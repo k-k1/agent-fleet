@@ -44,9 +44,11 @@ func TestNoSubscriptionsPreset(t *testing.T) {
 	for id, want := range map[string]bool{
 		"anthropic-subscription": false, "chatgpt-subscription": false, "muse-login": false, "agy-login": false,
 		"copilot-login": false, "cursor-login": false, "kiro-login": false, "opencode-account": false, "opencode-go": false,
-		"opencode-zen": false, // a metered key, but its destination is opencode.ai
+		"opencode-zen":  false, // a metered key, but its destination is opencode.ai
 		"anthropic-api": true, "openai-api": true, "meta-api": true, "bedrock": true, "bedrock-deployment": true,
-		"af-engine-llm": true, "member-llamacpp": true, // unclassified, but destinations are restricted only by removal here
+		"af-engine-llm": true,
+		// Unclassified until an endpoint is approved: refused under any restriction.
+		"member-llamacpp": false, "custom-api": false,
 	} {
 		if got := r.Allows(id); got != want {
 			t.Errorf("%s: allowed %v, want %v", id, got, want)
@@ -131,5 +133,26 @@ func TestNormalize(t *testing.T) {
 	none := Rule{Classes: &[]string{}}.Normalize()
 	if none.Classes == nil || len(*none.Classes) != 0 || !none.Restricted() || none.Allows("bedrock") {
 		t.Errorf("an empty class list must allow nothing: %+v", none)
+	}
+}
+
+// A route whose destination is unclassified is refused wherever any restriction is set, whatever
+// the restriction is about, and no list can let it in (D1c).
+func TestUnclassifiedIsRefusedUnderAnyRestriction(t *testing.T) {
+	for _, r := range []Rule{
+		must(t, "classes=-subscription"), must(t, "destinations=-opencode.ai"), must(t, "deny=openai-api"),
+		must(t, "classes=member-key"), {Classes: &[]string{"member-key"}, Except: []string{"anthropic-api"}},
+	} {
+		for _, id := range []string{"member-llamacpp", "custom-api"} {
+			if r.Allows(id) {
+				t.Errorf("%s allowed under %+v", id, r)
+			}
+		}
+	}
+	if _, err := ParseCeiling("destinations=unclassified"); err == nil {
+		t.Error("allowing the unclassified destination was accepted")
+	}
+	if !(Rule{}).Allows("member-llamacpp") {
+		t.Error("with no restriction a per-connection route must stay allowed")
 	}
 }

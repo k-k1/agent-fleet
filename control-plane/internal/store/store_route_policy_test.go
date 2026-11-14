@@ -16,20 +16,20 @@ func TestRoutePolicyRows(t *testing.T) {
 		if r, err := st.GetRoutePolicy(ctx, RoutePolicyTenant, tn.ID); err != nil || r.Rule != "{}" || r.Revision != 0 {
 			t.Fatalf("unwritten row = %+v %v, want no restriction at revision 0", r, err)
 		}
-		_, dep, err := st.PutRoutePolicy(ctx, RoutePolicyDeployment, "", `{"deny":["x"]}`, "su")
+		_, dep, err := st.PutRoutePolicy(ctx, RoutePolicyDeployment, "", `{"deny":["x"]}`, "su", nil)
 		mustDo(t, err)
-		before, cp, err := st.PutRoutePolicy(ctx, RoutePolicyTenantCap, tn.ID, `{"classes":["provided"]}`, "su")
+		before, cp, err := st.PutRoutePolicy(ctx, RoutePolicyTenantCap, tn.ID, `{"classes":["provided"]}`, "su", nil)
 		mustDo(t, err)
 		if before.Revision != 0 || cp.Revision <= dep.Revision {
 			t.Fatalf("cap before %+v after %+v, deployment %+v", before, cp, dep)
 		}
-		before, rule, err := st.PutRoutePolicy(ctx, RoutePolicyTenant, tn.ID, `{"deny":["y"]}`, "ta")
+		before, rule, err := st.PutRoutePolicy(ctx, RoutePolicyTenant, tn.ID, `{"deny":["y"]}`, "ta", nil)
 		mustDo(t, err)
 		if before.Rule != "{}" || rule.Revision <= cp.Revision {
 			t.Fatalf("tenant rule before %+v after %+v", before, rule)
 		}
 		// Clearing the tenant's rule leaves the cap as it was.
-		before, cleared, err := st.PutRoutePolicy(ctx, RoutePolicyTenant, tn.ID, "", "ta")
+		before, cleared, err := st.PutRoutePolicy(ctx, RoutePolicyTenant, tn.ID, "", "ta", nil)
 		mustDo(t, err)
 		if before.Rule != `{"deny":["y"]}` || cleared.Rule != "{}" || cleared.Revision <= rule.Revision {
 			t.Fatalf("clear: before %+v after %+v", before, cleared)
@@ -38,7 +38,7 @@ func TestRoutePolicyRows(t *testing.T) {
 			t.Fatalf("clearing the tenant rule touched the cap: %+v", got)
 		}
 		for _, bad := range [][2]string{{RoutePolicyDeployment, tn.ID}, {RoutePolicyTenant, ""}, {"member", tn.ID}} {
-			if _, _, err := st.PutRoutePolicy(ctx, bad[0], bad[1], "{}", "x"); err == nil {
+			if _, _, err := st.PutRoutePolicy(ctx, bad[0], bad[1], "{}", "x", nil); err == nil {
 				t.Errorf("scope %q tenant %q accepted", bad[0], bad[1])
 			}
 		}
@@ -71,7 +71,7 @@ func TestRoutePolicyRevisionsAreDistinct(t *testing.T) {
 				var err error
 				var after RoutePolicyRow
 				for try := 0; try < 20; try++ {
-					if _, after, err = st.PutRoutePolicy(ctx, scope, tid, "{}", "x"); err == nil {
+					if _, after, err = st.PutRoutePolicy(ctx, scope, tid, "{}", "x", nil); err == nil {
 						break
 					}
 				}
@@ -88,5 +88,68 @@ func TestRoutePolicyRevisionsAreDistinct(t *testing.T) {
 			}(i)
 		}
 		wg.Wait()
+	})
+}
+
+// A write and its audit row commit together: when the audit row cannot be inserted (here a
+// duplicate id the database refuses), the rule, its revision and the sequence stay as they were,
+// for every scope (D15).
+func TestRoutePolicyWriteAndAuditAreAtomic(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		tn, _ := limitMembers(t, st, "a")
+		mustDo(t, st.InsertAudit(ctx, AuditLog{ID: "taken", Action: "x", At: NowTS()}))
+		failing := func(before, after RoutePolicyRow) AuditLog { return AuditLog{ID: "taken", Action: "y", At: NowTS()} }
+		for _, sc := range [][2]string{{RoutePolicyCeiling, ""}, {RoutePolicyDeployment, ""}, {RoutePolicyTenantCap, tn.ID}, {RoutePolicyTenant, tn.ID}} {
+			if _, _, err := st.PutRoutePolicy(ctx, sc[0], sc[1], `{"deny":["z"]}`, "x", failing); err == nil {
+				t.Errorf("%s: the write succeeded although its audit row could not be written", sc[0])
+			}
+			if r, _ := st.GetRoutePolicy(ctx, sc[0], sc[1]); r.Revision != 0 || r.Rule != "{}" {
+				t.Errorf("%s: the rule committed without its audit row: %+v", sc[0], r)
+			}
+		}
+		ok := func(before, after RoutePolicyRow) AuditLog {
+			return AuditLog{ID: NewID(), TenantID: tn.ID, Action: "route_policy.tenant.put", Detail: before.Rule + "->" + after.Rule, At: NowTS()}
+		}
+		_, after, err := st.PutRoutePolicy(ctx, RoutePolicyTenant, tn.ID, `{"deny":["z"]}`, "x", ok)
+		mustDo(t, err)
+		if after.Revision != 1 {
+			t.Errorf("the failed writes consumed revisions: the first good one is %d", after.Revision)
+		}
+		logs, _ := st.ListAuditByTenant(ctx, tn.ID, 10)
+		if len(logs) != 1 || logs[0].Detail != `{}->{"deny":["z"]}` {
+			t.Errorf("audit rows = %+v", logs)
+		}
+	})
+}
+
+// One read returns every layer of a tenant from one snapshot, the effective revision being its
+// newest row; another tenant's rows are not in it.
+func TestRoutePolicyLayersRead(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		tn, _ := limitMembers(t, st, "a")
+		other, err := st.CreateTenant(ctx, "other", "Other")
+		mustDo(t, err)
+		empty, err := st.GetRoutePolicyLayers(ctx, tn.ID)
+		mustDo(t, err)
+		if empty.Revision() != 0 || empty.Tenant.Rule != "{}" || empty.Ceiling.Rule != "{}" {
+			t.Fatalf("empty read = %+v", empty)
+		}
+		_, c, _ := st.PutRoutePolicy(ctx, RoutePolicyCeiling, "", `{"deny":["c"]}`, "op", nil)
+		_, d, _ := st.PutRoutePolicy(ctx, RoutePolicyDeployment, "", `{"deny":["d"]}`, "su", nil)
+		_, tr, _ := st.PutRoutePolicy(ctx, RoutePolicyTenant, tn.ID, `{"deny":["t"]}`, "ta", nil)
+		_, o, _ := st.PutRoutePolicy(ctx, RoutePolicyTenant, other.ID, `{"deny":["o"]}`, "ta", nil)
+		got, err := st.GetRoutePolicyLayers(ctx, tn.ID)
+		mustDo(t, err)
+		if got.Ceiling.Revision != c.Revision || got.Deployment.Revision != d.Revision || got.Tenant.Rule != `{"deny":["t"]}` ||
+			got.TenantCap.Revision != 0 || got.Revision() != tr.Revision || got.Revision() >= o.Revision {
+			t.Errorf("layers = %+v", got)
+		}
+		dep, err := st.GetRoutePolicyLayers(ctx, "")
+		mustDo(t, err)
+		if dep.Tenant.Revision != 0 || dep.Revision() != d.Revision {
+			t.Errorf("the deployment-only read = %+v", dep)
+		}
 	})
 }

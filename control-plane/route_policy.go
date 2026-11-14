@@ -41,6 +41,35 @@ func loadRoutePolicyCeiling() error {
 	return nil
 }
 
+// syncRoutePolicyCeiling records this CP's ceiling as the stored ceiling row when it differs from
+// what is stored, under a new revision and with an audit row, so the change takes part in every
+// member's effective revision; an unchanged ceiling writes nothing and moves no revision.
+func syncRoutePolicyCeiling(ctx context.Context, st store.Store) error {
+	c := currentCeiling()
+	want, err := json.Marshal(c.rule)
+	if err != nil {
+		return err
+	}
+	row, err := st.GetRoutePolicy(ctx, store.RoutePolicyCeiling, "")
+	if err != nil {
+		return err
+	}
+	if row.Rule == string(want) || row.Revision == 0 && !c.rule.Restricted() {
+		return nil
+	}
+	_, after, err := st.PutRoutePolicy(ctx, store.RoutePolicyCeiling, "", string(want), "operator",
+		func(before, after store.RoutePolicyRow) store.AuditLog {
+			return store.AuditLog{ID: store.NewID(), ActorKind: "system", ActorID: "operator", Action: "route_policy.ceiling.sync",
+				Target: "deployment", Detail: fmt.Sprintf("before=%s after=%s revision=%d raw=%q", before.Rule, after.Rule, after.Revision, c.raw),
+				HTTPStatus: http.StatusOK, At: store.NowTS()}
+		})
+	if err != nil {
+		return fmt.Errorf("recording the operator ceiling: %w", err)
+	}
+	log.Printf("route policy: the operator ceiling changed, recorded at revision %d", after.Revision)
+	return nil
+}
+
 func currentCeiling() ceilingState {
 	if c := routePolicyCeiling.Load(); c != nil {
 		return *c
@@ -107,22 +136,27 @@ func layerOf(row store.RoutePolicyRow) (policyLayerWire, error) {
 	return policyLayerWire{Rule: r, Revision: row.Revision, UpdatedAt: row.UpdatedAt}, nil
 }
 
-// tenantPolicy reads every layer a tenant's members are judged by.
+// tenantPolicy reads every layer a tenant's members are judged by, in one snapshot, and labels it
+// with that snapshot's revision. The ceiling's rule is the recorded one (syncRoutePolicyCeiling),
+// so rule and revision come from the same read.
 func tenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantPolicyWire, error) {
-	out := tenantPolicyWire{Ceiling: ceilingView()}
+	rows, err := st.GetRoutePolicyLayers(ctx, tenantID)
+	if err != nil {
+		return tenantPolicyWire{}, err
+	}
+	out := tenantPolicyWire{Ceiling: ceilingView(), Revision: rows.Revision()}
+	ceiling, err := layerOf(rows.Ceiling)
+	if err != nil {
+		return out, err
+	}
+	out.Ceiling.Rule = ceiling.Rule
 	for _, l := range []struct {
-		scope, tenant string
-		into          *policyLayerWire
-	}{{store.RoutePolicyDeployment, "", &out.Deployment}, {store.RoutePolicyTenantCap, tenantID, &out.Cap},
-		{store.RoutePolicyTenant, tenantID, &out.Tenant}} {
-		row, err := st.GetRoutePolicy(ctx, l.scope, l.tenant)
-		if err != nil {
+		row  store.RoutePolicyRow
+		into *policyLayerWire
+	}{{rows.Deployment, &out.Deployment}, {rows.TenantCap, &out.Cap}, {rows.Tenant, &out.Tenant}} {
+		if *l.into, err = layerOf(l.row); err != nil {
 			return out, err
 		}
-		if *l.into, err = layerOf(row); err != nil {
-			return out, err
-		}
-		out.Revision = max(out.Revision, row.Revision)
 	}
 	layers := routepolicy.Layers{Ceiling: out.Ceiling.Rule, Deployment: out.Deployment.Rule, TenantCap: out.Cap.Rule, Tenant: out.Tenant.Rule}
 	out.Restricted = layers.Restricted()
@@ -136,12 +170,7 @@ func tenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantP
 }
 
 func (a routePolicyAdmin) getDeployment(w http.ResponseWriter, r *http.Request, _ store.Identity) {
-	row, err := a.mgr.store.GetRoutePolicy(r.Context(), store.RoutePolicyDeployment, "")
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	l, err := layerOf(row)
+	v, err := tenantPolicy(r.Context(), a.mgr.store, "")
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -149,7 +178,8 @@ func (a routePolicyAdmin) getDeployment(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, struct {
 		Ceiling    ceilingWire     `json:"ceiling"`
 		Deployment policyLayerWire `json:"deployment"`
-	}{ceilingView(), l})
+		Revision   int64           `json:"revision"`
+	}{v.Ceiling, v.Deployment, v.Revision})
 }
 
 // readRule decodes and validates a rule body. above, when set, is the layer the rule may not
@@ -179,21 +209,24 @@ func readRule(w http.ResponseWriter, r *http.Request, above *routepolicy.Rule) (
 	return in, string(b), true
 }
 
-// putLayer writes one layer and its audit row (D15: before and after).
+// putLayer writes one layer and its audit row (D15: before and after) in one transaction: when
+// the record cannot be written, neither is the rule.
 func (a routePolicyAdmin) putLayer(w http.ResponseWriter, r *http.Request, ident store.Identity, scope string, t store.Tenant, rule string) {
-	before, after, err := a.mgr.store.PutRoutePolicy(r.Context(), scope, t.ID, rule, ident.ID)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
 	target := t.Slug
 	if scope == store.RoutePolicyDeployment {
 		target = "deployment"
 	}
-	_ = a.mgr.store.InsertAudit(context.WithoutCancel(r.Context()), store.AuditLog{ID: store.NewID(), TenantID: t.ID,
-		ActorKind: "user", ActorID: ident.ID, Action: "route_policy." + scope + ".put", Target: target,
-		Detail:     fmt.Sprintf("before=%s after=%s revision=%d", before.Rule, after.Rule, after.Revision),
-		HTTPStatus: http.StatusOK, At: store.NowTS()})
+	_, after, err := a.mgr.store.PutRoutePolicy(r.Context(), scope, t.ID, rule, ident.ID,
+		func(before, after store.RoutePolicyRow) store.AuditLog {
+			return store.AuditLog{ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
+				Action: "route_policy." + scope + ".put", Target: target,
+				Detail:     fmt.Sprintf("before=%s after=%s revision=%d", before.Rule, after.Rule, after.Revision),
+				HTTPStatus: http.StatusOK, At: store.NowTS()}
+		})
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
 	l, err := layerOf(after)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))

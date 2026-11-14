@@ -13,6 +13,9 @@ import (
 
 // Route policy scopes.
 const (
+	// RoutePolicyCeiling is the operator ceiling as recorded by the last Control Plane to start;
+	// its environment, not this row, is the source of truth (D9c).
+	RoutePolicyCeiling    = "ceiling"
 	RoutePolicyDeployment = "deployment"
 	RoutePolicyTenantCap  = "tenant_cap"
 	RoutePolicyTenant     = "tenant"
@@ -30,18 +33,34 @@ type RoutePolicyRow struct {
 
 // RoutePolicyStore holds the policy rows.
 type RoutePolicyStore interface {
-	// GetRoutePolicy reads one row; tenantID is empty for the deployment scope.
+	// GetRoutePolicy reads one row; tenantID is empty for the ceiling and deployment scopes.
 	GetRoutePolicy(ctx context.Context, scope, tenantID string) (RoutePolicyRow, error)
+	// GetRoutePolicyLayers reads, in one statement and so from one snapshot, every row a
+	// tenant's members are judged by: the ceiling, the deployment rule, and the tenant's cap and
+	// rule (tenantID empty reads the first two). Rows never written read as no restriction.
+	GetRoutePolicyLayers(ctx context.Context, tenantID string) (RoutePolicyLayers, error)
 	// PutRoutePolicy writes one row under a new revision, strictly greater than every revision
-	// written before, and returns the row as it was before and as it is now.
-	PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor string) (before, after RoutePolicyRow, err error)
+	// written before, and returns the row as it was before and as it is now. audit, when set,
+	// builds the audit row from the two, inserted in the same transaction: the write and its
+	// record commit together or not at all (D15).
+	PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor string, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error)
+}
+
+// RoutePolicyLayers is one consistent read of a tenant's layers.
+type RoutePolicyLayers struct {
+	Ceiling, Deployment, TenantCap, Tenant RoutePolicyRow
+}
+
+// Revision is the effective revision of the read: the newest of its rows.
+func (l RoutePolicyLayers) Revision() int64 {
+	return max(l.Ceiling.Revision, l.Deployment.Revision, l.TenantCap.Revision, l.Tenant.Revision)
 }
 
 func validRoutePolicyScope(scope, tenantID string) error {
 	switch scope {
-	case RoutePolicyDeployment:
+	case RoutePolicyCeiling, RoutePolicyDeployment:
 		if tenantID != "" {
-			return fmt.Errorf("the deployment rule has no tenant")
+			return fmt.Errorf("the %s row has no tenant", scope)
 		}
 	case RoutePolicyTenantCap, RoutePolicyTenant:
 		if tenantID == "" {
@@ -74,7 +93,7 @@ func (s *SQL) GetRoutePolicy(ctx context.Context, scope, tenantID string) (Route
 // transaction: on Postgres the update holds the row lock until commit, so two writes are
 // serialised and commit in revision order, and a reader never sees a later revision committed
 // before an earlier one.
-func (s *SQL) PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor string) (before, after RoutePolicyRow, err error) {
+func (s *SQL) PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor string, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error) {
 	if err := validRoutePolicyScope(scope, tenantID); err != nil {
 		return before, after, err
 	}
@@ -104,5 +123,43 @@ func (s *SQL) PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor s
 		scope, tenantID, rule, rev, actor, after.UpdatedAt); err != nil {
 		return before, after, err
 	}
+	if audit != nil {
+		a := audit(before, after)
+		if _, err = tx.ExecContext(ctx, `INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at, http_status)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			a.ID, a.TenantID, a.ActorKind, a.ActorID, a.Action, a.Target, a.Detail, a.At, a.HTTPStatus); err != nil {
+			return before, after, fmt.Errorf("recording the audit row: %w", err)
+		}
+	}
 	return before, after, tx.Commit()
+}
+
+func (s *SQL) GetRoutePolicyLayers(ctx context.Context, tenantID string) (RoutePolicyLayers, error) {
+	blank := func(scope, tid string) RoutePolicyRow { return RoutePolicyRow{Scope: scope, TenantID: tid, Rule: "{}"} }
+	out := RoutePolicyLayers{Ceiling: blank(RoutePolicyCeiling, ""), Deployment: blank(RoutePolicyDeployment, ""),
+		TenantCap: blank(RoutePolicyTenantCap, tenantID), Tenant: blank(RoutePolicyTenant, tenantID)}
+	rows, err := s.db.QueryContext(ctx, `SELECT scope, tenant_id, rule, revision, updated_by, updated_at FROM route_policy
+		WHERE (tenant_id = '' AND scope IN ('ceiling', 'deployment')) OR (tenant_id = ? AND tenant_id <> '' AND scope IN ('tenant_cap', 'tenant'))`,
+		tenantID)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r RoutePolicyRow
+		if err := rows.Scan(&r.Scope, &r.TenantID, &r.Rule, &r.Revision, &r.UpdatedBy, &r.UpdatedAt); err != nil {
+			return out, err
+		}
+		switch r.Scope {
+		case RoutePolicyCeiling:
+			out.Ceiling = r
+		case RoutePolicyDeployment:
+			out.Deployment = r
+		case RoutePolicyTenantCap:
+			out.TenantCap = r
+		case RoutePolicyTenant:
+			out.Tenant = r
+		}
+	}
+	return out, rows.Err()
 }

@@ -272,6 +272,11 @@ func main() {
 		log.Fatalf("db migrate: %v", err)
 	}
 	reconcileSSMSignIns(ctx, st)
+	// The ceiling read above is recorded under a revision of its own, so a change of it reaches
+	// every member's effective revision (ADR 0138 D9, D12). Unrecorded, the start stops.
+	if err := syncRoutePolicyCeiling(ctx, st); err != nil {
+		log.Fatalf("route policy: %v", err)
+	}
 	mgr.store = st
 	mgr.initGitDataGuard()
 	logOrphanGitRepos(ctx, st, mgr.dataRoot)

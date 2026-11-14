@@ -88,6 +88,10 @@ func setList(key string, items, known []string) ([]string, error) {
 	}
 	out := []string{}
 	for _, k := range known {
+		// "Every destination but these" never includes unclassified, which no rule can allow.
+		if k == Unclassified {
+			continue
+		}
 		if !slices.Contains(items, "-"+k) {
 			out = append(out, k)
 		}
