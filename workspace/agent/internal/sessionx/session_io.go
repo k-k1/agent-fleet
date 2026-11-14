@@ -655,7 +655,12 @@ var initialDeliveries sync.WaitGroup
 func WaitInitialDeliveries() { initialDeliveries.Wait() }
 
 func deliverInitialPromptAsync(name, prompt string) {
-	run := initialInputOrder.enqueue(name, func() { deliverInitialPrompt(name, prompt) })
+	run := initialInputOrder.enqueue(name,
+		func() { deliverInitialPrompt(name, prompt) },
+		func() {
+			log.Printf("initial prompt NOT typed for %s: an earlier input to it never finished", name)
+			settleInitialPrompt(name, session.InitialPromptFailed)
+		})
 	initialDeliveries.Add(1)
 	go func() {
 		defer initialDeliveries.Done()
