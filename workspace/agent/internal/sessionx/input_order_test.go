@@ -57,28 +57,44 @@ func TestInputOrderRunsInEnqueueOrder(t *testing.T) {
 	}
 }
 
-// A head that never finishes must not hold the session's later inputs forever, and a later
-// input must not type ahead of it either: it is skipped, and the chain drains.
+// A head that never finishes must not hold the session's later inputs forever, and no later
+// input may type ahead of it, including one enqueued after the first timeout.
 func TestInputOrderSkipsBehindHungHead(t *testing.T) {
 	o := &inputOrder{tails: map[string]*orderTail{}, wait: 100 * time.Millisecond}
 	release := make(chan struct{})
 	var mu sync.Mutex
 	var ran, skipped []string
+	skipDone := make(chan struct{}, 8)
 	mark := func(l *[]string, s string) func() {
 		return func() { mu.Lock(); *l = append(*l, s); mu.Unlock() }
+	}
+	skipFn := func(s string) func() {
+		return func() { mark(&skipped, s)(); skipDone <- struct{}{} }
 	}
 	var wg sync.WaitGroup
 	start := func(run func()) {
 		wg.Add(1)
 		go func() { defer wg.Done(); run() }()
 	}
-	start(o.enqueue("s", func() { <-release; mark(&ran, "head")() }, mark(&skipped, "head")))
-	start(o.enqueue("s", mark(&ran, "b"), mark(&skipped, "b")))
-	start(o.enqueue("s", mark(&ran, "c"), mark(&skipped, "c")))
-	time.Sleep(400 * time.Millisecond) // b and c have timed out by now
+	waitSkips := func(n int) {
+		for i := 0; i < n; i++ {
+			select {
+			case <-skipDone:
+			case <-time.After(10 * time.Second):
+				t.Fatal("a skip never happened")
+			}
+		}
+	}
+	start(o.enqueue("s", func() { <-release; mark(&ran, "head")() }, skipFn("head")))
+	start(o.enqueue("s", mark(&ran, "b"), skipFn("b")))
+	start(o.enqueue("s", mark(&ran, "c"), skipFn("c")))
+	waitSkips(2)
+	// b has timed out and is the tail; d arrives after that and must not start on an empty chain.
+	start(o.enqueue("s", mark(&ran, "d"), skipFn("d")))
+	waitSkips(1)
 	mu.Lock()
-	if len(ran) != 0 || len(skipped) != 2 {
-		t.Errorf("while the head hangs: ran %v, skipped %v, want nothing run and b, c skipped", ran, skipped)
+	if len(ran) != 0 || len(skipped) != 3 {
+		t.Errorf("while the head hangs: ran %v, skipped %v, want nothing run, b, c, d skipped", ran, skipped)
 	}
 	mu.Unlock()
 	close(release)
@@ -86,8 +102,16 @@ func TestInputOrderSkipsBehindHungHead(t *testing.T) {
 	if len(ran) != 1 || ran[0] != "head" {
 		t.Errorf("ran = %v, want only the head", ran)
 	}
-	if len(o.tails) != 0 {
-		t.Errorf("tails leaked: %d", len(o.tails))
+	// With the head returned the chain is empty again and the next input runs.
+	o.mu.Lock()
+	left := len(o.tails)
+	o.mu.Unlock()
+	if left != 0 {
+		t.Errorf("tails leaked: %d", left)
+	}
+	o.enqueue("s", mark(&ran, "e"), skipFn("e"))()
+	if len(ran) != 2 || ran[1] != "e" {
+		t.Errorf("ran = %v, want e to run after the head returned", ran)
 	}
 }
 

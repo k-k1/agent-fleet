@@ -19,13 +19,15 @@ type inputOrder struct {
 	wait time.Duration
 }
 
-// orderTail is the last delivery enqueued for a session; its entry is dropped when that
-// delivery finishes with nobody queued behind it.
+// orderTail is the last delivery enqueued for a session; its entry is dropped when its slot is
+// released with nobody queued behind it.
 type orderTail struct {
+	// done closes when the slot is released: its delivery returned, or, for a skipped slot,
+	// the delivery it was waiting behind returned.
 	done chan struct{}
-	// skipped is set before done closes when the slot ended without running: its own
-	// predecessor was still alive then, so a successor must not run either.
-	skipped bool
+	// dead closes when the slot is skipped, so later inputs can skip at once instead of
+	// waiting out their own timeout.
+	dead chan struct{}
 }
 
 // initialInputOrderWait is longer than a delivery's own worst case (about 30 s for tmux, 30 s
@@ -38,37 +40,53 @@ var initialInputOrder = &inputOrder{tails: map[string]*orderTail{}, wait: initia
 // order enqueue calls were linearised in. The returned func waits for the previous slot, then
 // runs fn. When the predecessor has not finished within o.wait it runs skip instead and never
 // fn: failing the later input keeps the order, whereas letting it type ahead of a head that is
-// still alive would break it, and so does everything queued behind a skipped slot. The next slot is released afterwards either way.
+// still alive would break it. A skipped slot stays in the chain (and keeps skipping what is
+// queued behind it) until the live head has returned, so an input enqueued after the timeout
+// is skipped as well rather than starting on an empty chain.
 func (o *inputOrder) enqueue(name string, fn, skip func()) (run func()) {
 	o.mu.Lock()
 	prev := o.tails[name]
-	cur := &orderTail{done: make(chan struct{})}
+	cur := &orderTail{done: make(chan struct{}), dead: make(chan struct{})}
 	o.tails[name] = cur
 	o.mu.Unlock()
+	release := func() {
+		o.mu.Lock()
+		if o.tails[name] == cur {
+			delete(o.tails, name)
+		}
+		o.mu.Unlock()
+		close(cur.done)
+	}
 	return func() {
-		defer func() {
-			o.mu.Lock()
-			if o.tails[name] == cur {
-				delete(o.tails, name)
-			}
-			o.mu.Unlock()
-			close(cur.done)
-		}()
-		if prev != nil {
-			t := time.NewTimer(o.wait)
-			defer t.Stop()
-			select {
-			case <-prev.done:
-				if !prev.skipped {
-					fn()
-					return
-				}
-			case <-t.C:
-			}
-			cur.skipped = true
-			skip()
+		if prev == nil {
+			defer release()
+			fn()
 			return
 		}
+		t := time.NewTimer(o.wait)
+		defer t.Stop()
+		select {
+		case <-prev.done:
+		case <-prev.dead:
+			select {
+			case <-prev.done: // its head returned meanwhile; nothing is ahead any more
+			default:
+				o.skipSlot(cur, prev, skip, release)
+				return
+			}
+		case <-t.C:
+			o.skipSlot(cur, prev, skip, release)
+			return
+		}
+		defer release()
 		fn()
 	}
+}
+
+// skipSlot ends cur without running it and holds its place until prev is released.
+func (o *inputOrder) skipSlot(cur, prev *orderTail, skip, release func()) {
+	close(cur.dead)
+	skip()
+	<-prev.done
+	release()
 }
