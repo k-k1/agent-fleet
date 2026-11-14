@@ -228,4 +228,23 @@ const (
 	// A memo taken in from the inbox is flushed on its own, never in one message with other
 	// memos (ADR 0111 decision 3).
 	errCodeMemoOriginAlone = "memo_origin_alone"
+
+	// Memo queues (ADR 0137): the rules of a queue category and the refusals of a fire.
+	errCodeMemoLocked              = "memo_locked"
+	errCodeMemoSending             = "memo_sending"
+	errCodeMemoInQueue             = "memo_in_queue"
+	errCodeMemoQueueCategory       = "memo_queue_category"
+	errCodeMemoInboxInQueue        = "memo_inbox_in_queue"
+	errCodeMemoReleaseStale        = "memo_release_stale"
+	errCodeMemoTooLarge            = "memo_too_large"
+	errCodeMemoEnvelope            = "memo_envelope"
+	errCodeMemoRateLimited         = "memo_rate_limited"
+	errCodeMemoQueueNoInstruction  = "memo_queue_no_instruction"
+	errCodeMemoQueueBadSettings    = "memo_queue_bad_settings"
+	errCodeMemoQueuesDisabled      = "memo_queues_disabled"
+	errCodeMemoQueueNothingPending = "memo_queue_nothing_pending"
+	errCodeMemoQueueNoSlot         = "memo_queue_no_slot"
+	errCodeMemoQueueMemberLimit    = "memo_queue_member_limit"
+	errCodeMemoQueueBadRepo        = "memo_queue_bad_repo"
+	errCodeMemoQueueItemInvalid    = "memo_queue_item_invalid"
 )

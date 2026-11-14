@@ -34,9 +34,13 @@ func cpConsoleCatalog(t *testing.T, locale string) string {
 	dir := filepath.Join("..", "console", "src", "lib", "i18n", "locales", locale)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		// Allow for a build from a distribution that does not include console/,
-		// as on the agent side.
-		t.Skipf("catalog not available (%v)", err)
+		// Skip only when the whole locales tree is absent (a distribution without console/, as
+		// on the agent side). One locale missing beside another that exists is a renamed or
+		// deleted directory, and must fail rather than silence the check.
+		if _, serr := os.Stat(filepath.Dir(dir)); serr != nil {
+			t.Skipf("catalog not available (%v)", err)
+		}
+		t.Fatalf("locale %q has no catalog directory %s: %v", locale, dir, err)
 	}
 	var b strings.Builder
 	n := 0
@@ -114,17 +118,20 @@ func TestCPEmittedErrCodesHaveConsoleCatalogEntry(t *testing.T) {
 		}
 	}
 
-	catalog := cpConsoleCatalog(t, "ja")
 	codes := make([]string, 0, len(emitted))
 	for code := range emitted {
 		codes = append(codes, code)
 	}
 	sort.Strings(codes)
-	for _, code := range codes {
-		if !consoleCatalogHasKeyCP(catalog, "err."+code) {
-			t.Errorf("%s = %q is emitted, but the Console catalog has no \"err.%s\". "+
-				"Add it to console/src/lib/i18n/locales/{ja,en}/errors.ts at the same time",
-				emitted[code], code, code)
+	// Both locales: a code with only a ja entry shows the developer message to an English user.
+	for _, locale := range []string{"ja", "en"} {
+		catalog := cpConsoleCatalog(t, locale)
+		for _, code := range codes {
+			if !consoleCatalogHasKeyCP(catalog, "err."+code) {
+				t.Errorf("%s = %q is emitted, but the Console %s catalog has no \"err.%s\". "+
+					"Add it to console/src/lib/i18n/locales/{ja,en}/errors.ts at the same time",
+					emitted[code], code, locale, code)
+			}
 		}
 	}
 }
