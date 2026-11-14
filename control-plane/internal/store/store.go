@@ -64,6 +64,7 @@ type Store interface {
 	LimitBoardStore
 	InboxStore
 	ProvidedRouteStore
+	RoutePolicyStore
 	WatchIngressStore
 
 	// Ping backs GET /readyz. Not in a sub-interface: "is the database reachable"

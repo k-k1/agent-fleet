@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicysrv"
 	"log"
 	"net"
 	"net/http"
@@ -193,6 +194,10 @@ func main() {
 		os.Getenv(auth.AllowInsecureDevAuthEnv), os.Getenv("PUBLIC_BASE_URL")); authErr != nil {
 		log.Fatalf("auth mode: %v", authErr)
 	}
+	// The operator's credential ceiling (ADR 0138 D9c): an unparsable value stops the start.
+	if err := routepolicysrv.LoadCeiling(); err != nil {
+		log.Fatalf("route policy: %v", err)
+	}
 	// GITHUB_OAUTH_CLIENT_ID is deliberately NOT injected into the workspace any more
 	// (docs/log/71 §71.5). The GitHub device flow moved into the CP, where the app can be
 	// read per tenant from the database; container env is fixed at container start and
@@ -268,6 +273,11 @@ func main() {
 		log.Fatalf("db migrate: %v", err)
 	}
 	reconcileSSMSignIns(ctx, st)
+	// The ceiling read above is recorded under a revision of its own, so a change of it reaches
+	// every member's effective revision (ADR 0138 D9, D12). Unrecorded, the start stops.
+	if err := routepolicysrv.SyncCeiling(ctx, st); err != nil {
+		log.Fatalf("route policy: %v", err)
+	}
 	mgr.store = st
 	mgr.initGitDataGuard()
 	logOrphanGitRepos(ctx, st, mgr.dataRoot)

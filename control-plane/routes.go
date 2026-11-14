@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicysrv"
 	"log"
 	"net/http"
 	"net/url"
@@ -35,6 +36,8 @@ func buildMux(cfg config) *http.ServeMux {
 	// through cfg rather than each building (and running) its own.
 	cfg.engineReg = registerEngineRoutes(mux, cfg)
 	registerProvidedRouteRoutes(mux, cfg)
+	// The credential policy's administration (ADR 0138 M1, internal/routepolicysrv).
+	routepolicysrv.Register(mux, cpRoutePolicy{memberAuth{cfg.mgr}})
 	registerEventsRoutes(mux, cfg)
 	registerSessionRoutes(mux, cfg)
 	registerAgentRelays(mux, cfg)
