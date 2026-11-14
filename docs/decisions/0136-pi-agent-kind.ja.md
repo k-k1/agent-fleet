@@ -12,6 +12,8 @@
   変数、Bedrock のベアラーと `baseUrl`、エージェントディレクトリ、`auth.json` のロック、セッションの保存先、MCP の
   ファイル。後者で決定を支えている記述には *(docs)* を付けた。Stage 0b（実リポジトリの課題）は走らせていない。
   もう関門ではなく（オーナー、2026-11-12）、この記録のどこもそれに依存しない。
+  2026-11-14 に別セッション（codex `gpt-6.1-sol`）がレビューした。1 巡で指摘 8 件。どれもツリーと pi 1.5.2 の
+  ソースに照らして確かめ、本文に取り込んだ。
 - Follow-ups: #4140、#4141、#4142、#4143（P0〜P3）。未決の問い #4139（#4138 は回答済み）
 - 参照: [0128](0128-harness-route-maker.ja.md)（ハーネス × ルート。pi はその P3）/
   [0129](0129-provided-model-routes.ja.md)（提供される Bedrock ルート）/
@@ -129,7 +131,7 @@ ADR 0128 はすでに pi の行（決定 5: `chatgpt-subscription`、`openai-api
 
 | AF の操作 | pi |
 |---|---|
-| `Send` | `prompt`。応答の `data.disposition` が `handled` なら実行は始まっていない: `agent_settled` を待たずにすぐターンを終える *(docs)* |
+| `Send` | `prompt`。`data.disposition: "handled"` は、拡張のコマンドや入力ハンドラがプロンプトを消費したことを表す。これはプロンプトについての説明で、拡張が別に始めた仕事については何も言わない *(docs)*。AF はコマンドを登録する拡張を読み込まない（決定 7）ので、ドライバはそのターンを応答だけでは終えず、`get_state` が pi のアイドルを示してから終える |
 | `Steer`（ターン実行中） | `steer`: 次のモデル呼び出しの前に届く（実測） |
 | ターン実行中に送られた、steer でないメッセージ | AF のキューに保持し、`agent_settled` の後に新しい `prompt` として送る。pi の `follow_up` は使わない: 追送を同じ実行に畳み込む（`agent_end` が 1 回、実測）ので、AF の 2 つのターンが状態ストアでも台帳でも 1 ターンになってしまう |
 | ターンの終わり | **`agent_settled` のみ。** `agent_end` の後に再試行、コンパクション、steer が続きうる *(docs)* |
@@ -155,7 +157,8 @@ ADR 0128 はすでに pi の行（決定 5: `chatgpt-subscription`、`openai-api
 
 ### 6. すべての pi セッションにルートがあり、セッションごとのエージェントディレクトリと環境で保つ
 
-pi は `agents.RouteAdapter`（`internal/agents/route.go:21`）と `RouteModelOwner`（`:145`）を実装する。
+pi は `agents.RouteAdapter`（`internal/agents/route.go:21`）、`RouteBinder`（`:102`）、`RouteChecker`、
+`RouteModelOwner`（`:145`）を実装する。
 
 **空の選択は、それ自体のルート規則ではない。** ADR 0128 決定 2 は既存の種別について「空は今日の規則」を保つが、
 pi には今日がない。作成時、空の選択はメンバーがサインイン済みなら `chatgpt-subscription` に解決し、そうでなければ
@@ -168,9 +171,21 @@ pi には今日がない。作成時、空の選択はメンバーがサイン�
 場合のみの** `auth.json`。子プロセスの環境は、Agent の環境から、固定したバージョンの pi が読むすべてのプロバイダの
 資格情報とクラウドの資格情報の変数（ドキュメントのプロバイダ表、`ANTHROPIC_OAUTH_TOKEN`、`ANTHROPIC_AUTH_TOKEN`、
 フェデレーションの変数、`AWS_PROFILE`、静的な AWS キー、`AWS_CONTAINER_CREDENTIALS_*`、
-`AWS_WEB_IDENTITY_TOKEN_FILE`、Vertex の変数）を除き、ルート自身のものを足したものである。除く変数の一覧は固定した
-バージョンのドキュメントから生成し、版上げのたびに契約ワークフローで確かめる。上流で増えたプロバイダは、ルートを
-迂回する新しい道だからである。
+`AWS_WEB_IDENTITY_TOKEN_FILE`、Vertex の変数）を除き、さらに pi のものではない Agent 自身の秘密（資格情報を発行する
+トークン `AF_ROUTE_ISSUE_TOKEN` と `AF_ENGINE_ISSUE_TOKEN`、エンジンのキー、Workspace が保存するすべてのプロバイダの
+キー。#4004 の専用 serve が除くのと同じ。`opencode/route_serve.go:447` の `routeServeSecretEnv`）を除き、ルート
+自身のものとセッションの識別（決定 10）を足したものである。除く一覧の前半は固定したバージョンのドキュメントから
+生成し、版上げのたびに契約ワークフローで確かめる。上流で増えたプロバイダは、ルートを迂回する新しい道だからである。
+後半は AF のもので、その専用 serve と共有する。`AF_ROUTE_ISSUE_TOKEN` を持つプロセスは、コントロールプレーンに
+直接ルートのトークンを求め、ローカルのゲートウェイの呼び出し元の束縛を飛ばせてしまう
+（`control-plane/internal/routegateway/gateway.go`）。
+
+**保存する選択は、それを選んだときの資格情報に束縛する**（ADR 0128 決定 3、`RouteBinder`）。資格情報を差し替えても、
+保存済みのセッションが別の請求先へ移らないようにするためである。`openai-api` は、claude の `anthropic-api`
+（`claude/route.go`）と同じくキーの指紋に束縛する。`chatgpt-subscription` はログインが属する ChatGPT のアカウントに
+束縛する（ログインファイルのどこに安定したアカウント ID があるかは P0 の項目）。トークンの更新では束縛は保たれる。
+キーの差し替えや別アカウントへのログインは、起動と再開のたびに目に見える拒否（claude の差し替えられたキーと同じ、`keyReplaced`）になり、
+動作中のセッションはルートガードの巡回が止める。
 
 | ルート | 資格情報と層（ADR 0128 決定 7） | 子プロセスへの届け方 | 段階 |
 |---|---|---|---|
@@ -184,8 +199,11 @@ pi には今日がない。作成時、空の選択はメンバーがサイン�
 
 **モデルはルートに属する。** `RouteModelOwner` は `<provider>/<id>` を検査する: 2 つの OpenAI のルートは `openai/…`、
 Bedrock は `amazon-bedrock/…`、`anthropic-api` は `anthropic/…`。プロバイダをまたぐ `set_model` は拒否する
-（ADR 0128 決定 6）。モデルのメニューはルートのもの: ルートのエージェントディレクトリで短命の子プロセスを動かして
-`get_available_models` を取り、キャッシュし、失敗時は古いものを使う。
+（ADR 0128 決定 6）。モデルのメニューはルートのもの: ルートと接続のために作った一時のエージェントディレクトリで
+短命の子プロセスを動かして `get_available_models` を取り、ルートと束縛した接続を含むキーでキャッシュし、失敗時は
+古いものを使う。今の一覧の契約ではそれを尋ねられない: `agents.ModelQuery`（`internal/agents/modellist.go:14`）には
+ルートも接続もなく、モデルのエンドポイントもどちらも渡さない。P1 で両方を足し、Console の起動ダイアログと MCP の
+`create_session` がそれを送る。
 
 **隔離が主張しないこと。** すべてのセッションは同じユーザーで動く。`openai-api` のセッションのエージェントが
 `PI_CODING_AGENT_DIR` を別のディレクトリにしたり、ログインファイルを読んだりすれば、サブスクリプションに届く。
@@ -222,18 +240,25 @@ Bedrock は `amazon-bedrock/…`、`anthropic-api` は `anthropic/…`。プロ�
 
 ### 8. 使用量と文脈
 
-- **呼び出しごとに、セッションファイルから。** pi のセッション JSONL の各 assistant メッセージは、その呼び出しの
-  使用量を持つ（Stage 0 は最初の呼び出しの値をそこから読んだ）。`UsageReader` はその行を読む。各 `agent_settled` の
-  後の `get_session_stats` は照合用であって、源ではない。`UsageMeasured` は、複数の呼び出しを含むターンで両者が
-  一致することを P1 のゲートで示してから `exact` と宣言する。それまでは `partial`。
+- **課金されるレコードごとに、セッションファイルから。** 使用量を持つのは assistant メッセージだけではない: pi 1.5.2
+  は `usage` エントリ、`compaction` と `branch_summary` のエントリ、ツールの結果にも使用量を書き、
+  `get_session_stats` はそれらをすべて足す *(source: `core/agent-session.js`。docs: `session-format.md`)*。
+  `UsageReader` はそうしたレコードをすべて、エントリ ID をキーにして読む。各 `agent_settled` の後の
+  `get_session_stats` は照合用であって、源ではない。`UsageMeasured` は、ツールのループを含むターン**と**コンパクション
+  するターンの両方で両者が一致することを P1 のゲートで示してから `exact` と宣言する。それまでは `partial`。
 - **呼び出しごとのルートと請求**（ADR 0128 決定 8）: ルートはセッションに保存した選択である（claude の P1b と同じく、
   セッションが存在する間は変わらない）。請求: `openai-api` と `anthropic-api` は `metered`。`chatgpt-subscription` は
   未解決のまま残す。呼び出しの記録には、プランの枠とクレジットのどちらで払われたかを示すものがないからである。
   Bedrock の呼び出しはゲートウェイの行が数え、fold は pi 自身の行を落とす（`dropGatewayCounted`）。pi 自身の
   `cost` は価格付けに使わない。AF のルート優先の引き当てを使う。
 - **文脈のゲージ。** 動作中: `get_session_stats` の `contextUsage{tokens, contextWindow, percent}`（実測、G3。
-  モデル未選択のときはない）。休止中: 最後の呼び出しの使用量とモデルの窓。レジストリがオーバーレイにフックを
-  用意するまでは、muse と同じ形の動作中オーバーレイ（`sessionx/session_usage.go`）にする。
+  モデル未選択のときはない）。コンパクションの後、pi は assistant が再び応答するまで `tokens` と `percent` を
+  `null` で返し *(source)*、AF はその null を「不明」として保つ。休止中: 最新のコンパクションより後の、有効な最後の
+  assistant 応答の使用量とモデルの窓。なければ不明で、コンパクション前の値は決して出さない。動作中の値は、P1 で
+  作る汎用の任意インターフェース（種別が宣言する動作中の使用量オーバーレイ）を通じて使用量の読み取りに届ける。muse
+  のオーバーレイの複製にはしない: あれは `sessionx` の中で `KindMuse` を判定しており（`session_usage.go:235`）、
+  種別リテラルの上限がそれを禁じる。`ContextReporter` は `/messages` からしか読まれず、一括の使用量の読み取りでは
+  呼ばれない（`agents.go:404`）。
 - ChatGPT の枠の上限は、そのエラーを測ってから `UsageLimiter` にする。それまでは上限に当たるとターンが pi の
   メッセージで止まり、自動再開は予約しない。
 
@@ -253,8 +278,10 @@ AF は小さな拡張（TypeScript、ビルド不要。Stage 0 G4 は 8 行だ�
 ### 10. stdio の af MCP、ファイルにトークンを書かない
 
 セッションの `mcp.json` は af のサーバーを stdio の `workspace-agent mcp-stdio --self-report …`
-（`mcpreg/builtin.go`）として、`exposure: "direct"` で挙げる。子プロセスは `AF_SESSION_NAME`、`AGENT_TOKEN`、
-`AGENT_ADDR` を継ぐので、トークンは書かない（1.0.0 で実測、G2。固定する版で P0 に再測）。pi はそのファイルの
+（`mcpreg/builtin.go`）として、`exposure: "direct"` で挙げる。子プロセスの環境は
+`agents.WithSessionEnv(env, m.Name)`（`internal/agents/sessionenv.go`）を通し、`AF_SESSION_NAME` と `AF_WORK_DIR` を
+このセッションの値にする（Agent 自身の環境にはそれがないか、別のセッションの値がある）。`AGENT_TOKEN` と
+`AGENT_ADDR` は継ぐ。したがってトークンは書かない（1.0.0 で実測、G2。固定する版で P0 に再測）。pi はそのファイルの
 書き手を持って `writerTable`（`internal/mcpreg/materialize.go:98`）に加わる。メンバーとテナントの HTTP サーバーは
 ヘッダを `${VAR}` の参照として書き、pi がそれを展開する *(docs)*。AF が書くすべてのサーバーを `exposure: "direct"`
 にする: pi の既定の `codemode` はスクリプトを 1 つあたり最大 256 MB のワーカーで動かす *(docs)*。少数のツールの
@@ -286,7 +313,7 @@ URL の貼り戻しを代替にする（pi のコールバックは `127.0.0.1:1
 | | `PermissionChoice` | P1、Console からの往復の後 |
 | | `CanFork`、`CanForkAt` | P3（`fork` / `clone`、新しいファイルは決定 5 と同じく捕まえる） |
 | `Capabilities()` | `per-session-child`、`Steer`、`DynamicModel`、`DynamicEffort`、`Permissions`。`DynamicMode`、`Questions`、`Fork`（P3 まで）、`EventReplay`、`EphemeralThread`、`TUIAttach` は宣言しない | P1 |
-| 任意のインターフェース | `ManagedLifecycler`、`ConnectionStatuser`、`ModelLister`、`SkillsLayouter`、`Instructions`、`UsageReader`、`UsageMeasurer`、`ContextReporter`、`MoveTarget`、`RouteAdapter`、`RouteModelOwner`、`RouteChecker` | P1 |
+| 任意のインターフェース | `ManagedLifecycler`、`ConnectionStatuser`、`ModelLister`、`SkillsLayouter`、`Instructions`、`UsageReader`、`UsageMeasurer`、`ContextReporter`、動作中の使用量オーバーレイ（新設、決定 8）、`MoveTarget`、`RouteAdapter`、`RouteBinder`、`RouteModelOwner`、`RouteChecker` | P1 |
 | | `UsageLimiter`、`AuthRecoverer` | それぞれが依存するエラーを測ったとき |
 | | `NoHeadlessChat`（v1 ではアシスタントチャットのバックエンドなし） | P1 |
 | レジストリとスナップショット | `Kind*`、`kindTable`、`agentreg`、`managedDrivers`、`kindTable.ts`、種別とルートのカタログのスナップショット、MCP ツールのゴールデン、`guide/ref/agents.md` | P1 |
@@ -307,9 +334,9 @@ pi は MIT なので、プロプライエタリの CLI と違い、配布する�
 
 | 段階 | 内容 | 関門 |
 |---|---|---|
-| P0 | 固定する版での調査。製品コードはなく、ジャーナルにまとめる: 子プロセス 1 つのアイドル時とターン中の RSS。その版での決定 4 のプロトコル（abort の順序、`disposition`）。2 つの子プロセスが更新するときの `auth.json` のシンボリックリンクとロック。ログインと `OPENAI_API_KEY` の両方があるとき `openai` がどちらの資格情報を使うか。周囲の資格情報をそれぞれ試す子プロセスに対する除外一覧。ループバックの代役ゲートウェイに対する Bedrock の `baseUrl` + ベアラー（パス、`Authorization`、呼び出したプロセス）。RPC 経由の `/share`。MCP の環境の継承。指示のパス。信頼を断った状態でユーザー単位のパスから読ませたリポジトリのスキルとプロンプト、`--session-dir` に上書きされるプロジェクトの `sessionDir`。呼び出しごとの使用量と `get_session_stats` の照合 | すべての項目に答えるか、それが支える決定を日付付きの注記で改める |
-| P1 | 種別、ドライバ、トランスクリプト、`chatgpt-subscription` と `openai-api`、接続カード、承認、af MCP、使用量、指示、導入と版の固定、ガイドの行 | 両ルートについて ADR 0128 決定 14（答えたルート。台帳が書いた請求。否定の対照: 資格情報を外した同じ起動が目に見えて失敗し、ログイン済みのときの `openai-api` のセッションがなおキーに請求される）。ツール実行中に割り込んだターンが子プロセスを残さない。Console から承認に答える。モデルが af MCP のツールを呼ぶ |
-| P2 | ゲートウェイ経由の `bedrock`、`bedrock-tenant`、`bedrock-deployment` | ルートごとに決定 14。ゲートウェイの呼び出し元検査が子プロセスとそのツールを受け入れ、別セッションのプロセスを拒否する。Agent の環境に置いた周囲の AWS 資格情報が使われない |
+| P0 | 固定する版での調査。製品コードはなく、ジャーナルにまとめる: 子プロセス 1 つのアイドル時とターン中の RSS。その版での決定 4 のプロトコル（abort の順序、`handled` のプロンプトが動いている仕事を残すことがあるか）。2 つの子プロセスが更新するときの `auth.json` のシンボリックリンクとロック。ログインと `OPENAI_API_KEY` の両方があるとき `openai` がどちらの資格情報を使うか。周囲の資格情報（`AF_ROUTE_ISSUE_TOKEN` と `AF_ENGINE_ISSUE_TOKEN` を含む）をそれぞれ試す子プロセスに対する除外一覧。決定 6 の束縛のため、ChatGPT のログインファイルのどこに安定したアカウント ID があるか。ループバックの代役ゲートウェイに対する Bedrock の `baseUrl` + ベアラー（パス、`Authorization`、呼び出したプロセス）。RPC 経由の `/share`。MCP の環境の継承。指示のパス。信頼を断った状態でユーザー単位のパスから読ませたリポジトリのスキルとプロンプト、`--session-dir` に上書きされるプロジェクトの `sessionDir`。課金されるすべてのレコードの使用量と `get_session_stats` の、コンパクションをまたいだ照合。コンパクション直後と子プロセス停止後の文脈の値 | すべての項目に答えるか、それが支える決定を日付付きの注記で改める |
+| P1 | 種別、ドライバ、トランスクリプト、`chatgpt-subscription` と `openai-api` とその束縛、ルートを知るモデル一覧の契約、動作中の使用量オーバーレイのインターフェース、接続カード、承認、af MCP、使用量、指示、導入と版の固定、ガイドの行 | 両ルートについて ADR 0128 決定 14（答えたルート。台帳が書いた請求。否定の対照: 資格情報を外した同じ起動が目に見えて失敗し、ログイン済みのときの `openai-api` のセッションがなおキーに請求される）。キーを差し替えたり別の ChatGPT アカウントにログインしたりすると、保存済みのセッションが目に見えて拒否される。ツール実行中に割り込んだターンが子プロセスを残さない。Console から承認に答える。同じ作業コピーの 2 つの pi セッションがそれぞれ af MCP のツールを呼び、それぞれ自分に帰属する |
+| P2 | ゲートウェイ経由の `bedrock`、`bedrock-tenant`、`bedrock-deployment` | ルートごとに決定 14。ゲートウェイの呼び出し元検査が子プロセスとそのツールを受け入れ、別セッションのプロセスを拒否する。Agent の環境に置いた周囲の AWS 資格情報と `AF_ROUTE_ISSUE_TOKEN` に子プロセスから届かない |
 | P3 | `anthropic-api`。セッションに束縛された資格情報ができたら `af-engine-llm`。フォーク。P1 の測定が後回しにしたもの（`UsageLimiter`、`AuthRecoverer`） | ルートごとに決定 14。フォークが親の文脈を持って再開する |
 
 どの段階のライブゲートも本物のアカウントを要し、`needs-live-run` を付ける。代役の pi に対する単体テストでは閉じない。

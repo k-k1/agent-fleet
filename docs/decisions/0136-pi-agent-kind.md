@@ -14,6 +14,8 @@ English | [日本語](0136-pi-agent-kind.ja.md)
   `auth.json` locking, session storage, the MCP file. Each statement of the second kind is marked *(docs)* where it
   carries a decision. Stage 0b (real-repository tasks) was not run; it is no longer a gate (owner, 2026-11-12) and
   nothing in this record depends on it.
+  Reviewed 2026-11-14 by a separate session (codex `gpt-6.1-sol`), one round of eight findings; each was checked
+  against the tree and pi 1.5.2's source and is folded into this text.
 - Follow-ups: #4140, #4141, #4142, #4143 (P0–P3); open question #4139 (#4138 answered)
 - See also: [0128](0128-harness-route-maker.md) (harness × route; pi is its P3) /
   [0129](0129-provided-model-routes.md) (provided Bedrock routes) /
@@ -130,7 +132,7 @@ The client follows the ACP client's shape (`agents/acp`): id-correlated response
 
 | AF operation | pi |
 |---|---|
-| `Send` | `prompt`. A response whose `data.disposition` is `handled` started no run: the turn ends at once, without waiting for `agent_settled` *(docs)* |
+| `Send` | `prompt`. `data.disposition: "handled"` means an extension command or input handler consumed the prompt; it describes the prompt only, not independent work an extension may start *(docs)*. AF loads no extension that registers a command (decision 7), so the driver ends such a turn once `get_state` reports pi idle, not on the response alone |
 | `Steer` (turn running) | `steer`: delivered before the next model call (measured) |
 | a message sent while a turn runs, not as a steer | held in AF's queue and sent as a new `prompt` after `agent_settled`. pi's `follow_up` is not used: it folds the follow-up into the same run (one `agent_end`, measured), so two AF turns would become one turn in the status store and the ledger |
 | turn end | **`agent_settled` only.** `agent_end` can be followed by retries, compaction or steering *(docs)* |
@@ -157,7 +159,8 @@ fresh `Meta` from a field whitelist (ADR 0095 decision 4), so a stored file is n
 
 ### 6. Every pi session has a route, held by a per-session agent directory and environment
 
-pi implements `agents.RouteAdapter` (`internal/agents/route.go:21`) and `RouteModelOwner` (`:145`).
+pi implements `agents.RouteAdapter` (`internal/agents/route.go:21`), `RouteBinder` (`:102`), `RouteChecker` and
+`RouteModelOwner` (`:145`).
 
 **An empty selection is not a route rule of its own.** ADR 0128 decision 2 keeps "empty means today's rules" for
 existing kinds; pi has no today. At create, an empty selection resolves to `chatgpt-subscription` when the member
@@ -170,9 +173,21 @@ carries an explicit one from then on. A metered route is only ever taken when it
 `auth.json` **only for the route that uses a stored login**. The child's environment is the Agent's minus every
 provider credential and cloud-credential variable pi reads at the pinned version (its documented provider table,
 `ANTHROPIC_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN`, the federation variables, `AWS_PROFILE`, the static AWS keys,
-`AWS_CONTAINER_CREDENTIALS_*`, `AWS_WEB_IDENTITY_TOKEN_FILE`, the Vertex variables), plus the route's own. The
-strip list is generated from the pinned version's documentation and checked by the contract workflow at every
-pin bump, because a provider added upstream is a new way around the route.
+`AWS_CONTAINER_CREDENTIALS_*`, `AWS_WEB_IDENTITY_TOKEN_FILE`, the Vertex variables), minus the Agent's own
+secrets that are not pi's (the credential-issuing tokens `AF_ROUTE_ISSUE_TOKEN` and `AF_ENGINE_ISSUE_TOKEN`, the
+engine key and every provider key the Workspace stores, as #4004's private serve strips them, `routeServeSecretEnv`
+in `opencode/route_serve.go:447`), plus the route's own and the session's identity (decision 10). The first half
+of the strip list is generated from the pinned version's documentation and checked by the contract workflow at
+every pin bump, because a provider added upstream is a new way around the route; the second half is AF's and
+shared with that private serve. A process holding `AF_ROUTE_ISSUE_TOKEN` could ask the Control Plane for route
+tokens directly and skip the local gateway's caller binding (`control-plane/internal/routegateway/gateway.go`).
+
+**The stored selection is bound to the credential it was chosen on** (ADR 0128 decision 3, `RouteBinder`), so that
+replacing a credential never moves a stored session to another bill. `openai-api` is bound to a fingerprint of the
+key, as claude's `anthropic-api` is (`claude/route.go`); `chatgpt-subscription` to the ChatGPT account the login
+belongs to (where the login file carries a stable account id is a P0 item). A token refresh keeps the binding; a
+replaced key, or a login to another account, is a visible refusal (as claude's replaced key is, `keyReplaced`) at every start and
+resume, and the route guard sweep stops a running session over it.
 
 | Route | Credential and tier (ADR 0128 decision 7) | How it reaches the child | Phase |
 |---|---|---|---|
@@ -186,8 +201,11 @@ pin bump, because a provider added upstream is a new way around the route.
 
 **The model belongs to the route.** `RouteModelOwner` checks `<provider>/<id>`: `openai/…` for the two OpenAI
 routes, `amazon-bedrock/…` for Bedrock, `anthropic/…` for `anthropic-api`. `set_model` across providers is refused
-(ADR 0128 decision 6). The model menu is the route's: `get_available_models` from a short-lived child on the
-route's agent directory, cached, stale-if-error.
+(ADR 0128 decision 6). The model menu is the route's: `get_available_models` from a short-lived child on a
+temporary agent directory built for the route and connection, cached under a key that includes the route and the
+bound connection, stale-if-error. Today's listing contract cannot ask that: `agents.ModelQuery`
+(`internal/agents/modellist.go:14`) carries no route or connection, and the models endpoint passes none. P1 extends
+it with both, and the Console launch dialog and MCP `create_session` send them.
 
 **What isolation does not claim.** Every session runs as the same user. An agent in a session on `openai-api` that
 sets `PI_CODING_AGENT_DIR` to another directory, or reads the login file, reaches the subscription; `pi auth
@@ -228,18 +246,25 @@ and the ledger need, not that a hostile agent cannot reach the member's other cr
 
 ### 8. Usage and context
 
-- **Per call, from the session file.** Each assistant message in pi's session JSONL carries that call's usage
-  (Stage 0 read the first call's from it). `UsageReader` reads those rows; `get_session_stats` after each
-  `agent_settled` is the cross-check, not the source. `UsageMeasured` is declared `exact` only after P1's gate shows
-  the two agree on a multi-call turn; until then it is `partial`.
+- **Per billable record, from the session file.** Assistant messages are not the only records that carry usage:
+  pi 1.5.2 also writes it on `usage` entries, on `compaction` and `branch_summary` entries, and on tool results, and
+  `get_session_stats` sums all of them *(source: `core/agent-session.js`; docs: `session-format.md`)*.
+  `UsageReader` reads every such record, keyed by its entry id; `get_session_stats` after each `agent_settled` is
+  the cross-check, not the source. `UsageMeasured` is declared `exact` only after P1's gate shows the two agree on a
+  turn with a tool loop **and** on one that compacts; until then it is `partial`.
 - **Route and billing per call** (ADR 0128 decision 8): the route is the session's stored selection (it cannot
   change while the session exists, as for claude's P1b). Billing: `openai-api` and `anthropic-api` are `metered`;
   `chatgpt-subscription` stays unresolved, since nothing in a call's record says whether a plan window or credits
   paid for it; Bedrock calls are counted by the gateway's rows and the fold drops pi's own (`dropGatewayCounted`).
   pi's own `cost` field is not used for pricing; AF's route-first lookup is.
 - **Context gauge.** Live: `contextUsage{tokens, contextWindow, percent}` from `get_session_stats` (measured, G3;
-  absent when no model is selected). At rest: the last call's usage and the model's window. This is a live overlay
-  in the shape of muse's (`sessionx/session_usage.go`), until the registry gives overlays a hook.
+  absent when no model is selected). After a compaction pi reports `tokens` and `percent` as `null` until an
+  assistant responds again *(source)*, and AF keeps that null as "unknown". At rest: the usage of the last valid
+  assistant response after the latest compaction, and the model's window; none means unknown, never the
+  pre-compaction figure. The live figure reaches the usage read through a generic optional interface built in P1
+  (a live-usage overlay declared by the kind), not a copy of muse's overlay: that one branches on `KindMuse` inside
+  `sessionx` (`session_usage.go:235`), which the kind-literal ceiling forbids, and `ContextReporter` is read by
+  `/messages` only, not by the bulk usage read (`agents.go:404`).
 - A ChatGPT window limit is a `UsageLimiter` only once its error is measured; until then a limit stops the turn
   with pi's message and no auto-resume is booked.
 
@@ -259,8 +284,10 @@ cancel and logged, never left pending. `Questions` stays false: pi has no built-
 ### 10. af MCP over stdio, with no token in the file
 
 The session's `mcp.json` lists the af server as stdio, `workspace-agent mcp-stdio --self-report …`
-(`mcpreg/builtin.go`), with `exposure: "direct"`. The child inherits `AF_SESSION_NAME`, `AGENT_TOKEN` and
-`AGENT_ADDR`, so no token is written (measured on 1.0.0, G2; re-measured on the pin in P0). pi joins `writerTable`
+(`mcpreg/builtin.go`), with `exposure: "direct"`. The child's environment is passed through
+`agents.WithSessionEnv(env, m.Name)` (`internal/agents/sessionenv.go`), which sets `AF_SESSION_NAME` and
+`AF_WORK_DIR` to this session's values (the Agent's own environment has none, or another session's); `AGENT_TOKEN`
+and `AGENT_ADDR` are inherited. So no token is written (measured on 1.0.0, G2; re-measured on the pin in P0). pi joins `writerTable`
 (`internal/mcpreg/materialize.go:98`) with a writer for that file; member and tenant HTTP servers write their
 headers as `${VAR}` references, which pi expands *(docs)*. `exposure: "direct"` for every server AF writes:
 pi's default `codemode` runs scripts in workers of up to 256 MB each *(docs)*, a cost the shared host does not need
@@ -293,7 +320,7 @@ so AF offers no tenant- or deployment-provided ChatGPT subscription.
 | | `PermissionChoice` | P1, after the Console round trip |
 | | `CanFork`, `CanForkAt` | P3 (`fork` / `clone`, the new file captured as in decision 5) |
 | `Capabilities()` | `per-session-child`, `Steer`, `DynamicModel`, `DynamicEffort`, `Permissions`; not `DynamicMode`, `Questions`, `Fork` (until P3), `EventReplay`, `EphemeralThread`, `TUIAttach` | P1 |
-| Optional interfaces | `ManagedLifecycler`, `ConnectionStatuser`, `ModelLister`, `SkillsLayouter`, `Instructions`, `UsageReader`, `UsageMeasurer`, `ContextReporter`, `MoveTarget`, `RouteAdapter`, `RouteModelOwner`, `RouteChecker` | P1 |
+| Optional interfaces | `ManagedLifecycler`, `ConnectionStatuser`, `ModelLister`, `SkillsLayouter`, `Instructions`, `UsageReader`, `UsageMeasurer`, `ContextReporter`, the live-usage overlay (new, decision 8), `MoveTarget`, `RouteAdapter`, `RouteBinder`, `RouteModelOwner`, `RouteChecker` | P1 |
 | | `UsageLimiter`, `AuthRecoverer` | when the error each depends on is measured |
 | | `NoHeadlessChat` (no assistant-chat backend in v1) | P1 |
 | Registry and snapshots | `Kind*`, `kindTable`, `agentreg`, `managedDrivers`, `kindTable.ts`, the kind and route catalogue snapshots, the MCP tool goldens, `guide/ref/agents.md` | P1 |
@@ -314,9 +341,9 @@ an nvm-only install missing from a Terminal session's `PATH`). The pin is an ARG
 
 | Phase | Content | Gate |
 |---|---|---|
-| P0 | Probe on the pinned version, no product code, written up as a journal: idle and in-turn RSS of one child; the protocol of decision 4 on that version (abort ordering, `disposition`); `auth.json` symlink and lock under two children refreshing; which credential `openai` uses when both a login and `OPENAI_API_KEY` exist; the strip list against a child that tries each ambient source; Bedrock `baseUrl` + bearer against a stand-in gateway on loopback (path, `Authorization`, the calling process); `/share` through RPC; MCP env inheritance; the instructions path; repository skills and prompts loaded through user-level paths with trust declined, and a project `sessionDir` overridden by `--session-dir`; per-call usage against `get_session_stats` | Every item answered or the decision it feeds amended by a dated note |
-| P1 | The kind, the driver, the transcript, `chatgpt-subscription` and `openai-api`, the connection card, approvals, af MCP, usage, instructions, install and pin, guide rows | ADR 0128 decision 14 for both routes (the route that answered; the billing the ledger wrote; the negative control: the same launch without the credential fails visibly, and a session on `openai-api` with a signed-in login still bills the key); a turn interrupted mid-tool leaves no child process; an approval answered from the Console; the af MCP tool called by the model |
-| P2 | `bedrock`, `bedrock-tenant`, `bedrock-deployment` through the gateway | Decision 14 per route; the gateway's caller check accepts the child and its tools and refuses another session's process; an ambient AWS credential planted in the Agent's environment is not used |
+| P0 | Probe on the pinned version, no product code, written up as a journal: idle and in-turn RSS of one child; the protocol of decision 4 on that version (abort ordering, whether a `handled` prompt ever leaves work running); `auth.json` symlink and lock under two children refreshing; which credential `openai` uses when both a login and `OPENAI_API_KEY` exist; the strip list against a child that tries each ambient source, `AF_ROUTE_ISSUE_TOKEN` and `AF_ENGINE_ISSUE_TOKEN` included; where the ChatGPT login file carries a stable account id for decision 6's binding; Bedrock `baseUrl` + bearer against a stand-in gateway on loopback (path, `Authorization`, the calling process); `/share` through RPC; MCP env inheritance; the instructions path; repository skills and prompts loaded through user-level paths with trust declined, and a project `sessionDir` overridden by `--session-dir`; usage from every billable record against `get_session_stats`, across a compaction; the context figure right after a compaction and after the child stops | Every item answered or the decision it feeds amended by a dated note |
+| P1 | The kind, the driver, the transcript, `chatgpt-subscription` and `openai-api` with their binding, the route-aware model listing contract, the live-usage overlay interface, the connection card, approvals, af MCP, usage, instructions, install and pin, guide rows | ADR 0128 decision 14 for both routes (the route that answered; the billing the ledger wrote; the negative control: the same launch without the credential fails visibly, and a session on `openai-api` with a signed-in login still bills the key); replacing the key, or signing in to another ChatGPT account, refuses the stored session visibly; a turn interrupted mid-tool leaves no child process; an approval answered from the Console; two pi sessions in one working copy each call an af MCP tool and each is attributed to itself |
+| P2 | `bedrock`, `bedrock-tenant`, `bedrock-deployment` through the gateway | Decision 14 per route; the gateway's caller check accepts the child and its tools and refuses another session's process; an ambient AWS credential, and `AF_ROUTE_ISSUE_TOKEN`, planted in the Agent's environment are not reachable from the child |
 | P3 | `anthropic-api`; `af-engine-llm` once a session-bound credential exists; fork; whatever P1's measurements deferred (`UsageLimiter`, `AuthRecoverer`) | Decision 14 per route; a fork resumes with the parent's context |
 
 Every phase's live gate needs a real account and is marked `needs-live-run`; unit tests against a stand-in pi do not
