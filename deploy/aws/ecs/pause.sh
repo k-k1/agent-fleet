@@ -162,6 +162,75 @@ ws_tasks_wait() {
   done
 }
 
+# ws_services_checked — ws_services for the final sweep: a read that fails, or that comes back
+# with entries in failures[], is an error and not "nothing is running". Empty output with rc 0
+# is the only way to say nothing is left.
+ws_services_checked() {
+  local arns a got nfail
+  local -a names=() batch=()
+  arns="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text)" || return 1
+  case "$arns" in None) arns="" ;; esac
+  for a in $arns; do
+    case "${a##*/}" in af-ws-*) names+=("${a##*/}") ;; esac
+  done
+  while [ ${#names[@]} -gt 0 ]; do
+    batch=("${names[@]:0:10}")
+    names=("${names[@]:10}")
+    # The first field is the number of failures[] entries, then the names above 0.
+    # shellcheck disable=SC2016  # backticks are JMESPath literals
+    got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "${batch[@]}" \
+      --query '{f: length(failures), s: services[?desiredCount>`0`].serviceName}' --output text)" || return 1
+    nfail="${got%%[[:space:]]*}"
+    [ "$nfail" = 0 ] || return 1
+    got="${got#0}"
+    # shellcheck disable=SC2086
+    for a in $got; do echo "$a"; done
+  done
+}
+
+# slots_checked <state> ... — slots() that fails when the read fails.
+slots_checked() {
+  "${AWS[@]}" ec2 describe-instances \
+    --filters "Name=tag:af-pool,Values=$CLUSTER" "Name=tag:af-role,Values=slot" \
+      "Name=instance-state-name,Values=$(IFS=,; echo "$*")" \
+    --query 'Reservations[].Instances[].InstanceId' --output text
+}
+
+# cp_tasks_wait — until every task of the CP service has reached lastStatus STOPPED
+# (AF_CP_TASK_WAIT_SEC, default 600). services-stable only says runningCount == desiredCount; a
+# task in STOPPING still runs its shutdown, and the golden bake can still write to ECS from it.
+# Fails on timeout and when the tasks cannot be read: unknown is not stopped.
+cp_tasks_wait() {
+  local deadline st arns all left cnt
+  deadline=$(( $(date +%s) + ${AF_CP_TASK_WAIT_SEC:-600} ))
+  while :; do
+    all=""
+    for st in RUNNING STOPPED; do
+      arns="$("${AWS[@]}" ecs list-tasks --cluster "$CLUSTER" --service-name "$CP_SERVICE" \
+        --desired-status "$st" --query taskArns --output text)" || return 1
+      case "$arns" in None) arns="" ;; esac
+      all="$all $arns"
+    done
+    left=""
+    if [ -n "${all//[[:space:]]/}" ]; then
+      # list-tasks pages at 100 and a service keeps few tasks; more than that is read as unknown.
+      # shellcheck disable=SC2086
+      cnt=$(set -- $all; echo $#)
+      [ "$cnt" -le 100 ] || { echo "    $cnt tasks listed for $CP_SERVICE; cannot read them in one call" >&2; return 1; }
+      # shellcheck disable=SC2086,SC2016
+      left="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $all \
+        --query "{f: length(failures), t: tasks[?lastStatus!='STOPPED'].taskArn}" --output text)" || return 1
+      case "${left%%[[:space:]]*}" in 0) left="${left#0}" ;; *) echo "    describe-tasks reported failures for $CP_SERVICE's tasks" >&2; return 1 ;; esac
+    fi
+    [ -n "${left//[[:space:]]/}" ] || return 0
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "    still not STOPPED: $(printf '%s\n' "$left" | tr -s '[:space:]' ' ')" >&2
+      return 1
+    fi
+    sleep "${AF_GATEWAY_POLL_SEC:-15}"
+  done
+}
+
 slots() {  # <state> ...
   "${AWS[@]}" ec2 describe-instances \
     --filters "Name=tag:af-pool,Values=$CLUSTER" "Name=tag:af-role,Values=slot" \
@@ -576,17 +645,36 @@ EOF
     # to 0, and its golden auto-bake raises the probe workspace service back to 1 (measured on
     # the ECS sandbox: after a --fast pause that service sat at desired 1 and its slot kept
     # running). Only a read taken once the CP is down is final.
-    late="$(ws_services | tr '\n' ' ')"
-    for s in $late; do
-      echo "==> a workspace came back while the CP was stopping: scaling $s to 0"
-      af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$s" --desired-count 0 >/dev/null
-    done
-    ids="$(slots pending running)"
-    if [ -n "${ids// /}" ]; then
-      echo "==> no CP left to put them to sleep: stopping slots $ids"
-      # shellcheck disable=SC2086
-      af_run "${AWS[@]}" ec2 stop-instances --instance-ids $ids >/dev/null
+    sweepfail=""
+    if [ "$AF_DRY" != 1 ]; then
+      echo "==> waiting until the CP's tasks have reached STOPPED"
+      if ! cp_tasks_wait; then
+        sweepfail=1
+        echo "ERROR: could not confirm that the CP's task is STOPPED; it may still be changing workspace services." >&2
+        echo "       Sweeping anyway; run pause.sh again to confirm." >&2
+      fi
     fi
+    if late="$(ws_services_checked)"; then
+      # shellcheck disable=SC2086
+      for s in $late; do
+        echo "==> a workspace came back while the CP was stopping: scaling $s to 0"
+        af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$s" --desired-count 0 >/dev/null
+      done
+    else
+      sweepfail=1
+      echo "ERROR: could not read the workspace services after the CP stopped; one may be running again." >&2
+    fi
+    if ids="$(slots_checked pending running)"; then
+      if [ -n "${ids// /}" ]; then
+        echo "==> no CP left to put them to sleep: stopping slots $ids"
+        # shellcheck disable=SC2086
+        af_run "${AWS[@]}" ec2 stop-instances --instance-ids $ids >/dev/null
+      fi
+    else
+      sweepfail=1
+      echo "ERROR: could not read the slots after the CP stopped; one may still be running." >&2
+    fi
+
     for s in $(helpers_up); do
       echo "==> no CP left to lower it: scaling $s to 0"
       af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$s" --desired-count 0 >/dev/null
@@ -634,6 +722,11 @@ EOF
     resume:  deploy/aws/ecs/pause.sh --profile $AF_PROFILE --region $AF_REGION --up
     remaining cost: ${natnote:+$natnote / }ALB / EFS / $dbnote plus home's EBS. For close to zero, use teardown.sh.
 EOF
+    if [ -n "$sweepfail" ]; then
+      echo "ERROR: the check after the CP stopped did not complete (see above): a workspace or slot may" >&2
+      echo "       still be running. Run pause.sh again, or look at the cluster's services and slots." >&2
+      exit 1
+    fi
     case "$tagfail" in
       set)
         echo "ERROR: the af-paused tag on $DB_ID was not set (see above). Paused, but the database will" >&2
