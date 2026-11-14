@@ -4,7 +4,8 @@ English | [日本語](0136-pi-agent-kind.ja.md)
 
 - Status: **proposed** (2026-11-14). The owner decided on 2026-11-12 to adopt pi as a kind (#1585). The
   decisions below are this record's proposals until the owner accepts them; the questions only the owner can
-  answer are listed under Open questions and filed as `needs-decision` issues. Nothing is built. Every `file:line`
+  answer are listed under Open questions and filed as `needs-decision` issues; the owner answered the first on
+  2026-11-14 (in the review of this PR, #4138). Nothing is built. Every `file:line`
   was read on `7ab3e1141`.
   **What is measured and what is not.** Measured (pi 1.0.0, 2026-10-03, `docs/log/129`): the RPC operations,
   `agent_settled` and the abort ordering, af MCP over stdio, `get_session_stats`, an approval extension, and the
@@ -13,7 +14,7 @@ English | [日本語](0136-pi-agent-kind.ja.md)
   `auth.json` locking, session storage, the MCP file. Each statement of the second kind is marked *(docs)* where it
   carries a decision. Stage 0b (real-repository tasks) was not run; it is no longer a gate (owner, 2026-11-12) and
   nothing in this record depends on it.
-- Follow-ups: #4140, #4141, #4142, #4143 (P0–P3); open questions #4138, #4139
+- Follow-ups: #4140, #4141, #4142, #4143 (P0–P3); open question #4139 (#4138 answered)
 - See also: [0128](0128-harness-route-maker.md) (harness × route; pi is its P3) /
   [0129](0129-provided-model-routes.md) (provided Bedrock routes) /
   [0095](0095-muse-agent-kind.md) (the nearest precedent: a managed-only, per-session-child kind on a vendor
@@ -63,9 +64,14 @@ Facts this record has to respect:
   serialised with another process's read through the same file.
 - **Outbound by default** (`docs/log/129` §1): install telemetry and provider attribution headers are on
   (`enableInstallTelemetry`, `PI_TELEMETRY`), a version check calls `pi.dev`, and `/share` publishes a session.
-- **Project trust** (`docs/log/129` §1): in RPC mode, with the default `defaultProjectTrust: "ask"`, pi silently
-  skips trust-gated project resources (`.pi/settings.json`, `.pi/mcp.json`, project extensions); `AGENTS.md` and
-  `CLAUDE.md` are read regardless.
+- **Project trust** (`docs/log/129` §1; pi's `security.md` and `configuration.md` *(docs)*): in RPC mode, with the
+  default `defaultProjectTrust: "ask"`, pi silently skips trust-gated project resources. Trust is all or nothing over
+  `.pi/settings.json` (which can also declare pi packages), `.pi/mcp.json`, `.pi/extensions`, `.pi/skills`,
+  `.pi/prompts`, `.pi/themes`, `.pi/SYSTEM.md`, `.pi/APPEND_SYSTEM.md` and `.agents/skills` in the working directory
+  or an ancestor. There is no project `models.json`; a project **extension** can change an existing provider's
+  `baseUrl` (`pi.registerProvider`) and sees credentials, prompts and responses. `AGENTS.md` and `CLAUDE.md` are
+  read regardless of trust, and the project `sessionDir` setting is read before trust is resolved (a command-line
+  `--session-dir` takes precedence).
 - **The kind registry is ready.** ADR 0124 Phase 3 closed (#2872, #2927): adding a stub kind was measured to touch
   16 files outside its package (ADR 0124's 2026-10-29 addendum), and `TestKindLiteralNewKindCounted` (`kind_literal_ceiling_test.go:234`) already simulates `KindPi`.
   The checklist is `docs/build/20-add-an-agent.md` §20.7.
@@ -197,11 +203,24 @@ and the ledger need, not that a hostile agent cannot reach the member's other cr
 - `enableInstallTelemetry: false`, and `PI_TELEMETRY=0` in the environment (telemetry and provider attribution
   headers off), `PI_SKIP_VERSION_CHECK=1`. pi is never updated by itself: no `pi update`, and the pin is AF's
   (decision 14).
-- `defaultProjectTrust: "never"`, and `--no-approve` on the command line. Project-local pi resources (`.pi/`
-  settings, extensions, `mcp.json`, `models.json`) are not loaded, because a project's `models.json` could redirect
-  a provider's `baseUrl` and a project extension is arbitrary code that could replace AF's approval extension or
-  the route. `AGENTS.md` / `CLAUDE.md` in the working copy are still read, as pi does regardless of trust. Whether
-  members may opt a repository in is an open question (2).
+- **Text from the repository is loaded; code and configuration from it are not.** pi's project trust is never
+  granted (`defaultProjectTrust: "never"`, `--no-approve`), so `.pi/extensions`, `packages`, `.pi/mcp.json`,
+  `.pi/settings.json` and `.pi/SYSTEM.md` never load. The repository's text resources are loaded by reference
+  instead: the session's own `settings.json` lists the working copy's `.pi/skills`, `.agents/skills` and
+  `.pi/prompts` by absolute path (resource paths in user-level settings are not trust-gated *(docs)*), and the
+  driver appends `.pi/APPEND_SYSTEM.md` to the system prompt when it exists. `AGENTS.md` / `CLAUDE.md` are read as pi
+  always reads them. Why the line is drawn there:
+  - a project extension or package runs at pi's start, before any model action and with no approval, inside the
+    process that holds the route's credential; it can redirect a provider's `baseUrl` (the ChatGPT token and the
+    whole conversation leave, while AF still records the session's route) and can take over tool handling, which
+    neutralises AF's approval extension even in a session that asked for approvals;
+  - a file in the repository persists: an agent steered by injected text that writes `.pi/extensions/x.ts` runs it
+    at every later start in that working copy, and a commit carries it to other members' sessions;
+  - text resources carry no more risk than the `AGENTS.md` pi reads anyway, and `.agents/skills` is shared with
+    other agents, so dropping them costs members something real.
+
+  AF's own `--session-dir` overrides a project `sessionDir`, the one project setting pi reads before trust. The
+  owner confirms this line, or picks another, in open question 2.
 - `/share` and `/bug` publish a session. A prompt that starts with either is refused by the driver with a visible
   reason; P0 measures whether pi's built-in slash commands are reachable through RPC `prompt` at all.
 - The member's own `~/.pi/agent` (if they installed pi themselves) is never read by a session and never written by
@@ -261,9 +280,10 @@ the Agent, the URL paste-back as the fallback (pi's callback is fixed to `127.0.
 the API keys of decision 6 as member keys. The connection status is `pi auth check --provider openai --json` on the
 login file. Login and status routes are relayed by the Control Plane like codex's (`restLogin`). The login file and
 every session agent directory are added to the file browser's denylist. Whether the ChatGPT route is offered on a
-multi-member deployment is an open question (1); until it is answered, the route is offered only where an operator
-turns on a deployment switch for it (named in P1), the way ADR 0128's Bedrock routes started behind
-`AF_OPENCODE_BEDROCK_ROUTE`.
+multi-member deployment was open question 1; the owner's answer is yes, on every deployment, each member signing in
+with their own account (it is individual use: the login is the member's and never leaves their Workspace, exactly as
+codex's sign-in). The invariant that keeps it individual use: **a ChatGPT login is never shared between members**,
+so AF offers no tenant- or deployment-provided ChatGPT subscription.
 
 ### 13. What the kind declares
 
@@ -294,7 +314,7 @@ an nvm-only install missing from a Terminal session's `PATH`). The pin is an ARG
 
 | Phase | Content | Gate |
 |---|---|---|
-| P0 | Probe on the pinned version, no product code, written up as a journal: idle and in-turn RSS of one child; the protocol of decision 4 on that version (abort ordering, `disposition`); `auth.json` symlink and lock under two children refreshing; which credential `openai` uses when both a login and `OPENAI_API_KEY` exist; the strip list against a child that tries each ambient source; Bedrock `baseUrl` + bearer against a stand-in gateway on loopback (path, `Authorization`, the calling process); `/share` through RPC; MCP env inheritance; the instructions path; per-call usage against `get_session_stats` | Every item answered or the decision it feeds amended by a dated note |
+| P0 | Probe on the pinned version, no product code, written up as a journal: idle and in-turn RSS of one child; the protocol of decision 4 on that version (abort ordering, `disposition`); `auth.json` symlink and lock under two children refreshing; which credential `openai` uses when both a login and `OPENAI_API_KEY` exist; the strip list against a child that tries each ambient source; Bedrock `baseUrl` + bearer against a stand-in gateway on loopback (path, `Authorization`, the calling process); `/share` through RPC; MCP env inheritance; the instructions path; repository skills and prompts loaded through user-level paths with trust declined, and a project `sessionDir` overridden by `--session-dir`; per-call usage against `get_session_stats` | Every item answered or the decision it feeds amended by a dated note |
 | P1 | The kind, the driver, the transcript, `chatgpt-subscription` and `openai-api`, the connection card, approvals, af MCP, usage, instructions, install and pin, guide rows | ADR 0128 decision 14 for both routes (the route that answered; the billing the ledger wrote; the negative control: the same launch without the credential fails visibly, and a session on `openai-api` with a signed-in login still bills the key); a turn interrupted mid-tool leaves no child process; an approval answered from the Console; the af MCP tool called by the model |
 | P2 | `bedrock`, `bedrock-tenant`, `bedrock-deployment` through the gateway | Decision 14 per route; the gateway's caller check accepts the child and its tools and refuses another session's process; an ambient AWS credential planted in the Agent's environment is not used |
 | P3 | `anthropic-api`; `af-engine-llm` once a session-bound credential exists; fork; whatever P1's measurements deferred (`UsageLimiter`, `AuthRecoverer`) | Decision 14 per route; a fork resumes with the parent's context |
@@ -307,33 +327,36 @@ close one.
 - **A pane with pi's TUI as the only route, or as a second one in v1.** Decision 2.
 - **One shared agent directory and environment flags per session.** The ChatGPT login and an API key sit on one
   provider, so which one a session used would depend on pi's internal precedence, which can change in any release;
-  and a project's or member's `models.json` would apply to every session.
+  and a member's own `models.json` or extensions in a shared directory would apply to every session.
 - **A copy of the ChatGPT login per session.** Two copies refresh independently, and where the provider rotates
   refresh tokens, the copy that refreshes first invalidates the others. One file, symlinked and locked, keeps one
   writer at a time.
 - **The ChatGPT subscription through the route gateway (A2).** It would bind the token to the session, but it
   means proxying a private ChatGPT backend endpoint on the hot path for a credential the member already holds in
-  this Workspace, as codex does. Reconsidered if a provided (tenant) subscription ever exists, which open question 1
-  would have to allow first.
+  this Workspace, as codex does. It is not reconsidered for a provided (tenant) subscription, because decision 12
+  rules that out.
 - **Using pi's `follow_up` for queued messages.** Decision 4.
-- **Loading project `.pi/` resources by default.** Decision 7.
+- **Granting pi's project trust, or loading nothing from `.pi/`.** Decision 7: the first loads code that runs
+  before any approval, the second drops the repository's skills and prompts for no gain in safety.
 
 ## Open questions
 
-1. **May the ChatGPT subscription route be offered on a multi-member deployment?** OpenAI's endorsement covers an
-   individual's own account, not a multi-user service. Options: (a) everywhere, each member signing in with their
-   own account (as codex's sign-in already works); (b) only behind a deployment switch an operator turns on;
-   (c) only on single-member deployments. Owner's decision.
-2. **May a member opt a repository into pi's project resources (`.pi/`)?** Options: (a) never (decision 7's
-   default); (b) per repository, with the route-bearing files (`models.json`, provider settings) still ignored;
-   (c) per repository, everything. Owner's decision.
+1. ~~May the ChatGPT subscription route be offered on a multi-member deployment?~~ **Answered (owner,
+   2026-11-14, #4138): yes, everywhere**, each member signing in with their own account in their own Workspace. AF
+   uses it in individual Workspaces only; OpenAI's wording excludes resale and multi-user services, which a login
+   kept to one member's Workspace is not. Decision 12 records the invariant.
+2. **Which of a repository's pi resources does a session load?** Options: (a) text resources only — skills,
+   `.agents/skills`, prompts and `APPEND_SYSTEM.md`, by reference, with trust never granted (decision 7, recommended);
+   (b) nothing from `.pi/`; (c) everything, by granting pi's project trust per repository at the member's request.
+   Owner's decision (#4139).
 
 ## Consequences
 
 - An eighth Managed driver, whose fixed prompt cost measured about 1.2k tokens (Stage 0), on routes the member
   chooses per session, with the route recorded per call.
 - pi is the first harness that declares `chatgpt-subscription` and `openai-api` in the route catalogue.
-- pi sessions do not see the member's own pi setup or a repository's `.pi/` resources; a member who relies on pi
-  extensions or packages does not get them in AF.
+- pi sessions do not see the member's own pi setup, nor a repository's pi extensions, packages, MCP servers or
+  settings; they do see its skills and prompts. A member who relies on pi extensions or packages does not get them
+  in AF.
 - Each pin bump re-checks the strip list and the protocol; pi's release pace is the drift risk, as copilot's
   weekly releases are.
