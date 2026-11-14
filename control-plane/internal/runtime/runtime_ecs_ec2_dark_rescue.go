@@ -55,6 +55,10 @@ var (
 	// errRescueStepAside: nothing was written; somebody acted since the decision, or the
 	// slot is not one a rescue may take. The next pass decides again.
 	errRescueStepAside = errors.New("rescue steps aside")
+	// errRescueServiceUp is the step-aside whose cause is a running workspace service. It
+	// wraps errRescueStepAside, so every caller that matches the latter still does; the
+	// sweep alone looks for it, to say once per episode why the rescue is not happening.
+	errRescueServiceUp = fmt.Errorf("%w: the service is up and a failed probe carries no task identity", errRescueStepAside)
 	// errRescueOvertaken: the rescue owned the home and no longer does (the Start count
 	// moved, the marker or the home is gone). The caller finalizes: the rest is dropped,
 	// the episode is kept.
@@ -79,7 +83,9 @@ type darkDecision struct {
 	slot   string
 	vol    *ec2types.Volume
 	launch time.Time
-	gd     int64
+	// since is the dark stamp's first observation; with launch it names the episode.
+	since time.Time
+	gd    int64
 	// wedged marks the wedged-slot release: the service may be up, which instead of
 	// stepping aside must be shown to still be wedged under the claim lock (stillWedged),
 	// and the marker carries the wedged kind.
@@ -121,13 +127,30 @@ func (f *ecsEC2Factory) rescueDarkSlot(ctx context.Context, d darkDecision) {
 	}
 	m, ids, err := rt.rescuePrepare(ctx, cmds, d)
 	if err != nil {
-		if !errors.Is(err, errRescueStepAside) {
+		switch {
+		case errors.Is(err, errRescueServiceUp):
+			f.logServiceUpSkip(rt.base.name, d)
+		case !errors.Is(err, errRescueStepAside):
 			log.Printf("ecs-ec2 sweep: rescue of %s on %s not started: %v", rt.base.name, d.slot, err)
 		}
 		return
 	}
+	f.rescueSkipLogged.Delete(d.slot)
 	log.Printf("ecs-ec2 sweep: rescuing %s from the dark slot %s (marker %s)", rt.base.name, d.slot, m)
 	rt.rescueContinue(ctx, cmds, d.slot, m, ids)
+}
+
+// logServiceUpSkip says, once per dark episode, that the rescue is not happening because the
+// workspace service is up. The sweep reaches this every minute for as long as the slot stays
+// dark, so the episode (launch epoch + first observation) is remembered per slot; a new
+// episode, or the slot's stamp clearing, forgets it. Without the line the operator sees only
+// "action rescue" and a slot that sits at observing.
+func (f *ecsEC2Factory) logServiceUpSkip(workspace string, d darkDecision) {
+	key := d.launch.UTC().Format(time.RFC3339) + "/" + d.since.UTC().Format(time.RFC3339)
+	if prev, _ := f.rescueSkipLogged.Swap(d.slot, key); prev == key {
+		return
+	}
+	log.Printf("ecs-ec2 sweep: rescue of %s on dark slot %s skipped: its workspace service is up and a failed probe cannot say which task answered; waiting for the service to stop (logged once per episode)", workspace, d.slot)
 }
 
 // rescueRuntime is the runtime the rescue acts through; its waits use the factory's sleeper
@@ -201,7 +224,7 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 	} else if exists && svc.DesiredCount > 0 {
 		// A probe through the shared alias cannot say which task answered, so a service that
 		// is up is not rescued: the container may be serving its member.
-		return m, nil, fmt.Errorf("%w: the service is up and a failed probe carries no task identity", errRescueStepAside)
+		return m, nil, errRescueServiceUp
 	}
 	inst, err := e.slotInstance(lctx, d.slot)
 	if err != nil {

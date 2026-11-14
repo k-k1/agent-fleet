@@ -295,6 +295,9 @@ type ecsEC2Factory struct {
 	// already reported, so a slot left blocked does not repeat the audit row every sweep. It
 	// is in memory: a restart reports once more.
 	wedgedBlocked sync.Map
+	// rescueSkipLogged remembers, per slot, the dark episode whose "service is up, rescue
+	// skipped" line was already logged. In memory: a restart logs once more.
+	rescueSkipLogged sync.Map
 	// bg / sleep replace the probe runtime's background runner and sleeper when set; only
 	// tests do, to drive ForceStopSlot's delayed re-stop without waiting for it.
 	bg    func(context.Context, func(context.Context))

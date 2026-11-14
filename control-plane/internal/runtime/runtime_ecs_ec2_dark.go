@@ -155,10 +155,15 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 	probe := f.probeRuntime()
 	byInstance := map[string]*ec2types.Volume{}
 	var ids []string
+	holding := map[string]bool{} // every slot with a home on it, a live claim or not
 	for i := range homes {
 		vol := &homes[i]
 		inst := attachedInstance(vol)
-		if inst == "" || probe.claimLive(vol) {
+		if inst == "" {
+			continue
+		}
+		holding[inst] = true
+		if probe.claimLive(vol) {
 			continue
 		}
 		if isBakeHome(vol) {
@@ -170,6 +175,17 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 		}
 		byInstance[inst] = vol
 	}
+	// A slot that no longer holds a home (terminated, replaced, home moved) never reaches
+	// clearDarkStamp, so its "rescue skipped" memory is dropped here; otherwise a long-lived CP
+	// would keep one entry per instance id it ever saw dark. A slot under a Start's live claim
+	// still holds its home and keeps its entry: the dark stamp survives the claim, so the
+	// episode does too.
+	f.rescueSkipLogged.Range(func(k, _ any) bool {
+		if !holding[k.(string)] {
+			f.rescueSkipLogged.Delete(k)
+		}
+		return true
+	})
 	if len(ids) == 0 {
 		return
 	}
@@ -273,7 +289,7 @@ func (f *ecsEC2Factory) scanDarkSlot(ctx context.Context, cmds ssmSlotCommands, 
 	}
 	rescue := func() {
 		if canRescue {
-			f.rescueDarkSlot(ctx, darkDecision{slot: id, vol: vol, launch: launch, gd: gd})
+			f.rescueDarkSlot(ctx, darkDecision{slot: id, vol: vol, launch: launch, since: stamp.since, gd: gd})
 		}
 	}
 	if stamp.detected {
@@ -338,6 +354,7 @@ func (f *ecsEC2Factory) writeDarkStamp(ctx context.Context, instanceID string, s
 }
 
 func (f *ecsEC2Factory) clearDarkStamp(ctx context.Context, instanceID, current string) {
+	f.rescueSkipLogged.Delete(instanceID)
 	if current == "" {
 		return
 	}

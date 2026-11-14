@@ -484,6 +484,7 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM memo_category WHERE membership_id=?`, id},
 		{`DELETE FROM memo_queue WHERE membership_id=?`, id},
 		{`DELETE FROM memo_queue_intake WHERE membership_id=?`, id},
+		{`DELETE FROM memo_delivery WHERE membership_id=?`, id},
 		{`DELETE FROM work_item_cache WHERE membership_id=?`, id},
 		{`DELETE FROM work_item_query WHERE membership_id=?`, id},
 		{`DELETE FROM work_item_session WHERE membership_id=?`, id},

@@ -168,6 +168,8 @@ var cpOwnedResolvedRoutes = routeReasons(
 		"POST /api/session-handoff-offers",
 		"GET /api/sessions/{name}/handoff-recipients",
 		"POST /api/memos/flush",
+		// A queue fire: the CP reserves and claims, and the send happens on the scheduler's tick.
+		"POST /api/memo-queues/{categoryId}/fire",
 		"POST /api/ssm/instances",
 		"POST /api/mcp-servers/{id}/oauth/start",
 	}},

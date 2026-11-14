@@ -13,6 +13,14 @@ func TestCatalogueShape(t *testing.T) {
 		if r.Wire == "" || r.Credential == "" {
 			t.Errorf("%s: wire %q credential %q, both required", r.ID, r.Wire, r.Credential)
 		}
+		if !slices.Contains(Classes(), r.Class) || !slices.Contains(Destinations(), r.Destination) {
+			t.Errorf("%s: class %q destination %q, each must be a known value (ADR 0138 D1c)", r.ID, r.Class, r.Destination)
+		}
+		// A per-connection route reads as unclassified until its endpoint is approved, so it can
+		// never pass a destination rule on its catalogue entry alone (ADR 0138 §2).
+		if r.PerConnection && r.Destination != DestUnclassified {
+			t.Errorf("%s: a per-connection route's catalogue destination must be unclassified, got %q", r.ID, r.Destination)
+		}
 	}
 	if !slices.IsSorted(ids) || len(slices.Compact(slices.Clone(ids))) != len(ids) {
 		t.Errorf("ids = %v, want sorted and unique", ids)
@@ -97,6 +105,28 @@ func TestBoundAWSConnection(t *testing.T) {
 		"0123abcd@us-east-1#00112233aabbccdd#00112233aabbccdd", "0123abcd#00112233aabbccdd"} {
 		if _, _, _, ok := ParseBoundAWSConnection(bad); ok {
 			t.Errorf("%q was accepted", bad)
+		}
+	}
+}
+
+// The classes ADR 0138 D1 assigns: a subscription is never filed as a key and the reverse, since
+// "no subscriptions" is the first configuration the policy has to express.
+func TestCatalogueClasses(t *testing.T) {
+	want := map[string]Class{
+		RouteAnthropicSubscription: ClassSubscription, RouteChatGPTSubscription: ClassSubscription,
+		RouteOpencodeAccount: ClassSubscription, RouteOpencodeGo: ClassSubscription, RouteMuseLogin: ClassSubscription,
+		RouteAgyLogin: ClassSubscription, RouteCopilotLogin: ClassSubscription, RouteCursorLogin: ClassSubscription,
+		RouteKiroLogin:    ClassSubscription,
+		RouteAnthropicAPI: ClassMemberKey, RouteOpenAIAPI: ClassMemberKey, RouteOpencodeZen: ClassMemberKey,
+		RouteMetaAPI: ClassMemberKey, RouteOpenRouterAPI: ClassMemberKey, RouteGeminiAPI: ClassMemberKey,
+		RouteSakanaAPI: ClassMemberKey, RouteCustomAPI: ClassMemberKey,
+		RouteBedrock: ClassMemberCloud, RouteBedrockDeployment: ClassProvided, RouteBedrockTenant: ClassProvided,
+		RouteAFEngineLLM: ClassSelfHosted, RouteAFEngineImage: ClassSelfHosted,
+	}
+	for id, c := range want {
+		r, ok := Lookup(id)
+		if !ok || r.Class != c {
+			t.Errorf("%s: class %q (found %v), want %q", id, r.Class, ok, c)
 		}
 	}
 }

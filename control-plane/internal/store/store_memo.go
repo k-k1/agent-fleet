@@ -34,6 +34,10 @@ type Memo struct {
 	// SendToken is the attempt of a flush in flight on this row, SendStartedAt when it began
 	// ("" for none). See MemoSendStaleAfter.
 	SendToken, SendStartedAt string
+	// DeliveryID is the delivery that claimed this message (store_memo_delivery.go), "" for
+	// none. Only the delivery statements write it: InsertMemo and UpdateMemo never do, so a
+	// write that read the row before a claim cannot take the claim away.
+	DeliveryID string
 }
 
 // MemoCategory persists a memo category as a first-class row (docs/log/21 UI overhaul), so a
@@ -78,14 +82,14 @@ type MemoStore interface {
 
 const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at,
 	origin_item_id, origin_sender_membership_id, origin_sender_key,
-	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at FROM memo`
+	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at, delivery_id FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
 	err := row.Scan(&m.ID, &m.MembershipID, &m.Repo, &m.Category, &m.Kind,
 		&m.Body, &m.RefPath, &m.Attachments, &m.Position, &m.CreatedAt, &m.SentAt,
 		&m.OriginItemID, &m.OriginSenderMembershipID, &m.OriginSenderKey,
-		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt)
+		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt, &m.DeliveryID)
 	return m, err
 }
 
