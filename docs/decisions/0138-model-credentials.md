@@ -2,19 +2,20 @@
 
 English | [日本語](0138-model-credentials.ja.md)
 
-- Status: **proposed** (2026-11-14). Nothing is built. Every `file:line` was read on `1c92e98f9`; ADR 0136 was read
+- Status: **accepted** (2026-11-15; proposed 2026-11-14). The user accepted the record as it stood at `1d59f735`: the
+  recommended option in each decision, with the user's own decisions of 2026-11-14 below. Open question 1 stays open,
+  not measured. Nothing is built. Every `file:line` was read on `1c92e98f9`; ADR 0136 was read
   from its open PR (#4137, branch head of 2026-11-14). **What is measured and what is not.** Measured means read in
   the tree: where each credential is stored, which code reads it, which checks exist. Nothing was run against a live
   Workspace or deployment, and no AWS call was made. What a vendor's CLI or endpoint does (which host a login talks
   to, whether a CLI can be pointed at another credential file) is **not measured** unless a cited ADR measured it,
   and is marked so where a decision rests on it. Reviewed 2026-11-14 by a separate session (codex `gpt-6.1-sol`):
-  round 1, 13 findings; round 2, 5 findings; each checked against the tree and folded into this text. **The user's
-  decisions of 2026-11-14** are folded in while the record stays proposed: hide what the policy forbids (D10a);
+  round 1, 13 findings; round 2, 5 findings; a delta round on the user's decisions, 6 findings; each checked against
+  the tree and folded into this text. **The user's decisions of 2026-11-14**, taken before the acceptance: hide what the policy forbids (D10a);
   per-route exceptions (D1d); a forbidden credential found present is reported, never acted on (D13); per-member or
   per-role policy, Regions in the destination and per-tenant egress are not needed (§9).
 - Tracking: #4159. Refs #3282.
-- Follow-ups: none filed yet. The phases (§8) depend on which options the owner takes, so their issues are filed when
-  the decisions are accepted; until then the open question (§10) is tracked on #4159.
+- Follow-ups: #4167, #4168, #4169, #4170, #4171 (M0–M4); open question 1 (§10) is tracked on #4159.
 - Related: [0128](0128-harness-route-maker.md) (harness, route, maker; this record answers its open questions 1 and
   2) / [0129](0129-provided-model-routes.md) (provided routes, grants, budgets; this record amends the last bullet of
   its D3) / ADR 0136 (pi; proposed, PR #4137) / [0084](0084-engine-indicator-and-tenant-gate.md) (the tenant gate,
@@ -203,7 +204,7 @@ control.
   not its subscription", which is the first configuration the user asked for.
 - **D1b. Route id.** Exact, and it is what every check evaluates. As the admin's unit it is a list of a dozen ids
   that grows with every harness row, and a new id is either allowed by surprise or denied by surprise.
-- **D1c. Credential class × destination, evaluated on route ids** *(recommended)*. The catalogue assigns every route
+- **D1c. Credential class × destination, evaluated on route ids** *(taken, recommended)*. The catalogue assigns every route
   id exactly one class and one destination (D2), except the routes it marks **per-connection** (`member-llamacpp`,
   `custom-api`, and any route whose endpoint the member can set), whose class and destination come from the
   validated endpoint the connection is bound to (§2). The unit evaluated is therefore the route id plus, for those
@@ -256,7 +257,7 @@ not see muse or cursor at all.
   pastes a key twice, revokes it twice, and sees spend split by harness rather than by key.
 - **D3b. One credential per provider account, used by every harness that declares its route**, each through its own
   isolation (ADR 0128 decision 7: A1 per-session environment for a member key, A2 the gateway for anything broader)
-  *(recommended)*. The member decides per credential which harnesses may use it ("Use for", D6); the default is every
+  *(taken, recommended)*. The member decides per credential which harnesses may use it ("Use for", D6); the default is every
   harness that can, which is what opencode and claude already do with the Anthropic key.
 - **D3c. Harnesses share CLI login files** (pi reading codex's `auth.json`, opencode reading claude's OAuth file).
   Rejected: the Claude OAuth login is for Claude Code only (ADR 0128 decision 4); a refresh by one process can
@@ -282,7 +283,7 @@ started with until it stops; opencode's `serve` keeps its environment until rest
 - **D4a. Leave it as it is.** A removed key keeps working in running opencode serves and claude panes for as long as
   they live.
 - **D4b. Refuse bound sessions at their next start, stop running sessions on the route guard sweep, restart the
-  shared daemons without the credential** *(recommended)*. Removing a credential extends `RouteWatcher`
+  shared daemons without the credential** *(taken, recommended)*. Removing a credential extends `RouteWatcher`
   (`SweepRouteGuards`, `internal/sessionx/session_route.go:147`) to "the bound credential is gone or replaced"; the
   session is halted (resumable, as the route guard already does) and the notice names the credential. A shared
   `serve` or app-server is replaced by D12's **security restart**, not by the ordinary one.
@@ -294,7 +295,7 @@ started with until it stops; opencode's `serve` keeps its environment until rest
 ### D5. Spend is attributed to the credential, not only to the route
 
 - **D5a. Route and billing only** (today). Two Anthropic keys, or codex's key and the shared OpenAI key, are one row.
-- **D5b. A connection reference on every ledger row** *(recommended)*: the non-secret binding the route already
+- **D5b. A connection reference on every ledger row** *(taken, recommended)*: the non-secret binding the route already
   computes (`ANTHROPIC_API_KEY@<fingerprint>`, `<profile>@<region>#<fingerprint>`, `<source id>#<fingerprint>`).
   A CLI-locked login or key gets a **stable, non-secret binding** of the same kind: a hash of the account id where the
   login file carries one (as ADR 0136 decision 6 requires for pi's ChatGPT login), a fingerprint of the key for an
@@ -327,7 +328,7 @@ with its harness; the page does not suggest they are one.
 | 3 | tenant_admin | their tenant | narrow layer 2 for the tenant; budgets and member grants for provided routes (ADR 0129 D3) |
 | 4 | member | themselves | switch harnesses off, hide models, choose "Use for" (D3) |
 
-- **D7a. Intersection, deny wins** *(recommended)*. The effective set is the intersection of every layer's allowed
+- **D7a. Intersection, deny wins** *(taken, recommended)*. The effective set is the intersection of every layer's allowed
   set. A layer can only remove; nothing below can put back what a layer above took away. A provided route also
   needs ADR 0129's grant and a budget above zero, so for those routes the policy is an outer filter and the grant an
   inner one.
@@ -368,7 +369,7 @@ that layer, before the intersection.
   change.
 - **D9b. A super_admin setting in the database.** Flexible and audited, but a super_admin can widen it, and an
   auditor has to read the database to know the deployment's rule.
-- **D9c. Both: the variable is the ceiling, the super_admin setting narrows within it** *(recommended)*. The
+- **D9c. Both: the variable is the ceiling, the super_admin setting narrows within it** *(taken, recommended)*. The
   super_admin UI shows the ceiling read-only, with its source ("set by the deployment"). An unparsable or unknown
   value **refuses CP start** rather than reading as "allow all". Docker and native targets set the same variable in
   their environment file. The variable's format is the class and destination sets of D1 and D1d's two lists, for
@@ -431,7 +432,7 @@ replaces them must not move a member onto a metered bill they did not choose.
 - **D11a. Leave empty selections alone.** Every kind without an adapter, and every claude session started without a
   route, would escape the policy.
 - **D11b. Under any restriction, every create resolves to an explicit route and stores it, without changing who
-  pays** *(recommended)*. In order: the member's **default route** for the harness (a setting the member chose, D16,
+  pays** *(taken, recommended)*. In order: the member's **default route** for the harness (a setting the member chose, D16,
   which counts as naming the route), if allowed and its credential held; else, for a kind whose credential resolves to
   exactly one route (agy, copilot, cursor, kiro, muse and codex by their current login mode, lcpp by its connection),
   that route, if allowed; else a refusal (`route_required`) that lists the allowed routes. The first allowed route is
@@ -585,7 +586,7 @@ What can be done:
 
 ### D14. Credentials already stored when a policy tightens
 
-- **D14a. Kept, unusable, hidden** *(recommended, following D10a)*. A credential whose every route is forbidden is
+- **D14a. Kept, unusable, hidden** *(taken, recommended, following D10a)*. A credential whose every route is forbidden is
   kept where it is, never used, and not shown on the Model credentials page. So that a member can still clear what
   they hold, the page shows one line, only when such credentials exist and without listing them: "Some stored
   credentials cannot be used under your organisation's policy", with one action that removes them after a
