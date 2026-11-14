@@ -451,9 +451,15 @@ on a deployment yet. Building it settled the following, which the text above doe
   automatic fires only; "fire now" needs an instruction and not `enabled`. A category of the common bucket can be a
   queue; it gets no directory and no worktree.
 - **Entering a queue.** `pending` only for a message of provenance `member` that arrives by the Console; `held`
-  otherwise, which includes the notes already in a category when it becomes a queue and every row from before this
-  step (their provenance is unknown and is treated as `workspace`). A note that was already sent by hand enters as
-  `delivered`. A category that holds a note taken in from the inbox cannot become a queue.
+  otherwise. The notes already in a category when it becomes a queue enter by the same rule: an unsent note the
+  member wrote in the Console becomes `pending`, and a row from before this step, whose provenance is unknown and is
+  treated as `workspace`, becomes `held`. A note that was already sent by hand enters as `delivered`. A category that
+  holds a note taken in from the inbox cannot become a queue.
+- **The rate limit is per member, not per producer.** §3 bounds each producer. What was built counts every create
+  into a queue from the token face and `/mcp` together, across all of the member's queues: 30 a minute
+  (provisional). Moving or deleting a message does not give its create back, and a create answered with an existing
+  identical message is not counted. One busy session can therefore use up the minute for the member's other sessions
+  and connections.
 - **A release is all or none.** One press releases every item it names or none: one stale item refuses the press
   and returns the stale ids. §3 reads as if each item stood alone.
 - **A second guard on a released message.** A `pending` row keeps a copy of the released content under a database
