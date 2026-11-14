@@ -12,8 +12,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -80,6 +82,16 @@ func parseEvents(path string) []transcript.Turn {
 					text += "\n\n"
 				}
 				text += p.Text
+			}
+		}
+		if text == "" {
+			// An error-only turn has no prose; readers that flatten a turn to Text
+			// (get_session_output, the idle report) would otherwise see an empty turn.
+			for _, p := range cur.Parts {
+				if p.Kind == "error" {
+					text = "[error] " + p.Text
+					break
+				}
 			}
 		}
 		cur.Text = text
@@ -200,6 +212,22 @@ func parseEvents(path string) []transcript.Turn {
 			if img, ok := transcript.GeneratedImagePart(cur.Parts[i].Tool, d.Result.Content); ok {
 				gen = append(gen, transcript.PendingImage{At: i, Part: img})
 			}
+		case "session.error":
+			var d struct {
+				Message   string `json:"message"`
+				ErrorType string `json:"errorType"`
+			}
+			if json.Unmarshal(ev.Data, &d) != nil || d.Message == "" || isModelFallbackNotice(d.Message) {
+				continue
+			}
+			ensureCur(idx, ev.TS, "")
+			label := "error"
+			if d.ErrorType != "" {
+				label = d.ErrorType
+			}
+			// The provider's own text, quoted as recorded; only secret-shaped substrings
+			// are scrubbed, because the message can echo a request header or URL.
+			cur.Parts = append(cur.Parts, transcript.Part{Kind: "error", Info: label, Text: clip(bridge.ScrubSecrets(d.Message))})
 		case "assistant.turn_end":
 			if cur != nil && ev.TS != "" {
 				cur.EndTS = ev.TS // the authoritative end of the span
@@ -280,4 +308,12 @@ func toolEdits(name string, args json.RawMessage) (file, verb string, edits []tr
 		return "", "", nil // an edit-family name with no payload we understand
 	}
 	return file, "", []transcript.Edit{{Old: transcript.CapEdit(a.OldStr), New: transcript.CapEdit(a.NewStr)}}
+}
+
+// isModelFallbackNotice reports the session.error copilot writes when it ignores --model and
+// carries on with auto ("Model \"X\" from --model flag is not available. Using \"auto\"
+// instead."): the turn still runs, so showing it as a failure would mark a normal turn failed
+// (recall.go reads the same line as evidence of a refusal).
+func isModelFallbackNotice(msg string) bool {
+	return strings.Contains(msg, "from --model flag is not available.") && strings.Contains(msg, "instead.")
 }
