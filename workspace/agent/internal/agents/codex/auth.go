@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
@@ -147,6 +146,11 @@ func HandleAPIKey(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "key is required")
 		return
 	}
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteChatGPTSubscription)
+	if !began {
+		return
+	}
+	defer loginOp.Finish()
 	cmd := exec.Command("codex", "login", "--with-api-key")
 	cmd.Stdin = strings.NewReader(key)
 	out, err := cmd.CombinedOutput()
@@ -154,8 +158,6 @@ func HandleAPIKey(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "login_failed", "codex login failed: "+strings.TrimSpace(string(out)))
 		return
 	}
-	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
-	credbind.Bump(routes.RouteChatGPTSubscription)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 }
 
@@ -182,9 +184,18 @@ var flows = agents.NewFlowStore(flowTTL)
 // POST /connections/codex/device/start.
 func HandleDeviceStart(w http.ResponseWriter, r *http.Request) {
 	flows.Reap()
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteChatGPTSubscription)
+	if !began {
+		return
+	}
 	cmd := exec.Command("codex", "login", "--device-auth")
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	f, err := agents.StartFlow(cmd)
+	if err != nil {
+		loginOp.Finish()
+	} else {
+		f.LoginOp = loginOp
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
@@ -224,8 +235,6 @@ func HandleDevicePoll(w http.ResponseWriter, r *http.Request) {
 		if f := flows.Take(req.FlowID); f != nil {
 			f.Close()
 			stored = true
-			// The flow that saw the sign-in finish: a new credential instance (ADR 0138 D5b).
-			credbind.Bump(routes.RouteChatGPTSubscription)
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
 		return
@@ -236,9 +245,12 @@ func HandleDevicePoll(w http.ResponseWriter, r *http.Request) {
 // HandleDisconnect logs codex out (clears auth.json) via the CLI.
 // DELETE /connections/codex.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteChatGPTSubscription)
+	if !began {
+		return
+	}
+	defer loginOp.Finish()
 	_ = exec.Command("codex", "logout").Run()
-	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
-	credbind.Bump(routes.RouteChatGPTSubscription)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "codex"})
 }
 

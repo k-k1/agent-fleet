@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
@@ -140,9 +139,18 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	loginFlows.Reap()
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteKiroLogin)
+	if !began {
+		return
+	}
 	cmd := exec.Command(bin(), "login", "--license", "free", "--use-device-flow")
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	f, err := agents.StartFlow(cmd)
+	if err != nil {
+		loginOp.Finish()
+	} else {
+		f.LoginOp = loginOp
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
@@ -178,8 +186,6 @@ func HandlePoll(w http.ResponseWriter, r *http.Request) {
 		if f := loginFlows.Take(req.FlowID); f != nil {
 			f.Close()
 			stored = true
-			// The flow that saw the sign-in finish: a new credential instance (ADR 0138 D5b).
-			credbind.Bump(routes.RouteKiroLogin)
 		}
 		invalidateStatus()
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
@@ -194,10 +200,13 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	// logout can reach the network, so without a timeout this handler blocks indefinitely.
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteKiroLogin)
+	if !began {
+		return
+	}
+	defer loginOp.Finish()
 	_ = exec.CommandContext(ctx, bin(), "logout").Run()
 	invalidateStatus()
-	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
-	credbind.Bump(routes.RouteKiroLogin)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "kiro"})
 }
 

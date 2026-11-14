@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -48,9 +47,18 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	// Real subscription login (writes .credentials.json with a refresh token).
 	// CLAUDE_CONFIG_DIR is inherited from os.Environ() so creds land where sessions
 	// read them. Same authorize URL as setup-token (claude.com/cai/oauth/authorize).
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteAnthropicSubscription)
+	if !began {
+		return
+	}
 	cmd := exec.Command("claude", "auth", "login", "--claudeai")
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	f, err := agents.StartFlow(cmd)
+	if err != nil {
+		loginOp.Finish()
+	} else {
+		f.LoginOp = loginOp
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
@@ -115,14 +123,17 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	// claude wrote its own .credentials.json; nothing for us to store.
 	resetCredCache() // re-read the freshly written credentials: the contents can change under an unchanged stat
-	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
-	credbind.Bump(routes.RouteAnthropicSubscription)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": true})
 }
 
 // HandleDisconnect logs claude out via the CLI. DELETE /connections/claude.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	// claude owns its credentials; log out via the CLI so it clears them properly.
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteAnthropicSubscription)
+	if !began {
+		return
+	}
+	defer loginOp.Finish()
 	_ = exec.Command("claude", "auth", "logout").Run()
 	resetCredCache()
 	// Best-effort: drop any legacy stored token from the encrypted store too.
@@ -130,8 +141,6 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 		s.Claude = ""
 		_ = s.Save()
 	}
-	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
-	credbind.Bump(routes.RouteAnthropicSubscription)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "claude"})
 }
 

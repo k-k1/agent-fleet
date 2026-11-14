@@ -43,7 +43,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
@@ -200,10 +199,19 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	loginFlows.Reap()
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteMuseLogin)
+	if !began {
+		return
+	}
 	cmd := exec.Command(Bin(), "login")
 	// The pin is AF's, not the launcher's, on the login path too (decision 8).
 	cmd.Env = append(os.Environ(), "MUSE_NO_AUTO_UPDATE=1")
 	f, err := agents.StartPipeFlow(cmd)
+	if err != nil {
+		loginOp.Finish()
+	} else {
+		f.LoginOp = loginOp
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "spawn_failed", err.Error())
 		return
@@ -246,8 +254,6 @@ func HandlePoll(w http.ResponseWriter, r *http.Request) {
 		if f := loginFlows.Take(req.FlowID); f != nil {
 			f.Close()
 			stored = true
-			// The flow that saw the sign-in finish: a new credential instance (ADR 0138 D5b).
-			credbind.Bump(routes.RouteMuseLogin)
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
 		return
@@ -276,6 +282,11 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	// logout reaches the network, so without a timeout this handler blocks indefinitely.
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteMuseLogin)
+	if !began {
+		return
+	}
+	defer loginOp.Finish()
 	out, err := exec.CommandContext(ctx, Bin(), "logout").CombinedOutput()
 	// The credential is the outcome that matters: a non-zero exit with the entry gone is a
 	// disconnect, and a zero exit with it still there is not.
@@ -287,8 +298,6 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "logout_failed", detail)
 		return
 	}
-	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
-	credbind.Bump(routes.RouteMuseLogin)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "muse"})
 }
 
@@ -323,6 +332,11 @@ func HandleAPIKey(w http.ResponseWriter, r *http.Request) {
 			"an account sign-in is stored; an API key would replace it and move this workspace onto metered billing — disconnect first")
 		return
 	}
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteMuseLogin)
+	if !began {
+		return
+	}
+	defer loginOp.Finish()
 	cmd := exec.Command(Bin(), "auth", "set", "--api-key-stdin")
 	cmd.Env = append(os.Environ(), "MUSE_NO_AUTO_UPDATE=1")
 	cmd.Stdin = strings.NewReader(key)
@@ -338,7 +352,5 @@ func HandleAPIKey(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "auth_failed", "muse auth set wrote no credential")
 		return
 	}
-	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
-	credbind.Bump(routes.RouteMuseLogin)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "metered": true})
 }

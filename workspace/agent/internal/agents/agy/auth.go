@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/hostcaps"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
@@ -115,10 +114,19 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	_ = os.MkdirAll(loginDir, 0o700)
 	EnsureWorkspaceTrusted(loginDir)
 
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteAgyLogin)
+	if !began {
+		return
+	}
 	cmd := exec.Command("agy")
 	cmd.Dir = loginDir
 	cmd.Env = Env(append(os.Environ(), "TERM=xterm-256color"))
 	f, err := agents.StartFlow(cmd)
+	if err != nil {
+		loginOp.Finish()
+	} else {
+		f.LoginOp = loginOp
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
@@ -212,8 +220,6 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 	// Belt and braces on top of the ToS-screen toggle: pin the Interactions
 	// data-collection opt-out in settings.json (agy is closed by then).
 	enforceTelemetryOff()
-	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
-	credbind.Bump(routes.RouteAgyLogin)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": true})
 }
 
@@ -266,13 +272,16 @@ func driveOnboarding(f *agents.Flow, timeout time.Duration) error {
 // only), and in a keyring-less container /logout amounts to deleting the token
 // file — so that's what we do. DELETE /connections/agy.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteAgyLogin)
+	if !began {
+		return
+	}
+	defer loginOp.Finish()
 	if err := os.Remove(tokenPath()); err != nil && !os.IsNotExist(err) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "logout_failed", err.Error())
 		return
 	}
 	removeAccount()
-	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
-	credbind.Bump(routes.RouteAgyLogin)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "agy"})
 }
 

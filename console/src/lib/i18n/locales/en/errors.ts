@@ -327,6 +327,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.no_selector": "The agent did not show the sign-in method options.",
   "err.serve_unavailable": "The agent's service could not be started.",
   "err.login_failed": "The sign-in did not complete.",
+  "err.login_change_unrecorded": "The Agent could not record this sign-in change in its settings folder, so it did not make it. Check that the workspace's disk is not full or read-only, then try again.",
   "err.bad_method": "That sign-in method is not valid.",
   "err.method_unsupported": "That sign-in method is not available yet.",
   "err.opencode_unsupported": "opencode was not found (the image may be out of date).",
