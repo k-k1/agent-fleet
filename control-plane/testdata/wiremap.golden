@@ -81,7 +81,7 @@ internal_git.go gitServerAPI.reposList x1 {repos}
 internal_git_browse.go gitServerAPI.commits x2 {commits,path,ref}
 internal_git_browse.go gitServerAPI.tree x2 {entries,path,ref}
 login_provider_api.go loginProviderAPI.list x1 {providers}
-memo.go memoAPI.flush x1 {ids,sent,sentAt}
+memo.go memoAPI.flushVia x1 {ids,sent,sentAt}
 metrics.go workspaceAPI.stats x1 {cpu_pct,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
 notification.go notificationAPI.list x1 {items,maxSeq,sourceState,unseenCount}
 oauth_bitbucket.go config.handleBitbucketOAuthStart x1 {authorize_url}

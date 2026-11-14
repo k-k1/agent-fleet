@@ -106,9 +106,12 @@ type CP interface {
 	// cannot use now (ADR 0129 D3); nil for every other route and for a usable one.
 	ProvidedRouteErr(ctx context.Context, membershipID, route string) error
 	MemoList(ctx context.Context, membershipID string) (any, error)
-	MemoCreate(ctx context.Context, mv store.MembershipView, repo, category, kind, body, refPath string) (any, error)
+	// MemoCreate's connection is the authenticated connection id, recorded as the producer.
+	MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string) (any, error)
 	MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int) (any, error)
 	MemoFlush(ctx context.Context, rt runtime.Runtime, membershipID, sessionName string, ids []string) (map[string]any, error)
+	// MemoDelete is delete_memo through the shared core, which refuses a message in a queue.
+	MemoDelete(ctx context.Context, membershipID, id string) error
 
 	// --- Policy and primary sources (a copy becomes a second source of truth) ---
 	// ScopeRank is the PAT scope ladder (pat.go). Taken from the CP because a tier

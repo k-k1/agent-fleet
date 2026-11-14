@@ -824,7 +824,7 @@ func memberTools() []mcpTool {
 				"required": []string{"kind"},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
-				dto, err := a.cp.MemoCreate(ctx, res.MV,
+				dto, err := a.cp.MemoCreate(ctx, res.MV, mcpCallFrom(ctx).patID,
 					argStr(args, "repo"), argStr(args, "category"),
 					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"))
 				if err != nil {
@@ -864,7 +864,7 @@ func memberTools() []mcpTool {
 			desc:   "Delete a memo by `id`.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string", "description": "memo id (from list_memos)"}}, "required": []string{"id"}},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
-				if err := a.cp.Store().DeleteMemo(ctx, argStr(args, "id"), res.MV.MembershipID); err != nil {
+				if err := a.cp.MemoDelete(ctx, res.MV.MembershipID, argStr(args, "id")); err != nil {
 					return "", err
 				}
 				return `{"ok":true}`, nil

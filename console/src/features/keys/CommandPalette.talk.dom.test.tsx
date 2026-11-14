@@ -4,7 +4,8 @@
 //    in its order — no client-side fuzzy filter dropping hits whose snippet does not spell the
 //    query (a CJK bigram match, a width-folded one).
 // 2. Enter opens the hit's session with a mark at the hit's turn, so the mirror lands there.
-// 3. An archived hit opens the archive shelf rather than doing nothing.
+// 3. An archived hit opens the archive shelf, narrowed to that session, rather than doing nothing.
+// 6. Each row names the session beyond its title: slug, and branch (or the folder without one).
 // 4. While the Agent is still building the index, the palette says so and asks again until done.
 // 5. A search that could not run says why; it never reads as "no matching conversation".
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -100,7 +101,7 @@ beforeEach(() => {
   searchReject = false;
   useReposStore.setState({ repos: [] });
   useSessionsStore.setState({ sessions: [{ name: "fixer", kind: "codex", alive: false, title: "fixer" }] });
-  useSessionUI.setState({ archivedOpen: false });
+  useSessionUI.setState({ archivedOpen: false, archivedDir: null, archivedSession: null });
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -181,6 +182,24 @@ describe("CommandPalette conversations mode", () => {
     pressEnter();
     expect(opened).toEqual([]);
     expect(useSessionUI.getState().archivedOpen).toBe(true);
+    expect(useSessionUI.getState().archivedSession).toBe("shelved");
+    expect(useSessionUI.getState().archivedDir).toBeNull();
+  });
+
+  it("names each hit's session by slug and branch, or folder when it has no branch", async () => {
+    searchBody = {
+      hits: [
+        hit("abc1234", 1, "first", { display: "Review", dir: "/home/dev/repos/app@wip-1", branch: "feature/9-x" }),
+        hit("def5678", 2, "second", { display: "Review", dir: "/home/dev/repos/app@wip-2" }),
+      ],
+      indexing: false,
+      indexed: 2,
+      total: 2,
+    };
+    await typeQuery("review");
+    const where = [...document.querySelectorAll(".cp-talk-where")];
+    expect(where.map((e) => e.querySelector(".cp-talk-slug")?.textContent)).toEqual(["abc1234", "def5678"]);
+    expect(where.map((e) => e.querySelector(".cp-talk-place")?.textContent?.trim())).toEqual(["feature/9-x", "app@wip-2"]);
   });
 
   it("says when the index is still being built, and asks again until it is", async () => {

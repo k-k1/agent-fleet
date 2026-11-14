@@ -13,6 +13,9 @@ export interface SessionSearchHit {
   display: string;
   kind: string;
   repo?: string;
+  /** The working copy, and the branch the session recorded at create. */
+  dir?: string;
+  branch?: string;
   archived?: boolean;
   idx: number;
   role: string;
@@ -61,15 +64,16 @@ export type OpenHitOutcome = "opened" | "archived" | "missing";
  * the session restores the mark, and one already showing it is told to apply it. A turn older than
  * the loaded tail window is paged in first by the mirror (useOlderHistory, bounded).
  *
- * An archived session cannot be opened until it is restored, so the archive shelf opens instead;
- * the mark is left in place for when it is.
+ * An archived session cannot be opened until it is restored, so the archive shelf opens instead,
+ * narrowed to that one session — several sessions often share a title, and the shelf lists them
+ * all. The mark is left in place for when it is restored.
  */
 export function openSessionSearchHit(hit: SessionSearchHit, split: boolean, running: boolean): OpenHitOutcome {
   requestJump(hit.session, { atBottom: false, idx: hit.idx, offset: 0, near: true });
   const s = useSessionsStore.getState().sessions.find((x) => x.name === hit.session);
   if (s) return openSessionFromList(s, split, running) ? "opened" : "missing";
   if (hit.archived) {
-    useSessionUI.getState().openArchived();
+    useSessionUI.getState().openArchived(undefined, hit.session);
     return "archived";
   }
   return "missing";

@@ -38,10 +38,14 @@ const (
 
 // Hit is one matching turn.
 type Hit struct {
-	Session  string  `json:"session"`
-	Display  string  `json:"display"`
-	Kind     string  `json:"kind"`
-	Repo     string  `json:"repo,omitempty"`
+	Session string `json:"session"`
+	Display string `json:"display"`
+	Kind    string `json:"kind"`
+	Repo    string `json:"repo,omitempty"`
+	// Dir and Branch tell apart sessions that share a title: the working copy and the branch it
+	// recorded (Meta.Branch, the branch at create).
+	Dir      string  `json:"dir,omitempty"`
+	Branch   string  `json:"branch,omitempty"`
 	Archived bool    `json:"archived,omitempty"`
 	Idx      int     `json:"idx"`
 	Role     string  `json:"role"`
@@ -138,8 +142,9 @@ func Search(q Query) (Result, error) {
 		}
 		m := metas[h.Session]
 		hits = append(hits, Hit{
-			Session: m.Name, Display: session.Display(m), Kind: m.Kind, Repo: m.Repo, Archived: m.Archived,
-			Idx: h.Idx, Role: h.Role, TS: h.TS,
+			Session: m.Name, Display: session.Display(m), Kind: m.Kind, Repo: m.Repo, Dir: m.Dir, Branch: m.Branch,
+			Archived: m.Archived,
+			Idx:      h.Idx, Role: h.Role, TS: h.TS,
 			Snippet: Snippet(h.Text, terms, snippetRunes),
 			Score:   h.Score,
 		})

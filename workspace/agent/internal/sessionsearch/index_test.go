@@ -199,7 +199,7 @@ func TestSearchCapsPerSessionAndRanksScheduledRunsDown(t *testing.T) {
 	f.metas = []session.Meta{
 		{Name: "long", Kind: "claude", Repo: "app"},
 		{Name: "cron", Kind: "codex", Origin: session.OriginSchedule, Repo: "app"},
-		{Name: "other", Kind: "codex", Repo: "lib"},
+		{Name: "other", Kind: "codex", Repo: "lib", Dir: "/w/lib@wip", Branch: "feature/7-flaky"},
 	}
 	for i := 0; i < 6; i++ {
 		f.turns["long"] = append(f.turns["long"], say(i, "user", "flaky test again"))
@@ -227,6 +227,9 @@ func TestSearchCapsPerSessionAndRanksScheduledRunsDown(t *testing.T) {
 	r2, _ := Search(Query{Q: "flaky", Limit: 10, PerSession: 3, Repo: "lib"})
 	if len(r2.Hits) != 1 || r2.Hits[0].Session != "other" {
 		t.Fatalf("repo filter: %+v", r2.Hits)
+	}
+	if h := r2.Hits[0]; h.Dir != "/w/lib@wip" || h.Branch != "feature/7-flaky" {
+		t.Fatalf("hit lost the working copy or branch: dir=%q branch=%q", h.Dir, h.Branch)
 	}
 	r3, _ := Search(Query{Q: "flaky", Limit: 10, PerSession: 3, Session: "cron"})
 	if len(r3.Hits) != 1 || r3.Hits[0].Session != "cron" {

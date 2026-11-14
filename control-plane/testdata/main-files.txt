@@ -146,6 +146,7 @@ member_removal.go
 member_ui_state.go
 memo.go
 memo_bridge.go
+memo_queue.go
 metrics.go
 metrics_pressure.go
 notification.go
