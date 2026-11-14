@@ -202,8 +202,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # `curl -fsSL http://security.debian.org/debian-security/dists/trixie-security/main/binary-<arch>/Packages.xz | xz -dc | grep -A5 '^Package: chromium$'`
 # When comparing versions, read the same index on both sides (docs/decisions/0068 decision 3):
 # the security and main suites point at different versions, so reading one side from each
-# invents a version gap — that once recorded a false "trixie downgrades chromium" cost and
-# skewed the base-image decision. The pin here is always the security suite's version.
+# invents a version gap that does not exist. The pin here is always the security suite's version.
 ARG CHROMIUM_VERSION=156.0.8078.79-1~deb13u1
 # BAKE_OPTIONAL_TOOLS=0 (the native lean rootfs) bakes neither chromium nor the CJK fonts and
 # leaves them to the on-demand download (install-chromium, pinned by CHROMIUM_DL_VERSION), but
@@ -636,8 +635,7 @@ RUN mkdir -p /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/do
 # denied). That copy happens only the first time the access point's root gets content, so an
 # existing EFS directory already initialised as root is not fixed by a corrected image — it
 # needs `docker exec -u root … chown -R 1000:1000 /var/lib/af/claude`. keep (/var/lib/af/keep)
-# was always on the first-content side and so already dev-owned; chowning it here keeps a
-# newly created keep access point (decision 3-6) from hitting the same hole.
+# is chowned too so a newly created keep access point (decision 3-6) starts dev-owned.
 # docs has no bind-mount path on ECS: the Agent fetches the role's docs from the CP and
 # unpacks them here (docs/build/04 §4.9, agent docs_sync.go).
 RUN chown 1000:1000 /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/docs
