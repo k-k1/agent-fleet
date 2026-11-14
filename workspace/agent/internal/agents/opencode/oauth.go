@@ -207,6 +207,15 @@ func invalidateOAuthStatus() {
 	oauthMu.Unlock()
 }
 
+// oauthCached is the last Console-account view oauthStatus read, without refreshing it: known is
+// false when nothing has been read yet. For a create's launch record, which must not wait on the
+// daemon.
+func oauthCached() oauthState {
+	oauthMu.Lock()
+	defer oauthMu.Unlock()
+	return oauthCache
+}
+
 // oauthStatus reports the Console-account connection for Status(). When no daemon is running
 // it is not worth waking one to find out: the last value read is returned as stale, and if
 // nothing was ever read, unknown (connected=false, known=false).

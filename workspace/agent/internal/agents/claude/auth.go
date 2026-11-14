@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -113,6 +115,8 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	// claude wrote its own .credentials.json; nothing for us to store.
 	resetCredCache() // re-read the freshly written credentials: the contents can change under an unchanged stat
+	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
+	credbind.Bump(routes.RouteAnthropicSubscription)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": true})
 }
 
@@ -126,6 +130,8 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 		s.Claude = ""
 		_ = s.Save()
 	}
+	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
+	credbind.Bump(routes.RouteAnthropicSubscription)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "claude"})
 }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -21,7 +22,7 @@ const apiKeySlot = "codex-api-key"
 
 // Login is what codex's auth.json says it runs on: chatgpt-subscription or openai-api, from
 // auth_mode, and the binding of that credential (ADR 0138 D2, D5b). The ChatGPT login binds to
-// its account id, which a token refresh keeps; the API-key login to the key's fingerprint. A
+// its account id, which a token refresh keeps; the API-key login to the key's keyed digest. A
 // missing or unreadable file resolves to nothing. Every caller that runs codex (sessions, the
 // chat backend, the image provider) reads it when its call starts.
 func Login() routes.Launch {
@@ -67,9 +68,10 @@ func loginOf(b []byte) routes.Launch {
 				id = idTokenAccount(a.Tokens.IDToken)
 			}
 		}
-		return routes.Launch{Route: routes.RouteChatGPTSubscription, Binding: routes.AccountBinding(routes.RouteChatGPTSubscription, id)}
+		// A file whose tokens name no account binds to the login's generation (D5b's fallback).
+		return routes.Launch{Route: routes.RouteChatGPTSubscription, Binding: credbind.AccountOrGeneration(routes.RouteChatGPTSubscription, id)}
 	case "apikey":
-		return routes.Launch{Route: routes.RouteOpenAIAPI, Binding: routes.KeyBinding(apiKeySlot, key)}
+		return routes.Launch{Route: routes.RouteOpenAIAPI, Binding: credbind.Key(apiKeySlot, key)}
 	}
 	return routes.Launch{}
 }

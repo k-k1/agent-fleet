@@ -43,7 +43,9 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
 // mechanismAccount is the value muse stores for a device-code account login — the
@@ -244,6 +246,8 @@ func HandlePoll(w http.ResponseWriter, r *http.Request) {
 		if f := loginFlows.Take(req.FlowID); f != nil {
 			f.Close()
 			stored = true
+			// The flow that saw the sign-in finish: a new credential instance (ADR 0138 D5b).
+			credbind.Bump(routes.RouteMuseLogin)
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
 		return
@@ -283,6 +287,8 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "logout_failed", detail)
 		return
 	}
+	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
+	credbind.Bump(routes.RouteMuseLogin)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "muse"})
 }
 
@@ -332,5 +338,7 @@ func HandleAPIKey(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "auth_failed", "muse auth set wrote no credential")
 		return
 	}
+	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
+	credbind.Bump(routes.RouteMuseLogin)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "metered": true})
 }

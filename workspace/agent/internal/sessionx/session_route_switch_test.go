@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -50,8 +51,12 @@ func newSwitchEnv(t *testing.T, route *routes.Selection) *switchEnv {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	setAnthropicKey(t, "sk-ant-api03-switch-test")
 	e := &switchEnv{t: t, name: "sw1", alive: true, limitKind: agents.LimitWindow, atLimit: true, state: agents.StateLimited}
+	var launch *routes.Launch
+	if route != nil {
+		launch = &routes.Launch{Route: route.Route, Binding: switchTestOrigBinding}
+	}
 	session.WriteMeta(session.Meta{Name: e.name, Kind: session.KindClaude, Dir: t.TempDir(), Route: route,
-		CreatedAt: "2026-11-05T10:00:00+09:00"})
+		LaunchRoute: launch, CreatedAt: "2026-11-05T10:00:00+09:00"})
 	if err := RateLimitStates.Write(e.name, rateLimitState{
 		At: time.Now().Add(-time.Hour).Format(time.RFC3339), ResumeAt: time.Now().Add(2 * time.Hour).Format(time.RFC3339),
 		ScheduleID: "sch_old", ScheduleTries: 1,
@@ -122,6 +127,24 @@ func (e *switchEnv) code(err error) string {
 
 var subscriptionRoute = &routes.Selection{Route: "anthropic-subscription"}
 
+// switchTestOrigBinding is the launch record's binding a switch env starts with.
+const switchTestOrigBinding = "anthropic-subscription@0011223344556677"
+
+// checkLaunchRecord asserts the session's launch record is on route: the original record when
+// that is the route it started on, else the switch target's, bound to the key (ADR 0138 D11).
+func checkLaunchRecord(t *testing.T, m session.Meta, route string) {
+	t.Helper()
+	l := m.LaunchRoute
+	switch {
+	case l == nil || l.Route != route:
+		t.Errorf("launch record = %+v, want route %q", l, route)
+	case route == "anthropic-subscription" && l.Binding != switchTestOrigBinding:
+		t.Errorf("launch record binding = %q, want the original %q back", l.Binding, switchTestOrigBinding)
+	case route == "anthropic-api" && (l.Binding == "" || strings.Contains(l.Binding, "sk-ant")):
+		t.Errorf("launch record binding = %q, want the key's keyed binding", l.Binding)
+	}
+}
+
 func indexOf(events []string, want string) int {
 	for i, ev := range events {
 		if ev == want {
@@ -144,6 +167,11 @@ func TestRouteSwitchRunsEveryStepInOrder(t *testing.T) {
 	if len(m.RouteSwitches) != 1 || m.RouteSwitches[0].From == nil || m.RouteSwitches[0].From.Route != "anthropic-subscription" ||
 		m.RouteSwitches[0].To.Route != "anthropic-api" || m.RouteSwitches[0].At == "" {
 		t.Fatalf("boundary = %+v", m.RouteSwitches)
+	}
+	// The consented switch moves the launch record with the selection, in the same write.
+	checkLaunchRecord(t, m, "anthropic-api")
+	if m.LaunchRoute.Binding != credbind.Key("ANTHROPIC_API_KEY", "sk-ant-api03-switch-test") {
+		t.Errorf("launch record binding = %q, want the key's keyed binding", m.LaunchRoute.Binding)
 	}
 	// The old booking is deleted at the CP BEFORE the old runtime is stopped, which is before the
 	// new one starts: a stale "carry on" can never find the metered route.
@@ -263,6 +291,7 @@ func TestRouteSwitchRollsBackWhenTheNewRouteWillNotStart(t *testing.T) {
 	if m.Route == nil || m.Route.Route != "anthropic-subscription" || len(m.RouteSwitches) != 0 {
 		t.Fatalf("selection after rollback = %+v switches=%+v", m.Route, m.RouteSwitches)
 	}
+	checkLaunchRecord(t, m, "anthropic-subscription")
 	if got := e.launches; len(got) != 2 || routeNameOf(got[0].Route) != "anthropic-api" || routeNameOf(got[1].Route) != "anthropic-subscription" {
 		t.Fatalf("launches = %+v, want the failed new route then the old one", routes0(got))
 	}
@@ -537,6 +566,7 @@ func TestRouteSwitchCrashAtEveryStepBoundary(t *testing.T) {
 			if routeNameOf(m.Route) != tc.route || len(m.RouteSwitches) != tc.switches {
 				t.Errorf("route=%q switches=%d, want %q/%d", routeNameOf(m.Route), len(m.RouteSwitches), tc.route, tc.switches)
 			}
+			checkLaunchRecord(t, m, tc.route)
 			if e.alive != tc.alive {
 				t.Errorf("alive=%v, want %v", e.alive, tc.alive)
 			}

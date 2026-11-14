@@ -247,7 +247,7 @@ selection, such as a CLI-locked login. Every kind that runs a model declares at 
 is not one of the catalogued routes, adds a route id to `internal/routes` with its class and
 destination. It also implements `agents.CredentialResolver`
 (`TestEveryKindWithFixedRoutesResolves`): `ResolveLaunch` says which fixed route a session runs
-on and binds the credential with `routes.KeyBinding` or `routes.AccountBinding` (never a secret),
+on and binds the credential through `internal/credbind` (a keyed digest, never a secret or a plain hash),
 which the create records as the session's `launchRoute` (ADR 0138 D11); `UsableRoutes` is what the
 live kind catalog reports. A new kind adds a row to the snapshot, so regenerate it the same way:
 

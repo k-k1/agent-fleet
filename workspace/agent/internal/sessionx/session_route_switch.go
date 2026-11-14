@@ -68,6 +68,12 @@ type routeSwitchRecord struct {
 	From    *routes.Selection `json:"from,omitempty"`
 	To      routes.Selection  `json:"to"`
 	Step    string            `json:"step"`
+	// FromLaunch and ToLaunch are the session's launch-time record before and after (ADR 0138
+	// D11): a consented switch is the one recorded transition that moves it, written with the new
+	// selection in one write and put back by a rollback. FromLaunch is nil on a session created
+	// before the record existed.
+	FromLaunch *routes.Launch `json:"fromLaunch,omitempty"`
+	ToLaunch   *routes.Launch `json:"toLaunch,omitempty"`
 	// At is the boundary instant (Meta.RouteSwitch.At); empty until the old runtime is stopped.
 	At       string `json:"at,omitempty"`
 	WasAlive bool   `json:"wasAlive,omitempty"`
@@ -351,7 +357,8 @@ func runRouteSwitch(ctx context.Context, name, want string) (*routeSwitchWire, e
 	ctx = context.WithoutCancel(ctx)
 	run := &routeSwitchRun{name: name, orig: m, rec: routeSwitchRecord{
 		Session: name, From: m.Route.Clone(), To: to, WasAlive: routeSwitchAlive(m),
-		StartedAt: time.Now().Format(time.RFC3339),
+		StartedAt:  time.Now().Format(time.RFC3339),
+		FromLaunch: m.LaunchRoute.Clone(), ToLaunch: switchLaunchOf(m.Kind, to),
 	}}
 	log.Printf("route-switch: %s: %s -> %s", name, routeNameOf(m.Route), to.Route)
 	if err := run.persist(rsBegun); err != nil {
@@ -374,6 +381,13 @@ func runRouteSwitch(ctx context.Context, name, want string) (*routeSwitchWire, e
 	}
 	log.Printf("route-switch: %s: now on %s", name, to.Route)
 	return res, nil
+}
+
+// switchLaunchOf is the launch record a switch to sel writes: the target selection as a create
+// on it would record it (launchOfSelection, bound by the time the switch runs).
+func switchLaunchOf(kind string, sel routes.Selection) *routes.Launch {
+	a, _ := RegisteredAgent(NormalizeKind(kind))
+	return launchOfSelection(a, sel)
 }
 
 func routeNameOf(s *routes.Selection) string {
@@ -467,6 +481,7 @@ func (r *routeSwitchRun) store() error {
 			return false
 		}
 		cur.Route = r.rec.To.Clone()
+		cur.LaunchRoute = r.rec.ToLaunch.Clone()
 		cur.RouteSwitches = append(cur.RouteSwitches, session.RouteSwitch{At: r.rec.At, From: r.rec.From.Clone(), To: r.rec.To})
 		return true
 	})
@@ -591,6 +606,7 @@ func rollbackRouteSwitch(name string, rec routeSwitchRecord) (relaunch, rollback
 			}
 			c.RouteSwitches = kept
 			c.Route = rec.From.Clone()
+			c.LaunchRoute = rec.FromLaunch.Clone()
 			return true
 		})
 		// The new selection's tokens end with it; the old route's relaunch below mints its own.

@@ -2,18 +2,23 @@ package cursor
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 var _ agents.CredentialResolver = agentImpl{}
 
-// Login is what a cursor session runs on (ADR 0138 D2, D5b): its one login route, bound to the
-// account `cursor-agent status` reports (cached, the probe /connections uses), which a token refresh keeps and a sign-in to another account changes. The
-// route is resolved even when nothing is signed in, since it is the only one the CLI can use;
-// the binding is then empty.
+// Login is what a cursor session runs on (ADR 0138 D2, D5b): cursor-login, bound to the account
+// `cursor-agent status` reports. It reads the cached probe without waiting (Peek): a create must
+// not pay the CLI's seconds, so a cold probe leaves the binding unproven. A login the probe shows
+// with no e-mail falls back to the login's generation.
 func Login() routes.Launch {
-	return routes.Launch{Route: routes.RouteCursorLogin, Binding: routes.AccountBinding(routes.RouteCursorLogin, probeStatus().UserInfo.Email)}
+	l := routes.Launch{Route: routes.RouteCursorLogin}
+	if st, ok := statusProbe.Peek(); ok && st.IsAuthenticated {
+		l.Binding = credbind.AccountOrGeneration(routes.RouteCursorLogin, st.UserInfo.Email)
+	}
+	return l
 }
 
 // ResolveLaunch implements agents.CredentialResolver.

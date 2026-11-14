@@ -222,8 +222,8 @@ cd workspace/agent && go test -run TestKindCatalogSnapshot -update-kind-catalog 
 モデルを動かす種別はどれも最低 1 つのルートを宣言します（`TestEveryCredentialPathHasARoute`）。新しい種別は
 `FixedRoutes()` を実装し、そのログインがカタログに無ければ `internal/routes` にルート id を分類・送り先付きで足します。
 あわせて `agents.CredentialResolver` も実装します（`TestEveryKindWithFixedRoutesResolves`）。`ResolveLaunch` は
-セッションがどの固定ルートで動くかを答え、資格情報を `routes.KeyBinding` か `routes.AccountBinding` で束ねます
-（秘密は入れません）。作成時にこれがセッションの `launchRoute` として記録されます（ADR 0138 D11）。
+セッションがどの固定ルートで動くかを答え、資格情報を `internal/credbind` で束ねます
+（鍵付きダイジェストで、秘密も素のハッシュも入れません）。作成時にこれがセッションの `launchRoute` として記録されます（ADR 0138 D11）。
 `UsableRoutes` はライブの種別カタログが報告する値です。
 新しい種別はスナップショットにも 1 行増えるので、同じ要領で作り直します。
 

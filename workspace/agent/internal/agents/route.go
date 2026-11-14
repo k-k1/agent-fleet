@@ -55,8 +55,8 @@ func FixedRoutesOf(a Agent) []string {
 // mechanism), never from the kind.
 type CredentialResolver interface {
 	// ResolveLaunch says what a session with NO explicit selection runs on if it is launched now:
-	// one of FixedRoutes and the binding of the credential behind it (routes.KeyBinding,
-	// routes.AccountBinding). It must read no secret into the result. An empty Route is "cannot
+	// one of FixedRoutes and the binding of the credential behind it (credbind.Key,
+	// credbind.Account). It must read no secret into the result. An empty Route is "cannot
 	// tell"; an empty Binding is a route whose credential instance cannot be identified.
 	ResolveLaunch(m session.Meta) routes.Launch
 	// UsableRoutes are the routes, selectable or fixed, whose credential this Workspace holds
@@ -64,9 +64,10 @@ type CredentialResolver interface {
 	UsableRoutes() []string
 }
 
-// LaunchBinder is an optional capability of a CredentialResolver: the binding of an explicit
-// selection whose stored connection does not identify the credential instance (a subscription
-// selection names no connection, since there is only one login). "" when it cannot tell.
+// LaunchBinder is an optional capability of a CredentialResolver: the launch record's binding of
+// an explicit selection, where the stored connection does not identify the credential instance
+// (a subscription selection names no connection) or is not fit to travel (a plain key
+// fingerprint, credbind). "" keeps the stored connection.
 type LaunchBinder interface {
 	LaunchBinding(sel RouteSelection) string
 }

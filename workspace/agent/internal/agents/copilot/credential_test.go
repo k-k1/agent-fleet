@@ -3,6 +3,7 @@ package copilot
 import (
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
@@ -15,7 +16,7 @@ func TestLoginBindsTheGitHubAccount(t *testing.T) {
 
 	set("octo", true)
 	a := Login()
-	if a.Route != routes.RouteCopilotLogin || a.Binding != routes.AccountBinding(routes.RouteCopilotLogin, "octo") {
+	if a.Route != routes.RouteCopilotLogin || a.Binding != credbind.Account(routes.RouteCopilotLogin, "octo") {
 		t.Fatalf("Login = %+v", a)
 	}
 	if u := (agentImpl{}).UsableRoutes(); len(u) != 1 || u[0] != routes.RouteCopilotLogin {

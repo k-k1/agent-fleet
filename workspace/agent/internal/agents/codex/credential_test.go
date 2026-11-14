@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
@@ -36,7 +37,7 @@ func TestLoginOf(t *testing.T) {
 	}
 
 	k := loginOf([]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"sk-one"}`))
-	if k.Route != routes.RouteOpenAIAPI || k.Binding != routes.KeyBinding(apiKeySlot, "sk-one") {
+	if k.Route != routes.RouteOpenAIAPI || k.Binding != credbind.Key(apiKeySlot, "sk-one") {
 		t.Fatalf("api-key login = %+v", k)
 	}
 	if n := loginOf([]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"sk-two"}`)); n.Binding == k.Binding {
@@ -49,5 +50,24 @@ func TestLoginOf(t *testing.T) {
 		if l := loginOf([]byte(bad)); l != (routes.Launch{}) {
 			t.Errorf("%q resolved to %+v", bad, l)
 		}
+	}
+}
+
+// A ChatGPT login whose tokens name no account binds to the login's generation.
+func TestChatGPTLoginWithoutAccountIDUsesTheGeneration(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := func(access string) []byte {
+		return []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"` + jwt(`{}`) + `","access_token":"` + access + `"}}`)
+	}
+	a := loginOf(f("t1"))
+	if a.Route != routes.RouteChatGPTSubscription || a.Binding == "" || a.Binding != credbind.Generation(routes.RouteChatGPTSubscription) {
+		t.Fatalf("identityless login = %+v", a)
+	}
+	if r := loginOf(f("t2")); r != a {
+		t.Errorf("a token refresh changed the launch: %+v", r)
+	}
+	credbind.Bump(routes.RouteChatGPTSubscription)
+	if r := loginOf(f("t1")); r.Binding == a.Binding {
+		t.Error("a replaced login kept the binding")
 	}
 }

@@ -1,13 +1,12 @@
 package muse
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -17,11 +16,12 @@ var _ agents.CredentialResolver = agentImpl{}
 // Login is what muse runs on now (ADR 0138 D2, D5b): META_API_KEY in the Agent's environment
 // first, because muse says it "always takes priority over the account login" (envKeySet), then
 // auth.json told apart by mechanism. The account login binds to the account's e-mail, which a
-// token refresh keeps; a stored key binds to its fingerprint. Nothing signed in resolves to
+// token refresh keeps (the login's generation when the file names none); a stored key binds to
+// its keyed digest. Nothing signed in resolves to
 // nothing.
 func Login() routes.Launch {
 	if v := strings.TrimSpace(os.Getenv("META_API_KEY")); v != "" {
-		return routes.Launch{Route: routes.RouteMetaAPI, Binding: routes.KeyBinding("META_API_KEY", v)}
+		return routes.Launch{Route: routes.RouteMetaAPI, Binding: credbind.Key("META_API_KEY", v)}
 	}
 	b, err := os.ReadFile(authPath())
 	if err != nil {
@@ -30,8 +30,8 @@ func Login() routes.Launch {
 	return loginOf(b)
 }
 
-// loginOf reads auth.json. The key is fingerprinted from its raw JSON bytes, so no code path
-// here holds it as a string (the rule readCredential keeps).
+// loginOf reads auth.json. The key is digested from its raw JSON value, never decoded, as
+// readCredential keeps it.
 func loginOf(b []byte) routes.Launch {
 	var f authFile
 	if json.Unmarshal(b, &f) != nil {
@@ -50,14 +50,14 @@ func loginOf(b []byte) routes.Launch {
 	}
 	switch mech := str("mechanism"); {
 	case mech != "" && mech != mechanismAPIKey:
-		return routes.Launch{Route: routes.RouteMuseLogin, Binding: routes.AccountBinding(routes.RouteMuseLogin, str("user_email"))}
+		// No e-mail in the file: the login's generation (D5b's fallback).
+		return routes.Launch{Route: routes.RouteMuseLogin, Binding: credbind.AccountOrGeneration(routes.RouteMuseLogin, str("user_email"))}
 	case hasValue(meta["api_key"]):
-		h := sha256.Sum256([]byte(strings.TrimSpace(string(meta["api_key"]))))
-		return routes.Launch{Route: routes.RouteMetaAPI, Binding: "muse-api-key@" + hex.EncodeToString(h[:])[:16]}
+		return routes.Launch{Route: routes.RouteMetaAPI, Binding: credbind.Key("muse-api-key", string(meta["api_key"]))}
 	case hasValue(meta["access_token"]):
-		// A token with no mechanism and no key: a shape not measured. It is a login, but which
-		// account cannot be told.
-		return routes.Launch{Route: routes.RouteMuseLogin}
+		// A token with no mechanism and no key: a shape not measured. It is a login that names no
+		// account, so it binds to the login's generation.
+		return routes.Launch{Route: routes.RouteMuseLogin, Binding: credbind.Generation(routes.RouteMuseLogin)}
 	}
 	return routes.Launch{}
 }

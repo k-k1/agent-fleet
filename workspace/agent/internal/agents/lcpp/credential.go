@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -26,14 +27,13 @@ var memberConn = func() (secrets.LcppConn, bool) {
 // Connection is what an lcpp call runs on now (ADR 0138 D2, D5b), by the rule the engine seam
 // applies (package main's harnessEngineToken): the member's own connection wins over the
 // deployment's engine. The member route binds to the endpoint and key together, so repointing
-// the URL or replacing the key is another connection; the endpoint is hashed, never recorded.
+// the URL or replacing the key is another connection; neither is recoverable from the binding.
 func Connection() routes.Launch {
 	if c, ok := memberConn(); ok {
-		id := strings.TrimRight(strings.TrimSpace(c.URL), "/") + "\x00" + strings.TrimSpace(c.APIKey)
-		return routes.Launch{Route: routes.RouteMemberLlamacpp, Binding: routes.AccountBinding(routes.RouteMemberLlamacpp, id)}
+		return routes.Launch{Route: routes.RouteMemberLlamacpp, Binding: credbind.Endpoint(routes.RouteMemberLlamacpp, c.URL, c.APIKey)}
 	}
 	// The engine's token is minted per session; the catalogue key is the stable part.
-	return routes.Launch{Route: routes.RouteAFEngineLLM, Binding: routes.RouteAFEngineLLM + "@" + engineKey}
+	return routes.Launch{Route: routes.RouteAFEngineLLM, Binding: credbind.Named(routes.RouteAFEngineLLM, engineKey)}
 }
 
 // ResolveLaunch implements agents.CredentialResolver.

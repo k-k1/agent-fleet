@@ -2,18 +2,22 @@ package agy
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 var _ agents.CredentialResolver = agentImpl{}
 
-// Login is what a agy session runs on (ADR 0138 D2, D5b): its one login route, bound to the
-// account named by the token file's id_token_email, which a token refresh keeps and a sign-in to another account changes. The
-// route is resolved even when nothing is signed in, since it is the only one the CLI can use;
-// the binding is then empty.
+// Login is what an agy session runs on (ADR 0138 D2, D5b): agy-login, bound to the account the
+// token file's id_token_email names, which a refresh keeps; a token file without one falls back
+// to the login's generation. Nothing signed in leaves the binding empty.
 func Login() routes.Launch {
-	return routes.Launch{Route: routes.RouteAgyLogin, Binding: routes.AccountBinding(routes.RouteAgyLogin, accountEmail())}
+	l := routes.Launch{Route: routes.RouteAgyLogin}
+	if SignedIn() {
+		l.Binding = credbind.AccountOrGeneration(routes.RouteAgyLogin, accountEmail())
+	}
+	return l
 }
 
 // ResolveLaunch implements agents.CredentialResolver.

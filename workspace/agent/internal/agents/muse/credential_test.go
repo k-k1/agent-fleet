@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
@@ -38,7 +39,27 @@ func TestLoginModes(t *testing.T) {
 		}
 	}
 	t.Setenv("META_API_KEY", "env-key")
-	if l := Login(); l.Route != routes.RouteMetaAPI || l.Binding != routes.KeyBinding("META_API_KEY", "env-key") {
+	if l := Login(); l.Route != routes.RouteMetaAPI || l.Binding != credbind.Key("META_API_KEY", "env-key") {
 		t.Errorf("META_API_KEY in the environment = %+v", l)
+	}
+}
+
+// An account login whose file names no account binds to the login's generation: stable across a
+// refresh, moved by the Agent's own login flow (ADR 0138 D5b's fallback).
+func TestLoginWithoutAccountIDUsesTheGeneration(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	noEmail := func(token string) []byte {
+		return []byte(`{"providers":{"meta":{"access_token":"` + token + `","mechanism":"oauth","obtained_via":"device_code"}}}`)
+	}
+	a := loginOf(noEmail("t1"))
+	if a.Route != routes.RouteMuseLogin || a.Binding == "" || a.Binding != credbind.Generation(routes.RouteMuseLogin) {
+		t.Fatalf("identityless login = %+v", a)
+	}
+	if r := loginOf(noEmail("t2")); r != a {
+		t.Errorf("a token refresh changed the launch: %+v", r)
+	}
+	credbind.Bump(routes.RouteMuseLogin)
+	if r := loginOf(noEmail("t1")); r.Binding == a.Binding {
+		t.Error("a replaced login kept the binding")
 	}
 }

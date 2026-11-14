@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -38,38 +39,58 @@ func resolveDefault(getenv func(string) string, settingFiles []string, account f
 	}
 	switch {
 	case key != "":
-		return routes.Launch{Route: RouteAPI, Binding: routes.KeyBinding(apiKeyConnection, key)}
+		return routes.Launch{Route: RouteAPI, Binding: credbind.Key(apiKeyConnection, key)}
 	case tok != "":
-		return routes.Launch{Route: RouteSubscription, Binding: routes.KeyBinding("CLAUDE_CODE_OAUTH_TOKEN", tok)}
+		return routes.Launch{Route: RouteSubscription, Binding: credbind.Key("CLAUDE_CODE_OAUTH_TOKEN", tok)}
 	}
-	return routes.Launch{Route: RouteSubscription, Binding: routes.AccountBinding(RouteSubscription, account())}
+	return routes.Launch{Route: RouteSubscription, Binding: subscriptionBinding(account)}
+}
+
+// subscriptionBinding binds the OAuth login to the account .claude.json names, the login's
+// generation when it names none, and nothing when there is no credentials file to bind.
+func subscriptionBinding(account func() string) string {
+	if _, err := os.Stat(credsPath()); err != nil {
+		return ""
+	}
+	return credbind.AccountOrGeneration(RouteSubscription, account())
 }
 
 var _ agents.LaunchBinder = agentImpl{}
 
-// LaunchBinding implements agents.LaunchBinder: an explicit subscription selection runs on the
-// OAuth file alone (its launch unsets the environment tokens), so it binds to the account
-// .claude.json names. The other routes are bound by BindRoute.
+// LaunchBinding implements agents.LaunchBinder. An explicit subscription selection runs on the
+// OAuth file alone (its launch unsets the environment tokens), so it binds to the login. An
+// anthropic-api selection stores the key's plain fingerprint for BindRoute's own check; the
+// record gets the keyed binding of the same key instead, since it travels further (credbind).
+// Bedrock's stored binding names a profile's identity, not a secret, and is kept.
 func (agentImpl) LaunchBinding(sel agents.RouteSelection) string {
-	if sel.Route == RouteSubscription {
-		return routes.AccountBinding(RouteSubscription, accountID())
+	switch sel.Route {
+	case RouteSubscription:
+		return subscriptionBinding(accountID)
+	case RouteAPI:
+		k, _ := loadAPIKey()
+		if _, fp := splitConnection(sel.Connection); k == "" || fp != "" && fp != keyFingerprint(k) {
+			return ""
+		}
+		return credbind.Key(apiKeyConnection, k)
 	}
 	return ""
 }
 
 // UsableRoutes implements agents.CredentialResolver: the subscription while claude's credentials
-// file exists, anthropic-api while a key is stored, and each offered Bedrock route (its profile or
-// grant is checked at create).
+// file exists or CLAUDE_CODE_OAUTH_TOKEN is in the environment, anthropic-api while a key is
+// stored or ANTHROPIC_API_KEY is in the environment, and an offered Bedrock route while the
+// gateway holds a credential for it (a marked profile, the deployment's grant). An acceptance
+// gate alone proves nothing is held.
 func (a agentImpl) UsableRoutes() []string {
 	var out []string
-	if _, err := os.Stat(credsPath()); err == nil {
+	if _, err := os.Stat(credsPath()); err == nil || strings.TrimSpace(os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")) != "" {
 		out = append(out, RouteSubscription)
 	}
-	if k, _ := loadAPIKey(); k != "" {
+	if k, _ := loadAPIKey(); k != "" || strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
 		out = append(out, RouteAPI)
 	}
 	for _, r := range a.OfferedRoutes() {
-		if isBedrock(r) {
+		if isBedrock(r) && agents.GatewayHolds(r) {
 			out = append(out, r)
 		}
 	}

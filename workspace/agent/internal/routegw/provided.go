@@ -97,6 +97,27 @@ func (g *Gateway) Offered(route string) bool {
 	return ref == nil
 }
 
+// Holds is agents.RouteHolding. bedrock: a profile marked as a model route in the last Settings
+// list the CP gave (cached; no CP call). A provided route: Offered.
+func (g *Gateway) Holds(route string) bool {
+	if isProvided(route) {
+		return g.Offered(route)
+	}
+	if route != RouteBedrock {
+		return false
+	}
+	ps, _, ok := awsx.CachedSettings()
+	if !ok {
+		return false
+	}
+	for _, p := range ps {
+		if p.ModelRoute {
+			return true
+		}
+	}
+	return false
+}
+
 // bound checks a selection's connection against the CP's current binding: empty takes it, a
 // different one is a source the CP has re-pointed, and the session never follows it.
 func bound(sel agents.RouteSelection, u CPUsable) *refusal {

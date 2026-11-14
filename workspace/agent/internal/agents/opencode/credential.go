@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -35,12 +36,12 @@ func keyRoutes() map[string]string {
 }
 
 // credentialView is what the resolution reads: the stored keys, the billing choice and the
-// opencode.ai account. A seam for tests.
+// opencode.ai account as last seen (no daemon round trip). A seam for tests.
 var credentialView = func() (keys map[string]string, pref string, account oauthState) {
 	if s, err := secrets.Load(); err == nil {
 		keys = s.Opencode
 	}
-	return keys, UsagePref(), oauthStatus()
+	return keys, UsagePref(), oauthCached()
 }
 
 // ResolveLaunch implements agents.CredentialResolver: the route of the model the session is
@@ -59,7 +60,7 @@ func resolveModel(model string, keys map[string]string, pref string, acct oauthS
 		return routes.Launch{}
 	}
 	if slices.Contains(engines, prov) {
-		return routes.Launch{Route: routes.RouteAFEngineLLM, Binding: routes.RouteAFEngineLLM + "@llm"}
+		return routes.Launch{Route: routes.RouteAFEngineLLM, Binding: credbind.Named(routes.RouteAFEngineLLM, "llm")}
 	}
 	if p, ok := providerKeys[prov]; ok {
 		if keys[p.key] == "" {
@@ -67,38 +68,54 @@ func resolveModel(model string, keys map[string]string, pref string, acct oauthS
 			// `auth login`), which would be another class altogether.
 			return routes.Launch{}
 		}
-		return routes.Launch{Route: p.route, Binding: routes.KeyBinding(p.key, keys[p.key])}
+		return routes.Launch{Route: p.route, Binding: credbind.Key(p.key, keys[p.key])}
 	}
 	switch prov {
 	case "opencode", "opencode-go":
-		route := routes.RouteOpencodeZen
-		if prov == "opencode-go" {
-			route = routes.RouteOpencodeGo
-		}
-		if pref == UsageFree {
-			// The zero-auth tier: no credential, and OPENCODE_API_KEY is dropped from the launch.
-			return routes.Launch{Route: route}
-		}
-		key, signedIn := keys[opencodeKeyEnv], acct.connected && acct.id != ""
-		switch {
-		case key != "" && signedIn:
-			// Either may pay (opencode gates paid models on the OR of the two); which one did is
-			// not measured.
-			return routes.Launch{Route: route}
-		case key != "":
-			return routes.Launch{Route: route, Binding: routes.KeyBinding(opencodeKeyEnv, key)}
-		case signedIn:
-			// The Console account pays for its org's models: the account route.
-			return routes.Launch{Route: routes.RouteOpencodeAccount, Binding: routes.AccountBinding(routes.RouteOpencodeAccount, acct.id)}
-		}
-		// A free model with no credential still goes to opencode.ai; the ledger files it under Zen.
-		return routes.Launch{Route: route}
+		return resolveOpencodeAI(prov, keys, pref, acct)
 	case bedrockProvider:
 		// Bedrock runs only on an explicit selection (the route's own launch); without one the
 		// AWS credential chain decides, which cannot be told.
 		return routes.Launch{}
 	}
 	return routes.Launch{Route: routes.RouteCustomAPI}
+}
+
+// resolveOpencodeAI resolves a model on opencode.ai's own providers. Who pays is proven only
+// when exactly one payer can be: the Zen/Go key alone (the account known to be signed out), or
+// the Console account alone (no key on the launch). The account state comes from the cached view
+// (oauthCached), never a daemon round trip; an unknown state, both payers at once (opencode
+// gates paid models on the OR of the two, and which one pays is not measured), or a billing
+// choice that keeps opencode.ai out resolves to nothing, route included, since the two payers
+// are different classes.
+func resolveOpencodeAI(prov string, keys map[string]string, pref string, acct oauthState) routes.Launch {
+	route := routes.RouteOpencodeZen
+	if prov == "opencode-go" {
+		route = routes.RouteOpencodeGo
+	}
+	if pref == UsageOwn || !acct.known {
+		return routes.Launch{}
+	}
+	key := keys[opencodeKeyEnv]
+	if pref == UsageFree {
+		key = "" // the launch drops it (keyEnv)
+	}
+	signedIn := acct.connected
+	switch {
+	case key != "" && signedIn:
+		return routes.Launch{}
+	case key != "":
+		return routes.Launch{Route: route, Binding: credbind.Key(opencodeKeyEnv, key)}
+	case signedIn && acct.id != "":
+		return routes.Launch{Route: routes.RouteOpencodeAccount, Binding: credbind.Account(routes.RouteOpencodeAccount, acct.id)}
+	case signedIn:
+		return routes.Launch{}
+	case prov == "opencode":
+		// No credential at all: a free model, which still goes to opencode.ai and which the
+		// ledger files under Zen.
+		return routes.Launch{Route: routes.RouteOpencodeZen}
+	}
+	return routes.Launch{}
 }
 
 // engineProviderIDs are the provider ids of the deployment's engines in opencode's config (the
@@ -124,11 +141,16 @@ func engineProviderIDs() []string {
 }
 
 // UsableRoutes implements agents.CredentialResolver: every route the stored keys, the account
-// login, the billing choice and the engine config open now, and bedrock while it is offered.
+// login, the billing choice and the engine config open now, and bedrock while it is offered and
+// the gateway holds a marked profile for it.
 func (a agentImpl) UsableRoutes() []string {
 	keys, pref, acct := credentialView()
 	out := usableOf(keys, pref, acct, HasEngineProviders())
-	out = append(out, a.OfferedRoutes()...)
+	for _, r := range a.OfferedRoutes() {
+		if agents.GatewayHolds(r) {
+			out = append(out, r)
+		}
+	}
 	slices.Sort(out)
 	return slices.Compact(out)
 }

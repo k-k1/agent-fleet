@@ -3,6 +3,7 @@ package lcpp
 import (
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -14,8 +15,9 @@ func TestConnection(t *testing.T) {
 	t.Cleanup(func() { memberConn = old })
 	set := func(c secrets.LcppConn, ok bool) { memberConn = func() (secrets.LcppConn, bool) { return c, ok } }
 
+	t.Setenv("HOME", t.TempDir())
 	set(secrets.LcppConn{}, false)
-	if l := Connection(); l != (routes.Launch{Route: routes.RouteAFEngineLLM, Binding: "af-engine-llm@llm"}) {
+	if l := Connection(); l != (routes.Launch{Route: routes.RouteAFEngineLLM, Binding: credbind.Named(routes.RouteAFEngineLLM, "llm")}) {
 		t.Errorf("engine = %+v", l)
 	}
 	set(secrets.LcppConn{URL: "http://gpu.example:8080/", APIKey: "k1"}, true)

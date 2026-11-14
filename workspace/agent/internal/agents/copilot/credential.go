@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -28,7 +29,7 @@ var githubLogin = func() (login string, connected bool) {
 // the binding; connecting another account changes it.
 func Login() routes.Launch {
 	login, _ := githubLogin()
-	return routes.Launch{Route: routes.RouteCopilotLogin, Binding: routes.AccountBinding(routes.RouteCopilotLogin, login)}
+	return routes.Launch{Route: routes.RouteCopilotLogin, Binding: credbind.Account(routes.RouteCopilotLogin, login)}
 }
 
 // ResolveLaunch implements agents.CredentialResolver.
