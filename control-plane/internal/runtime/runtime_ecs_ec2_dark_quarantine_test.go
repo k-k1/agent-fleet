@@ -699,3 +699,27 @@ func TestPoolViewQuarantineFlagsAgreeOnEveryPath(t *testing.T) {
 		})
 	}
 }
+
+// The screen's bake-capacity count and the baker's own (BakeBlocked) must agree when a rung-L2
+// box is held out: both leave it out of the slots in use.
+func TestPoolViewBakeCountAgreesWithBakeBlockedWithAnL2Slot(t *testing.T) {
+	ctx := context.Background()
+	w := quarantineWorld(t, false)
+	w.f.pool.maxSlots = 4
+	w.h.ec2.addSlot("i-n1", "ap-northeast-1a", "m7i.large", true, false)
+	w.h.ec2.addSlot("i-n2", "ap-northeast-1a", "m7i.large", true, false)
+	w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: w.count(), Reason: "repeat: x", At: time.Now()})
+
+	blocked, _, err := w.f.BakeBlocked(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := w.f.PoolStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := st.Goldens[0]
+	if blocked || g.Phase == EC2BakePhaseBlocked {
+		t.Fatalf("2 ordinary slots of 4 plus an L2 slot: BakeBlocked=%v, screen phase=%q (slots in use %d); neither may count the L2 box", blocked, g.Phase, g.SlotsInUse)
+	}
+}

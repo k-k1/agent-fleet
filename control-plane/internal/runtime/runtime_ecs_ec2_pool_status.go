@@ -582,8 +582,8 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 	// whole question the operator has is which classes are still slow.
 	slotsInUse, slotRunning := 0, map[string]bool{}
 	for _, s := range st.Slots {
-		if s.Terminable {
-			continue // the same set BakeBlocked counts: af-role=slot, quarantine excluded
+		if s.Quarantined {
+			continue // the same set BakeBlocked counts: af-role=slot, every held-out box (role or rung L2) excluded
 		}
 		slotsInUse++
 		slotRunning[s.InstanceID] = s.State == "running"
