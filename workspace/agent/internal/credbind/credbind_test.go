@@ -103,3 +103,51 @@ func TestKeyFile(t *testing.T) {
 		t.Errorf("a corrupt key still produced %q", b)
 	}
 }
+
+// A generation state that cannot be trusted serves no binding rather than generation zero, and a
+// Bump rebuilds it under a new epoch, so no login is handed a value an earlier state used.
+func TestGenerationFailurePaths(t *testing.T) {
+	freshHome(t)
+	p := filepath.Join(paths.AgentConfigDir(), genFile)
+	g0 := Generation("muse-login")
+	other0 := Generation("agy-login")
+	Bump("muse-login")
+	g1 := Generation("muse-login")
+	if g1 == "" || g1 == g0 || Generation("agy-login") != other0 {
+		t.Fatalf("bump: %q -> %q, agy %q", g0, g1, Generation("agy-login"))
+	}
+	for name, body := range map[string]string{"malformed": "{", "null": "null", "no logins": `{"epoch":"x"}`} {
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if g := Generation("muse-login"); g != "" {
+			t.Errorf("%s state: Generation = %q, want unproven", name, g)
+		}
+	}
+	// Recovery: a Bump rebuilds the state; neither login gets back any earlier binding.
+	Bump("muse-login")
+	for _, g := range []string{Generation("muse-login"), Generation("agy-login")} {
+		if g == "" || g == g0 || g == g1 || g == other0 {
+			t.Errorf("after a rebuild: %q reuses an earlier binding (%q %q %q)", g, g0, g1, other0)
+		}
+	}
+	// A Bump that cannot persist leaves the login unproven, never on its replaced binding.
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	Bump("cursor-login")
+	if g := Generation("cursor-login"); g != "" {
+		t.Errorf("after a failed bump: %q, want unproven", g)
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	Bump("cursor-login")
+	if g := Generation("cursor-login"); g == "" {
+		t.Error("a successful bump did not clear the failure")
+	}
+	t.Cleanup(func() { genMu.Lock(); genPoisoned = map[string]bool{}; genMu.Unlock() })
+}

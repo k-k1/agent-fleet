@@ -38,6 +38,7 @@ import (
 	"net/url"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -207,13 +208,40 @@ func invalidateOAuthStatus() {
 	oauthMu.Unlock()
 }
 
-// oauthCached is the last Console-account view oauthStatus read, without refreshing it: known is
-// false when nothing has been read yet. For a create's launch record, which must not wait on the
-// daemon.
+// oauthCached is the Console-account view for a create's launch record, which must not wait on
+// the daemon: the last view read, only while it is current (read within oauthStatusTTL and not
+// invalidated by a login or a disconnect since). Anything else is unknown (known=false), never
+// the stale-if-error view the Connections card keeps showing, which could name the previous
+// account or call a new one signed out. A view that is not current starts one refresh in the
+// background for the next create; one that is being refreshed right now (the lock is held over
+// the daemon call) is unknown too.
 func oauthCached() oauthState {
-	oauthMu.Lock()
-	defer oauthMu.Unlock()
-	return oauthCache
+	if !oauthMu.TryLock() {
+		return oauthState{}
+	}
+	current := !oauthAt.IsZero() && time.Since(oauthAt) < oauthStatusTTL
+	st := oauthCache
+	oauthMu.Unlock()
+	if !current {
+		refreshOAuthAsync()
+		return oauthState{}
+	}
+	return st
+}
+
+// oauthRefreshing keeps refreshOAuthAsync to one refresh at a time.
+var oauthRefreshing atomic.Bool
+
+// refreshOAuthAsync reads the daemon's view in the background (oauthStatus), at most one at a
+// time. A seam for tests.
+var refreshOAuthAsync = func() {
+	if !oauthRefreshing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer oauthRefreshing.Store(false)
+		oauthStatus()
+	}()
 }
 
 // oauthStatus reports the Console-account connection for Status(). When no daemon is running

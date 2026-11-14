@@ -1,11 +1,17 @@
 package sessionx
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -19,11 +25,11 @@ type resolvingAgent struct {
 
 func (a resolvingAgent) ResolveLaunch(session.Meta) routes.Launch { return a.launch }
 func (resolvingAgent) UsableRoutes() []string                     { return nil }
-func (resolvingAgent) LaunchBinding(sel agents.RouteSelection) string {
+func (resolvingAgent) LaunchBinding(sel agents.RouteSelection) (string, bool) {
 	if sel.Connection == "" {
-		return "bound-by-binder"
+		return "bound-by-binder", true
 	}
-	return "" // keeps the stored connection
+	return "", false // not handled: keeps the stored connection
 }
 
 // Every create records what it launched on (ADR 0138 D11): an explicit selection as stored, an
@@ -93,10 +99,10 @@ func (h hungResolver) ResolveLaunch(session.Meta) routes.Launch {
 	return routes.Launch{Route: "late", Binding: "late"}
 }
 func (hungResolver) UsableRoutes() []string { return nil }
-func (h hungResolver) LaunchBinding(agents.RouteSelection) string {
+func (h hungResolver) LaunchBinding(agents.RouteSelection) (string, bool) {
 	h.entered <- struct{}{}
 	<-h.release
-	return "late"
+	return "late", true
 }
 
 func withHungResolver(t *testing.T) hungResolver {
@@ -185,4 +191,60 @@ func TestLaunchRouteOfIsBounded(t *testing.T) {
 	if el := time.Since(start); el > 2*time.Second {
 		t.Errorf("launchRouteOf took %v", el)
 	}
+}
+
+// fixedBinder answers LaunchBinding with a fixed answer.
+type fixedBinder struct {
+	agents.Agent
+	binding string
+	handled bool
+}
+
+func (f fixedBinder) LaunchBinding(agents.RouteSelection) (string, bool) { return f.binding, f.handled }
+
+// A binder that handles the route is authoritative, "" included: the stored connection (a plain
+// fingerprint for anthropic-api) never stands in for a binding the binder could not compute.
+func TestLaunchOfSelectionBinderIsAuthoritative(t *testing.T) {
+	sel := routes.Selection{Route: "anthropic-api", Connection: "ANTHROPIC_API_KEY@plainfingerprint"}
+	// Wrapped, so only the agents.Agent methods remain: the real claude is itself a binder.
+	base := struct{ agents.Agent }{AgentOf("claude")}
+	for name, tc := range map[string]struct {
+		a    agents.Agent
+		want string
+	}{
+		"no binder":            {base, sel.Connection},
+		"not handled":          {fixedBinder{base, "", false}, sel.Connection},
+		"handled, bound":       {fixedBinder{base, "ANTHROPIC_API_KEY@keyed", true}, "ANTHROPIC_API_KEY@keyed"},
+		"handled, cannot tell": {fixedBinder{base, "", true}, ""},
+	} {
+		if l := launchOfSelection(tc.a, sel); l.Route != sel.Route || l.Binding != tc.want {
+			t.Errorf("%s: %+v, want binding %q", name, l, tc.want)
+		}
+	}
+}
+
+// The real claude record of an explicit anthropic-api selection, through a Workspace whose binding
+// key is unreadable: unproven, never the stored plain fingerprint.
+func TestExplicitAPIRecordWithoutTheBindingKey(t *testing.T) {
+	isolateAgentState(t)
+	setAnthropicKey(t, "sk-ant-api03-record-test")
+	sel := routes.Selection{Route: "anthropic-api", Connection: "ANTHROPIC_API_KEY@" + plainFingerprint("sk-ant-api03-record-test")}
+	ok := switchLaunchOf("claude", sel)
+	if ok.Binding == "" || ok.Binding == sel.Connection {
+		t.Fatalf("with a key: %+v, want the keyed binding", ok)
+	}
+	keyFile := filepath.Join(paths.AgentConfigDir(), "route-binding.key")
+	if err := os.WriteFile(keyFile, []byte("corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	credbind.ResetForTest()
+	t.Cleanup(credbind.ResetForTest)
+	if l := switchLaunchOf("claude", sel); l.Route != "anthropic-api" || l.Binding != "" {
+		t.Errorf("without a usable binding key: %+v, want an unproven binding", l)
+	}
+}
+
+func plainFingerprint(k string) string {
+	h := sha256.Sum256([]byte(k))
+	return hex.EncodeToString(h[:])[:16]
 }

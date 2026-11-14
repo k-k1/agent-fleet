@@ -60,20 +60,21 @@ var _ agents.LaunchBinder = agentImpl{}
 // LaunchBinding implements agents.LaunchBinder. An explicit subscription selection runs on the
 // OAuth file alone (its launch unsets the environment tokens), so it binds to the login. An
 // anthropic-api selection stores the key's plain fingerprint for BindRoute's own check; the
-// record gets the keyed binding of the same key instead, since it travels further (credbind).
-// Bedrock's stored binding names a profile's identity, not a secret, and is kept.
-func (agentImpl) LaunchBinding(sel agents.RouteSelection) string {
+// record gets the keyed binding of the same key instead, since it travels further (credbind),
+// and nothing when that cannot be computed or the key is no longer the one bound. Bedrock's
+// stored binding names a profile's identity, not a secret, and is left to the stored form.
+func (agentImpl) LaunchBinding(sel agents.RouteSelection) (string, bool) {
 	switch sel.Route {
 	case RouteSubscription:
-		return subscriptionBinding(accountID)
+		return subscriptionBinding(accountID), true
 	case RouteAPI:
 		k, _ := loadAPIKey()
 		if _, fp := splitConnection(sel.Connection); k == "" || fp != "" && fp != keyFingerprint(k) {
-			return ""
+			return "", true
 		}
-		return credbind.Key(apiKeyConnection, k)
+		return credbind.Key(apiKeyConnection, k), true
 	}
-	return ""
+	return "", false
 }
 
 // UsableRoutes implements agents.CredentialResolver: the subscription while claude's credentials

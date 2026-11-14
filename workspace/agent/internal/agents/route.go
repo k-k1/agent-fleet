@@ -67,9 +67,10 @@ type CredentialResolver interface {
 // LaunchBinder is an optional capability of a CredentialResolver: the launch record's binding of
 // an explicit selection, where the stored connection does not identify the credential instance
 // (a subscription selection names no connection) or is not fit to travel (a plain key
-// fingerprint, credbind). "" keeps the stored connection.
+// fingerprint, credbind). handled=false leaves the stored connection as the record's binding;
+// handled=true makes the answer authoritative, so "" there is unproven, never the stored form.
 type LaunchBinder interface {
-	LaunchBinding(sel RouteSelection) string
+	LaunchBinding(sel RouteSelection) (binding string, handled bool)
 }
 
 // RoutePlan is what ApplyRoute adds to a launch.

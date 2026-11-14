@@ -55,22 +55,34 @@ func launchRouteOf(m session.Meta) *routes.Launch {
 }
 
 // launchOfSelection is the record of an explicit selection: its route, and the binding the
-// kind's agents.LaunchBinder gives it, else the bound connection BindRoute stored. A binder past
-// the budget leaves the binding unproven.
+// kind's agents.LaunchBinder gives it when it handles the route (authoritative, "" included),
+// else the bound connection BindRoute stored. A binder past the budget leaves the binding
+// unproven: the stored connection may be the very form it exists to replace.
 func launchOfSelection(a agents.Agent, sel routes.Selection) *routes.Launch {
 	l := &routes.Launch{Route: sel.Route, Binding: sel.Connection}
-	if lb, ok := a.(agents.LaunchBinder); ok {
-		got, ok := withinBudget(sel.Route+" LaunchBinding", func() routes.Launch {
-			return routes.Launch{Binding: lb.LaunchBinding(sel)}
-		})
-		switch {
-		case !ok:
-			// The stored connection may be a form the binder exists to replace; unproven is
-			// honest, a guess at which form is fit to travel is not.
-			l.Binding = ""
-		case got.Binding != "":
-			l.Binding = got.Binding
+	lb, ok := a.(agents.LaunchBinder)
+	if !ok {
+		return l
+	}
+	type answer struct {
+		binding string
+		handled bool
+	}
+	ch := make(chan answer, 1)
+	go func() {
+		b, h := lb.LaunchBinding(sel)
+		ch <- answer{b, h}
+	}()
+	t := time.NewTimer(launchResolveBudget)
+	defer t.Stop()
+	select {
+	case got := <-ch:
+		if got.handled {
+			l.Binding = got.binding
 		}
+	case <-t.C:
+		log.Printf("launch route: %s LaunchBinding did not answer within %v; binding recorded as unproven", sel.Route, launchResolveBudget)
+		l.Binding = ""
 	}
 	return l
 }

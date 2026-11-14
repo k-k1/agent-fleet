@@ -81,22 +81,22 @@ func TestLaunchBindingSubscription(t *testing.T) {
 	t.Cleanup(func() { loadAPIKey = old })
 	loadAPIKey = func() (string, error) { return "sk-ant-1", nil }
 	bound := apiKeyConnection + "@" + keyFingerprint("sk-ant-1")
-	if b := (agentImpl{}).LaunchBinding(*sel(RouteAPI, bound)); b != credbind.Key(apiKeyConnection, "sk-ant-1") || strings.Contains(b, keyFingerprint("sk-ant-1")) {
-		t.Errorf("anthropic-api = %q, want the keyed binding instead of the stored fingerprint", b)
+	if b, h := (agentImpl{}).LaunchBinding(*sel(RouteAPI, bound)); !h || b != credbind.Key(apiKeyConnection, "sk-ant-1") || strings.Contains(b, keyFingerprint("sk-ant-1")) {
+		t.Errorf("anthropic-api = %q %v, want the keyed binding instead of the stored fingerprint", b, h)
 	}
-	if b := (agentImpl{}).LaunchBinding(*sel(RouteAPI, apiKeyConnection+"@0000000000000000")); b != "" {
-		t.Errorf("a selection bound to another key = %q, want unproven", b)
+	if b, h := (agentImpl{}).LaunchBinding(*sel(RouteAPI, apiKeyConnection+"@0000000000000000")); !h || b != "" {
+		t.Errorf("a selection bound to another key = %q %v, want handled and unproven", b, h)
 	}
-	if b := (agentImpl{}).LaunchBinding(*sel(RouteBedrock, "p1@us-east-1#0011223344556677")); b != "" {
-		t.Errorf("bedrock = %q, want the stored connection kept", b)
+	if b, h := (agentImpl{}).LaunchBinding(*sel(RouteBedrock, "p1@us-east-1#0011223344556677")); h || b != "" {
+		t.Errorf("bedrock = %q %v, want it left to the stored connection", b, h)
 	}
-	if b := (agentImpl{}).LaunchBinding(*sel(RouteSubscription, "")); b != "" {
-		t.Errorf("subscription without a credentials file = %q", b)
+	if b, h := (agentImpl{}).LaunchBinding(*sel(RouteSubscription, "")); !h || b != "" {
+		t.Errorf("subscription without a credentials file = %q %v", b, h)
 	}
 	if err := os.WriteFile(credsPath(), []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if b := (agentImpl{}).LaunchBinding(*sel(RouteSubscription, "")); b == "" {
+	if b, _ := (agentImpl{}).LaunchBinding(*sel(RouteSubscription, "")); b == "" {
 		t.Error("subscription with a credentials file has no binding")
 	}
 }

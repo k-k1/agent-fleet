@@ -22,7 +22,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -40,6 +39,13 @@ var (
 	keyVal []byte
 	keyDir string // the directory keyVal was read from; a test that moves HOME reads again
 )
+
+// ResetForTest forgets the cached binding key, so the next binding reads the key file again.
+func ResetForTest() {
+	keyMu.Lock()
+	keyVal, keyDir = nil, ""
+	keyMu.Unlock()
+}
 
 // bindingKey returns the Workspace's binding key, creating it on first use. nil when it can be
 // neither read nor created.
@@ -147,11 +153,28 @@ func Endpoint(route, url, key string) string {
 func Named(route, name string) string { return route + "@" + name }
 
 // Generation is the binding of a login whose credential carries no account id at all (D5b's
-// fallback): the login's generation, which the Agent bumps (Bump) whenever one of its own flows
+// fallback): the login's generation, which the Agent moves (Bump) whenever one of its own flows
 // replaces or removes the login. A token refresh writes no generation and keeps the binding. A
 // login made by hand outside the Agent's flows is not seen, and keeps the generation it found.
+//
+// "" (unproven) whenever the state cannot be trusted: unreadable or malformed, or a Bump of this
+// login that failed to persist in this process. Reading such a state as generation zero would
+// hand a replaced login its predecessor's binding.
 func Generation(login string) string {
-	return join(login, mac("generation", login, strconv.FormatUint(generation(login), 10)))
+	genMu.Lock()
+	defer genMu.Unlock()
+	if genPoisoned[login] {
+		return ""
+	}
+	st, ok := readGenerations()
+	if !ok {
+		return ""
+	}
+	tok := st.Logins[login]
+	if tok == "" {
+		tok = "0" // never bumped in this state's epoch
+	}
+	return join(login, mac("generation", login, st.Epoch+"\x00"+tok))
 }
 
 // AccountOrGeneration is Account when the login names its account, else Generation.
@@ -162,55 +185,105 @@ func AccountOrGeneration(login, accountID string) string {
 	return Generation(login)
 }
 
-var genMu sync.Mutex
+var (
+	genMu sync.Mutex
+	// genPoisoned holds the logins whose Bump failed to persist: their generation on disk is the
+	// replaced login's, so it is not served until a Bump succeeds. In memory only, so an Agent
+	// restart after a failed persist serves the old generation again; the failure is logged.
+	genPoisoned = map[string]bool{}
+)
 
-func readGenerations() map[string]uint64 {
-	m := map[string]uint64{}
+// genState is route-generations.json. A login's generation is a random token, never a counter,
+// so a state rebuilt after corruption can never hand out a value an earlier state used. Epoch is
+// "" for a state that has never been rebuilt; a rebuild picks a random one, which moves the
+// generation of every login it could not read, the never-bumped ones included.
+type genState struct {
+	Epoch  string            `json:"epoch,omitempty"`
+	Logins map[string]string `json:"logins"`
+}
+
+// readGenerations reads the state: ok=false when it exists but cannot be read or parsed. A
+// missing file is the empty state of epoch "".
+func readGenerations() (genState, bool) {
+	st := genState{Logins: map[string]string{}}
 	b, err := os.ReadFile(filepath.Join(paths.AgentConfigDir(), genFile))
-	if err == nil {
-		_ = json.Unmarshal(b, &m)
+	if errors.Is(err, fs.ErrNotExist) {
+		return st, true
 	}
-	return m
+	if err != nil {
+		return st, false
+	}
+	var got genState
+	if json.Unmarshal(b, &got) != nil || got.Logins == nil {
+		return st, false
+	}
+	return got, true
 }
 
-func generation(login string) uint64 {
-	genMu.Lock()
-	defer genMu.Unlock()
-	return readGenerations()[login]
+func randomToken() (string, error) {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
-// Bump moves the login to a new generation. Called by the Agent's own login, key and disconnect
-// handlers when they replace or remove the credential, never on a refresh.
+// Bump moves each login to a new generation. Called by the Agent's own login, key and disconnect
+// handlers when they replace or remove the credential, never on a refresh. An unreadable state is
+// rebuilt under a new epoch (every login's generation moves); a state that cannot be written
+// leaves these logins unproven until a Bump succeeds.
 func Bump(logins ...string) {
 	genMu.Lock()
 	defer genMu.Unlock()
-	m := readGenerations()
-	for _, l := range logins {
-		m[l]++
-	}
-	b, err := json.Marshal(m)
-	if err != nil {
+	if err := bumpLocked(logins); err != nil {
+		log.Printf("credbind: bump %v: %v; their bindings stay unproven", logins, err)
+		for _, l := range logins {
+			genPoisoned[l] = true
+		}
 		return
+	}
+	for _, l := range logins {
+		delete(genPoisoned, l)
+	}
+}
+
+func bumpLocked(logins []string) error {
+	st, ok := readGenerations()
+	if !ok {
+		epoch, err := randomToken()
+		if err != nil {
+			return err
+		}
+		st = genState{Epoch: epoch, Logins: map[string]string{}}
+	}
+	for _, l := range logins {
+		tok, err := randomToken()
+		if err != nil {
+			return err
+		}
+		st.Logins[l] = tok
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		return err
 	}
 	dir := paths.AgentConfigDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		log.Printf("credbind: bump %v: %v", logins, err)
-		return
+		return err
 	}
 	tmp, err := os.CreateTemp(dir, genFile+".*")
 	if err != nil {
-		log.Printf("credbind: bump %v: %v", logins, err)
-		return
+		return err
 	}
 	_, werr := tmp.Write(b)
-	cerr := tmp.Close()
-	if werr != nil || cerr != nil {
-		_ = os.Remove(tmp.Name())
-		log.Printf("credbind: bump %v: %v %v", logins, werr, cerr)
-		return
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
 	}
-	if err := os.Rename(tmp.Name(), filepath.Join(dir, genFile)); err != nil {
-		_ = os.Remove(tmp.Name())
-		log.Printf("credbind: bump %v: %v", logins, err)
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), filepath.Join(dir, genFile))
 	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+	}
+	return werr
 }

@@ -3,6 +3,7 @@ package opencode
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
@@ -69,5 +70,62 @@ func TestUsableOf(t *testing.T) {
 	}
 	if got := usableOf(keys, UsageOff, oauthState{connected: true}, true); got != nil {
 		t.Errorf("off: %v", got)
+	}
+}
+
+// The launch reads the account view only while it is current: after a login or a disconnect
+// invalidates it, or once it is older than its TTL, it is unknown (so no payer is proven) and a
+// background refresh is started, never waited for.
+func TestOAuthCachedIsCurrentOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	refreshes := 0
+	oldRefresh := refreshOAuthAsync
+	refreshOAuthAsync = func() { refreshes++ }
+	oauthMu.Lock()
+	oldCache, oldAt := oauthCache, oauthAt
+	oauthMu.Unlock()
+	t.Cleanup(func() {
+		refreshOAuthAsync = oldRefresh
+		oauthMu.Lock()
+		oauthCache, oauthAt = oldCache, oldAt
+		oauthMu.Unlock()
+	})
+	seed := func(st oauthState, at time.Time) {
+		oauthMu.Lock()
+		oauthCache, oauthAt = st, at
+		oauthMu.Unlock()
+	}
+	resolve := func() routes.Launch { return resolveModel("opencode/m", nil, UsageZen, oauthCached(), nil) }
+	accountA := routes.Launch{Route: routes.RouteOpencodeAccount, Binding: credbind.Account(routes.RouteOpencodeAccount, "cred-A")}
+
+	seed(oauthState{known: true, connected: true, id: "cred-A"}, time.Now())
+	if got := resolve(); got != accountA {
+		t.Fatalf("current account A = %+v", got)
+	}
+	// Account A -> B: the disconnect/login invalidates; the next create must not record A.
+	invalidateOAuthStatus()
+	if got := resolve(); got != (routes.Launch{}) {
+		t.Errorf("after invalidation: %+v, want unknown", got)
+	}
+	if refreshes == 0 {
+		t.Error("an invalidated view started no background refresh")
+	}
+	seed(oauthState{known: true, connected: true, id: "cred-B"}, time.Now())
+	if got := resolve(); got.Binding == accountA.Binding || got.Route != routes.RouteOpencodeAccount {
+		t.Errorf("account B = %+v", got)
+	}
+	// Signed out -> signed in: an old signed-out view must not prove "only the key pays".
+	seed(oauthState{known: true}, time.Now().Add(-2*oauthStatusTTL))
+	if got := resolveModel("opencode/m", map[string]string{opencodeKeyEnv: "k"}, UsageZen, oauthCached(), nil); got != (routes.Launch{}) {
+		t.Errorf("expired signed-out view with a key: %+v, want unknown", got)
+	}
+	// A refresh in flight holds the lock over the daemon call: unknown, not a wait.
+	seed(oauthState{known: true, connected: true, id: "cred-A"}, time.Now())
+	oauthMu.Lock()
+	start := time.Now()
+	st := oauthCached()
+	oauthMu.Unlock()
+	if st.known || time.Since(start) > time.Second {
+		t.Errorf("during a refresh: %+v after %v", st, time.Since(start))
 	}
 }
