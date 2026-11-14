@@ -486,4 +486,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memo_queue_no_instruction": "An instruction is required to turn auto-run on.",
   "err.memo_queue_bad_settings": "The auto-run settings hold a value that cannot be used.",
   "err.memo_queues_disabled": "This organization has not allowed auto-run settings yet. Ask an organization administrator.",
+  "err.memo_queue_nothing_pending": "Nothing is waiting to run in this category.",
+  "err.memo_queue_no_slot": "This category is already running as many sessions as it allows. Wait for one to finish, or raise “Sessions at the same time” in its settings.",
+  "err.memo_queue_member_limit": "Auto-run sessions are already running up to the limit (4) across all categories. Try again when one has finished.",
+  "err.memo_queue_bad_repo": "This category's repository is not a single folder name, so no session can be started in it.",
 };

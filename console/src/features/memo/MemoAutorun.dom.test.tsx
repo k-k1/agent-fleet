@@ -48,6 +48,8 @@ const { MemoQueueSection } = await import("./MemoQueueSection.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
+const { errText } = await import("../../core/api/client.ts");
+const { deliveryStateKey } = await import("./queues.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -395,5 +397,32 @@ describe("deliveries and Run now", () => {
     await render();
     await openDeliveries();
     expect(dialog().textContent).toContain(t("memo.d_load_failed"));
+  });
+});
+
+describe("every delivery state and outcome has a member's word", () => {
+  const states = ["claimed", "sending", "open"];
+  const outcomes = ["clean", "failed", "aborted", "unknown", "not_sent"];
+  it("maps each open state and each closed outcome to a catalogue key whose text is not the identifier", () => {
+    const all = [...states.map((state) => ({ state, outcome: "" })), ...outcomes.map((outcome) => ({ state: "closed", outcome }))];
+    for (const d of all) {
+      const k = deliveryStateKey(d);
+      expect(k, JSON.stringify(d)).not.toBeNull();
+      const text = t(k!);
+      // "Failed" is a word a member uses; the raw identifiers are not (claimed, sending, not_sent, ...).
+      for (const id of ["claimed", "sending", "open", "clean", "aborted", "unknown", "not_sent"]) expect(text.toLowerCase()).not.toBe(id);
+      expect(text).not.toMatch(/queue|slot|キュー|スロット/i);
+    }
+  });
+});
+
+describe("the memo auto-run error codes have a text of their own", () => {
+  const codes = [
+    "memo_locked", "memo_sending", "memo_in_queue", "memo_queue_category", "memo_inbox_in_queue", "memo_release_stale",
+    "memo_too_large", "memo_envelope", "memo_rate_limited", "memo_queue_no_instruction", "memo_queue_bad_settings",
+    "memo_queues_disabled", "memo_queue_nothing_pending", "memo_queue_no_slot", "memo_queue_member_limit", "memo_queue_bad_repo",
+  ];
+  it("answers the catalogue line, never the server's message", () => {
+    for (const code of codes) expect(errText({ code, message: "SERVER-MESSAGE" }), code).not.toBe("SERVER-MESSAGE");
   });
 });

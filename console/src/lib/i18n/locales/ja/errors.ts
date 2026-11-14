@@ -482,4 +482,8 @@ export const errors = {
   "err.memo_queue_no_instruction": "自動実行をオンにするには指示が必要です。",
   "err.memo_queue_bad_settings": "自動実行の設定に使えない値があります。",
   "err.memo_queues_disabled": "この組織では、自動実行の設定がまだ許可されていません。組織の管理者に依頼してください。",
+  "err.memo_queue_nothing_pending": "このカテゴリには、実行待ちのメモがありません。",
+  "err.memo_queue_no_slot": "このカテゴリで同時に動かせるセッション数の上限に達しています。実行中のセッションが終わるか、設定の「同時に動かすセッション数」を増やしてください。",
+  "err.memo_queue_member_limit": "自動実行のセッションが、すべてのカテゴリの合計で上限（4 つ）まで動いています。どれかが終わってからもう一度試してください。",
+  "err.memo_queue_bad_repo": "このカテゴリのリポジトリが 1 つのフォルダ名ではないため、セッションを起動できません。",
 };
