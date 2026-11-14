@@ -131,7 +131,9 @@ func TestGenerationFailurePaths(t *testing.T) {
 			t.Errorf("after a rebuild: %q reuses an earlier binding (%q %q %q)", g, g0, g1, other0)
 		}
 	}
-	// A Bump that cannot persist leaves the login unproven, never on its replaced binding.
+	// A Bump that cannot persist leaves the login unproven, never on its replaced binding, and
+	// removes the state so a restart (the in-memory mark gone) starts a fresh epoch.
+	beforeFail := Generation("cursor-login")
 	if err := os.Remove(p); err != nil {
 		t.Fatal(err)
 	}
@@ -142,12 +144,42 @@ func TestGenerationFailurePaths(t *testing.T) {
 	if g := Generation("cursor-login"); g != "" {
 		t.Errorf("after a failed bump: %q, want unproven", g)
 	}
-	if err := os.Remove(p); err != nil {
-		t.Fatal(err)
+	genMu.Lock()
+	genPoisoned = map[string]bool{} // a restart
+	genMu.Unlock()
+	if g := Generation("cursor-login"); g == "" || g == beforeFail {
+		t.Errorf("after a failed bump and a restart: %q, want a fresh binding (old %q)", g, beforeFail)
 	}
 	Bump("cursor-login")
 	if g := Generation("cursor-login"); g == "" {
 		t.Error("a successful bump did not clear the failure")
 	}
 	t.Cleanup(func() { genMu.Lock(); genPoisoned = map[string]bool{}; genMu.Unlock() })
+}
+
+// A lost state file never reissues a predecessor's binding: the next read starts and persists a
+// fresh epoch, which then holds across a reload.
+func TestGenerationAfterTheStateIsLost(t *testing.T) {
+	freshHome(t)
+	p := filepath.Join(paths.AgentConfigDir(), genFile)
+	g0 := Generation("muse-login")
+	Bump("muse-login")
+	g1 := Generation("muse-login")
+	if g1 == "" || g1 == g0 {
+		t.Fatalf("bump: %q -> %q", g0, g1)
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	g2 := Generation("muse-login")
+	if g2 == "" || g2 == g0 || g2 == g1 {
+		t.Errorf("after the state was lost: %q, reissues %q or %q", g2, g0, g1)
+	}
+	ResetForTest() // a reload of the binding key; the state is read from disk again
+	if g := Generation("muse-login"); g != g2 {
+		t.Errorf("after a reload: %q, want the persisted %q", g, g2)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Errorf("the fresh epoch was not persisted: %v", err)
+	}
 }

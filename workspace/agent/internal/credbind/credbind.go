@@ -170,10 +170,20 @@ func Generation(login string) string {
 	if !ok {
 		return ""
 	}
-	tok := st.Logins[login]
-	if tok == "" {
-		tok = "0" // never bumped in this state's epoch
+	if st.Epoch == "" {
+		// No state yet, or a state that was lost: start a fresh epoch and persist it before any
+		// generation is served, so a lost state can never reissue a predecessor's binding.
+		epoch, err := randomToken()
+		if err != nil {
+			return ""
+		}
+		st = genState{Epoch: epoch, Logins: map[string]string{}}
+		if err := writeGenerations(st); err != nil {
+			log.Printf("credbind: starting the generation state: %v; bindings stay unproven", err)
+			return ""
+		}
 	}
+	tok := st.Logins[login]
 	return join(login, mac("generation", login, st.Epoch+"\x00"+tok))
 }
 
@@ -188,22 +198,24 @@ func AccountOrGeneration(login, accountID string) string {
 var (
 	genMu sync.Mutex
 	// genPoisoned holds the logins whose Bump failed to persist: their generation on disk is the
-	// replaced login's, so it is not served until a Bump succeeds. In memory only, so an Agent
-	// restart after a failed persist serves the old generation again; the failure is logged.
+	// replaced login's, so it is not served until a Bump succeeds. In memory only; Bump also
+	// removes the state file so a restart starts a fresh epoch, and only when that removal fails
+	// too can a restart serve the old generation (#4189).
 	genPoisoned = map[string]bool{}
 )
 
 // genState is route-generations.json. A login's generation is a random token, never a counter,
-// so a state rebuilt after corruption can never hand out a value an earlier state used. Epoch is
-// "" for a state that has never been rebuilt; a rebuild picks a random one, which moves the
-// generation of every login it could not read, the never-bumped ones included.
+// and the state carries a random epoch chosen when it is first written, so a state that is lost,
+// rebuilt after corruption or started afresh can never hand out a value an earlier state used:
+// every login's generation moves with the epoch, the never-bumped ones included.
 type genState struct {
 	Epoch  string            `json:"epoch,omitempty"`
 	Logins map[string]string `json:"logins"`
 }
 
-// readGenerations reads the state: ok=false when it exists but cannot be read or parsed. A
-// missing file is the empty state of epoch "".
+// readGenerations reads the state: ok=false when it exists but cannot be read or parsed, or
+// carries no epoch. A missing file is the empty state with no epoch, which Generation and Bump
+// replace with a fresh one before using it.
 func readGenerations() (genState, bool) {
 	st := genState{Logins: map[string]string{}}
 	b, err := os.ReadFile(filepath.Join(paths.AgentConfigDir(), genFile))
@@ -214,7 +226,7 @@ func readGenerations() (genState, bool) {
 		return st, false
 	}
 	var got genState
-	if json.Unmarshal(b, &got) != nil || got.Logins == nil {
+	if json.Unmarshal(b, &got) != nil || got.Logins == nil || got.Epoch == "" {
 		return st, false
 	}
 	return got, true
@@ -240,6 +252,12 @@ func Bump(logins ...string) {
 		for _, l := range logins {
 			genPoisoned[l] = true
 		}
+		// The state on disk now holds the replaced logins' generations. Removing it makes the
+		// next read start a fresh epoch, which survives a restart where the in-memory mark does
+		// not; when even that fails, a restart can serve the old generation (#4189).
+		if rerr := os.Remove(filepath.Join(paths.AgentConfigDir(), genFile)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			log.Printf("credbind: removing the generation state after a failed bump: %v", rerr)
+		}
 		return
 	}
 	for _, l := range logins {
@@ -249,7 +267,7 @@ func Bump(logins ...string) {
 
 func bumpLocked(logins []string) error {
 	st, ok := readGenerations()
-	if !ok {
+	if !ok || st.Epoch == "" {
 		epoch, err := randomToken()
 		if err != nil {
 			return err
@@ -263,6 +281,11 @@ func bumpLocked(logins []string) error {
 		}
 		st.Logins[l] = tok
 	}
+	return writeGenerations(st)
+}
+
+// writeGenerations replaces the state file atomically (temp file and rename).
+func writeGenerations(st genState) error {
 	b, err := json.Marshal(st)
 	if err != nil {
 		return err
