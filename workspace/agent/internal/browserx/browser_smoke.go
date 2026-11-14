@@ -114,22 +114,43 @@ func runBrowserSmoke(requireSandbox bool) error {
 	return nil
 }
 
+// verifyBrowserFrameRate waits for the first frame under a bound that only a hang
+// reaches, then counts frames over a window that starts at that frame. A fixed window
+// from "now" also measures Chromium's start-up and the scheduler, so a loaded host
+// delivered no frame in it at all.
 func verifyBrowserFrameRate(page *browserPage, interval time.Duration) error {
-	duration := 1250 * time.Millisecond
-	deadline := time.NewTimer(duration)
+	const firstFrameTimeout = 30 * time.Second
+	const window = 1250 * time.Millisecond
+	checkJPEG := func(frame []byte) error {
+		if len(frame) < 2 || frame[0] != 0xff || frame[1] != 0xd8 {
+			return fmt.Errorf("Page %s emitted a non-JPEG frame", page.id)
+		}
+		return nil
+	}
+	first := time.NewTimer(firstFrameTimeout)
+	defer first.Stop()
+	select {
+	case frame := <-page.latestFrame:
+		if err := checkJPEG(frame); err != nil {
+			return err
+		}
+	case <-first.C:
+		return fmt.Errorf("Page %s emitted no frame in %s", page.id, firstFrameTimeout)
+	}
+	frames := 1
+	deadline := time.NewTimer(window)
 	defer deadline.Stop()
-	frames := 0
 	for {
 		select {
 		case frame := <-page.latestFrame:
-			if len(frame) < 2 || frame[0] != 0xff || frame[1] != 0xd8 {
-				return fmt.Errorf("Page %s emitted a non-JPEG frame", page.id)
+			if err := checkJPEG(frame); err != nil {
+				return err
 			}
 			frames++
 		case <-deadline.C:
-			maxFrames := int(duration/interval) + 2 // initial frame + timer scheduling tolerance
-			if frames == 0 || frames > maxFrames {
-				return fmt.Errorf("Page %s emitted %d frames in %s, want 1..%d", page.id, frames, duration, maxFrames)
+			maxFrames := int(window/interval) + 2 // first frame + timer scheduling tolerance
+			if frames > maxFrames {
+				return fmt.Errorf("Page %s emitted %d frames in %s after the first, want at most %d", page.id, frames, window, maxFrames)
 			}
 			return nil
 		}
