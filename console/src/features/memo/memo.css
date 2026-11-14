@@ -892,10 +892,24 @@
   gap: 6px;
   align-items: baseline;
 }
-.memo-release-text {
+.memo-release-body {
   flex: 1;
   min-width: 0;
+}
+.memo-release-text {
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
+  max-height: 14em;
+  overflow-y: auto;
+}
+.memo-release-atts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.memo-release-att-name {
+  font-size: 10px;
 }
 .memo-release-att,
 .memo-release-hint {

@@ -7,21 +7,16 @@
 // inside the workspace shows up here with its new hash before it can be approved.
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { MemoImageThumb } from "./MemoImageThumb.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import type { Memo } from "../../types/memo.ts";
 import type { ReleaseCard } from "./queues.ts";
 
-const PREVIEW = 240;
-const preview = (s: string): string => {
-  const one = s.replace(/\s+/g, " ").trim();
-  return one.length > PREVIEW ? one.slice(0, PREVIEW - 1) + "…" : one;
-};
-
-/** What a row shows of a message: plain text, never JSON. A file reference leads with its path. */
+/** What a row shows of a message: the whole body, never a cut. The release is bound to a hash of
+ *  the full content, so anything shorter would let a change past the cut be approved unseen.
+ *  The reference path is shown on its own line, since it is hashed too. */
 export function releaseRowText(m: Memo): string {
-  const body = preview(m.body || "");
-  if (m.kind === "file") return m.refPath ? (body ? `${m.refPath} — ${body}` : m.refPath) : body;
-  return body;
+  return m.body || "";
 }
 
 interface Props {
@@ -50,12 +45,20 @@ export function MemoReleaseCard({ card, busy, changedIds, onRelease }: Props) {
       <ul className="memo-release-items">
         {card.items.map((m) => (
           <li key={m.id} className="memo-release-item">
-            <span className="memo-release-text">{releaseRowText(m) || "—"}</span>
-            {(m.attachments?.length ?? 0) > 0 && (
-              <span className="memo-release-att" aria-hidden="true">
-                <Icon name="device-camera" /> {m.attachments!.length}
-              </span>
-            )}
+            <div className="memo-release-body">
+              {m.kind === "file" && m.refPath && <code className="memo-release-ref">{m.refPath}</code>}
+              <div className="memo-release-text">{releaseRowText(m) || (m.kind === "file" ? "" : "—")}</div>
+              {(m.attachments?.length ?? 0) > 0 && (
+                <div className="memo-release-atts">
+                  {m.attachments!.map((a) => (
+                    <span key={a.name} className="memo-release-att" title={a.name}>
+                      <MemoImageThumb name={a.name} />
+                      <span className="memo-release-att-name">{a.name}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
             {changedIds.has(m.id) && <span className="memo-release-changed">{tr("memo.changed_tag")}</span>}
           </li>
         ))}

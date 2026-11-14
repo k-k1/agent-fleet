@@ -246,6 +246,29 @@ describe("the release card", () => {
     expect(memoRelease).toHaveBeenCalledTimes(2);
   });
 
+  it("shows the whole body, so a change past any cut is seen before it can be approved", async () => {
+    const long = "x".repeat(600);
+    servedMemos = [held("m1", "h1", { body: long + " TAIL-ONE" })];
+    await render();
+    const text = () => document.querySelector(".memo-release-text")?.textContent ?? "";
+    expect(text()).toBe(long + " TAIL-ONE");
+    memoRelease.mockResolvedValueOnce({ error: { code: "memo_release_stale", stale: ["m1"] } });
+    servedMemos = [held("m1", "h2", { body: long + " TAIL-TWO" })];
+    await click(must(document.querySelector(".memo-release button"), "release button"));
+    expect(text()).toBe(long + " TAIL-TWO");
+  });
+
+  it("lists the attachments, so a changed attachment shows on the redrawn card", async () => {
+    servedMemos = [held("m1", "h1", { attachments: [{ path: "/p/a.png", name: "a.png" }] })];
+    await render();
+    const names = () => [...document.querySelectorAll(".memo-release-att")].map((e) => e.getAttribute("title"));
+    expect(names()).toEqual(["a.png"]);
+    memoRelease.mockResolvedValueOnce({ error: { code: "memo_release_stale", stale: ["m1"] } });
+    servedMemos = [held("m1", "h2", { attachments: [{ path: "/p/b.png", name: "b.png" }, { path: "/p/c.png", name: "c.png" }] })];
+    await click(must(document.querySelector(".memo-release button"), "release button"));
+    expect(names()).toEqual(["b.png", "c.png"]);
+  });
+
   it("makes one card per producer", async () => {
     servedMemos = [held("m1", "h1"), held("m2", "h2", { producer: "worker-2" }), held("m3", "h3", { provenance: "mcp", producer: "pat_1" })];
     await render();
