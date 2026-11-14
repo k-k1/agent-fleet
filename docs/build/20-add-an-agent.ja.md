@@ -216,8 +216,12 @@ cd workspace/agent && go test -run TestKindCatalogSnapshot -update-kind-catalog 
 ```
 
 ルートのカタログにも専用のスナップショット `control-plane/internal/agentroutes/catalog.json`
-（ADR 0128）があります。ルート id と、レジストリのキーごとに、その Agent の `RouteAdapter` が宣言する
-ルート（アダプタが無い種別は無し）を持ちます。新しい種別はここにも 1 行増えるので、同じ要領で作り直します。
+（ADR 0128）があります。ルート id とそれぞれの資格情報の分類・送り先（ADR 0138 D1c）、レジストリのキーごとに、
+その Agent の `RouteAdapter` が宣言するルート（アダプタが無い種別は無し）と **固定ルート**
+（`agents.FixedRouter`。経路を選ばないときに種別自身の規則が行き着くルートで、CLI に閉じたログインなど）を持ちます。
+モデルを動かす種別はどれも最低 1 つのルートを宣言します（`TestEveryCredentialPathHasARoute`）。新しい種別は
+`FixedRoutes()` を実装し、そのログインがカタログに無ければ `internal/routes` にルート id を分類・送り先付きで足します。
+新しい種別はスナップショットにも 1 行増えるので、同じ要領で作り直します。
 
 ```
 cd workspace/agent && go test -run TestRouteCatalogSnapshot -update-route-catalog .

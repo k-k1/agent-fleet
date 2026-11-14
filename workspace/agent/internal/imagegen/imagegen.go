@@ -15,10 +15,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -526,6 +528,26 @@ var providerRanks = []providerRank{
 	{ID: ProviderComfy, Fleet: true},
 	{ID: ProviderAgy},
 	{ID: ProviderCodex},
+}
+
+// providerRoutes is the routes each image provider can run on (ADR 0138 D2). The codex provider
+// runs on whichever login codex's auth.json holds (it accepts an API-key login), agy on its own
+// Google login, and the fleet's providers on the deployment's engine. TestProviderRoutes holds
+// it to providerRanks.
+var providerRoutes = map[string][]string{
+	ProviderOpenAICompat: {routes.RouteAFEngineImage},
+	ProviderComfy:        {routes.RouteAFEngineImage},
+	ProviderAgy:          {routes.RouteAgyLogin},
+	ProviderCodex:        {routes.RouteChatGPTSubscription, routes.RouteOpenAIAPI},
+}
+
+// ProviderRoutes returns every image provider's routes by provider id, each list sorted.
+func ProviderRoutes() map[string][]string {
+	out := make(map[string][]string, len(providerRoutes))
+	for id, rs := range providerRoutes {
+		out[id] = slices.Sorted(slices.Values(rs))
+	}
+	return out
 }
 
 func providerIDsOf(ranks []providerRank) []string {

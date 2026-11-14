@@ -239,8 +239,13 @@ cd workspace/agent && go test -run TestKindCatalogSnapshot -update-kind-catalog 
 ```
 
 The route catalog has its own snapshot, `control-plane/internal/agentroutes/catalog.json`
-(ADR 0128): the route ids plus, per registry key, the routes the agent's `RouteAdapter` declares
-(none for a kind without one). A new kind adds a row to it, so regenerate it the same way:
+(ADR 0128): the route ids with each one's credential class and destination (ADR 0138 D1c) plus,
+per registry key, the routes the agent's `RouteAdapter` declares (none for a kind without one)
+and its **fixed routes** (`agents.FixedRouter`): the routes its own rules resolve to with no
+selection, such as a CLI-locked login. Every kind that runs a model declares at least one route
+(`TestEveryCredentialPathHasARoute`), so a new kind implements `FixedRoutes()` and, when its login
+is not one of the catalogued routes, adds a route id to `internal/routes` with its class and
+destination. A new kind adds a row to the snapshot, so regenerate it the same way:
 
 ```
 cd workspace/agent && go test -run TestRouteCatalogSnapshot -update-route-catalog .

@@ -31,6 +31,24 @@ type RouteAdapter interface {
 	ResolveRoute(m session.Meta, turn TurnInfo) ResolvedRoute
 }
 
+// FixedRouter is an optional Agent capability (ADR 0138 D2): the routes a session of this kind
+// runs on WITHOUT an explicit selection, which is what its own rules resolve to (a CLI-locked
+// login, the provider keys a shared daemon carries). A kind with no RouteAdapter declares these
+// only, and its sessions are recorded on them; a kind with one declares the routes its empty
+// selection can resolve to. Which one a given session runs on is resolved per login mode when the
+// session starts, never assumed from the kind. Every id must be in routes.Catalogue.
+type FixedRouter interface {
+	FixedRoutes() []string
+}
+
+// FixedRoutesOf returns a's fixed routes, nil when it declares none.
+func FixedRoutesOf(a Agent) []string {
+	if fr, ok := a.(FixedRouter); ok {
+		return fr.FixedRoutes()
+	}
+	return nil
+}
+
 // RoutePlan is what ApplyRoute adds to a launch.
 type RoutePlan struct {
 	// Env is KEY=VALUE pairs for this session's process only (LaunchPlan.Env).
