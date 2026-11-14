@@ -27,6 +27,12 @@ vi.mock("./api.ts", () => ({
   memoCategoryDelete: async () => ({ ok: true }),
   memoPasteImage: async () => ({ status: 500 }),
   memoImageGC: async () => ({}),
+  memoQueueList: async () => ({ tenantEnabled: false, queues: [] }),
+  memoRelease: async () => ({}),
+  memoQueuePut: async () => ({}),
+  memoQueueDelete: async () => ({ ok: true }),
+  memoQueueFire: async () => ({}),
+  memoQueueDeliveries: async () => [],
 }));
 // The PWA share stash reads CacheStorage, which jsdom does not have.
 vi.mock("./share.ts", () => ({ consumeShare: async () => null, registerShareSW: () => {} }));

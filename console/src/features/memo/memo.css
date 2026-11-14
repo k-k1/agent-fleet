@@ -410,7 +410,8 @@
 /* "add to this category": unlike send/delete this one stays visible (dimmed) — it is the
    affordance that says a category can be written into, and a hover-only icon is invisible
    on touch, where the header's other actions already are. */
-.memo-cat-add {
+.memo-cat-add,
+.memo-cat-act {
   flex: none;
   background: none;
   border: none;
@@ -420,10 +421,12 @@
   opacity: 0.55;
   display: inline-flex;
 }
-.memo-cat-head:hover .memo-cat-add {
+.memo-cat-head:hover .memo-cat-add,
+.memo-cat-head:hover .memo-cat-act {
   opacity: 1;
 }
-.memo-cat-add:hover {
+.memo-cat-add:hover,
+.memo-cat-act:hover {
   color: var(--fg);
 }
 .memo-cat-del {
@@ -816,3 +819,150 @@
 /* A memo taken in from the member inbox (ADR 0111): whose text it started as. */
 .memo-origin { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); border: 1px solid var(--border2, var(--border)); border-radius: 9px; padding: 0 6px; margin-bottom: 2px; }
 .memo-origin-hint { color: var(--warn, var(--muted)); }
+
+/* --- auto-run (ADR 0137): category badge, message state, release card, run history --- */
+.memo-q-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--accent);
+  border: 1px solid currentColor;
+  border-radius: 9px;
+  padding: 0 6px;
+}
+.memo-q-badge.off {
+  color: var(--muted);
+}
+.memo-qmeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 2px;
+  font-size: 10px;
+}
+.memo-qstate {
+  border-radius: 9px;
+  padding: 0 6px;
+  border: 1px solid var(--border2, var(--border));
+  color: var(--muted);
+}
+.memo-qstate.s-held,
+.memo-qstate.s-unconfirmed {
+  color: var(--warn, var(--accent));
+  border-color: currentColor;
+}
+.memo-qstate.s-pending,
+.memo-qstate.s-claimed {
+  color: var(--accent);
+  border-color: currentColor;
+}
+.memo-qorigin {
+  color: var(--muted);
+}
+.memo-release {
+  margin: 4px 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--warn, var(--accent));
+  border-radius: 6px;
+  background: var(--bg2, var(--bg));
+  font-size: 12px;
+}
+.memo-release.changed {
+  box-shadow: 0 0 0 1px var(--warn, var(--accent));
+}
+.memo-release-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.memo-release-items {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.memo-release-item {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.memo-release-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.memo-release-att,
+.memo-release-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+.memo-release-changed {
+  font-size: 10px;
+  color: var(--warn, var(--accent));
+  border: 1px solid currentColor;
+  border-radius: 9px;
+  padding: 0 6px;
+}
+.memo-release-note {
+  color: var(--warn, var(--accent));
+  font-size: 11px;
+  margin: 2px 0;
+}
+.memo-release-foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+.memo-q-modal .memo-q-narrow {
+  flex: 0 0 9em;
+}
+.memo-q-notice {
+  color: var(--warn, var(--accent));
+}
+.memo-d-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.memo-d-waiting {
+  flex: 1;
+  color: var(--muted);
+}
+.memo-d-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.memo-d-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+.memo-d-state {
+  font-size: 11px;
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 9px;
+  padding: 0 6px;
+}
+.memo-d-state.s-failed,
+.memo-d-state.s-unknown,
+.memo-d-state.s-not_sent {
+  color: var(--warn, var(--accent));
+}
+.memo-d-n,
+.memo-d-at {
+  color: var(--muted);
+  font-size: 11px;
+}

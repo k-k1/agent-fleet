@@ -1049,4 +1049,13 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcptrust_not_served": "This deployment does not serve MCP OAuth yet (it needs AF_MCP_ENABLED=true, AF_MCP_OAUTH=1 and an https PUBLIC_BASE_URL), so the list has no effect until it does.",
   "admin.mcptrust_saved": "Saved.",
   "admin.mcptrust_unreadable": "The saved list is not valid, so no hosted client is trusted until you save a new list or reset it.",
+  "tenant.tab_memo_queues": "Memo auto-run",
+  "tenant.memo_queues_title": "Memo auto-run",
+  "tenant.memo_queues_note": "Lets members give a memo category auto-run settings. Auto-run runs approved memos as sessions.",
+  "tenant.memo_queues_on": "Allow",
+  "tenant.memo_queues_off": "Block",
+  "tenant.memo_queues_on_hint": "Members may create auto-run settings for their own memo categories.",
+  "tenant.memo_queues_off_hint": "Blocked (the default): no new auto-run settings can be created. Existing settings are kept, and can still be read and removed.",
+  "tenant.memo_queues_load_failed": "Could not load the setting.",
+  "tenant.memo_queues_save_failed": "Could not save the setting.",
 };

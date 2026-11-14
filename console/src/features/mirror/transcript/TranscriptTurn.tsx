@@ -434,6 +434,9 @@ function TranscriptTurnImpl({
   // the turn was cut off. Nobody typed it and no operator sent it, so it needs its own badge — an
   // unattributed 「続けて」 in the transcript is the most confusing kind of injected turn.
   const fromAutoResume = isUser && turn.source === "auto-resume";
+  // Memo auto-run (ADR 0137): the Agent stamps the first turn of a session a category's auto-run
+  // (or its "Run now") started with source "queue". Nobody typed it, so it gets its own badge.
+  const fromQueue = isUser && turn.source === "queue";
   // Stalled-tree notice: the agent's automated check to a parent whose children are all idle.
   // Badged by the envelope's kind: watch and PR-feedback notices share the origin tag.
   const fromNotice = isUser && turn.source === "notice";
@@ -455,6 +458,7 @@ function TranscriptTurnImpl({
         (turn.sidechain ? " sidechain" : "") +
         (fromOperator ? " from-operator" : "") +
         (fromSchedule ? " from-schedule" : "") +
+        (fromQueue ? " from-schedule" : "") +
         (fromAutoResume || fromNotice ? " from-schedule" : "") +
         (fromPeer || fromMcp ? " from-peer" : "") +
         (chatProvider ? " from-chat" : "")
@@ -480,6 +484,11 @@ function TranscriptTurnImpl({
           >
             <Icon name={scheduleManual ? "play" : "clock"} />{" "}
             {tr(scheduleManual ? "mirror.from_schedule_manual" : "mirror.from_schedule")}
+          </span>
+        )}
+        {fromQueue && (
+          <span className="mt-op mt-sched" title={tr("mirror.from_queue_title")}>
+            <Icon name="checklist" /> {tr("mirror.from_queue")}
           </span>
         )}
         {fromAutoResume && (

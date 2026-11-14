@@ -582,4 +582,6 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.route_switch_unknown": "The answer to the switch was lost, so it is not known whether it went through: {detail} Reload and check which route the session is on before sending more.",
   "mirror.route_switch_carry_unknown": "Whether the \"carry on\" message reached the session could not be confirmed, and it may already be queued. Look for it or an answer in the conversation before sending it again.",
   "mirror.route_switch_carry_skipped": "The workspace was changed before the \"carry on\" message could be sent, so it was not sent. Open the session and send a message to continue.",
+  "mirror.from_queue": "Auto-run",
+  "mirror.from_queue_title": "A turn handed the approved memos by a category's auto-run (or its “Run now”), not typed by you.",
 };
