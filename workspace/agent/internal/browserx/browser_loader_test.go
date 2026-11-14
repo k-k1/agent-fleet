@@ -166,21 +166,53 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 	}
 	next = len(snapshot())
 
+	// The viewer receives every state change the page makes, in order, so the
+	// aborted-navigation steps assert on the recorded sequence: a poll can miss a
+	// loading state that ends within a millisecond (a 204 or a denied download).
+	v := &browserViewer{page: p, control: make(chan browserOutbound, 256), done: make(chan struct{})}
+	p.mu.Lock()
+	p.viewer = v
+	p.mu.Unlock()
+	type viewerMsg struct{ Type, State string }
+	var msgs []viewerMsg
+	pump := func() {
+		for len(v.control) > 0 {
+			var msg viewerMsg
+			_ = json.Unmarshal((<-v.control).data, &msg)
+			msgs = append(msgs, msg)
+		}
+	}
+	sawLoading := func(from int) bool {
+		pump()
+		for _, m := range msgs[from:] {
+			if m.Type == "state" && m.State == "loading" {
+				return true
+			}
+		}
+		return false
+	}
+	drain := func() []string {
+		pump()
+		var types []string
+		for _, m := range msgs {
+			types = append(types, m.Type)
+		}
+		msgs = nil
+		return types
+	}
+
 	// A top-level navigation that is aborted without committing leaves the
 	// previous document live: it must end "ready", never "target-unreachable".
 	abortedBy := func(step string, trigger func()) {
 		t.Helper()
 		from := len(snapshot())
+		pump()
+		mark := len(msgs)
 		trigger()
 		if !waitFor(10*time.Second, func() bool {
-			for _, r := range snapshot()[from:] {
-				if r.state == "loading" {
-					return p.response().State != "loading"
-				}
-			}
-			return false
+			return sawLoading(mark) && p.response().State != "loading"
 		}) {
-			t.Fatalf("%s: never left loading: %+v (page %+v)", step, snapshot()[from:], p.response())
+			t.Fatalf("%s: never left loading: %+v (page %+v)", step, msgs[mark:], p.response())
 		}
 		time.Sleep(300 * time.Millisecond) // a late event must not flip it either
 		for _, r := range snapshot()[from:] {
@@ -203,19 +235,6 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 
 	// The pane's own address bar: Page.navigate answers net::ERR_ABORTED after
 	// Network.loadingFailed has already restored the state.
-	v := &browserViewer{page: p, control: make(chan browserOutbound, 256), done: make(chan struct{})}
-	p.mu.Lock()
-	p.viewer = v
-	p.mu.Unlock()
-	drain := func() []string {
-		var types []string
-		for len(v.control) > 0 {
-			var msg struct{ Type string }
-			_ = json.Unmarshal((<-v.control).data, &msg)
-			types = append(types, msg.Type)
-		}
-		return types
-	}
 	paneNavigate := func(path string) func() {
 		return func() { v.handleControl([]byte(`{"type":"navigate","path":"` + path + `"}`)) }
 	}
