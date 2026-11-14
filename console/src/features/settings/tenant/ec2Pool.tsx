@@ -133,6 +133,9 @@ type Slot = {
   /** af-role=quarantined: the only kind Terminate accepts. A rung-L2 row is quarantined too
    *  but keeps a slot's actions. */
   terminable?: boolean;
+  /** The af-quarantine value in force on a rung-L2 row. "Return to pool" sends it back so the
+   *  server deletes exactly that record: a slot re-quarantined since this screen loaded is refused. */
+  quarantine_token?: string;
   /** Launch template version the slot was launched from, and whether that is older than
    *  $Latest. User data is read only at launch, so an outdated slot runs the old one. */
   template_version?: string;
@@ -242,6 +245,9 @@ export function PoolView() {
   const [stopAck, setStopAck] = useState(false);
   const [stopped, setStopped] = useState<ForceStopReply | null>(null);
   const [bulkErr, setBulkErr] = useState("");
+  // Return of a rung-L2 slot to the pool (#4019): the row being confirmed, and its last refusal.
+  const [returning, setReturning] = useState<Slot | null>(null);
+  const [returnErr, setReturnErr] = useState("");
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   const poll = useCallback(async () => {
@@ -279,6 +285,26 @@ export function PoolView() {
       return;
     }
     setKilling(null);
+    poll();
+  };
+
+  // The token is the one the row showed, not a fresh read: a re-quarantine in between must answer
+  // 409 rather than be undone, and the poll then shows the new row.
+  const returnToPool = async (s: Slot) => {
+    setBusy(true);
+    setReturnErr("");
+    const d = await apiJSON(
+      "api/admin/ec2-pool/slots/" + encodeURIComponent(s.instance_id) + "/return",
+      "POST",
+      { token: s.quarantine_token },
+    );
+    setBusy(false);
+    if (d?.error) {
+      setReturnErr(tr("pool.return_failed", { msg: errText(d.error) }));
+      poll();
+      return;
+    }
+    setReturning(null);
     poll();
   };
 
@@ -550,6 +576,13 @@ export function PoolView() {
                         </Button>
                       ) : (
                         <>
+                        {/* Rung L2 only: af-role=slot held out by an af-quarantine record. A role-
+                            quarantined row is terminable and takes Terminate instead. */}
+                        {s.rung === "quarantined" && !s.terminable && s.quarantine_token && (
+                          <Button small onClick={() => { setReturnErr(""); setReturning(s); }}>
+                            {tr("pool.return")}
+                          </Button>
+                        )}
                         {/* An unregistered slot that is up is the wedged shape: no override needed. A
                             registered one answers its health check, so only the explicit override
                             (confirmed in the dialog) reaches it, and only while running. */}
@@ -736,6 +769,23 @@ export function PoolView() {
           )}
           {stopping.workspace && <p className="mono">{tr("pool.force_stop_occupant", { ws: stopping.workspace })}</p>}
           {stopErr && <p className="warn-text">{stopErr}</p>}
+        </ConfirmDialog>
+      )}
+
+      {returning && (
+        <ConfirmDialog
+          title={tr("pool.return_title", { id: returning.instance_id })}
+          confirmLabel={tr("pool.return")}
+          busy={busy}
+          onCancel={() => setReturning(null)}
+          onConfirm={() => returnToPool(returning)}
+        >
+          <p>{tr("pool.return_body")}</p>
+          {returning.quarantine_reason && (
+            <p className="mono">{tr("pool.terminate_reason", { reason: returning.quarantine_reason })}</p>
+          )}
+          {returning.workspace && <p className="mono">{tr("pool.force_stop_occupant", { ws: returning.workspace })}</p>}
+          {returnErr && <p className="warn-text">{returnErr}</p>}
         </ConfirmDialog>
       )}
 

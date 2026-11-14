@@ -308,6 +308,19 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 
 // bumpStartCount is beginStart's increment, for a caller that already holds the claim lock.
 func (e *ecsEC2Runtime) bumpStartCount(lctx context.Context) (int64, error) {
+	gen, err := e.bumpStartCountNoCarry(lctx)
+	if err != nil {
+		return 0, err
+	}
+	if err := e.carryAfterBump(lctx, gen); err != nil {
+		return 0, err
+	}
+	return gen, nil
+}
+
+// bumpStartCountNoCarry moves the count and nothing else. The operator's return of a held slot
+// uses it: the carry would copy a record that landed after the delete forward to the new count.
+func (e *ecsEC2Runtime) bumpStartCountNoCarry(lctx context.Context) (int64, error) {
 	var gen int64
 	if e.leases == nil {
 		gen = e.generation().Add(1)
@@ -317,9 +330,6 @@ func (e *ecsEC2Runtime) bumpStartCount(lctx context.Context) (int64, error) {
 		if err = homeGuardOf(lctx).outcome(err); err != nil {
 			return 0, err
 		}
-	}
-	if err := e.carryAfterBump(lctx, gen); err != nil {
-		return 0, err
 	}
 	return gen, nil
 }

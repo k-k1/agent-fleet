@@ -39,6 +39,10 @@ type ec2SlotView struct {
 	// Terminable: af-role=quarantined, the only kind the operator's Terminate accepts. An L2
 	// row keeps a slot's actions, because nothing locks a Start that is choosing it out.
 	Terminable bool `json:"terminable,omitempty"`
+	// QuarantineToken is the value of the af-quarantine record in force on a rung-L2 row. The
+	// Console sends it back to return the slot, so a re-quarantine under a new token between
+	// the screen and the click is not undone. Empty on every other row.
+	QuarantineToken string `json:"quarantine_token,omitempty"`
 	// TemplateVersion is the launch template version the slot was launched from, and
 	// TemplateOutdated whether that is older than $Latest (slotTemplateOutdated) — user data
 	// is read only at launch, so an outdated slot runs the old one until it is replaced.
@@ -435,6 +439,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 			view := inst
 			if q, held := probe.quarantineInForce(ctx, inst.Tags, id); held {
 				s.Quarantined = true // rung L2: the row stays a slot (Terminable is the role's)
+				s.QuarantineToken = ec2TagValue(inst.Tags, quarantineKey(q.Volume, q.Gen))
 				if q.Reason != "" || s.QuarantineReason == "" {
 					s.QuarantineReason = q.Reason
 				}

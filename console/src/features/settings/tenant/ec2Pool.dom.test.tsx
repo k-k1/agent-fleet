@@ -353,6 +353,59 @@ it("counts held, running and hibernating slots and says eviction happens once th
     expect(buttonsIn(rowOf("i-l2")).map((b) => b.textContent)).toEqual(["停止（強制）", "入れ替えを予約"]);
   });
 
+  // #4019: "Return to pool" is for rung L2 only (quarantined, not terminable, with a token), and
+  // sends the token the row carried so the server deletes exactly that record.
+  describe("return of a rung-L2 slot", () => {
+    const L2 = { instance_id: "i-l2", instance_type: "m7i.large", az: "ap-northeast-1a", state: "stopped", registered: false,
+      workspace: "", idle_minutes: 0, quarantined: true, rung: "quarantined", dark_since: "2026-11-13T00:00:00Z",
+      quarantine_reason: "repeat: dark again", quarantine_token: "vol-1:7/repeat: dark again/2026-11-13T00:00:00Z" };
+    const labels = (id: string) => buttonsIn(rowOf(id)).map((b) => b.textContent);
+
+    it("is offered on an L2 row only, never on a role-quarantined or a healthy one", async () => {
+      api.mockResolvedValue({ ...QUARANTINED, slots: [...QUARANTINED.slots, L2] });
+      await mount();
+      expect(labels("i-l2")).toContain("プールに戻す");
+      expect(labels("i-bad")).toEqual(["終了"]);
+      expect(labels("i-hot")).not.toContain("プールに戻す");
+      // An older Control Plane sends no token: there is nothing to send, so no button.
+      api.mockResolvedValue({ ...POOL, slots: [{ ...L2, quarantine_token: undefined }] });
+      await mount();
+      expect(labels("i-l2")).not.toContain("プールに戻す");
+    });
+
+    const open = async () => {
+      api.mockResolvedValue({ ...POOL, slots: [L2] });
+      await mount();
+      await act(async () => buttonsIn(rowOf("i-l2")).find((b) => b.textContent === "プールに戻す")!.click());
+    };
+    const confirmBtn = () => {
+      const a = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+      return a[a.length - 1];
+    };
+
+    it("asks first, naming the slot and the reason, and sends nothing yet", async () => {
+      await open();
+      const dlg = document.querySelector(".confirm");
+      expect(dlg?.textContent).toContain("i-l2");
+      expect(dlg?.textContent).toContain("repeat: dark again");
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("posts the row's own token once confirmed", async () => {
+      apiJSON.mockResolvedValue({ instance_id: "i-l2", count_bumped: true });
+      await open();
+      await act(async () => confirmBtn().click());
+      expect(apiJSON).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-l2/return", "POST", { token: L2.quarantine_token });
+    });
+
+    it("keeps the server's refusal on screen", async () => {
+      apiJSON.mockResolvedValue({ error: { code: "quarantine_changed", message: "the quarantine on this slot is not the one you saw" } });
+      await open();
+      await act(async () => confirmBtn().click());
+      expect(document.querySelector(".confirm")?.textContent).toContain("not the one you saw");
+    });
+  });
+
   it("renders the terminate button as a bordered danger button", async () => {
     api.mockResolvedValue(QUARANTINED);
     await mount();

@@ -988,6 +988,22 @@ func (m *manager) forceStopSlot(ctx context.Context, instanceID string, override
 	return res, true, err
 }
 
+// runtimeSlotReturner is the pool's "return a rung-L2 slot" action (#4019), a claim of its own
+// for the reason runtimeSlotTerminator is.
+type runtimeSlotReturner interface {
+	ReturnQuarantinedSlot(ctx context.Context, instanceID, token string) (runtime.SlotReturn, error)
+}
+
+// returnQuarantinedSlot lifts one rung-L2 hold; ok=false on every runtime with no pool.
+func (m *manager) returnQuarantinedSlot(ctx context.Context, instanceID, token string) (runtime.SlotReturn, bool, error) {
+	p, ok := m.rtFactory.(runtimeSlotReturner)
+	if !ok {
+		return runtime.SlotReturn{}, false, nil
+	}
+	res, err := p.ReturnQuarantinedSlot(ctx, instanceID, token)
+	return res, true, err
+}
+
 // runtimeSlotReserver marks a slot for replacement at its workspace's next Start (#1473).
 type runtimeSlotReserver interface {
 	ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (runtime.SlotReservation, error)

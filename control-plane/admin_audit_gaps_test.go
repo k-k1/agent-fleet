@@ -232,6 +232,7 @@ var adminWriteRouteAudits = map[string]adminWriteRouteAudit{
 	"PUT /api/admin/ec2-pool/slots/{id}/replace":                  {marker: `pool.slot_replace_reserve`},
 	"DELETE /api/admin/ec2-pool/slots/{id}/replace":               {marker: `pool.slot_replace_reserve`},
 	"POST /api/admin/ec2-pool/slots/{id}/force-stop":              {marker: `pool.slot_force_stop`},
+	"POST /api/admin/ec2-pool/slots/{id}/return":                  {marker: `pool.slot_return`},
 	"POST /api/admin/ec2-pool/reserve-outdated":                   {marker: `pool.slot_replace_reserve`},
 	"POST /api/admin/egress/allowlist":                            {marker: `egress.allow.add`},
 	"POST /api/admin/egress/allowlist/{id}/state":                 {marker: `egress.allow.`},
