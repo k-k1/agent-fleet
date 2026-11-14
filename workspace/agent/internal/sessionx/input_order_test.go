@@ -72,9 +72,11 @@ func TestInputOrderSkipsBehindHungHead(t *testing.T) {
 		return func() { mark(&skipped, s)(); skipDone <- struct{}{} }
 	}
 	var wg sync.WaitGroup
-	start := func(run func()) {
+	start := func(run func()) <-chan struct{} {
+		fin := make(chan struct{})
 		wg.Add(1)
-		go func() { defer wg.Done(); run() }()
+		go func() { defer wg.Done(); defer close(fin); run() }()
+		return fin
 	}
 	waitSkips := func(n int) {
 		for i := 0; i < n; i++ {
@@ -86,12 +88,20 @@ func TestInputOrderSkipsBehindHungHead(t *testing.T) {
 		}
 	}
 	start(o.enqueue("s", func() { <-release; mark(&ran, "head")() }, skipFn("head")))
-	start(o.enqueue("s", mark(&ran, "b"), skipFn("b")))
-	start(o.enqueue("s", mark(&ran, "c"), skipFn("c")))
+	fb := start(o.enqueue("s", mark(&ran, "b"), skipFn("b")))
+	fc := start(o.enqueue("s", mark(&ran, "c"), skipFn("c")))
 	waitSkips(2)
 	// b has timed out and is the tail; d arrives after that and must not start on an empty chain.
-	start(o.enqueue("s", mark(&ran, "d"), skipFn("d")))
+	fd := start(o.enqueue("s", mark(&ran, "d"), skipFn("d")))
 	waitSkips(1)
+	// A skipped input's goroutine ends at the timeout; none waits for the hung head.
+	for _, f := range []<-chan struct{}{fb, fc, fd} {
+		select {
+		case <-f:
+		case <-time.After(10 * time.Second):
+			t.Fatal("a skipped input's goroutine is still waiting for the head")
+		}
+	}
 	mu.Lock()
 	if len(ran) != 0 || len(skipped) != 3 {
 		t.Errorf("while the head hangs: ran %v, skipped %v, want nothing run, b, c, d skipped", ran, skipped)
