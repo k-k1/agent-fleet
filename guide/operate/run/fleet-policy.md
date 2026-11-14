@@ -28,7 +28,7 @@ The policy is baked into the image and delivered to every container.
 | cursor | Not delivered |
 
 Topic files sit in `/usr/local/share/agent-fleet/notes/` in the container.
-For claude, codex and opencode, the Workspace Agent also registers each topic as a skill named `af-<topic>` at every start.
+For claude, codex, opencode and muse, the Workspace Agent also registers each topic as a skill named `af-<topic>` at every start.
 The CLI's skill mechanism becomes a second way to the text. For the other agents, the index is the only way.
 
 ## Write it

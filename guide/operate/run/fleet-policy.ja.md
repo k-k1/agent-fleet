@@ -28,7 +28,7 @@ source_of_truth: "`workspace/workspace-notes.md` と `workspace/notes/`、Worksp
 | cursor | 届きません |
 
 トピックのファイルは、コンテナでは `/usr/local/share/agent-fleet/notes/` に置かれます。
-claude・codex・opencode には、Workspace Agent が起動のたびに各トピックを `af-<トピック>` という名前のスキルとしても登録します。
+claude・codex・opencode・muse には、Workspace Agent が起動のたびに各トピックを `af-<トピック>` という名前のスキルとしても登録します。
 CLI のスキルの仕組みからも本文にたどり着けます。ほかのエージェントがたどり着く経路は、索引だけです。
 
 ## 書く
