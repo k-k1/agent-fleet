@@ -22,6 +22,7 @@ import { TenantSignInMethods } from "./tenantSignInMethods.tsx";
 import { PoolBudgetHint, type PoolBudget } from "./ec2Pool.tsx";
 import { TenantExternalMemoryView } from "./tenantExternalMemory.tsx";
 import { TenantWatchSourcesView } from "./tenantWatchSources.tsx";
+import { TenantMemoQueuesView } from "./tenantMemoQueues.tsx";
 import { TenantNetworkView } from "./tenantNetwork.tsx";
 import { TenantMCPOAuthView } from "./tenantMCPOAuth.tsx";
 import { TenantLimitBoardView } from "../../limits/TenantLimitBoardView.tsx";
@@ -69,6 +70,8 @@ export function tenantScopeGroups(opts: { cost: boolean; engines?: boolean }): S
     ["external-memory", "tenant.tab_external_memory"],
     // Whether members may register their own MCP servers as watch sources (ADR 0133 §8).
     ["watch-sources", "tenant.tab_watch_sources"],
+    // Whether members may give a memo category auto-run settings (ADR 0137 §3).
+    ["memo-queues", "tenant.tab_memo_queues"],
     // The reduced engine panel (ADR 0072 open question 11). Created only where the operator
     // granted this tenant `allow_engine_ingest` — like the cost item above, the item does not
     // exist rather than existing and being hidden, because the CP answers 403 without the
@@ -617,6 +620,7 @@ export function TenantScopeBody({
   if (section === "member-defaults") return <TenantMemberDefaultsPanel key={slug} slug={slug} />;
   if (section === "external-memory") return <TenantExternalMemoryView key={slug} slug={slug} />;
   if (section === "watch-sources") return <TenantWatchSourcesView key={slug} slug={slug} />;
+  if (section === "memo-queues") return <TenantMemoQueuesView key={slug} slug={slug} />;
   // tenant is passed because this view carries two toggles, "accept" and "show as a button"
   // (docs/log/61 §61.17.5). Only a super_admin can flip them, and the rules PUT stays fixed at
   // withSuperAdmin (decision 19). onChanged reloads the four columns.

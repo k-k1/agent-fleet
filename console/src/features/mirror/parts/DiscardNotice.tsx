@@ -23,6 +23,8 @@ export function originLabel(o: TurnOrigin | undefined): string {
       return tr("mirror.from_schedule");
     case "schedule-manual":
       return tr("mirror.from_schedule_manual");
+    case "queue":
+      return tr("mirror.from_queue");
     case "auto-resume":
       return tr("mirror.from_auto_resume");
     case "notice":

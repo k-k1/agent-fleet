@@ -27,7 +27,23 @@ export interface Memo {
   /** Set by the Control Plane on a memo taken in from the member inbox (ADR 0111): the item
    *  and its sender. Absent on every memo the member or their agent wrote. */
   origin?: { itemId: string; sender: string };
+  /** Message-queue fields (ADR 0137), all written by the Control Plane. state is "" (or absent)
+   *  on a plain note. A client never sends them back. */
+  state?: MemoState;
+  /** Which face created the message: "member" (Console), "workspace" (a session), "mcp", "inbox". */
+  provenance?: string;
+  /** Attribution only: the session name (workspace) or connection id (mcp). */
+  producer?: string;
+  producerOrigin?: string;
+  /** What a release names: the hash of the content the card showed. */
+  contentHash?: string;
+  releasedAt?: string;
+  /** The delivery (one fire) that took the message (#4163). */
+  deliveryId?: string;
 }
+
+/** A message's state in a queue; "" is a note outside any queue. */
+export type MemoState = "" | "held" | "pending" | "claimed" | "delivered" | "unconfirmed" | "superseded";
 
 // The user-editable subset sent to POST /api/memos.
 export interface MemoInput {
@@ -59,6 +75,52 @@ export interface MemoCategory {
   name: string;
   position: number; // order within the repo bucket
   createdAt: string; // RFC3339
+  /** True when the category has auto-run settings (a row in memo_queue), enabled or not. */
+  queue?: boolean;
+}
+
+/** Auto-run settings of a category (GET /api/memo-queues, PUT /api/memo-queues/{categoryId}). */
+export interface MemoQueue {
+  categoryId: string;
+  repo: string;
+  category: string;
+  instruction: string;
+  agentKind: string;
+  model: string;
+  effort: string;
+  route: string;
+  spendCapUsd: number;
+  worktree: boolean;
+  maxActive: number;
+  batch: number;
+  enabled: boolean;
+  generation: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The PUT body: a PUT replaces the whole row, so every field is sent. */
+export type MemoQueueInput = Pick<
+  MemoQueue,
+  "instruction" | "agentKind" | "model" | "effort" | "route" | "spendCapUsd" | "worktree" | "maxActive" | "batch" | "enabled"
+>;
+
+/** GET /api/memo-queues. tenantEnabled false: the tenant's administrator has not allowed new queues. */
+export interface MemoQueuesWire {
+  tenantEnabled: boolean;
+  queues: MemoQueue[];
+}
+
+/** One fire of a queue (GET /api/memo-queues/{categoryId}/deliveries, #4163). */
+export interface MemoDelivery {
+  id: string;
+  state: string; // claimed | sending | open | closed
+  outcome: string; // clean | failed | aborted | unknown | not_sent ("" while not closed)
+  session: string; // the started session's name; "" until known
+  messageIds: string[];
+  createdAt: string;
+  sentAt: string;
+  closedAt: string;
 }
 
 // Body sent to POST /api/memo-categories.

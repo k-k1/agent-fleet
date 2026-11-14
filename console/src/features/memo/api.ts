@@ -13,4 +13,10 @@ export {
   memoCategoryCreate,
   memoCategoryUpdate,
   memoCategoryDelete,
+  memoQueueList,
+  memoQueuePut,
+  memoQueueDelete,
+  memoRelease,
+  memoQueueFire,
+  memoQueueDeliveries,
 } from "../../core/api/client.ts";
