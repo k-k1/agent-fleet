@@ -102,8 +102,8 @@ What a session enqueues waits for one press by the person before it can be fired
   stays true for them.
 - **Message.** A `memo` row plus a state, a provenance (§3), an optional typed reference (§4) and a de-duplication
   key. States: `held` (waiting for the person's release), `pending` (may be fired), `claimed` (a fire took it),
-  `delivered`, `unconfirmed` (the fire could not tell whether it arrived), `superseded` (replaced by a tidy run,
-  §8). From `claimed` on a message cannot be changed. A manual send keeps `sent_at` and is a delivery by a person.
+  `delivered`, `unconfirmed` (the create's outcome is unknown and no session can be found), `superseded` (replaced by
+  a tidy run, §8). From `claimed` on a message cannot be changed. A manual send keeps `sent_at` and is a delivery by a person.
 - **Delivery.** One fire: its messages, the session it started, and a state: `claimed` (the messages are taken and
   nothing was sent), `sending` (the create request is leaving or has left), `open` (the session is known), `closed`
   with an outcome (clean, failed, aborted, unknown, or not sent). It is the ledger the Console shows and the thing
@@ -132,9 +132,11 @@ The Control Plane sets a message's provenance from the route it arrived by, neve
 
 - **Release is one press, bound to what was shown.** When a session enqueues into a queue, the Console shows one
   card per session and queue: which session, which queue, the items. Pressing it moves them to `pending`. The press
-  is a Control Plane request that needs the member's Console session, which the workspace does not hold (ADR 0113
-  decision 6), and the token face has no release route: it is a wall, not a convention. The release records a hash
-  of what the card showed: the body, the reference, the attachments and the queue. A person who told a session "put
+  is a Control Plane request under `/api`: it needs the member's Console session and passes the Console's write
+  checks (`control-plane/internal/writegate`). The workspace does not hold that session (ADR 0113 decision 6), and
+  the token face has no release route. So it is a wall, not a convention, as strong as the Control Plane's
+  sign-in: a deployment that runs without sign-in has none (ADR 0113, Threat model). The release records a hash of
+  what the card showed: the body, the reference, the attachments and the queue. A person who told a session "put
   these in the queue" is at the Console and presses once; what a session enqueues with nobody there waits.
 - **A released message cannot be changed from inside the workspace.** A change to the body, the reference or the
   attachments, or a move to another category, that arrives by the token face or `/mcp` puts the message back to
@@ -224,10 +226,13 @@ A slot held by a session that waits for a person is deliberate. Two sessions tha
 the queue; the member finds two questions in the morning, not ten. A person who later resumes the session of a
 closed delivery is doing their own work, and it is not counted again.
 
-**Overdue.** A delivery open longer than `max_task_hours` (default 12) does not free its slot by that alone: its
-children may still be running. It is marked overdue and the member is notified. When its session has also shown no
-progress for an hour (the reaper's bound, `busyProgressLapse`), the dispatcher stops the session and the sessions it
-started, and frees the slot once they read as stopped. A stop that fails leaves the slot occupied.
+**Overdue.** A delivery open longer than `max_task_hours` (default 12) is marked overdue and the member is notified.
+Being overdue never frees a slot. When neither its session nor any session that session started has shown progress
+for an hour (the reaper's bound, `busyProgressLapse`), the dispatcher asks the Agent to **retire** them: end their
+watches and timers, cancel their booked resumes, and stop them. A stop alone would not do: a watch or a booked
+resume starts a stopped session again. The slot is then freed by the ordinary rule, when the Agent's report says
+that nothing will start them again; a retire that does not get that far leaves the slot occupied. A delivery whose
+children still make progress is not retired.
 
 **A fire reserves, claims, then sends.**
 
@@ -238,31 +243,49 @@ started, and frees the slot once they read as stopped. A stop that fails leaves 
    pick different messages. (The gate's claim covers one schedule's ledger; this one has to cover the queue and the
    member.)
 2. *Wake and wait*, the scheduler's path.
-3. *Send*: write the delivery as `sending`, then create the session with the idempotency key `q_<delivery>`, the
-   delivery id stamped on the session, the queue's consumer settings, the `queue` source, and a **new worktree off
-   the queue's repository** unless the queue says otherwise (two sessions in one working copy corrupt each other).
-   When the answer arrives the delivery becomes `open` with the session's name.
+3. *Send*: reserve the durable idempotency key `q_<delivery>` on the Agent; move the delivery from `claimed` to
+   `sending` with a conditional write on its state, and only a fire whose write succeeds may go on; then create the
+   session under that key, with the delivery id stamped on it, the queue's consumer settings, the `queue` source,
+   and a **new worktree off the queue's repository** unless the queue says otherwise (two sessions in one working
+   copy corrupt each other). When the answer arrives the delivery becomes `open` with the session's name.
+
+The durable key is what the Agent already has for the Control Plane's own launches
+(`workspace/agent/internal/sessionx/session_idempotency.go:14-23`; the member inbox launches with it,
+`control-plane/inbox_launch.go`): its record is on disk, a key that was abandoned refuses a create that arrives
+later, and only a reserved, abandoned or refused record answers "not created".
 
 What happens when a step does not complete:
 
-- **Provably not sent**: the delivery never reached `sending` (the wake failed, the Agent was not ready in the
-  window), or the create was answered with a refusal (memory pressure, a quota). The messages return to `pending`,
-  the delivery closes as not sent, and the queue backs off. It is not a failure.
-- **Not provable**: the delivery reached `sending` and no answer was recorded (a timeout, a Control Plane restart).
-  Reconciliation decides.
+- **Provably not sent**: the delivery never left `claimed` (the wake failed, the Agent was not ready in the window),
+  or the create was answered with a refusal (memory pressure, a quota). The delivery is closed as not sent with a
+  conditional write on its state, and only when that write succeeds do the messages return to `pending`. The queue
+  backs off. It is not a failure.
+- **Not provable**: the delivery is `sending` and no answer was recorded (a timeout, a Control Plane restart). It
+  keeps its slot until reconciliation resolves it.
 
-**Reconciliation** runs every tick over deliveries that are `claimed` or `sending` and older than a fire's own time
-budget, so that a restart leaves nothing behind:
+**Reconciliation** runs in every tick, before anything is reserved, over deliveries that are `claimed` or `sending`
+and older than a fire's own time budget, so that a restart leaves nothing behind:
 
-- `claimed`, never `sending`: nothing was sent. The messages return to `pending`.
-- `sending`, and the Agent answers: look for a session stamped with the delivery id. Found: the delivery becomes
-  `open`. Not found: the delivery closes as unknown and its messages become `unconfirmed`. They are shown to the
-  person and never fired again by themselves; a duplicate implements an issue twice.
-- `sending`, and the workspace is stopped: nothing can be running, so the delivery closes as unknown at once. If a
-  session with its id shows up at a later start, the delivery is opened again and counted.
+- `claimed`: close it as not sent, with the same conditional write on its state. If that write wins, the messages
+  return to `pending`. If a slow fire's write to `sending` won instead, nothing is returned. Elapsed time alone
+  never proves that an old worker will not send; the conditional write does.
+- `sending`: look the key up on the Agent.
+  - Done: the delivery becomes `open` with the session the record names.
+  - Reserved: abandon the key, which is atomic with the start of a create, so a create still on its way is refused.
+    Abandoned or refused, then or already: nothing was created and nothing will be. The delivery closes as not sent
+    and the messages return to `pending`.
+  - In flight in the running Agent: leave it for the next tick.
+  - Unknown (no record, an unreadable one, or one left in flight by an Agent process that is gone): look for a
+    session stamped with the delivery id. Found: the delivery becomes `open`. Not found: the delivery closes as
+    unknown and the messages become `unconfirmed`. They are shown to the person and never fired again by
+    themselves; a duplicate implements an issue twice.
+- While the workspace is stopped a `sending` delivery cannot be resolved, and it keeps its slot: its session may
+  exist and hold a watch or a booked resume. When such a delivery is all that keeps an open queue with `pending`
+  messages from firing, the dispatcher wakes the workspace to resolve it. That wake counts against the queue's
+  daily cap.
 
-A delivery that closes stops its session and the sessions that session started (resumable). Nothing is archived or
-deleted.
+A delivery that closes stops its session and the sessions that session started (resumable); by the rule above
+nothing is left that would start them again. Nothing is archived or deleted.
 
 ### 7. Safety valves
 
@@ -319,8 +342,9 @@ manual and alone (ADR 0111 decisions 1 and 3). A queue shared by the members of 
 - **Control Plane**: settings and release under `/api`, requiring the member's Console session. On the token face:
   enqueue, list and edit, where an edit of a released message returns it to `held`; no release, no settings, and for
   a queue no flush, no delete and no category change.
-- **Agent**: the relay for `add_memo`, the `queue` turn source, the report on the session row (what would start the
-  session again, how the delivery's first turn ended), the tidy call.
+- **Agent**: the relay for `add_memo`, the `queue` turn source, the delivery id on the session, retire, the report
+  on the session row (what would start the session again, how the delivery's first turn ended), the tidy call. The
+  durable idempotency key is used as it is.
 - **Guide**: a task page, the limits table, and a term for the glossary. "Queue" already names a session's waiting
   inputs (ADR 0105) in the Console, so the word shown to members is chosen there, not here.
 
@@ -328,9 +352,9 @@ manual and alone (ADR 0111 decisions 1 and 3). A queue shared by the members of 
 
 1. **Queues without automatic fires.** Settings, message states, provenance, the Agent relay, the release card and
    its hash, the rules for the token face, the envelope and source, the delivery ledger with reservation and
-   reconciliation, worktree per fire, "fire now".
-2. **Automatic fires.** The dispatcher, the report on the session row, the open conditions, the quota, the breaker,
-   the caps and the notifications.
+   reconciliation over the durable idempotency key, worktree per fire, "fire now".
+2. **Automatic fires.** The dispatcher, the report on the session row, retire, the open conditions, the quota, the
+   breaker, the caps and the notifications.
 3. **Typed references** and "add to queue" on work items.
 4. **"Accept from sessions I started".**
 5. **Tidying before a fire.**
@@ -345,8 +369,11 @@ manual and alone (ADR 0111 decisions 1 and 3). A queue shared by the members of 
   ever; the report ledger moved from an edge to a level for the same reason (ADR 0035).
 - **A turn end, or a stop, as the task end.** Too early for a session that waits for CI or a review, and a stopped
   session is started again by a notice or a booked resume (fact 6).
-- **Freeing a slot because the time is up.** The children of an overdue session keep running, so the rule that
-  protects the limit would break it.
+- **Freeing a slot because the time is up, or because a stop was seen.** The children of an overdue session keep
+  running, and a watch or a booked resume starts a stopped session again, so the rule that protects the limit would
+  break it.
+- **Closing a delivery whose create got no answer**, after a timeout or because the workspace is stopped. The
+  session may exist; the slot would be handed out twice.
 - **Letting sessions enqueue straight into automatic fires.** That is docs/log/86 §86.5's backdoor with a tool
   advertised to every session.
 - **A credential per session to authenticate the producer.** Same uid: any process can read it (fact 1).
@@ -372,7 +399,9 @@ manual and alone (ADR 0111 decisions 1 and 3). A queue shared by the members of 
 - The scheduler gets a second source of due work and shares its four parallel fires with schedules. Replenishment
   is as fast as the tick, and no faster.
 - The Agent has to report, per session, what would start it again and how its first queue turn ended, and the
-  Control Plane has to keep that with the row while the workspace is stopped.
+  Control Plane has to keep that with the row while the workspace is stopped. The Agent also gets a way to retire
+  a session.
+- A delivery whose create got no answer holds its slot until the Agent can be asked, which may take a wake.
 - Hook-less agent kinds report idle by polling, which can be late or early, and record no turn outcome; for them
   the one-minute rule and the overdue rule are the backstops, and a queue's consumer is better a kind with turn
   hooks.
