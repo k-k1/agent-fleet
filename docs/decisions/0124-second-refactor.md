@@ -711,4 +711,3 @@ the reusable workflow stops declaring one. Not verified live: no caller was run 
 (secrets through `workflow_call`, `vars` and `github.token` in the called workflow, `if:` on the
 called job's steps); `actionlint` accepts all of them and checks each call against the callee's
 inputs and secrets.
-
