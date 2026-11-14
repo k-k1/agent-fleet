@@ -273,7 +273,7 @@ func (f *ecsEC2Factory) scanDarkSlot(ctx context.Context, cmds ssmSlotCommands, 
 	}
 	rescue := func() {
 		if canRescue {
-			f.rescueDarkSlot(ctx, darkDecision{slot: id, vol: vol, launch: launch, gd: gd})
+			f.rescueDarkSlot(ctx, darkDecision{slot: id, vol: vol, launch: launch, since: stamp.since, gd: gd})
 		}
 	}
 	if stamp.detected {
@@ -338,6 +338,7 @@ func (f *ecsEC2Factory) writeDarkStamp(ctx context.Context, instanceID string, s
 }
 
 func (f *ecsEC2Factory) clearDarkStamp(ctx context.Context, instanceID, current string) {
+	f.rescueSkipLogged.Delete(instanceID)
 	if current == "" {
 		return
 	}

@@ -1,9 +1,12 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -302,6 +305,51 @@ func TestRescueNeverTakesAServiceThatIsUp(t *testing.T) {
 		}
 		w.untouched()
 	})
+}
+
+func TestRescueSkippedForAServiceThatIsUpIsLoggedOncePerEpisode(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		var buf bytes.Buffer
+		log.SetOutput(&buf)
+		defer log.SetOutput(os.Stderr)
+		skips := func() int { return strings.Count(buf.String(), "skipped: its workspace service is up") }
+
+		w.h.ecs.services[rescueWorkspace] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+		w.h.ci.running = append(w.h.ci.running, runningTask(rescueWorkspace, "i-dark"))
+		w.arm()
+		w.pass(w.f)
+		if skips() != 1 {
+			t.Fatalf("first acting sweep logged %d skips, want 1:\n%s", skips(), buf.String())
+		}
+		w.pass(w.f)
+		w.pass(w.f)
+		if skips() != 1 {
+			t.Fatalf("later sweeps of the same episode logged %d skips, want 1:\n%s", skips(), buf.String())
+		}
+
+		// The episode ends (the slot answers, the stamp clears) and a new one starts: it is
+		// told again.
+		clearDark := func() {
+			w.h.ec2.instances["i-dark"].Tags = withoutTag(w.h.ec2.instances["i-dark"].Tags, ec2TagDarkSince)
+		}
+		clearDark()
+		w.pass(w.f)
+		backdateDark(t, w.h, 45*time.Minute) // a different first observation: a different episode
+		w.pass(w.f)
+		if skips() != 2 {
+			t.Fatalf("a new episode logged %d skips in total, want 2:\n%s", skips(), buf.String())
+		}
+	})
+}
+
+func withoutTag(tags []ec2types.Tag, key string) []ec2types.Tag {
+	var out []ec2types.Tag
+	for _, tg := range tags {
+		if aws.ToString(tg.Key) != key {
+			out = append(out, tg)
+		}
+	}
+	return out
 }
 
 func TestRescueStepsAsideWhenTheDecisionIsStale(t *testing.T) {
