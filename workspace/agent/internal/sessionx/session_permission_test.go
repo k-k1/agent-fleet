@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -701,18 +702,104 @@ func TestPermissionAnswerRefusesNewlineVariantOfTheNewerCall(t *testing.T) {
 		t.Fatalf("an answer for P was sent to a dialog that may be Q:\n%s", b)
 	}
 
-	// The wrapped P still answers when no newer call is recorded, when the record is P itself, and
-	// when the record is a call the screen does not show (a background subagent's tool).
-	for i, last := range [][2]string{{"", ""}, {"Bash · " + short, short + " " + next}, {"Bash · ls -la", "ls -la"}, {"Edit · /tmp/x.go", ""}} {
+	// The wrapped P still answers when no newer call is recorded and when the record is P itself.
+	for i, last := range [][2]string{{"", ""}, {"Bash · " + short, short + " " + next}} {
 		name := "nlp" + strconv.Itoa(i)
 		stubPane(t, replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+short+"\n "+next+"\n"))
 		sid := permissionSession(t, name)
 		status.WritePendingPermissionCommand(sid, "Bash · "+short, short+" "+next)
 		if last[0] != "" {
-			status.WriteLastToolCall(sid, last[0], last[1], "toolu_other")
+			status.WriteLastToolCall(sid, last[0], last[1], "toolu_p")
 		}
 		if rec := postPermission(name, `{"choice":"allow","expect":"`+permissionToken(sid)+`"}`); rec.Code != http.StatusOK {
 			t.Errorf("last-tool %q: %d %s", last[0], rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// Review round 1 of #4125: the evidence of a newer call must not be lost on the way.
+//   - Q recorded, then a background call R (not on screen) overwrites the single slot.
+//   - The record cannot be read (here: the path is a directory, EISDIR).
+//
+// Both refuse a wrap-ambiguous dialog; an unambiguous one still answers, since the screen then
+// pins the dialog to P's exact text.
+func TestPermissionAnswerRefusesWhenNewerCallEvidenceIsLost(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	short := "echo " + strings.Repeat("a", 60)
+	next := strings.Repeat("b", 20)
+	wrapped := replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+short+"\n "+next+"\n")
+	p, q := short+" "+next, short+"\n"+next
+	setups := map[string]func(sid string){
+		"overwritten by R": func(sid string) {
+			status.WriteLastToolCall(sid, "Bash · "+short, q, "toolu_q")
+			status.WriteLastToolCall(sid, "Bash · ls -la", "ls -la", "toolu_r")
+		},
+		"unrelated Edit": func(sid string) { status.WriteLastToolCall(sid, "Edit · /tmp/x.go", "", "toolu_r") },
+		"unreadable": func(sid string) {
+			if err := os.MkdirAll(filepath.Join(paths.AgentStateDir(), "pending-perm", sid+".tool"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	i := 0
+	for name, setup := range setups {
+		sess := "nle" + strconv.Itoa(i)
+		i++
+		stubPane(t, wrapped)
+		sid := permissionSession(t, sess)
+		status.WritePendingPermissionCommand(sid, "Bash · "+short, p)
+		setup(sid)
+		tok := permissionToken(sid)
+		meta, _ := session.ReadMeta(sess)
+		if out, err := answerClaudePermission(meta, claude.PermAllow, tok, true); err != nil || !strings.Contains(out, "not the one this button") {
+			t.Errorf("%s button: %q %v", name, out, err)
+		}
+		if rec := postPermission(sess, `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
+			t.Errorf("%s card: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+		t.Fatalf("an answer was sent while the newer call's evidence was lost:\n%s", b)
+	}
+	// The same records beside an unambiguous dialog (one short line) refuse nothing.
+	j := 0
+	for name, setup := range setups {
+		sess := "nlu" + strconv.Itoa(j)
+		j++
+		stubPane(t, permFixture(t, "bash_ask_rule_af_label.txt"))
+		sid := permissionSession(t, sess)
+		setup(sid)
+		if rec := postPermission(sess, `{"choice":"allow","expect":"`+permissionToken(sid)+`"}`); rec.Code != http.StatusOK {
+			t.Errorf("%s, unambiguous: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// Q's Notification completing while the answer for P reads the pane: the record is retired only
+// after Q's payload is published, so the answer sees either Q's record or Q's token, never
+// neither.
+func TestPermissionAnswerRacingThePublish(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	short := "echo " + strings.Repeat("a", 60)
+	next := strings.Repeat("b", 20)
+	wrapped := replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+short+"\n "+next+"\n")
+	sid := permissionSession(t, "nlr")
+	status.WritePendingPermissionCommand(sid, "Bash · "+short, short+" "+next)
+	status.WriteLastToolCall(sid, "Bash · "+short, short+"\n"+next, "toolu_q")
+	tok := permissionToken(sid)
+	prev := readPermissionMenu
+	readPermissionMenu = func(string) (claude.PermissionMenu, bool) {
+		time.Sleep(10 * time.Millisecond) // a later mtime for Q's payload
+		status.PublishPermissionPrompt(sid, "")
+		return claude.ParsePermissionMenu(wrapped)
+	}
+	t.Cleanup(func() { readPermissionMenu = prev })
+	if rec := postPermission("nlr", `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("answer for P during Q's publish: %d %s", rec.Code, rec.Body.String())
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+		t.Fatalf("keys sent:\n%s", b)
 	}
 }

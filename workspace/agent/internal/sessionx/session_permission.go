@@ -63,8 +63,8 @@ func permissionToken(sid string) string {
 // ("" for another tool; a Bash payload without one is refused, #3521). A target that cannot be compared (the payload
 // names none) is let through, since the token still binds the answer; a target the dialog does
 // not show, or a dialog whose body cannot be read, is refused as "target_mismatch". So is a
-// dialog that a newer call, already announced by its PreToolUse hook, could equally be drawing
-// (newerCallOnScreen).
+// wrap-ambiguous dialog while a newer call has been announced by its PreToolUse hook
+// (newerCallMayBeShown).
 func permissionKeys(sid, name, choice, detail, command, cwd string) (keys []string, code string) {
 	m, ok := readPermissionMenu(name)
 	if !ok {
@@ -73,10 +73,8 @@ func permissionKeys(sid, name, choice, detail, command, cwd string) (keys []stri
 	// The token binds an answer to the payload, but claude can draw the next dialog before its
 	// hook rewrites the payload (#3359). Only a dialog that shows the payload's target is the one
 	// the card or button was drawn for.
-	if m.CheckTargetCommand(detail, cwd, command) == claude.TargetDiffers {
-		return nil, "target_mismatch"
-	}
-	if newerCallOnScreen(m, sid, detail, command, cwd) {
+	check, ambiguous := m.CheckTargetCommandWrap(detail, cwd, command)
+	if check == claude.TargetDiffers || newerCallMayBeShown(sid, detail, command, ambiguous) {
 		return nil, "target_mismatch"
 	}
 	if k, found := m.Key(choice); found {
@@ -88,24 +86,30 @@ func permissionKeys(sid, name, choice, detail, command, cwd string) (keys []stri
 	return nil, "choice_unavailable"
 }
 
-// newerCallOnScreen reports whether the dialog on screen could be the call recorded by the last
-// permtool PreToolUse hook rather than the pending one. That record is consumed when a
-// permission_prompt publishes it, so while a prompt is pending it exists only when a later call
-// has already reached PreToolUse. Claude Code runs PreToolUse before its permission check (the
-// hook's decision can allow, deny or ask), so a next dialog Q drawn before its own Notification
-// rewrites the payload has its record here.
+// newerCallMayBeShown reports whether the dialog on screen may belong to a later call than the
+// pending one. It matters only when the match is wrap-ambiguous: P wrapped by the terminal and a
+// Q with a real newline at that wrap draw the same screen, so the screen alone matches Q for P
+// (CheckTargetCommandWrap). An unambiguous match pins the dialog to P's exact text.
 //
-// The screen alone cannot separate P wrapped by the terminal from a Q with a real newline at that
-// wrap (CheckTargetCommand's limit). This closes that window: when the screen reads as Q as well
-// as P and the two texts differ, the answer is refused and the user answers in the terminal. A
-// record the screen does not match (a background subagent's tool, written under the same
-// session) is not this dialog and refuses nothing.
-func newerCallOnScreen(m claude.PermissionMenu, sid, detail, command, cwd string) bool {
-	d, c, _, ok := status.ReadLastToolCall(sid)
-	if !ok || (d == detail && c == command) {
+// The evidence is the permtool PreToolUse record (last-tool). Claude Code runs PreToolUse before
+// its permission check (the hook's decision can allow, deny or ask), so Q's record exists while Q
+// is drawn, and a permission_prompt retires it only after publishing Q's payload (the token
+// re-check then refuses). Any record other than the pending call's own counts, whether or not it
+// matches the screen: the single slot can be overwritten, so an unrelated record (a background
+// subagent's tool) may have replaced Q's. A record that cannot be read counts too. Either costs a
+// refusal, and the user answers in the terminal.
+//
+// Left open: a PreToolUse hook that never recorded Q (it failed or timed out, and claude goes on
+// to the dialog) leaves nothing to find.
+func newerCallMayBeShown(sid, detail, command string, ambiguous bool) bool {
+	if !ambiguous {
 		return false
 	}
-	return m.CheckTargetCommand(d, cwd, c) == claude.TargetMatches
+	d, c, present, err := status.LastToolRecord(sid)
+	if err != nil {
+		return true
+	}
+	return present && (d != detail || c != command)
 }
 
 // permissionChoices is what the poll reports beside pendingPermission, so the card offers only

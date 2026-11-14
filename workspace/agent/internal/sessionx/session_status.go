@@ -581,19 +581,8 @@ func applyPendingPayloads(sid, state string, h hookInput) {
 		status.RemovePendingPlan(sid)
 	}
 	if state == "permission" {
-		message := h.message
-		command, toolUseID := "", ""
 		// Prefer the specific tool detail captured just before the prompt.
-		detail, lastCommand, lastID, ok := status.ReadLastToolCall(sid)
-		if ok && detail != "" {
-			message = detail
-			command = lastCommand
-			toolUseID = lastID
-		} else if message == "" {
-			message = "Claude needs your permission"
-		}
-		status.RemoveLastTool(sid)
-		status.WritePendingPermissionCall(sid, message, command, toolUseID)
+		status.PublishPermissionPrompt(sid, h.message)
 	} else {
 		status.RemovePendingPermission(sid)
 	}

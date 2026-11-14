@@ -9,9 +9,12 @@ package status
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"log"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -566,6 +569,77 @@ func ReadLastToolCall(sid string) (detail, command, toolUseID string, ok bool) {
 	detail, command, toolUseID = splitCall(v)
 	return detail, command, toolUseID, true
 }
+
+// LastToolRecord is the raw last-tool record for an answer path that must not mistake a failed
+// read for an absent record: present is false only when the file does not exist, and err is set
+// for any other failure, an empty file included (Write never stores one).
+func LastToolRecord(sid string) (detail, command string, present bool, err error) {
+	b, err := os.ReadFile(lastTools.Path(sid))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", "", false, nil
+	}
+	if err == nil && len(b) == 0 {
+		err = errors.New("empty last-tool record")
+	}
+	if err != nil {
+		return "", "", true, err
+	}
+	detail, command, _ = splitCall(string(b))
+	return detail, command, true, nil
+}
+
+// retireLastToolIf removes the last-tool record only while it still holds want, the record a
+// permission_prompt just published. The permtool hook writes without the sid lock, so a plain
+// remove could delete a newer call's record that landed in between, and that record is the only
+// evidence an answer path has of a dialog drawn ahead of its payload. The record is taken
+// atomically (rename), and anything else is put back with link, which never replaces a record
+// written after the take.
+func retireLastToolIf(sid, want string) {
+	path := lastTools.Path(sid)
+	staging := filepath.Join(lastTools.Dir(), fstore.StagingSubdir)
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		return
+	}
+	f, err := os.CreateTemp(staging, sid+".retire.*")
+	if err != nil {
+		return
+	}
+	taken := f.Name()
+	_ = f.Close()
+	defer os.Remove(taken)
+	if err := os.Rename(path, taken); err != nil {
+		return
+	}
+	if b, err := os.ReadFile(taken); err == nil && string(b) == want {
+		return
+	}
+	_ = os.Link(taken, path)
+}
+
+// PublishPermissionPrompt turns the call the last permtool hook recorded into the pending
+// payload (message is the fallback when none was recorded), then retires that record. The order
+// matters: an answer path that finds no record must also find the new payload, so the record
+// outlives the old payload and is retired only while it is still the one published.
+func PublishPermissionPrompt(sid, message string) {
+	raw, ok := lastTools.Read(sid)
+	command, toolUseID := "", ""
+	if ok {
+		if d, c, id := splitCall(raw); d != "" {
+			message, command, toolUseID = d, c, id
+		}
+	}
+	if message == "" {
+		message = "Claude needs your permission"
+	}
+	WritePendingPermissionCall(sid, message, command, toolUseID)
+	if ok {
+		beforeRetireLastTool()
+		retireLastToolIf(sid, raw)
+	}
+}
+
+// beforeRetireLastTool runs between publishing a prompt and retiring its record; tests stall it.
+var beforeRetireLastTool = func() {}
 
 // WritePendingPermissionCommand publishes the payload together with the command it stands for.
 func WritePendingPermissionCommand(sid, message, command string) {
