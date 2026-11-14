@@ -90,6 +90,10 @@ const (
 	OriginSchedule = "schedule" // raised by scheduled execution (docs/log/38)
 	OriginHandoff  = "handoff"  // grown out of a handoff (formerly fork)
 	OriginSession  = "session"  // create_session by another SESSION (ADR 0073) — see OriginSession field
+	// OriginQueue is a session a message queue's delivery started (ADR 0137 §5). Set only from
+	// a create that carries a queue delivery, never from the origin field: ValidOrigin does not
+	// accept it, so no client can label a session a queue's without its envelope.
+	OriginQueue = "queue"
 	// OriginUnknown is a session that predates this feature. It keeps "neither zero nor user".
 	OriginUnknown = "unknown"
 )
@@ -249,6 +253,10 @@ type Session struct {
 	// conversation went. The Control Plane's sessionWire has to carry them too.
 	Moving  string `json:"moving,omitempty"`
 	MovedTo string `json:"movedTo,omitempty"`
+	// QueueDelivery mirrors Meta.QueueDelivery: the queue delivery that created this session
+	// (ADR 0137 §6). The Control Plane finds the session a delivery created by it, so its
+	// sessionWire has to carry it too.
+	QueueDelivery string `json:"queueDelivery,omitempty"`
 	// TitleSetBy mirrors Meta.TitleSetBy ("user" | "parent" | ""): who last set Title. It
 	// rides the wire so a reader outside this process can tell a name the user chose from one
 	// a parent wrote — the same reason Origin / OriginSession are here. Display-only for now;
@@ -789,6 +797,10 @@ type Meta struct {
 	// it is written just before the state settles to failed and cleared whenever a delivery
 	// starts again, so a stale reason never outlives its failure.
 	InitialPromptReason string `json:"initialPromptReason,omitempty"`
+	// QueueDelivery is the id of the queue delivery whose create started this session (ADR 0137
+	// §6), "" for every other session. Recreate and fork do not inherit it: one delivery names
+	// one session.
+	QueueDelivery string `json:"queueDelivery,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so
 	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached

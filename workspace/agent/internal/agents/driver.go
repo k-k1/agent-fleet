@@ -72,6 +72,7 @@ const (
 	OriginAutoResume     = "auto-resume"
 	OriginNotice         = "notice"
 	OriginMCP            = "mcp"
+	OriginQueue          = "queue"
 )
 
 // Origin says where a TurnInput came from.

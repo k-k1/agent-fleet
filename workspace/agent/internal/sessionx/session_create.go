@@ -638,6 +638,9 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		MuseContributorMode: contributorModeOn(c.kind),
 	}
 	applyCreateLinks(&meta, req)
+	if req.QueueDelivery != nil {
+		meta.QueueDelivery = req.QueueDelivery.ID
+	}
 	// pending from the first write of the meta: the pane must not offer a resend while the
 	// delivery in launch may still be typing (ADR 0100 decision 2).
 	if strings.TrimSpace(req.InitialPrompt) != "" {

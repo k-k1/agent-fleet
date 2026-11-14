@@ -93,10 +93,11 @@ func spoolFile(sub, name, id string) string {
 }
 
 // isHeldOrigin reports whether input of origin kind is held: the origins nobody at the
-// session's keyboard can resend.
+// session's keyboard can resend. A queue's first prompt is one: the Control Plane counts the
+// delivery as sent once the create answered, so an input lost to a restart is never fired again.
 func isHeldOrigin(kind string) bool {
 	switch kind {
-	case OriginPeer, OriginOperator, OriginSchedule, OriginScheduleManual:
+	case OriginPeer, OriginOperator, OriginSchedule, OriginScheduleManual, OriginQueue:
 		return true
 	}
 	return false

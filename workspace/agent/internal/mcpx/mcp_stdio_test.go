@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -831,20 +833,23 @@ func TestFleetObserveToolsAreAlwaysOnForSessions(t *testing.T) {
 // still gated at writeEnabled(), and tools/list cannot see it. That shipped once already
 // (list_models, ADR 0073), so every set gets this test.
 //
-// The Agent and the memo store are not stubbed: what is under test is the GATE, so any other
-// failure is fine as long as it is not "you are not allowed".
+// What is under test is the GATE, so any other failure is fine as long as it is not "you are
+// not allowed".
 //
-// Redirecting HOME does not isolate the memo tools: cpMemoDo posts to the CP over
-// AF_CP_BASE_URL/AF_MEMO_TOKEN, which the CP injects live into every Workspace container.
-// Measured: with the two vars left alone, every run of this test files a real memo reading
-// "note" into the developer's own queue. Emptying them closes the write and costs the test
-// nothing — the gate under test is checked before cpMemoDo is ever reached.
+// Nothing here may reach a real Control Plane or the live Agent. The memo tools go through the
+// Agent's relay (memorelay), and the live Agent relays to the real CP with the workspace's
+// AF_MEMO_TOKEN; measured before the relay existed, a run with the CP variables left alone filed
+// a real memo reading "note" into the developer's own queue. So the Agent is a fake that records
+// what reached it, and the CP variables point at a tripwire that fails the test when anything
+// calls it directly.
 func TestFleetObserveToolsAreCallableNotJustAdvertised(t *testing.T) {
 	asSession(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
-	t.Setenv("AF_CP_BASE_URL", "")
-	t.Setenv("AF_MEMO_TOKEN", "")
+	cp := memoTripwireCP(t)
+	t.Setenv("AF_CP_BASE_URL", cp)
+	t.Setenv("AF_MEMO_TOKEN", "tripwire-token")
+	agent := memoFakeAgent(t)
 	mcpSourceSession = "slot01"
 	t.Cleanup(func() { mcpSourceSession = "" })
 
@@ -862,15 +867,68 @@ func TestFleetObserveToolsAreCallableNotJustAdvertised(t *testing.T) {
 		if strings.Contains(resp, "許可されていません") {
 			t.Errorf("%s is advertised to a session but refuses the call: %s", name, resp)
 		}
-		// The guard for the paragraph above: a memo tool that got PAST cpMemoDo's own
-		// unset-CP check reached a real CP with a real membership token. Failing here is
-		// what stops the next edit from quietly filing memos again.
-		if strings.HasSuffix(name, "_memo") || name == "list_memos" {
-			if !strings.Contains(resp, "メモ機能はこの環境では利用できません") {
-				t.Errorf("%s talked to a CP instead of stopping at the unset bridge: %s", name, resp)
-			}
-		}
 	}
+	got := agent.memoCalls()
+	want := []string{"GET /memos", `POST /memos {"from":"slot01","memo":{"body":"note","kind":"text"}}`,
+		`PATCH /memos/m1 {"body":"corrected","id":"m1"}`}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("memo tools reached the Agent as\n%q\nwant\n%q", got, want)
+	}
+}
+
+// memoTripwireCP is a Control Plane that fails the test when it is called.
+func memoTripwireCP(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("a test called the Control Plane directly: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "tripwire", http.StatusTeapot)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// memoFake is a fake Agent: it records every /memos call and answers {} to everything.
+type memoFake struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (f *memoFake) memoCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+// memoFakeAgent starts a memoFake and points AGENT_ADDR at it.
+func memoFakeAgent(t *testing.T) *memoFake {
+	t.Helper()
+	f := &memoFake{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/memos") {
+			b, _ := io.ReadAll(r.Body)
+			line := r.Method + " " + r.URL.Path
+			if len(b) > 0 {
+				line += " " + canonicalJSON(b)
+			}
+			f.mu.Lock()
+			f.calls = append(f.calls, line)
+			f.mu.Unlock()
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AGENT_ADDR", strings.TrimPrefix(srv.URL, "http://"))
+	return f
+}
+
+// canonicalJSON re-encodes b with sorted keys, so a recorded body compares stably.
+func canonicalJSON(b []byte) string {
+	var v any
+	if json.Unmarshal(b, &v) != nil {
+		return string(b)
+	}
+	out, _ := json.Marshal(v)
+	return string(out)
 }
 
 // What observation opens, and what it still does not: nothing that drives, answers for or
