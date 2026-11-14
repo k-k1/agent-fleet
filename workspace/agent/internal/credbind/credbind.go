@@ -292,11 +292,19 @@ var (
 	removeFile = os.Remove
 )
 
-// liveOps are the operations begun in this process and not yet finished. A marker of an
-// operation not in it belongs to an earlier Agent process; a completed change may clear it,
-// because the generation it writes is fresh and supersedes whatever that operation did.
+// opMu serialises the operations' transactions: a Begin's registration and marker creation, and
+// a Finish's whole bump-then-clean-up. Without it a Begin landing between a Finish's look at the
+// live set and its scan of the markers reads as an earlier process's orphan and loses its
+// protection while its CLI may still write, and two Finishes interleaving could let one clear a
+// marker that a later failed bump left. Under it, a marker a Finish clears is always superseded
+// by the generation that same Finish has just made durable.
+//
+// liveOps are the operations begun in this process and not yet finished. A marker of an operation
+// not in it belongs to an earlier Agent process, or to one whose own bump failed; a completed
+// change may clear it, because the generation it wrote in the same transaction is fresh and
+// supersedes whatever that operation did.
 var (
-	liveMu  sync.Mutex
+	opMu    sync.Mutex
 	liveOps = map[string]bool{}
 )
 
@@ -322,19 +330,17 @@ func Begin(logins ...string) (*Op, error) {
 	}
 	op := &Op{id: id, logins: logins}
 	dir := paths.AgentConfigDir()
+	opMu.Lock()
+	defer opMu.Unlock()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	liveMu.Lock()
 	liveOps[id] = true
-	liveMu.Unlock()
 	fail := func(err error) (*Op, error) {
 		for _, l := range logins {
 			_ = removeFile(markerPath(l, id))
 		}
-		liveMu.Lock()
 		delete(liveOps, id)
-		liveMu.Unlock()
 		return nil, err
 	}
 	for _, l := range logins {
@@ -369,21 +375,14 @@ func (o *Op) Finish() {
 		return
 	}
 	o.once.Do(func() {
-		defer func() {
-			liveMu.Lock()
-			delete(liveOps, o.id)
-			liveMu.Unlock()
-		}()
+		opMu.Lock()
+		defer opMu.Unlock()
+		defer delete(liveOps, o.id)
 		if !Bump(o.logins...) {
 			return
 		}
 		dir := paths.AgentConfigDir()
-		liveMu.Lock()
-		live := make(map[string]bool, len(liveOps))
-		for k := range liveOps {
-			live[k] = true
-		}
-		liveMu.Unlock()
+		live := liveOps // read under opMu: no Begin can register between here and the scan
 		removed := false
 		for _, l := range o.logins {
 			ops, _ := markersOf(l)

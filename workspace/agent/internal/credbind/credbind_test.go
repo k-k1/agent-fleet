@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -244,9 +245,9 @@ func restart() {
 	genMu.Lock()
 	genPoisoned = map[string]bool{}
 	genMu.Unlock()
-	liveMu.Lock()
+	opMu.Lock()
 	liveOps = map[string]bool{}
-	liveMu.Unlock()
+	opMu.Unlock()
 	ResetForTest()
 }
 
@@ -367,5 +368,55 @@ func TestDurableOrder(t *testing.T) {
 	restart()
 	if g := Generation("kiro-login"); g != "" || markerAbsent("kiro-login") {
 		t.Errorf("after an unsynced state: %q, marker absent %v; want unproven, marker kept", g, markerAbsent("kiro-login"))
+	}
+}
+
+// A Begin that arrives while a Finish is cleaning up (here: from inside its removal of another
+// login's marker) is not taken for an orphan: it waits for the Finish's transaction, then keeps
+// its own marker, and its login stays unproven while it is in flight.
+func TestBeginDuringFinishCleanup(t *testing.T) {
+	freshHome(t)
+	a, err := Begin("alpha", "beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldR := removeFile
+	t.Cleanup(func() { removeFile = oldR })
+	var b *Op
+	done := make(chan struct{})
+	started := false
+	removeFile = func(p string) error {
+		if !started && strings.HasPrefix(filepath.Base(p), pendingPrefix+"alpha.") {
+			started = true
+			go func() {
+				defer close(done)
+				b, _ = Begin("beta")
+			}()
+			// Give the Begin every chance to run now, as it would without the transaction lock.
+			select {
+			case <-done:
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+		return oldR(p)
+	}
+	a.Finish()
+	<-done
+	removeFile = oldR
+	if b == nil {
+		t.Fatal("the second Begin failed")
+	}
+	if markerAbsent("beta") {
+		t.Error("the Finish removed the marker of a Begin that arrived during its clean-up")
+	}
+	if g := Generation("beta"); g != "" {
+		t.Errorf("beta with a change in flight: %q, want unproven", g)
+	}
+	if g := Generation("alpha"); g == "" {
+		t.Error("alpha has no binding after its change finished")
+	}
+	b.Finish()
+	if g := Generation("beta"); g == "" || !markerAbsent("beta") {
+		t.Errorf("beta after its own change finished: %q, marker absent %v", g, markerAbsent("beta"))
 	}
 }
