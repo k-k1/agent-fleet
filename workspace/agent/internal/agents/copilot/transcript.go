@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
@@ -50,7 +51,11 @@ func clip(s string) string {
 	if len(s) <= outClip {
 		return s
 	}
-	return s[:outClip] + "\n…（省略）"
+	cut := outClip
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut-- // never split a multi-byte rune: invalid UTF-8 is corrupted by JSON encoding
+	}
+	return s[:cut] + "\n…（省略）"
 }
 
 // parseEvents renders the whole events.jsonl into turns. Line numbers double as
@@ -75,24 +80,24 @@ func parseEvents(path string) []transcript.Turn {
 		}
 		cur.Parts = transcript.SplicePendingImages(cur.Parts, gen)
 		gen = nil
+		// Text flattens the turn for readers that never see Parts (get_session_output, the
+		// idle report): prose and failures in recorded order, so a failure after an answer
+		// still reaches them.
 		text := ""
 		for _, p := range cur.Parts {
-			if p.Kind == "text" {
-				if text != "" {
-					text += "\n\n"
-				}
-				text += p.Text
+			var piece string
+			switch p.Kind {
+			case "text":
+				piece = p.Text
+			case "error":
+				piece = "[error] " + p.Text
+			default:
+				continue
 			}
-		}
-		if text == "" {
-			// An error-only turn has no prose; readers that flatten a turn to Text
-			// (get_session_output, the idle report) would otherwise see an empty turn.
-			for _, p := range cur.Parts {
-				if p.Kind == "error" {
-					text = "[error] " + p.Text
-					break
-				}
+			if text != "" {
+				text += "\n\n"
 			}
+			text += piece
 		}
 		cur.Text = text
 		if len(cur.Parts) > 0 {

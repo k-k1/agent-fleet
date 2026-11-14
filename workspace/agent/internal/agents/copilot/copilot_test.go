@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestBuildProgram(t *testing.T) {
@@ -338,5 +339,28 @@ func TestParseEventsSessionError(t *testing.T) {
 	}
 	if !strings.HasPrefix(e.Text, "[error] Execution failed") {
 		t.Errorf("flattened text = %q", e.Text)
+	}
+}
+
+func TestParseEventsErrorAfterAnswerFlattened(t *testing.T) {
+	turns := parseEvents(writeFixture(t, `{"type":"user.message","data":{"content":"q"},"timestamp":"2026-11-13T01:00:00Z"}
+{"type":"assistant.turn_start","data":{"turnId":"0","model":"auto"},"timestamp":"2026-11-13T01:00:01Z"}
+{"type":"assistant.message","data":{"content":"partial answer","model":"auto"},"timestamp":"2026-11-13T01:00:02Z"}
+{"type":"session.error","data":{"message":"stream died","errorType":"query"},"timestamp":"2026-11-13T01:00:03Z"}
+`))
+	if len(turns) != 2 || turns[1].Text != "partial answer\n\n[error] stream died" {
+		t.Fatalf("flattened text wrong: %+v", turns)
+	}
+}
+
+func TestClipKeepsUTF8(t *testing.T) {
+	// "あ" is 3 bytes; 2 leading bytes put a rune across the 4000-byte boundary.
+	in := "xx" + strings.Repeat("あ", 2000)
+	out := clip(in)
+	if !utf8.ValidString(out) {
+		t.Fatalf("clip split a rune: invalid UTF-8")
+	}
+	if !strings.HasSuffix(out, "\n…（省略）") {
+		t.Fatalf("missing marker")
 	}
 }
