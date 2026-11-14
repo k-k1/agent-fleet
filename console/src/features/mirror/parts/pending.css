@@ -471,7 +471,10 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   min-width: 0;
 }
 .mirror-watches .mw-ref {
-  flex: 1;
+  /* Shrinks to the text but never grows: a growing anchor makes the empty space to its right
+     clickable. The auto margin pushes the meta and the end button right instead. */
+  flex: 0 1 auto;
+  margin-right: auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
