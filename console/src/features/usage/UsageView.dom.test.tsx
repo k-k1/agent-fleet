@@ -279,4 +279,27 @@ describe("UsageView range buttons", () => {
     expect(Math.round(days)).toBe(30);
     expect(q.bucket).toBe("day");
   });
+
+  it("keeps data-shown-hours on the old range until the new range's data arrives", async () => {
+    fetchUsageSeries.mockImplementation(() => Promise.resolve(series(100, false)));
+    await mount();
+    const stage = () => host!.querySelector(".usage-stage")?.getAttribute("data-shown-hours");
+    expect(stage()).toBe("168");
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    fetchUsageSeries.mockImplementation(() => gate.then(() => series(900, false)));
+    await act(async () => {
+      host!.querySelector<HTMLButtonElement>('button[data-range-hours="720"]')!.click();
+    });
+    // The button is pressed at once, but the chart still shows the 7-day data.
+    expect(host!.querySelector('button[data-range-hours="720"]')!.getAttribute("aria-pressed")).toBe("true");
+    expect(stage()).toBe("168");
+
+    await act(async () => {
+      release();
+      await gate;
+    });
+    expect(stage()).toBe("720");
+  });
 });

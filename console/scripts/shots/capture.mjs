@@ -194,7 +194,8 @@ const SCENES = [
       document.querySelector(sel)?.click();
     })()`,
     settle: 2500,
-    verify: `document.querySelector('.usage-controls button[data-range-hours="720"]')?.getAttribute("aria-pressed") === "true"`,
+    verify: `document.querySelector('.usage-controls button[data-range-hours="720"]')?.getAttribute("aria-pressed") === "true" &&
+      !!document.querySelector('.usage-stage[data-shown-hours="720"]') && !document.querySelector(".usage-board .form-err")`,
   },
   {
     // Settings › Agent memory, for the features page: the memories every agent kind shares,
@@ -1898,7 +1899,8 @@ const SCENES = [
       document.querySelector(sel)?.click();
     })()`,
     settle: 2500,
-    verify: `document.querySelector('.usage-controls button[data-range-hours="720"]')?.getAttribute("aria-pressed") === "true"`,
+    verify: `document.querySelector('.usage-controls button[data-range-hours="720"]')?.getAttribute("aria-pressed") === "true" &&
+      !!document.querySelector('.usage-stage[data-shown-hours="720"]') && !document.querySelector(".usage-board .form-err")`,
   },
   {
     // Settings › Skills with Claude's skills under its real config folder, one shadowed.
@@ -3476,10 +3478,19 @@ try {
     }
     // scene.verify names the state the action was meant to reach. An action that misses its
     // target does nothing and still yields a plausible picture of the default state, so the run
-    // fails instead of writing it.
+    // fails instead of writing it. It is polled, bounded like `ready`, because the state can
+    // depend on a fetch the action started; a picture taken the moment it turns true can still
+    // be mid-transition, hence the short pause after a late success.
     if (scene.verify) {
-      const r = await cdp.send("Runtime.evaluate", { expression: scene.verify, returnByValue: true });
-      if (!r.result?.value) throw new Error(`scene ${scene.name} failed verify: ${scene.verify}`);
+      let ok = false;
+      let i = 0;
+      for (; i < 40 && !ok; i++) {
+        const r = await cdp.send("Runtime.evaluate", { expression: scene.verify, returnByValue: true });
+        ok = !!r.result?.value;
+        if (!ok) await sleep(500);
+      }
+      if (!ok) throw new Error(`scene ${scene.name} failed verify after 20 s: ${scene.verify}`);
+      if (i > 1) await sleep(800);
     }
     // The way to settle a question about appearance without judging it by eye (docs/log/80
     // §80.18.7): an expression in scene.measure has its result printed to stdout. Whether
