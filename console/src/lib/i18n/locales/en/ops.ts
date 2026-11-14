@@ -134,7 +134,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.return": "Return to pool",
   "pool.return_title": "Return slot {id} to the pool?",
   "pool.return_body":
-    "This slot was held out of the pool because it kept going dark. Returning it deletes the quarantine record and moves the start count of the workspace on it, if any, so the quarantine cannot be written again for the same episode. The slot is then used like any other. Its dark-episode history is kept: if it goes dark again within the repeat window it is quarantined again. A slot that went dark twice in a day is often better terminated from the EC2 console instead.",
+    "This slot was held out of the pool because it kept going dark. Returning it deletes the quarantine record and moves the start count of the workspace on it, if any, which stops a write already on its way from holding the slot again. With no workspace on it, or if the count could not be moved, such a write can bring the quarantine back: reload, and return it again. The slot is then used like any other. Its dark-episode history is kept: if it goes dark again within the repeat window it is quarantined again. A slot that went dark twice in a day is often better terminated from the EC2 console instead.",
   "pool.return_failed": "Could not return it: {msg}",
   "pool.force_stop": "Stop (force)",
   "pool.force_stop_title": "Stop slot {id} (force)?",

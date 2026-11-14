@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 )
 
 // held puts a rung-L2 record on the box for the home's current count and returns its token.
@@ -204,5 +206,57 @@ func TestPoolStatusCarriesTheQuarantineTokenOfAnL2Row(t *testing.T) {
 	token := w.held(w.count())
 	if s := slot(); s.QuarantineToken != token || !s.Quarantined || s.Terminable {
 		t.Fatalf("row %+v, want token %q", s, token)
+	}
+}
+
+// afterDeleteTags runs a hook once a DeleteTags has gone through, with that call's context.
+type afterDeleteTags struct {
+	ec2API
+	after func(context.Context)
+}
+
+func (h *afterDeleteTags) DeleteTags(ctx context.Context, in *ec2.DeleteTagsInput, opts ...func(*ec2.Options)) (*ec2.DeleteTagsOutput, error) {
+	out, err := h.ec2API.DeleteTags(ctx, in, opts...)
+	if err == nil {
+		h.after(ctx)
+	}
+	return out, err
+}
+
+// A write of the returned token that lands between the delete and the count's bump must not be
+// carried to the new count: the bump here does not carry, so that write reads as void.
+func TestReturnQuarantinedSlotDoesNotCarryALateWriteOfItsOwnToken(t *testing.T) {
+	bothQuarantineModes(t, func(t *testing.T, w *rescueWorld) {
+		token := w.held(w.count())
+		q, _ := parseQuarantineTag(token)
+		w.f.ec2 = &afterDeleteTags{ec2API: w.h.ec2, after: func(context.Context) { w.setQuarantine(q) }}
+		if _, err := w.f.ReturnQuarantinedSlot(context.Background(), "i-dark", token); err != nil {
+			t.Fatal(err)
+		}
+		if w.heldOut() {
+			t.Fatalf("records %+v: the late write was carried to the new count and holds the slot", w.records())
+		}
+	})
+}
+
+// When the claim lease lapsed while the delete was in flight and a newer Start counted, the
+// return must not count again: that would void the new Start's own token.
+func TestReturnQuarantinedSlotDoesNotOvertakeANewerStartAfterALapsedLease(t *testing.T) {
+	w := quarantineWorld(t, true)
+	g := w.count()
+	token := w.held(g)
+	w.f.ec2 = &afterDeleteTags{ec2API: w.h.ec2, after: func(ctx context.Context) {
+		homeGuardOf(ctx).markLost()
+		w.startLands()
+	}}
+	res, err := w.f.ReturnQuarantinedSlot(context.Background(), "i-dark", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.count() != g+1 || res.CountBumped {
+		t.Fatalf("count %d (want %d), result %+v: an expired return moved the count", w.count(), g+1, res)
+	}
+	if len(w.records()) != 0 {
+		t.Fatalf("the delete did not stand: %+v", w.records())
 	}
 }

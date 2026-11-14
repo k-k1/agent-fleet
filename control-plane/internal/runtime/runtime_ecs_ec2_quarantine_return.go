@@ -51,9 +51,10 @@ type SlotReturn struct {
 //   - A home of the token's volume is on the slot: the claim lock of that home's workspace is
 //     taken, so no Start counts and no rescue writes meanwhile. A live claim refuses
 //     (ErrSlotPlacing). When the record is in force (its count is the home's current Start
-//     count) the count is bumped AFTER the delete: a rescue that still holds the old token, or
-//     a CreateTags already on its way, then reads as void instead of re-holding the slot. The
-//     bump is after, not before, so the carry of a bump finds no record to copy forward.
+//     count) the count is bumped AFTER the delete, without the carry and only while the claim lease
+//     still holds: a rescue that still holds the old token, or a CreateTags already on its way,
+//     then reads as void instead of re-holding the slot, and a record that lands between the
+//     delete and the bump is not copied to the new count.
 //   - No home of that token is on the slot: the per-instance lease is taken, the one the
 //     finalizers of af-wedge-at use. There is no count to move; a late write of the token holds
 //     an idle slot, which the guide's "delete it again" covers.
@@ -149,7 +150,14 @@ func (e *ecsEC2Runtime) returnUnderClaim(ctx context.Context, instanceID string,
 	if !inForce {
 		return nil
 	}
-	if _, err := e.bumpStartCount(lctx); err != nil {
+	// The delete waited on AWS, so the lease may have lapsed and a newer Start counted: a bump
+	// now would overtake it. The return stands; only the voiding of a late write is skipped.
+	if err := homeGuardOf(lctx).check(); err != nil {
+		log.Printf("ecs-ec2: returned slot %s but the claim lease of %s lapsed before the start count moved: %v; if the quarantine reappears, return it again", instanceID, e.base.name, err)
+		return nil
+	}
+	// No carry: a record that landed after the delete would be copied to the new count.
+	if _, err := e.bumpStartCountNoCarry(lctx); err != nil {
 		// The slot is already returned; the bump only voids a late write of the same token.
 		log.Printf("ecs-ec2: returned slot %s but could not move the start count of %s on: %v; if the quarantine reappears, return it again", instanceID, e.base.name, err)
 		return nil
