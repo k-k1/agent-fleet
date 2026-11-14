@@ -54,6 +54,19 @@ type memoDTO struct {
 	// Origin is set only on a memo taken in from the inbox, by the CP (ADR 0111 decision 3).
 	// A client may send one: validateMemo and memoPatch never read it.
 	Origin *memoOriginWire `json:"origin,omitempty"`
+	// The message fields of ADR 0137 (memo_queue.go), all written by the CP. A client may
+	// send them: validateMemo and memoPatch never read them. State is "" for a plain note.
+	// Provenance is the face the memo was created by, "workspace" for a row from before it was
+	// recorded. ContentHash is what a release names (POST /api/memos/release).
+	State       string `json:"state"`
+	Provenance  string `json:"provenance"`
+	ReleasedAt  string `json:"releasedAt,omitempty"`
+	ContentHash string `json:"contentHash"`
+	// Producer and ProducerOrigin are attribution only: on the token face the session name and
+	// origin the Agent relay supplies on create (the one place a request field is read for
+	// them), on /mcp the connection id. Never read by a rule.
+	Producer       string `json:"producer,omitempty"`
+	ProducerOrigin string `json:"producerOrigin,omitempty"`
 }
 
 // memoOriginWire is where a taken-in memo came from: the inbox item and its sender.
@@ -65,7 +78,9 @@ type memoOriginWire struct {
 func memoToDTO(m store.Memo) memoDTO {
 	d := memoDTO{ID: m.ID, Repo: m.Repo, Category: m.Category, Kind: m.Kind,
 		Body: m.Body, RefPath: m.RefPath, Attachments: parseMemoAttachments(m.Attachments),
-		Position: m.Position, CreatedAt: m.CreatedAt, SentAt: m.SentAt}
+		Position: m.Position, CreatedAt: m.CreatedAt, SentAt: m.SentAt,
+		State: m.State, Provenance: memoEffectiveProvenance(m), ReleasedAt: m.ReleasedAt,
+		ContentHash: memoContentHash(m), Producer: m.Producer, ProducerOrigin: m.ProducerOrigin}
 	if m.OriginItemID != "" {
 		d.Origin = &memoOriginWire{ItemID: m.OriginItemID, Sender: m.OriginSenderKey}
 	}
@@ -185,44 +200,88 @@ func validateMemo(mv store.MembershipView, in memoDTO) (store.Memo, *apiError) {
 	return m, nil
 }
 
-// memoCreateFor validates + inserts one memo for a membership. Shared core.
+// memoCreateFor is memoCreateVia on the Console face.
 func memoCreateFor(ctx context.Context, st store.MemoStore, mv store.MembershipView, in memoDTO) (memoDTO, *apiError) {
-	m, aerr := validateMemo(mv, in)
-	if aerr != nil {
-		return memoDTO{}, aerr
-	}
-	// New memos always join the end of their own repo/category group.  Clients do
-	// not need to coordinate a position (and an omitted JSON position otherwise
-	// becomes zero, which used to put every new memo at the top of the group).
-	rows, err := st.ListMemos(ctx, m.MembershipID, "")
-	if err != nil {
-		return memoDTO{}, internalErr(err)
-	}
-	for _, row := range rows {
-		if row.Repo == m.Repo && row.Category == m.Category && row.Position >= m.Position {
-			m.Position = row.Position + 1
-		}
-	}
-	m.ID = store.NewID()
-	m.CreatedAt = store.NowTS()
-	if err := st.CreateMemo(ctx, m); err != nil {
-		return memoDTO{}, internalErr(err)
-	}
-	return memoToDTO(m), nil
+	dto, _, aerr := memoCreateVia(ctx, st, mv, in, memoViaConsole)
+	return dto, aerr
 }
 
-func (a memoAPI) create(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-	var in memoDTO
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
-		return
-	}
-	dto, aerr := memoCreateFor(r.Context(), a.store, mv, in)
+// memoCreateVia validates + inserts one memo for a membership. Shared core. The provenance,
+// the producer and, in a queue, the entering state come from via, never from in. created is
+// false when a create into a queue from inside the workspace or /mcp matched a message already
+// waiting there, which is answered instead.
+func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipView, in memoDTO, via memoVia) (memoDTO, bool, *apiError) {
+	m, aerr := validateMemo(mv, in)
 	if aerr != nil {
-		writeAPIErr(w, aerr)
-		return
+		return memoDTO{}, false, aerr
 	}
-	writeJSON(w, http.StatusCreated, dto)
+	m.Provenance, m.Producer, m.ProducerOrigin = via.provenance(), clipProducer(via.producer), clipProducer(via.producerOrigin)
+	created := true
+	err := st.MemoTx(ctx, mv.MembershipID, func(tx store.MemoTxOps) error {
+		inQ, err := memoInQueue(tx, m.Repo, m.Category)
+		if err != nil {
+			return err
+		}
+		if inQ && via.fromWorkspace() {
+			dup, aerr, err := memoCreateBounds(tx, m)
+			if err != nil {
+				return err
+			}
+			if aerr != nil {
+				return memoTxFail(aerr)
+			}
+			if dup != nil {
+				m, created = *dup, false
+				return nil
+			}
+		}
+		// New memos always join the end of their own repo/category group.  Clients do
+		// not need to coordinate a position (and an omitted JSON position otherwise
+		// becomes zero, which used to put every new memo at the top of the group).
+		rows, err := tx.ListMemosIn(m.Repo, m.Category)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if row.Position >= m.Position {
+				m.Position = row.Position + 1
+			}
+		}
+		m.ID = store.NewID()
+		m.CreatedAt = store.NowTS()
+		if m, aerr = memoQueueMove(m, m, false, inQ, via); aerr != nil {
+			return memoTxFail(aerr)
+		}
+		return tx.InsertMemo(m)
+	})
+	if aerr := memoTxResult(err); aerr != nil {
+		return memoDTO{}, false, aerr
+	}
+	return memoToDTO(m), created, nil
+}
+
+func (a memoAPI) create(via memoVia) func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView) {
+	return func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		var in memoDTO
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+			return
+		}
+		v := via
+		if v.face == memoFaceToken {
+			v.producer, v.producerOrigin = in.Producer, in.ProducerOrigin
+		}
+		dto, created, aerr := memoCreateVia(r.Context(), a.store, mv, in, v)
+		if aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		status := http.StatusCreated
+		if !created {
+			status = http.StatusOK
+		}
+		writeJSON(w, status, dto)
+	}
 }
 
 // memoPatch carries partial edits. Nil fields are left unchanged so a reorder can send
@@ -237,15 +296,47 @@ type memoPatch struct {
 }
 
 // memoUpdateFor applies a partial edit to an owned memo (ownership by membership).
-// Nil patch fields are left unchanged. Shared core.
-func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id string, in memoPatch) (memoDTO, *apiError) {
-	cur, found, err := st.GetMemo(ctx, id)
-	if err != nil {
-		return memoDTO{}, internalErr(err)
+// Nil patch fields are left unchanged. Shared core. In a queue the edit also moves the
+// message's state by the rules of the face it arrived by (memoQueueMove).
+func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id string, in memoPatch, via memoVia) (memoDTO, *apiError) {
+	var out store.Memo
+	err := st.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
+		cur, found, err := tx.GetMemo(id)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return memoTxFail(&apiError{http.StatusNotFound, "not_found", "memo not found"})
+		}
+		if memoStateLocked(cur.State) {
+			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoLocked, "this message has been delivered and cannot be changed"})
+		}
+		next, aerr := applyMemoPatch(cur, in)
+		if aerr != nil {
+			return memoTxFail(aerr)
+		}
+		inPrev, err := memoInQueue(tx, cur.Repo, cur.Category)
+		if err != nil {
+			return err
+		}
+		inNext, err := memoInQueue(tx, next.Repo, next.Category)
+		if err != nil {
+			return err
+		}
+		if next, aerr = memoQueueMove(cur, next, inPrev, inNext, via); aerr != nil {
+			return memoTxFail(aerr)
+		}
+		out = next
+		return tx.WriteMemo(next)
+	})
+	if aerr := memoTxResult(err); aerr != nil {
+		return memoDTO{}, aerr
 	}
-	if !found || cur.MembershipID != membershipID {
-		return memoDTO{}, &apiError{http.StatusNotFound, "not_found", "memo not found"}
-	}
+	return memoToDTO(out), nil
+}
+
+// applyMemoPatch applies the non-nil fields of a patch and re-checks the kind's requirement.
+func applyMemoPatch(cur store.Memo, in memoPatch) (store.Memo, *apiError) {
 	if in.Repo != nil {
 		cur.Repo = strings.TrimSpace(*in.Repo)
 	}
@@ -261,7 +352,7 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 	if in.Attachments != nil {
 		atts, aerr := normalizeAttachments(*in.Attachments)
 		if aerr != nil {
-			return memoDTO{}, aerr
+			return cur, aerr
 		}
 		cur.Attachments = atts
 	}
@@ -269,29 +360,28 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 		cur.Position = *in.Position
 	}
 	if cur.Kind == "file" && cur.RefPath == "" {
-		return memoDTO{}, &apiError{http.StatusBadRequest, "bad_ref", "refPath is required for kind=file"}
+		return cur, &apiError{http.StatusBadRequest, "bad_ref", "refPath is required for kind=file"}
 	}
 	if cur.Kind == "text" && cur.Body == "" && cur.Attachments == "" {
-		return memoDTO{}, &apiError{http.StatusBadRequest, "bad_body", "body or attachments is required for kind=text"}
+		return cur, &apiError{http.StatusBadRequest, "bad_body", "body or attachments is required for kind=text"}
 	}
-	if err := st.UpdateMemo(ctx, cur); err != nil {
-		return memoDTO{}, internalErr(err)
-	}
-	return memoToDTO(cur), nil
+	return cur, nil
 }
 
-func (a memoAPI) update(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-	var in memoPatch
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
-		return
+func (a memoAPI) update(via memoVia) func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView) {
+	return func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		var in memoPatch
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+			return
+		}
+		dto, aerr := memoUpdateFor(r.Context(), a.store, mv.MembershipID, r.PathValue("id"), in, via)
+		if aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		writeJSON(w, http.StatusOK, dto)
 	}
-	dto, aerr := memoUpdateFor(r.Context(), a.store, mv.MembershipID, r.PathValue("id"), in)
-	if aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
-	writeJSON(w, http.StatusOK, dto)
 }
 
 // buildFlushMessage concatenates the selected memos directly, grouping by category
@@ -384,7 +474,11 @@ const memoImageOpenPrompt = "Open the following file(s) with the Read tool:"
 // three send granularities (whole repo / category / individual) — the client just
 // builds the right ids. Sending happens through the running workspace agent, so this
 // resolves the full runtime (not just membership).
-func (a memoAPI) flush(w http.ResponseWriter, r *http.Request, res *resolved) {
+func (a memoAPI) flush(via memoVia) func(http.ResponseWriter, *http.Request, *resolved) {
+	return func(w http.ResponseWriter, r *http.Request, res *resolved) { a.flushVia(w, r, res, via) }
+}
+
+func (a memoAPI) flushVia(w http.ResponseWriter, r *http.Request, res *resolved, via memoVia) {
 	var in struct {
 		SessionName string   `json:"sessionName"`
 		IDs         []string `json:"ids"`
@@ -397,7 +491,7 @@ func (a memoAPI) flush(w http.ResponseWriter, r *http.Request, res *resolved) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	out, aerr := memoFlushFor(r.Context(), a.store, res.rt, res.mv.MembershipID, in.SessionName, in.IDs, in.Text)
+	out, aerr := memoFlushFor(r.Context(), a.store, res.rt, res.mv.MembershipID, in.SessionName, in.IDs, in.Text, via)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -405,12 +499,39 @@ func (a memoAPI) flush(w http.ResponseWriter, r *http.Request, res *resolved) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (a memoAPI) delete(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-	if err := a.store.DeleteMemo(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
+func (a memoAPI) delete(via memoVia) func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView) {
+	return func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		if aerr := memoDeleteFor(r.Context(), a.store, mv.MembershipID, r.PathValue("id"), via); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
-	w.WriteHeader(http.StatusNoContent)
+}
+
+// memoDeleteFor deletes an owned memo. Shared core. From inside the workspace and /mcp a
+// message in a queue is not deleted: that stays with the Console. An unknown id is a no-op.
+func memoDeleteFor(ctx context.Context, st store.MemoStore, membershipID, id string, via memoVia) *apiError {
+	if !via.fromWorkspace() {
+		if err := st.DeleteMemo(ctx, id, membershipID); err != nil {
+			return internalErr(err)
+		}
+		return nil
+	}
+	return memoTxResult(st.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
+		m, ok, err := tx.GetMemo(id)
+		if err != nil || !ok {
+			return err
+		}
+		inQ, err := memoInQueue(tx, m.Repo, m.Category)
+		if err != nil {
+			return err
+		}
+		if inQ || m.State != "" {
+			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoInQueue, "a message in a queue is deleted from the Console only"})
+		}
+		return tx.DeleteMemo(id)
+	}))
 }
 
 // --- Memo categories (docs/log/21 UI overhaul) -------------------------------------------
@@ -418,16 +539,32 @@ func (a memoAPI) delete(w http.ResponseWriter, r *http.Request, _ store.Identity
 // while empty. A category's NAME stays the grouping key (Memo.Category), so a rename
 // cascades onto the memos and a rename onto an existing name merges the two.
 
+// memoCategoryDTO is a category on the wire. Queue says whether it has queue settings
+// (ADR 0137), on every face, so that a session listing memos can tell a queue from a note.
 type memoCategoryDTO struct {
 	ID        string `json:"id"`
 	Repo      string `json:"repo"`
 	Name      string `json:"name"`
 	Position  int    `json:"position"`
 	CreatedAt string `json:"createdAt"`
+	Queue     bool   `json:"queue"`
 }
 
-func memoCategoryToDTO(c store.MemoCategory) memoCategoryDTO {
-	return memoCategoryDTO{ID: c.ID, Repo: c.Repo, Name: c.Name, Position: c.Position, CreatedAt: c.CreatedAt}
+func memoCategoryToDTO(c store.MemoCategory, queue bool) memoCategoryDTO {
+	return memoCategoryDTO{ID: c.ID, Repo: c.Repo, Name: c.Name, Position: c.Position, CreatedAt: c.CreatedAt, Queue: queue}
+}
+
+// memoQueueIDs is the set of a membership's category ids that are queues.
+func (a memoAPI) memoQueueIDs(ctx context.Context, membershipID string) (map[string]bool, error) {
+	qs, err := a.store.ListMemoQueues(ctx, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(qs))
+	for _, q := range qs {
+		out[q.CategoryID] = true
+	}
+	return out, nil
 }
 
 func (a memoAPI) listCategories(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
@@ -436,9 +573,14 @@ func (a memoAPI) listCategories(w http.ResponseWriter, r *http.Request, _ store.
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	queues, err := a.memoQueueIDs(r.Context(), mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
 	out := make([]memoCategoryDTO, 0, len(rows))
 	for _, c := range rows {
-		out = append(out, memoCategoryToDTO(c))
+		out = append(out, memoCategoryToDTO(c, queues[c.ID]))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -467,7 +609,12 @@ func (a memoAPI) createCategory(w http.ResponseWriter, r *http.Request, _ store.
 	for _, c := range existing {
 		if c.Repo == repo {
 			if c.Name == name {
-				writeJSON(w, http.StatusOK, memoCategoryToDTO(c))
+				queues, err := a.memoQueueIDs(r.Context(), mv.MembershipID)
+				if err != nil {
+					writeAPIErr(w, internalErr(err))
+					return
+				}
+				writeJSON(w, http.StatusOK, memoCategoryToDTO(c, queues[c.ID]))
 				return
 			}
 			if c.Position > maxPos {
@@ -480,7 +627,7 @@ func (a memoAPI) createCategory(w http.ResponseWriter, r *http.Request, _ store.
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusCreated, memoCategoryToDTO(c))
+	writeJSON(w, http.StatusCreated, memoCategoryToDTO(c, false))
 }
 
 // memoCategoryPatch carries a rename and/or reorder. Nil fields are unchanged, so a
@@ -494,94 +641,116 @@ type memoCategoryPatch struct {
 // memos (Memo.Category is the name); renaming onto a name that already exists in the same
 // repo MERGES — the memos move to the survivor and the renamed row is deleted — because
 // the unique (membership, repo, name) index forbids two categories sharing a name.
-func (a memoAPI) updateCategory(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-	var in memoCategoryPatch
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
-		return
-	}
-	id := r.PathValue("id")
-	cur, found, err := a.store.GetCategory(r.Context(), id)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	if !found || cur.MembershipID != mv.MembershipID {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "category not found"})
-		return
-	}
-	if in.Position != nil {
-		cur.Position = *in.Position
-	}
-	if in.Name != nil {
-		newName := strings.TrimSpace(*in.Name)
-		if newName == "" {
-			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "name is required"})
+//
+// Queues (ADR 0137): a rename keeps the category's settings (they are keyed by its id), and a
+// merge keeps the survivor's, so the merged memos enter or leave a queue by the survivor's.
+// From inside the workspace a queue is not renamed or merged, and nothing is renamed onto one.
+func (a memoAPI) updateCategory(via memoVia) func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView) {
+	return func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		var in memoCategoryPatch
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 			return
 		}
-		if newName != cur.Name {
-			// Move the memos onto the new name, then either merge into an existing
-			// same-name category or rename this row.
-			if err := a.store.ReassignMemoCategory(r.Context(), mv.MembershipID, cur.Repo, cur.Name, newName); err != nil {
-				writeAPIErr(w, internalErr(err))
-				return
+		var out memoCategoryDTO
+		err := a.store.MemoTx(r.Context(), mv.MembershipID, func(tx store.MemoTxOps) error {
+			cur, found, err := tx.GetCategory(r.PathValue("id"))
+			if err != nil {
+				return err
 			}
-			if dup := a.findCategory(r.Context(), mv.MembershipID, cur.Repo, newName); dup != nil {
-				if err := a.store.DeleteCategory(r.Context(), cur.ID, mv.MembershipID); err != nil {
-					writeAPIErr(w, internalErr(err))
-					return
+			if !found {
+				return memoTxFail(&apiError{http.StatusNotFound, "not_found", "category not found"})
+			}
+			_, curQ, err := tx.GetQueue(cur.ID)
+			if err != nil {
+				return err
+			}
+			if in.Position != nil {
+				cur.Position = *in.Position
+			}
+			if in.Name != nil {
+				newName := strings.TrimSpace(*in.Name)
+				if newName == "" {
+					return memoTxFail(&apiError{http.StatusBadRequest, "bad_name", "name is required"})
 				}
-				writeJSON(w, http.StatusOK, memoCategoryToDTO(*dup))
-				return
+				if newName != cur.Name {
+					dup, hasDup, err := tx.FindCategory(cur.Repo, newName)
+					if err != nil {
+						return err
+					}
+					nextQ := curQ
+					if hasDup {
+						if _, nextQ, err = tx.GetQueue(dup.ID); err != nil {
+							return err
+						}
+					}
+					if via.fromWorkspace() && (curQ || nextQ) {
+						return memoTxFail(&apiError{http.StatusConflict, errCodeMemoQueueCategory, "a queue is renamed, merged or deleted from the Console only"})
+					}
+					// Move the memos onto the new name, then either merge into an existing
+					// same-name category or rename this row.
+					if err := memoMoveBucket(tx, cur.Repo, cur.Name, newName, curQ, nextQ, via); err != nil {
+						return err
+					}
+					if hasDup {
+						if err := tx.DeleteQueue(cur.ID); err != nil {
+							return err
+						}
+						if err := tx.DeleteCategory(cur.ID); err != nil {
+							return err
+						}
+						out = memoCategoryToDTO(dup, nextQ)
+						return nil
+					}
+					cur.Name = newName
+				}
 			}
-			cur.Name = newName
+			out = memoCategoryToDTO(cur, curQ)
+			return tx.UpdateCategory(cur)
+		})
+		if aerr := memoTxResult(err); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
 		}
+		writeJSON(w, http.StatusOK, out)
 	}
-	if err := a.store.UpdateCategory(r.Context(), cur); err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	writeJSON(w, http.StatusOK, memoCategoryToDTO(cur))
-}
-
-// findCategory returns the caller's category with (repo, name), or nil. Small helper for
-// the merge-on-rename path.
-func (a memoAPI) findCategory(ctx context.Context, membershipID, repo, name string) *store.MemoCategory {
-	rows, err := a.store.ListCategories(ctx, membershipID)
-	if err != nil {
-		return nil
-	}
-	for i := range rows {
-		if rows[i].Repo == repo && rows[i].Name == name {
-			return &rows[i]
-		}
-	}
-	return nil
 }
 
 // deleteCategory removes a category and empties its memos (they move to the
 // uncategorized bucket rather than being deleted — a category delete must never lose
-// notes).
-func (a memoAPI) deleteCategory(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-	id := r.PathValue("id")
-	cur, found, err := a.store.GetCategory(r.Context(), id)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
+// notes). The memos of a queue leave it with its settings, and from inside the workspace a
+// queue is not deleted at all.
+func (a memoAPI) deleteCategory(via memoVia) func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView) {
+	return func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		err := a.store.MemoTx(r.Context(), mv.MembershipID, func(tx store.MemoTxOps) error {
+			cur, found, err := tx.GetCategory(r.PathValue("id"))
+			if err != nil {
+				return err
+			}
+			if !found {
+				return memoTxFail(&apiError{http.StatusNotFound, "not_found", "category not found"})
+			}
+			_, curQ, err := tx.GetQueue(cur.ID)
+			if err != nil {
+				return err
+			}
+			if curQ && via.fromWorkspace() {
+				return memoTxFail(&apiError{http.StatusConflict, errCodeMemoQueueCategory, "a queue is renamed, merged or deleted from the Console only"})
+			}
+			if err := memoMoveBucket(tx, cur.Repo, cur.Name, "", curQ, false, via); err != nil {
+				return err
+			}
+			if err := tx.DeleteQueue(cur.ID); err != nil {
+				return err
+			}
+			return tx.DeleteCategory(cur.ID)
+		})
+		if aerr := memoTxResult(err); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
-	if !found || cur.MembershipID != mv.MembershipID {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "category not found"})
-		return
-	}
-	if err := a.store.ReassignMemoCategory(r.Context(), mv.MembershipID, cur.Repo, cur.Name, ""); err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	if err := a.store.DeleteCategory(r.Context(), id, mv.MembershipID); err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // memoFlushFor resolves the requested ids to OWNED memos, concatenates them into one
@@ -589,7 +758,7 @@ func (a memoAPI) deleteCategory(w http.ResponseWriter, r *http.Request, _ store.
 // runtime, and stamps sent_at on those memos. Returns the flush summary. Shared core
 // between the session HTTP handler, the internal operator-token bridge, and the CP MCP
 // tool — every face funnels through this so the "send once + mark sent" stays atomic.
-func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, membershipID, sessionName string, ids []string, textOverride string) (map[string]any, *apiError) {
+func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, membershipID, sessionName string, ids []string, textOverride string, via memoVia) (map[string]any, *apiError) {
 	sessionName = strings.TrimSpace(sessionName)
 	if sessionName == "" {
 		return nil, &apiError{http.StatusBadRequest, "bad_session", "sessionName is required"}
@@ -618,6 +787,24 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 	for _, m := range memos {
 		if m.OriginItemID != "" && len(memos) > 1 {
 			return nil, &apiError{http.StatusConflict, errCodeMemoOriginAlone, "a memo taken in from the inbox is sent on its own"}
+		}
+	}
+	// A message in a queue is sent from the Console only (ADR 0137 section 3): a send from
+	// inside the workspace or /mcp is the unattended path the queue's release guards.
+	if via.fromWorkspace() {
+		if aerr := memoTxResult(st.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
+			for _, m := range memos {
+				inQ, err := memoInQueue(tx, m.Repo, m.Category)
+				if err != nil {
+					return err
+				}
+				if inQ || m.State != "" {
+					return memoTxFail(&apiError{http.StatusConflict, errCodeMemoInQueue, "a message in a queue is sent from the Console only"})
+				}
+			}
+			return nil
+		})); aerr != nil {
+			return nil, aerr
 		}
 	}
 	// Group by category (stable within-category order preserved from ListMemos).

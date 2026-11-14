@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with every routeSwitch on (routes_golden_test.go).
-# count: 781
+# count: 785
 ANY /
 ANY /.well-known/oauth-authorization-server/mcp-oauth
 ANY /.well-known/oauth-protected-resource/mcp
@@ -248,6 +248,8 @@ POST /api/chat/conversations/{id}/title/suggest
 GET /api/claude/settings
 PUT /api/claude/settings
 GET /api/claude/usage
+GET /api/cleanup/af-work
+POST /api/cleanup/af-work
 DELETE /api/cleanup/archives
 GET /api/cleanup/archives
 DELETE /api/cleanup/archives/{id}
@@ -257,8 +259,6 @@ GET /api/cleanup/home
 POST /api/cleanup/home/measure
 GET /api/cleanup/leftovers
 DELETE /api/cleanup/leftovers/{kind}
-GET /api/cleanup/af-work
-POST /api/cleanup/af-work
 GET /api/cleanup/tool-caches
 DELETE /api/cleanup/tool-caches/{name}
 GET /api/cleanup/usage
@@ -472,12 +472,16 @@ GET /api/memo-categories
 POST /api/memo-categories
 DELETE /api/memo-categories/{id}
 PATCH /api/memo-categories/{id}
+GET /api/memo-queues
+DELETE /api/memo-queues/{categoryId}
+PUT /api/memo-queues/{categoryId}
 GET /api/memos
 POST /api/memos
 POST /api/memos/flush
 POST /api/memos/images/gc
 GET /api/memos/images/{file}
 POST /api/memos/paste-image
+POST /api/memos/release
 DELETE /api/memos/{id}
 PATCH /api/memos/{id}
 GET /api/muse/usage

@@ -25,6 +25,12 @@ type Memo struct {
 	// by the CP at take-in and by nothing else: CreateMemo from a client leaves them empty,
 	// and UpdateMemo never writes them, so an edit cannot remove or forge an origin.
 	OriginItemID, OriginSenderMembershipID, OriginSenderKey string
+	// The message fields of ADR 0137 (store_memo_queue.go). State is "" for a plain note.
+	// Provenance and the producer pair are written once, at the insert, and UpdateMemo never
+	// writes them. ReleaseHash and ReleasedAt are set by a release (or a Console write in a
+	// queue) and cleared when a message goes back to held or leaves its queue.
+	State, Provenance, Producer, ProducerOrigin string
+	ReleaseHash, ReleasedAt                     string
 }
 
 // MemoCategory persists a memo category as a first-class row (docs/log/21 UI overhaul), so a
@@ -60,18 +66,23 @@ type MemoStore interface {
 	// ReassignMemoCategory moves every owned memo in (repo, from) to category `to`
 	// (to="" empties them). Used by rename/merge and by category delete.
 	ReassignMemoCategory(ctx context.Context, membershipID, repo, from, to string) error
+
+	// Queues and message states (ADR 0137, store_memo_queue.go).
+	MemoQueueStore
 }
 
 // --- Memo queue (docs/log/21) --------------------------------------------------------
 
 const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at,
-	origin_item_id, origin_sender_membership_id, origin_sender_key FROM memo`
+	origin_item_id, origin_sender_membership_id, origin_sender_key,
+	state, provenance, producer, producer_origin, release_hash, released_at FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
 	err := row.Scan(&m.ID, &m.MembershipID, &m.Repo, &m.Category, &m.Kind,
 		&m.Body, &m.RefPath, &m.Attachments, &m.Position, &m.CreatedAt, &m.SentAt,
-		&m.OriginItemID, &m.OriginSenderMembershipID, &m.OriginSenderKey)
+		&m.OriginItemID, &m.OriginSenderMembershipID, &m.OriginSenderKey,
+		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt)
 	return m, err
 }
 
@@ -108,19 +119,33 @@ func (s *SQL) GetMemo(ctx context.Context, id string) (Memo, bool, error) {
 // CreateMemo inserts a memo a member or their agent wrote. It never writes an origin: a
 // taken-in memo is created only by TakeInInboxRecipe.
 func (s *SQL) CreateMemo(ctx context.Context, m Memo) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO memo(id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.CreatedAt, m.SentAt)
+	return insertMemo(ctx, s.db, m)
+}
+
+func insertMemo(ctx context.Context, q memoQuerier, m Memo) error {
+	_, err := q.ExecContext(ctx,
+		`INSERT INTO memo(id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at,
+		   state, provenance, producer, producer_origin, release_hash, released_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.CreatedAt, m.SentAt,
+		m.State, m.Provenance, m.Producer, m.ProducerOrigin, m.ReleaseHash, m.ReleasedAt)
 	return err
 }
 
+// UpdateMemo writes the editable columns and the message state of an owned row. Provenance,
+// producer and origin are not among them: they are fixed at the insert.
 func (s *SQL) UpdateMemo(ctx context.Context, m Memo) error {
+	return writeMemo(ctx, s.db, m)
+}
+
+func writeMemo(ctx context.Context, q memoQuerier, m Memo) error {
 	// membership_id in the WHERE so a member can only update their own row.
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, attachments=?, position=?
+	_, err := q.ExecContext(ctx,
+		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, attachments=?, position=?,
+		   state=?, release_hash=?, released_at=?
 		   WHERE id=? AND membership_id=?`,
-		m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.ID, m.MembershipID)
+		m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position,
+		m.State, m.ReleaseHash, m.ReleasedAt, m.ID, m.MembershipID)
 	return err
 }
 
@@ -131,7 +156,8 @@ func (s *SQL) DeleteMemo(ctx context.Context, id, membershipID string) error {
 }
 
 // MarkMemosSent stamps sent_at on the caller's memos in ids (ownership enforced by
-// membership_id in the WHERE, so foreign ids are silently ignored).
+// membership_id in the WHERE, so foreign ids are silently ignored). A message in a queue (a
+// non-empty state) becomes delivered: a manual send is a delivery by the person.
 func (s *SQL) MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error {
 	if len(ids) == 0 {
 		return nil
@@ -145,7 +171,7 @@ func (s *SQL) MarkMemosSent(ctx context.Context, membershipID string, ids []stri
 	}
 	args = append(args, membershipID)
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE memo SET sent_at=? WHERE id IN (`+strings.Join(ph, ",")+`) AND membership_id=?`, args...)
+		`UPDATE memo SET sent_at=?, state=CASE WHEN state='' THEN '' ELSE 'delivered' END WHERE id IN (`+strings.Join(ph, ",")+`) AND membership_id=?`, args...)
 	return err
 }
 

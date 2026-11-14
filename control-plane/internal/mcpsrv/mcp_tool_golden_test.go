@@ -54,8 +54,8 @@ func (c goldenCP) MemoList(_ context.Context, _ string) (any, error) {
 	return map[string]any{"ok": true}, nil
 }
 
-func (c goldenCP) MemoCreate(_ context.Context, _ store.MembershipView, repo, category, kind, body, refPath string) (any, error) {
-	c.record("MEMO-CREATE", repo, category, kind, body, refPath)
+func (c goldenCP) MemoCreate(_ context.Context, _ store.MembershipView, connection, repo, category, kind, body, refPath string) (any, error) {
+	c.record("MEMO-CREATE", connection, repo, category, kind, body, refPath)
 	return map[string]any{"ok": true}, nil
 }
 
@@ -67,6 +67,11 @@ func (c goldenCP) MemoUpdate(_ context.Context, _, id string, repo, category, bo
 func (c goldenCP) MemoFlush(_ context.Context, _ runtime.Runtime, _, sessionName string, ids []string) (map[string]any, error) {
 	c.record("MEMO-FLUSH", sessionName, ids)
 	return map[string]any{"ok": true}, nil
+}
+
+func (c goldenCP) MemoDelete(_ context.Context, _, id string) error {
+	c.record("MEMO-DELETE", id)
+	return nil
 }
 
 func goldenJSON(t *testing.T, v any) []byte {

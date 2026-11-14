@@ -113,7 +113,8 @@ source_of_truth: "`control-plane/internal/store/migrations/*.sql` と `migration
 | `egress_daily` / `egress_allowlist` | egress 統制（[07 §7.8](07-security.ja.md)）：(day, host, allowed) ごとの日次集計と、全体またはテナント単位の版管理 allowlist（`active` \| `proposed` \| `retired`） |
 | `deployment_setting` | デプロイ全体の KV。egress モード、ブランディング、エンジンごとの設定、封印した Hugging Face と Civitai のトークン、claude 監査のカーソルを持つ。ここの値には compare-and-swap が無いので、書き手が 2 つあるものは表にする |
 | `git_repo` / `lfs_object` / `lfs_lock` | 内部 git プロバイダの台帳（[91](91-internal-git.ja.md)）。bare リポジトリは `<WS_DATA>/git/<tenant-slug>/<name>.git` のファイルで、LFS の実体はその横に content-addressed で置く。表はリポジトリ一覧、O(1) のクォータ集計、ロックのためにある。**アクセストークンは保存しない**：membership ごとの HMAC を都度導出する |
-| `memo` / `memo_category` | メモキュー（[03 §3.6](03-control-plane.ja.md)）。添付は JSON の参照で、画像そのものはコンテナの中に残る。`memo_category` はカテゴリの並び順を持ち、空のカテゴリも残す。送信済みのメモは 7 日で掃除する |
+| `memo` / `memo_category` | メモキュー（[03 §3.6](03-control-plane.ja.md)）。添付は JSON の参照で、画像そのものはコンテナの中に残る。`memo_category` はカテゴリの並び順を持ち、空のカテゴリも残す。送信済みのメモは 7 日で掃除する。メモはメッセージでもある（[decisions/0137](../decisions/0137-message-queues.ja.md)）: `state` は普通のメモで `''`、キューの中で `held` / `pending` / `claimed` / `delivered` / `unconfirmed` / `superseded`。`provenance`（`member` / `workspace` / `mcp` / `inbox` / `curator`、`''` は `workspace` と読む）は作成要求が来た面から CP が決め、以後変えない。`producer` / `producer_origin` は帰属の表示だけ。`release_hash` / `released_at` はメンバーの解放の記録。**不変条件: `pending` のメッセージの `release_hash` はいまの内容ハッシュに等しい**。どの書き込みも membership 行のロックの下で 1 トランザクションで守る |
+| `memo_queue` | `memo_category` の行をキューにする設定。カテゴリの id がキー: 常設の `instruction`、消費者（`agent_kind` — shell と ssm は不可 —、`model`、`effort`、`route`、`spend_cap_usd`、`worktree`）、`max_active`（1〜6、既定 2）、`batch`（1〜20、既定 1）、`enabled`（instruction が無いと不可）、後の段の予約が使う `generation`。書くのは Console だけ。未分類にはカテゴリの行が無く、キューにならない |
 | `notification` / `notification_usage_state` | 通知センター（[03](03-control-plane.ja.md)）：membership ごとの行（`event_id` で一意、保持 7 日）と、使用量しきい値通知の窓の状態 |
 | `schedule` / `schedule_run` | 定時実行（[decisions/0021](../decisions/0021-scheduled-execution.ja.md)）。前者は定義と発火台帳（`next_run`・`last_run`）、reuse モードの回転、`report`、`stop_after_run`。後者は上限付きの実行履歴。**CP の DB に置くのは、ワークスペースが停止している間も時計を見られるのが CP だけだから** |
 | `mcp_server` | テナント配布の MCP サーバ：remote の定義だけで、**stdio 用の command・引数・環境の列を意図して持たない**（[decisions/0031](../decisions/0031-mcp-registry.ja.md)）。ヘッダは封印する。`user_secret=1` はヘッダ名だけを配り、値は各メンバーが入れる。`auth=oauth` は資格情報を配らない（各メンバーがサインインする）。任意のテナントのクライアントシークレット（`oauth_secret_enc`）も封印し、配らない（[decisions/0119](../decisions/0119-mcp-client-oauth.ja.md)） |
@@ -134,7 +135,7 @@ identity ──< membership >── tenant ──< git_repo, tenant_idp, tenant_
    ├─< identity_provider
    └─< pat (optionally pinned to one membership)
 
-membership ──< user_limit (1:1), ssm_profile ──< ssm_host, memo, memo_category,
+membership ──< user_limit (1:1), ssm_profile ──< ssm_host, memo, memo_category ──< memo_queue (0..1),
                notification, schedule ──< schedule_run,
                work_item_query ──< work_item_cache,
                work_item_session (no link to a query or the cache),

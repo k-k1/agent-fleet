@@ -201,6 +201,16 @@ Workspace を起こさない。
   送信済みと打刻する。送信には Agent が要るので、flush は runtime を解決する。
 - **コンテナ内のオペレーター**は同じ handler に `/internal/memos` から `AF_MEMO_TOKEN` で届く。
 - **保持**: 送信済みは送信時に消さず 7 日残し、一覧取得時に lazy に掃除する。
+- **キュー**（[decisions/0137](../decisions/0137-message-queues.ja.md) の段 1a）: 設定のある
+  カテゴリ（`GET /api/memo-queues`、`PUT` / `DELETE /api/memo-queues/{categoryId}`）がキューで、
+  その中のメモは状態を持つメッセージになる。要求が来た面 — Console・トークン面・`/mcp` — は
+  ルートの登録時に決まり、provenance と入るときの状態を決める（`pending` は Console からの
+  メンバー自身のメモだけ、ほかは `held`）。`POST /api/memos/release` は held を `pending` に
+  全部か無しで移す。1 件ずつ、その行自身への条件付き書き込みで、カードに見せた内容ハッシュも
+  条件にする。設定と解放は Console だけ。トークン面と `/mcp` からは、キューのメッセージを
+  flush も削除もできず、解放済みを編集すると `held` に戻り、キューの改名・統合・削除はできず、
+  キューへの作成には上限がある（16 KiB、`[agent-fleet:` で始まる本文は不可、同じ本文が待って
+  いればそれを返す、1 分 30 件）。この段ではまだセッションを起こさない。
 
 ## 3.7 バックグラウンドジョブ
 

@@ -149,10 +149,12 @@ func (d cpDeps) MemoList(ctx context.Context, membershipID string) (any, error) 
 	return memoListFor(ctx, d.m.store, membershipID)
 }
 
-func (d cpDeps) MemoCreate(ctx context.Context, mv store.MembershipView, repo, category, kind, body, refPath string) (any, error) {
-	dto, aerr := memoCreateFor(ctx, d.m.store, mv, memoDTO{
+// The memo methods below are the /mcp face: memoFaceMCP is fixed here, and the producer is
+// the connection id mcpsrv reads from the authenticated principal.
+func (d cpDeps) MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string) (any, error) {
+	dto, _, aerr := memoCreateVia(ctx, d.m.store, mv, memoDTO{
 		Repo: repo, Category: category, Kind: kind, Body: body, RefPath: refPath,
-	})
+	}, memoVia{face: memoFaceMCP, producer: connection})
 	if aerr != nil {
 		return nil, errors.New(aerr.message)
 	}
@@ -162,7 +164,7 @@ func (d cpDeps) MemoCreate(ctx context.Context, mv store.MembershipView, repo, c
 func (d cpDeps) MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int) (any, error) {
 	dto, aerr := memoUpdateFor(ctx, d.m.store, membershipID, id, memoPatch{
 		Repo: repo, Category: category, Body: body, RefPath: refPath, Position: position,
-	})
+	}, memoVia{face: memoFaceMCP})
 	if aerr != nil {
 		return nil, errors.New(aerr.message)
 	}
@@ -170,11 +172,18 @@ func (d cpDeps) MemoUpdate(ctx context.Context, membershipID, id string, repo, c
 }
 
 func (d cpDeps) MemoFlush(ctx context.Context, rt runtime.Runtime, membershipID, sessionName string, ids []string) (map[string]any, error) {
-	out, aerr := memoFlushFor(ctx, d.m.store, rt, membershipID, sessionName, ids, "")
+	out, aerr := memoFlushFor(ctx, d.m.store, rt, membershipID, sessionName, ids, "", memoVia{face: memoFaceMCP})
 	if aerr != nil {
 		return nil, errors.New(aerr.message)
 	}
 	return out, nil
+}
+
+func (d cpDeps) MemoDelete(ctx context.Context, membershipID, id string) error {
+	if aerr := memoDeleteFor(ctx, d.m.store, membershipID, id, memoVia{face: memoFaceMCP}); aerr != nil {
+		return errors.New(aerr.message)
+	}
+	return nil
 }
 
 // mcpAPIError converts the CP's apiError (unexported fields) to the seam's copy.

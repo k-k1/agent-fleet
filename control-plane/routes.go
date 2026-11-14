@@ -592,30 +592,41 @@ func registerWorkItemRoutes(mux *http.ServeMux, cfg config) {
 // to a session as one message. Scoped by membership (no workspace build for CRUD).
 func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	memo := newMemoAPI(cfg.mgr)
+	// The face each route is registered with is what the memo cores read the provenance and
+	// the queue rules from (memo_queue.go). It is never taken from the request.
+	console, token := memoViaConsole, memoVia{face: memoFaceToken}
 	mux.HandleFunc("GET /api/memos", memo.withMembership(memo.list))
-	mux.HandleFunc("POST /api/memos", memo.withMembership(memo.create))
-	mux.HandleFunc("POST /api/memos/flush", memo.withResolved(memo.flush))
-	mux.HandleFunc("PATCH /api/memos/{id}", memo.withMembership(memo.update))
-	mux.HandleFunc("DELETE /api/memos/{id}", memo.withMembership(memo.delete))
+	mux.HandleFunc("POST /api/memos", memo.withMembership(memo.create(console)))
+	mux.HandleFunc("POST /api/memos/flush", memo.withResolved(memo.flush(console)))
+	// Release (ADR 0137): Console only. The workspace does not hold the member's session, and
+	// the token face has no route for it.
+	mux.HandleFunc("POST /api/memos/release", memo.withMembership(memo.release))
+	mux.HandleFunc("PATCH /api/memos/{id}", memo.withMembership(memo.update(console)))
+	mux.HandleFunc("DELETE /api/memos/{id}", memo.withMembership(memo.delete(console)))
 
 	// First-class categories (docs/log/21 UI overhaul): add empty, rename (cascades), reorder.
 	mux.HandleFunc("GET /api/memo-categories", memo.withMembership(memo.listCategories))
 	mux.HandleFunc("POST /api/memo-categories", memo.withMembership(memo.createCategory))
-	mux.HandleFunc("PATCH /api/memo-categories/{id}", memo.withMembership(memo.updateCategory))
-	mux.HandleFunc("DELETE /api/memo-categories/{id}", memo.withMembership(memo.deleteCategory))
+	mux.HandleFunc("PATCH /api/memo-categories/{id}", memo.withMembership(memo.updateCategory(console)))
+	mux.HandleFunc("DELETE /api/memo-categories/{id}", memo.withMembership(memo.deleteCategory(console)))
+
+	// Queue settings (ADR 0137): Console only, like the release.
+	mux.HandleFunc("GET /api/memo-queues", memo.withMembership(memo.listQueues))
+	mux.HandleFunc("PUT /api/memo-queues/{categoryId}", memo.withMembership(memo.putQueue))
+	mux.HandleFunc("DELETE /api/memo-queues/{categoryId}", memo.withMembership(memo.deleteQueue))
 
 	// Internal (operator-token) face: an in-container fleet operator has no
 	// gateway session, so it hits these with its AF_MEMO_TOKEN Bearer (memo_bridge.go).
 	// /internal/* is session-exempt; auth + membership scoping live in withMemoToken.
 	mux.HandleFunc("GET /internal/memos", memo.withMemoToken(memo.list))
-	mux.HandleFunc("POST /internal/memos", memo.withMemoToken(memo.create))
-	mux.HandleFunc("POST /internal/memos/flush", memo.withMemoTokenResolved(memo.flush))
-	mux.HandleFunc("PATCH /internal/memos/{id}", memo.withMemoToken(memo.update))
-	mux.HandleFunc("DELETE /internal/memos/{id}", memo.withMemoToken(memo.delete))
+	mux.HandleFunc("POST /internal/memos", memo.withMemoToken(memo.create(token)))
+	mux.HandleFunc("POST /internal/memos/flush", memo.withMemoTokenResolved(memo.flush(token)))
+	mux.HandleFunc("PATCH /internal/memos/{id}", memo.withMemoToken(memo.update(token)))
+	mux.HandleFunc("DELETE /internal/memos/{id}", memo.withMemoToken(memo.delete(token)))
 	mux.HandleFunc("GET /internal/memo-categories", memo.withMemoToken(memo.listCategories))
 	mux.HandleFunc("POST /internal/memo-categories", memo.withMemoToken(memo.createCategory))
-	mux.HandleFunc("PATCH /internal/memo-categories/{id}", memo.withMemoToken(memo.updateCategory))
-	mux.HandleFunc("DELETE /internal/memo-categories/{id}", memo.withMemoToken(memo.deleteCategory))
+	mux.HandleFunc("PATCH /internal/memo-categories/{id}", memo.withMemoToken(memo.updateCategory(token)))
+	mux.HandleFunc("DELETE /internal/memo-categories/{id}", memo.withMemoToken(memo.deleteCategory(token)))
 }
 
 // Scheduled execution (docs/log/38 + ADR0021) — operator-authored cron/interval/once tasks.
