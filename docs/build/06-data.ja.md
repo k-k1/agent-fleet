@@ -117,6 +117,7 @@ source_of_truth: "`control-plane/internal/store/migrations/*.sql` と `migration
 | `tenant.memo_queues` | メモキューのテナント単位のスイッチ。既定 off（`/api/admin/tenants/{slug}/memo-queues`、tenant_admin）。off の間はどのカテゴリもキューにできない。**ロールアウトの規則: 配備のすべての Control Plane が migration 0131 を含むバイナリになってから on にする。** 古いバイナリのトークン面と `/mcp` にはキューの規則が無いが、off の間はそれが触れるキューの行が存在しない。あとで off にしても新しいキューを止めるだけで、何も消さない |
 | `memo_queue_intake` | トークン面か `/mcp` からキューへの作成 1 件につき 1 行、1 分残す: 上限は作成の回数で数えるので、メッセージを移しても消しても作成の分は戻らない |
 | `memo_queue` | `memo_category` の行をキューにする設定。カテゴリの id がキー: 常設の `instruction`、消費者（`agent_kind` — shell と ssm は不可 —、`model`、`effort`、`route`、`spend_cap_usd`、`worktree`）、`max_active`（1〜6、既定 2）、`batch`（1〜20、既定 1）、`enabled`（instruction が無いと不可）、後の段の予約が使う `generation`。書くのは Console だけ。未分類にはカテゴリの行が無く、キューにならない |
+| `memo_delivery` | キューの 1 回の発火（[decisions/0137](../decisions/0137-message-queues.ja.md) §6）: `queue_id`（カテゴリの id）、`state`（`claimed` / `sending` / `open` / `closed`）、閉じたものの `outcome`（`clean` / `failed` / `aborted` / `unknown` / `not_sent`）、起こした `session`、確保した `message_ids`（JSON。メモが掃除されたあとも残る）、`idle_ticks`（そのセッションが続けて idle に見えた tick の数。再起動で数え直さないため）、各状態に入った時刻。閉じていない配信は 1 つずつキューの `max_active` の枠を占め、メンバー全体の上限 4 にも数える。**枠の予約は `MemoTx` の中、membership の行のロックの後ろで行う**。これが SQLite でも Postgres でも、2 つの Control Plane が同じ空き枠を予約できない理由。**`state` の移動はすべてその行自身の状態への条件付き書き込み。** `memo.delivery_id` はメッセージを確保した配信を指し、書くのは配信の文だけ |
 | `notification` / `notification_usage_state` | 通知センター（[03](03-control-plane.ja.md)）：membership ごとの行（`event_id` で一意、保持 7 日）と、使用量しきい値通知の窓の状態 |
 | `schedule` / `schedule_run` | 定時実行（[decisions/0021](../decisions/0021-scheduled-execution.ja.md)）。前者は定義と発火台帳（`next_run`・`last_run`）、reuse モードの回転、`report`、`stop_after_run`。後者は上限付きの実行履歴。**CP の DB に置くのは、ワークスペースが停止している間も時計を見られるのが CP だけだから** |
 | `mcp_server` | テナント配布の MCP サーバ：remote の定義だけで、**stdio 用の command・引数・環境の列を意図して持たない**（[decisions/0031](../decisions/0031-mcp-registry.ja.md)）。ヘッダは封印する。`user_secret=1` はヘッダ名だけを配り、値は各メンバーが入れる。`auth=oauth` は資格情報を配らない（各メンバーがサインインする）。任意のテナントのクライアントシークレット（`oauth_secret_enc`）も封印し、配らない（[decisions/0119](../decisions/0119-mcp-client-oauth.ja.md)） |
@@ -138,6 +139,7 @@ identity ──< membership >── tenant ──< git_repo, tenant_idp, tenant_
    └─< pat (optionally pinned to one membership)
 
 membership ──< user_limit (1:1), ssm_profile ──< ssm_host, memo, memo_category ──< memo_queue (0..1),
+               memo_delivery（memo.delivery_id がその 1 つを指す）,
                notification, schedule ──< schedule_run,
                work_item_query ──< work_item_cache,
                work_item_session (no link to a query or the cache),

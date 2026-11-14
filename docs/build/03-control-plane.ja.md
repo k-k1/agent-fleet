@@ -212,11 +212,36 @@ Workspace を起こさない。
   条件にする。設定と解放は Console だけ。トークン面と `/mcp` からは、キューのメッセージを
   flush も削除もできず、解放済みを編集すると `held` に戻り、キューの改名・統合・削除はできず、
   キューへの作成には上限がある（16 KiB、`[agent-fleet:` で始まる本文は不可、同じ本文が待って
-  いればそれを返す、1 分 30 件）。この段ではまだセッションを起こさない。
+  いればそれを返す、1 分 30 件）。
+- **配信**（decisions/0137 §6、段 1c）: 配信はキューの 1 回の発火。閉じていない配信は 1 つずつ
+  キューの `maxActive` の枠を 1 つ占め、メンバー全体の上限 4 にも数える。
+  `POST /api/memo-queues/{categoryId}/fire`（Console だけ）は 1 つの `MemoTx` で枠を予約し、
+  古い順に `batch` 件までの `pending`（`sent_at` が空、`send_token` が無く、解放ハッシュが内容
+  ハッシュと一致するもの。一致しないものは `held` に戻す）を確保して、`claimed` の配信を 202 で
+  返す。待っているものが無い・空き枠が無い・テナントのスイッチが off・指示が無い・`max_sessions`
+  の上限（動いているセッションと未送信の配信の和）のときは拒む。`enabled` は関係しない。送信は
+  スケジューラの次の tick（§3.7）で行う: スケジュールと同じく起こして待ち、Agent に耐久キー
+  `q_<配信>` を予約し、配信の状態への条件付き書き込みで `sending` に移し、`source: "queue"`・
+  `queue_delivery`・`idempotency_durable` と `~/repos/<repo>` からの新しい worktree でセッションを
+  作る。答えが来れば配信はそのセッション名で `open`、メッセージは `delivered`。
+  `GET /api/memo-queues/{categoryId}/deliveries` は新しい順に 50 件。セッションの行は
+  `queueDelivery` を、メモは自分を確保した配信（`deliveryId`）を運ぶ。
 
 ## 3.7 バックグラウンドジョブ
 
 いずれも CP 内の goroutine。間隔は env で、`0` は無効化。
+
+- **メッセージキューの配信**はスケジューラの tick（`AF_SCHEDULER_INTERVAL`）に乗るので、
+  `AF_SCHEDULER_INTERVAL=0` ならキューの送信も止まる。各 tick はまず 60 秒以内で片付ける:
+  発火の持ち時間（起動待ちのタイムアウト + 10 分）より古い `claimed` は `not_sent` で閉じる。
+  同じく古い `sending` は Agent の `POST /sessions-idempotency/{key}/abandon` の答えで決める
+  （200 は open、202 は保持、404 `not_created` は `not_sent` で閉じる、503 はその `queueDelivery`
+  を持つセッションを探し、あれば open、無ければ `unknown` で閉じてメッセージは `unconfirmed`、
+  答えが無ければ保持）。`open` はセッションがアーカイブ・削除されたとき、運ぶ対話なしで止まった
+  とき、2 tick 続けて idle だったときに閉じる（回数は `memo_delivery.idle_ticks` に残す）。
+  Workspace が止まっている間、`sending` は枠を保持し、`open` はセッションのミラーで判断する。
+  そのあと、キューの送信は最大 2 本まで、tick の並列 4 発火をスケジュールと分け合う。配信の状態の
+  移動はすべてその状態への条件付き書き込みなので、遅れた送信と照合のどちらか一方だけが動く。
 
 - **reaper（idle-stop）** — `AF_IDLE_SWEEP_INTERVAL`（1 分）。**既定で有効**: セッションは 1 時間で
   （`AF_SESSION_IDLE_TIMEOUT`）、人の判断待ち — 質問・プラン承認・許可 — のセッションは
