@@ -27,6 +27,14 @@ func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
 	return resolveDefault(os.Getenv, append(userSettingFiles(), projectSettingFiles(m)...), accountID)
 }
 
+// DefaultLaunch is ResolveLaunch for a claude run outside any session (the assistant chat and the
+// one-shots). Those run with --setting-sources "" (chatx's chatClaudeCmd), so only the managed
+// policy files, which apply regardless, can move them; the user's and the project's settings
+// cannot.
+func DefaultLaunch() routes.Launch {
+	return resolveDefault(os.Getenv, managedSettingFiles(), accountID)
+}
+
 func resolveDefault(getenv func(string) string, settingFiles []string, account func() string) routes.Launch {
 	key, tok := strings.TrimSpace(getenv("ANTHROPIC_API_KEY")), strings.TrimSpace(getenv("CLAUDE_CODE_OAUTH_TOKEN"))
 	for _, n := range routeOverrides {

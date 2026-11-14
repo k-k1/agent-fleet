@@ -543,13 +543,14 @@ func (q *jobQueue) run(j *jobRec) {
 	req.OnUpstream = func(id string) { q.setUpstream(j, id) }
 
 	started := jobsNow()
+	launch := providerLaunch(prov)
 	res, err := prov.Generate(q.stop, req)
 	ok := err == nil && len(res.Images) > 0
 	// The ledger row is written on every path, including the failed one: an attempt that spent
 	// GPU time and produced nothing still consumed what the deployment pays for (ADR 0029 §3).
 	// ref is empty — this path has no session, and naming one that does not exist would file a
 	// member's own volume under a conversation nobody had.
-	recordUsage(context.Background(), "", j.provider, res, ok, started)
+	recordUsage(context.Background(), "", j.provider, launch, res, ok, started)
 	if err == nil && len(res.Images) == 0 {
 		err = errors.New("the provider returned no image")
 	}

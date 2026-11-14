@@ -20,6 +20,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -541,6 +544,41 @@ var providerRoutes = map[string][]string{
 	ProviderCodex:        {routes.RouteChatGPTSubscription, routes.RouteOpenAIAPI},
 }
 
+// launcher is a provider that knows what its next call runs on (ADR 0138 D2, D5b): the exact
+// credential it will execute with.
+type launcher interface{ launch() routes.Launch }
+
+// launch implements launcher: the login in the auth.json of the home this provider runs codex
+// with ($CODEX_HOME), not the default one.
+func (p *codexProvider) launch() routes.Launch { return codex.LoginAt(p.home) }
+
+// launch implements launcher: agy's own Google login.
+func (p *agyProvider) launch() routes.Launch { return agy.Login() }
+
+// providerObserveBudget bounds providerLaunch (routes.Observe). A var for tests.
+var providerObserveBudget = routes.ObserveBudget
+
+// providerLaunch is what an image call on p runs on and the binding of its credential, resolved
+// when the call starts and within providerObserveBudget: a slow or hung read leaves the row
+// unresolved and never holds the generation. The fleet's providers run on the deployment's
+// engine, named by provider id.
+var providerLaunch = func(p Provider) routes.Launch {
+	if p == nil {
+		return routes.Launch{}
+	}
+	id := p.ID()
+	l, _ := routes.Observe(providerObserveBudget, id+" image launch", func() routes.Launch {
+		if lp, ok := p.(launcher); ok {
+			return lp.launch()
+		}
+		if providerIsFleet(id) {
+			return routes.Launch{Route: routes.RouteAFEngineImage, Binding: credbind.Named(routes.RouteAFEngineImage, id)}
+		}
+		return routes.Launch{}
+	})
+	return l
+}
+
 // ProviderRoutes returns every image provider's routes by provider id, each list sorted.
 func ProviderRoutes() map[string][]string {
 	out := make(map[string][]string, len(providerRoutes))
@@ -913,12 +951,13 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 		}
 
 		started := time.Now()
+		launch := providerLaunch(p)
 		res, err := p.Generate(ctx, req)
 		// Record on every path, including the failed one: an attempt that burned driver tokens
 		// and produced nothing still consumed the user's plan, and a row with ok:false is what
 		// keeps that visible (ADR 0029 §3). Recording INSIDE the loop is what makes a
 		// fall-through cost two honest rows rather than one that hides the wasted attempt.
-		recordUsage(ctx, job.Session, name, res, err == nil && len(res.Images) > 0, started)
+		recordUsage(ctx, job.Session, name, launch, res, err == nil && len(res.Images) > 0, started)
 		if err == nil && len(res.Images) == 0 {
 			err = errors.New("the provider returned no image")
 		}
@@ -1144,14 +1183,16 @@ func parseSize(s string) (w, h int, ok bool) {
 // ref is the session the picture was made for, and it is EMPTY for the Console's job queue
 // (ADR 0081): that path has no session, and naming one that does not exist would file a
 // member's own volume under a conversation nobody had.
-func recordUsage(ctx context.Context, ref string, chosen string, res Result, ok bool, started time.Time) {
+func recordUsage(ctx context.Context, ref string, chosen string, launch routes.Launch, res Result, ok bool, started time.Time) {
 	tag := usagex.Tag{Feature: usagex.FeatureToolImagegen, Trigger: usagex.TriggerUser, Ref: ref}
 	call := usagex.Call{
-		Kind:     usageKindOf(res.Provider, chosen),
-		ModelReq: res.Model,
-		OK:       ok,
-		CostUSD:  res.CostUSD,
-		Measured: usagex.MeasuredPartial,
+		Kind:       usageKindOf(res.Provider, chosen),
+		ModelReq:   res.Model,
+		OK:         ok,
+		CostUSD:    res.CostUSD,
+		Measured:   usagex.MeasuredPartial,
+		Route:      launch.Route,
+		Connection: launch.Binding,
 	}
 	call.SetTotals(res.Usage.In, res.Usage.Out, res.Usage.CacheRead, res.Usage.CacheCreate)
 	if !res.Usage.Measured {

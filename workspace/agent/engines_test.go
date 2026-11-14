@@ -1086,3 +1086,25 @@ func TestHarnessEngineWindowCacheExpires(t *testing.T) {
 		t.Fatalf("props requested %d time(s), want exactly 2 (expiry forces a second ask)", len(res.propsRequested))
 	}
 }
+
+// An engine.llm call is recorded on the engine's route and binding; another engine key, which has
+// no route id yet, stays without one.
+func TestEngineUsageCarriesTheEngineRoute(t *testing.T) {
+	engineUsageHome(t)
+	if rec := postEngineUsage(t, `{"feature":"engine.llm","session":"s","model":"m","in":1,"out":1,"ok":true,"measured":"exact"}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	if rec := postEngineUsage(t, `{"feature":"engine.image","session":"s","model":"m","in":1,"out":1,"ok":true,"measured":"exact"}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	rows := readLedger(t)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if rows[0].Route != usagex.RouteAFEngineLLM || rows[0].Connection != "af-engine-llm@llm" {
+		t.Errorf("engine.llm row = route %q conn %q", rows[0].Route, rows[0].Connection)
+	}
+	if rows[1].Route != "" || rows[1].Connection != "" {
+		t.Errorf("engine.image row = route %q conn %q, want none", rows[1].Route, rows[1].Connection)
+	}
+}

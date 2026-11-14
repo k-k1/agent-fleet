@@ -97,6 +97,9 @@ type Record struct {
 	// Route is the connection that served a KindAssistant record's call (usagex.Route*), "" on
 	// records written before it was recorded.
 	Route string `json:"route,omitempty"`
+	// Binding is the non-secret binding of that connection (ADR 0138 D5b), "" on records written
+	// before it was recorded.
+	Binding string `json:"binding,omitempty"`
 	// Usage is set on a KindUsage record (a pointer, not a value, so an all-zero
 	// harness.Usage that was never actually reported — types.go's own "Usage's zero value
 	// means the engine reported none" rule — round-trips as visibly present, not
@@ -300,14 +303,14 @@ func (s *Store) AppendMessage(m harness.Message) (Record, error) {
 // the mirror can badge each response with the model that actually answered it; the meta only
 // holds the current one.
 func (s *Store) AppendMessageFrom(m harness.Message, model string) (Record, error) {
-	return s.AppendMessageOn(m, model, "")
+	return s.AppendMessageOn(m, model, "", "")
 }
 
 // AppendMessageOn is AppendMessageFrom also recording the route the call was served on
 // (usagex.RouteAFEngineLLM / RouteMemberLcpp), written when the call ran: the member connection
 // is read per turn and can be set or cleared between turns, so it cannot be recovered later.
 // route is kept on assistant records only; lines written before this field stay unresolved.
-func (s *Store) AppendMessageOn(m harness.Message, model, route string) (Record, error) {
+func (s *Store) AppendMessageOn(m harness.Message, model, route, binding string) (Record, error) {
 	switch m.Role {
 	case harness.RoleUser:
 		k := KindUser
@@ -316,7 +319,7 @@ func (s *Store) AppendMessageOn(m harness.Message, model, route string) (Record,
 		}
 		return s.append(Record{Kind: k, Content: m.Content})
 	case harness.RoleAssistant:
-		return s.append(Record{Kind: KindAssistant, Content: m.Content, Reasoning: m.Reasoning, ToolCalls: m.ToolCalls, Model: model, Route: route})
+		return s.append(Record{Kind: KindAssistant, Content: m.Content, Reasoning: m.Reasoning, ToolCalls: m.ToolCalls, Model: model, Route: route, Binding: binding})
 	case harness.RoleTool:
 		return s.append(Record{Kind: KindToolResult, Content: m.Content, ToolCallID: m.ToolCallID})
 	case harness.RoleSystem:
@@ -549,7 +552,7 @@ func (b *transcriptBuilder) add(r Record) {
 		if r.Route != "" {
 			// Both connections are self-hosted inference; the member's own llama.cpp and the
 			// deployment's engine are charged as GPU time, never per token.
-			t.Route, t.Billing = r.Route, usagex.BillingSelfHosted
+			t.Route, t.Billing, t.Connection = r.Route, usagex.BillingSelfHosted, r.Binding
 		}
 		if t.Model == "" {
 			if b.sawNote {

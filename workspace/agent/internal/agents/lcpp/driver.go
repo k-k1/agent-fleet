@@ -693,7 +693,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 	h.mu.Unlock()
 
 	for _, m := range newMessagesSince(before, result.Messages) {
-		if _, aerr := st.AppendMessageOn(m, model, conn.Route); aerr != nil {
+		if _, aerr := st.AppendMessageOn(m, model, conn.Route, conn.Binding); aerr != nil {
 			log.Printf("lcpp: persisting turn message: %v", aerr)
 		}
 	}

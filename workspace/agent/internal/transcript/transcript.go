@@ -161,8 +161,11 @@ type Turn struct {
 	// gap from the session's current settings.
 	Route   string `json:"-"`
 	Billing string `json:"-"`
-	TS      string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
-	Idx     int    `json:"idx"` // transcript line index — a stable render key
+	// Connection is the per-call binding of the credential that served the call (ADR 0138 D5b,
+	// internal/credbind), under the same rule as Route: only from the call's own record.
+	Connection string `json:"-"`
+	TS         string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
+	Idx        int    `json:"idx"` // transcript line index — a stable render key
 	// AnchorID is the AGENT's own stable identifier for this turn, opaque to the Console:
 	// claude = message uuid, codex = turn id, opencode = message id ("msg_…"). It is the
 	// handle "branch from this message" (docs/log/55) passes back to POST /fork {"at": …}.

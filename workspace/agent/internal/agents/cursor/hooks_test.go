@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -554,5 +555,23 @@ func TestEnsureHooksInvalidRestoreKeepsTheNewestSave(t *testing.T) {
 	files := append(prevFiles(t, target), target)
 	if !anyContains(t, files, "newest.sh") {
 		t.Fatal("the newest save is neither in the file nor kept beside it")
+	}
+}
+
+// The stop hook's token row carries the session's launch route and binding, and stays without
+// them for a session created before the record existed (ADR 0138 D11).
+func TestRecordStopCarriesTheLaunchRecord(t *testing.T) {
+	m := hookFixture(t, func(m *session.Meta) {
+		m.LaunchRoute = &routes.Launch{Route: routes.RouteCursorLogin, Binding: "cursor-login@aa"}
+	})
+	recordStop(m.Name, stopFixture(t, "stop_completed_multistep.json"), time.Now())
+	if rows := usagex.ReadRows(); len(rows) != 1 || rows[0].Route != routes.RouteCursorLogin || rows[0].Connection != "cursor-login@aa" ||
+		rows[0].Spend != 835 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	old := hookFixture(t, nil)
+	recordStop(old.Name, stopFixture(t, "stop_completed_multistep.json"), time.Now())
+	if rows := usagex.ReadRows(); len(rows) != 1 || rows[0].Route != "" || rows[0].Connection != "" {
+		t.Fatalf("pre-record session rows = %+v", rows)
 	}
 }

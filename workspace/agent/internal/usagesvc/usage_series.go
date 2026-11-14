@@ -15,6 +15,7 @@ package usagesvc
 
 import (
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -38,7 +39,24 @@ const (
 	usageDimMeasured   = "measured"
 	usageDimRoute      = "route"
 	usageDimBilling    = "billing"
+	// usageDimConnection splits by the credential instance a call ran on (ADR 0138 D5):
+	// spend per credential. Empty reads as not recorded.
+	usageDimConnection = "connection"
 )
+
+// pricingRoute is the route the price lookup may use for a key: the recorded route of a session
+// turn or a route-gateway call, where it is per-call evidence and always was, and none for every
+// other feature. The assistant chat, the one-shots and image generation record their route from
+// ADR 0138 M0 on, as attribution; pricing their rows by it would move the estimate those rows
+// had before (an opencode-go chat would leave the kind's opencode prices), and M0 changes no
+// behaviour.
+func pricingRoute(k usageKey) string {
+	switch k.Feature {
+	case usagex.FeatureSession, usagex.FeatureRouteGateway:
+		return k.Route
+	}
+	return ""
+}
 
 // usageDimValue takes one dimension's value out of the dimension tuple. Reject unknown
 // dimensions with validUsageDim before calling, so they fail rather than read as "".
@@ -67,19 +85,19 @@ func usageDimValue(k usageKey, dim string) string {
 	case usageDimBilling:
 		// A row with no billing recorded reads as unknown, never as included.
 		return usagex.BillingOrUnknown(k.Billing)
+	case usageDimConnection:
+		return k.Connection
 	}
 	return ""
 }
 
-func validUsageDim(dim string) bool {
-	switch dim {
-	case usageDimFeature, usageDimKind, usageDimModel, usageDimTrigger, usageDimOrigin,
-		usageDimOriginConv, usageDimVerb, usageDimModelSrc, usageDimMeasured,
-		usageDimRoute, usageDimBilling:
-		return true
-	}
-	return false
-}
+// usageDims is every dimension the API accepts. console/src/features/usage/api.ts's UsageDim is
+// the same vocabulary (TestUsageDimsMatchTheConsole).
+var usageDims = []string{usageDimFeature, usageDimKind, usageDimModel, usageDimTrigger, usageDimOrigin,
+	usageDimOriginConv, usageDimVerb, usageDimModelSrc, usageDimMeasured,
+	usageDimRoute, usageDimBilling, usageDimConnection}
+
+func validUsageDim(dim string) bool { return slices.Contains(usageDims, dim) }
 
 // usageFilter maps dim -> patterns. The same dimension ORs, different dimensions AND
 // (filter=kind:claude,kind:codex is "claude or codex"; filter=kind:claude,feature:title.* is
@@ -280,7 +298,7 @@ func HandleSeries(w http.ResponseWriter, r *http.Request) {
 		// may have gone through a different provider), so look it up here, before kind is
 		// dropped.
 		agg := s.Agg
-		if est, src, priced := usageEstCostUSDOn(s.Key.Kind, s.Key.Route, s.Key.Model, agg); priced {
+		if est, src, priced := usageEstCostUSDOn(s.Key.Kind, pricingRoute(s.Key), s.Key.Model, agg); priced {
 			agg.CostEstUSD = est
 			resp.PricedSpend += agg.Spend
 			resp.notePrice(s.Key, src, agg.Spend)
@@ -347,7 +365,7 @@ func (r *usageSeriesResp) notePrice(k usageKey, src string, spend int) {
 		r.Prices[k.Model] = cur
 		return
 	}
-	p, _, ok := usagePriceOfOn(k.Kind, k.Route, k.Model)
+	p, _, ok := usagePriceOfOn(k.Kind, pricingRoute(k), k.Model)
 	if !ok {
 		return
 	}

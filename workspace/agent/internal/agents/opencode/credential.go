@@ -12,7 +12,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-var _ agents.CredentialResolver = agentImpl{}
+var (
+	_ agents.CredentialResolver = agentImpl{}
+	_ agents.PerCallRouter      = agentImpl{}
+)
+
+// RoutesPerCall implements agents.PerCallRouter: a call's route is its model's provider.
+func (agentImpl) RoutesPerCall() {}
 
 // providerKeys maps opencode's provider ids to the route and the stored key (Settings >
 // Connections, secrets.Data.Opencode) a call on that provider is paid by. The names are the
@@ -52,6 +58,13 @@ var credentialView = func() (keys map[string]string, pref string, account oauthS
 func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
 	keys, pref, acct := credentialView()
 	return resolveModel(m.Model, keys, pref, acct, engineProviderIDs())
+}
+
+// ModelLaunch is ResolveLaunch for an opencode run outside any session (the assistant chat and the
+// one-shots), on model.
+func ModelLaunch(model string) routes.Launch {
+	keys, pref, acct := credentialView()
+	return resolveModel(model, keys, pref, acct, engineProviderIDs())
 }
 
 func resolveModel(model string, keys map[string]string, pref string, acct oauthState, engines []string) routes.Launch {

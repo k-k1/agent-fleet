@@ -307,12 +307,12 @@ type usageTurnRow struct {
 	// sizeUnknown marks a row whose input size the ledger would not record (a subagent's); set
 	// only by spendOfRows so the budget prices it like the ledger does.
 	sizeUnknown bool
-	// Route and Billing are the per-call evidence of the calls this row folds
-	// (transcript.Turn.Route/Billing), merged by noteRoute: a row whose calls disagree reads as
-	// unresolved.
-	Route, Billing string
-	routeSet       bool // a call has been noted
-	routeMixed     bool // the noted calls disagreed
+	// Route, Billing and Connection are the per-call evidence of the calls this row folds
+	// (transcript.Turn.Route/Billing/Connection), merged by noteRoute: a row whose calls disagree
+	// reads as unresolved.
+	Route, Billing, Connection string
+	routeSet                   bool // a call has been noted
+	routeMixed                 bool // the noted calls disagreed
 	// segs are the row's contributions in order, adjacent ones with the same evidence merged. A
 	// mixed row keeps them (settleRoute) only when every contribution proves its billing, which
 	// is what makes the boundary between two of them provable; usageRecordsOf then writes one
@@ -325,15 +325,15 @@ type usageTurnRow struct {
 // foldTurnRows), so they sit on the segment of the call that last reported any, and the segments
 // add up to exactly the row's totals.
 type usageSeg struct {
-	Route, Billing string
-	Tokens         usagex.Tokens
-	CostUSD        float64
-	TS, Model      string
+	Route, Billing, Connection string
+	Tokens                     usagex.Tokens
+	CostUSD                    float64
+	TS, Model                  string
 }
 
 // pushSeg appends a contribution, merging it into the last segment when the evidence is the same.
 func (r *usageTurnRow) pushSeg(s usageSeg) {
-	if n := len(r.segs); n > 0 && r.segs[n-1].Route == s.Route && r.segs[n-1].Billing == s.Billing {
+	if n := len(r.segs); n > 0 && r.segs[n-1].Route == s.Route && r.segs[n-1].Billing == s.Billing && r.segs[n-1].Connection == s.Connection {
 		l := &r.segs[n-1]
 		l.Tokens.Out += s.Tokens.Out
 		l.CostUSD += s.CostUSD
@@ -354,7 +354,7 @@ func (r *usageTurnRow) pushSeg(s usageSeg) {
 // pushCall records one call (or cost-only step) of the turn as a contribution. A call that
 // reports input takes the input and cache figures off every earlier segment: they replace.
 func (r *usageTurnRow) pushCall(t transcript.Turn, withTokens bool) {
-	s := usageSeg{Route: t.Route, Billing: t.Billing, CostUSD: t.CostUSD, TS: t.TS, Model: t.Model}
+	s := usageSeg{Route: t.Route, Billing: t.Billing, Connection: t.Connection, CostUSD: t.CostUSD, TS: t.TS, Model: t.Model}
 	if withTokens {
 		s.Tokens.Out = t.OutTok
 		if t.InTok+t.CacheRead+t.CacheCreate > 0 {
@@ -371,12 +371,12 @@ func (r *usageTurnRow) pushCall(t transcript.Turn, withTokens bool) {
 // them; a later call that differs makes the whole row unresolved (empty), because one ledger
 // row cannot be split across routes without renumbering the logical turns past the watermark,
 // and a guess would file consumption under a route that did not serve it.
-func (r *usageTurnRow) noteRoute(route, billing string) {
+func (r *usageTurnRow) noteRoute(route, billing, connection string) {
 	if !r.routeSet {
-		r.Route, r.Billing, r.routeSet = route, billing, true
+		r.Route, r.Billing, r.Connection, r.routeSet = route, billing, connection, true
 		return
 	}
-	if r.Route != route || r.Billing != billing {
+	if r.Route != route || r.Billing != billing || r.Connection != connection {
 		r.routeMixed = true
 	}
 }
@@ -387,7 +387,7 @@ func (r *usageTurnRow) absorbRoute(p usageTurnRow) {
 	if !p.routeSet {
 		return
 	}
-	r.noteRoute(p.Route, p.Billing)
+	r.noteRoute(p.Route, p.Billing, p.Connection)
 	r.routeMixed = r.routeMixed || p.routeMixed
 }
 
@@ -402,7 +402,7 @@ func (r *usageTurnRow) settleRoute() {
 		r.segs = nil
 		return
 	}
-	r.Route, r.Billing = "", ""
+	r.Route, r.Billing, r.Connection = "", "", ""
 	for _, s := range r.segs {
 		if s.Billing == "" {
 			r.segs = nil
@@ -465,7 +465,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 		if t.CostOnly {
 			if inGroup && cur.Sidechain == t.Sidechain {
 				cur.CostUSD += t.CostUSD
-				cur.noteRoute(t.Route, t.Billing)
+				cur.noteRoute(t.Route, t.Billing, t.Connection)
 				cur.pushCall(t, false)
 				continue
 			}
@@ -474,7 +474,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 				*p = usageTurnRow{Trigger: trigger, Sidechain: t.Sidechain}
 			}
 			p.CostUSD += t.CostUSD
-			p.noteRoute(t.Route, t.Billing)
+			p.noteRoute(t.Route, t.Billing, t.Connection)
 			p.pushCall(t, false)
 			if t.TS != "" {
 				p.TS = t.TS
@@ -512,7 +512,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 				*p = usageTurnRow{}
 			}
 		}
-		cur.noteRoute(t.Route, t.Billing)
+		cur.noteRoute(t.Route, t.Billing, t.Connection)
 		cur.pushCall(t, true)
 		cur.Tokens.Out += t.OutTok
 		cur.CostUSD += t.CostUSD
@@ -1002,7 +1002,7 @@ func usageRecordsOf(m session.Meta, r usageTurnRow) []usagex.Record {
 	for k, sg := range r.segs {
 		seg := r
 		seg.segs = nil
-		seg.Route, seg.Billing, seg.Tokens, seg.CostUSD = sg.Route, sg.Billing, sg.Tokens, sg.CostUSD
+		seg.Route, seg.Billing, seg.Connection, seg.Tokens, seg.CostUSD = sg.Route, sg.Billing, sg.Connection, sg.Tokens, sg.CostUSD
 		if sg.TS != "" {
 			seg.TS = sg.TS
 		}
@@ -1028,7 +1028,7 @@ func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
 	rec := usagex.Record{
 		TS: r.TS, Call: chatx.RandUUID(), Feature: usagex.FeatureSession, Trigger: r.Trigger,
 		Origin: origin, OriginConv: originConv, Kind: m.Kind,
-		Route: r.Route, Billing: r.Billing,
+		Route: r.Route, Billing: r.Billing, Connection: r.Connection,
 		Ref: m.Name, Sidechain: r.Sidechain, Idx: r.Idx, Agent: agent,
 		Key: orphanLedgerKey(m, r),
 		In:  r.Tokens.In, Out: r.Tokens.Out,
@@ -1047,6 +1047,10 @@ func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
 	if rec.TS == "" {
 		rec.TS = time.Now().UTC().Format(time.RFC3339)
 	}
+	if !r.routeMixed {
+		// A turn whose calls disagreed is not a gap: its cleared or split evidence stands.
+		stampLaunch(m, &rec)
+	}
 	if r.Model != "" {
 		// The model the transcript reported is the measured value. It is a raw id
 		// including the version, so it is kept in model_raw as well.
@@ -1055,6 +1059,62 @@ func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
 		rec.Model, rec.ModelSrc = usagex.ModelFallback(m.Model)
 	}
 	return rec
+}
+
+// stampLaunch fills a session row's gaps from the session's launch record (ADR 0138 D11): every
+// turn of a session carries the route it was launched on and the binding of its credential.
+// Only gaps, and only where the record proves them:
+//   - never for a kind whose calls resolve their own route and credential per call
+//     (agents.PerCallRouter: opencode follows the model's provider, lcpp re-resolves its endpoint
+//     on every call). A matching route id there does not prove the launch credential served the
+//     call, so such a row keeps exactly what its call recorded;
+//   - never for a turn whose calls disagreed (the caller skips it): cleared evidence is not a gap;
+//   - never for a row stamped before the session's last route switch: the record names the route
+//     after the switch;
+//   - a row with a route of its own keeps it, and takes the record's binding only when the
+//     routes agree.
+//
+// The routes filled this way have no provider of their own in the price lookup
+// (usageRouteProviders; TestLaunchFillsNoPricedRoute), so no estimate moves.
+func stampLaunch(m session.Meta, rec *usagex.Record) {
+	l := m.LaunchRoute
+	if l == nil || l.Route == "" || perCallRoutes(m.Kind) || !afterLastRouteSwitch(m, rec.TS) {
+		return
+	}
+	switch rec.Route {
+	case l.Route:
+	case "":
+		rec.Route = l.Route
+	default:
+		return
+	}
+	if rec.Connection == "" {
+		rec.Connection = l.Binding
+	}
+}
+
+// afterLastRouteSwitch reports whether a row stamped at ts ran after the session's last route
+// switch (always, with none). An unreadable time is not proof.
+func afterLastRouteSwitch(m session.Meta, ts string) bool {
+	if len(m.RouteSwitches) == 0 {
+		return true
+	}
+	at, err := time.Parse(time.RFC3339Nano, m.RouteSwitches[len(m.RouteSwitches)-1].At)
+	if err != nil {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339Nano, ts)
+	return err == nil && !t.Before(at)
+}
+
+// perCallRoutes reports a kind whose calls may run on routes other than its launch route.
+func perCallRoutes(kind string) bool {
+	a, ok := sessionx.RegisteredAgent(kind)
+	if !ok {
+		return true // unknown: never fill
+	}
+	_, per := a.(agents.PerCallRouter)
+	return per
 }
 
 // orphanLedgerKey is a cost-only row's ledger Key ("" for a logical turn). The session name is

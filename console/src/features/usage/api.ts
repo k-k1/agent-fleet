@@ -15,7 +15,11 @@ export type UsageDim =
   | "origin_conv"
   | "verb"
   | "model_src"
-  | "measured";
+  | "measured"
+  | "route"
+  | "billing"
+  /** The credential instance a call ran on (ADR 0138 D5): spend per credential. */
+  | "connection";
 
 /** One entry of `series`. spend = in + ccreate + out (cache_read is not counted). */
 export interface UsageAgg {

@@ -9,26 +9,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// launchResolveBudget bounds how long a create, fork or recreate waits for its launch record.
-// The record is evidence, not a condition of the launch (ADR 0138 M0 changes no behaviour), so a
-// resolver that is slow or hangs (a cold CLI probe, a locked store) costs the record, never the
-// launch: past the budget the session is recorded as unresolved and starts as it always did.
-var launchResolveBudget = 500 * time.Millisecond
+// launchResolveBudget bounds how long a create, fork or recreate waits for its launch record
+// (routes.Observe): past it the session is recorded as unresolved and starts as it always did.
+var launchResolveBudget = routes.ObserveBudget
 
-// withinBudget runs f, returning its answer, or ok=false when it has not answered within
-// launchResolveBudget. A late answer is dropped.
+// withinBudget is routes.Observe under launchResolveBudget.
 func withinBudget(what string, f func() routes.Launch) (routes.Launch, bool) {
-	ch := make(chan routes.Launch, 1)
-	go func() { ch <- f() }()
-	t := time.NewTimer(launchResolveBudget)
-	defer t.Stop()
-	select {
-	case l := <-ch:
-		return l, true
-	case <-t.C:
-		log.Printf("launch route: %s did not answer within %v; recorded as unresolved", what, launchResolveBudget)
-		return routes.Launch{}, false
-	}
+	return routes.Observe(launchResolveBudget, what, f)
 }
 
 // launchRouteOf is the launch-time record of a session being created now (ADR 0138 D11): the

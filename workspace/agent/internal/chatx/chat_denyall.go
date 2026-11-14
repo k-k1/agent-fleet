@@ -194,6 +194,7 @@ func runClaudeDenyAll(ctx context.Context, persona, prompt, selected string) (st
 		return "", err
 	}
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: selected}
+	call.Route, call.Connection = chatLaunch(session.KindClaude, selected)
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	started := routeNow()
 	cmd := claudeOneShotCmd(ctx, claudeOneShotArgsFormat(persona, selected, true))
