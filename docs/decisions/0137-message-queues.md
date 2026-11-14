@@ -432,4 +432,6 @@ manual and alone (ADR 0111 decisions 1 and 3). A queue shared by the members of 
    (fact 9), so that a finished task is replaced within a minute whatever else is waking.
 
 *Note, 2026-11-14 (acceptance).* Accepted by the owner as written. The open questions go with the work they belong
-to: 1, 4 and 5 are carried in #4149, 2 in #4150, and 3 is #4153.
+to: 1, 4 and 5 are carried in #4149, 2 in #4150, and 3 is #4153. One sentence is to be read with §3: where §5 ends
+with "came from the member or was released by the member", a message accepted under the standing switch the member
+turned on for that queue is included.

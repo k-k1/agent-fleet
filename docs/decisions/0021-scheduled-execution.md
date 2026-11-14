@@ -197,7 +197,10 @@ live run (#3809).
 
 **Note (2026-11-14, ADR 0137):** [ADR 0137](0137-message-queues.md) amends decision 10, and the 2026-10-03 addendum's
 exclusion of "chaining one run's output into the next", for queue fires only. A queue fire's prompt is the queue's
-standing instruction, which a person registered, followed by the queued messages marked as data; each was written or
-released by the member and names its origin (0137 §5). A tidy step may rewrite those messages before the fire, by a
-call that has no tools and whose reply is validated (0137 §8). Schedules are unchanged: a schedule's prompt still
-carries only the fixed variables and `{{gate.refs}}`. Nothing of 0137 is built yet (#4148).
+standing instruction, which a person registered, followed by the queued messages marked as data, or by the path of a
+file in the workspace that holds them when the batch is over the size cap or has attachments (0137 §5). Each message
+names its origin and reached the queue in one of three ways: the member wrote it, the member released it, or the
+member turned on that queue's standing switch for sessions they started, which is a guard rail and not a wall
+(0137 §3). A tidy step may rewrite those messages before the fire, by a call that has no tools and whose reply is
+validated (0137 §8). Schedules are unchanged: a schedule's prompt still carries only the fixed variables and
+`{{gate.refs}}`. Nothing of 0137 is built yet (#4148).
