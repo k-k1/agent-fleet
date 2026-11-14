@@ -858,10 +858,9 @@ func (e *inboxEnv) useHookAgent() *hookAgent {
 	return h
 }
 
-// A flush checks and stamps the rows it sends in one transaction before the send. A note a
-// session sends and that is moved into a queue while the send is in flight enters the queue
-// as delivered, never as a message that can still be released and fired; and a queue message
-// the member sends cannot be rewritten while it is in flight and then counted as sent.
+// A flush reserves the rows it sends. A note in flight cannot enter a queue, alone or together
+// with an edit, so a text nobody sent can never be counted as a delivered message; and a queue
+// message the member sends cannot be rewritten while it is in flight.
 func TestMemoQueueFlushReservesWhatItSends(t *testing.T) {
 	eachDialect(t, func(t *testing.T, e *inboxEnv) {
 		e.queue(e.category("r", "q"))
@@ -869,15 +868,20 @@ func TestMemoQueueFlushReservesWhatItSends(t *testing.T) {
 		console, tok := memoFaceClient{"console", e}, memoFaceClient{"token", e}
 
 		for _, f := range workspaceFaces(e) {
-			_, m := console.create(textMemo("r", "plain", "sent by "+f.name+", then moved"))
-			var moved int
-			h.onTurn = func() { moved, _ = tok.update(m.ID, map[string]any{"category": "q"}) }
-			if code := f.flush(m.ID); code != http.StatusOK {
-				t.Fatalf("%s flush of a plain note: %d", f.name, code)
-			}
-			got := e.memoRow(m.ID)
-			if moved != http.StatusOK || got.Category != "q" || got.State != store.MemoStateDelivered || got.SentAt == "" {
-				t.Fatalf("%s: moved=%d, row %+v, want it in the queue as delivered", f.name, moved, got)
+			for _, patch := range []map[string]any{
+				{"category": "q"},
+				{"category": "q", "body": "B, never sent"},
+			} {
+				_, m := console.create(textMemo("r", "plain", "A, sent by "+f.name))
+				var moved int
+				h.onTurn = func() { moved, _ = f.update(m.ID, patch) }
+				if code := f.flush(m.ID); code != http.StatusOK {
+					t.Fatalf("%s flush of a plain note: %d", f.name, code)
+				}
+				got := e.memoRow(m.ID)
+				if moved != http.StatusConflict || got.Category != "plain" || got.State != "" || got.SentAt == "" || got.Body != m.Body || got.SendToken != "" {
+					t.Fatalf("%s %v during the send: moved=%d, row %+v", f.name, patch, moved, got)
+				}
 			}
 		}
 
@@ -897,9 +901,9 @@ func TestMemoQueueFlushReservesWhatItSends(t *testing.T) {
 	})
 }
 
-// A send that fails takes the stamp back off: a note is unsent again, a pending message is
-// pending again under its release, a held one held.
-func TestMemoQueueFailedFlushUndoesTheStamp(t *testing.T) {
+// A send the Agent refuses leaves every row as it was: a note unsent, a pending message
+// pending under its release, a held one held, and no reservation behind.
+func TestMemoQueueRefusedFlushLeavesRowsAsTheyWere(t *testing.T) {
 	eachDialect(t, func(t *testing.T, e *inboxEnv) {
 		e.queue(e.category("r", "q"))
 		h := e.useHookAgent()
@@ -1214,5 +1218,96 @@ func TestMemoQueueTenantSwitchGatesCreatingAQueue(t *testing.T) {
 		if r := e.do("a", "DELETE", "/api/memo-queues/"+cat, nil); r.Code != http.StatusNoContent {
 			t.Fatalf("delete with the switch off: %d", r.Code)
 		}
+	})
+}
+
+// The settle never marks a queue message delivered when its text is not what the flush sent,
+// whatever let the text change: the reservation is the first guard, this is the second.
+func TestMemoQueueSettleDeliversOnlyTheSentText(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		_, m := memoFaceClient{"token", e}.create(textMemo("r", "q", "B, never sent"))
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET send_token='t1', send_started_at=? WHERE id=?`, store.NowTS(), m.ID); err != nil {
+			t.Fatal(err)
+		}
+		sent := e.memoRow(m.ID)
+		sent.Body = "A, the text that was sent"
+		if err := memoSettleSend(context.Background(), e.st, e.members["a"], "t1", []store.Memo{sent}, nil, store.NowTS()); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.memoRow(m.ID); got.State != store.MemoStateHeld || got.SentAt != "" || got.SendToken != "" {
+			t.Fatalf("after settling a send of other text: %+v", got)
+		}
+	})
+}
+
+// R3-1, as a matrix: while a send is in flight, no change of the body, the ref, the
+// attachments, the repo or the category can carry a memo into, out of or within a queue, for
+// a memo that starts as a plain note and for one that starts in a queue, on the Console and
+// the token face. Each such change is refused, and the settle records exactly what was sent.
+// A change that keeps a plain note plain still goes through, as it always did.
+func TestMemoQueueNoChangeRidesASendInFlight(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		e.queue(e.category("r2", "plain"))
+		h := e.useHookAgent()
+		console := memoFaceClient{"console", e}
+		fileMemo := func(repo, category, body string) memoDTO {
+			_, d := console.create(map[string]any{"kind": "file", "repo": repo, "category": category, "body": body, "refPath": "~/repos/r/a.go"})
+			return d
+		}
+		att := []map[string]any{{"path": "/home/dev/.cache/agent-fleet/memo-images/x.png"}}
+		cases := []struct {
+			name, startCat string
+			patch          map[string]any
+			refused        bool
+		}{
+			{"plain: body into a queue", "plain", map[string]any{"category": "q", "body": "B"}, true},
+			{"plain: ref into a queue", "plain", map[string]any{"category": "q", "refPath": "~/repos/r/b.go"}, true},
+			{"plain: attachments into a queue", "plain", map[string]any{"category": "q", "attachments": att}, true},
+			{"plain: repo into a queue", "plain", map[string]any{"repo": "r2"}, true},
+			{"plain: category into a queue", "plain", map[string]any{"category": "q"}, true},
+			{"plain: body, staying plain", "plain", map[string]any{"body": "B"}, false},
+			{"queue: body", "q", map[string]any{"body": "B"}, true},
+			{"queue: ref", "q", map[string]any{"refPath": "~/repos/r/b.go"}, true},
+			{"queue: attachments", "q", map[string]any{"attachments": att}, true},
+			{"queue: repo out", "q", map[string]any{"repo": "r3"}, true},
+			{"queue: category out", "q", map[string]any{"category": "plain"}, true},
+		}
+		for _, f := range []memoFaceClient{console, {"token", e}} {
+			for _, c := range cases {
+				if f.name == "token" && c.patch["attachments"] != nil {
+					continue // the token face sends attachments too, but one face is enough for them
+				}
+				m := fileMemo("r", c.startCat, "A, the text that is sent")
+				var code int
+				var rec *httptest.ResponseRecorder
+				h.onTurn = func() { rec = f.http("PATCH", "/memos/"+m.ID, c.patch); code = rec.Code }
+				if r := e.do("a", "POST", "/api/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{m.ID}}); r.Code != http.StatusOK {
+					t.Fatalf("%s %s: flush %d %s", f.name, c.name, r.Code, r.Body.String())
+				}
+				got := e.memoRow(m.ID)
+				if got.SendToken != "" || got.SentAt == "" {
+					t.Fatalf("%s %s: not settled as sent: %+v", f.name, c.name, got)
+				}
+				if !c.refused {
+					if code != http.StatusOK || got.Body != "B" || got.State != "" {
+						t.Fatalf("%s %s: %d %+v", f.name, c.name, code, got)
+					}
+					continue
+				}
+				if code != http.StatusConflict || decode[errResp](t, rec).Error.Code != errCodeMemoSending {
+					t.Fatalf("%s %s: change during the send answered %d %s", f.name, c.name, code, rec.Body.String())
+				}
+				wantState := ""
+				if c.startCat == "q" {
+					wantState = store.MemoStateDelivered
+				}
+				if got.Body != m.Body || got.RefPath != m.RefPath || got.Attachments != "" || got.Repo != "r" || got.Category != c.startCat || got.State != wantState {
+					t.Fatalf("%s %s: row after the send %+v", f.name, c.name, got)
+				}
+			}
+		}
+		e.assertPendingReleaseMatches()
 	})
 }

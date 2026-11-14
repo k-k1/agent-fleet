@@ -885,6 +885,13 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 	return map[string]any{"sent": len(sentIDs), "sentAt": sentAt, "ids": sentIDs}, nil
 }
 
+// memoSameSentContent says whether a row still holds the text a flush composed from sent: the
+// kind, body, ref path and attachments. Repo and category are where it is filed, not what was
+// sent.
+func memoSameSentContent(cur, sent store.Memo) bool {
+	return cur.Kind == sent.Kind && cur.Body == sent.Body && cur.RefPath == sent.RefPath && cur.Attachments == sent.Attachments
+}
+
 // memoSendUnknown is a send whose outcome is unknown: the Agent was not reached or did not
 // answer with one of its own errors. An Agent error (question_pending, not_running, ...) is a
 // refusal, and nothing was sent.
@@ -912,6 +919,9 @@ func memoSettleSend(ctx context.Context, st store.MemoStore, membershipID, token
 			next := cur
 			next.SendToken, next.SendStartedAt = "", ""
 			switch {
+			case sendErr == nil && cur.State != "" && !memoSameSentContent(cur, m):
+				// A queue message whose text is not what was sent is not delivered. The
+				// reservation keeps this from happening; this keeps it from ever counting.
 			case sendErr == nil:
 				next.SentAt = sentAt
 				if next.State != "" {

@@ -159,8 +159,10 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext bool, via memoVia) (sto
 	if prev.State == store.MemoStateClaimed && moved {
 		return next, &apiError{http.StatusConflict, errCodeMemoLocked, "this message has been taken by a delivery and cannot be changed"}
 	}
-	// A queue message in a flush in flight keeps what is being sent until the flush settles.
-	if prev.SendToken != "" && prev.State != "" && moved {
+	// A row in a flush in flight keeps what is being sent until the flush settles when it is,
+	// or would become, a queue message: otherwise the settle would mark delivered a content
+	// that entered the queue after the send began.
+	if prev.SendToken != "" && (prev.State != "" || inNext) && moved {
 		return next, &apiError{http.StatusConflict, errCodeMemoSending, "this message is being sent"}
 	}
 	if !inNext {
