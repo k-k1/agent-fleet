@@ -115,6 +115,7 @@ func RunSessionStatusHook(args []string) {
 		// after SIGKILL, say). An already-promoted entry is not overwritten.
 		status.PromoteCarried(sid, "stopped")
 		status.Persist(sid, "idle")
+		status.ResetCalls(sid)
 		applyPendingPayloads(sid, "idle", h)
 		return
 	}
@@ -137,6 +138,7 @@ func RunSessionStatusHook(args []string) {
 	// about to run (for the permission block's detail) — it fires in EVERY mode, so
 	// it must not change the session status.
 	if state == "permtool" {
+		status.NoteCallStart(sid, h.toolUseID)
 		status.WriteLastToolCall(sid, h.toolDetail, h.toolCommand, h.toolUseID)
 		// The same hook is how we learn WHERE this session's plan lives: claude writes the
 		// plan through its own Write tool, so the path passes through here while the plan is
@@ -146,6 +148,11 @@ func RunSessionStatusHook(args []string) {
 			status.WritePlanFile(sid, p)
 		}
 		return
+	}
+	// PostToolUse(*) ends the call in the calls log, a subagent's included: its start was
+	// recorded above too, and the subagent guard below may return before the status is touched.
+	if state == "working" && h.toolName != "" {
+		status.NoteCallEnd(sid, h.toolUseID)
 	}
 	// The Notification hook fires for several reasons (idle, permission, …); only
 	// "permission_prompt" means the session is blocked awaiting a tool-permission
@@ -187,6 +194,9 @@ func RunSessionStatusHook(args []string) {
 		// wakeup — but the report reconciler (a separate process on this route) no longer
 		// needs that call to arrive before its next tick to learn why.
 		notifyState, notifyText = turnEndLabel(sid, state, turnText)
+		if h.agentID == "" {
+			status.ResetCalls(sid)
+		}
 		status.PersistTurnEndFor(sid, state, turnEndReasonFor(notifyState), turnPromptID(sid, h))
 		if !codexMarker {
 			// A finished turn means the transcript has real content; a later missing jsonl is

@@ -86,30 +86,33 @@ func permissionKeys(sid, name, choice, detail, command, cwd string) (keys []stri
 	return nil, "choice_unavailable"
 }
 
-// newerCallMayBeShown reports whether the dialog on screen may belong to a later call than the
+// newerCallMayBeShown reports whether the dialog on screen may belong to another call than the
 // pending one. It matters only when the match is wrap-ambiguous: P wrapped by the terminal and a
 // Q with a real newline at that wrap draw the same screen, so the screen alone matches Q for P
 // (CheckTargetCommandWrap). An unambiguous match pins the dialog to P's exact text.
 //
-// The evidence is the permtool PreToolUse record (last-tool), which publishing never removes.
-// Claude Code runs PreToolUse before its permission check (the hook's decision can allow, deny
-// or ask), so while Q is drawn the record is Q's or a still later call's. The answer goes
-// through only when the record is the pending call itself, by tool_use id: the text cannot
-// tell, since a background call may run the very same command. An unknown id on either side, a
-// missing record or one that cannot be read refuses too; the user then answers in the terminal.
+// Neither the payload nor the last-tool record can say which call a dialog belongs to: both come
+// from one slot, which a sibling's PreToolUse can overwrite before the dialog's own Notification
+// publishes it (the payload then names the sibling). The calls log can: Claude Code runs
+// PreToolUse before its permission check (the hook's decision can allow, deny or ask), so every
+// tracked call whose dialog can be on screen has started and not ended. The answer goes through
+// only when that set is exactly the pending call, by tool_use id. Anything else (another call
+// running, a background subagent's included; an unknown id; an unreadable log; nothing running)
+// refuses, and the user answers in the terminal.
 //
-// Left open: a PreToolUse hook that never recorded Q (it failed or timed out, and claude goes on
-// to the dialog) leaves P's record in place, which reads as P.
+// Left open: a call whose PreToolUse hook never recorded it (the hook failed or timed out, and
+// claude goes on to the dialog), and a call that started before the last turn end, which resets
+// the log.
 func newerCallMayBeShown(sid string, ambiguous bool) bool {
 	if !ambiguous {
 		return false
 	}
-	_, _, id, present, err := status.LastToolRecord(sid)
-	if err != nil || !present || id == "" {
+	running, err := status.InFlightCalls(sid)
+	if err != nil || len(running) != 1 {
 		return true
 	}
 	pending, ok := status.ReadPendingPermissionToolUseID(sid)
-	return !ok || pending != id
+	return !ok || running[0] != pending
 }
 
 // permissionChoices is what the poll reports beside pendingPermission, so the card offers only

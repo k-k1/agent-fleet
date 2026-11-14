@@ -113,7 +113,9 @@ var (
 	pendingPerms     = fstore.Strings(paths.AgentStateDir, "pending-perm", ".txt")
 	lastTools        = fstore.Strings(paths.AgentStateDir, "pending-perm", ".tool")
 	// publishedTools is the last-tool record a permission prompt last published (PublishPermissionPrompt).
-	publishedTools   = fstore.Strings(paths.AgentStateDir, "pending-perm", ".published")
+	publishedTools = fstore.Strings(paths.AgentStateDir, "pending-perm", ".published")
+	// callLogs is the calls log (NoteCallStart).
+	callLogs         = fstore.Strings(paths.AgentStateDir, "pending-perm", ".calls")
 	pendingTexts     = fstore.Strings(paths.AgentStateDir, "pending-text", ".txt")
 	carriedFiles     = fstore.JSON[Carried](paths.AgentStateDir, "carried-interaction", ".json")
 	restoreNoteFiles = fstore.JSON[RestoreNotes](paths.AgentStateDir, "transcript-restore-notes", ".json")
@@ -431,6 +433,7 @@ func Remove(sid string) {
 	RemovePendingPermission(sid)
 	lastTools.Remove(sid)
 	publishedTools.Remove(sid)
+	callLogs.Remove(sid)
 	planFiles.Remove(sid)
 }
 
@@ -573,33 +576,77 @@ func ReadLastToolCall(sid string) (detail, command, toolUseID string, ok bool) {
 	return detail, command, toolUseID, true
 }
 
-// LastToolRecord is the last-tool record for an answer path that must not mistake a failed read
-// for an absent record: present is false only when the file does not exist, and err is set for
-// any other failure, an empty file included (Write never stores one).
-func LastToolRecord(sid string) (detail, command, toolUseID string, present bool, err error) {
-	b, err := os.ReadFile(lastTools.Path(sid))
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", "", "", false, nil
+// The calls log (pending-perm/<sid>.calls) lists the tracked tool calls that started and ended
+// in the current turn, one line each: "+<tool_use_id>" from the permtool PreToolUse hook and
+// "-<tool_use_id>" from PostToolUse. It exists because the single last-tool slot cannot say which
+// call a dialog belongs to: a sibling's PreToolUse can overwrite the slot before the dialog's own
+// Notification publishes it, and the payload then names the sibling. Lines are appended with one
+// O_APPEND write each, so concurrent hooks never lose each other's lines.
+
+// NoteCallStart records that a tracked call reached PreToolUse. An unknown id is recorded as "?",
+// which never matches a payload and so keeps the answer path from vouching for any call.
+func NoteCallStart(sid, toolUseID string) { appendCall(sid, "+", toolUseID) }
+
+// NoteCallEnd records that a call finished (PostToolUse). Ends of untracked calls are harmless.
+func NoteCallEnd(sid, toolUseID string) {
+	if toolUseID != "" {
+		appendCall(sid, "-", toolUseID)
 	}
-	if err == nil && len(b) == 0 {
-		err = errors.New("empty last-tool record")
+}
+
+func appendCall(sid, sign, id string) {
+	if id == "" || strings.ContainsAny(id, "\n\r") {
+		id = "?"
+	}
+	path := callLogs.Path(sid)
+	if err := os.MkdirAll(callLogs.Dir(), 0o700); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return
+	}
+	_, _ = f.Write([]byte(sign + id + "\n"))
+	_ = f.Close()
+}
+
+// ResetCalls forgets the turn's calls, at the turn's end. A call denied in the dialog fires no
+// PostToolUse and would otherwise count as running for the rest of the session.
+func ResetCalls(sid string) { callLogs.Remove(sid) }
+
+// InFlightCalls is the tool_use ids of the tracked calls that started and have not ended, in start
+// order ("?" for an unknown id). A missing log is no calls; any other read failure is an error.
+func InFlightCalls(sid string) ([]string, error) {
+	b, err := os.ReadFile(callLogs.Path(sid))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
 	if err != nil {
-		return "", "", "", true, err
+		return nil, err
 	}
-	detail, command, toolUseID = splitCall(string(b))
-	return detail, command, toolUseID, true, nil
+	ended := map[string]bool{}
+	lines := strings.Split(string(b), "\n")
+	for _, ln := range lines {
+		if id, ok := strings.CutPrefix(ln, "-"); ok {
+			ended[id] = true
+		}
+	}
+	var out []string
+	for _, ln := range lines {
+		if id, ok := strings.CutPrefix(ln, "+"); ok && (id == "?" || !ended[id]) {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 // PublishPermissionPrompt turns the call the last permtool hook recorded into the pending
 // payload (message is the fallback when none was recorded).
 //
-// The record itself is never removed or rewritten here. It is the evidence an answer path has of
-// a call whose dialog is drawn ahead of its payload, and any remove-then-restore, or a remove
-// after a failed publish, opens a moment where that evidence is missing while the old payload is
-// still pending. The answer path tells the published call from a newer one by tool_use id.
-// Instead, the published record is remembered (publishedTools), so a later prompt from a tool
-// with no permtool hook does not inherit it; it is remembered only once the payload was written.
+// The record itself is not removed: the published record is remembered (publishedTools) instead,
+// so a later prompt from a tool with no permtool hook does not inherit it, and only once the
+// payload was written. Which call a dialog belongs to is not decided from this record at all
+// (see the calls log).
 func PublishPermissionPrompt(sid, message string) {
 	raw, ok := lastTools.Read(sid)
 	if ok {
