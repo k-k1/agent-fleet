@@ -13,7 +13,7 @@ English | [日本語](0136-pi-agent-kind.ja.md)
   `auth.json` locking, session storage, the MCP file. Each statement of the second kind is marked *(docs)* where it
   carries a decision. Stage 0b (real-repository tasks) was not run; it is no longer a gate (owner, 2026-11-12) and
   nothing in this record depends on it.
-- Follow-ups: (filled in when the issues are filed)
+- Follow-ups: #4140, #4141, #4142, #4143 (P0–P3); open questions #4138, #4139
 - See also: [0128](0128-harness-route-maker.md) (harness × route; pi is its P3) /
   [0129](0129-provided-model-routes.md) (provided Bedrock routes) /
   [0095](0095-muse-agent-kind.md) (the nearest precedent: a managed-only, per-session-child kind on a vendor
