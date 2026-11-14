@@ -342,6 +342,23 @@ func TestRescueSkippedForAServiceThatIsUpIsLoggedOncePerEpisode(t *testing.T) {
 	})
 }
 
+func TestRescueSkipMemoryIsDroppedWhenTheSlotLeavesTheScan(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		w.h.ecs.services[rescueWorkspace] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+		w.h.ci.running = append(w.h.ci.running, runningTask(rescueWorkspace, "i-dark"))
+		w.arm()
+		w.pass(w.f)
+		if _, ok := w.f.rescueSkipLogged.Load("i-dark"); !ok {
+			t.Fatal("no skip remembered")
+		}
+		w.h.ec2.detach("vol-1") // the slot no longer holds a home: out of the scan population
+		w.pass(w.f)
+		if _, ok := w.f.rescueSkipLogged.Load("i-dark"); ok {
+			t.Fatal("the memory of a slot that left the scan survived")
+		}
+	})
+}
+
 func withoutTag(tags []ec2types.Tag, key string) []ec2types.Tag {
 	var out []ec2types.Tag
 	for _, tg := range tags {

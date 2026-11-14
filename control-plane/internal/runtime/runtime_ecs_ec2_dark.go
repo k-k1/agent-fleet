@@ -170,6 +170,15 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 		}
 		byInstance[inst] = vol
 	}
+	// A slot that left the population (terminated, replaced, home moved) never reaches
+	// clearDarkStamp, so its "rescue skipped" memory is dropped here; otherwise a long-lived CP
+	// would keep one entry per instance id it ever saw dark.
+	f.rescueSkipLogged.Range(func(k, _ any) bool {
+		if _, in := byInstance[k.(string)]; !in {
+			f.rescueSkipLogged.Delete(k)
+		}
+		return true
+	})
 	if len(ids) == 0 {
 		return
 	}
