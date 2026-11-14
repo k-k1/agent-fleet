@@ -24,11 +24,11 @@ source_of_truth: "`workspace/workspace-notes.md` と `workspace/notes/`、Worksp
 | エージェント | 読む場所 |
 |---|---|
 | claude | `/etc/claude-code/CLAUDE.md`（managed policy）。セッションのたびに読みます |
-| codex・opencode・agy・copilot・kiro | 起動のたびに、同じ本文が各自の指示ファイルにマージされます |
+| codex・opencode・muse・agy・copilot・kiro | 起動のたびに、同じ本文が各自の指示ファイルにマージされます |
 | cursor | 届きません |
 
 トピックのファイルは、コンテナでは `/usr/local/share/agent-fleet/notes/` に置かれます。
-claude・codex・opencode には、Workspace Agent が起動のたびに各トピックを `af-<トピック>` という名前のスキルとしても登録します。
+claude・codex・opencode・muse には、Workspace Agent が起動のたびに各トピックを `af-<トピック>` という名前のスキルとしても登録します。
 CLI のスキルの仕組みからも本文にたどり着けます。ほかのエージェントがたどり着く経路は、索引だけです。
 
 ## 書く

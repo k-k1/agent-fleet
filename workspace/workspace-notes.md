@@ -1,11 +1,11 @@
 # Workspace Guide (operating policy)
 
 This file is installed into every agent-fleet Workspace container and read at the start of every
-Claude / Codex / OpenCode / agy / Copilot / Kiro session. It holds only what you must know
+Claude / Codex / OpenCode / Muse / agy / Copilot / Kiro session. It holds only what you must know
 *before* you know you need it: prohibitions and silent traps. The procedures behind them are the
 topic files listed at the end under `/usr/local/share/agent-fleet/notes/` — read the one named
 for your situation before you start, not after something broke. Where your CLI has a user skills
-root (Claude, Codex, OpenCode) the same files are also registered as skills named `af-<topic>`;
+root (Claude, Codex, OpenCode, Muse) the same files are also registered as skills named `af-<topic>`;
 either route reaches the same text, so use whichever fires first and do not read both. Edit it
 in the repo at `workspace/workspace-notes.md` (topic files: `workspace/notes/`); changes take
 effect after the image is rebuilt.
