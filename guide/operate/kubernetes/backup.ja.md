@@ -48,7 +48,7 @@ ZONE="$(echo "$HANDLE" | cut -d/ -f4)"; DISK="${HANDLE##*/}"
 
 ```bash
 gcloud compute resource-policies create snapshot-schedule "$PREFIX-cp-data" --project "$PROJECT" \
-  --region "$REGION" --daily-schedule --start-time 02:00 --max-retention-days 14   # once; UTC, on the hour
+  --region "$REGION" --daily-schedule --start-time 02:00 --max-retention-days 14   # 1 回だけ。UTC で、ちょうどの時刻
 gcloud compute disks add-resource-policies "$DISK" --zone "$ZONE" --project "$PROJECT" \
   --resource-policies "$PREFIX-cp-data"
 ```
@@ -91,7 +91,7 @@ metadata:
 spec:
   capacity: { storage: ${SIZE}Gi }
   accessModes: ["ReadWriteOnce"]
-  persistentVolumeReclaimPolicy: Retain      # until it is confirmed; see each procedure
+  persistentVolumeReclaimPolicy: Retain      # 確かめ終わるまで。それぞれの手順を参照
   storageClassName: $PREFIX-workspace
   claimRef: { namespace: $PREFIX-cp, name: $CLAIM }
   csi:
@@ -113,11 +113,11 @@ YAML
 ```bash
 gcloud sql instances clone "$PREFIX-pg" "$PREFIX-pg-rehearsal" --project "$PROJECT" \
   --point-in-time "$(date -u -d '-15 min' +%Y-%m-%dT%H:%M:%SZ)"
-# gcloud may stop waiting after about 10 minutes ("taking longer than expected") while the
-# clone goes on. Wait for the operation it named, or until the clone's state is RUNNABLE:
+# gcloud は 10 分ほどで待つのをやめることがある（"taking longer than expected"）が、複製は続いている。
+# 表示されたオペレーションの終わりか、複製の状態が RUNNABLE になるまで待つ:
 #   gcloud beta sql operations wait --project "$PROJECT" --timeout unlimited <operation>
 #   gcloud sql instances describe "$PREFIX-pg-rehearsal" --project "$PROJECT" --format='value(state)'
-# connect to the clone as in "4. Grant the database (once)" and check that the data is there:
+# 「4. データベースの権限を付ける（最初の 1 回）」と同じ方法で複製に接続し、データがあることを確かめる:
 #   SELECT count(*) FROM identity;  SELECT max(at) FROM audit_log;
 gcloud sql instances patch "$PREFIX-pg-rehearsal" --project "$PROJECT" --no-deletion-protection
 gcloud sql instances delete "$PREFIX-pg-rehearsal" --project "$PROJECT"
@@ -145,7 +145,7 @@ NAME="$PREFIX-cp-data-rehearsal-$(date +%Y%m%d%H%M)" CLAIM=af-cp-data-rehearsal 
 SENT_REPO="git/<tenant slug>/<test repo>.git" SENT_REF=refs/heads/<branch> SENT_COMMIT=<commit id>
 LFS_OID=<oid, or empty without LFS> LFS_SIZE=<bytes, or empty>
 LFS_PATH=""; [ -n "$LFS_OID" ] && LFS_PATH="$SENT_REPO/lfs/objects/${LFS_OID:0:2}/${LFS_OID:2:2}/$LFS_OID"
-# ... both parts of "Make a disk and a volume from a snapshot" ...
+# ……「スナップショットからディスクとボリュームを作る」の両方の部分……
 IMAGE="$(kubectl -n "$PREFIX-cp" get deployment af-cp -o jsonpath='{.spec.template.spec.containers[?(@.name=="cp")].image}')"
 kubectl apply -f - <<YAML
 apiVersion: v1
@@ -206,10 +206,10 @@ spec:
     - name: tmp
       emptyDir: {}
 YAML
-kubectl -n "$PREFIX-cp" get pvc "$CLAIM"                 # Bound, to $NAME
+kubectl -n "$PREFIX-cp" get pvc "$CLAIM"                 # Bound で、相手は $NAME
 kubectl -n "$PREFIX-cp" wait --for=jsonpath='{.status.phase}'=Succeeded pod/af-cp-data-rehearsal --timeout=600s
-kubectl -n "$PREFIX-cp" logs af-cp-data-rehearsal       # "fsck ok" per repo, "sentinel commit ok", "sentinel lfs ok"
-kubectl -n "$PREFIX-cp" get pod af-cp-data-rehearsal -o wide   # its node is in $ZONE
+kubectl -n "$PREFIX-cp" logs af-cp-data-rehearsal       # リポジトリごとの "fsck ok"、"sentinel commit ok"、"sentinel lfs ok"
+kubectl -n "$PREFIX-cp" get pod af-cp-data-rehearsal -o wide   # ノードが $ZONE にある
 ```
 
 次のすべてを満たしたときだけ合格です。

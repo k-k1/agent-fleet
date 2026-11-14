@@ -39,7 +39,7 @@ WSL ではないふつうの Ubuntu 23.10 以降では、AppArmor が特権の�
 
 ```bash
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-# make it permanent:
+# 再起動後も有効にする:
 echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-agent-fleet.conf
 ```
 
@@ -49,8 +49,8 @@ echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/6
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install.sh | bash
-af start            # first run only: fetch, verify, and extract the rootfs (~200MB)
-# open http://localhost:8099 in a browser
+af start            # 初回だけ rootfs（約 200MB）を取得・検証・展開する
+# ブラウザで http://localhost:8099 を開く
 ```
 
 | 環境変数 | 意味 |
@@ -64,8 +64,8 @@ tar を直接受け取ったときは、展開してその中の `af` を使い�
 ```bash
 tar xzf agent-fleet-native-<v>-linux-<arch>.tar.gz
 cd agent-fleet-native-<v>-linux-<arch>
-./af start          # first run only: fetch, verify, and extract the rootfs (~200MB)
-# open http://localhost:8099 in a browser
+./af start          # 初回だけ rootfs（約 200MB）を取得・検証・展開する
+# ブラウザで http://localhost:8099 を開く
 ```
 
 ## 2. 起動して開く

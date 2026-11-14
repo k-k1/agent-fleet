@@ -36,7 +36,7 @@ Linux の rootful Docker で動く Docker Compose の配備が対象です。
 4. 各ワークスペースを Console で停止して起動します。設定がワークスペースに届くのは、次の起動からです
 
 ```bash
-# the docker0 gateway address (normally 172.17.0.1):
+# docker0 のゲートウェイのアドレス（ふつうは 172.17.0.1）:
 docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'
 # .env
 AF_CP_INTERNAL_LISTEN=172.17.0.1:8098

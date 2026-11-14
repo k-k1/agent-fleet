@@ -25,8 +25,8 @@ source_of_truth: "`deploy/native/af` の `update` と配布リポジトリの `i
 **動いている Control Plane は再起動しません。** 新しいバージョンは再起動したときから使われるので、動いているエージェントのセッションが勝手に切れることはありません。
 
 ```bash
-af update --check   # report whether a newer release exists (no download)
-af update           # download + verify + stage the latest (or AF_VERSION-pinned)
+af update --check   # 新しいリリースがあるかを表示する（ダウンロードしない）
+af update           # 最新版（または AF_VERSION の版）を取得・検証して用意する
 ```
 
 - `--yes` を付けると、取得前の確認を省きます
@@ -42,8 +42,8 @@ af update           # download + verify + stage the latest (or AF_VERSION-pinned
 - あとから止めるときや、次に動く時刻を見るときは次のとおりです
 
 ```bash
-systemctl --user disable --now agent-fleet-update.timer   # stop auto-staging
-systemctl --user list-timers agent-fleet-update.timer     # when it next runs
+systemctl --user disable --now agent-fleet-update.timer   # 自動の用意を止める
+systemctl --user list-timers agent-fleet-update.timer     # 次に動く時刻
 ```
 
 ## 用意したバージョンに切り替える
@@ -71,7 +71,7 @@ systemctl --user list-timers agent-fleet-update.timer     # when it next runs
 tar を手で展開して使っているときは、新しいバージョンを展開して、その中の `af` で起動します。
 
 ```bash
-tar xzf agent-fleet-native-<v'>-linux-<arch>.tar.gz   # extract the new version
+tar xzf agent-fleet-native-<v'>-linux-<arch>.tar.gz   # 新しいバージョンを展開する
 cd agent-fleet-native-<v'>-linux-<arch> && ./af start
 ```
 

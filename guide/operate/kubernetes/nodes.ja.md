@@ -77,7 +77,7 @@ CP は、応答しなくなったノードの Pod を置き換えません。「
 1. ノードに対応する VM を探し、**Kubernetes ではなく Google Cloud で**、止まっているかなくなっていることを確かめます
    ```bash
    gcloud compute instances describe <node> --zone <zone> --project "$PROJECT" --format='value(status)'
-   # TERMINATED, or "not found", is proof. RUNNING, or no answer, is not.
+   # TERMINATED か "not found" なら確か。RUNNING か応答なしなら確かではない
    ```
    VM が動いているのに届かない（ネットワークの分断）、または状態を読めないときは、**何もしないでください**。エージェントがまだホームディレクトリに書いているかもしれません
 2. そのあとで、Node オブジェクトを消す（`kubectl delete node <node>`）か、ボリュームがデタッチされるようにサービス対象外（out-of-service）の taint を付けます

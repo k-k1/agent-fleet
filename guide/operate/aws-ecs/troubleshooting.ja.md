@@ -97,10 +97,10 @@ Fargate はタスクをまたいでイメージをキャッシュしないので
 どの段階に時間がかかったかは、次のコマンドで確かめます。
 
 ```bash
-# image pull window (and the surrounding task lifecycle)
+# イメージの取得にかかった時間（と、その前後のタスクの状態）
 aws ecs describe-tasks --cluster <cluster> --tasks <task-arn> \
   --query 'tasks[0].{created:createdAt,pullStart:pullStartedAt,pullStop:pullStoppedAt,started:startedAt}'
-# entrypoint cost (boot-install of the pinned CLIs on a fresh home is NOT a pull)
+# エントリーポイントの時間（新しいホームに固定版の CLI を入れる時間は、取得の時間ではない）
 aws logs tail <ws-log-group> --since 10m
 ```
 

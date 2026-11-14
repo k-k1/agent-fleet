@@ -30,12 +30,12 @@ Terraform でクラスターとそのまわりを作り、マニフェストを�
 コマンドはすべて**リポジトリのルートから**実行します。`gcloud` のコマンドはどれもプロジェクトを明示するので、`gcloud` の設定で既定のプロジェクトが別のものになっていても、そのプロジェクトを誤って変更することはありません。シェルごとに一度設定します。
 
 ```bash
-PROJECT=<project>          # Terraform's project_id
-REGION=<region>            # Terraform's region
-LOCATION="$REGION"         # the cluster's location: node_zones[0] instead when zonal_cluster = true
-PREFIX=<name_prefix>       # Terraform's name_prefix
+PROJECT=<project>          # Terraform の project_id
+REGION=<region>            # Terraform の region
+LOCATION="$REGION"         # クラスターの場所。zonal_cluster = true なら node_zones[0]
+PREFIX=<name_prefix>       # Terraform の name_prefix
 TF="terraform -chdir=deploy/gcp/gke"
-OVERLAY="deploy/kubernetes/overlays/$PREFIX"   # your overlay; point it at the copy once you move it
+OVERLAY="deploy/kubernetes/overlays/$PREFIX"   # 自分のオーバーレイ。移したらコピーの場所にする
 ```
 
 ## 1. プロジェクトを準備する（最初の 1 回）
@@ -71,7 +71,7 @@ OVERLAY="deploy/kubernetes/overlays/$PREFIX"   # your overlay; point it at the c
 ## 2. Terraform を適用する
 
 ```bash
-cp deploy/gcp/gke/terraform.tfvars.example deploy/gcp/gke/terraform.tfvars   # fill it in; gitignored
+cp deploy/gcp/gke/terraform.tfvars.example deploy/gcp/gke/terraform.tfvars   # 中を書く。git の対象外
 $TF init -backend-config="bucket=<state-bucket>" -backend-config="prefix=$PREFIX"
 $TF apply
 ```
@@ -134,8 +134,8 @@ Terraform は kubeconfig に触りません。**`kubectl` のコマンドを打�
 
 ```bash
 eval "$($TF output -raw get_credentials)"     # gcloud container clusters get-credentials …
-kubectl config current-context                # gke_<project>_<region>_<prefix>-gke
-kubectl get nodes -L agent-fleet.io/pool      # the system and workspace pools
+kubectl config current-context                # gke_<project>_<region>_<prefix>-gke になる
+kubectl get nodes -L agent-fleet.io/pool      # system と workspace のプール
 ```
 
 運用ページの手順を行う前にも、新しいシェルを開くたびに同じことをします。
@@ -153,9 +153,9 @@ CP のデータベースユーザーは、パスワードのない IAM ユーザ
 gcloud sql users set-password postgres --instance "$PREFIX-pg" --project "$PROJECT" --prompt-for-password
 DBUSER="$($TF output -raw cp_database_user)"
 DBHOST="$(gcloud sql instances describe "$PREFIX-pg" --project "$PROJECT" --format='value(ipAddresses[0].ipAddress)')"
-# The statements to paste into psql below (the pod knows nothing of $DBUSER):
+# 下の psql に貼り付ける文（Pod は $DBUSER を知らない）:
 echo "GRANT \"$DBUSER\" TO postgres; ALTER DATABASE agentfleet OWNER TO \"$DBUSER\"; ALTER SCHEMA public OWNER TO \"$DBUSER\";"
-# The CP namespace does not exist yet (step 6 creates it); `default` does.
+# CP の Namespace はまだない（手順 6 で作る）ので、`default` を使う
 kubectl -n default run psql-grant -it --rm --restart=Never --image=postgres:17-alpine \
   --override-type=strategic \
   --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":70,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"psql-grant","securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' \
@@ -177,7 +177,7 @@ kubectl -n default run psql-grant -it --rm --restart=Never --image=postgres:17-a
 上のブロックの最初の行（`gcloud sql users set-password … --prompt-for-password`）もターミナルが要ります。ターミナルがないときは `--password` でパスワードを設定し（その `gcloud` の呼び出しの引数に一瞬だけ載ります）、終わったら新しいランダムな値にします。たとえば、次のように生成したパスワードを先に設定しておくと、下のブロックはプロンプトを出さずにその `PGPW` を使います。
 
 ```bash
-PGPW="$(openssl rand -base64 24)"                   # kept only in this shell
+PGPW="$(openssl rand -base64 24)"                   # このシェルの中だけに置く
 gcloud sql users set-password postgres --instance "$PREFIX-pg" --project "$PROJECT" --password "$PGPW"
 ```
 
@@ -189,15 +189,15 @@ DBHOST="$(gcloud sql instances describe "$PREFIX-pg" --project "$PROJECT" --form
 [ -n "$DBUSER" ] && [ -n "$DBHOST" ] || { echo "DBUSER or DBHOST is empty: stop"; exit 1; }
 PWDIR="$(mktemp -d)"; chmod 700 "$PWDIR"
 cleanup() {
-  rm -rf "$PWDIR"                                   # the local copy first: it needs no API
+  rm -rf "$PWDIR"                                   # 先に手元のコピーを消す（API は要らない）
   kubectl -n default delete pod psql-grant --ignore-not-found --wait=false --request-timeout=30s \
     || echo "could not delete pod psql-grant: delete it by hand"
   kubectl -n default delete secret psql-grant-pw --ignore-not-found --request-timeout=30s \
     || echo "WARNING: secret psql-grant-pw may remain (it holds the postgres password): delete it by hand"
 }
-trap cleanup EXIT                                   # runs under `set -e` too
-[ -n "${PGPW:-}" ] || { read -rs -p 'postgres password: ' PGPW; echo; }   # or read it from your vault
-printf '%s' "$PGPW" > "$PWDIR/PGPASSWORD"; unset PGPW   # printf is a builtin: not in any argv
+trap cleanup EXIT                                   # `set -e` のときも動く
+[ -n "${PGPW:-}" ] || { read -rs -p 'postgres password: ' PGPW; echo; }   # またはパスワードマネージャーから読む
+printf '%s' "$PGPW" > "$PWDIR/PGPASSWORD"; unset PGPW   # printf は組み込みなので、argv に載らない
 kubectl -n default create secret generic psql-grant-pw --from-file=PGPASSWORD="$PWDIR/PGPASSWORD"
 kubectl -n default run psql-grant --restart=Never --image=postgres:17-alpine \
   --override-type=strategic \
@@ -206,7 +206,7 @@ kubectl -n default run psql-grant --restart=Never --image=postgres:17-alpine \
   -c "GRANT \"$DBUSER\" TO postgres; ALTER DATABASE agentfleet OWNER TO \"$DBUSER\"; ALTER SCHEMA public OWNER TO \"$DBUSER\";"
 kubectl -n default wait --for=jsonpath='{.status.phase}'=Succeeded pod/psql-grant --timeout=120s \
   || echo "grant pod did not succeed"
-kubectl -n default logs psql-grant        # expect GRANT ROLE, ALTER DATABASE, ALTER SCHEMA
+kubectl -n default logs psql-grant        # GRANT ROLE、ALTER DATABASE、ALTER SCHEMA と出れば OK
 ```
 
 - `EXIT` の trap は、先にパスワードのファイルを消し、それから削除を 1 つずつ試します。`kubectl delete` が 1 つ失敗しても（ログインの期限切れ、接続なし）残りは飛ばしません。Secret を消せなかったときはそう表示するので、手で消します
@@ -277,7 +277,7 @@ fi
 CP は Secret `af-cp-secrets` を 1 つ読みます。マニフェストには入っていません。Namespace ができたら作ります。
 
 ```bash
-kubectl config current-context                # still this cluster (step 3)
+kubectl config current-context                # まだこのクラスター（手順 3）
 kubectl apply -k "$OVERLAY"
 kubectl -n "$PREFIX-cp" create secret generic af-cp-secrets \
   --from-literal=AF_MASTER_KEY="$(cat master-key)" \
@@ -319,9 +319,9 @@ Gateway `af-cp`（`components/gke/gateway.yaml`）が、GKE に**グローバル
 
 ```bash
 kubectl -n "$PREFIX-cp" rollout status deployment/af-cp
-kubectl get ns "$PREFIX-ws" -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}'   # restricted
-kubectl -n "$PREFIX-cp" get pvc af-cp-data    # Bound
-kubectl -n "$PREFIX-cp" get gateway af-cp     # PROGRAMMED True, ADDRESS = lb_address
+kubectl get ns "$PREFIX-ws" -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}'   # restricted になる
+kubectl -n "$PREFIX-cp" get pvc af-cp-data    # Bound になる
+kubectl -n "$PREFIX-cp" get gateway af-cp     # PROGRAMMED が True、ADDRESS が lb_address
 curl -sS https://<fqdn>/readyz
 ```
 
@@ -345,7 +345,7 @@ until [ "$(curl -sS -m 10 -o /dev/null -w '%{http_code}' https://<fqdn>/readyz)"
 ```bash
 SA=system:serviceaccount:$PREFIX-cp:af-cp
 kubectl auth can-i create statefulsets -n "$PREFIX-ws" --as $SA       # yes
-kubectl auth can-i delete pods -n "$PREFIX-ws" --as $SA               # yes (the erase pod)
+kubectl auth can-i delete pods -n "$PREFIX-ws" --as $SA               # yes（消去用の Pod）
 kubectl auth can-i patch namespaces --as $SA                          # no
 kubectl auth can-i create networkpolicies -n "$PREFIX-ws" --as $SA    # no
 kubectl auth can-i list storageclasses --as $SA                       # no
@@ -367,7 +367,7 @@ kubectl -n kube-system get pods -l k8s-app=node-local-dns
 
 ```bash
 kubectl -n "$PREFIX-ws" get pods -o wide -l agent-fleet.io/workspace
-kubectl -n "$PREFIX-ws" exec <pod> -- getent hosts github.com     # an address, not empty
+kubectl -n "$PREFIX-ws" exec <pod> -- getent hosts github.com     # 空ではなくアドレスが出る
 ```
 
 ### ノードに届かないこと
@@ -380,7 +380,7 @@ kubectl -n "$PREFIX-ws" exec <pod> -- getent hosts github.com     # an address, 
 ```bash
 nodes=$(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}') \
   && [ -n "$nodes" ] || echo "ERROR: could not list the nodes"
-probe() {  # <ip> <port>
+probe() {  # 使い方: probe <ip> <port>
   kubectl -n "$PREFIX-ws" exec <pod> -- bash -c \
     "if timeout 3 bash -c 'exec 3<>/dev/tcp/$1/$2' 2>/dev/null; then echo '$1:$2 open'; else echo '$1:$2 closed'; fi" \
     || echo "$1:$2 ERROR: exec failed"
@@ -394,7 +394,7 @@ probe 1.1.1.1 443
 そのワークスペースのターミナルで確かめます。ホームディレクトリの所有者が `dev` で、ほかの誰も書き込めない状態でないと、`af-gcloud-exec` と `af-aws-exec` はその下に状態を置くのを拒みます。
 
 ```bash
-stat -c '%U:%G %A' /home/dev    # dev:dev drwxr-sr-x — no w for group or other (the s, from fsGroup, is harmless)
+stat -c '%U:%G %A' /home/dev    # dev:dev drwxr-sr-x。グループとその他に w がない（s は fsGroup によるもので問題ない）
 ```
 
 - ホームディレクトリは、ホームディレクトリ用の claim の中のディレクトリ `.af-home` です。`dev` として動く init コンテナが、エージェントの起動前にそれを作り、以前のホームディレクトリのファイルをそこへ移します

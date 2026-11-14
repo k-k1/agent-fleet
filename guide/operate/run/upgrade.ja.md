@@ -35,11 +35,11 @@ source_of_truth: "`deploy/compose/docker-compose.yml`、ECS の手順書と `dep
 `.env` の `VERSION` を新しいタグに変え、イメージを取得（またはビルド）して `docker compose up -d` します。
 
 ```bash
-# edit .env: VERSION=<new tag>, and point WS_IMAGE at the matching workspace tag
-# (WS_IMAGE is an independent variable — it is not derived from VERSION)
-docker compose pull            # or rebuild: docker compose build
-# the workspace image is not a compose service — pull/rebuild it separately:
-docker pull <WS_IMAGE>         # or rebuild: docker build -t <WS_IMAGE> ../../workspace
+# .env を書き換える: VERSION=<新しいタグ>。WS_IMAGE も対応するワークスペースのタグにする
+# （WS_IMAGE は VERSION とは別の変数で、VERSION からは決まらない）
+docker compose pull            # またはビルドし直す: docker compose build
+# ワークスペースのイメージは compose のサービスではないので、別に取得かビルドする:
+docker pull <WS_IMAGE>         # またはビルドし直す: docker build -t <WS_IMAGE> ../../workspace
 docker compose up -d
 ```
 

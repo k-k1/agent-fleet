@@ -52,7 +52,7 @@ Fargate には GPU がないので、エンジンは EC2 のインスタンス�
 
    ```bash
    aws iam create-service-linked-role --aws-service-name ec2fleet.amazonaws.com || true
-   # and, for a deployment that declares a `spot` offer:
+   # `spot` の offer を宣言する配備では、次も:
    aws iam create-service-linked-role --aws-service-name spot.amazonaws.com || true
    ```
 
@@ -60,7 +60,7 @@ Fargate には GPU がないので、エンジンは EC2 のインスタンス�
 
    ```bash
    crane copy ghcr.io/ggml-org/llama.cpp:server-cuda <acct>.dkr.ecr.<region>.amazonaws.com/af-llamacpp:server-cuda
-   # the image role:
+   # 画像のロール:
    crane copy ghcr.io/k-k1/agent-fleet/comfyui:v0.37.0 <acct>.dkr.ecr.<region>.amazonaws.com/af-comfyui:v0.37.0
    ```
 
@@ -151,7 +151,7 @@ ImageEnabled=true
 エンジンが Hugging Face と通信することはありません。モデルは Fargate のタスクがスタックの S3 Bucket に 1 回置き、エンジンは起動時に S3 から取ります。
 
 ```bash
-# The sha256 is siblings[].lfs.sha256 from https://huggingface.co/api/models/<repo>?blobs=true
+# sha256 は https://huggingface.co/api/models/<repo>?blobs=true の siblings[].lfs.sha256
 aws ecs run-task --cluster <cluster> --launch-type FARGATE \
   --task-definition af-af-ecs-engines-ingest \
   --network-configuration 'awsvpcConfiguration={subnets=[subnet-…],securityGroups=[sg-…],assignPublicIp=DISABLED}' \

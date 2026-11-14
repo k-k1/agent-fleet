@@ -37,7 +37,7 @@ AWS の ECS に Agent Fleet を構築し、Control Plane を起動して、IdP �
 ```bash
 aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com || true
 aws iam create-service-linked-role --aws-service-name ec2fleet.amazonaws.com || true
-# and, for a deployment that declares a `spot` offer:
+# `spot` の offer を宣言する配備では、次も:
 aws iam create-service-linked-role --aws-service-name spot.amazonaws.com || true
 ```
 
@@ -99,9 +99,9 @@ ECR のリポジトリは `20-platform` が持っています。先に `20-platf
 `release-ecr.sh` はリポジトリがあることを確かめるだけで、作りません。
 
 ```bash
-# images already local (built by deploy/release/build.sh):
+# イメージがこのマシンにあるとき（deploy/release/build.sh でビルドしたもの）:
 VERSION=<v> ./release-ecr.sh --profile af-sandbox --region <region>
-# or from the air-gap images tar (B) when the build host is a different machine:
+# ビルドしたマシンが別のときは、オフライン用のイメージの tar（B）から:
 VERSION=<v> ./release-ecr.sh --profile af-sandbox --region <region> \
     --images-tar agent-fleet-images-<v>.tar.gz
 ```
@@ -117,7 +117,7 @@ VERSION=<v> ./release-ecr.sh --profile af-sandbox --region <region> \
 ```bash
 aws ecr get-login-password --region <region> | docker login --username AWS \
     --password-stdin <acct>.dkr.ecr.<region>.amazonaws.com
-# tag + push the images already built for local (no heavy rebuild here):
+# ローカル用にビルド済みのイメージにタグを付けて push する（ここで重いビルドはしない）:
 docker tag agent-fleet/control-plane:<tag> <acct>.dkr.ecr.<region>.amazonaws.com/af-control-plane:<tag>
 docker tag agent-fleet/workspace:<tag>     <acct>.dkr.ecr.<region>.amazonaws.com/af-workspace:<tag>
 docker push <acct>.dkr.ecr.<region>.amazonaws.com/af-control-plane:<tag>
@@ -153,9 +153,9 @@ aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
   --name /af-cp/cookie-secret       --value "$(openssl rand -hex 32)"
 aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
   --name /af-cp/master-key          --value "$(openssl rand -hex 32)"
-# one of these two, or both — only the IdPs you enable are wired in
+# 次の 2 つのどちらか、または両方。有効にした IdP の分だけ使われる
 aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
-  --name /af-cp/google-client-secret --value "<GOOGLE_OAUTH_CLIENT_SECRET>"   # your terminal, not shared
+  --name /af-cp/google-client-secret --value "<GOOGLE_OAUTH_CLIENT_SECRET>"   # 自分のターミナルで。共有しない
 aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
   --name /af-cp/oidc-client-secret   --value "<AF_OIDC_<ID>_CLIENT_SECRET>"
 ```

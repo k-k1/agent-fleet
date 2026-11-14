@@ -48,7 +48,7 @@ WantedBy=default.target
 
 ```bash
 systemctl --user daemon-reload && systemctl --user enable --now agent-fleet
-systemctl --user status agent-fleet          # expect: Active: active (running)
+systemctl --user status agent-fleet          # Active: active (running) と出れば OK
 ```
 
 ## 3. 閉じても動き続けるようにする

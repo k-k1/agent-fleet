@@ -72,7 +72,7 @@ grep '^NatEipAllocationId=' ~/.config/agent-fleet/deploy/<p>.<r>/params/00-netwo
 ```bash
 aws cloudformation describe-stacks --stack-name af-ecs-network \
   --query "Stacks[0].Outputs[?OutputKey=='NatEipAllocationId'].OutputValue" --output text
-# -> NatEipAllocationId=eipalloc-... into ~/.config/agent-fleet/deploy/<p>.<r>/params/00-network
+# -> NatEipAllocationId=eipalloc-... を ~/.config/agent-fleet/deploy/<p>.<r>/params/00-network に書く
 ```
 
 撤去したあとにタグで探すとき:
@@ -80,7 +80,7 @@ aws cloudformation describe-stacks --stack-name af-ecs-network \
 ```bash
 aws ec2 describe-addresses --output text --query \
   "Addresses[].[AllocationId,PublicIp,AssociationId,Tags[?Key=='Name']|[0].Value]"
-# the row named af-<stack>-nat-eip with no association id is the one that was retained
+# 名前が af-<stack>-nat-eip で association id のない行が、保持されたアドレス
 ```
 
 見つけた ID を、新しく構築するときに渡します。

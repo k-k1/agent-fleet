@@ -23,8 +23,8 @@ source_of_truth: "`deploy/native/af` の `reset`（食い違ったらこのペ�
 Control Plane を止めてから実行します。動いている間は、`af reset` が実行を拒否します。
 
 ```bash
-./af reset          # dev user's data only (DB and rootfs are kept)
-./af reset --all    # all of WS_DATA (full wipe incl. the extracted rootfs)
+./af reset          # dev ユーザーのデータだけ（DB と rootfs は残る）
+./af reset --all    # WS_DATA を全部（展開した rootfs も消える）
 ```
 
 - 消す前に確認を求めます。`--yes` を付けると確認を省きます
@@ -33,24 +33,24 @@ Control Plane を止めてから実行します。動いている間は、`af re
 ## アンインストールする
 
 ```bash
-# 1. If you set up the systemd user unit, stop and remove it first
+# 1. systemd のユーザー unit を設定したなら、先に止めて消す
 systemctl --user disable --now agent-fleet 2>/dev/null
-systemctl --user disable --now agent-fleet-update.timer 2>/dev/null   # auto-update timer
+systemctl --user disable --now agent-fleet-update.timer 2>/dev/null   # 自動更新のタイマー
 rm -f ~/.config/systemd/user/agent-fleet.service \
       ~/.config/systemd/user/agent-fleet-update.service \
       ~/.config/systemd/user/agent-fleet-update.timer
-# otherwise just stop `af start` with Ctrl-C
+# 設定していなければ、`af start` を Ctrl-C で止めるだけ
 
-# 2. Wipe all data (skip to keep it — data is separate from the program)
-#    installed via install.sh:
+# 2. データを全部消す（残すなら飛ばす。データはプログラムとは別の場所にある）
+#    install.sh で入れたとき:
 af reset --all
-#    extracted from a tar directly, in the extracted directory:
+#    tar を直接展開したとき（展開したディレクトリで実行）:
 ./af reset --all
 
-# 3. Remove the program
-#    installed via install.sh:
+# 3. プログラムを消す
+#    install.sh で入れたとき:
 rm -f ~/.local/bin/af && rm -rf ~/.local/opt/agent-fleet
-#    extracted from a tar directly: just delete the extracted directory
+#    tar を直接展開したとき: 展開したディレクトリを消すだけ
 ```
 
 | 手順 | 補足 |

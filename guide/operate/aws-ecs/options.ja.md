@@ -76,9 +76,9 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 | Console の兄弟で、Console の名前だけが委任されたゾーン | `pv.example.com`（ゾーンが `af.example.com`） | 兄弟のための別のホストゾーンを作り、親から `NS` で委任して、そのゾーンの ID を渡す |
 
 ```bash
-# sibling, delegated zone
+# 兄弟で、委任されたゾーン
 --parameter-overrides PreviewDomain=pv.example.com PreviewHostedZoneId=<pv zone id> ...
-# child of the Console's zone — nothing to delegate
+# Console のゾーンの子。委任は要らない
 --parameter-overrides PreviewDomain=pv.af.example.com ...
 ```
 
@@ -93,9 +93,9 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 Control Plane が暗号化して保存するシークレットを、`AF_MASTER_KEY` から導出した鍵ではなく KMS キーで守ります。何が変わり、何に気をつけるかは [保存時のキーを AWS KMS にする](../keys/kms.ja.md) にあります。ここではパラメータだけを書きます。
 
 ```bash
-# 10-data: make the key (it follows Persistence, like RDS)
+# 10-data: キーを作る（RDS と同じく Persistence に従う）
 --parameter-overrides CustodianKmsKey=create ...
-# 30-ingress: hand the CP the key from 10-data's CustodianKmsKeyArn output
+# 30-ingress: 10-data の出力 CustodianKmsKeyArn のキーを CP に渡す
 --parameter-overrides CustodianKmsKeyArn=arn:aws:kms:<region>:<account>:key/<key-id> ...
 ```
 
@@ -105,7 +105,7 @@ Control Plane が暗号化して保存するシークレットを、`AF_MASTER_K
 ### ホームごとにキーを分ける
 
 ```bash
-# 30-ingress, together with CustodianKmsKeyArn above
+# 30-ingress。上の CustodianKmsKeyArn と一緒に
 --parameter-overrides CustodianKmsKeyArn=arn:aws:kms:<region>:<account>:key/<key-id> WorkspaceDekRandom=on ...
 ```
 
@@ -131,7 +131,7 @@ aws ecs run-task --cluster <cluster> --launch-type FARGATE \
 ## リモートの MCP を公開する
 
 ```bash
-# 30-ingress: serve /mcp, then (optionally) let hosted MCP clients sign in with OAuth
+# 30-ingress: /mcp を公開し、（任意で）ホスト型の MCP クライアントが OAuth でサインインできるようにする
 aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
   --capabilities CAPABILITY_NAMED_IAM --parameter-overrides McpEnabled=on McpOAuth=on
 ```
@@ -149,7 +149,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 配備が費用を持つ Bedrock を、管理者が決めた予算の中でメンバーに使わせます。受け入れの確認のためのスイッチです。
 
 ```bash
-# 30-ingress: Bedrock the deployment pays for (acceptance only)
+# 30-ingress: 配備が料金を払う Bedrock（受け入れの確認用だけ）
 aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
   --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ProvidedRoutes=on
 ```

@@ -37,7 +37,7 @@ RDS のスナップショットと、EFS のオンデマンドの復旧ポイン
 `Persistence=retain` の配備だけの確認です。`update.sh` も同じ確認を実行して警告します。
 
 ```bash
-./efs-backup-check.sh --profile <p> --region <r> --stack af-ecs-ingress   # read-only
+./efs-backup-check.sh --profile <p> --region <r> --stack af-ecs-ingress   # 読み取りだけ
 aws cloudformation describe-stacks --stack-name af-ecs-data \
   --query "Stacks[0].Outputs[?OutputKey=='EfsBackupVaultName'].OutputValue" --output text \
   --profile <p> --region <r>
@@ -58,8 +58,8 @@ v0.26.0 より前に構築した `Persistence=retain` の配備は、それ以�
 ふつうはこのスクリプトを使います。手で上げる手順を 1 つにまとめたもので、compose の `docker compose pull && docker compose up -d` にあたります。
 
 ```bash
-VERSION=<v> ./update.sh --profile <p> --region <r>          # deploy an already-pushed tag
-VERSION=<v> ./update.sh --profile <p> --region <r> --push   # push to ECR first
+VERSION=<v> ./update.sh --profile <p> --region <r>          # push 済みのタグをデプロイする
+VERSION=<v> ./update.sh --profile <p> --region <r> --push   # 先に ECR に push する
 VERSION=<v> ./update.sh --profile <p> --region <r> --dry-run
 ```
 
@@ -191,8 +191,8 @@ Control Plane は、内部 git のリポジトリとその LFS オブジェク�
 3. **まだ読めるリポジトリを全部外へ写す。** テナントごとに、そのテナントの管理者が、**そのテナントにある自分のワークスペースの中で**行います。そこでは git が内部 git に認証できるよう設定済みですが、外のマシンはそうではありません（認証エラーになるだけです）。ワークスペースを再起動しても残るホームの下のディレクトリで作業し、Console に出る clone URL（設定 >「内部リポジトリ」）を使います。どこかで失敗すれば関数は止まります。Control Plane が「not found」と答えたもの以外は、消えたものとして扱いません。やり直す前には、その `<name>.git` を消します
 
    ```bash
-   refs() { awk '$2 != "HEAD" && $2 !~ /\^\{\}$/' | sort; }   # what ls-remote lists, minus HEAD and peeled tags
-   rescue() {   # rescue <name> <clone URL>
+   refs() { awk '$2 != "HEAD" && $2 !~ /\^\{\}$/' | sort; }   # ls-remote の一覧から HEAD と peeled のタグを除いたもの
+   rescue() {   # 使い方: rescue <name> <clone URL>
      local name="$1" url="$2" out
      if ! out="$(git ls-remote "$url" 2>&1)"; then
        case "$out" in
@@ -206,7 +206,7 @@ Control Plane は、内部 git のリポジトリとその LFS オブジェク�
      git -C "$name.git" for-each-ref --format='%(objectname)%09%(refname)' | sort | diff "$name.refs" - || return 1
      echo "$name: copied"
    }
-   rescue <name> <clone URL>     # once per listed repository
+   rescue <name> <clone URL>     # 並んだリポジトリごとに 1 回
    ```
 
    **確認点: Console に並ぶすべてのリポジトリが `copied` か `lost` を出すまで、手順 4 に進みません。** `UNCONFIRMED`（認証エラー、タイムアウト、5xx）や、エラーで止まったものは、そのどちらでもありません。原因を調べて、もう一度実行します。ここまでは何も変えておらず、古いタスクがまだ唯一のコピーを持っています
@@ -239,7 +239,7 @@ Control Plane は、内部 git のリポジトリとその LFS オブジェク�
 
    ```bash
    refs() { awk '$2 != "HEAD" && $2 !~ /\^\{\}$/' | sort; }
-   putback() {   # putback <name> <clone URL>
+   putback() {   # 使い方: putback <name> <clone URL>
      local name="$1" url="$2"
      git -C "$name.git" lfs push --all "$url" || return 1
      git -C "$name.git" push --mirror "$url" || return 1
