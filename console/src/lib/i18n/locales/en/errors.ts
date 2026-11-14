@@ -111,6 +111,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.cli_install_network": "This agent's CLI could not be installed when the workspace started because of a network error. Restart the workspace to try again.",
   "err.cli_install_checksum": "This agent's CLI could not be installed when the workspace started because the download did not match its checksum. Restart the workspace to try again.",
   "err.cli_install_other": "This agent's CLI could not be installed when the workspace started. See Settings › Toolchains and the workspace log.",
+  // Appended by errDetail() after a launch failure whose message is copilot's "Model … is not available".
+  "err.model_not_available_hint": "Your Copilot plan may not include this model (the Free plan offers Auto only). Start the session again with the model set to \"Default\"; see Troubleshooting › Agents.",
   "err.runtime_failed": "Couldn't start the agent. Wait a moment and try again.",
   // The line above is for failures that waiting fixes. A shared daemon that was not
   // started because the CLI is not signed in never fixes itself, so it gets its own

@@ -96,3 +96,18 @@ describe("errDetail", () => {
     },
   );
 });
+
+describe("errDetail hint for copilot's model-not-available refusal", () => {
+  const e = { code: "runtime_failed", message: 'Model "claude-haiku-5.5" is not available' };
+
+  it("appends the plan hint after the server's message", () => {
+    const got = client.errDetail(e);
+    expect(got).toContain('Model "claude-haiku-5.5" is not available');
+    expect(got).toContain("Auto");
+  });
+
+  it("leaves other runtime_failed messages alone", () => {
+    const got = client.errDetail({ code: "runtime_failed", message: "spawn failed" });
+    expect(got).not.toContain("Auto");
+  });
+});
