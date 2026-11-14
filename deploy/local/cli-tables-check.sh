@@ -14,6 +14,8 @@
 #   Dockerfile       every ARG is defined once; versions.json has the kind's key, fed by that ARG
 #   tools.tsv        the image's tool list has the ARG; every `agent` row's ARG is in the manifest
 #   workflows        the contract file exists and has the `latest` input the manifest names;
+#                    each installable CLI's contract calls cli-contract.yml with its own `cli:` and
+#                    exactly its manifest secrets (never `inherit`), all declared by the reusable one;
 #                    the watcher binds exactly the secrets its dispatching contracts need;
 #                    cli-drift.yml binds CRED_<KIND> for exactly the secret-gated kinds
 #   the action       each non-npm install method has a branch; mcp-config-contract's agent
@@ -87,6 +89,55 @@ for n in "${M_NAMES[@]}"; do
   if [ ! -f "$f" ]; then drift "$n: contract workflow ${M_contract[$n]} does not exist"; continue; fi
   [ "${M_input[$n]}" = - ] || grep -q "^      ${M_input[$n]}:" "$f" ||
     drift "$n: ${M_contract[$n]} has no workflow_dispatch input ${M_input[$n]}"
+done
+
+# --- the contract callers ------------------------------------------------------------
+# Every contract the action can install a CLI for is a thin caller of cli-contract.yml. The
+# secrets it passes are its CLI's own (never `inherit`: a step of one CLI must not see another's
+# credential) and the reusable workflow declares each of them. muse installs its own artifact
+# and is not a caller (install `-`).
+reusable="$WF/cli-contract.yml"
+need_file "$reusable" || true
+for n in "${M_NAMES[@]}"; do
+  [ "${M_contract[$n]}" != - ] && [ "${M_install[$n]}" != - ] || continue
+  f="$WF/${M_contract[$n]}"
+  [ -f "$f" ] || continue   # reported above
+  grep -q '^    uses: \./\.github/workflows/cli-contract\.yml$' "$f" ||
+    drift "$n: ${M_contract[$n]} does not call cli-contract.yml"
+  grep -Eq "^      cli: $n\$" "$f" || drift "$n: ${M_contract[$n]} does not pass cli: $n"
+  grep -Eq '^ *secrets: *inherit' "$f" && drift "$n: ${M_contract[$n]} uses secrets: inherit (pass only its own secrets)"
+  passed="$(sed -n 's/^      \(E2E_[A-Za-z0-9_]*\): \${{ secrets\.\(E2E_[A-Za-z0-9_]*\) }}$/\1 \2/p' "$f")"
+  while read -r l r; do
+    [ -n "$l" ] || continue
+    [ "$l" = "$r" ] || drift "$n: ${M_contract[$n]} passes $l from secrets.$r (the two names must be the same)"
+    if [ -f "$reusable" ]; then
+      grep -q "^      $l:\$" "$reusable" || drift "$n: cli-contract.yml does not declare secret $l that ${M_contract[$n]} passes"
+    fi
+    owned=0
+    IFS=',' read -r -a ms <<< "${M_secrets[$n]}"
+    for m in "${ms[@]}"; do
+      case "$m" in
+        *[0-9]..[0-9]*)   # E2E_X_1..8 names a numbered family: base + each of 1..8
+          base="${m%%[0-9]..*}"; rng="${m#"$base"}"; lo="${rng%%..*}"; hi="${rng##*..}"
+          case "$l" in "$base"*) i="${l#"$base"}"; [[ "$i" =~ ^[0-9]+$ ]] && [ "$i" -ge "$lo" ] && [ "$i" -le "$hi" ] && owned=1 ;; esac ;;
+        *) [ "$l" != "$m" ] || owned=1 ;;
+      esac
+    done
+    [ "$owned" = 1 ] || drift "$n: ${M_contract[$n]} passes $l, which the manifest does not list for $n"
+  done <<< "$passed"
+  IFS=',' read -r -a ms <<< "${M_secrets[$n]}"
+  for m in "${ms[@]}"; do
+    [ "$m" != - ] || continue
+    wanted=("$m")
+    case "$m" in
+      *[0-9]..[0-9]*)   # every member of the family must be passed, not just one
+        base="${m%%[0-9]..*}"; rng="${m#"$base"}"; wanted=()
+        for ((i = ${rng%%..*}; i <= ${rng##*..}; i++)); do wanted+=("$base$i"); done ;;
+    esac
+    for w in "${wanted[@]}"; do
+      grep -q "^$w " <<< "$passed" || drift "$n: ${M_contract[$n]} does not pass the secret $w the manifest lists"
+    done
+  done
 done
 
 watch="$WF/cli-release-watch.yml"

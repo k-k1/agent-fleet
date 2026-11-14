@@ -34,7 +34,7 @@ FILES=(
   scripts/workspace-image/tools.tsv workspace/agent/env_tool_versions.go
   .github/actions/setup-agent-cli/action.yml
   .github/workflows/cli-release-watch.yml .github/workflows/cli-drift.yml
-  .github/workflows/mcp-config-contract.yml
+  .github/workflows/mcp-config-contract.yml .github/workflows/cli-contract.yml
   .github/workflows/claude-tui-contract.yml .github/workflows/codex-contract.yml
   .github/workflows/opencode-contract.yml .github/workflows/copilot-contract.yml
   .github/workflows/agy-contract.yml .github/workflows/cursor-contract.yml
@@ -87,6 +87,14 @@ zz\tagent\t\tZZ\thttps://example.invalid/\tMIT\thttps://example.invalid/\targ:ZZ
 seeded "watcher stopped binding a secret" .github/workflows/cli-release-watch.yml '/E2E_AGY_OAUTH_TOKEN: /d' 'does not bind secret E2E_AGY_OAUTH_TOKEN'
 seeded "watcher binds a secret nobody needs" .github/workflows/cli-release-watch.yml 's/^\( *\)E2E_AGY_OAUTH_TOKEN: .*/&\n\1E2E_OLD_TOKEN: ${{ secrets.E2E_OLD_TOKEN }}/' 'binds secret E2E_OLD_TOKEN'
 seeded "watcher binds one secret to another's name" .github/workflows/cli-release-watch.yml 's/E2E_AGY_OAUTH_TOKEN: \${{ secrets.E2E_AGY_OAUTH_TOKEN }}/E2E_AGY_OAUTH_TOKEN: ${{ secrets.E2E_COPILOT_GITHUB_TOKEN }}/' 'binds E2E_AGY_OAUTH_TOKEN to secrets.E2E_COPILOT_GITHUB_TOKEN'
+seeded "a caller stopped calling the reusable workflow" .github/workflows/cursor-contract.yml 's|uses: ./.github/workflows/cli-contract.yml|uses: ./.github/workflows/cli-contractx.yml|' 'cursor: cursor-contract.yml does not call cli-contract.yml'
+seeded "a caller installs another CLI" .github/workflows/kiro-contract.yml 's/^      cli: kiro$/      cli: cursor/' 'kiro: kiro-contract.yml does not pass cli: kiro'
+seeded "a caller passes one secret under another's name" .github/workflows/agy-contract.yml 's/E2E_AGY_OAUTH_TOKEN: \${{ secrets.E2E_AGY_OAUTH_TOKEN }}/E2E_AGY_OAUTH_TOKEN: ${{ secrets.E2E_COPILOT_GITHUB_TOKEN }}/' 'agy: agy-contract.yml passes E2E_AGY_OAUTH_TOKEN from secrets.E2E_COPILOT_GITHUB_TOKEN'
+seeded "a caller passes another CLI's secret" .github/workflows/codex-contract.yml 's|^    uses: ./.github/workflows/cli-contract.yml$|&\n    secrets:\n      E2E_AGY_OAUTH_TOKEN: ${{ secrets.E2E_AGY_OAUTH_TOKEN }}|' 'codex: codex-contract.yml passes E2E_AGY_OAUTH_TOKEN, which the manifest does not list for codex'
+seeded "a caller inherits every secret" .github/workflows/copilot-contract.yml 's|^    uses: ./.github/workflows/cli-contract.yml$|&\n    # (seeded)\n    secrets: inherit|' 'copilot-contract.yml uses secrets: inherit'
+seeded "a caller dropped a secret its CLI needs" .github/workflows/claude-tui-contract.yml '/E2E_ANTHROPIC_API_KEY: \${{ secrets/d' 'does not pass the secret E2E_ANTHROPIC_API_KEY'
+seeded "a caller dropped only the last of kiro's eight secrets" .github/workflows/kiro-contract.yml '/E2E_KIRO_AUTH_DB_B64_8: \${{ secrets/d' 'does not pass the secret E2E_KIRO_AUTH_DB_B64_8'
+seeded "the reusable workflow lost a secret it must declare" .github/workflows/cli-contract.yml '/^      E2E_CURSOR_AUTH_JSON:$/,+1d' 'cli-contract.yml does not declare secret E2E_CURSOR_AUTH_JSON'
 seeded "update issues lost a CRED_ binding" .github/workflows/cli-drift.yml '/CRED_COPILOT:/d' 'does not bind CRED_COPILOT'
 seeded "CRED_ tests the wrong secret" .github/workflows/cli-drift.yml 's/secrets.E2E_AGY_OAUTH_TOKEN/secrets.E2E_OTHER/' 'CRED_AGY does not test secrets.E2E_AGY_OAUTH_TOKEN'
 seeded "contract lost its latest input" .github/workflows/copilot-contract.yml 's/^      cli_version:/      cli_versionx:/' 'copilot: copilot-contract.yml has no workflow_dispatch input cli_version'

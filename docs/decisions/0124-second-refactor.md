@@ -693,3 +693,21 @@ seeds each kind of drift. Behaviour unchanged except two cosmetic ones: the drif
 before opencode, and a missing-secret warning in the watcher reads differently. Not verified live:
 the watcher, drift and pin-bump workflows run on cron and were exercised only through their scripts
 with stubs. The reusable contract workflow (#3893) and the boot-install move (#3894) are separate.
+
+## Note (2026-11-14): One reusable contract workflow (#3893, Phase 6)
+
+`cli-contract.yml` (`workflow_call`) is the shared body of seven contracts: claude-tui, codex,
+opencode, copilot, agy, cursor and kiro. Each `*-contract.yml` keeps its triggers, `concurrency`,
+credential guard / restore and test scripts as inputs of a thin caller; the install, the
+`tested` / red-contract bookkeeping and the advisory caps probe's reporting are written once. The
+"report only when a contract step failed" condition is unchanged (`contract_0..3` or `caps_probe`
+concluded `failure`). A caller passes only its own secrets by name, never `secrets: inherit`, and
+the reusable workflow hands them to the contract and caps steps only when the caller says the CLI
+itself needs them (claude, copilot). muse-contract.yml is not a caller: it installs the release
+artifact itself, and the action refuses muse for that reason (CLI manifest, `install` column `-`).
+`cli-drift-check.sh --tables` now also fails when a caller stops calling the reusable workflow,
+names another CLI, passes a secret its manifest row does not list (or one under another name), or
+the reusable workflow stops declaring one. Not verified live: no caller was run on Actions
+(secrets through `workflow_call`, `vars` and `github.token` in the called workflow, `if:` on the
+called job's steps); `actionlint` accepts all of them and checks each call against the callee's
+inputs and secrets.

@@ -60,7 +60,7 @@ source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近
 | エージェントへの指示 | `agent_instructions.go`: `instrSupportedKinds` と種別ごとの適用、または Agent の `agents.InstructionsUnsupported`（理由コードを返す 1 行のメソッド。`cursor/instructions.go`） | Console の配布先一覧は `instrSupportedKinds` とレジストリの `InstructionsUnsupported` の答えから作られる。ユーザー単位の置き場が無い CLI は、**黙って捨てず理由付きで載せる**。システムプロンプトを自分で組む種別は、各層をそこで読む。lcpp は `harness.SystemPrompt` でターンごとにそうしている。こうした種別も `instrSupportedKinds` に載せ、配信方式 `prompt`・パス無し・`Applied` は true とする（行のスイッチがハーネスの読む値そのものになる）。プレビューの case も足す |
 | Console の descriptor | `console/src/agents/kindTable.ts` の行（順序・カタログの事実・色）と、`console/src/agents/registry.ts` の descriptor 1 個 | 操作要素は descriptor の `caps` で決まる。driver に関する事実（`managedDriver`、`terminalDriver`）はカタログから読み、読み込み前は kind 表から導いた `FALLBACK_KIND_FACTS` が答える。ただし kind 名で分岐する画面がまだあるので grep する（下記）|
 | 版ピン | `workspace/Dockerfile` の ARG、そこで書き出す `versions.json`、CLI マニフェスト `workspace/agent/internal/climanifest/cli-manifest.psv` の 1 行 | [10 §10.2.1](10-development.ja.md)。ベンダーの CLI を動かさない種別にはピンが無い |
-| contract ワークフロー | `.github/workflows/` の下に専用ファイル（ワークスペースイメージが CLI やホストをピンする種別）| **エージェント毎に 1 ファイル**。リリース監視に登録する。lcpp はイメージで何もピンせず、代わりに手動の検査を持つ（§20.5）|
+| contract ワークフロー | `.github/workflows/` の下に専用ファイル（ワークスペースイメージが CLI やホストをピンする種別）| **エージェント毎に 1 ファイル**。リリース監視に登録する。action が入れる CLI なら `cli-contract.yml`（再利用ワークフロー: インストール、`tested` と赤 contract の記録、caps probe の報告）を呼ぶ薄い caller にする。いちばん近い caller を写し、トリガ・クレデンシャルの確認・テストのスクリプトだけ変える。lcpp はイメージで何もピンせず、代わりに手動の検査を持つ（§20.5）|
 
 この表は kind 名が現れる場所の完全な一覧ではありません。手で持っている一覧がまだあります。
 たとえば `internal/sessionx/session_io.go` の bracketed paste を使う種別。使用量の精度・移動先・ワンショットの
