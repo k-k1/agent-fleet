@@ -93,6 +93,7 @@ seeded "a caller passes one secret under another's name" .github/workflows/agy-c
 seeded "a caller passes another CLI's secret" .github/workflows/codex-contract.yml 's|^    uses: ./.github/workflows/cli-contract.yml$|&\n    secrets:\n      E2E_AGY_OAUTH_TOKEN: ${{ secrets.E2E_AGY_OAUTH_TOKEN }}|' 'codex: codex-contract.yml passes E2E_AGY_OAUTH_TOKEN, which the manifest does not list for codex'
 seeded "a caller inherits every secret" .github/workflows/copilot-contract.yml 's|^    uses: ./.github/workflows/cli-contract.yml$|&\n    # (seeded)\n    secrets: inherit|' 'copilot-contract.yml uses secrets: inherit'
 seeded "a caller dropped a secret its CLI needs" .github/workflows/claude-tui-contract.yml '/E2E_ANTHROPIC_API_KEY: \${{ secrets/d' 'does not pass the secret E2E_ANTHROPIC_API_KEY'
+seeded "a caller dropped only the last of kiro's eight secrets" .github/workflows/kiro-contract.yml '/E2E_KIRO_AUTH_DB_B64_8: \${{ secrets/d' 'does not pass the secret E2E_KIRO_AUTH_DB_B64_8'
 seeded "the reusable workflow lost a secret it must declare" .github/workflows/cli-contract.yml '/^      E2E_CURSOR_AUTH_JSON:$/,+1d' 'cli-contract.yml does not declare secret E2E_CURSOR_AUTH_JSON'
 seeded "update issues lost a CRED_ binding" .github/workflows/cli-drift.yml '/CRED_COPILOT:/d' 'does not bind CRED_COPILOT'
 seeded "CRED_ tests the wrong secret" .github/workflows/cli-drift.yml 's/secrets.E2E_AGY_OAUTH_TOKEN/secrets.E2E_OTHER/' 'CRED_AGY does not test secrets.E2E_AGY_OAUTH_TOKEN'

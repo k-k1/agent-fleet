@@ -117,7 +117,9 @@ for n in "${M_NAMES[@]}"; do
     IFS=',' read -r -a ms <<< "${M_secrets[$n]}"
     for m in "${ms[@]}"; do
       case "$m" in
-        *..*) case "$l" in "${m%%[0-9]..*}"*) owned=1 ;; esac ;;   # E2E_X_1..8 names a numbered family
+        *[0-9]..[0-9]*)   # E2E_X_1..8 names a numbered family: base + each of 1..8
+          base="${m%%[0-9]..*}"; rng="${m#"$base"}"; lo="${rng%%..*}"; hi="${rng##*..}"
+          case "$l" in "$base"*) i="${l#"$base"}"; [[ "$i" =~ ^[0-9]+$ ]] && [ "$i" -ge "$lo" ] && [ "$i" -le "$hi" ] && owned=1 ;; esac ;;
         *) [ "$l" != "$m" ] || owned=1 ;;
       esac
     done
@@ -126,9 +128,15 @@ for n in "${M_NAMES[@]}"; do
   IFS=',' read -r -a ms <<< "${M_secrets[$n]}"
   for m in "${ms[@]}"; do
     [ "$m" != - ] || continue
-    case "$m" in *..*) want_name="${m%%[0-9]..*}" ;; *) want_name="$m" ;; esac
-    grep -q "^      $want_name" <<< "$(awk '{print "      " $1}' <<< "$passed")" ||
-      drift "$n: ${M_contract[$n]} does not pass the secret $m the manifest lists"
+    wanted=("$m")
+    case "$m" in
+      *[0-9]..[0-9]*)   # every member of the family must be passed, not just one
+        base="${m%%[0-9]..*}"; rng="${m#"$base"}"; wanted=()
+        for ((i = ${rng%%..*}; i <= ${rng##*..}; i++)); do wanted+=("$base$i"); done ;;
+    esac
+    for w in "${wanted[@]}"; do
+      grep -q "^$w " <<< "$passed" || drift "$n: ${M_contract[$n]} does not pass the secret $w the manifest lists"
+    done
   done
 done
 

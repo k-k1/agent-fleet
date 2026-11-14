@@ -32,6 +32,8 @@ on:
       - "workspace/Dockerfile"
       - ".github/workflows/codex-contract.yml"
       - ".github/actions/setup-agent-cli/action.yml"
+      # The shared body of every contract caller.
+      - ".github/workflows/cli-contract.yml"
       # The action reads the CLI manifest (arg, package, install method) through this reader.
       - "deploy/local/cli-manifest.sh"
       - "workspace/agent/internal/climanifest/cli-manifest.psv"
