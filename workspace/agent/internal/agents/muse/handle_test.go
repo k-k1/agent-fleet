@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -818,4 +819,25 @@ func TestSentImagesAreDroppedWhenNoUserMessageCanFollow(t *testing.T) {
 	h3.noteImages("in-flight", []string{shot})
 	h3.hostLost(h3.cl)
 	settled(h3, "host lost")
+}
+
+// The two kinds muse 1.4.20 added must decode and read as an actionable failure; an older
+// host's kinds and a message-only failure keep their text untouched.
+func TestTurnFailureTextForTheNewErrorKinds(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  msp.TurnError
+		want string
+	}{
+		{"contextOverflow", msp.TurnError{Kind: msp.TurnErrorKindContextOverflow, Message: "too long"}, "Compact it"},
+		{"reasoningReplayRefused", msp.TurnError{Kind: msp.TurnErrorKindReasoningReplayRefused, Message: "refused"}, "switch model"},
+		{"blank message", msp.TurnError{Kind: msp.TurnErrorKindContextOverflow}, "context window"},
+	} {
+		if got := turnFailureText(&tc.err); !strings.Contains(got, tc.want) {
+			t.Errorf("%s: %q lacks %q", tc.name, got, tc.want)
+		}
+	}
+	if got := turnFailureText(&msp.TurnError{Kind: "toolFailure", Message: "boom"}); got != "boom" {
+		t.Errorf("other kinds must keep their message, got %q", got)
+	}
 }

@@ -8,7 +8,7 @@ import "encoding/json"
 // rendered from. A different fingerprint only says the bundle is behind the host;
 // whether these types can still speak to it is schemagen.Compare's question, asked of
 // the installed binary by fingerprint_test.go.
-const SchemaFingerprint = "sha256:ef311d2dbf051ed9114556e14ad3980eb515104baa3409306a6817082a61d8cd"
+const SchemaFingerprint = "sha256:283b1b125dcc9172928fb5d6711a92a353796d030a7c186988ed527a13cf07f0"
 
 // SchemaVersion is MSP's own version, carried in `initialize`.
 const SchemaVersion = 1
@@ -973,6 +973,40 @@ type BlockedPrompt struct {
 	Text string `json:"text"`
 }
 
+// BodyCompletionCorrelation Whether the origin call join held at delivery.
+type BodyCompletionCorrelation string
+
+const (
+	BodyCompletionCorrelationResolved   BodyCompletionCorrelation = "resolved"
+	BodyCompletionCorrelationUnresolved BodyCompletionCorrelation = "unresolved"
+)
+
+// BodyCompletionCorrelationValues are every BodyCompletionCorrelation the bundle declares, in schema order.
+var BodyCompletionCorrelationValues = []BodyCompletionCorrelation{
+	BodyCompletionCorrelationResolved,
+	BodyCompletionCorrelationUnresolved,
+}
+
+// BodyCompletionMembers `bodyCompletion`: the facts one receipt row renders (ADR 87062 D2). The fold reads them
+// from the inbox terminal record and the backgrounded call it names. `status`,
+// `result_summary`, and `correlation` are required; `origin_call_id` is absent exactly
+// when the join is unresolved.
+type BodyCompletionMembers struct {
+	// Whether the origin call join held at delivery.
+	Correlation BodyCompletionCorrelation `json:"correlation"`
+	// The originating call's provider call id, opaque — the join key back to the original
+	// row. Absent when the join is unresolved (compaction).
+	OriginCallID *string `json:"originCallId,omitempty"`
+	// True for the Manual semantic receipt (`◆`); false for the ordinary completion row.
+	Receipt bool `json:"receipt"`
+	// Bounded transcript-visible result text; empty when the terminal carries none. Full bytes
+	// stay behind outputRef.
+	ResultSummary string `json:"resultSummary"`
+	// One fixed wire word per Task terminal (`completed`, `failed`, `cancelled`, `timedOut`,
+	// `rejected`) — never display text; gate-off display words derive client-side.
+	Status string `json:"status"`
+}
+
 // BranchState The latest branch observation in the snapshot (tdd SS4.6.4, SS4.9.1).
 type BranchState struct {
 	// The observed branch; `null` on a detached-HEAD observation.
@@ -1681,6 +1715,13 @@ type ErrorData struct {
 	SessionID *string `json:"sessionId,omitempty"`
 	// Winning settlement on `userInputAlreadySettled`.
 	Settlement *UserInputSettlementSummary `json:"settlement,omitempty"`
+	// The stop's refusal kind on a `workflow/cancel` `commandRejected` whose stop was refused
+	// or whose settlement read failed (SS3.19, spec 14410 FR-92884-1): `stale_revision`,
+	// `policy_rejected`, `actor_authority_mismatch`, `authority_index_conflict`,
+	// `admission_failed`, `persistence_failed`, `control_not_signalled`,
+	// `post_marker_not_cancellable`, `control_outcome_uncertain`,
+	// `adapter_contract_violation`, `transport_lost` or `reply_lost`.
+	StopRefusal *string `json:"stopRefusal,omitempty"`
 	// The rejected upload id on `uploadNotFound` (`-32038`, SS3.33).
 	UploadID *string `json:"uploadId,omitempty"`
 	// Prompt identity on user-input errors.
@@ -2337,10 +2378,17 @@ type Item struct {
 	BackgroundTarget *BackgroundTarget `json:"backgroundTarget,omitempty"`
 	// `backgroundTerminalCompletion`: the five facts the Finished cell renders (ADR 50041 D4).
 	BackgroundTerminalCompletion *BackgroundTerminalCompletion `json:"backgroundTerminalCompletion,omitempty"`
+	// `toolCall`: the call's Bash Title — its `description` argument through the shared Bash
+	// Title normalizer, for a managed Bash call, served only while the host's `bash_titles`
+	// gate is on. The host adds it when it serves the item and never stores it; absent for any
+	// other call (tdd SS4.5.5; ADR 31406 D26). Old clients ignore it.
+	BashTitle *string `json:"bashTitle,omitempty"`
 	// `reminderChild`: `true` when this child is a blocking reminder (it holds the turn open
 	// until it settles); absent otherwise, never `false` (ADR 41191 D4). The status word stays
 	// off the wire; clients name the reminder from `reminderAgentId`.
 	Blocking *bool `json:"blocking,omitempty"`
+	// `bodyCompletion`: the facts one receipt row renders (ADR 87062 D2, accepted names).
+	BodyCompletion *BodyCompletionMembers `json:"bodyCompletion,omitempty"`
 	// `toolCall`: the provider call id (`call_...`), opaque.
 	CallID *string `json:"callId,omitempty"`
 	// `workflow`: one `outputRef`-shaped link per recorded child spawn with an objective
@@ -2585,7 +2633,8 @@ type Item struct {
 	// `reasoning`: one entry per summary part; part *n* streams via `item/delta` field
 	// `"summary.n"` (part boundary = index change).
 	Summary []string `json:"summary,omitempty"`
-	// `reminderChild`: the linked task id.
+	// `reminderChild`: the linked task id. Unresolved `bodyCompletion` items also set it
+	// (FR-87062-1: the diagnostic names the task whose join did not hold).
 	TaskID *string `json:"taskId,omitempty"`
 	// Terminal `toolCall`, or a `subagent` whose result drained (#70249): the item after whose
 	// rows the terminal row renders (tdd SS4.5.21, ADR 56496 D2/D3).
@@ -2716,6 +2765,7 @@ const (
 	ItemKindSubagentInput                ItemKind = "subagentInput"
 	ItemKindSubagentResult               ItemKind = "subagentResult"
 	ItemKindSystemNotice                 ItemKind = "systemNotice"
+	ItemKindBodyCompletion               ItemKind = "bodyCompletion"
 )
 
 // ItemKindValues are every ItemKind the bundle declares, in schema order.
@@ -2742,6 +2792,7 @@ var ItemKindValues = []ItemKind{
 	ItemKindSubagentInput,
 	ItemKindSubagentResult,
 	ItemKindSystemNotice,
+	ItemKindBodyCompletion,
 }
 
 // ItemReadOutputEncoding The `item/readOutput` content encoding (tdd SS4.7.4). Closed: text media is ALWAYS
@@ -3340,9 +3391,10 @@ type MonitorInboxSnapshotEntry struct {
 
 // NoticeOrigin `systemNotice`: the producing family, so a client routes a notice without parsing its
 // text (tdd SS4.5.23). Open. The v1 vocabulary is the Monitor notice and the three
-// system-chrome producers (ADR 42729 D1) plus the hook-run producer (ADR 75121 D2) and the
-// paused-Workflow checkpoint producer (ADR 39490 D5); absent means the server named no
-// origin, and a client never infers one.
+// system-chrome producers (ADR 42729 D1) plus the hook-run producer (ADR 75121 D2), the
+// paused-Workflow checkpoint producer (ADR 39490 D5) and the continued-child tools
+// producer (ADR 42729 D5); absent means the server named no origin, and a client never
+// infers one.
 type NoticeOrigin string
 
 const (
@@ -3352,6 +3404,7 @@ const (
 	NoticeOriginIncompleteGeneration NoticeOrigin = "incompleteGeneration"
 	NoticeOriginHook                 NoticeOrigin = "hook"
 	NoticeOriginWorkflowCheckpoint   NoticeOrigin = "workflowCheckpoint"
+	NoticeOriginContinuedChildTools  NoticeOrigin = "continuedChildTools"
 )
 
 // NoticeOriginValues are every NoticeOrigin the bundle declares, in schema order.
@@ -3362,6 +3415,7 @@ var NoticeOriginValues = []NoticeOrigin{
 	NoticeOriginIncompleteGeneration,
 	NoticeOriginHook,
 	NoticeOriginWorkflowCheckpoint,
+	NoticeOriginContinuedChildTools,
 }
 
 // NoticeSeverity `systemNotice`: the notice's level (tdd SS4.5.23). Open; an unknown value is an
@@ -4298,6 +4352,10 @@ var SandboxUnavailableReasonValues = []SandboxUnavailableReason{
 // raw-log `schema_version`, and the 0.x/1.0 stability posture, which is not on the wire at
 // all (INV-006a).
 type SchemaInfo struct {
+	// `sha256:<64 lower hex>` content hash of this server binary's experimental-surface bundle
+	// (ADR 97527 D5). Additive-optional: a host that predates the member omits it, and the
+	// reader treats absence as unknown — never a guessed value (SS1.5.4).
+	ExperimentalFingerprint *string `json:"experimentalFingerprint,omitempty"`
 	// `sha256:<64 lower hex>` content hash of this server binary's stable-surface bundle
 	// (INV-003). A mismatch is a warning condition, not an error (SS1.4.1).
 	Fingerprint string `json:"fingerprint"`
@@ -4316,11 +4374,12 @@ type ServerInfo struct {
 // Session The session object every lifecycle method returns or lists (tdd SS2.4).
 // Additive-optional evolution applies: clients must ignore unknown fields.
 type Session struct {
-	// The `turnId` of the current foreground turn when `status` is `running`, and `null` when
-	// the session is idle (tdd SS2.4). **Required-nullable.** Every served `Session` carries
-	// the member: `null` when the session is idle or not loaded, the turn id when it is
-	// running. An optional-absent shape would publish it as plain `string` and reject every
-	// idle `Session` frame the host sends.
+	// The `turnId` of the current foreground turn when a turn is in flight (parked under
+	// `needsInput` included), and `null` otherwise (tdd SS2.4, ADR 95605 D1).
+	// **Required-nullable.** Every served `Session` carries the member: `null` when no turn is
+	// in flight or the session is not loaded, the turn id when one is. An optional-absent
+	// shape would publish it as plain `string` and reject every idle `Session` frame the host
+	// sends.
 	ActiveTurnID *string `json:"activeTurnId,omitempty"`
 	// The folded effective approval mode. **Additive-optional**: a Session object that omits
 	// it means the host has not folded a mode, which is why the index-derived `session/list`
@@ -4598,6 +4657,15 @@ type SessionCompactResult struct {
 // export applies nowhere, and the `x-msp-closed` opt-in mechanism stays inert. Recognized
 // `mcpServers` values are typed and validated before they leave the wire boundary.
 type SessionConfig struct {
+	// Developer instructions for this session only (ADR 32029 D38, stable from switch piece
+	// F2), on `session/start` and `session/resume`. The text is trimmed. A nonblank value
+	// replaces the settings-derived developer instructions; an omitted member is no override
+	// and keeps the full developer context. Explicit `null` and blank text are the explicit
+	// clear (the Rust value is an empty string): no override, and on a host that serves
+	// developer instructions they also turn off the session's suppressible developer context
+	// (the agent catalog and the memory snapshot). Any other type fails the decode. A host
+	// that does not serve developer instructions ignores a valid member.
+	DeveloperPrompt *string `json:"developerPrompt,omitempty"`
 	// Native MCP servers added only to this session runtime.
 	MCPServers map[string]SessionMCPServerConfig `json:"mcpServers,omitempty"`
 }
@@ -5082,6 +5150,11 @@ type SessionReadResult struct {
 	History SessionHistory `json:"history"`
 	// Same member as `session/resume` (tdd SS2.5.5, ADR 36635 D2).
 	LastTurn *LastTurn `json:"lastTurn,omitempty"`
+	// Whether a native child read session's model turn runs (tdd SS2.5.5, ADR 89202 D1):
+	// served on a read of a `subagent` session whose containing session this host holds
+	// loaded, from that session's runtime at serve time. Absent for every other read and when
+	// the runtime cannot answer; absence asserts nothing.
+	ModelTurnRunning *bool `json:"modelTurnRunning,omitempty"`
 	// The same pointer shape as `session/resume`. Because `session/read` never subscribes this
 	// is a point-in-time log read only: no requests are re-issued after it (tdd SS2.5.5).
 	PendingRequests []PendingRequestPointer `json:"pendingRequests"`
@@ -5349,6 +5422,11 @@ type SessionStartParams struct {
 	// mode the host's configuration already defines (tdd SS2.5.1, SS5.12). This is the only
 	// surface that declares a non-interactive run's policy (tdd SS5.11, D-008).
 	ApprovalMode *ApprovalMode `json:"approvalMode,omitempty"`
+	// Marks this start as a `/clear` (spec 207 amendment 93195, FR-93195-1, ADR 93195 D1):
+	// `true` starts the new session as a clear, so its `SessionStart` hooks get source `clear`
+	// instead of `startup`. `false` and omitted are the same plain start (source `startup`).
+	// It neither needs nor implies `previousSessionId`. Explicit `null` is invalid params.
+	Clear *bool `json:"clear,omitempty"`
 	// The SS2.5 idempotency handle (UUIDv7). Required; the server never mints one.
 	CommandID string `json:"commandId"`
 	// Reserved for future per-session overrides; only its `mcpServers` member is admitted.
@@ -5447,17 +5525,18 @@ var SessionStatusValues = []SessionStatus{
 }
 
 // SessionStatusChangedParams `session/statusChanged` params (tdd SS4.6.10, ADR 31983 D2): a loaded session's
-// projected `(status, attention)` value flipped. A command-plane broadcast — delivered
-// to every connection regardless of its view subscription set, never gated, no
-// `sourceRange`; the same facts live on the Session object, which is how a client seeds
-// its table (no initial burst on connect).
+// projected `(status, attention, needsInputReasons)` value flipped. A command-plane
+// broadcast — delivered to every connection regardless of its view subscription set,
+// never gated, no `sourceRange`; the same facts live on the Session object, which is how a
+// client seeds its table (no initial burst on connect).
 type SessionStatusChangedParams struct {
 	// Attention flags after the transition; present only when at least one flag is set (tdd
 	// SS2.4, ADR 31983 D3).
 	Attention []AttentionFlag `json:"attention,omitempty"`
 	// The owning session.
 	SessionID string `json:"sessionId"`
-	// Load state after the transition (the closed SS2.4 enum, unchanged).
+	// Load state after the transition (the open SS2.4 enum, including `needsInput` since ADR
+	// 95605 D1/D4).
 	Status SessionStatus `json:"status"`
 	// The causing record's view cursor (ADR 31983 D4). Required-nullable: `null` exactly when
 	// the paired `session/closed`'s cursor is `null` (the unload fold-failure arm); a definite
@@ -6137,6 +6216,11 @@ type SubagentResult struct {
 	// SS4.5.7, ADR 35691 D9); a cut sets the item's `truncated`. The durable record stays
 	// verbatim.
 	Summary string `json:"summary"`
+	// `true` once a newer attempt of the child started after this result (ADR 92325 D1): the
+	// result stays, and a client takes the child's status from `controlStatus`. Absent, it
+	// asserts nothing (a host before this member, or a fold state saved before it, never sets
+	// it); a newer result replaces the whole result, so it carries no mark.
+	Superseded *bool `json:"superseded,omitempty"`
 	// Result text, when present, bounded on the wire at the same 64 KiB budget (ADR 35691 D9);
 	// a cut sets the item's `truncated`.
 	Text *string `json:"text,omitempty"`
@@ -6619,16 +6703,18 @@ type TurnError struct {
 type TurnErrorKind string
 
 const (
-	TurnErrorKindStepLimit           TurnErrorKind = "stepLimit"
-	TurnErrorKindConfigError         TurnErrorKind = "configError"
-	TurnErrorKindProjectionError     TurnErrorKind = "projectionError"
-	TurnErrorKindLogError            TurnErrorKind = "logError"
-	TurnErrorKindWorkflowLaunchError TurnErrorKind = "workflowLaunchError"
-	TurnErrorKindEnvironmentError    TurnErrorKind = "environmentError"
-	TurnErrorKindModelError          TurnErrorKind = "modelError"
-	TurnErrorKindLaunchError         TurnErrorKind = "launchError"
-	TurnErrorKindAuthRequired        TurnErrorKind = "authRequired"
-	TurnErrorKindMCPLinkError        TurnErrorKind = "mcpLinkError"
+	TurnErrorKindStepLimit              TurnErrorKind = "stepLimit"
+	TurnErrorKindConfigError            TurnErrorKind = "configError"
+	TurnErrorKindProjectionError        TurnErrorKind = "projectionError"
+	TurnErrorKindLogError               TurnErrorKind = "logError"
+	TurnErrorKindWorkflowLaunchError    TurnErrorKind = "workflowLaunchError"
+	TurnErrorKindEnvironmentError       TurnErrorKind = "environmentError"
+	TurnErrorKindModelError             TurnErrorKind = "modelError"
+	TurnErrorKindLaunchError            TurnErrorKind = "launchError"
+	TurnErrorKindAuthRequired           TurnErrorKind = "authRequired"
+	TurnErrorKindMCPLinkError           TurnErrorKind = "mcpLinkError"
+	TurnErrorKindReasoningReplayRefused TurnErrorKind = "reasoningReplayRefused"
+	TurnErrorKindContextOverflow        TurnErrorKind = "contextOverflow"
 )
 
 // TurnErrorKindValues are every TurnErrorKind the bundle declares, in schema order.
@@ -6643,6 +6729,8 @@ var TurnErrorKindValues = []TurnErrorKind{
 	TurnErrorKindLaunchError,
 	TurnErrorKindAuthRequired,
 	TurnErrorKindMCPLinkError,
+	TurnErrorKindReasoningReplayRefused,
+	TurnErrorKindContextOverflow,
 }
 
 // TurnForegroundCompletedParams `turn/foregroundCompleted` params (tdd SS4.5.12): the turn's foreground work is done and
