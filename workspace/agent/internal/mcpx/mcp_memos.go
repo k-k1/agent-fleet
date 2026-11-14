@@ -1,15 +1,21 @@
 package mcpx
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
 )
 
-// memoTools are the memo queue, which relays to the CP's /internal/memos bridge (the queue lives
-// in the CP store, not the Agent), authenticated by AF_MEMO_TOKEN. list_memos is read-only
-// (available to af_read too); the mutating ones require --write, except that a session may add
-// to its user's queue and correct what is in it. The tool args match the CP wire shape, so
-// p.Args is forwarded as the request body verbatim.
+// memoTools are the memo queue, which lives in the CP store, not the Agent. list_memos, add_memo
+// and update_memo go through the Agent's relay (memorelay, ADR 0137 §3), which stamps the
+// calling session on a create; delete_memo and flush_memos, which only the operator gets, still
+// call the CP's /internal/memos bridge with AF_MEMO_TOKEN. list_memos is read-only (available to
+// af_read too); the mutating ones require --write, except that a session may add to its user's
+// queue and correct what is in it.
 func memoTools() []toolSpec {
 	return []toolSpec{
 		{
@@ -17,7 +23,7 @@ func memoTools() []toolSpec {
 			operator: func() map[string]any {
 				return map[string]any{
 					"name":        "list_memos",
-					"description": "メモキュー（溜めて一括でセッションへ送るメモ）の一覧を返す。未送信＋保持期間内の送信済みを含む。各メモは id/repo/category/kind(file|text)/body/refPath を持つ。利用者に「今どんなメモが溜まっている?」と聞かれた時や、flush_memos / update_memo / delete_memo で対象の id を選ぶ前に呼ぶ。",
+					"description": "メモキュー（溜めて一括でセッションへ送るメモ）の一覧を返す。未送信＋保持期間内の送信済みを含む。memos の各メモは id/repo/category/kind(file|text)/body/refPath/state を持ち、categories のうち queue=true のものはキュー（メモがセッションへの仕事になる）。利用者に「今どんなメモが溜まっている?」と聞かれた時や、flush_memos / update_memo / delete_memo で対象の id を選ぶ前に呼ぶ。",
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 				}
 			},
@@ -26,16 +32,17 @@ func memoTools() []toolSpec {
 					"name": "list_memos",
 					"description": "Agent Fleet: list your user's memo queue - what they call their \"memo\": the notes " +
 						"they collect and later send into a session in one batch. " +
-						"Each memo has id / repo / category / kind (file|text) / body / refPath. " +
+						"Each memo has id / repo / category / kind (file|text) / body / refPath / state; a category " +
+						"with queue=true is a queue, whose notes are work for a session. " +
 						"Call it before add_memo to see whether the point is already queued, and to match the repo and " +
 						"category labels already in use.",
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 				}
 			},
 			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
-				out, err := cpMemoDo(http.MethodGet, "/internal/memos", nil)
+				out, err := agentGET("/memos")
 				if err != nil {
-					return mcpToolErr(req.ID, err.Error())
+					return mcpToolErr(req.ID, memoRelayErr(err))
 				}
 				return mcpTextResult(req.ID, out)
 			}),
@@ -45,7 +52,7 @@ func memoTools() []toolSpec {
 			operator: func() map[string]any {
 				return map[string]any{
 					"name":        "add_memo",
-					"description": "メモキューに1件追加する。kind=text は body（メモ本文）、kind=file は refPath（~/repos/... パス）が必須で body は任意コメント。repo（''=共通/未分類）と category（サブプロジェクトの自由ラベル）で仕分ける。チャット中に出た TODO・依頼・後で渡したい対象を溜めておく時に呼ぶ。",
+					"description": "メモキューに1件追加する。kind=text は body（メモ本文）、kind=file は refPath（~/repos/... パス）が必須で body は任意コメント。repo（''=共通/未分類）と category（サブプロジェクトの自由ラベル）で仕分ける。チャット中に出た TODO・依頼・後で渡したい対象を溜めておく時に呼ぶ。キュー（queue=true）のカテゴリに入れたメモはセッションへの仕事になり、利用者が解放するまで待つ。",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -74,7 +81,9 @@ func memoTools() []toolSpec {
 						"Say what you found and where (repo, file:line); the queue is read away from this conversation, " +
 						"so nothing here is context the reader already has. " +
 						"Do not log progress, completion or thanks - your report and the Console already carry those. " +
-						"kind=text needs body; kind=file needs refPath (a ~/repos/... path) and takes body as a comment.",
+						"kind=text needs body; kind=file needs refPath (a ~/repos/... path) and takes body as a comment. " +
+						"In a category that is a queue (queue=true) the note is work for a session instead, and waits " +
+						"until your user releases it; you cannot release, send or delete it.",
 					"inputSchema": map[string]any{
 						"type": "object", "additionalProperties": false,
 						"properties": map[string]any{
@@ -96,9 +105,24 @@ func memoTools() []toolSpec {
 				return ""
 			},
 			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
-				out, err := cpMemoDo(http.MethodPost, "/internal/memos", []byte(p.Args))
+				// The caller is this server's own session, never an argument: the Agent stamps
+				// producer and producerOrigin from it, and nothing the model passes reaches either.
+				// The operator has no session and sends "".
+				from := ""
+				if selfReportOnly() {
+					self, err := mcpOwningSession()
+					if err != nil {
+						return mcpToolErr(req.ID, err.Error())
+					}
+					from = self
+				}
+				body, err := memoCreateBody(from, p.Args)
 				if err != nil {
 					return mcpToolErr(req.ID, err.Error())
+				}
+				out, err := AgentPOST("/memos", body)
+				if err != nil {
+					return mcpToolErr(req.ID, memoRelayErr(err))
 				}
 				return mcpTextResult(req.ID, out)
 			}),
@@ -108,7 +132,7 @@ func memoTools() []toolSpec {
 			operator: func() map[string]any {
 				return map[string]any{
 					"name":        "update_memo",
-					"description": "既存メモ（id 指定）を編集する。渡したフィールドだけ変わり、省略した項目はそのまま。文言の整形・カテゴリ変更・並び替え(position)に使う。id は list_memos で得る。",
+					"description": "既存メモ（id 指定）を編集する。渡したフィールドだけ変わり、省略した項目はそのまま。文言の整形・カテゴリ変更・並び替え(position)に使う。id は list_memos で得る。解放済みのキューのメッセージを編集すると解放待ちに戻る。",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -134,7 +158,8 @@ func memoTools() []toolSpec {
 						"memo that contradicts the first. " +
 						"The queue is your user's, and it holds notes from them and from other sessions too: correct " +
 						"your own, and leave someone else's alone unless you are fixing the thing it is about. " +
-						"You cannot delete a memo or send the queue; that stays with the user in the Console.",
+						"Editing a released queue message sends it back to wait for release. " +
+						"You cannot delete, release or send a memo; that stays with the user in the Console.",
 					"inputSchema": map[string]any{
 						"type": "object", "additionalProperties": false,
 						"properties": map[string]any{
@@ -159,9 +184,9 @@ func memoTools() []toolSpec {
 				if a.ID == "" {
 					return mcpToolErr(req.ID, "id（メモ id）が必要です")
 				}
-				out, err := cpMemoDo(http.MethodPatch, "/internal/memos/"+url.PathEscape(a.ID), []byte(p.Args))
+				out, err := agentDo(http.MethodPatch, "/memos/"+url.PathEscape(a.ID), memoArgsObject(p.Args))
 				if err != nil {
-					return mcpToolErr(req.ID, err.Error())
+					return mcpToolErr(req.ID, memoRelayErr(err))
 				}
 				return mcpTextResult(req.ID, out)
 			}),
@@ -230,4 +255,35 @@ func memoTools() []toolSpec {
 			}),
 		},
 	}
+}
+
+// memoArgsObject is a call's arguments as a JSON object body: an absent argument list is {}.
+func memoArgsObject(args json.RawMessage) []byte {
+	if len(args) == 0 || string(args) == "null" {
+		return []byte("{}")
+	}
+	return []byte(args)
+}
+
+// memoCreateBody is add_memo's request to the Agent: the caller and the model's arguments.
+func memoCreateBody(from string, args json.RawMessage) ([]byte, error) {
+	var in struct {
+		From string          `json:"from"`
+		Memo json.RawMessage `json:"memo"`
+	}
+	in.From, in.Memo = from, memoArgsObject(args)
+	return json.Marshal(in)
+}
+
+// memoRelayErr is the tool error for a failed relay call. The relay's own "no bridge here"
+// answer reads as it did when the tools called the CP themselves.
+func memoRelayErr(err error) string {
+	var he *agentHTTPError
+	if !errors.As(err, &he) {
+		return err.Error()
+	}
+	if he.hasCode("memo_unavailable") {
+		return memorelay.UnavailableMessage
+	}
+	return fmt.Sprintf("CP メモAPI エラー (%d): %s", he.StatusCode, he.Body)
 }

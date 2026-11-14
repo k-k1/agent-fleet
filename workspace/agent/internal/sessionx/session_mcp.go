@@ -180,6 +180,9 @@ func HandleMCPCreateSession(w http.ResponseWriter, r *http.Request) {
 	req.ReportTo, req.Source = "", ""
 	req.ScheduleID, req.ScheduleSlot, req.ScheduleDelivery = "", "", nil
 	req.Origin, req.OriginConv, req.OriginSession, req.OriginProposal = "", "", "", ""
+	// A queue delivery is the Control Plane's own create on POST /sessions; over /mcp it would
+	// put a queue envelope on a prompt the caller chose.
+	req.QueueDelivery = nil
 	if strings.TrimSpace(req.InitialPrompt) != "" {
 		if !utf8.ValidString(req.InitialPrompt) {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_message", "initial_prompt must be UTF-8")

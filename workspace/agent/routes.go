@@ -6,6 +6,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memconsol"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
@@ -246,6 +247,12 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /memos/paste-image", handleMemoPasteImage)
 	mux.HandleFunc("GET /memos/images/{file}", handleMemoPastedImage)
 	mux.HandleFunc("POST /memos/images/gc", handleMemoImageGC)
+	// The memo tools' relay (ADR 0137 §3): list_memos, add_memo and update_memo call these, and
+	// the Agent stamps the calling session on a create. Called from inside the workspace only;
+	// the CP relays none of them.
+	mux.HandleFunc("GET /memos", memorelay.HandleList)
+	mux.HandleFunc("POST /memos", memorelay.HandleCreate)
+	mux.HandleFunc("PATCH /memos/{id}", memorelay.HandleUpdate)
 	mux.HandleFunc("GET /sessions/{name}/status", sessionx.HandleSessionStatus)
 	mux.HandleFunc("GET /sessions/{name}/output", sessionx.HandleSessionOutput)
 	mux.HandleFunc("GET /sessions/{name}/ssm-login", sessionx.HandleSSMLoginStatus)
