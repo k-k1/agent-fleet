@@ -24,7 +24,7 @@ The policy is baked into the image and delivered to every container.
 | Agent | Where it reads it |
 |---|---|
 | claude | `/etc/claude-code/CLAUDE.md` (managed policy), every session |
-| codex, opencode, agy, copilot, kiro | The same body is merged into each one's instruction file at every start |
+| codex, opencode, muse, agy, copilot, kiro | The same body is merged into each one's instruction file at every start |
 | cursor | Not delivered |
 
 Topic files sit in `/usr/local/share/agent-fleet/notes/` in the container.
