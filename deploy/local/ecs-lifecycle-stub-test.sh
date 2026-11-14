@@ -104,6 +104,12 @@ cat > "$STUB/aws" <<'FAKE'
 #!/usr/bin/env bash
 echo "aws $*" >> "$STUB_LOG"
 args="$*"
+# The CP is gone for the stub once its desired 0 was written and, with STUB_CP_TASK=stopping,
+# its task has been read as STOPPED: late resources appear only then.
+cp_gone() {
+  grep -q "af-t-ingress-cp --desired-count 0" "$STUB_LOG" || return 1
+  [ "${STUB_CP_TASK:-none}" != stopping ] || [ "$(grep -c "describe-tasks.*cptask1.*lastStatus" "$STUB_LOG")" -ge 2 ]
+}
 # af_cfn_clear_params (env.sh) reads every value back after its change set. A stack's live value
 # is "None" once such a change set ran on it, unless STUB_CLEAR_STICKS=1 (CloudFormation kept
 # the value, the way `deploy --parameter-overrides Key=` did in the #2763 rehearsal), and
@@ -410,6 +416,10 @@ case "$args" in
   # services whose desired count is > 0. Return a name for the former and the wait loop
   # spins for five minutes.
   *"ecs describe-services"*"runningCount"*) echo "0" ;;
+  # The sweep's checked reads, one flat list each (a dict or nested list would print labels in
+  # the real CLI's text output). STUB_WS_FAILURES=1: a service describe-services could not return.
+  *"ecs describe-services"*"--query failures[].arn"*)
+    [ "${STUB_WS_FAILURES:-0}" = 1 ] && echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-alice" || echo "None" ;;
   # update.sh's listing: [failures, services, names above desired 0]. STUB_SVC_FAILURES=1 answers
   # 200 with the service in failures[]; STUB_SVC_PARTIAL=1 answers 200 with it simply missing.
   *"ecs describe-services"*"length(failures), length(services)"*)
@@ -424,7 +434,12 @@ case "$args" in
     [ "${STUB_ENGINE_SVC_UP:-0}" = 1 ] && echo "af-af-ecs-engines-image" || echo "" ;;
   # STUB_WS_DESIRED0=1: every workspace service is already at desired 0 (stopped by its user a
   # moment ago, or by an earlier pause cut short), while its task may still be running.
-  *"ecs describe-services"*) [ "${STUB_WS_DESIRED0:-0}" = 1 ] && echo "" || echo "af-ws-alice" ;;
+  # STUB_WS_LATE=1: no workspace is above 0 until the CP has been stopped — what a golden bake
+  # does when it raises its probe service while the CP is still going down.
+  *"ecs describe-services"*)
+    if [ "${STUB_WS_LATE:-0}" = 1 ]; then
+      cp_gone && echo "af-ws-probe" || echo ""
+    else [ "${STUB_WS_DESIRED0:-0}" = 1 ] && echo "" || echo "af-ws-alice"; fi ;;
   *"ecs list-container-instances"*) echo "arn:aws:ecs:x:1:container-instance/ci-1" ;;
   *"ecs list-task-definitions"*) echo "arn:aws:ecs:x:1:task-definition/af-ws-alice:1" ;;
   # The engines' GPU boxes (af-role=engine-*), before the slot branch that answers everything.
@@ -437,7 +452,10 @@ case "$args" in
       *) echo "" ;;
     esac ;;
   *"ec2 describe-instances"*)
-    if [ "${STUB_NO_SLOTS:-0}" = 1 ]; then echo ""; else echo "i-1"; fi ;;
+    [ "${STUB_SLOTS_FAIL:-0}" = 1 ] && { echo "An error occurred (RequestLimitExceeded)" >&2; exit 254; }
+    if [ "${STUB_SLOTS_LATE:-0}" = 1 ]; then
+      cp_gone && echo "i-late-slot" || echo ""
+    elif [ "${STUB_NO_SLOTS:-0}" = 1 ]; then echo ""; else echo "i-1"; fi ;;
   # The egress gateway's interface and its checks through SSM. STUB_GW_ATTACH= (empty) is an
   # interface no instance has attached. STUB_GW_PROBE is what the readiness check answers;
   # "model" is a gateway whose agent gets its first policy only once the CP is up (the log is
@@ -464,6 +482,21 @@ case "$args" in
   # Workspace tasks still alive (pause.sh before it stops the egress gateway). One task of a
   # workspace service; STUB_WS_TASKS: gone (default), stuck, late (alive on the first look),
   # fail (the read is refused).
+  # STUB_CP_TASK=stopping: the CP service's task is STOPPING for one read, then STOPPED;
+  # stuck: it never stops; fail: it cannot be read. Unset: the CP service has no task.
+  *"ecs list-tasks"*"--service-name af-t-ingress-cp"*"--desired-status RUNNING"*)
+    case "${STUB_CP_TASK:-none}" in
+      none) echo "None" ;;
+      fail) echo "An error occurred (Throttling)" >&2; exit 254 ;;
+      *) echo "arn:aws:ecs:x:1:task/t-cluster/cptask1" ;;
+    esac ;;
+  *"ecs list-tasks"*"--service-name af-t-ingress-cp"*) echo "None" ;;
+  *"ecs describe-tasks"*"cptask1"*"failures[].arn"*) echo "None" ;;
+  *"ecs describe-tasks"*"cptask1"*)
+    case "${STUB_CP_TASK:-none}" in
+      stopping) [ "$(grep -c "describe-tasks.*cptask1.*lastStatus" "$STUB_LOG")" -ge 2 ] && echo "None" || echo "arn:aws:ecs:x:1:task/t-cluster/cptask1" ;;
+      *) echo "arn:aws:ecs:x:1:task/t-cluster/cptask1" ;;
+    esac ;;
   *"ecs list-tasks"*"--desired-status RUNNING"*) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
   *"ecs list-tasks"*) echo "None" ;;
   # update.sh's closing hint: the subnet of each running workspace task's ENI.
@@ -2196,6 +2229,48 @@ STUB_NO_SLOTS=1 STUB_ENGINE_BOXES=late \
   "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out4c" </dev/null
 order "$CP_DOWN" "ec2 terminate-instances --instance-ids i-late"
 grep -q "no CP left to end them" "$WORK/out4c" || fail "the sweep did not say why it terminated: $(tail -3 "$WORK/out4c")"
+
+echo "== case 4c2: a workspace and slot that came back during the CP stop are re-stopped =="
+for mode in --fast ""; do
+  : > "$LOG"
+  STUB_WS_LATE=1 STUB_SLOTS_LATE=1 \
+    "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes $mode > "$WORK/out4c2" </dev/null
+  order "$CP_DOWN" "ecs update-service --cluster t-cluster --service af-ws-probe --desired-count 0"
+  order "$CP_DOWN" "ec2 stop-instances --instance-ids i-late-slot"
+  grep -q "a workspace came back" "$WORK/out4c2" || fail "the re-check did not say what it re-stopped ($mode): $(tail -3 "$WORK/out4c2")"
+done
+echo "== case 4c2b: the sweep waits until the CP's task is STOPPED, not just until desired 0 settles =="
+: > "$LOG"
+STUB_CP_TASK=stopping STUB_WS_LATE=1 STUB_SLOTS_LATE=1 \
+  "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4c2b" </dev/null
+[ "$(grep -c "describe-tasks.*cptask1.*lastStatus" "$LOG")" -ge 2 ] || fail "the CP's task was not read until STOPPED"
+a="$(lineno_last "cptask1 --query tasks[?lastStatus")"; b="$(lineno "service af-ws-probe --desired-count 0")"
+[ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] || fail "the sweep ran before the CP's task was STOPPED"
+order "cptask1 --query tasks[?lastStatus" "ec2 stop-instances --instance-ids i-late-slot"
+for knob in STUB_CP_TASK=stuck STUB_CP_TASK=fail; do
+  : > "$LOG"
+  if env "$knob" AF_CP_TASK_WAIT_SEC=0 \
+       "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4c2c" 2>&1 </dev/null; then
+    fail "$knob: pause reported success without a confirmed-stopped CP"
+  fi
+  grep -q "could not confirm that the CP's task is STOPPED" "$WORK/out4c2c" || fail "$knob: no explanation: $(tail -3 "$WORK/out4c2c")"
+done
+echo "== case 4c2d: an unreadable sweep fails the run instead of printing paused =="
+for knob in STUB_LIST_SERVICES_FAIL=1 STUB_WS_FAILURES=1 STUB_SLOTS_FAIL=1; do
+  : > "$LOG"
+  if env "$knob" "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4c2d" 2>&1 </dev/null; then
+    fail "$knob: an unreadable post-CP sweep still ended in success"
+  fi
+  grep -q "could not read the" "$WORK/out4c2d" || fail "$knob: no ERROR: $(tail -3 "$WORK/out4c2d")"
+  # The rest of the cleanup still ran.
+  has "$CP_DOWN"
+done
+echo "== case 4c3: nothing came back, nothing is re-stopped =="
+: > "$LOG"
+STUB_WS_DESIRED0=1 STUB_NO_SLOTS=1 \
+  "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4c3" </dev/null
+grep -q "came back" "$WORK/out4c3" && fail "a quiet pause claimed something came back"
+hasnt "ecs update-service --cluster t-cluster --service af-ws-"
 
 echo "== case 4d: the database stops AFTER the control plane, and only when it is running =="
 : > "$LOG"
