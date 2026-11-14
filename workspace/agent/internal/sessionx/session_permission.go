@@ -62,8 +62,10 @@ func permissionToken(sid string) string {
 // detail is the payload's "Tool · target" line, and command the whole Bash command beside it
 // ("" for another tool; a Bash payload without one is refused, #3521). A target that cannot be compared (the payload
 // names none) is let through, since the token still binds the answer; a target the dialog does
-// not show, or a dialog whose body cannot be read, is refused as "target_mismatch".
-func permissionKeys(name, choice, detail, command, cwd string) (keys []string, code string) {
+// not show, or a dialog whose body cannot be read, is refused as "target_mismatch". So is a
+// dialog that a newer call, already announced by its PreToolUse hook, could equally be drawing
+// (newerCallOnScreen).
+func permissionKeys(sid, name, choice, detail, command, cwd string) (keys []string, code string) {
 	m, ok := readPermissionMenu(name)
 	if !ok {
 		return nil, "menu_unreadable"
@@ -74,6 +76,9 @@ func permissionKeys(name, choice, detail, command, cwd string) (keys []string, c
 	if m.CheckTargetCommand(detail, cwd, command) == claude.TargetDiffers {
 		return nil, "target_mismatch"
 	}
+	if newerCallOnScreen(m, sid, detail, command, cwd) {
+		return nil, "target_mismatch"
+	}
 	if k, found := m.Key(choice); found {
 		return []string{k}, ""
 	}
@@ -81,6 +86,26 @@ func permissionKeys(name, choice, detail, command, cwd string) (keys []string, c
 		return []string{"Escape"}, ""
 	}
 	return nil, "choice_unavailable"
+}
+
+// newerCallOnScreen reports whether the dialog on screen could be the call recorded by the last
+// permtool PreToolUse hook rather than the pending one. That record is consumed when a
+// permission_prompt publishes it, so while a prompt is pending it exists only when a later call
+// has already reached PreToolUse. Claude Code runs PreToolUse before its permission check (the
+// hook's decision can allow, deny or ask), so a next dialog Q drawn before its own Notification
+// rewrites the payload has its record here.
+//
+// The screen alone cannot separate P wrapped by the terminal from a Q with a real newline at that
+// wrap (CheckTargetCommand's limit). This closes that window: when the screen reads as Q as well
+// as P and the two texts differ, the answer is refused and the user answers in the terminal. A
+// record the screen does not match (a background subagent's tool, written under the same
+// session) is not this dialog and refuses nothing.
+func newerCallOnScreen(m claude.PermissionMenu, sid, detail, command, cwd string) bool {
+	d, c, _, ok := status.ReadLastToolCall(sid)
+	if !ok || (d == detail && c == command) {
+		return false
+	}
+	return m.CheckTargetCommand(d, cwd, c) == claude.TargetMatches
 }
 
 // permissionChoices is what the poll reports beside pendingPermission, so the card offers only
@@ -262,7 +287,7 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "not_running", err.Error())
 		return
 	}
-	keys, code := permissionKeys(name, req.Choice, detail, command, meta.Dir)
+	keys, code := permissionKeys(sid, name, req.Choice, detail, command, meta.Dir)
 	// The hook and the terminal do not take permRespondLock, so the prompt can change while the
 	// pane is captured; the menu just read may then be the next prompt's. Re-check after the
 	// capture and send nothing on a change.

@@ -65,7 +65,7 @@ func TestPermissionKeysByLabel(t *testing.T) {
 	for _, c := range cases {
 		stubPane(t, permFixture(t, c.file))
 		for choice, w := range c.want {
-			keys, code := permissionKeys("s", choice, "", "", "")
+			keys, code := permissionKeys("", "s", choice, "", "", "")
 			if !reflect.DeepEqual(keys, w.keys) || code != w.code {
 				t.Errorf("%s %s: keys=%v code=%q, want %v %q", c.file, choice, keys, code, w.keys, w.code)
 			}
@@ -78,7 +78,7 @@ func TestPermissionKeysByLabel(t *testing.T) {
 func TestPermissionKeysUnreadableMenu(t *testing.T) {
 	stubPane(t, "❯ \n  ⏸ manual mode on\n")
 	for _, c := range []string{claude.PermAllow, claude.PermAlways, claude.PermDeny} {
-		if keys, code := permissionKeys("s", c, "", "", ""); keys != nil || code != "menu_unreadable" {
+		if keys, code := permissionKeys("", "s", c, "", "", ""); keys != nil || code != "menu_unreadable" {
 			t.Errorf("%s: %v %q", c, keys, code)
 		}
 	}
@@ -501,7 +501,7 @@ func TestPermissionKeysHoldsTheDialogToTheWholeCommand(t *testing.T) {
 	stubPane(t, permFixture(t, "bash_multiline_command.txt"))
 	detail := "Bash · cat > note.txt <<'EOF'"
 	full := "cat > note.txt <<'EOF'\nhello\nEOF\nls -l note.txt"
-	if keys, code := permissionKeys("s", claude.PermAllow, detail, full, ""); code != "" || len(keys) != 1 {
+	if keys, code := permissionKeys("", "s", claude.PermAllow, detail, full, ""); code != "" || len(keys) != 1 {
 		t.Errorf("same command: keys=%v code=%q", keys, code)
 	}
 	for name, cmd := range map[string]string{
@@ -509,7 +509,7 @@ func TestPermissionKeysHoldsTheDialogToTheWholeCommand(t *testing.T) {
 		"newlines as spaces":  "cat > note.txt <<'EOF' hello EOF ls -l note.txt",
 		"no command recorded": "",
 	} {
-		if keys, code := permissionKeys("s", claude.PermAllow, detail, cmd, ""); code != "target_mismatch" || keys != nil {
+		if keys, code := permissionKeys("", "s", claude.PermAllow, detail, cmd, ""); code != "target_mismatch" || keys != nil {
 			t.Errorf("%s: keys=%v code=%q", name, keys, code)
 		}
 	}
@@ -576,7 +576,7 @@ func TestPermissionAnswerIsBoundToTheWholeRecord(t *testing.T) {
 func TestPermissionKeysRefusesBareBash(t *testing.T) {
 	stubPane(t, permFixture(t, "bash_ask_rule_af_label.txt"))
 	for _, d := range []string{"Bash", "Bash · "} {
-		if keys, code := permissionKeys("s", claude.PermAllow, d, "", ""); code != "target_mismatch" || keys != nil {
+		if keys, code := permissionKeys("", "s", claude.PermAllow, d, "", ""); code != "target_mismatch" || keys != nil {
 			t.Errorf("%q: keys=%v code=%q", d, keys, code)
 		}
 	}
@@ -655,5 +655,64 @@ func TestPendingPermissionKeepsTheToolUseID(t *testing.T) {
 	}
 	if d, cmd, ok := status.ReadPendingPermissionCommand(sid); !ok || d != "Bash · echo hi" || cmd != "echo hi" {
 		t.Fatalf("detail=%q command=%q ok=%v", d, cmd, ok)
+	}
+}
+
+// #3521: P wrapped by the terminal and Q with a real newline at that wrap draw the same screen,
+// so the screen alone matches Q for P. Q's PreToolUse record, written before Q's dialog and
+// before Q's Notification rewrites the payload, is what tells them apart: an answer for P is
+// refused while that record also matches the screen.
+func TestPermissionAnswerRefusesNewlineVariantOfTheNewerCall(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	edge := "echo " + strings.Repeat("a", 73)  // reaches the pane edge: a hard wrap
+	short := "echo " + strings.Repeat("a", 60) // stops short: the next word did not fit
+	next := strings.Repeat("b", 20)
+	layouts := []struct {
+		name, first, second, p, q string
+	}{
+		{"pane edge", edge, "rm -rf build", edge + " rm -rf build", edge + "\nrm -rf build"},
+		{"pane edge, no blank", edge, "rm -rf build", edge + "rm -rf build", edge + "\nrm -rf build"},
+		{"word wrap", short, next, short + " " + next, short + "\n" + next},
+		{"newline is P", short, next, short + "\n" + next, short + " " + next},
+	}
+	for i, l := range layouts {
+		name := "nlq" + strconv.Itoa(i)
+		stubPane(t, replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+l.first+"\n "+l.second+"\n"))
+		sid := permissionSession(t, name)
+		status.WritePendingPermissionCommand(sid, "Bash · "+l.first, l.p)
+		tok := permissionToken(sid)
+		meta, _ := session.ReadMeta(name)
+		m, _ := readPermissionMenu(name)
+		if m.CheckTargetCommand("Bash · "+l.first, "", l.p) != claude.TargetMatches || m.CheckTargetCommand("Bash · "+l.first, "", l.q) != claude.TargetMatches {
+			t.Fatalf("%s: the screen no longer reads as both P and Q", l.name)
+		}
+		status.WriteLastToolCall(sid, "Bash · "+l.first, l.q, "toolu_q")
+		for _, c := range []string{claude.PermAllow, claude.PermDeny} {
+			if out, err := answerClaudePermission(meta, c, tok, true); err != nil || !strings.Contains(out, "not the one this button") {
+				t.Errorf("%s button %s: %q %v", l.name, c, out, err)
+			}
+		}
+		if rec := postPermission(name, `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
+			t.Errorf("%s card: %d %s", l.name, rec.Code, rec.Body.String())
+		}
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+		t.Fatalf("an answer for P was sent to a dialog that may be Q:\n%s", b)
+	}
+
+	// The wrapped P still answers when no newer call is recorded, when the record is P itself, and
+	// when the record is a call the screen does not show (a background subagent's tool).
+	for i, last := range [][2]string{{"", ""}, {"Bash · " + short, short + " " + next}, {"Bash · ls -la", "ls -la"}, {"Edit · /tmp/x.go", ""}} {
+		name := "nlp" + strconv.Itoa(i)
+		stubPane(t, replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+short+"\n "+next+"\n"))
+		sid := permissionSession(t, name)
+		status.WritePendingPermissionCommand(sid, "Bash · "+short, short+" "+next)
+		if last[0] != "" {
+			status.WriteLastToolCall(sid, last[0], last[1], "toolu_other")
+		}
+		if rec := postPermission(name, `{"choice":"allow","expect":"`+permissionToken(sid)+`"}`); rec.Code != http.StatusOK {
+			t.Errorf("last-tool %q: %d %s", last[0], rec.Code, rec.Body.String())
+		}
 	}
 }

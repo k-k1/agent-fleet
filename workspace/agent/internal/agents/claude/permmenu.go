@@ -268,7 +268,9 @@ func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 // Limit: a screen drawn identically for P wrapped by the terminal and for Q with a real newline
 // where a wrap was possible (a pane-wide line, or a next word that would not have fit) cannot be
 // told apart by any reading of the screen, and matches. Everything else that differs by a
-// newline, or by lines after the first, is refused.
+// newline, or by lines after the first, is refused. The answer path closes that case off the
+// screen: it also checks the dialog against the newer call a PreToolUse hook has already
+// recorded, and refuses when both match (sessionx.newerCallOnScreen).
 func (m PermissionMenu) CheckTargetCommand(detail, cwd, command string) TargetCheck {
 	// A bare "Bash" (the hook saw an empty command) names nothing to compare; it is not the
 	// untargeted case that CheckTarget lets through.
