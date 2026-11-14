@@ -644,3 +644,33 @@ func TestDarkAgentProbeFailedIsNeverProven(t *testing.T) {
 		t.Fatalf("res = %v proven = %v", res, f.LastAgentTaskProven("i-dark"))
 	}
 }
+
+// bakeSlotHarness re-tags the harness's home as the golden seed's, so the slot is a bake box.
+func bakeSlotHarness(t *testing.T, h *ec2Harness, ws string) {
+	t.Helper()
+	h.ec2.setTag("vol-1", EC2TagWorkspace, ws)
+	// The volume sweep releases a home whose service is gone, so the workspace needs its own.
+	h.ecs.services[ws] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	task := runningTask(ws, "i-dark")
+	task.HealthStatus = ecstypes.HealthStatusHealthy
+	h.ci.running = []ecstypes.Task{task}
+}
+
+func TestSweepDarkSlotSkipsBakeOwnedSlot(t *testing.T) {
+	ctx := context.Background()
+	h, f, events := darkHarness(t)
+	h.rt.pool.darkAction = darkActionQuarantine
+	f.pool.darkAction = darkActionQuarantine
+	bakeSlotHarness(t, h, "af-ws-golden-"+GoldenSeedKey)
+	_ = f.sweep(ctx)
+	if darkStampOf(h) != "" || len(*events) != 0 {
+		t.Fatalf("bake slot was stamped/reported: %q %v", darkStampOf(h), *events)
+	}
+
+	// Handed to a member: swept again.
+	bakeSlotHarness(t, h, "af-ws-acme-alice")
+	_ = f.sweep(ctx)
+	if darkStampOf(h) == "" {
+		t.Fatal("a slot that left the bake must be swept again")
+	}
+}

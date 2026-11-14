@@ -419,6 +419,29 @@ func findBakeHome(homes map[string]ec2BakeHome, key, arch string) (string, ec2Ba
 	return "", ec2BakeHome{}, false
 }
 
+// isBakeHome reports whether a home volume belongs to a golden bake's reserved seed or
+// probe workspace, for any architecture. The marker is the volume's own workspace tag
+// (the same one findBakeHome reads), so it is true only while that home is what sits on the
+// slot: once the bake releases the home and a member's home attaches, the slot is an
+// ordinary one again and the sweeps must see it. A bake box runs no member Agent, so the
+// dark and wedged scans' Agent probe says nothing about it and they must neither stamp nor
+// act on it.
+func isBakeHome(vol *ec2types.Volume) bool {
+	ws := ec2TagValue(vol.Tags, EC2TagWorkspace)
+	if ws == "" {
+		return false
+	}
+	for _, base := range []string{GoldenSeedKey, GoldenProbeKey} {
+		for _, arch := range []string{EC2ArchX86, EC2ArchArm} {
+			want := ArchKey(base, arch)
+			if ws == want || strings.HasSuffix(ws, "-"+want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // snapshotProgress turns EBS's "63%" into 63. An unreadable value is 0, which the
 // screen shows as no percentage at all rather than as "0% done".
 func snapshotProgress(s ec2types.Snapshot) int {

@@ -407,3 +407,22 @@ func TestLastAgentProbeDoesNotOutliveThePassWithDarkOff(t *testing.T) {
 		})
 	}
 }
+
+func TestSweepWedgedSlotSkipsBakeOwnedSlot(t *testing.T) {
+	ctx := context.Background()
+	for _, ws := range []string{"af-ws-golden-" + GoldenProbeKey, "af-ws-golden-" + GoldenSeedKey + "-arm64"} {
+		h, f, events, _ := wedgedHarness(t)
+		f.pool.wedgedAction = wedgedActionRelease
+		bakeSlotHarness(t, h, ws)
+		_ = f.sweep(ctx)
+		if wedgedStampOf(h) != "" || len(*events) != 0 {
+			t.Fatalf("%s: bake slot was stamped/reported: %q %v", ws, wedgedStampOf(h), *events)
+		}
+
+		bakeSlotHarness(t, h, "af-ws-acme-alice")
+		_ = f.sweep(ctx)
+		if wedgedStampOf(h) == "" {
+			t.Fatalf("%s: a slot that left the bake must be swept again", ws)
+		}
+	}
+}

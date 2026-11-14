@@ -124,7 +124,7 @@ func (f *ecsEC2Factory) sweepWedgedSlots(ctx context.Context, homes []ec2types.V
 	for i := range homes {
 		vol := &homes[i]
 		inst := attachedInstance(vol)
-		if inst == "" || probe.claimLive(vol) {
+		if inst == "" || probe.claimLive(vol) || isBakeHome(vol) {
 			continue
 		}
 		if _, seen := byInstance[inst]; !seen {
