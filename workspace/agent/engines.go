@@ -41,6 +41,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -1323,8 +1324,13 @@ func lcppMemberCacheReset() {
 func harnessEngineToken(ctx context.Context, key, session string) (harness.EngineConn, bool) {
 	if key == "llm" {
 		if conn, ok := harnessMemberConn(); ok {
+			// The binding is evidence for the ledger, read within routes.ObserveBudget: a slow key
+			// file leaves it unproven and never holds the call.
+			b, _ := routes.Observe(routes.ObserveBudget, "lcpp member binding", func() routes.Launch {
+				return routes.Launch{Binding: credbind.Endpoint(usagex.RouteMemberLcpp, conn.URL, conn.APIKey)}
+			})
 			return harness.EngineConn{BaseURL: lcppMemberBase(conn.URL) + "/v1", Token: conn.APIKey, Route: usagex.RouteMemberLcpp,
-				Binding: credbind.Endpoint(usagex.RouteMemberLcpp, conn.URL, conn.APIKey)}, true
+				Binding: b.Binding}, true
 		}
 	}
 	base := cpurl.Request()
@@ -1489,6 +1495,12 @@ func handleEngineUsage(w http.ResponseWriter, r *http.Request) {
 		MS:       req.MS,
 		OK:       req.OK,
 		Measured: measured,
+	}
+	// The engine catalogue key in the feature names the connection that served the call (ADR
+	// 0138 D2, D5b): attribution only, since the price lookup ignores the route of a non-session
+	// row.
+	if route := engineRouteOf(strings.TrimPrefix(feature, "engine.")); route != "" {
+		row.Route, row.Connection = route, credbind.Named(route, strings.TrimPrefix(feature, "engine."))
 	}
 	if err := usagex.AppendRows([]usagex.Record{row}); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "ledger_failed", err.Error())

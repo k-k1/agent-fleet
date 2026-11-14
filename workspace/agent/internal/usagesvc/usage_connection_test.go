@@ -2,7 +2,10 @@ package usagesvc
 
 import (
 	"encoding/json"
+	"os"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -73,16 +76,19 @@ func TestStampLaunch(t *testing.T) {
 		route, conn    string
 		wantR, wantCon string
 	}{
-		"gap filled":             {codex, "", "", launch.Route, launch.Binding},
-		"own route agrees":       {codex, launch.Route, "", launch.Route, launch.Binding},
-		"own route differs":      {codex, routes.RouteOpenAIAPI, "", routes.RouteOpenAIAPI, ""},
-		"own binding kept":       {codex, launch.Route, "x@1", launch.Route, "x@1"},
-		"no record (pre-M0)":     {session.Meta{Name: "c", Kind: session.KindCodex}, "", "", "", ""},
-		"unresolved record":      {session.Meta{Name: "c", Kind: session.KindCodex, LaunchRoute: &routes.Launch{}}, "", "", "", ""},
-		"opencode, no evidence":  {session.Meta{Name: "o", Kind: session.KindOpencode, LaunchRoute: &routes.Launch{Route: routes.RouteAnthropicAPI, Binding: "a@1"}}, "", "", "", ""},
-		"opencode, same route":   {session.Meta{Name: "o", Kind: session.KindOpencode, LaunchRoute: &routes.Launch{Route: routes.RouteOpencodeZen, Binding: "z@1"}}, routes.RouteOpencodeZen, "", routes.RouteOpencodeZen, "z@1"},
-		"before the last switch": {session.Meta{Name: "s", Kind: session.KindCodex, LaunchRoute: launch, RouteSwitches: []session.RouteSwitch{{At: "2026-11-15T11:00:00Z"}}}, "", "", "", ""},
-		"after the last switch":  {session.Meta{Name: "s", Kind: session.KindCodex, LaunchRoute: launch, RouteSwitches: []session.RouteSwitch{{At: "2026-11-15T09:00:00Z"}}}, "", "", launch.Route, launch.Binding},
+		"gap filled":            {codex, "", "", launch.Route, launch.Binding},
+		"own route agrees":      {codex, launch.Route, "", launch.Route, launch.Binding},
+		"own route differs":     {codex, routes.RouteOpenAIAPI, "", routes.RouteOpenAIAPI, ""},
+		"own binding kept":      {codex, launch.Route, "x@1", launch.Route, "x@1"},
+		"no record (pre-M0)":    {session.Meta{Name: "c", Kind: session.KindCodex}, "", "", "", ""},
+		"unresolved record":     {session.Meta{Name: "c", Kind: session.KindCodex, LaunchRoute: &routes.Launch{}}, "", "", "", ""},
+		"opencode, no evidence": {session.Meta{Name: "o", Kind: session.KindOpencode, LaunchRoute: &routes.Launch{Route: routes.RouteAnthropicAPI, Binding: "a@1"}}, "", "", "", ""},
+		// A dynamic owner's matching route id does not prove the launch credential served it.
+		"opencode, same route":       {session.Meta{Name: "o", Kind: session.KindOpencode, LaunchRoute: &routes.Launch{Route: routes.RouteOpencodeZen, Binding: "z@1"}}, routes.RouteOpencodeZen, "", routes.RouteOpencodeZen, ""},
+		"lcpp, same route, no proof": {session.Meta{Name: "l", Kind: session.KindLcpp, LaunchRoute: &routes.Launch{Route: routes.RouteMemberLlamacpp, Binding: "m@old"}}, routes.RouteMemberLlamacpp, "", routes.RouteMemberLlamacpp, ""},
+		"lcpp, no route":             {session.Meta{Name: "l", Kind: session.KindLcpp, LaunchRoute: &routes.Launch{Route: routes.RouteAFEngineLLM, Binding: "af-engine-llm@llm"}}, "", "", "", ""},
+		"before the last switch":     {session.Meta{Name: "s", Kind: session.KindCodex, LaunchRoute: launch, RouteSwitches: []session.RouteSwitch{{At: "2026-11-15T11:00:00Z"}}}, "", "", "", ""},
+		"after the last switch":      {session.Meta{Name: "s", Kind: session.KindCodex, LaunchRoute: launch, RouteSwitches: []session.RouteSwitch{{At: "2026-11-15T09:00:00Z"}}}, "", "", launch.Route, launch.Binding},
 	} {
 		rec := usagex.Record{TS: ts, Route: tc.route, Connection: tc.conn}
 		stampLaunch(tc.m, &rec)
@@ -94,6 +100,20 @@ func TestStampLaunch(t *testing.T) {
 	rows := foldTurnRows([]transcript.Turn{{Role: "user"}, routeTurn("", "", 3)}, true)
 	if rec := usageRecordOf(codex, rows[0], ""); rec.Route != launch.Route || rec.Connection != launch.Binding {
 		t.Errorf("folded row = route %q conn %q", rec.Route, rec.Connection)
+	}
+	// A claude turn that crosses the switch: a subscription call before it, an API call after. The
+	// calls disagree, so the turn is unresolved, and the launch record (now the API key) must not
+	// claim it although the turn ends after the switch.
+	switched := session.Meta{Name: "w", Kind: session.KindClaude,
+		LaunchRoute:   &routes.Launch{Route: routes.RouteAnthropicAPI, Binding: "ANTHROPIC_API_KEY@new"},
+		RouteSwitches: []session.RouteSwitch{{At: "2026-11-03T01:00:00Z"}}}
+	before, after := routeTurn(routes.RouteAnthropicSubscription, "", 2), routeTurn(routes.RouteAnthropicAPI, "", 3)
+	before.TS, after.TS = "2026-11-03T00:59:00Z", "2026-11-03T01:01:00Z"
+	rows = foldTurnRows([]transcript.Turn{{Role: "user"}, before, after}, true)
+	for _, rec := range usageRecordsOf(switched, rows[0]) {
+		if rec.Connection != "" {
+			t.Errorf("a turn across the switch was stamped: route %q conn %q", rec.Route, rec.Connection)
+		}
 	}
 	// Per-call connection evidence travels like route evidence.
 	lt := routeTurn(usagex.RouteMemberLcpp, usagex.BillingSelfHosted, 3)
@@ -122,5 +142,63 @@ func TestLaunchFillsNoPricedRoute(t *testing.T) {
 	}
 	if !slices.Contains(agents.FixedRoutesOf(sessionx.AgentOf(session.KindOpencode)), routes.RouteOpencodeZen) {
 		t.Error("the guard above relies on opencode being the per-call kind that owns the priced routes")
+	}
+}
+
+// An auxiliary call's route is attribution only (ADR 0138 M0): a chat or one-shot row now
+// recorded on opencode-go is estimated exactly as it was with no route, while a session turn's
+// per-call route keeps pricing as it always did.
+func TestAuxiliaryRouteDoesNotMovePrices(t *testing.T) {
+	UseIsolatedUsageDir(t)
+	UseUsageCatalog(t, routeCatalogFixture)
+	resetUsageFold(t)
+	day := daysAgo(0)
+	est := func(feature, route string) float64 {
+		t.Helper()
+		UseIsolatedUsageDir(t)
+		UseUsageCatalog(t, routeCatalogFixture)
+		r := at(row("c1", feature, session.KindOpencode, "glm-5.2", 0), day)
+		r.In, r.Spend, r.Route = 1_000_000, 1_000_000, route
+		writeUsageDay(t, day, r)
+		return getSeries(t, "from="+day+"&to="+day).Totals.CostEstUSD
+	}
+	for _, f := range []string{usagex.FeatureAssistantChat, usagex.FeatureTitleSession, usagex.FeatureToolImagegen} {
+		before, after := est(f, ""), est(f, usagex.RouteOpencodeGo)
+		if before != after || before != 1 {
+			t.Errorf("%s: estimate %v with no route, %v on opencode-go; want both the kind's 1", f, before, after)
+		}
+	}
+	if got := est(usagex.FeatureSession, usagex.RouteOpencodeGo); got != 0.5 {
+		t.Errorf("a session turn's per-call route priced %v, want 0.5 as before", got)
+	}
+}
+
+// consoleUsageAPI is the Console's typed client for /usage/series. This test reads outside the
+// module, so a mutation of that file alone needs go test -count=1 to be seen.
+const consoleUsageAPI = "../../../../console/src/features/usage/api.ts"
+
+// The Console's closed UsageDim union and the server's accepted dimensions are one vocabulary:
+// a dimension the server accepts but the type lacks cannot be requested by a typed caller.
+func TestUsageDimsMatchTheConsole(t *testing.T) {
+	b, err := os.ReadFile(consoleUsageAPI)
+	if err != nil {
+		t.Fatalf("read %s: %v", consoleUsageAPI, err)
+	}
+	src := string(b)
+	i := strings.Index(src, "export type UsageDim =")
+	if i < 0 {
+		t.Fatal("no UsageDim type in the Console's usage client")
+	}
+	body := src[i:]
+	body = body[:strings.Index(body, ";")]
+	var ts []string
+	for _, m := range regexp.MustCompile(`\|\s*"([a-z_]+)"`).FindAllStringSubmatch(body, -1) {
+		ts = append(ts, m[1])
+	}
+	if len(ts) == 0 {
+		t.Fatal("UsageDim parsed to nothing (positive control)")
+	}
+	if got, want := slices.Sorted(slices.Values(ts)), slices.Sorted(slices.Values(usageDims)); !slices.Equal(got, want) {
+		t.Errorf("Console UsageDim = %v, server dims = %v", got, want)
 	}
 }

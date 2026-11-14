@@ -544,21 +544,39 @@ var providerRoutes = map[string][]string{
 	ProviderCodex:        {routes.RouteChatGPTSubscription, routes.RouteOpenAIAPI},
 }
 
-// providerLaunch is what an image call on provider id runs on and the binding of its credential
-// (ADR 0138 D2, D5b), resolved when the call starts. The codex provider runs on whichever login
-// codex's auth.json holds, read per call; agy on its Google login; the fleet's providers on the
-// deployment's engine, named by provider. Files and cached views only, never a CLI.
-var providerLaunch = func(id string) routes.Launch {
-	switch id {
-	case ProviderCodex:
-		return codex.Login()
-	case ProviderAgy:
-		return agy.Login()
+// launcher is a provider that knows what its next call runs on (ADR 0138 D2, D5b): the exact
+// credential it will execute with.
+type launcher interface{ launch() routes.Launch }
+
+// launch implements launcher: the login in the auth.json of the home this provider runs codex
+// with ($CODEX_HOME), not the default one.
+func (p *codexProvider) launch() routes.Launch { return codex.LoginAt(p.home) }
+
+// launch implements launcher: agy's own Google login.
+func (p *agyProvider) launch() routes.Launch { return agy.Login() }
+
+// providerObserveBudget bounds providerLaunch (routes.Observe). A var for tests.
+var providerObserveBudget = routes.ObserveBudget
+
+// providerLaunch is what an image call on p runs on and the binding of its credential, resolved
+// when the call starts and within providerObserveBudget: a slow or hung read leaves the row
+// unresolved and never holds the generation. The fleet's providers run on the deployment's
+// engine, named by provider id.
+var providerLaunch = func(p Provider) routes.Launch {
+	if p == nil {
+		return routes.Launch{}
 	}
-	if providerIsFleet(id) {
-		return routes.Launch{Route: routes.RouteAFEngineImage, Binding: credbind.Named(routes.RouteAFEngineImage, id)}
-	}
-	return routes.Launch{}
+	id := p.ID()
+	l, _ := routes.Observe(providerObserveBudget, id+" image launch", func() routes.Launch {
+		if lp, ok := p.(launcher); ok {
+			return lp.launch()
+		}
+		if providerIsFleet(id) {
+			return routes.Launch{Route: routes.RouteAFEngineImage, Binding: credbind.Named(routes.RouteAFEngineImage, id)}
+		}
+		return routes.Launch{}
+	})
+	return l
 }
 
 // ProviderRoutes returns every image provider's routes by provider id, each list sorted.
@@ -933,7 +951,7 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 		}
 
 		started := time.Now()
-		launch := providerLaunch(name)
+		launch := providerLaunch(p)
 		res, err := p.Generate(ctx, req)
 		// Record on every path, including the failed one: an attempt that burned driver tokens
 		// and produced nothing still consumed the user's plan, and a row with ok:false is what

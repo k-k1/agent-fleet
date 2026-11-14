@@ -436,11 +436,16 @@ var managedSettingsDir = "/etc/claude-code"
 
 // userSettingFiles are the settings files that do not depend on the working copy.
 func userSettingFiles() []string {
-	files := []string{
+	return append([]string{
 		filepath.Join(ConfigDir(), "settings.json"),
 		filepath.Join(ConfigDir(), "settings.local.json"),
-		filepath.Join(managedSettingsDir, "managed-settings.json"),
-	}
+	}, managedSettingFiles()...)
+}
+
+// managedSettingFiles are the managed policy files, which claude applies whatever
+// --setting-sources says.
+func managedSettingFiles() []string {
+	files := []string{filepath.Join(managedSettingsDir, "managed-settings.json")}
 	if more, _ := filepath.Glob(filepath.Join(managedSettingsDir, "managed-settings.d", "*.json")); len(more) > 0 {
 		files = append(files, more...)
 	}

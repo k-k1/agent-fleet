@@ -25,12 +25,17 @@ var chatLaunches = map[string]func(model string) routes.Launch{
 	session.KindMuse:     func(string) routes.Launch { return muse.Login() },
 }
 
-// chatLaunch is the route and binding a call on kind's backend runs on, resolved before it runs;
-// "" for a kind with no resolver here.
+// chatObserveBudget bounds chatLaunch (routes.Observe). A var for tests.
+var chatObserveBudget = routes.ObserveBudget
+
+// chatLaunch is the route and binding a call on kind's backend runs on, resolved before it runs,
+// within chatObserveBudget: a resolver that is slow or hangs leaves the row unresolved and never
+// holds the call. "" for a kind with no resolver here.
 func chatLaunch(kind, model string) (route, binding string) {
-	if f, ok := chatLaunches[kind]; ok {
-		l := f(model)
-		return l.Route, l.Binding
+	f, ok := chatLaunches[kind]
+	if !ok {
+		return "", ""
 	}
-	return "", ""
+	l, _ := routes.Observe(chatObserveBudget, kind+" chat launch", func() routes.Launch { return f(model) })
+	return l.Route, l.Binding
 }

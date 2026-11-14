@@ -2375,6 +2375,22 @@ func oneShotOnCodex(ctx context.Context, call *usagex.Call, run oneShotRun) (str
 	return reply, err
 }
 
+// opencodeOneShotModel is the model an opencode one-shot passes (the recommendation when the
+// settings name none), set on the call with the route and binding resolved on that model:
+// opencode's route follows the model's provider, so it is resolved again here, not on the model
+// oneShotRunOn saw before the recommendation (ADR 0138 D2).
+func opencodeOneShotModel(call *usagex.Call, selected string, configured bool, kind string, tier OneShotTier) string {
+	m := selected
+	if !configured {
+		m = recommendedOneShotModel(kind, tier) // AF_TITLE_MODEL_OPENCODE first, as for "recommended"
+	}
+	if m != "" {
+		call.ModelReq = m
+	}
+	call.Route, call.Connection = chatLaunch(session.KindOpencode, m)
+	return m
+}
+
 // oneShotOnOpencode runs one one-shot on opencode (oneShotRunOn).
 func oneShotOnOpencode(ctx context.Context, call *usagex.Call, run oneShotRun) (string, error) {
 	selected, configured, tier, persona, prompt, kind := run.selected, run.configured, run.tier, run.persona, run.prompt, run.kind
@@ -2394,13 +2410,9 @@ func oneShotOnOpencode(ctx context.Context, call *usagex.Call, run oneShotRun) (
 	// it, while the configured default answers fine (measured 2026-07-25). A hard failure of
 	// title/branch/reply suggestions is worse than their token cost, so opencode keeps the
 	// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
-	m := selected
-	if !configured {
-		m = recommendedOneShotModel(kind, tier) // AF_TITLE_MODEL_OPENCODE first, as for "recommended"
-	}
+	m := opencodeOneShotModel(call, selected, configured, kind, tier)
 	if m != "" {
 		args = append(args, "--model", m)
-		call.ModelReq = m
 	}
 	args = append(args, headlessPrompt(persona, nil, prompt))
 	if err := opencode.PrepareStart(spec); err != nil {

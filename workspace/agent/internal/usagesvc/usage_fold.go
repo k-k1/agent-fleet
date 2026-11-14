@@ -1047,7 +1047,10 @@ func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
 	if rec.TS == "" {
 		rec.TS = time.Now().UTC().Format(time.RFC3339)
 	}
-	stampLaunch(m, &rec)
+	if !r.routeMixed {
+		// A turn whose calls disagreed is not a gap: its cleared or split evidence stands.
+		stampLaunch(m, &rec)
+	}
 	if r.Model != "" {
 		// The model the transcript reported is the measured value. It is a raw id
 		// including the version, so it is kept in model_raw as well.
@@ -1061,24 +1064,26 @@ func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
 // stampLaunch fills a session row's gaps from the session's launch record (ADR 0138 D11): every
 // turn of a session carries the route it was launched on and the binding of its credential.
 // Only gaps, and only where the record proves them:
-//   - a row stamped before the session's last route switch is left alone: the record names the
-//     route after the switch;
+//   - never for a kind whose calls resolve their own route and credential per call
+//     (agents.PerCallRouter: opencode follows the model's provider, lcpp re-resolves its endpoint
+//     on every call). A matching route id there does not prove the launch credential served the
+//     call, so such a row keeps exactly what its call recorded;
+//   - never for a turn whose calls disagreed (the caller skips it): cleared evidence is not a gap;
+//   - never for a row stamped before the session's last route switch: the record names the route
+//     after the switch;
 //   - a row with a route of its own keeps it, and takes the record's binding only when the
-//     routes agree;
-//   - a row with no route takes the record's route only for a kind whose every call runs on its
-//     launch route. opencode's calls follow the model's provider, which can change mid-session
-//     (agents.PerCallRouter), so an unproven opencode call stays unresolved.
+//     routes agree.
 //
 // The routes filled this way have no provider of their own in the price lookup
 // (usageRouteProviders; TestLaunchFillsNoPricedRoute), so no estimate moves.
 func stampLaunch(m session.Meta, rec *usagex.Record) {
 	l := m.LaunchRoute
-	if l == nil || l.Route == "" || !afterLastRouteSwitch(m, rec.TS) {
+	if l == nil || l.Route == "" || perCallRoutes(m.Kind) || !afterLastRouteSwitch(m, rec.TS) {
 		return
 	}
-	switch {
-	case rec.Route == l.Route:
-	case rec.Route == "" && !perCallRoutes(m.Kind):
+	switch rec.Route {
+	case l.Route:
+	case "":
 		rec.Route = l.Route
 	default:
 		return

@@ -25,8 +25,12 @@ const apiKeySlot = "codex-api-key"
 // its account id, which a token refresh keeps; the API-key login to the key's keyed digest. A
 // missing or unreadable file resolves to nothing. Every caller that runs codex (sessions, the
 // chat backend, the image provider) reads it when its call starts.
-func Login() routes.Launch {
-	b, err := os.ReadFile(filepath.Join(paths.HomeDir(), ".codex", "auth.json"))
+func Login() routes.Launch { return LoginAt(filepath.Join(paths.HomeDir(), ".codex")) }
+
+// LoginAt is Login for a codex run whose home is home (a $CODEX_HOME), whose auth.json is what
+// that run uses.
+func LoginAt(home string) routes.Launch {
+	b, err := os.ReadFile(filepath.Join(home, "auth.json"))
 	if err != nil {
 		return routes.Launch{}
 	}

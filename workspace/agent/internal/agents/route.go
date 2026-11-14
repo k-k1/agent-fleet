@@ -64,10 +64,10 @@ type CredentialResolver interface {
 	UsableRoutes() []string
 }
 
-// PerCallRouter marks a kind whose calls within one session may run on routes other than the
-// one it was launched on (opencode: the route follows the model's provider, and the model can be
-// changed mid-session). The ledger never fills such a call's missing route from the session's
-// launch record.
+// PerCallRouter marks a kind whose calls within one session may run on another route or another
+// credential than the one it was launched on (opencode: the route follows the model's provider,
+// and the model can be changed mid-session; lcpp: every call resolves its endpoint anew). The
+// ledger never fills such a call's route or binding from the session's launch record.
 type PerCallRouter interface {
 	RoutesPerCall()
 }

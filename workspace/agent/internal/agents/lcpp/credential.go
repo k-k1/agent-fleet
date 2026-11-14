@@ -13,7 +13,15 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-var _ agents.CredentialResolver = agentImpl{}
+var (
+	_ agents.CredentialResolver = agentImpl{}
+	_ agents.PerCallRouter      = agentImpl{}
+)
+
+// RoutesPerCall implements agents.PerCallRouter: every call resolves its connection anew
+// (harness.EngineToken), so the member's endpoint or key can change between two calls of one
+// session, and each call records what served it.
+func (agentImpl) RoutesPerCall() {}
 
 // memberConn is the member's own llama.cpp connection, ok=false without one. A seam for tests.
 var memberConn = func() (secrets.LcppConn, bool) {

@@ -121,3 +121,28 @@ func TestUsableRoutesNeedACredential(t *testing.T) {
 		t.Errorf("env credentials: %v", u)
 	}
 }
+
+// The chat and the one-shots run with --setting-sources "": a key in the user's settings does not
+// reach them and must not make their record unresolved, while a managed policy file still does.
+func TestDefaultLaunchReadsOnlyManagedSettings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	managed := t.TempDir()
+	prev := managedSettingsDir
+	managedSettingsDir = managed
+	t.Cleanup(func() { managedSettingsDir = prev })
+	if err := os.WriteFile(filepath.Join(ConfigDir(), "settings.json"), []byte(`{"env":{"ANTHROPIC_API_KEY":"sk"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if l := DefaultLaunch(); l.Route != RouteSubscription {
+		t.Errorf("with an ignored user settings key: %+v, want the subscription", l)
+	}
+	if err := os.WriteFile(filepath.Join(managed, "managed-settings.json"), []byte(`{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:1"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if l := DefaultLaunch(); l != (routes.Launch{}) {
+		t.Errorf("with a managed base URL: %+v, want unresolved", l)
+	}
+}

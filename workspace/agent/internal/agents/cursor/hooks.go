@@ -117,6 +117,11 @@ func recordStop(name string, in stopInput, now time.Time) {
 		Measured:   usagex.MeasuredPartial,
 		TokensOnly: true,
 	}
+	// cursor runs on its one login for the session's life, so the launch record proves the
+	// route and binding of every turn it reports (ADR 0138 D11).
+	if l := m.LaunchRoute; l != nil && l.Route != "" {
+		rec.Route, rec.Connection = l.Route, l.Binding
+	}
 	// The model is the raw selector: "default" for Auto, which is not the model Auto picked.
 	if in.Model != "" && in.Model != "default" {
 		rec.Model, rec.ModelRaw, rec.ModelReq, rec.ModelSrc = in.Model, in.Model, in.Model, usagex.ModelRequest

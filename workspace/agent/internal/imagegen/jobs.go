@@ -543,7 +543,7 @@ func (q *jobQueue) run(j *jobRec) {
 	req.OnUpstream = func(id string) { q.setUpstream(j, id) }
 
 	started := jobsNow()
-	launch := providerLaunch(j.provider)
+	launch := providerLaunch(prov)
 	res, err := prov.Generate(q.stop, req)
 	ok := err == nil && len(res.Images) > 0
 	// The ledger row is written on every path, including the failed one: an attempt that spent
