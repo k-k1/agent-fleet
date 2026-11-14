@@ -53,6 +53,12 @@ func withTestReconciler(t *testing.T, interval time.Duration) *reportReconciler 
 	return installReconciler(t, newReportReconciler(interval))
 }
 
+// sweepHangBound bounds the wait for a sweep or a tick the test has already triggered. The
+// wait returns the moment the signal arrives, so the bound costs nothing when green; it only
+// has to separate "slow under load" from "never finishes". A few seconds does not: a sweep
+// reads transcripts and markers from disk and failed a 3s bound on a loaded host (#4126).
+const sweepHangBound = 60 * time.Second
+
 // fakeReportClock drives the reconciler tick by tick.
 type fakeReportClock struct {
 	mu  sync.Mutex
@@ -91,12 +97,12 @@ func (f *fakeReportClock) advance(t *testing.T, rc *reportReconciler, d time.Dur
 	f.mu.Unlock()
 	select {
 	case f.c <- now:
-	case <-time.After(3 * time.Second):
+	case <-time.After(sweepHangBound):
 		t.Fatal("reconciler did not take the tick")
 	}
 	select {
 	case <-rc.swept:
-	case <-time.After(3 * time.Second):
+	case <-time.After(sweepHangBound):
 		t.Fatal("sweep did not finish")
 	}
 }
@@ -107,7 +113,7 @@ func (f *fakeReportClock) waitSweep(t *testing.T, rc *reportReconciler) {
 	t.Helper()
 	select {
 	case <-rc.swept:
-	case <-time.After(3 * time.Second):
+	case <-time.After(sweepHangBound):
 		t.Fatal("wake sweep did not finish")
 	}
 }
