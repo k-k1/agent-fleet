@@ -284,6 +284,9 @@ export function UsageView() {
             <button
               key={r.hours}
               type="button"
+              // A locale-independent handle: the guide's screenshot harness selects the range by
+              // it, and a label match silently leaves the default range on screen when it misses.
+              data-range-hours={r.hours}
               className={"uc-seg" + (hours === r.hours ? " active" : "")}
               aria-pressed={hours === r.hours}
               onClick={() => setHours(r.hours)}

@@ -1887,11 +1887,15 @@ const SCENES = [
       await new Promise((r) => setTimeout(r, 500));
       const items = [...document.querySelectorAll(".acct-item")];
       items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
-      await new Promise((r) => setTimeout(r, 1500));
-      const btns = [...document.querySelectorAll("button")];
-      btns.find((el) => /^(30 ?日|30 days)$/.test((el.textContent || "").trim()))?.click();
+      // The range buttons appear only once the view is up; wait for them instead of a fixed delay.
+      const sel = '.usage-controls button[data-range-hours="720"]';
+      for (let i = 0; i < 40 && !document.querySelector(sel); i++) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      document.querySelector(sel)?.click();
     })()`,
     settle: 2500,
+    verify: `document.querySelector('.usage-controls button[data-range-hours="720"]')?.getAttribute("aria-pressed") === "true"`,
   },
   {
     // Settings › Skills with Claude's skills under its real config folder, one shadowed.
@@ -3466,6 +3470,13 @@ try {
     if (scene.action) {
       await cdp.send("Runtime.evaluate", { expression: scene.action, awaitPromise: true });
       await sleep(scene.settle || 800);
+    }
+    // scene.verify names the state the action was meant to reach. An action that misses its
+    // target does nothing and still yields a plausible picture of the default state, so the run
+    // fails instead of writing it.
+    if (scene.verify) {
+      const r = await cdp.send("Runtime.evaluate", { expression: scene.verify, returnByValue: true });
+      if (!r.result?.value) throw new Error(`scene ${scene.name} failed verify: ${scene.verify}`);
     }
     // The way to settle a question about appearance without judging it by eye (docs/log/80
     // §80.18.7): an expression in scene.measure has its result printed to stdout. Whether

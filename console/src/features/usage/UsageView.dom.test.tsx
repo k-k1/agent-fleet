@@ -253,3 +253,30 @@ describe("UsageView image counters", () => {
     expect(kpiText("生成したピクセル")).toBe("3.1 MP");
   });
 });
+
+// The guide's screenshot harness (scripts/shots/capture.mjs, scene agents-usage) picks the range
+// by data-range-hours, so the attribute has to stay on each button and switch the query.
+describe("UsageView range buttons", () => {
+  it("exposes each range as data-range-hours and refetches the chosen span", async () => {
+    fetchUsageSeries.mockImplementation(() => Promise.resolve(series(100, false)));
+    await mount();
+    const hours = [...host!.querySelectorAll<HTMLButtonElement>("button[data-range-hours]")].map(
+      (b) => b.dataset.rangeHours,
+    );
+    expect(hours).toEqual(["24", "168", "720"]);
+
+    fetchUsageSeries.mockClear();
+    const btn = host!.querySelector<HTMLButtonElement>('button[data-range-hours="720"]')!;
+    await act(async () => {
+      btn.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    const q = queries()[0];
+    const days = (Date.parse(q.to!) - Date.parse(q.from!)) / 86_400_000;
+    expect(Math.round(days)).toBe(30);
+    expect(q.bucket).toBe("day");
+  });
+});
