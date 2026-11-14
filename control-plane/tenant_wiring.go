@@ -486,3 +486,16 @@ func (a adminAPI) setTenantMCPOAuth(w http.ResponseWriter, r *http.Request) {
 	a.srv().SetTenantMCPOAuth(w, r)
 }
 func (d cpTenant) MCPOAuthServed() bool { return d.m.mcpOAuthServed.Load() }
+
+// cpRoutePolicy is internal/routepolicysrv's view of the CP: the store and the role gates.
+type cpRoutePolicy struct{ memberAuth }
+
+func (c cpRoutePolicy) Store() store.Store { return c.mgr.store }
+
+func (c cpRoutePolicy) SuperAdminFor(w http.ResponseWriter, r *http.Request) (store.Identity, bool) {
+	return c.superAdminFor(w, r)
+}
+
+func (c cpRoutePolicy) TenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (store.Identity, store.Tenant, bool) {
+	return c.tenantAdminFor(w, r, slug)
+}

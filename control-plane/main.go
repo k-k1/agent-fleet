@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicysrv"
 	"log"
 	"net"
 	"net/http"
@@ -194,7 +195,7 @@ func main() {
 		log.Fatalf("auth mode: %v", authErr)
 	}
 	// The operator's credential ceiling (ADR 0138 D9c): an unparsable value stops the start.
-	if err := loadRoutePolicyCeiling(); err != nil {
+	if err := routepolicysrv.LoadCeiling(); err != nil {
 		log.Fatalf("route policy: %v", err)
 	}
 	// GITHUB_OAUTH_CLIENT_ID is deliberately NOT injected into the workspace any more
@@ -274,7 +275,7 @@ func main() {
 	reconcileSSMSignIns(ctx, st)
 	// The ceiling read above is recorded under a revision of its own, so a change of it reaches
 	// every member's effective revision (ADR 0138 D9, D12). Unrecorded, the start stops.
-	if err := syncRoutePolicyCeiling(ctx, st); err != nil {
+	if err := routepolicysrv.SyncCeiling(ctx, st); err != nil {
 		log.Fatalf("route policy: %v", err)
 	}
 	mgr.store = st

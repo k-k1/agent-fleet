@@ -1,10 +1,9 @@
-package main
-
-// route_policy.go — the credential policy's administration (ADR 0138 D7–D9, D15): the operator
-// ceiling read from the environment at start, and the audited REST of the three administered
-// layers. Nothing here enforces the policy; the Agent's pull and the enforcement points come in
-// the phases after this one, so with every layer empty, which is the default, no behaviour
-// changes.
+// Package routepolicysrv is the credential policy's administration (ADR 0138 D7–D9, D15): the
+// operator ceiling read from the environment at start and recorded under a revision, and the
+// audited REST of the three administered layers. Nothing here enforces the policy; the Agent's
+// pull and the enforcement points come in later phases, so with every layer empty, which is the
+// default, no behaviour changes.
+package routepolicysrv
 
 import (
 	"context"
@@ -28,9 +27,9 @@ type ceilingState struct {
 
 var routePolicyCeiling atomic.Pointer[ceilingState]
 
-// loadRoutePolicyCeiling reads the ceiling once at start. An unparsable or unknown value refuses
+// LoadCeiling reads the ceiling once at start. An unparsable or unknown value refuses
 // the start rather than reading as "allow all" (D9c).
-func loadRoutePolicyCeiling() error {
+func LoadCeiling() error {
 	raw, rule, err := routepolicy.CeilingFromEnv()
 	if err != nil {
 		return err
@@ -42,10 +41,10 @@ func loadRoutePolicyCeiling() error {
 	return nil
 }
 
-// syncRoutePolicyCeiling records this CP's ceiling as the stored ceiling row when it differs from
+// SyncCeiling records this CP's ceiling as the stored ceiling row when it differs from
 // what is stored, under a new revision and with an audit row, so the change takes part in every
 // member's effective revision; an unchanged ceiling writes nothing and moves no revision.
-func syncRoutePolicyCeiling(ctx context.Context, st store.Store) error {
+func SyncCeiling(ctx context.Context, st store.Store) error {
 	c := currentCeiling()
 	want, err := json.Marshal(c.rule)
 	if err != nil {
@@ -78,8 +77,8 @@ func currentCeiling() ceilingState {
 	return ceilingState{}
 }
 
-func registerRoutePolicyRoutes(mux *http.ServeMux, cfg config) {
-	a := routePolicyAdmin{memberAuth{cfg.mgr}}
+func Register(mux *http.ServeMux, cp CP) {
+	a := admin{cp}
 	mux.HandleFunc("GET /api/admin/route-policy", a.withSuperAdmin(a.getDeployment))
 	mux.HandleFunc("PUT /api/admin/route-policy", a.withSuperAdmin(a.putDeployment))
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/route-policy", a.getTenant)
@@ -87,7 +86,8 @@ func registerRoutePolicyRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/route-policy/cap", a.putCap)
 }
 
-type routePolicyAdmin struct{ memberAuth }
+// admin serves the policy REST over the CP seam.
+type admin struct{ cp CP }
 
 // policyLayerWire is one stored layer as the API shows it.
 type policyLayerWire struct {
@@ -148,7 +148,7 @@ var errCeilingUnsettled = errors.New("route policy: the recorded operator ceilin
 // it (a database edit, or another CP with another ceiling) is re-recorded first, under a new
 // revision, and the layers read again, so the answer's revision is the one its ceiling was
 // recorded at and never a revision another reading labels with a looser rule.
-func tenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantPolicyWire, error) {
+func TenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantPolicyWire, error) {
 	c := currentCeiling()
 	want, err := json.Marshal(c.rule)
 	if err != nil {
@@ -165,7 +165,7 @@ func tenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantP
 		if attempt == 3 {
 			return tenantPolicyWire{}, errCeilingUnsettled
 		}
-		if err := syncRoutePolicyCeiling(ctx, st); err != nil {
+		if err := SyncCeiling(ctx, st); err != nil {
 			return tenantPolicyWire{}, err
 		}
 	}
@@ -189,8 +189,8 @@ func tenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantP
 	return out, nil
 }
 
-func (a routePolicyAdmin) getDeployment(w http.ResponseWriter, r *http.Request, _ store.Identity) {
-	v, err := tenantPolicy(r.Context(), a.mgr.store, "")
+func (a admin) getDeployment(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+	v, err := TenantPolicy(r.Context(), a.cp.Store(), "")
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -206,17 +206,17 @@ func (a routePolicyAdmin) getDeployment(w http.ResponseWriter, r *http.Request, 
 // widen (the operator ceiling for a super_admin's write, §8 M1).
 func readRule(w http.ResponseWriter, r *http.Request, above *routepolicy.Rule) (routepolicy.Rule, string, bool) {
 	var in routepolicy.Rule
-	if !decodeAdminBody(w, r, &in) {
+	if !decodeBody(w, r, &in) {
 		return in, "", false
 	}
 	if err := in.Validate(); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "invalid_route_policy", err.Error()})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "invalid_route_policy", err.Error()})
 		return in, "", false
 	}
 	in = in.Normalize()
 	if above != nil {
 		if wider := in.Exceeds(*above); len(wider) > 0 {
-			writeAPIErr(w, &apiError{http.StatusBadRequest, "route_policy_exceeds_ceiling",
+			writeAPIErr(w, &APIError{http.StatusBadRequest, "route_policy_exceeds_ceiling",
 				fmt.Sprintf("the deployment's ceiling forbids routes this rule would allow: %v; a layer below the ceiling can only narrow it", wider)})
 			return in, "", false
 		}
@@ -231,12 +231,12 @@ func readRule(w http.ResponseWriter, r *http.Request, above *routepolicy.Rule) (
 
 // putLayer writes one layer and its audit row (D15: before and after) in one transaction: when
 // the record cannot be written, neither is the rule.
-func (a routePolicyAdmin) putLayer(w http.ResponseWriter, r *http.Request, ident store.Identity, scope string, t store.Tenant, rule string) {
+func (a admin) putLayer(w http.ResponseWriter, r *http.Request, ident store.Identity, scope string, t store.Tenant, rule string) {
 	target := t.Slug
 	if scope == store.RoutePolicyDeployment {
 		target = "deployment"
 	}
-	_, after, err := a.mgr.store.PutRoutePolicy(r.Context(), scope, t.ID, rule, ident.ID,
+	_, after, err := a.cp.Store().PutRoutePolicy(r.Context(), scope, t.ID, rule, ident.ID,
 		func(before, after store.RoutePolicyRow) store.AuditLog {
 			return store.AuditLog{ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
 				Action: "route_policy." + scope + ".put", Target: target,
@@ -255,7 +255,7 @@ func (a routePolicyAdmin) putLayer(w http.ResponseWriter, r *http.Request, ident
 	writeJSON(w, http.StatusOK, l)
 }
 
-func (a routePolicyAdmin) putDeployment(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+func (a admin) putDeployment(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	c := currentCeiling()
 	if _, rule, ok := readRule(w, r, &c.rule); ok {
 		a.putLayer(w, r, ident, store.RoutePolicyDeployment, store.Tenant{}, rule)
@@ -263,18 +263,18 @@ func (a routePolicyAdmin) putDeployment(w http.ResponseWriter, r *http.Request, 
 }
 
 // putCap is the super_admin's cap on one tenant; a tenant_admin can neither write nor clear it.
-func (a routePolicyAdmin) putCap(w http.ResponseWriter, r *http.Request) {
-	ident, ok := a.superAdminFor(w, r)
+func (a admin) putCap(w http.ResponseWriter, r *http.Request) {
+	ident, ok := a.cp.SuperAdminFor(w, r)
 	if !ok {
 		return
 	}
-	t, found, err := a.mgr.store.GetTenantBySlug(r.Context(), r.PathValue("slug"))
+	t, found, err := a.cp.Store().GetTenantBySlug(r.Context(), r.PathValue("slug"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !found {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_tenant", "unknown tenant"})
 		return
 	}
 	c := currentCeiling()
@@ -285,8 +285,8 @@ func (a routePolicyAdmin) putCap(w http.ResponseWriter, r *http.Request) {
 
 // putTenant is the tenant_admin's own rule. It may name exceptions the layers above do not have:
 // those reopen nothing (D1d, D7a), so they are stored as written rather than refused.
-func (a routePolicyAdmin) putTenant(w http.ResponseWriter, r *http.Request) {
-	ident, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+func (a admin) putTenant(w http.ResponseWriter, r *http.Request) {
+	ident, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -295,12 +295,12 @@ func (a routePolicyAdmin) putTenant(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a routePolicyAdmin) getTenant(w http.ResponseWriter, r *http.Request) {
-	_, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+func (a admin) getTenant(w http.ResponseWriter, r *http.Request) {
+	_, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	v, err := tenantPolicy(r.Context(), a.mgr.store, t.ID)
+	v, err := TenantPolicy(r.Context(), a.cp.Store(), t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return

@@ -1,9 +1,10 @@
-package main
+package routepolicysrv
 
 import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,16 +13,60 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// routePolicyFixture is a CP with the policy routes, a super_admin (root@x), and a tenant with a
-// tenant_admin (boss@x) and a member (m@x).
+// fakeCP is the CP seam over a real store: the caller is named by X-Who, and roles come from
+// the store (super_admin on the identity, tenant_admin on the membership).
+type fakeCP struct{ st store.Store }
+
+func (f fakeCP) Store() store.Store { return f.st }
+
+func (f fakeCP) who(w http.ResponseWriter, r *http.Request) (store.Identity, bool) {
+	id, ok, err := f.st.GetIdentityByUserKey(r.Context(), r.Header.Get("X-Who"))
+	if err != nil || !ok {
+		writeAPIErr(w, &APIError{http.StatusUnauthorized, "unauthenticated", "no such caller"})
+		return store.Identity{}, false
+	}
+	return id, true
+}
+
+func (f fakeCP) SuperAdminFor(w http.ResponseWriter, r *http.Request) (store.Identity, bool) {
+	id, ok := f.who(w, r)
+	if ok && id.Role != "super_admin" {
+		writeAPIErr(w, &APIError{http.StatusForbidden, "forbidden", "super_admin required"})
+		return id, false
+	}
+	return id, ok
+}
+
+func (f fakeCP) TenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (store.Identity, store.Tenant, bool) {
+	id, ok := f.who(w, r)
+	if !ok {
+		return id, store.Tenant{}, false
+	}
+	t, found, err := f.st.GetTenantBySlug(r.Context(), slug)
+	if err != nil || !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		return id, t, false
+	}
+	if id.Role == "super_admin" {
+		return id, t, true
+	}
+	m, has, err := f.st.GetMembership(r.Context(), id.ID, t.ID)
+	if err != nil || !has || m.Role != "tenant_admin" {
+		writeAPIErr(w, &APIError{http.StatusForbidden, "forbidden", "tenant admin required"})
+		return id, t, false
+	}
+	return id, t, true
+}
+
+// routePolicyFixture is the policy routes over a real store, with a super_admin (root-x), and a
+// tenant with a tenant_admin (boss-x) and a member (m-x).
 func routePolicyFixture(t *testing.T, ceiling string) (*store.SQL, *http.ServeMux, store.Tenant) {
-	st, mux, tn, _ := routePolicyFixtureMgr(t, ceiling, nil)
+	st, mux, tn := routePolicyFixtureWrap(t, ceiling, nil)
 	return st, mux, tn
 }
 
-// routePolicyFixtureMgr is routePolicyFixture with the manager, and wrap to put a store in front
-// of the real one.
-func routePolicyFixtureMgr(t *testing.T, ceiling string, wrap func(*store.SQL) store.Store) (*store.SQL, *http.ServeMux, store.Tenant, *manager) {
+// routePolicyFixtureWrap is routePolicyFixture with wrap putting a store in front of the real one.
+func routePolicyFixtureWrap(t *testing.T, ceiling string, wrap func(*store.SQL) store.Store) (*store.SQL, *http.ServeMux, store.Tenant) {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
@@ -32,15 +77,14 @@ func routePolicyFixtureMgr(t *testing.T, ceiling string, wrap func(*store.SQL) s
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	mgr := p3Manager(t, st)
-	if _, err := st.UpsertIdentity(ctx, "root@x", "root-x", "super_admin"); err != nil {
+	if _, err := st.UpsertIdentity(ctx, "root-x", "root-x", "super_admin"); err != nil {
 		t.Fatal(err)
 	}
 	tn, err := st.CreateTenant(ctx, "acme", "Acme")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []struct{ email, key, role string }{{"boss@x", "boss-x", "tenant_admin"}, {"m@x", "m-x", "member"}} {
+	for _, p := range []struct{ email, key, role string }{{"boss-x", "boss-x", "tenant_admin"}, {"m-x", "m-x", "member"}} {
 		id, err := st.UpsertIdentity(ctx, p.email, p.key, "")
 		if err != nil {
 			t.Fatal(err)
@@ -49,22 +93,47 @@ func routePolicyFixtureMgr(t *testing.T, ceiling string, wrap func(*store.SQL) s
 			t.Fatal(err)
 		}
 	}
-	restoreAuthExemptions(t)
 	t.Setenv(routepolicy.EnvCeiling, ceiling)
 	prev := routePolicyCeiling.Load()
 	t.Cleanup(func() { routePolicyCeiling.Store(prev) })
-	if err := loadRoutePolicyCeiling(); err != nil {
+	if err := LoadCeiling(); err != nil {
 		t.Fatal(err)
 	}
-	if err := syncRoutePolicyCeiling(ctx, st); err != nil {
+	if err := SyncCeiling(ctx, st); err != nil {
 		t.Fatal(err)
 	}
+	var cp store.Store = st
 	if wrap != nil {
-		mgr.store = wrap(st)
+		cp = wrap(st)
 	}
 	mux := http.NewServeMux()
-	registerRoutePolicyRoutes(mux, config{mgr: mgr})
-	return st, mux, tn, mgr
+	Register(mux, fakeCP{cp})
+	return st, mux, tn
+}
+
+// routeAdminDo calls the mux as who (an identity's user key).
+func routeAdminDo(mux *http.ServeMux, method, path, who, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Header.Set("X-Who", who)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	return w
+}
+
+// auditRowsOf lists the audit rows with the action; tenantID "" spans every tenant.
+func auditRowsOf(t *testing.T, st store.Store, tenantID, action string) []store.AuditLog {
+	t.Helper()
+	logs, err := st.ListAuditByTenant(context.Background(), tenantID, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []store.AuditLog
+	for _, l := range logs {
+		if l.Action == action {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func decodePolicy(t *testing.T, body string) tenantPolicyWire {
@@ -88,7 +157,7 @@ func routeAllowed(v tenantPolicyWire, id string) (bool, []string) {
 // No policy anywhere: nothing is restricted and every catalogued route is allowed (D8).
 func TestRoutePolicyDefaultIsUnrestricted(t *testing.T) {
 	_, mux, tn := routePolicyFixture(t, "")
-	w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss@x", "")
+	w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", "")
 	if w.Code != 200 {
 		t.Fatalf("get: %d %s", w.Code, w.Body)
 	}
@@ -109,22 +178,22 @@ func TestRoutePolicyLayers(t *testing.T) {
 	st, mux, tn := routePolicyFixture(t, "")
 	base := "/api/admin/tenants/" + tn.Slug + "/route-policy"
 	noSubs := `{"classes":["member-key","member-cloud","provided","self-hosted"]}`
-	if w := routeAdminDo(mux, "PUT", base+"/cap", "boss@x", noSubs); w.Code != http.StatusForbidden {
+	if w := routeAdminDo(mux, "PUT", base+"/cap", "boss-x", noSubs); w.Code != http.StatusForbidden {
 		t.Fatalf("a tenant_admin wrote the cap: %d %s", w.Code, w.Body)
 	}
-	if w := routeAdminDo(mux, "PUT", base, "m@x", noSubs); w.Code != http.StatusForbidden {
+	if w := routeAdminDo(mux, "PUT", base, "m-x", noSubs); w.Code != http.StatusForbidden {
 		t.Fatalf("a member wrote the tenant rule: %d %s", w.Code, w.Body)
 	}
-	if w := routeAdminDo(mux, "PUT", "/api/admin/route-policy", "boss@x", "{}"); w.Code != http.StatusForbidden {
+	if w := routeAdminDo(mux, "PUT", "/api/admin/route-policy", "boss-x", "{}"); w.Code != http.StatusForbidden {
 		t.Fatalf("a tenant_admin wrote the deployment rule: %d %s", w.Code, w.Body)
 	}
-	if w := routeAdminDo(mux, "PUT", base+"/cap", "root@x", noSubs); w.Code != 200 {
+	if w := routeAdminDo(mux, "PUT", base+"/cap", "root-x", noSubs); w.Code != 200 {
 		t.Fatalf("cap: %d %s", w.Code, w.Body)
 	}
-	if w := routeAdminDo(mux, "PUT", base, "boss@x", `{"except":["copilot-login"]}`); w.Code != 200 {
+	if w := routeAdminDo(mux, "PUT", base, "boss-x", `{"except":["copilot-login"]}`); w.Code != 200 {
 		t.Fatalf("tenant rule: %d %s", w.Code, w.Body)
 	}
-	v := decodePolicy(t, routeAdminDo(mux, "GET", base, "boss@x", "").Body.String())
+	v := decodePolicy(t, routeAdminDo(mux, "GET", base, "boss-x", "").Body.String())
 	if ok, by := routeAllowed(v, "copilot-login"); ok || strings.Join(by, ",") != routepolicy.LayerTenantCap {
 		t.Errorf("copilot under a cap without the exception: allowed %v by %v", ok, by)
 	}
@@ -132,16 +201,16 @@ func TestRoutePolicyLayers(t *testing.T) {
 		t.Errorf("anthropic-api must stay allowed under no-subscriptions: %+v", v)
 	}
 	// The tenant_admin clearing their rule leaves the cap in force.
-	if w := routeAdminDo(mux, "PUT", base, "boss@x", `{}`); w.Code != 200 {
+	if w := routeAdminDo(mux, "PUT", base, "boss-x", `{}`); w.Code != 200 {
 		t.Fatalf("clear: %d %s", w.Code, w.Body)
 	}
-	v2 := decodePolicy(t, routeAdminDo(mux, "GET", base, "boss@x", "").Body.String())
+	v2 := decodePolicy(t, routeAdminDo(mux, "GET", base, "boss-x", "").Body.String())
 	if ok, _ := routeAllowed(v2, "anthropic-subscription"); ok || v2.Revision <= v.Revision {
 		t.Errorf("after the tenant rule was cleared: subscription allowed %v, revision %d (was %d)", ok, v2.Revision, v.Revision)
 	}
 	// Refused at save: an unknown route id, a per-connection exception, an unknown class.
 	for _, bad := range []string{`{"except":["no-such-route"]}`, `{"except":["member-llamacpp"]}`, `{"classes":["nope"]}`, `{"colour":1}`} {
-		if w := routeAdminDo(mux, "PUT", base, "boss@x", bad); w.Code != http.StatusBadRequest {
+		if w := routeAdminDo(mux, "PUT", base, "boss-x", bad); w.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d %s, want 400", bad, w.Code, w.Body)
 		}
 	}
@@ -158,19 +227,19 @@ func TestRoutePolicyLayers(t *testing.T) {
 func TestRoutePolicyCeilingRefusesWidening(t *testing.T) {
 	_, mux, tn := routePolicyFixture(t, "classes=provided")
 	for _, path := range []string{"/api/admin/route-policy", "/api/admin/tenants/" + tn.Slug + "/route-policy/cap"} {
-		w := routeAdminDo(mux, "PUT", path, "root@x", `{}`)
+		w := routeAdminDo(mux, "PUT", path, "root-x", `{}`)
 		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "route_policy_exceeds_ceiling") {
 			t.Errorf("%s widened to everything: %d %s", path, w.Code, w.Body)
 		}
-		if w := routeAdminDo(mux, "PUT", path, "root@x", `{"classes":["provided"],"deny":["bedrock-tenant"]}`); w.Code != 200 {
+		if w := routeAdminDo(mux, "PUT", path, "root-x", `{"classes":["provided"],"deny":["bedrock-tenant"]}`); w.Code != 200 {
 			t.Errorf("%s narrowed: %d %s", path, w.Code, w.Body)
 		}
 	}
-	w := routeAdminDo(mux, "GET", "/api/admin/route-policy", "root@x", "")
+	w := routeAdminDo(mux, "GET", "/api/admin/route-policy", "root-x", "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"raw":"classes=provided"`) || !strings.Contains(w.Body.String(), `"source":"deployment"`) {
 		t.Errorf("deployment view: %d %s", w.Code, w.Body)
 	}
-	v := decodePolicy(t, routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss@x", "").Body.String())
+	v := decodePolicy(t, routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", "").Body.String())
 	if ok, by := routeAllowed(v, "anthropic-api"); ok || by[0] != routepolicy.LayerCeiling {
 		t.Errorf("anthropic-api under classes=provided: allowed %v by %v", ok, by)
 	}
@@ -182,12 +251,12 @@ func TestRoutePolicyCeilingRefusesStart(t *testing.T) {
 	t.Cleanup(func() { routePolicyCeiling.Store(prev) })
 	for _, bad := range []string{"classes=everything", "except=member-llamacpp", "except=no-such-route", "nonsense"} {
 		t.Setenv(routepolicy.EnvCeiling, bad)
-		if err := loadRoutePolicyCeiling(); err == nil {
+		if err := LoadCeiling(); err == nil {
 			t.Errorf("%q started", bad)
 		}
 	}
 	t.Setenv(routepolicy.EnvCeiling, "")
-	if err := loadRoutePolicyCeiling(); err != nil || currentCeiling().rule.Restricted() {
+	if err := LoadCeiling(); err != nil || currentCeiling().rule.Restricted() {
 		t.Errorf("no ceiling: %v %+v", err, currentCeiling())
 	}
 }
@@ -211,14 +280,14 @@ func (s auditDupStore) PutRoutePolicy(ctx context.Context, scope, tenantID, rule
 // A write whose audit row cannot be recorded is refused and leaves the rule as it was, for every
 // layer (D15).
 func TestRoutePolicyAuditFailureRefusesTheWrite(t *testing.T) {
-	st, mux, tn, _ := routePolicyFixtureMgr(t, "", func(st *store.SQL) store.Store { return auditDupStore{st, st} })
+	st, mux, tn := routePolicyFixtureWrap(t, "", func(st *store.SQL) store.Store { return auditDupStore{st, st} })
 	if err := st.InsertAudit(context.Background(), store.AuditLog{ID: "taken", Action: "x", At: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range []struct{ path, who, scope, tenant string }{
-		{"/api/admin/route-policy", "root@x", store.RoutePolicyDeployment, ""},
-		{"/api/admin/tenants/" + tn.Slug + "/route-policy/cap", "root@x", store.RoutePolicyTenantCap, tn.ID},
-		{"/api/admin/tenants/" + tn.Slug + "/route-policy", "boss@x", store.RoutePolicyTenant, tn.ID},
+		{"/api/admin/route-policy", "root-x", store.RoutePolicyDeployment, ""},
+		{"/api/admin/tenants/" + tn.Slug + "/route-policy/cap", "root-x", store.RoutePolicyTenantCap, tn.ID},
+		{"/api/admin/tenants/" + tn.Slug + "/route-policy", "boss-x", store.RoutePolicyTenant, tn.ID},
 	} {
 		if w := routeAdminDo(mux, "PUT", c.path, c.who, `{"deny":["openai-api"]}`); w.Code != http.StatusInternalServerError {
 			t.Errorf("%s: %d %s, want a refusal", c.path, w.Code, w.Body)
@@ -238,8 +307,8 @@ func (panicOnSingleRead) GetRoutePolicy(context.Context, string, string) (store.
 
 // The admin read takes every layer and its revision from one snapshot.
 func TestRoutePolicyReadIsOneSnapshot(t *testing.T) {
-	_, mux, tn, _ := routePolicyFixtureMgr(t, "", func(st *store.SQL) store.Store { return panicOnSingleRead{st} })
-	for _, c := range [][2]string{{"/api/admin/route-policy", "root@x"}, {"/api/admin/tenants/" + tn.Slug + "/route-policy", "boss@x"}} {
+	_, mux, tn := routePolicyFixtureWrap(t, "", func(st *store.SQL) store.Store { return panicOnSingleRead{st} })
+	for _, c := range [][2]string{{"/api/admin/route-policy", "root-x"}, {"/api/admin/tenants/" + tn.Slug + "/route-policy", "boss-x"}} {
 		if w := routeAdminDo(mux, "GET", c[0], c[1], ""); w.Code != 200 {
 			t.Errorf("%s: %d %s", c[0], w.Code, w.Body)
 		}
@@ -253,7 +322,7 @@ func TestRoutePolicyCeilingChangeTakesARevision(t *testing.T) {
 	ctx := context.Background()
 	get := func() tenantPolicyWire {
 		t.Helper()
-		return decodePolicy(t, routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss@x", "").Body.String())
+		return decodePolicy(t, routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", "").Body.String())
 	}
 	if v := get(); v.Revision != 0 || v.Restricted {
 		t.Fatalf("no ceiling: %+v", v)
@@ -261,10 +330,10 @@ func TestRoutePolicyCeilingChangeTakesARevision(t *testing.T) {
 	restart := func(raw string) {
 		t.Helper()
 		t.Setenv(routepolicy.EnvCeiling, raw)
-		if err := loadRoutePolicyCeiling(); err != nil {
+		if err := LoadCeiling(); err != nil {
 			t.Fatal(err)
 		}
-		if err := syncRoutePolicyCeiling(ctx, st); err != nil {
+		if err := SyncCeiling(ctx, st); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -297,7 +366,7 @@ func TestRoutePolicyStoredCeilingCannotWidenTheEnvironment(t *testing.T) {
 	ctx := context.Background()
 	get := func() tenantPolicyWire {
 		t.Helper()
-		w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss@x", "")
+		w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", "")
 		if w.Code != 200 {
 			t.Fatalf("get: %d %s", w.Code, w.Body)
 		}
@@ -340,11 +409,11 @@ func (s fightingCeilingStore) PutRoutePolicy(ctx context.Context, scope, tenantI
 // When the recorded ceiling never settles on this CP's own, nothing is answered rather than an
 // answer labelled with a revision another CP gives other content.
 func TestRoutePolicyUnsettledCeilingAnswersNothing(t *testing.T) {
-	st, mux, tn, _ := routePolicyFixtureMgr(t, "classes=provided", func(st *store.SQL) store.Store { return fightingCeilingStore{st, st} })
+	st, mux, tn := routePolicyFixtureWrap(t, "classes=provided", func(st *store.SQL) store.Store { return fightingCeilingStore{st, st} })
 	if _, _, err := st.PutRoutePolicy(context.Background(), store.RoutePolicyCeiling, "", "{}", "other-cp", nil); err != nil {
 		t.Fatal(err)
 	}
-	if w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss@x", ""); w.Code != http.StatusInternalServerError {
+	if w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", ""); w.Code != http.StatusInternalServerError {
 		t.Errorf("unsettled ceiling: %d %s, want a refusal", w.Code, w.Body)
 	}
 }
