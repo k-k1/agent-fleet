@@ -489,6 +489,20 @@ func kindSummary(it msp.Item) string {
 		if m := it.PeerMessage; m != nil {
 			return fmt.Sprintf("message from %s: %s", m.SenderLabel, m.Body)
 		}
+	case msp.ItemKindBodyCompletion:
+		// A background task's completion receipt: the task's terminal status and result text
+		// are the point, and an unresolved join (compaction) names the task so the receipt can
+		// still be traced. The host's label/fallbackText is optional.
+		if b := it.BodyCompletion; b != nil {
+			s := "background task " + b.Status
+			if b.ResultSummary != "" {
+				s += ": " + b.ResultSummary
+			}
+			if b.Correlation == msp.BodyCompletionCorrelationUnresolved && it.TaskID != nil && *it.TaskID != "" {
+				s += " (origin unresolved, task " + *it.TaskID + ")"
+			}
+			return s
+		}
 	case msp.ItemKindSubagentResult:
 		// Host-side fallbackText is only a SHOULD for a new kind; the outcome must not depend on it.
 		if it.ResultStatus != nil {
