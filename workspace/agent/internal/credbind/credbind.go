@@ -158,8 +158,8 @@ func Named(route, name string) string { return route + "@" + name }
 // login made by hand outside the Agent's flows is not seen, and keeps the generation it found.
 //
 // "" (unproven) whenever the state cannot be trusted: unreadable or malformed, a login change
-// begun (Begin) and not yet bumped, which survives a restart, or a Bump of this login that failed
-// to persist in this process. Reading such a state as generation zero, or as the generation
+// begun (Begin) and not yet finished, which survives a restart, or a Bump of this login that
+// failed to persist in this process. Reading such a state as generation zero, or as the generation
 // before the change, would hand a replaced login its predecessor's binding.
 func Generation(login string) string {
 	genMu.Lock()
@@ -200,7 +200,7 @@ var (
 	genMu sync.Mutex
 	// genPoisoned holds the logins whose Bump failed to persist: their generation on disk is the
 	// replaced login's, so it is not served until a Bump succeeds. The durable half is the pending
-	// marker Begin wrote before the change, which a failed Bump leaves in place.
+	// marker Begin wrote before the change, which a failed Finish leaves in place.
 	genPoisoned = map[string]bool{}
 )
 
@@ -240,57 +240,177 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// pendingPrefix names a login's pending marker in the Agent config directory: written by Begin
-// before the Agent changes the login, removed by the Bump that records the change.
+// pendingPrefix names the pending markers in the Agent config directory: one file per login and
+// operation, "<prefix><login>.<op id>", written by Begin before the Agent changes the login and
+// removed by that operation's Finish. Owning the marker per operation is what keeps one
+// completed change from clearing the protection of another still in flight (a device login left
+// open while a disconnect completes).
 const pendingPrefix = "route-generation-pending."
 
-func markerPath(login string) string {
-	return filepath.Join(paths.AgentConfigDir(), pendingPrefix+login)
+func markerPath(login, op string) string {
+	return filepath.Join(paths.AgentConfigDir(), pendingPrefix+login+"."+op)
 }
 
-// markerAbsent reports that login has no pending marker; a marker that cannot be checked is not
-// proven absent.
-func markerAbsent(login string) bool {
-	_, err := os.Stat(markerPath(login))
-	return errors.Is(err, fs.ErrNotExist)
-}
-
-// Begin records, durably and before anything changes, that the Agent is about to replace or
-// remove each login. Until the Bump that records the change succeeds, the login's generation is
-// unproven, across an Agent restart too: a change whose new generation could not be persisted
-// can then never be read back as the old one. An error means nothing could be recorded,
-// and the caller must not change the login: proceeding would leave a replaced login nothing to
-// tell it from its predecessor but process memory.
-//
-// A flow that is begun and then abandoned leaves its marker, so the login's generation stays
-// unproven until its next completed change: unknown is the safe answer when it cannot be told
-// whether the file was replaced.
-func Begin(logins ...string) error {
-	dir := paths.AgentConfigDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+// markersOf lists login's pending markers by operation id. ok=false when the directory cannot
+// be read: nothing is then proven absent.
+func markersOf(login string) (ops []string, ok bool) {
+	ents, err := os.ReadDir(paths.AgentConfigDir())
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, true
 	}
-	for _, l := range logins {
-		f, err := os.OpenFile(markerPath(l), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, false
+	}
+	prefix := pendingPrefix + login + "."
+	for _, e := range ents {
+		if n := e.Name(); strings.HasPrefix(n, prefix) {
+			ops = append(ops, strings.TrimPrefix(n, prefix))
+		}
+	}
+	return ops, true
+}
+
+// markerAbsent reports that login has no pending marker at all; one that cannot be checked is
+// not proven absent.
+func markerAbsent(login string) bool {
+	ops, ok := markersOf(login)
+	return ok && len(ops) == 0
+}
+
+// Durability seams: the protocol is ordered by fsync, and a test injects failures or records
+// the order through these.
+var (
+	syncFile = func(f *os.File) error { return f.Sync() }
+	syncDir  = func(dir string) error {
+		d, err := os.Open(dir)
 		if err != nil {
 			return err
 		}
-		if err := f.Sync(); err != nil {
-			f.Close()
-			return err
-		}
-		if err := f.Close(); err != nil {
-			return err
-		}
+		defer d.Close()
+		return d.Sync()
 	}
-	return nil
+	removeFile = os.Remove
+)
+
+// liveOps are the operations begun in this process and not yet finished. A marker of an
+// operation not in it belongs to an earlier Agent process; a completed change may clear it,
+// because the generation it writes is fresh and supersedes whatever that operation did.
+var (
+	liveMu  sync.Mutex
+	liveOps = map[string]bool{}
+)
+
+// Op is one credential change the Agent is making: begun durably before it starts, finished
+// when it ends, whatever its outcome.
+type Op struct {
+	id     string
+	logins []string
+	once   sync.Once
 }
 
-// Bump moves each login to a new generation. Called by the Agent's own login, key and disconnect
-// handlers when they replace or remove the credential, never on a refresh. An unreadable state is
+// Begin records, durably and before anything changes, that the Agent is about to replace or
+// remove each login. Until this operation's Finish has persisted a new generation, the logins'
+// generation is unproven, across an Agent restart and a machine crash too: a change whose new
+// generation could not be persisted can never be read back as the old one. The marker's file and
+// its directory are synced before Begin returns. An error means nothing could be recorded, and
+// the caller must not change the login: proceeding would leave a replaced login nothing to tell
+// it from its predecessor but process memory.
+func Begin(logins ...string) (*Op, error) {
+	id, err := randomToken()
+	if err != nil {
+		return nil, err
+	}
+	op := &Op{id: id, logins: logins}
+	dir := paths.AgentConfigDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	liveMu.Lock()
+	liveOps[id] = true
+	liveMu.Unlock()
+	fail := func(err error) (*Op, error) {
+		for _, l := range logins {
+			_ = removeFile(markerPath(l, id))
+		}
+		liveMu.Lock()
+		delete(liveOps, id)
+		liveMu.Unlock()
+		return nil, err
+	}
+	for _, l := range logins {
+		f, err := os.OpenFile(markerPath(l, id), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return fail(err)
+		}
+		if err := syncFile(f); err != nil {
+			f.Close()
+			return fail(err)
+		}
+		if err := f.Close(); err != nil {
+			return fail(err)
+		}
+	}
+	if err := syncDir(dir); err != nil {
+		return fail(err)
+	}
+	return op, nil
+}
+
+// Finish ends the operation, whatever its outcome: it moves the logins to a new generation, and
+// only once that is durable removes this operation's markers and those left by an earlier Agent
+// process, then syncs the directory. Markers of other operations still live in this process stay,
+// so their logins stay unproven until they finish too. A change that never happened (a flow
+// cancelled before the CLI wrote anything) still moves the generation: a spurious new binding
+// reads as a replacement and is refused, which is the safe direction. When the new generation
+// cannot be persisted, every marker stays and the logins stay unproven. Safe on nil and to call
+// more than once.
+func (o *Op) Finish() {
+	if o == nil {
+		return
+	}
+	o.once.Do(func() {
+		defer func() {
+			liveMu.Lock()
+			delete(liveOps, o.id)
+			liveMu.Unlock()
+		}()
+		if !Bump(o.logins...) {
+			return
+		}
+		dir := paths.AgentConfigDir()
+		liveMu.Lock()
+		live := make(map[string]bool, len(liveOps))
+		for k := range liveOps {
+			live[k] = true
+		}
+		liveMu.Unlock()
+		removed := false
+		for _, l := range o.logins {
+			ops, _ := markersOf(l)
+			for _, id := range ops {
+				if id != o.id && live[id] {
+					continue // another change of this login is still in flight
+				}
+				if err := removeFile(markerPath(l, id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					log.Printf("credbind: clearing a pending mark of %s: %v; its binding stays unproven", l, err)
+					continue
+				}
+				removed = true
+			}
+		}
+		if removed {
+			if err := syncDir(dir); err != nil {
+				log.Printf("credbind: syncing the config directory after clearing pending marks: %v", err)
+			}
+		}
+	})
+}
+
+// Bump moves each login to a new generation and reports whether that is durable. The Agent's
+// login, key and disconnect handlers reach it through Op.Finish, never on a refresh. An unreadable state is
 // rebuilt under a new epoch (every login's generation moves); a state that cannot be written
 // leaves these logins unproven until a Bump succeeds.
-func Bump(logins ...string) {
+func Bump(logins ...string) bool {
 	genMu.Lock()
 	defer genMu.Unlock()
 	if err := bumpLocked(logins); err != nil {
@@ -304,16 +424,12 @@ func Bump(logins ...string) {
 		if rerr := os.Remove(filepath.Join(paths.AgentConfigDir(), genFile)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
 			log.Printf("credbind: removing the generation state after a failed bump: %v", rerr)
 		}
-		return
+		return false
 	}
 	for _, l := range logins {
 		delete(genPoisoned, l)
-		// The change is recorded; a marker that cannot be removed leaves the login unproven,
-		// never wrong.
-		if err := os.Remove(markerPath(l)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			log.Printf("credbind: clearing the pending mark of %s: %v; its binding stays unproven", l, err)
-		}
 	}
+	return true
 }
 
 func bumpLocked(logins []string) error {
@@ -349,7 +465,12 @@ func writeGenerations(st genState) error {
 	if err != nil {
 		return err
 	}
+	// Ordered for a machine crash: the new state's bytes, then its name, then the directory
+	// entry, so nothing that follows (a pending marker's removal) can outlive it.
 	_, werr := tmp.Write(b)
+	if werr == nil {
+		werr = syncFile(tmp)
+	}
 	if cerr := tmp.Close(); werr == nil {
 		werr = cerr
 	}
@@ -358,6 +479,7 @@ func writeGenerations(st genState) error {
 	}
 	if werr != nil {
 		_ = os.Remove(tmp.Name())
+		return werr
 	}
-	return werr
+	return syncDir(dir)
 }

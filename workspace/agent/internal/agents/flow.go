@@ -7,6 +7,7 @@ package agents
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"os"
 	"os/exec"
 	"regexp"
@@ -40,6 +41,9 @@ type Flow struct {
 	ended   bool
 	endedCh chan struct{} // closed once, by drain, when it observes EOF
 	Created time.Time
+	// LoginOp is the credential change this flow is making (BeginLoginChange), finished by Close
+	// whatever the flow's outcome, so its pending mark never outlives the flow's process.
+	LoginOp *credbind.Op
 }
 
 // StartFlow launches cmd under a PTY (TERM set by the caller on cmd.Env) and
@@ -154,6 +158,9 @@ func (f *Flow) Close() {
 		_ = f.rd.Close()
 	}
 	_ = f.Cmd.Wait()
+	// After the process is gone: nothing can write the credential once the new generation is
+	// recorded.
+	f.LoginOp.Finish()
 }
 
 // WaitFor polls the flow's cleaned output until re matches, the timeout hits, or the child's
