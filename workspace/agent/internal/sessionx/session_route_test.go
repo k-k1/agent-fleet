@@ -104,8 +104,14 @@ func TestCreateWithoutRouteIsUnchanged(t *testing.T) {
 	if len(launched) != 1 || launched[0].Route != nil {
 		t.Fatalf("launched %+v, want one meta with no route", launched)
 	}
+	// The launch-time record (ADR 0138 D11) is written for every create and nests its own
+	// "route"; the selection key itself stays absent.
 	b, _ := json.Marshal(launched[0])
-	if strings.Contains(string(b), `"route"`) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(b, &top); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := top["route"]; ok {
 		t.Errorf("meta JSON carries a route key: %s", b)
 	}
 }

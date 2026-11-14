@@ -183,7 +183,10 @@ func daemonJSON[T any](method, addr, path string, body any, out *envelope[T]) er
 type oauthState struct {
 	connected bool
 	label     string
-	known     bool // whether the daemon was ever read successfully (drives stale-if-error)
+	// id is the Console-account credential's id: a new sign-in is a new credential, a token
+	// refresh keeps it, so it is what the opencode-account binding hashes (ADR 0138 D5b).
+	id    string
+	known bool // whether the daemon was ever read successfully (drives stale-if-error)
 }
 
 var (
@@ -234,6 +237,7 @@ func oauthStatus() oauthState {
 		if c.Type == "credential" {
 			st.connected = true
 			st.label = c.Label
+			st.id = c.ID
 			break
 		}
 	}

@@ -245,7 +245,11 @@ and its **fixed routes** (`agents.FixedRouter`): the routes its own rules resolv
 selection, such as a CLI-locked login. Every kind that runs a model declares at least one route
 (`TestEveryCredentialPathHasARoute`), so a new kind implements `FixedRoutes()` and, when its login
 is not one of the catalogued routes, adds a route id to `internal/routes` with its class and
-destination. A new kind adds a row to the snapshot, so regenerate it the same way:
+destination. It also implements `agents.CredentialResolver`
+(`TestEveryKindWithFixedRoutesResolves`): `ResolveLaunch` says which fixed route a session runs
+on and binds the credential with `routes.KeyBinding` or `routes.AccountBinding` (never a secret),
+which the create records as the session's `launchRoute` (ADR 0138 D11); `UsableRoutes` is what the
+live kind catalog reports. A new kind adds a row to the snapshot, so regenerate it the same way:
 
 ```
 cd workspace/agent && go test -run TestRouteCatalogSnapshot -update-route-catalog .

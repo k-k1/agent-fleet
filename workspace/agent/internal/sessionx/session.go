@@ -131,8 +131,8 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		recordPolledTurnEnd(m, li.State)
 	}
 	s := session.Session{
-		Route: m.Route.Clone(),
-		Name:  m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
+		Route: m.Route.Clone(), LaunchRoute: m.LaunchRoute.Clone(),
+		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
 		Repo: m.Repo, WorkingCopyID: gitx.WorkingCopyID(m.Dir), Title: m.Title, TitleSetBy: m.TitleSetBy,
 		PlanReviewers: planReviewersOrEmpty(m.PlanReviewers),
 		Display:       session.Display(m), Color: m.Color, Label: m.Label,

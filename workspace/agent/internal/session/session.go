@@ -220,6 +220,9 @@ type Session struct {
 	// that has none. The Control Plane reads it to refuse a scheduled fire whose route does not
 	// match the session it would send to.
 	Route *routes.Selection `json:"route,omitempty"`
+	// LaunchRoute mirrors Meta.LaunchRoute (ADR 0138 D11): what the session was launched on,
+	// absent for a session created before the record existed.
+	LaunchRoute *routes.Launch `json:"launchRoute,omitempty"`
 	// Subdir mirrors Meta.Subdir: the folder beneath Dir the agent actually runs in
 	// ("" = Dir itself). Dir stays the working copy, so the Console keeps grouping
 	// sessions by copy and only shows this as extra "where inside it" detail.
@@ -628,7 +631,12 @@ type Meta struct {
 	// byte-identical on disk and behaves exactly as before. Never a fallback: a session whose
 	// connection is gone stops with a reason instead of moving to another.
 	Route *routes.Selection `json:"route,omitempty"`
-	Title string            `json:"title"` // user-supplied display title (optional); "" = auto
+	// LaunchRoute is the route and credential binding this session's create resolved to, with or
+	// without an explicit selection (ADR 0138 D11). Written once, when the session is created, and
+	// never re-resolved: it is the launch-time evidence a policy judges the session on. nil on a
+	// session created before the record existed.
+	LaunchRoute *routes.Launch `json:"launchRoute,omitempty"`
+	Title       string         `json:"title"` // user-supplied display title (optional); "" = auto
 	// SuggestedTitle is a headless-LLM-generated candidate the Console offers via a
 	// dismissible banner once the session has had a couple of exchanges and has no
 	// user title yet. "" = none pending (not generated yet, already accepted into

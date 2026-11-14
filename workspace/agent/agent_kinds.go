@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -43,6 +44,13 @@ type kindEntryWire struct {
 	// so the kind snapshot does not carry them twice. The Console offers a route picker only for
 	// a kind that lists some.
 	Routes []string `json:"routes,omitempty"`
+	// FixedRoutes are the routes the kind runs on with no selection (agents.FixedRouter, ADR
+	// 0138 D2), sorted. Live only, for the same reason as Routes.
+	FixedRoutes []string `json:"fixedRoutes,omitempty"`
+	// UsableRoutes are the routes, selectable or fixed, whose credential this Workspace holds now
+	// (agents.CredentialResolver), sorted. Live only. Absent when the kind has no resolver or did
+	// not answer within usableRoutesBudget (unknown, not "none"); an empty list is "none".
+	UsableRoutes *[]string `json:"usableRoutes,omitempty"`
 	// InstructionsReason is instrUnsupportedOf's reason when Instructions is "no".
 	InstructionsReason string `json:"instructionsReason,omitempty"`
 }
@@ -61,6 +69,10 @@ type kindCapsWire struct {
 func buildKindCatalog(live bool) kindCatalogWire {
 	kinds := sessionx.RegisteredKinds()
 	out := kindCatalogWire{Kinds: make([]kindEntryWire, 0, len(kinds))}
+	var usable map[string][]string
+	if live {
+		usable = usableRoutesOf(kinds)
+	}
 	for _, k := range kinds {
 		c := sessionx.AgentOf(k).Caps()
 		e := kindEntryWire{
@@ -85,8 +97,58 @@ func buildKindCatalog(live bool) kindCatalogWire {
 			} else if ra, ok := sessionx.AgentOf(k).(agents.RouteAdapter); ok {
 				e.Routes = slices.Sorted(slices.Values(ra.Routes()))
 			}
+			if f := agents.FixedRoutesOf(sessionx.AgentOf(k)); len(f) > 0 {
+				e.FixedRoutes = slices.Sorted(slices.Values(f))
+			}
+			if u, ok := usable[k]; ok {
+				u = slices.Sorted(slices.Values(u))
+				if u == nil {
+					u = []string{}
+				}
+				e.UsableRoutes = &u
+			}
 		}
 		out.Kinds = append(out.Kinds, e)
+	}
+	return out
+}
+
+// usableRoutesBudget bounds how long the catalog waits for the kinds' UsableRoutes. Some read a
+// cached CLI probe that is cold right after the Agent starts (cursor, kiro: seconds); the catalog
+// is on the Console's boot path, so a kind that misses the budget is reported as unknown rather
+// than holding the answer up.
+var usableRoutesBudget = 2 * time.Second
+
+// usableRoutesOf asks every kind with an agents.CredentialResolver for its usable routes, in
+// parallel, and returns the answers that arrived within usableRoutesBudget.
+func usableRoutesOf(kinds []string) map[string][]string {
+	type answer struct {
+		kind   string
+		routes []string
+	}
+	ch := make(chan answer, len(kinds))
+	n := 0
+	for _, k := range kinds {
+		a, ok := sessionx.RegisteredAgent(k)
+		if !ok {
+			continue
+		}
+		cr, ok := a.(agents.CredentialResolver)
+		if !ok {
+			continue
+		}
+		n++
+		go func() { ch <- answer{k, cr.UsableRoutes()} }()
+	}
+	out := map[string][]string{}
+	timeout := time.After(usableRoutesBudget)
+	for ; n > 0; n-- {
+		select {
+		case a := <-ch:
+			out[a.kind] = a.routes
+		case <-timeout:
+			return out
+		}
 	}
 	return out
 }

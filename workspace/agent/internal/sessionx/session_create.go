@@ -638,6 +638,9 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		MuseContributorMode: contributorModeOn(c.kind),
 	}
 	applyCreateLinks(&meta, req)
+	// After the route has been checked and bound (checkRoute), before anything starts: the record
+	// is what the session launches on.
+	meta.LaunchRoute = launchRouteOf(meta)
 	// pending from the first write of the meta: the pane must not offer a resend while the
 	// delivery in launch may still be typing (ADR 0100 decision 2).
 	if strings.TrimSpace(req.InitialPrompt) != "" {
