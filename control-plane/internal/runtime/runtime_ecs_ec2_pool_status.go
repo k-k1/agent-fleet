@@ -26,11 +26,19 @@ type ec2SlotView struct {
 	Registered   bool   `json:"registered"` // ECS accepts tasks on it
 	Workspace    string `json:"workspace"`  // occupant, "" = free
 	IdleMinutes  int    `json:"idle_minutes"`
-	// Quarantined: this box failed to mount a home and has been taken out of the pool
-	// (decision 20). It is shown rather than hidden because it keeps billing until somebody
-	// terminates it, and because "the pool shrank by one" is not an explanation.
-	Quarantined      bool   `json:"quarantined"`
+	// Quarantined: this box is held out of the pool, whichever way it got there: it failed
+	// to mount a home or was abandoned as lost (af-role=quarantined, decision 20), or the
+	// dark-slot ladder's rung L2 holds it (af-quarantine-* record, the row stays a slot). It
+	// is shown rather than hidden because it keeps billing, and because "the pool shrank by
+	// one" is not an explanation. Quarantined and Rung never contradict: a quarantined row's
+	// Rung is "quarantined", and that rung only ever appears on a quarantined row.
+	Quarantined bool `json:"quarantined"`
+	// QuarantineReason is never empty on a quarantined row (quarantineReasonUnrecorded stands
+	// in when the box carries none).
 	QuarantineReason string `json:"quarantine_reason"`
+	// Terminable: af-role=quarantined, the only kind the operator's Terminate accepts. An L2
+	// row keeps a slot's actions, because nothing locks a Start that is choosing it out.
+	Terminable bool `json:"terminable,omitempty"`
 	// TemplateVersion is the launch template version the slot was launched from, and
 	// TemplateOutdated whether that is older than $Latest (slotTemplateOutdated) — user data
 	// is read only at launch, so an outdated slot runs the old one until it is replaced.
@@ -61,6 +69,10 @@ type ec2SlotView struct {
 	WedgedSince string `json:"wedged_since,omitempty"`
 	WedgedRung  string `json:"wedged_rung,omitempty"`
 }
+
+// quarantineReasonUnrecorded is shown for a held-out box whose reason tag is missing or
+// empty (written by an older release, or lost), so the Console never renders a bare row.
+const quarantineReasonUnrecorded = "no reason recorded"
 
 // Values of ec2SlotView.Rung (ADR 0121 decision 5). Observing comes from the af-dark-since
 // stamp; rescuing, blocked and rescued from the af-rescue marker; quarantined from a quarantined
@@ -411,7 +423,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 				s.IdleMinutes = int(now.Sub(at).Minutes())
 			}
 			if ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined {
-				s.Quarantined = true
+				s.Quarantined, s.Terminable = true, true
 				s.QuarantineReason = ec2TagValue(inst.Tags, ec2TagQuarantineReason)
 			}
 			var reasons []string
@@ -422,11 +434,20 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 			// A void record is not a quarantine: the view reads the box without it.
 			view := inst
 			if q, held := probe.quarantineInForce(ctx, inst.Tags, id); held {
-				s.QuarantineReason = q.Reason // rung L2: the row stays a slot (Quarantined is the role's)
+				s.Quarantined = true // rung L2: the row stays a slot (Terminable is the role's)
+				if q.Reason != "" || s.QuarantineReason == "" {
+					s.QuarantineReason = q.Reason
+				}
 			} else {
 				view.Tags = withoutQuarantineRecords(inst.Tags)
 			}
 			s.DarkSince, s.Rung = darkView(view)
+			if s.Quarantined {
+				s.Rung = darkRungQuarantined
+				if s.QuarantineReason == "" {
+					s.QuarantineReason = quarantineReasonUnrecorded
+				}
+			}
 			s.WedgedSince, s.WedgedRung = wedgedView(inst)
 			st.Slots = append(st.Slots, s)
 		}
@@ -562,7 +583,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 	slotsInUse, slotRunning := 0, map[string]bool{}
 	for _, s := range st.Slots {
 		if s.Quarantined {
-			continue // the same set BakeBlocked counts: af-role=slot, quarantine excluded
+			continue // the same set BakeBlocked counts: af-role=slot, every held-out box (role or rung L2) excluded
 		}
 		slotsInUse++
 		slotRunning[s.InstanceID] = s.State == "running"

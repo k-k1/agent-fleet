@@ -640,3 +640,86 @@ func TestQuarantineCarryLeaseLapsingDuringItsCallStopsTheAttempts(t *testing.T) 
 		})
 	}
 }
+
+// The pool view's quarantined flag and rung describe the same fact, and a held-out row always
+// says why: whichever way the box was taken out of the pool.
+func TestPoolViewQuarantineFlagsAgreeOnEveryPath(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name       string
+		setup      func(w *rescueWorld)
+		wantHeld   bool
+		wantTerm   bool
+		wantReason string // "" = any non-empty
+	}{
+		{"healthy slot", func(w *rescueWorld) {}, false, false, ""},
+		{"rung L2 in force", func(w *rescueWorld) {
+			w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: w.count(), Reason: "repeat: x", At: time.Now()})
+		}, true, false, "repeat: x"},
+		{"rung L2 with no reason", func(w *rescueWorld) {
+			w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: w.count(), Reason: "", At: time.Now()})
+		}, true, false, quarantineReasonUnrecorded},
+		{"slot lost, reason recorded", func(w *rescueWorld) {
+			w.h.ec2.setInstanceTag("i-dark", EC2TagRole, ec2RoleQuarantined)
+			w.h.ec2.setInstanceTag("i-dark", ec2TagQuarantineReason, "slot lost: agent gone")
+		}, true, true, "slot lost: agent gone"},
+		{"role quarantined, reason missing, dark stamp present", func(w *rescueWorld) {
+			w.h.ec2.setInstanceTag("i-dark", EC2TagRole, ec2RoleQuarantined)
+			st := darkStamp{since: time.Now().Add(-time.Hour), launch: w.h.ec2.instances["i-dark"].LaunchTime.UTC().Truncate(time.Second)}
+			w.h.ec2.setInstanceTag("i-dark", ec2TagDarkSince, st.String())
+		}, true, true, quarantineReasonUnrecorded},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := quarantineWorld(t, false)
+			tc.setup(w)
+			st, err := w.f.PoolStatus(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, sl := range st.Slots {
+				if sl.InstanceID != "i-dark" {
+					continue
+				}
+				if sl.Quarantined != tc.wantHeld || sl.Terminable != tc.wantTerm {
+					t.Fatalf("quarantined=%v terminable=%v, want %v %v (%+v)", sl.Quarantined, sl.Terminable, tc.wantHeld, tc.wantTerm, sl)
+				}
+				if (sl.Rung == darkRungQuarantined) != sl.Quarantined {
+					t.Fatalf("rung %q contradicts quarantined=%v", sl.Rung, sl.Quarantined)
+				}
+				if sl.Quarantined && sl.QuarantineReason == "" {
+					t.Fatal("held-out row has no reason")
+				}
+				if tc.wantReason != "" && sl.QuarantineReason != tc.wantReason {
+					t.Fatalf("reason %q, want %q", sl.QuarantineReason, tc.wantReason)
+				}
+				return
+			}
+			t.Fatal("i-dark missing from the pool view")
+		})
+	}
+}
+
+// The screen's bake-capacity count and the baker's own (BakeBlocked) must agree when a rung-L2
+// box is held out: both leave it out of the slots in use.
+func TestPoolViewBakeCountAgreesWithBakeBlockedWithAnL2Slot(t *testing.T) {
+	ctx := context.Background()
+	w := quarantineWorld(t, false)
+	w.f.pool.maxSlots = 4
+	w.h.ec2.addSlot("i-n1", "ap-northeast-1a", "m7i.large", true, false)
+	w.h.ec2.addSlot("i-n2", "ap-northeast-1a", "m7i.large", true, false)
+	w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: w.count(), Reason: "repeat: x", At: time.Now()})
+
+	blocked, _, err := w.f.BakeBlocked(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := w.f.PoolStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := st.Goldens[0]
+	if blocked || g.Phase == EC2BakePhaseBlocked {
+		t.Fatalf("2 ordinary slots of 4 plus an L2 slot: BakeBlocked=%v, screen phase=%q (slots in use %d); neither may count the L2 box", blocked, g.Phase, g.SlotsInUse)
+	}
+}
