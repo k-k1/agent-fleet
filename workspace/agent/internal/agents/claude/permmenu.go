@@ -252,7 +252,8 @@ var permDashRuleRe = regexp.MustCompile(`^\s*╌{10,}\s*$`)
 // a command (measured: bash_four_options.txt); the payload holds the command as it was before. CheckTargetCommand accepts it in
 // front of any simple command (stripRtk); this one-line comparison only at the start.
 func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
-	return m.checkTarget(detail, cwd, nil)
+	c, _ := m.checkTarget(detail, cwd, nil)
+	return c
 }
 
 // CheckTargetCommand is CheckTarget plus, for a Bash target, the whole command the hook saw
@@ -268,28 +269,38 @@ func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 // Limit: a screen drawn identically for P wrapped by the terminal and for Q with a real newline
 // where a wrap was possible (a pane-wide line, or a next word that would not have fit) cannot be
 // told apart by any reading of the screen, and matches. Everything else that differs by a
-// newline, or by lines after the first, is refused.
+// newline, or by lines after the first, is refused. CheckTargetCommandWrap reports when a match
+// rests on such a boundary, so the answer path can close that case off the screen.
 func (m PermissionMenu) CheckTargetCommand(detail, cwd, command string) TargetCheck {
+	c, _ := m.CheckTargetCommandWrap(detail, cwd, command)
+	return c
+}
+
+// CheckTargetCommandWrap is CheckTargetCommand plus ambiguous: the matched command region has a
+// boundary where the terminal could have wrapped, so the same screen also reads as a command that
+// differs from this one by a newline (or by a wrap where this one has a newline). ambiguous is
+// meaningful only with TargetMatches and is false for other tools.
+func (m PermissionMenu) CheckTargetCommandWrap(detail, cwd, command string) (_ TargetCheck, ambiguous bool) {
 	// A bare "Bash" (the hook saw an empty command) names nothing to compare; it is not the
 	// untargeted case that CheckTarget lets through.
 	if tool, _, _ := strings.Cut(detail, " · "); strings.TrimSpace(tool) == "Bash" {
 		if _, _, ok := payloadTarget(detail); !ok || strings.TrimSpace(command) == "" {
-			return TargetDiffers
+			return TargetDiffers, false
 		}
 	}
 	return m.checkTarget(detail, cwd, &command)
 }
 
-func (m PermissionMenu) checkTarget(detail, cwd string, command *string) TargetCheck {
+func (m PermissionMenu) checkTarget(detail, cwd string, command *string) (TargetCheck, bool) {
 	tool, target, ok := payloadTarget(detail)
 	if !ok {
-		return TargetUnchecked
+		return TargetUnchecked, false
 	}
 	if !m.BodyOK {
 		if m.Clipped && tool == "Bash" && command != nil && strings.HasPrefix(normalizeCommand(*command), target) {
 			return m.checkClippedCommand(*command)
 		}
-		return TargetDiffers
+		return TargetDiffers, false
 	}
 	truncated := strings.HasSuffix(strings.TrimSpace(detail), "…")
 	titles, known := dialogTitles[tool]
@@ -298,7 +309,7 @@ func (m PermissionMenu) checkTarget(detail, cwd string, command *string) TargetC
 		body = body[1:]
 	}
 	if !known || len(body) == 0 {
-		return TargetDiffers
+		return TargetDiffers, false
 	}
 	title := strings.TrimSpace(body[0])
 	titled := false
@@ -306,7 +317,7 @@ func (m PermissionMenu) checkTarget(detail, cwd string, command *string) TargetC
 		titled = titled || t == title
 	}
 	if !titled {
-		return TargetDiffers
+		return TargetDiffers, false
 	}
 	// The target region: lines up to the first dashed rule (file tools), or between the first
 	// and the second (Bash).
@@ -316,7 +327,7 @@ func (m PermissionMenu) checkTarget(detail, cwd string, command *string) TargetC
 		before = append(before, body[i])
 	}
 	if i >= len(body) {
-		return TargetDiffers // no fenced region: the layout is not the one measured
+		return TargetDiffers, false // no fenced region: the layout is not the one measured
 	}
 	for i++; i < len(body) && !permDashRuleRe.MatchString(body[i]); i++ {
 		between = append(between, body[i])
@@ -324,18 +335,22 @@ func (m PermissionMenu) checkTarget(detail, cwd string, command *string) TargetC
 	if tool == "Bash" {
 		// The description sits above the first rule and is not the command.
 		if i >= len(body) {
-			return TargetDiffers
+			return TargetDiffers, false
 		}
 		between, width := stripCommandBar(between, m.RuleWidth)
 		if command != nil {
 			// The payload's target must be the start of that command, or the two were read from
 			// different prompts. The whole command is then compared in place of the first line.
-			if !strings.HasPrefix(normalizeCommand(*command), target) || !matchFullCommand(between, *command, width, false) {
-				return TargetDiffers
+			if !strings.HasPrefix(normalizeCommand(*command), target) {
+				return TargetDiffers, false
 			}
-			return TargetMatches
+			ok, amb := matchFullCommandWrap(between, *command, width, false)
+			if !ok {
+				return TargetDiffers, false
+			}
+			return TargetMatches, amb
 		}
-		return matchLogicalLine(between, target, truncated, width, func(shown string) bool { return shown == target || shown == "rtk "+target })
+		return matchLogicalLine(between, target, truncated, width, func(shown string) bool { return shown == target || shown == "rtk "+target }), false
 	}
 	cands := []string{target}
 	if rel, err := filepath.Rel(cwd, target); cwd != "" && err == nil {
@@ -348,7 +363,7 @@ func (m PermissionMenu) checkTarget(detail, cwd string, command *string) TargetC
 			}
 		}
 		return false
-	})
+	}), false
 }
 
 // cols is the display width of s, and whether it can be trusted. East Asian wide runes take
@@ -775,6 +790,13 @@ func parseHeredoc(s string) (d heredocDelim, n int, ok bool) {
 // With tail set, region is only the end of the command (the dialog's top is clipped): its first
 // line may start anywhere in the command, and the reconstruction must be a suffix of it.
 func matchFullCommand(region []string, command string, width int, tail bool) bool {
+	ok, _ := matchFullCommandWrap(region, command, width, tail)
+	return ok
+}
+
+// matchFullCommandWrap is matchFullCommand plus whether any boundary of the region could have
+// been a wrap: there the screen reads as more than one command text.
+func matchFullCommandWrap(region []string, command string, width int, tail bool) (ok, ambiguous bool) {
 	var lines []string
 	for _, ln := range region {
 		lines = append(lines, strings.TrimRight(strings.TrimPrefix(ln, " "), " \t"))
@@ -786,13 +808,13 @@ func matchFullCommand(region []string, command string, width int, tail bool) boo
 		lines = lines[:len(lines)-1]
 	}
 	if len(lines) == 0 {
-		return false
+		return false, false
 	}
 	opts := make([][]string, len(lines)-1)
 	for k := range opts {
 		c, ok := cols(lines[k])
 		if !ok {
-			return false // unknown width with more lines below: cannot say how it was broken
+			return false, false // unknown width with more lines below: cannot say how it was broken
 		}
 		switch {
 		case width > 0 && c+1 >= width-1:
@@ -807,9 +829,12 @@ func matchFullCommand(region []string, command string, width int, tail bool) boo
 			opts[k] = []string{"\n"}
 		}
 	}
+	for _, o := range opts {
+		ambiguous = ambiguous || len(o) > 1
+	}
 	want := stripRtk(normalizeCommand(command), false)
 	if want == "" {
-		return false
+		return false, false
 	}
 	var try func(i int, shown string) bool
 	try = func(i int, shown string) bool {
@@ -835,7 +860,7 @@ func matchFullCommand(region []string, command string, width int, tail bool) boo
 		}
 		return false
 	}
-	return try(1, lines[0])
+	return try(1, lines[0]), ambiguous
 }
 
 // clippedMinLines is the fewest command lines a clipped dialog must show before its tail counts as
@@ -856,7 +881,7 @@ const clippedMinLines = 8
 // tail matches, whatever its first lines. The prompt token still binds the answer to the payload.
 // Refusing instead made every Bash prompt taller than the pane (a heredoc on a phone-width pane)
 // unanswerable from the card.
-func (m PermissionMenu) checkClippedCommand(command string) TargetCheck {
+func (m PermissionMenu) checkClippedCommand(command string) (TargetCheck, bool) {
 	var rules []int
 	for i, ln := range m.Body {
 		if permDashRuleRe.MatchString(ln) {
@@ -864,16 +889,16 @@ func (m PermissionMenu) checkClippedCommand(command string) TargetCheck {
 		}
 	}
 	if len(rules) == 0 || len(rules) > 2 {
-		return TargetDiffers
+		return TargetDiffers, false
 	}
 	// The dashed rule spans the pane, as the top rule does.
 	width := len([]rune(strings.TrimSpace(m.Body[rules[0]])))
 	if len(rules) == 2 {
 		region, w := stripCommandBar(m.Body[rules[0]+1:rules[1]], width)
-		if matchFullCommand(region, command, w, false) {
-			return TargetMatches
+		if ok, amb := matchFullCommandWrap(region, command, w, false); ok {
+			return TargetMatches, amb
 		}
-		return TargetDiffers
+		return TargetDiffers, false
 	}
 	region, w := stripCommandBar(m.Body[:rules[0]], width)
 	shown := 0
@@ -883,7 +908,8 @@ func (m PermissionMenu) checkClippedCommand(command string) TargetCheck {
 		}
 	}
 	if shown < clippedMinLines || !matchFullCommand(region, command, w, true) {
-		return TargetDiffers
+		return TargetDiffers, false
 	}
-	return TargetMatches
+	// Only the tail is on screen: it reads as every command that ends this way.
+	return TargetMatches, true
 }

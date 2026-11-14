@@ -311,6 +311,41 @@ func TestCheckTargetCommandNewlineAtPaneEdge(t *testing.T) {
 	}
 }
 
+// Wide runes count two columns: a CJK line that reaches the pane edge is a possible wrap, so a
+// hard-wrapped command (no blank between the lines) still matches, and only the command's text
+// tells the newline variants apart. Trailing blanks on the drawn line are not part of it.
+func TestCheckTargetCommandWideRunesAtPaneEdge(t *testing.T) {
+	first := "echo " + strings.Repeat("あ", 36) + "a" // 42 runes, 78 columns: the pane edge
+	for _, drawn := range []string{" " + first + "\n", " " + first + "   \n"} {
+		m := paneWith(t, "bash_ask_rule_af_label.txt", " echo live-check-3357\n", drawn+" rm -rf build\n")
+		for _, c := range []struct {
+			cmd  string
+			want TargetCheck
+		}{
+			{first + "rm -rf build", TargetMatches},
+			{first + " rm -rf build", TargetMatches},
+			{first + "\nrm -rf build", TargetMatches},
+			{first + "\n\nrm -rf build", TargetDiffers},
+			{first + "rm -rf /", TargetDiffers},
+		} {
+			if got := m.CheckTargetCommand("Bash · "+first, "", c.cmd); got != c.want {
+				t.Errorf("drawn %q, %q: %v, want %v", drawn, c.cmd, got, c.want)
+			}
+		}
+	}
+	// One column short of the edge, with a next word that would have fit: a real newline only.
+	short := "echo " + strings.Repeat("あ", 30)
+	m := paneWith(t, "bash_ask_rule_af_label.txt", " echo live-check-3357\n", " "+short+"\n rm\n")
+	if got := m.CheckTargetCommand("Bash · "+short, "", short+"\nrm"); got != TargetMatches {
+		t.Errorf("newline: %v", got)
+	}
+	for _, sep := range []string{"", " "} {
+		if got := m.CheckTargetCommand("Bash · "+short, "", short+sep+"rm"); got != TargetDiffers {
+			t.Errorf("%q joined as a wrap: %v", sep, got)
+		}
+	}
+}
+
 func TestCheckTargetCommandRefusesBareBash(t *testing.T) {
 	m := menuFixture(t, "bash_ask_rule_af_label.txt")
 	for _, c := range [][2]string{{"Bash", ""}, {"Bash", "  "}, {"Bash · ", ""}, {"Bash", "echo live-check-3357"}} {

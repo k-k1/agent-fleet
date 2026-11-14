@@ -62,8 +62,10 @@ func permissionToken(sid string) string {
 // detail is the payload's "Tool · target" line, and command the whole Bash command beside it
 // ("" for another tool; a Bash payload without one is refused, #3521). A target that cannot be compared (the payload
 // names none) is let through, since the token still binds the answer; a target the dialog does
-// not show, or a dialog whose body cannot be read, is refused as "target_mismatch".
-func permissionKeys(name, choice, detail, command, cwd string) (keys []string, code string) {
+// not show, or a dialog whose body cannot be read, is refused as "target_mismatch". So is a
+// wrap-ambiguous dialog while a newer call has been announced by its PreToolUse hook
+// (newerCallMayBeShown).
+func permissionKeys(sid, name, choice, detail, command, cwd string) (keys []string, code string) {
 	m, ok := readPermissionMenu(name)
 	if !ok {
 		return nil, "menu_unreadable"
@@ -71,7 +73,8 @@ func permissionKeys(name, choice, detail, command, cwd string) (keys []string, c
 	// The token binds an answer to the payload, but claude can draw the next dialog before its
 	// hook rewrites the payload (#3359). Only a dialog that shows the payload's target is the one
 	// the card or button was drawn for.
-	if m.CheckTargetCommand(detail, cwd, command) == claude.TargetDiffers {
+	check, ambiguous := m.CheckTargetCommandWrap(detail, cwd, command)
+	if check == claude.TargetDiffers || newerCallMayBeShown(sid, ambiguous) {
 		return nil, "target_mismatch"
 	}
 	if k, found := m.Key(choice); found {
@@ -81,6 +84,35 @@ func permissionKeys(name, choice, detail, command, cwd string) (keys []string, c
 		return []string{"Escape"}, ""
 	}
 	return nil, "choice_unavailable"
+}
+
+// newerCallMayBeShown reports whether the dialog on screen may belong to another call than the
+// pending one. It matters only when the match is wrap-ambiguous: P wrapped by the terminal and a
+// Q with a real newline at that wrap draw the same screen, so the screen alone matches Q for P
+// (CheckTargetCommandWrap). An unambiguous match pins the dialog to P's exact text.
+//
+// Neither the payload nor the last-tool record can say which call a dialog belongs to: both come
+// from one slot, which a sibling's PreToolUse can overwrite before the dialog's own Notification
+// publishes it (the payload then names the sibling). The calls log can: Claude Code runs
+// PreToolUse before its permission check (the hook's decision can allow, deny or ask), so every
+// tracked call whose dialog can be on screen has started and not ended. The answer goes through
+// only when that set is exactly the pending call, by tool_use id. Anything else (another call
+// running, a background subagent's included; an unknown id; an unreadable log; nothing running)
+// refuses, and the user answers in the terminal.
+//
+// Left open: a call whose PreToolUse hook never recorded it (the hook failed or timed out, and
+// claude goes on to the dialog), and a call that started before the last turn end, which resets
+// the log.
+func newerCallMayBeShown(sid string, ambiguous bool) bool {
+	if !ambiguous {
+		return false
+	}
+	running, err := status.InFlightCalls(sid)
+	if err != nil || len(running) != 1 {
+		return true
+	}
+	pending, ok := status.ReadPendingPermissionToolUseID(sid)
+	return !ok || running[0] != pending
 }
 
 // permissionChoices is what the poll reports beside pendingPermission, so the card offers only
@@ -262,7 +294,7 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "not_running", err.Error())
 		return
 	}
-	keys, code := permissionKeys(name, req.Choice, detail, command, meta.Dir)
+	keys, code := permissionKeys(sid, name, req.Choice, detail, command, meta.Dir)
 	// The hook and the terminal do not take permRespondLock, so the prompt can change while the
 	// pane is captured; the menu just read may then be the next prompt's. Re-check after the
 	// capture and send nothing on a change.

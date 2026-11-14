@@ -302,7 +302,7 @@ func answerClaudePermission(meta session.Meta, choice, expect string, en bool) (
 	if done, ok := permDecided.Load(meta.Name); ok && done == token {
 		return Fb(en, "この確認はもう完了しています", "This prompt is no longer active"), nil
 	}
-	keys, code := permissionKeys(meta.Name, choice, detail, command, meta.Dir)
+	keys, code := permissionKeys(sid, meta.Name, choice, detail, command, meta.Dir)
 	if code == "" && permissionToken(sid) != token {
 		return Fb(en, "別の確認に変わりました。Console で確かめてください", "The prompt changed — check it in the Console"), nil
 	}
