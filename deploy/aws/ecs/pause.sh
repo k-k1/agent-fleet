@@ -119,11 +119,22 @@ ws_services() {
   done
 }
 
+# described_rows <text> — splits what a `[length(failures), join(' ', <rows>)]` query printed
+# into _nf and _rows, and succeeds only when failures[] was empty. Take failures and the rows
+# from the same response (never a second call) so one cannot be dropped while the other is read.
+described_rows() {
+  case "$1" in
+    *$'\t'*) _nf="${1%%$'\t'*}"; _rows="${1#*$'\t'}" ;;
+    *) _nf="$1"; _rows="" ;;
+  esac
+  [ "$_nf" = 0 ]
+}
+
 # ws_tasks_alive — Workspace tasks that have not reached STOPPED, whatever their service's desired
 # count: a workspace its user stopped a moment ago, or one an earlier pause cut short, still has
 # connections open through the egress gateway. Fails when it cannot tell.
 ws_tasks_alive() {
-  local st arns all="" batch i got
+  local st arns all="" batch i got t
   for st in RUNNING STOPPED; do
     arns="$("${AWS[@]}" ecs list-tasks --cluster "$CLUSTER" --desired-status "$st" \
       --query taskArns --output text)" || return 1
@@ -135,16 +146,17 @@ ws_tasks_alive() {
   while [ $# -gt 0 ]; do
     batch=""; i=0
     while [ $# -gt 0 ] && [ $i -lt 100 ]; do batch="$batch $1"; shift; i=$((i + 1)); done
-    # A 200 can carry a task in failures[]; a task that cannot be read is not a task that is gone.
+    # failures[] and the tasks come from ONE response: a 200 can carry a task in failures[], and a
+    # second call for the data could be answered differently. A task that cannot be read is not a
+    # task that is gone.
     # shellcheck disable=SC2086
     got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $batch \
-      --query 'failures[].arn' --output text)" || return 1
-    case "$got" in ''|None) ;; *) return 1 ;; esac
+      --query "[length(failures), join(' ', tasks[?starts_with(group,'service:af-ws-') && lastStatus!='STOPPED'].taskArn)]" \
+      --output text)" || return 1
+    described_rows "$got" || return 1
+    got="$_rows"
     # shellcheck disable=SC2086
-    got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $batch \
-      --query "tasks[?starts_with(group,'service:af-ws-') && lastStatus!='STOPPED'].taskArn" --output text)" || return 1
-    case "$got" in None) got="" ;; esac
-    [ -z "$got" ] || echo "$got"
+    for t in $got; do echo "$t"; done
   done
 }
 
@@ -177,18 +189,13 @@ golden_bake() {
   done
   while [ ${#names[@]} -gt 0 ]; do
     batch=("${names[@]:0:10}"); names=("${names[@]:10}")
-    # A 200 can still carry the service in failures[]: that is "cannot tell", not "not running".
-    if ! got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "${batch[@]}" \
-        --query 'failures[].arn' --output text 2>/dev/null)"; then
-      echo "(cannot tell: the golden services could not be read)"; return 0
-    fi
-    case "$got" in ''|None) ;; *) echo "(cannot tell: the golden services could not be read)"; return 0 ;; esac
     # shellcheck disable=SC2016  # backticks are JMESPath literals
     if ! got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "${batch[@]}" \
-        --query 'services[?runningCount>`0`].serviceName' --output text 2>/dev/null)"; then
+        --query "[length(failures), join(' ', services[?runningCount>\`0\`].serviceName)]" --output text 2>/dev/null)" \
+        || ! described_rows "$got"; then
       echo "(cannot tell: the golden services could not be read)"; return 0
     fi
-    case "$got" in None) got="" ;; esac
+    got="$_rows"
     for a in $got; do out="$out $a (service running)"; done
   done
   if ! alive="$(ws_tasks_alive 2>/dev/null)"; then
@@ -199,10 +206,11 @@ golden_bake() {
   while [ ${#tasks[@]} -gt 0 ]; do
     batch=("${tasks[@]:0:100}"); tasks=("${tasks[@]:100}")
     if ! got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks "${batch[@]}" \
-        --query 'tasks[].group' --output text 2>/dev/null)"; then
+        --query "[length(failures), join(' ', tasks[].group)]" --output text 2>/dev/null)" \
+        || ! described_rows "$got"; then
       echo "(cannot tell: the golden tasks could not be read)${out:+ —$out}"; return 0
     fi
-    case "$got" in None) got="" ;; esac
+    got="$_rows"
     for t in $got; do ! golden_name "${t#service:}" || out="$out ${t#service:} (task not STOPPED)"; done
   done
   echo "${out:-(none)}"

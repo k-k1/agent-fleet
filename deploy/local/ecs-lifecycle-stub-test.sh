@@ -424,13 +424,16 @@ case "$args" in
     : ;;
   # --status's golden-bake read: golden services with runningCount>0 (STUB_GOLDEN=service: desired
   # 0, running 1). Before the CP-stop wait's runningCount branch below, which would swallow it.
-  *"ecs describe-services"*"[?runningCount>"*)
+  *"ecs describe-services"*"[length(failures), join("*"runningCount>"*)
+    # One response carries failures[] AND the rows (STUB_WS_FAILURES=1: failures non-empty even
+    # though the service is listed).
     case "${STUB_GOLDEN:-0}" in
-      service) echo "af-ws-af-golden-af-golden-seed" ;;
-      arm) echo "af-ws-af-golden-af-golden-probe-arm64" ;;
-      lookalike) echo "af-ws-af-golden-af-golden-seed-extra af-ws-af-golden-af-golden-other" ;;
-      *) echo "" ;;
-    esac ;;
+      service) names="af-ws-af-golden-af-golden-seed" ;;
+      arm) names="af-ws-af-golden-af-golden-probe-arm64" ;;
+      lookalike) names="af-ws-af-golden-af-golden-seed-extra af-ws-af-golden-af-golden-other" ;;
+      *) names="" ;;
+    esac
+    printf '%s\t%s\n' "${STUB_WS_FAILURES:-0}" "$names" ;;
   # Do not confuse the runningCount query (waiting for the CP to stop) with the listing of
   # services whose desired count is > 0. Return a name for the former and the wait loop
   # spins for five minutes.
@@ -518,18 +521,17 @@ case "$args" in
     esac ;;
   *"ecs list-tasks"*"--desired-status RUNNING"*) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
   *"ecs list-tasks"*) echo "None" ;;
-  # A task describe-tasks answers 200 for but lists in failures[] (STUB_TASK_FAILED=1).
-  *"ecs describe-tasks"*"--query failures[].arn"*)
-    [ "${STUB_TASK_FAILED:-0}" = 1 ] && echo "arn:aws:ecs:x:1:task/t-cluster/t1" || echo "None" ;;
   # --status's golden-bake read of the tasks ws_tasks_alive found. STUB_GOLDEN=task: one of them
   # belongs to the seed's service, which no longer exists.
-  *"ecs describe-tasks"*"--query tasks[].group"*)
+  *"ecs describe-tasks"*"tasks[].group"*)
+    # STUB_GOLDEN_TASK_FAILED=1: only this call (not ws_tasks_alive's) answers with a failure.
     case "${STUB_GOLDEN:-0}" in
-      task) echo "service:af-ws-af-golden-af-golden-probe" ;;
-      armtask) echo "service:af-ws-af-golden-af-golden-seed-arm64" ;;
-      lookalike) echo "service:af-ws-af-golden-af-golden-seed-extra service:af-ws-af-golden-af-golden-other" ;;
-      *) echo "" ;;
-    esac ;;
+      task) rows="service:af-ws-af-golden-af-golden-probe" ;;
+      armtask) rows="service:af-ws-af-golden-af-golden-seed-arm64" ;;
+      lookalike) rows="service:af-ws-af-golden-af-golden-seed-extra service:af-ws-af-golden-af-golden-other" ;;
+      *) rows="" ;;
+    esac
+    printf '%s\t%s\n' "${STUB_GOLDEN_TASK_FAILED:-0}" "$rows" ;;
   # update.sh's closing hint: the subnet of each running workspace task's ENI.
   # [failures, tasks, subnet]. STUB_TASK_FAILURES=1: answered 200 with the task in failures[].
   *"ecs describe-tasks"*"subnetId"*)
@@ -537,12 +539,14 @@ case "$args" in
     if [ "${STUB_TASK_FAILURES:-0}" = 1 ]; then printf '1\t0\tNone\n'
     else printf '0\t1\t%s\n' "${STUB_TASK_SUBNET:-subnet-priv0}"; fi ;;
   *"ecs describe-tasks"*)
+    # ws_tasks_alive's read: [length(failures), tasks]. STUB_TASK_FAILED=1: failures non-empty.
     case "${STUB_WS_TASKS:-gone}" in
-      stuck) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
-      late) [ "$(grep -c "ecs describe-tasks" "$STUB_LOG")" -ge 2 ] && echo "" || echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
+      stuck) rows="arn:aws:ecs:x:1:task/t-cluster/t1" ;;
+      late) [ "$(grep -c "ecs describe-tasks" "$STUB_LOG")" -ge 2 ] && rows="" || rows="arn:aws:ecs:x:1:task/t-cluster/t1" ;;
       fail) echo "An error occurred (AccessDeniedException) when calling the DescribeTasks operation" >&2; exit 254 ;;
-      *) echo "" ;;
-    esac ;;
+      *) rows="" ;;
+    esac
+    printf '%s\t%s\n' "${STUB_TASK_FAILED:-0}" "$rows" ;;
   # The workspace egress address handed back to standup.sh (#2728): its address and the
   # interface holding it. STUB_GW_EIP: free (default), elsewhere (another interface), gone.
   *"ec2 describe-addresses --allocation-ids"*)
@@ -2687,6 +2691,11 @@ grep -q "golden bake   : (cannot tell" "$WORK/out4k2h" || fail "a service in fai
 : > "$LOG"
 STUB_GOLDEN=task STUB_WS_TASKS=stuck STUB_TASK_FAILED=1 "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2i" 2>&1 </dev/null
 grep -q "golden bake   : (cannot tell" "$WORK/out4k2i" || fail "a task in failures[] was reported as stopped"
+# failures[] reaches only the second describe (the golden tasks'): the first one's answer must
+# not be trusted on its own.
+: > "$LOG"
+STUB_GOLDEN=task STUB_WS_TASKS=stuck STUB_GOLDEN_TASK_FAILED=1 "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2j" 2>&1 </dev/null
+grep -q "golden bake   : (cannot tell" "$WORK/out4k2j" || fail "a failure that came only with the second describe was dropped"
 hasnt "update-service"; hasnt "stop-instances"
 
 echo "== case 4l: a capture taken while paused (NatEnabled=false) still stands up WITH a NAT =="
