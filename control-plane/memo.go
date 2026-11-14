@@ -151,6 +151,20 @@ func memoListFor(ctx context.Context, st store.MemoStore, membershipID string) (
 	if err != nil {
 		return nil, err
 	}
+	// A send reservation left by a CP that died is taken back by MemoTx. Lists are polled,
+	// so the transaction is opened only when the list shows a stale one.
+	stale := time.Now().UTC().Add(-store.MemoSendStaleAfter).Format(time.RFC3339)
+	for _, m := range rows {
+		if m.SendToken != "" && m.SendStartedAt < stale {
+			if err := st.MemoTx(ctx, membershipID, func(store.MemoTxOps) error { return nil }); err != nil {
+				return nil, err
+			}
+			if rows, err = st.ListMemos(ctx, membershipID, cutoff); err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
 	out := make([]memoDTO, 0, len(rows))
 	for _, m := range rows {
 		out = append(out, memoToDTO(m))
@@ -765,12 +779,12 @@ func (a memoAPI) deleteCategory(via memoVia) func(http.ResponseWriter, *http.Req
 // between the session HTTP handler, the internal operator-token bridge, and the CP MCP
 // tool — every face funnels through this so the "send once + mark sent" stays atomic.
 //
-// The memos are read, checked and stamped sent (a queue message delivered) in one MemoTx
-// before the send, and the stamp is undone if the send fails. Checking first and stamping
-// after the send let a concurrent move or edit slip between the two: a workspace flush sent a
-// note that had just entered a queue, and the stamp marked an edit nobody sent as delivered.
-// With the stamp first, a later edit of a queue message meets a delivered one and is refused,
-// and a sent note moved into a queue enters it delivered.
+// A flush runs in three steps. It reserves the rows (send_token) in one MemoTx that reads and
+// checks them, sends with no lock held, and then settles the rows that still carry its token.
+// While a row is reserved, another flush of it is refused and a queue message in it cannot
+// change, so what is stamped delivered is what was sent. Nothing says sent before the send
+// has succeeded, and a reservation left by a CP that died is taken back by MemoTx after
+// store.MemoSendStaleAfter.
 func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, membershipID, sessionName string, ids []string, textOverride string, via memoVia) (map[string]any, *apiError) {
 	sessionName = strings.TrimSpace(sessionName)
 	if sessionName == "" {
@@ -779,9 +793,8 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 	if len(ids) == 0 {
 		return nil, &apiError{http.StatusBadRequest, "no_ids", "ids is required"}
 	}
-	sentAt := store.NowTS()
+	token := store.NewID()
 	var memos []store.Memo
-	before := map[string]store.Memo{} // each stamped row as it was, for the undo
 	err := st.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
 		memos = make([]store.Memo, 0, len(ids))
 		// Resolve the requested ids to owned memos (foreign/unknown ids are dropped).
@@ -807,6 +820,9 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 			}
 		}
 		for _, m := range memos {
+			if m.SendToken != "" {
+				return memoTxFail(&apiError{http.StatusConflict, errCodeMemoSending, "this memo is being sent"})
+			}
 			// A claimed message belongs to its delivery: nobody sends it by hand.
 			if m.State == store.MemoStateClaimed {
 				return memoTxFail(&apiError{http.StatusConflict, errCodeMemoLocked, "this message has been taken by a delivery"})
@@ -823,17 +839,14 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 				}
 			}
 		}
+		reserved := map[string]bool{}
 		for _, m := range memos {
-			if _, done := before[m.ID]; done {
+			if reserved[m.ID] {
 				continue
 			}
-			before[m.ID] = m
-			next := m
-			next.SentAt = sentAt
-			if next.State != "" {
-				next.State = store.MemoStateDelivered
-			}
-			if err := tx.WriteMemo(next); err != nil {
+			reserved[m.ID] = true
+			m.SendToken, m.SendStartedAt = token, store.NowTS()
+			if err := tx.WriteMemo(m); err != nil {
 				return err
 			}
 		}
@@ -853,13 +866,18 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 	if o := memos[0]; o.OriginItemID != "" {
 		message = memoOriginLine(o) + "\n\n" + message
 	}
-	if aerr := sendMemoPrompt(ctx, rt, sessionName, message); aerr != nil {
-		if err := memoUndoSent(context.WithoutCancel(ctx), st, membershipID, sentAt, before); err != nil {
-			log.Printf("memo flush: undo of the sent stamp failed after a failed send session=%s: %v", sessionName, err)
-		}
-		return nil, aerr
+	sendErr := sendMemoPrompt(ctx, rt, sessionName, message)
+	sentAt := store.NowTS()
+	if err := memoSettleSend(context.WithoutCancel(ctx), st, membershipID, token, memos, sendErr, sentAt); err != nil {
+		// The outcome is known but not recorded. The rows keep the reservation until
+		// MemoSendStaleAfter takes it back: a queue message then becomes unconfirmed and is
+		// never fired again by itself. After a successful send, answering 500 would make the
+		// client send the same text twice, so the send's own outcome is reported.
+		log.Printf("memo flush: settling the send failed session=%s sent=%v: %v", sessionName, sendErr == nil, err)
 	}
-
+	if sendErr != nil {
+		return nil, sendErr
+	}
 	sentIDs := make([]string, len(memos))
 	for i, m := range memos {
 		sentIDs[i] = m.ID
@@ -867,34 +885,40 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 	return map[string]any{"sent": len(sentIDs), "sentAt": sentAt, "ids": sentIDs}, nil
 }
 
-// memoUndoSent takes the stamp of a failed send off each row that still carries it. A queue
-// message goes back to what it was when it is still where it was released, and to held
-// otherwise: it may have moved while it looked delivered, and a release covers one place.
-func memoUndoSent(ctx context.Context, st store.MemoStore, membershipID, sentAt string, before map[string]store.Memo) error {
+// memoSendUnknown is a send whose outcome is unknown: the Agent was not reached or did not
+// answer with one of its own errors. An Agent error (question_pending, not_running, ...) is a
+// refusal, and nothing was sent.
+func memoSendUnknown(aerr *apiError) bool { return aerr != nil && aerr.code == "flush_failed" }
+
+// memoSettleSend records a send's outcome on the rows that still carry its reservation. Sent:
+// sent_at, and a queue message delivered. Refused: as before the flush. Unknown: a held or
+// pending message becomes unconfirmed, because firing it again could do its work twice; a
+// plain note stays unsent, as a failed flush always left it.
+func memoSettleSend(ctx context.Context, st store.MemoStore, membershipID, token string, memos []store.Memo, sendErr *apiError, sentAt string) error {
 	return st.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
-		for id, prev := range before {
-			cur, ok, err := tx.GetMemo(id)
+		done := map[string]bool{}
+		for _, m := range memos {
+			if done[m.ID] {
+				continue
+			}
+			done[m.ID] = true
+			cur, ok, err := tx.GetMemo(m.ID)
 			if err != nil {
 				return err
 			}
-			if !ok || cur.SentAt != sentAt {
+			if !ok || cur.SendToken != token {
 				continue
 			}
 			next := cur
-			next.SentAt = prev.SentAt
-			if cur.State == store.MemoStateDelivered && prev.State != store.MemoStateDelivered {
-				inQ, err := memoInQueue(tx, cur.Repo, cur.Category)
-				if err != nil {
-					return err
+			next.SendToken, next.SendStartedAt = "", ""
+			switch {
+			case sendErr == nil:
+				next.SentAt = sentAt
+				if next.State != "" {
+					next.State, next.ReleaseHash, next.ReleasedAt = store.MemoStateDelivered, "", ""
 				}
-				switch {
-				case !inQ:
-					next.State, next.ReleaseHash, next.ReleasedAt = "", "", ""
-				case prev.State == store.MemoStatePending && memoContentHash(cur) == memoContentHash(prev):
-					next.State, next.ReleaseHash, next.ReleasedAt = prev.State, prev.ReleaseHash, prev.ReleasedAt
-				default:
-					next.State, next.ReleaseHash, next.ReleasedAt = store.MemoStateHeld, "", ""
-				}
+			case memoSendUnknown(sendErr) && (cur.State == store.MemoStateHeld || cur.State == store.MemoStatePending):
+				next.State, next.ReleaseHash, next.ReleasedAt = store.MemoStateUnconfirmed, "", ""
 			}
 			if err := tx.WriteMemo(next); err != nil {
 				return err

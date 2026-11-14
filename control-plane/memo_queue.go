@@ -29,6 +29,7 @@ import (
 // for every code declared there.
 const (
 	errCodeMemoLocked             = "memo_locked"
+	errCodeMemoSending            = "memo_sending"
 	errCodeMemoInQueue            = "memo_in_queue"
 	errCodeMemoQueueCategory      = "memo_queue_category"
 	errCodeMemoInboxInQueue       = "memo_inbox_in_queue"
@@ -38,6 +39,7 @@ const (
 	errCodeMemoRateLimited        = "memo_rate_limited"
 	errCodeMemoQueueNoInstruction = "memo_queue_no_instruction"
 	errCodeMemoQueueBadSettings   = "memo_queue_bad_settings"
+	errCodeMemoQueuesDisabled     = "memo_queues_disabled"
 )
 
 // Bounds on a create into a queue from the token face or /mcp (ADR 0137 section 3). The
@@ -156,6 +158,10 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext bool, via memoVia) (sto
 	moved := inPrev != inNext || memoContentHash(prev) != memoContentHash(next)
 	if prev.State == store.MemoStateClaimed && moved {
 		return next, &apiError{http.StatusConflict, errCodeMemoLocked, "this message has been taken by a delivery and cannot be changed"}
+	}
+	// A queue message in a flush in flight keeps what is being sent until the flush settles.
+	if prev.SendToken != "" && prev.State != "" && moved {
+		return next, &apiError{http.StatusConflict, errCodeMemoSending, "this message is being sent"}
 	}
 	if !inNext {
 		next.State, next.ReleaseHash, next.ReleasedAt = "", "", ""
@@ -376,7 +382,19 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 	return q, nil
 }
 
+// memoQueuesWire is GET /api/memo-queues: the member's queues and whether their tenant lets
+// them create one (tenant.memo_queues). Existing queues are listed whatever the switch says.
+type memoQueuesWire struct {
+	TenantEnabled bool           `json:"tenantEnabled"`
+	Queues        []memoQueueDTO `json:"queues"`
+}
+
 func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	on, err := a.mgr.store.GetTenantMemoQueues(r.Context(), mv.TenantID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
 	qs, err := a.store.ListMemoQueues(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -397,13 +415,23 @@ func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Iden
 			out = append(out, memoQueueToDTO(q, c))
 		}
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, memoQueuesWire{TenantEnabled: on, Queues: out})
 }
 
 // putQueue creates or replaces a category's queue settings. A category that becomes a queue
 // takes its memos in under the rules of a Console write: the member's own become pending,
 // everything else held. A category holding a memo taken in from the inbox cannot become one.
+// Refused while the member's tenant has memo queues off (tenant_memo_queues.go): that switch
+// is what keeps queue rows away from a Control Plane binary without the queue rules.
 func (a memoAPI) putQueue(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	if on, err := a.mgr.store.GetTenantMemoQueues(r.Context(), mv.TenantID); err != nil || !on {
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		writeAPIErr(w, &apiError{http.StatusConflict, errCodeMemoQueuesDisabled, "your tenant has not turned memo queues on"})
+		return
+	}
 	var in memoQueueIn
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})

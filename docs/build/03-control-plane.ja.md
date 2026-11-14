@@ -203,6 +203,8 @@ Workspace を起こさない。
 - **保持**: 送信済みは送信時に消さず 7 日残し、一覧取得時に lazy に掃除する。
 - **キュー**（[decisions/0137](../decisions/0137-message-queues.ja.md) の段 1a）: 設定のある
   カテゴリ（`GET /api/memo-queues`、`PUT` / `DELETE /api/memo-queues/{categoryId}`）がキューで、
+  テナントのスイッチ（`/api/admin/tenants/{slug}/memo-queues`、既定 off）が off の間は `PUT` を拒む。
+  on にするのはすべての CP がこのバイナリになってから（[06](06-data.ja.md)）。
   その中のメモは状態を持つメッセージになる。要求が来た面 — Console・トークン面・`/mcp` — は
   ルートの登録時に決まり、provenance と入るときの状態を決める（`pending` は Console からの
   メンバー自身のメモだけ、ほかは `held`）。`POST /api/memos/release` は held を `pending` に

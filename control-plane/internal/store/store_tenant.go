@@ -69,6 +69,10 @@ type TenantStore interface {
 	// sources (ADR 0133 §8, #3631). Off by default. Unknown tenant = error.
 	GetTenantWatchSources(ctx context.Context, tenantID string) (bool, error)
 	SetTenantWatchSources(ctx context.Context, tenantID string, enabled bool) error
+	// GetTenantMemoQueues / SetTenantMemoQueues: the tenant-wide switch that lets a member make
+	// a memo category a queue (ADR 0137). Off by default. Unknown tenant = error.
+	GetTenantMemoQueues(ctx context.Context, tenantID string) (bool, error)
+	SetTenantMemoQueues(ctx context.Context, tenantID string, enabled bool) error
 }
 
 func (s *SQL) EnsureDefaultTenant(ctx context.Context) (Tenant, error) {
@@ -190,6 +194,20 @@ func (s *SQL) SetTenantWatchSources(ctx context.Context, tenantID string, enable
 func (s *SQL) GetTenantWatchSources(ctx context.Context, tenantID string) (bool, error) {
 	var v int
 	err := s.db.QueryRowContext(ctx, `SELECT watch_sources FROM tenant WHERE id=?`, tenantID).Scan(&v)
+	return v != 0, err
+}
+
+// SetTenantMemoQueues writes the tenant-wide switch for memo queues.
+func (s *SQL) SetTenantMemoQueues(ctx context.Context, tenantID string, enabled bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE tenant SET memo_queues=? WHERE id=?`, b2i(enabled), tenantID)
+	return err
+}
+
+// GetTenantMemoQueues reads it. An unknown tenant is an error, never "enabled": the caller
+// that gates on it fails closed.
+func (s *SQL) GetTenantMemoQueues(ctx context.Context, tenantID string) (bool, error) {
+	var v int
+	err := s.db.QueryRowContext(ctx, `SELECT memo_queues FROM tenant WHERE id=?`, tenantID).Scan(&v)
 	return v != 0, err
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -36,7 +37,18 @@ func memoQueueEnvs(t *testing.T) map[string]*inboxEnv {
 		t.Cleanup(func() { pg.Close() })
 		out["postgres"] = newInboxEnvOn(t, pg)
 	}
+	for _, e := range out {
+		e.memoQueuesOn(true)
+	}
 	return out
+}
+
+// memoQueuesOn sets the tenant switch of members a, b and c (tenant T1).
+func (e *inboxEnv) memoQueuesOn(on bool) {
+	e.t.Helper()
+	if err := e.st.SetTenantMemoQueues(context.Background(), e.t1.ID, on); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 // eachDialect runs f per dialect. The tests that use it are not parallel: dropping several
@@ -204,7 +216,7 @@ func textMemo(repo, category, body string) map[string]any {
 
 func TestMemoQueueSettings(t *testing.T) {
 	eachDialect(t, func(t *testing.T, e *inboxEnv) {
-		if r := e.do("a", "GET", "/api/memo-queues", nil); r.Code != 200 || strings.TrimSpace(r.Body.String()) != "[]" {
+		if r := e.do("a", "GET", "/api/memo-queues", nil); r.Code != 200 || strings.TrimSpace(r.Body.String()) != `{"tenantEnabled":true,"queues":[]}` {
 			t.Fatalf("empty list: %d %s", r.Code, r.Body.String())
 		}
 		cat := e.category("repo-a", "issues")
@@ -253,11 +265,11 @@ func TestMemoQueueSettings(t *testing.T) {
 		if r.Code != 200 || !got.Enabled || got.MaxActive != 6 || got.Batch != 20 || got.Worktree || got.AgentKind != "codex" || got.SpendCapUSD != 5 {
 			t.Fatalf("update: %d %s", r.Code, r.Body.String())
 		}
-		list := decode[[]memoQueueDTO](t, e.do("a", "GET", "/api/memo-queues", nil))
+		list := decode[memoQueuesWire](t, e.do("a", "GET", "/api/memo-queues", nil)).Queues
 		if len(list) != 1 || list[0].CategoryID != cat || !list[0].Enabled {
 			t.Fatalf("list: %+v", list)
 		}
-		if l := decode[[]memoQueueDTO](t, e.do("c", "GET", "/api/memo-queues", nil)); len(l) != 0 {
+		if l := decode[memoQueuesWire](t, e.do("c", "GET", "/api/memo-queues", nil)).Queues; len(l) != 0 {
 			t.Fatalf("another member sees %d queue(s)", len(l))
 		}
 		// The category DTO marks the queue on the Console and on the token face.
@@ -284,6 +296,7 @@ func TestMemoQueueSettings(t *testing.T) {
 func TestMemoQueueTokenFaceHasNoSettingsOrRelease(t *testing.T) {
 	t.Parallel()
 	e := newInboxEnv(t)
+	e.memoQueuesOn(true)
 	cat := e.category("r", "q")
 	e.queue(cat)
 	_, m := memoFaceClient{"token", e}.create(textMemo("r", "q", "from a session"))
@@ -1040,6 +1053,166 @@ func TestMemoQueueRateHoldsUnderConcurrentCreates(t *testing.T) {
 		wg.Wait()
 		if created != memoQueueRatePerMinute {
 			t.Fatalf("%d creates passed, want %d", created, memoQueueRatePerMinute)
+		}
+	})
+}
+
+// A flush in flight owns its rows: a second flush of them is refused, so two flushes can never
+// settle each other's rows, and the first one's outcome is the row's.
+func TestMemoQueueOverlappingFlushesDoNotSettleEachOther(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		h := e.useHookAgent()
+		console := memoFaceClient{"console", e}
+		for _, outcome := range []int{0, http.StatusConflict} {
+			_, m := console.create(textMemo("r", "q", fmt.Sprintf("overlap %d", outcome)))
+			_, plain := console.create(textMemo("r", "", fmt.Sprintf("plain overlap %d", outcome)))
+			var second, secondPlain int
+			h.status = outcome
+			h.onTurn = func() {
+				second = console.flush(m.ID)
+				secondPlain = console.flush(plain.ID)
+			}
+			code := console.flush(m.ID, plain.ID)
+			if second != http.StatusConflict || secondPlain != http.StatusConflict {
+				t.Fatalf("outcome %d: second flush %d / %d, want 409", outcome, second, secondPlain)
+			}
+			got, gotPlain := e.memoRow(m.ID), e.memoRow(plain.ID)
+			if outcome == 0 {
+				if code != 200 || got.State != store.MemoStateDelivered || got.SentAt == "" || gotPlain.SentAt == "" {
+					t.Fatalf("sent: %d %+v %+v", code, got, gotPlain)
+				}
+			} else if code != http.StatusConflict || got.State != store.MemoStatePending || got.SentAt != "" || gotPlain.SentAt != "" {
+				t.Fatalf("refused: %d %+v %+v", code, got, gotPlain)
+			}
+			if got.SendToken != "" || gotPlain.SendToken != "" {
+				t.Fatalf("a settled flush left its reservation: %+v %+v", got, gotPlain)
+			}
+		}
+		e.assertPendingReleaseMatches()
+	})
+}
+
+// A send whose outcome is unknown (the Agent was not reached) leaves a queue message
+// unconfirmed, never pending again, so it is not fired a second time; a plain note stays
+// unsent as before.
+func TestMemoQueueUnknownSendOutcomeIsUnconfirmed(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		e.workspaceFor("a", newCapturingAgent(t))
+		c := e.mgr.rts[e.members["a"]]
+		c.rt = stubRuntime{endpoint: "http://127.0.0.1:1", token: "tok"}
+		e.mgr.rts[e.members["a"]] = c
+		console, tok := memoFaceClient{"console", e}, memoFaceClient{"token", e}
+		_, pending := console.create(textMemo("r", "q", "released"))
+		_, held := tok.create(textMemo("r", "q", "waiting"))
+		_, plain := console.create(textMemo("r", "", "note"))
+		if code := console.flush(pending.ID, held.ID, plain.ID); code < 500 {
+			t.Fatalf("unreachable agent: %d", code)
+		}
+		for _, id := range []string{pending.ID, held.ID} {
+			if got := e.memoRow(id); got.State != store.MemoStateUnconfirmed || got.SentAt != "" || got.SendToken != "" || got.ReleaseHash != "" {
+				t.Fatalf("queue message after an unknown outcome: %+v", got)
+			}
+		}
+		if got := e.memoRow(plain.ID); got.State != "" || got.SentAt != "" || got.SendToken != "" {
+			t.Fatalf("plain note after an unknown outcome: %+v", got)
+		}
+		// An unconfirmed message cannot be released back into the queue's hands.
+		if r := e.release(held.ID, held.ContentHash); r.Code != http.StatusConflict {
+			t.Fatalf("release of an unconfirmed message: %d", r.Code)
+		}
+	})
+}
+
+// A reservation is durable but not permanent. While it is fresh it holds the rows; once it is
+// older than the bound (the CP that made it died before the outcome) the next read or write
+// takes it back: a queue message becomes unconfirmed, a plain note is unsent again, and
+// nothing is marked sent that was never sent.
+func TestMemoQueueReservationLeftByACrashIsTakenBack(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		console := memoFaceClient{"console", e}
+		e.workspaceFor("a", newCapturingAgent(t))
+		_, m := console.create(textMemo("r", "q", "reserved when the CP died"))
+		_, plain := console.create(textMemo("r", "", "a note reserved when the CP died"))
+		reserve := func(at string) {
+			for _, id := range []string{m.ID, plain.ID} {
+				if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET send_token='dead', send_started_at=? WHERE id=?`, at, id); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		reserve(store.NowTS())
+		if code, _ := console.update(m.ID, map[string]any{"body": "changed"}); code != http.StatusConflict {
+			t.Fatalf("edit of a reserved queue message: %d", code)
+		}
+		if code := console.flush(m.ID); code != http.StatusConflict {
+			t.Fatalf("flush of a reserved message: %d", code)
+		}
+		reserve(time.Now().UTC().Add(-store.MemoSendStaleAfter - time.Minute).Format(time.RFC3339))
+		list := decode[[]memoDTO](t, e.do("a", "GET", "/api/memos", nil))
+		if len(list) != 2 {
+			t.Fatalf("list: %+v", list)
+		}
+		if got := e.memoRow(m.ID); got.State != store.MemoStateUnconfirmed || got.SentAt != "" || got.SendToken != "" {
+			t.Fatalf("queue message after the stale reservation: %+v", got)
+		}
+		if got := e.memoRow(plain.ID); got.State != "" || got.SentAt != "" || got.SendToken != "" {
+			t.Fatalf("plain note after the stale reservation: %+v", got)
+		}
+		// The member can still send it by hand.
+		if code := console.flush(m.ID, plain.ID); code != http.StatusOK {
+			t.Fatalf("manual send after the sweep: %d", code)
+		}
+		if got := e.memoRow(m.ID); got.State != store.MemoStateDelivered || got.SentAt == "" {
+			t.Fatalf("after the manual send: %+v", got)
+		}
+	})
+}
+
+// No category becomes a queue while the tenant switch is off, which is every tenant's default:
+// that is what keeps queue rows away from a Control Plane binary without the queue rules during
+// a rollout. Existing queues are listed, deleted and released whatever the switch says, and
+// turning it off deletes nothing.
+func TestMemoQueueTenantSwitchGatesCreatingAQueue(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		if on, err := e.st.GetTenantMemoQueues(context.Background(), e.t2.ID); err != nil || on {
+			t.Fatalf("an untouched tenant: on=%v err=%v, want off", on, err)
+		}
+		cat := e.category("r", "q")
+		e.memoQueuesOn(false)
+		r := e.do("a", "PUT", "/api/memo-queues/"+cat, map[string]any{"instruction": "x"})
+		if r.Code != http.StatusConflict || decode[errResp](t, r).Error.Code != errCodeMemoQueuesDisabled {
+			t.Fatalf("PUT with the switch off: %d %s", r.Code, r.Body.String())
+		}
+		if e.count("memo_queue") != 0 {
+			t.Fatal("a refused PUT wrote settings")
+		}
+		if got := decode[memoQueuesWire](t, e.do("a", "GET", "/api/memo-queues", nil)); got.TenantEnabled || got.Queues == nil {
+			t.Fatalf("GET with the switch off: %+v", got)
+		}
+		e.memoQueuesOn(true)
+		e.queue(cat)
+		_, m := memoFaceClient{"token", e}.create(textMemo("r", "q", "held"))
+		// Off again: the queue stays, its rules still hold, and the Console can still release
+		// and remove it; only creating or changing settings is refused.
+		e.memoQueuesOn(false)
+		got := decode[memoQueuesWire](t, e.do("a", "GET", "/api/memo-queues", nil))
+		if got.TenantEnabled || len(got.Queues) != 1 {
+			t.Fatalf("GET after turning it off: %+v", got)
+		}
+		if code := (memoFaceClient{"token", e}).del(m.ID); code != http.StatusConflict {
+			t.Fatalf("token delete with the switch off: %d", code)
+		}
+		if r := e.do("a", "PUT", "/api/memo-queues/"+cat, map[string]any{"instruction": "y"}); r.Code != http.StatusConflict {
+			t.Fatalf("settings change with the switch off: %d", r.Code)
+		}
+		if r := e.release(m.ID, m.ContentHash); r.Code != http.StatusOK {
+			t.Fatalf("release with the switch off: %d %s", r.Code, r.Body.String())
+		}
+		if r := e.do("a", "DELETE", "/api/memo-queues/"+cat, nil); r.Code != http.StatusNoContent {
+			t.Fatalf("delete with the switch off: %d", r.Code)
 		}
 	})
 }

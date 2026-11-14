@@ -263,7 +263,10 @@ Memos you accumulate and send to a session in one go (the tables are
   fetched, rather than deleted on send.
 - **Queues** ([decisions/0137](../decisions/0137-message-queues.md), step 1a): a category
   with settings (`GET /api/memo-queues`, `PUT` / `DELETE /api/memo-queues/{categoryId}`)
-  is a queue, and its memos are messages with a state. The face a request arrived by —
+  is a queue, and a `PUT` is refused while the tenant switch
+  (`/api/admin/tenants/{slug}/memo-queues`, off by default) is off. Turn it on only after
+  every CP runs this binary ([06](06-data.md)). A queue's memos are messages with a
+  state. The face a request arrived by —
   the Console, the token face, `/mcp` — is fixed where the route is registered and decides
   the provenance and the entering state (`pending` only for the member's own note through
   the Console, `held` otherwise). `POST /api/memos/release` moves held messages to

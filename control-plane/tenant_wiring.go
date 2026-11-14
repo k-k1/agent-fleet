@@ -174,6 +174,14 @@ func (a adminAPI) setTenantWatchSources(w http.ResponseWriter, r *http.Request) 
 	a.srv().SetTenantWatchSources(w, r)
 }
 
+func (a adminAPI) tenantMemoQueues(w http.ResponseWriter, r *http.Request) {
+	a.srv().TenantMemoQueues(w, r)
+}
+
+func (a adminAPI) setTenantMemoQueues(w http.ResponseWriter, r *http.Request) {
+	a.srv().SetTenantMemoQueues(w, r)
+}
+
 func (a adminAPI) tenantSlotClass(w http.ResponseWriter, r *http.Request) {
 	a.srv().TenantSlotClass(w, r)
 }

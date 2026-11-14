@@ -31,6 +31,9 @@ type Memo struct {
 	// queue) and cleared when a message goes back to held or leaves its queue.
 	State, Provenance, Producer, ProducerOrigin string
 	ReleaseHash, ReleasedAt                     string
+	// SendToken is the attempt of a flush in flight on this row, SendStartedAt when it began
+	// ("" for none). See MemoSendStaleAfter.
+	SendToken, SendStartedAt string
 }
 
 // MemoCategory persists a memo category as a first-class row (docs/log/21 UI overhaul), so a
@@ -75,14 +78,14 @@ type MemoStore interface {
 
 const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at,
 	origin_item_id, origin_sender_membership_id, origin_sender_key,
-	state, provenance, producer, producer_origin, release_hash, released_at FROM memo`
+	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
 	err := row.Scan(&m.ID, &m.MembershipID, &m.Repo, &m.Category, &m.Kind,
 		&m.Body, &m.RefPath, &m.Attachments, &m.Position, &m.CreatedAt, &m.SentAt,
 		&m.OriginItemID, &m.OriginSenderMembershipID, &m.OriginSenderKey,
-		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt)
+		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt)
 	return m, err
 }
 
@@ -156,11 +159,12 @@ func writeMemo(ctx context.Context, q memoQuerier, m Memo) error {
 	// membership_id in the WHERE so a member can only update their own row.
 	_, err := q.ExecContext(ctx,
 		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, attachments=?, position=?, sent_at=?,
-		   state=?, release_hash=?, released_at=?,
+		   state=?, release_hash=?, released_at=?, send_token=?, send_started_at=?,
 		   release_repo=?, release_category=?, release_kind=?, release_body=?, release_ref_path=?, release_attachments=?
 		   WHERE id=? AND membership_id=?`,
 		m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.SentAt,
-		m.State, m.ReleaseHash, m.ReleasedAt, rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], m.ID, m.MembershipID)
+		m.State, m.ReleaseHash, m.ReleasedAt, m.SendToken, m.SendStartedAt,
+		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], m.ID, m.MembershipID)
 	return err
 }
 

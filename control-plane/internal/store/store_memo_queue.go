@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 )
 
 // Message queues, step 1a (ADR 0137). A memo category becomes a queue when a memo_queue row
@@ -31,6 +32,12 @@ const (
 	MemoProvenanceCurator   = "curator"
 )
 
+// MemoSendStaleAfter bounds a flush in flight: past it, the CP that reserved the rows is taken
+// to have died between its reservation and the send's outcome, and the reservation is taken
+// back (SweepStaleMemoSends). It is above the longest a send can take (two Agent calls of at
+// most two minutes each), so a live flush is never swept.
+const MemoSendStaleAfter = 10 * time.Minute
+
 // MemoQueue is the settings row that makes a memo category a queue. Only the member's Console
 // writes it. Generation is the compare-and-set counter the reservation of a later step uses.
 type MemoQueue struct {
@@ -50,7 +57,8 @@ type MemoQueue struct {
 type MemoQueueStore interface {
 	ListMemoQueues(ctx context.Context, membershipID string) ([]MemoQueue, error)
 	// MemoTx runs f in one transaction that holds the membership's lock first, so every
-	// queue-relevant memo write of a member is serialized behind the others. f's error
+	// queue-relevant memo write of a member is serialized behind the others. Before f it
+	// takes back the member's stale send reservations, so f never sees one. f's error
 	// rolls the transaction back and is returned as is.
 	MemoTx(ctx context.Context, membershipID string, f func(MemoTxOps) error) error
 }
@@ -103,10 +111,31 @@ func (s *SQL) MemoTx(ctx context.Context, membershipID string, f func(MemoTxOps)
 	if err := lockMemberships(ctx, tx, []string{membershipID}); err != nil {
 		return err
 	}
+	if err := sweepStaleMemoSends(ctx, tx, membershipID); err != nil {
+		return err
+	}
 	if err := f(memoTx{ctx: ctx, q: tx, mid: membershipID}); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// sweepStaleMemoSends takes back the send reservations older than MemoSendStaleAfter. Whether
+// such a send reached the session is unknown, so a held or pending message becomes unconfirmed:
+// shown to the person and never fired by itself, since a second send could do the work twice.
+// A plain note is simply unsent again, as it was before any reservation existed.
+func sweepStaleMemoSends(ctx context.Context, q memoQuerier, membershipID string) error {
+	cutoff := time.Now().UTC().Add(-MemoSendStaleAfter).Format(time.RFC3339)
+	_, err := q.ExecContext(ctx, `UPDATE memo SET
+		  state=CASE WHEN state IN (?,?) THEN ? ELSE state END,
+		  release_hash=CASE WHEN state IN (?,?) THEN '' ELSE release_hash END,
+		  released_at=CASE WHEN state IN (?,?) THEN '' ELSE released_at END,
+		  send_token='', send_started_at=''
+		WHERE membership_id=? AND send_token<>'' AND send_started_at<?`,
+		MemoStateHeld, MemoStatePending, MemoStateUnconfirmed,
+		MemoStateHeld, MemoStatePending, MemoStateHeld, MemoStatePending,
+		membershipID, cutoff)
+	return err
 }
 
 type memoTx struct {

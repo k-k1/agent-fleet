@@ -272,6 +272,9 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/external-memory", adm.setTenantExternalMemory)
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/watch-sources", adm.tenantWatchSources)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/watch-sources", adm.setTenantWatchSources)
+	// The tenant-wide switch for memo queues (ADR 0137): off until every CP runs this binary.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/memo-queues", adm.tenantMemoQueues)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/memo-queues", adm.setTenantMemoQueues)
 	// The tenant's DEFAULT machine class (docs/log/70). tenant_admin for the same reason
 	// as the network rule above — it reaches nothing outside this tenant, and the set
 	// it may choose from is bounded by allowed_slot_classes, which only a super_admin
