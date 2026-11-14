@@ -75,12 +75,17 @@ type fakeQueueAgent struct {
 	bodies  map[string]string // done key -> the create's answer
 	creates []map[string]any
 	rows    []map[string]any
-	// createMode: "" answers the create, "lost" creates and answers 502 with no key header
-	// (a proxy's error), "refuse" refuses it (503, outcome refused), "noreserve" has no
-	// reserve route (an older Agent).
+	// createMode: "" answers the create, "lost" creates and drops the connection, "proxy"
+	// creates and answers 502 with no key header (a proxy's error), "invalid" refuses the
+	// body before the key (400, no headers), "refuse" refuses it (503, outcome refused),
+	// "noreserve" has no reserve route (an older Agent).
 	createMode string
 	// abandonOverride, when set, is answered to every abandon instead of the record's state.
 	abandonOverride func(w http.ResponseWriter, key string)
+	// sessionsDown makes GET /sessions fail.
+	sessionsDown bool
+	// reserveBarrier, when set, holds every reserve until all it counts have arrived.
+	reserveBarrier *sync.WaitGroup
 }
 
 func newFakeQueueAgent(t *testing.T) *fakeQueueAgent {
@@ -97,11 +102,19 @@ func agentErr(w http.ResponseWriter, status int, code string) {
 }
 
 func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	if b := a.reserveBarrier; b != nil && strings.HasSuffix(path, "/reserve") {
+		b.Done()
+		b.Wait()
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	path := r.URL.Path
 	switch {
 	case r.Method == "GET" && path == "/sessions":
+		if a.sessionsDown {
+			agentErr(w, http.StatusBadGateway, "down")
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"sessions": a.rows})
 	case r.Method == "POST" && strings.HasPrefix(path, "/sessions-idempotency/") && strings.HasSuffix(path, "/reserve"):
 		key := strings.TrimSuffix(strings.TrimPrefix(path, "/sessions-idempotency/"), "/reserve")
@@ -142,6 +155,12 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		key, _ := body["idempotency_key"].(string)
 		a.creates = append(a.creates, body)
+		// The real Agent checks the delivery before it takes the key (sessionx
+		// checkQueueDelivery), and its refusal carries no create headers.
+		if a.createMode == "invalid" || !validQueueDelivery(body) {
+			agentErr(w, http.StatusBadRequest, "bad_queue_delivery")
+			return
+		}
 		if a.keys[key] == "abandoned" || a.createMode == "refuse" {
 			if a.createMode == "refuse" {
 				a.keys[key] = "refused"
@@ -164,7 +183,15 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		a.rows = append(a.rows, map[string]any{"name": name, "kind": "claude", "alive": true, "state": "working", "queueDelivery": id})
 		a.keys[key] = "done"
 		a.bodies[key] = `{"name":"` + name + `"}`
-		if a.createMode == "lost" {
+		switch a.createMode {
+		case "lost":
+			// The connection drops before the answer: no answer at all.
+			hj, _ := w.(http.Hijacker)
+			c, _, _ := hj.Hijack()
+			_ = c.Close()
+			return
+		case "proxy":
+			// A proxy's own error after the Agent created: an answer without the outcome.
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = io.WriteString(w, `{"error":"upstream timed out"}`)
 			return
@@ -176,6 +203,31 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// validQueueDelivery is the part of the Agent's checkQueueDelivery the CP has to respect.
+func validQueueDelivery(body map[string]any) bool {
+	if p, _ := body["initial_prompt"].(string); p != "" {
+		return false
+	}
+	qd, _ := body["queue_delivery"].(map[string]any)
+	items, _ := qd["items"].([]any)
+	if len(items) == 0 || len(items) > 20 {
+		return false
+	}
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		b, _ := m["body"].(string)
+		switch m["provenance"] {
+		case "member", "workspace", "mcp":
+		default:
+			return false
+		}
+		if len(b) > 64<<10 {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *fakeQueueAgent) createCount() int {
@@ -764,6 +816,7 @@ func TestMemoDeliveryClosingRule(t *testing.T) {
 	type step struct {
 		row   map[string]any // fields set on the session row; nil = the row is deleted
 		state string         // the workspace state
+		down  bool           // the Agent does not answer GET /sessions
 		want  string
 	}
 	idle := map[string]any{"alive": true, "state": "idle"}
@@ -798,6 +851,16 @@ func TestMemoDeliveryClosingRule(t *testing.T) {
 		"workspace stopped, not in the mirror": {
 			{row: nil, state: "stopped", want: store.DeliveryOpen},
 		},
+		// A running workspace whose Agent does not answer proves nothing, whatever the mirror
+		// holds, and the idle ticks around the gap are not consecutive.
+		"running, the Agent does not answer": {
+			{row: idle, want: store.DeliveryOpen},
+			{row: map[string]any{}, down: true, want: store.DeliveryOpen},
+			{row: idle, want: store.DeliveryOpen},
+		},
+		"starting, the mirror shows it stopped": {
+			{row: map[string]any{}, state: "starting", want: store.DeliveryOpen},
+		},
 	}
 	for name, steps := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -817,12 +880,19 @@ func TestMemoDeliveryClosingRule(t *testing.T) {
 					} else {
 						agent.setRow(open.Session, s.row)
 					}
-					if s.state == "stopped" {
+					agent.mu.Lock()
+					agent.sessionsDown = s.down
+					agent.mu.Unlock()
+					if s.state == "stopped" || s.state == "starting" || s.down {
 						ws, _, _ := e.st.GetWorkspaceByMembership(context.Background(), e.members["a"])
 						var rows []store.SessionRow
 						if s.row != nil {
 							carried, _ := s.row["carried"].(string)
-							rows = append(rows, store.SessionRow{Name: open.Session, Kind: "claude", State: "stopped", Carried: carried})
+							state := "stopped"
+							if s.down {
+								state = "running"
+							}
+							rows = append(rows, store.SessionRow{Name: open.Session, Kind: "claude", State: state, Carried: carried})
 						}
 						if err := e.st.ReplaceSessions(context.Background(), ws.ID, rows); err != nil {
 							t.Fatal(err)
@@ -887,6 +957,178 @@ func TestMemoDeliveryListWire(t *testing.T) {
 		list = decode[[]memoDeliveryDTO](t, e.do("a", "GET", "/api/memo-queues/"+q+"/deliveries", nil))
 		if len(list) != memoDeliveryListMax || list[0].ID != d2.ID {
 			t.Fatalf("bounded list: %d, first %s", len(list), list[0].ID)
+		}
+	})
+}
+
+// --- Review round 1 ---------------------------------------------------------------------------
+
+// The quota holds while the workspace is stopped (the deliveries not yet sent are a lower
+// bound), and two sends of one member that each counted no running session cannot both
+// create: the second sees the first in the move to sending.
+func TestMemoDeliveryQuotaHoldsForParallelSends(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", nil) // two slots
+		m1 := e.pending("app", "impl", "one")
+		m2 := e.pending("app", "impl", "two")
+		agent := e.useQueueAgent("stopped")
+		if err := e.st.PutUserLimit(context.Background(), e.members["a"], store.UserQuota{MaxSessions: 1}); err != nil {
+			t.Fatal(err)
+		}
+		d1 := e.fired(q)
+		if rec := e.fire(q); rec.Code != http.StatusTooManyRequests || deliveryErrCode(t, rec) != errCodeQuotaSessions {
+			t.Fatalf("a second press while stopped with max_sessions 1: %d %s", rec.Code, rec.Body.String())
+		}
+		// The cap is raised for the presses and lowered again before the sends.
+		if err := e.st.PutUserLimit(context.Background(), e.members["a"], store.UserQuota{MaxSessions: 2}); err != nil {
+			t.Fatal(err)
+		}
+		d2 := e.fired(q)
+		if err := e.st.PutUserLimit(context.Background(), e.members["a"], store.UserQuota{MaxSessions: 1}); err != nil {
+			t.Fatal(err)
+		}
+		e.setRuntime(agent, "")
+		var b sync.WaitGroup
+		b.Add(2)
+		agent.reserveBarrier = &b
+		r := e.runner()
+		var wg sync.WaitGroup
+		for _, id := range []string{d1.ID, d2.ID} {
+			wg.Add(1)
+			go func(id string) {
+				defer wg.Done()
+				r.send(context.Background(), e.delivery(id))
+			}(id)
+		}
+		wg.Wait()
+		if n := agent.createCount(); n != 1 {
+			t.Fatalf("max_sessions 1, but parallel sends created %d sessions", n)
+		}
+		states := map[string]int{}
+		for _, id := range []string{d1.ID, d2.ID} {
+			got := e.delivery(id)
+			states[got.State+"/"+got.Outcome]++
+		}
+		if states["open/"] != 1 || states["closed/not_sent"] != 1 {
+			t.Fatalf("deliveries %v", states)
+		}
+		pending := 0
+		for _, id := range []string{m1.ID, m2.ID} {
+			if e.memoRow(id).State == store.MemoStatePending {
+				pending++
+			}
+		}
+		if pending != 1 {
+			t.Fatalf("%d messages pending again, want 1", pending)
+		}
+		e.assertPendingReleaseMatches()
+	})
+}
+
+// A message the Agent would refuse is refused at the press, where the member can still edit
+// it, instead of holding a slot and coming back on every fire.
+func TestMemoDeliveryFireRefusesAnItemTheAgentWouldRefuse(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"batch": 2})
+		big := e.pending("app", "impl", strings.Repeat("x", memoDeliveryItemBodyMax+1))
+		agent := e.useQueueAgent("")
+		rec := e.fire(q)
+		if rec.Code != http.StatusConflict || deliveryErrCode(t, rec) != errCodeMemoQueueItemInvalid || !strings.Contains(rec.Body.String(), big.ID) {
+			t.Fatalf("fire with an oversized message: %d %s", rec.Code, rec.Body.String())
+		}
+		if got := e.memoRow(big.ID); got.State != store.MemoStatePending || got.DeliveryID != "" {
+			t.Fatalf("the refused message: %+v", got)
+		}
+		if rec := e.do("a", "PATCH", "/api/memos/"+big.ID, map[string]any{"body": "short now"}); rec.Code != http.StatusOK {
+			t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())
+		}
+		e.fired(q)
+		e.tick(e.runner(), time.Now())
+		if agent.createCount() != 1 {
+			t.Fatalf("%d creates", agent.createCount())
+		}
+	})
+}
+
+// A create the Agent refuses before it takes the key carries no create headers. The abandon
+// answer settles it at once: the key was only reserved, so not_created closes the delivery as
+// not sent without holding the slot until its budget.
+func TestMemoDeliveryRefusalWithoutHeadersSettlesAtOnce(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"maxActive": 1})
+		m := e.pending("app", "impl", "one")
+		agent := e.useQueueAgent("")
+		d := e.fired(q)
+		agent.createMode = "invalid"
+		e.tick(e.runner(), time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryNotSent {
+			t.Fatalf("a header-less refusal: %+v", got)
+		}
+		if got := e.memoRow(m.ID); got.State != store.MemoStatePending {
+			t.Fatalf("message %+v", got)
+		}
+		// A proxy's error after the Agent created: abandon reports the session at once.
+		agent.createMode = "proxy"
+		d = e.fired(q)
+		e.tick(e.runner(), time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.Session == "" {
+			t.Fatalf("a proxy error after a create: %+v", got)
+		}
+		e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET state='closed' WHERE id=?`, d.ID)
+		e.pending("app", "impl", "two")
+		// A proxy's error while the create runs is not settled as not sent: abandon says the
+		// create is in flight, and the slot is kept.
+		agent.createMode = "proxy"
+		agent.abandonOverride = func(w http.ResponseWriter, key string) {
+			w.Header().Set(createKeyHeader, key)
+			w.WriteHeader(http.StatusAccepted)
+		}
+		d = e.fired(q)
+		e.tick(e.runner(), time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliverySending {
+			t.Fatalf("a proxy error with a create in flight: %+v", got)
+		}
+	})
+}
+
+// The settle pass keeps its deadline in its writes: a membership lock another Control Plane
+// holds does not hold the tick, and the schedules behind it, past the budget.
+func TestMemoDeliverySettleKeepsItsDeadline(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", nil)
+		e.pending("app", "impl", "one")
+		e.useQueueAgent("")
+		d := e.fired(q)
+		tx, err := e.other.DB().BeginTx(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(context.Background(), `UPDATE membership SET status=status WHERE id=?`, e.members["a"]); err != nil {
+			t.Fatal(err)
+		}
+		release := sync.OnceFunc(func() { _ = tx.Rollback() })
+		defer release()
+		r := e.runner()
+		r.settleBudget = 2 * time.Second
+		done := make(chan time.Duration, 1)
+		go func() {
+			start := time.Now()
+			r.settle(context.Background(), e.stale(r))
+			done <- time.Since(start)
+		}()
+		select {
+		case took := <-done:
+			if took > 10*time.Second {
+				t.Fatalf("settle took %s with a 2s budget", took)
+			}
+		case <-time.After(30 * time.Second):
+			release()
+			<-done
+			t.Fatal("settle waited on the lock past its budget")
+		}
+		release()
+		if got := e.delivery(d.ID); got.State != store.DeliveryClaimed {
+			t.Fatalf("a write that timed out decided %+v", got)
 		}
 	})
 }

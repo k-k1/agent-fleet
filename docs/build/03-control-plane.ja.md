@@ -219,11 +219,15 @@ Workspace を起こさない。
   古い順に `batch` 件までの `pending`（`sent_at` が空、`send_token` が無く、解放ハッシュが内容
   ハッシュと一致するもの。一致しないものは `held` に戻す）を確保して、`claimed` の配信を 202 で
   返す。待っているものが無い・空き枠が無い・テナントのスイッチが off・指示が無い・`max_sessions`
-  の上限（動いているセッションと未送信の配信の和）のときは拒む。`enabled` は関係しない。送信は
+  の上限（動いているセッションと未送信の配信の和）のとき、Agent が拒むメッセージがあるとき
+  （`memo_queue_item_invalid`: 64 KiB を超える本文、21 件以上の添付、4 KiB を超えるパス）は拒む。
+  `enabled` は関係しない。上限は `sending` へ移す書き込みでも membership のロックの下で数え直すので、
+  同じメンバーの 2 つの送信が両方通ることはない。送信は
   スケジューラの次の tick（§3.7）で行う: スケジュールと同じく起こして待ち、Agent に耐久キー
   `q_<配信>` を予約し、配信の状態への条件付き書き込みで `sending` に移し、`source: "queue"`・
   `queue_delivery`・`idempotency_durable` と `~/repos/<repo>` からの新しい worktree でセッションを
-  作る。答えが来れば配信はそのセッション名で `open`、メッセージは `delivered`。
+  作る。答えが来れば配信はそのセッション名で `open`、メッセージは `delivered`。create の結果を
+  持たない答え（Agent による本文の拒否や、プロキシのエラー）は、その場で下の abandon の答えで決める。
   `GET /api/memo-queues/{categoryId}/deliveries` は新しい順に 50 件。セッションの行は
   `queueDelivery` を、メモは自分を確保した配信（`deliveryId`）を運ぶ。
 
@@ -240,6 +244,7 @@ Workspace を起こさない。
   答えが無ければ保持）。`open` はセッションがアーカイブ・削除されたとき、運ぶ対話なしで止まった
   とき、2 tick 続けて idle だったときに閉じる（回数は `memo_delivery.idle_ticks` に残す）。
   Workspace が止まっている間、`sending` は枠を保持し、`open` はセッションのミラーで判断する。
+  動いているのに Agent が答えない Workspace や、起動中・停止中の Workspace では何も閉じない。
   そのあと、キューの送信は最大 2 本まで、tick の並列 4 発火をスケジュールと分け合う。配信の状態の
   移動はすべてその状態への条件付き書き込みなので、遅れた送信と照合のどちらか一方だけが動く。
 

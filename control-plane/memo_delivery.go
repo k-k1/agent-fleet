@@ -42,6 +42,7 @@ const (
 	errCodeMemoQueueNoSlot         = "memo_queue_no_slot"
 	errCodeMemoQueueMemberLimit    = "memo_queue_member_limit"
 	errCodeMemoQueueBadRepo        = "memo_queue_bad_repo"
+	errCodeMemoQueueItemInvalid    = "memo_queue_item_invalid"
 )
 
 const (
@@ -58,10 +59,51 @@ const (
 	// memoAgentCallWait each Agent call in it. Both run before the tick's fires start.
 	memoSettleBudget  = 60 * time.Second
 	memoAgentCallWait = 15 * time.Second
+	// memoDeliveryWriteWait bounds a delivery write made where no caller deadline applies (a
+	// send after its Agent call). A write that times out decides nothing: the next tick
+	// reconciles the delivery from its state.
+	memoDeliveryWriteWait = 30 * time.Second
 	// memoDeliverySendMargin is the part of a fire's time budget beyond the wait for the
 	// Agent: the reservation, the create (agentHTTPClient's two minutes) and slack.
 	memoDeliverySendMargin = 10 * time.Minute
 )
+
+// The Agent's bounds on one item of a queue delivery (workspace/agent sessionx
+// checkQueueDelivery). A message past them is refused by the Agent whole, so it is refused at
+// the press instead, where the member can still edit it.
+const (
+	memoDeliveryItemBodyMax    = 64 << 10
+	memoDeliveryAttachmentsMax = 20
+	memoDeliveryPathMax        = 4096
+)
+
+// memoDeliveryItemProblem says why the Agent would refuse m as an item, "" when it would not.
+func memoDeliveryItemProblem(m store.Memo) string {
+	if len(m.Body) > memoDeliveryItemBodyMax {
+		return fmt.Sprintf("its text is over %d bytes", memoDeliveryItemBodyMax)
+	}
+	if len(m.RefPath) > memoDeliveryPathMax {
+		return fmt.Sprintf("its file path is over %d bytes", memoDeliveryPathMax)
+	}
+	switch memoEffectiveProvenance(m) {
+	case store.MemoProvenanceMember, store.MemoProvenanceWorkspace, store.MemoProvenanceMCP:
+	default:
+		return "its origin cannot be sent to a session"
+	}
+	atts := parseMemoAttachments(m.Attachments)
+	if strings.TrimSpace(m.Attachments) != "" && atts == nil {
+		return "its attachments cannot be read"
+	}
+	if len(atts) > memoDeliveryAttachmentsMax {
+		return fmt.Sprintf("it has more than %d attachments", memoDeliveryAttachmentsMax)
+	}
+	for _, a := range atts {
+		if len(a.Path) > memoDeliveryPathMax || len(a.Name) > memoDeliveryPathMax || !filepath.IsAbs(a.Path) {
+			return "an attachment's path or name cannot be sent"
+		}
+	}
+	return ""
+}
 
 // memoDeliveryKey is the durable Agent idempotency key of a delivery's create.
 func memoDeliveryKey(deliveryID string) string { return "q_" + deliveryID }
@@ -190,11 +232,15 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 		return none, &apiError{http.StatusConflict, errCodeMemoQueueMemberLimit,
 			fmt.Sprintf("your queues already run %d deliveries, the most at once", inMember)}, nil
 	}
-	if limit > 0 && running >= 0 {
-		// The deliveries not yet sent have no session to count yet.
+	if limit > 0 {
+		// The deliveries not yet sent have no session to count yet. With the running count
+		// unknown (the workspace is not running) they are still a lower bound.
 		unsent, err := tx.CountUnsentDeliveries()
 		if err != nil {
 			return none, nil, err
+		}
+		if running < 0 {
+			running = 0
 		}
 		if running+unsent >= limit {
 			return none, &apiError{http.StatusTooManyRequests, errCodeQuotaSessions,
@@ -234,6 +280,10 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 				return none, nil, err
 			}
 			continue
+		}
+		if why := memoDeliveryItemProblem(m); why != "" {
+			return none, &apiError{http.StatusConflict, errCodeMemoQueueItemInvalid,
+				fmt.Sprintf("message %s cannot be sent to a session: %s", m.ID, why)}, nil
 		}
 		won, err := tx.ClaimMemo(m, d.ID)
 		if err != nil {
@@ -291,6 +341,8 @@ type memoQueueRunner struct {
 	// budget is a fire's own time budget: a claimed or sending delivery older than it is
 	// reconciled. It is above everything a live send waits for.
 	budget time.Duration
+	// settleBudget bounds one tick's settle pass (memoSettleBudget).
+	settleBudget time.Duration
 }
 
 func newMemoQueueRunner(mgr *manager, f *wakeFirer) *memoQueueRunner {
@@ -298,21 +350,24 @@ func newMemoQueueRunner(mgr *manager, f *wakeFirer) *memoQueueRunner {
 	if ready <= 0 {
 		ready = 5 * time.Minute
 	}
-	return &memoQueueRunner{mgr: mgr, f: f, budget: ready + memoDeliverySendMargin}
+	return &memoQueueRunner{mgr: mgr, f: f, budget: ready + memoDeliverySendMargin, settleBudget: memoSettleBudget}
 }
 
 // memoMemberView is what settle knows of one member's workspace in this tick.
 type memoMemberView struct {
 	res *resolved
-	// live is the Agent's session list, and liveOK whether it answered. Without it, mirror
-	// holds the DB mirror's rows (stopped sessions only).
-	live   []sessionWire
-	liveOK bool
-	mirror []sessionWire
+	// live is the Agent's session list, and liveOK whether it answered. mirrorOK is set
+	// instead when the workspace is stopped, and mirror then holds the DB mirror's rows. With
+	// neither, nothing is known of the sessions this tick: a workspace that runs but does not
+	// answer, or one that is starting or stopping, proves no session done.
+	live     []sessionWire
+	liveOK   bool
+	mirror   []sessionWire
+	mirrorOK bool
 }
 
 func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.MemoDelivery {
-	ctx, cancel := context.WithTimeout(ctx, memoSettleBudget)
+	ctx, cancel := context.WithTimeout(ctx, r.settleBudget)
 	defer cancel()
 	ds, err := r.mgr.store.ListLiveMemoDeliveries(ctx)
 	if err != nil {
@@ -370,19 +425,21 @@ func (r *memoQueueRunner) view(ctx context.Context, views map[string]*memoMember
 		return nil
 	}
 	v := &memoMemberView{res: res}
-	if res.rt.State(ctx) == "running" {
+	switch res.rt.State(ctx) {
+	case "running":
 		cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
 		v.live, err = r.mgr.agentSessions(cctx, res.rt)
 		cancel()
 		v.liveOK = err == nil
-	}
-	if !v.liveOK {
+	case "stopped":
 		rows, err := r.mgr.store.ListSessions(ctx, res.ws.ID)
 		if err != nil {
-			return nil
+			break
 		}
+		v.mirrorOK = true
 		for _, s := range rows {
-			v.mirror = append(v.mirror, sessionWire{Name: s.Name, Kind: s.Kind, Carried: s.Carried})
+			// A row the mirror still records as running says nothing about an end.
+			v.mirror = append(v.mirror, sessionWire{Name: s.Name, Kind: s.Kind, Carried: s.Carried, Alive: s.State == "running"})
 		}
 	}
 	views[membershipID] = v
@@ -465,6 +522,11 @@ func sessionNameOf(body []byte) string {
 // idle on two consecutive ticks. A session where a machine is working, or a person has to act,
 // keeps it open. The rows of other states (limited, unknown) keep it open too.
 func (r *memoQueueRunner) closeIfDone(ctx context.Context, v *memoMemberView, d store.MemoDelivery, now time.Time) {
+	if !v.liveOK && !v.mirrorOK {
+		// No observation this tick: the idle ticks are no longer consecutive.
+		r.markIdle(ctx, d, 0)
+		return
+	}
 	rows := v.live
 	if !v.liveOK {
 		rows = v.mirror
@@ -505,19 +567,35 @@ func (r *memoQueueRunner) markIdle(ctx context.Context, d store.MemoDelivery, ti
 	if d.IdleTicks == ticks {
 		return
 	}
-	if _, err := r.mgr.store.MarkMemoDeliveryIdle(context.WithoutCancel(ctx), d.ID, ticks); err != nil {
+	wctx, cancel := memoWriteCtx(ctx)
+	defer cancel()
+	if _, err := r.mgr.store.MarkMemoDeliveryIdle(wctx, d.ID, ticks); err != nil {
 		log.Printf("memo queue: delivery %s: idle mark: %v", d.ID, err)
 	}
 }
 
 // --- The settles: each a conditional write on the delivery's state ---------------------------
 
+// memoWriteCtx is the context of a delivery write. A caller's deadline (the settle pass's) is
+// kept: a write that waits on another Control Plane's membership lock must not hold the tick,
+// and every schedule behind it, past its budget. A caller without one (a send, whose outcome
+// has to be recorded even if the tick is cancelled) gets memoDeliveryWriteWait. Either way a
+// write that does not finish decides nothing, and the next tick reconciles from the state.
+func memoWriteCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), memoDeliveryWriteWait)
+}
+
 // memoDeliveryMove moves a delivery and, only when that write won, applies then to its
 // messages, in one MemoTx. It reports whether the move won.
 func memoDeliveryMove(ctx context.Context, st store.MemoStore, d store.MemoDelivery, from, to, session, outcome string,
 	then func(tx store.MemoTxOps, at string) error) (bool, error) {
 	won := false
-	err := st.MemoTx(context.WithoutCancel(ctx), d.MembershipID, func(tx store.MemoTxOps) error {
+	wctx, cancel := memoWriteCtx(ctx)
+	defer cancel()
+	err := st.MemoTx(wctx, d.MembershipID, func(tx store.MemoTxOps) error {
 		at := store.DeliveryTS(time.Now())
 		ok, err := tx.MoveDelivery(d.ID, from, to, session, outcome, at)
 		if err != nil || !ok {
@@ -620,24 +698,31 @@ func (r *memoQueueRunner) send(ctx context.Context, d store.MemoDelivery) {
 	if !r.wake(ctx, res, d) {
 		return
 	}
-	if lim := r.mgr.sessionLimit(ctx, res); lim > 0 && !r.mgr.nativeRuntime {
+	// The quota: the running sessions as the Agent counts them now, and, in the move to
+	// sending below, every delivery whose session the count may not show yet.
+	running, lim, countedAt := 0, 0, store.DeliveryTS(time.Now())
+	if !r.mgr.nativeRuntime {
+		lim = r.mgr.sessionLimit(ctx, res)
+	}
+	if lim > 0 {
 		n, err := r.mgr.countSessions(ctx, res.rt)
 		if err != nil {
 			notSent("count sessions: " + err.Error())
 			return
 		}
-		if n >= lim {
-			notSent(fmt.Sprintf("concurrent session limit reached (%d running, max %d)", n, lim))
-			return
-		}
+		running = n
 	}
 	if err := reserveDeliveryCreate(ctx, res, d.ID); err != nil {
 		notSent("reserve the key: " + err.Error())
 		return
 	}
-	won, err := memoDeliveryMove(ctx, r.mgr.store, d, store.DeliveryClaimed, store.DeliverySending, "", "", nil)
+	won, over, err := r.startSending(ctx, d, running, lim, countedAt)
 	if err != nil || !won {
 		// Lost to reconciliation (or another Control Plane's send): that writer owns it now.
+		return
+	}
+	if over != "" {
+		log.Printf("memo queue: delivery %s not sent: %s", d.ID, over)
 		return
 	}
 	status, h, body, err := r.create(ctx, res, memoDeliveryCreateBody(d, plan))
@@ -657,8 +742,49 @@ func (r *memoQueueRunner) send(ctx context.Context, d store.MemoDelivery) {
 		log.Printf("memo queue: delivery %s: the Agent refused the create (%d %s)", d.ID, status, strings.TrimSpace(string(body)))
 		r.closeNotSent(ctx, d, store.DeliverySending)
 	default:
-		log.Printf("memo queue: delivery %s: create answered %d (outcome %q); reconciliation settles it", d.ID, status, outcome)
+		// An answer that does not carry the create's outcome: the Agent's own refusal of the
+		// body before it took the key, or a proxy's error. Neither proves anything, but the
+		// abandon answer does, now: not_created closes it as not sent, a create that began is
+		// reported, and anything else is left to reconciliation.
+		log.Printf("memo queue: delivery %s: create answered %d (outcome %q); asking the Agent", d.ID, status, outcome)
+		cur := d
+		cur.State = store.DeliverySending
+		r.reconcileSending(ctx, &memoMemberView{res: res, liveOK: true}, cur)
 	}
+}
+
+// startSending moves a claimed delivery to sending, with the quota check in the same
+// transaction: running sessions counted at countedAt, plus every other delivery of the member
+// whose session that count may miss (sending, or sent or opened since). The membership lock
+// orders two sends of one member, on any Control Plane, so the second sees the first. won is
+// whether this send owns the delivery; over is set when the quota closed it as not sent.
+func (r *memoQueueRunner) startSending(ctx context.Context, d store.MemoDelivery, running, lim int, countedAt string) (won bool, over string, err error) {
+	wctx, cancel := memoWriteCtx(ctx)
+	defer cancel()
+	err = r.mgr.store.MemoTx(wctx, d.MembershipID, func(tx store.MemoTxOps) error {
+		at := store.DeliveryTS(time.Now())
+		to, outcome := store.DeliverySending, ""
+		if lim > 0 {
+			starting, err := tx.CountDeliveriesStartedSince(countedAt, d.ID)
+			if err != nil {
+				return err
+			}
+			if running+starting >= lim {
+				to, outcome = store.DeliveryClosed, store.DeliveryNotSent
+				over = fmt.Sprintf("concurrent session limit reached (%d running, %d starting, max %d)", running, starting, lim)
+			}
+		}
+		ok, err := tx.MoveDelivery(d.ID, store.DeliveryClaimed, to, "", outcome, at)
+		if err != nil || !ok {
+			return err
+		}
+		won = true
+		if to == store.DeliveryClosed {
+			return tx.ReturnDeliveryMessages(d.ID)
+		}
+		return nil
+	})
+	return won && err == nil, over, err
 }
 
 // plan reads what a claimed delivery sends. ok is false when it is no longer claimed.

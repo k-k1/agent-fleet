@@ -72,6 +72,10 @@ type MemoDeliveryTxOps interface {
 	// CountUnsentDeliveries counts the membership's deliveries in claimed or sending: the
 	// ones that have no session yet.
 	CountUnsentDeliveries() (int, error)
+	// CountDeliveriesStartedSince counts the membership's deliveries other than except that
+	// are sending, or were sent or opened at or after since: the ones whose session a session
+	// count taken at since may not show.
+	CountDeliveriesStartedSince(since, except string) (int, error)
 	// ClaimMemo moves one pending message to claimed by delivery, only if the row still holds
 	// exactly the content and the release of seen, unsent, in no flush and claimed by none. It
 	// is one conditional write on the row itself. False means nothing was written.
@@ -171,6 +175,13 @@ func (t memoTx) CountUnsentDeliveries() (int, error) {
 	var n int
 	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_delivery WHERE membership_id=? AND state IN (?,?)`,
 		t.mid, DeliveryClaimed, DeliverySending).Scan(&n)
+	return n, err
+}
+
+func (t memoTx) CountDeliveriesStartedSince(since, except string) (int, error) {
+	var n int
+	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_delivery WHERE membership_id=? AND id<>?
+		AND (state=? OR sent_at>=? OR opened_at>=?)`, t.mid, except, DeliverySending, since, since).Scan(&n)
 	return n, err
 }
 

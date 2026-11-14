@@ -283,13 +283,18 @@ Memos you accumulate and send to a session in one go (the tables are
   messages (empty `sent_at`, no `send_token`, a release hash still equal to the content
   hash; one that is not goes back to `held`) in one `MemoTx`, and answers 202 with the
   delivery in `claimed`. It is refused with nothing pending, no free slot, the tenant
-  switch off, no instruction, or the `max_sessions` quota (running sessions plus the
-  deliveries not yet sent). `enabled` does not gate it. The send runs on the scheduler's
+  switch off, no instruction, the `max_sessions` quota (running sessions plus the
+  deliveries not yet sent), or a message the Agent would refuse (`memo_queue_item_invalid`:
+  a text over 64 KiB, more than 20 attachments, a path over 4 KiB). `enabled` does not
+  gate it. The quota is checked again in the move to `sending`, under the membership lock,
+  so two sends of one member cannot both pass it. The send runs on the scheduler's
   next tick (§3.7): wake and wait as a schedule does, reserve the durable Agent key
   `q_<delivery>`, move the delivery to `sending` with a conditional write on its state,
   and create the session with `source: "queue"`, `queue_delivery`, `idempotency_durable`
   and a new worktree off `~/repos/<repo>`. On the answer the delivery is `open` with the
-  session's name and its messages `delivered`. `GET
+  session's name and its messages `delivered`. An answer without the create's outcome (the
+  Agent's refusal of the body, or a proxy's error) is settled at once by the abandon
+  answer below. `GET
   /api/memo-queues/{categoryId}/deliveries` lists the newest 50. The session row carries
   `queueDelivery`, and a memo the delivery that claimed it (`deliveryId`).
 
@@ -308,7 +313,8 @@ disables.
   closes when its session is archived, deleted, stopped with no interaction carried, or
   idle on two consecutive ticks (the count is kept in `memo_delivery.idle_ticks`). While
   the workspace is stopped a `sending` delivery keeps its slot and an `open` one is
-  judged from the session mirror. Then at most two queue sends share the tick's four
+  judged from the session mirror. A running workspace whose Agent does not answer, or one
+  starting or stopping, closes nothing. Then at most two queue sends share the tick's four
   parallel fires with the schedules. Every move of a delivery's state is a conditional
   write on that state, so of a slow sender and the reconciliation only one acts.
 
