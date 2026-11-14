@@ -30,6 +30,8 @@ interface ArchivedModalProps {
   onRestored?: () => void;
   /** Open scoped to one working copy's folder (the working-copy row menu). */
   dir?: string | null;
+  /** Open narrowed to one session by name (a past-session search hit). Wins over `dir`. */
+  session?: string | null;
 }
 
 // Group heading, split into the base repo (a prefix) and a branch/folder label.
@@ -65,9 +67,10 @@ const isOld = (s: ArchivedSession, now: number) => {
   return !isNaN(ts) && now - ts > OLD_DAYS * 86400_000;
 };
 
-export function ArchivedModal({ onClose, onRestored, dir: scopeDir }: ArchivedModalProps) {
+export function ArchivedModal({ onClose, onRestored, dir: scopeDir, session: scopeSession }: ArchivedModalProps) {
   const [items, setItems] = useState<ArchivedSession[] | null>(null);
   const [scope, setScope] = useState<string | null>(scopeDir || null);
+  const [only, setOnly] = useState<string | null>(scopeSession || null);
   const [recreate, setRecreate] = useState<{ dir: string; list: ArchivedSession[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
@@ -92,12 +95,13 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir }: ArchivedMo
   // live or archived, so both lists feed the lineage.
   const scoped = useMemo(() => {
     const all = items || [];
+    if (only) return all.filter((s) => s.name === only);
     if (!scope) return all;
     const pool = [...live, ...all];
     const roots = pool.filter((s) => s.dir === scope).map((s) => s.name);
     const kin = descendantNames(roots, pool);
     return all.filter((s) => s.dir === scope || kin.has(s.name));
-  }, [items, live, scope]);
+  }, [items, live, scope, only]);
 
   const filtered = useMemo(() => {
     const list = scoped;
@@ -246,6 +250,9 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir }: ArchivedMo
   };
 
   const total = items?.length ?? 0;
+  // The narrowed session's title, or its slug once it is no longer on the shelf.
+  const onlyItem = only ? (items || []).find((s) => s.name === only) : undefined;
+  const onlyLabel = onlyItem ? displayName(onlyItem) : only || "";
 
   // Once there are enough rows to fill the panel, pin the panel height so typing
   // in the filter scrolls the list instead of resizing/recentering the modal.
@@ -290,7 +297,18 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir }: ArchivedMo
               </Button>
             </div>
 
-            {scope && (
+            {only && (
+              <div className="arch-scope">
+                <Icon name="filter" />
+                <span className="arch-scope-dir" title={"ID: " + only}>
+                  {tr("arch.scope_session", { name: onlyLabel })}
+                </span>
+                <Button small variant="ghost" onClick={() => setOnly(null)}>
+                  {tr("arch.scope_clear")}
+                </Button>
+              </div>
+            )}
+            {!only && scope && (
               <div className="arch-scope">
                 <Icon name="filter" />
                 <span className="arch-scope-dir" title={scope}>

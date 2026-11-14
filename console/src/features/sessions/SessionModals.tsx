@@ -26,6 +26,7 @@ export function SessionModals() {
   const ssmResume = useSessionUI((s) => s.ssmResume);
   const archivedOpen = useSessionUI((s) => s.archivedOpen);
   const archivedDir = useSessionUI((s) => s.archivedDir);
+  const archivedSession = useSessionUI((s) => s.archivedSession);
   const cleanupOpen = useSessionUI((s) => s.cleanupOpen);
   const reclaimOpen = useSessionUI((s) => s.reclaimOpen);
   const budget = useSessionUI((s) => s.budget);
@@ -57,6 +58,7 @@ export function SessionModals() {
       {archivedOpen && (
         <ArchivedModal
           dir={archivedDir}
+          session={archivedSession}
           onClose={close}
           onRestored={() => {
             void refreshSessions();

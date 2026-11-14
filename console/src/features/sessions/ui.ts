@@ -12,6 +12,7 @@ interface SessionUI {
   ssmResume: { name: string; force: boolean } | null; // SSM re-login/resume target
   archivedOpen: boolean; // the archive browser
   archivedDir: string | null; // …scoped to one working copy's folder, when opened from its row
+  archivedSession: string | null; // …or narrowed to one session, when opened from a search hit
   cleanupOpen: boolean; // the cleanup panel (docs/log/32)
   reclaimOpen: boolean; // the confirm behind the low-disk notice's "Clean regenerable items…" (#3880)
   budget: Session | null; // spend budget / "raise and resume" target (#1054)
@@ -20,7 +21,7 @@ interface SessionUI {
   openRename(s: Session): void;
   openBranchRename(s: Session): void;
   openSsmResume(name: string, force: boolean): void;
-  openArchived(dir?: string): void;
+  openArchived(dir?: string, session?: string): void;
   openCleanup(): void;
   openReclaim(): void;
   openBudget(s: Session): void;
@@ -34,6 +35,7 @@ export const useSessionUI = create<SessionUI>((set) => ({
   ssmResume: null,
   archivedOpen: false,
   archivedDir: null,
+  archivedSession: null,
   cleanupOpen: false,
   reclaimOpen: false,
   budget: null,
@@ -42,11 +44,11 @@ export const useSessionUI = create<SessionUI>((set) => ({
   openRename: (s) => set({ rename: s }),
   openBranchRename: (s) => set({ branchRename: s }),
   openSsmResume: (name, force) => set({ ssmResume: { name, force } }),
-  openArchived: (dir) => set({ archivedOpen: true, archivedDir: dir || null }),
+  openArchived: (dir, session) => set({ archivedOpen: true, archivedDir: dir || null, archivedSession: session || null }),
   openCleanup: () => set({ cleanupOpen: true }),
   openReclaim: () => set({ reclaimOpen: true }),
   openBudget: (s) => set({ budget: s }),
   openMove: (s, fromLimit = false) => set({ move: s, moveFromLimit: fromLimit }),
   close: () =>
-    set({ rename: null, branchRename: null, ssmResume: null, archivedOpen: false, archivedDir: null, cleanupOpen: false, reclaimOpen: false, budget: null, move: null, moveFromLimit: false }),
+    set({ rename: null, branchRename: null, ssmResume: null, archivedOpen: false, archivedDir: null, archivedSession: null, cleanupOpen: false, reclaimOpen: false, budget: null, move: null, moveFromLimit: false }),
 }));

@@ -1,5 +1,6 @@
 // A folder-scoped archive shelf also lists the archived children of that folder's sessions,
-// which normally live in worktrees of their own. The api client is the only thing swapped out.
+// which normally live in worktrees of their own; a session-scoped one (opened from a past-session
+// search hit) lists that one session. The api client is the only thing swapped out.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -29,7 +30,7 @@ afterEach(() => {
   useSessionsStore.setState({ sessions: [] });
 });
 
-const shown = async (live: Session[], archived: Session[]) => {
+const shown = async (live: Session[], archived: Session[], props: { dir?: string; session?: string } = { dir: DIR }) => {
   useSessionsStore.setState({ sessions: live });
   api.mockResolvedValue({ sessions: archived });
   const host = document.createElement("div");
@@ -39,7 +40,7 @@ const shown = async (live: Session[], archived: Session[]) => {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <ArchivedModal dir={DIR} />
+          <ArchivedModal {...props} />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -67,5 +68,30 @@ describe("ArchivedModal folder scope", () => {
       [s("parent", { dir: DIR }), s("child", { dir: "/home/dev/repos/app@wip-c1", originSession: "parent" })],
     );
     expect(names).toEqual(["child", "parent"]);
+  });
+});
+
+describe("ArchivedModal session scope", () => {
+  // Same title on purpose: the search hit's title alone cannot pick the row.
+  const shelf = [
+    s("abc1234", { title: "Review", dir: "/home/dev/repos/app@wip-1" }),
+    s("def5678", { title: "Review", dir: "/home/dev/repos/app@wip-2" }),
+  ];
+
+  it("lists only the named session, and Show all brings the rest back", async () => {
+    const names = await shown([], shelf, { session: "def5678" });
+    expect(names).toEqual(["Review"]);
+    expect(document.querySelector(".arch-info")?.getAttribute("title")).toBe("ID: def5678");
+    const chip = document.querySelector(".arch-scope");
+    expect(chip?.textContent).toMatch(/Review/);
+    const clear = [...chip!.querySelectorAll("button")].find((b) => /すべて表示|Show all/.test(b.textContent || ""));
+    await act(async () => clear!.click());
+    expect(document.querySelectorAll(".arch-row").length).toBe(2);
+  });
+
+  it("shows no rows, not the whole shelf, once the session is no longer archived", async () => {
+    const names = await shown([], shelf, { session: "gone999" });
+    expect(names).toEqual([]);
+    expect(document.querySelector(".arch-scope")?.textContent).toMatch(/gone999/);
   });
 });

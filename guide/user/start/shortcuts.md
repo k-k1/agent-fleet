@@ -48,6 +48,8 @@ What it searches:
 - The order of the sessions list is fixed the moment the palette opens. Rows do not swap places while you read
 - Type an issue or pull request number such as `#1662` or `PROJ-123` and the sessions tied to it come first. The whole number is matched, so `#12` does not find `#1662`
 - Enter on a result in Conversations opens that session scrolled to the matching turn. Tool output and the agent's thinking are not searched
+- An archived session cannot be opened as it is, so Enter on its result opens the archive showing only that session; restore it there. **Show all** brings back the rest of the archive
+- Under each Conversations result's title are the session's ID and its branch (the folder name when it has none), which tell apart sessions with the same title
 
 ## Act with the leader key
 
