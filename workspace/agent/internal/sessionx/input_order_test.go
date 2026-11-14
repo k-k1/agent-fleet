@@ -209,3 +209,45 @@ esac
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// B and C both time out while A hangs, so C wakes with its own timer and B's death ready at
+// once. Whichever case the select takes, the chain must end up empty once A returns and the
+// next input must be delivered, not failed.
+func TestInputOrderRecoversAfterSimultaneousTimeouts(t *testing.T) {
+	for i := 0; i < 300; i++ {
+		o := &inputOrder{tails: map[string]*orderTail{}, wait: time.Nanosecond}
+		release := make(chan struct{})
+		var wg sync.WaitGroup
+		start := func(run func()) {
+			wg.Add(1)
+			go func() { defer wg.Done(); run() }()
+		}
+		start(o.enqueue("s", func() { <-release }, func() { t.Error("head skipped") }))
+		// Enqueued before any of them runs, so B and C both start from the same state.
+		skipped := make(chan struct{}, 2)
+		b := o.enqueue("s", func() { t.Error("b ran behind a live head") }, func() { skipped <- struct{}{} })
+		c := o.enqueue("s", func() { t.Error("c ran behind a live head") }, func() { skipped <- struct{}{} })
+		start(b)
+		start(c)
+		for j := 0; j < 2; j++ {
+			select {
+			case <-skipped:
+			case <-time.After(10 * time.Second):
+				t.Fatal("a follower was never skipped while the head hangs")
+			}
+		}
+		close(release)
+		wg.Wait()
+		ran := false
+		o.enqueue("s", func() { ran = true }, func() { t.Error("input after the head returned was failed") })()
+		if !ran {
+			t.Fatalf("round %d: input after the head returned did not run", i)
+		}
+		o.mu.Lock()
+		left := len(o.tails)
+		o.mu.Unlock()
+		if left != 0 {
+			t.Fatalf("round %d: tails left: %d", i, left)
+		}
+	}
+}
