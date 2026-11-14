@@ -35,6 +35,10 @@ carve-out は Ctrl+C/V とズームのみ）。このため「ターミナルに
 4. **Escape は capture で握らない**。overlay の閉じは escLayer が bubble フェーズで担う設計なので、
    capture で Escape を stop すると全モーダル/メニューの Esc が壊れる。例外はリーダー保留中のみ。
    overlay が開いている間はディスパッチャ自体を不活性化する（`escLayer.hasOpenOverlay()`）。
+   ただし不活性でもリーダーとパレットのコードのブラウザ既定動作だけは取り消す（preventDefault のみで、
+   キーは overlay に届く）。オートリピート中・IME 変換中・ターミナルにコードを譲る場合も同じ。
+   これが無いとモーダルの裏で Ctrl/⌘+P がブラウザの印刷ダイアログを開く。フォーカスを持つ sandbox
+   frame（drawio ビューア）はそのコードを自分で取り消して親に渡す。
 
 5. **レイヤリング**: 純ロジックは `lib/keys/`（`chords.ts`／`registry.ts`、store も DOM も import せず
    vitest 対象）、ストア結合は `features/keys/`。コマンド DATA は 1 か所（`commands.ts` の

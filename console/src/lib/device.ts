@@ -74,9 +74,10 @@ export const isStandalonePWA = (): boolean =>
       (navigator as unknown as { standalone?: boolean }).standalone === true,
   );
 
-// isMac drives DISPLAY only — whether a shortcut label shows ⌘/⌥ or Ctrl/Alt. Key
-// MATCHING stays platform-agnostic (chords treat Ctrl and ⌘ as one "mod"), so this
-// never affects which keys fire, only how they read. Prefers the modern
+// isMac drives DISPLAY — whether a shortcut label shows ⌘/⌥ or Ctrl/Alt — and which
+// modifier counts as the browser's own accelerator when the dispatcher cancels a browser
+// default. Key MATCHING stays platform-agnostic (chords treat Ctrl and ⌘ as one "mod"),
+// so this never affects which keys fire. Prefers the modern
 // userAgentData.platform, falling back to the legacy platform / UA string.
 export const isMac = (): boolean =>
   typeof navigator !== "undefined" &&

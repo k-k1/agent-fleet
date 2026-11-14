@@ -54,7 +54,10 @@ export type DrawioFrameRequest =
    *  error, it degrades quietly to a picture with frames and colours only. `missing` is returned
    *  so the frame can drop those from "already requested" and ask again on the next render
    *  (docs/log/65 §65.5.4). */
-  | { af: typeof DRAWIO_MSG; t: "stencils"; xml: string[]; missing?: string[] };
+  | { af: typeof DRAWIO_MSG; t: "stencils"; xml: string[]; missing?: string[] }
+  /** The Console's gateway chords (leader, palette) in canonical form. The frame cancels their
+   *  browser default and hands them back as `key`; every other key stays the frame's. */
+  | { af: typeof DRAWIO_MSG; t: "keys"; chords: string[] };
 
 export type DrawioFrameEvent =
   | { af: typeof DRAWIO_MSG; t: "ready" }
@@ -82,18 +85,82 @@ export type DrawioFrameEvent =
    *  (measured; the same hole as §65.11-7). Fetching is the parent's job, as it holds the
    *  credentials. */
   | { af: typeof DRAWIO_MSG; t: "stencils"; sets: string[] }
+  /** A gateway chord pressed while the frame has focus. Keys typed inside an iframe never reach
+   *  the Console's window, so without this Ctrl/⌘+P printed and Ctrl/⌘+K went to the browser
+   *  as soon as the user had clicked into the diagram. */
+  | {
+      af: typeof DRAWIO_MSG;
+      t: "key";
+      code: string;
+      key: string;
+      ctrlKey: boolean;
+      metaKey: boolean;
+      altKey: boolean;
+      shiftKey: boolean;
+      repeat: boolean;
+    }
   /** `boot` means the viewer could not be evaluated, `parse` that the file was not readable as
    *  a diagram. Never conflate the two: reporting a load failure as "the diagram is broken"
    *  makes the cause look like the file and sends the whole investigation the wrong way. */
   | { af: typeof DRAWIO_MSG; t: "error"; code: "boot" | "parse" | "empty" };
 
-const FRAME_EVENTS = ["ready", "booted", "rendered", "stencils", "error"];
+const FRAME_EVENTS = ["ready", "booted", "rendered", "stencils", "error", "key"];
 
 /** Whether the event really came from the frame; anyone can send a postMessage. */
 export function isDrawioFrameEvent(data: unknown): data is DrawioFrameEvent {
   if (!data || typeof data !== "object") return false;
   const m = data as { af?: unknown; t?: unknown };
   return m.af === DRAWIO_MSG && typeof m.t === "string" && FRAME_EVENTS.includes(m.t);
+}
+
+/** The fields of a keydown that decide its chord. */
+export type FrameKey = Pick<KeyboardEvent, "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">;
+
+/**
+ * frameChordOf is the canonical chord of a keydown (lib/keys/chords.ts eventChordString), or
+ * null for a modifier-only key. It is a self-contained copy because this file must import
+ * nothing (scripts/afDrawioFrames.js loads it as a data: module), and it is embedded into the
+ * frame script by its source text, so it may reference nothing outside its own body.
+ * drawioFrame.test.ts holds it equal to eventChordString; a drift would silently stop the
+ * frame from recognising a rebound gateway chord.
+ */
+export function frameChordOf(e: FrameKey): string | null {
+  const code = e.code || "";
+  if (/^(Shift|Control|Alt|Meta)(Left|Right)$/.test(code)) return null;
+  const sym: Record<string, string> = {
+    Backslash: "\\",
+    BracketLeft: "[",
+    BracketRight: "]",
+    Comma: ",",
+    Period: ".",
+    Semicolon: ";",
+    Quote: "'",
+    Backquote: "`",
+    Minus: "-",
+    Equal: "=",
+    Slash: "/",
+    Space: "space",
+    Enter: "enter",
+    NumpadEnter: "enter",
+    Tab: "tab",
+    Escape: "escape",
+    Backspace: "backspace",
+    Delete: "delete",
+  };
+  let m: RegExpExecArray | null;
+  let key: string;
+  if ((m = /^Key([A-Z])$/.exec(code))) key = m[1].toLowerCase();
+  else if ((m = /^(?:Digit|Numpad)([0-9])$/.exec(code))) key = m[1];
+  else if ((m = /^F([1-9]|1[0-9]|2[0-4])$/.exec(code))) key = "f" + m[1];
+  else if ((m = /^Arrow(Up|Down|Left|Right)$/.exec(code))) key = "arrow" + m[1].toLowerCase();
+  else if (Object.prototype.hasOwnProperty.call(sym, code)) key = sym[code];
+  else key = code.toLowerCase();
+  const parts: string[] = [];
+  if (e.ctrlKey || e.metaKey) parts.push("mod");
+  if (e.altKey) parts.push("alt");
+  if (e.shiftKey) parts.push("shift");
+  parts.push(key);
+  return parts.join("+");
 }
 
 // srcdoc is an attribute value, so every embedded string must be escaped, double quotes included.
@@ -167,6 +234,33 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     m.af = MSG;
     parent.postMessage(m, "*");
   }
+
+  // The Console's gateway chords (leader, palette), sent by the parent. A key pressed in here
+  // never reaches the Console's window, so these are cancelled here — otherwise Ctrl/⌘+P opens
+  // the browser's print dialog — and handed to the parent, which runs them. Every other key
+  // keeps its default: the frame has no say over what the Console does with it.
+  var appKeys = [];
+  var chordOf = ${frameChordOf.toString()};
+  window.addEventListener(
+    "keydown",
+    function (e) {
+      if (e.isComposing) return;
+      var c = chordOf(e);
+      if (!c || appKeys.indexOf(c) < 0) return;
+      e.preventDefault();
+      post({
+        t: "key",
+        code: e.code,
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        repeat: e.repeat,
+      });
+    },
+    true,
+  );
 
   // The viewer can fail asynchronously, and swallowing that leaves the pane empty for no
   // apparent reason, so always report one line to the parent, which turns it into a message.
@@ -620,6 +714,14 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     }
     if (m.t === "stencils") {
       addStencils(m.xml, m.missing);
+      return;
+    }
+    if (m.t === "keys") {
+      appKeys = Array.isArray(m.chords)
+        ? m.chords.filter(function (c) {
+            return typeof c === "string" && c !== "";
+          })
+        : [];
       return;
     }
     if (m.t !== "render") return;

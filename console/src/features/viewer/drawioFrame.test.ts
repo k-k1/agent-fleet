@@ -2,7 +2,8 @@
 // isolation, and the absence of paths out to external hosts, really are in the string.
 // Rendering itself can only be checked in a real browser, which scripts/drawio/check.mjs does.
 import { describe, expect, it } from "vitest";
-import { drawioFrameSrcdoc, isDrawioFrameEvent, DRAWIO_MSG } from "./drawioFrame.ts";
+import { drawioFrameSrcdoc, isDrawioFrameEvent, frameChordOf, DRAWIO_MSG, type FrameKey } from "./drawioFrame.ts";
+import { eventChordString } from "../../lib/keys/chords.ts";
 
 const html = (dark = false) => drawioFrameSrcdoc({ dark });
 
@@ -127,10 +128,51 @@ describe("isDrawioFrameEvent", () => {
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "booted" })).toBe(true);
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "rendered", pages: 1, page: 1, scale: 1 })).toBe(true);
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "error", code: "parse" })).toBe(true);
+    expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "key", code: "KeyP", ctrlKey: true })).toBe(true);
+    expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "keys", chords: [] })).toBe(false);
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "render", xml: "" })).toBe(false);
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "boot", src: "" })).toBe(false);
     expect(isDrawioFrameEvent({ t: "ready" })).toBe(false);
     expect(isDrawioFrameEvent("ready")).toBe(false);
     expect(isDrawioFrameEvent(null)).toBe(false);
+  });
+});
+
+describe("gateway chords pressed inside the frame", () => {
+  // Keys typed in an iframe never reach the Console's window: without this, Ctrl/⌘+P printed
+  // and Ctrl/⌘+K went to the browser once the user had clicked into the diagram.
+  it("cancels only the chords the parent sent, before handing them over", () => {
+    const s = html();
+    const listener = s.slice(s.indexOf('"keydown"'));
+    expect(listener).toMatch(/appKeys\.indexOf\(c\) < 0\) return;\s*e\.preventDefault\(\);\s*post\(\{\s*t: "key"/);
+    // Capture phase: the viewer's own handlers must not get to stop it first.
+    expect(listener).toMatch(/\},\s*true,\s*\);/);
+    expect(s).toContain('if (m.t === "keys")');
+  });
+
+  // The function is embedded by its source text; anything it referenced outside its body would
+  // be undefined in the frame. Evaluating the text on its own proves it is self-contained.
+  const embedded = new Function("return " + frameChordOf.toString())() as (e: FrameKey) => string | null;
+
+  it("computes the same chord as the Console's dispatcher", () => {
+    const codes = [
+      "KeyP", "KeyK", "KeyA", "KeyZ", "Digit0", "Digit9", "Numpad5", "F1", "F6", "F12", "F24",
+      "ArrowUp", "ArrowLeft", "Backslash", "BracketLeft", "BracketRight", "Comma", "Period",
+      "Semicolon", "Quote", "Backquote", "Minus", "Equal", "Slash", "Space", "Enter", "NumpadEnter",
+      "Tab", "Escape", "Backspace", "Delete", "PageDown", "Home", "NumpadAdd", "IntlRo",
+      "ShiftLeft", "ControlRight", "AltLeft", "MetaRight",
+    ];
+    let compared = 0;
+    for (const code of codes) {
+      for (let bits = 0; bits < 16; bits++) {
+        const init = { code, ctrlKey: !!(bits & 1), metaKey: !!(bits & 2), altKey: !!(bits & 4), shiftKey: !!(bits & 8) };
+        const want = eventChordString(init as unknown as KeyboardEvent);
+        expect(frameChordOf(init), `${code} ${bits}`).toBe(want);
+        expect(embedded(init), `${code} ${bits} (embedded)`).toBe(want);
+        compared++;
+      }
+    }
+    expect(compared).toBe(codes.length * 16);
+    expect(embedded({ code: "KeyP", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false })).toBe("mod+p");
   });
 });

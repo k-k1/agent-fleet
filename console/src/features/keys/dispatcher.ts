@@ -13,6 +13,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { hasOpenOverlay } from "../../lib/escLayer.ts";
 import { getSettings } from "../../lib/settings.ts";
+import { isMac } from "../../lib/device.ts";
 import { eventChordString, eventKeyChordString } from "../../lib/keys/chords.ts";
 import { matchDirect, resolveLeader, isLeaderPrefix } from "../../lib/keys/registry.ts";
 import type { KeyContext } from "../../lib/keys/registry.ts";
@@ -30,6 +31,21 @@ const LEADER_TIMEOUT = 3000; // ms: a dangling leader (overlay not yet shown) au
 // while still recovering if they walk away (never a permanently stuck overlay).
 const LEADER_TIMEOUT_OPEN = 15000;
 const WHICHKEY_DELAY = 350; // ms before the which-key overlay reveals
+
+// blockBrowserDefault cancels the browser's own action for the two gateway chords (the
+// leader and the palette) when the dispatcher declines to act on them: an overlay owns the
+// keyboard, the key is an auto-repeat, an IME is composing, or a terminal is yielded the
+// chord. Without it Ctrl/⌘+P opens the browser's print dialog and Ctrl/⌘+K its search box
+// whenever a modal is up. preventDefault only, never stopPropagation: the modal, the
+// palette's own input and xterm still receive the key and keep their behaviour (xterm does
+// not look at defaultPrevented). Only the browser's accelerator modifier counts — ⌘ on
+// macOS, Ctrl elsewhere — because macOS Ctrl+P / Ctrl+K are the text fields' line-up and
+// kill-line, not browser commands. A chord the user rebound away is no longer the app's,
+// so its browser default comes back.
+function blockBrowserDefault(e: KeyboardEvent, chord: string, leader: string, palette: string): void {
+  if (chord !== leader && chord !== palette) return;
+  if (isMac() ? e.metaKey : e.ctrlKey) e.preventDefault();
+}
 
 function focusedKind(): KeyContext["focusedKind"] {
   const el = document.activeElement as HTMLElement | null;
@@ -170,7 +186,6 @@ export function wireKeys(): () => void {
     // Scroll the active viewer pane. Handled before the auto-repeat guard so holding the key
     // keeps scrolling (unlike one-shot shortcuts, which must not fire on auto-repeat).
     if (maybeScrollActivePane(e)) return;
-    if (e.repeat) return; // never fire a shortcut on auto-repeat (a held-down key)
     const chord = eventChordString(e); // from e.code — valid even while an IME composes
     if (chord == null) return; // modifier-only keydown — keep waiting
     // An IME is mid-composition (Japanese conversion reports isComposing / keyCode 229).
@@ -181,6 +196,12 @@ export function wireKeys(): () => void {
     const LEADER = boundChord(APP_LEADER);
     const PALETTE = boundChord(APP_PALETTE);
     const CHEAT = boundChord(APP_CHEAT);
+
+    // Every early return below that leaves the key alone goes through this, so that a
+    // gateway chord the dispatcher declines still never reaches the browser.
+    const yieldKey = () => blockBrowserDefault(e, chord, LEADER, PALETTE);
+
+    if (e.repeat) return yieldKey(); // never fire a shortcut on auto-repeat (a held-down key)
     const commands = effectiveCommands();
 
     const ks = useKeysStore.getState();
@@ -243,12 +264,13 @@ export function wireKeys(): () => void {
         consume(e);
         dropIME();
         enterLeader([]);
+        return;
       }
-      return;
+      return yieldKey();
     }
 
     // A modal/menu/palette owning the keyboard wins.
-    if (hasOpenOverlay()) return;
+    if (hasOpenOverlay()) return yieldKey();
 
     const ctx = buildContext();
 
@@ -260,10 +282,10 @@ export function wireKeys(): () => void {
       // including the leader (Ctrl/⌘+K) and palette (Ctrl/⌘+P) — so Ctrl+K (kill-line),
       // Ctrl+P (history-prev) etc. reach the shell. A fully pure terminal; return to app
       // shortcuts by focusing another pane. (An in-progress leader sequence is handled above.)
-      if (s.shellTermPassthrough && isShellSsmTerminal()) return;
+      if (s.shellTermPassthrough && isShellSsmTerminal()) return yieldKey();
       // terminalPriority (all terminals): yield every chord EXCEPT the leader — the single
       // guaranteed gateway to which-key / palette. With the leader unbound, nothing escapes.
-      if (s.terminalPriority && chord !== LEADER) return;
+      if (s.terminalPriority && chord !== LEADER) return yieldKey();
     }
 
     if (chord === LEADER) {

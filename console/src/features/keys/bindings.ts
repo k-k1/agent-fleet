@@ -55,6 +55,13 @@ export function boundChord(id: string): string {
   return raw ? canonical(raw) : "";
 }
 
+/** The gateway chords — the leader and the palette — as currently bound, unbound ones left
+ * out. These are the chords whose browser default the Console always cancels (Ctrl/⌘+P would
+ * print), and the only ones a sandboxed frame hands back to the Console (DrawioView). */
+export function gatewayChords(): string[] {
+  return [boundChord(APP_LEADER), boundChord(APP_PALETTE)].filter((c) => c !== "");
+}
+
 // Memoize on the overrides object identity. The settings store swaps `keybindings` to a
 // fresh object only when a binding actually changes, so between unrelated settings updates
 // the SAME reference comes back and we return the SAME array — essential for
