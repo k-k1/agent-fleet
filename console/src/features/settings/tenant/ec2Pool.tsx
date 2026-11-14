@@ -130,6 +130,9 @@ type Slot = {
   // A quarantined slot (decision 20): out of the pool, still being billed.
   quarantined?: boolean;
   quarantine_reason?: string;
+  /** af-role=quarantined: the only kind Terminate accepts. A rung-L2 row is quarantined too
+   *  but keeps a slot's actions. */
+  terminable?: boolean;
   /** Launch template version the slot was launched from, and whether that is older than
    *  $Latest. User data is read only at launch, so an outdated slot runs the old one. */
   template_version?: string;
@@ -357,7 +360,9 @@ export function PoolView() {
   // free slots shows an operator "one free slot that nobody can enter". They stay in the table,
   // because they are still being billed.
   const pool = slots.filter((s) => !s.quarantined);
-  const quarantined = slots.filter((s) => s.quarantined);
+  // The hint and Terminate are for af-role=quarantined boxes; a rung-L2 row is held out of the
+  // counts above but is still a slot, with a slot's actions.
+  const quarantined = slots.filter((s) => s.terminable);
   const running = pool.filter((s) => s.state === "running").length;
   const asleep = pool.filter((s) => s.state === "stopped").length;
   const free = pool.filter((s) => !s.workspace).length;
@@ -467,18 +472,18 @@ export function PoolView() {
                     <td className="mono">{s.instance_id}</td>
                     <td className="mono">{s.instance_type}<span className="pool-az muted" title={s.az}>{s.az}</span></td>
                     <td>
-                      <span className={"state-dot " + (s.quarantined ? "off" : s.state === "running" ? "on" : "off")} />
-                      {s.quarantined ? (
+                      <span className={"state-dot " + (s.terminable ? "off" : s.state === "running" ? "on" : "off")} />
+                      {s.terminable ? (
                         <span className="warn-text" title={s.quarantine_reason || ""}>{tr("pool.state_quarantined")}</span>
                       ) : s.state === "stopped" ? (
                         tr("pool.state_asleep")
                       ) : (
                         s.state
                       )}
-                      {!s.quarantined && s.state === "running" && !s.registered && (
+                      {!s.terminable && s.state === "running" && !s.registered && (
                         <span className="muted"> {tr("pool.not_registered")}</span>
                       )}
-                      {s.dark_since && !s.quarantined && (
+                      {s.dark_since && !s.terminable && (
                         <span
                           className="pool-badge outdated"
                           title={tr(s.rung === "observing" ? "pool.dark_title" : "pool.dark_title_later", { since: s.dark_since })}
@@ -489,7 +494,7 @@ export function PoolView() {
                           })}
                         </span>
                       )}
-                      {s.wedged_since && !s.quarantined && (
+                      {s.wedged_since && !s.terminable && (
                         <span
                           className="pool-badge outdated"
                           title={tr(s.wedged_rung === "observing" ? "pool.wedged_title" : "pool.wedged_title_later", { since: s.wedged_since })}
@@ -539,7 +544,7 @@ export function PoolView() {
                         the only way the product has to stop paying for one (the sweeper's
                         terminate stage filters on af-role=slot and never collects it). */}
                     <td className="pool-actions">
-                      {s.quarantined ? (
+                      {s.terminable ? (
                         <Button small variant="danger" onClick={() => { setKillErr(""); setKilling(s); }}>
                           {tr("pool.terminate")}
                         </Button>

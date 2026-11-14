@@ -322,6 +322,8 @@ it("counts held, running and hibernating slots and says eviction happens once th
         workspace: "",
         idle_minutes: 0,
         quarantined: true,
+        terminable: true,
+        rung: "quarantined",
         quarantine_reason: "mount home on i-bad: no device",
       },
     ],
@@ -345,7 +347,7 @@ it("counts held, running and hibernating slots and says eviction happens once th
     api.mockResolvedValue({
       ...POOL,
       slots: [{ instance_id: "i-l2", instance_type: "m7i.large", az: "ap-northeast-1a", state: "running", registered: false,
-        workspace: "", idle_minutes: 0, rung: "quarantined", dark_since: "2026-11-13T00:00:00Z", quarantine_reason: "repeat: x" }],
+        workspace: "", idle_minutes: 0, quarantined: true, rung: "quarantined", dark_since: "2026-11-13T00:00:00Z", quarantine_reason: "repeat: x" }],
     });
     await mount();
     expect(buttonsIn(rowOf("i-l2")).map((b) => b.textContent)).toEqual(["停止（強制）", "入れ替えを予約"]);
