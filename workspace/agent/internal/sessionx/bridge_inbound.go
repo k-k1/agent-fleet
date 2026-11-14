@@ -46,6 +46,9 @@ func injectSessionPrompt(name, prompt string, origin agents.Origin) error {
 	if prompt == "" {
 		return ErrInjectEmpty
 	}
+	if queueEnvelopeForged(prompt) {
+		return errors.New(queueForgedMessage)
+	}
 	if !session.ValidName(name) {
 		return fmt.Errorf("invalid session name %q", name)
 	}

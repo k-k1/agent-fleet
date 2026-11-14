@@ -30,6 +30,8 @@ import {
   memoCategoryDelete,
   memoPasteImage,
   memoImageGC,
+  memoQueueList,
+  memoRelease,
 } from "./api.ts";
 import { useMemoStore } from "./store.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
@@ -40,7 +42,12 @@ import { useTenantStore } from "../../core/store/tenant.ts";
 import { useDraft } from "../../lib/draft.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { useSettings } from "../../lib/settings.ts";
-import type { Memo, MemoCategory, MemoAttachment } from "../../types/memo.ts";
+import type { Memo, MemoCategory, MemoAttachment, MemoQueue } from "../../types/memo.ts";
+import { errDetail, errText } from "../../core/api/client.ts";
+import { MemoQueueSettingsModal } from "./MemoQueueSettingsModal.tsx";
+import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
+import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
+import { isStaleRelease, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, staleIdsOf } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -176,6 +183,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const imgInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [tidy, setTidy] = useState<Memo[] | null>(null);
+  // Auto-run settings (ADR 0137), read with the memo poll below. tenantEnabled false: the
+  // tenant's administrator has not allowed new settings.
+  const [queues, setQueues] = useState<MemoQueue[]>([]);
+  const [tenantEnabled, setTenantEnabled] = useState(false);
+  const lastQueues = useRef<{ tenantEnabled: boolean; queues: MemoQueue[] }>({ tenantEnabled: false, queues: [] });
+  // The dialogs hold a category id, never a copy of the category or its settings: each render
+  // looks the live row up, so a poll that renames or removes it is seen by the dialog.
+  const [settingsFor, setSettingsFor] = useState<string | null>(null);
+  const [deliveriesFor, setDeliveriesFor] = useState<string | null>(null);
+  const [releasing, setReleasing] = useState<string | null>(null); // release card key in flight
+  const [changedIds, setChangedIds] = useState<ReadonlySet<string>>(new Set());
   const [sendOpen, setSendOpen] = useState(false);
   // Section open/closed, owned here (controlled) so the leader command can force it open.
   const [openStored, setSectionOpen] = useFold(SECTION_KEY);
@@ -189,16 +207,22 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   useEffect(() => {
     let alive = true;
     const load = () =>
-      Promise.all([memoList(), memoCategoryList()])
-        .then(([mList, cList]) => {
+      Promise.all([memoList(), memoCategoryList(), memoQueueList().catch(() => null)])
+        .then(([mList, cList, qRaw]) => {
           if (!alive) return;
           const marr = Array.isArray(mList) ? mList : [];
           const carr = Array.isArray(cList) ? cList : [];
-          const ser = JSON.stringify([marr, carr]);
+          // A failed settings read (an older Control Plane, an error body) keeps the last good
+          // one; it never takes the memo list down with it.
+          const qw = readMemoQueues(qRaw) ?? lastQueues.current;
+          lastQueues.current = qw;
+          const ser = JSON.stringify([marr, carr, qw]);
           if (ser !== serRef.current) {
             serRef.current = ser;
             setMemos(marr);
             setCats(carr);
+            setQueues(qw.queues);
+            setTenantEnabled(qw.tenantEnabled);
           }
         })
         .catch(() => {});
@@ -236,6 +260,33 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const selectedMemos = useMemo(() => memos.filter((m) => sel[m.id]), [memos, sel]);
 
   const toggle = (id: string) => setSel((s) => ({ ...s, [id]: !s[id] }));
+  const queueByCat = useMemo(() => new Map(queues.map((q) => [q.categoryId, q])), [queues]);
+
+  // Approve what a release card showed, each message with the hash its row carried. A 409
+  // means something changed after the card was drawn: nothing was approved, the stale ids
+  // are marked, and the list is re-read so the card shows what is there now.
+  const release = async (cardKey: string, items: Memo[]) => {
+    if (releasing) return;
+    setReleasing(cardKey);
+    try {
+      const res = await memoRelease(items.map((m) => ({ id: m.id, contentHash: m.contentHash ?? "" })));
+      if (res?.error) {
+        if (isStaleRelease(res)) {
+          setChangedIds(new Set(staleIdsOf(res)));
+          toast(t("memo.release_stale"), { kind: "warn" });
+        } else toast(errDetail(res.error) || t("memo.release_failed"), { kind: "warn" });
+        bumpMemos();
+        return;
+      }
+      setChangedIds(new Set());
+      toast(t("memo.release_done", { count: items.length }), { kind: "success" });
+      bumpMemos();
+    } catch {
+      toast(t("memo.release_failed"), { kind: "warn" });
+    } finally {
+      setReleasing(null);
+    }
+  };
 
   // ---- composer ----------------------------------------------------------------
   const openComposer = () => {
@@ -351,7 +402,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       // apiJSON resolves a server error as {error} rather than throwing, so check it or a
       // false success toast is shown.
       if ((res as { error?: unknown }).error) {
-        toast(t("common.send_failed"));
+        // A queue's own refusals (locked, sending, ...) have their own wording.
+        const err = (res as unknown as { error: { code?: string } }).error;
+        toast(err.code?.startsWith("memo_") ? errText(err) : t("common.send_failed"));
         return;
       }
       if (category.trim() && !catNames.includes(category.trim()))
@@ -731,6 +784,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   const cat = g.catId ? cats.find((c) => c.id === g.catId) : undefined;
                   const dropKey = groupKey(rb.repo, g.category);
                   const collapsed = !!collapsedCats[dropKey];
+                  const queue = cat ? queueByCat.get(cat.id) : undefined;
+                  const isQueue = !!queue || !!cat?.queue;
+                  const cards = releaseCards(g.memos);
                   return (
                     <div
                       key={g.category || "\x00unfiled"}
@@ -828,6 +884,15 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           </span>
                         )}
                         <span className="memo-cat-n">{g.memos.length}</span>
+                        {isQueue && (
+                          <span
+                            className={"memo-q-badge" + (queue && !queue.enabled ? " off" : "")}
+                            title={tr(queue && !queue.enabled ? "memo.autorun_badge_off_title" : "memo.autorun_badge_title")}
+                          >
+                            {tr(queue && !queue.enabled ? "memo.autorun_badge_off" : "memo.autorun_badge")}
+                          </span>
+                        )}
+
                         {ids.length > 0 && (
                           <button
                             type="button"
@@ -852,6 +917,34 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                         >
                           <Icon name="add" />
                         </button>
+                        {cat && isQueue && (
+                          <button
+                            type="button"
+                            className="memo-cat-act"
+                            title={tr("memo.autorun_deliveries")}
+                            aria-label={tr("memo.autorun_deliveries")}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeliveriesFor(cat.id);
+                            }}
+                          >
+                            <Icon name="history" />
+                          </button>
+                        )}
+                        {cat && (
+                          <button
+                            type="button"
+                            className="memo-cat-act"
+                            title={tr("memo.autorun_settings")}
+                            aria-label={tr("memo.autorun_settings")}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSettingsFor(cat.id);
+                            }}
+                          >
+                            <Icon name="settings-gear" />
+                          </button>
+                        )}
                         {cat && (
                           <button
                             type="button"
@@ -869,6 +962,16 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       </div>
 
                       {targetKey === dropKey && composer}
+
+                      {cards.map((c) => (
+                        <MemoReleaseCard
+                          key={c.key}
+                          card={c}
+                          busy={releasing === dropKey + "\x00" + c.key}
+                          changedIds={changedIds}
+                          onRelease={(items) => void release(dropKey + "\x00" + c.key, items)}
+                        />
+                      ))}
 
                       {!collapsed && (
                         <div className="memo-cat-items">
@@ -994,6 +1097,35 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           )}
       </Section>
 
+      {settingsFor && (() => {
+        const c = cats.find((x) => x.id === settingsFor);
+        if (!c) return null;
+        return (
+          <MemoQueueSettingsModal
+            key={c.id}
+            categoryId={c.id}
+            categoryName={c.name}
+            queue={queueByCat.get(c.id)}
+            tenantEnabled={tenantEnabled}
+            onClose={() => setSettingsFor(null)}
+            onChanged={bumpMemos}
+          />
+        );
+      })()}
+      {deliveriesFor && (() => {
+        const c = cats.find((x) => x.id === deliveriesFor);
+        if (!c) return null;
+        return (
+          <MemoQueueDeliveriesModal
+            key={c.id}
+            categoryId={c.id}
+            categoryName={c.name}
+            waiting={pendingCount(memos.filter((m) => m.repo === c.repo && m.category === c.name))}
+            onClose={() => setDeliveriesFor(null)}
+            onFired={bumpMemos}
+          />
+        );
+      })()}
       {tidy && (
         <MemoTidyModal
           memos={tidy}
@@ -1118,6 +1250,8 @@ function MemoRow(props: MemoRowProps) {
     );
   }
 
+  const stateWords = memoStateWords(m.state);
+  const originWords = memoOriginWords(m);
   const isLong = (m.body || "").length > 60 || (m.body || "").includes("\n");
   return (
     <div
@@ -1179,9 +1313,19 @@ function MemoRow(props: MemoRowProps) {
             ))}
           </div>
         )}
+        {(stateWords || originWords) && (
+          <div className="memo-qmeta">
+            {stateWords && (
+              <span className={"memo-qstate s-" + m.state} title={tr(stateWords.title)}>
+                {tr(stateWords.label)}
+              </span>
+            )}
+            {originWords && <span className="memo-qorigin">{tr(originWords.key, { name: originWords.name ?? "" })}</span>}
+          </div>
+        )}
         {(m.sentAt || isLong) && (
           <div className="memo-meta">
-            {m.sentAt && <span className="memo-sent-tag">{tr("memo.sent_tag")}</span>}
+            {m.sentAt && !stateWords && <span className="memo-sent-tag">{tr("memo.sent_tag")}</span>}
             {isLong &&
               (expanded ? (
                 // Expanding is a click on the body, but a second one edits — without this

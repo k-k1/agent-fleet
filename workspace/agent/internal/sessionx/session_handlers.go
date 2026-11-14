@@ -407,6 +407,10 @@ type CreateReq struct {
 	ScheduleSlot string `json:"schedule_slot"`
 	// ScheduleDelivery is the run's own targets and silent sentinel, as on /input (#1560).
 	ScheduleDelivery *chatx.ScheduleDelivery `json:"schedule_delivery"`
+	// QueueDelivery is a message queue's fire (ADR 0137 §6), sent by the Control Plane with
+	// source=queue. The Agent composes the first prompt from it (session_queue.go); with it,
+	// initial_prompt must be empty.
+	QueueDelivery *QueueDelivery `json:"queue_delivery,omitempty"`
 	// managed: a Managed create, which raises the instruction row as sending and sends
 	// initial_prompt carrying its id (instr) (#1257). False on the Terminal route.
 	managed bool
@@ -681,6 +685,10 @@ func clipRunes(s string, n int) string {
 // launched from). Under any other one the request loses it rather than growing a lineage
 // nobody can read.
 func CreateOrigin(req *CreateReq) (origin, conv, parent string) {
+	if req.QueueDelivery != nil {
+		// checkQueueCreate cleared the origin fields, so nothing below applies.
+		return session.OriginQueue, "", ""
+	}
 	if req.Origin != "" {
 		origin = session.ValidOrigin(req.Origin)
 	} else if s := injectionSource(req.Source); s == TurnSourceSchedule || s == TurnSourceScheduleManual {
@@ -754,7 +762,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 // in-process with the name it booked (CreateReq.name).
 func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 	c := &createRun{w: w, r: r, req: &req}
-	if !c.validateKind() || !c.validateRoute() || !c.claim() {
+	if !c.validateKind() || !c.validateQueue() || !c.validateRoute() || !c.claim() {
 		return
 	}
 	defer c.settleClaim()
@@ -764,7 +772,7 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 	// The failure net for a reserved slot: every path that ends without a meta. A no-op for a
 	// create that is not a spawn.
 	defer c.slot.release()
-	if !c.validateOptions() || !c.resolveDriver() || !c.checkModel() || !c.checkRoute() || !c.resolveWorkingCopy() || !c.identify() {
+	if !c.validateOptions() || !c.resolveDriver() || !c.checkModel() || !c.checkRoute() || !c.resolveWorkingCopy() || !c.identify() || !c.composeQueue() {
 		return
 	}
 	meta, ok := c.armMeta()
@@ -788,6 +796,8 @@ func createTurnOrigin(req *CreateReq, spawnParent string) agents.Origin {
 		return turnOrigin(TurnSourceMCP, "")
 	case req.chatSource != "":
 		return turnOrigin(req.chatSource, "")
+	case req.QueueDelivery != nil:
+		return turnOrigin(TurnSourceQueue, "")
 	case req.ReportTo != "":
 		return turnOrigin(injectionSource(req.Source), "")
 	case scheduleInjectionSource(req.Source) != "":
@@ -835,6 +845,10 @@ func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
 		if hasPrompt {
 			recordFleetGraphInstruct(name, req.chatSource, "", "", req.InitialPrompt)
 		}
+	case req.QueueDelivery != nil:
+		// A queue's fire (ADR 0137 §5): a badge of its own. No ledger row (it reports to no
+		// conversation) and no fleet-graph arrow, like /mcp: the member did not type it.
+		recordInjection(name, req.InitialPrompt, TurnSourceQueue)
 	case req.ReportTo != "" || req.delivery() != nil:
 		req.instr = chatx.AddScheduledInstruction(name, req.ReportTo, injectionSource(req.Source), req.delivery(), req.managed)
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)

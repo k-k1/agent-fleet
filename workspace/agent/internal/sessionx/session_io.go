@@ -151,6 +151,12 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
 		return
 	}
+	// The queue envelope is written only by a queue's own create (session_queue.go); typed
+	// here it would make the text after it read as the member's standing instruction.
+	if queueEnvelopeForged(body.Prompt) {
+		httpx.WriteErr(w, http.StatusBadRequest, "queue_forged_envelope", queueForgedMessage)
+		return
+	}
 	// Each key/seq step is paced (~90ms gaps for TUI re-render), so an unbounded list
 	// would let one request occupy the handler for minutes — cap it. Real drivers
 	// (question modals, navigation) use a handful of steps.

@@ -62,13 +62,21 @@
 ## add_memo absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo empty {}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo unknown {"zz_unknown":1}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -80,103 +88,183 @@
 ## add_memo badtype-body {"body":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"body":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"body":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo badtype-category {"category":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"category":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"category":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo badtype-kind {"kind":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo badtype-refPath {"refPath":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"refPath":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"refPath":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo badtype-repo {"repo":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"repo":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"repo":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo full {"body":"v","category":"v","kind":"v","refPath":"v","repo":"v"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"body":"v","category":"v","kind":"v","refPath":"v","repo":"v"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"body":"v","category":"v","kind":"v","refPath":"v","repo":"v"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind= {"kind":""}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":""}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":""}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=claude {"kind":"claude"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"claude"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"claude"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=codex {"kind":"codex"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"codex"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"codex"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=opencode {"kind":"opencode"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"opencode"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"opencode"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=agy {"kind":"agy"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"agy"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"agy"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=copilot {"kind":"copilot"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"copilot"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"copilot"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=cursor {"kind":"cursor"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"cursor"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"cursor"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=kiro {"kind":"kiro"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"kiro"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"kiro"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=lcpp {"kind":"lcpp"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"lcpp"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"lcpp"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=muse {"kind":"muse"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"muse"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"muse"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=shell {"kind":"shell"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"shell"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"shell"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=ssm {"kind":"ssm"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"ssm"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"ssm"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=Codex {"kind":"Codex"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"Codex"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"Codex"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind=nope {"kind":"nope"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
-[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"kind":"nope"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"kind":"nope"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## af_report absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"af_report はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -1982,10 +2070,12 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_memory_snapshots","type":"text"}],"isError":true,"resultType":"complete"}}
 ## list_memos absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+  -> GET /memos
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## list_memos empty {}
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+  -> GET /memos
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## list_memos unknown {"zz_unknown":1}
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_memos","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -4094,7 +4184,8 @@
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+  -> PATCH /memos/v {"body":"v","category":"v","id":"v","position":2,"refPath":"v","repo":"v"}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"position\" for update_memo","type":"text"}],"isError":true,"resultType":"complete"}}
 ## update_schedule absent

@@ -123,6 +123,8 @@ export interface ApiError {
   code?: string;
   message?: string;
   status?: number;
+  /** memo_release_stale: the ids of the messages whose content changed since the card showed them. */
+  stale?: string[];
 }
 
 // The common file-management result: an HTTP status plus whatever JSON the
@@ -516,7 +518,7 @@ export type TurnOp = "start" | "steer" | "interrupt" | "remove" | "dismiss_disca
 // --- two-stage stop (ADR 0105; wire frozen in workspace/agent/testdata/stop-queue-wire.json) ---
 
 /** Where a queued or discarded input came from, in the injection-badge vocabulary
- *  (member / peer / spawn / operator / schedule / schedule-manual / discord / slack /
+ *  (member / peer / spawn / operator / schedule / schedule-manual / queue / discord / slack /
  *  auto-resume). `from` names the sending session of a peer and the parent of a spawn. */
 export interface TurnOrigin {
   kind: string;
@@ -1413,7 +1415,15 @@ export const repoSkills = (repo: string, kind: string, subdir: string): Promise<
 // Per-membership notes accumulated across devices, then flushed to a session as one
 // message. Persisted in the Control Plane (membership-scoped), so they sync between
 // devices; there is no server push, so callers refetch on open + poll while open.
-import type { Memo, MemoInput, MemoPatch, MemoCategory, MemoCategoryInput, MemoCategoryPatch } from "../../types/memo.ts";
+import type {
+  Memo,
+  MemoInput,
+  MemoPatch,
+  MemoCategory,
+  MemoCategoryInput,
+  MemoCategoryPatch,
+  MemoQueueInput,
+} from "../../types/memo.ts";
 
 export const memoList = (): Promise<Memo[]> => api("api/memos");
 export const memoCreate = (input: MemoInput): Promise<Memo> =>
@@ -1467,6 +1477,26 @@ export const memoCategoryUpdate = (id: string, patch: MemoCategoryPatch): Promis
   apiJSON(`api/memo-categories/${encodeURIComponent(id)}`, "PATCH", patch);
 export const memoCategoryDelete = (id: string): Promise<Response> =>
   raw(`api/memo-categories/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+/** A write's answer: the saved body, or {error}. apiJSON resolves an HTTP error as {error}. */
+export type MemoWriteResult = { error?: ApiError } & Record<string, unknown>;
+
+// Auto-run settings of categories (ADR 0137). The reads answer the raw body: the caller
+// normalises it (features/memo/queues.ts), because the CP can answer a JSON null where an array
+// is expected and nothing above the memo section would catch the throw.
+export const memoQueueList = (): Promise<unknown> => api("api/memo-queues");
+export const memoQueuePut = (categoryId: string, body: MemoQueueInput): Promise<MemoWriteResult> =>
+  apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}`, "PUT", body);
+export const memoQueueDelete = (categoryId: string): Promise<Response> =>
+  raw(`api/memo-queues/${encodeURIComponent(categoryId)}`, { method: "DELETE" });
+// Release held messages, each with the content hash its card showed. All or none: a changed
+// message answers 409 memo_release_stale with error.stale.
+export const memoRelease = (items: { id: string; contentHash: string }[]): Promise<MemoWriteResult> =>
+  apiJSON("api/memos/release", "POST", { items });
+export const memoQueueFire = (categoryId: string): Promise<MemoWriteResult> =>
+  apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/fire`, "POST", {});
+export const memoQueueDeliveries = (categoryId: string): Promise<unknown> =>
+  api(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries`);
 
 // --- assistant one-shot ask (docs/log/21 memo tidy-up) ---
 // Stateless advisory turn (tools off) used to tidy up + auto-categorize memos. The

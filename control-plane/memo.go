@@ -67,6 +67,9 @@ type memoDTO struct {
 	// them), on /mcp the connection id. Never read by a rule.
 	Producer       string `json:"producer,omitempty"`
 	ProducerOrigin string `json:"producerOrigin,omitempty"`
+	// DeliveryID is the queue delivery that claimed the message (memo_delivery.go), written by
+	// the CP. Absent for a message no delivery holds.
+	DeliveryID string `json:"deliveryId,omitempty"`
 }
 
 // memoOriginWire is where a taken-in memo came from: the inbox item and its sender.
@@ -80,7 +83,8 @@ func memoToDTO(m store.Memo) memoDTO {
 		Body: m.Body, RefPath: m.RefPath, Attachments: parseMemoAttachments(m.Attachments),
 		Position: m.Position, CreatedAt: m.CreatedAt, SentAt: m.SentAt,
 		State: m.State, Provenance: memoEffectiveProvenance(m), ReleasedAt: m.ReleasedAt,
-		ContentHash: memoContentHash(m), Producer: m.Producer, ProducerOrigin: m.ProducerOrigin}
+		ContentHash: memoContentHash(m), Producer: m.Producer, ProducerOrigin: m.ProducerOrigin,
+		DeliveryID: m.DeliveryID}
 	if m.OriginItemID != "" {
 		d.Origin = &memoOriginWire{ItemID: m.OriginItemID, Sender: m.OriginSenderKey}
 	}

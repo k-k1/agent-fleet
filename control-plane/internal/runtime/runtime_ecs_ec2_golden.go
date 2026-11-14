@@ -447,6 +447,7 @@ func isBakeHome(vol *ec2types.Volume) bool {
 // observation (or "detected") onto the member home that takes the slot next, skipping the
 // wait. Deleting an absent tag is a no-op.
 func (f *ecsEC2Factory) skipBakeSlot(ctx context.Context, instanceID string) {
+	f.rescueSkipLogged.Delete(instanceID)
 	f.wedgedBlocked.Delete(instanceID)
 	if _, err := f.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{instanceID},

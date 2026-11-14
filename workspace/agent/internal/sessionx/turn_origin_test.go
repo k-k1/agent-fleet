@@ -186,6 +186,7 @@ func TestTurnOriginMatchesBadgeVocabulary(t *testing.T) {
 		TurnSourceSlack:          agents.OriginSlack,
 		TurnSourceAutoResume:     agents.OriginAutoResume,
 		TurnSourceMCP:            agents.OriginMCP,
+		TurnSourceQueue:          agents.OriginQueue,
 	}
 	for badge, kind := range pairs {
 		if badge != kind {

@@ -99,6 +99,7 @@ func wireArchivedRow(m session.Meta) session.Session {
 		Resumable: stoppedResumable(m),
 		Locked:    m.Locked, Archived: m.Archived, ArchivedAt: m.ArchivedAt,
 		Origin: session.OriginOf(m), OriginSession: m.OriginSession,
+		QueueDelivery: m.QueueDelivery,
 	}
 }
 
@@ -152,7 +153,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		// for a spawned session's first turn.
 		Origin: session.OriginOf(m), OriginSession: m.OriginSession,
 		Studio: m.Studio, InitialPromptState: m.InitialPromptState, InitialPromptReason: m.InitialPromptReason,
-		Moving: m.Moving, MovedTo: m.MovedTo,
+		Moving: m.Moving, MovedTo: m.MovedTo, QueueDelivery: m.QueueDelivery,
 		// An outstanding handoff proposal is work this session has already described and
 		// handed on, and it is the row's only trace: the card lives in the mirror and nothing
 		// notifies. Read for stopped rows as well — a folded session with an unlaunched

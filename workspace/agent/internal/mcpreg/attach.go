@@ -249,12 +249,13 @@ func builtinEnvVars(d ServerDef) []string {
 		// starts stdio MCP children with a default-deny environment, so both the
 		// bearer token and a non-default listen address must be forwarded.
 		//
-		// The memo tools (docs/log/86 stage 1) are the exception to "local Agent REST":
+		// The operator's delete_memo and flush_memos are the exception to "local Agent REST":
 		// the queue lives in the CP store, so they hairpin out to AF_CP_BASE_URL with the
 		// per-membership AF_MEMO_TOKEN (cpMemoDo) — or to AF_CP_INTERNAL_URL where the CP
 		// injected one; without it here they would silently fall back to the public base,
-		// which a Kubernetes workspace cannot reach. Both are workspace-level env, present
-		// for every other kind by inheritance and dropped only by codex's default-deny.
+		// which a Kubernetes workspace cannot reach. The session's memo tools go through the
+		// Agent's relay (memorelay). Both are workspace-level env, present for every other
+		// kind by inheritance and dropped only by codex's default-deny.
 		// They are listed unconditionally rather than behind the opt-in: this list is
 		// resolved once per boot into codex's config, while the opt-in can be toggled
 		// afterwards, and a var that is merely forwarded grants nothing on its own — the

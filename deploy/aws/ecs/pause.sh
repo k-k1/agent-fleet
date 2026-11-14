@@ -119,11 +119,22 @@ ws_services() {
   done
 }
 
+# described_rows <text> — splits what a `[length(failures), join(' ', <rows>)]` query printed
+# into _nf and _rows, and succeeds only when failures[] was empty. Take failures and the rows
+# from the same response (never a second call) so one cannot be dropped while the other is read.
+described_rows() {
+  case "$1" in
+    *$'\t'*) _nf="${1%%$'\t'*}"; _rows="${1#*$'\t'}" ;;
+    *) _nf="$1"; _rows="" ;;
+  esac
+  [ "$_nf" = 0 ]
+}
+
 # ws_tasks_alive — Workspace tasks that have not reached STOPPED, whatever their service's desired
 # count: a workspace its user stopped a moment ago, or one an earlier pause cut short, still has
 # connections open through the egress gateway. Fails when it cannot tell.
 ws_tasks_alive() {
-  local st arns all="" batch i got
+  local st arns all="" batch i got t
   for st in RUNNING STOPPED; do
     arns="$("${AWS[@]}" ecs list-tasks --cluster "$CLUSTER" --desired-status "$st" \
       --query taskArns --output text)" || return 1
@@ -135,12 +146,74 @@ ws_tasks_alive() {
   while [ $# -gt 0 ]; do
     batch=""; i=0
     while [ $# -gt 0 ] && [ $i -lt 100 ]; do batch="$batch $1"; shift; i=$((i + 1)); done
+    # failures[] and the tasks come from ONE response: a 200 can carry a task in failures[], and a
+    # second call for the data could be answered differently. A task that cannot be read is not a
+    # task that is gone.
     # shellcheck disable=SC2086
     got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $batch \
-      --query "tasks[?starts_with(group,'service:af-ws-') && lastStatus!='STOPPED'].taskArn" --output text)" || return 1
-    case "$got" in None) got="" ;; esac
-    [ -z "$got" ] || echo "$got"
+      --query "[length(failures), join(' ', tasks[?starts_with(group,'service:af-ws-') && lastStatus!='STOPPED'].taskArn)]" \
+      --output text)" || return 1
+    described_rows "$got" || return 1
+    got="$_rows"
+    # shellcheck disable=SC2086
+    for t in $got; do echo "$t"; done
   done
+}
+
+# golden_name — exactly the four reserved bake workspaces: seed and probe, each with its arm64
+# twin (control-plane/internal/runtime/golden_keys.go: af-ws-<slug>-<key>). Not a prefix: an
+# ordinary member whose key merely starts with one of them is not a bake.
+golden_name() {
+  case "$1" in
+    af-ws-af-golden-af-golden-seed|af-ws-af-golden-af-golden-seed-arm64) ;;
+    af-ws-af-golden-af-golden-probe|af-ws-af-golden-af-golden-probe-arm64) ;;
+    *) return 1 ;;
+  esac
+}
+
+# golden_bake — what a golden bake still holds, for --status only. ws_services counts desired>0,
+# which says nothing about a seed or probe whose service was just lowered to 0 while its task
+# is still running (or whose task outlived its service). Looks at golden services with
+# runningCount>0 and at not-yet-STOPPED Workspace tasks (ws_tasks_alive) whose service is a
+# golden one. Always prints one line and returns 0: a read that fails says "cannot tell", never
+# "none", and the answer must not move --status's exit code.
+golden_bake() {
+  local arns a got out="" alive t
+  local -a names=() batch=() tasks=()
+  if ! arns="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null)"; then
+    echo "(cannot tell: the service list could not be read)"; return 0
+  fi
+  case "$arns" in None) arns="" ;; esac
+  for a in $arns; do
+    ! golden_name "${a##*/}" || names+=("${a##*/}")
+  done
+  while [ ${#names[@]} -gt 0 ]; do
+    batch=("${names[@]:0:10}"); names=("${names[@]:10}")
+    # shellcheck disable=SC2016  # backticks are JMESPath literals
+    if ! got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "${batch[@]}" \
+        --query "[length(failures), join(' ', services[?runningCount>\`0\`].serviceName)]" --output text 2>/dev/null)" \
+        || ! described_rows "$got"; then
+      echo "(cannot tell: the golden services could not be read)"; return 0
+    fi
+    got="$_rows"
+    for a in $got; do out="$out $a (service running)"; done
+  done
+  if ! alive="$(ws_tasks_alive 2>/dev/null)"; then
+    echo "(cannot tell: the cluster's tasks could not be read)${out:+ —$out}"; return 0
+  fi
+  # shellcheck disable=SC2206  # word splitting is the batching
+  tasks=($alive)
+  while [ ${#tasks[@]} -gt 0 ]; do
+    batch=("${tasks[@]:0:100}"); tasks=("${tasks[@]:100}")
+    if ! got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks "${batch[@]}" \
+        --query "[length(failures), join(' ', tasks[].group)]" --output text 2>/dev/null)" \
+        || ! described_rows "$got"; then
+      echo "(cannot tell: the golden tasks could not be read)${out:+ —$out}"; return 0
+    fi
+    got="$_rows"
+    for t in $got; do ! golden_name "${t#service:}" || out="$out ${t#service:} (task not STOPPED)"; done
+  done
+  echo "${out:-(none)}"
 }
 
 # ws_tasks_wait — until no Workspace task is left (AF_WS_TASK_WAIT_SEC, default 600). Fails on
@@ -406,9 +479,12 @@ ws_subnets_check() {
 }
 
 status() {
-  local running stopped ws boxes helpers db cp nat gw gwi eni restop
+  local running stopped ws golden boxes helpers db cp nat gw gwi eni restop
   running="$(slots pending running | tr '\t' ' ')"; stopped="$(slots stopping stopped | tr '\t' ' ')"
   ws="$(ws_services | tr '\n' ' ')"
+  # Only for an explicit --status: the pause plan prints this report first, and the extra task
+  # reads would land before the sweep that the pause tests order its own reads against.
+  golden=""; [ "${1:-}" != --golden ] || golden="$(golden_bake)"
   boxes="$(engine_boxes | tr '\t' ' ')"; helpers="$(helpers_up)"
   db="$(db_status)"; cp="$(cp_counts | tr '\t' '/')"
   nat="$(nat_enabled)"
@@ -421,6 +497,7 @@ status() {
   echo "==> $AF_FQDN (profile=$AF_PROFILE region=$AF_REGION)"
   echo "    control plane : desired/running = $cp"
   echo "    workspaces up : ${ws:-(none)}"
+  [ "${1:-}" != --golden ] || echo "    golden bake   : $golden"
   echo "    slots running : ${running:-(none)}"
   echo "    slots stopped : ${stopped:-(none)}"
   echo "    engine boxes  : ${boxes:-(none)}"
@@ -457,7 +534,7 @@ status() {
 
 case "$MODE" in
   status)
-    status
+    status --golden
     exit 0
     ;;
 

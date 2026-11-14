@@ -285,8 +285,10 @@ exec '` + real + `' -L '` + socket + `' "$@"
 			_ = os.Unsetenv(k)
 		}
 	}
+	// The bridge tokens go too: with a base URL set again by a test, a real token would let
+	// that test write to the member's real memo queue or schedules.
 	for _, k := range []string{"AF_SESSION_NAME", "TMUX", "TMUX_PANE", "AF_TMUX_SOCKET", "AF_WORK_DIR",
-		"AGENT_TOKEN", "AGENT_ADDR", "AF_CP_BASE_URL", "AF_CP_INTERNAL_URL"} {
+		"AGENT_TOKEN", "AGENT_ADDR", "AF_CP_BASE_URL", "AF_CP_INTERNAL_URL", "AF_MEMO_TOKEN", "AF_SCHEDULE_TOKEN"} {
 		_ = os.Unsetenv(k)
 	}
 	// Route acceptance gates (ADR 0128 decision 14): a workspace opened for an acceptance run sets

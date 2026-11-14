@@ -63,6 +63,9 @@ const (
 	// TurnSourceMCP is a prompt a hosted assistant or PAT client sent over the CP's /mcp
 	// (#2542). Stamped from the route (session_mcp.go), never from the body.
 	TurnSourceMCP = "mcp"
+	// TurnSourceQueue is the first prompt of a session a message queue's delivery started
+	// (ADR 0137 §5). Stamped only by a create that carries a queue delivery (session_queue.go).
+	TurnSourceQueue = "queue"
 )
 
 // injectionSource maps a caller-supplied source onto the recordable vocabulary. The

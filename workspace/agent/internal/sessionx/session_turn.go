@@ -94,6 +94,12 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_op", "op must be start, steer, interrupt, remove or dismiss_discard")
 		return
 	}
+	// Ahead of every side effect, on both drivers: the queue envelope is written only by a
+	// queue's own create (session_queue.go).
+	if (req.Op == "start" || req.Op == "steer") && queueEnvelopeForged(req.Prompt) {
+		httpx.WriteErr(w, http.StatusBadRequest, "queue_forged_envelope", queueForgedMessage)
+		return
+	}
 	// Every op, not only start and steer: on Managed each one Resumes the runtime, which starts
 	// a process on a stopped session (ADR 0115 decision 11.1).
 	lease, ok := enterSessionGate(w, r, name)

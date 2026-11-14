@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 435
+# count: 446
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -74,6 +74,7 @@ agentCatalogWire.sessions[].ports [number],omitempty
 agentCatalogWire.sessions[].pr raw,omitempty
 agentCatalogWire.sessions[].progressAgeSec number,omitempty
 agentCatalogWire.sessions[].progressAt string,omitempty
+agentCatalogWire.sessions[].queueDelivery string,omitempty
 agentCatalogWire.sessions[].rateLimitResumeAt string,omitempty
 agentCatalogWire.sessions[].remoteUrl string
 agentCatalogWire.sessions[].repo string
@@ -214,6 +215,7 @@ memoDTO.body string
 memoDTO.category string
 memoDTO.contentHash string
 memoDTO.createdAt string
+memoDTO.deliveryId string,omitempty
 memoDTO.id string
 memoDTO.kind string
 memoDTO.origin.itemId string
@@ -227,6 +229,14 @@ memoDTO.releasedAt string,omitempty
 memoDTO.repo string
 memoDTO.sentAt string
 memoDTO.state string
+memoDeliveryDTO.closedAt string
+memoDeliveryDTO.createdAt string
+memoDeliveryDTO.id string
+memoDeliveryDTO.messageIds [string]
+memoDeliveryDTO.outcome string
+memoDeliveryDTO.sentAt string
+memoDeliveryDTO.session string
+memoDeliveryDTO.state string
 notificationDTO.createdAt string
 notificationDTO.displayName string
 notificationDTO.id string
@@ -335,6 +345,7 @@ sessionWire.ports [number],omitempty
 sessionWire.pr raw,omitempty
 sessionWire.progressAgeSec number,omitempty
 sessionWire.progressAt string,omitempty
+sessionWire.queueDelivery string,omitempty
 sessionWire.rateLimitResumeAt string,omitempty
 sessionWire.remoteUrl string
 sessionWire.repo string
