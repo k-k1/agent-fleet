@@ -182,10 +182,18 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 			msgs = append(msgs, msg)
 		}
 	}
-	sawLoading := func(from int) bool {
+	// loadedThenReady reports whether msgs[from:] holds a loading state followed
+	// by a ready one: the navigation went through loading and came back.
+	loadedThenReady := func(from int) bool {
 		pump()
+		loading := false
 		for _, m := range msgs[from:] {
-			if m.Type == "state" && m.State == "loading" {
+			if m.Type != "state" {
+				continue
+			}
+			if m.State == "loading" {
+				loading = true
+			} else if loading && m.State == "ready" {
 				return true
 			}
 		}
@@ -205,19 +213,20 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 	// previous document live: it must end "ready", never "target-unreachable".
 	abortedBy := func(step string, trigger func()) {
 		t.Helper()
-		from := len(snapshot())
 		pump()
 		mark := len(msgs)
 		trigger()
 		if !waitFor(10*time.Second, func() bool {
-			return sawLoading(mark) && p.response().State != "loading"
+			return loadedThenReady(mark) && p.response().State == "ready"
 		}) {
-			t.Fatalf("%s: never left loading: %+v (page %+v)", step, msgs[mark:], p.response())
+			pump()
+			t.Fatalf("%s: never went loading then ready: %+v (page %+v)", step, msgs[mark:], p.response())
 		}
 		time.Sleep(300 * time.Millisecond) // a late event must not flip it either
-		for _, r := range snapshot()[from:] {
-			if r.state == "target-unreachable" {
-				t.Errorf("%s: reported target-unreachable although the document is still live: %+v", step, snapshot()[from:])
+		pump()
+		for _, m := range msgs[mark:] {
+			if m.Type == "state" && m.State == "target-unreachable" {
+				t.Errorf("%s: reported target-unreachable although the document is still live: %+v", step, msgs[mark:])
 				break
 			}
 		}
