@@ -2,9 +2,10 @@
 
 English | [日本語](0137-message-queues.ja.md)
 
-- Status: **proposed** (2026-11-14). Nothing is built. Every `file:line` was read on `7ab3e1141`. Limit values are
-  provisional.
+- Status: **accepted** (2026-11-14; proposed 2026-11-14). Nothing is built. Every `file:line` was read on
+  `7ab3e1141`. Limit values are provisional.
 - Tracking: #4145.
+- Follow-ups: #4148, #4149, #4150, #4151, #4152 (steps 1 to 5 of §11); #4153 (open question 3).
 - Related: [0021](0021-scheduled-execution.md) (scheduled execution; this record amends its decision 10 and its
   2026-10-03 addendum) / [0061](0061-work-item-inbox.md) (work-item inbox; amends decision 8) /
   [0111](0111-member-collaboration.md) (member collaboration) / [0113](0113-member-origin-mark.md) (the member's
@@ -429,3 +430,6 @@ manual and alone (ADR 0111 decisions 1 and 3). A queue shared by the members of 
    person.
 5. **Faster replenishment.** Whether to take the re-count of slots out of the tick that waits for long fires
    (fact 9), so that a finished task is replaced within a minute whatever else is waking.
+
+*Note, 2026-11-14 (acceptance).* Accepted by the owner as written. The open questions go with the work they belong
+to: 1, 4 and 5 are carried in #4149, 2 in #4150, and 3 is #4153.

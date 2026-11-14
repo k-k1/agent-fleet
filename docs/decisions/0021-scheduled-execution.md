@@ -195,3 +195,9 @@ work-item queries, fingerprint mode, the two caps, and a read-only "last checked
 stored spec from it. Still open: the cap-held-back notice, gate backoff, `stop_after_run` default, `refire_after`, and the
 live run (#3809).
 
+**Note (2026-11-14, ADR 0137):** [ADR 0137](0137-message-queues.md) amends decision 10, and the 2026-10-03 addendum's
+exclusion of "chaining one run's output into the next", for queue fires only. A queue fire's prompt is the queue's
+standing instruction, which a person registered, followed by the queued messages marked as data; each was written or
+released by the member and names its origin (0137 §5). A tidy step may rewrite those messages before the fire, by a
+call that has no tools and whose reply is validated (0137 §8). Schedules are unchanged: a schedule's prompt still
+carries only the fixed variables and `{{gate.refs}}`. Nothing of 0137 is built yet (#4148).
