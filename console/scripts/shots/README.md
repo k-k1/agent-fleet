@@ -32,7 +32,7 @@ node console/scripts/shots/capture.mjs --locale en
 - A scene whose `action` switches the UI into a state sets `verify`: an expression checked once
   after `settle`. An action that misses its target does nothing and still yields a plausible
   picture of the default state, so the run fails instead of writing it. Select the target by a
-  `data-*` attribute rather than its label (`agents-usage` clicks `data-range-hours="720"`).
+  `data-*` attribute rather than its label (`usage` and `agents-usage` click `data-range-hours="720"`).
 
 ## Rules for the fixtures
 

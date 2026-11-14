@@ -187,11 +187,14 @@ const SCENES = [
       items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
       // 30 days: the bars are capped at 34px and left-aligned by design, so the 7-day
       // preset leaves most of the plot empty — 30 daily buckets fill it.
-      await new Promise((r) => setTimeout(r, 1200));
-      const btns = [...document.querySelectorAll("button")];
-      btns.find((el) => /^(30日|30 days)$/.test((el.textContent || "").trim()))?.click();
+      const sel = '.usage-controls button[data-range-hours="720"]';
+      for (let i = 0; i < 40 && !document.querySelector(sel); i++) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      document.querySelector(sel)?.click();
     })()`,
     settle: 2500,
+    verify: `document.querySelector('.usage-controls button[data-range-hours="720"]')?.getAttribute("aria-pressed") === "true"`,
   },
   {
     // Settings › Agent memory, for the features page: the memories every agent kind shares,
