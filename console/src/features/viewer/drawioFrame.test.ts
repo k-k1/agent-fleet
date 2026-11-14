@@ -144,7 +144,10 @@ describe("gateway chords pressed inside the frame", () => {
   it("cancels only the chords the parent sent, before handing them over", () => {
     const s = html();
     const listener = s.slice(s.indexOf('"keydown"'));
-    expect(listener).toMatch(/appKeys\.indexOf\(c\) < 0\) return;\s*e\.preventDefault\(\);\s*post\(\{\s*t: "key"/);
+    // preventDefault comes before the composition check: the browser prints even mid-composition.
+    expect(listener).toMatch(/appKeys\.indexOf\(c\) < 0\) return;[^]*?e\.preventDefault\(\);[^]*?if \(e\.isComposing\) return;\s*post\(\{\s*t: "key"/);
+    // The frame's `.key` is never sent: the parent must not be handed a field it could misread.
+    expect(listener).not.toContain("e.key");
     // Capture phase: the viewer's own handlers must not get to stop it first.
     expect(listener).toMatch(/\},\s*true,\s*\);/);
     expect(s).toContain('if (m.t === "keys")');

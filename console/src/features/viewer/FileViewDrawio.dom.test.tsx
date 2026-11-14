@@ -10,6 +10,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { revisionOf } from "../editor/buffer.ts";
 import { clearDirtyRegistryForTests } from "../editor/dirtyRegistry.ts";
 import { MAX_STENCIL_SETS } from "./drawioStencilRelay.ts";
+import { wireKeys } from "../keys/dispatcher.ts";
+import { useKeysStore } from "../keys/store.ts";
 
 const DIAGRAM = '<mxfile host="app.diagrams.net"><diagram id="a" name="ページ1"></diagram></mxfile>';
 const VIEWER_SRC = "/* drawio viewer source */";
@@ -221,25 +223,36 @@ describe("the protocol with the frame", () => {
   });
 
   // Keys typed in the frame never reach the Console's window, so the frame cancels Ctrl/⌘+P
-  // (print) and hands it over; the parent replays it at its own dispatcher.
-  it("replays a gateway chord from the frame at the Console's window, and nothing else", async () => {
+  // (print) and hands it over. The parent runs it through the dispatcher's gateway entry, never
+  // as a replayed KeyboardEvent: other window listeners (PaneFind reads `.key`, the Settings key
+  // recorder takes any chord) would act on whatever the frame put in it.
+  it("runs a gateway chord from the frame through the dispatcher's entry, and nothing else", async () => {
     await render();
     spyOnFrame();
+    const unwire = wireKeys();
     const seen: string[] = [];
-    const listen = (e: KeyboardEvent) => seen.push(`${e.ctrlKey ? "ctrl+" : ""}${e.code}`);
+    const listen = (e: KeyboardEvent) => seen.push(e.code);
     window.addEventListener("keydown", listen, true);
     const blur = vi.spyOn(frame()!, "blur");
     try {
-      fromFrame({ t: "key", code: "KeyP", key: "p", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, repeat: false });
-      expect(seen).toEqual(["ctrl+KeyP"]);
+      useKeysStore.setState({ paletteOpen: false });
+      // A `.key` that disagrees with `.code` (PaneFind would read "f" as Ctrl+F) is never used.
+      fromFrame({ t: "key", code: "KeyP", key: "f", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, repeat: false });
+      expect(useKeysStore.getState().paletteOpen).toBe(true);
+      expect(seen).toEqual([]);
       // The keyboard comes back to the Console so the palette (or the leader's next key) gets it.
       expect(blur).toHaveBeenCalledTimes(1);
       // The frame runs the viewer on a user's file: any other chord it sends is dropped.
-      fromFrame({ t: "key", code: "KeyW", key: "w", ctrlKey: false, metaKey: false, altKey: true, shiftKey: false, repeat: false });
-      fromFrame({ t: "key", code: "KeyP", key: "p", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, repeat: false });
-      expect(seen).toEqual(["ctrl+KeyP"]);
+      act(() => useKeysStore.setState({ paletteOpen: false }));
+      fromFrame({ t: "key", code: "KeyW", ctrlKey: false, metaKey: false, altKey: true, shiftKey: false, repeat: false });
+      fromFrame({ t: "key", code: "KeyP", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, repeat: false });
+      fromFrame({ t: "key", code: "KeyP", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, repeat: true });
+      expect(useKeysStore.getState().paletteOpen).toBe(false);
+      expect(blur).toHaveBeenCalledTimes(1);
+      expect(seen).toEqual([]);
     } finally {
       window.removeEventListener("keydown", listen, true);
+      unwire();
     }
   });
 

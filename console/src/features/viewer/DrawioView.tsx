@@ -27,6 +27,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { eventChordString } from "../../lib/keys/chords.ts";
 import { gatewayChords } from "../keys/bindings.ts";
+import { pressGatewayChord } from "../keys/dispatcher.ts";
 import { acceptedStencilNames, stencilUrl } from "./drawioStencilRelay.ts";
 import { DRAWIO_MSG, drawioFrameFile, isDrawioFrameEvent, type DrawioViewState } from "./drawioFrame.ts";
 
@@ -126,27 +127,22 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
       }
       if (msg.t === "key") {
         // The frame cancelled a gateway chord's browser default (Ctrl/⌘+P would print) and hands
-        // it over. Rebuild the event from typed fields and re-check the chord: the frame runs the
-        // viewer on a user's file and is not trusted to drive any other shortcut.
-        const ev = new KeyboardEvent("keydown", {
+        // it over. The chord is rebuilt from typed fields and only a gateway chord is run, through
+        // the dispatcher's dedicated entry: the frame runs the viewer on a user's file and is not
+        // trusted to drive any other shortcut (see pressGatewayChord).
+        if (msg.repeat === true) return;
+        const chord = eventChordString({
           code: String(msg.code),
-          key: String(msg.key),
           ctrlKey: msg.ctrlKey === true,
           metaKey: msg.metaKey === true,
           altKey: msg.altKey === true,
           shiftKey: msg.shiftKey === true,
-          repeat: msg.repeat === true,
-          bubbles: true,
-          cancelable: true,
-        });
-        const chord = eventChordString(ev);
+        } as KeyboardEvent);
         if (!chord || !gatewayChords().includes(chord)) return;
         // Take the keyboard back from the frame first: the leader's follow-up keys (and the
         // palette's typing) must land in the Console, and a frame that keeps focus swallows them.
         frameRef.current?.blur();
-        // Through the dispatcher's own window listener, so overlays, rebinds and the leader
-        // sequence behave exactly as for a key pressed in the Console.
-        window.dispatchEvent(ev);
+        pressGatewayChord(chord);
         return;
       }
       if (msg.t === "booted") {

@@ -92,7 +92,6 @@ export type DrawioFrameEvent =
       af: typeof DRAWIO_MSG;
       t: "key";
       code: string;
-      key: string;
       ctrlKey: boolean;
       metaKey: boolean;
       altKey: boolean;
@@ -244,14 +243,14 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   window.addEventListener(
     "keydown",
     function (e) {
-      if (e.isComposing) return;
       var c = chordOf(e);
       if (!c || appKeys.indexOf(c) < 0) return;
+      // Cancel even mid-composition (the browser still prints), but leave the IME its key.
       e.preventDefault();
+      if (e.isComposing) return;
       post({
         t: "key",
         code: e.code,
-        key: e.key,
         ctrlKey: e.ctrlKey,
         metaKey: e.metaKey,
         altKey: e.altKey,

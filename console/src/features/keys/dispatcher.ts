@@ -88,6 +88,20 @@ export function buildContext(): KeyContext {
   };
 }
 
+// The live dispatcher's gateway entry, set by wireKeys. Null while unwired.
+let gatewayEntry: ((chord: string) => void) | null = null;
+
+/** pressGatewayChord runs a gateway chord (the leader or the palette, as currently bound)
+ * handed over from a surface whose keys never reach this window — the sandboxed drawio frame.
+ * It is a separate entry rather than a replayed KeyboardEvent because the sender is not
+ * trusted: a replayed event also reaches every other window keydown listener (PaneFind reads
+ * `.key`, the Settings key recorder takes any chord), so a frame could pass a gateway `.code`
+ * with another `.key` and drive them. Any other chord is ignored; nothing runs behind an
+ * overlay or during a leader sequence, the same as for a key pressed here. */
+export function pressGatewayChord(chord: string): void {
+  gatewayEntry?.(chord);
+}
+
 export function wireKeys(): () => void {
   let leaderTimer: number | null = null;
   let whichKeyTimer: number | null = null;
@@ -327,8 +341,20 @@ export function wireKeys(): () => void {
     // No match → let the key flow to the terminal / inputs untouched.
   };
 
+  const runGateway = (chord: string) => {
+    if (hasOpenOverlay() || useKeysStore.getState().leaderPending) return;
+    if (chord === boundChord(APP_LEADER)) {
+      dropIME();
+      enterLeader([]);
+    } else if (chord === boundChord(APP_PALETTE)) {
+      useKeysStore.getState().openPalette();
+    }
+  };
+
   window.addEventListener("keydown", onKeyDown, true); // capture: beat xterm + React
+  gatewayEntry = runGateway;
   return () => {
+    if (gatewayEntry === runGateway) gatewayEntry = null;
     clearTimers();
     window.removeEventListener("keydown", onKeyDown, true);
   };
