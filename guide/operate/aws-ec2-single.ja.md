@@ -46,7 +46,7 @@ aws cloudformation deploy \
       SSHLocation=<your-ip>/32 \
       PublicKey="$(cat agent-fleet-test-key.pub)"
 
-# read the outputs (public IP, FQDN, ssh command)
+# 出力（パブリック IP・FQDN・ssh のコマンド）を読む
 aws cloudformation describe-stacks --stack-name agent-fleet-test \
   --query 'Stacks[0].Outputs' --output table
 ```
@@ -78,7 +78,7 @@ Route 53 の A レコードが効くのは、ドメインがそのホストゾ�
 手元でイメージとバンドルを作り、インスタンスにコピーします。インスタンスでは git をクローンしません。
 
 ```bash
-cd ../../..                                  # repo root
+cd ../../..                                  # リポジトリのルート
 VERSION=0.1.0 deploy/compose/release.sh --save
 scp -i deploy/aws/ec2-single/agent-fleet-test-key \
     deploy/compose/dist/agent-fleet-images-0.1.0.tar.gz \
@@ -95,15 +95,15 @@ scp -i deploy/aws/ec2-single/agent-fleet-test-key \
 
 ```bash
 ssh -i deploy/aws/ec2-single/agent-fleet-test-key ubuntu@<public-ip>
-# on the VM:
+# VM で:
 tar xzf agent-fleet-0.1.0.tar.gz && cd agent-fleet-0.1.0
-./load-images.sh ~/agent-fleet-images-0.1.0.tar.gz    # or: gunzip|docker load
+./load-images.sh ~/agent-fleet-images-0.1.0.tar.gz    # または gunzip|docker load
 cp .env.example .env
-#   set DATA_DIR=/srv/agent-fleet/data, DOCKER_GID=$(getent group docker|cut -d: -f3),
-#   PUBLIC_DOMAIN / PUBLIC_BASE_URL=https://<Fqdn>, the login IdP (GOOGLE_OAUTH_*,
-#   AF_OIDC_PROVIDERS + AF_OIDC_<ID>_*, and/or AF_GITHUB_ALLOWED_ORGS +
-#   GITHUB_OAUTH_CLIENT_ID/_SECRET), AF_COOKIE_SECRET,
-#   AF_MASTER_KEY (generate!), AF_OAUTH_ALLOWED_DOMAINS, SUPER_ADMIN_EMAILS
+#   次を設定する: DATA_DIR=/srv/agent-fleet/data、DOCKER_GID=$(getent group docker|cut -d: -f3)、
+#   PUBLIC_DOMAIN / PUBLIC_BASE_URL=https://<Fqdn>、サインインの IdP（GOOGLE_OAUTH_*、
+#   AF_OIDC_PROVIDERS + AF_OIDC_<ID>_*、AF_GITHUB_ALLOWED_ORGS +
+#   GITHUB_OAUTH_CLIENT_ID/_SECRET のどれか、または複数）、AF_COOKIE_SECRET、
+#   AF_MASTER_KEY（新しく作る）、AF_OAUTH_ALLOWED_DOMAINS、SUPER_ADMIN_EMAILS
 sudo mkdir -p /srv/agent-fleet/data && sudo chown 1000:1000 /srv/agent-fleet/data
 docker compose up -d
 docker compose logs -f caddy cp

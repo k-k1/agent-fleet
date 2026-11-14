@@ -70,23 +70,23 @@ SAML しかない IdP（HENNGE One・TrustLogin・CloudGate など）は、oauth
 ```bash
 cd deploy/compose
 cp .env.example .env
-# 1) generate secrets and put them in .env:
-head -c 32 /dev/urandom | base64   # -> AF_MASTER_KEY   (store a copy in a vault!)
+# 1) シークレットを作って .env に書く:
+head -c 32 /dev/urandom | base64   # -> AF_MASTER_KEY   （控えをパスワードマネージャーに残す）
 head -c 32 /dev/urandom | base64   # -> AF_COOKIE_SECRET
-# 2) set DOCKER_GID to the host docker group:
+# 2) DOCKER_GID にホストの docker グループを入れる:
 getent group docker | cut -d: -f3  # -> DOCKER_GID
-# 3) fill in PUBLIC_DOMAIN / PUBLIC_BASE_URL / your IdP (GOOGLE_OAUTH_* and/or
-#    AF_OIDC_*) / AF_OAUTH_ALLOWED_DOMAINS / SUPER_ADMIN_EMAILS / DATA_DIR in .env
-# 4) create DATA_DIR owned by uid 1000, the user the CP runs as (the default
-#    /srv/agent-fleet/data needs sudo):
+# 3) .env に PUBLIC_DOMAIN / PUBLIC_BASE_URL / IdP（GOOGLE_OAUTH_* と
+#    AF_OIDC_* のどちらか、または両方）/ AF_OAUTH_ALLOWED_DOMAINS / SUPER_ADMIN_EMAILS / DATA_DIR を書く
+# 4) DATA_DIR を作り、CP を動かすユーザー uid 1000 の持ち物にする（既定の
+#    /srv/agent-fleet/data には sudo が要る）:
 DATA_DIR="$(grep -E '^DATA_DIR=' .env | cut -d= -f2)"
 sudo mkdir -p "$DATA_DIR" && sudo chown 1000:1000 "$DATA_DIR"
 
-# 5) build the per-user workspace image (compose builds only the CP; the CP
-#    launches workspaces from WS_IMAGE, agent-fleet/workspace:dev by default):
+# 5) ユーザーごとのワークスペースのイメージをビルドする（compose がビルドするのは CP だけ。
+#    CP は WS_IMAGE からワークスペースを起動する。既定は agent-fleet/workspace:dev）:
 docker build -t agent-fleet/workspace:dev ../../workspace
 
-docker compose up -d --build     # from source
+docker compose up -d --build     # ソースから
 docker compose logs -f cp
 ```
 
@@ -100,7 +100,7 @@ docker compose logs -f cp
 
 ```bash
 docker compose pull                                  # cp + caddy
-docker pull "$(grep -E '^WS_IMAGE=' .env | cut -d= -f2)"   # workspace (see below)
+docker pull "$(grep -E '^WS_IMAGE=' .env | cut -d= -f2)"   # ワークスペース（下を参照）
 docker compose up -d
 ```
 

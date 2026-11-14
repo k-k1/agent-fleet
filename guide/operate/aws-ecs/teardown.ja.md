@@ -36,7 +36,7 @@ ECS の配備を、途中で止まらない順番ですべて消します。
 手順 2〜7 で消すものは、すべて Control Plane が管理しているものです。Control Plane は必要に応じてスロットを起動するので、動いたままだと、消したものを作り直すことがあります。
 
 ```bash
-CL=af-af-ecs-platform      # cluster = af-<platform stack name>
+CL=af-af-ecs-platform      # クラスター = af-<platform のスタック名>
 aws ecs update-service --cluster $CL --service af-af-ecs-ingress-cp --desired-count 0
 ```
 
@@ -58,15 +58,15 @@ done
 スロットを終了するとルートボリュームは消えますが、**ホームのボリュームは消えません**。ホームのボリュームはわざとデタッチして残す設計なので、消すまで料金がかかり続けます。
 
 ```bash
-F="Name=tag:af-pool,Values=$CL"     # this deployment's pool only: its slots and engine instances
+F="Name=tag:af-pool,Values=$CL"     # この配備のプールだけ（スロットとエンジンのインスタンス）
 aws ec2 describe-instances --filters "$F" Name=instance-state-name,Values=pending,running,stopping,stopped \
   --query 'Reservations[].Instances[].[InstanceId,State.Name,Tags[?Key==`af-role`]|[0].Value]' --output table
 IDS=$(aws ec2 describe-instances --filters "$F" Name=instance-state-name,Values=pending,running,stopping,stopped \
   --query 'Reservations[].Instances[].InstanceId' --output text)
-# check the table lists only this deployment's instances, then:
+# 表にこの配備のインスタンスだけが並ぶことを確かめてから:
 [ -n "$IDS" ] && aws ec2 terminate-instances --instance-ids $IDS && aws ec2 wait instance-terminated --instance-ids $IDS
 aws ec2 describe-volumes --filters "$F" --query 'Volumes[].[VolumeId,State,Size]' --output table
-# check the home volumes listed, then:
+# 並んだホームのボリュームを確かめてから:
 for v in $(aws ec2 describe-volumes --filters "$F" --query 'Volumes[].VolumeId' --output text); do
   aws ec2 delete-volume --volume-id "$v"
 done
@@ -115,10 +115,10 @@ aws s3 rm "s3://$CFN_BUCKET" --recursive
 for s in af-ecs-ingress af-ecs-engines af-ecs-tts af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do
   if ! err=$(aws cloudformation describe-stacks --stack-name $s 2>&1 >/dev/null); then
     case "$err" in *"does not exist"*) echo "skip $s (not deployed)"; continue ;; esac
-    echo "$err" >&2; break                     # credentials, permission or network: stop here
+    echo "$err" >&2; break                     # 認証情報・権限・通信のエラー: ここで止める
   fi
   aws cloudformation delete-stack --stack-name $s
-  aws cloudformation wait stack-delete-complete --stack-name $s || break   # stop on the first failure
+  aws cloudformation wait stack-delete-complete --stack-name $s || break   # 最初の失敗で止める
 done
 ```
 
@@ -136,16 +136,16 @@ done
 `Persistence=retain` では、データスタックを消しても 3 つのものが残ります。`af-ecs-data` が消えてから消します（削除保護は手順 8 で外してあります）。
 
 ```bash
-# after af-ecs-data is deleted:
-aws rds delete-db-snapshot --db-snapshot-identifier af-ecs-data-snapshot-db-<suffix>  # DeletionPolicy: Snapshot leaves one
-aws efs delete-file-system --file-system-id <efs>                                     # DeletionPolicy: Retain keeps it
-# each EFS backup vault (DeletionPolicy: Retain) cannot be deleted until its recovery points are:
+# af-ecs-data が消えたあとで:
+aws rds delete-db-snapshot --db-snapshot-identifier af-ecs-data-snapshot-db-<suffix>  # DeletionPolicy: Snapshot で 1 つ残る
+aws efs delete-file-system --file-system-id <efs>                                     # DeletionPolicy: Retain で残る
+# EFS のバックアップボールト（DeletionPolicy: Retain）は、中の復旧ポイントを消すまで消せない:
 aws backup list-backup-vaults --query "BackupVaultList[?starts_with(BackupVaultName,'af-ecs-data-efs-')].BackupVaultName"
 for rp in $(aws backup list-recovery-points-by-backup-vault --backup-vault-name <vault> \
     --query 'RecoveryPoints[].RecoveryPointArn' --output text); do
   aws backup delete-recovery-point --backup-vault-name <vault> --recovery-point-arn "$rp"
 done
-aws backup delete-backup-vault --backup-vault-name <vault>                            # once the points are gone
+aws backup delete-backup-vault --backup-vault-name <vault>                            # 復旧ポイントが消えてから
 ```
 
 `teardown.sh` は手順 8 の前に削除保護を外しますが、最後のスナップショット・EFS・バックアップのボールトは、`--purge-retained` を付けたときだけ消します。付けなければ、ボールトの復旧ポイントは `EfsBackupRetentionDays` のとおりに自然に期限切れになります。
@@ -183,8 +183,8 @@ aws backup delete-backup-vault --backup-vault-name <vault>                      
 - 配備を完全にやめるときは、アドレスと S3 Bucket ごとに 1 手順ずつ足します
 
   ```bash
-  aws ec2 release-address --allocation-id eipalloc-...   # each EIP
-  aws s3 rb s3://<bucket> --force                        # empty then delete each bucket
+  aws ec2 release-address --allocation-id eipalloc-...   # EIP ごとに
+  aws s3 rb s3://<bucket> --force                        # S3 Bucket ごとに、空にしてから消す
   ```
 
 - 残りがないことを点検します: EC2 のインスタンス・ボリューム・スナップショット・AMI・EIP、ECS のクラスターとタスク定義、EFS、RDS のインスタンスと手動のスナップショット、ALB、ACM、NAT、ECR、Cloud Map の名前空間、`/af` のロググループ、`af-*` の IAM ロールとインスタンスプロファイル、デフォルトでない VPC

@@ -35,7 +35,7 @@ source_of_truth: "`deploy/compose/release.sh`・`load-images.sh` と `control-pl
 
 ```bash
 VERSION=<version> deploy/compose/release.sh --save
-#   -> deploy/compose/dist/agent-fleet-images-<version>.tar.gz  (docker save, gzip)
+#   -> deploy/compose/dist/agent-fleet-images-<version>.tar.gz ができる（docker save を gzip したもの）
 ```
 
 その tar とバンドルを対象のホストにコピーし、そこで読み込みます。

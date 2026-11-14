@@ -54,7 +54,7 @@ AZ を移す方法と、AZ を失ったときの手順は [AZ を移す・失う
    aws cloudformation deploy --stack-name af-ecs-ec2-pool \
      --template-file cfn/40-ec2-pool.yaml --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides NetworkStackName=af-ecs-network PlatformStackName=af-ecs-platform
-   # then point the CP at it (this is the whole switch, and the whole rollback):
+   # 次に CP をそこに向ける（切り替えも戻すのも、これだけ）:
    aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
      --capabilities CAPABILITY_NAMED_IAM --parameter-overrides WsRuntime=ecs-ec2 Ec2SlotLaunchTemplate=lt-0123456789abcdef0 ...
    ```

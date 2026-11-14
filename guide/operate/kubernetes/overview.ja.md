@@ -117,7 +117,7 @@ gcloud beta quotas preferences create --project <project> --service compute.goog
   --quota-id SSD-TOTAL-GB-per-project-region --dimensions region=<region> \
   --preferred-value <GB> --preference-id <prefix>-ssd-total-gb \
   --justification "Agent Fleet on GKE: node boot disks and workspace volumes"
-gcloud beta quotas preferences describe <prefix>-ssd-total-gb --project <project>   # granted value
+gcloud beta quotas preferences describe <prefix>-ssd-total-gb --project <project>   # 認められた値
 ```
 
 2000 GB への引き上げが 1 分ほどで承認された例がありますが、約束ではありません。大きな要求は審査に回ることがあります。

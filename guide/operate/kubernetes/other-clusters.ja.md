@@ -26,9 +26,9 @@ GKE 以外のクラスターに、汎用のオーバーレイ `deploy/kubernetes
 シェル変数を設定し、オーバーレイをコピーします。このクローンの外に置くなら、[クローンの外に置く](gke.ja.md#クローンの外に置く) のとおりにパスを直します。
 
 ```bash
-OVERLAY=<your overlay>     # where your copy of overlays/generic lives
-CP_NS=<cpNamespace>        # deployment.yaml's cpNamespace
-WS_NS=<wsNamespace>        # deployment.yaml's wsNamespace
+OVERLAY=<your overlay>     # overlays/generic のコピーを置く場所
+CP_NS=<cpNamespace>        # deployment.yaml の cpNamespace
+WS_NS=<wsNamespace>        # deployment.yaml の wsNamespace
 cp -r deploy/kubernetes/overlays/generic "$OVERLAY"
 ```
 
@@ -49,12 +49,12 @@ cp -r deploy/kubernetes/overlays/generic "$OVERLAY"
    - 8098 の規則の `af-placeholder-ws` を、自分の `wsNamespace` にします（このラベルはオーバーレイが書き換えません。ポリシー自体の Namespace は書き換えます）
    ```bash
    cp deploy/kubernetes/components/gke/cp-networkpolicy.yaml "$OVERLAY/cp-networkpolicy.yaml"
-   # edit it as above, add `- cp-networkpolicy.yaml` under resources: in kustomization.yaml, then:
-   kubectl kustomize "$OVERLAY" | grep -A3 'name: cp-ingress'   # namespace: your cpNamespace
+   # 上のとおりに書き換え、kustomization.yaml の resources: に `- cp-networkpolicy.yaml` を足してから:
+   kubectl kustomize "$OVERLAY" | grep -A3 'name: cp-ingress'   # namespace: が自分の cpNamespace になる
    ```
 4. オーバーレイを適用します。2 つの Namespace、CP、RBAC と、CP の受信ポリシーを含む NetworkPolicy ができます。CP の Pod は手順 5 まで `CreateContainerConfigError` のまま待ちます
    ```bash
-   kubectl config current-context                # the cluster you mean
+   kubectl config current-context                # 使うつもりのクラスター
    kubectl apply -k "$OVERLAY"
    ```
 5. CP の Namespace に CP の Secret を作ります。キーに加えてストアの DSN を `AF_DATABASE_URL` として入れ、ロールアウトを待ちます。使うサインインのシークレット（`GOOGLE_OAUTH_CLIENT_SECRET`、`AF_OIDC_<ID>_CLIENT_SECRET`、`GITHUB_OAUTH_CLIENT_SECRET`）も同じ Secret に入れます。キーの要件は [配備のキーを扱う](../secure/deployment-keys.ja.md) にあります。イメージにプルシークレットが要るなら、ここで `$WS_NS` に、`AF_K8S_IMAGE_PULL_SECRET` に書いた名前で作ります

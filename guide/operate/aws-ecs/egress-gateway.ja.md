@@ -105,7 +105,7 @@ SSH の git やデータベースへの接続です。`GatewaySg` はワーク�
    aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
      --capabilities CAPABILITY_IAM --parameter-overrides EgressRoute=gateway \
      GatewayEipAllocationId=eipalloc-... GatewayEipAddress=<its public address>
-   ./update.sh --profile <p> --region <r>    # 20-platform (the token read) and 30-ingress
+   ./update.sh --profile <p> --region <r>    # 20-platform（トークンの読み取り）と 30-ingress
    ```
 
 2. ゲートウェイが通信を通せるようになるまで待ちます（下の表）
@@ -167,9 +167,9 @@ aws ec2 allocate-address --domain vpc --tag-specifications 'ResourceType=elastic
 ```bash
 aws ec2 describe-addresses --output text --query \
   "Addresses[?Tags[?Key=='Name' && Value=='af-<network stack>-egress-gateway-eip']].[AllocationId,PublicIp,AssociationId]"
-# one row with AssociationId None: pass AllocationId and PublicIp as
-# GatewayEipAllocationId= GatewayEipAddress= (with EgressRoute=gateway), or write both lines
-# into ~/.config/agent-fleet/deploy/<p>.<r>/params/00-network before standup.sh
+# AssociationId が None の行が 1 つあれば、その AllocationId と PublicIp を
+# GatewayEipAllocationId= GatewayEipAddress= に渡す（EgressRoute=gateway と一緒に）。または standup.sh の前に
+# ~/.config/agent-fleet/deploy/<p>.<r>/params/00-network に 2 行とも書く
 ```
 
 > [!CAUTION]
@@ -241,10 +241,10 @@ Control Plane は、生の通信のイベントを消す前に、終わった日
 
 ```bash
 aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
-  --capabilities CAPABILITY_IAM            # the S3 endpoint policy admits the bucket
+  --capabilities CAPABILITY_IAM            # S3 のエンドポイントポリシーがこの S3 Bucket を許可する
 aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
   --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --parameter-overrides EgressArchive=create
-./update.sh --profile <p> --region <r>     # 20-platform's CP grant, then 30-ingress's URL
+./update.sh --profile <p> --region <r>     # 20-platform の CP への権限、次に 30-ingress の URL
 ```
 
 - 取得した状態に `EgressArchive=create` があれば、`standup.sh` も再構築で同じことをします

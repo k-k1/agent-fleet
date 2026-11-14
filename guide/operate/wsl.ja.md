@@ -44,16 +44,16 @@ Docker Desktop の連携でも動きますが、この構成はホストの Dock
 | Node | Console を Vite でビルドします。nvm をおすすめします |
 
 ```bash
-curl -fsSL https://get.docker.com | sh          # install docker-ce
-sudo usermod -aG docker "$USER"                 # docker without sudo from now on
-sudo service docker start                        # on WSL, `service` works even without systemd
-# open a new shell: you're set once `docker info` succeeds
+curl -fsSL https://get.docker.com | sh          # docker-ce を入れる
+sudo usermod -aG docker "$USER"                 # 以後は sudo なしで docker を使える
+sudo service docker start                        # WSL では systemd がなくても `service` が使える
+# 新しいシェルを開く。`docker info` が通れば準備完了
 ```
 
 - systemd を有効にすると（`/etc/wsl.conf` の `[boot]` に `systemd=true`）、`dockerd` が自動で起動し、手で起動する手間が省けます
 
 ```bash
-stat -fc %T /sys/fs/cgroup     # => cgroup2fs means OK
+stat -fc %T /sys/fs/cgroup     # cgroup2fs と出れば OK
 ```
 
 - `cgroup2fs` と出なければ、Windows の側で `wsl --update` を実行して WSL を新しくします
@@ -67,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bas
 
 ```bash
 git clone <this-repo> && cd agent-fleet
-deploy/local/run-dev.sh wsl        # the old wsl-quickstart.sh wraps this (still works)
+deploy/local/run-dev.sh wsl        # 前の wsl-quickstart.sh はこれを呼ぶだけ（今も使える）
 ```
 
 スクリプトがすることは次のとおりです。
@@ -118,7 +118,7 @@ GitHub のクローンとプッシュを OAuth のデバイスフローで使う
 どの環境でも、コンテナの中から JDK を入れられます。
 
 ```bash
-workspace-agent install-jdk 21     # install the latest GA Temurin into ~/.local/share/agent-fleet/jvm
+workspace-agent install-jdk 21     # 最新の GA の Temurin を ~/.local/share/agent-fleet/jvm に入れる
 ```
 
 - Console の **設定 → ツールチェーン** で Java のバージョンを選ぶと、足りないバージョンを次のコンテナの起動で入れ、各セッションに `JAVA_HOME` を渡します（[ツールチェーンを選ぶ](../user/workspace/toolchains.ja.md)）
@@ -141,7 +141,7 @@ workspace-agent install-jdk 21     # install the latest GA Temurin into ~/.local
 WSL2 にどうしても Docker を入れられないときは、ワークスペースをコンテナなしでホストのプロセスとして動かせます（`AF_RUNTIME=native`、1 人だけ、試験的）。
 
 ```bash
-# install CLIs like tmux / git / claude on the host (nothing is baked in)
+# tmux / git / claude などの CLI はホストに入れておく（何も同梱されない）
 deploy/local/run-dev.sh native
 ```
 

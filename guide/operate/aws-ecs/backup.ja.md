@@ -55,7 +55,7 @@ ECS の配備で、EFS に置いたメンバーのデータを毎日バックア
 aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
   --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --no-execute-changeset \
   --profile <p> --region <r>
-# the command prints the change set's ARN
+# 変更セットの ARN が表示される
 aws cloudformation describe-change-set --change-set-name <arn> \
   --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output table \
   --profile <p> --region <r>
@@ -126,7 +126,7 @@ aws backup start-restore-job --recovery-point-arn <rp-arn> \
   --metadata '{"file-system-id":"<efs-id>","newFileSystem":"false","Encrypted":"true",
     "PerformanceMode":"generalPurpose",
     "ItemsToRestore":"[\"/home/<membership>\",\"/claude-config/<membership>\"]"}'
-aws backup describe-restore-job --restore-job-id <id>    # wait for COMPLETED
+aws backup describe-restore-job --restore-job-id <id>    # COMPLETED になるまで待つ
 ```
 
 復元したコピーはどのアクセスポイントの範囲にも入らないので、どのワークスペースからも見えません。元の場所に戻すには、ファイルシステムのルートをマウントする必要があります。そのために、root で動く使い捨ての Fargate タスクを使います。タスクはプライベートサブネットで動かし、ワークスペースのセキュリティグループを付けます。EFS ボリュームには `$EFS` のルートディレクトリ `/` を指定し、転送中の暗号化をオンにします。

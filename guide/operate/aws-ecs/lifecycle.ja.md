@@ -21,10 +21,10 @@ ECS の配備を、4 つのスクリプトで記録し、一時停止し、撤�
 | `standup.sh --yes` で再構築する | 記録したパラメータで配備を構築する |
 
 ```bash
-./capture-env.sh --profile <p> --region <r>            # record a live deployment
-./pause.sh       --profile <p> --region <r> [--up]     # stop / resume (data stays)
-./teardown.sh    --profile <p> --region <r> [--yes]    # delete everything
-./standup.sh     --profile <p> --region <r> [--yes]    # build it back
+./capture-env.sh --profile <p> --region <r>            # 動いている配備を記録する
+./pause.sh       --profile <p> --region <r> [--up]     # 止める / 再開する（データは残る）
+./teardown.sh    --profile <p> --region <r> [--yes]    # 全部消す
+./standup.sh     --profile <p> --region <r> [--yes]    # 作り直す
 ```
 
 ## `--yes` が要る操作

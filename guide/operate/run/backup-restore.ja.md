@@ -41,7 +41,7 @@ Docker Compose の配備のデータを定期的にアーカイブにまとめ�
 `deploy/compose/backup.sh` を実行します。本番では cron で定期実行します。
 
 ```bash
-deploy/compose/backup.sh              # -> deploy/compose/backups/agent-fleet-<ts>.tar.gz
+deploy/compose/backup.sh              # -> deploy/compose/backups/agent-fleet-<ts>.tar.gz ができる
 OUT_DIR=/mnt/backups KEEP=14 deploy/compose/backup.sh
 ```
 
@@ -69,10 +69,10 @@ OUT_DIR=/mnt/backups KEEP=14 deploy/compose/backup.sh
 4. メンバー（または管理者）が Console でワークスペースを「**起動**」します
 
 ```bash
-# 1) recreate .env with the SAME AF_MASTER_KEY (from your vault)
-# 2) restore the archive:
+# 1) .env を作り直す。AF_MASTER_KEY は前と同じ値（パスワードマネージャーの控え）
+# 2) アーカイブを戻す:
 deploy/compose/restore.sh /mnt/backups/agent-fleet-<ts>.tar.gz
-# 3) bring it up; Start each workspace from the Console to rehydrate containers
+# 3) 起動する。コンテナを戻すには、各ワークスペースを Console で起動する
 docker compose up -d
 ```
 
