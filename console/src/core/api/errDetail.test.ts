@@ -110,4 +110,9 @@ describe("errDetail hint for copilot's model-not-available refusal", () => {
     const got = client.errDetail({ code: "runtime_failed", message: "spawn failed" });
     expect(got).not.toContain("Auto");
   });
+
+  it.each(["engine_register_failed", "model_unavailable", "internal"])("does not add the hint under code %s", (code) => {
+    const got = client.errDetail({ code, message: e.message });
+    expect(got).not.toContain("Auto");
+  });
 });

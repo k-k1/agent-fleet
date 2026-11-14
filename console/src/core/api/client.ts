@@ -186,7 +186,9 @@ const BILINGUAL_MESSAGE_CODES = new Set([
 ]);
 
 // copilot's refusal of a model outside the account's plan (a Free plan allows Auto alone), as it
-// reaches the Console inside a generic launch failure's message. The wording is copilot's, so it
+// reaches the Console inside a runtime_failed launch failure's message (the only code the Agent
+// gives a managed child that died at start; the hint is never added under any other code, since
+// errDetail serves every feature and agent). The wording is copilot's, so it
 // is matched here on the message, not on a code the Agent does not have; a miss only drops the
 // hint. The catalogue line points at the troubleshooting section for this error.
 const MODEL_NOT_AVAILABLE_RE = /Model "[^"]+" is not available/;
@@ -205,7 +207,8 @@ export const errDetail = (error: ApiError | string | null | undefined): string =
   if (error && typeof error === "object" && error.code && BILINGUAL_MESSAGE_CODES.has(error.code)) return head;
   const detail = error && typeof error === "object" ? (error.message ?? "").trim() : "";
   const out = detail && detail !== head ? head + ": " + detail : head;
-  return MODEL_NOT_AVAILABLE_RE.test(detail) ? out + " " + t("err.model_not_available_hint") : out;
+  const generic = error && typeof error === "object" && error.code === "runtime_failed";
+  return generic && MODEL_NOT_AVAILABLE_RE.test(detail) ? out + " " + t("err.model_not_available_hint") : out;
 };
 
 // api() resolves the path against baseURI and parses JSON. Mirrors the legacy
