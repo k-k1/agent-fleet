@@ -87,7 +87,7 @@ func agentContractFamilies() []contractFamily {
 			binding: sessionSearchHitBinding,
 			tsPath:  "../../console/src/features/keys/talkSearch.ts",
 			tsName:  "SessionSearchHit",
-			tsKeys:  keySet("session", "display", "kind", "repo", "archived", "idx", "role", "ts", "snippet", "score"),
+			tsKeys:  keySet("session", "display", "kind", "repo", "dir", "branch", "archived", "idx", "role", "ts", "snippet", "score"),
 			tsOnly:  map[string]string{},
 			goOnly:  map[string]string{},
 		},
@@ -461,8 +461,8 @@ var cleanupManifestBinding = map[string]string{
 }
 
 var sessionSearchHitBinding = map[string]string{
-	"Session": "session", "Display": "display", "Kind": "kind", "Repo": "repo", "Archived": "archived",
-	"Idx": "idx", "Role": "role", "TS": "ts", "Snippet": "snippet", "Score": "score",
+	"Session": "session", "Display": "display", "Kind": "kind", "Repo": "repo", "Dir": "dir", "Branch": "branch",
+	"Archived": "archived", "Idx": "idx", "Role": "role", "TS": "ts", "Snippet": "snippet", "Score": "score",
 }
 
 var browserAttachmentBinding = map[string]string{
