@@ -152,6 +152,9 @@ const CASES = [
   // The dark theme is checked down to "are default-coloured labels readable" (a boolean here
   // renders black on black).
   { name: "plain-dark", xml: PLAIN, dark: true, pages: 2, scale: 1 },
+  // A key typed in the frame never reaches the parent window: Ctrl/⌘+P must be cancelled in the
+  // frame and handed over, or it opens the browser's print dialog.
+  { name: "gateway-keys", xml: PLAIN, dark: false, pages: 2, scale: 1, keys: true },
   { name: "compressed", xml: compressed(PLAIN), dark: false, pages: 1, scale: 1 },
   { name: "big", xml: BIG, dark: false, pages: 1, maxScale: 0.5 },
   // XML that is not a readable diagram. Rather than silently showing the viewer's own English
@@ -312,10 +315,15 @@ for (const c of CASES) {
   const page = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:${c.dark ? "#1e1e1e" : "#fff"}">
 <iframe id="f" sandbox="allow-scripts" width="860" height="520" style="border:0;display:block" srcdoc="${srcdoc.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}"></iframe>
 <script>
-window.__ev=[];
+window.__ev=[]; window.__parentKeys=[];
+window.addEventListener("keydown",function(e){ window.__parentKeys.push(e.code); },true);
 function post(m){ m.af="af-drawio"; document.getElementById("f").contentWindow.postMessage(m,"*"); }
 window.__dark=${c.dark}; window.__restore=null;
 window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-drawio")return; window.__ev.push(d);
+  // Same as DrawioView.tsx: the gateway chords go with ready, and a handed-back one takes the
+  // keyboard back from the frame before it is replayed.
+  if(d.t==="ready") post({t:"keys",chords:["mod+k","mod+p"]});
+  if(d.t==="key") document.getElementById("f").blur();
   if(d.t==="ready") fetch("/assets/viewer.js",{credentials:"same-origin"}).then(function(r){return r.text()}).then(function(src){ post({t:"boot",src:src}); });
   if(d.t==="booted") post({t:"render",xml:${JSON.stringify(c.xml)},dark:window.__dark,restore:window.__restore?JSON.parse(window.__restore):null});
   // Same as DrawioView.tsx: the frame declares what it needs, the PARENT fetches it and hands the
@@ -496,6 +504,40 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
       if (now.pageId !== kept.pageId) fail.push(`${c.name}: page was not carried over (${kept.pageId} -> ${now.pageId})`);
       console.log(`   theme-switch: scale ${kept.scale} -> ${now.scale} / page ${now.pageId} / darkMode=${now.darkMode}`);
     }
+  }
+
+  // ── Gateway chords typed inside the frame ─────────────────────────────────
+  // Real keys at a frame that holds focus. The frame must hand back Ctrl+P (and only the chords
+  // it was sent), and after the parent's blur the next key must arrive in the parent window.
+  if (c.keys && rendered) {
+    const evalJSON = async (expr) =>
+      JSON.parse((await b.call("Runtime.evaluate", { expression: `JSON.stringify(${expr})`, returnByValue: true })).result?.value ?? "null");
+    const key = async (code, k, vk, modifiers) => {
+      await b.call("Input.dispatchKeyEvent", { type: "rawKeyDown", code, key: k, windowsVirtualKeyCode: vk, modifiers });
+      await b.call("Input.dispatchKeyEvent", { type: "keyUp", code, key: k, windowsVirtualKeyCode: vk, modifiers });
+    };
+    await b.call("Input.dispatchMouseEvent", { type: "mousePressed", x: 430, y: 260, button: "left", clickCount: 1 });
+    await b.call("Input.dispatchMouseEvent", { type: "mouseReleased", x: 430, y: 260, button: "left", clickCount: 1 });
+    await sleep(200);
+    const focusedBefore = await evalJSON("document.activeElement && document.activeElement.id");
+    if (focusedBefore !== "f") fail.push(`${c.name}: a click did not give the frame focus (active=${focusedBefore}); the case proves nothing`);
+    await key("KeyC", "c", 67, 2); // Ctrl+C: not a gateway chord, must stay the frame's
+    await key("KeyP", "p", 80, 2); // Ctrl+P
+    await sleep(300);
+    const handed = await evalJSON("window.__ev.filter(function(e){return e.t==='key'})");
+    const focusedAfter = await evalJSON("document.activeElement && document.activeElement.id");
+    const parentBefore = await evalJSON("window.__parentKeys.slice()");
+    await key("KeyX", "x", 88, 0);
+    await sleep(200);
+    const parentAfter = await evalJSON("window.__parentKeys.slice()");
+    if (handed.length !== 1 || handed[0].code !== "KeyP" || handed[0].ctrlKey !== true) {
+      fail.push(`${c.name}: the frame handed back ${JSON.stringify(handed)} (expected Ctrl+KeyP alone)`);
+    }
+    if (parentBefore.length) fail.push(`${c.name}: keys typed in the frame reached the parent window (${parentBefore})`);
+    if (focusedAfter === "f" || JSON.stringify(parentAfter) !== '["KeyX"]') {
+      fail.push(`${c.name}: the keyboard did not come back to the parent (active=${focusedAfter}, parent saw ${JSON.stringify(parentAfter)})`);
+    }
+    console.log(`   keys: focus=${focusedBefore} handed=${handed.map((h) => (h.ctrlKey ? "ctrl+" : "") + h.code)} after=${focusedAfter} parent=${JSON.stringify(parentAfter)}`);
   }
 
   // ── Gestures (docs/log/65 §65.12) ─────────────────────────────────────────

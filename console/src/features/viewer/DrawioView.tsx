@@ -24,6 +24,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import viewerAssetUrl from "../../../vendor/drawio/viewer-static.min.js?url";
 import { downloadURL } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { useSettings } from "../../lib/settings.ts";
+import { eventChordString } from "../../lib/keys/chords.ts";
+import { gatewayChords } from "../keys/bindings.ts";
+import { pressGatewayChord } from "../keys/dispatcher.ts";
 import { acceptedStencilNames, stencilUrl } from "./drawioStencilRelay.ts";
 import { DRAWIO_MSG, drawioFrameFile, isDrawioFrameEvent, type DrawioViewState } from "./drawioFrame.ts";
 
@@ -114,10 +118,31 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
       if (!isDrawioFrameEvent(event.data)) return;
       const msg = event.data;
       if (msg.t === "ready") {
+        post({ t: "keys", chords: gatewayChords() });
         // The document exists now; only here is the viewer source handed over.
         viewerSource()
           .then((src) => post({ t: "boot", src }))
           .catch(() => setFrameErr(tr("view.drawio.viewer_unavailable")));
+        return;
+      }
+      if (msg.t === "key") {
+        // The frame cancelled a gateway chord's browser default (Ctrl/⌘+P would print) and hands
+        // it over. The chord is rebuilt from typed fields and only a gateway chord is run, through
+        // the dispatcher's dedicated entry: the frame runs the viewer on a user's file and is not
+        // trusted to drive any other shortcut (see pressGatewayChord).
+        if (msg.repeat === true) return;
+        const chord = eventChordString({
+          code: String(msg.code),
+          ctrlKey: msg.ctrlKey === true,
+          metaKey: msg.metaKey === true,
+          altKey: msg.altKey === true,
+          shiftKey: msg.shiftKey === true,
+        } as KeyboardEvent);
+        if (!chord || !gatewayChords().includes(chord)) return;
+        // Take the keyboard back from the frame first: the leader's follow-up keys (and the
+        // palette's typing) must land in the Console, and a frame that keeps focus swallows them.
+        frameRef.current?.blur();
+        pressGatewayChord(chord);
         return;
       }
       if (msg.t === "booted") {
@@ -179,6 +204,12 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [post, tr]);
+
+  // A rebind made while the pane is open reaches the frame too ("ready" sends the first list).
+  const keybindings = useSettings().keybindings;
+  useEffect(() => {
+    post({ t: "keys", chords: gatewayChords() });
+  }, [keybindings, post]);
 
   // Render request, sent once the viewer has been evaluated and the XML has arrived. The frame
   // holds one message if they arrive in the other order, but waiting here keeps a single path.

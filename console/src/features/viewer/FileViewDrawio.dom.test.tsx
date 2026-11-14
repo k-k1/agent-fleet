@@ -10,6 +10,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { revisionOf } from "../editor/buffer.ts";
 import { clearDirtyRegistryForTests } from "../editor/dirtyRegistry.ts";
 import { MAX_STENCIL_SETS } from "./drawioStencilRelay.ts";
+import { wireKeys } from "../keys/dispatcher.ts";
+import { useKeysStore } from "../keys/store.ts";
 
 const DIAGRAM = '<mxfile host="app.diagrams.net"><diagram id="a" name="ページ1"></diagram></mxfile>';
 const VIEWER_SRC = "/* drawio viewer source */";
@@ -210,12 +212,48 @@ describe("the protocol with the frame", () => {
     });
     // The parent fetches the viewer: from the frame no Lax cookie is attached and it gets a 401.
     expect(fetched.some((u) => u.includes("viewer-static"))).toBe(true);
-    expect(posts().map((m) => m.t)).toEqual(["boot"]);
-    expect(posts()[0].src).toBe(VIEWER_SRC);
+    // "keys" goes first, with ready: the gateway chords the frame must hand back.
+    expect(posts().map((m) => m.t)).toEqual(["keys", "boot"]);
+    expect(posts()[0].chords).toEqual(["mod+k", "mod+p"]);
+    expect(posts()[1].src).toBe(VIEWER_SRC);
 
     fromFrame({ t: "booted" });
-    expect(posts().map((m) => m.t)).toEqual(["boot", "render"]);
-    expect(posts()[1].xml).toBe(DIAGRAM);
+    expect(posts().map((m) => m.t)).toEqual(["keys", "boot", "render"]);
+    expect(posts()[2].xml).toBe(DIAGRAM);
+  });
+
+  // Keys typed in the frame never reach the Console's window, so the frame cancels Ctrl/⌘+P
+  // (print) and hands it over. The parent runs it through the dispatcher's gateway entry, never
+  // as a replayed KeyboardEvent: other window listeners (PaneFind reads `.key`, the Settings key
+  // recorder takes any chord) would act on whatever the frame put in it.
+  it("runs a gateway chord from the frame through the dispatcher's entry, and nothing else", async () => {
+    await render();
+    spyOnFrame();
+    const unwire = wireKeys();
+    const seen: string[] = [];
+    const listen = (e: KeyboardEvent) => seen.push(e.code);
+    window.addEventListener("keydown", listen, true);
+    const blur = vi.spyOn(frame()!, "blur");
+    try {
+      useKeysStore.setState({ paletteOpen: false });
+      // A `.key` that disagrees with `.code` (PaneFind would read "f" as Ctrl+F) is never used.
+      fromFrame({ t: "key", code: "KeyP", key: "f", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, repeat: false });
+      expect(useKeysStore.getState().paletteOpen).toBe(true);
+      expect(seen).toEqual([]);
+      // The keyboard comes back to the Console so the palette (or the leader's next key) gets it.
+      expect(blur).toHaveBeenCalledTimes(1);
+      // The frame runs the viewer on a user's file: any other chord it sends is dropped.
+      act(() => useKeysStore.setState({ paletteOpen: false }));
+      fromFrame({ t: "key", code: "KeyW", ctrlKey: false, metaKey: false, altKey: true, shiftKey: false, repeat: false });
+      fromFrame({ t: "key", code: "KeyP", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, repeat: false });
+      fromFrame({ t: "key", code: "KeyP", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, repeat: true });
+      expect(useKeysStore.getState().paletteOpen).toBe(false);
+      expect(blur).toHaveBeenCalledTimes(1);
+      expect(seen).toEqual([]);
+    } finally {
+      window.removeEventListener("keydown", listen, true);
+      unwire();
+    }
   });
 
   it("fetches stencils from the CP in the parent on the frame's request and returns the contents", async () => {
@@ -358,9 +396,9 @@ describe("theme switching", () => {
     await mount(false);
     const first = frameEl();
     await drive(first);
-    expect(postsOf(first).map((m) => m.t)).toEqual(["boot", "render"]);
+    expect(postsOf(first).map((m) => m.t)).toEqual(["keys", "boot", "render"]);
     // The first render has nothing to carry over.
-    expect(postsOf(first)[1].restore).toBeNull();
+    expect(postsOf(first)[2].restore).toBeNull();
 
     // The frame reports that the user has zoomed in and is looking at page 2.
     act(() => {
