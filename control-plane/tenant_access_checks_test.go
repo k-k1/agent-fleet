@@ -348,6 +348,7 @@ func TestIngestGateIsBoundToTheSelectedTenant(t *testing.T) {
 // --- offboarding -------------------------------------------------------------------
 
 func TestDeactivatingAMembershipRevokesItsPATsAndGrants(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	client := e.registerClient(loopbackCB)
@@ -382,6 +383,7 @@ func TestDeactivatingAMembershipRevokesItsPATsAndGrants(t *testing.T) {
 }
 
 func TestAllowlistRemovalRevokesBearers(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	client := e.registerClient(loopbackCB)
@@ -420,6 +422,7 @@ func TestAllowlistRemovalRevokesBearers(t *testing.T) {
 }
 
 func TestLegacyNonExpiringPATIsCappedFromCreation(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	mk := func(id string, age time.Duration) string {
@@ -468,6 +471,7 @@ func TestListTenantsOmitsTenantsThatRefuseTheRequest(t *testing.T) {
 }
 
 func TestIdentityStillAllowedOnlyJudgesWhatItCanVerify(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	if err := e.mgr.store.AttachProvider(ctx, e.ident.ID, store.IdentityLink{Provider: "entra", Subject: "s1", Email: "dev@example.com"}); err != nil {
@@ -563,6 +567,7 @@ func TestParsePATMaxDays(t *testing.T) {
 }
 
 func TestPATWithAnUnreadableExpiryIsNotHonored(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	tok, h := newPATToken()
 	if err := e.mgr.store.CreatePAT(context.Background(), store.PAT{ID: "bad", IdentityID: e.ident.ID, MembershipID: e.membershipID(),
@@ -575,6 +580,7 @@ func TestPATWithAnUnreadableExpiryIsNotHonored(t *testing.T) {
 }
 
 func TestCredentialsCannotBeIssuedAgainstAnInactiveMembership(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	mid := e.membershipID()
@@ -601,6 +607,7 @@ func TestCredentialsCannotBeIssuedAgainstAnInactiveMembership(t *testing.T) {
 }
 
 func TestBearerSetRevokeSparesCredentialsMintedAfterTheSnapshot(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	mk := func(id string) {
@@ -646,6 +653,7 @@ func (f *flakyRoster) EmailHasActiveMembership(ctx context.Context, email string
 }
 
 func TestIdentityStillAllowedKeepsCredentialsWhenTheJudgmentsOwnReadFails(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	if err := e.mgr.store.AttachProvider(ctx, e.ident.ID, store.IdentityLink{Provider: "entra", Subject: "s1", Email: "gone@example.com"}); err != nil {
@@ -669,6 +677,7 @@ func TestIdentityStillAllowedKeepsCredentialsWhenTheJudgmentsOwnReadFails(t *tes
 }
 
 func TestPendingCodesDieWithTheMembership(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	client := e.registerClient(loopbackCB)
@@ -698,6 +707,7 @@ func TestPendingCodesDieWithTheMembership(t *testing.T) {
 }
 
 func TestInFlightExchangeCannotCompleteAfterReinvite(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	if _, err := e.mgr.store.CreateMCPOAuthClient(ctx, store.MCPOAuthClient{ClientID: "c", RedirectURIs: "[]", CreatedAt: time.Now().Unix()}, 10); err != nil {
@@ -727,6 +737,7 @@ func (f *flakyRules) ListTenantLoginRules(ctx context.Context) ([]store.TenantLo
 }
 
 func TestIdentityStillAllowedKeepsCredentialsWhenTheRulesRefreshFails(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	if err := e.mgr.store.AttachProvider(ctx, e.ident.ID, store.IdentityLink{Provider: "entra", Subject: "s1", Email: "gone@example.com"}); err != nil {
@@ -752,6 +763,7 @@ func TestIdentityStillAllowedKeepsCredentialsWhenTheRulesRefreshFails(t *testing
 }
 
 func TestCodeAndConsentRowsAreIssuedUnderTheMembershipLock(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	if _, err := e.mgr.store.CreateMCPOAuthClient(ctx, store.MCPOAuthClient{ClientID: "c", RedirectURIs: "[]", CreatedAt: time.Now().Unix()}, 10); err != nil {

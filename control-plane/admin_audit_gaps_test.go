@@ -119,6 +119,7 @@ func TestSetMembershipRoleRefusedWhenTheAuditRecordCannotBeWritten(t *testing.T)
 // pat.revoke must sit under the membership's tenant (where pat.create put it), or the tenant's
 // administrators see the issuance and never the revocation.
 func TestPATRevokeIsVisibleToTheIssuingTenant(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	_, h := newPATToken()
@@ -141,6 +142,7 @@ func TestPATRevokeIsVisibleToTheIssuingTenant(t *testing.T) {
 // The automatic revocation writes one system row per credential that was live, under that
 // credential's tenant; a credential already revoked adds nothing.
 func TestRevokeBearerSetAuditsEachRevokedCredential(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	for _, id := range []string{"p-live", "p-dead"} {
