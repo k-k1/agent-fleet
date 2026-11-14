@@ -424,7 +424,12 @@ case "$args" in
     [ "${STUB_ENGINE_SVC_UP:-0}" = 1 ] && echo "af-af-ecs-engines-image" || echo "" ;;
   # STUB_WS_DESIRED0=1: every workspace service is already at desired 0 (stopped by its user a
   # moment ago, or by an earlier pause cut short), while its task may still be running.
-  *"ecs describe-services"*) [ "${STUB_WS_DESIRED0:-0}" = 1 ] && echo "" || echo "af-ws-alice" ;;
+  # STUB_WS_LATE=1: no workspace is above 0 until the CP has been stopped — what a golden bake
+  # does when it raises its probe service while the CP is still going down.
+  *"ecs describe-services"*)
+    if [ "${STUB_WS_LATE:-0}" = 1 ]; then
+      grep -q "af-t-ingress-cp --desired-count 0" "$STUB_LOG" && echo "af-ws-probe" || echo ""
+    else [ "${STUB_WS_DESIRED0:-0}" = 1 ] && echo "" || echo "af-ws-alice"; fi ;;
   *"ecs list-container-instances"*) echo "arn:aws:ecs:x:1:container-instance/ci-1" ;;
   *"ecs list-task-definitions"*) echo "arn:aws:ecs:x:1:task-definition/af-ws-alice:1" ;;
   # The engines' GPU boxes (af-role=engine-*), before the slot branch that answers everything.
@@ -437,7 +442,9 @@ case "$args" in
       *) echo "" ;;
     esac ;;
   *"ec2 describe-instances"*)
-    if [ "${STUB_NO_SLOTS:-0}" = 1 ]; then echo ""; else echo "i-1"; fi ;;
+    if [ "${STUB_SLOTS_LATE:-0}" = 1 ]; then
+      grep -q "af-t-ingress-cp --desired-count 0" "$STUB_LOG" && echo "i-late-slot" || echo ""
+    elif [ "${STUB_NO_SLOTS:-0}" = 1 ]; then echo ""; else echo "i-1"; fi ;;
   # The egress gateway's interface and its checks through SSM. STUB_GW_ATTACH= (empty) is an
   # interface no instance has attached. STUB_GW_PROBE is what the readiness check answers;
   # "model" is a gateway whose agent gets its first policy only once the CP is up (the log is
@@ -2196,6 +2203,22 @@ STUB_NO_SLOTS=1 STUB_ENGINE_BOXES=late \
   "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out4c" </dev/null
 order "$CP_DOWN" "ec2 terminate-instances --instance-ids i-late"
 grep -q "no CP left to end them" "$WORK/out4c" || fail "the sweep did not say why it terminated: $(tail -3 "$WORK/out4c")"
+
+echo "== case 4c2: a workspace and slot that came back during the CP stop are re-stopped =="
+for mode in --fast ""; do
+  : > "$LOG"
+  STUB_WS_LATE=1 STUB_SLOTS_LATE=1 \
+    "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes $mode > "$WORK/out4c2" </dev/null
+  order "$CP_DOWN" "ecs update-service --cluster t-cluster --service af-ws-probe --desired-count 0"
+  order "$CP_DOWN" "ec2 stop-instances --instance-ids i-late-slot"
+  grep -q "a workspace came back" "$WORK/out4c2" || fail "the re-check did not say what it re-stopped ($mode): $(tail -3 "$WORK/out4c2")"
+done
+echo "== case 4c3: nothing came back, nothing is re-stopped =="
+: > "$LOG"
+STUB_WS_DESIRED0=1 STUB_NO_SLOTS=1 \
+  "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4c3" </dev/null
+grep -q "came back" "$WORK/out4c3" && fail "a quiet pause claimed something came back"
+hasnt "ecs update-service --cluster t-cluster --service af-ws-"
 
 echo "== case 4d: the database stops AFTER the control plane, and only when it is running =="
 : > "$LOG"

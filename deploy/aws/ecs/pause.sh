@@ -484,7 +484,7 @@ EOF
       dbstep=""; [ -z "$DB_ID" ] || [ "$KEEP_DB" = 1 ] || dbstep=" -> database stopped"
       natstep=""; [ "$KEEP_NAT" = 1 ] || [ "$(nat_enabled)" != true ] || natstep=" -> NAT gateway deleted"
       gwstep=""; [ "$(af_gateway_state "$AF_STACK_NETWORK")" != on ] || gwstep=" -> egress gateway stopped"
-      echo "plan: ${ws:-(no Workspace to stop)} -> slots asleep, engines idle$gwstep -> CP desired 0 -> leftover engines ended$dbstep$natstep"
+      echo "plan: ${ws:-(no Workspace to stop)} -> slots asleep, engines idle$gwstep -> CP desired 0 -> leftover workspaces, slots and engines re-checked and ended$dbstep$natstep"
       exit 0
     fi
 
@@ -571,6 +571,22 @@ EOF
     # The sweep. From here on nothing will ever end an engine box or lower a helper's desired
     # count, so whatever is still up is ended now: a box the CP bought between the wait and its
     # own stop is exactly the $28-a-day one nobody sees.
+    #
+    # Workspaces and slots too: the CP was still running while the services above were scaled
+    # to 0, and its golden auto-bake raises the probe workspace service back to 1 (measured on
+    # the ECS sandbox: after a --fast pause that service sat at desired 1 and its slot kept
+    # running). Only a read taken once the CP is down is final.
+    late="$(ws_services | tr '\n' ' ')"
+    for s in $late; do
+      echo "==> a workspace came back while the CP was stopping: scaling $s to 0"
+      af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$s" --desired-count 0 >/dev/null
+    done
+    ids="$(slots pending running)"
+    if [ -n "${ids// /}" ]; then
+      echo "==> no CP left to put them to sleep: stopping slots $ids"
+      # shellcheck disable=SC2086
+      af_run "${AWS[@]}" ec2 stop-instances --instance-ids $ids >/dev/null
+    fi
     for s in $(helpers_up); do
       echo "==> no CP left to lower it: scaling $s to 0"
       af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$s" --desired-count 0 >/dev/null
