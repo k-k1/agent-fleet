@@ -432,7 +432,9 @@ manual and alone (ADR 0111 decisions 1 and 3). A queue shared by the members of 
    (fact 9), so that a finished task is replaced within a minute whatever else is waking.
 
 *Note, 2026-11-14 (acceptance).* Accepted by the owner as written. The open questions go with the work they belong
-to: 1, 4 and 5 are carried in #4149, 2 in #4150, and 3 is #4153. Two sentences are to be read with §3. Where §5 ends
-with "came from the member or was released by the member", and where §8 ends with "derived only from messages the
-person released", the messages meant are the `pending` ones: those the member wrote, those the member released, and
-those accepted under the standing switch the member turned on for that queue.
+to: 1, 4 and 5 are carried in #4149, 2 in #4150, and 3 is #4153. Three sentences summarise §3 and are to be read
+with it: the opening of the Decision ("What a session enqueues waits for one press by the person"), the end of §5
+("came from the member or was released by the member") and the end of §8 ("derived only from messages the person
+released"). §3 is the full rule. The messages that may be fired are the `pending` ones: those the member wrote, those
+the member released, and those from a session the member started that were accepted without a press because the
+member turned on that queue's standing switch, which is a guard rail and not a wall.
