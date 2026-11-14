@@ -140,17 +140,25 @@ base ← head and the size of the diff.
 - When the fetch fails, press **Try again**
 - Read the diff and the review discussion on the original page with **Open in GitHub** or **Open in Bitbucket**
 
-### Merge (GitHub only)
+### Merge
 
-A pull request GitHub says can be merged gets a **Merge** button.
+A GitHub or Bitbucket pull request that the connection can merge gets a **Merge** button.
 
 1. Press **Merge** to open a confirmation with the pull request, base ← head and the merge method
-2. The methods are the ones the repository allows. The first available of merge commit, squash and rebase is preselected
-3. Press **Merge** in the confirmation to merge it on GitHub at once
+2. The methods are the ones the repository allows. On GitHub the first available of merge commit, squash and rebase is
+   preselected; on Bitbucket, the destination branch's default merge strategy
+3. On Bitbucket, **Close source branch** is also there, ticked or not as the pull request is set
+4. Press **Merge** in the confirmation to merge it on GitHub or Bitbucket at once
 
-- Only the commit shown in the detail is merged. If the branch has moved since, nothing is merged and the latest content is shown again
-- The branch is not deleted after the merge
-- A Bitbucket pull request has no Merge button, and agents cannot merge it either
+- On GitHub, only the commit shown in the detail is merged. If the branch has moved since, nothing is merged and the latest
+  content is shown again
+- On Bitbucket, the head is checked again just before the merge, and if it has moved nothing is merged. A push made after
+  that check cannot be stopped
+- With a Bitbucket merge queue, or a large merge, Bitbucket may still be processing it when the confirmation closes. Open
+  the detail again later to see the result
+- A GitHub branch is not deleted after the merge. A Bitbucket source branch is closed only when **Close source branch** is ticked
+- Agents can merge a Bitbucket pull request too when you ask, with `bkt pr merge`, as far as the connection's pull request
+  write permission and your account allow ([Use the Bitbucket CLI](../integrations/bitbucket-cli.md#scopes))
 
 ### Start a review
 
@@ -193,6 +201,7 @@ The button appears only when the connection is known to be able to merge.
 | Classic token (from GitHub's device-flow login) | It has the `repo` scope (`public_repo` is enough for a public repository) |
 | GitHub App | The installation grants Contents: write on this repository and GitHub has shown that you can push. Not when that cannot be read (an error, a rate limit, a timeout) |
 | Fine-grained token | Never: GitHub does not say what it can do. Merge on GitHub |
+| Bitbucket | The connection is known to have the pull request write permission (Pull requests: Write for OAuth, `write:pullrequest:bitbucket` for an API token), Bitbucket says your account may merge it, and the destination branch allows at least one merge strategy. Not when any of these cannot be read |
 
 ### The Merge button cannot be pressed
 
@@ -200,13 +209,13 @@ The reason is shown beside it.
 
 | Reason | What to do |
 |---|---|
-| Start the workspace to merge | The GitHub credentials live in the workspace. Start it and try again |
+| Start the workspace to merge | The GitHub or Bitbucket credentials live in the workspace. Start it and try again |
 | Blocked: required reviews or checks are not satisfied | Get the required reviews and checks done |
 | The branch is behind its base | Update the branch first |
 | Conflicts must be resolved first | Resolve the conflicts |
 | Some checks are failing | Fix the checks |
 | A draft cannot be merged | Mark the pull request ready for review |
-| GitHub has not decided yet | Wait a moment and open it again |
+| GitHub has not decided yet / Bitbucket has not decided yet | Wait a moment and open it again |
 
 ### The body is nowhere to be seen
 

@@ -46,6 +46,7 @@ Agents can do things like these:
 | Create a pull request | `bkt pr create` |
 | List and read pull requests | `bkt pr list`, `bkt pr view 123` |
 | Read comments | `bkt pr comments 123` |
+| Merge a pull request, when you ask | `bkt pr merge 123` |
 | Check pipelines | `bkt pipeline` |
 
 - **What they write is recorded under your name.** They can do only what your account and the connection allow
@@ -60,7 +61,7 @@ API token) are not enough for pull requests or pipelines.
 
 | What | Connected with OAuth | Connected with an API token |
 |---|---|---|
-| Pull requests (create, comment) | Pull requests: Read and Write | `read:pullrequest:bitbucket`, `write:pullrequest:bitbucket` |
+| Pull requests (create, comment, merge) | Pull requests: Read and Write | `read:pullrequest:bitbucket`, `write:pullrequest:bitbucket` |
 | See pipelines | Pipelines: Read | `read:pipeline:bitbucket` |
 | Run or stop a pipeline | Pipelines: Write | `write:pipeline:bitbucket` |
 
@@ -70,6 +71,8 @@ API token) are not enough for pull requests or pipelines.
   new token that has it
 - The same permission lets you use "**Comment the work back**" on a Bitbucket pull request in the issue tracker's
   detail. The button appears only when the connection is known to have the pull request write permission
+- Merging also needs your account to be allowed to merge into the destination branch. With the same permission, the detail
+  offers **Merge** on a Bitbucket pull request ([Merge](../sessions/from-issues.md#merge))
 
 ## Use your own setup
 
