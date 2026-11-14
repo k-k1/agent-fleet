@@ -438,3 +438,60 @@ with it: the opening of the Decision ("What a session enqueues waits for one pre
 released"). §3 is the full rule. The messages that may be fired are the `pending` ones: those the member wrote, those
 the member released, and those from a session the member started that were accepted without a press because the
 member turned on that queue's standing switch, which is a guard rail and not a wall.
+
+*Note, 2026-11-15 (step 1: #4148, built as #4157, #4177, #4173 and #4172).* Step 1 of §11 is merged. Nothing has run
+on a deployment yet. Building it settled the following, which the text above does not say or says differently.
+
+- **A tenant switch, off by default** (the owner's decision). `tenant.memo_queues` gates creating or changing a
+  queue's settings; an administrator turns it on. The rules for the token face and `/mcp` are always on, whatever the
+  switch says, and a later step makes the dispatcher skip a tenant whose switch is off. **Rollout rule: turn it on
+  only after every Control Plane of the deployment runs a version that has the rules.** No queue can exist before
+  that, so an older binary, which knows none of §3, never sees one. Turning it off later deletes nothing.
+- **What "is a queue" means.** A category is a queue when it has a settings row, enabled or not. `enabled` gates
+  automatic fires only; "fire now" needs an instruction and not `enabled`. A category of the common bucket can be a
+  queue; it gets no directory and no worktree.
+- **Entering a queue.** `pending` only for a message of provenance `member` that arrives by the Console; `held`
+  otherwise. The notes already in a category when it becomes a queue enter by the same rule: an unsent note the
+  member wrote in the Console becomes `pending`, and a row from before this step, whose provenance is unknown and is
+  treated as `workspace`, becomes `held`. A note that was already sent by hand enters as `delivered`. A category that
+  holds a note taken in from the inbox cannot become a queue.
+- **The rate limit is per member, not per producer.** §3 bounds each producer. What was built counts every create
+  into a queue from the token face and `/mcp` together, across all of the member's queues: 30 a minute
+  (provisional). Moving or deleting a message does not give its create back, and a create answered with an existing
+  identical message is not counted. One busy session can therefore use up the minute for the member's other sessions
+  and connections.
+- **A release is all or none.** One press releases every item it names or none: one stale item refuses the press
+  and returns the stale ids. §3 reads as if each item stood alone.
+- **A second guard on a released message.** A `pending` row keeps a copy of the released content under a database
+  constraint, so that no write, by this binary or an older one, can leave a `pending` row whose content is not what
+  was released. The fire checks the hash again at the claim.
+- **A manual send reserves, sends, then settles.** The send marks its rows before it sends and settles only the rows
+  that still carry its mark; an unknown outcome makes a queue message `unconfirmed`. While a row is marked, nothing
+  may make it a queue message, take it out of a queue, or change it inside one. A fire claims only `pending` rows
+  that were never sent and carry no such mark.
+- **The reservation of §6 uses the member's row lock, not a generation counter.** Every memo write of a member
+  already runs behind a lock on the membership row, and both limits (the queue's `max_active` and the member-wide 4)
+  belong to one member, so they are counted and taken behind that lock. Two Control Plane processes racing over one
+  database reserve exactly as many slots as there are, on SQLite and on Postgres. The quota on sessions is checked
+  at the press and again, behind the same lock, when the delivery moves to `sending`.
+- **Closing, for now.** Step 1 closes an `open` delivery when its session is archived or deleted (outcome aborted),
+  stopped with nothing carried, or idle on two consecutive ticks (outcome clean). An Agent that does not answer, or
+  a session that is starting or stopping, is no evidence of either. **Closing stops no session yet**: whether a stop
+  is safe depends on the report of what would start the session again, which is step 2 (#4149), together with the
+  rest of the table in §6, overdue and retire, and the wake made only to reconcile.
+- **The Agent composes the prompt.** The Control Plane sends the delivery as data (instruction and items); the Agent
+  writes the envelope, the instruction as it is, a line that labels data, and every line of every item quoted,
+  under an origin line built from structured fields that says who added the item, not who released it. Over 8 KiB,
+  or with an attachment, the items go to a file in the session's own work directory. A prompt that starts with the
+  queue envelope is refused on every input path that takes text (create, input, turn, peer, `/mcp`, the chat bridge).
+  Limits: 20 items, 16 KiB of instruction, 64 KiB per item. An explicit refusal by the Agent is settled at once by
+  abandoning the key, as §6 says.
+- **Attribution.** The Agent stamps the session's name and origin on a create; a value the model passes is ignored
+  and an unknown caller is refused. The operator assistant is stamped as `operator`.
+- **Words on screen** (working terms; §10 leaves the choice to the Console). Members do not see "queue" or "slot": a
+  category has **auto-run** settings; a note waits for approval, waits to run, is starting, is sent, or needs a
+  look; a run is starting, running, done, failed, stopped, needs a look, or was not sent. The release card is inline
+  in the memo section, not a notification.
+
+Left out of step 1 and tracked: filing a note added from a worktree under its base repository (§2, #4175); the guide
+page, limits and glossary (#4188); moving the new error codes beside the others (#4187).
