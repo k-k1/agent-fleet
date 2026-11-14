@@ -31,6 +31,9 @@ on:
       - "workspace/Dockerfile"
       - ".github/workflows/codex-contract.yml"
       - ".github/actions/setup-agent-cli/action.yml"
+      # The action reads the CLI manifest (arg, package, install method) through this reader.
+      - "deploy/local/cli-manifest.sh"
+      - "workspace/agent/internal/climanifest/cli-manifest.psv"
   schedule:
     # Every Monday 6:15 JST — catch upstream codex breakage even with no code changes.
     # Offset from e2e.yml (0 21) / opencode-contract.yml (30 21) so the weeklies

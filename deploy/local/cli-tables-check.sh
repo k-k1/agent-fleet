@@ -94,7 +94,11 @@ if need_file "$watch"; then
   want="$(manifest_secret_names)"
   # The `E2E_*: ${{ secrets.E2E_* }}` bindings (the contracts' credentials by convention;
   # GH_TOKEN and the like are not a CLI's). A different name on the two sides is itself drift.
-  have="$(sed -n 's/^ *\(E2E_[A-Za-z0-9_]*\): \${{ secrets\.E2E_[A-Za-z0-9_]* }}$/\1/p' "$watch" | sort -u)"
+  binds="$(sed -n 's/^ *\(E2E_[A-Za-z0-9_]*\): .*secrets\.\([A-Za-z0-9_]*\).*$/\1 \2/p' "$watch" | sort -u)"
+  while read -r l r; do
+    [ -z "$l" ] || [ "$l" = "$r" ] || drift "cli-release-watch.yml binds $l to secrets.$r (the two names must be the same)"
+  done <<< "$binds"
+  have="$(awk 'NF { print $1 }' <<< "$binds" | sort -u)"
   for s in $want; do
     grep -qx "$s" <<< "$have" || drift "cli-release-watch.yml does not bind secret $s (a dispatching contract needs it)"
   done

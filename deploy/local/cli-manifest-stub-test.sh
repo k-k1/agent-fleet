@@ -86,6 +86,7 @@ seeded "tools.tsv has an agent the manifest lacks" scripts/workspace-image/tools
 zz\tagent\t\tZZ\thttps://example.invalid/\tMIT\thttps://example.invalid/\targ:ZZ_VERSION\tx\ty' 'ZZ_VERSION is not in the CLI manifest'
 seeded "watcher stopped binding a secret" .github/workflows/cli-release-watch.yml '/E2E_AGY_OAUTH_TOKEN: /d' 'does not bind secret E2E_AGY_OAUTH_TOKEN'
 seeded "watcher binds a secret nobody needs" .github/workflows/cli-release-watch.yml 's/^\( *\)E2E_AGY_OAUTH_TOKEN: .*/&\n\1E2E_OLD_TOKEN: ${{ secrets.E2E_OLD_TOKEN }}/' 'binds secret E2E_OLD_TOKEN'
+seeded "watcher binds one secret to another's name" .github/workflows/cli-release-watch.yml 's/E2E_AGY_OAUTH_TOKEN: \${{ secrets.E2E_AGY_OAUTH_TOKEN }}/E2E_AGY_OAUTH_TOKEN: ${{ secrets.E2E_COPILOT_GITHUB_TOKEN }}/' 'binds E2E_AGY_OAUTH_TOKEN to secrets.E2E_COPILOT_GITHUB_TOKEN'
 seeded "update issues lost a CRED_ binding" .github/workflows/cli-drift.yml '/CRED_COPILOT:/d' 'does not bind CRED_COPILOT'
 seeded "CRED_ tests the wrong secret" .github/workflows/cli-drift.yml 's/secrets.E2E_AGY_OAUTH_TOKEN/secrets.E2E_OTHER/' 'CRED_AGY does not test secrets.E2E_AGY_OAUTH_TOKEN'
 seeded "contract lost its latest input" .github/workflows/copilot-contract.yml 's/^      cli_version:/      cli_versionx:/' 'copilot: copilot-contract.yml has no workflow_dispatch input cli_version'

@@ -34,6 +34,9 @@ on:
       - "workspace/Dockerfile"
       - ".github/workflows/mcp-config-contract.yml"
       - ".github/actions/setup-agent-cli/action.yml"
+      # The action reads the CLI manifest (arg, package, install method) through this reader.
+      - "deploy/local/cli-manifest.sh"
+      - "workspace/agent/internal/climanifest/cli-manifest.psv"
   schedule:
     # Mondays 6:45 JST, offset from codex-contract (21:15 UTC) and e2e (21:00 UTC).
     - cron: "45 21 * * 0"
