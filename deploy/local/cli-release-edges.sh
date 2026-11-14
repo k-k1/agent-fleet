@@ -17,7 +17,9 @@
 # ## Contract
 #
 # In (environment):
-#   KINDS            dispatch kinds, space separated (default: the seven mirror CLIs)
+#   KINDS            kinds to judge, space separated (default: every manifest row with a contract)
+#   STATE_JSON       `toJSON(steps.state.outputs)`: tested_<kind>, red_<kind> (instead of TESTED_/RED_ below)
+#   VERSIONS_JSON    `toJSON(steps.versions.outputs)`: latest_<kind> (instead of LATEST_ below)
 #   FAILED           `failed=` from cli-drift-check.sh: rows whose source could not be read
 #   LATEST_<KIND>    public version, uppercase kind; empty means "unknown"
 #   TESTED_<KIND>    version the contract last passed against
@@ -49,7 +51,11 @@
 # kinds separately instead of failing the job.
 set -euo pipefail
 
-KINDS="${KINDS:-claude codex opencode copilot agy cursor kiro muse}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=cli-manifest.sh
+. "$HERE/cli-manifest.sh"
+manifest_load || exit 1
+KINDS="${KINDS:-$(manifest_tested_kinds)}"
 OUT="${GITHUB_OUTPUT:-/dev/null}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 NOW="${NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
@@ -59,13 +65,17 @@ is_kind() { case " $KINDS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # Kinds whose contract the watcher dispatches by itself, hence the only ones a red marker
 # may hold back.
-RED_KINDS="${RED_KINDS:-claude codex opencode copilot agy muse}"
+RED_KINDS="${RED_KINDS:-$(manifest_auto_kinds)}"
 
 # `red=` is a summary output for the job log and the step outputs; no later step reads it.
 changed=()   # kind=version, one per dispatch edge
 red=()       # kind=version, edges not dispatched because that version's contract is red
 held=()      # dispatch kinds skipped because their source could not be read
 other=()     # failed rows that are not dispatch kinds (rtk today)
+
+# A workflow passes the step outputs as JSON instead of one env line per CLI.
+[ -z "${STATE_JSON:-}" ] || { manifest_import_outputs TESTED_ "$STATE_JSON" tested_; manifest_import_outputs RED_ "$STATE_JSON" red_; }
+[ -z "${VERSIONS_JSON:-}" ] || manifest_import_outputs LATEST_ "$VERSIONS_JSON" latest_
 
 for kind in $KINDS; do
   upper="$(printf '%s' "$kind" | tr '[:lower:]' '[:upper:]')"

@@ -56,27 +56,32 @@ runs:
         VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        # agent -> Dockerfile の ARG 名 / npm パッケージ名。npm 以外は install
-        # step が公式の versioned archive / manifest を使う（Dockerfile と同じ供給元）。
-        # （deploy/local/cli-drift-check.sh の TARGETS と同じ対応表。片方だけ足すとズレる）
-        case "$AGENT" in
-          claude)   arg=CLAUDE_CODE_VERSION; pkg="@anthropic-ai/claude-code" ;;
-          codex)    arg=CODEX_VERSION;       pkg="@openai/codex" ;;
-          opencode) arg=OPENCODE_VERSION;    pkg="@opencode/cli" ;;
-          copilot)  arg=COPILOT_VERSION;     pkg="@github/copilot" ;;
-          agy)      arg=AGY_VERSION;         pkg="" ;;
-          cursor)   arg=CURSOR_VERSION;      pkg="" ;;
-          kiro)     arg=KIRO_VERSION;        pkg="" ;;
-          # muse は意図的にここに無い（cli-drift-check.sh の TARGETS には有る）。muse-contract.yml が
-          # 自分で artifact を落として release manifest の checksum と fingerprint を突き合わせる
-          # ——それが検査の本体なので、共有インストーラに渡すと検査対象が検査の外に出てしまう。
-          *) echo "::error::agent 入力が不正: '$AGENT'（claude | codex | opencode | copilot | agy | cursor | kiro）"; exit 1 ;;
-        esac
+        # agent -> Dockerfile ARG, install method and npm package all come from the CLI
+        # manifest (workspace/agent/internal/climanifest/cli-manifest.psv). A row whose
+        # install column is `-` (muse) is deliberately not installable here: its contract
+        # installs the artifact itself, because checking the release manifest's own checksum
+        # IS that contract.
+        . deploy/local/cli-manifest.sh
+        manifest_load
+        install=""
+        valid=()
+        for n in "${M_NAMES[@]}"; do
+          [ "${M_install[$n]}" = - ] || valid+=("$n")
+        done
+        [ -z "${M_install[$AGENT]:-}" ] || [ "${M_install[$AGENT]}" = - ] || install="${M_install[$AGENT]}"
+        if [ -z "$install" ]; then
+          list="$(printf '%s | ' "${valid[@]}")"
+          echo "::error::agent 入力が不正: '$AGENT'（${list% | }）"; exit 1
+        fi
+        arg="${M_arg[$AGENT]}"
+        pkg=""
+        [ "$install" != npm ] || pkg="${M_locator[$AGENT]}"
 
-        case "$AGENT:$VERSION" in
-          agy:pinned|agy:latest|cursor:pinned|cursor:latest|kiro:pinned|kiro:latest) ;;
-          agy:*|cursor:*|kiro:*) echo "::error::$AGENT の version は pinned または latest のみ対応"; exit 1 ;;
-        esac
+        # Only the npm CLIs can install an explicit version; the archive installs know
+        # pinned (the Dockerfile's sha256-checked archive) and latest (the vendor installer).
+        if [ "$install" != npm ] && [ "$VERSION" != pinned ] && [ "$VERSION" != latest ]; then
+          echo "::error::$AGENT の version は pinned または latest のみ対応"; exit 1
+        fi
 
         if [ "$VERSION" = pinned ]; then
           spec="$(sed -n "s/^ARG $arg=//p" workspace/Dockerfile | head -1)"
@@ -89,6 +94,7 @@ runs:
 
         echo "spec=$spec" >> "$GITHUB_OUTPUT"
         echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
+        echo "install=$install" >> "$GITHUB_OUTPUT"
         echo "$AGENT spec: $spec（version 入力 = $VERSION）"
 
     - name: install ${{ inputs.agent }}
@@ -97,14 +103,15 @@ runs:
       env:
         AGENT: ${{ inputs.agent }}
         PKG: ${{ steps.resolve.outputs.pkg }}
+        INSTALL: ${{ steps.resolve.outputs.install }}
         SPEC: ${{ steps.resolve.outputs.spec }}
         VERSION_INPUT: ${{ inputs.version }}
       run: |
         set -euo pipefail
         bin_dir="$RUNNER_TEMP/agent-cli-bin"
         mkdir -p "$bin_dir"
-        case "$AGENT" in
-          claude|codex|opencode|copilot)
+        case "$INSTALL" in
+          npm)
             npm install -g "$PKG@$SPEC"
             cmd="$AGENT"
             ;;

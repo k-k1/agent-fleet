@@ -608,7 +608,7 @@ Two complementary systems close it — neither works alone:
 
 Drift is **the normal state** — some CLIs move every few days — so the drift workflow
 does not go red, and most of it needs no person. It opens an issue for a CLI only when
-a person has something to do (§10.2.2) and closes it when that is done. The rows it checks are `TARGETS` in `deploy/local/cli-drift-check.sh`:
+a person has something to do (§10.2.2) and closes it when that is done. The rows it checks are the CLI manifest, `workspace/agent/internal/climanifest/cli-manifest.psv`:
 every agent CLI whose version is pinned, plus `rtk`. lcpp is not among them: it runs
 in-process against a self-hosted engine and has no upstream CLI.
 

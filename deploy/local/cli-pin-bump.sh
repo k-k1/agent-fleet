@@ -85,19 +85,20 @@ FRAGMENT_CHECK="${FRAGMENT_CHECK:-$HERE/cli-fragment-check.sh}"
 REPORT="${REPORT:-$HERE/cli-contract-report.sh}"
 OUT="${GITHUB_OUTPUT:-/dev/null}"
 
-# kind|version ARG|contract workflow
-KINDS=(
-  "claude|CLAUDE_CODE_VERSION|claude-tui-contract.yml"
-  "codex|CODEX_VERSION|codex-contract.yml"
-  "opencode|OPENCODE_VERSION|opencode-contract.yml"
-  "copilot|COPILOT_VERSION|copilot-contract.yml"
-  "agy|AGY_VERSION|agy-contract.yml"
-  "cursor|CURSOR_VERSION|cursor-contract.yml"
-  "kiro|KIRO_VERSION|kiro-contract.yml"
-  "muse|MUSE_VERSION|muse-contract.yml"
-)
-# Drift rows that are not automated at all, and why.
-UNAUTOMATED=("rtk|no contract gates it; bump \`RTK_VERSION\` by hand")
+# shellcheck source=cli-manifest.sh
+. "$HERE/cli-manifest.sh"
+manifest_load || exit 1
+# kind|version ARG|contract workflow: every manifest row with a contract.
+KINDS=()
+# Drift rows that are not automated at all (no contract gates them), and why.
+UNAUTOMATED=()
+for _n in "${M_NAMES[@]}"; do
+  if [ "${M_contract[$_n]}" = - ]; then
+    UNAUTOMATED+=("$_n|no contract gates it; bump \`${M_arg[$_n]}\` by hand")
+  else
+    KINDS+=("$_n|${M_arg[$_n]}|${M_contract[$_n]}")
+  fi
+done
 
 CURL=(curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors --max-time 600)
 VALUE_RE='^[0-9A-Za-z._+-]+$'
@@ -292,7 +293,7 @@ for row in "${KINDS[@]}"; do
 
   # A new opencode major changes the server API, the plugin API and the TUI flags at once: a
   # bump PR must never carry it, whatever a contract says about the newer line.
-  if [ "$kind" = opencode ] && [ "$(major_of "$pin")" != "$(major_of "$latest")" ]; then
+  if manifest_has_flag "$kind" major-manual && [ "$(major_of "$pin")" != "$(major_of "$latest")" ]; then
     left+=("$kind|$pin|$latest|a new major ($(major_of "$pin") -> $(major_of "$latest")): the cut-over is manual (#2101), never an automatic bump")
     continue
   fi
@@ -300,15 +301,16 @@ for row in "${KINDS[@]}"; do
   tested="$("$RELEASE_STATE" get tested "$kind")" || die "could not read the release state for $kind"
   if [ "$tested" != "$latest" ]; then
     reason="no passing \`latest\` contract on $latest yet (tested: ${tested:-none})"
-    case "$kind" in
-      cursor|kiro) reason="$reason; its credential rotates, so dispatch \`$workflow\` by hand with \`cli_version=latest\`" ;;
-    esac
+    # A manual kind's credential rotates: the watcher never runs its contract.
+    if [ "${M_dispatch[$kind]}" = manual ]; then
+      reason="$reason; its credential rotates, so dispatch \`$workflow\` by hand with \`${M_input[$kind]}=latest\`"
+    fi
     left+=("$kind|$pin|$latest|$reason")
     continue
   fi
 
   # Not in `$( )`: the resolvers fill NEW, which a subshell would throw away.
-  if [ "$kind" = claude ] || [ "$kind" = codex ] || [ "$kind" = opencode ] || [ "$kind" = copilot ]; then
+  if [ "${M_install[$kind]}" = npm ]; then
     resolve_npm "$arg" "$latest"
   else
     set +e

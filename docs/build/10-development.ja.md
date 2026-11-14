@@ -531,7 +531,7 @@ Pod（cordon するノード上のメンバーのワークスペースなど）�
 
 ドリフトは**常態**（数日で版が進む CLI もある）なので、ドリフトのワークフローは赤くならない。
 その大半は人の手も要らない。人が何かすべき CLI にだけ issue を開き（§10.2.2）、済めば閉じる。検査する行は
-`deploy/local/cli-drift-check.sh` の `TARGETS`: 版をピンしている全エージェント CLI と `rtk`。
+CLI マニフェスト `workspace/agent/internal/climanifest/cli-manifest.psv`: 版をピンしている全エージェント CLI と `rtk`。
 lcpp は入らない——セルフホストのエンジンに対してプロセス内で動き、上流の CLI を持たない。
 
 同じワークフローの `apt-pins` ジョブは Debian パッケージのピンを `deploy/local/apt-pin-check.sh`

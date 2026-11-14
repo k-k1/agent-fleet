@@ -514,6 +514,13 @@ jobs:
       # pins that a failing `gh` still exits 0 and says the check did not run.
       - name: release-time cli-drift warning (real script, stub gh)
         run: ./deploy/local/cli-drift-warn-stub-test.sh
+      # Every CLI is listed once, in workspace/agent/internal/climanifest/cli-manifest.psv. The
+      # tools read it; this is what fails when a name that only a workflow, the Dockerfile or
+      # Go source can hold stops matching it (no network), and the stub proves it does.
+      - name: CLI manifest vs the hand-kept tables
+        run: |
+          ./deploy/local/cli-drift-check.sh --tables
+          ./deploy/local/cli-manifest-stub-test.sh
       # The bump PR is opened unattended; which kinds move and which checksums are
       # accepted is decided here, so it is tested here.
       - name: CLI pin bump decisions (real script, stub drift/gh/curl)
