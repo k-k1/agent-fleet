@@ -34,9 +34,13 @@ func cpConsoleCatalog(t *testing.T, locale string) string {
 	dir := filepath.Join("..", "console", "src", "lib", "i18n", "locales", locale)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		// Allow for a build from a distribution that does not include console/,
-		// as on the agent side.
-		t.Skipf("catalog not available (%v)", err)
+		// Skip only when the whole locales tree is absent (a distribution without console/, as
+		// on the agent side). One locale missing beside another that exists is a renamed or
+		// deleted directory, and must fail rather than silence the check.
+		if _, serr := os.Stat(filepath.Dir(dir)); serr != nil {
+			t.Skipf("catalog not available (%v)", err)
+		}
+		t.Fatalf("locale %q has no catalog directory %s: %v", locale, dir, err)
 	}
 	var b strings.Builder
 	n := 0
