@@ -451,7 +451,7 @@ them in for one `exec`:
   member to reconnect Jira instead of running into a bare 401. Unknown scopes (an older store,
   a failed lookup) are never a refusal. The verdict is the union over every accessible-resources row with the site's id (Jira and Confluence rows share it). Settings shows the same verdict
   (`confluenceScopes: "missing"` in the connection status).
-- **Page core over v2 (2026-11-03, #3266).** confluence-cli 2.31 reads, creates and updates pages
+- **Page core over v2 (2026-11-03, #3266).** confluence-cli 2.31.0 read, created and updated pages
   through the v1 `/content` and `/space` endpoints, which current Cloud sites answer with 410.
   `workspace-agent confluence-page` (`internal/jirax/confluence_page.go`) takes `read`, `info`,
   `create`, `create-child`, `update`, `edit` and `space-lookup` from the wrapper and calls
@@ -465,14 +465,17 @@ them in for one `exec`:
   serves it, and search works). Writes are sent once; update sends `version+1` so a
   concurrent edit is a 409. Folders: the shim refuses `create --type folder`.
 - **The CLI's own v2 fallback (2.31.1, #3274).** From 2.31.1 confluence-cli switches a command to
-  `/wiki/api/v2` once a v1 endpoint answers 410 (`CONFLUENCE_FORCE_CLOUD=true`, which the wrapper
-  sets, keeps the gateway host from being taken for Data Center). With the scopes the group
-  requests, `spaces`, `children` and `move` work over v2 (`spaces` and `children` checked live,
-  2026-11-15); `delete`, `copy-tree` and `export` also read ancestors and need
-  `read:content.metadata:confluence` (plus `delete:*` for delete), `children --type folders` needs
-  `read:hierarchical-content:confluence`, and neither is requested, so those answer 401. Comments,
-  attachments, versions and properties are still v1 in the CLI and answer 410 on a site where
-  Atlassian removed them (comments and attachments did, live). The shim stays for the page core
+  `/wiki/api/v2` once a v1 endpoint answers 410 (only on a host it takes for Cloud; the
+  `api.atlassian.com` gateway always is). With the scopes the group requests, `spaces`, plain
+  `children` and `move` work over v2 (`spaces` and `children` checked live, 2026-11-15).
+  `delete`, `copy-tree`, `export`, `children --recursive --json` and `children --format tree` also
+  read ancestors and need `read:content.metadata:confluence` (plus `delete:*` for delete);
+  `children --type folders|all` needs `read:hierarchical-content:confluence`. Neither is requested,
+  so those answer 401 or 403. Listing and adding page comments, attachments, versions and
+  properties are still v1 in the CLI and answer 410 on a site where Atlassian removed them
+  (comments and attachments did, live); comment replies (`--parent`), inline comments and
+  `comment-resolve` go to v2 and need `read:comment:confluence` / `write:comment:confluence`,
+  also not requested. The shim stays for the page core
   because the CLI's Markdown→storage is markdown-it without CJK-friendly emphasis:
   `**「括弧」**の` keeps its asterisks. Removing it, and the scopes that removal needs, is #3274.
 - **Read-only retry**: `readonly_cmd` in the wrapper re-runs the subcommands it lists

@@ -411,8 +411,8 @@ Jira は git でなく作業項目インボックス
   （記録済みのスコープに `confluence` を含むものがない）を返し、ラッパーは素の 401 に当たらせる代わりに
   Jira を接続し直すよう 1 行で伝える。スコープが不明（古いストア、取得失敗）の場合は拒否しない。判定は、サイトの id を持つ accessible-resources の全行（Jira と Confluence の行は同じ id）のスコープの和集合で行う。
   設定画面も同じ判定を出す（接続状態の `confluenceScopes: "missing"`）。
-- **ページ操作は v2 で処理する（2026-11-03、#3266）。** confluence-cli 2.31 はページの閲覧・作成・更新に
-  v1 の `/content`・`/space` を使うが、現行の Cloud サイトは 410 を返す。`workspace-agent confluence-page`
+- **ページ操作は v2 で処理する（2026-11-03、#3266）。** confluence-cli 2.31.0 はページの閲覧・作成・更新に
+  v1 の `/content`・`/space` を使っていたが、現行の Cloud サイトは 410 を返す。`workspace-agent confluence-page`
   （`internal/jirax/confluence_page.go`）が `read`・`info`・`create`・`create-child`・`update`・`edit`・
   `space-lookup` をラッパーから受け取り、CLI と同じコマンドラインと出力で `/wiki/api/v2` を呼ぶ。変換は
   Markdown→storage が goldmark（CJK 対応の強調、Jira の ADF で使用済み）、storage→Markdown/テキストが
@@ -423,13 +423,15 @@ Jira は git でなく作業項目インボックス
   検索は動く）。書き込みは 1 回だけ送り、更新は `version+1` を送るので同時編集は 409 になる。
   フォルダ: shim は `create --type folder` を拒否する。
 - **CLI 自身の v2 切り替え（2.31.1、#3274）。** 2.31.1 から confluence-cli は v1 が 410 を返した時点で
-  そのコマンドを `/wiki/api/v2` に切り替える（ラッパーが設定する `CONFLUENCE_FORCE_CLOUD=true` により、
-  ゲートウェイのホストが Data Center と判定されない）。グループが要求するスコープで `spaces`・`children`・
-  `move` が v2 で動く（`spaces` と `children` は 2026-11-15 に実機で確認）。`delete`・`copy-tree`・`export` は
-  祖先を読むため `read:content.metadata:confluence`（delete はさらに `delete:*`）、`children --type folders` は
-  `read:hierarchical-content:confluence` が要り、どちらも未要求なので 401 になる。コメント・添付・
-  バージョン・プロパティは CLI でもまだ v1 で、Atlassian が廃止したサイトでは 410 になる（コメントと添付は
-  実機で 410）。ページ操作の shim を残すのは、CLI の Markdown→storage が CJK 対応の強調を持たない
+  そのコマンドを `/wiki/api/v2` に切り替える（Cloud と判定したホストに限る。`api.atlassian.com` の
+  ゲートウェイは常に Cloud と判定される）。グループが要求するスコープで `spaces`・オプションなしの `children`・
+  `move` が v2 で動く（`spaces` と `children` は 2026-11-15 に実機で確認）。`delete`・`copy-tree`・`export`・
+  `children --recursive --json`・`children --format tree` は祖先を読むため `read:content.metadata:confluence`
+  （delete はさらに `delete:*`）、`children --type folders|all` は `read:hierarchical-content:confluence` が要り、
+  どちらも未要求なので 401 か 403 になる。ページコメントの一覧と追加・添付・バージョン・プロパティは CLI でも
+  まだ v1 で、Atlassian が廃止したサイトでは 410 になる（コメントと添付は実機で 410）。コメントへの返信
+  （`--parent`）・インラインコメント・`comment-resolve` は v2 を使い、`read:comment:confluence` /
+  `write:comment:confluence` が要るが、これも未要求。ページ操作の shim を残すのは、CLI の Markdown→storage が CJK 対応の強調を持たない
   markdown-it で、`**「括弧」**の` のアスタリスクが残るため。shim の撤去と、そのために要るスコープは #3274。
 - **読み取りのリトライ**: ラッパーの `readonly_cmd` に挙げたサブコマンド（`attachments` は
   `-d`/`--download`/`--dest` なしのときだけ）は、CLI 自身のエラー行から読んだ通信エラー（ECONNRESET・

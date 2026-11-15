@@ -211,10 +211,11 @@ directory belongs to someone else.
   reset or timeout (CLI: up to twice, only the last attempt shown, the way the jira wrapper does; Agent shim: its GETs, within about 20 s;
   `AF_CONFLUENCE_TIMEOUT` seconds bounds one attempt, default 60, 0 = none); writes (`create`, `update`,
   `delete`, `comment`, uploads, anything unknown) are never re-run, so after a failed or timed-out
-  write check Confluence before repeating it. `spaces`, `children` and `move` switch to the v2
-  API by themselves; `delete`, `copy-tree`, `export` and folder listings need scopes the
-  connection does not request (401), and comments, attachments, versions and properties are still
-  v1 in the CLI and may answer 410. A grant from before the v2 page scopes gets one line naming the fix
+  write check Confluence before repeating it. `spaces`, plain `children` and `move` switch to
+  the v2 API by themselves; `delete`, `copy-tree`, `export`, `children --recursive --json` /
+  `--format tree` / `--type folders|all`, comment replies, inline comments and `comment-resolve`
+  need scopes the connection does not request (401/403), and listing or adding comments,
+  attachments, versions and properties are still v1 in the CLI and may answer 410. A grant from before the v2 page scopes gets one line naming the fix
   (administrator adds `read:page` / `write:page` / `read:space` to the Atlassian app, member
   reconnects Jira); report it. Never run
   `confluence init`, never set `CONFLUENCE_*` variables or `--profile` (a config of the user's own is
