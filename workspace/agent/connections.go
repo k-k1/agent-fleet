@@ -648,12 +648,6 @@ func normalizeLcppURL(raw string) (string, error) {
 }
 
 func handlePutLcppConn(w http.ResponseWriter, r *http.Request) {
-	// A member's own endpoint is the member-llamacpp route (ADR 0138 D12, credential entry): it
-	// is not added while the policy forbids it.
-	if ref := agents.CredentialEntryRefusal(routes.RouteMemberLlamacpp); ref != nil {
-		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
-		return
-	}
 	var req lcppConnReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -661,6 +655,13 @@ func handlePutLcppConn(w http.ResponseWriter, r *http.Request) {
 	normalized, err := normalizeLcppURL(req.URL)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnLcppURLRequired, err.Error())
+		return
+	}
+	// A member's own endpoint is the member-llamacpp route (ADR 0138 D12, credential entry): it
+	// is not added while the policy forbids it, which under a restriction is unless its host is
+	// an approved self-hosted endpoint (§2).
+	if ref := agents.CredentialEntryRefusalAt(routepolicy.HostOf(normalized), routes.RouteMemberLlamacpp); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
 	conn := &secrets.LcppConn{URL: normalized, APIKey: strings.TrimSpace(req.APIKey)}

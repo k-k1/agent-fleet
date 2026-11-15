@@ -193,6 +193,30 @@ func TestLcppConnectionEntryUnderThePolicy(t *testing.T) {
 	}
 }
 
+// Under a restriction a member endpoint is added only on an approved self-hosted host (ADR 0138
+// §2), judged on the URL being stored, not on the connection it replaces.
+func TestLcppConnectionEntryOnAnApprovedEndpoint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	p := apiKeysOnly
+	p.Endpoints, p.EndpointRoutes = []string{"llm.corp.example"}, []string{routes.RouteMemberLlamacpp}
+	useHidingPolicy(t, p)
+	if w := lcppPut("http://LLM.corp.example:8081/v1", ""); w.Code != http.StatusOK {
+		t.Fatalf("an approved endpoint was refused: %d %s", w.Code, w.Body.String())
+	}
+	if w := lcppPut("http://llm.other.example:8081", ""); w.Code != http.StatusForbidden {
+		t.Errorf("an endpoint that is not approved, replacing an approved one: %d %s", w.Code, w.Body.String())
+	}
+	if s, err := secrets.Load(); err != nil || s.Lcpp == nil || routepolicy.HostOf(s.Lcpp.URL) != "LLM.corp.example" {
+		t.Errorf("the refused endpoint replaced the approved one: %+v %v", s.Lcpp, err)
+	}
+	p.EndpointRoutes = nil
+	useHidingPolicy(t, p)
+	if w := lcppPut("http://llm.corp.example:8081", ""); w.Code != http.StatusForbidden {
+		t.Errorf("an approved host on which no layer allows the route: %d %s", w.Code, w.Body.String())
+	}
+}
+
 // Every harness whose login the Agent runs as a flow has its flow store guarded, so a tighter
 // policy cancels a login in progress (ADR 0138 D12, credential entry).
 func TestEveryLoginFlowIsGuarded(t *testing.T) {

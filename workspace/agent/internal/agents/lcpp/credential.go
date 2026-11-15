@@ -8,6 +8,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -31,6 +32,17 @@ var memberConn = func() (secrets.LcppConn, bool) {
 		return secrets.LcppConn{}, false
 	}
 	return *s.Lcpp, true
+}
+
+// The member's endpoint is a per-connection route: under a restriction it is allowed only while
+// its host is an approved self-hosted endpoint (ADR 0138 §2).
+func init() {
+	routepolicy.RegisterEndpoint(routes.RouteMemberLlamacpp, func() string {
+		if c, ok := memberConn(); ok {
+			return routepolicy.HostOf(c.URL)
+		}
+		return ""
+	})
 }
 
 // Connection is what an lcpp call runs on now (ADR 0138 D2, D5b), by the rule the engine seam

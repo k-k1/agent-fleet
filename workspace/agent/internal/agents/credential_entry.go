@@ -20,11 +20,22 @@ import (
 // policy restricts nothing, or allows at least one of them (a key that opens two routes is
 // usable on the one allowed). While the policy cannot be confirmed, nothing new is added.
 func CredentialEntryRefusal(opened ...string) *RouteRefusal {
+	return entryRefusal(func(p routepolicy.Policy, r string) bool { return p.Allows(r) }, opened)
+}
+
+// CredentialEntryRefusalAt is CredentialEntryRefusal for a connection to host about to be stored
+// (a member endpoint): a per-connection route is judged on that host, not on the connection it
+// replaces (ADR 0138 §2).
+func CredentialEntryRefusalAt(host string, opened ...string) *RouteRefusal {
+	return entryRefusal(func(p routepolicy.Policy, r string) bool { return p.AllowsAt(r, host) }, opened)
+}
+
+func entryRefusal(allows func(routepolicy.Policy, string) bool, opened []string) *RouteRefusal {
 	if err := routepolicy.Active().Gate(); err != nil {
 		return &RouteRefusal{Status: http.StatusServiceUnavailable, Code: routes.CodePolicyUnconfirmed, Message: err.Error()}
 	}
 	p, restricted := routepolicy.Hiding()
-	if !restricted || len(opened) == 0 || slices.ContainsFunc(opened, p.Allows) {
+	if !restricted || len(opened) == 0 || slices.ContainsFunc(opened, func(r string) bool { return allows(p, r) }) {
 		return nil
 	}
 	return &RouteRefusal{Status: http.StatusForbidden, Code: routes.CodePolicyForbidden,

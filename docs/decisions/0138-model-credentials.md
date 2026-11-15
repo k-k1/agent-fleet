@@ -203,6 +203,14 @@ Two attributes of a route make the policy writable by a person:
   - **Storage.** Each layer's patterns (the ceiling's `endpoints=` key; the deployment rule and a tenant's cap) and the
     tenant rule's approved exact hosts are the `endpoints` field of that layer's rule, on its own role-scoped row.
     They are revisioned and audited with the rule through the same REST.
+  - **The Agent.** Under a restriction, the Agent allows `member-llamacpp` only while the member's llama.cpp
+    connection points at a listed host, and only on a route the layers allow there.
+    - The check applies at the connection's entry, which judges the URL being stored, and at every launch, start,
+      sweep and utility call.
+    - The connection's binding covers its URL, so a session whose URL changed since its launch is a replacement (D4).
+    - A name entered in Unicode is not converted, and matches nothing.
+    - `custom-api` stays `unclassified`. Its endpoint is a base URL in opencode's own configuration, which the Agent
+      neither stores nor pins: #4271.
 
 **Maker** (ADR 0128) is unchanged and is not a policy axis: Claude on Bedrock and Claude on the Anthropic API share a
 maker and differ in destination, and the destination is what a data-residency rule is about. **Source** (ADR 0129

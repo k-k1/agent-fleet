@@ -46,16 +46,23 @@ import (
 
 // Policy is the effective policy as the CP sends it (control-plane routepolicysrv.MemberPolicy).
 // With Restricted false every route is allowed; with it true only the routes in Allowed are,
-// and an id the CP did not list (one it does not know) is refused.
+// and an id the CP did not list (one it does not know) is refused, except a per-connection
+// route on an approved self-hosted endpoint (endpoints.go): Endpoints are the approved hosts and
+// EndpointRoutes the routes allowed on one.
 type Policy struct {
 	Revision          int64    `json:"revision"`
 	Restricted        bool     `json:"restricted"`
 	CeilingRestricted bool     `json:"ceilingRestricted"`
 	Allowed           []string `json:"allowed"`
+	Endpoints         []string `json:"endpoints,omitempty"`
+	EndpointRoutes    []string `json:"endpointRoutes,omitempty"`
 }
 
-// Allows reports whether the policy allows the route id.
-func (p Policy) Allows(route string) bool { return !p.Restricted || slices.Contains(p.Allowed, route) }
+// Allows reports whether the policy allows the route id. A per-connection route is allowed on
+// the host its connection points at now (RegisterEndpoint) when that host is approved.
+func (p Policy) Allows(route string) bool {
+	return !p.Restricted || slices.Contains(p.Allowed, route) || p.onApprovedEndpoint(route)
+}
 
 func (p Policy) restricting() bool { return p.Restricted || p.CeilingRestricted }
 
