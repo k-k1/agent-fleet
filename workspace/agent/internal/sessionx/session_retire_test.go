@@ -143,9 +143,6 @@ func TestRetireWalksTheTreeAtAnyDepthAndOnlyTheTree(t *testing.T) {
 	for _, n := range []string{"p", "c1", "g1", "gg", "h1", "px", "p2"} {
 		r.hold(t, n)
 	}
-	// A loop in the chain (p started by its own descendant) must not spin.
-	writeMeta(t, session.Meta{Name: "p", Origin: session.OriginSession, OriginSession: "gg"})
-
 	code, out := postRetire(t, "p")
 	if code != 200 || retiredNames(out.Sessions) != "p,c1,g1,gg" {
 		t.Fatalf("retire = %d %s", code, retiredNames(out.Sessions))
@@ -1053,5 +1050,61 @@ func TestStartDoesNotClaimSuccessWhenClearingTheMarkFails(t *testing.T) {
 	}
 	if m, _ := session.ReadMeta("a"); m.RetiredAt == "" {
 		t.Fatal("the mark was cleared although the write failed")
+	}
+}
+
+// Retire is for roots only. A session another session started is refused (naming its root, at any
+// depth), so a second retire rooted at a child cannot be set up; a handoff launch carries
+// originSession but was not started by it, and is a root.
+func TestRetireIsAcceptedOnlyForARoot(t *testing.T) {
+	r := newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+	writeMeta(t, session.Meta{Name: "g", Origin: session.OriginSession, OriginSession: "c"})
+	writeMeta(t, session.Meta{Name: "h", Origin: session.OriginHandoff, OriginSession: "p"})
+	writeMeta(t, session.Meta{Name: "orphan", Origin: session.OriginSession, OriginSession: "gone"})
+	for name, root := range map[string]string{"c": "p", "g": "p", "orphan": "gone"} {
+		req := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/retire", nil)
+		req.SetPathValue("name", name)
+		rec := httptest.NewRecorder()
+		HandleSessionRetire(rec, req)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "retire_not_root") || !strings.Contains(rec.Body.String(), "session "+root+";") {
+			t.Fatalf("%s: %d %s, want 409 retire_not_root naming %s", name, rec.Code, rec.Body, root)
+		}
+		if m, _ := session.ReadMeta(name); m.RetiredAt != "" {
+			t.Fatalf("%s was marked by a refused retire", name)
+		}
+	}
+	r.hold(t, "h")
+	if code, out := postRetire(t, "h"); code != http.StatusOK || retiredNames(out.Sessions) != "h" {
+		t.Fatalf("a handoff launch is a root: %d %s", code, retiredNames(out.Sessions))
+	}
+	if code, _ := postRetire(t, "p"); code != http.StatusOK {
+		t.Fatalf("the root: %d", code)
+	}
+}
+
+// Two requests for the same root do not overlap: the second waits for the first, so the first never
+// goes on with a tree the second has been through (and a person resumed) in between.
+func TestTwoRetiresOfOneRootAreSerialised(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+	g := retireGate("c")
+	g.RLock() // a person's start on c: retire A stops at c
+	doneA, doneB := make(chan struct{}), make(chan struct{})
+	go func() { postRetire(t, "p"); close(doneA) }()
+	time.Sleep(300 * time.Millisecond)
+	first, _ := retireIntents.Read("p")
+	go func() { postRetire(t, "p"); close(doneB) }()
+	time.Sleep(300 * time.Millisecond)
+	if now, _ := retireIntents.Read("p"); now.ID != first.ID {
+		t.Fatal("a second retire of the root began while the first was still running")
+	}
+	g.RUnlock()
+	<-doneA
+	<-doneB
+	if _, still := retireIntents.Read("p"); still {
+		t.Fatal("an intent is left after both retires finished")
 	}
 }

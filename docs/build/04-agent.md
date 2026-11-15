@@ -103,6 +103,12 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     the sessions, what was ended for each and what could not be ended (a cancel the Control
     Plane did not confirm, which is retried). A second call lists the same sessions and ends
     nothing more. There is no MCP tool.
+    Retire is for roots only: a session another session started is refused with
+    `409 retire_not_root` naming its root, so the trees of two retires are disjoint and an intent
+    never meets a mark written by a retire of another root (the Control Plane retires a delivery's
+    own session, which is always a root). At most one retire of a root runs at a time, from its
+    intent to its end, and the start-up recovery takes the same per-root lock: a second request
+    waits for the first (bounded by its own deadline) and then runs.
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
     written, the watch sink never starts or injects into the session, a Managed input (any
     origin) is refused with `409 session_retired`, an automatic `/start` is refused, the session

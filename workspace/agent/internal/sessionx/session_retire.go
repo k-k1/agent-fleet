@@ -120,10 +120,24 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	if _, ok := session.ReadMeta(name); !ok {
+	m, ok := session.ReadMeta(name)
+	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// Retire is for roots only: the tree of a root is fixed (a session's parent never changes), so
+	// the trees of two roots are disjoint and an intent never meets a mark or a release written by
+	// a retire of another root. Ask for the root of a session that another session started.
+	if session.OriginOf(m) == session.OriginSession && m.OriginSession != "" && m.OriginSession != name {
+		httpx.WriteErr(w, http.StatusConflict, "retire_not_root",
+			name+" was started by session "+retireRootOf(m)+"; retire that session instead")
+		return
+	}
+	// One retire of a root at a time, from the intent to the end, recovery included: a second
+	// request waits for the first, so an older run never goes on with a tree a newer one has
+	// already been through and a person has resumed since.
+	unlock := lockRetireRoot(name)
+	defer unlock()
 	in, err := beginRetire(name)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "retire_intent_unwritable",
@@ -298,11 +312,19 @@ func ReconcileRetired(ctx context.Context) int {
 			retireIntentMu.Unlock()
 			continue
 		}
+		unlock := lockRetireRoot(root)
+		// Read again under the lock: a request that held it may have replaced or finished the intent.
+		in, ok = retireIntents.Read(root)
+		if !ok {
+			unlock()
+			continue
+		}
 		reps := retireTree(ctx, root, &in)
 		for _, r := range reps {
 			covered[r.Name] = true
 		}
 		finishRetire(&in, reps)
+		unlock()
 		if _, still := retireIntents.Read(root); !still {
 			done++
 		} else {
@@ -437,4 +459,30 @@ func appendNew(list []string, add ...string) []string {
 		}
 	}
 	return list
+}
+
+// retireRootOf follows the origin=session chain up from m to the session no other session started
+// (or the last one that still exists, when an ancestor is gone), without looping.
+func retireRootOf(m session.Meta) string {
+	seen := map[string]bool{m.Name: true}
+	for session.OriginOf(m) == session.OriginSession && m.OriginSession != "" && !seen[m.OriginSession] {
+		parent, ok := session.ReadMeta(m.OriginSession)
+		if !ok {
+			return m.OriginSession
+		}
+		seen[parent.Name] = true
+		m = parent
+	}
+	return m.Name
+}
+
+var retireRoots sync.Map // root name -> *sync.Mutex
+
+// lockRetireRoot serialises the whole of a retire of one root, from its intent to its end.
+// Lock order: this, then the per-session gates.
+func lockRetireRoot(root string) (unlock func()) {
+	v, _ := retireRoots.LoadOrStore(root, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
