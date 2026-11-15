@@ -83,6 +83,12 @@ type Supervisor struct {
 	askedStop *exec.Cmd
 	// watching: one zero-demand watcher (agents.WatchIdle, idlestop.go) is running.
 	watching bool
+	// credGen is the credential generation of the daemon this supervisor started
+	// (credentialGen): the policy's pin and keys it was given. "" for an adopted daemon, whose
+	// environment is unknown. securing: a security restart is replacing the daemon, and no
+	// turn is admitted to it meanwhile (policy_restart.go).
+	credGen  string
+	securing bool
 }
 
 var supervisor = &Supervisor{}
@@ -287,6 +293,11 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	addr := serveAddr()
+	// Under a restriction, a daemon is only used when this supervisor started it with the
+	// policy's current credentials (policy_restart.go).
+	if err := s.policyAdmitLocked(addr); err != nil {
+		return "", 0, err
+	}
 	if s.up && healthy(addr) {
 		return addr, s.gen, nil
 	}
@@ -294,6 +305,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	// restarted — same pattern as connectCodexAppServer's connect-first). No cmd:
 	// exit recording degrades to SSE-disconnect detection for an adopted daemon.
 	if healthy(addr) {
+		s.credGen = ""
 		s.gen++
 		s.cmd = nil
 		s.up = true
@@ -353,6 +365,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		return "", 0, err
 	}
 	cmd.Env, _ = servePolicyEnv(cmd.Env)
+	credGen := credentialGen()
 	if sharedWanted {
 		// Tells the plugins this is af's shared server: no AF_SESSION_SID here, sessions are told
 		// apart by metadata, and shell commands wait for their environment (agent-fleet-shared.js).
@@ -379,6 +392,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			s.cmd = cmd
 			s.up = true
 			s.stopping = false
+			s.credGen = credGen
 			gen := s.gen
 			s.armIdleWatchLocked()
 			go s.waitDaemon(cmd, tail, gen)
