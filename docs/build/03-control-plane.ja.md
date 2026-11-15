@@ -282,7 +282,9 @@ Workspace を起こさない。
   エンベロープの `actMark` を報告と一緒に保存し（`memo_delivery.act_mark`。`ObserveDelivery` が残りと
   一緒に書く）、retire はすべて、判断の元になった報告の `{"ifNoActSince": mark}` を付けて送る。
   クリーンな close の保存済み報告（動いている Workspace の読み取りも、止まっている Workspace の保存済み報告も）と、
-  overdue の retire が判断に使った読み取りである。その読み取りのあとに人が起動・入力したセッションは
+  overdue の retire の最初の試行時の保存済み報告である。この mark は `memo_delivery.retire_act_mark` に固定され
+  （close か overdue の最初の試行が設定し、progress を見たら消す）、確認できない再試行は毎回同じ値を送る。
+  overdue の配信は open のまま `act_mark` を新しい読み取りで上書きし続けるため。その読み取りのあとに人が起動・入力したセッションは
   `released`（root）か `done`（root の下）で返り、どちらも従来どおり保留中の retire を終わらせる。
   `actMark` を送らない Agent には body を付けない。
   `aborted` の close は何も retire しない。

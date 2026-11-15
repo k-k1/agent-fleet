@@ -304,9 +304,9 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if delivery != nil {
 		delivery.PromptSum = chatx.PromptSum(body.Prompt) // the text as it lands in the transcript
 	}
-	// What the member typed (a prompt, a key press, a answer's keys) is an act of a person; an
-	// input with an origin of its own is not. The same test the managed path draws its "user" turn by.
-	if typedByMember(body.PeerFrom, body.ReportTo, body.Source, delivery != nil) {
+	// What the member typed (a prompt, a key press, an answer's keys) is an act of a person; an
+	// input that carries any field of an automatic origin is not.
+	if !inputCarriesOrigin(body.Source, body.PeerFrom, body.PeerIntent, body.ReportTo, body.ScheduleID, body.ScheduleSlot, body.ScheduleDelivery != nil) {
 		notePersonAct(name)
 	}
 	// A managed session's {prompt} has no tmux pane (it goes through app-server), so route

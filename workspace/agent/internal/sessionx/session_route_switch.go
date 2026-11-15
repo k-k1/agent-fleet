@@ -306,7 +306,6 @@ func HandleSessionRouteSwitch(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 && !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	notePersonAct(name) // a person's relaunch on another route
 	res, err := runRouteSwitch(r.Context(), name, strings.TrimSpace(req.Route))
 	if err != nil {
 		var se *routeSwitchError
@@ -352,6 +351,13 @@ func runRouteSwitch(ctx context.Context, name, want string) (*routeSwitchWire, e
 	if !ok {
 		return nil, refusal(http.StatusNotFound, "not_found", "no such session: "+name)
 	}
+	// A person's relaunch: held under the retire gate (after the lifecycle gate, the usual order)
+	// and refused on a session a retire has marked.
+	releaseRelaunch, herr := holdPersonRelaunch(name)
+	if herr != nil {
+		return nil, refusal(http.StatusConflict, "session_retired", herr.Error())
+	}
+	defer releaseRelaunch()
 	to, rerr := checkRouteSwitch(ctx, m, want)
 	if rerr != nil {
 		return nil, rerr

@@ -104,6 +104,9 @@ type fakeQueueAgent struct {
 	// retireBodies is the body of every retire call ("" for none), parallel to retires.
 	actMark      int64
 	retireBodies []string
+	// retireDrop makes that many retire calls lose their answer: the call is recorded and the
+	// connection is closed without a reply.
+	retireDrop int
 }
 
 // setActMark sets the actMark the next list answers carry.
@@ -164,6 +167,16 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "POST" && strings.HasPrefix(path, "/sessions/") && strings.HasSuffix(path, "/retire"):
 		rb, _ := io.ReadAll(r.Body)
 		a.retireBodies = append(a.retireBodies, string(rb))
+		if a.retireDrop > 0 {
+			a.retireDrop--
+			a.retires = append(a.retires, "dropped")
+			if hj, ok := w.(http.Hijacker); ok {
+				if c, _, err := hj.Hijack(); err == nil {
+					_ = c.Close()
+				}
+			}
+			return
+		}
 		a.serveRetire(w, strings.TrimSuffix(strings.TrimPrefix(path, "/sessions/"), "/retire"))
 	case r.Method == "POST" && strings.HasPrefix(path, "/sessions-idempotency/") && strings.HasSuffix(path, "/reserve"):
 		key := strings.TrimSuffix(strings.TrimPrefix(path, "/sessions-idempotency/"), "/reserve")

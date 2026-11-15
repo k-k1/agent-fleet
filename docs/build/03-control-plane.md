@@ -356,7 +356,10 @@ disables.
   envelope's `actMark` is kept with the report (`memo_delivery.act_mark`, written by
   `ObserveDelivery` with the rest of it) and every retire is sent with `{"ifNoActSince": mark}` of
   the report it was decided on: the kept report at a clean close (a running workspace's read, and
-  the kept report of a stopped one) and the read an overdue retire is decided on. A session a
+  the kept report of a stopped one) and the kept report at the first attempt of an overdue retire.
+  That mark is frozen in `memo_delivery.retire_act_mark` (set by the close, or by the first overdue
+  attempt; cleared when progress is seen) and every unconfirmed retry sends the same one, because
+  an overdue delivery stays open and keeps overwriting `act_mark` with newer reads. A session a
   person started or typed into after that read comes back `released` (root) or `done` (below the
   root), which end the pending retire as before. An Agent that sends no `actMark` gets no body.
   An `aborted` close retires nothing.

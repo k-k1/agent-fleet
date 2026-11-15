@@ -267,17 +267,27 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 			writeBlockedErr(w, blocked, m.Kind)
 			return
 		}
-	} else if err := ensureSessionTmux(lease, name, false); err != nil {
-		if writeStartRefusal(w, err) {
+	} else {
+		// The relaunch is held under the retire gate and refused on a marked session, like /start.
+		releaseRelaunch, rerr := holdPersonRelaunch(name)
+		if rerr != nil {
+			httpx.WriteErr(w, http.StatusConflict, "session_retired", rerr.Error())
 			return
 		}
-		if writeLaunchRefusal(w, err) {
+		err := ensureSessionTmux(lease, name, false)
+		releaseRelaunch()
+		if err != nil {
+			if writeStartRefusal(w, err) {
+				return
+			}
+			if writeLaunchRefusal(w, err) {
+				return
+			}
+			if !writeCodexReleasingErr(w, err) {
+				httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
+			}
 			return
 		}
-		if !writeCodexReleasingErr(w, err) {
-			httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
-		}
-		return
 	}
 	// The carried entry is dropped here: delivery is asynchronous (there is a CLI boot to
 	// wait for), so this keeps the card from being pressed twice while the response is

@@ -139,16 +139,24 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     intent (`ifNoActSince`), so the start-up recovery applies the same one. No body, or 0, is the
     retire as before.
     What counts as an act (when in doubt it is one): `POST /start` without the in-process
-    automatic mark; `/input` that carries no origin (no `source`, `peer_from`, `report_to`, schedule
-    fields, nor the `/mcp` stamp), prompt, keys and seq alike; `/turn` start and steer; `/respond`,
+    automatic mark (this includes a start through the route by a program: it cannot be told from a
+    person's until #4249); `/input` that carries none of the origin fields (`source` of any value,
+    `peer_from`, `peer_intent`, `report_to`, `schedule_id`, `schedule_slot`, `schedule_delivery`, nor
+    the `/mcp` stamp; `inputCarriesOrigin`, not the mirror's `typedByMember`), prompt, keys and seq alike; `/turn` start and steer; `/respond`,
     `/answer`, the permission and plan decisions (the automatic plan review sets `expect_plan` and
-    is not one), a carried answer; a driver switch and a route switch; the chat bridge's replies and
-    button clicks (`injectSessionPrompt` with a member origin); keystrokes in the terminal pane
-    (`/ws/pty`, recorded before the lifecycle gate is taken, with a bounded wait for a retire's
-    gate: past it the key goes on unrecorded, which is the "act arrives at a retired session"
-    state). Not acts: the watch wake, the plan-review reviewer's start, input with an origin
-    (peer, schedule, `/mcp`, notice, auto-resume, a queue delivery's prompt), a start through the
-    route by a program (indistinguishable from a person's until #4249, so it counts as one).
+    is not one), a carried answer; a driver switch, a route switch and a carried answer that
+    relaunches: these three go round `/start`, so each holds the retire gate's read side across the
+    launch and is refused with `409 session_retired` on a session a retire has marked (resume it
+    first); the chat bridge's replies and button clicks (`injectSessionPrompt` with a member origin);
+    keystrokes in the terminal pane (`/ws/pty`, recorded before the lifecycle gate is taken). Failing
+    to get the gate's read side is not evidence that the session is marked (a pending retire also
+    stops new readers while a long `/start` holds one): past a short wait the key passes unrecorded
+    only when the meta already says retired (the "act arrives at a retired session" state), else it
+    is held, and dropped after 30 s. Not acts: the watch wake, the plan-review reviewer's start,
+    input with an origin (peer, schedule, `/mcp`, notice, auto-resume, a queue delivery's prompt).
+    A retire whose `ifNoActSince` is above the Agent's own counter (a restored older state file)
+    cannot be ordered here, so it reads as an act: the tree is released, never retired. The
+    monotonic guarantee holds while the state file survives.
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
     written, the watch sink never starts or injects into the session, a Managed input (any
     origin) is refused with `409 session_retired`, an automatic `/start` is refused, the session

@@ -267,7 +267,10 @@ func retireOne(ctx context.Context, rep *retireReport, in *retireIntent) {
 	g.Lock()
 	defer g.Unlock()
 	cur, ok := session.ReadMeta(rep.Name)
-	if ok && in.IfNoActSince > 0 && !isRetired(cur) && cur.PersonActMark >= in.IfNoActSince &&
+	// A number above this Agent's own counter was not handed out by it (a restored older state, a
+	// file that could not be read): nothing here proves "no act since", so it reads as an act.
+	if ok && in.IfNoActSince > 0 && !isRetired(cur) &&
+		(cur.PersonActMark >= in.IfNoActSince || in.IfNoActSince > actMarks.now()) &&
 		!releasedFrom(cur, in.ID) && !releasedAncestor(cur, in.ID) {
 		// A person started it or typed into it after the list this retire was decided on: the
 		// same release as a start after the retire began, written here under the member's gate and

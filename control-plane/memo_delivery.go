@@ -996,7 +996,16 @@ func (r *memoQueueRunner) retireOverdue(ctx context.Context, v *memoMemberView, 
 	// Whatever the answer, only a retry-worthy one is repeated: a complete retire, a person who
 	// took the session over (the Agent's word: released) and a fault that repeating cannot mend
 	// are recorded, and progress seen later clears the record.
-	if res := r.retire(ctx, v.res, d.Session, d.ActMark); res != retireRepeat {
+	// The mark is fixed with the first attempt: a retry whose answer was lost must carry the
+	// condition of the first, not of the newer read this row has since kept.
+	fctx, fcancel := memoProgressCtx(ctx)
+	mark, ferr := r.mgr.store.FreezeDeliveryRetireMark(fctx, d.ID)
+	fcancel()
+	if ferr != nil {
+		log.Printf("memo queue: delivery %s: freeze the retire mark: %v", d.ID, ferr)
+		return
+	}
+	if res := r.retire(ctx, v.res, d.Session, mark); res != retireRepeat {
 		wctx, cancel := memoProgressCtx(ctx)
 		defer cancel()
 		if _, err := r.mgr.store.MarkMemoDeliveryRetired(wctx, d.ID, store.DeliveryTS(time.Now())); err != nil {
@@ -1162,7 +1171,7 @@ func (r *memoQueueRunner) retirePending(ctx context.Context, views map[string]*m
 				continue
 			}
 		}
-		if res := r.retire(ctx, v.res, d.Session, d.ActMark); res != retireRepeat {
+		if res := r.retire(ctx, v.res, d.Session, d.RetireActMark); res != retireRepeat {
 			r.finishRetire(ctx, d, string(res))
 		}
 	}

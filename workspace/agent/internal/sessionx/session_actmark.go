@@ -14,9 +14,14 @@ package sessionx
 // that every value handed out stays below; a restart begins at the higher of that ceiling and the
 // clock, so a value from before the restart is below every value after it, whatever the clock did.
 // The ceiling is raised a block ahead, so a list answer costs a disk write once per block.
+//
+// The guarantee holds while the state file survives. A restored older copy, or an unreadable file,
+// can put the counter behind a number a Control Plane still holds; a retire carrying a number above
+// the counter is therefore never read as "no act since" (retireOne releases the tree instead).
 
 import (
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,6 +79,14 @@ func (c *actClock) take() (n int64, ok bool) {
 		c.reserved = next
 	}
 	return c.cur, true
+}
+
+// now is the highest mark handed out or read by this Agent so far.
+func (c *actClock) now() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.loadLocked()
+	return c.cur
 }
 
 // current is the mark an act made now carries, and whether name's meta already holds it.
@@ -143,23 +156,54 @@ func notePersonAct(name string) {
 	}
 }
 
-// paneActWait bounds how long a keystroke waits for a retire that is stopping the session.
-const paneActWait = 2 * time.Second
+// holdPersonRelaunch is for a person's relaunch of an existing session that does not go through
+// /start or a Managed resume (a driver switch, a route switch, a carried answer): it takes the
+// read side of the retire gate, refuses a session a retire has marked (errSessionRetired: resume it
+// first, which clears the mark), records the act and returns the release. Held across the launch,
+// so a retire cannot mark the session between the check and the launch and leave it marked and
+// running. Call it with the lifecycle gate already held, never with the gate's read side.
+func holdPersonRelaunch(name string) (release func(), err error) {
+	g := retireGate(name)
+	g.RLock()
+	if cur, ok := session.ReadMeta(name); ok && isRetired(cur) {
+		g.RUnlock()
+		return nil, errSessionRetired
+	}
+	if err := recordPersonAct(name); err != nil {
+		log.Printf("act mark: %s: the act could not be recorded: %v", name, err)
+	}
+	return g.RUnlock, nil
+}
 
-// NotePersonActPane is notePersonAct for the terminal pane's writer. It takes no lock and writes
-// nothing while the meta holds the current mark. Otherwise it waits at most paneActWait for the
-// read side: a retire holds the write side through a stop, and a keystroke into a session being
-// stopped is the "act arrives at a retired session" outcome, so past the bound the key goes on
-// unrecorded and the next one tries again.
-func NotePersonActPane(name string) {
+// paneActWait is how long a keystroke waits for the read side before it checks whether the session
+// is already retired. A var for the tests.
+var paneActWait = 2 * time.Second
+
+// paneActHold bounds the whole wait: a key that still cannot be recorded by then is dropped.
+const paneActHold = 30 * time.Second
+
+// NotePersonActPane is notePersonAct for the terminal pane's writer, and reports whether the bytes
+// may go on to the PTY. It takes no lock and writes nothing while the meta holds the current mark.
+// Otherwise it takes the read side without queueing behind the retire's write side beyond what the
+// session's state allows: failing to get the read side proves nothing (a pending writer also stops
+// new readers while a long /start holds one), so past paneActWait the bytes pass unrecorded only
+// when the meta already says the session is retired, which is the "act arrives at a retired
+// session" state. Otherwise they keep waiting, and are dropped (false) after paneActHold. Nothing
+// is held while it waits.
+func NotePersonActPane(name string) (deliver bool) {
 	if _, done := actMarks.current(name); done {
-		return
+		return true
 	}
 	g := retireGate(name)
-	deadline := time.Now().Add(paneActWait)
+	start := time.Now()
 	for !g.TryRLock() {
-		if time.Now().After(deadline) {
-			return
+		if time.Since(start) > paneActWait {
+			if cur, ok := session.ReadMeta(name); ok && isRetired(cur) {
+				return true
+			}
+			if time.Since(start) > paneActHold {
+				return false
+			}
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -167,4 +211,15 @@ func NotePersonActPane(name string) {
 	if err := recordPersonAct(name); err != nil {
 		log.Printf("act mark: %s: the act could not be recorded: %v", name, err)
 	}
+	return true
+}
+
+// inputCarriesOrigin reports whether a /input body carries any field an automatic sender sets: a
+// source of any value (the /mcp stamp included, an unknown one too), a peer message, a report, or a
+// schedule's fields. Only an input with none of them is read as the member's own. This is
+// deliberately not typedByMember, which decides what the mirror draws as the user's turn and
+// treats a source such as "operator" as the member's when no report_to rides with it.
+func inputCarriesOrigin(source, peerFrom, peerIntent, reportTo, scheduleID, scheduleSlot string, scheduleDelivery bool) bool {
+	return source != "" || peerFrom != "" || strings.TrimSpace(peerIntent) != "" || reportTo != "" ||
+		scheduleID != "" || scheduleSlot != "" || scheduleDelivery
 }

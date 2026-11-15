@@ -117,15 +117,22 @@ source_of_truth: "コード（本書は地図と設計意図）"
     競った act は、released か、retire 済みのセッションに act が届くか、の 2 つのどちらかで終わる。
     条件は retire の意図（`ifNoActSince`）に残るので、起動時の回復も同じ条件を適用する。body なし、または 0 は
     従来どおりの retire。
-    act に数えるもの（迷ったら act）: 自動の印の無い `POST /start`、出どころ（`source`・`peer_from`・`report_to`・
-    schedule 系・`/mcp` の印）を一切持たない `/input`（prompt・keys・seq とも）、`/turn` の start と steer、
+    act に数えるもの（迷ったら act）: 自動の印の無い `POST /start`（プログラムが route 越しに行う start も含む。#4249 までは人の start と
+    区別できない）、出どころのフィールド（任意の値の `source`・`peer_from`・`peer_intent`・`report_to`・
+    `schedule_id`・`schedule_slot`・`schedule_delivery`・`/mcp` の印）を一切持たない `/input`
+    （`inputCarriesOrigin`。mirror の `typedByMember` ではない。prompt・keys・seq とも）、`/turn` の start と steer、
     `/respond`・`/answer`・許可とプランの判断（自動プランレビューは `expect_plan` を付けるので含まない）、
-    carried の回答、driver の切替と route の切替、チャットブリッジの返信とボタン（member の origin で
-    `injectSessionPrompt`）、ターミナルペインのキー入力（`/ws/pty`。ライフサイクル gate を取る前に記録し、
-    retire の gate は上限つきで待つ。超えたらキーは記録されずに通る。これが「retire 済みのセッションに act が届く」状態）。
+    carried の回答（再起動を伴うもの）、driver の切替と route の切替（この 3 つは `/start` を通らないので、
+    起動の間 retire gate の読み取り側を持ち、retire が印したセッションには `409 session_retired` を返す。先に再開する）、
+    チャットブリッジの返信とボタン（member の origin で `injectSessionPrompt`）、ターミナルペインのキー入力
+    （`/ws/pty`。ライフサイクル gate を取る前に記録する）。gate の読み取り側が取れないことは印の証拠ではない
+    （待っている retire は、長い `/start` が読み取り側を持つ間も新しい reader を止める）ので、短い待ちのあと、meta が
+    すでに retired のときだけキーは記録されずに通り（「retire 済みのセッションに act が届く」状態）、そうでなければ
+    保留し、30 秒で捨てる。
     数えないもの: watch の起動、プランレビュー役の start、出どころを持つ入力（peer・schedule・`/mcp`・notice・
-    auto-resume・キュー配信の prompt）、プログラムが route 越しに行う start（#4249 までは人の start と区別が付かず、
-    act に数える）。
+    auto-resume・キュー配信の prompt）。Agent 自身のカウンタより大きい `ifNoActSince`（古い状態ファイルの復元）は
+    ここで順序を証明できないので act と読み、木は release する（retire しない）。単調性の保証は状態ファイルが
+    残っている間のもの。
   - meta の `retiredAt` が、終わらせたものを終わったままにする。付けた瞬間から、
     watch の sink は起動も注入もせず、Managed への入力は（出どころを問わず）`409 session_retired`
     で断り、自動の `/start` も断り、子の枠も取らせず、エンジンは新しい購読と組み込みを断り、予約された

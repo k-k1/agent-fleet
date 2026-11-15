@@ -145,3 +145,36 @@ func TestMemoActMarkReleasedAnswersEndThePendingRetire(t *testing.T) {
 		})
 	}
 }
+
+// An overdue retire whose answer was lost is repeated with the condition of the first attempt,
+// not of the newer read the open delivery has kept since.
+func TestMemoActMarkOverdueRetryKeepsTheFirstCondition(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(map[string]any{"maxTaskHours": 1})
+		agent.setRow(d.Session, map[string]any{"wakers": map[string]any{"watches": 1, "timers": 0}})
+		agent.setActMark(300)
+		e.settleNow(time.Now())
+		agent.mu.Lock()
+		agent.retireDrop = 1
+		agent.mu.Unlock()
+		later := time.Now().Add(3 * time.Hour)
+		e.settleNow(later) // marks it overdue
+		agent.setActMark(900)
+		e.settleNow(later) // the first attempt: its answer is lost
+		agent.setActMark(1500)
+		e.settleNow(later) // the retry, after two newer reads were kept
+		e.settleNow(later)
+		if agent.retireCalls() < 2 {
+			t.Fatalf("calls %d", agent.retireCalls())
+		}
+		if b := agent.retireBody(0); b != wantBody(300) && b != wantBody(900) {
+			t.Fatalf("first call carried %q", b)
+		}
+		if agent.retireBody(0) != agent.retireBody(1) {
+			t.Fatalf("the retry moved the condition: %q then %q", agent.retireBody(0), agent.retireBody(1))
+		}
+		if got := e.delivery(d.ID); got.RetiredAt == "" {
+			t.Fatalf("the retry was not recorded: %+v", got)
+		}
+	})
+}

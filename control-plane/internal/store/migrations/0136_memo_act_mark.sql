@@ -3,6 +3,9 @@
 -- memo_delivery.act_mark is the Agent's actMark of the last kept report (the Agent-wide number its
 -- session list carried), 0 for a report that carried none. The retire sends it as ifNoActSince, so
 -- a session a person started or typed into after that read is left running.
+-- memo_delivery.retire_act_mark is the mark one retire decision and its retries send, frozen when the
+-- decision is made, so a later read cannot move the condition of a retire whose answer was lost.
 -- Forward compatible: a column only, default 0. An older Control Plane never reads it and sends its
 -- retire with no body, which is the unconditional retire.
-ALTER TABLE memo_delivery ADD COLUMN act_mark INTEGER NOT NULL DEFAULT 0
+ALTER TABLE memo_delivery ADD COLUMN act_mark INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE memo_delivery ADD COLUMN retire_act_mark INTEGER NOT NULL DEFAULT 0

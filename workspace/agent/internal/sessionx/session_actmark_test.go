@@ -174,7 +174,7 @@ func TestPaneTypingWritesTheMetaOncePerMark(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 50; i++ {
-			NotePersonActPane("a")
+			_ = NotePersonActPane("a")
 		}
 		close(done)
 	}()
@@ -189,25 +189,137 @@ func TestPaneTypingWritesTheMetaOncePerMark(t *testing.T) {
 		t.Fatal("a keystroke at an unchanged mark wrote the meta")
 	}
 	listActMark(t)
-	NotePersonActPane("a")
+	_ = NotePersonActPane("a")
 	if fi, _ := os.Stat(p); fi.ModTime().Unix() == 1 {
 		t.Fatal("a keystroke at a new mark did not write the meta")
 	}
 }
 
-// The pane's writer does not wait for a retire that is stopping the session for long.
-func TestPaneTypingDoesNotWaitForeverOnARetire(t *testing.T) {
+// A keystroke into a session a retire has marked is not held back: it arrives at a retired session.
+func TestPaneTypingPassesOnARetiredSessionWhileItIsBeingStopped(t *testing.T) {
 	newActEnv(t)
-	writeMeta(t, session.Meta{Name: "a"})
+	prev := paneActWait
+	paneActWait = 100 * time.Millisecond
+	t.Cleanup(func() { paneActWait = prev })
+	writeMeta(t, session.Meta{Name: "a", RetiredAt: time.Now().UTC().Format(time.RFC3339), RetireID: "r"})
 	g := retireGate("a")
-	g.Lock()
+	g.Lock() // the retire is still stopping it
 	defer g.Unlock()
-	done := make(chan struct{})
-	go func() { NotePersonActPane("a"); close(done) }()
+	done := make(chan bool, 1)
+	go func() { done <- NotePersonActPane("a") }()
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("a key for a retired session was dropped")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the pane's writer is stuck behind the retire gate")
+	}
+}
+
+// Failing to take the read side is not evidence that the session is marked: a pending retire
+// stops new readers while a long /start holds one. The key is held, not sent unrecorded, and is
+// recorded once the retire has marked the session.
+func TestPaneTypingWaitsForAPendingRetireBehindALongStart(t *testing.T) {
+	newActEnv(t)
+	prev := paneActWait
+	paneActWait = 100 * time.Millisecond
+	t.Cleanup(func() { paneActWait = prev })
+	writeMeta(t, session.Meta{Name: "a"})
+	listed := listActMark(t)
+	g := retireGate("a")
+	g.RLock() // /start, mid-launch
+	retired := make(chan retireResp, 1)
+	go func() { _, out := postRetireIf(t, "a", listed); retired <- out }()
+	for i := 0; i < 200; i++ { // the retire is queued on the write side
+		if g.TryRLock() {
+			g.RUnlock()
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+		break
+	}
+	done := make(chan bool, 1)
+	go func() { done <- NotePersonActPane("a") }()
 	select {
 	case <-done:
-	case <-time.After(paneActWait + 3*time.Second):
-		t.Fatal("the pane's writer is stuck behind the retire gate")
+		t.Fatal("the key went through unrecorded while the session was not marked")
+	case <-time.After(500 * time.Millisecond):
+	}
+	g.RUnlock() // the start ends; the retire marks and stops, then the key is recorded on a retired session
+	if ok := <-done; !ok {
+		t.Fatal("the key was dropped")
+	}
+	out := <-retired
+	m, _ := session.ReadMeta("a")
+	if rep := reportOf(out, "a"); rep.Released || m.RetiredAt == "" {
+		t.Fatalf("%+v retiredAt=%q", rep, m.RetiredAt)
+	}
+}
+
+// A condition above the Agent's own counter was not handed out by it (a restored older state): it
+// proves nothing, so the tree is released, never retired.
+func TestRetireWithANumberFromTheFutureReleasesTheTree(t *testing.T) {
+	newActEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+	listed := listActMark(t)
+	// The state file is replaced by an older copy and the Agent restarts below the number the
+	// Control Plane still holds.
+	if err := actMarkStore.Write(actMarkKey, actMarkState{Reserved: 5}); err != nil {
+		t.Fatal(err)
+	}
+	actMarks.mu.Lock()
+	actMarks.loaded, actMarks.cur, actMarks.reserved = true, 5, 5
+	actMarks.mu.Unlock()
+	_, out := postRetireIf(t, "p", listed+1000)
+	if !reportOf(out, "p").Released {
+		t.Fatalf("%+v", out.Sessions)
+	}
+	for _, n := range []string{"p", "c"} {
+		if m, _ := session.ReadMeta(n); m.RetiredAt != "" {
+			t.Fatalf("%s was retired by a number the Agent never handed out", n)
+		}
+	}
+}
+
+// Only an input with none of the automatic origin fields is the member's own.
+func TestInputOriginFieldsDecideWhetherItIsAnAct(t *testing.T) {
+	bodies := map[string]bool{
+		`{"prompt":"x"}`:                                        true,
+		`{"keys":["Down"]}`:                                     true,
+		`{"prompt":"x","source":"operator"}`:                    false,
+		`{"prompt":"x","source":"spawn"}`:                       false,
+		`{"prompt":"x","source":"queue"}`:                       false,
+		`{"prompt":"x","source":"whatever"}`:                    false,
+		`{"prompt":"x","source":"schedule"}`:                    false,
+		`{"prompt":"x","schedule_id":"s1"}`:                     false,
+		`{"prompt":"x","schedule_id":"s1","schedule_slot":"2"}`: false,
+		`{"prompt":"x","report_to":"conv"}`:                     false,
+	}
+	for body, isAct := range bodies {
+		e := newActEnv(t)
+		_ = e
+		writeMeta(t, session.Meta{Name: "s"})
+		listed := listActMark(t)
+		postTo(t, HandleSessionInput, "s", "input", body)
+		_, out := postRetireIf(t, "s", listed)
+		if got := reportOf(out, "s").Released; got != isAct {
+			t.Errorf("%s: released=%v, want %v", body, got, isAct)
+		}
+	}
+}
+
+// A relaunch by a person that goes round /start (a driver switch) is refused on a session a retire
+// has marked, so none leaves it marked and running.
+func TestDriverSwitchRefusesAMarkedSession(t *testing.T) {
+	newActEnv(t)
+	writeMeta(t, session.Meta{Name: "s", Kind: session.KindCodex})
+	postRetire(t, "s")
+	rec := postTo(t, HandleSessionDriver, "s", "driver", `{"driver":"managed"}`)
+	m, _ := session.ReadMeta("s")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "session_retired") || m.RetiredAt == "" || m.Driver == session.DriverManaged {
+		t.Fatalf("%d %s retiredAt=%q driver=%q", rec.Code, rec.Body, m.RetiredAt, m.Driver)
 	}
 }
 
@@ -243,7 +355,7 @@ func TestRetireWithACondition(t *testing.T) {
 				t.Fatalf("turn = %d %s", rec.Code, rec.Body)
 			}
 		}, true},
-		{"typing in the terminal pane", session.KindClaude, "", func(t *testing.T, _ *actEnv, name string) { NotePersonActPane(name) }, true},
+		{"typing in the terminal pane", session.KindClaude, "", func(t *testing.T, _ *actEnv, name string) { _ = NotePersonActPane(name) }, true},
 		{"the chat bridge", session.KindCodex, session.DriverManaged, func(t *testing.T, _ *actEnv, name string) {
 			if err := injectSessionPrompt(name, "go on", turnOrigin(TurnSourceDiscord, "")); err != nil {
 				t.Fatal(err)
