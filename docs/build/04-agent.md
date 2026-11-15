@@ -101,7 +101,12 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     started at any depth (`origin == "session"` and the `originSession` chain, the walk
     `spendDescendants` makes), cancels their booked resumes, then halts them. The answer lists
     the sessions, what was ended for each and what could not be ended (a cancel the Control
-    Plane did not confirm, which is retried). A second call lists the same sessions and ends
+    Plane did not confirm, which is retried). A session a person started while the retire ran is
+    reported `released: true` with its real state (`running`), never `stopped`: a retire never
+    touches a session whose meta carries its own id as `retireClearedID`, nor anything under it
+    (the ancestors are read again under each member's gate; the walk does not descend below a
+    released member). The response's `complete` is false when any session was released or has
+    anything unended; the Control Plane must not read the delivery as ended then. A second call lists the same sessions and ends
     nothing more. There is no MCP tool.
     Retire is for roots only: a session another session started is refused with
     `409 retire_not_root` naming its root, so the trees of two retires are disjoint and an intent
@@ -118,8 +123,8 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     gate: the mark of that retire is finished, the tombstone a person's start leaves in the same
     meta write (`retireClearedID`) is left alone, and a session with neither was never reached and
     is marked for the first time. The usage-limit booking path refuses a marked session, so the
-    retire cancels whatever the episode holds. Lock order: lifecycle gate,
-    then the retire gate.
+    retire cancels whatever the episode holds. Lock order: a retire takes its root's lock first; every start and input
+    takes the lifecycle gate, then the session's retire gate.
     `POST /sessions/{name}/start` clears it, so a person resuming the session from the Console
     makes it an ordinary session again.
 - **How a queue delivery's first turn ended** (ADR 0137 §7): `queueTurn: {outcome, ms, endedAt}`
