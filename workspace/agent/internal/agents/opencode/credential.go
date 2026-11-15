@@ -53,8 +53,10 @@ var credentialView = func() (keys map[string]string, pref string, account oauthS
 // ResolveLaunch implements agents.CredentialResolver: the route of the model the session is
 // launched on, from its provider id (ADR 0138 D2), and the credential the stored keys or the
 // account login give that provider. A session can change model later; this is the launch. A
-// launch on opencode's own default model (no model named), or on a provider whose payer cannot
-// be told, resolves to nothing rather than to a guess.
+// launch on a provider whose payer cannot be told resolves to nothing rather than to a guess, and
+// so does one on opencode's own default model (no model named): opencode falls back from a
+// configured model that is unavailable or disabled, and an agent's own model (JSON or Markdown,
+// global or project) overrides it, so nothing read at launch proves which model will run.
 func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
 	keys, pref, acct := credentialView()
 	return resolveModel(m.Model, keys, pref, acct, engineProviderIDs())
@@ -125,11 +127,15 @@ func resolveOpencodeAI(prov string, keys map[string]string, pref string, acct oa
 		return routes.Launch{}
 	case prov == "opencode":
 		// No credential at all: a free model, which still goes to opencode.ai and which the
-		// ledger files under Zen.
-		return routes.Launch{Route: routes.RouteOpencodeZen}
+		// ledger files under Zen. It has no credential to fingerprint, so it gets the one fixed
+		// binding of the keyless route (D5b: every row carries a binding).
+		return routes.Launch{Route: routes.RouteOpencodeZen, Binding: FreeBinding}
 	}
 	return routes.Launch{}
 }
+
+// FreeBinding is the binding of opencode.ai's free models, which run with no credential at all.
+var FreeBinding = credbind.Named(routes.RouteOpencodeZen, "free")
 
 // engineProviderIDs are the provider ids of the deployment's engines in opencode's config (the
 // entries af wrote, carrying engineProviderMarker).
