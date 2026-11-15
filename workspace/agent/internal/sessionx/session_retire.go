@@ -69,16 +69,22 @@ func retireGate(name string) *sync.RWMutex {
 // errSessionRetired is what an automatic start or input is refused with.
 var errSessionRetired = errors.New("session_retired: this session was retired; resume it from the Console first")
 
-// clearRetired takes the mark off a session a person started.
+// clearRetired takes the mark off a session a person started, and leaves a durable note of when,
+// so a recovery can tell this from a mark that was never written.
 func clearRetired(name string) {
-	UpdateSessionMeta(name, func(m *session.Meta) bool {
+	if _, cleared := UpdateSessionMeta(name, func(m *session.Meta) bool {
 		if m.RetiredAt == "" {
 			return false
 		}
 		m.RetiredAt = ""
 		return true
-	})
+	}); cleared {
+		_ = retireCleared.Write(name, time.Now().Format(time.RFC3339Nano))
+	}
 }
+
+// retireCleared holds, per session, when a person last cleared its retired mark.
+var retireCleared = fstore.Strings(paths.AgentStateDir, "session-retire-cleared", ".txt")
 
 type autoStartKey struct{}
 
@@ -166,7 +172,7 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 		for _, rep := range fresh {
 			// A session this retire had already marked and a person has resumed since is theirs
 			// again: a recovery leaves it alone.
-			retireOne(ctx, rep, in, in.wasMarked(rep.Name))
+			retireOne(ctx, rep, in, in.wasMarked(rep.Name) || in.resumedSince(rep.Name))
 		}
 		if !waitSpawns(ctx, order) {
 			order[0].Unended = appendNew(order[0].Unended, "a child create was still in flight; retire again once it has finished")
@@ -230,10 +236,31 @@ type retireIntent struct {
 type retireMember struct {
 	Name   string `json:"name"`
 	Marked bool   `json:"marked,omitempty"`
+	// At is when the member was recorded as pending.
+	At string `json:"at,omitempty"`
 }
 
 var retireIntents = fstore.JSON[retireIntent](paths.AgentStateDir, "session-retire-intent", ".json")
 var retireIntentMu sync.Mutex
+
+// resumedSince reports whether name was recorded as pending and a person cleared its mark after
+// that: the crash came between the mark and its confirmation, and the session is theirs now.
+func (in *retireIntent) resumedSince(name string) bool {
+	if in == nil {
+		return false
+	}
+	i := slices.IndexFunc(in.Members, func(m retireMember) bool { return m.Name == name && !m.Marked })
+	if i < 0 {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339Nano, in.Members[i].At)
+	cleared, ok := retireCleared.Read(name)
+	if !ok || err != nil {
+		return false
+	}
+	ct, err := time.Parse(time.RFC3339Nano, cleared)
+	return err == nil && ct.After(at)
+}
 
 // wasMarked reports whether the intent saw name's mark on disk: a mark found missing now is a
 // person's start.
@@ -258,7 +285,7 @@ func (in *retireIntent) set(name string, marked bool) error {
 		}
 		next.Members[i].Marked = true
 	} else {
-		next.Members = append(next.Members, retireMember{Name: name, Marked: marked})
+		next.Members = append(next.Members, retireMember{Name: name, Marked: marked, At: time.Now().Format(time.RFC3339Nano)})
 	}
 	if err := writeRetireIntent(next); err != nil {
 		return err
@@ -422,8 +449,15 @@ func endSubscriptions(ctx context.Context, rep *retireReport) {
 	}
 }
 
+// beforeResumeCancel is a test seam: it runs after the retire left the gate and before the resume
+// cancel, where a person's start and a new booking can land. Nil in production.
+var beforeResumeCancel func(name string)
+
 // cancelResume cancels the booked usage-limit resume.
 func cancelResume(rep *retireReport) {
+	if beforeResumeCancel != nil {
+		beforeResumeCancel(rep.Name)
+	}
 	cancelled, left := cancelBookedResume(rep.Name, rep.resumeIDs)
 	rep.ResumeCancelled = rep.ResumeCancelled || cancelled
 	rep.Unended = appendNew(rep.Unended, left...)
@@ -440,6 +474,12 @@ func appendNew(list []string, add ...string) []string {
 
 // bookedResumeIDs reads the resume bookings the session's episode holds now.
 func bookedResumeIDs(name string) []string {
+	// Under the episode lock: a sweep that began before the retire and is still booking holds it,
+	// so the snapshot waits for the id that sweep is about to save. Lock order: retire gate, then
+	// episode lock.
+	mu := rateLimitEpisodeLock(name)
+	mu.Lock()
+	defer mu.Unlock()
 	st, has := RateLimitStates.Read(name)
 	if !has {
 		return nil

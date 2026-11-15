@@ -27,6 +27,7 @@ type SessionStatus struct {
 	// turnStart marks a write made by a driver that started a turn itself (PersistTurnStart); it is
 	// never stored.
 	turnStart bool
+	startKey  string
 	State     string `json:"state"` // "working" | "idle"
 	TS        string `json:"ts"`    // RFC3339
 	// TurnEnd marks an idle that was written by a turn's ACTUAL end (Stop hook /

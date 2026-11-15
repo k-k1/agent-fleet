@@ -909,23 +909,14 @@ func TestRetireDoesNotCancelAResumeABookedAfterItsGate(t *testing.T) {
 	if err := RateLimitStates.Write("a", rateLimitState{At: at, ResumeAt: at, ScheduleID: "sch_old"}); err != nil {
 		t.Fatal(err)
 	}
-	ep := rateLimitEpisodeLock("a")
-	ep.Lock() // holds the retire's cancel back, after it left the gate
-	done := make(chan struct{})
-	go func() { postRetire(t, "a"); close(done) }()
-	for i := 0; i < 200; i++ { // the retire has marked, stopped and released the gate
-		if m, _ := session.ReadMeta("a"); m.RetiredAt != "" && m.StoppedAt != "" {
-			break
+	beforeResumeCancel = func(name string) { // after the retire left the gate
+		clearRetired(name) // the person's start
+		if err := RateLimitStates.Write(name, rateLimitState{At: at, ResumeAt: at, ScheduleID: "sch_new"}); err != nil {
+			t.Error(err)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	time.Sleep(100 * time.Millisecond)
-	clearRetired("a") // the person's start
-	if err := RateLimitStates.Write("a", rateLimitState{At: at, ResumeAt: at, ScheduleID: "sch_new"}); err != nil {
-		t.Fatal(err)
-	}
-	ep.Unlock()
-	<-done
+	t.Cleanup(func() { beforeResumeCancel = nil })
+	postRetire(t, "a")
 	st, has := RateLimitStates.Read("a")
 	if !has || st.ScheduleID != "sch_new" {
 		t.Fatalf("the person's new episode was removed: %+v %v", st, has)
@@ -934,5 +925,56 @@ func TestRetireDoesNotCancelAResumeABookedAfterItsGate(t *testing.T) {
 	defer mu.Unlock()
 	if strings.Join(dropped, ",") != "sch_old" {
 		t.Fatalf("cancelled %v, want only sch_old", dropped)
+	}
+}
+
+// The Agent died after a member's mark was written and before its confirmation; a person started
+// the session before the recovery ran. It is theirs: the recovery must not mark and stop it.
+func TestReconcileRetiredRespectsAPersonsStartAfterAMarkCrash(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+	in := mustBeginRetire(t, "p")
+	retireOne(context.Background(), &retireReport{Name: "p", Unended: []string{}}, in, false)
+	if err := in.pending("c"); err != nil { // the crash: pending written, then marked, never confirmed
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	UpdateSessionMeta("c", func(m *session.Meta) bool { m.RetiredAt = "2026-11-15T10:00:00Z"; return true })
+	clearRetired("c") // the person's start before the recovery
+	ReconcileRetired(context.Background())
+	if m, _ := session.ReadMeta("c"); m.RetiredAt != "" {
+		t.Fatal("the recovery retired a session a person had started")
+	}
+}
+
+// A sweep that began before the retire and is still booking holds the episode lock; the retire's
+// snapshot waits for it, so that booking is cancelled too.
+func TestRetireCancelsABookingThatFinishesAfterItBegan(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "a"})
+	var dropped []string
+	var mu sync.Mutex
+	prev := dropRateLimitSchedule
+	dropRateLimitSchedule = func(id string) error { mu.Lock(); dropped = append(dropped, id); mu.Unlock(); return nil }
+	t.Cleanup(func() { dropRateLimitSchedule = prev })
+	ep := rateLimitEpisodeLock("a")
+	ep.Lock() // the sweep, waiting for the Control Plane to answer
+	done := make(chan struct{})
+	go func() { postRetire(t, "a"); close(done) }()
+	time.Sleep(300 * time.Millisecond)
+	at := time.Now().Add(time.Hour).Format(time.RFC3339)
+	if err := RateLimitStates.Write("a", rateLimitState{At: at, ResumeAt: at, ScheduleID: "sch_auto"}); err != nil {
+		t.Fatal(err)
+	}
+	ep.Unlock()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(dropped, ",") != "sch_auto" {
+		t.Fatalf("cancelled %v, want sch_auto", dropped)
+	}
+	if _, has := RateLimitStates.Read("a"); has {
+		t.Fatal("the late booking's episode remains")
 	}
 }

@@ -63,6 +63,8 @@ var Entries = []string{
 	"session-first-turn",
 	// A retire in progress, for the start-up recovery (sessionx session_retire.go).
 	"session-retire-intent",
+	// When a person last cleared a session's retired mark (sessionx session_retire.go).
+	"session-retire-cleared",
 	"session-injections",
 	"session-auth-resume",
 	"session-abort-resume",

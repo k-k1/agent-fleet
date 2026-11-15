@@ -38,6 +38,11 @@ type FirstTurn struct {
 	Delivering bool `json:"delivering,omitempty"`
 	// FirstPrompt is the prompt id of the first turn when the kind has one (claude, codex hooks).
 	FirstPrompt string `json:"firstPrompt,omitempty"`
+	// LastKey identifies the input the last explicit (driver) start was for; Optimistic says the
+	// start counted so far came from the create's optimistic working write, which the driver's own
+	// start then confirms instead of counting again.
+	LastKey    string `json:"lastKey,omitempty"`
+	Optimistic bool   `json:"optimistic,omitempty"`
 	// Starts counts the turn starts seen since ArmedAt; StartAt is the first one's time.
 	Starts  int    `json:"starts,omitempty"`
 	StartAt string `json:"startAt,omitempty"`
@@ -119,6 +124,17 @@ func noteFirstTurnWrite(sid string, s SessionStatus) {
 			break
 		}
 		prev, had := Read(sid)
+		if s.turnStart && t.Starts >= 1 {
+			if s.startKey != "" && s.startKey == t.LastKey {
+				return // the same input started twice (a driver marks it at send and again on the native start)
+			}
+			if t.Starts == 1 && t.Optimistic && t.LastKey == "" {
+				// The create's optimistic working write came first; this is the driver's own
+				// start of the same turn.
+				t.Optimistic, t.LastKey = false, s.startKey
+				break
+			}
+		}
 		start := s.turnStart || !had || (prev.State == "idle" && !prev.InputNotDelivered)
 		if !start {
 			// A heartbeat, the answer to a question or permission, or the input of this same turn
@@ -130,6 +146,11 @@ func noteFirstTurnWrite(sid string, s SessionStatus) {
 			return
 		}
 		t.Starts++
+		if s.turnStart {
+			t.LastKey, t.Optimistic = s.startKey, false
+		} else {
+			t.Optimistic = true
+		}
 		if !t.Delivering {
 			t.Void = true // a turn that is not the delivery's prompt's
 		}
@@ -195,7 +216,7 @@ func noteObservedFirstTurnEnd(sid, at string) {
 // a turn start whatever the record said before. A Managed turn's start carries no prompt id and
 // the record may still say working from a turn whose end nobody saw (the Agent was not running),
 // so the state alone cannot tell this start from a heartbeat.
-func PersistTurnStart(sid string) {
-	persist(sid, SessionStatus{State: "working", turnStart: true})
+func PersistTurnStart(sid, key string) {
+	persist(sid, SessionStatus{State: "working", turnStart: true, startKey: key})
 	RemoveCompletionKey(sid)
 }

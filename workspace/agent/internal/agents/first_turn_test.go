@@ -39,3 +39,43 @@ func TestManagedFirstTurnSettlesWithTheOptimisticWorkingWrite(t *testing.T) {
 		t.Fatalf("first turn = %+v ok=%v", got, ok)
 	}
 }
+
+// The create's optimistic working write usually comes before the pump's own start of the same
+// turn: the second is a confirmation, not another turn.
+func TestOptimisticWorkingBeforeTheManagedStartIsTheSameTurn(t *testing.T) {
+	captureNotifier(t)
+	const sid = "managed-opt-first"
+	status.ArmFirstTurn(sid, false)
+	status.MarkFirstTurnDelivering(sid)
+	status.PersistRev(sid, "working") // markSessionWorking after Send
+	MarkTurnStartRun(sid, TurnInput{Prompt: "task", ClientMessageID: "c1"})
+	MarkTurnEnd(sid, TurnCompleted)
+	if got, ok := status.ReadFirstTurn(sid); !ok || got.Outcome != status.TurnOutcomeClean {
+		t.Fatalf("first turn = %+v ok=%v", got, ok)
+	}
+}
+
+// codex marks the same input at send and again on its turn/started notification.
+func TestTheSameInputStartedTwiceIsOneTurn(t *testing.T) {
+	captureNotifier(t)
+	const sid = "managed-twice"
+	status.ArmFirstTurn(sid, false)
+	status.MarkFirstTurnDelivering(sid)
+	in := TurnInput{Prompt: "task", ClientMessageID: "c1"}
+	MarkTurnStartRun(sid, in)
+	MarkTurnStartRun(sid, in)
+	MarkTurnEnd(sid, TurnCompleted)
+	if _, ok := status.ReadFirstTurn(sid); !ok {
+		t.Fatal("one input started twice voided the first turn")
+	}
+	// A different input while the first turn has not ended is a second turn.
+	const sid2 = "managed-two"
+	status.ArmFirstTurn(sid2, false)
+	status.MarkFirstTurnDelivering(sid2)
+	MarkTurnStartRun(sid2, in)
+	MarkTurnStartRun(sid2, TurnInput{Prompt: "other", ClientMessageID: "c2"})
+	MarkTurnEnd(sid2, TurnCompleted)
+	if got, ok := status.ReadFirstTurn(sid2); ok {
+		t.Fatalf("a second input's turn settled the ledger: %+v", got)
+	}
+}
