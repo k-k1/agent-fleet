@@ -246,15 +246,16 @@ not see muse or cursor at all.
   always reports that provider is **not measured**. Having no credential to fingerprint, they carry the one fixed
   binding `opencode-zen@free` (D5b) wherever their credentials are resolved when the call starts: the launch record
   and the assistant chat's rows.
-- **An opencode launch with no model named** resolves on the model opencode will choose. Its documented order is the
-  `--model` flag (af passes none), then the config's `model`, then the last model used, then the first model by its
-  internal priority.
-  - It resolves on the config's `model` when the config files that apply to the launch (global, and its project's)
-    agree on one, and no agent or mode in them sets a model of its own.
-  - Otherwise it does not resolve. The later steps depend on what the launch's project and opencode's own credential
-    store make available, which nothing af holds proves at launch.
-  - An unresolved record (`{}`) is no record: under a restriction a create follows D11b's order, and a resume or a
-    running session is judged as having none.
+- **An opencode launch with no model named does not resolve.** Nothing af reads at launch proves which model it will
+  run:
+  - opencode falls back from a configured `model` that is unavailable or disabled
+    (https://opencode.ai/docs/models/#defaults);
+  - an agent's own model, from JSON or Markdown and global or project files, overrides it;
+  - the last model used, and opencode's own priority, depend on what the project and opencode's credential store make
+    available.
+  - Its record stays `{}`, and an unresolved record is no record. Under a restriction a create follows D11b's order (the
+    member's default route, else `route_required`, which tells the member to name a model or set a default route). A
+    resume or a running session is judged as having none.
   - Follow-ups: #4227 (an authoritative per-directory answer from opencode) and #4228 (per-call bindings for
     opencode's session rows).
 - **A kind with more than one login mode resolves per mode, at execution.** muse resolves to `muse-login` or

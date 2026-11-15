@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
-	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -54,85 +52,21 @@ var credentialView = func() (keys map[string]string, pref string, account oauthS
 
 // ResolveLaunch implements agents.CredentialResolver: the route of the model the session is
 // launched on, from its provider id (ADR 0138 D2), and the credential the stored keys or the
-// account login give that provider. A session can change model later; this is the launch. With no
-// model named, the model opencode will choose (defaultModel). A launch whose model or payer
-// cannot be told resolves to nothing rather than to a guess.
+// account login give that provider. A session can change model later; this is the launch. A
+// launch on a provider whose payer cannot be told resolves to nothing rather than to a guess, and
+// so does one on opencode's own default model (no model named): opencode falls back from a
+// configured model that is unavailable or disabled, and an agent's own model (JSON or Markdown,
+// global or project) overrides it, so nothing read at launch proves which model will run.
 func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
 	keys, pref, acct := credentialView()
-	return resolveModel(launchModel(m.Model, append(globalConfigFiles(), projectConfigFiles(m)...)), keys, pref, acct,
-		engineProviderIDs())
+	return resolveModel(m.Model, keys, pref, acct, engineProviderIDs())
 }
 
 // ModelLaunch is ResolveLaunch for an opencode run outside any session (the assistant chat and the
 // one-shots), on model.
 func ModelLaunch(model string) routes.Launch {
 	keys, pref, acct := credentialView()
-	// The chat runs in a working directory under the state directory whose own config (af's)
-	// sets no model; the directories above it (the home directory's opencode.json among them)
-	// are read like any project's.
-	files := append(globalConfigFiles(), projectConfigFiles(session.Meta{Dir: paths.AgentStateDir()})...)
-	return resolveModel(launchModel(model, files), keys, pref, acct, engineProviderIDs())
-}
-
-// launchModel is model when it names one, else defaultModel over the config files that apply.
-func launchModel(model string, files []string) string {
-	if _, _, ok := splitModel(model); ok {
-		return model
-	}
-	return defaultModel(files)
-}
-
-// defaultModel is the model opencode will run a launch that names none on, or "" when that
-// cannot be told. opencode's documented order is the --model flag (af passes none), then the
-// config's "model", then the last model used, then the first by its internal priority. Only the
-// config can be read with certainty:
-//   - The config's "model", when the files that set one agree. Which of two disagreeing files
-//     wins is opencode's merge order, not a contract, so disagreement resolves to nothing, and so
-//     does a file that cannot be parsed but mentions "model".
-//   - An agent (or a legacy mode) with a model of its own overrides it for that agent, so a file
-//     that sets one resolves to nothing.
-//   - Without a configured model, nothing: the last model used and opencode's priority depend on
-//     the providers this launch's project and opencode's own credential store make available,
-//     which nothing af holds proves at launch.
-func defaultModel(files []string) string {
-	set := map[string]bool{}
-	for _, f := range files {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			continue
-		}
-		var top struct {
-			Model *string                    `json:"model"`
-			Agent map[string]json.RawMessage `json:"agent"`
-			Mode  map[string]json.RawMessage `json:"mode"`
-		}
-		if json.Unmarshal(stripJSONC(b), &top) != nil {
-			if strings.Contains(string(b), `"model"`) {
-				return ""
-			}
-			continue
-		}
-		for _, entries := range []map[string]json.RawMessage{top.Agent, top.Mode} {
-			for _, raw := range entries {
-				var a struct {
-					Model *string `json:"model"`
-				}
-				if json.Unmarshal(raw, &a) == nil && a.Model != nil && strings.TrimSpace(*a.Model) != "" {
-					return ""
-				}
-			}
-		}
-		if top.Model != nil && strings.TrimSpace(*top.Model) != "" {
-			set[strings.TrimSpace(*top.Model)] = true
-		}
-	}
-	if len(set) != 1 {
-		return ""
-	}
-	for m := range set {
-		return m
-	}
-	return ""
+	return resolveModel(model, keys, pref, acct, engineProviderIDs())
 }
 
 func resolveModel(model string, keys map[string]string, pref string, acct oauthState, engines []string) routes.Launch {
