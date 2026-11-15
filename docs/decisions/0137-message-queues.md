@@ -527,9 +527,9 @@ made the text above concrete or departed from it. Where a point only confirms §
 - **Closing, then stopping.** A clean close records that a retire is owed. A retire the Agent has not confirmed is
   repeated on later ticks, and a stopped workspace is not woken for the retire of a delivery that has closed. The
   repeats end with a result kept on the delivery: the Agent said `complete`; the Agent said the root was released (a
-  person has the session); everything but released children is stopped; the Agent refused the session as not a
-  root, which is a fault and is logged; or the session is missing from a list read after the close. A 404 is not a
-  confirmation.
+  person has the session); the Agent reported released children and confirmed that every other session is stopped
+  with nothing left unended; the Agent refused the session as not a root, which is a fault and is logged; or the
+  session is missing from a list read after the close. A 404 is not a confirmation.
 - **Two versions side by side.** A database constraint refuses a clean close of a delivery whose last report holds
   it, so a Control Plane older than step 2 cannot free that slot by its own rule. The count of clear reads does not
   trust a count the older rule wrote. Rollout rule, with step 1's: turn the tenant switch on only when every Control
