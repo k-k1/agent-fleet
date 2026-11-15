@@ -85,6 +85,10 @@ type held struct {
 type floor struct {
 	Revision    int64 `json:"revision"`
 	Restricting bool  `json:"restricting"`
+	// SeenStart mirrors held.SeenStart, so the receipt of an unknown start marker survives a lost
+	// copy: without it, an unrestricted tenant whose copy was lost would be re-blocked by a
+	// marker it had already taken.
+	SeenStart string `json:"seenStart,omitempty"`
 }
 
 // floorState is what Open found in the floor file.
@@ -107,11 +111,12 @@ func readFloor(path string) (floor, floorState) {
 	var wire struct {
 		Revision    *int64 `json:"revision"`
 		Restricting *bool  `json:"restricting"`
+		SeenStart   string `json:"seenStart"`
 	}
 	if json.Unmarshal(b, &wire) != nil || wire.Revision == nil || wire.Restricting == nil || *wire.Revision < 0 {
 		return floor{}, floorUntrusted
 	}
-	return floor{Revision: *wire.Revision, Restricting: *wire.Restricting}, floorOK
+	return floor{Revision: *wire.Revision, Restricting: *wire.Restricting, SeenStart: wire.SeenStart}, floorOK
 }
 
 // placeholder allows nothing and restricts, unconfirmed.
@@ -176,20 +181,20 @@ func Open(path string) *Store {
 		// At a tie the two must agree: the floor is written first, so a floor that disagrees
 		// with a copy at its own revision is the newer of the two (a copy that failed to land).
 		s.h = c
+		if f.Revision == c.Policy.Revision {
+			// The floor is written first: where the two disagree on the receipt, the floor's
+			// is the newer one (a copy that failed to land after recording a marker).
+			s.h.SeenStart = f.SeenStart
+		}
 		s.floorOK = f.Revision == c.Policy.Revision
 	case fs == floorOK && !f.Restricting:
-		s.h = held{Policy: Policy{Revision: f.Revision, Allowed: []string{}}, Held: true}
-		if copyErr == nil {
-			s.h.SeenStart = c.SeenStart
-		}
+		s.h = held{Policy: Policy{Revision: f.Revision, Allowed: []string{}}, Held: true, SeenStart: f.SeenStart}
 		s.floorOK = true
 	case fs == floorOK:
 		log.Printf("route policy: the copy at %s cannot be trusted (%v) behind a restricting floor at revision %d; allowing nothing until the Control Plane answers",
 			path, copyErrOr(copyErr, "older than the floor"), f.Revision)
 		s.h = placeholder(f.Revision, false)
-		if copyErr == nil {
-			s.h.SeenStart = c.SeenStart
-		}
+		s.h.SeenStart = f.SeenStart
 		s.floorOK = true
 	default:
 		rev := int64(0)
@@ -319,8 +324,9 @@ func (s *Store) take(p Policy, confirmedAt int64, live bool) (bool, error) {
 // that then fails to land is caught at the next start), then the copy. next is held in memory
 // whatever the disk does: it is the rule to enforce now. s.mu must be held.
 func (s *Store) persistLocked(next held) error {
-	want := floor{Revision: next.Policy.Revision, Restricting: next.Policy.restricting()}
-	floorMatches := s.floorOK && s.h.Held && s.h.Policy.Revision == want.Revision && s.h.Policy.restricting() == want.Restricting
+	want := floor{Revision: next.Policy.Revision, Restricting: next.Policy.restricting(), SeenStart: next.SeenStart}
+	floorMatches := s.floorOK && s.h.Held && s.h.Policy.Revision == want.Revision && s.h.Policy.restricting() == want.Restricting &&
+		s.h.SeenStart == want.SeenStart
 	s.h = next
 	if !floorMatches {
 		s.floorOK = false

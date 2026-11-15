@@ -606,3 +606,66 @@ func TestHealthyCadenceCountsFromRequestStart(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// The receipt of an unknown start marker survives a lost copy: an unrestricted tenant that took
+// the marker and was loosened by a live answer is not re-blocked by it after its copy is lost.
+func TestLostCopyKeepsTheStartReceipt(t *testing.T) {
+	s, _ := testStore(t)
+	if _, err := s.Accept(open1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SeedUnknown("start-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Accept(open1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := reopen(s)
+	if !r.Allows("openai-api") {
+		t.Fatalf("the valid open floor should allow everything: %+v", r.State())
+	}
+	t.Setenv(EnvPolicy, `{"unknown":true,"id":"start-1","issuedAt":1}`)
+	r.seedFromEnv()
+	if !r.Allows("openai-api") || r.Gate() != nil {
+		t.Fatalf("a marker already taken re-blocked the tenant after its copy was lost: %+v", r.State())
+	}
+}
+
+// A marker recorded without changing the policy (a policy that already knows the ceiling) whose
+// copy then fails to land is still remembered: the floor carries the receipt.
+func TestStartReceiptSurvivesAFailedCopy(t *testing.T) {
+	s, _ := testStore(t)
+	ceiling := Policy{Revision: 4, Restricted: true, CeilingRestricted: true, Allowed: []string{"bedrock"}}
+	if _, err := s.Accept(ceiling); err != nil {
+		t.Fatal(err)
+	}
+	old := rename
+	t.Cleanup(func() { rename = old })
+	rename = func(a, b string) error {
+		if b == s.path {
+			return errors.New("injected copy failure")
+		}
+		return old(a, b)
+	}
+	if _, err := s.SeedUnknown("start-9"); err == nil {
+		t.Fatal("control: the copy write should fail")
+	}
+	rename = old
+	r := reopen(s)
+	if st := r.State(); st.Policy.Revision != 4 || st.Placeholder {
+		t.Fatalf("after the restart: %+v", st)
+	}
+	// Loosened by a live answer, then restarted with the same marker: not re-blocked.
+	if _, err := r.Accept(Policy{Revision: 5, Allowed: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	r2 := reopen(r)
+	t.Setenv(EnvPolicy, `{"unknown":true,"id":"start-9","issuedAt":1}`)
+	r2.seedFromEnv()
+	if !r2.Allows("openai-api") {
+		t.Fatalf("the marker taken before the failed copy re-blocked the tenant: %+v", r2.State())
+	}
+}
