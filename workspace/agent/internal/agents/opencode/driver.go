@@ -98,6 +98,13 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	// route is fixed for the session's life, so a handle never moves between the two.
 	// A stop of this session while the server starts or the conversation is prepared wins: the
 	// handle is not published alive after it (dropEpoch).
+	// On the shared serve, a config file in the session's own directories could override the
+	// credential policy's provider pin: under a restriction that session does not start.
+	if m.Route == nil {
+		if err := policyConfigErr(projectConfigFiles(m)); err != nil {
+			return nil, err
+		}
+	}
 	epoch := dropEpochOf(m.Name)
 	ensure := func() (string, int, error) { return Serve().Ensure() }
 	if m.Route != nil {
