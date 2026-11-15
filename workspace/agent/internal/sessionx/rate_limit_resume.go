@@ -219,6 +219,12 @@ func rateLimitTickSession(m session.Meta, now time.Time) {
 	episodeMu := rateLimitEpisodeLock(m.Name)
 	episodeMu.Lock()
 	defer episodeMu.Unlock()
+	// A retired session books nothing. Checked under the episode lock the retire's snapshot also
+	// takes, after the mark: either this step holds the lock first (the retire waits and cancels
+	// what it books) or it sees the mark.
+	if fresh, ok := session.ReadMeta(m.Name); !ok || isRetired(fresh) {
+		return
+	}
 	st, has := RateLimitStates.Read(m.Name)
 	if has && st.MovedFrom != "" {
 		st = settleMovedFrom(m, st)

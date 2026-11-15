@@ -65,6 +65,7 @@ source_of_truth: "コード（本書は地図と設計意図）"
 | 操作 | エンドポイント | 効果 |
 |---|---|---|
 | halt | `POST /sessions/{name}/halt` | driver を止め、メタデータは残す。停止中として一覧に残り、再開できる |
+| retire | `POST /sessions/{name}/retire` | セッションを再び起動しうるものを Agent が持っている分すべて終わらせ、そのセッションが始めたセッションにも同じことをして、全部を halt する。下記 |
 | 削除 | `DELETE /sessions/{name}[?stop=1]`、または旧名の `POST /sessions/{name}/stop` | セッションを**ごみ箱へ移す**（`trashSession`、[decisions/0101](../decisions/0101-session-delete-via-trash.ja.md)）。下記 |
 | archive / restore | `POST /sessions/{name}/archive`・`…/restore` | 行を隠す／停止中として戻す |
 | recreate | `POST /sessions/{name}/recreate` | 旧スロットをアーカイブし、同じディレクトリ・kind・driver・設定で新しい会話を始める。起動に失敗したら旧スロットを戻す |
@@ -78,6 +79,43 @@ source_of_truth: "コード（本書は地図と設計意図）"
   - **削除は作業コピーに触らない**。だから戻したセッションが消えたフォルダへ戻ることはない。
 - **セッションを畳む経路はどれも、持ち越し中の作業を先に昇格させる**（`PromoteCarriedFor`。
   kill やハンドル破棄より前）。そういう経路を新しく足すときも同じにすること。
+- **セッションを再び起動しうるものと retire**（ADR 0137 §6）。halt は watch・タイマー・予約済みの
+  利用上限の再開を残し、どれもセッションを起動し直す。生きている行も停止中の行も、まだ持っているものを
+  行に載せる。
+  - `wakers: {watches, timers}` は、セッションが持ち、まだそれを起動するか入力を入れうる購読の数。
+    組み込みの PR 購読と、通知を配達している最中のものは数える。メンバー宛ての組み込みは数えない。
+    `notify: parent` の watch は親に数える。`timers` は期限のあるもの。両方 0 なら項目ごと出さない。
+    watch の状態を読めないときは `wakers` を付けず `wakersUnknown: true` を付ける。確信のない 0 は
+    返さない（`Engine.Wakers`、`internal/watch/owner.go`）。
+  - `GET /sessions` は `sessions` の隣に `"queueReport": 1` を載せる。Control Plane が、何も持たないから
+    `wakers` を省く Agent と、何も言わない古い Agent を見分けるため。
+  - `POST /sessions/{name}/retire` は、そのセッションと、それが始めた全セッション（深さを問わない。
+    `origin == "session"` と `originSession` の連鎖で、`spendDescendants` と同じ辿り方）について、
+    上のものを全部終わらせ、予約済みの再開を取り消し、halt する。答えは、セッションの一覧、それぞれで
+    終わらせたもの、終わらせられなかったもの（Control Plane が確認しなかった取り消しで、再試行される）と、retire の最中に人が start したセッション。後者は `released: true` で実際の状態（`running`）を返し、`stopped` とは言わない。retire はそれとその下を一切触らず、答えの `complete` は false になる。
+    2 回目は同じセッションを返し、それ以上は何も終わらせない。MCP ツールは無い。
+    retire は root 専用で、他のセッションが始めたセッションには、root の名前を添えた
+    `409 retire_not_root` を返す。だから 2 つの retire の木は交わらず、意図が別の root の retire の
+    印に出会うことはない（Control Plane が retire するのは配達自身のセッションで、それは常に root）。
+    1 つの root の retire は、意図から終わりまで同時に 1 つだけ走り、起動時の回復も同じ root ごとの
+    ロックを取る。2 つ目の要求は、1 つ目が終わるまで待ってから走る。待っている間（またはロックが空いた瞬間）に期限が切れた要求は `503 retire_wait_cancelled` を返し、何もしない。意図の無い印は終わった retire で、回復は触らない。
+  - meta の `retiredAt` が、終わらせたものを終わったままにする。付けた瞬間から、
+    watch の sink は起動も注入もせず、Managed への入力は（出どころを問わず）`409 session_retired`
+    で断り、自動の `/start` も断り、子の枠も取らせず、エンジンは新しい購読と組み込みを断り、予約された
+    利用上限の再開も断る。retire の意図（root と retire id）はディスクに残り、途中で終わった retire は（子孫ごと）次の起動で
+    Agent が完了させる。各メンバーは gate の中で読む。その retire の印があれば続きをやり、人の start が
+    同じ meta 書込みで残す墓標（`retireClearedID`）があれば触らず、どちらも無ければ未到達として初めて印を付ける。
+    利用上限の予約経路は印の付いたセッションを断るので、retire は episode にあるものを取り消す。ロックの順は、ライフサイクル gate → retire gate。`POST /sessions/{name}/start` が外すので、利用者が Console から再開すれば
+    普通のセッションに戻る。
+- **キュー配信の最初のターンの終わり方**（ADR 0137 §7）: `queueDelivery` を持つセッションの行に
+  `queueTurn: {outcome, ms, endedAt}`。`outcome` は `clean`・`turn-failed`・`turn-aborted`
+  （スケジュール実行が記録する値）で、理由を記録しない kind では空。専用の台帳（`status.FirstTurn`）に
+  持つ。プロンプトを配る前に用意し、ターンの開始がちょうど 1 回あった後の最初の終了で確定する
+  （driver が自分で始めたターンは、記録の状態によらず開始 1 回と数える。create の楽観的な working 書込みを
+  確認できるのは、配達入力自身（ClientMessageID）の開始だけで、それ以外の開始・id の無い開始・未確認の
+  まま Agent が再起動した場合は ledger を void にする。最初の prompt id も保持する）。
+  だから停止で消えず、後のターンが書き換えることもない。それを示せないとき（開始か終了を見逃した、
+  間の停止で status が消えた）は、項目を出さないままにする。
 
 ### 再開
 

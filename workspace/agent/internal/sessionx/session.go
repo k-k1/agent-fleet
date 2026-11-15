@@ -186,6 +186,8 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	if !alive && rateLimitWatched(m) {
 		s.RateLimitResumeAt = rateLimitBookedAt(m, time.Now())
 	}
+	fillWakers(&s, m)
+	fillQueueTurn(&s, m)
 	fillStateSince(&s, m, realSinceProbes)
 	fillBackgroundSince(&s, time.Now())
 	if alive {
@@ -357,3 +359,36 @@ func forkTitle(src session.Meta) string {
 }
 
 // shellQuote lives in internal/session as session.ShellQuote.
+
+// watchWakers is the engine's answer to "what does this session hold that could start it?",
+// replaceable by tests that must not build the Agent's engine.
+var watchWakers = func(name string) (watches, timers int, ok bool) { return watchEngine().Wakers(name) }
+
+// fillWakers sets what would start the session again, on live and stopped rows alike (ADR 0137
+// §6). Nothing is sent when it holds nothing; when the engine's state could not be read the row
+// says so instead, because a zero it is not sure of would let the Control Plane close a
+// delivery whose session a watch can still wake.
+func fillWakers(s *session.Session, m session.Meta) {
+	watches, timers, ok := watchWakers(m.Name)
+	switch {
+	case !ok:
+		s.WakersUnknown = true
+	case watches > 0 || timers > 0:
+		s.Wakers = &session.Wakers{Watches: watches, Timers: timers}
+	}
+}
+
+// fillQueueTurn sets how a queue delivery's first turn ended (ADR 0137 §7). The ledger is
+// settled once (status.FirstTurn) and survives a stop and a restart. A delivery whose prompt
+// never went in, or whose delivery nothing confirmed (unknown after a restart), has no first turn,
+// whatever the ledger says.
+func fillQueueTurn(s *session.Session, m session.Meta) {
+	if m.QueueDelivery == "" || m.InitialPromptState != session.InitialPromptDelivered {
+		return
+	}
+	t, ok := status.ReadFirstTurn(session.UUID(m.Dir, m.Name))
+	if !ok {
+		return
+	}
+	s.QueueTurn = &session.QueueTurn{Outcome: t.Outcome, Ms: t.Ms, EndedAt: t.EndedAt}
+}

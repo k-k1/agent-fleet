@@ -414,6 +414,7 @@ POST /sessions/{name}/recreate
 POST /sessions/{name}/rename-branch
 POST /sessions/{name}/respond
 POST /sessions/{name}/restore
+POST /sessions/{name}/retire
 GET /sessions/{name}/route-switch
 POST /sessions/{name}/route-switch
 GET /sessions/{name}/settings

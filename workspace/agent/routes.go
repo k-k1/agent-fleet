@@ -111,6 +111,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/route-switch", sessionx.HandleSessionRouteSwitch)
 	mux.HandleFunc("POST /sessions/{name}/stop", sessionx.HandleStopSession)
 	mux.HandleFunc("POST /sessions/{name}/halt", sessionx.HandleHaltSession)
+	// Retire (ADR 0137 §6): end what would start the session again and everything it started, then
+	// stop them all. Called by the Control Plane, which needs the same path registered; there is
+	// no MCP tool, so a session cannot retire another.
+	mux.HandleFunc("POST /sessions/{name}/retire", sessionx.HandleSessionRetire)
 	mux.HandleFunc("POST /sessions/{name}/recreate", sessionx.HandleRecreateSession)
 	mux.HandleFunc("GET /sessions/archived", sessionx.HandleListArchived)
 	mux.HandleFunc("GET /sessions/usage", sessionx.HandleSessionsUsage)

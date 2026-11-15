@@ -102,14 +102,14 @@ var turnRuns sync.Map // sid -> TurnRun
 // as well, but stopping here avoids creating a goroutine for nothing.
 func MarkTurnStart(sid string) {
 	turnRuns.Store(sid, TurnRun{})
-	status.Persist(sid, "working")
+	status.PersistTurnStart(sid, "")
 }
 
 // MarkTurnStartRun is MarkTurnStart for a turn whose input the driver has in hand: the turn's
 // end is then attributed to that input's run by identity rather than by timing.
 func MarkTurnStartRun(sid string, in TurnInput) {
 	turnRuns.Store(sid, TurnRun{Known: true, Instr: in.Instr})
-	status.Persist(sid, "working")
+	status.PersistTurnStart(sid, in.ClientMessageID)
 }
 
 // runOf is the input the turn of sid that is ending was started with.

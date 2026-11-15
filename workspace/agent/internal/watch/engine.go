@@ -106,6 +106,18 @@ type Engine struct {
 	// 0133 §8, which come and go with the member's definitions). Built-in kinds win; it is
 	// consulted for every other kind and must be safe for concurrent use.
 	Dynamic func(kind string) (Source, bool)
+	// Barred says an owner may hold no new subscription that could start it (a retired session,
+	// ADR 0137 §6). It is asked under the engine's lock when a subscription is added, so one that
+	// was being made while the owner was retired is refused instead of surviving the retire. Nil
+	// bars nobody; it must be cheap and must not call back into the engine.
+	Barred func(owner string) bool
+	// loadFailed: the stored state exists and could not be read, so the empty state in use is
+	// a fallback and not a fact (Wakers).
+	loadFailed bool
+	// inflight counts, per subscription ID, the claimed notices being delivered: a capped
+	// built-in has nothing pending then and a deadline watch may cross its deadline, yet the
+	// notice is still going into the owner (Wakers, EndOwner).
+	inflight map[string]int
 }
 
 // New builds an engine over the given sources.
@@ -135,6 +147,8 @@ func (e *Engine) load() {
 	e.loaded = true
 	if st, ok := e.store.Load(); ok {
 		e.state = st
+	} else if u, can := e.store.(StateUnreadable); can && u.Unreadable() {
+		e.loadFailed = true
 	}
 	if e.state.Subjects == nil {
 		e.state.Subjects = map[SubjectID]SubjectState{}
@@ -299,6 +313,9 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 		return existing, err
 	}
 	defer e.mu.Unlock()
+	if e.Barred != nil && e.Barred(r.Owner) {
+		return Subscription{}, &ErrRefused{fmt.Sprintf("session %s was retired and holds no new watches; resume it to use watch again", r.Owner)}
+	}
 	// An expired twin of this watch, not yet swept by a tick, is dropped: it neither counts
 	// against the limits nor lends its Told versions to the new watch.
 	e.state.Subs = slices.DeleteFunc(e.state.Subs, func(s Subscription) bool {
@@ -877,6 +894,9 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 		}
 		claims = nil
 	}
+	for _, c := range claims {
+		e.markInflightLocked(c, 1)
+	}
 	e.mu.Unlock()
 	for _, o := range gone {
 		e.sink.Forget(o)
@@ -890,6 +910,7 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 			err = e.sink.Inject(c.sub, c.evs)
 		}
 		e.mu.Lock()
+		e.markInflightLocked(c, -1)
 		if err != nil {
 			e.releaseLocked(c)
 		} else {

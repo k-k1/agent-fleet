@@ -31,6 +31,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // nowUTC is the clock for archive ids; a var so tests can pin it.
@@ -171,6 +172,8 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 		}
 	}
 	sessionx.ForgetRuntime(m)
+	// The delivery's first-turn ledger survives a stop and goes only with the session.
+	status.RemoveFirstTurn(session.UUID(m.Dir, m.Name))
 	sessionsearch.Forget(m.Name) // the trash bundle is now the only copy of its text (ADR 0110)
 	removeSessionSideFiles(m.Name)
 	removeTerminalHistory(m.Name)

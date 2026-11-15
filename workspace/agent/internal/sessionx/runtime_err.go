@@ -41,6 +41,11 @@ func writeRuntimeErr(w http.ResponseWriter, err error) {
 	if writeStartRefusal(w, err) {
 		return
 	}
+	if errors.Is(err, errSessionRetired) {
+		// Permanent until a person starts the session: not a runtime fault to retry.
+		httpx.WriteErr(w, http.StatusConflict, "session_retired", err.Error())
+		return
+	}
 	if errors.Is(err, errDriverSwitching) {
 		httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, err.Error())
 		return
@@ -72,6 +77,17 @@ func runtimeErrMessage(err error) string {
 // reason, when its CLI failed to install. Every managed input path (turn, input, answer, bridge,
 // carried) goes through it, so the refusal is not only on the explicit start endpoints.
 func resumeManaged(d agents.Driver, m session.Meta) (agents.ThreadHandle, error) {
+	// A retired session is not started by an input of any kind (peer, schedule, notice, a
+	// member's message): only a person's explicit start clears the mark. The read side is held
+	// across the check and the launch so a retire cannot land between them (retireGates).
+	g := retireGate(m.Name)
+	g.RLock()
+	defer g.RUnlock()
+	if !ManagedAlive(m) {
+		if cur, ok := session.ReadMeta(m.Name); ok && isRetired(cur) {
+			return nil, errSessionRetired
+		}
+	}
 	if !ManagedAlive(m) {
 		if ref := startRefusalOf(m); ref != nil {
 			return nil, &StartRefusalError{ref}

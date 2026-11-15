@@ -278,6 +278,9 @@ func serve() {
 	imagegen.ClearInputSets()
 	// A session whose initial prompt was still being typed when the previous process ended
 	// would read "sending" forever (ADR 0100 decision 2); settle those as unknown.
+	// A first-turn ledger still waiting for its input's start may belong to an input this process
+	// lost; its turn is not to be reported (status.FirstTurn).
+	status.VoidUnconfirmedFirstTurns()
 	if n := sessionx.RecoverPendingInitialPrompts(); n > 0 {
 		log.Printf("initial-prompt: %d pending delivery(ies) from the previous process marked unknown", n)
 	}
@@ -391,6 +394,13 @@ func serve() {
 	sessionx.StartStalledTreeWatch()
 	sessionx.StartPRFeedbackWatch()
 	sessionx.StartWatchEngine()
+	// A retire the previous process did not finish (marked, still running or not yet swept).
+	go func() {
+		time.Sleep(45 * time.Second) // after tmux and the drivers are up
+		if n := sessionx.ReconcileRetired(context.Background()); n > 0 {
+			log.Printf("retire: finished %d retire(s) the previous process had begun", n)
+		}
+	}()
 
 	// Self-hosted inference engines (ADR 0071 P0): ask the CP which engines this deployment
 	// runs and declare them in opencode's config, so `llamacpp/<model>` is in the launch
