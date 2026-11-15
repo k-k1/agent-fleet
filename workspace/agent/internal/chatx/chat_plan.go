@@ -447,7 +447,7 @@ func HandleChatPlanRefresh(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	changed, err := refreshPlan(ctx, c)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
+		writeChatErr(w, err)
 		return
 	}
 	if changed {

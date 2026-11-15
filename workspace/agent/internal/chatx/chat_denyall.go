@@ -194,7 +194,7 @@ func OneShotDenyAll(ctx context.Context, feature string, tier OneShotTier, perso
 
 // runClaudeDenyAll is claude's runner: probe with the same argv and environment and a prompt that
 // is not the transcript, then run, and read the init event of the real run.
-func runClaudeDenyAll(ctx context.Context, persona, prompt, selected string) (string, error) {
+func runClaudeDenyAll(ctx context.Context, persona, prompt, selected string) (_ string, err error) {
 	if err := verifyClaudeDenyAll(ctx, persona, selected); err != nil {
 		return "", err
 	}
@@ -203,7 +203,9 @@ func runClaudeDenyAll(ctx context.Context, persona, prompt, selected string) (st
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindClaude, selected); policyErr != nil {
 		return "", policyErr
 	}
-	defer usagex.RecordCall(ctx, &call, time.Now())
+	ctx, done := trackCall(ctx, call.Route)
+	defer done(&err)
+	defer recordCall(ctx, &call, time.Now())
 	started := routeNow()
 	cmd := claudeOneShotCmd(ctx, claudeOneShotArgsFormat(persona, selected, true))
 	cmd.Stdin = strings.NewReader(prompt)

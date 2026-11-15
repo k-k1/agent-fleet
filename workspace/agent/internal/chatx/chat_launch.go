@@ -1,8 +1,11 @@
 package chatx
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -10,9 +13,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // chatLaunches resolves, per backend, what a chat or one-shot call runs on and the binding of
@@ -51,18 +56,82 @@ var chatObserveBudget = routes.ObserveBudget
 // call is the error its caller returns, so a fallback order never moves to a forbidden backend.
 func chatLaunchChecked(kind, model string) (route, binding string, err error) {
 	route, binding = chatLaunch(kind, model)
+	return route, binding, routeChecked(kind, route)
+}
+
+// routeChecked is the credential policy's answer for a call on kind about to run on route: nil
+// while nothing is restricted and the policy can be confirmed, or the route is allowed. A refusal
+// wraps ErrRoutePolicy, and the store's Gate error when that is the reason.
+func routeChecked(kind, route string) error {
 	if gerr := routepolicy.Active().Gate(); gerr != nil {
-		return route, binding, fmt.Errorf("%w: %v", ErrRoutePolicy, gerr)
+		return fmt.Errorf("%w: %w", ErrRoutePolicy, gerr)
 	}
 	p, restricted := routepolicy.Hiding()
 	switch {
 	case !restricted:
 	case route == "":
-		return route, binding, fmt.Errorf("%w: the route %s would run on cannot be told", ErrRoutePolicy, kind)
+		return fmt.Errorf("%w: the route %s would run on cannot be told", ErrRoutePolicy, kind)
 	case !p.Allows(route):
-		return route, binding, fmt.Errorf("%w: %s would run on %s", ErrRoutePolicy, kind, route)
+		return fmt.Errorf("%w: %s would run on %s", ErrRoutePolicy, kind, route)
 	}
-	return route, binding, nil
+	return nil
+}
+
+// trackCall keeps a running call on route cancellable by the credential policy
+// (routepolicy.Track): when a tighter policy forbids its route, its context is cancelled, which
+// stops its CLI or request. done ends the tracking and turns such a cancel into the ErrRoutePolicy
+// refusal its caller reports, whatever error the stopped call returned; call it deferred with the
+// call's error.
+func trackCall(ctx context.Context, route string) (context.Context, func(err *error)) {
+	ctx, c := routepolicy.Track(ctx, route)
+	return ctx, func(err *error) {
+		c.Done()
+		if routepolicy.Cancelled(ctx) {
+			*err = fmt.Errorf("%w: %w", ErrRoutePolicy, routepolicy.ErrCancelled)
+		}
+	}
+}
+
+// recordCall is usagex.RecordCall, except for a call the credential policy cancelled: like one it
+// refused before it ran, it leaves no ledger row.
+func recordCall(ctx context.Context, c *usagex.Call, started time.Time) {
+	if routepolicy.Cancelled(ctx) {
+		return
+	}
+	usagex.RecordCall(ctx, c, started)
+}
+
+// writeChatErr answers a failed chat call: the credential policy's refusal or cancel with its
+// code (policy_unconfirmed while it cannot be confirmed, route_forbidden otherwise), any other
+// failure as the provider's.
+func writeChatErr(w http.ResponseWriter, err error) {
+	if status, code := policyErrCode(err); code != "" {
+		httpx.WriteErr(w, status, code, err.Error())
+		return
+	}
+	httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
+}
+
+// streamErrEvent is a streamed chat's error event: the message, and the policy's code for a
+// credential policy refusal or cancel.
+func streamErrEvent(err error) map[string]any {
+	ev := map[string]any{"error": err.Error()}
+	if _, code := policyErrCode(err); code != "" {
+		ev["code"] = code
+	}
+	return ev
+}
+
+// policyErrCode is the status and code of a credential policy refusal or cancel, "" for any other
+// error.
+func policyErrCode(err error) (int, string) {
+	switch {
+	case errors.Is(err, routepolicy.ErrUnconfirmed), errors.Is(err, routepolicy.ErrUnrecorded):
+		return http.StatusServiceUnavailable, routes.CodePolicyUnconfirmed
+	case errors.Is(err, ErrRoutePolicy):
+		return http.StatusForbidden, routes.CodePolicyForbidden
+	}
+	return 0, ""
 }
 
 func chatLaunch(kind, model string) (route, binding string) {

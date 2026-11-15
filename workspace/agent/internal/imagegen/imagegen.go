@@ -537,12 +537,28 @@ var providerRanks = []providerRank{
 // ErrRoutePolicy marks an image call the credential policy refuses before it runs (ADR 0138 D12).
 var ErrRoutePolicy = errors.New("the credential policy does not allow this image provider")
 
+// policyCancelErr is the error of a call the credential policy stopped while it ran.
+func policyCancelErr() error { return fmt.Errorf("%w: %w", ErrRoutePolicy, routepolicy.ErrCancelled) }
+
+// policyOnly reports whether every reason in err is the credential policy's: a single refusal or
+// cancel, or a run each of whose candidates the policy refused or stopped.
+func policyOnly(err error) bool {
+	// Only a run's joined attempts are walked: an error that wraps ErrRoutePolicy itself (with a
+	// second cause beside it, such as the cancel) is the policy's whatever else it carries.
+	j, ok := err.(interface{ Unwrap() []error })
+	if !ok || slices.Contains(j.Unwrap(), ErrRoutePolicy) {
+		return errors.Is(err, ErrRoutePolicy)
+	}
+	es := j.Unwrap()
+	return len(es) > 0 && !slices.ContainsFunc(es, func(e error) bool { return !policyOnly(e) })
+}
+
 // providerPolicyErr is the credential policy's answer for a call on provider id, about to run on
 // launch: nil when it may run. Under a restriction a call whose route cannot be told is refused
 // too; while the policy cannot be confirmed or recorded, every call waits (the store's Gate).
 func providerPolicyErr(id string, launch routes.Launch) error {
 	if err := routepolicy.Active().Gate(); err != nil {
-		return fmt.Errorf("%w: %v", ErrRoutePolicy, err)
+		return fmt.Errorf("%w: %w", ErrRoutePolicy, err)
 	}
 	p, restricted := routepolicy.Hiding()
 	switch {
@@ -980,7 +996,15 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 			continue
 		}
 		started := time.Now()
-		res, err := p.Generate(ctx, req)
+		// Tracked while it runs: a tighter policy that forbids its route stops it (D12), and the
+		// order moves on as for a provider it refused; such a stopped call leaves no row.
+		gctx, tracked := routepolicy.Track(ctx, launch.Route)
+		res, err := p.Generate(gctx, req)
+		tracked.Done()
+		if routepolicy.Cancelled(gctx) {
+			attempts = append(attempts, attemptFailure{id: name, err: policyCancelErr()})
+			continue
+		}
 		// Record on every path, including the failed one: an attempt that burned driver tokens
 		// and produced nothing still consumed the user's plan, and a row with ok:false is what
 		// keeps that visible (ADR 0029 §3). Recording INSIDE the loop is what makes a

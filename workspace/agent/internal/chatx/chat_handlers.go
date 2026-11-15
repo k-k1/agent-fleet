@@ -262,7 +262,7 @@ func HandleChatAsk(w http.ResponseWriter, r *http.Request) {
 		NoteTurnResult(ctx, c, actualAgent, err)
 	}
 	if err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
+		writeChatErr(w, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"assistant": a.Name, "reply": reply})
@@ -529,7 +529,7 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 		// Persist the user turn + resume handle even on failure so a retry continues.
 		c.UpdatedAt = NowMs()
 		_ = SaveConv(c)
-		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
+		writeChatErr(w, err)
 		return
 	}
 	MarkReportsDelivered(pendingReports)
@@ -685,7 +685,7 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 		}
 		c.UpdatedAt = NowMs()
 		_ = SaveConv(c) // persist the user turn + resume handle so a retry continues
-		emit(map[string]any{"error": err.Error()})
+		emit(streamErrEvent(err))
 		return
 	}
 	MarkReportsDelivered(pendingReports)
