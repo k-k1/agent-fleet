@@ -212,14 +212,17 @@ type plRun struct {
 			Name string `json:"name"`
 		} `json:"stage"`
 	} `json:"state"`
-	Target struct {
-		RefName string `json:"ref_name"`
-		// Source is the branch of a pull request run, whose ref_name is null.
-		Source   string `json:"source"`
-		Selector struct {
-			Pattern string `json:"pattern"`
-		} `json:"selector"`
-	} `json:"target"`
+	Target plTarget `json:"target"`
+}
+
+type plTarget struct {
+	// RefName is a pointer so that null (a pull request run) and "" stay distinguishable.
+	RefName *string `json:"ref_name"`
+	// Source is the branch of a pull request run, whose ref_name is null.
+	Source   string `json:"source"`
+	Selector struct {
+		Pattern string `json:"pattern"`
+	} `json:"selector"`
 }
 
 type plPage struct {
@@ -436,7 +439,7 @@ func (p *BitbucketPipelines) pollPipeline(ctx context.Context, subject SubjectID
 	wait := time.Duration(0)
 	for i := range runs {
 		r := &runs[i]
-		if (branch != "" && r.Target.RefName != branch) || (name != "" && r.Target.Selector.Pattern != name) {
+		if (branch != "" && r.Target.refName() != branch) || (name != "" && r.Target.Selector.Pattern != name) {
 			continue
 		}
 		if !plStartedAfter(*r, floorBuild, floorUnix) {
@@ -520,14 +523,24 @@ func plStartedAfter(r plRun, floorBuild, floorUnix int64) bool {
 	return t.Unix() >= floorUnix
 }
 
-// plBranchLabel names the branch a run is about for the Data line only. A pull request run has no
-// ref_name (null); its branch is target.source. Identity, version and the @branch filter stay on
+// refName is ref_name as before: "" for null and for empty alike, which is what identity and the
+// @branch filter use.
+func (t plTarget) refName() string {
+	if t.RefName == nil {
+		return ""
+	}
+	return *t.RefName
+}
+
+// plBranchLabel names the branch a run is about for the Data line only. A pull request run has a
+// null ref_name and its branch in target.source; only null falls back, so a present ref_name
+// (even an empty one) is shown as before. Identity, version and the @branch filter stay on
 // ref_name, so what a watch matches is unchanged.
 func plBranchLabel(r plRun) string {
-	if r.Target.RefName != "" {
-		return r.Target.RefName
+	if r.Target.RefName == nil {
+		return r.Target.Source
 	}
-	return r.Target.Source
+	return *r.Target.RefName
 }
 
 func plDone(r plRun) bool { return r.State.Name == "COMPLETED" }

@@ -540,3 +540,34 @@ func TestPullRequestRunDataLineNamesItsSourceBranch(t *testing.T) {
 		t.Fatalf("branch filter took a pull request run: %v %v", evs, err)
 	}
 }
+
+// Only a null ref_name falls back to the source branch: a present one, even empty, is shown as
+// before, and with neither the label is empty as it was.
+func TestBranchLabelFallsBackOnlyForANullRefName(t *testing.T) {
+	for _, c := range []struct {
+		name, target, want string
+	}{
+		{"null ref_name", `{"ref_name":null,"source":"feature/login"}`, "feature/login"},
+		{"absent ref_name", `{"source":"feature/login"}`, "feature/login"},
+		{"empty ref_name, source set", `{"ref_name":"","source":"feature/login"}`, ""},
+		{"ref_name and source", `{"ref_name":"main","source":"feature/login"}`, "main"},
+		{"null ref_name, empty source", `{"ref_name":null,"source":""}`, ""},
+		{"null ref_name, no source", `{"ref_name":null}`, ""},
+	} {
+		var r plRun
+		if err := json.Unmarshal([]byte(`{"target":`+c.target+`}`), &r); err != nil {
+			t.Fatal(err)
+		}
+		if got := plBranchLabel(r); got != c.want {
+			t.Errorf("%s: label %q, want %q", c.name, got, c.want)
+		}
+		// Identity and the @branch filter read ref_name as before: "" for null and empty alike.
+		wantRef := ""
+		if strings.Contains(c.target, `"main"`) {
+			wantRef = "main"
+		}
+		if got := r.Target.refName(); got != wantRef {
+			t.Errorf("%s: refName %q, want %q", c.name, got, wantRef)
+		}
+	}
+}
