@@ -84,6 +84,8 @@ codex・opencode・copilot・cursor・kiro・agy・lcpp・muse は、ダイア�
 Copilot Free プランで使えるのは Auto（copilot では **Copilot Fusion** と表示）だけです。copilot の `/model` 一覧には他のモデルも並びますが、どれを選んでもこの表示で終わります。
 モデルを **「既定」** にして起動し直してください。モデルを指定して使うには、GitHub アカウントに有料の Copilot プランが要ります。
 
+プロバイダのエラー（この「Model … is not available」など）は、会話にエラーの文面として出ます。`get_session_output` でも同じ文面が読めます。そのターンは失敗として終わるので、親セッションの `fleet.session.idle` ウォッチと状態の理由にも失敗（turn-failed）として伝わります。これはマネージドとターミナル（CLI）の両方の実行方式で同じ動きになるはずですが、ターミナル（CLI）はまだ実機で確かめていません。
+
 ## opencode のセッションが「作業中」のまま何も返ってこない
 
 会話の上に「**プロバイダがエラーを返し、エージェントが再試行しています（N 回目）: …**」が出ていないか見てください。

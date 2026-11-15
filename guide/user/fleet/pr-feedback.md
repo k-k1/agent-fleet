@@ -156,6 +156,7 @@ A session waiting on a watch looks idle, so the session's chat view lists its li
 - **End watch** asks first, then ends that watch, the same as the agent's `unwatch`. If the watch had already ended, the row simply goes. Someone who can only view the session sees the rows without the button
 - A watch a child asked to send to its parent (`notify: parent`) shows on the parent's chat view, marked with the child's name
 - The panel hides when the session has no watches
+- An idle session that holds watches shows **Ready · N watches** as its state chip in the header, and the same chip on its session list row and Home card. N is the number of rows in this panel: timers count; the agent's own PR-feedback subscriptions and notices being delivered do not. An older Agent that does not report the count shows plain "Ready"
 
 ### Limits on watches
 
