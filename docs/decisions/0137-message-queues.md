@@ -495,3 +495,72 @@ on a deployment yet. Building it settled the following, which the text above doe
 
 Left out of step 1 and tracked: filing a note added from a worktree under its base repository (§2, #4175); the guide
 page, limits and glossary (#4188); moving the new error codes beside the others (#4187).
+
+*Note, 2026-11-15 (step 2: #4149, built as #4200, #4216, #4233 and #4240).* Step 2 of §11 is merged. Step 1 was seen
+on a deployment the same day (#4148); nothing of step 2 has run on one yet. Building it settled the following, which
+the text above does not say or says differently.
+
+- **What the Agent reports.** Per session row: `wakers` (its watches and its timers, built-in subscriptions and a
+  notice being delivered included), or `wakersUnknown` when the Agent cannot tell. §6 also names a booked resume and
+  the unfinished children: those are not reported again; the Control Plane reads them from fields the row already
+  had (`rateLimitResumeAt`, `origin` and `originSession`). The answer to the session list carries `queueReport: 1`,
+  because a zero count is omitted and an older Agent sends nothing either. For a workspace without the mark the
+  Control Plane keeps step 1's closing rule, stops no session, and starts no run by itself.
+- **The first turn (§7).** The instruction ledger does not record it; the Agent keeps a record of its own, written
+  once. It is confirmed only by the identity of the delivery's own input, and absent in every other case: another
+  input started first, the Agent restarted before the turn was confirmed, the agent kind rewrites the identity
+  (opencode). A missing first turn costs the breaker one data point; a wrong one would report a lost delivery as
+  finished.
+- **Retire (§6).** Only for a session that no session started, which a delivery's own session always is. One retire
+  per root runs at a time, the recovery after an Agent restart included. The mark carries the retire's identity, and
+  a person's start clears it in one write that also records which retire the session was released from. A retire
+  never touches a session a person released from it, nor anything under such a session, and its answer says so
+  (`released`, and `complete` only when every session was retired). While a session is retired and stopped the Agent
+  starts it for nothing and refuses input to it (`session_retired`); a person starts it from the Console and it is an
+  ordinary session again. Not covered: a person's start between the Control Plane's read and its first retire call
+  (#4218).
+- **Occupancy is kept with the delivery (§6).** The last report read is stored on the delivery: why it is held and
+  in which session, and when progress was last seen. Reads are ordered by a number the database hands out, never by
+  a clock. Keeping a read, counting it and closing on it are one transaction behind the member's row lock. A delivery
+  closes on the second read in a row with nothing holding it. While the workspace is stopped only a delivery last
+  seen with nothing holding it may close.
+- **Closing, then stopping.** A clean close records that a retire is owed, and the retire is repeated on later ticks
+  until the Agent says `complete`. It never wakes a workspace. A 404 is not a confirmation; a session is taken as
+  gone only from a list read after the close. When the Agent says the root was released, the Control Plane stops
+  repeating: a person has the session.
+- **Two versions side by side.** A database constraint refuses a clean close of a delivery whose last report holds
+  it, so a Control Plane older than step 2 cannot free that slot by its own rule. The count of clear reads does not
+  trust a count the older rule wrote. Rollout rule, with step 1's: turn the tenant switch on only when every Control
+  Plane runs the version with these migrations and the Console that words the new notifications is deployed.
+- **The dispatcher (§6).** It runs in the tick after the settle pass, with a time budget of its own, and claims
+  through the same reservation as "fire now". Every condition is read again inside the claim: enabled, paused, open,
+  the tenant switch, the usage limit, the count of the day, the back-off. Members are served by their oldest waiting
+  message, one fire per member per round.
+- **When a queue is open.** A window is a cron expression for its start, a length in minutes, and a time zone kept
+  with the queue: the Control Plane does not know a member's zone, so the Console sends the browser's. A threshold
+  starts after a minute with nothing added, and the queue then drains; that it is draining is stored in the row, a
+  pause keeps it, and disabling the queue clears it. A window and a threshold together are refused.
+- **Back-off.** A delivery that was provably not sent returns its messages, and the queue then waits: five minutes,
+  doubling to four hours. §6 says "the queue backs off" without a number.
+- **The breaker (§7).** It looks at the two newest deliveries whose first turn is recorded, counted since the last
+  resume. A first turn that ends after its delivery closed is still collected, for a day. A pause stops runs that
+  start by themselves and leaves "fire now" working.
+- **The usage limit (§7).** Kept per delivery as the agent kinds of the limited sessions in its tree, and compared
+  with the queue's kind at the claim.
+- **Wakes made only to settle.** At most two per tick and one per member in ten minutes, each recorded as a closed
+  delivery row of its own outcome so that it counts toward the day. A workspace whose Agent does not report is never
+  woken for this, and no workspace is woken to retire.
+- **Overdue.** `maxTaskHours` per queue, 1 to 72, default 12, counted from when the delivery opened. One
+  notification. Retire only after an hour with no progress anywhere in the tree.
+- **Notifications.** Four kinds: overdue, paused, every run of a category waiting for the member, a message that
+  could not be confirmed as sent. Each is told once.
+- **Words on screen.** Auto-run runs "at any time", "in a time window" or "once notes are waiting". A run that is
+  still open says why: working, waiting for you, waiting for a usage limit, waiting on a watch or a timer, not known.
+  Overdue is 期限超過 in Japanese (the owner's choice), and the button is 今すぐ実行, as for schedules. An approval
+  card marks a note that changed while it was on screen and asks for a confirming press before it can be approved;
+  the Control Plane's rule (the press is bound to the content shown) was already enough for safety, the mark is for
+  the person.
+
+Left out of step 2 and tracked: a retire conditional on what the Control Plane read (#4218); first-turn records left
+by a create that failed (#4210); the order of the settle and retire passes when workspaces are slow (#4245). Open
+questions 1, 4 and 5 stay with #4149: the defaults have not been measured on a deployment.
