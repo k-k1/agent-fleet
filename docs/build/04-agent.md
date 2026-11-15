@@ -149,11 +149,14 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     launch and is refused with `409 session_retired` on a session a retire has marked (resume it
     first); the chat bridge's replies and button clicks (`injectSessionPrompt` with a member origin);
     keystrokes in the terminal pane (`/ws/pty`, recorded before the lifecycle gate is taken), except
-    a write made only of complete, known replies of the terminal itself (device attribute, status,
-    cursor position and mode reports, focus in / out, OSC colour and DCS replies), which is not an
-    act; a reply followed by a key in one write, a reply cut across two writes, a mouse report and
-    anything not recognised in full are acts (a member who switches the browser tab sends a focus
-    report, and that must not release a session nobody touched). Failing
+    a write made only of focus reports (`ESC [ I`, `ESC [ O`, one or several): a member who
+    switches the browser tab sends one, and it must not release a session nobody touched. It is the
+    only exception, because a byte grammar cannot tell the terminal's other replies from keys
+    (xterm.js sends Shift+F3 as `ESC [ 1 ; 2 R`, a cursor position report by grammar) and no
+    xterm.js key produces those two sequences. Every other write is an act, a focus report
+    followed by any byte or cut across two writes included. Limit: a person who pastes the literal
+    bytes `ESC [ I` or `ESC [ O` with bracketed paste off sends exactly a focus report, and it is
+    not counted. Failing
     to get the gate's read side is not evidence that the session is marked (a pending retire also
     stops new readers while a long `/start` holds one), and a retired mark in the meta may be an
     older retire's: the key is held until it can record under the read side (on a session the retire
@@ -170,7 +173,10 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     person acted on. Restoring Agent state is outside the guarantee until the Control Plane echoes
     an incarnation identity.
   - **A meta that cannot be read is in doubt.** The retire decides, and writes the mark or the
-    release, in one checked meta update on the meta that update reads under the meta lock. A member
+    release, in one checked meta update on the meta that update reads under the meta lock, and ends
+    subscriptions and stops only after the mark is written durably (a mark or release that could not
+    be written, or a meta unreadable inside the update, ends and stops nothing: the member is
+    reported in `unended`). A member
     whose meta exists but cannot be read, or whose ancestor's cannot, is neither marked nor stopped
     in that pass and is reported in `unended` (so `complete` is false and the Control Plane repeats);
     the start-up recovery keeps the intent of a root it cannot read.

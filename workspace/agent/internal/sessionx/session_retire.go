@@ -284,9 +284,12 @@ func retireOne(ctx context.Context, rep *retireReport, in *retireIntent) {
 		rep.Released, rep.Running = true, SessionAlive(cur)
 		return
 	}
-	if released, final := markOrRelease(rep, in); released {
+	switch state, final := markOrRelease(rep, in); state {
+	case markReleased:
 		rep.Released, rep.Running = true, SessionAlive(final)
 		return
+	case markDoubt:
+		return // nothing is ended or stopped: the reason is in unended and the Control Plane repeats
 	}
 	endSubscriptions(ctx, rep)
 	stopRetired(rep)
@@ -427,28 +430,43 @@ func retireIntentRoots() []string {
 	return out
 }
 
+// markState is what markOrRelease came to. Only markMarked lets the retire end and stop.
+type markState int
+
+const (
+	// markDoubt: the update failed, or the meta could not be read inside it. Nothing was decided.
+	markDoubt markState = iota
+	// markMarked: this retire's mark is on the meta, written durably (or was already there).
+	markMarked
+	// markReleased: a person has the session, by a start after the retire began or by an act.
+	markReleased
+)
+
 // markOrRelease decides and writes in one checked meta update, on the meta that update reads under
 // the meta lock: a member a person started (this retire's tombstone) is left alone; one with
 // personActMark >= ifNoActSince is released with the same record a person's start leaves; every
-// other member gets the mark and the retire's id, keeping the first date. The write is checked: a
-// mark that did not reach the disk protects nothing, and is reported as not ended.
+// other member gets the mark and the retire's id, keeping the first date. Any error, and a meta
+// that cannot be read inside the update, is markDoubt: a mark or a release that did not reach the
+// disk protects nothing, and the caller must not end or stop on it.
 //
 // A number above this Agent's own counter was not handed out by it (a restored older state): nothing
 // here proves "no act since", so it reads as an act. A member this retire or an earlier one has
 // marked is not looked at for acts: an act that reached it after the mark found a retired session.
-func markOrRelease(rep *retireReport, in *retireIntent) (released bool, final session.Meta) {
+func markOrRelease(rep *retireReport, in *retireIntent) (markState, session.Meta) {
 	id := in.ID
+	state := markDoubt
 	final, _, err := updateSessionMetaChecked(rep.Name, func(m *session.Meta) bool {
 		if releasedFrom(*m, id) {
-			released = true
+			state = markReleased
 			return false
 		}
 		if in.IfNoActSince > 0 && !isRetired(*m) &&
 			(m.PersonActMark >= in.IfNoActSince || in.IfNoActSince > actMarks.now()) {
 			m.RetiredAt, m.RetireID, m.RetireClearedID = "", "", id
-			released = true
+			state = markReleased
 			return true
 		}
+		state = markMarked
 		// The first date stays; the id is this retire's, so a person's start clears the mark
 		// of the retire whose intent is on disk.
 		if m.RetiredAt != "" && (m.RetireID == id || id == "") {
@@ -460,15 +478,16 @@ func markOrRelease(rep *retireReport, in *retireIntent) (released bool, final se
 		m.RetireID = id
 		return true
 	})
-	if err != nil {
-		released = false
-		rep.Unended = appendNew(rep.Unended, "the retired mark (or the release of a session a person acted on) could not be written: "+err.Error())
-		return false, final
+	switch {
+	case err != nil:
+		rep.Unended = appendNew(rep.Unended, "the retired mark (or the release of a session a person acted on) could not be written, so nothing was ended or stopped: "+err.Error())
+		return markDoubt, final
+	case final.Name == "":
+		// The update never ran: the meta is gone or could not be read.
+		rep.Unended = appendNew(rep.Unended, "the session's meta could not be read, so it was neither marked nor stopped; retire again")
+		return markDoubt, final
 	}
-	if final.Name == "" {
-		rep.Unended = appendNew(rep.Unended, "the session is gone")
-	}
-	return released, final
+	return state, final
 }
 
 // endSubscriptions ends the subscriptions of one session.

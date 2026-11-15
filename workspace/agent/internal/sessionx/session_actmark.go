@@ -224,126 +224,32 @@ func inputCarriesOrigin(source, peerFrom, peerIntent, reportTo, scheduleID, sche
 }
 
 // NotePersonActInput is what the terminal pane's writer calls for each write from the browser: a
-// write that consists only of complete, known replies of the terminal itself is not a person's act
-// and goes on unrecorded; everything else is one (NotePersonActPane). Reason: a member who watches
-// a run finish and then switches the browser tab sends a focus report, and counting it would
-// release a session nobody touched.
+// write that consists only of focus reports is not a person's act and goes on unrecorded;
+// everything else is one (NotePersonActPane). Reason: a member who watches a run finish and then
+// switches the browser tab sends a focus report, and counting it would release a session nobody
+// touched.
 func NotePersonActInput(name string, b []byte) (deliver bool) {
-	if terminalReplyOnly(b) {
+	if focusReportsOnly(b) {
 		return true
 	}
 	return NotePersonActPane(name)
 }
 
-// terminalReplyOnly reports whether b is made of complete terminal replies and nothing else: a
-// device attributes reply (CSI ? .. c, CSI > .. c), a status report (CSI .. n, CSI ? .. n), a
-// cursor position report (CSI r ; c R), a mode report (CSI ? .. $ y), a focus in / out report
-// (CSI I, CSI O), an OSC colour reply (OSC 4, 10, 11, 12 ;.. terminated by BEL or ST) or a DCS
-// reply (DCS .. ST). Mouse reports, keys, text, and any sequence that is cut short or not
-// recognised in full are not: when in doubt, it is an act.
-func terminalReplyOnly(b []byte) bool {
-	if len(b) == 0 {
+// focusReportsOnly reports whether b is one or more focus reports (ESC [ I, ESC [ O) and nothing
+// else. It is the only write that is not an act, and deliberately the only one: a byte grammar
+// cannot tell a terminal's other replies from keys (xterm.js sends Shift+F3 as ESC [ 1 ; 2 R, which
+// is a cursor position report by grammar, and an OSC or DCS payload is arbitrary). No xterm.js key
+// produces ESC [ I or ESC [ O, so these two cannot be a person's key. A report followed by any
+// byte, or cut across two writes, is not matched and is an act: when in doubt, an act. Known limit:
+// a person who pastes the literal bytes ESC [ I or ESC [ O with bracketed paste off sends exactly
+// a focus report (the Console's paste passes the clipboard through unchanged), and it is not
+// counted.
+func focusReportsOnly(b []byte) bool {
+	if len(b) == 0 || len(b)%3 != 0 {
 		return false
 	}
-	for i := 0; i < len(b); {
-		n := terminalReplyLen(b[i:])
-		if n == 0 {
-			return false
-		}
-		i += n
-	}
-	return true
-}
-
-// terminalReplyLen is the length of the known complete reply at the start of b, 0 for none.
-func terminalReplyLen(b []byte) int {
-	if len(b) < 3 || b[0] != 0x1b {
-		return 0
-	}
-	switch b[1] {
-	case '[':
-		i := 2
-		prefix := byte(0)
-		if b[i] >= '<' && b[i] <= '?' {
-			prefix = b[i]
-			i++
-		}
-		ps := i
-		for i < len(b) && (b[i] >= '0' && b[i] <= '9' || b[i] == ';') {
-			i++
-		}
-		params := b[ps:i]
-		inter := byte(0)
-		if i < len(b) && b[i] == '$' {
-			inter = '$'
-			i++
-		}
-		if i >= len(b) {
-			return 0
-		}
-		final := b[i]
-		i++
-		switch {
-		case final == 'c' && (prefix == '?' || prefix == '>') && inter == 0:
-			return i
-		case final == 'n' && (prefix == 0 || prefix == '?') && inter == 0 && len(params) > 0:
-			return i
-		case final == 'R' && (prefix == 0 || prefix == '?') && inter == 0 && cursorReportParams(params):
-			return i
-		case (final == 'I' || final == 'O') && prefix == 0 && inter == 0 && len(params) == 0:
-			return i
-		case final == 'y' && inter == '$' && (prefix == 0 || prefix == '?') && len(params) > 0:
-			return i
-		}
-		return 0
-	case ']':
-		body, n := stringReply(b[2:])
-		if n == 0 {
-			return 0
-		}
-		for _, p := range []string{"4;", "10;", "11;", "12;"} {
-			if strings.HasPrefix(string(body), p) {
-				return 2 + n
-			}
-		}
-		return 0
-	case 'P':
-		_, n := stringReply(b[2:])
-		if n == 0 {
-			return 0
-		}
-		return 2 + n
-	}
-	return 0
-}
-
-// stringReply reads an OSC / DCS body up to its terminator (BEL or ESC \), returning the body and
-// the length consumed including the terminator, 0 when it is cut short or holds a control byte.
-func stringReply(b []byte) (body []byte, n int) {
-	for i := 0; i < len(b); i++ {
-		switch {
-		case b[i] == 0x07:
-			return b[:i], i + 1
-		case b[i] == 0x1b:
-			if i+1 < len(b) && b[i+1] == '\\' {
-				return b[:i], i + 2
-			}
-			return nil, 0
-		case b[i] < 0x20:
-			return nil, 0
-		}
-	}
-	return nil, 0
-}
-
-// cursorReportParams is "row;col" (a cursor position report), with an optional page.
-func cursorReportParams(p []byte) bool {
-	parts := strings.Split(string(p), ";")
-	if len(parts) < 2 || len(parts) > 3 {
-		return false
-	}
-	for _, x := range parts {
-		if x == "" {
+	for i := 0; i < len(b); i += 3 {
+		if b[i] != 0x1b || b[i+1] != '[' || (b[i+2] != 'I' && b[i+2] != 'O') {
 			return false
 		}
 	}

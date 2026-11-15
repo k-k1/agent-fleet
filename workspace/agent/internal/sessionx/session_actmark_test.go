@@ -709,36 +709,27 @@ func TestRetireLeavesAnUnreadableMetaInDoubt(t *testing.T) {
 	}
 }
 
-// The terminal's own replies are not a person's act; a key, a mouse report, a reply with a key in
-// the same write, and a reply cut across two writes are.
-func TestPaneRepliesAreNotActs(t *testing.T) {
-	replies := map[string]string{
-		"DA1":           "\x1b[?62;4c",
-		"DA2":           "\x1b[>0;276;0c",
-		"DSR status":    "\x1b[0n",
-		"cursor":        "\x1b[24;80R",
-		"focus in":      "\x1b[I",
-		"focus out":     "\x1b[O",
-		"mode report":   "\x1b[?2004;2$y",
-		"OSC 11 (BEL)":  "\x1b]11;rgb:0000/0000/0000\x07",
-		"OSC 10 (ST)":   "\x1b]10;rgb:ffff/ffff/ffff\x1b\\",
-		"DCS xtversion": "\x1bP>|xterm.js(5.5.0)\x1b\\",
-		"several":       "\x1b[?62;4c\x1b[>0;276;0c\x1b[I",
-		"DCS DECRQSS":   "\x1bP1$r0m\x1b\\",
-		"OSC 4 palette": "\x1b]4;1;rgb:cccc/0000/0000\x07",
+// Only focus reports are not a person's act. Every other write is, including the terminal's other
+// replies (a byte grammar cannot tell them from keys: Shift+F3 is ESC [ 1 ; 2 R).
+func TestPaneOnlyFocusReportsAreNotActs(t *testing.T) {
+	notActs := map[string]string{
+		"focus in":  "\x1b[I",
+		"focus out": "\x1b[O",
+		"both":      "\x1b[I\x1b[O",
+		"several":   "\x1b[O\x1b[I\x1b[O",
 	}
 	acts := map[string]string{
-		"a key":                   "a",
-		"enter":                   "\r",
-		"arrow":                   "\x1b[A",
-		"mouse report":            "\x1b[<0;10;5M",
-		"reply then key":          "\x1b[I" + "x",
-		"key then reply":          "x\x1b[I",
-		"reply cut (first half)":  "\x1b]11;rgb:0000/00",
-		"reply cut (second half)": "00/0000\x07",
-		"cut csi":                 "\x1b[?62;4",
-		"unknown osc":             "\x1b]52;c;aGk=\x07",
-		"empty":                   "",
+		"Shift+F3 (a CPR by grammar)": "\x1b[1;2R",
+		"device attributes reply":     "\x1b[?62;4c",
+		"OSC colour reply":            "\x1b]11;rgb:0000/0000/0000\x07",
+		"DCS reply":                   "\x1bP>|xterm.js(5.5.0)\x1b\\",
+		"focus then a byte":           "\x1b[Ix",
+		"byte then focus":             "x\x1b[I",
+		"focus cut (first write)":     "\x1b[",
+		"focus cut (second write)":    "I",
+		"a key":                       "a",
+		"arrow":                       "\x1b[A",
+		"mouse report":                "\x1b[<0;10;5M",
 	}
 	check := func(name, in string, wantAct bool) {
 		newActEnv(t)
@@ -752,13 +743,79 @@ func TestPaneRepliesAreNotActs(t *testing.T) {
 			t.Errorf("%s: act=%v, want %v", name, got, wantAct)
 		}
 	}
-	for n, in := range replies {
+	for n, in := range notActs {
 		check(n, in, false)
 	}
 	for n, in := range acts {
-		if n == "empty" {
-			continue
-		}
 		check(n, in, true)
+	}
+}
+
+// A mark or a release that cannot be written, or a meta that cannot be read inside the update, is
+// in doubt: nothing is ended or stopped, and the member is reported unended.
+func TestRetireEndsAndStopsOnlyAfterTheMarkIsDurable(t *testing.T) {
+	cases := map[string]struct {
+		cond   bool // a person acted: the update would write a release
+		break_ func(t *testing.T)
+	}{
+		"mark cannot be written": {false, func(t *testing.T) {
+			if err := os.Chmod(session.MetaDir(), 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(session.MetaDir(), 0o700) })
+		}},
+		"release cannot be written": {true, func(t *testing.T) {
+			if err := os.Chmod(session.MetaDir(), 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(session.MetaDir(), 0o700) })
+		}},
+		"meta unreadable": {false, func(t *testing.T) {
+			if err := os.WriteFile(session.MetaPath("s"), []byte("{"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := newActEnv(t)
+			if os.Geteuid() == 0 && strings.Contains(name, "written") {
+				t.Skip("root writes into a read-only directory")
+			}
+			writeMeta(t, session.Meta{Name: "s"})
+			r.hold(t, "s")
+			listed := listActMark(t)
+			if c.cond {
+				notePersonAct("s")
+			}
+			in, _ := beginRetire("s", listed)
+			c.break_(t)
+			rep := &retireReport{Name: "s", Unended: []string{}}
+			retireOne(context.Background(), rep, in)
+			if rep.Stopped || len(rep.Unended) == 0 || rep.Ended != (watch.Ended{}) {
+				t.Fatalf("went on with a mark that was not durable: %+v", rep)
+			}
+			if w, tm, _ := r.e.Wakers("s"); w != 1 || tm != 1 {
+				t.Fatalf("the subscriptions were ended: %d %d", w, tm)
+			}
+		})
+	}
+}
+
+// A meta that becomes unreadable between the walk's read and the update is in doubt inside the
+// update too: markOrRelease says so, and writes nothing.
+func TestMarkOrReleaseSaysDoubtOnAnUnreadableMeta(t *testing.T) {
+	newActEnv(t)
+	writeMeta(t, session.Meta{Name: "s"})
+	in, _ := beginRetire("s", 0)
+	if err := os.WriteFile(session.MetaPath("s"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rep := &retireReport{Name: "s", Unended: []string{}}
+	if state, _ := markOrRelease(rep, in); state != markDoubt || len(rep.Unended) == 0 {
+		t.Fatalf("state %v, %+v", state, rep)
+	}
+	if b, _ := os.ReadFile(session.MetaPath("s")); string(b) != "{" {
+		t.Fatalf("the meta was written: %q", b)
 	}
 }
