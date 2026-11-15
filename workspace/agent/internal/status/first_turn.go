@@ -51,6 +51,9 @@ type FirstTurn struct {
 	// Starts counts the turn starts seen since ArmedAt; StartAt is the first one's time.
 	Starts  int    `json:"starts,omitempty"`
 	StartAt string `json:"startAt,omitempty"`
+	// Interrupted: the open turn was cut short on purpose (a driver's cancelled end, set by
+	// NoteFirstTurnCancelled), so the end that settles it next is aborted, not clean.
+	Interrupted bool `json:"interrupted,omitempty"`
 	// Void: the end the Agent saw cannot be shown to be the first turn's; the ledger stays
 	// empty for good.
 	Void bool `json:"void,omitempty"`
@@ -97,6 +100,41 @@ func voidOpenFirstTurn(sid string) {
 		return
 	}
 	t.Void = true
+	_ = firstTurns.Write(sid, t)
+}
+
+// NoteFirstTurnCancelled is called by a driver that is about to record a cancelled turn end (a
+// stop the person asked for, an interrupt): the turn did not end cleanly, so the end the ledger
+// is about to see settles as aborted. It writes only the open ledger, never the status record,
+// whose end reason drives resumes and reports and stays as it was.
+func NoteFirstTurnCancelled(sid string) {
+	unlock, _ := lockSid(sid)
+	defer unlock()
+	t, ok := firstTurns.Read(sid)
+	if !ok || t.Done || t.Void || t.Starts != 1 {
+		return
+	}
+	t.Interrupted = true
+	_ = firstTurns.Write(sid, t)
+}
+
+// SettleFirstTurnInterrupted closes the open first turn as aborted for a Terminal session whose
+// turn was interrupted at the prompt: Esc fires no Stop hook, so no end is ever written, and the
+// heal that follows deletes the record (which voids an open ledger). at is when the CLI wrote
+// the interruption into its transcript. It settles only a ledger with exactly one start, and
+// only when the interruption is not older than that start: an earlier turn's interruption must
+// never be read as this one's end.
+func SettleFirstTurnInterrupted(sid string, at time.Time) {
+	unlock, _ := lockSid(sid)
+	defer unlock()
+	t, ok := firstTurns.Read(sid)
+	if !ok || t.Done || t.Void || t.Starts != 1 || at.IsZero() {
+		return
+	}
+	if start, err := time.Parse(time.RFC3339Nano, t.StartAt); err != nil || at.Before(start) {
+		return
+	}
+	settleFirstTurn(&t, at.Format(time.RFC3339Nano), TurnEndReasonAborted)
 	_ = firstTurns.Write(sid, t)
 }
 
@@ -202,6 +240,8 @@ func settleFirstTurn(t *FirstTurn, endedAt, reason string) {
 	switch {
 	case t.NoReason:
 		t.Outcome = ""
+	case reason == "" && t.Interrupted:
+		t.Outcome = TurnEndReasonAborted
 	case reason == "":
 		t.Outcome = TurnOutcomeClean
 	default:

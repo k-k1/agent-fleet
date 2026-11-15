@@ -398,7 +398,40 @@ func HealIdle(sid string) {
 		agents.MarkTurnEndErr(sid, st, msg)
 		return
 	}
+	// Esc fires no Stop hook, so an interrupted turn's end is written by nobody and this heal is
+	// the only place it can be seen. The delete below would void a delivery's open first turn;
+	// give the ledger the interruption first.
+	if at, ok := interruptedAt(sid); ok {
+		status.SettleFirstTurnInterrupted(sid, at)
+	}
 	status.Remove(sid)
+}
+
+// interruptedMarker starts the text claude records when the person stops a turn ("[Request
+// interrupted by user]", or "... for tool use" when a tool call was open).
+const interruptedMarker = "[Request interrupted by user"
+
+// interruptedAt reports when the newest real record of the transcript is the person's
+// interruption of a turn. A record with no usable timestamp is not enough to say: a false answer
+// only leaves a first turn unrecorded.
+func interruptedAt(sid string) (time.Time, bool) {
+	for _, p := range jsonlByMtime(sid) {
+		line, found := lastLineWhere(p, func(l []byte) bool { _, ok := terminalRecord(l); return ok })
+		if !found {
+			continue
+		}
+		return interruptionFrom(line)
+	}
+	return time.Time{}, false
+}
+
+func interruptionFrom(line []byte) (time.Time, bool) {
+	var r stopRecord
+	if json.Unmarshal(line, &r) != nil || !r.prompt() || !strings.HasPrefix(userText(r.Message), interruptedMarker) {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, r.Timestamp)
+	return at, err == nil
 }
 
 // RanTurnSince reports that the newest terminal transcript record is the END of an ordinary

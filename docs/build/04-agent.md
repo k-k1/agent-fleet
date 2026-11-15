@@ -137,6 +137,13 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
   id, or an Agent restart that finds it unconfirmed voids the ledger; the first prompt id is kept too), so a stop does not delete
   it and a later turn never changes it. When that cannot be shown (a start or an end was
   missed, the status deleted by a stop in between) the field stays absent for good.
+  A first turn the person interrupts reads `turn-aborted`, so the breaker counts it: a Managed
+  driver's cancelled end marks the open ledger (`status.NoteFirstTurnCancelled`; the status
+  record's own end reason stays empty), and a Terminal claude session, whose Esc fires no Stop
+  hook, is settled by the pane heal (`claude.HealIdle`) from the `[Request interrupted by user…]`
+  record in the transcript, only when that record is not older than the turn's start. Kinds whose
+  Terminal turn has no such evidence leave the field absent, or with no outcome, and the
+  one-minute rule of the breaker covers them.
 - **Every path that folds a session away promotes its carried work first**
   (`PromoteCarriedFor`, before any kill or handle drop). A new path of that kind must do
   the same.

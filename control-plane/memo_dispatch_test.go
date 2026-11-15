@@ -320,6 +320,29 @@ func TestMemoDispatchBreaker(t *testing.T) {
 	})
 }
 
+// Two interrupted first turns (the Agent's turn-aborted, as an interrupt of a Terminal or a
+// Managed session now reads) pause the queue, however long they ran.
+func TestMemoDispatchBreakerCountsInterruptedFirstTurns(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", nil, 6)
+		e.autoTick(time.Now())
+		live := e.liveDeliveries(q)
+		if len(live) != 2 {
+			t.Fatalf("%d live", len(live))
+		}
+		for i, d := range live {
+			agent.setRow(d.Session, map[string]any{"queueTurn": map[string]any{
+				"outcome": "turn-aborted", "ms": 600000, "endedAt": "2026-11-15T01:00:0" + string(rune('0'+i)) + "Z"}})
+		}
+		for i := 0; i < 3; i++ {
+			e.autoTick(time.Now())
+		}
+		if row := e.queueRow(q); !row.Paused || e.notificationsOf(memoPausedKind) != 1 {
+			t.Fatalf("paused %v, notifications %d", row.Paused, e.notificationsOf(memoPausedKind))
+		}
+	})
+}
+
 // A turn counts as bad by its outcome, or by ending inside a minute without a clean end.
 func TestMemoDispatchTurnBad(t *testing.T) {
 	for _, c := range []struct {
