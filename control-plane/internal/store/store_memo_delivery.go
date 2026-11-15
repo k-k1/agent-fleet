@@ -64,6 +64,9 @@ type MemoDelivery struct {
 	// RetireResult is how a pending retire ended: confirmed, released (a person started the
 	// session after the retire began), done, gone or fault.
 	RetireResult string
+	// LimitKinds is ",kind,kind," of the sessions of the tree that waited for a usage limit at the
+	// last kept report, independent of the strongest reason in HeldBy.
+	LimitKinds string
 	// Auto is set for a delivery the dispatcher fired by itself, not one a person pressed.
 	Auto bool
 	// TurnEndedAt is "" until the first turn of the delivery's session was seen to end. It and
@@ -90,7 +93,9 @@ type DeliveryObservation struct {
 	At                  string
 	HeldBy, HeldSession string
 	// Progress says a session of the tree showed progress, at ProgressAt (the tick's time).
-	Progress                 bool
+	Progress bool
+	// LimitKinds is the kinds of the sessions of the tree waiting for a usage limit, ",a,b," or "".
+	LimitKinds               string
 	ProgressAt               string
 	TurnOutcome, TurnEndedAt string
 	TurnMs                   int64
@@ -106,11 +111,6 @@ type MemoDeliveryStore interface {
 	GetMemoDelivery(ctx context.Context, id string) (MemoDelivery, bool, error)
 	// ListMemoDeliveries returns a queue's deliveries, newest first, at most limit.
 	ListMemoDeliveries(ctx context.Context, membershipID, queueID string, limit int) ([]MemoDelivery, error)
-	// ListRecentTurnDeliveries returns a queue's deliveries created after the given time whose
-	// first turn was recorded, newest first, at most limit.
-	ListRecentTurnDeliveries(ctx context.Context, queueID, after string, limit int) ([]MemoDelivery, error)
-	// ListRecentQueueDeliveries returns a queue's newest deliveries, wakes left out, newest first.
-	ListRecentQueueDeliveries(ctx context.Context, queueID string, limit int) ([]MemoDelivery, error)
 	// ListLiveMemoDeliveries returns every delivery that is not closed, of every member,
 	// oldest first: the scheduler's work.
 	ListLiveMemoDeliveries(ctx context.Context) ([]MemoDelivery, error)
@@ -185,7 +185,7 @@ type MemoDeliveryTxOps interface {
 const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, session, message_ids, idle_ticks,
 	created_at, sent_at, opened_at, closed_at, updated_at,
 	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at, retire_result,
-	turn_outcome, turn_ms, turn_ended_at, auto FROM memo_delivery`
+	turn_outcome, turn_ms, turn_ended_at, auto, limit_kinds FROM memo_delivery`
 
 func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	var d MemoDelivery
@@ -194,7 +194,7 @@ func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	err := row.Scan(&d.ID, &d.MembershipID, &d.QueueID, &d.State, &d.Outcome, &d.Session, &ids, &d.IdleTicks,
 		&d.CreatedAt, &d.SentAt, &d.OpenedAt, &d.ClosedAt, &d.UpdatedAt,
 		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt, &d.RetireResult,
-		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto)
+		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto, &d.LimitKinds)
 	d.Reported, d.RetirePending, d.Auto = reported != 0, retire != 0, auto != 0
 	d.MessageIDs = []string{}
 	if err == nil && ids != "" {
@@ -237,14 +237,24 @@ func (s *SQL) ListLiveMemoDeliveries(ctx context.Context) ([]MemoDelivery, error
 		ORDER BY created_at, id`, DeliveryClaimed, DeliverySending, DeliveryOpen))
 }
 
-func (s *SQL) ListRecentTurnDeliveries(ctx context.Context, queueID, after string, limit int) ([]MemoDelivery, error) {
-	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE queue_id=? AND turn_ended_at<>'' AND created_at>?
-		ORDER BY created_at DESC, id DESC LIMIT ?`, queueID, after, limit))
+func (t memoTx) queryDeliveries(q string, args ...any) ([]MemoDelivery, error) {
+	rows, err := t.q.QueryContext(t.ctx, q, args...)
+	return scanMemoDeliveries(rows, err)
 }
 
-func (s *SQL) ListRecentQueueDeliveries(ctx context.Context, queueID string, limit int) ([]MemoDelivery, error) {
-	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE queue_id=? AND outcome<>?
-		ORDER BY created_at DESC, id DESC LIMIT ?`, queueID, DeliveryWake, limit))
+func (t memoTx) RecentQueueDeliveries(queueID string, limit int) ([]MemoDelivery, error) {
+	return t.queryDeliveries(memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND outcome<>?
+		ORDER BY created_at DESC, id DESC LIMIT ?`, t.mid, queueID, DeliveryWake, limit)
+}
+
+func (t memoTx) LiveQueueDeliveries(queueID string) ([]MemoDelivery, error) {
+	return t.queryDeliveries(memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND state<>? ORDER BY created_at, id`,
+		t.mid, queueID, DeliveryClosed)
+}
+
+func (t memoTx) RecentTurnDeliveries(queueID, after string, limit int) ([]MemoDelivery, error) {
+	return t.queryDeliveries(memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND turn_ended_at<>'' AND created_at>?
+		ORDER BY created_at DESC, id DESC LIMIT ?`, t.mid, queueID, after, limit)
 }
 
 func (t memoTx) CountWakesSince(queueID, since string) (int, error) {
@@ -296,7 +306,7 @@ func (t memoTx) ObserveDelivery(id string, o DeliveryObservation) (int, bool, er
 	if o.Progress {
 		progress = 1
 	}
-	kept, err := affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET held_by=?, held_session=?, held_seen_at=?, held_gen=?,
+	kept, err := affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET held_by=?, held_session=?, held_seen_at=?, held_gen=?, limit_kinds=?,
 		  reported=1, updated_at=?,
 		  idle_ticks=CASE WHEN ?=1 THEN 0 WHEN reported=1 AND idle_ticks>=1 THEN 2 ELSE 1 END,
 		  progress_seen_at=CASE WHEN ?=1 THEN ? ELSE progress_seen_at END,
@@ -305,7 +315,7 @@ func (t memoTx) ObserveDelivery(id string, o DeliveryObservation) (int, bool, er
 		  turn_ms=CASE WHEN turn_ended_at='' AND ?<>'' THEN ? ELSE turn_ms END,
 		  turn_ended_at=CASE WHEN turn_ended_at='' THEN ? ELSE turn_ended_at END
 		WHERE id=? AND membership_id=? AND state=? AND held_gen<=?`,
-		o.HeldBy, o.HeldSession, o.At, o.Gen, DeliveryTS(time.Now()),
+		o.HeldBy, o.HeldSession, o.At, o.Gen, o.LimitKinds, DeliveryTS(time.Now()),
 		held, progress, o.ProgressAt, progress,
 		o.TurnEndedAt, o.TurnOutcome, o.TurnEndedAt, o.TurnMs, o.TurnEndedAt,
 		id, t.mid, DeliveryOpen, o.Gen))

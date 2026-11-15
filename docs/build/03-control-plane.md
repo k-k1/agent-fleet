@@ -399,6 +399,18 @@ disables.
   outcome `wake` that counts as a fire of the day and is not listed. **Notifications**, each
   once through its `EventID`: `memo-queue-paused`, `memo-queue-waiting` (every slot held by a
   session that waits for a person, per set of deliveries) and `memo-delivery-unconfirmed`.
+  **Rechecks behind the lock**: the claim of a fire by itself, and the record of a settle wake,
+  take the tenant's row (turning the switch off waits for them) and read the switch, the queue
+  (`enabled`, `paused`, the cap), the not-sent back-off and the usage limit again inside the
+  membership transaction, so what the tick read earlier cannot start a session. The usage limit
+  reads `memo_delivery.limit_kinds`, the kinds of every session of the tree that waits for a
+  limit (kept apart from `held_by`, which names only the strongest reason), so a limited parent
+  with a working child still holds its kind, and a queue changed to another kind is not held by
+  the old one. The breaker decides its pause in a membership transaction too, from the queue's
+  current `breaker_after`, and a resume runs in one, so a pause decided on failures from before
+  a resume cannot land after it. `draining` ends in the transaction that leaves nothing pending
+  (every `MemoTx` checks before it commits), so a message added after an empty moment starts a
+  new batch; a pause keeps it while messages are left, and the drain goes on with the resume.
   **Deletion guard**: an enabled queue blocks deleting its repository like an enabled
   schedule (`schedule_in_use`). **Mixed versions**: an older Control Plane never fires by
   itself, its settings PUT lists none of the new columns and so keeps every setting and

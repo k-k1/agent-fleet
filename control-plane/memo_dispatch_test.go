@@ -48,6 +48,16 @@ func (e *deliveryEnv) autoTick(now time.Time) ([]store.MemoDelivery, []func(cont
 	return sends, wakes
 }
 
+// pauseQueue pauses a queue the way the breaker does, behind the membership lock.
+func (e *deliveryEnv) pauseQueue(queueID, reason string) (bool, error) {
+	won := false
+	err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) (err error) {
+		won, err = tx.PauseQueue(queueID, store.DeliveryTS(time.Now()), reason)
+		return err
+	})
+	return won, err
+}
+
 func (e *deliveryEnv) liveDeliveries(queueID string) []store.MemoDelivery {
 	e.t.Helper()
 	ds, err := e.st.ListLiveMemoDeliveries(context.Background())
@@ -230,7 +240,7 @@ func TestMemoDispatchSwitchesAndFireNow(t *testing.T) {
 			t.Fatal("fired with the queue not enabled")
 		}
 		e.queueWith("app", "impl", map[string]any{"enabled": true, "maxActive": 6})
-		if ok, err := e.st.PauseMemoQueue(context.Background(), q, store.DeliveryTS(time.Now()), "test"); err != nil || !ok {
+		if ok, err := e.pauseQueue(q, "test"); err != nil || !ok {
 			t.Fatal(ok, err)
 		}
 		e.autoTick(time.Now())
@@ -611,7 +621,8 @@ func TestMemoDispatchSettings(t *testing.T) {
 			t.Fatalf("a PUT replaces the whole settings row: %+v", row)
 		}
 		ctx := context.Background()
-		_, _ = e.st.PauseMemoQueue(ctx, id, store.DeliveryTS(time.Now()), "why")
+		e.pending("app", "impl", "waiting") // draining is kept only while a message is pending
+		_, _ = e.pauseQueue(id, "why")
 		_ = e.st.SetMemoQueueDraining(ctx, id, true)
 		_ = e.st.SetMemoQueueNoReport(ctx, id, "t")
 		put(map[string]any{"openAfter": 5})
@@ -752,6 +763,237 @@ func TestMemoDispatchWakeNeedsNoRoomAndIsOncePerWorkspace(t *testing.T) {
 		}
 		if wakeRows != 1 {
 			t.Fatalf("%d wakes counted against the day, want 1", wakeRows)
+		}
+	})
+}
+
+// staleWork is the dispatcher's snapshot of a queue as a tick read it before taking the lock.
+func (e *deliveryEnv) staleWork(queueID string) *memoQueueWork {
+	return &memoQueueWork{q: e.queueRow(queueID), pending: store.QueuePending{Count: 1, Oldest: "2000-01-01T00:00:00Z", Latest: "2000-01-01T00:00:00Z"}}
+}
+
+// What a tick read before it took the lock is read again behind it: a tenant switch turned off,
+// a queue disabled or paused, or a delivery that just closed as not sent after the snapshot stop
+// the fire, and a wake made only to settle is not recorded either.
+func TestMemoDispatchRechecksBehindTheLock(t *testing.T) {
+	cases := map[string]func(e *deliveryEnv, q string){
+		"tenant switch off": func(e *deliveryEnv, q string) { e.memoQueuesOn(false) },
+		"queue disabled": func(e *deliveryEnv, q string) {
+			e.queueWith("app", "impl", map[string]any{"enabled": false})
+		},
+		"queue paused": func(e *deliveryEnv, q string) { _, _ = e.pauseQueue(q, "x") },
+		"closed as not sent": func(e *deliveryEnv, q string) {
+			ts := store.DeliveryTS(time.Now())
+			_ = e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+				return tx.InsertDelivery(store.MemoDelivery{ID: store.NewID(), QueueID: q, State: store.DeliveryClosed,
+					Outcome: store.DeliveryNotSent, CreatedAt: ts, UpdatedAt: ts, ClosedAt: ts})
+			})
+		},
+		"daily cap lowered": func(e *deliveryEnv, q string) {
+			e.queueWith("app", "impl", map[string]any{"enabled": true, "maxFiresPerDay": 1})
+			ts := store.DeliveryTS(time.Now())
+			_ = e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+				return tx.InsertDelivery(store.MemoDelivery{ID: store.NewID(), QueueID: q, State: store.DeliveryClosed,
+					Outcome: store.DeliveryClean, CreatedAt: ts, UpdatedAt: ts, ClosedAt: ts})
+			})
+		},
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+				agent, q := e.autoQueue("app", "impl", map[string]any{"maxActive": 1}, 2)
+				r := e.runner()
+				w := e.staleWork(q)
+				views := map[string]*memoMemberView{}
+				change(e, q)
+				if d, ok := r.fireQueue(context.Background(), views, w, nil, time.Now()); ok {
+					t.Fatalf("fired on a stale snapshot: %+v", d)
+				}
+				if len(e.liveDeliveries(q)) != 0 || agent.createCount() != 0 {
+					t.Fatal("a delivery was claimed")
+				}
+			})
+		})
+	}
+	// A wake made only to settle: the same conditions.
+	for name, change := range map[string]func(e *deliveryEnv, q string){
+		"tenant switch off": func(e *deliveryEnv, q string) { e.memoQueuesOn(false) },
+		"queue disabled": func(e *deliveryEnv, q string) {
+			e.queueWith("app", "impl", map[string]any{"enabled": false, "maxActive": 1})
+		},
+		"queue paused": func(e *deliveryEnv, q string) { _, _ = e.pauseQueue(q, "x") },
+		"slot freed": func(e *deliveryEnv, q string) {
+			_ = e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+				for _, d := range mustLive(tx, q) {
+					if _, err := tx.MoveDelivery(d.ID, store.DeliverySending, store.DeliveryClosed, "", store.DeliveryNotSent, store.DeliveryTS(time.Now())); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+		},
+	} {
+		t.Run("wake "+name, func(t *testing.T) {
+			eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+				agent, q := e.autoQueue("app", "impl", map[string]any{"maxActive": 1}, 2)
+				e.setRuntime(agent, "stopped")
+				ts := store.DeliveryTS(time.Now())
+				live := store.MemoDelivery{ID: store.NewID(), MembershipID: e.members["a"], QueueID: q, State: store.DeliverySending,
+					MessageIDs: []string{}, CreatedAt: ts, UpdatedAt: ts, SentAt: ts}
+				if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error { return tx.InsertDelivery(live) }); err != nil {
+					t.Fatal(err)
+				}
+				r := e.runner()
+				w := e.staleWork(q)
+				change(e, q)
+				r.settleWake(context.Background(), w, []store.MemoDelivery{live}, time.Now())
+				if len(r.wakeJobs) != 0 {
+					t.Fatal("a wake was scheduled on a stale snapshot")
+				}
+				_ = e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+					n, _ := tx.CountWakesSince(q, store.DeliveryTS(time.Now().Add(-time.Hour)))
+					if n != 0 {
+						t.Fatalf("%d wake rows", n)
+					}
+					return nil
+				})
+			})
+		})
+	}
+}
+
+func mustLive(tx store.MemoTxOps, q string) []store.MemoDelivery {
+	ds, _ := tx.LiveQueueDeliveries(q)
+	return ds
+}
+
+// A usage limit is read from every session of the tree, not from the strongest reason, and by the
+// kind the session really has: a parent that waits for a limit while its child works still stops
+// a new session of that kind, and a queue changed to another kind is not stopped by it.
+func TestMemoDispatchUsageLimitReadsTheTreeAndTheKind(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", map[string]any{"maxActive": 3}, 1)
+		e.autoTick(time.Now())
+		live := e.liveDeliveries(q)
+		if len(live) != 1 {
+			t.Fatalf("%d live", len(live))
+		}
+		agent.setRow(live[0].Session, map[string]any{"state": "limited"})
+		agent.child("c1", live[0].Session, map[string]any{"state": "working", "progressAgeSec": 1})
+		e.autoTick(time.Now())
+		if got := e.delivery(live[0].ID); got.HeldBy != store.HeldMachine || got.LimitKinds != ",claude," {
+			t.Fatalf("the strongest reason is the child's, the limit is kept apart: %+v", got)
+		}
+		e.pending("app", "impl", "two")
+		before := agent.createCount()
+		for i := 0; i < 3; i++ {
+			e.autoTick(time.Now())
+		}
+		if agent.createCount() != before {
+			t.Fatal("started a session of the limited kind while the parent waited for a limit")
+		}
+		// The same queue changed to another kind is not held by a claude session.
+		e.queueWith("app", "impl", map[string]any{"enabled": true, "maxActive": 3, "agentKind": "codex"})
+		e.autoTick(time.Now())
+		if agent.createCount() == before {
+			t.Fatal("a claude limit held a codex queue")
+		}
+	})
+}
+
+// A pause decided on failures from before a resume does not land after it, and the old failures
+// are not counted again.
+func TestMemoDispatchBreakerPauseIsDecidedBehindTheLock(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", nil, 6)
+		e.autoTick(time.Now())
+		live := e.liveDeliveries(q)
+		agent.setRow(live[0].Session, map[string]any{"queueTurn": map[string]any{"outcome": "turn-failed", "ms": 120000, "endedAt": "2026-11-15T01:00:00Z"}})
+		agent.setRow(live[1].Session, map[string]any{"queueTurn": map[string]any{"outcome": "turn-failed", "ms": 120000, "endedAt": "2026-11-15T01:00:01Z"}})
+		e.settleNow(time.Now()) // the turns are copied, nothing decides yet
+		stale := e.queueRow(q)  // tick A read the queue unpaused
+		if stale.Paused {
+			t.Fatal("paused early")
+		}
+		// Another process paused it, and the member resumed.
+		if won, err := e.pauseQueue(q, "other"); err != nil || !won {
+			t.Fatal(won, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+		if rec := e.do("a", "POST", "/api/memo-queues/"+q+"/resume", nil); rec.Code != http.StatusNoContent {
+			t.Fatal(rec.Code)
+		}
+		e.runner().checkBreaker(context.Background(), stale, time.Now())
+		if e.queueRow(q).Paused || e.notificationsOf(memoPausedKind) != 0 {
+			t.Fatal("a pause decided before the resume landed after it")
+		}
+	})
+}
+
+// Draining ends in the transaction that leaves nothing pending, so a message added afterwards
+// begins a new batch that has to reach its threshold: after the last pending message is claimed,
+// and after every pending message is deleted. A pause keeps it while messages are left.
+func TestMemoDispatchDrainingEndsWhenNothingIsPending(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", map[string]any{"openAfter": 2, "maxActive": 6}, 2)
+		later := time.Now().Add(2 * time.Minute)
+		e.autoTick(later) // two pending, quiet: opens, fires one at a time per round
+		if agent.createCount() == 0 {
+			t.Fatal("did not open")
+		}
+		// Whatever is left, press fire now until nothing is pending: the claim ends the drain.
+		for e.fire(q).Code == http.StatusAccepted {
+		}
+		if e.queueRow(q).Draining {
+			t.Fatal("still draining after the last pending message was claimed")
+		}
+		before := agent.createCount()
+		e.pending("app", "impl", "one new")
+		// Within a fire's budget: a later "now" would return the claimed fire-now delivery's
+		// message to pending, which is another story.
+		soon := time.Now().Add(2 * time.Minute)
+		e.autoTick(soon)
+		e.autoTick(soon)
+		if agent.createCount() != before+1 { // the fire-now delivery is sent, nothing else is fired
+			t.Fatal("one message after an empty moment fired a threshold queue")
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, q := e.autoQueue("app", "impl", map[string]any{"openAfter": 3}, 3)
+		if err := e.st.SetMemoQueueDraining(context.Background(), q, true); err != nil {
+			t.Fatal(err)
+		}
+		memos := decode[[]memoDTO](t, e.do("a", "GET", "/api/memos", nil))
+		for _, m := range memos {
+			if rec := e.do("a", "DELETE", "/api/memos/"+m.ID, nil); rec.Code >= 300 {
+				t.Fatalf("delete: %d", rec.Code)
+			}
+		}
+		if e.queueRow(q).Draining {
+			t.Fatal("still draining with every message deleted")
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", map[string]any{"openAfter": 2, "maxActive": 1}, 3)
+		later := time.Now().Add(5 * time.Minute)
+		e.autoTick(later)
+		if !e.queueRow(q).Draining {
+			t.Fatal("not draining")
+		}
+		_, _ = e.pauseQueue(q, "x")
+		e.autoTick(later)
+		if !e.queueRow(q).Draining {
+			t.Fatal("a pause ended draining while messages are left: the drain resumes with the queue")
+		}
+		e.do("a", "POST", "/api/memo-queues/"+q+"/resume", nil)
+		live := e.liveDeliveries(q)
+		agent.setRow(live[0].Session, map[string]any{"state": "idle"})
+		before := agent.createCount()
+		for i := 0; i < 4; i++ {
+			e.autoTick(later)
+		}
+		if agent.createCount() <= before {
+			t.Fatal("did not go on draining after the resume")
 		}
 	})
 }

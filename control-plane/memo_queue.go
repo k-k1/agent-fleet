@@ -581,7 +581,13 @@ func (a memoAPI) deleteQueue(w http.ResponseWriter, r *http.Request, _ store.Ide
 // resumeQueue (POST /api/memo-queues/{categoryId}/resume) lifts the circuit breaker's pause and
 // restarts its count from now. Console only. A queue that is not paused answers the same.
 func (a memoAPI) resumeQueue(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-	found, err := a.store.ResumeMemoQueue(r.Context(), mv.MembershipID, r.PathValue("categoryId"), store.DeliveryTS(time.Now()))
+	// Behind the membership lock, like the breaker's pause, so that a pause decided on failures
+	// from before this resume cannot land after it.
+	found := false
+	err := a.store.MemoTx(r.Context(), mv.MembershipID, func(tx store.MemoTxOps) (err error) {
+		found, err = tx.ResumeQueue(r.PathValue("categoryId"), store.DeliveryTS(time.Now()))
+		return err
+	})
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return

@@ -10,6 +10,8 @@
 -- found the workspace's Agent not sending the queue report).
 -- memo_delivery.auto is 1 for a delivery the dispatcher fired by itself, which checks after the wake
 -- that the Agent sends the queue report.
+-- memo_delivery.limit_kinds is the agent kinds of the sessions of the tree that waited for a usage
+-- limit at the last kept report, as a comma list with a comma at each end.
 -- Forward compatible: columns are only added, with defaults that mean today's behaviour (always
 -- open, 20 a day, not paused). An older Control Plane never fires by itself, its PUT leaves
 -- every one of these columns as it is, and it cannot lift a pause.
@@ -26,4 +28,5 @@ ALTER TABLE memo_queue ADD COLUMN paused_reason TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_queue ADD COLUMN breaker_after TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_queue ADD COLUMN no_report_at TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_delivery ADD COLUMN auto INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE memo_delivery ADD COLUMN limit_kinds TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_memo_delivery_turn ON memo_delivery(queue_id, created_at) WHERE turn_ended_at <> ''

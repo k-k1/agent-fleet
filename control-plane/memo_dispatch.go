@@ -191,9 +191,6 @@ func (r *memoQueueRunner) wakeQueue(ctx context.Context, views map[string]*memoM
 	if open, _ := openState(q, w.pending, now); !open {
 		return
 	}
-	if r.limitHeld(q, live, r.queueKinds(ctx, q.MembershipID)) {
-		return
-	}
 	v := r.viewOf(ctx, views, q.MembershipID)
 	if v == nil || v.res.rt.State(ctx) != "stopped" {
 		return
@@ -225,16 +222,6 @@ func notSentBackoff(ds []store.MemoDelivery) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return closed.Add(wait), true
-}
-
-// backoff reports whether the queue is still waiting out its not-sent deliveries.
-func backoff(ctx context.Context, r *memoQueueRunner, queueID string, now time.Time) bool {
-	ds, err := r.mgr.store.ListRecentQueueDeliveries(ctx, queueID, 8)
-	if err != nil {
-		return false
-	}
-	until, ok := notSentBackoff(ds)
-	return ok && now.Before(until)
 }
 
 // olderPending orders by oldest waiting message, a member with none last.
@@ -317,36 +304,48 @@ func turnBad(d store.MemoDelivery) bool {
 }
 
 // checkBreaker pauses a queue whose last two deliveries with a recorded first turn, created
-// since it was last resumed, both ended badly, and tells the member once.
+// since it was last resumed, both ended badly, and tells the member once. The decision is made
+// again behind the membership lock, from the stored queue and deliveries, where a resume made
+// since this tick began has already moved breaker_after: failures from before it are not
+// counted again.
 func (r *memoQueueRunner) checkBreaker(ctx context.Context, q store.MemoQueue, now time.Time) {
-	ds, err := r.mgr.store.ListRecentTurnDeliveries(ctx, q.CategoryID, q.BreakerAfter, memoBreakerRun)
+	var reason, eventID string
+	err := r.mgr.store.MemoTx(ctx, q.MembershipID, func(tx store.MemoTxOps) error {
+		cur, ok, err := tx.GetQueue(q.CategoryID)
+		if err != nil || !ok || cur.Paused {
+			return err
+		}
+		ds, err := tx.RecentTurnDeliveries(q.CategoryID, cur.BreakerAfter, memoBreakerRun)
+		if err != nil || len(ds) < memoBreakerRun {
+			return err
+		}
+		var outcomes []string
+		for _, d := range ds {
+			if !turnBad(d) {
+				return nil
+			}
+			o := d.TurnOutcome
+			if o == "" {
+				o = "ended within a minute"
+			}
+			outcomes = append(outcomes, o)
+		}
+		why := "the first turns of the last two runs ended badly: " + strings.Join(outcomes, ", ")
+		won, err := tx.PauseQueue(q.CategoryID, store.DeliveryTS(now), why)
+		if err != nil || !won {
+			return err
+		}
+		reason, eventID = why, "memo-paused-"+q.CategoryID+"-"+ds[0].ID
+		return nil
+	})
 	if err != nil {
 		log.Printf("memo queue: queue %s: breaker: %v", q.CategoryID, err)
 		return
 	}
-	if len(ds) < memoBreakerRun {
-		return
+	if eventID != "" {
+		// Told once per occurrence: the EventID is the newest of the two deliveries.
+		r.notifyQueueRow(ctx, q, memoPausedKind, eventID, map[string]any{"reason": reason})
 	}
-	var outcomes []string
-	for _, d := range ds {
-		if !turnBad(d) {
-			return
-		}
-		o := d.TurnOutcome
-		if o == "" {
-			o = "ended within a minute"
-		}
-		outcomes = append(outcomes, o)
-	}
-	reason := "the first turns of the last two runs ended badly: " + strings.Join(outcomes, ", ")
-	at := store.DeliveryTS(now)
-	if _, err := r.mgr.store.PauseMemoQueue(ctx, q.CategoryID, at, reason); err != nil {
-		log.Printf("memo queue: queue %s: pause: %v", q.CategoryID, err)
-		return
-	}
-	// Told once per occurrence, by whichever Control Plane wrote the pause or lost that write:
-	// the EventID is the newest of the two deliveries.
-	r.notifyQueueRow(ctx, q, memoPausedKind, "memo-paused-"+q.CategoryID+"-"+ds[0].ID, map[string]any{"reason": reason})
 }
 
 // checkWaiting tells the member once when every slot of a queue is held by a session that waits
@@ -467,17 +466,6 @@ func (r *memoQueueRunner) fireOneOf(ctx context.Context, views map[string]*memoM
 	return store.MemoDelivery{}, false
 }
 
-// limitHeld reports whether a session of the member waits for a usage limit under an agent kind
-// the same as the queue's: no session of that kind is started while one does.
-func (r *memoQueueRunner) limitHeld(q store.MemoQueue, live []store.MemoDelivery, kindOf map[string]string) bool {
-	for _, d := range live {
-		if d.State == store.DeliveryOpen && d.Reported && d.HeldBy == store.HeldLimit && kindOf[d.QueueID] == q.AgentKind {
-			return true
-		}
-	}
-	return false
-}
-
 // fireQueue tries one automatic fire of a queue. It reports whether a delivery was claimed.
 func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoMemberView, w *memoQueueWork,
 	live []store.MemoDelivery, now time.Time) (store.MemoDelivery, bool) {
@@ -485,14 +473,7 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 	if q.Paused || !q.Enabled {
 		return store.MemoDelivery{}, false
 	}
-	if backoff(ctx, r, q.CategoryID, now) {
-		return store.MemoDelivery{}, false
-	}
 	if open, _ := openState(q, w.pending, now); !open {
-		return store.MemoDelivery{}, false
-	}
-	kindOf := r.queueKinds(ctx, q.MembershipID)
-	if r.limitHeld(q, live, kindOf) {
 		return store.MemoDelivery{}, false
 	}
 	v := r.viewOf(ctx, views, q.MembershipID)
@@ -533,8 +514,16 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 	claimed := false
 	since := store.DeliveryTS(now.Add(-memoFiresWindow))
 	err := r.mgr.store.MemoTx(ctx, q.MembershipID, func(tx store.MemoTxOps) error {
+		// Everything below is read again behind the membership lock: what the tick read before
+		// the lock (the queue, the tenant switch, a usage limit, the deliveries) may be old.
+		if on, err := tx.LockTenantSwitch(); err != nil || !on {
+			return err
+		}
 		cur, ok, err := tx.GetQueue(q.CategoryID)
 		if err != nil || !ok || !cur.Enabled || cur.Paused {
+			return err
+		}
+		if held, err := autoHeld(tx, cur, now); err != nil || held {
 			return err
 		}
 		fires, err := tx.CountDeliveriesCreatedSince(q.CategoryID, since)
@@ -577,6 +566,22 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 	return out, claimed
 }
 
+// autoHeld says whether a fire by itself of the queue has to wait, from the stored state seen
+// inside the transaction of the fire: a delivery of the queue closed as not sent lately (the
+// back-off), or a session of the member waits for a usage limit under the queue's agent kind, in
+// any session of any tree (the report's own list, not its strongest reason).
+func autoHeld(tx store.MemoTxOps, q store.MemoQueue, now time.Time) (bool, error) {
+	recent, err := tx.RecentQueueDeliveries(q.CategoryID, 8)
+	if err != nil {
+		return false, err
+	}
+	if until, ok := notSentBackoff(recent); ok && now.Before(until) {
+		return true, nil
+	}
+	n, err := tx.CountLimitedDeliveries(scheduleInjectKind(q.AgentKind))
+	return n > 0, err
+}
+
 // pendingOf summarizes the pending messages of a bucket the way ListQueuePendingStats does.
 func pendingOf(rows []store.Memo) store.QueuePending {
 	var p store.QueuePending
@@ -595,19 +600,6 @@ func pendingOf(rows []store.Memo) store.QueuePending {
 		}
 	}
 	return p
-}
-
-// queueKinds maps a member's queues to their agent kinds.
-func (r *memoQueueRunner) queueKinds(ctx context.Context, membershipID string) map[string]string {
-	out := map[string]string{}
-	qs, err := r.mgr.store.ListMemoQueues(ctx, membershipID)
-	if err != nil {
-		return out
-	}
-	for _, q := range qs {
-		out[q.CategoryID] = q.AgentKind
-	}
-	return out
 }
 
 func (r *memoQueueRunner) setNoReport(ctx context.Context, q store.MemoQueue, at string) {
@@ -676,12 +668,46 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 		MessageIDs: []string{}, CreatedAt: store.DeliveryTS(now), UpdatedAt: store.DeliveryTS(now), ClosedAt: store.DeliveryTS(now), Auto: true}
 	record := false
 	err := r.mgr.store.MemoTx(ctx, q.MembershipID, func(tx store.MemoTxOps) error {
+		// The same conditions as the snapshot above, read again behind the lock: a switch turned
+		// off, a queue disabled or paused, a cap lowered, or a slot freed since this tick read
+		// them makes a wake that nothing needs.
+		if on, err := tx.LockTenantSwitch(); err != nil || !on {
+			return err
+		}
+		cur, ok, err := tx.GetQueue(q.CategoryID)
+		if err != nil || !ok || !cur.Enabled || cur.Paused {
+			return err
+		}
+		c, ok, err := tx.GetCategory(q.CategoryID)
+		if err != nil || !ok {
+			return err
+		}
+		rows, err := tx.ListMemosIn(c.Repo, c.Name)
+		if err != nil {
+			return err
+		}
+		pending := pendingOf(rows)
+		if open, _ := openState(cur, pending, now); !open || pending.Count == 0 {
+			return nil
+		}
+		if held, err := autoHeld(tx, cur, now); err != nil || held {
+			return err
+		}
+		liveNow, err := tx.LiveQueueDeliveries(q.CategoryID)
+		if err != nil || len(liveNow) == 0 || len(liveNow) < cur.MaxActive {
+			return err
+		}
+		for _, d := range liveNow {
+			if d.State != store.DeliverySending && !(d.State == store.DeliveryOpen && d.OverdueAt != "" && d.RetiredAt == "") {
+				return nil
+			}
+		}
 		recent, err := tx.CountWakesSince(q.CategoryID, store.DeliveryTS(now.Add(-memoSettleWakeEvery)))
 		if err != nil || recent > 0 {
 			return err
 		}
 		fires, err := tx.CountDeliveriesCreatedSince(q.CategoryID, store.DeliveryTS(now.Add(-memoFiresWindow)))
-		if err != nil || fires >= memoQueueFiresPerDay(q) {
+		if err != nil || fires >= memoQueueFiresPerDay(cur) {
 			return err
 		}
 		record = true

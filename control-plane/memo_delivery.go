@@ -727,6 +727,29 @@ func sessionProgress(s sessionWire) bool {
 	return busyState(s.State) && !progressLapsed(s)
 }
 
+// treeLimitKinds is the agent kinds of the sessions of a tree that wait for a usage limit
+// (limited, or a booked resume), as ",a,b," or "". It is kept apart from the strongest hold of
+// treeHold: a parent that waits for a limit while its child works is held by a machine, and the
+// limit still has to stop a new session of that kind.
+func treeLimitKinds(tree []*sessionWire) string {
+	set := map[string]bool{}
+	for _, s := range tree {
+		if s.Archived || !(s.State == stateLimited || s.RateLimitResumeAt != "") {
+			continue
+		}
+		set[scheduleInjectKind(s.Kind)] = true
+	}
+	if len(set) == 0 {
+		return ""
+	}
+	kinds := make([]string, 0, len(set))
+	for k := range set {
+		kinds = append(kinds, k)
+	}
+	sort.Strings(kinds)
+	return "," + strings.Join(kinds, ",") + ","
+}
+
 // treeHold is the strongest hold in a tree, the session that has it, and whether any session of
 // it shows progress. An archived session of the tree holds nothing.
 func treeHold(tree []*sessionWire, now time.Time) (why, session string, progress bool) {
@@ -767,7 +790,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		return
 	}
 	o := store.DeliveryObservation{Gen: gen, At: v.readAt, HeldBy: why, HeldSession: who, Progress: progress,
-		ProgressAt: store.DeliveryTS(now)}
+		ProgressAt: store.DeliveryTS(now), LimitKinds: treeLimitKinds(tree)}
 	if t := tree[0].QueueTurn; t != nil && t.EndedAt != "" {
 		o.TurnOutcome, o.TurnMs, o.TurnEndedAt = t.Outcome, t.Ms, t.EndedAt
 	}
