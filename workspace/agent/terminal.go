@@ -17,6 +17,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
@@ -187,6 +188,12 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			_, _ = ptmx.Write(b)
 			return true
+		}
+		// A key press into a session is a person's act. Recorded before the lifecycle gate is
+		// taken, so the wait for a retire's gate never holds a lease; a no-op while the mark has
+		// not moved since this session's last recorded act.
+		if !sessionx.NotePersonActInput(name, b) {
+			return true // could not be ordered against a retire in time: the bytes are dropped, the socket stays
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

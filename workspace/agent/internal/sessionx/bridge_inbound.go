@@ -64,6 +64,9 @@ func injectSessionPrompt(name, prompt string, origin agents.Origin) error {
 	if !metaOK || !peerTargetAllowed(meta.Kind) {
 		return errInjectTargetForbidden
 	}
+	if origin.IsMember() { // the chat bridge's replies; every automatic caller has its own origin
+		notePersonAct(name)
+	}
 	if st := promptBlocker(name); st != "" {
 		if st == "question" {
 			return errInjectQuestionPending

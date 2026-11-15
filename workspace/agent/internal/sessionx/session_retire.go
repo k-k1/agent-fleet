@@ -21,8 +21,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -85,6 +87,15 @@ func clearRetired(name string) error {
 	return err
 }
 
+// readMetaStable reads a session's meta under the meta lock. A plain read can land in the middle
+// of a writer that truncates and rewrites the file and then comes back empty or cut short; the
+// retire must not take that for "no act and no release" and go on to mark and stop the session.
+func readMetaStable(name string) (session.Meta, bool) {
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	return session.ReadMeta(name)
+}
+
 type autoStartKey struct{}
 
 // asAutomaticStart marks a request to HandleStartSession as one the Agent makes on its own.
@@ -127,7 +138,7 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	m, ok := session.ReadMeta(name)
+	m, ok := readMetaStable(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
@@ -139,6 +150,14 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "retire_not_root",
 			name+" was started by session "+retireRootOf(m)+"; retire that session instead")
 		return
+	}
+	// The body is optional: none, or 0, is the unconditional retire.
+	var cond retireReq
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&cond); err != nil && !errors.Is(err, io.EOF) {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "the body, when there is one, is {\"ifNoActSince\": n}")
+			return
+		}
 	}
 	// One retire of a root at a time, from the intent to the end, recovery included: a second
 	// request waits for the first, so an older run never goes on with a tree a newer one has
@@ -155,7 +174,7 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 			"this request's deadline passed before the retire started; nothing was done")
 		return
 	}
-	in, err := beginRetire(name)
+	in, err := beginRetire(name, cond.IfNoActSince)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "retire_intent_unwritable",
 			"the retire could not be recorded, so nothing was ended: "+err.Error())
@@ -210,7 +229,7 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 	// What the answer says is the state now: a session a person started after this retire marked it
 	// is released and running, not stopped.
 	for _, rep := range order {
-		if cur, ok := session.ReadMeta(rep.Name); ok && releasedFrom(cur, in.ID) {
+		if cur, ok := readMetaStable(rep.Name); ok && releasedFrom(cur, in.ID) {
 			rep.Released, rep.Running, rep.Stopped = true, SessionAlive(cur), false
 		}
 	}
@@ -242,14 +261,36 @@ func retireOne(ctx context.Context, rep *retireReport, in *retireIntent) {
 	g := retireGate(rep.Name)
 	g.Lock()
 	defer g.Unlock()
-	cur, ok := session.ReadMeta(rep.Name)
-	if ok && (releasedFrom(cur, in.ID) || releasedAncestor(cur, in.ID)) {
+	cur, ok := readMetaStable(rep.Name)
+	if !ok {
+		// A meta that cannot be read, or is gone, is in doubt: nothing here may stand for "no act" and
+		// "not released". The member is neither marked nor stopped in this pass, and the answer says
+		// so (not complete), so the Control Plane repeats.
+		if metaFileExists(rep.Name) {
+			rep.Unended = appendNew(rep.Unended, "the session's meta could not be read, so it was neither marked nor stopped; retire again")
+		} else {
+			rep.Unended = appendNew(rep.Unended, "the session is gone")
+		}
+		return
+	}
+	above, doubt := ancestorState(cur, in.ID)
+	if doubt != "" {
+		rep.Unended = appendNew(rep.Unended, "the meta of "+doubt+" (above this session) could not be read, so this session was neither marked nor stopped; retire again")
+		return
+	}
+	if above || releasedFrom(cur, in.ID) {
 		// A person started it, or a session above it, since this retire began: it and everything
 		// below it are theirs. Nothing is marked, stopped or ended, and the answer says so.
 		rep.Released, rep.Running = true, SessionAlive(cur)
 		return
 	}
-	markRetired(rep, in.ID)
+	switch state, final := markOrRelease(rep, in); state {
+	case markReleased:
+		rep.Released, rep.Running = true, SessionAlive(final)
+		return
+	case markDoubt:
+		return // nothing is ended or stopped: the reason is in unended and the Control Plane repeats
+	}
 	endSubscriptions(ctx, rep)
 	stopRetired(rep)
 	endSubscriptions(ctx, rep)
@@ -262,6 +303,17 @@ func retireOne(ctx context.Context, rep *retireReport, in *retireIntent) {
 type retireIntent struct {
 	Root string `json:"root"`
 	ID   string `json:"id"`
+	// IfNoActSince is the condition the request carried: a member whose PersonActMark is at or
+	// above it is released from this retire. 0 is none. It lives with the intent so that the
+	// recovery after a restart applies the same one.
+	IfNoActSince int64 `json:"ifNoActSince,omitempty"`
+}
+
+// retireReq is the optional body of POST /sessions/{name}/retire.
+type retireReq struct {
+	// IfNoActSince is the actMark of the session list the retire was decided on. A session a
+	// person started or typed into after that list (PersonActMark >= it) is not retired.
+	IfNoActSince int64 `json:"ifNoActSince"`
 }
 
 var retireIntents = fstore.JSON[retireIntent](paths.AgentStateDir, "session-retire-intent", ".json")
@@ -270,10 +322,10 @@ var retireIntentMu sync.Mutex
 // beginRetire records a new retire before anything is marked. Without a durable intent nothing
 // may be marked: the write is read back, because a directory that accepted it and keeps nothing
 // would leave a crash with no tree to recover.
-func beginRetire(root string) (*retireIntent, error) {
+func beginRetire(root string, ifNoActSince int64) (*retireIntent, error) {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
-	in := retireIntent{Root: root, ID: hex.EncodeToString(b)}
+	in := retireIntent{Root: root, ID: hex.EncodeToString(b), IfNoActSince: max(ifNoActSince, 0)}
 	retireIntentMu.Lock()
 	defer retireIntentMu.Unlock()
 	if err := retireIntents.Write(root, in); err != nil {
@@ -340,7 +392,11 @@ func ReconcileRetired(ctx context.Context) int {
 			unlock()
 			continue
 		}
-		m, exists := session.ReadMeta(root)
+		m, exists := readMetaStable(root)
+		if !exists && metaFileExists(root) {
+			unlock() // unreadable, not gone: in doubt, so the intent stays for the next start
+			continue
+		}
 		if !exists || (!isRetired(m) && m.RetireClearedID == in.ID) {
 			retireIntentMu.Lock()
 			retireIntents.Remove(root) // gone, or a person resumed the root: nothing to finish
@@ -374,11 +430,43 @@ func retireIntentRoots() []string {
 	return out
 }
 
-// markRetired puts the mark and the retire's id on in one update, keeping the first date when it is
-// already there. The write is checked: a mark that did not reach the disk protects nothing, and
-// is reported as not ended.
-func markRetired(rep *retireReport, id string) {
-	_, _, err := updateSessionMetaChecked(rep.Name, func(m *session.Meta) bool {
+// markState is what markOrRelease came to. Only markMarked lets the retire end and stop.
+type markState int
+
+const (
+	// markDoubt: the update failed, or the meta could not be read inside it. Nothing was decided.
+	markDoubt markState = iota
+	// markMarked: this retire's mark is on the meta, written durably (or was already there).
+	markMarked
+	// markReleased: a person has the session, by a start after the retire began or by an act.
+	markReleased
+)
+
+// markOrRelease decides and writes in one checked meta update, on the meta that update reads under
+// the meta lock: a member a person started (this retire's tombstone) is left alone; one with
+// personActMark >= ifNoActSince is released with the same record a person's start leaves; every
+// other member gets the mark and the retire's id, keeping the first date. Any error, and a meta
+// that cannot be read inside the update, is markDoubt: a mark or a release that did not reach the
+// disk protects nothing, and the caller must not end or stop on it.
+//
+// A number above this Agent's own counter was not handed out by it (a restored older state): nothing
+// here proves "no act since", so it reads as an act. A member this retire or an earlier one has
+// marked is not looked at for acts: an act that reached it after the mark found a retired session.
+func markOrRelease(rep *retireReport, in *retireIntent) (markState, session.Meta) {
+	id := in.ID
+	state := markDoubt
+	final, _, err := updateSessionMetaChecked(rep.Name, func(m *session.Meta) bool {
+		if releasedFrom(*m, id) {
+			state = markReleased
+			return false
+		}
+		if in.IfNoActSince > 0 && !isRetired(*m) &&
+			(m.PersonActMark >= in.IfNoActSince || in.IfNoActSince > actMarks.now()) {
+			m.RetiredAt, m.RetireID, m.RetireClearedID = "", "", id
+			state = markReleased
+			return true
+		}
+		state = markMarked
 		// The first date stays; the id is this retire's, so a person's start clears the mark
 		// of the retire whose intent is on disk.
 		if m.RetiredAt != "" && (m.RetireID == id || id == "") {
@@ -390,12 +478,17 @@ func markRetired(rep *retireReport, id string) {
 		m.RetireID = id
 		return true
 	})
-	if err != nil {
-		rep.Unended = appendNew(rep.Unended, "the retired mark could not be written: "+err.Error())
+	switch {
+	case err != nil:
+		rep.Unended = appendNew(rep.Unended, "the retired mark (or the release of a session a person acted on) could not be written, so nothing was ended or stopped: "+err.Error())
+		return markDoubt, final
+	case state == markDoubt:
+		// The callback never ran (the checked updater does not call it for a meta it cannot decode,
+		// whatever name that decode left behind): decided from the state, never from the name.
+		rep.Unended = appendNew(rep.Unended, "the session's meta could not be read, so it was neither marked nor stopped; retire again")
+		return markDoubt, final
 	}
-	if _, exists := session.ReadMeta(rep.Name); !exists {
-		rep.Unended = appendNew(rep.Unended, "the session is gone")
-	}
+	return state, final
 }
 
 // endSubscriptions ends the subscriptions of one session.
@@ -457,7 +550,7 @@ func cancelBookedResume(name string) (cancelled bool, unended []string) {
 
 // stopRetired stops one session with the ordinary, resumable stop.
 func stopRetired(rep *retireReport) {
-	m, ok := session.ReadMeta(rep.Name)
+	m, ok := readMetaStable(rep.Name)
 	if !ok {
 		return
 	}
@@ -482,7 +575,7 @@ func appendNew(list []string, add ...string) []string {
 func retireRootOf(m session.Meta) string {
 	seen := map[string]bool{m.Name: true}
 	for session.OriginOf(m) == session.OriginSession && m.OriginSession != "" && !seen[m.OriginSession] {
-		parent, ok := session.ReadMeta(m.OriginSession)
+		parent, ok := readMetaStable(m.OriginSession)
 		if !ok {
 			return m.OriginSession
 		}
@@ -516,19 +609,36 @@ func releasedFrom(m session.Meta, id string) bool {
 // releasedAncestor reports whether any session above m (origin=session chain, up to the root) was
 // released from the retire id. Loop-safe; a missing ancestor ends the climb.
 func releasedAncestor(m session.Meta, id string) bool {
+	released, _ := ancestorState(m, id)
+	return released
+}
+
+// ancestorState is releasedAncestor that also says when an ancestor's meta exists but cannot be
+// read (doubt names it): the climb cannot tell whether that one was released, so a destructive step
+// must not go on.
+func ancestorState(m session.Meta, id string) (released bool, doubt string) {
 	seen := map[string]bool{m.Name: true}
 	for session.OriginOf(m) == session.OriginSession && m.OriginSession != "" && !seen[m.OriginSession] {
-		parent, ok := session.ReadMeta(m.OriginSession)
+		parent, ok := readMetaStable(m.OriginSession)
 		if !ok {
-			return false
+			if metaFileExists(m.OriginSession) {
+				return false, m.OriginSession
+			}
+			return false, ""
 		}
 		if releasedFrom(parent, id) {
-			return true
+			return true, ""
 		}
 		seen[parent.Name] = true
 		m = parent
 	}
-	return false
+	return false, ""
+}
+
+// metaFileExists says the session's meta file is there, readable or not.
+func metaFileExists(name string) bool {
+	_, err := os.Stat(session.MetaPath(name))
+	return err == nil
 }
 
 // underReleased reports whether a session of the walk sits below one this retire found released.
