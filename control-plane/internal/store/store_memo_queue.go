@@ -74,6 +74,12 @@ type MemoQueueStore interface {
 	ListEnabledMemoQueues(ctx context.Context) ([]MemoQueue, error)
 	// ListQueuePendingStats counts the pending messages of every enabled queue, by category id.
 	ListQueuePendingStats(ctx context.Context) (map[string]QueuePending, error)
+	// ListMemberQueuePendingStats is the same for every queue of one member, enabled or not: the
+	// read that says why a queue with notes waiting starts nothing.
+	ListMemberQueuePendingStats(ctx context.Context, membershipID string) (map[string]QueuePending, error)
+	// MemoRead runs f with the reads that decide whether a queue may fire, outside a transaction
+	// and without the membership's lock: a display must not queue behind the dispatcher.
+	MemoRead(ctx context.Context, membershipID string, f func(MemoWaitOps) error) error
 	// SetMemoQueueDraining and SetMemoQueueNoReport write the dispatcher's state columns.
 	SetMemoQueueDraining(ctx context.Context, queueID string, on bool) error
 	SetMemoQueueNoReport(ctx context.Context, queueID, at string) error
@@ -136,6 +142,19 @@ type MemoTxOps interface {
 	ResumeQueue(categoryID, at string) (bool, error)
 
 	MemoDeliveryTxOps
+	MemoWaitOps
+}
+
+// MemoWaitOps are the reads behind "may this queue fire now", the ones the dispatcher makes
+// behind the membership's lock and the Console's list makes without it.
+type MemoWaitOps interface {
+	CountLimitedDeliveries(kind string) (int, error)
+	RecentQueueDeliveries(queueID string, limit int) ([]MemoDelivery, error)
+	CountDeliveriesCreatedSince(queueID, since string) (int, error)
+	CountLiveDeliveries(queueID string) (queue, member int, err error)
+	// NthOldestDeliverySince is the creation time of the queue's skip-th oldest delivery (0 is
+	// the oldest) created at or after since, counted as CountDeliveriesCreatedSince counts.
+	NthOldestDeliverySince(queueID, since string, skip int) (string, bool, error)
 }
 
 // memoQuerier is what *sqlDB and *sqlTx have in common.
@@ -399,11 +418,19 @@ func (s *SQL) ListEnabledMemoQueues(ctx context.Context) ([]MemoQueue, error) {
 }
 
 func (s *SQL) ListQueuePendingStats(ctx context.Context) (map[string]QueuePending, error) {
+	return s.queuePendingStats(ctx, `q.enabled=1`)
+}
+
+func (s *SQL) ListMemberQueuePendingStats(ctx context.Context, membershipID string) (map[string]QueuePending, error) {
+	return s.queuePendingStats(ctx, `q.membership_id=?`, membershipID)
+}
+
+func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (map[string]QueuePending, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at)
 		FROM memo m
 		JOIN memo_category c ON c.membership_id=m.membership_id AND c.repo=m.repo AND c.name=m.category
 		JOIN memo_queue q ON q.category_id=c.id
-		WHERE q.enabled=1 AND m.state=? GROUP BY c.id`, MemoStatePending)
+		WHERE `+cond+` AND m.state=? GROUP BY c.id`, append(args, MemoStatePending)...)
 	if err != nil {
 		return nil, err
 	}
@@ -423,6 +450,10 @@ func (s *SQL) ListQueuePendingStats(ctx context.Context) (map[string]QueuePendin
 		out[id] = p
 	}
 	return out, rows.Err()
+}
+
+func (s *SQL) MemoRead(ctx context.Context, membershipID string, f func(MemoWaitOps) error) error {
+	return f(memoTx{ctx: ctx, q: s.db, mid: membershipID})
 }
 
 func (s *SQL) SetMemoQueueDraining(ctx context.Context, queueID string, on bool) error {

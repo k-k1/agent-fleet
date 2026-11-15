@@ -256,11 +256,11 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 	if err != nil {
 		return none, nil, err
 	}
-	if inQueue >= q.MaxActive {
+	switch memoPlaceTaken(q, inQueue, inMember) {
+	case "category":
 		return none, &apiError{http.StatusConflict, errCodeMemoQueueNoSlot,
 			fmt.Sprintf("every slot of this queue is taken (%d of %d)", inQueue, q.MaxActive)}, nil
-	}
-	if inMember >= memoQueueMemberLimit {
+	case "member":
 		return none, &apiError{http.StatusConflict, errCodeMemoQueueMemberLimit,
 			fmt.Sprintf("your queues already run %d deliveries, the most at once", inMember)}, nil
 	}

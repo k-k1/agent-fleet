@@ -322,7 +322,16 @@ Workspace を起こさない。
   のは自動の発火で、「今すぐ送る」は止めない。**`queueReport` を送らない Agent** には自動では
   発火しない: 動いている Workspace は読んで `no_report_at` を立て（キューの DTO に出る）、止まって
   いるものは読まない。自動で撃った配信（`memo_delivery.auto`）は起こしたあとに確かめ、報告が無ければ
-  メッセージを戻す。**決済だけの起こし**: pending があるキューの全枠が、止まった Workspace の
+  メッセージを戻す。**pending があるのに何も始まらない理由**:
+  `GET /api/memo-queues` はキューごとに `waiting: {reason, until?, detail?}` を足す（実行できるとき、
+  待っているものが無いとき、古い CP からは無い）。保存はしない。発火してよいかを決める関数は
+  `memoWaitingFor`（`memo_dispatch.go`）の 1 つで、dispatcher は membership のロックの中で、一覧は
+  ロックを取らない `MemoRead` で呼ぶ。理由はこの順に調べ、最初に当てはまったものを返す:
+  `tenant_off`、`disabled`、`no_report`、`paused`、`window_closed`（`until` = 窓の次の開始。キューの
+  タイムゾーン）、`below_threshold`（`detail.needed`・`detail.waiting`）、`quiet_minute`（`until` =
+  静かな 1 分の終わり）、`daily_cap`（`until` = 直近 24 時間の数が上限を下回るまでに古い実行が抜ける時刻）、
+  `backoff`（`until` = バックオフの終わり）、`usage_limit`（`detail.agentKind`）、`no_place`
+  （`detail.by` = `category` か `member`）。セッション数のクォータ不足はこの中に入らない。**決済だけの起こし**: pending があるキューの全枠が、止まった Workspace の
   `sending` か、retire を待つ overdue の配信で埋まっているとき、Workspace を起こす（tick の発火枠の
   1 つで、キューごとに 10 分に 1 回まで、Workspace ごとに tick に 1 回まで。tick の送信がキューの枠を
   使い切っていても起こす）。結果 `wake` の閉じた配信として記録し、その日の発火に数え、一覧には出さない。
