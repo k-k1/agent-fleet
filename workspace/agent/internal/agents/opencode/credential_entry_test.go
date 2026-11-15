@@ -3,7 +3,6 @@ package opencode
 import (
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,13 +16,7 @@ import (
 func TestPutConnRefusesAKeyThePolicyForbids(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AF_SECRET_KEY", "")
-	s := routepolicy.Open(filepath.Join(t.TempDir(), "rp.json"), "")
-	if _, err := s.Accept(routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []string{routes.RouteOpencodeGo}}); err != nil {
-		t.Fatal(err)
-	}
-	old := routepolicy.Active
-	routepolicy.Active = func() *routepolicy.Store { return s }
-	t.Cleanup(func() { routepolicy.Active = old })
+	useIsolationPolicy(t, routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []string{routes.RouteOpencodeGo}})
 	put := func(env string) int {
 		rec := httptest.NewRecorder()
 		HandlePutConn(rec, httptest.NewRequest(http.MethodPut, "/connections/opencode", strings.NewReader(`{"env":"`+env+`","key":"k-1"}`)))

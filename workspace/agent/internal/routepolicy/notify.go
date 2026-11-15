@@ -8,6 +8,8 @@ import "sync"
 var (
 	listenersMu sync.Mutex
 	listeners   []func(Policy)
+	// running counts the listener calls in flight, for WaitListeners.
+	running sync.WaitGroup
 )
 
 // OnChange registers f to be called, on its own goroutine, with the held policy each time a store
@@ -25,6 +27,15 @@ func (s *Store) notify() {
 	fs := append([]func(Policy){}, listeners...)
 	listenersMu.Unlock()
 	for _, f := range fs {
-		go f(p)
+		running.Add(1)
+		go func() {
+			defer running.Done()
+			f(p)
+		}()
 	}
 }
+
+// WaitListeners waits for the listener calls in flight to return. A test that swaps a package var
+// a listener reads (Active among them) calls it first: the listeners a store's Accept started run
+// on their own goroutines and outlive it. Production never waits.
+func WaitListeners() { running.Wait() }
