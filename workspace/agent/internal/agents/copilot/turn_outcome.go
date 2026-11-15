@@ -13,31 +13,36 @@ import (
 	"os"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 )
 
-// turnWatch implements acp.Hooks.TurnWatch: it notes where events.jsonl ends when the turn is
-// sent, and the returned function reports the turn's failure from what was appended after.
+// turnWatch implements acp.Hooks.TurnWatch: it marks events.jsonl when the turn is sent, and the
+// returned function reports the turn's failure from what came after the mark. The mark carries a
+// fingerprint of the file's head and not only its size (agents.FileSizeMark): a bare size would
+// seek past the end of a file that was truncated or replaced during the turn and read nothing,
+// turning a new failure into a clean idle.
 func turnWatch(sid string) func() string {
 	path := EventsPath(sid)
-	var off int64 // the file may not exist yet: a new session's first turn creates it
-	if fi, err := os.Stat(path); err == nil {
-		off = fi.Size()
-	}
-	return func() string { return failureSince(path, off) }
+	mark, _ := agents.FileSizeMark(path) // "" (unreadable) is treated like a replaced file below
+	return func() string { return failureSince(path, mark) }
 }
 
-// failureSince returns the message of the last session.error appended after off that no
+// failureSince returns the message of the last session.error appended after mark that no
 // assistant output followed ("" = none). The "--model … Using auto instead" notice is not a
 // failure, since the turn still runs, and an error followed by assistant.message or
 // assistant.turn_end belongs to a turn that went on to answer. The text is the provider's, scrubbed
-// of secret-shaped substrings and clipped, because it reaches the operator report.
-func failureSince(path string, off int64) string {
+// of secret-shaped substrings and clipped, because it reaches the operator report. A file that is
+// no longer the one the mark was taken from (replaced, or truncated below the mark) is read from
+// its start: every line in it is new to this turn, and a turn that answered clears an older error
+// anyway.
+func failureSince(path, mark string) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
+	off, _ := agents.FileMarkOffset(path, mark) // 0 when the mark no longer fits the file
 	if _, err := f.Seek(off, io.SeekStart); err != nil {
 		return ""
 	}

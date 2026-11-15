@@ -180,6 +180,21 @@ func parseFileMark(path, mark string) (at int64, ok bool) {
 	return at, true
 }
 
+// FileMarkOffset is the byte offset a FileSizeMark was taken at, and whether path still holds the
+// file the mark was taken from. ok=false means the file was replaced, truncated below the mark or
+// the mark is unreadable: the offset then means nothing, and a caller that wants "what came after
+// the mark" has to treat the whole file as new rather than seek there.
+func FileMarkOffset(path, mark string) (at int64, ok bool) {
+	at, ok = parseFileMark(path, mark)
+	if !ok {
+		return 0, false
+	}
+	if fi, err := os.Stat(path); err == nil && fi.Size() < at {
+		return 0, false
+	}
+	return at, true
+}
+
 // firstLineFrom streams the file from byte offset at and returns the offset of the first line
 // accepted by match. A mark that falls inside a line (the CLI was mid-write) skips that line's
 // remainder: it began before the mark.

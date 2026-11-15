@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
 
 const failedTurnsFixture = "testdata/failed_turns_events.jsonl"
@@ -14,21 +16,90 @@ const failedTurnsFixture = "testdata/failed_turns_events.jsonl"
 // - no user.message and no turn events at all.
 func TestFailureSinceRecordedFailedTurns(t *testing.T) {
 	const want = `Execution failed: Model "claude-haiku-5.5" is not available.`
-	if got := failureSince(failedTurnsFixture, 0); got != want {
-		t.Fatalf("failure = %q, want %q", got, want)
-	}
-	// A turn sent after the first failure sees only what was appended after it.
 	raw, err := os.ReadFile(failedTurnsFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := strings.Index(string(raw), "\n") + 1
-	second := first + strings.Index(string(raw[first:]), "\n") + 1 // just past the first session.error
-	if got := failureSince(failedTurnsFixture, int64(second)); got != want {
+	lines := strings.SplitAfter(string(raw), "\n") // session.start, error, error, shutdown, ""
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	write := func(s string) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// First prompt: the file holds only session.start when the turn is sent.
+	write(lines[0])
+	mark, _ := agents.FileSizeMark(p)
+	write(lines[0] + lines[1])
+	if got := failureSince(p, mark); got != want {
+		t.Fatalf("first turn failure = %q, want %q", got, want)
+	}
+	// A turn sent after the first failure sees only what was appended after it.
+	mark, _ = agents.FileSizeMark(p)
+	if got := failureSince(p, mark); got != "" {
+		t.Errorf("nothing appended, yet failure = %q", got)
+	}
+	write(lines[0] + lines[1] + lines[2])
+	if got := failureSince(p, mark); got != want {
 		t.Errorf("second turn failure = %q, want %q", got, want)
 	}
-	if got := failureSince(failedTurnsFixture, int64(len(raw))); got != "" {
-		t.Errorf("nothing appended, yet failure = %q", got)
+	// The whole recorded file read from its start (no usable mark) still ends in the failure.
+	if got := failureSince(failedTurnsFixture, ""); got != want {
+		t.Errorf("unmarked failure = %q, want %q", got, want)
+	}
+}
+
+// A file that is truncated or replaced during the turn must not be read from the old byte
+// offset: a seek past the new end succeeds and reads nothing, which turned a new failure into a
+// clean idle. The mark's size is larger than the new file in the shrink cases and smaller in the
+// rotation one.
+func TestFailureSinceFileReplacedDuringTurn(t *testing.T) {
+	const failLine = `{"type":"session.error","data":{"message":"Execution failed: new","errorType":"query"}}` + "\n"
+	// A head of a few KiB made of ordinary events, so the mark has a real size and fingerprint.
+	var old strings.Builder
+	old.WriteString(`{"type":"session.start","data":{"sessionId":"old"}}` + "\n")
+	for old.Len() < 8193 {
+		old.WriteString(`{"type":"assistant.message","data":{"content":"filler filler filler filler"}}` + "\n")
+	}
+	for name, replace := range map[string]func(p string){
+		"truncated": func(p string) {
+			if err := os.WriteFile(p, []byte(failLine), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"renamed and recreated, smaller": func(p string) {
+			if err := os.Rename(p, p+".old"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(failLine), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"rotated, new file larger than the mark": func(p string) {
+			if err := os.Rename(p, p+".old"); err != nil {
+				t.Fatal(err)
+			}
+			big := `{"type":"session.start","data":{"sessionId":"new"}}` + "\n" + old.String() + failLine
+			if err := os.WriteFile(p, []byte(big), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "events.jsonl")
+			if err := os.WriteFile(p, []byte(old.String()), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			mark, ok := agents.FileSizeMark(p)
+			if !ok {
+				t.Fatal("no mark")
+			}
+			replace(p)
+			if got := failureSince(p, mark); got != "Execution failed: new" {
+				t.Errorf("failure = %q, want the new file's error", got)
+			}
+		})
 	}
 }
 
@@ -48,12 +119,12 @@ func TestFailureSinceIgnoresNoticeAndAnsweredTurns(t *testing.T) {
 			if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if got := failureSince(p, 0); got != "" {
+			if got := failureSince(p, "0"); got != "" {
 				t.Errorf("failure = %q, want none", got)
 			}
 		})
 	}
-	if got := failureSince(filepath.Join(t.TempDir(), "missing.jsonl"), 0); got != "" {
+	if got := failureSince(filepath.Join(t.TempDir(), "missing.jsonl"), "0"); got != "" {
 		t.Errorf("missing file: failure = %q", got)
 	}
 }
@@ -64,7 +135,7 @@ func TestFailureSinceScrubsSecrets(t *testing.T) {
 	if err := os.WriteFile(p, []byte(line), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := failureSince(p, 0)
+	got := failureSince(p, "0")
 	if got == "" || strings.Contains(got, "ghp_abcdef") {
 		t.Errorf("failure = %q", got)
 	}
