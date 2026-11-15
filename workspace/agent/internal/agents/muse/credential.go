@@ -11,7 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-var _ agents.CredentialResolver = agentImpl{}
+var _ agents.OneRouteResolver = agentImpl{}
 
 // Login is what muse runs on now (ADR 0138 D2, D5b): META_API_KEY in the Agent's environment
 // first, because muse says it "always takes priority over the account login" (envKeySet), then
@@ -64,6 +64,9 @@ func loginOf(b []byte) routes.Launch {
 
 // ResolveLaunch implements agents.CredentialResolver.
 func (agentImpl) ResolveLaunch(session.Meta) routes.Launch { return Login() }
+
+// ResolvesOneRoute implements agents.OneRouteResolver.
+func (agentImpl) ResolvesOneRoute() {}
 
 // UsableRoutes implements agents.CredentialResolver: the one route the current login is on.
 func (agentImpl) UsableRoutes() []string {

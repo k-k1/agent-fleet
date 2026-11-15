@@ -15,6 +15,7 @@ import (
 
 var (
 	_ agents.CredentialResolver = agentImpl{}
+	_ agents.OneRouteResolver   = agentImpl{}
 	_ agents.PerCallRouter      = agentImpl{}
 )
 
@@ -46,6 +47,9 @@ func Connection() routes.Launch {
 
 // ResolveLaunch implements agents.CredentialResolver.
 func (agentImpl) ResolveLaunch(session.Meta) routes.Launch { return Connection() }
+
+// ResolvesOneRoute implements agents.OneRouteResolver.
+func (agentImpl) ResolvesOneRoute() {}
 
 // UsableRoutes implements agents.CredentialResolver: the member's endpoint while it is set, else
 // the deployment's chat engine while the engine catalogue (cached) has one.

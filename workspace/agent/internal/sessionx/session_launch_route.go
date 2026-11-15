@@ -41,6 +41,17 @@ func launchRouteOf(m session.Meta) *routes.Launch {
 	return nil
 }
 
+// judgedOr is the launch record of m: judged, the resolution the credential policy judged it on,
+// when it resolved one, else launchRouteOf. A record that differed from what was judged would let a
+// login changed in between pass under the old one's permission.
+func judgedOr(judged *routes.Launch, m session.Meta) *routes.Launch {
+	if judged != nil {
+		l := *judged
+		return &l
+	}
+	return launchRouteOf(m)
+}
+
 // launchOfSelection is the record of an explicit selection: its route, and the binding the
 // kind's agents.LaunchBinder gives it when it handles the route (authoritative, "" included),
 // else the bound connection BindRoute stored. A binder past the budget leaves the binding
