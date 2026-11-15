@@ -408,7 +408,7 @@ disables.
   returns its messages when the report is missing. **Why a queue with notes waiting starts nothing**:
   `GET /api/memo-queues` adds `waiting: {reason, until?, detail?}` per queue (absent when a run can
   start, when nothing waits, and from an older CP). It is not stored: `memoWaitingFor`
-  (`memo_waiting.go`) is the one function that decides whether a queue may fire, called by the
+  (`memo_dispatch.go`) is the one function that decides whether a queue may fire, called by the
   dispatcher behind the membership lock and by the list through `MemoRead`, which takes no lock.
   The reasons are checked in this order, and the first that holds is reported: `tenant_off`,
   `disabled`, `no_report`, `paused`, `window_closed` (`until` = the window's next start in the

@@ -325,7 +325,7 @@ Workspace を起こさない。
   メッセージを戻す。**pending があるのに何も始まらない理由**:
   `GET /api/memo-queues` はキューごとに `waiting: {reason, until?, detail?}` を足す（実行できるとき、
   待っているものが無いとき、古い CP からは無い）。保存はしない。発火してよいかを決める関数は
-  `memoWaitingFor`（`memo_waiting.go`）の 1 つで、dispatcher は membership のロックの中で、一覧は
+  `memoWaitingFor`（`memo_dispatch.go`）の 1 つで、dispatcher は membership のロックの中で、一覧は
   ロックを取らない `MemoRead` で呼ぶ。理由はこの順に調べ、最初に当てはまったものを返す:
   `tenant_off`、`disabled`、`no_report`、`paused`、`window_closed`（`until` = 窓の次の開始。キューの
   タイムゾーン）、`below_threshold`（`detail.needed`・`detail.waiting`）、`quiet_minute`（`until` =
