@@ -482,8 +482,9 @@ func markOrRelease(rep *retireReport, in *retireIntent) (markState, session.Meta
 	case err != nil:
 		rep.Unended = appendNew(rep.Unended, "the retired mark (or the release of a session a person acted on) could not be written, so nothing was ended or stopped: "+err.Error())
 		return markDoubt, final
-	case final.Name == "":
-		// The update never ran: the meta is gone or could not be read.
+	case state == markDoubt:
+		// The callback never ran (the checked updater does not call it for a meta it cannot decode,
+		// whatever name that decode left behind): decided from the state, never from the name.
 		rep.Unended = appendNew(rep.Unended, "the session's meta could not be read, so it was neither marked nor stopped; retire again")
 		return markDoubt, final
 	}

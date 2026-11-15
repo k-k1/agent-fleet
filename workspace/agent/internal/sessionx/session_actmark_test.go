@@ -819,3 +819,27 @@ func TestMarkOrReleaseSaysDoubtOnAnUnreadableMeta(t *testing.T) {
 		t.Fatalf("the meta was written: %q", b)
 	}
 }
+
+// A meta that decodes with a type error still leaves a name behind, and the checked updater does not
+// run the callback for it: that is in doubt too, with a reason in unended, so the retire is not
+// complete and its intent stays.
+func TestMarkOrReleaseSaysDoubtOnATypeInvalidMeta(t *testing.T) {
+	newActEnv(t)
+	writeMeta(t, session.Meta{Name: "s"})
+	in, _ := beginRetire("s", 0)
+	bad := `{"name":"s","personActMark":"bad"}`
+	if err := os.WriteFile(session.MetaPath("s"), []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rep := &retireReport{Name: "s", Unended: []string{}}
+	state, _ := markOrRelease(rep, in)
+	if state != markDoubt || len(rep.Unended) == 0 {
+		t.Fatalf("state %v, %+v", state, rep)
+	}
+	if retireComplete([]retireReport{*rep}) {
+		t.Fatal("a member in doubt was reported complete")
+	}
+	if b, _ := os.ReadFile(session.MetaPath("s")); string(b) != bad {
+		t.Fatalf("the meta was written: %q", b)
+	}
+}
