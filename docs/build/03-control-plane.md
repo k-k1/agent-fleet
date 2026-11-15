@@ -417,8 +417,10 @@ disables.
   message and then returned as not sent puts the queue back to draining (`memo_delivery.drain`),
   so it does not wait for a threshold it had passed. The first turn of a session that showed
   after its delivery closed (archived or stopped first) is copied onto the closed delivery for a
-  day after the close, so the breaker counts it; a session deleted before its turn was seen
-  leaves nothing to read, and that delivery is never counted. **Idle count and `gone`**: a second
+  day after the close, so the breaker counts it; every delivery read is stamped (`turn_tried_at`) and the least recently tried goes first, so
+  fifty that never fill cannot keep the rest from being read; a session deleted before its turn
+  was seen leaves nothing to read, and that delivery is never counted. The drain mark is set
+  by the common claim, so a manual fire's returned last batch restores the drain too. **Idle count and `gone`**: a second
   clear read counts only when the stored row was itself clear (`held_by` empty), so an older
   Control Plane's idle count never closes on one clear read; and a pending retire ends as `gone`
   only on a read made after the close (a fresh read when the tick's cached list lacks the root).

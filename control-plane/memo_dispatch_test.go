@@ -1099,3 +1099,73 @@ func TestMemoOccupancyFirstTurnAfterTheClose(t *testing.T) {
 		}
 	})
 }
+
+// A manual fire that claims the last pending message of a draining queue and comes back as not
+// sent puts the queue back to draining too, the same as a fire by itself.
+func TestMemoDispatchDrainSurvivesAReturnedManualFire(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", map[string]any{"openAfter": 2, "maxActive": 2}, 2)
+		now := time.Now().Add(2 * time.Minute)
+		e.autoTick(now) // opens, fires one, one pending left, draining
+		if !e.queueRow(q).Draining || e.pendingCount(q) != 1 {
+			t.Fatalf("draining %v, pending %d", e.queueRow(q).Draining, e.pendingCount(q))
+		}
+		agent.mu.Lock()
+		agent.createMode = "refuse"
+		agent.mu.Unlock()
+		if rec := e.fire(q); rec.Code != http.StatusAccepted { // claims the last pending: the drain ends
+			t.Fatalf("fire now: %d %s", rec.Code, rec.Body.String())
+		}
+		if e.queueRow(q).Draining {
+			t.Fatal("the claim of the last pending message did not end the drain")
+		}
+		e.autoTick(now) // the send is refused, the message returns
+		if e.pendingCount(q) != 1 || !e.queueRow(q).Draining {
+			t.Fatalf("pending %d, draining %v: the drain was not restored", e.pendingCount(q), e.queueRow(q).Draining)
+		}
+		agent.mu.Lock()
+		agent.createMode = ""
+		agent.mu.Unlock()
+		before := agent.createCount()
+		e.autoTick(now.Add(6 * time.Minute))
+		if agent.createCount() != before+1 {
+			t.Fatal("the returned message of a manual fire stayed below its threshold for good")
+		}
+	})
+}
+
+// Closed deliveries whose first turn never shows (a deleted session) cannot keep the ones behind
+// them from being read: with more of them than one pass reads, the pass goes on with the rest.
+func TestMemoOccupancyClosedTurnsAreReadFairly(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", nil, 0)
+		insert := func(session string, closedAgo time.Duration) string {
+			id := store.NewID()
+			ts := store.DeliveryTS(time.Now().Add(-closedAgo))
+			if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+				return tx.InsertDelivery(store.MemoDelivery{ID: id, QueueID: q, State: store.DeliveryClosed, Outcome: store.DeliveryClean,
+					Session: session, MessageIDs: []string{}, CreatedAt: ts, UpdatedAt: ts, ClosedAt: ts, Reported: true, RetireResult: "confirmed"})
+			}); err != nil {
+				t.Fatal(err)
+			}
+			return id
+		}
+		for i := 0; i < memoClosedTurnsPerTick+5; i++ {
+			insert(fmt.Sprintf("gone-%d", i), 3*time.Hour)
+		}
+		realIDs := []string{insert("real-1", time.Hour), insert("real-2", time.Hour)}
+		agent.mu.Lock()
+		for _, n := range []string{"real-1", "real-2"} {
+			agent.rows = append(agent.rows, map[string]any{"name": n, "kind": "claude", "alive": false, "state": "",
+				"queueTurn": map[string]any{"outcome": "turn-failed", "ms": 4000, "endedAt": "2026-11-15T01:00:00Z"}})
+		}
+		agent.mu.Unlock()
+		e.settleNow(time.Now()) // reads the fifty oldest
+		e.settleNow(time.Now()) // goes on with the ones never tried
+		for _, id := range realIDs {
+			if got := e.delivery(id); got.TurnOutcome != "turn-failed" {
+				t.Fatalf("a delivery behind fifty that never fill was not read: %+v", got)
+			}
+		}
+	})
+}

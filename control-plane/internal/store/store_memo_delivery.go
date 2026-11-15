@@ -114,8 +114,10 @@ type MemoDeliveryStore interface {
 	// ListMemoDeliveries returns a queue's deliveries, newest first, at most limit.
 	ListMemoDeliveries(ctx context.Context, membershipID, queueID string, limit int) ([]MemoDelivery, error)
 	// ListClosedWithoutTurn returns the deliveries closed at or after since with a session and no
-	// first turn recorded, oldest first, at most limit.
+	// first turn recorded, the least recently tried first (never tried before tried), at most limit.
+	// MarkTurnTried stamps the ones a pass has read, so the next pass goes on with the others.
 	ListClosedWithoutTurn(ctx context.Context, since string, limit int) ([]MemoDelivery, error)
+	MarkTurnTried(ctx context.Context, ids []string, at string) error
 	// RecordDeliveryFirstTurn copies a first turn onto a delivery that has none (open or closed).
 	RecordDeliveryFirstTurn(ctx context.Context, id, outcome string, ms int64, endedAt string) (bool, error)
 	// ListLiveMemoDeliveries returns every delivery that is not closed, of every member,
@@ -286,7 +288,16 @@ func (t memoTx) MarkDeliveryDrain(id string) error {
 
 func (s *SQL) ListClosedWithoutTurn(ctx context.Context, since string, limit int) ([]MemoDelivery, error) {
 	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state=? AND session<>'' AND turn_ended_at='' AND closed_at>=?
-		ORDER BY closed_at, id LIMIT ?`, DeliveryClosed, since, limit))
+		ORDER BY turn_tried_at, closed_at, id LIMIT ?`, DeliveryClosed, since, limit))
+}
+
+func (s *SQL) MarkTurnTried(ctx context.Context, ids []string, at string) error {
+	for _, id := range ids {
+		if _, err := s.db.ExecContext(ctx, `UPDATE memo_delivery SET turn_tried_at=? WHERE id=?`, at, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SQL) RecordDeliveryFirstTurn(ctx context.Context, id, outcome string, ms int64, endedAt string) (bool, error) {

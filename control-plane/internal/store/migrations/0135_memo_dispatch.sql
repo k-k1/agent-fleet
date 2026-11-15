@@ -14,6 +14,8 @@
 -- limit at the last kept report, as a comma list with a comma at each end.
 -- memo_delivery.drain is 1 for a delivery claimed while its queue was draining, so that its
 -- messages returning as not sent put the queue back to draining.
+-- memo_delivery.turn_tried_at is when a closed delivery was last read for the first turn of its
+-- session, so that the deliveries never tried come first and none is read forever ahead of the rest.
 -- Forward compatible: columns are only added, with defaults that mean today's behaviour (always
 -- open, 20 a day, not paused). An older Control Plane never fires by itself, its PUT leaves
 -- every one of these columns as it is, and it cannot lift a pause.
@@ -32,4 +34,5 @@ ALTER TABLE memo_queue ADD COLUMN no_report_at TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_delivery ADD COLUMN auto INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE memo_delivery ADD COLUMN limit_kinds TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_delivery ADD COLUMN drain INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE memo_delivery ADD COLUMN turn_tried_at TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_memo_delivery_turn ON memo_delivery(queue_id, created_at) WHERE turn_ended_at <> ''

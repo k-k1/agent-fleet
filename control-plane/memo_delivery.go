@@ -334,6 +334,13 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 	if err := tx.InsertDelivery(d); err != nil {
 		return none, nil, err
 	}
+	if q.Draining {
+		// Fire now or by itself: if this batch returns as not sent, the drain it belonged to
+		// goes on (ReturnDeliveryMessages).
+		if err := tx.MarkDeliveryDrain(d.ID); err != nil {
+			return none, nil, err
+		}
+	}
 	return d, nil, nil
 }
 
@@ -1148,10 +1155,25 @@ func (r *memoQueueRunner) collectClosedTurns(ctx context.Context, views map[stri
 		log.Printf("memo queue: list closed deliveries without a turn: %v", err)
 		return
 	}
+	// Every delivery read is stamped, found or not, so the next tick goes on with the ones not
+	// tried yet: fifty that never fill (a deleted session, a stopped workspace) cannot keep the
+	// rest from being read.
+	tried := make([]string, 0, len(ds))
+	defer func() {
+		if len(tried) == 0 {
+			return
+		}
+		wctx, cancel := memoWriteCtx(ctx)
+		defer cancel()
+		if err := r.mgr.store.MarkTurnTried(wctx, tried, store.DeliveryTS(time.Now())); err != nil {
+			log.Printf("memo queue: mark the first turns tried: %v", err)
+		}
+	}()
 	for _, d := range ds {
 		if ctx.Err() != nil {
 			return
 		}
+		tried = append(tried, d.ID)
 		v := r.view(ctx, views, d.MembershipID)
 		if v == nil || !v.liveOK || !v.report {
 			continue
