@@ -768,3 +768,44 @@ func TestMemoOccupancyRetireAnswers(t *testing.T) {
 		}
 	})
 }
+
+// A Control Plane that predates this version closes by its own rule and ignores what was kept.
+// The database refuses its clean close while the last kept report holds the delivery, so the
+// slot is not freed under a watch, and a clean close it makes when the report was clear sets no
+// retire mark, so this version retires that session all the same. (The older binary's write is
+// MoveDelivery's statement: the memo tx op is what an older binary runs.)
+func TestMemoOccupancyOlderControlPlaneCannotCloseAHeldDelivery(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.setRow(d.Session, map[string]any{"wakers": map[string]any{"watches": 1, "timers": 0}})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.HeldBy != store.HeldWakers {
+			t.Fatalf("%+v", got)
+		}
+		oldClose := func() error {
+			return e.other.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+				_, err := tx.MoveDelivery(d.ID, store.DeliveryOpen, store.DeliveryClosed, "", store.DeliveryClean, store.DeliveryTS(time.Now()))
+				return err
+			})
+		}
+		if err := oldClose(); err == nil {
+			t.Fatal("an older binary's clean close of a held delivery went through")
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+			t.Fatalf("%+v", got)
+		}
+		// The report is clear: its close is allowed, sets no mark, and is retired anyway.
+		agent.setRow(d.Session, map[string]any{"wakers": nil})
+		e.settleNow(time.Now())
+		if err := oldClose(); err != nil {
+			t.Fatalf("a close of a clear delivery was refused: %v", err)
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.RetirePending {
+			t.Fatalf("%+v", got)
+		}
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.RetireResult != "confirmed" || agent.retireCalls() != 1 {
+			t.Fatalf("calls %d, %+v", agent.retireCalls(), got)
+		}
+	})
+}

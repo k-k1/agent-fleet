@@ -112,7 +112,8 @@ type MemoDeliveryStore interface {
 	// MarkMemoDeliveryRetired records an Agent's confirmed retire of an open delivery's tree.
 	MarkMemoDeliveryRetired(ctx context.Context, id, at string) (bool, error)
 	// ListRetirePendingDeliveries returns the closed deliveries whose session still has to be
-	// retired, oldest first.
+	// retired, oldest first: the ones marked pending, and every clean close of a reported
+	// delivery without a result (an older binary's close sets no mark).
 	ListRetirePendingDeliveries(ctx context.Context) ([]MemoDelivery, error)
 	// FinishDeliveryRetire clears the pending retire of a closed delivery and keeps result
 	// (confirmed, released, done, gone, fault). retired_at is set only for a confirmed one.
@@ -301,8 +302,8 @@ func (s *SQL) MarkMemoDeliveryRetired(ctx context.Context, id, at string) (bool,
 }
 
 func (s *SQL) ListRetirePendingDeliveries(ctx context.Context) ([]MemoDelivery, error) {
-	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE retire_pending=1 AND state=?
-		ORDER BY closed_at, id`, DeliveryClosed))
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state=? AND retire_result='' AND (retire_pending=1 OR (outcome=? AND reported=1))
+		ORDER BY closed_at, id`, DeliveryClosed, DeliveryClean))
 }
 
 func (s *SQL) FinishDeliveryRetire(ctx context.Context, id, at, result string) (bool, error) {
@@ -311,7 +312,7 @@ func (s *SQL) FinishDeliveryRetire(ctx context.Context, id, at, result string) (
 		retired = at
 	}
 	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET retire_pending=0, retired_at=?, retire_result=?, updated_at=?
-		WHERE id=? AND retire_pending=1`, retired, result, at, id))
+		WHERE id=? AND state=? AND retire_result=''`, retired, result, at, id, DeliveryClosed))
 }
 
 func (t memoTx) SetDeliveryRetirePending(id string) error {

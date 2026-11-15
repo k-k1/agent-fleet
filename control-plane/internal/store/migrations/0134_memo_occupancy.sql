@@ -12,6 +12,12 @@
 -- retire_pending is 1 from a clean close until the Agent confirms that the session was retired,
 -- retired_at is when an Agent last confirmed a retire (cleared when progress is seen again).
 -- retire_result is how a pending retire ended (confirmed, released, done, gone, fault).
+-- close_guard exists for its CHECK alone. A Control Plane that predates this migration closes
+-- a delivery by its own rule and ignores held_by, so the CHECK refuses any clean close of a
+-- delivery whose last kept report held it. An older binary's close fails and its delivery stays
+-- open until a binary of this version reads the report as clear. A clean close by an older
+-- binary of a delivery last seen clear sets no retire_pending, so the retire list also takes
+-- every clean close of a reported delivery that has no retire_result yet.
 -- turn_* copy how the first turn of the delivery's session ended, written once when it appears.
 -- memo_queue.max_task_hours is the queue's bound for overdue, 1 to 72, default 12.
 -- Forward compatible: columns are only added, with defaults that mean today's behaviour (nothing
@@ -32,4 +38,5 @@ ALTER TABLE memo_delivery ADD COLUMN retire_result TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_delivery ADD COLUMN turn_outcome TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_delivery ADD COLUMN turn_ms INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE memo_delivery ADD COLUMN turn_ended_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE memo_delivery ADD COLUMN close_guard INTEGER NOT NULL DEFAULT 0 CHECK (state <> 'closed' OR outcome <> 'clean' OR held_by = '');
 CREATE INDEX IF NOT EXISTS idx_memo_delivery_retire ON memo_delivery(retire_pending) WHERE retire_pending=1

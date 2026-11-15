@@ -147,7 +147,7 @@ func memoDeliveryToDTO(d store.MemoDelivery) memoDeliveryDTO {
 		out.HeldBy, out.HeldSession, out.HeldSeenAt = d.HeldBy, d.HeldSession, d.HeldSeenAt
 	}
 	out.Retire = d.RetireResult
-	if d.RetirePending {
+	if d.RetirePending || (d.State == store.DeliveryClosed && d.Outcome == store.DeliveryClean && d.Reported && d.RetireResult == "") {
 		out.Retire = "pending"
 	}
 	if d.TurnEndedAt != "" {
@@ -1073,6 +1073,9 @@ func (r *memoQueueRunner) retirePending(ctx context.Context, views map[string]*m
 		if v == nil || !v.liveOK || !v.report {
 			continue
 		}
+		// A root missing from a successful report is a deleted session: a delivery is closed
+		// clean only after reads that listed its root (an absent root closes it aborted), so the
+		// session existed when it closed, whatever tick of this one the cached read was taken in.
 		if len(deliveryTree(v.live, d.Session)) == 0 {
 			r.finishRetire(ctx, d, "gone")
 			continue
