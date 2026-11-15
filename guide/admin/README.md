@@ -50,6 +50,7 @@ For your own work, see [Find what you want to do](../user/README.md).
 |---|---|
 | [Set the branch naming rules](defaults/branch-rules.md) | Line up the branch names and starting branches proposed when work starts from an issue |
 | [Set member defaults](defaults/members.md) | Decide which agent new members are pointed at |
+| [Allow memo auto-run](defaults/memo-auto-run.md) | Decide whether members may run their memos automatically, and when it is safe to turn on |
 
 ## Audit and usage
 

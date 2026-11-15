@@ -2894,6 +2894,68 @@ export function chatPagesMemos(locale) {
     m("m3", "payments-api", ja ? "返金" : "Refunds", ja ? "返金の冪等キーを再設計" : "Redesign the refund idempotency key", 4),
   ];
 }
+
+// ---- user guide: memo auto-run (SHOT_AUTORUN_GUIDE in server.mjs) ----
+// One webshop category with auto-run settings: memos you wrote waiting to run, two a session
+// added waiting for approval, and a sent one; plus the settings and a run history. Shapes follow
+// console/src/types/memo.ts (Memo, MemoCategory, MemoQueue, MemoDelivery).
+export function autorunMemos(locale) {
+  const ja = locale === "ja";
+  const cat = ja ? "決済" : "Checkout";
+  const m = (id, body, pos, extra) => ({
+    id, repo: "webshop", category: cat, kind: "text", body, refPath: "", position: pos,
+    createdAt: ago(pos * 30 + 40), sentAt: "", ...extra,
+  });
+  const mine = { provenance: "member", state: "pending", contentHash: "h-mine" };
+  const held = (hash) => ({ provenance: "workspace", producer: "cart-ui", state: "held", contentHash: hash });
+  return [
+    m("m1", ja ? "クーポン併用時の税計算を確認する" : "Check tax when coupons stack", 1, mine),
+    m("m2", ja ? "0 円注文のログを Sentry に出す" : "Log zero-total orders to Sentry", 2, mine),
+    m("m6", ja ? "0 円注文の経路に単体テストを足す" : "Add a unit test for the zero-total order path", 3, held("h-held-1")),
+    m("m7", ja ? "クーポン計算の端数処理を直す" : "Fix the rounding in the coupon calculation", 4, held("h-held-2")),
+    m("m5", ja ? "注文確認メールの件名を揃える" : "Align the order confirmation email subject", 5, {
+      provenance: "member", state: "delivered", sentAt: ago(300), contentHash: "h-sent",
+    }),
+    { id: "m3", repo: "payments-api", category: ja ? "返金" : "Refunds", kind: "text", body: ja ? "返金の冪等キーを再設計" : "Redesign the refund idempotency key", refPath: "", position: 6, createdAt: ago(220), sentAt: "" },
+  ];
+}
+export function autorunCategories(locale) {
+  const ja = locale === "ja";
+  return [
+    { id: "k1", repo: "webshop", name: ja ? "決済" : "Checkout", position: 1, createdAt: ago(9000), queue: true },
+    { id: "k2", repo: "payments-api", name: ja ? "返金" : "Refunds", position: 2, createdAt: ago(9000) },
+  ];
+}
+export function autorunQueues(locale) {
+  const ja = locale === "ja";
+  return {
+    tenantEnabled: true,
+    queues: [
+      {
+        categoryId: "k1", repo: "webshop", category: ja ? "決済" : "Checkout",
+        instruction: ja
+          ? "メモに書かれた不具合を直し、テストを足してください。触ってよいのはこのリポジトリだけです。ブランチを push してプルリクエストを作り、マージはしないでください。"
+          : "Fix the bug the memo describes and add a test. Touch this repository only. Push the branch and open a pull request, and do not merge.",
+        agentKind: "claude", model: "", effort: "", route: "", spendCapUsd: 5, worktree: true, maxActive: 2, batch: 2,
+        maxTaskHours: 12, openCron: "0 22 * * *", openMinutes: 240, tz: "Asia/Tokyo", openAfter: 0, maxFiresPerDay: 20,
+        paused: false, pausedAt: "", pausedReason: "", draining: false, noReportAt: "", enabled: true, generation: 1,
+        createdAt: ago(9000), updatedAt: ago(600),
+      },
+    ],
+  };
+}
+export function autorunDeliveries() {
+  const d = (id, state, outcome, session, n, minutesAgo, extra) => ({
+    id, state, outcome, session, messageIds: Array.from({ length: n }, (_, i) => id + "-" + i),
+    createdAt: ago(minutesAgo), sentAt: ago(minutesAgo - 1), closedAt: outcome ? ago(minutesAgo - 20) : "",
+    heldBy: "", heldSession: "", heldSeenAt: "", overdue: false, overdueAt: "", auto: true, retire: "", firstTurn: null, ...extra,
+  });
+  return [
+    d("d1", "open", "", "checkout-tax-1", 2, 35, { heldBy: "machine", heldSeenAt: ago(1), firstTurn: null }),
+    d("d2", "closed", "clean", "checkout-log-zero", 1, 260, { retire: "confirmed", firstTurn: { outcome: "clean", ms: 412000, endedAt: ago(250) } }),
+    d("d3", "closed", "clean", "checkout-email-subject", 1, 640, { auto: false, retire: "confirmed", firstTurn: { outcome: "clean", ms: 188000, endedAt: ago(630) } }),
+  ];
+}
 // ---- end chat pages ----
 
 // ---- user guide: outside-access and security pages (SHOT_OUTSIDE_GUIDE in server.mjs) ----

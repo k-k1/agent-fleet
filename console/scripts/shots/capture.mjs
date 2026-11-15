@@ -2439,6 +2439,64 @@ const SCENES = [
     })()`,
     settle: 2000,
   },
+  // ---- memo auto-run pages (SHOT_AUTORUN_GUIDE) ----
+  {
+    name: "autorun-settings",
+    guide: true,
+    stubEnv: { SHOT_AUTORUN_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: { assistant: 0, workitems: 0, memos: 1, schedules: 0, repos: 0, files: 0 },
+    width: 1300,
+    height: 1500,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".memo-cat-act"); i++) await new Promise((r) => setTimeout(r, 200));
+      const cat = [...document.querySelectorAll(".memo-cat")].find((c) => /決済|Checkout/.test(c.querySelector(".memo-cat-name")?.textContent || ""));
+      const acts = cat ? [...cat.querySelectorAll(".memo-cat-act")] : [];
+      acts[acts.length - 1]?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".ui-modal textarea"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2000,
+  },
+  {
+    name: "autorun-card",
+    guide: true,
+    stubEnv: { SHOT_AUTORUN_GUIDE: "1" },
+    clip: ".memo-release",
+    pad: 0,
+    sections: { assistant: 0, workitems: 0, memos: 1, schedules: 0, repos: 0, files: 0 },
+    width: 1300,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".memo-cat-act"); i++) await new Promise((r) => setTimeout(r, 200));
+      const cat = [...document.querySelectorAll(".memo-cat")].find((c) => /決済|Checkout/.test(c.querySelector(".memo-cat-name")?.textContent || ""));
+      const acts = cat ? [...cat.querySelectorAll(".memo-cat-act")] : [];
+      for (let i = 0; i < 50 && !document.querySelector(".memo-release"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2000,
+  },
+  {
+    name: "autorun-history",
+    guide: true,
+    stubEnv: { SHOT_AUTORUN_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: { assistant: 0, workitems: 0, memos: 1, schedules: 0, repos: 0, files: 0 },
+    width: 1300,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".memo-cat-act"); i++) await new Promise((r) => setTimeout(r, 200));
+      const cat = [...document.querySelectorAll(".memo-cat")].find((c) => /決済|Checkout/.test(c.querySelector(".memo-cat-name")?.textContent || ""));
+      const acts = cat ? [...cat.querySelectorAll(".memo-cat-act")] : [];
+      acts[0]?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".memo-d-row"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2000,
+  },
+  // ---- end memo auto-run pages ----
   // ---- end chat pages ----
   // ---- outside-access and security pages (SHOT_OUTSIDE_GUIDE) ----
   {

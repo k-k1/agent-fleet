@@ -40,6 +40,11 @@ thing.
 | Child session | spawn / origin `session` | A session another session started and handed a task to. The parent may list, watch, stop, resume and rename the children it started, and nothing else; deleting one is yours. See [Start child sessions from a session](../user/fleet/child-sessions.md) |
 | Work item | work item | An issue, ticket or pull request pulled in from a provider. See [repos.md](repos.md) |
 | Memo queue | memo | Instructions parked now and sent to a session later, in a batch |
+| Auto-run | — | Settings on a memo category that have its waiting memos run as sessions, with your instruction, by "Run now" or by themselves. Not a schedule, which runs a fixed prompt at set times, and not a session's "Waiting to send" list ([Hold what you send, stop a turn](../user/sessions/queue.md)). See [Run memos automatically](../user/chat/memo-auto-run.md) |
+| Waits for approval · Waiting to run · Starting · Sent · Needs a look | memo state | The state of a memo in an auto-run category. A memo a session adds waits for approval until you approve it. Starting means a session is being started for it |
+| Starting · Running · Done · Stopped · Needs a look · Not sent | run state | The state of one run of an auto-run category in its run history. Not the same as a session's own state ([Read a session's state](../user/sessions/status.md)) |
+| Overdue | — | A run of an auto-run category still open after the hours set in its settings |
+| Paused | — | An auto-run category that stopped starting runs by itself after two failed runs. "Resume" lifts it, and "Run now" works while it is paused |
 | Cleanup / trash | cleanup / shelf | The sweep of stopped sessions, stale worktrees and merged branches. What it removes is stashed and can be restored |
 | Browser pane | browser pane | The workspace's own Chromium rendering `127.0.0.1:{port}` into a pane. See [browser-pane.md](browser-pane.md) |
 | Lightweight preview | preview proxy | The same service opened in a new tab under a `/preview/{port}/` sub-path. WebSocket and SSE pass through, but an app emitting absolute-path assets breaks |

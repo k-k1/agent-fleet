@@ -81,10 +81,10 @@ How to read a cell:
 | Tool | What it does | Session | Assistant | Outside | Required parameters |
 |---|---|---|---|---|---|
 | `list_memos` | List your memo queue | ✓ | ✓ AF read | ✓ `read` | — |
-| `add_memo` | Add one memo to your memo queue | ✓ | ✓ AF write | ✓ `write` | `kind` |
-| `update_memo` | Edit a memo; only the fields passed change | ✓ | ✓ AF write | ✓ `write` | `id` |
-| `delete_memo` | Delete a memo by its id | — | ✓ AF write | ✓ `write` | `id` |
-| `flush_memos` | Send the chosen memos to a session as one message | — | ✓ AF write | ✓ `write` | `sessionName`, `ids` |
+| `add_memo` | Add one memo to your memo queue; in an auto-run category it waits for your approval | ✓ | ✓ AF write | ✓ `write` | `kind` |
+| `update_memo` | Edit a memo; only the fields passed change. Editing an approved auto-run memo sends it back for approval | ✓ | ✓ AF write | ✓ `write` | `id` |
+| `delete_memo` | Delete a memo by its id; refused in an auto-run category | — | ✓ AF write | ✓ `write` | `id` |
+| `flush_memos` | Send the chosen memos to a session as one message; refused in an auto-run category | — | ✓ AF write | ✓ `write` | `sessionName`, `ids` |
 
 ## Schedules
 
