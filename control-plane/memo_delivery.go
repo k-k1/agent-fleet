@@ -47,8 +47,11 @@ const (
 	memoQueueSendsPerTick = schedulerMaxConcurrentFires / 2
 	// memoSettleBudget bounds the reconciliation and closing pass of one tick, and
 	// memoAgentCallWait each Agent call in it. Both run before the tick's fires start.
-	memoSettleBudget  = 60 * time.Second
-	memoAgentCallWait = 15 * time.Second
+	// memoClosedTurnBudget bounds the pass that reads the first turns of closed deliveries, apart
+	// from memoSettleBudget.
+	memoClosedTurnBudget = 20 * time.Second
+	memoSettleBudget     = 60 * time.Second
+	memoAgentCallWait    = 15 * time.Second
 	// memoRetireCallWait bounds one retire call: it stops every session of a tree.
 	memoRetireCallWait = 30 * time.Second
 	// memoDeliveryWriteWait bounds a delivery write made where no caller deadline applies (a
@@ -425,6 +428,7 @@ type memoMemberView struct {
 }
 
 func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.MemoDelivery {
+	tick := ctx
 	ctx, cancel := context.WithTimeout(ctx, r.settleBudget)
 	defer cancel()
 	ds, err := r.mgr.store.ListLiveMemoDeliveries(ctx)
@@ -469,7 +473,11 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 		}
 	}
 	r.retirePending(ctx, views, now)
-	r.collectClosedTurns(ctx, views, now)
+	// The first-turn pass has a budget of its own: the reads above may have used all of the pass's,
+	// and a pass that never runs would leave the breaker blind.
+	tctx, tcancel := context.WithTimeout(tick, memoClosedTurnBudget)
+	r.collectClosedTurns(tctx, views, now)
+	tcancel()
 	return sends
 }
 
@@ -983,7 +991,7 @@ func (r *memoQueueRunner) retireOverdue(ctx context.Context, v *memoMemberView, 
 	// took the session over (the Agent's word: released) and a fault that repeating cannot mend
 	// are recorded, and progress seen later clears the record.
 	if res := r.retire(ctx, v.res, d.Session); res != retireRepeat {
-		wctx, cancel := memoWriteCtx(ctx)
+		wctx, cancel := memoProgressCtx(ctx)
 		defer cancel()
 		if _, err := r.mgr.store.MarkMemoDeliveryRetired(wctx, d.ID, store.DeliveryTS(time.Now())); err != nil {
 			log.Printf("memo queue: delivery %s: mark retired: %v", d.ID, err)
@@ -1155,25 +1163,19 @@ func (r *memoQueueRunner) collectClosedTurns(ctx context.Context, views map[stri
 		log.Printf("memo queue: list closed deliveries without a turn: %v", err)
 		return
 	}
-	// Every delivery read is stamped, found or not, so the next tick goes on with the ones not
-	// tried yet: fifty that never fill (a deleted session, a stopped workspace) cannot keep the
-	// rest from being read.
-	tried := make([]string, 0, len(ds))
-	defer func() {
-		if len(tried) == 0 {
-			return
-		}
-		wctx, cancel := memoWriteCtx(ctx)
-		defer cancel()
-		if err := r.mgr.store.MarkTurnTried(wctx, tried, store.DeliveryTS(time.Now())); err != nil {
-			log.Printf("memo queue: mark the first turns tried: %v", err)
-		}
-	}()
 	for _, d := range ds {
 		if ctx.Err() != nil {
 			return
 		}
-		tried = append(tried, d.ID)
+		// Stamped before it is tried, and only the ones reached: a pass that runs out of budget
+		// inside a slow workspace has still moved on past this delivery, so the next tick starts
+		// with the ones not reached. Fifty that never fill cannot keep the rest from being read.
+		sctx, cancel := memoProgressCtx(ctx)
+		err := r.mgr.store.MarkTurnTried(sctx, []string{d.ID}, store.DeliveryTS(time.Now()))
+		cancel()
+		if err != nil {
+			log.Printf("memo queue: delivery %s: stamp the first turn tried: %v", d.ID, err)
+		}
 		v := r.view(ctx, views, d.MembershipID)
 		if v == nil || !v.liveOK || !v.report {
 			continue
@@ -1183,7 +1185,10 @@ func (r *memoQueueRunner) collectClosedTurns(ctx context.Context, views map[stri
 			if v.live[i].Name != d.Session || t == nil || t.EndedAt == "" {
 				continue
 			}
-			if _, err := r.mgr.store.RecordDeliveryFirstTurn(ctx, d.ID, t.Outcome, t.Ms, t.EndedAt); err != nil {
+			wctx, wcancel := memoProgressCtx(ctx)
+			_, err := r.mgr.store.RecordDeliveryFirstTurn(wctx, d.ID, t.Outcome, t.Ms, t.EndedAt)
+			wcancel()
+			if err != nil {
 				log.Printf("memo queue: delivery %s: record the first turn: %v", d.ID, err)
 			}
 		}
@@ -1192,7 +1197,9 @@ func (r *memoQueueRunner) collectClosedTurns(ctx context.Context, views map[stri
 
 // finishRetire ends a pending retire and keeps why: confirmed, released, done, gone or fault.
 func (r *memoQueueRunner) finishRetire(ctx context.Context, d store.MemoDelivery, result string) {
-	wctx, cancel := memoWriteCtx(ctx)
+	// The Agent's answer (or the fresh read behind a gone) is in hand: recorded whatever is left of
+	// the pass's budget.
+	wctx, cancel := memoProgressCtx(ctx)
 	defer cancel()
 	if _, err := r.mgr.store.FinishDeliveryRetire(wctx, d.ID, store.DeliveryTS(time.Now()), result); err != nil {
 		log.Printf("memo queue: delivery %s: finish retire: %v", d.ID, err)
@@ -1221,6 +1228,15 @@ func memoWriteCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	if _, ok := ctx.Deadline(); ok {
 		return context.WithCancel(ctx)
 	}
+	return context.WithTimeout(context.WithoutCancel(ctx), memoDeliveryWriteWait)
+}
+
+// memoProgressCtx is the context of a write that records progress the next tick builds on: a
+// retire the Agent confirmed, a first turn read, a delivery stamped as tried. The work it records
+// has been done (or begun), so a settle pass whose budget ran out meanwhile must not lose it, or the
+// same work is repeated first on every tick and starves what is behind it. It does not inherit the
+// pass's deadline. Writes that decide something keep memoWriteCtx.
+func memoProgressCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), memoDeliveryWriteWait)
 }
 
