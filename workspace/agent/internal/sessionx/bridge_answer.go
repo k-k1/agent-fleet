@@ -74,6 +74,7 @@ func answerInteraction(pi bridge.ParsedInteraction) (string, error) {
 	if !ok {
 		return Fb(en, "セッションが見つかりません", "Session not found"), nil
 	}
+	notePersonAct(pi.Session) // a member's button click in the chat
 	// Managed (codex/opencode/copilot): the answer is a structured Interaction reply
 	// to the live driver, not a tmux modal — resolve the driver and Respond by the
 	// CURRENT interaction id (managed only ever buttons single-select questions;

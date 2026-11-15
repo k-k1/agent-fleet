@@ -425,6 +425,8 @@ type memoMemberView struct {
 	gens   map[string]int64
 	report bool
 	readAt string
+	// actMark is the envelope's actMark of that read, 0 when the Agent sent none.
+	actMark int64
 }
 
 func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.MemoDelivery {
@@ -514,6 +516,10 @@ func (r *memoQueueRunner) view(ctx context.Context, views map[string]*memoMember
 		env, err = r.mgr.agentSessionsEnv(cctx, res.rt)
 		cancel()
 		v.live, v.liveOK, v.report = env.Sessions, err == nil, err == nil && env.reportsQueue()
+		if v.liveOK {
+			v.actMark = env.ActMark
+		}
+
 	case "stopped":
 		rows, err := r.mgr.store.ListSessions(ctx, res.ws.ID)
 		if err != nil {
@@ -806,7 +812,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		return
 	}
 	o := store.DeliveryObservation{Gen: gen, At: v.readAt, HeldBy: why, HeldSession: who, Progress: progress,
-		ProgressAt: store.DeliveryTS(now), LimitKinds: treeLimitKinds(tree)}
+		ProgressAt: store.DeliveryTS(now), LimitKinds: treeLimitKinds(tree), ActMark: v.actMark}
 	if t := tree[0].QueueTurn; t != nil && t.EndedAt != "" {
 		o.TurnOutcome, o.TurnMs, o.TurnEndedAt = t.Outcome, t.Ms, t.EndedAt
 	}
@@ -990,10 +996,25 @@ func (r *memoQueueRunner) retireOverdue(ctx context.Context, v *memoMemberView, 
 	// Whatever the answer, only a retry-worthy one is repeated: a complete retire, a person who
 	// took the session over (the Agent's word: released) and a fault that repeating cannot mend
 	// are recorded, and progress seen later clears the record.
-	if res := r.retire(ctx, v.res, d.Session); res != retireRepeat {
+	// The mark is fixed with the first attempt: a retry whose answer was lost must carry the
+	// condition of the first, not of the newer read this row has since kept.
+	// One conditional write: it takes the mark of the report this decision was made on, and only while
+	// that report is still the kept one; a newer report (or progress) kept first means nothing is
+	// sent and the next tick decides again.
+	fctx, fcancel := memoProgressCtx(ctx)
+	mark, gen, ok, ferr := r.mgr.store.FreezeDeliveryRetireMark(fctx, d.ID, d.HeldGen, d.ActMark)
+	fcancel()
+	if ferr != nil {
+		log.Printf("memo queue: delivery %s: freeze the retire mark: %v", d.ID, ferr)
+		return
+	}
+	if !ok {
+		return
+	}
+	if res := r.retire(ctx, v.res, d.Session, mark); res != retireRepeat {
 		wctx, cancel := memoProgressCtx(ctx)
 		defer cancel()
-		if _, err := r.mgr.store.MarkMemoDeliveryRetired(wctx, d.ID, store.DeliveryTS(time.Now())); err != nil {
+		if _, err := r.mgr.store.MarkMemoDeliveryRetired(wctx, d.ID, store.DeliveryTS(time.Now()), gen); err != nil {
 			log.Printf("memo queue: delivery %s: mark retired: %v", d.ID, err)
 		}
 	}
@@ -1044,13 +1065,27 @@ const (
 // (retirePending), never by this call. The Agent runs one retire of a root at a time and makes
 // a second request wait for the first, so the call keeps its own timeout, and a timeout or a
 // cancelled wait (503 retire_wait_cancelled) is a repeat on a later tick.
-func (r *memoQueueRunner) retire(ctx context.Context, res *resolved, session string) retireResult {
+func (r *memoQueueRunner) retire(ctx context.Context, res *resolved, session string, actMark int64) retireResult {
 	cctx, cancel := context.WithTimeout(ctx, memoRetireCallWait)
 	defer cancel()
+	// ifNoActSince is the actMark of the report the retire was decided on: the Agent leaves a
+	// session a person started or typed into after that read, and answers it as released. No mark
+	// (an Agent that sends none, a delivery never read with one) sends no body: the retire as
+	// before, which an Agent without the condition would ignore anyway.
+	var body io.Reader
+	if actMark > 0 {
+		b, _ := json.Marshal(struct {
+			IfNoActSince int64 `json:"ifNoActSince"`
+		}{actMark})
+		body = bytes.NewReader(b)
+	}
 	req, err := http.NewRequestWithContext(cctx, http.MethodPost,
-		res.rt.Endpoint()+"/sessions/"+url.PathEscape(session)+"/retire", nil)
+		res.rt.Endpoint()+"/sessions/"+url.PathEscape(session)+"/retire", body)
 	if err != nil {
 		return retireRepeat
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if res.rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+res.rt.Token())
@@ -1142,7 +1177,7 @@ func (r *memoQueueRunner) retirePending(ctx context.Context, views map[string]*m
 				continue
 			}
 		}
-		if res := r.retire(ctx, v.res, d.Session); res != retireRepeat {
+		if res := r.retire(ctx, v.res, d.Session, d.RetireActMark); res != retireRepeat {
 			r.finishRetire(ctx, d, string(res))
 		}
 	}

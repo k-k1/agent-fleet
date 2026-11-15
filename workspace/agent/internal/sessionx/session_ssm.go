@@ -71,6 +71,16 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// The retire gate's read side is already held, so the act is recorded without taking it again.
+	// Before the launch, and refused when it cannot be written: a person's start that goes
+	// unrecorded is one a retire decided on an older list would stop.
+	if !auto {
+		if err := recordPersonAct(name); err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, "act_not_recorded",
+				"the start was not made, because it could not be recorded as a person's: "+err.Error())
+			return
+		}
+	}
 	force := r.URL.Query().Get("force") == "1"
 	if r.URL.Query().Get("fresh") == "1" {
 		if err := startFresh(name); err != nil {

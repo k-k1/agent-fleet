@@ -130,6 +130,15 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The relaunch below starts the session again on the other driver: a person's start. Held
+	// across it, and refused on a session a retire has marked (resume it first), so no relaunch
+	// leaves a marked session running.
+	releaseRelaunch, rerr := holdPersonRelaunch(name)
+	if rerr != nil {
+		httpx.WriteErr(w, http.StatusConflict, "session_retired", rerr.Error())
+		return
+	}
+	defer releaseRelaunch()
 	// The relaunch below starts the CLI: refuse it with the reason, before the old runtime is
 	// stopped, its held input dropped or its status cleared, when that CLI failed to install.
 	if ref := startRefusalOf(m); ref != nil {

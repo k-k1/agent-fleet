@@ -852,6 +852,11 @@ type Meta struct {
 	// person resumed (RetireClearedID).
 	RetireID        string `json:"retireID,omitempty"`
 	RetireClearedID string `json:"retireClearedID,omitempty"`
+	// PersonActMark is the Agent's act mark (sessionx session_actmark.go) as it stood when a
+	// person last started this session or put input into it, 0 for none. A retire that carries
+	// ifNoActSince leaves a session whose mark is at or above it alone: that act came after the
+	// session list the retire was decided on.
+	PersonActMark int64 `json:"personActMark,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so
 	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached

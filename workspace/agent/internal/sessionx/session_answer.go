@@ -138,6 +138,7 @@ func HandleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	notePersonAct(name) // a person's answer
 
 	if meta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(meta)
@@ -268,6 +269,9 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
+	}
+	if req.ExpectPlan == "" { // the automatic plan review sets it; a person's decision does not
+		notePersonAct(name)
 	}
 	if !planRespondSupported(meta.Kind) {
 		httpx.WriteErr(w, http.StatusNotImplemented, "plan_unsupported",

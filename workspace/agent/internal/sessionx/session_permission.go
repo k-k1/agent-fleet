@@ -262,6 +262,7 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	notePersonAct(name) // a person's allow / deny
 	if meta.DriverKind() == session.DriverManaged {
 		httpx.WriteErr(w, http.StatusNotImplemented, "permission_unsupported",
 			"Managed セッションの承認はカードの許可／拒否で答えてください")

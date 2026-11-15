@@ -351,6 +351,13 @@ func runRouteSwitch(ctx context.Context, name, want string) (*routeSwitchWire, e
 	if !ok {
 		return nil, refusal(http.StatusNotFound, "not_found", "no such session: "+name)
 	}
+	// A person's relaunch: held under the retire gate (after the lifecycle gate, the usual order)
+	// and refused on a session a retire has marked.
+	releaseRelaunch, herr := holdPersonRelaunch(name)
+	if herr != nil {
+		return nil, refusal(http.StatusConflict, "session_retired", herr.Error())
+	}
+	defer releaseRelaunch()
 	to, rerr := checkRouteSwitch(ctx, m, want)
 	if rerr != nil {
 		return nil, rerr
