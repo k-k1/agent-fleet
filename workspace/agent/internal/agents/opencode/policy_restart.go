@@ -82,7 +82,7 @@ func (s *Supervisor) policyAdmitLocked(addr string) error {
 		return errors.Join(ErrServeUnverified, errors.New("an opencode serve this Agent did not start is running at "+addr+
 			", and it cannot be held to the policy; stop it, or restart the Workspace"))
 	case s.up && s.credGen != credentialGen():
-		go s.SecurityRestart("credential generation is stale")
+		goSecurityRestart(s, "credential generation is stale")
 		return errors.Join(ErrServeUnverified, errors.New("its daemon carries credentials the policy no longer allows and is being replaced; try again shortly"))
 	}
 	return nil
@@ -122,6 +122,16 @@ func (s *Supervisor) SecurityRestart(reason string) bool {
 	s.finishTeardown(cmd)
 	goReconcile("security restart: " + reason)
 	return true
+}
+
+// goSecurityRestart runs SecurityRestart in the background, tracked by reconcileInflight like the
+// reconcile it starts, so a test that triggered it can wait for both.
+func goSecurityRestart(s *Supervisor, reason string) {
+	reconcileInflight.Add(1)
+	go func() {
+		defer reconcileInflight.Done()
+		s.SecurityRestart(reason)
+	}()
 }
 
 // abortAll aborts every turn running on the daemon, managed and Terminal, without waiting.

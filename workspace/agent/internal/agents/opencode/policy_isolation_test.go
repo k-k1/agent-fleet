@@ -22,9 +22,19 @@ func useIsolationPolicy(t *testing.T, p routepolicy.Policy) {
 	if _, err := s.Accept(p); err != nil {
 		t.Fatal(err)
 	}
+	// The policy listeners (Accept starts them), the security restarts they or Ensure start, and
+	// the reconciles those start, an earlier test's included, read Active in the background.
+	settle := func() {
+		routepolicy.WaitListeners()
+		reconcileInflight.Wait()
+	}
+	settle()
 	old := routepolicy.Active
 	routepolicy.Active = func() *routepolicy.Store { return s }
-	t.Cleanup(func() { routepolicy.Active = old })
+	t.Cleanup(func() {
+		settle()
+		routepolicy.Active = old
+	})
 }
 
 var anthropicOnly = routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []string{routes.RouteAnthropicAPI}}
