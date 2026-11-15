@@ -764,6 +764,13 @@ func memberTools() []mcpTool {
 						return "", err
 					}
 				}
+				routeID := ""
+				if route != nil {
+					routeID = argStr(args, "route")
+				}
+				if err := a.cp.RoutePolicyErr(ctx, res.MV, res.RT, kind, routeID); err != nil {
+					return "", err
+				}
 				driver := ""
 				// An MCP caller cannot drive a pane, so it asks for managed wherever the Agent's
 				// registry says that is the default (the kind catalog snapshot). The match is

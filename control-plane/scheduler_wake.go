@@ -93,6 +93,12 @@ func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time
 		if aerr := providedRouteCreateRefusal(ctx, sch.MembershipID, sch.Route); aerr != nil {
 			return "", "", fmt.Errorf("schedule route (%s): %s", aerr.code, aerr.message)
 		}
+		// The credential policy at the fire (ADR 0138 D12): a tightening after the save refuses
+		// this run, and the failed run notifies the member (notifyOutcome). The Agent judges
+		// again, an empty selection included.
+		if aerr := routePolicyCreateRefusal(ctx, f.mgr.store, sch.TenantID, sch.Route); aerr != nil {
+			return "", "", fmt.Errorf("schedule route (%s): %s", aerr.code, aerr.message)
+		}
 	}
 	// 1. membership -> resolved (no gateway headers; the MCP/memo-bridge path).
 	identityID, ok, err := f.mgr.store.IdentityIDForMembership(ctx, sch.MembershipID)
@@ -172,6 +178,13 @@ func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time
 			return "", "", retryableFireErr(fmt.Errorf("%w (after %v)", err, wakeErr))
 		}
 		return "", "", retryableFireErr(fmt.Errorf("agent not ready: %w", err))
+	}
+	// A restricted member's run goes only to an Agent that enforces the credential policy (D12,
+	// Upgrade). Nothing has been delivered, and a restart of the Workspace upgrades the Agent.
+	if sch.SessionMode != "assistant" && !wakeOnly {
+		if aerr := agentPolicyRefusal(ctx, f.mgr.store, sch.TenantID, scheduleInjectKind(sch.AgentKind), res.rt); aerr != nil {
+			return "", "", fmt.Errorf("schedule route (%s): %s", aerr.code, aerr.message)
+		}
 	}
 	if wakeErr != nil {
 		// The start reported failure but the Agent is up — it was only slow. Finish the

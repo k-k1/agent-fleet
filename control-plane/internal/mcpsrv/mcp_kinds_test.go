@@ -9,6 +9,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // pathCP records the Agent paths a tool asks for, so a tool can be run without a
@@ -183,6 +184,43 @@ func TestCreateSessionRefusesAnUnusableProvidedRoute(t *testing.T) {
 		t.Fatalf("create_session on anthropic-api = %v, Agent body %q", err, raw)
 	}
 	if len(asked) != 2 || asked[0] != "m1|bedrock-deployment" {
+		t.Fatalf("asked = %v", asked)
+	}
+}
+
+// policyRefusingCP refuses a create the way the CP's credential-policy check does: a forbidden
+// route, or (for a model kind) an Agent that does not enforce the policy.
+type policyRefusingCP struct {
+	bodyCP
+	asked *[]string
+}
+
+func (c policyRefusingCP) RoutePolicyErr(_ context.Context, mv store.MembershipView, _ runtime.Runtime, kind, route string) error {
+	*c.asked = append(*c.asked, mv.TenantID+"|"+kind+"|"+route)
+	if route == "anthropic-subscription" {
+		return errors.New("the credential policy does not allow route anthropic-subscription")
+	}
+	return nil
+}
+
+// create_session asks the CP's credential policy about every create before the Agent is called
+// (ADR 0138 D12): with the selected route, or "" for none, which the Agent judges. A refusal
+// sends nothing to the Agent.
+func TestCreateSessionAsksTheCredentialPolicy(t *testing.T) {
+	var raw []byte
+	var asked []string
+	a := API{cp: policyRefusingCP{bodyCP: bodyCP{body: &raw}, asked: &asked}}
+	res := &Resolved{}
+	res.MV.MembershipID, res.MV.TenantID = "m1", "t1"
+	ctx := withMCPCall(context.Background(), mcpCallInfo{patID: "grant_k"})
+	_, err := memberTool(t, "create_session").run(ctx, a, res, map[string]any{"route": "anthropic-subscription"})
+	if err == nil || !strings.Contains(err.Error(), "does not allow") || raw != nil {
+		t.Fatalf("a forbidden route = %v, Agent body %q", err, raw)
+	}
+	if _, err := memberTool(t, "create_session").run(ctx, a, res, map[string]any{}); err != nil || raw == nil {
+		t.Fatalf("no route = %v, Agent body %q", err, raw)
+	}
+	if len(asked) != 2 || asked[0] != "t1||anthropic-subscription" || asked[1] != "t1||" {
 		t.Fatalf("asked = %v", asked)
 	}
 }
