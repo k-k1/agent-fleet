@@ -537,7 +537,10 @@ func TestPolicyEnvWhenThePolicyCannotBeRead(t *testing.T) {
 	old := nowUnix
 	t.Cleanup(func() { nowUnix = old })
 	nowUnix = func() int64 { return 1_800_000_000 }
-	if env := PolicyEnv(context.Background(), layersFailStore{st}, tn.ID); len(env) != 1 || env[0] != EnvPolicy+`={"unknown":true,"issuedAt":1800000000}` {
+	oldID := newMarkerID
+	t.Cleanup(func() { newMarkerID = oldID })
+	newMarkerID = func() string { return "m1" }
+	if env := PolicyEnv(context.Background(), layersFailStore{st}, tn.ID); len(env) != 1 || env[0] != EnvPolicy+`={"unknown":true,"id":"m1","issuedAt":1800000000}` {
 		t.Errorf("restricting ceiling, unreadable policy: %v", env)
 	}
 	st2, _, tn2 := routePolicyFixture(t, "")
@@ -547,5 +550,12 @@ func TestPolicyEnvWhenThePolicyCannotBeRead(t *testing.T) {
 	env := PolicyEnv(context.Background(), st2, tn2.ID)
 	if len(env) != 1 || !strings.Contains(env[0], `"issuedAt":1800000000`) {
 		t.Errorf("a computed start policy carries when it was issued: %v", env)
+	}
+}
+
+// Every start's unknown marker has its own id.
+func TestUnknownMarkerIDsDiffer(t *testing.T) {
+	if a, b := newMarkerID(), newMarkerID(); a == b || len(a) != 24 {
+		t.Errorf("marker ids %q %q", a, b)
 	}
 }

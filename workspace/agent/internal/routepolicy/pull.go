@@ -98,6 +98,7 @@ type startEnv struct {
 	policy   Policy
 	issuedAt int64
 	unknown  bool
+	id       string // the unknown marker's id
 }
 
 func readStartEnv() (startEnv, bool) {
@@ -108,17 +109,18 @@ func readStartEnv() (startEnv, bool) {
 	var meta struct {
 		IssuedAt *int64 `json:"issuedAt"`
 		Unknown  bool   `json:"unknown"`
+		ID       string `json:"id"`
 	}
 	if err := json.Unmarshal([]byte(v), &meta); err != nil {
 		log.Printf("route policy: %s does not parse: %v", EnvPolicy, err)
 		return startEnv{}, false
 	}
 	if meta.Unknown {
-		if meta.IssuedAt == nil {
-			log.Printf("route policy: %s says unknown without issuedAt", EnvPolicy)
+		if meta.ID == "" {
+			log.Printf("route policy: %s says unknown without an id", EnvPolicy)
 			return startEnv{}, false
 		}
-		return startEnv{unknown: true, issuedAt: *meta.IssuedAt}, true
+		return startEnv{unknown: true, id: meta.ID}, true
 	}
 	p, err := parse([]byte(v))
 	if err != nil || meta.IssuedAt == nil {
@@ -142,7 +144,7 @@ func (s *Store) seedFromEnv() {
 	switch {
 	case !ok:
 	case e.unknown:
-		changed, err := s.SeedUnknown(e.issuedAt)
+		changed, err := s.SeedUnknown(e.id)
 		if err != nil {
 			log.Printf("route policy (start): %v", err)
 		}

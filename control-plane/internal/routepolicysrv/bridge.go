@@ -11,8 +11,10 @@ package routepolicysrv
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -52,9 +54,18 @@ type MemberPolicy struct {
 // answer, rather than starting with no policy at all.
 type unknownPolicy struct {
 	Unknown bool `json:"unknown"`
-	// IssuedAt orders the marker against the Agent's held copy: it supersedes a copy confirmed
-	// before it, never one a later live answer confirmed.
-	IssuedAt int64 `json:"issuedAt"`
+	// ID names this marker, new for every start. The marker stays in the container's environment
+	// for its whole life; by its id the Agent takes it once and never again after a restart, so a
+	// live answer taken since is not undone by it, whatever the two hosts' clocks say.
+	ID       string `json:"id"`
+	IssuedAt int64  `json:"issuedAt"`
+}
+
+// newMarkerID is a fresh random id for an unknown marker. A var for tests.
+var newMarkerID = func() string {
+	b := make([]byte, 12)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // MemberPolicyOf is the effective policy of a member of tenantID.
@@ -87,7 +98,7 @@ func PolicyEnv(ctx context.Context, st store.Store, tenantID string) []string {
 	case err == nil:
 		v = p
 	case currentCeiling().rule.Restricted():
-		v = unknownPolicy{Unknown: true, IssuedAt: nowUnix()}
+		v = unknownPolicy{Unknown: true, ID: newMarkerID(), IssuedAt: nowUnix()}
 	default:
 		return nil
 	}

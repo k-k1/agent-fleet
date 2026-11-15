@@ -335,7 +335,7 @@ func TestSeedFromEnv(t *testing.T) {
 		t.Fatalf("start policy: %+v", st)
 	}
 	u, _ := testStore(t)
-	t.Setenv(EnvPolicy, `{"unknown":true,"issuedAt":1}`)
+	t.Setenv(EnvPolicy, `{"unknown":true,"id":"m1","issuedAt":1}`)
 	u.seedFromEnv()
 	if st := u.State(); !st.Placeholder || u.Allows("bedrock-deployment") || u.Gate() == nil {
 		t.Errorf("unknown start: %+v", st)
@@ -494,29 +494,83 @@ func TestUnrestrictedFloorKeepsItsRevision(t *testing.T) {
 }
 
 // The unknown start marker supersedes an older copy that knows of no ceiling, and a later live
-// loosening supersedes the marker again, across a restart with the same old environment.
+// loosening supersedes the marker again, across a restart with the same old environment. The
+// marker is ordered by its id, not by clocks: both directions hold within one second.
 func TestUnknownStartOrdering(t *testing.T) {
-	s, now := testStore(t)
+	s, _ := testStore(t) // the clock never moves: every confirmation is in the same second
 	if _, err := s.Accept(open1); err != nil {
 		t.Fatal(err)
 	}
-	issued := now.Add(time.Minute).Unix()
-	*now = now.Add(2 * time.Minute)
-	t.Setenv(EnvPolicy, fmt.Sprintf(`{"unknown":true,"issuedAt":%d}`, issued))
+	t.Setenv(EnvPolicy, `{"unknown":true,"id":"start-1","issuedAt":1800000000}`)
 	s.seedFromEnv()
 	if s.Allows("openai-api") || s.Gate() == nil {
 		t.Fatalf("the unknown start under a restricting ceiling left the old open copy in force: %+v", s.State())
 	}
 	// The CP answers again: the tenant is in fact unrestricted at revision 1.
-	*now = now.Add(time.Minute)
 	if changed, err := s.Accept(open1); !changed || err != nil {
 		t.Fatalf("the live answer did not replace the placeholder: %v %v", changed, err)
 	}
-	// A restart in the same container, with the same old marker: the live answer stays.
+	// A restart in the same container, with the same marker: the live answer stays.
 	r := reopen(s)
 	r.seedFromEnv()
 	if !r.Allows("openai-api") || r.Gate() != nil || r.State().Placeholder {
 		t.Fatalf("an old unknown marker re-blocked a tenant a later live answer loosened: %+v", r.State())
+	}
+	// A new container's marker is taken again.
+	t.Setenv(EnvPolicy, `{"unknown":true,"id":"start-2","issuedAt":1800000000}`)
+	r.seedFromEnv()
+	if r.Allows("openai-api") {
+		t.Errorf("a new start's unknown marker was ignored: %+v", r.State())
+	}
+	// A marker without an id is not taken.
+	n, _ := testStore(t)
+	if _, err := n.Accept(open1); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvPolicy, `{"unknown":true,"issuedAt":1800000000}`)
+	n.seedFromEnv()
+	if !n.Allows("openai-api") {
+		t.Error("a marker without an id was taken")
+	}
+}
+
+// At a revision tie the floor and the copy must agree: a restricting floor written for an unknown
+// start whose copy then failed to land is not overridden by the old unrestricted copy.
+func TestRestrictingFloorAtTheSameRevisionProtectsTheCopy(t *testing.T) {
+	s, _ := testStore(t)
+	if _, err := s.Accept(open1); err != nil {
+		t.Fatal(err)
+	}
+	old := rename
+	t.Cleanup(func() { rename = old })
+	rename = func(a, b string) error {
+		if b == s.path {
+			return errors.New("injected copy failure")
+		}
+		return old(a, b)
+	}
+	if changed, err := s.SeedUnknown("start-1"); !changed || err == nil {
+		t.Fatalf("control: the floor should land and the copy fail: %v %v", changed, err)
+	}
+	rename = old
+	if r := reopen(s); r.Allows("openai-api") || r.Gate() == nil {
+		t.Fatalf("the old open copy at the same revision overrode the restricting floor: %+v", r.State())
+	}
+}
+
+// A newer revision is confirmed by what brought it: a start environment issued long ago does not
+// borrow the fresh confirmation of the older revision it replaces.
+func TestHigherSeedDoesNotInheritAnOlderConfirmation(t *testing.T) {
+	s, now := testStore(t)
+	if _, err := s.Accept(open1); err != nil {
+		t.Fatal(err)
+	}
+	issued := now.Add(-FreshnessLimit - time.Second).Unix()
+	if _, err := s.Seed(strict2, issued); err != nil {
+		t.Fatal(err)
+	}
+	if s.State().LastOK.Unix() != issued || !errors.Is(s.Gate(), ErrUnconfirmed) {
+		t.Fatalf("the older revision's confirmation refreshed the expired newer seed: %+v gate=%v", s.State(), s.Gate())
 	}
 }
 

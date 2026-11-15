@@ -72,6 +72,11 @@ type held struct {
 	// could not be read), so only a live pull, which answers the CP's current revision, replaces
 	// it; a start environment cannot.
 	NeedsLive bool `json:"needsLive,omitempty"`
+	// SeenStart is the id of the last unknown start marker taken (applied or found already
+	// covered). The marker stays in the container's environment for its whole life, so a restart
+	// reads it again: by its id it is taken once, and a later live answer is never undone by it,
+	// whatever the clocks say.
+	SeenStart string `json:"seenStart,omitempty"`
 }
 
 // floor is the record written before every copy: the revision held and whether it restricts. It
@@ -153,7 +158,8 @@ func floorPath(path string) string { return path + ".floor" }
 
 // Open loads the copy at path behind its floor.
 //   - Neither file: nothing held (a first boot).
-//   - A valid copy at or above a valid floor: the copy.
+//   - A valid copy above a valid floor, or at its revision and agreeing with it on whether it
+//     restricts: the copy.
 //   - A valid floor above the copy, or over a copy that is missing or unreadable: the floor's own
 //     policy when it does not restrict (an unrestricted policy needs nothing more), a placeholder
 //     at its revision when it does.
@@ -166,16 +172,24 @@ func Open(path string) *Store {
 	copyMissing := errors.Is(copyErr, os.ErrNotExist)
 	switch {
 	case fs == floorMissing && copyMissing:
-	case fs == floorOK && copyErr == nil && c.Policy.Revision >= f.Revision:
+	case fs == floorOK && copyErr == nil && (c.Policy.Revision > f.Revision || c.Policy.Revision == f.Revision && f.Restricting == c.Policy.restricting()):
+		// At a tie the two must agree: the floor is written first, so a floor that disagrees
+		// with a copy at its own revision is the newer of the two (a copy that failed to land).
 		s.h = c
-		s.floorOK = f.Revision == c.Policy.Revision && f.Restricting == c.Policy.restricting()
+		s.floorOK = f.Revision == c.Policy.Revision
 	case fs == floorOK && !f.Restricting:
 		s.h = held{Policy: Policy{Revision: f.Revision, Allowed: []string{}}, Held: true}
+		if copyErr == nil {
+			s.h.SeenStart = c.SeenStart
+		}
 		s.floorOK = true
 	case fs == floorOK:
 		log.Printf("route policy: the copy at %s cannot be trusted (%v) behind a restricting floor at revision %d; allowing nothing until the Control Plane answers",
 			path, copyErrOr(copyErr, "older than the floor"), f.Revision)
 		s.h = placeholder(f.Revision, false)
+		if copyErr == nil {
+			s.h.SeenStart = c.SeenStart
+		}
 		s.floorOK = true
 	default:
 		rev := int64(0)
@@ -184,6 +198,9 @@ func Open(path string) *Store {
 		}
 		log.Printf("route policy: the floor at %s cannot vouch for the copy; allowing nothing until the Control Plane answers", floorPath(path))
 		s.h = placeholder(rev, true)
+		if copyErr == nil {
+			s.h.SeenStart = c.SeenStart
+		}
 	}
 	return s
 }
@@ -207,6 +224,7 @@ func readCopy(path string) (held, error) {
 		LastOK      *int64          `json:"lastOk"`
 		Placeholder bool            `json:"placeholder"`
 		NeedsLive   bool            `json:"needsLive"`
+		SeenStart   string          `json:"seenStart"`
 	}
 	if err := json.Unmarshal(b, &wire); err != nil {
 		return held{}, err
@@ -218,7 +236,8 @@ func readCopy(path string) (held, error) {
 	if err != nil {
 		return held{}, err
 	}
-	return held{Policy: p, Held: true, LastOK: *wire.LastOK, Placeholder: wire.Placeholder, NeedsLive: wire.NeedsLive}, nil
+	return held{Policy: p, Held: true, LastOK: *wire.LastOK, Placeholder: wire.Placeholder, NeedsLive: wire.NeedsLive,
+		SeenStart: wire.SeenStart}, nil
 }
 
 // State returns the current snapshot.
@@ -242,19 +261,25 @@ func (s *Store) Seed(p Policy, issuedAt int64) (changed bool, err error) {
 	return s.take(p, issuedAt, false)
 }
 
-// SeedUnknown takes the CP's word, issued at issuedAt, that it could not compute the policy at
-// this start while a ceiling restricts the deployment. It supersedes a held policy that knows of
-// no ceiling and was last confirmed before issuedAt (the ceiling came later), with a placeholder
-// at that policy's revision. A policy confirmed after issuedAt (a later live answer), or one that
-// already knows the ceiling, stays.
-func (s *Store) SeedUnknown(issuedAt int64) (changed bool, err error) {
+// SeedUnknown takes the CP's word, in the start marker with the given id, that it could not
+// compute the policy at this start while a ceiling restricts the deployment. A marker is taken
+// once, by its id: the first time, it supersedes a held policy that knows of no ceiling with a
+// placeholder at that policy's revision (the ceiling is newer than that policy); a policy that
+// already knows the ceiling, or a placeholder, stays. Read again by a restart of the Agent in the
+// same container, it changes nothing, so a live answer taken since is never undone by it.
+func (s *Store) SeedUnknown(id string) (changed bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur := s.h
-	if cur.Held && (cur.Placeholder || cur.Policy.CeilingRestricted || issuedAt <= cur.LastOK) {
+	if cur.Held && cur.SeenStart == id {
 		return false, nil
 	}
-	return true, s.persistLocked(placeholder(cur.Policy.Revision, false))
+	next := cur
+	if !cur.Held || !cur.Placeholder && !cur.Policy.CeilingRestricted {
+		next, changed = placeholder(cur.Policy.Revision, false), true
+	}
+	next.SeenStart = id
+	return changed, s.persistLocked(next)
 }
 
 func (s *Store) take(p Policy, confirmedAt int64, live bool) (bool, error) {
@@ -280,13 +305,11 @@ func (s *Store) take(p Policy, confirmedAt int64, live bool) (bool, error) {
 		return false, nil // a replay, or nothing new to record
 	}
 	next := cur
-	if replace {
-		next = held{Policy: p, Held: true, LastOK: cur.LastOK}
-		if cur.Placeholder {
-			next.LastOK = 0
-		}
-	}
-	if confirmedAt > next.LastOK {
+	switch {
+	case replace:
+		// A new revision is confirmed by what brought it, never by a confirmation of an older one.
+		next = held{Policy: p, Held: true, LastOK: confirmedAt, SeenStart: cur.SeenStart}
+	case confirmedAt > next.LastOK:
 		next.LastOK = confirmedAt
 	}
 	return replace, s.persistLocked(next)
