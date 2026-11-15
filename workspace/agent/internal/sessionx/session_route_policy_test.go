@@ -391,7 +391,8 @@ func (lcppLikeAgent) RoutesPerCall() {}
 // would be built.
 type recallingAgent struct {
 	agents.Agent
-	built *string
+	built  *string
+	recall string // the model the conversation last ran on; "" is opencode's free one
 }
 
 func (recallingAgent) UsableRoutes() []string { return nil }
@@ -402,7 +403,10 @@ func (recallingAgent) ResolveLaunch(m session.Meta) routes.Launch {
 	}
 	return routes.Launch{Route: routes.RouteAnthropicAPI, Binding: "ANTHROPIC_API_KEY@a"}
 }
-func (recallingAgent) RecallSettings(session.Meta) agents.RecalledSettings {
+func (a recallingAgent) RecallSettings(session.Meta) agents.RecalledSettings {
+	if a.recall != "" {
+		return agents.RecalledSettings{Model: a.recall}
+	}
 	return agents.RecalledSettings{Model: "opencode/free"}
 }
 func (a recallingAgent) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
@@ -444,5 +448,69 @@ func TestRecreateHandoffRefusesAChangedCredential(t *testing.T) {
 	cur, _ := session.ReadMeta("rhand1")
 	if launched || cur.Archived || routeCode(t, rec.Body.String()) != routes.CodePolicyForbidden {
 		t.Errorf("recreate = %d %s launched=%v old archived=%v", rec.Code, rec.Body.String(), launched, cur.Archived)
+	}
+}
+
+// A route switch's candidate is judged on the launch record the switch would store, not on the
+// old route's: an allowed target is offered under a restricting policy, a forbidden one is not.
+func TestRouteSwitchCandidateIsJudgedOnItsOwnRecord(t *testing.T) {
+	e := newSwitchEnv(t, subscriptionRoute)
+	usePolicy(t, routepolicy.Policy{Revision: 4, Restricted: true, Allowed: []string{routes.RouteAnthropicSubscription, routes.RouteAnthropicAPI}})
+	if _, err := checkRouteSwitch(t.Context(), e.meta(), ""); err != nil {
+		t.Fatalf("an allowed target was refused: %v", err)
+	}
+	usePolicy(t, routepolicy.Policy{Revision: 5, Restricted: true, Allowed: []string{routes.RouteAnthropicSubscription}})
+	if _, err := checkRouteSwitch(t.Context(), e.meta(), ""); err == nil || err.Code != routes.CodePolicyForbidden {
+		t.Fatalf("a forbidden target: %v, want %s", err, routes.CodePolicyForbidden)
+	}
+}
+
+// A start is judged on the settings it launches with, the recalled ones: a stored model the member
+// has since switched away from neither stops nor stands in for the one launched.
+func TestStartJudgesTheRecalledModelNotTheStoredOne(t *testing.T) {
+	p := newCreateProbe(t)
+	usePolicy(t, noSubscriptions)
+	built := ""
+	t.Cleanup(agentreg.SwapForTest(session.KindOpencode, recallingAgent{Agent: AgentOf(session.KindOpencode), built: &built, recall: "anthropic/claude-x"}))
+	// Stored on the forbidden free model; the conversation last ran on the allowed Anthropic one.
+	m := session.Meta{Name: "recall2", Dir: p.repo, Kind: session.KindOpencode, Model: "opencode/free",
+		LaunchRoute: &routes.Launch{Route: routes.RouteAnthropicAPI, Binding: "ANTHROPIC_API_KEY@a"}}
+	session.WriteMeta(m)
+	rec := callHandler(HandleStartSession, http.MethodPost, m.Name, "")
+	if built != "anthropic/claude-x" {
+		t.Errorf("start = %d %s, built %q: the recalled allowed model must reach the build", rec.Code, rec.Body.String(), built)
+	}
+}
+
+// opencode's payer changing under the same model is a replacement: an account session that would
+// now run on Zen (the account signed out) is refused, and so is the reverse; Zen to Go on the same
+// key is a change of model, and a move to another provider's allowed route is too.
+func TestOpencodePayerChangeIsAReplacement(t *testing.T) {
+	p := noSubscriptions
+	p.Allowed = append(slices.Clone(p.Allowed), routes.RouteOpencodeZen, routes.RouteOpencodeGo, routes.RouteOpencodeAccount)
+	usePolicy(t, p)
+	cur := swapPerCall(t, routes.Launch{})
+	m := func(rec routes.Launch) session.Meta {
+		return session.Meta{Name: "oc", Kind: session.KindOpencode, Model: "opencode/m", LaunchRoute: &rec}
+	}
+	account := routes.Launch{Route: routes.RouteOpencodeAccount, Binding: "opencode-account@c1"}
+	zenFree := routes.Launch{Route: routes.RouteOpencodeZen, Binding: "opencode-zen@free"}
+	zenKey := routes.Launch{Route: routes.RouteOpencodeZen, Binding: "OPENCODE_API_KEY@k"}
+	goKey := routes.Launch{Route: routes.RouteOpencodeGo, Binding: "OPENCODE_API_KEY@k"}
+	anth := routes.Launch{Route: routes.RouteAnthropicAPI, Binding: "ANTHROPIC_API_KEY@a"}
+	for name, tc := range map[string]struct {
+		rec, now routes.Launch
+		refused  bool
+	}{
+		"account signed out, now free Zen":  {account, zenFree, true},
+		"a Zen key replaced by the account": {zenKey, account, true},
+		"Zen to Go on the same key":         {zenKey, goKey, false},
+		"to another provider's route":       {account, anth, false},
+	} {
+		*cur = tc.now
+		ref := storedLaunchPolicyRefusal(m(tc.rec))
+		if got := ref != nil; got != tc.refused {
+			t.Errorf("%s: refusal %+v, want refused=%v", name, ref, tc.refused)
+		}
 	}
 }

@@ -200,6 +200,9 @@ func checkRouteSwitch(ctx context.Context, m session.Meta, want string) (routes.
 	}
 	cand := m
 	cand.Route = target.Clone()
+	// The candidate carries the launch record the switch would store (r.store), not the old
+	// route's: judged against the old one, every allowed target would read as a replacement.
+	cand.LaunchRoute = switchLaunchOf(m.Kind, target)
 	if ref := startRefusalOf(cand); ref != nil {
 		return routes.Selection{}, refusal(ref.Status, ref.Code, ref.Message)
 	}
@@ -504,10 +507,7 @@ func (r *routeSwitchRun) resume() error {
 	if !ok {
 		return errMoveSourceGone
 	}
-	if ref := startRefusalOf(cur); ref != nil {
-		return errors.New(ref.Message)
-	}
-	if ref := recallAndJudge(&cur); ref != nil {
+	if ref := recallAndRefuse(&cur); ref != nil {
 		return errors.New(ref.Message)
 	}
 	if err := routeSwitchLaunch(cur, false); err != nil {
@@ -628,9 +628,7 @@ func rollbackRouteSwitch(name string, rec routeSwitchRecord) (relaunch, rollback
 	}
 	if rec.WasAlive {
 		if m, ok := session.ReadMeta(name); ok && !routeSwitchAlive(m) {
-			if ref := startRefusalOf(m); ref != nil {
-				relaunch = errors.New(ref.Message)
-			} else if ref := recallAndJudge(&m); ref != nil {
+			if ref := recallAndRefuse(&m); ref != nil {
 				relaunch = errors.New(ref.Message)
 			} else {
 				if err := routeSwitchLaunch(m, false); err != nil {

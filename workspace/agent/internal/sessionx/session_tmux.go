@@ -156,10 +156,7 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 	if !ok {
 		return fmt.Errorf("no meta for session %s", name)
 	}
-	if ref := startRefusalOf(m); ref != nil {
-		return &StartRefusalError{ref}
-	}
-	if ref := recallAndJudge(&m); ref != nil {
+	if ref := recallAndRefuse(&m); ref != nil {
 		return &StartRefusalError{ref}
 	}
 	if err := startSessionTmux(m, ssmForce); err != nil {
@@ -169,15 +166,13 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 	return nil
 }
 
-// recallAndJudge is recallSettings followed by the credential policy on what will actually be
-// launched: the recalled model can be another provider's (opencode), so the start check made on
-// the stored settings does not cover it.
-func recallAndJudge(m *session.Meta) *SpawnRefusal {
+// recallAndRefuse folds the settings the conversation last ran with into m (recallSettings), then
+// runs the start checks (startRefusalOf, the credential policy included) on what will actually be
+// launched. In that order: the recalled model can be another provider's (opencode), and a stored
+// model the member has since switched away from must neither pass for nor stop the one launched.
+func recallAndRefuse(m *session.Meta) *SpawnRefusal {
 	recallSettings(m)
-	if ref := storedLaunchPolicyRefusal(*m); ref != nil {
-		return &SpawnRefusal{Status: ref.Status, Code: ref.Code, Message: ref.Message}
-	}
-	return nil
+	return startRefusalOf(*m)
 }
 
 // recallSettings folds what the conversation last ran with (the kind's SettingsRecaller) into

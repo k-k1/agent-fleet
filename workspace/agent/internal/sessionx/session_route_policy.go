@@ -106,7 +106,9 @@ func newLaunchPolicyRefusal(kind string, sel *routes.Selection, m session.Meta) 
 //     with the record the same way. A kind whose route follows its model (agents.PerCallRouter,
 //     unless it also resolves one route per connection, as lcpp does) may have changed model
 //     since the launch: on the record's route the binding must still match; on another route
-//     that route must be allowed.
+//     at the same destination (opencode.ai's Zen, Go and account) only the same binding is a
+//     change of model, another one is the payer changing under the same model (an account
+//     signed out, a key added); on another destination that route must be allowed.
 //
 // It is also the launch handoff's check (handoffRefusal): a session about to start is judged on
 // the record it carries, so a credential that changed after the create judged it is refused.
@@ -157,6 +159,8 @@ func storedLaunchPolicyRefusal(m session.Meta) *agents.RouteRefusal {
 			return forbiddenRefusal(m.Kind, cur.Route, p)
 		case cur.Route == rec.Route && rec.Binding != "" && cur.Binding != rec.Binding:
 			return replacementRefusal(m.Kind, rec.Route)
+		case cur.Route != rec.Route && sameDestination(cur.Route, rec.Route) && (rec.Binding == "" || cur.Binding != rec.Binding):
+			return replacementRefusal(m.Kind, rec.Route)
 		}
 		return nil
 	}
@@ -164,6 +168,14 @@ func storedLaunchPolicyRefusal(m session.Meta) *agents.RouteRefusal {
 		return replacementRefusal(m.Kind, rec.Route)
 	}
 	return nil
+}
+
+// sameDestination reports whether two catalogued routes send prompts to the same destination. An
+// uncatalogued route never reaches it allowed: the policy lists catalogued routes only.
+func sameDestination(a, b string) bool {
+	ra, okA := routes.Lookup(a)
+	rb, okB := routes.Lookup(b)
+	return okA && okB && ra.Destination == rb.Destination
 }
 
 // handoffRefusal is the check at the moment a new launch is handed to its runtime (a create, a
