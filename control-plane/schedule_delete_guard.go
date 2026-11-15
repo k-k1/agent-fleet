@@ -21,6 +21,11 @@ func scheduleGuardErr(ctx context.Context, st store.Store, membershipID, repoNam
 	if repoName == "" && sessionName == "" {
 		return nil
 	}
+	if repoName != "" {
+		if err := queueGuardErr(ctx, st, membershipID, repoName); err != nil {
+			return err
+		}
+	}
 	schedules, err := st.ListSchedules(ctx, membershipID)
 	if err != nil {
 		return nil
@@ -64,4 +69,29 @@ func scheduleDeleteGuard(ctx context.Context, st store.Store, membershipID strin
 	default:
 		return nil
 	}
+}
+
+// queueGuardErr blocks deleting a repository that an ENABLED auto-run queue (ADR 0137 section 7)
+// starts its sessions from: the dispatcher would fire into a working copy that is gone. Like the
+// schedules above, a store error fails open. The queue's category repo is the folder name.
+func queueGuardErr(ctx context.Context, st store.Store, membershipID, repoName string) error {
+	qs, err := st.ListMemoQueues(ctx, membershipID)
+	if err != nil {
+		return nil
+	}
+	cats, err := st.ListCategories(ctx, membershipID)
+	if err != nil {
+		return nil
+	}
+	for _, q := range qs {
+		if !q.Enabled {
+			continue
+		}
+		for _, c := range cats {
+			if c.ID == q.CategoryID && c.Repo == repoName {
+				return fmt.Errorf("auto-run of %q still starts sessions from this repo — turn it off or delete it first", c.Repo+"/"+c.Name)
+			}
+		}
+	}
+	return nil
 }

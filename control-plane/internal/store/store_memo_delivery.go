@@ -31,6 +31,10 @@ const (
 	DeliveryAborted = "aborted"
 	DeliveryUnknown = "unknown"
 	DeliveryNotSent = "not_sent"
+	// DeliveryWake is a closed row with no messages and no session: a wake made only to settle
+	// the deliveries of a stopped workspace (ADR 0137 section 6), kept so that it counts as a
+	// fire of the day.
+	DeliveryWake = "wake"
 )
 
 // MemoDelivery is one fire of a queue. QueueID is the queue's category id.
@@ -60,6 +64,13 @@ type MemoDelivery struct {
 	// RetireResult is how a pending retire ended: confirmed, released (a person started the
 	// session after the retire began), done, gone or fault.
 	RetireResult string
+	// LimitKinds is ",kind,kind," of the sessions of the tree that waited for a usage limit at the
+	// last kept report, independent of the strongest reason in HeldBy.
+	LimitKinds string
+	// Drain is set for a delivery claimed while its queue was draining.
+	Drain bool
+	// Auto is set for a delivery the dispatcher fired by itself, not one a person pressed.
+	Auto bool
 	// TurnEndedAt is "" until the first turn of the delivery's session was seen to end. It and
 	// the two fields beside it are written once.
 	TurnOutcome, TurnEndedAt string
@@ -84,7 +95,9 @@ type DeliveryObservation struct {
 	At                  string
 	HeldBy, HeldSession string
 	// Progress says a session of the tree showed progress, at ProgressAt (the tick's time).
-	Progress                 bool
+	Progress bool
+	// LimitKinds is the kinds of the sessions of the tree waiting for a usage limit, ",a,b," or "".
+	LimitKinds               string
 	ProgressAt               string
 	TurnOutcome, TurnEndedAt string
 	TurnMs                   int64
@@ -100,6 +113,13 @@ type MemoDeliveryStore interface {
 	GetMemoDelivery(ctx context.Context, id string) (MemoDelivery, bool, error)
 	// ListMemoDeliveries returns a queue's deliveries, newest first, at most limit.
 	ListMemoDeliveries(ctx context.Context, membershipID, queueID string, limit int) ([]MemoDelivery, error)
+	// ListClosedWithoutTurn returns the deliveries closed at or after since with a session and no
+	// first turn recorded, the least recently tried first (never tried before tried), at most limit.
+	// MarkTurnTried stamps the ones a pass has read, so the next pass goes on with the others.
+	ListClosedWithoutTurn(ctx context.Context, since string, limit int) ([]MemoDelivery, error)
+	MarkTurnTried(ctx context.Context, ids []string, at string) error
+	// RecordDeliveryFirstTurn copies a first turn onto a delivery that has none (open or closed).
+	RecordDeliveryFirstTurn(ctx context.Context, id, outcome string, ms int64, endedAt string) (bool, error)
 	// ListLiveMemoDeliveries returns every delivery that is not closed, of every member,
 	// oldest first: the scheduler's work.
 	ListLiveMemoDeliveries(ctx context.Context) ([]MemoDelivery, error)
@@ -131,6 +151,16 @@ type MemoDeliveryTxOps interface {
 	// CountUnsentDeliveries counts the membership's deliveries in claimed or sending: the
 	// ones that have no session yet.
 	CountUnsentDeliveries() (int, error)
+	// CountDeliveriesCreatedSince counts the queue's deliveries created at or after since,
+	// whatever their state: the fires of the day, wakes included.
+	CountDeliveriesCreatedSince(queueID, since string) (int, error)
+	// CountWakesSince counts the queue's wakes made only to settle, created at or after since.
+	CountWakesSince(queueID, since string) (int, error)
+	// CountMemberWakesSince counts the wakes of every queue of the member since, which share
+	// one workspace.
+	CountMemberWakesSince(since string) (int, error)
+	// MarkDeliveryDrain marks a delivery as claimed while its queue was draining.
+	MarkDeliveryDrain(id string) error
 	// CountDeliveriesStartedSince counts the membership's deliveries other than except that
 	// are sending, or were sent or opened at or after since: the ones whose session a session
 	// count taken at since may not show.
@@ -153,7 +183,10 @@ type MemoDeliveryTxOps interface {
 	// the read about to begin. Call it before the Agent is asked.
 	ReserveDeliveryReads() (map[string]int64, error)
 	// ObserveDelivery keeps a read of an Agent that sends the queue report with an open delivery
-	// and answers the consecutive reads that found nothing holding it (0, 1 or 2). The count is
+	// and answers the consecutive reads that found nothing holding it (0, 1 or 2). A count counts as
+	// a previous clear read only when the stored row was itself clear (held_by empty before this
+	// update): MarkMemoDeliveryIdle, the rule for an Agent that does not report, writes idle_ticks
+	// whatever the kept report says, and that is no clear read of the report. The count is
 	// worked out from the stored row, never from a copy read earlier. A read whose number is
 	// older than the kept one is refused (kept false): it still resets the count when it found
 	// a hold, so a stale read can never help a close. Progress clears retired_at, and a first
@@ -169,17 +202,17 @@ type MemoDeliveryTxOps interface {
 const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, session, message_ids, idle_ticks,
 	created_at, sent_at, opened_at, closed_at, updated_at,
 	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at, retire_result,
-	turn_outcome, turn_ms, turn_ended_at FROM memo_delivery`
+	turn_outcome, turn_ms, turn_ended_at, auto, limit_kinds, drain FROM memo_delivery`
 
 func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	var d MemoDelivery
 	var ids string
-	var reported, retire int
+	var reported, retire, auto, drain int
 	err := row.Scan(&d.ID, &d.MembershipID, &d.QueueID, &d.State, &d.Outcome, &d.Session, &ids, &d.IdleTicks,
 		&d.CreatedAt, &d.SentAt, &d.OpenedAt, &d.ClosedAt, &d.UpdatedAt,
 		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt, &d.RetireResult,
-		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt)
-	d.Reported, d.RetirePending = reported != 0, retire != 0
+		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto, &d.LimitKinds, &drain)
+	d.Reported, d.RetirePending, d.Auto, d.Drain = reported != 0, retire != 0, auto != 0, drain != 0
 	d.MessageIDs = []string{}
 	if err == nil && ids != "" {
 		_ = json.Unmarshal([]byte(ids), &d.MessageIDs)
@@ -212,13 +245,78 @@ func (s *SQL) GetMemoDelivery(ctx context.Context, id string) (MemoDelivery, boo
 }
 
 func (s *SQL) ListMemoDeliveries(ctx context.Context, membershipID, queueID string, limit int) ([]MemoDelivery, error) {
-	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE membership_id=? AND queue_id=?
-		ORDER BY created_at DESC, id DESC LIMIT ?`, membershipID, queueID, limit))
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND outcome<>?
+		ORDER BY created_at DESC, id DESC LIMIT ?`, membershipID, queueID, DeliveryWake, limit))
 }
 
 func (s *SQL) ListLiveMemoDeliveries(ctx context.Context) ([]MemoDelivery, error) {
 	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state IN (?,?,?)
 		ORDER BY created_at, id`, DeliveryClaimed, DeliverySending, DeliveryOpen))
+}
+
+func (t memoTx) queryDeliveries(q string, args ...any) ([]MemoDelivery, error) {
+	rows, err := t.q.QueryContext(t.ctx, q, args...)
+	return scanMemoDeliveries(rows, err)
+}
+
+func (t memoTx) RecentQueueDeliveries(queueID string, limit int) ([]MemoDelivery, error) {
+	return t.queryDeliveries(memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND outcome<>?
+		ORDER BY created_at DESC, id DESC LIMIT ?`, t.mid, queueID, DeliveryWake, limit)
+}
+
+func (t memoTx) LiveQueueDeliveries(queueID string) ([]MemoDelivery, error) {
+	return t.queryDeliveries(memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND state<>? ORDER BY created_at, id`,
+		t.mid, queueID, DeliveryClosed)
+}
+
+func (t memoTx) RecentTurnDeliveries(queueID, after string, limit int) ([]MemoDelivery, error) {
+	return t.queryDeliveries(memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND turn_ended_at<>'' AND created_at>?
+		ORDER BY created_at DESC, id DESC LIMIT ?`, t.mid, queueID, after, limit)
+}
+
+func (t memoTx) CountMemberWakesSince(since string) (int, error) {
+	var n int
+	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_delivery WHERE membership_id=? AND created_at>=? AND outcome=?`,
+		t.mid, since, DeliveryWake).Scan(&n)
+	return n, err
+}
+
+func (t memoTx) MarkDeliveryDrain(id string) error {
+	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET drain=1 WHERE id=? AND membership_id=?`, id, t.mid)
+	return err
+}
+
+func (s *SQL) ListClosedWithoutTurn(ctx context.Context, since string, limit int) ([]MemoDelivery, error) {
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state=? AND session<>'' AND turn_ended_at='' AND closed_at>=?
+		ORDER BY turn_tried_at, closed_at, id LIMIT ?`, DeliveryClosed, since, limit))
+}
+
+func (s *SQL) MarkTurnTried(ctx context.Context, ids []string, at string) error {
+	for _, id := range ids {
+		if _, err := s.db.ExecContext(ctx, `UPDATE memo_delivery SET turn_tried_at=? WHERE id=?`, at, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SQL) RecordDeliveryFirstTurn(ctx context.Context, id, outcome string, ms int64, endedAt string) (bool, error) {
+	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET turn_outcome=?, turn_ms=?, turn_ended_at=? WHERE id=? AND turn_ended_at=''`,
+		outcome, ms, endedAt, id))
+}
+
+func (t memoTx) CountWakesSince(queueID, since string) (int, error) {
+	var n int
+	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_delivery WHERE membership_id=? AND queue_id=? AND created_at>=? AND outcome=?`,
+		t.mid, queueID, since, DeliveryWake).Scan(&n)
+	return n, err
+}
+
+func (t memoTx) CountDeliveriesCreatedSince(queueID, since string) (int, error) {
+	var n int
+	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_delivery WHERE membership_id=? AND queue_id=? AND created_at>=?`,
+		t.mid, queueID, since).Scan(&n)
+	return n, err
 }
 
 func (s *SQL) MarkMemoDeliveryIdle(ctx context.Context, id string, ticks int) (bool, error) {
@@ -256,16 +354,16 @@ func (t memoTx) ObserveDelivery(id string, o DeliveryObservation) (int, bool, er
 	if o.Progress {
 		progress = 1
 	}
-	kept, err := affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET held_by=?, held_session=?, held_seen_at=?, held_gen=?,
+	kept, err := affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET held_by=?, held_session=?, held_seen_at=?, held_gen=?, limit_kinds=?,
 		  reported=1, updated_at=?,
-		  idle_ticks=CASE WHEN ?=1 THEN 0 WHEN reported=1 AND idle_ticks>=1 THEN 2 ELSE 1 END,
+		  idle_ticks=CASE WHEN ?=1 THEN 0 WHEN reported=1 AND held_by='' AND idle_ticks>=1 THEN 2 ELSE 1 END,
 		  progress_seen_at=CASE WHEN ?=1 THEN ? ELSE progress_seen_at END,
 		  retired_at=CASE WHEN ?=1 THEN '' ELSE retired_at END,
 		  turn_outcome=CASE WHEN turn_ended_at='' AND ?<>'' THEN ? ELSE turn_outcome END,
 		  turn_ms=CASE WHEN turn_ended_at='' AND ?<>'' THEN ? ELSE turn_ms END,
 		  turn_ended_at=CASE WHEN turn_ended_at='' THEN ? ELSE turn_ended_at END
 		WHERE id=? AND membership_id=? AND state=? AND held_gen<=?`,
-		o.HeldBy, o.HeldSession, o.At, o.Gen, DeliveryTS(time.Now()),
+		o.HeldBy, o.HeldSession, o.At, o.Gen, o.LimitKinds, DeliveryTS(time.Now()),
 		held, progress, o.ProgressAt, progress,
 		o.TurnEndedAt, o.TurnOutcome, o.TurnEndedAt, o.TurnMs, o.TurnEndedAt,
 		id, t.mid, DeliveryOpen, o.Gen))
@@ -332,9 +430,9 @@ func (t memoTx) CountLiveDeliveries(queueID string) (int, int, error) {
 func (t memoTx) InsertDelivery(d MemoDelivery) error {
 	ids, _ := json.Marshal(append([]string{}, d.MessageIDs...))
 	_, err := t.q.ExecContext(t.ctx, `INSERT INTO memo_delivery(id, membership_id, queue_id, state, outcome, session,
-		message_ids, idle_ticks, created_at, sent_at, opened_at, closed_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		message_ids, idle_ticks, created_at, sent_at, opened_at, closed_at, updated_at, auto) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		d.ID, t.mid, d.QueueID, d.State, d.Outcome, d.Session, string(ids), d.IdleTicks,
-		d.CreatedAt, d.SentAt, d.OpenedAt, d.ClosedAt, d.UpdatedAt)
+		d.CreatedAt, d.SentAt, d.OpenedAt, d.ClosedAt, d.UpdatedAt, b2i(d.Auto))
 	return err
 }
 
@@ -398,6 +496,13 @@ func (t memoTx) ReturnDeliveryMessages(delivery string) error {
 		  release_ref_path=ref_path, release_attachments=attachments
 		WHERE membership_id=? AND delivery_id=? AND state=?`,
 		MemoStatePending, t.mid, delivery, MemoStateClaimed)
+	if err != nil {
+		return err
+	}
+	// The batch that ended the drain by claiming the last pending message goes back: the queue
+	// is draining again, or the returned message would wait for a threshold it already passed.
+	_, err = t.q.ExecContext(t.ctx, `UPDATE memo_queue SET draining=1 WHERE membership_id=? AND category_id=
+		(SELECT queue_id FROM memo_delivery WHERE id=? AND drain=1)`, t.mid, delivery)
 	return err
 }
 
