@@ -10,9 +10,11 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"strings"
+	"syscall"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 )
@@ -25,23 +27,44 @@ func turnWatch(sid string) func() string {
 	return func() string { return failureSince(path, mark) }
 }
 
-// markSpan is how many bytes at each end of the marked region are fingerprinted.
-const markSpan = 256
+// openRegular opens path for reading only if it is a regular file. The type is checked on the
+// open handle, and O_NONBLOCK keeps the open itself from waiting: a FIFO planted at the path
+// would otherwise block until a writer shows up, and TurnWatch runs before session/prompt with
+// the lifecycle lease held, so the turn could neither start nor end.
+func openRegular(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		f.Close()
+		return nil, errNotRegular
+	}
+	return f, nil
+}
 
-// eventsMark is where events.jsonl stood when a turn was sent. A bare byte size is not enough: a
-// file truncated or replaced during the turn is then read from an offset past its new end (or
-// from the middle of unrelated lines) and a new failure reads as a clean idle. So the mark also
-// carries the file's identity (os.SameFile) and a fingerprint of its first and last bytes up to
-// the mark, which catches a replacement that kept the same header and regrew past the old size.
-// The zero value (no file yet, or unreadable) matches no file, so everything is read.
+var errNotRegular = errors.New("events.jsonl is not a regular file")
+
+// eventsMark is where events.jsonl stood when a turn was sent: its size and a hash of every byte
+// before that size. events.jsonl is append-only, so "the lines after the mark" is only a valid
+// reading while the bytes before it are untouched; a size, a head fingerprint or the file's
+// identity each miss some rewrite (a truncation that regrew, a replacement that kept the header,
+// an in-place insertion that kept both ends), and a new failure then reads as a clean idle. The
+// hash costs one sequential read of the file at each end of a turn, which is small next to the
+// turn. The zero value (no file yet, or not readable) matches no file, so everything is read.
 type eventsMark struct {
-	fi         os.FileInfo
-	size       int64
-	head, tail [sha256.Size]byte
+	ok   bool
+	size int64
+	sum  [sha256.Size]byte
 }
 
 func takeEventsMark(path string) eventsMark {
-	f, err := os.Open(path)
+	f, err := openRegular(path)
 	if err != nil {
 		return eventsMark{}
 	}
@@ -50,44 +73,32 @@ func takeEventsMark(path string) eventsMark {
 	if err != nil {
 		return eventsMark{}
 	}
-	m := eventsMark{fi: fi, size: fi.Size()}
-	var ok bool
-	if m.head, m.tail, ok = fingerprints(f, m.size); !ok {
+	m := eventsMark{size: fi.Size()}
+	if m.sum, m.ok = prefixSum(f, m.size); !m.ok {
 		return eventsMark{}
 	}
 	return m
 }
 
-// fingerprints hashes the first and last markSpan bytes of the first size bytes of f.
-func fingerprints(f *os.File, size int64) (head, tail [sha256.Size]byte, ok bool) {
-	n := size
-	if n > markSpan {
-		n = markSpan
+// prefixSum hashes the first size bytes of f; ok=false when f holds fewer.
+func prefixSum(f *os.File, size int64) (sum [sha256.Size]byte, ok bool) {
+	h := sha256.New()
+	if n, err := io.Copy(h, io.NewSectionReader(f, 0, size)); err != nil || n != size {
+		return sum, false
 	}
-	buf := make([]byte, n)
-	if _, err := f.ReadAt(buf, 0); err != nil && !(err == io.EOF && n == 0) {
-		return head, tail, false
-	}
-	head = sha256.Sum256(buf)
-	if _, err := f.ReadAt(buf, size-n); err != nil && !(err == io.EOF && n == 0) {
-		return head, tail, false
-	}
-	return head, sha256.Sum256(buf), true
+	copy(sum[:], h.Sum(nil))
+	return sum, true
 }
 
-// offset is where this turn's lines start in f, the handle being read: the mark's size while f
-// is still the file the mark was taken from, else 0 (every line in a replaced file is new to
-// the turn). Everything is checked on the handle, not on the path, so a swap between the check
-// and the read cannot slip through.
+// offset is where this turn's lines start in f, the handle being read: the mark's size while the
+// bytes before it are unchanged, else 0 (a rewritten file is read whole; a turn that answered
+// clears an older error anyway). It is checked on the handle, not the path, so a swap between
+// the check and the read cannot slip through.
 func (m eventsMark) offset(f *os.File) int64 {
-	if m.fi == nil {
+	if !m.ok {
 		return 0
 	}
-	cur, err := f.Stat()
-	if err != nil || !os.SameFile(m.fi, cur) || cur.Size() < m.size {
-		return 0
-	}
-	if head, tail, ok := fingerprints(f, m.size); !ok || head != m.head || tail != m.tail {
+	if sum, ok := prefixSum(f, m.size); !ok || sum != m.sum {
 		return 0
 	}
 	return m.size
@@ -97,11 +108,10 @@ func (m eventsMark) offset(f *os.File) int64 {
 // assistant output followed ("" = none). The "--model … Using auto instead" notice is not a
 // failure, since the turn still runs, and an error followed by assistant.message or
 // assistant.turn_end belongs to a turn that went on to answer. The text is the provider's, scrubbed
-// of secret-shaped substrings and clipped, because it reaches the operator report. A file that is
-// no longer the one the mark was taken from is read from its start: a turn that answered clears
-// an older error anyway.
+// of secret-shaped substrings and clipped, because it reaches the operator report. A source that
+// is not a regular file reads as no failure.
 func failureSince(path string, mark eventsMark) string {
-	f, err := os.Open(path)
+	f, err := openRegular(path)
 	if err != nil {
 		return ""
 	}

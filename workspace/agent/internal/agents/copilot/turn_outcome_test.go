@@ -86,13 +86,10 @@ func TestFailureSinceFileReplacedDuringTurn(t *testing.T) {
 				t.Fatal(err)
 			}
 		},
-		"replaced by a file whose head and tail bytes at the mark are unchanged": func(p string) {
-			// Only the file identity tells this one: the new error line is inserted mid-file, sized
-			// to a whole number of padding lines so that the bytes at both ends of the old region
-			// are identical, and the old size is the offset a size-only reader would resume from.
-			if err := os.Rename(p, p+".old"); err != nil {
-				t.Fatal(err)
-			}
+		"edited in place, bytes at both ends of the marked region unchanged": func(p string) {
+			// The new error line is inserted mid-file on the SAME inode, sized to a whole number of
+			// padding lines so that the bytes at both ends of the old region stay identical; the old
+			// size is the offset a size-only reader would resume from.
 			const padLine = `{"type":"session.info","data":{"message":"filler filler filler filler"}}` + "\n"
 			// Trailing spaces inside the message (trimmed from the reported text) round it up.
 			spaces := (len(padLine) - len(failLine)%len(padLine)) % len(padLine)
