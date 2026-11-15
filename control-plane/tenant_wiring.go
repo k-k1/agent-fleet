@@ -499,3 +499,9 @@ func (c cpRoutePolicy) SuperAdminFor(w http.ResponseWriter, r *http.Request) (st
 func (c cpRoutePolicy) TenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (store.Identity, store.Tenant, bool) {
 	return c.tenantAdminFor(w, r, slug)
 }
+
+func (c cpRoutePolicy) VerifyBridge(ctx context.Context, signKey []byte, token string, verify func([]byte, string) (string, bool)) (string, bool) {
+	return c.mgr.verifyBridge(ctx, signKey, token, verify)
+}
+
+func (c cpRoutePolicy) SigningRoot() []byte { return c.mgr.tokenSigningRoot() }

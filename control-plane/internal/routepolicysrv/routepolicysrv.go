@@ -84,6 +84,7 @@ func Register(mux *http.ServeMux, cp CP) {
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/route-policy", a.getTenant)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/route-policy", a.putTenant)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/route-policy/cap", a.putCap)
+	mux.HandleFunc("GET "+BridgePath, a.pull)
 }
 
 // admin serves the policy REST over the CP seam.

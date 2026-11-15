@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicysrv"
 	"log"
 	"os"
 	"path/filepath"
@@ -658,7 +659,14 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			// Watch ingress bridge (ADR 0133 step 4): the agent registers the subjects it
 			// wants poked about and creates tenant hooks. Its own credential; a leak does
 			// that for this member and nothing else.
-			"AF_WATCH_TOKEN="+watchingress.MintToken(at(watchingress.SignKey(root)), ws.MembershipID))
+			"AF_WATCH_TOKEN="+watchingress.MintToken(at(watchingress.SignKey(root)), ws.MembershipID),
+			// Credential policy bridge (ADR 0138 D12): the agent pulls its effective policy at
+			// least every 30 s. Its own credential; a leak reads that policy and nothing else.
+			routepolicysrv.EnvToken+"="+routepolicysrv.MintToken(at(routepolicysrv.SignKey(root)), ws.MembershipID))
+		// The effective policy at start, so the Agent judges by it before its first pull.
+		if m.store != nil {
+			env = append(env, routepolicysrv.PolicyEnv(ctx, m.store, ws.TenantID)...)
+		}
 		// Provided model routes (ADR 0129 G3), only with AF_PROVIDED_ROUTES=1.
 		env = append(env, providedRouteIssueEnv(root, at, ws.MembershipID)...)
 		// Where the workspace reaches the CP by an internal address (ADR 0106 decision 8),

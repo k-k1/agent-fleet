@@ -19,6 +19,15 @@ type fakeCP struct{ st store.Store }
 
 func (f fakeCP) Store() store.Store { return f.st }
 
+// testRoot is the fake CP's signing root; VerifyBridge checks a token under it with no epoch.
+var testRoot = []byte(strings.Repeat("k", 32))
+
+func (fakeCP) SigningRoot() []byte { return testRoot }
+
+func (fakeCP) VerifyBridge(_ context.Context, signKey []byte, token string, verify func([]byte, string) (string, bool)) (string, bool) {
+	return verify(signKey, token)
+}
+
 func (f fakeCP) who(w http.ResponseWriter, r *http.Request) (store.Identity, bool) {
 	id, ok, err := f.st.GetIdentityByUserKey(r.Context(), r.Header.Get("X-Who"))
 	if err != nil || !ok {
@@ -416,4 +425,99 @@ func TestRoutePolicyUnsettledCeilingAnswersNothing(t *testing.T) {
 	if w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", ""); w.Code != http.StatusInternalServerError {
 		t.Errorf("unsettled ceiling: %d %s, want a refusal", w.Code, w.Body)
 	}
+}
+
+// bridgeGet is the Agent's pull with a bearer.
+func bridgeGet(mux *http.ServeMux, token string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("GET", BridgePath, nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	return w
+}
+
+func memberOf(t *testing.T, st *store.SQL, tn store.Tenant, key string) string {
+	t.Helper()
+	ctx := context.Background()
+	id, ok, err := st.GetIdentityByUserKey(ctx, key)
+	if err != nil || !ok {
+		t.Fatalf("identity %s: %v %v", key, ok, err)
+	}
+	m, ok, err := st.GetMembership(ctx, id.ID, tn.ID)
+	if err != nil || !ok {
+		t.Fatalf("membership %s: %v %v", key, ok, err)
+	}
+	return m.ID
+}
+
+// The Agent's pull answers its own tenant's effective policy with the snapshot's revision; with
+// no policy anywhere it is unrestricted at revision 0. A bad or foreign-purpose token, or a
+// removed member, gets nothing.
+func TestBridgePull(t *testing.T) {
+	st, mux, tn := routePolicyFixture(t, "")
+	mid := memberOf(t, st, tn, "m-x")
+	tok := MintToken(SignKey(testRoot), mid)
+	decode := func(w *httptest.ResponseRecorder) MemberPolicy {
+		t.Helper()
+		if w.Code != 200 {
+			t.Fatalf("pull: %d %s", w.Code, w.Body)
+		}
+		var p MemberPolicy
+		if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	p0 := decode(bridgeGet(mux, tok))
+	if p0.Restricted || p0.CeilingRestricted || p0.Revision != 0 || len(p0.Allowed) == 0 {
+		t.Fatalf("no policy: %+v", p0)
+	}
+	if w := routeAdminDo(mux, "PUT", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", `{"classes":["member-key"]}`); w.Code != 200 {
+		t.Fatalf("tenant rule: %d %s", w.Code, w.Body)
+	}
+	p1 := decode(bridgeGet(mux, tok))
+	if !p1.Restricted || p1.CeilingRestricted || p1.Revision <= p0.Revision {
+		t.Fatalf("after the tenant rule: %+v", p1)
+	}
+	for _, id := range p1.Allowed {
+		if id == "anthropic-subscription" || id == "member-llamacpp" {
+			t.Errorf("%s allowed under classes=member-key", id)
+		}
+	}
+	for _, bad := range []string{"", "afc_nope.x", MintToken(SignKey([]byte("another root")), mid), "afb_" + strings.TrimPrefix(tok, "afc_")} {
+		if w := bridgeGet(mux, bad); w.Code != http.StatusUnauthorized {
+			t.Errorf("token %q: %d", bad, w.Code)
+		}
+	}
+	if err := st.DeleteMembership(context.Background(), mid); err != nil {
+		t.Fatal(err)
+	}
+	if w := bridgeGet(mux, tok); w.Code != http.StatusUnauthorized {
+		t.Errorf("a removed member was answered: %d %s", w.Code, w.Body)
+	}
+}
+
+// The start environment carries the same answer the pull gives, and the ceiling's flag.
+func TestPolicyEnv(t *testing.T) {
+	st, _, tn := routePolicyFixture(t, "classes=provided")
+	env := PolicyEnv(context.Background(), st, tn.ID)
+	if len(env) != 1 || !strings.HasPrefix(env[0], EnvPolicy+"=") {
+		t.Fatalf("env = %v", env)
+	}
+	var p MemberPolicy
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(env[0], EnvPolicy+"=")), &p); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Restricted || !p.CeilingRestricted || p.Revision == 0 || slicesContains(p.Allowed, "anthropic-api") || !slicesContains(p.Allowed, "bedrock-deployment") {
+		t.Errorf("start policy = %+v", p)
+	}
+}
+
+func slicesContains(l []string, v string) bool {
+	for _, x := range l {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicysrv"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -95,6 +96,7 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 	}{
 		{"/internal/docs", bearer(func() string { return mintDocsToken(k(docsSignKey(master)), mem.ID) })},
 		{"/internal/branch-rules", bearer(func() string { return mintBranchRulesToken(k(branchRulesSignKey(master)), mem.ID) })},
+		{"/internal/route-policy", bearer(func() string { return routepolicysrv.MintToken(k(routepolicysrv.SignKey(master)), mem.ID) })},
 		{"/internal/watch-", bearer(func() string { return watchingress.MintToken(k(watchingress.SignKey(master)), mem.ID) })},
 		{"/internal/mcp-servers", bearer(func() string { return mcpsrv.MintMCPToken(k(mcpsrv.MCPSignKey(master)), mem.ID) })},
 		{"/internal/aws-profiles", bearer(func() string { return mintAWSProfilesToken(k(awsProfilesSignKey(master)), mem.ID) })},
@@ -119,6 +121,7 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 	samples := []struct{ method, path string }{
 		{"GET", "/internal/docs"},
 		{"GET", "/internal/branch-rules"},
+		{"GET", "/internal/route-policy"},
 		{"PUT", "/internal/watch-subjects"},
 		{"GET", "/internal/watch-hooks"},
 		{"POST", "/internal/watch-hooks"},

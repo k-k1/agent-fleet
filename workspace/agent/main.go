@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/taskid"
 	"log"
 	"net"
@@ -229,6 +230,8 @@ func serve() {
 	// Pull the tenant's branch naming rules (ADR 0103 decision 10). Backgrounded and
 	// fail-open like the MCP pull: an unreachable CP keeps the last copy.
 	startBranchRulesTenantSync()
+	// The credential policy (ADR 0138 D12): the start environment's copy, then a pull every 30 s.
+	go routepolicy.Shared().Run(context.Background())
 	awsx.LoginAWSBin = ensureAWSCLI
 	gcpx.LoginGCloudBin = ensureGCloud
 	startTerminalHistoryJanitor()
