@@ -72,6 +72,11 @@ func wireGoldenTypes() []struct {
 		{"workItemSessionDTO", reflect.TypeOf(workItemSessionDTO{})},
 		// Memo queue / scheduled execution.
 		{"memoDTO", reflect.TypeOf(memoDTO{})},
+		// The auto-run settings and why nothing starts (#4257): the Console reads `waiting` in one place.
+		{"memoQueuesWire", reflect.TypeOf(memoQueuesWire{})},
+		{"memoQueueDTO", reflect.TypeOf(memoQueueDTO{})},
+		{"memoWaiting", reflect.TypeOf(memoWaiting{})},
+		{"memoWaitingDetail", reflect.TypeOf(memoWaitingDetail{})},
 		{"scheduleDTO", reflect.TypeOf(scheduleDTO{})},
 		// A queue's deliveries (ADR 0137): the Console slice draws them against this wire while
 		// the Control Plane slice that writes it is built in parallel.
