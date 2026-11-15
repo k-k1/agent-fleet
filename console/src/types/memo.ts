@@ -113,6 +113,30 @@ export interface MemoQueue {
   generation: number;
   createdAt: string;
   updatedAt: string;
+  /** Why notes are waiting and nothing starts now (read-only, the list only). Absent when a run
+   *  can start, when nothing waits, and from a Control Plane that does not send it. */
+  waiting?: MemoQueueWaiting;
+}
+
+/** The reasons the Control Plane gives, in the order it checks them (the first that holds). */
+export type MemoWaitingReason =
+  | "tenant_off"
+  | "disabled"
+  | "no_report"
+  | "paused"
+  | "window_closed"
+  | "below_threshold"
+  | "quiet_minute"
+  | "daily_cap"
+  | "backoff"
+  | "usage_limit"
+  | "no_place";
+
+export interface MemoQueueWaiting {
+  reason: MemoWaitingReason;
+  /** RFC 3339: when the Control Plane will act, only when it is known. */
+  until?: string;
+  detail?: { needed?: number; waiting?: number; agentKind?: string; by?: "category" | "member" };
 }
 
 /** The PUT body: a PUT replaces the whole row, so every setting is sent, and nothing read-only. */

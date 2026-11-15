@@ -301,6 +301,9 @@ type memoQueueDTO struct {
 	Generation   int    `json:"generation"`
 	CreatedAt    string `json:"createdAt"`
 	UpdatedAt    string `json:"updatedAt"`
+	// Waiting is set by the list only: why a queue with notes waiting starts nothing now (see
+	// memoQueueWaiting). Absent when nothing waits or a run can start.
+	Waiting *memoWaiting `json:"waiting,omitempty"`
 }
 
 func memoQueueToDTO(q store.MemoQueue, c store.MemoCategory) memoQueueDTO {
@@ -483,11 +486,31 @@ func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Iden
 	for _, c := range cats {
 		byID[c.ID] = c
 	}
+	stats, err := a.store.ListMemberQueuePendingStats(r.Context(), mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
 	out := make([]memoQueueDTO, 0, len(qs))
-	for _, q := range qs {
-		if c, ok := byID[q.CategoryID]; ok {
-			out = append(out, memoQueueToDTO(q, c))
+	now := time.Now()
+	err = a.store.MemoRead(r.Context(), mv.MembershipID, func(rd store.MemoWaitOps) error {
+		for _, q := range qs {
+			c, ok := byID[q.CategoryID]
+			if !ok {
+				continue
+			}
+			dto := memoQueueToDTO(q, c)
+			var err error
+			if dto.Waiting, err = memoQueueWaiting(rd, q, on, stats[q.CategoryID], now); err != nil {
+				return err
+			}
+			out = append(out, dto)
 		}
+		return nil
+	})
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
 	}
 	writeJSON(w, http.StatusOK, memoQueuesWire{TenantEnabled: on, Queues: out})
 }

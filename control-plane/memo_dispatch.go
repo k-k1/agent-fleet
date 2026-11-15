@@ -431,22 +431,43 @@ func quietSince(latest string, now time.Time) bool {
 	return !t.After(now.Add(-memoThresholdQuiet))
 }
 
-// openState says whether the queue is open now and, for a threshold queue, whether it has just
-// begun to drain (to be written with the claim).
-func openState(q store.MemoQueue, pending store.QueuePending, now time.Time) (open, startDrain bool) {
+// openCheck says whether the queue is open now and, when it is not, why and until when. For a
+// threshold queue startDrain says it has just begun to drain (to be written with the claim).
+func openCheck(q store.MemoQueue, pending store.QueuePending, now time.Time) (open, startDrain bool, why *memoWaiting) {
 	switch {
 	case q.OpenCron != "":
-		return windowOpen(q, now), false
+		if windowOpen(q, now) {
+			return true, false, nil
+		}
+		w := &memoWaiting{Reason: waitWindowClosed}
+		if next, err := nextCron(q.OpenCron, now, scheduleLocation(q.TZ)); err == nil {
+			w.Until = untilOf(next)
+		}
+		return false, false, w
 	case q.OpenAfter > 0:
 		if q.Draining {
-			return true, false
+			return true, false, nil
 		}
-		if pending.Count >= q.OpenAfter && quietSince(pending.Latest, now) {
-			return true, true
+		if pending.Count < q.OpenAfter {
+			return false, false, &memoWaiting{Reason: waitBelowThreshold,
+				Detail: &memoWaitingDetail{Needed: q.OpenAfter, Waiting: pending.Count}}
 		}
-		return false, false
+		if !quietSince(pending.Latest, now) {
+			w := &memoWaiting{Reason: waitQuietMinute}
+			if t, err := time.Parse(time.RFC3339, pending.Latest); err == nil {
+				w.Until = untilOf(t.Add(memoThresholdQuiet))
+			}
+			return false, false, w
+		}
+		return true, true, nil
 	}
-	return true, false
+	return true, false, nil
+}
+
+// openState is openCheck without the reason.
+func openState(q store.MemoQueue, pending store.QueuePending, now time.Time) (open, startDrain bool) {
+	open, startDrain, _ = openCheck(q, pending, now)
+	return open, startDrain
 }
 
 // --- One fire ------------------------------------------------------------------------------------
@@ -519,36 +540,30 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 	}
 	var out store.MemoDelivery
 	claimed := false
-	since := store.DeliveryTS(now.Add(-memoFiresWindow))
 	err := r.mgr.store.MemoTx(ctx, q.MembershipID, func(tx store.MemoTxOps) error {
 		// Everything below is read again behind the membership lock: what the tick read before
 		// the lock (the queue, the tenant switch, a usage limit, the deliveries) may be old.
-		if on, err := tx.LockTenantSwitch(); err != nil || !on {
-			return err
-		}
-		cur, ok, err := tx.GetQueue(q.CategoryID)
-		if err != nil || !ok || !cur.Enabled || cur.Paused {
-			return err
-		}
-		if held, err := autoHeld(tx, cur, now); err != nil || held {
-			return err
-		}
-		fires, err := tx.CountDeliveriesCreatedSince(q.CategoryID, since)
-		if err != nil || fires >= memoQueueFiresPerDay(cur) {
-			return err
-		}
-		c, ok, err := tx.GetCategory(q.CategoryID)
-		if err != nil || !ok {
-			return err
-		}
-		rows, err := tx.ListMemosIn(c.Repo, c.Name)
+		on, err := tx.LockTenantSwitch()
 		if err != nil {
 			return err
 		}
-		pending := pendingOf(rows)
-		open, start := openState(cur, pending, now)
-		if !open {
-			return nil
+		cur, ok, err := tx.GetQueue(q.CategoryID)
+		if err != nil || !ok {
+			return err
+		}
+		// The rules of "may this queue fire now" are memoWaitingFor's, which the member's list reads
+		// too; the Agent's report was decided above, against the running workspace.
+		why, start, err := memoWaitingFor(tx, memoWaitInput{q: cur, tenantOn: on, now: now, skipNoReport: true,
+			pending: func() (store.QueuePending, error) {
+				c, ok, err := tx.GetCategory(q.CategoryID)
+				if err != nil || !ok {
+					return store.QueuePending{}, err
+				}
+				rows, err := tx.ListMemosIn(c.Repo, c.Name)
+				return pendingOf(rows), err
+			}})
+		if err != nil || why != nil {
+			return err
 		}
 		d, aerr, err := memoReserveAndClaim(tx, q.CategoryID, running, limit, true)
 		if err != nil {
@@ -577,22 +592,6 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 		return store.MemoDelivery{}, false
 	}
 	return out, claimed
-}
-
-// autoHeld says whether a fire by itself of the queue has to wait, from the stored state seen
-// inside the transaction of the fire: a delivery of the queue closed as not sent lately (the
-// back-off), or a session of the member waits for a usage limit under the queue's agent kind, in
-// any session of any tree (the report's own list, not its strongest reason).
-func autoHeld(tx store.MemoTxOps, q store.MemoQueue, now time.Time) (bool, error) {
-	recent, err := tx.RecentQueueDeliveries(q.CategoryID, 8)
-	if err != nil {
-		return false, err
-	}
-	if until, ok := notSentBackoff(recent); ok && now.Before(until) {
-		return true, nil
-	}
-	n, err := tx.CountLimitedDeliveries(scheduleInjectKind(q.AgentKind))
-	return n > 0, err
 }
 
 // pendingOf summarizes the pending messages of a bucket the way ListQueuePendingStats does.
@@ -703,7 +702,7 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 		if open, _ := openState(cur, pending, now); !open || pending.Count == 0 {
 			return nil
 		}
-		if held, err := autoHeld(tx, cur, now); err != nil || held {
+		if held, err := autoHeld(tx, cur, now); err != nil || held != nil {
 			return err
 		}
 		liveNow, err := tx.LiveQueueDeliveries(q.CategoryID)

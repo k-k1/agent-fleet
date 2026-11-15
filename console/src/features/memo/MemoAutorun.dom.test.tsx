@@ -50,6 +50,7 @@ const { MemoQueueSection } = await import("./MemoQueueSection.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
+const { fmtDateTime } = await import("../../lib/intl.ts");
 const { errText } = await import("../../core/api/client.ts");
 const { deliveryStateKey } = await import("./queues.ts");
 const { resetShownNotes } = await import("./shownNotes.ts");
@@ -626,6 +627,87 @@ describe("a workspace that cannot run by itself yet", () => {
     servedQueues = { tenantEnabled: true, queues: [aQueue({ noReportAt: "t", enabled: false })] };
     await render();
     expect(document.querySelector(".memo-q-noreport")).toBeNull();
+  });
+});
+
+describe("why nothing starts", () => {
+  const until = "2026-11-16T09:30:00Z";
+  const cases: [string, Record<string, unknown>, string, Record<string, string | number>][] = [
+    ["tenant_off", {}, "memo.waiting_tenant_off", {}],
+    ["disabled", {}, "memo.waiting_disabled", {}],
+    ["window_closed", { until }, "memo.waiting_window_closed_at", { at: "" }],
+    ["window_closed", {}, "memo.waiting_window_closed", {}],
+    ["below_threshold", { detail: { needed: 5, waiting: 2 } }, "memo.waiting_below_threshold", { needed: 5, count: 2 }],
+    ["quiet_minute", { until }, "memo.waiting_quiet_at", { at: "" }],
+    ["daily_cap", { until }, "memo.waiting_cap_at", { at: "" }],
+    ["daily_cap", {}, "memo.waiting_cap", {}],
+    ["backoff", { until }, "memo.waiting_backoff_at", { at: "" }],
+    ["usage_limit", { detail: { agentKind: "claude" } }, "memo.waiting_usage_limit", { agent: "Claude" }],
+    ["no_place", { detail: { by: "category" } }, "memo.waiting_no_place", {}],
+    ["no_place", { detail: { by: "member" } }, "memo.waiting_no_place_member", {}],
+  ];
+  const line = async (waiting: unknown) => {
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ waiting })] };
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+    await render();
+  };
+  const expected = (key: string, params: Record<string, string | number>) =>
+    t(key as never, "at" in params ? { at: fmtDateTime(until) } : params);
+
+  it.each(cases)("says %s in one line on the category and at the top of the run history", async (reason, extra, key, params) => {
+    await line({ reason, ...extra });
+    const want = expected(key, params);
+    const onRow = [...document.querySelectorAll(".memo-q-why")];
+    expect(onRow).toHaveLength(1);
+    expect(onRow[0].textContent).toBe(want);
+    await click(byLabel(t("memo.autorun_deliveries")));
+    expect(dialog().querySelector(".memo-q-why")?.textContent).toBe(want);
+  });
+
+  it("writes the time in the member's local form, not the raw stamp", async () => {
+    await line({ reason: "daily_cap", until });
+    expect(document.querySelector(".memo-q-why")?.textContent).not.toContain("2026-11-16T");
+  });
+
+  it("says nothing without a waiting field, as an older Control Plane answers", async () => {
+    await line(undefined);
+    expect(document.querySelector(".memo-q-why")).toBeNull();
+    await click(byLabel(t("memo.autorun_deliveries")));
+    expect(dialog().querySelector(".memo-q-why")).toBeNull();
+  });
+
+  it("drops a reason it does not know instead of showing an identifier", async () => {
+    await line({ reason: "a_reason_from_the_future" });
+    expect(document.querySelector(".memo-q-why")).toBeNull();
+  });
+
+  it("leaves a pause and a workspace to restart to their own notices and does not say them twice", async () => {
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ paused: true, waiting: { reason: "paused" } })] };
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+    await render();
+    expect(document.querySelectorAll(".memo-q-paused")).toHaveLength(1);
+    expect(document.querySelector(".memo-q-why")).toBeNull();
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ noReportAt: "t", waiting: { reason: "no_report" } })] };
+    await bump();
+    expect(document.querySelectorAll(".memo-q-noreport")).toHaveLength(1);
+    expect(document.querySelector(".memo-q-why")).toBeNull();
+  });
+
+  it("reads the same lines in Japanese, with no stray key left", async () => {
+    const { setLocale } = await import("../../lib/i18n/index.ts");
+    setLocale("ja");
+    try {
+      for (const [reason, extra, key, params] of cases) {
+        await line({ reason, ...extra });
+        const text = document.querySelector(".memo-q-why")?.textContent ?? "";
+        expect(text, reason).toBe(expected(key, params));
+        expect(text, reason).not.toMatch(/memo\.waiting|[{}]/);
+        expect(text, reason).toMatch(/[ぁ-ん]/);
+        await act(async () => root!.render(<div />));
+      }
+    } finally {
+      setLocale("en");
+    }
   });
 });
 

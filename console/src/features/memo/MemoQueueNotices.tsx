@@ -5,7 +5,10 @@
 // catalogue line, never it.
 import { Button } from "../../ui/Button.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { fmtDateTime } from "../../lib/intl.ts";
+import { kindLabel } from "../../lib/sessionkind.ts";
 import type { MemoQueue } from "../../types/memo.ts";
+import { waitingWords } from "./queues.ts";
 
 interface Props {
   queue: MemoQueue;
@@ -18,7 +21,9 @@ export function MemoQueueNotices({ queue, busy, onResume }: Props) {
   // A workspace that does not report is only worth a word while auto-run is on: with it off
   // nothing waits to run by itself.
   const noReport = queue.enabled && queue.noReportAt !== "";
-  if (!queue.paused && !noReport) return null;
+  // Why nothing starts, for the reasons the two notices below do not already give.
+  const why = waitingWords(queue, (iso) => fmtDateTime(iso), (kind) => kindLabel(kind));
+  if (!queue.paused && !noReport && !why) return null;
   return (
     <div className="memo-q-notices">
       {queue.paused && (
@@ -27,6 +32,11 @@ export function MemoQueueNotices({ queue, busy, onResume }: Props) {
           <Button small variant="primary" disabled={busy} onClick={onResume}>
             {tr("memo.paused_resume")}
           </Button>
+        </div>
+      )}
+      {why && (
+        <div className="memo-q-why" role="status">
+          {tr(why.key, why.params)}
         </div>
       )}
       {noReport && (

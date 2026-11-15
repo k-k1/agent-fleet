@@ -391,7 +391,18 @@ disables.
   "fire now". **An Agent that does not send `queueReport`** is not fired into by itself: a
   running workspace is read and `no_report_at` set (shown in the queue DTO); a stopped one is
   not read, and a delivery fired by itself (`memo_delivery.auto`) checks after its wake and
-  returns its messages when the report is missing. **Wakes made only to settle**: when every
+  returns its messages when the report is missing. **Why a queue with notes waiting starts nothing**:
+  `GET /api/memo-queues` adds `waiting: {reason, until?, detail?}` per queue (absent when a run can
+  start, when nothing waits, and from an older CP). It is not stored: `memoWaitingFor`
+  (`memo_waiting.go`) is the one function that decides whether a queue may fire, called by the
+  dispatcher behind the membership lock and by the list through `MemoRead`, which takes no lock.
+  The reasons are checked in this order, and the first that holds is reported: `tenant_off`,
+  `disabled`, `no_report`, `paused`, `window_closed` (`until` = the window's next start in the
+  queue's zone), `below_threshold` (`detail.needed`, `detail.waiting`), `quiet_minute` (`until` =
+  the end of the quiet minute), `daily_cap` (`until` = when enough runs have left the last 24
+  hours for the count to fall below the cap), `backoff` (`until` = the end of the back-off),
+  `usage_limit` (`detail.agentKind`), `no_place` (`detail.by` = `category` or `member`). A lack of
+  the Agent's session quota is not one of them. **Wakes made only to settle**: when every
   slot of a queue with pending messages is held by a `sending` delivery, or an overdue one
   waiting for its retire, in a stopped workspace, the workspace is woken (in one of the
   tick's fire slots, at most once in ten minutes per queue and once per tick per workspace,

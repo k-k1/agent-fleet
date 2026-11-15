@@ -319,6 +319,16 @@ func (t memoTx) CountDeliveriesCreatedSince(queueID, since string) (int, error) 
 	return n, err
 }
 
+func (t memoTx) NthOldestDeliverySince(queueID, since string, skip int) (string, bool, error) {
+	var at string
+	err := t.q.QueryRowContext(t.ctx, `SELECT created_at FROM memo_delivery WHERE membership_id=? AND queue_id=? AND created_at>=?
+		ORDER BY created_at, id LIMIT 1 OFFSET ?`, t.mid, queueID, since, skip).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return at, err == nil, err
+}
+
 func (s *SQL) MarkMemoDeliveryIdle(ctx context.Context, id string, ticks int) (bool, error) {
 	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET idle_ticks=?, updated_at=? WHERE id=? AND state=?`,
 		ticks, DeliveryTS(time.Now()), id, DeliveryOpen))

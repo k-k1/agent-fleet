@@ -7,7 +7,7 @@
 // so the owner can change a word with one line.
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import { browserTimeZone, isValidTimeZone } from "../../lib/intl.ts";
-import type { Memo, MemoDelivery, MemoQueue, MemoQueueInput, MemoQueuesWire } from "../../types/memo.ts";
+import type { Memo, MemoDelivery, MemoQueue, MemoQueueInput, MemoQueueWaiting, MemoQueuesWire, MemoWaitingReason } from "../../types/memo.ts";
 
 // Limits the Control Plane enforces (control-plane/memo_queue.go). The form checks them first
 // so a mistake is named next to its field; the Control Plane stays the authority.
@@ -27,6 +27,37 @@ export const QUEUE_WINDOW_DEFAULT_MINUTES = 60;
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const num = (v: unknown, d: number): number => (typeof v === "number" && Number.isFinite(v) ? v : d);
+
+const WAITING_REASONS: readonly string[] = [
+  "tenant_off",
+  "disabled",
+  "no_report",
+  "paused",
+  "window_closed",
+  "below_threshold",
+  "quiet_minute",
+  "daily_cap",
+  "backoff",
+  "usage_limit",
+  "no_place",
+] satisfies MemoWaitingReason[];
+
+/** The `waiting` of a queue: absent from an older Control Plane, and a reason this Console does
+ *  not know (a newer Control Plane) is dropped rather than shown as an identifier. */
+function readWaiting(v: unknown): MemoQueueWaiting | undefined {
+  if (!isObj(v) || typeof v.reason !== "string" || !WAITING_REASONS.includes(v.reason)) return undefined;
+  const d = isObj(v.detail) ? v.detail : {};
+  return {
+    reason: v.reason as MemoWaitingReason,
+    until: str(v.until) || undefined,
+    detail: {
+      needed: num(d.needed, 0),
+      waiting: num(d.waiting, 0),
+      agentKind: str(d.agentKind),
+      by: d.by === "member" ? "member" : "category",
+    },
+  };
+}
 
 function readQueue(v: unknown): MemoQueue | null {
   if (!isObj(v) || typeof v.categoryId !== "string" || !v.categoryId) return null;
@@ -58,6 +89,7 @@ function readQueue(v: unknown): MemoQueue | null {
     generation: num(v.generation, 0),
     createdAt: str(v.createdAt),
     updatedAt: str(v.updatedAt),
+    waiting: readWaiting(v.waiting),
   };
 }
 
@@ -104,6 +136,42 @@ export function readDeliveries(raw: unknown): MemoDelivery[] | null {
     });
   }
   return out;
+}
+
+// ---- why nothing starts ---------------------------------------------------------------------
+
+/** The line that says why a category with notes waiting starts nothing: a catalogue key and its
+ *  parameters. Null when there is nothing to say: no `waiting` (a run can start, nothing waits, an
+ *  older Control Plane), and for a pause and a workspace that has to be restarted, which have
+ *  notices of their own that must not be said twice. `at` writes a time the way the screen does. */
+export function waitingWords(
+  q: Pick<MemoQueue, "waiting">,
+  at: (iso: string) => string,
+  agentName: (kind: string) => string,
+): { key: MsgKey; params?: Record<string, string | number> } | null {
+  const w = q.waiting;
+  if (!w || w.reason === "paused" || w.reason === "no_report") return null;
+  const when = w.until && !Number.isNaN(Date.parse(w.until)) ? { at: at(w.until) } : null;
+  switch (w.reason) {
+    case "tenant_off":
+      return { key: "memo.waiting_tenant_off" };
+    case "disabled":
+      return { key: "memo.waiting_disabled" };
+    case "window_closed":
+      return when ? { key: "memo.waiting_window_closed_at", params: when } : { key: "memo.waiting_window_closed" };
+    case "below_threshold":
+      return { key: "memo.waiting_below_threshold", params: { needed: w.detail?.needed ?? 0, count: w.detail?.waiting ?? 0 } };
+    case "quiet_minute":
+      return when ? { key: "memo.waiting_quiet_at", params: when } : { key: "memo.waiting_quiet" };
+    case "daily_cap":
+      return when ? { key: "memo.waiting_cap_at", params: when } : { key: "memo.waiting_cap" };
+    case "backoff":
+      return when ? { key: "memo.waiting_backoff_at", params: when } : { key: "memo.waiting_backoff" };
+    case "usage_limit":
+      return { key: "memo.waiting_usage_limit", params: { agent: agentName(w.detail?.agentKind ?? "") } };
+    case "no_place":
+      return { key: w.detail?.by === "member" ? "memo.waiting_no_place_member" : "memo.waiting_no_place" };
+  }
 }
 
 // ---- message state and origin ------------------------------------------------------------

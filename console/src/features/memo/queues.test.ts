@@ -15,6 +15,7 @@ import {
   pendingCount,
   readDeliveries,
   readMemoQueues,
+  waitingWords,
   shownStatus,
   trackShown,
   releaseCards,
@@ -245,5 +246,44 @@ describe("notes that changed under an open card", () => {
 describe("pendingCount", () => {
   it("counts the messages a fire could take", () => {
     expect(pendingCount([memo({ state: "pending" }), memo({ state: "held" }), memo({ state: "pending", sentAt: "x" })])).toBe(1);
+  });
+});
+
+describe("waiting (why nothing starts)", () => {
+  const read = (waiting: unknown) => readMemoQueues({ queues: [{ categoryId: "c1", waiting }] })!.queues[0];
+  const at = (iso: string) => `<${iso}>`;
+  const kind = (k: string) => `kind:${k}`;
+
+  it("is absent from an older Control Plane and from a queue that can run", () => {
+    expect(read(undefined).waiting).toBeUndefined();
+    expect(read(null).waiting).toBeUndefined();
+    expect(waitingWords(read(undefined), at, kind)).toBeNull();
+  });
+
+  it("drops a reason it does not know", () => {
+    expect(read({ reason: "from_the_future" }).waiting).toBeUndefined();
+    expect(read({ reason: 5 }).waiting).toBeUndefined();
+  });
+
+  it("keeps the time and the detail", () => {
+    expect(read({ reason: "below_threshold", detail: { needed: 5, waiting: 2 } }).waiting).toMatchObject({
+      reason: "below_threshold",
+      detail: { needed: 5, waiting: 2 },
+    });
+    expect(read({ reason: "daily_cap", until: "2026-11-16T09:30:00Z" }).waiting?.until).toBe("2026-11-16T09:30:00Z");
+  });
+
+  it("leaves the pause and the workspace to restart to their own notices", () => {
+    expect(waitingWords(read({ reason: "paused" }), at, kind)).toBeNull();
+    expect(waitingWords(read({ reason: "no_report" }), at, kind)).toBeNull();
+  });
+
+  it("uses the line with a time only when a usable one is known", () => {
+    expect(waitingWords(read({ reason: "daily_cap", until: "2026-11-16T09:30:00Z" }), at, kind)).toEqual({
+      key: "memo.waiting_cap_at",
+      params: { at: "<2026-11-16T09:30:00Z>" },
+    });
+    expect(waitingWords(read({ reason: "daily_cap", until: "garbage" }), at, kind)?.key).toBe("memo.waiting_cap");
+    expect(waitingWords(read({ reason: "usage_limit", detail: { agentKind: "codex" } }), at, kind)?.params).toEqual({ agent: "kind:codex" });
   });
 });
