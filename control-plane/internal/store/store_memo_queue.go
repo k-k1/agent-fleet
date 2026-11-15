@@ -69,7 +69,8 @@ type MemoQueue struct {
 // MemoQueueStore is the queue half of the memo store.
 type MemoQueueStore interface {
 	ListMemoQueues(ctx context.Context, membershipID string) ([]MemoQueue, error)
-	// ListEnabledMemoQueues returns every enabled queue of every member: the dispatcher's work.
+	// ListEnabledMemoQueues returns every enabled queue of every member, and a queue that is not
+	// enabled but still marked draining so that the mark is cleared: the dispatcher's work.
 	ListEnabledMemoQueues(ctx context.Context) ([]MemoQueue, error)
 	// ListQueuePendingStats counts the pending messages of every enabled queue, by category id.
 	ListQueuePendingStats(ctx context.Context) (map[string]QueuePending, error)
@@ -355,7 +356,7 @@ type QueuePending struct {
 }
 
 func (s *SQL) ListEnabledMemoQueues(ctx context.Context) ([]MemoQueue, error) {
-	rows, err := s.db.QueryContext(ctx, memoQueueCols+` WHERE enabled=1 ORDER BY created_at, category_id`)
+	rows, err := s.db.QueryContext(ctx, memoQueueCols+` WHERE enabled=1 OR draining=1 ORDER BY created_at, category_id`)
 	if err != nil {
 		return nil, err
 	}

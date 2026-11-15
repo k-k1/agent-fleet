@@ -109,6 +109,8 @@ type MemoDeliveryStore interface {
 	// ListRecentTurnDeliveries returns a queue's deliveries created after the given time whose
 	// first turn was recorded, newest first, at most limit.
 	ListRecentTurnDeliveries(ctx context.Context, queueID, after string, limit int) ([]MemoDelivery, error)
+	// ListRecentQueueDeliveries returns a queue's newest deliveries, wakes left out, newest first.
+	ListRecentQueueDeliveries(ctx context.Context, queueID string, limit int) ([]MemoDelivery, error)
 	// ListLiveMemoDeliveries returns every delivery that is not closed, of every member,
 	// oldest first: the scheduler's work.
 	ListLiveMemoDeliveries(ctx context.Context) ([]MemoDelivery, error)
@@ -238,6 +240,11 @@ func (s *SQL) ListLiveMemoDeliveries(ctx context.Context) ([]MemoDelivery, error
 func (s *SQL) ListRecentTurnDeliveries(ctx context.Context, queueID, after string, limit int) ([]MemoDelivery, error) {
 	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE queue_id=? AND turn_ended_at<>'' AND created_at>?
 		ORDER BY created_at DESC, id DESC LIMIT ?`, queueID, after, limit))
+}
+
+func (s *SQL) ListRecentQueueDeliveries(ctx context.Context, queueID string, limit int) ([]MemoDelivery, error) {
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE queue_id=? AND outcome<>?
+		ORDER BY created_at DESC, id DESC LIMIT ?`, queueID, DeliveryWake, limit))
 }
 
 func (t memoTx) CountWakesSince(queueID, since string) (int, error) {

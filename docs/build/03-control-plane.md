@@ -381,7 +381,9 @@ disables.
   `maxFiresPerDay` (default 20, 1–200) counts the deliveries created in the last 24 hours,
   read inside the claim, wakes made only to settle included. **Order**: the member whose
   oldest pending message waited longest, and in a member the queue with the oldest message,
-  one fire per member per round. **Circuit breaker**: the last two deliveries with a
+  one fire per member per round. **Back-off**: deliveries that closed as not sent (the Agent
+  refused, the wake failed, a quota held) make the queue wait, 5 minutes doubling with each
+  one in a row up to 4 hours, read from the queue's newest deliveries. **Circuit breaker**: the last two deliveries with a
   recorded first turn, created since the queue was last resumed (`breaker_after`), that
   both failed, were aborted, or ended within a minute without a clean end pause the queue
   (`paused`, `paused_reason`) and notify once (`memo-queue-paused`);
@@ -392,7 +394,8 @@ disables.
   returns its messages when the report is missing. **Wakes made only to settle**: when every
   slot of a queue with pending messages is held by a `sending` delivery, or an overdue one
   waiting for its retire, in a stopped workspace, the workspace is woken (in one of the
-  tick's fire slots, at most once in ten minutes), recorded as a closed delivery with
+  tick's fire slots, at most once in ten minutes per queue and once per tick per workspace,
+  also when the tick's sends filled the queue room), recorded as a closed delivery with
   outcome `wake` that counts as a fire of the day and is not listed. **Notifications**, each
   once through its `EventID`: `memo-queue-paused`, `memo-queue-waiting` (every slot held by a
   session that waits for a person, per set of deliveries) and `memo-delivery-unconfirmed`.

@@ -162,7 +162,79 @@ func (r *memoQueueRunner) dispatch(ctx context.Context, now time.Time, room int)
 			}
 		}
 	}
+	// Wakes made only to settle do not need a free room: a tick whose sends filled it still wakes.
+	woke := map[string]bool{}
+	for _, m := range ready {
+		for _, w := range m.queues {
+			if woke[m.membershipID] || ctx.Err() != nil {
+				break
+			}
+			if w.pending.Count == 0 {
+				continue
+			}
+			before := len(r.wakeJobs)
+			r.wakeQueue(ctx, views, w, liveBy[m.membershipID], now)
+			woke[m.membershipID] = len(r.wakeJobs) > before // one wake of a workspace per tick
+		}
+	}
 	return out, r.wakeJobs
+}
+
+// wakeQueue wakes the stopped workspace of a queue that would fire but for deliveries only a
+// running Agent can settle (settleWake).
+func (r *memoQueueRunner) wakeQueue(ctx context.Context, views map[string]*memoMemberView, w *memoQueueWork,
+	live []store.MemoDelivery, now time.Time) {
+	q := w.q
+	if q.Paused || !q.Enabled || q.NoReportAt != "" {
+		return
+	}
+	if open, _ := openState(q, w.pending, now); !open {
+		return
+	}
+	if r.limitHeld(q, live, r.queueKinds(ctx, q.MembershipID)) {
+		return
+	}
+	v := r.viewOf(ctx, views, q.MembershipID)
+	if v == nil || v.res.rt.State(ctx) != "stopped" {
+		return
+	}
+	r.settleWake(ctx, w, live, now)
+}
+
+// notSentBackoff is how long a queue waits after deliveries that closed as not sent: the Agent
+// refused, the wake failed or a quota held. It doubles with each one in a row, from five
+// minutes to four hours, so a refusing Agent does not use up the day's fires a minute at a time
+// (ADR 0137 section 6: the queue backs off, it is not a failure).
+func notSentBackoff(ds []store.MemoDelivery) (time.Time, bool) {
+	n := 0
+	for _, d := range ds {
+		if d.State != store.DeliveryClosed || d.Outcome != store.DeliveryNotSent {
+			break
+		}
+		n++
+	}
+	if n == 0 {
+		return time.Time{}, false
+	}
+	wait := 5 * time.Minute << min(n-1, 6)
+	if wait > 4*time.Hour {
+		wait = 4 * time.Hour
+	}
+	closed, err := time.Parse("2006-01-02T15:04:05.000000Z", ds[0].ClosedAt)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return closed.Add(wait), true
+}
+
+// backoff reports whether the queue is still waiting out its not-sent deliveries.
+func backoff(ctx context.Context, r *memoQueueRunner, queueID string, now time.Time) bool {
+	ds, err := r.mgr.store.ListRecentQueueDeliveries(ctx, queueID, 8)
+	if err != nil {
+		return false
+	}
+	until, ok := notSentBackoff(ds)
+	return ok && now.Before(until)
 }
 
 // olderPending orders by oldest waiting message, a member with none last.
@@ -211,6 +283,15 @@ func (r *memoQueueRunner) resolveMember(ctx context.Context, membershipID string
 // not anything waits to be fired.
 func (r *memoQueueRunner) houseKeep(ctx context.Context, w *memoQueueWork, live []store.MemoDelivery, now time.Time) {
 	q := w.q
+	if !q.Enabled {
+		// A disabled queue is not draining: turning it on again starts its threshold anew.
+		if q.Draining {
+			if err := r.mgr.store.SetMemoQueueDraining(ctx, q.CategoryID, false); err != nil {
+				log.Printf("memo queue: queue %s: end draining: %v", q.CategoryID, err)
+			}
+		}
+		return
+	}
 	if q.Draining && w.pending.Count == 0 {
 		if err := r.mgr.store.SetMemoQueueDraining(ctx, q.CategoryID, false); err != nil {
 			log.Printf("memo queue: queue %s: end draining: %v", q.CategoryID, err)
@@ -401,7 +482,10 @@ func (r *memoQueueRunner) limitHeld(q store.MemoQueue, live []store.MemoDelivery
 func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoMemberView, w *memoQueueWork,
 	live []store.MemoDelivery, now time.Time) (store.MemoDelivery, bool) {
 	q := w.q
-	if q.Paused {
+	if q.Paused || !q.Enabled {
+		return store.MemoDelivery{}, false
+	}
+	if backoff(ctx, r, q.CategoryID, now) {
 		return store.MemoDelivery{}, false
 	}
 	if open, _ := openState(q, w.pending, now); !open {
@@ -431,9 +515,6 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 		// A stopped workspace is not asked. One found without the report stays skipped until a
 		// running workspace shows it (the send checks again after its wake).
 		if q.NoReportAt != "" {
-			return store.MemoDelivery{}, false
-		}
-		if r.settleWake(ctx, w, live, now) {
 			return store.MemoDelivery{}, false
 		}
 	default:
@@ -473,17 +554,17 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 		if !open {
 			return nil
 		}
-		if start {
-			if err := tx.SetQueueDraining(q.CategoryID, true); err != nil {
-				return err
-			}
-		}
 		d, aerr, err := memoReserveAndClaim(tx, q.CategoryID, running, limit, true)
 		if err != nil {
 			return err
 		}
 		if aerr != nil {
-			return nil // no slot, nothing pending, a quota: not now
+			return nil // no slot, nothing pending, a quota: not now, and nothing is marked
+		}
+		if start {
+			if err := tx.SetQueueDraining(q.CategoryID, true); err != nil {
+				return err
+			}
 		}
 		d.MembershipID = q.MembershipID // the claim does not carry it, and the send looks the delivery up by it
 		out, claimed = d, true

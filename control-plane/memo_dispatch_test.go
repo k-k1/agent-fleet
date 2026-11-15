@@ -627,3 +627,131 @@ func TestMemoDispatchSettings(t *testing.T) {
 		}
 	})
 }
+
+// A queue that is turned off while draining is not draining any more: turning it on again starts
+// its threshold anew, and one message does not fire it.
+func TestMemoDispatchDisabledQueueEndsDraining(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", map[string]any{"openAfter": 5}, 1)
+		if err := e.st.SetMemoQueueDraining(context.Background(), q, true); err != nil {
+			t.Fatal(err)
+		}
+		e.queueWith("app", "impl", map[string]any{"enabled": false, "openAfter": 5})
+		e.autoTick(time.Now())
+		if e.queueRow(q).Draining {
+			t.Fatal("a disabled queue stayed draining")
+		}
+		e.queueWith("app", "impl", map[string]any{"enabled": true, "openAfter": 5})
+		e.autoTick(time.Now().Add(5 * time.Minute))
+		if agent.createCount() != 0 {
+			t.Fatal("one message fired a threshold queue that had been draining")
+		}
+	})
+}
+
+// A claim that is refused leaves nothing marked: a threshold queue whose slot is taken does not
+// start draining.
+func TestMemoDispatchRefusedClaimDoesNotStartDraining(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, q := e.autoQueue("app", "impl", map[string]any{"openAfter": 2, "maxActive": 1}, 2)
+		later := time.Now().Add(5 * time.Minute)
+		e.autoTick(later) // opens, fires one, drains
+		if !e.queueRow(q).Draining {
+			t.Fatal("did not start draining with a free slot")
+		}
+		if err := e.st.SetMemoQueueDraining(context.Background(), q, false); err != nil {
+			t.Fatal(err)
+		}
+		e.pending("app", "impl", "more")
+		e.autoTick(later.Add(5 * time.Minute)) // two pending, quiet, but the one slot is taken
+		if e.queueRow(q).Draining {
+			t.Fatal("a refused claim marked the queue draining")
+		}
+	})
+}
+
+// A delivery that closes as not sent backs the queue off, doubling with each one in a row, so a
+// refusing Agent does not use up the day's fires a minute at a time.
+func TestMemoDispatchBacksOffAfterNotSent(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", map[string]any{"maxActive": 1}, 3)
+		agent.mu.Lock()
+		agent.createMode = "refuse"
+		agent.mu.Unlock()
+		now := time.Now()
+		e.autoTick(now)
+		first := len(e.allDeliveries(q))
+		if first != 1 || e.allDeliveries(q)[0].Outcome != store.DeliveryNotSent {
+			t.Fatalf("%d deliveries, %+v", first, e.allDeliveries(q))
+		}
+		for _, d := range []time.Duration{time.Minute, 4 * time.Minute} {
+			e.autoTick(now.Add(d))
+			if len(e.allDeliveries(q)) != first {
+				t.Fatalf("fired again after %v", d)
+			}
+		}
+		e.autoTick(now.Add(6 * time.Minute)) // five minutes after the first
+		if len(e.allDeliveries(q)) != 2 {
+			t.Fatalf("did not try again after the backoff: %d", len(e.allDeliveries(q)))
+		}
+		// Two in a row: ten minutes. (A close is stamped by the real clock, so the second
+		// delivery's ten minutes end at the first's tenth.)
+		e.autoTick(now.Add(9 * time.Minute))
+		if len(e.allDeliveries(q)) != 2 {
+			t.Fatal("the second backoff was not doubled")
+		}
+		e.autoTick(now.Add(11 * time.Minute))
+		if len(e.allDeliveries(q)) != 3 {
+			t.Fatalf("%d", len(e.allDeliveries(q)))
+		}
+	})
+	d := func(outcome, closed string) store.MemoDelivery {
+		return store.MemoDelivery{State: store.DeliveryClosed, Outcome: outcome, ClosedAt: closed}
+	}
+	ts := store.DeliveryTS(time.Now())
+	if _, ok := notSentBackoff([]store.MemoDelivery{d(store.DeliveryClean, ts), d(store.DeliveryNotSent, ts)}); ok {
+		t.Fatal("a delivery that was sent ends the backoff")
+	}
+	var many []store.MemoDelivery
+	for i := 0; i < 8; i++ {
+		many = append(many, d(store.DeliveryNotSent, ts))
+	}
+	until, _ := notSentBackoff(many)
+	if got := time.Until(until); got > 4*time.Hour+time.Minute || got < 3*time.Hour {
+		t.Fatalf("the backoff is capped at four hours, got %v", got)
+	}
+}
+
+// A wake made only to settle is found even when the tick's sends filled every room, and two
+// queues of one workspace wake it once.
+func TestMemoDispatchWakeNeedsNoRoomAndIsOncePerWorkspace(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q1 := e.autoQueue("app", "one", map[string]any{"maxActive": 1}, 2)
+		_, q2 := e.autoQueue("app", "two", map[string]any{"maxActive": 1}, 2)
+		e.setRuntime(agent, "stopped")
+		ts := store.DeliveryTS(time.Now())
+		for _, q := range []string{q1, q2} {
+			if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+				return tx.InsertDelivery(store.MemoDelivery{ID: store.NewID(), QueueID: q, State: store.DeliverySending,
+					MessageIDs: []string{}, CreatedAt: ts, UpdatedAt: ts, SentAt: ts})
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		sends, wakes := e.runner().dispatch(context.Background(), time.Now(), 0)
+		if len(sends) != 0 || len(wakes) != 1 {
+			t.Fatalf("room 0: sends %d, wakes %d, want one wake of the one workspace", len(sends), len(wakes))
+		}
+		wakeRows := 0
+		for _, q := range []string{q1, q2} {
+			_ = e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+				n, err := tx.CountWakesSince(q, store.DeliveryTS(time.Now().Add(-time.Hour)))
+				wakeRows += n
+				return err
+			})
+		}
+		if wakeRows != 1 {
+			t.Fatalf("%d wakes counted against the day, want 1", wakeRows)
+		}
+	})
+}
