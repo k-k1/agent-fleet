@@ -171,6 +171,112 @@
       "destination": "google"
     }
   ],
+  "destinations": [
+    {
+      "id": "anthropic",
+      "hosts": [
+        "anthropic.com",
+        "*.anthropic.com",
+        "claude.ai",
+        "*.claude.ai",
+        "claude.com",
+        "*.claude.com"
+      ]
+    },
+    {
+      "id": "openai",
+      "hosts": [
+        "openai.com",
+        "*.openai.com",
+        "chatgpt.com",
+        "*.chatgpt.com"
+      ]
+    },
+    {
+      "id": "google",
+      "hosts": [
+        "google.com",
+        "*.google.com",
+        "googleapis.com",
+        "*.googleapis.com"
+      ]
+    },
+    {
+      "id": "meta",
+      "hosts": [
+        "llama.com",
+        "*.llama.com",
+        "meta.ai",
+        "*.meta.ai",
+        "meta.com",
+        "*.meta.com"
+      ]
+    },
+    {
+      "id": "github",
+      "hosts": [
+        "github.com",
+        "*.github.com",
+        "githubcopilot.com",
+        "*.githubcopilot.com"
+      ]
+    },
+    {
+      "id": "cursor",
+      "hosts": [
+        "cursor.com",
+        "*.cursor.com",
+        "cursor.sh",
+        "*.cursor.sh"
+      ]
+    },
+    {
+      "id": "kiro",
+      "hosts": [
+        "kiro.dev",
+        "*.kiro.dev"
+      ]
+    },
+    {
+      "id": "opencode.ai",
+      "hosts": [
+        "opencode.ai",
+        "*.opencode.ai"
+      ]
+    },
+    {
+      "id": "openrouter",
+      "hosts": [
+        "openrouter.ai",
+        "*.openrouter.ai"
+      ]
+    },
+    {
+      "id": "sakana",
+      "hosts": [
+        "sakana.ai",
+        "*.sakana.ai"
+      ]
+    },
+    {
+      "id": "aws-bedrock",
+      "hosts": [
+        "amazonaws.com",
+        "*.amazonaws.com",
+        "api.aws",
+        "*.api.aws"
+      ]
+    },
+    {
+      "id": "af-engine"
+    },
+    {
+      "id": "self-hosted"
+    },
+    {
+      "id": "unclassified"
+    }
+  ],
   "kinds": [
     {
       "kind": "agy",

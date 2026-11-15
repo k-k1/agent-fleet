@@ -43,6 +43,12 @@ type MemberPolicy struct {
 	Restricted        bool     `json:"restricted"`
 	CeilingRestricted bool     `json:"ceilingRestricted"`
 	Allowed           []string `json:"allowed"`
+	// Endpoints are the approved self-hosted endpoints' hosts and EndpointRoutes the per-connection
+	// routes allowed on one (ADR 0138 §2): such a route is allowed when its connection's host is
+	// listed. Both empty while nothing is restricted (every route is then allowed) or nothing is
+	// approved.
+	Endpoints      []string `json:"endpoints,omitempty"`
+	EndpointRoutes []string `json:"endpointRoutes,omitempty"`
 	// IssuedAt is when the CP computed the answer (Unix seconds). The Agent counts a start
 	// environment as confirmation only up to it, so an old environment re-read by a restarted
 	// Agent confirms nothing.
@@ -79,6 +85,16 @@ func MemberPolicyOf(ctx context.Context, st store.Store, tenantID string) (Membe
 	for _, r := range v.Routes {
 		if r.Allowed {
 			out.Allowed = append(out.Allowed, r.ID)
+		}
+	}
+	if v.Restricted && len(v.EndpointRoutes) > 0 {
+		for _, e := range v.Endpoints {
+			if e.Approved {
+				out.Endpoints = append(out.Endpoints, e.Host)
+			}
+		}
+		if len(out.Endpoints) > 0 {
+			out.EndpointRoutes = v.EndpointRoutes
 		}
 	}
 	return out, nil

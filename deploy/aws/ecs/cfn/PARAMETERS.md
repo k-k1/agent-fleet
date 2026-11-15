@@ -1074,11 +1074,13 @@ with list values separated by `,`:
 | `destinations` | destinations allowed (`aws-bedrock`), or every one but those listed with `-` (`-opencode.ai`) |
 | `except` | route ids allowed although the classes or destinations above would not (`copilot-login`) |
 | `deny` | route ids forbidden although they would be allowed |
+| `endpoints` | host patterns that may be approved as self-hosted endpoints at all: an exact host (an IP literal counts as one) or `*.suffix`, no port (`*.corp.example,10.0.0.5`). Unset under a `destinations` restriction, none may be. A tenant_admin approves exact hosts inside what is left; an approved endpoint is the destination `self-hosted` |
 
 For example, `classes=-subscription;destinations=-opencode.ai` is "No subscriptions", and
 `destinations=aws-bedrock` is "Bedrock only". An unparsable value, an unknown class,
-destination or route id, or a per-connection route (`member-llamacpp`, `custom-api`) in
-`except` stops the Control Plane at start instead of reading as "allow all": a failed
+destination or route id, a per-connection route (`member-llamacpp`, `custom-api`) in
+`except`, or an endpoint pattern that is malformed, covers a public suffix (`*.com`) or a vendor's
+hosts (`*.openai.com`) stops the Control Plane at start instead of reading as "allow all": a failed
 deployment rolls back rather than running unrestricted. The ceiling is shown read-only to
 super_admins, with its source.
 

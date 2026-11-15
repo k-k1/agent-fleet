@@ -91,6 +91,11 @@ const (
 	DestAWSBedrock Destination = "aws-bedrock"
 	// DestAFEngine: this deployment's own inference engine.
 	DestAFEngine Destination = "af-engine"
+	// DestSelfHosted: an approved self-hosted endpoint (ADR 0138 §2). One destination for every
+	// approved host, apart from the engine's; the connection's binding pins which host it is. No
+	// route is catalogued with it: a per-connection route takes it only while its endpoint is
+	// approved.
+	DestSelfHosted Destination = "self-hosted"
 	// DestUnclassified: a destination Agent Fleet cannot vouch for. Wherever any restriction is
 	// set it is refused (fail closed).
 	DestUnclassified Destination = "unclassified"
@@ -104,8 +109,32 @@ func Classes() []Class {
 // Destinations is every destination, unclassified last.
 func Destinations() []Destination {
 	return []Destination{DestAnthropic, DestOpenAI, DestGoogle, DestMeta, DestGitHub, DestCursor, DestKiro,
-		DestOpencodeAI, DestOpenRouter, DestSakana, DestAWSBedrock, DestAFEngine, DestUnclassified}
+		DestOpencodeAI, DestOpenRouter, DestSakana, DestAWSBedrock, DestAFEngine, DestSelfHosted, DestUnclassified}
 }
+
+// vendorHosts are the host patterns each vendor destination serves its API and logins from: an
+// exact host, or "*.suffix" for every host under it. They decide one thing: no layer may approve
+// a host under them as a self-hosted endpoint, nor allow a pattern that covers one, so an
+// excluded vendor cannot be relabelled self-hosted (ADR 0138 §2). They are not an egress list.
+// The engine, an approved endpoint and unclassified have none. *.amazonaws.com covers Bedrock and
+// with it every AWS-hosted name, an EC2 instance's public one included: such an endpoint is
+// approved under a name of the member's own domain instead.
+var vendorHosts = map[Destination][]string{
+	DestAnthropic:  {"anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai", "claude.com", "*.claude.com"},
+	DestOpenAI:     {"openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"},
+	DestGoogle:     {"google.com", "*.google.com", "googleapis.com", "*.googleapis.com"},
+	DestMeta:       {"llama.com", "*.llama.com", "meta.ai", "*.meta.ai", "meta.com", "*.meta.com"},
+	DestGitHub:     {"github.com", "*.github.com", "githubcopilot.com", "*.githubcopilot.com"},
+	DestCursor:     {"cursor.com", "*.cursor.com", "cursor.sh", "*.cursor.sh"},
+	DestKiro:       {"kiro.dev", "*.kiro.dev"},
+	DestOpencodeAI: {"opencode.ai", "*.opencode.ai"},
+	DestOpenRouter: {"openrouter.ai", "*.openrouter.ai"},
+	DestSakana:     {"sakana.ai", "*.sakana.ai"},
+	DestAWSBedrock: {"amazonaws.com", "*.amazonaws.com", "api.aws", "*.api.aws"},
+}
+
+// VendorHosts returns the host patterns of a vendor destination; nil for one that has none.
+func VendorHosts(d Destination) []string { return append([]string(nil), vendorHosts[d]...) }
 
 // Route ids. Existing ids keep their names; a new one names the credential, not the harness:
 // <destination>-<subscription|api> for a vendor plan or key, <harness>-login only where the login

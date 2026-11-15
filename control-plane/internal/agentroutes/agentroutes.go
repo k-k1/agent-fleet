@@ -63,9 +63,17 @@ const (
 	CodeRouteUnavailable = "route_connection_unavailable"
 )
 
+// Destination is one destination of the catalogue with its vendor host patterns: an exact host or
+// "*.suffix". None for the engine, an approved self-hosted endpoint and unclassified.
+type Destination struct {
+	ID    string   `json:"id"`
+	Hosts []string `json:"hosts,omitempty"`
+}
+
 var snapshot = func() (c struct {
-	Routes []Route `json:"routes"`
-	Kinds  []struct {
+	Routes       []Route       `json:"routes"`
+	Destinations []Destination `json:"destinations"`
+	Kinds        []struct {
 		Kind   string   `json:"kind"`
 		Routes []string `json:"routes"`
 		Fixed  []string `json:"fixed"`
@@ -82,6 +90,15 @@ var snapshot = func() (c struct {
 
 // Routes returns the route catalogue, sorted by id.
 func Routes() []Route { return slices.Clone(snapshot.Routes) }
+
+// Destinations returns every destination in the catalogue's order, with its vendor hosts.
+func Destinations() []Destination {
+	out := slices.Clone(snapshot.Destinations)
+	for i := range out {
+		out[i].Hosts = slices.Clone(out[i].Hosts)
+	}
+	return out
+}
 
 // RoutesOf returns the routes the harness declares; nil for a kind that declares none, which
 // therefore accepts no explicit selection. An empty kind means claude, as on every create path.

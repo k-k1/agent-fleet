@@ -184,6 +184,25 @@ Two attributes of a route make the policy writable by a person:
   destination only while the harness pins the vendor's endpoint (as claude's routes pin `ANTHROPIC_BASE_URL` and
   refuse a settings file that sets it, ADR 0128 notes of 2026-11-04 and 2026-11-05); an override makes it
   `unclassified`.
+- **Endpoint approval, as settled for M1 (2026-11-15).**
+  - **Patterns.** A host pattern is an exact host or `*.suffix` (every host under the suffix), case-insensitive, with
+    no port. An IPv4 or IPv6 literal is an exact host. CIDR ranges are not in M1. Before matching, a pattern is
+    normalised: lowercase, no trailing dot, an internationalised name in its punycode form. Refused at save, and in
+    the ceiling at CP start:
+    - a bare `*`;
+    - a `*` anywhere but a leading `*.`;
+    - a wildcard over an IP address;
+    - a pattern on a public suffix (`*.com`, `co.uk`, `*.github.io`).
+  - **Destination.** Every approved endpoint has one destination, `self-hosted`, apart from the engine's `af-engine`,
+    and the class `self-hosted`. There are no per-host destinations: the connection's binding pins the host.
+    `destinations=self-hosted` therefore opens every approved host, and its absence closes them all.
+  - **Vendor hosts.** The route catalogue lists each vendor destination's host patterns (`hosts`, in both modules'
+    catalogues, held equal by the snapshot test). No layer may approve a host under them, nor allow a pattern that
+    covers one. `*.amazonaws.com` is among them, so an endpoint on an AWS-generated name is approved under a name of
+    the member's own domain instead.
+  - **Storage.** Each layer's patterns (the ceiling's `endpoints=` key; the deployment rule and a tenant's cap) and the
+    tenant rule's approved exact hosts are the `endpoints` field of that layer's rule, on its own role-scoped row.
+    They are revisioned and audited with the rule through the same REST.
 
 **Maker** (ADR 0128) is unchanged and is not a policy axis: Claude on Bedrock and Claude on the Anthropic API share a
 maker and differ in destination, and the destination is what a data-residency rule is about. **Source** (ADR 0129

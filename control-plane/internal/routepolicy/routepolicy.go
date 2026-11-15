@@ -20,12 +20,15 @@ import (
 )
 
 // Rule is one layer's rule. Classes and Destinations nil mean every class and every destination;
-// an empty list allows none. Except and Deny are route ids.
+// an empty list allows none. Except and Deny are route ids. Endpoints is the layer's part of
+// endpoint approval (endpoints.go): host patterns above the tenant, approved hosts in the tenant
+// rule; nil does not narrow.
 type Rule struct {
 	Classes      *[]string `json:"classes,omitempty"`
 	Destinations *[]string `json:"destinations,omitempty"`
 	Except       []string  `json:"except,omitempty"`
 	Deny         []string  `json:"deny,omitempty"`
+	Endpoints    *[]string `json:"endpoints,omitempty"`
 }
 
 // Restricted reports that the rule forbids anything at all. Except alone restricts nothing.
@@ -37,7 +40,7 @@ func (r Rule) Restricted() bool {
 // a route whose destination is unclassified (a per-connection route whose endpoint no layer has
 // approved), is allowed only by a rule that restricts nothing: under any restriction it is
 // refused (fail closed, D1c), whatever the restriction is about, and no list can name it in.
-// An approved endpoint gives such a route a real destination, which is a later phase's.
+// On an approved endpoint such a route is judged by allowsSelfHosted instead (endpoints.go).
 func (r Rule) Allows(routeID string) bool {
 	if !r.Restricted() {
 		return true
@@ -60,8 +63,17 @@ func (r Rule) Allows(routeID string) bool {
 const Unclassified = "unclassified"
 
 // Classes and Destinations are the vocabulary, taken from the route catalogue the CP embeds.
-func Classes() []string      { return vocab(func(r agentroutes.Route) string { return r.Class }) }
-func Destinations() []string { return vocab(func(r agentroutes.Route) string { return r.Destination }) }
+// Destinations includes self-hosted, which no route is catalogued with: a per-connection route
+// takes it on an approved endpoint.
+func Classes() []string { return vocab(func(r agentroutes.Route) string { return r.Class }) }
+func Destinations() []string {
+	var out []string
+	for _, d := range agentroutes.Destinations() {
+		out = append(out, d.ID)
+	}
+	sort.Strings(out)
+	return out
+}
 
 func vocab(f func(agentroutes.Route) string) []string {
 	var out []string
@@ -96,6 +108,9 @@ func (r Rule) Validate() error {
 	if err := check("destination", r.Destinations, Destinations()); err != nil {
 		return err
 	}
+	if err := validateEndpoints(r.Endpoints); err != nil {
+		return err
+	}
 	if r.Destinations != nil && slices.Contains(*r.Destinations, Unclassified) {
 		return fmt.Errorf("the %s destination cannot be allowed: such a route is refused under any restriction", Unclassified)
 	}
@@ -123,6 +138,18 @@ func (r Rule) Normalize() Rule {
 		return slices.Compact(out)
 	}
 	out := Rule{Except: norm(r.Except), Deny: norm(r.Deny)}
+	if r.Endpoints != nil {
+		var e []string
+		for _, p := range *r.Endpoints {
+			if n, err := NormalizePattern(p, false); err == nil {
+				e = append(e, n)
+			}
+		}
+		if e = norm(e); e == nil {
+			e = []string{}
+		}
+		out.Endpoints = &e
+	}
 	if r.Classes != nil {
 		c := norm(*r.Classes)
 		if c == nil {
