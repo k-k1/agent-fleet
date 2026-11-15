@@ -222,8 +222,10 @@ const exact = {
     bitbucket: { configured: true },
     jira: { configured: true },
   }),
-  "/api/memos": () => (process.env.SHOT_CHATPAGES_GUIDE ? fx.chatPagesMemos(LOCALE) : fx.memos(LOCALE)),
-  "/api/memo-categories": () => fx.memoCategories(LOCALE),
+  "/api/memos": () =>
+    process.env.SHOT_AUTORUN_GUIDE ? fx.autorunMemos(LOCALE) : process.env.SHOT_CHATPAGES_GUIDE ? fx.chatPagesMemos(LOCALE) : fx.memos(LOCALE),
+  "/api/memo-categories": () => (process.env.SHOT_AUTORUN_GUIDE ? fx.autorunCategories(LOCALE) : fx.memoCategories(LOCALE)),
+  "/api/memo-queues": () => (process.env.SHOT_AUTORUN_GUIDE ? fx.autorunQueues(LOCALE) : { tenantEnabled: false, queues: [] }),
   "/api/schedules": () =>
     process.env.SHOT_FLEET_GUIDE ? fx.fleetGuideSchedules(LOCALE) : fx.schedules(LOCALE),
   // agentMemory on: the memory scene's status header reads it, and nothing else on screen changes
@@ -650,6 +652,8 @@ const exact = {
 };
 
 const re = [
+  // The memo auto-run pages of the user guide (SHOT_AUTORUN_GUIDE): the run history of the category.
+  ...(process.env.SHOT_AUTORUN_GUIDE ? [[/^\/api\/memo-queues\/[^/]+\/deliveries$/, () => fx.autorunDeliveries()]] : []),
   // The tenant administrator's guide pages (SHOT_ADMIN_GUIDE, with SHOTS_ADMIN): a roster with a
   // card that needs attention and the tenant-settings screens with fictional values. Listed
   // first so these win over the plain member routes below.

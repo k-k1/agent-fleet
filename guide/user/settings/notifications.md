@@ -54,6 +54,7 @@ Open **⚙ Settings → "Notifications"**. The "**What each notification does**"
 | Cloud sign-in | AWS or Google Cloud needs you to sign in, or an SSO session is about to expire |
 | Terminal notifications | A program in a session sent a notification (OSC 9 / 99 / 777) |
 | Budget stops | A session stopped because its estimated spend reached its budget |
+| Auto-run | A run is overdue, auto-run paused or is waiting for you, or a run could not be confirmed ([Run memos automatically](../chat/memo-auto-run.md#notifications)) |
 | Other notices | Assistant chat paused or near its context limit, submodule sync, stop after turn, workspace start stopped, and any new kind |
 
 "Needs your answer", "Handoffs", "Cloud sign-in" and "Budget stops" wait for a person to act. The unread dot of these four cannot be turned off.

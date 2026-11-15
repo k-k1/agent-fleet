@@ -98,6 +98,7 @@ About the stalled-tree notice:
 ## Clear up
 
 - **Children outlive their parent.** When the parent ends, its children keep running. The parent is told to list the children it leaves behind and their state before its last turn, so read that list
+- A session that [auto-run](../chat/memo-auto-run.md) started is an ordinary parent. While its children work, its run stays open, and when the run ends they are stopped with it
 - Only you can delete or archive a child. Once deleted or archived, it no longer counts towards Children per session
 - The same goes for a child left stopped and archived automatically when its time is up ([Stop and resume a session](../sessions/stop-resume.md#leave-a-session-stopped)). Merely stopping it does not take it out of the count
 - Each child is one agent: it uses the workspace's memory and spends that agent's usage from your share

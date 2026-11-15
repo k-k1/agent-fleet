@@ -44,6 +44,30 @@ These do not vary by deployment.
 > in different layers produces failures that appear only at one specific moment, which
 > is the hardest kind to diagnose. So there is one value, kept in one place.
 
+## Memo auto-run
+
+Fixed in the product, for [Run memos automatically](../user/chat/memo-auto-run.md). The settings' ranges are checked when you save, and the Console shows them.
+
+| Limit | Value | What happens at it |
+|---|---|---|
+| Open runs per category ("Sessions at the same time") | 1 to 6, starts at 2 | "Run now" is refused. Nothing starts by itself until a run ends |
+| Open runs across all of a member's categories | 4 | The same |
+| Memos per run ("Memos per session") | 1 to 20, starts at 1 | A run takes no more than this many |
+| Instruction | 16 KiB | Saving is refused. An instruction is also required to turn auto-run on or to "Run now" |
+| Spend limit per run | 0 to 10,000 USD, starts at 0 (no limit) | Saving is refused outside the range |
+| A memo a session or an `/mcp` connection adds to an auto-run category | 16 KiB. The text cannot start with `[agent-fleet:` | The memo is refused |
+| Memos a session or an `/mcp` connection adds | 30 a minute in total, across a member's categories | The memo is refused until the minute has passed |
+| A memo when it is run | Text up to 64 KiB, up to 20 images, a file path up to 4,096 bytes | "Run now" is refused and says to edit the memo. A run by itself does not start while that memo is the next one to run |
+| Memos typed into a session's first prompt | Up to 8 KiB all together, with no image | Beyond it, or with an image, the memos go to a file in the session's work folder and the prompt points to it |
+| Length of a time window ("Window length (minutes)") | 1 to 1,440 minutes | Saving is refused |
+| Number that starts a run ("Notes waiting to run") | 1 to 100, and no new memo for 1 minute | Starts once reached. It keeps going until none is left |
+| Runs per day | 1 to 200, starts at 20, counted over the last 24 hours | Nothing starts by itself until older runs pass 24 hours. "Run now" is not stopped, but its runs are counted |
+| Overdue after (hours) | 1 to 72, starts at 12 | The run is marked "Overdue" and you are notified. When none of its sessions has shown a sign of work for an hour, they are stopped |
+| Runs in a row that pause auto-run | 2 | The category is paused. "Resume" lifts it, and counting starts again |
+| Wait after a run that was "Not sent" | 5 minutes, doubling with each one in a row, up to 4 hours | Nothing starts by itself during the wait. "Run now" is not held |
+| Checks that end a run | Nothing holding the session on 2 checks in a row, about a minute apart | The run becomes "Done" and its session is stopped |
+| Run history | The latest 50 runs, refreshed every 10 seconds | Older runs are not listed |
+
 ## Set by the deployment
 
 Defaults are the Control Plane's own; `deploy/compose/.env.example` annotates most of them.

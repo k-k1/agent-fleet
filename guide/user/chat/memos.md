@@ -75,8 +75,13 @@ A memo taken in from an inbox recipe is marked "**Inbox: …**" ([Ask a teammate
 - Selected together with your own memos, it can go only to a running session
 - Started alone in a new session, that session is marked as coming from the inbox in the left pane
 
+## Run them by themselves
+
+Give a category **auto-run** settings, and the memos waiting in it are run as sessions with your instruction, with "Run now" or by themselves. A memo a session adds waits for your approval first ([Run memos automatically](memo-auto-run.md)).
+
 ## Related
 
+- [Run memos automatically](memo-auto-run.md): have a category's memos run as sessions
 - [Ask an assistant](assistant.md): the assistants you can hand memos to
 - [Start a session](../sessions/start.md): launch a session with a memo as the first prompt
 - [Ask a teammate through the inbox](../team/inbox.md): take an inbox recipe into your memos

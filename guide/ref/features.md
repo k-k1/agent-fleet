@@ -88,6 +88,7 @@ If a feature ships and does not appear here, it is not done
 |---|---|---|---|
 | Working sets | member | top of the left pane | [Narrow the view with working sets](../user/fleet/working-sets.md) |
 | Memo queue | member | Memo queue | [Collect memos and hand them over](../user/chat/memos.md) |
+| Memo auto-run — run a category's memos as sessions with your instruction, by "Run now" or by themselves | member | Memo queue → a category → Auto-run settings | [Run memos automatically](../user/chat/memo-auto-run.md) |
 | Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [Start from an issue or a ticket](../user/sessions/from-issues.md); [repos.md](repos.md) for what each provider contributes |
 | Scheduled (unattended) runs | member | Schedules | [Run at a set time](../user/fleet/schedules.md) |
 | Notification centre | member | top bar | [Get notified](../user/settings/notifications.md#read-them-in-the-notification-center) |
@@ -165,6 +166,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Branch naming rules — the team's default branch names and base | tenant admin | Branch naming rules | [Set the branch naming rules](../admin/defaults/branch-rules.md) |
 | Member defaults — the agent new members connect | tenant admin | Member defaults | [Set member defaults](../admin/defaults/members.md) |
 | Whether members may use Agent Fleet memory from outside | tenant admin | External memory access | [Allow memory use from outside](../admin/memory-outside.md) |
+| Whether members may run their memos automatically | tenant admin | Memo auto-run | [Allow memo auto-run](../admin/defaults/memo-auto-run.md) |
 | Distributing integration servers | tenant admin | MCP distribution | [Distribute an MCP server to everyone](../admin/mcp-distribute.md) |
 | Audit | tenant admin | Audit | [Read the audit log](../admin/audit.md) |
 | Running time | tenant admin | Running time | [Read running time and cloud cost](../admin/usage.md#read-running-time) |
