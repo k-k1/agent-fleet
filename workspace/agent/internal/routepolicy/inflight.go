@@ -27,6 +27,12 @@ type Call struct {
 var (
 	inflightMu sync.Mutex
 	inflight   = map[*Call]struct{}{}
+	// judgeMu makes a judgement atomic against a registration: the listener holds it from reading
+	// the policy to the last cancel, Track and SetRoute from registering or naming a route to
+	// judging it. A call registered after the listener read a policy therefore waits for that pass
+	// to end and is judged against the policy held by then, so a pass reading a tightening that a
+	// later loosening has since replaced never reaches a call the loosening admitted.
+	judgeMu sync.Mutex
 )
 
 // Track registers a call on route for as long as it runs: the returned context is cancelled with
@@ -45,12 +51,14 @@ func Track(ctx context.Context, route string) (context.Context, *Call) {
 	if beforeTrack != nil {
 		beforeTrack()
 	}
+	judgeMu.Lock()
 	inflightMu.Lock()
 	inflight[c] = struct{}{}
 	inflightMu.Unlock()
 	if route != "" {
 		c.judgeHeld()
 	}
+	judgeMu.Unlock()
 	return context.WithValue(ctx, callKey{}, c), c
 }
 
@@ -66,7 +74,8 @@ func SetBeforeTrackForTest(f func()) (restore func()) {
 	return func() { beforeTrack = old }
 }
 
-// judgeHeld cancels c when the policy held now restricts and does not allow its route.
+// judgeHeld cancels c when the policy held now restricts and does not allow its route. judgeMu is
+// held.
 func (c *Call) judgeHeld() {
 	if p, restricted := Hiding(); restricted {
 		c.judge(p)
@@ -95,6 +104,8 @@ func CallFrom(ctx context.Context) *Call {
 // SetRoute names the route a call resolved after it was tracked, and judges it against the policy
 // held now, for the same window as Track's.
 func (c *Call) SetRoute(route string) {
+	judgeMu.Lock()
+	defer judgeMu.Unlock()
 	c.mu.Lock()
 	c.route = route
 	c.mu.Unlock()
@@ -113,9 +124,25 @@ func (c *Call) Done() {
 // Cancelled reports whether ctx was cancelled by the credential policy.
 func Cancelled(ctx context.Context) bool { return errors.Is(context.Cause(ctx), ErrCancelled) }
 
-// cancelForbidden is the tracked calls' policy listener. p is the policy the store holds when the
-// listener runs (notify), so a tightening delivered after a later loosening acts on the loosening.
-func cancelForbidden(p Policy) {
+// cancelForbiddenIn is the tracked calls' policy listener for store s (notify): it reads the policy
+// s holds and judges every tracked call by it, as one step against registrations (judgeMu).
+func cancelForbiddenIn(s *Store) {
+	judgeMu.Lock()
+	defer judgeMu.Unlock()
+	p := s.State().Policy
+	if afterJudgeRead != nil {
+		afterJudgeRead()
+	}
+	judgeAllLocked(p)
+}
+
+// afterJudgeRead runs in the listener between reading the policy and judging the calls: a seam for
+// a test that changes the policy in that interval.
+var afterJudgeRead func()
+
+// judgeAllLocked cancels every tracked call p does not allow; nothing while p restricts nothing.
+// judgeMu is held.
+func judgeAllLocked(p Policy) {
 	if !p.Restricted {
 		return
 	}
@@ -129,5 +156,3 @@ func cancelForbidden(p Policy) {
 		c.judge(p)
 	}
 }
-
-func init() { OnChange(cancelForbidden) }

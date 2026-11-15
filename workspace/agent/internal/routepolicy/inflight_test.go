@@ -4,8 +4,17 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
+
+// judgeAll is one judgement of every tracked call by p, as the listener makes it.
+func judgeAll(p Policy) {
+	judgeMu.Lock()
+	defer judgeMu.Unlock()
+	judgeAllLocked(p)
+}
 
 // holdPolicy makes Active a store holding p, settling the listeners first and on restore.
 func holdPolicy(t *testing.T, p Policy) *Store {
@@ -39,14 +48,14 @@ func TestTrackedCallsUnderAPolicyChange(t *testing.T) {
 	if CallFrom(named) != nc {
 		t.Error("CallFrom does not find the tracked call")
 	}
-	cancelForbidden(Policy{Revision: 1, Allowed: []string{}})
+	judgeAll(Policy{Revision: 1, Allowed: []string{}})
 	for name, ctx := range map[string]context.Context{"allowed": allowed, "forbidden": forbidden, "unnamed": unnamed} {
 		if ctx.Err() != nil {
 			t.Errorf("%s: cancelled by a policy that restricts nothing", name)
 		}
 	}
 
-	cancelForbidden(Policy{Revision: 2, Restricted: true, Allowed: []string{"anthropic-api"}})
+	judgeAll(Policy{Revision: 2, Restricted: true, Allowed: []string{"anthropic-api"}})
 	for name, ctx := range map[string]context.Context{"forbidden": forbidden, "unnamed": unnamed} {
 		if !Cancelled(ctx) || !errors.Is(context.Cause(ctx), ErrCancelled) {
 			t.Errorf("%s: not cancelled by the policy (%v)", name, context.Cause(ctx))
@@ -124,5 +133,50 @@ func TestADelayedTighteningDoesNotUndoALoosening(t *testing.T) {
 	WaitListeners()
 	if ctx.Err() != nil {
 		t.Error("a delayed tightening cancelled a call the held policy allows")
+	}
+}
+
+// A listener that read a tightening is not overtaken by a loosening and a call it admits: from the
+// read to its last cancel the listener holds the judgement, so a call registering meanwhile waits
+// for it and is then judged against the policy held by then. The test pauses the listener right
+// after it read the tightening, takes the loosening, and starts a call on a route only the
+// loosening allows.
+func TestAListenerThatReadATighteningDoesNotCancelACallALaterLooseningAdmits(t *testing.T) {
+	s := holdPolicy(t, Policy{Revision: 1, Restricted: true, Allowed: []string{"anthropic-api", "openai-api"}})
+	read, resume := make(chan Policy, 1), make(chan struct{})
+	afterJudgeRead = func() {
+		if p := s.State().Policy; p.Revision == 2 {
+			read <- p
+			<-resume
+		}
+	}
+	var once sync.Once
+	release := func() { once.Do(func() { close(resume) }) }
+	t.Cleanup(func() { release(); WaitListeners(); afterJudgeRead = nil }) // a failed run leaves no listener paused
+	if _, err := s.Accept(Policy{Revision: 2, Restricted: true, Allowed: []string{"openai-api"}}); err != nil {
+		t.Fatal(err)
+	}
+	if p := <-read; p.Allows("anthropic-api") {
+		t.Fatal("the premise: the paused listener read the tightening")
+	}
+	if _, err := s.Accept(Policy{Revision: 3, Restricted: true, Allowed: []string{"anthropic-api", "openai-api"}}); err != nil {
+		t.Fatal(err)
+	}
+	tracked := make(chan context.Context, 1)
+	go func() {
+		ctx, c := Track(context.Background(), "anthropic-api") // admitted by revision 3
+		t.Cleanup(c.Done)
+		tracked <- ctx
+	}()
+	select {
+	case <-tracked:
+		t.Fatal("a call registered while a listener held a judgement")
+	case <-time.After(200 * time.Millisecond):
+	}
+	release()
+	ctx := <-tracked
+	WaitListeners()
+	if ctx.Err() != nil {
+		t.Errorf("a listener that read revision 2 cancelled a call revision 3 admitted: %v", context.Cause(ctx))
 	}
 }

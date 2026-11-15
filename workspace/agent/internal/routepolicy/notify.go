@@ -28,6 +28,12 @@ func (s *Store) notify() {
 	listenersMu.Lock()
 	fs := append([]func(Policy){}, listeners...)
 	listenersMu.Unlock()
+	// The tracked calls are judged against what s holds (inflight.go), on the same count.
+	running.Add(1)
+	go func() {
+		defer running.Done()
+		cancelForbiddenIn(s)
+	}()
 	for _, f := range fs {
 		running.Add(1)
 		go func() {
