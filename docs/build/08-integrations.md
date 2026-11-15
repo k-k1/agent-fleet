@@ -462,9 +462,19 @@ them in for one `exec`:
   emoji, `code`/**bold** beside Japanese, lists, tables. The group gained the granular
   `read:page`, `write:page`, `read:space` scopes; `confluenceScopes` reads `"outdated"` for a grant
   with Confluence scopes but not those (Settings shows a reconnect hint; `confluence-cred` still
-  serves it, search and comments work). Writes are sent once; update sends `version+1` so a
-  concurrent edit is a 409. Still on v1 and expected to 410: move, delete, children, find, spaces,
-  copy-tree, versions, properties. Folders: the shim refuses `create --type folder`; the CLI lists folder children over v2 `/pages/{id}/direct-children` (`read:hierarchical-content:confluence`, not requested).
+  serves it, and search works). Writes are sent once; update sends `version+1` so a
+  concurrent edit is a 409. Folders: the shim refuses `create --type folder`.
+- **The CLI's own v2 fallback (2.31.1, #3274).** From 2.31.1 confluence-cli switches a command to
+  `/wiki/api/v2` once a v1 endpoint answers 410 (`CONFLUENCE_FORCE_CLOUD=true`, which the wrapper
+  sets, keeps the gateway host from being taken for Data Center). With the scopes the group
+  requests, `spaces`, `children` and `move` work over v2 (`spaces` and `children` checked live,
+  2026-11-15); `delete`, `copy-tree` and `export` also read ancestors and need
+  `read:content.metadata:confluence` (plus `delete:*` for delete), `children --type folders` needs
+  `read:hierarchical-content:confluence`, and neither is requested, so those answer 401. Comments,
+  attachments, versions and properties are still v1 in the CLI and answer 410 on a site where
+  Atlassian removed them (comments and attachments did, live). The shim stays for the page core
+  because the CLI's Markdown→storage is markdown-it without CJK-friendly emphasis:
+  `**「括弧」**の` keeps its asterisks. Removing it, and the scopes that removal needs, is #3274.
 - **Read-only retry**: `readonly_cmd` in the wrapper re-runs the subcommands it lists
   (`attachments` only without `-d`/`--download`/`--dest`) up to twice after a transport error read
   from the CLI's own error line (ECONNRESET, ETIMEDOUT, …; never an HTTP status), replaying only the

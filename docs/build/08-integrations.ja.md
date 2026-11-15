@@ -420,8 +420,17 @@ Jira は git でなく作業項目インボックス
   ため。日本語・絵文字・日本語に隣接する `code`/**太字**・リスト・表をゴールデンの往復テストで固定している。
   グループに細粒度の `read:page`・`write:page`・`read:space` を追加し、Confluence のスコープはあるがこれらが
   ない認可は `confluenceScopes: "outdated"`（設定画面は再接続を案内、`confluence-cred` は引き続き渡すので
-  検索とコメントは動く）。書き込みは 1 回だけ送り、更新は `version+1` を送るので同時編集は 409 になる。
-  v1 のままで 410 が見込まれるもの: move・delete・children・find・spaces・copy-tree・versions・properties。フォルダは別: shim は `create --type folder` を拒否し、CLI のフォルダ子一覧は v2 `/pages/{id}/direct-children`（`read:hierarchical-content:confluence`、未要求）。
+  検索は動く）。書き込みは 1 回だけ送り、更新は `version+1` を送るので同時編集は 409 になる。
+  フォルダ: shim は `create --type folder` を拒否する。
+- **CLI 自身の v2 切り替え（2.31.1、#3274）。** 2.31.1 から confluence-cli は v1 が 410 を返した時点で
+  そのコマンドを `/wiki/api/v2` に切り替える（ラッパーが設定する `CONFLUENCE_FORCE_CLOUD=true` により、
+  ゲートウェイのホストが Data Center と判定されない）。グループが要求するスコープで `spaces`・`children`・
+  `move` が v2 で動く（`spaces` と `children` は 2026-11-15 に実機で確認）。`delete`・`copy-tree`・`export` は
+  祖先を読むため `read:content.metadata:confluence`（delete はさらに `delete:*`）、`children --type folders` は
+  `read:hierarchical-content:confluence` が要り、どちらも未要求なので 401 になる。コメント・添付・
+  バージョン・プロパティは CLI でもまだ v1 で、Atlassian が廃止したサイトでは 410 になる（コメントと添付は
+  実機で 410）。ページ操作の shim を残すのは、CLI の Markdown→storage が CJK 対応の強調を持たない
+  markdown-it で、`**「括弧」**の` のアスタリスクが残るため。shim の撤去と、そのために要るスコープは #3274。
 - **読み取りのリトライ**: ラッパーの `readonly_cmd` に挙げたサブコマンド（`attachments` は
   `-d`/`--download`/`--dest` なしのときだけ）は、CLI 自身のエラー行から読んだ通信エラー（ECONNRESET・
   ETIMEDOUT など。HTTP ステータスは対象外）のあと最大 2 回やり直し、最後の実行だけを出す。stdout と

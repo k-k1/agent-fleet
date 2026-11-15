@@ -79,12 +79,12 @@ confluence --help
 送ったあとで通信が切れ、ページができたかどうかわかりません。書き込みは自動ではやり直しません。
 同じタイトルで検索するか、ページを読んで確かめてから、もう一度実行してください。
 
-### 「410」で失敗するコマンドがある
+### 「410」や「401」で失敗するコマンドがある
 
-次のコマンドは、Atlassian が廃止した古い API を使っているため、失敗することがあります。
+`spaces`・`children`・`move` は、Atlassian の新しい API に自動で切り替わります。次のものはまだ失敗します。
 
-- `move`・`delete`・`children`・`find`・`spaces`・`copy-tree`
-- ページのバージョン、プロパティ（front matter）
+- 「410」（Atlassian が廃止した API をまだ使っている）: コメント、添付ファイル、ページのバージョン、プロパティ（front matter）
+- 「401」（必要な権限を接続が要求していない）: `delete`・`copy-tree`・`export`、`children --type folders` でのフォルダ一覧
 
 フォルダは `create --type folder` で作れません。
 
