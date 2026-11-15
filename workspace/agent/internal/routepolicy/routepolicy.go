@@ -414,14 +414,24 @@ func (s *Store) release(why string) {
 // ever, or any answer at or above a placeholder's revision replaces the held policy; an answer at
 // the held revision or above confirms it; a lower one is a replay or an out-of-order answer and
 // changes nothing, its freshness included. It reports whether the held policy changed.
-func (s *Store) Accept(p Policy) (changed bool, err error) { return s.take(p, s.now().Unix(), true) }
+func (s *Store) Accept(p Policy) (changed bool, err error) {
+	changed, err = s.take(p, s.now().Unix(), true)
+	if changed {
+		s.notify()
+	}
+	return changed, err
+}
 
 // Seed takes the start environment's policy, issued by the CP at issuedAt. It replaces like
 // Accept (except a placeholder only a live pull may replace), but confirms only up to issuedAt:
 // the environment is read again by every restart of the Agent in the same container, and an old
 // one must not stand in for the CP answering now.
 func (s *Store) Seed(p Policy, issuedAt int64) (changed bool, err error) {
-	return s.take(p, issuedAt, false)
+	changed, err = s.take(p, issuedAt, false)
+	if changed {
+		s.notify()
+	}
+	return changed, err
 }
 
 // SeedUnknown takes the CP's word, in the start marker with the given id, that it could not
@@ -431,6 +441,14 @@ func (s *Store) Seed(p Policy, issuedAt int64) (changed bool, err error) {
 // already knows the ceiling, or a placeholder, stays. Read again by a restart of the Agent in the
 // same container, it changes nothing, so a live answer taken since is never undone by it.
 func (s *Store) SeedUnknown(id string) (changed bool, err error) {
+	changed, err = s.seedUnknown(id)
+	if changed {
+		s.notify()
+	}
+	return changed, err
+}
+
+func (s *Store) seedUnknown(id string) (changed bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur := s.h

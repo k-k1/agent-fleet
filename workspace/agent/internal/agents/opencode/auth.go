@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -241,6 +242,10 @@ func HandlePutConn(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimSpace(req.Key)
 	if key == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "key is required")
+		return
+	}
+	if ref := agents.CredentialEntryRefusal(keyEnvRoutes(env)...); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
 	s, err := secrets.Load()

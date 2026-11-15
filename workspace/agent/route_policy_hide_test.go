@@ -12,6 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
@@ -171,5 +172,35 @@ func TestModelMenusHideWhatThePolicyForbids(t *testing.T) {
 	ids, reason := agentModels(t, session.KindAgy)
 	if len(ids) != 0 || reason != "route_policy" {
 		t.Errorf("agy under the policy offers %v (reason %q), want nothing, said", ids, reason)
+	}
+}
+
+// A member's own endpoint (member-llamacpp) is not added while the policy forbids it, and nothing
+// is written; with no restriction it is added as before.
+func TestLcppConnectionEntryUnderThePolicy(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	useHidingPolicy(t, apiKeysOnly)
+	if w := lcppPut("http://127.0.0.1:8081", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("a forbidden member endpoint: %d %s", w.Code, w.Body.String())
+	}
+	if s, err := secrets.Load(); err != nil || s.Lcpp != nil {
+		t.Errorf("a refused endpoint was stored: %+v %v", s.Lcpp, err)
+	}
+	useHidingPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
+	if w := lcppPut("http://127.0.0.1:8081", ""); w.Code != http.StatusOK {
+		t.Errorf("control: an open policy refused: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Every harness whose login the Agent runs as a flow has its flow store guarded, so a tighter
+// policy cancels a login in progress (ADR 0138 D12, credential entry).
+func TestEveryLoginFlowIsGuarded(t *testing.T) {
+	got := agents.GuardedLoginRoutes()
+	for _, r := range []string{routes.RouteAnthropicSubscription, routes.RouteChatGPTSubscription, routes.RouteAgyLogin,
+		routes.RouteCursorLogin, routes.RouteKiroLogin, routes.RouteMuseLogin} {
+		if !slices.Contains(got, r) {
+			t.Errorf("no login flow store guards %s (guarded: %v)", r, got)
+		}
 	}
 }

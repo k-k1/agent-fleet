@@ -23,6 +23,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -647,6 +648,12 @@ func normalizeLcppURL(raw string) (string, error) {
 }
 
 func handlePutLcppConn(w http.ResponseWriter, r *http.Request) {
+	// A member's own endpoint is the member-llamacpp route (ADR 0138 D12, credential entry): it
+	// is not added while the policy forbids it.
+	if ref := agents.CredentialEntryRefusal(routes.RouteMemberLlamacpp); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	var req lcppConnReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return

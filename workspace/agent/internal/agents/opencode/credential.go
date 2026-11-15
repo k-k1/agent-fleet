@@ -32,6 +32,18 @@ var providerKeys = map[string]struct{ route, key string }{
 	"sakana":     {routes.RouteSakanaAPI, "SAKANA_API_KEY"},
 }
 
+// keyEnvRoutes are the routes a key stored under env opens (usableOf's mapping): Zen and Go for
+// the opencode.ai key, the provider's route for a provider key, custom-api for any other name.
+func keyEnvRoutes(env string) []string {
+	if env == opencodeKeyEnv {
+		return []string{routes.RouteOpencodeZen, routes.RouteOpencodeGo}
+	}
+	if r := keyRoutes()[env]; r != "" {
+		return []string{r}
+	}
+	return []string{routes.RouteCustomAPI}
+}
+
 // keyRoutes is providerKeys the other way round: the route a stored key opens.
 func keyRoutes() map[string]string {
 	out := map[string]string{}
