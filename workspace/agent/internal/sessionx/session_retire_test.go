@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/watch"
@@ -651,7 +652,7 @@ func TestReconcileRetiredFinishesWhatACrashLeft(t *testing.T) {
 		if w, tm, _ := fresh.Wakers("a"); w+tm != 2 {
 			t.Fatalf("stopped=%v setup: %d %d", stopped, w, tm)
 		}
-		if n := ReconcileRetired(); n != 1 {
+		if n := ReconcileRetired(context.Background()); n != 1 {
 			t.Fatalf("stopped=%v: reconciled %d", stopped, n)
 		}
 		if w, tm, _ := fresh.Wakers("a"); w+tm != 0 {
@@ -680,5 +681,139 @@ func TestRowWithAnEmptyOrBrokenWatchStateIsUnknown(t *testing.T) {
 			t.Fatalf("%s: wakers=%+v unknown=%v", name, s.Wakers, s.WakersUnknown)
 		}
 		_ = r
+	}
+}
+
+// The root was marked and the process died before its child was: the intent records the root, and
+// the recovery walks the tree again from it.
+func TestReconcileRetiredFindsChildrenNeverMarked(t *testing.T) {
+	r := newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+	r.hold(t, "c")
+	in := beginRetire("p")
+	retireOne(context.Background(), &retireReport{Name: "p", Unended: []string{}}, in, false) // the crash comes here
+	if m, _ := session.ReadMeta("c"); m.RetiredAt != "" {
+		t.Fatal("setup: the child is marked")
+	}
+	if n := ReconcileRetired(context.Background()); n != 1 {
+		t.Fatalf("reconciled %d", n)
+	}
+	if m, _ := session.ReadMeta("c"); m.RetiredAt == "" {
+		t.Fatal("the child of an interrupted retire was never retired")
+	}
+	if w, tm, _ := r.e.Wakers("c"); w+tm != 0 {
+		t.Fatalf("the child still holds %d %d", w, tm)
+	}
+	if len(retireIntentRoots()) != 0 {
+		t.Fatal("a finished recovery kept its intent")
+	}
+}
+
+// A member the retire had marked and a person resumed since is theirs again; the recovery must not
+// mark it and stop it a second time.
+func TestReconcileRetiredLeavesASessionAPersonResumed(t *testing.T) {
+	r := newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+	in := beginRetire("p")
+	for _, n := range []string{"p", "c"} {
+		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in, false)
+	}
+	clearRetired("c") // the person's start
+	r.hold(t, "c")
+	ReconcileRetired(context.Background())
+	if m, _ := session.ReadMeta("c"); m.RetiredAt != "" {
+		t.Fatal("the recovery retired a session a person had resumed")
+	}
+	if w, _, _ := r.e.Wakers("c"); w != 1 {
+		t.Fatalf("its watches were ended: %d", w)
+	}
+}
+
+func TestRetiredRuntimeRefusalIsAPermanent409(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeRuntimeErr(rec, errSessionRetired)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "session_retired") {
+		t.Fatalf("answer = %d %s", rec.Code, rec.Body)
+	}
+}
+
+// The lock order is the lifecycle gate, then the retire gate. With a move waiting for exclusive
+// access behind a running input, a start, a retire and the input's own resume all finish.
+func TestRetireGateOrderDoesNotDeadlockWithTheLifecycleGate(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "a"})
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	ctx := context.Background()
+	input, err := lifegate.Enter(ctx, "a") // a running input
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	go func() { // a move, waiting for the input to finish
+		x, err := lifegate.Lock(ctx, "a")
+		if err == nil {
+			x.Unlock()
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		req := httptest.NewRequest(http.MethodPost, "/sessions/a/start", nil)
+		req.SetPathValue("name", "a")
+		HandleStartSession(httptest.NewRecorder(), req)
+	}()
+	go func() { defer wg.Done(); time.Sleep(100 * time.Millisecond); postRetire(t, "a") }()
+	time.Sleep(400 * time.Millisecond)
+	g := retireGate("a") // the input reaching resumeManaged
+	g.RLock()
+	g.RUnlock()
+	input.Release()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("input, start, retire and move wait for each other")
+	}
+}
+
+// A person typing while the prompt waits for the CLI to boot owns that turn: it must not become
+// the delivery's first turn.
+func TestInitialPromptDeliveryDoesNotTakeATurnStartedDuringTheBootWait(t *testing.T) {
+	newRetireEnv(t)
+	dir := t.TempDir()
+	writeMeta(t, session.Meta{Name: "q", Kind: session.KindShell, Dir: dir, QueueDelivery: "d1", InitialPromptState: session.InitialPromptPending})
+	m, _ := session.ReadMeta("q")
+	sid := session.UUID(m.Dir, "q")
+	status.ArmFirstTurn(sid, false)
+	flag := filepath.Join(t.TempDir(), "booting")
+	bin := t.TempDir()
+	script := "#!/bin/sh\n[ \"$1\" = -L ] && shift 2\ncase \"$1\" in\n  has-session) [ -e " + flag + " ] || { : > " + flag + "; /bin/sleep 1; } ;;\n  list-panes) echo '1 %1' ;;\nesac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	go func() { // the person, while the Agent waits for tmux
+		for i := 0; i < 200; i++ {
+			if _, err := os.Stat(flag); err == nil {
+				status.Persist(sid, "working")
+				status.PersistTurnEnd(sid, "idle")
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	typeInitialPrompt("q", "the queue's task")
+	status.Persist(sid, "working") // the prompt's own turn
+	status.PersistTurnEnd(sid, "idle")
+	if got, ok := status.ReadFirstTurn(sid); ok {
+		t.Fatalf("a turn started during the boot wait was reported as the delivery's: %+v", got)
 	}
 }

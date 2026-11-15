@@ -7,24 +7,31 @@ package sessionx
 //
 // The order is the point. The mark goes on first, because the things that would undo a retire
 // (a notice already claimed, a built-in made again by the next sweep, a timer's wake, the
-// booked resume's time passing) are not stopped by ending what exists now; each of them asks
-// retiredAndStopped before it starts anything. Ending the subscriptions comes second and the stop
-// last, so nothing between them can start a session that is about to be stopped and find it
-// stopped afterwards.
+// booked resume's time passing, a Managed input, a child create in flight) are not stopped by
+// ending what exists now; each of them checks the mark (isRetired) before it starts anything.
+// Ending the subscriptions comes second and the stop last. A per-session gate (retireGates)
+// orders the whole of it against the starts that check the mark and then launch.
 //
-// The mark means "retired while stopped": a person starting the session (POST /start) clears it,
-// and it is an ordinary session from then on.
+// The mark means "retired": from the moment it is written no automatic start or input reaches the
+// session. A person's start (POST /start) clears it, and it is an ordinary session from then on.
+// The intent (retireIntent) is on disk, so a process that died half-way finishes the tree at
+// its next start (ReconcileRetired).
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/watch"
 )
@@ -112,13 +119,16 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, retireResp{Sessions: retireTree(r.Context(), name)})
+	in := beginRetire(name)
+	reports := retireTree(r.Context(), name, in)
+	finishRetire(in, reports)
+	httpx.WriteJSON(w, http.StatusOK, retireResp{Sessions: reports})
 }
 
 // retireTree retires root and everything it started. The walk repeats until it finds nobody new,
 // waiting for creates that already reserved a child slot to publish, so a child that was still
 // being launched is found by the next round; a retired parent reserves no new slot.
-func retireTree(ctx context.Context, root string) []retireReport {
+func retireTree(ctx context.Context, root string, in *retireIntent) []retireReport {
 	const maxRounds = 20
 	seen := map[string]*retireReport{}
 	var order []*retireReport
@@ -147,7 +157,9 @@ func retireTree(ctx context.Context, root string) []retireReport {
 			break
 		}
 		for _, rep := range fresh {
-			retireOne(ctx, rep)
+			// A session this retire had already marked and a person has resumed since is theirs
+			// again: a recovery leaves it alone.
+			retireOne(ctx, rep, in, in.wasMember(rep.Name))
 		}
 		if !waitSpawns(ctx, order) {
 			order[0].Unended = appendNew(order[0].Unended, "a child create was still in flight; retire again once it has finished")
@@ -160,17 +172,80 @@ func retireTree(ctx context.Context, root string) []retireReport {
 	return out
 }
 
-// retireOne retires one session under its gate: mark, end, stop, and end once more for what a
-// still-running session made in between. Every step is safe to repeat, which is also what the
-// start-up recovery (ReconcileRetired) relies on.
-func retireOne(ctx context.Context, rep *retireReport) {
+// retireOne retires one session: under its gate mark, end its subscriptions, stop, and end once
+// more for what a still-running session made in between; then cancel its booked resume (outside
+// the gate, which only has to order the launches). Every step is safe to repeat. onlyIfMarked is
+// the recovery's rule: the mark is checked again under the gate, and a session whose mark is gone
+// (a person started it) is left alone.
+func retireOne(ctx context.Context, rep *retireReport, in *retireIntent, onlyIfMarked bool) {
 	g := retireGate(rep.Name)
 	g.Lock()
-	defer g.Unlock()
+	if onlyIfMarked {
+		if cur, ok := session.ReadMeta(rep.Name); !ok || !isRetired(cur) {
+			g.Unlock()
+			return
+		}
+	}
 	markRetired(rep)
-	endHeld(ctx, rep)
+	in.addMember(rep.Name)
+	endSubscriptions(ctx, rep)
 	stopRetired(rep)
-	endHeld(ctx, rep)
+	endSubscriptions(ctx, rep)
+	g.Unlock()
+	cancelResume(rep)
+}
+
+// retireIntent is the durable record of a retire in progress: its root and the sessions already
+// marked. It is what lets the start-up recovery finish a tree whose root alone was marked when
+// the process died, and tell a session a person has resumed since from one never reached.
+type retireIntent struct {
+	Root    string   `json:"root"`
+	Members []string `json:"members,omitempty"`
+}
+
+var retireIntents = fstore.JSON[retireIntent](paths.AgentStateDir, "session-retire-intent", ".json")
+var retireIntentMu sync.Mutex
+
+func (in *retireIntent) wasMember(name string) bool {
+	return in != nil && slices.Contains(in.Members, name)
+}
+
+func (in *retireIntent) addMember(name string) {
+	if in == nil {
+		return
+	}
+	retireIntentMu.Lock()
+	defer retireIntentMu.Unlock()
+	if !slices.Contains(in.Members, name) {
+		in.Members = append(in.Members, name)
+		_ = retireIntents.Write(in.Root, *in)
+	}
+}
+
+// beginRetire records the intent before anything is marked; an existing one for the same root is
+// continued, so its members stay known.
+func beginRetire(root string) *retireIntent {
+	retireIntentMu.Lock()
+	defer retireIntentMu.Unlock()
+	in, ok := retireIntents.Read(root)
+	if !ok {
+		in = retireIntent{Root: root}
+		_ = retireIntents.Write(root, in)
+	}
+	return &in
+}
+
+// finishRetire drops the intent once nothing is left unended; otherwise it stays for the next
+// start's recovery to try again.
+func finishRetire(in *retireIntent, reports []retireReport) {
+	for _, r := range reports {
+		if len(r.Unended) > 0 {
+			return
+		}
+	}
+	retireIntentMu.Lock()
+	defer retireIntentMu.Unlock()
+	retireIntents.Remove(in.Root)
 }
 
 // waitSpawns waits, within a bound, until none of the sessions has a create in flight, and
@@ -196,19 +271,58 @@ func waitSpawns(ctx context.Context, reps []*retireReport) bool {
 	}
 }
 
-// ReconcileRetired finishes a retire the previous Agent process did not: the mark was set and the
-// session still runs, or it was stopped and its subscriptions were not all ended yet. A marked
-// session is by definition one nobody resumed (a person's start clears the mark).
-func ReconcileRetired() int {
-	n := 0
-	for _, m := range session.ListMetas() {
-		if m.Archived || !isRetired(m) {
+// ReconcileRetired finishes the retires the previous Agent process did not: each recorded intent
+// is walked again from its root (so children never reached are retired), and a marked session
+// with no intent (a mark whose intent could not be written) is finished on its own. A session
+// whose mark a person cleared since is left alone. What still cannot be ended keeps its intent,
+// to be tried at the next start. It returns the number of retires that are now complete.
+func ReconcileRetired(ctx context.Context) int {
+	done := 0
+	covered := map[string]bool{}
+	for _, root := range retireIntentRoots() {
+		in := beginRetire(root)
+		if m, ok := session.ReadMeta(root); !ok || !isRetired(m) {
+			retireIntentMu.Lock()
+			retireIntents.Remove(root)
+			retireIntentMu.Unlock()
 			continue
 		}
-		retireOne(context.Background(), &retireReport{Name: m.Name, Unended: []string{}})
-		n++
+		reps := retireTree(ctx, root, in)
+		for _, r := range reps {
+			covered[r.Name] = true
+		}
+		finishRetire(in, reps)
+		if _, still := retireIntents.Read(root); !still {
+			done++
+		} else {
+			log.Printf("retire: %s is not finished, it is tried again at the next start", root)
+		}
 	}
-	return n
+	for _, m := range session.ListMetas() {
+		if m.Archived || !isRetired(m) || covered[m.Name] {
+			continue
+		}
+		rep := &retireReport{Name: m.Name, Unended: []string{}}
+		retireOne(ctx, rep, nil, true)
+		if len(rep.Unended) == 0 {
+			done++
+		}
+	}
+	return done
+}
+
+func retireIntentRoots() []string {
+	entries, err := os.ReadDir(retireIntents.Dir())
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+			out = append(out, strings.TrimSuffix(e.Name(), ".json"))
+		}
+	}
+	return out
 }
 
 // markRetired puts the mark on, keeping the first date when it is already there. The write is
@@ -229,8 +343,8 @@ func markRetired(rep *retireReport) {
 	}
 }
 
-// endHeld ends the subscriptions and the booked resume of one session.
-func endHeld(ctx context.Context, rep *retireReport) {
+// endSubscriptions ends the subscriptions of one session.
+func endSubscriptions(ctx context.Context, rep *retireReport) {
 	ended, unended, err := watchEngine().EndOwner(ctx, rep.Name)
 	rep.Ended.Watches += ended.Watches
 	rep.Ended.Timers += ended.Timers
@@ -239,6 +353,10 @@ func endHeld(ctx context.Context, rep *retireReport) {
 	if err != nil {
 		rep.Unended = appendNew(rep.Unended, "subscriptions: "+err.Error())
 	}
+}
+
+// cancelResume cancels the booked usage-limit resume.
+func cancelResume(rep *retireReport) {
 	cancelled, left := cancelBookedResume(rep.Name)
 	rep.ResumeCancelled = rep.ResumeCancelled || cancelled
 	rep.Unended = appendNew(rep.Unended, left...)

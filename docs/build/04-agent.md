@@ -103,9 +103,13 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     the sessions, what was ended for each and what could not be ended (a cancel the Control
     Plane did not confirm, which is retried). A second call lists the same sessions and ends
     nothing more. There is no MCP tool.
-  - The mark `retiredAt` on the meta is what keeps the ended things ended: while it is set and
-    the session is stopped, the watch sink never starts or injects into it, the engine refuses
-    new subscriptions and built-ins for it, and a scheduled usage-limit resume is refused.
+  - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
+    written, the watch sink never starts or injects into the session, a Managed input (any
+    origin) is refused with `409 session_retired`, an automatic `/start` is refused, the session
+    reserves no child slot, the engine refuses new subscriptions and built-ins for it, and a
+    scheduled usage-limit resume is refused. A retire's intent is kept on disk and the Agent
+    finishes an interrupted one (tree included) at its next start. Lock order: lifecycle gate,
+    then the retire gate.
     `POST /sessions/{name}/start` clears it, so a person resuming the session from the Console
     makes it an ordinary session again.
 - **How a queue delivery's first turn ended** (ADR 0137 §7): `queueTurn: {outcome, ms, endedAt}`

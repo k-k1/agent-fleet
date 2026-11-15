@@ -94,9 +94,11 @@ source_of_truth: "コード（本書は地図と設計意図）"
     上のものを全部終わらせ、予約済みの再開を取り消し、halt する。答えは、セッションの一覧、それぞれで
     終わらせたもの、終わらせられなかったもの（Control Plane が確認しなかった取り消しで、再試行される）。
     2 回目は同じセッションを返し、それ以上は何も終わらせない。MCP ツールは無い。
-  - meta の `retiredAt` が、終わらせたものを終わったままにする。これが付いていて停止中のあいだ、
-    watch の sink は起動も注入もせず、エンジンは新しい購読と組み込みを断り、予約された利用上限の
-    再開も断る。`POST /sessions/{name}/start` が外すので、利用者が Console から再開すれば
+  - meta の `retiredAt` が、終わらせたものを終わったままにする。付けた瞬間から、
+    watch の sink は起動も注入もせず、Managed への入力は（出どころを問わず）`409 session_retired`
+    で断り、自動の `/start` も断り、子の枠も取らせず、エンジンは新しい購読と組み込みを断り、予約された
+    利用上限の再開も断る。retire の意図はディスクに残り、途中で終わった retire は（子孫ごと）次の起動で
+    Agent が完了させる。ロックの順は、ライフサイクル gate → retire gate。`POST /sessions/{name}/start` が外すので、利用者が Console から再開すれば
     普通のセッションに戻る。
 - **キュー配信の最初のターンの終わり方**（ADR 0137 §7）: `queueDelivery` を持つセッションの行に
   `queueTurn: {outcome, ms, endedAt}`。`outcome` は `clean`・`turn-failed`・`turn-aborted`

@@ -1059,9 +1059,6 @@ func typeInitialPrompt(name, prompt string) string {
 		noteInitialPromptReason(name, session.InitialPromptReasonAuthExpired)
 		return session.InitialPromptFailed
 	}
-	// From here the prompt is on its way: a queue delivery's first-turn ledger counts the turn it
-	// starts, and treats any turn that began earlier as somebody else's.
-	status.MarkFirstTurnDelivering(session.UUID(authMeta.Dir, name))
 	tn := session.TmuxName(name)
 	// Wait for tmux + a resolvable pane id (the agent process is up). Cap ~30s to match
 	// the Console's give-up budget, polling on the same cadence.
@@ -1121,6 +1118,10 @@ func typeInitialPrompt(name, prompt string) string {
 		base = deliveryBaseline(meta)
 	}
 	pre := captureTurnMark(name) // before delivery, see submitPromptTUI
+	// Only now, after every boot wait and immediately before the keys go in: a queue delivery's
+	// first-turn ledger counts the turn this prompt starts, and a turn a person started during the
+	// waits above is somebody else's and voids it.
+	status.MarkFirstTurnDelivering(session.UUID(authMeta.Dir, name))
 	if typeLineAndSubmit(name, pane, prompt) != nil {
 		return session.InitialPromptFailed
 	}

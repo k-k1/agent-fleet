@@ -388,7 +388,7 @@ func serve() {
 	// A retire the previous process did not finish (marked, still running or not yet swept).
 	go func() {
 		time.Sleep(45 * time.Second) // after tmux and the drivers are up
-		if n := sessionx.ReconcileRetired(); n > 0 {
+		if n := sessionx.ReconcileRetired(context.Background()); n > 0 {
 			log.Printf("retire: finished %d retire(s) the previous process had begun", n)
 		}
 	}()

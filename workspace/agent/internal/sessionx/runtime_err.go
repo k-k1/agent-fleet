@@ -41,6 +41,11 @@ func writeRuntimeErr(w http.ResponseWriter, err error) {
 	if writeStartRefusal(w, err) {
 		return
 	}
+	if errors.Is(err, errSessionRetired) {
+		// Permanent until a person starts the session: not a runtime fault to retry.
+		httpx.WriteErr(w, http.StatusConflict, "session_retired", err.Error())
+		return
+	}
 	if errors.Is(err, errDriverSwitching) {
 		httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, err.Error())
 		return

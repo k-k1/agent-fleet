@@ -50,8 +50,15 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	// From the check of the retired mark to the end of the launch (and the clearing of the
-	// mark), so a retire cannot slip between them (retireGates).
+	// Lock order everywhere: the lifecycle gate, then the retire gate (a Managed input holds a
+	// lifecycle lease when it reaches resumeManaged). The retire gate is held from the check of
+	// the retired mark to the end of the launch and the clearing of the mark, so a retire cannot
+	// slip between them (retireGates).
+	lease, ok := enterSessionGate(w, r, name)
+	if !ok {
+		return
+	}
+	defer lease.Release()
 	g := retireGate(name)
 	g.RLock()
 	defer g.RUnlock()
@@ -60,11 +67,6 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "session_retired", errSessionRetired.Error())
 		return
 	}
-	lease, ok := enterSessionGate(w, r, name)
-	if !ok {
-		return
-	}
-	defer lease.Release()
 	if _, ok := session.ReadMeta(name); !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return

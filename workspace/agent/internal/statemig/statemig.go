@@ -61,6 +61,8 @@ var Entries = []string{
 	"session-turn-mark",
 	// A queue delivery's first turn (status.FirstTurn). Introduced directly under AgentStateDir.
 	"session-first-turn",
+	// A retire in progress, for the start-up recovery (sessionx session_retire.go).
+	"session-retire-intent",
 	"session-injections",
 	"session-auth-resume",
 	"session-abort-resume",
