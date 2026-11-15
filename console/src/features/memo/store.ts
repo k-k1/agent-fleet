@@ -10,6 +10,10 @@ interface MemoStore {
    * or any other "quick-add a memo" entry point). The panel watches this. */
   composeReq: number;
   requestCompose(): void;
+  /** A request to show one auto-run category (from a notification): the panel opens, unfolds it,
+   *  scrolls to it and, with history, opens its run history. n makes a repeat re-trigger. */
+  reveal: { id: string | null; history: boolean; n: number };
+  revealCategory(id: string, history: boolean): void;
 }
 
 export const useMemoStore = create<MemoStore>((set) => ({
@@ -17,4 +21,6 @@ export const useMemoStore = create<MemoStore>((set) => ({
   bump: () => set((s) => ({ tick: s.tick + 1 })),
   composeReq: 0,
   requestCompose: () => set((s) => ({ composeReq: s.composeReq + 1 })),
+  reveal: { id: null, history: false, n: 0 },
+  revealCategory: (id, history) => set((s) => ({ reveal: { id, history, n: s.reveal.n + 1 } })),
 }));

@@ -87,7 +87,7 @@ Each page covers one thing you want to do.
 | [Connect GitHub Copilot](agents/copilot.md) | Run the Copilot CLI on your GitHub connection alone |
 | [Connect Cursor](agents/cursor.md) | Run the Cursor CLI on your Cursor account |
 | [Connect Kiro](agents/kiro.md) | Install Kiro and run it on a Builder ID or similar |
-| [Connect Antigravity](agents/agy.md) | Run the Antigravity CLI on a Google account (experimental) |
+| [Connect Antigravity](agents/agy.md) | Run the Antigravity CLI on a Google account |
 | [Connect Muse Code](agents/muse.md) | Install Muse Code and run it on a Meta account or an API key |
 | [Use lcpp](agents/lcpp.md) | Run sessions on the deployment's llama.cpp engine or your own llama-server |
 | [Check prices and usage](agents/usage.md) | See model list prices, what is left of your allowance and what your tokens went on; save with RTK |

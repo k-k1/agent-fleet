@@ -1220,6 +1220,11 @@ func (a workspaceAPI) sessionCreateThen(w http.ResponseWriter, r *http.Request, 
 			writeAPIErr(w, aerr)
 			return
 		}
+		// The credential policy (ADR 0138 D12), before waking; the Agent judges again.
+		if aerr := routePolicyCreateRefusal(ctx, a.mgr.store, res.mv.TenantID, peek.sel.Route); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
 	}
 	// SSM sessions (docs/log/p3-ssm-session.md): resolve the host bookmark
 	// server-side and rewrite the body with the (non-secret) instance/document/SSO
@@ -1240,6 +1245,12 @@ func (a workspaceAPI) sessionCreateThen(w http.ResponseWriter, r *http.Request, 
 			writeAPIErr(w, aerr)
 			return
 		}
+	}
+	// Once the Workspace runs, before the create is handed to it: a restricted member's create
+	// goes only to an Agent that enforces the credential policy (ADR 0138 D12, Upgrade).
+	if aerr := agentPolicyRefusal(ctx, a.mgr.store, res.mv.TenantID, peekSessionKind(r), res.rt); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
 	}
 	if aerr := a.sessionQuotaExceeded(ctx, res, peekSessionKind(r)); aerr != nil {
 		writeAPIErr(w, aerr)

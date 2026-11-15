@@ -22,6 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -66,7 +67,14 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 	}
 	// One entry per agent kind, under its kind name (agents.ConnectionStatuser). copilot rides on
 	// the GitHub connection (docs/log/36 contract): no flow of its own.
+	// A kind the credential policy forbids altogether has no entry (ADR 0138 D10a): its card, its
+	// login and its install controls are not offered. The GitHub entry above is never hidden: git
+	// is not a model route, and only copilot's own entry speaks for copilot-login.
+	hide, hiding := routepolicy.Hiding()
 	for k, st := range agentConnectionStatuses(agents.StatusInputs{Secrets: s, GithubConnected: ghConnected}) {
+		if hiding && hide.HidesKind(kindRoutesOf(k)) {
+			continue
+		}
 		out[k] = st
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)

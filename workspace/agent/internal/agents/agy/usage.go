@@ -242,8 +242,7 @@ var (
 	panelRe = regexp.MustCompile(`esc Close`)
 	// Startup-header identity line: "k1.example@gmail.com (Antigravity Starter
 	// Quota)". The plan suffix fills in asynchronously ~10s after startup, so a
-	// normal scrape usually finishes before it renders — parsed best-effort only
-	// (the AgyCard's "experimental tier" label is static and does not depend on it).
+	// normal scrape usually finishes before it renders — parsed best-effort only.
 	planRe = regexp.MustCompile(`(\S+@\S+)\s+\(([^)]+)\)`)
 	// The panel's own account line (no plan there).
 	accountRe = regexp.MustCompile(`Account:\s*(\S+@\S+)`)

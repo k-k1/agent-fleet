@@ -686,7 +686,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "get_agent_usage", minScope: scopeRead,
-			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude, codex, agy and muse; opencode, copilot, cursor and kiro have no usage source). claude and codex report fiveHour / sevenDay windows with pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts); codex may add planType and resetCredits. agy has a different shape: account / plan plus groups (each quota pool's label, remainingPct and resetsAt — e.g. the experimental Starter pool). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds. Use when asked how much quota remains or when a limit resets.",
+			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude, codex, agy and muse; opencode, copilot, cursor and kiro have no usage source). claude and codex report fiveHour / sevenDay windows with pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts); codex may add planType and resetCredits. agy has a different shape: account / plan plus groups (each quota pool's label, remainingPct and resetsAt — e.g. the Starter pool). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds. Use when asked how much quota remains or when a limit resets.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a API, res *Resolved, _ map[string]any) (string, error) {
 				cl, err := a.cp.AgentText(ctx, res.RT, "GET", "/claude/usage", nil)
@@ -763,6 +763,13 @@ func memberTools() []mcpTool {
 					if err := a.cp.ProvidedRouteErr(ctx, res.MV.MembershipID, argStr(args, "route")); err != nil {
 						return "", err
 					}
+				}
+				routeID := ""
+				if route != nil {
+					routeID = argStr(args, "route")
+				}
+				if err := a.cp.RoutePolicyErr(ctx, res.MV, res.RT, kind, routeID); err != nil {
+					return "", err
 				}
 				driver := ""
 				// An MCP caller cannot drive a pane, so it asks for managed wherever the Agent's

@@ -53,6 +53,10 @@ const SAMPLES: [string, string, string][] = [
   ["terminal-notification", "session", "parent"],
   ["spend-budget", "session", "parent"],
   ["chat-auto-paused", "session", "parent"],
+  ["memo-delivery-overdue", "memo-queue", "c1"],
+  ["memo-queue-paused", "memo-queue", "c1"],
+  ["memo-queue-waiting", "memo-queue", "c1"],
+  ["memo-delivery-unconfirmed", "memo-queue", "c1"],
   ["a-kind-from-a-newer-cp", "session", "parent"],
 ];
 

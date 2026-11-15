@@ -8,21 +8,21 @@ source_of_truth: "the Antigravity card in the Console's Settings > Agents"
 English | [日本語](agy.ja.md)
 
 Sign in with a Google account and sessions can run the Antigravity CLI (agy).
-agy is an experimental slot: its quota is small and shared with the Antigravity IDE and Jules.
+Its quota is shared with the Antigravity IDE and Jules on the same Google account.
 
 ## How it works
 
 | What you do | What happens |
 |---|---|
-| Sign in with Google on the Antigravity card | "Launch Antigravity (experimental)" appears in the launch menu |
+| Sign in with Google on the Antigravity card | "Launch Antigravity" appears in the launch menu |
 | Choose the behavior | agy sessions started afterwards use it |
 | Re-authenticate when the sign-in expires | You go through the sign-in steps again |
 
 ## Connect
 
-Work on the **Antigravity** card in **⚙Settings → Agents**. The card reads "**Experimental slot (small quota, shared with the Antigravity IDE / Jules)**".
+Work on the **Antigravity** card in **⚙Settings → Agents**.
 
-![The Antigravity card before connecting: the experimental-slot label, the "Google OAuth" method and the "Connect via OAuth" button](../../assets/agents-agy-en-light.webp)
+![The Antigravity card before connecting: the "Google OAuth" method and the "Connect via OAuth" button](../../assets/agents-agy-en-light.webp)
 
 1. Press "**Connect via OAuth**". The Google sign-in opens in a new tab; if it does not, open it from "**the sign-in link ↗**"
 2. Approve in your own browser

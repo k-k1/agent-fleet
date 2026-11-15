@@ -16,7 +16,7 @@ export const sessions = {
   "agent.launch_hint.cursor": "Cursor を起動",
   "agent.launch_hint.kiro": "Kiro を起動",
   "agent.launch_hint.opencode": "OpenCode を起動",
-  "agent.launch_hint.agy": "Antigravity を起動（実験枠）",
+  "agent.launch_hint.agy": "Antigravity を起動",
   "agent.launch_hint.copilot": "GitHub Copilot を起動",
   // lcpp (ADR 0093): registered but not launchable yet — kept out of every launch picker
   // (registry.ts repoLaunchKinds), so this string renders nowhere today.

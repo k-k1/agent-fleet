@@ -208,8 +208,17 @@ const schedulerMaxConcurrentFires = 4
 // slots, after the schedules have been handed theirs.
 func (sc *scheduler) tickAt(ctx context.Context, now time.Time) {
 	var sends []store.MemoDelivery
+	var wakes []func(context.Context)
 	if sc.queue != nil {
 		sends = sc.queue.settle(ctx, now)
+		// The fires a queue makes by itself share the sends' part of the tick.
+		if room := memoQueueSendsPerTick - len(sends); room > 0 {
+			var fired []store.MemoDelivery
+			fired, wakes = sc.queue.dispatch(ctx, now, room)
+			sends = append(sends, fired...)
+		} else {
+			_, wakes = sc.queue.dispatch(ctx, now, 0)
+		}
 	}
 	due, err := sc.store.ListDueSchedules(ctx, now.Format(time.RFC3339))
 	if err != nil {
@@ -244,6 +253,14 @@ func (sc *scheduler) tickAt(ctx context.Context, now time.Time) {
 			defer func() { <-sem; wg.Done() }()
 			sc.queue.send(ctx, d)
 		}(d)
+	}
+	for _, wake := range wakes {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(wake func(context.Context)) {
+			defer func() { <-sem; wg.Done() }()
+			wake(ctx)
+		}(wake)
 	}
 	wg.Wait()
 }

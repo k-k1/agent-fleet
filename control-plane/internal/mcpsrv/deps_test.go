@@ -42,7 +42,10 @@ func (c testCP) BridgeKeyFor(_ context.Context, signKey []byte, _ string) ([]byt
 }
 func (c testCP) EvictMembershipCache(string)                            { unwired("EvictMembershipCache") }
 func (c testCP) ProvidedRouteErr(context.Context, string, string) error { return nil }
-func (c testCP) TenantSel(*http.Request) string                         { unwired("TenantSel"); return "" }
+func (c testCP) RoutePolicyErr(context.Context, store.MembershipView, runtime.Runtime, string, string) error {
+	return nil
+}
+func (c testCP) TenantSel(*http.Request) string { unwired("TenantSel"); return "" }
 
 // ScopeRank is wired for real even in the fake: New uses it to catch a stale copy, and
 // panicking here would put that check out of reach of the mcpsrv unit tests. The values

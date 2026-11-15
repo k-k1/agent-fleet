@@ -32,7 +32,7 @@ Connections and settings go through the agent CLIs inside the workspace. If the 
 | A GitHub Copilot subscription (Free included) | copilot | [Connect GitHub Copilot](copilot.md) |
 | A Cursor account | cursor | [Connect Cursor](cursor.md) |
 | An AWS Builder ID, a Kiro plan | kiro | [Connect Kiro](kiro.md) |
-| A Google account (experimental slot) | agy | [Connect Antigravity](agy.md) |
+| A Google account | agy | [Connect Antigravity](agy.md) |
 | A Meta account, a Meta API key | muse | [Connect Muse Code](muse.md) |
 | None (uses the deployment's llama.cpp engine) | lcpp | [Use lcpp](lcpp.md) |
 

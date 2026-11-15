@@ -7,12 +7,18 @@ import {
   draftBody,
   draftErrors,
   draftOf,
+  confirmShown,
+  firstTurnWords,
+  heldWords,
   memoOriginWords,
   memoStateWords,
   pendingCount,
   readDeliveries,
   readMemoQueues,
+  shownStatus,
+  trackShown,
   releaseCards,
+  runModeOf,
   staleIdsOf,
 } from "./queues.ts";
 
@@ -134,6 +140,105 @@ describe("settings form", () => {
   it("sends the route back untouched: a PUT replaces the whole row", () => {
     const q: MemoQueue = { ...(readMemoQueues({ queues: [{ categoryId: "c1", route: "r1" }] })!.queues[0]) };
     expect(draftBody(draftOf(q), q.route).route).toBe("r1");
+  });
+});
+
+describe("when it runs", () => {
+  const ok = { ...draftOf(undefined), instruction: "do it" };
+  it("reads the three ways from the settings, and an older Control Plane's row as any time with the defaults", () => {
+    const q = (o: Record<string, unknown>) => readMemoQueues({ queues: [{ categoryId: "c1", ...o }] })!.queues[0];
+    expect(runModeOf(q({}))).toBe("always");
+    expect(runModeOf(q({ openCron: "0 9 * * *", openMinutes: 30 }))).toBe("window");
+    expect(runModeOf(q({ openAfter: 3 }))).toBe("threshold");
+    const old = q({});
+    expect([old.maxTaskHours, old.maxFiresPerDay, old.paused, old.noReportAt]).toEqual([12, 20, false, ""]);
+  });
+  it("checks only the fields of the chosen way", () => {
+    expect(draftErrors({ ...ok, runMode: "always", openCron: "junk", openAfter: "x" })).toEqual({});
+    expect(draftErrors({ ...ok, runMode: "window", openCron: "" }).openCron).toBe("memo.q_err_cron");
+    expect(draftErrors({ ...ok, runMode: "window", openCron: "0 9 * * 1-5", openMinutes: "1441" }).openMinutes).toBe("memo.q_err_window");
+    expect(draftErrors({ ...ok, runMode: "window", openCron: "0 9 * * *", openMinutes: "60", tz: "Mars/Base" }).tz).toBe("memo.q_err_tz");
+    expect(draftErrors({ ...ok, runMode: "window", openCron: "0 9 * * *", openMinutes: "60", tz: "" })).toEqual({});
+    expect(draftErrors({ ...ok, runMode: "threshold", openAfter: "0" }).openAfter).toBe("memo.q_err_open_after");
+    expect(draftErrors({ ...ok, runMode: "threshold", openAfter: "100" })).toEqual({});
+  });
+  it("bounds the runs per day and the overdue hours", () => {
+    expect(draftErrors({ ...ok, maxFiresPerDay: "0" }).maxFiresPerDay).toBeDefined();
+    expect(draftErrors({ ...ok, maxFiresPerDay: "200" }).maxFiresPerDay).toBeUndefined();
+    expect(draftErrors({ ...ok, maxTaskHours: "73" }).maxTaskHours).toBeDefined();
+    expect(draftErrors({ ...ok, maxTaskHours: "72" }).maxTaskHours).toBeUndefined();
+  });
+  it("sends the unchosen ways as their off values and never a read-only field", () => {
+    const w = draftBody({ ...ok, runMode: "window", openCron: " 0  9 * * * ", openMinutes: "90", tz: "UTC", openAfter: "7" }, "r");
+    expect(w).toMatchObject({ openCron: "0 9 * * *", openMinutes: 90, tz: "UTC", openAfter: 0 });
+    const th = draftBody({ ...ok, runMode: "threshold", openCron: "0 9 * * *", openAfter: "7" }, "r");
+    expect(th).toMatchObject({ openCron: "", openMinutes: 0, tz: "", openAfter: 7 });
+    expect(Object.keys(w).sort()).toEqual(
+      ["agentKind", "batch", "effort", "enabled", "instruction", "maxActive", "maxFiresPerDay", "maxTaskHours", "model", "openAfter", "openCron", "openMinutes", "route", "spendCapUsd", "tz", "worktree"],
+    );
+  });
+});
+
+describe("why a run is still open and how it went", () => {
+  it("words each reason, an unknown one as unknown, and nothing for a run that is not open", () => {
+    expect(heldWords({ state: "open", heldBy: "person" })).toBe("memo.d_held_person");
+    expect(heldWords({ state: "open", heldBy: "from-the-future" })).toBe("memo.d_held_unknown");
+    expect(heldWords({ state: "open", heldBy: "" })).toBeNull();
+    expect(heldWords({ state: "closed", heldBy: "machine" })).toBeNull();
+  });
+  it("words the end of the first turn", () => {
+    expect(firstTurnWords({ firstTurn: null })).toBeNull();
+    expect(firstTurnWords({ firstTurn: { outcome: "turn-aborted", ms: 1, endedAt: "" } })).toBe("memo.d_turn_aborted");
+    expect(firstTurnWords({ firstTurn: { outcome: "", ms: 1, endedAt: "" } })).toBe("memo.d_turn_ended");
+  });
+  it("reads the new delivery fields, and a null first turn", () => {
+    const [d] = readDeliveries([{ id: "d", heldBy: "limit", overdue: true, auto: true, retire: "released", firstTurn: { outcome: "clean", ms: 5 } }])!;
+    expect([d.heldBy, d.overdue, d.auto, d.retire, d.firstTurn?.outcome]).toEqual(["limit", true, true, "released", "clean"]);
+    expect(readDeliveries([{ id: "d", firstTurn: null }])![0].firstTurn).toBeNull();
+  });
+});
+
+describe("notes that changed under an open card", () => {
+  const held = (id: string, h: string) => memo({ id, state: "held", contentHash: h });
+  const key = (id: string) => "t\x00" + id;
+  const scope = (k: string) => k.startsWith("t\x00");
+  const step = (prev: ReturnType<typeof trackShown>, notes: Memo[]) => trackShown(prev, notes, key, scope);
+  const status = (recs: ReturnType<typeof trackShown>, notes: Memo[]) => shownStatus(recs, notes, key);
+
+  it("latches a change, so going back to the first hash does not clear it", () => {
+    let r = step(new Map(), [held("1", "h1")]);
+    expect(status(r, [held("1", "h1")]).edited.size).toBe(0);
+    r = step(r, [held("1", "h2")]);
+    r = step(r, [held("1", "h1")]);
+    const s = status(r, [held("1", "h1")]);
+    expect([...s.edited]).toEqual(["1"]);
+    expect([...s.awaiting]).toEqual(["1"]);
+  });
+  it("drops a confirmation when the hash moves again, even back to the confirmed one", () => {
+    let r = step(new Map(), [held("1", "h1")]);
+    r = step(r, [held("1", "h2")]);
+    r = confirmShown(r, [held("1", "h2")], key);
+    expect(status(r, [held("1", "h2")]).awaiting.size).toBe(0);
+    r = step(r, [held("1", "h3")]);
+    r = step(r, [held("1", "h2")]);
+    expect([...status(r, [held("1", "h2")]).awaiting]).toEqual(["1"]);
+  });
+  it("is idempotent for one list", () => {
+    const a = step(step(new Map(), [held("1", "h1")]), [held("1", "h1")]);
+    expect(status(a, [held("1", "h1")]).edited.size).toBe(0);
+  });
+  it("keeps a record while the note is pending or not listed as held, and forgets it when it is gone or consumed", () => {
+    let r = step(new Map(), [held("1", "h1")]);
+    r = step(r, [memo({ id: "1", state: "pending" })]);
+    expect(r.size).toBe(1);
+    r = step(r, [held("1", "h9")]);
+    expect([...status(r, [held("1", "h9")]).awaiting]).toEqual(["1"]);
+    expect(step(r, [memo({ id: "1", state: "delivered" })]).size).toBe(0);
+    expect(step(r, []).size).toBe(0);
+  });
+  it("forgets only what its own tenant owns", () => {
+    const other = new Map([["u\x00x", { first: "a", last: "a", changed: true, ack: "" }]]);
+    expect(step(other, []).has("u\x00x")).toBe(true);
   });
 });
 

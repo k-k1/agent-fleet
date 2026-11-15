@@ -30,11 +30,13 @@ export function parseBudgetText(text: string): number | null | undefined {
 }
 
 /** The PUT body: every group, always. The CP keeps a group the body leaves out, so sending all of
- *  them is what lets an admin clear one. `repos` is one owner/name per line. */
+ *  them is what lets an admin clear one. `repos` is one owner/name per line. The model is trimmed
+ *  here, not per keystroke: agy's older ids contain spaces ("Gemini 3.5 Flash (Medium)"), and a
+ *  trim on change eats each space as it is typed. */
 export function defaultsBody(agent: string, launch: LaunchDefaults, repos: string, ops: OpsSettings) {
   return {
     agent,
-    launch: { ...launch, agent: "" },
+    launch: { ...launch, agent: "", model: launch.model.trim() },
     repos: repos.split("\n").map((l) => l.trim()).filter(Boolean),
     ops,
   };
@@ -148,7 +150,7 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
         <p className="admin-hint">{tr("tenant.member_defaults_launch_note")}</p>
         <label className="admin-fld">
           <span className="af-cap">{tr("tenant.member_defaults_model")}</span>
-          <input value={launch.model} onChange={(e) => setLaunch({ ...launch, model: e.target.value.trim() })} />
+          <input value={launch.model} onChange={(e) => setLaunch({ ...launch, model: e.target.value })} />
         </label>
         <label className="admin-fld">
           <span className="af-cap">{tr("tenant.member_defaults_driver")}</span>

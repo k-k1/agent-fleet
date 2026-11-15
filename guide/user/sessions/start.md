@@ -90,7 +90,7 @@ Start lists the agents you have connected, and shell. Connecting an agent is in 
 | cursor | Cursor (needs a Cursor plan) |
 | copilot | GitHub Copilot (uses your GitHub connection) |
 | kiro | Kiro |
-| agy | Antigravity (experimental) |
+| agy | Antigravity |
 | opencode | OpenCode |
 | lcpp | The workspace's llama.cpp engine. No login needed. Listed only while **Use llama.cpp** is on in ⚙ Settings → Agents |
 | muse | Muse Code. Listed once it is installed and signed in |

@@ -340,7 +340,6 @@ export const settings = {
   "agents.agy_auth_failed": "Antigravity の認証を開始できませんでした: {msg}",
   "agents.agy_desc": "Antigravity CLI（agy）に Google OAuth で接続します。承認後にコードを貼り付けて完了します。",
   "agents.agy_desc_flow": "Antigravity CLI に Google OAuth で接続します。ログインは新しいタブで開きます。",
-  "agents.agy_exp_label": "実験枠（クォータ小・Antigravity IDE / Jules と共有）",
   "agents.agy_method_label": "認証方式",
   "agents.agy_method_oauth": "Google OAuth",
   "agents.agy_method_gcp": "GCP プロジェクト（準備中）",

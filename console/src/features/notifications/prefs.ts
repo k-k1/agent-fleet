@@ -24,6 +24,7 @@ export type NotifyRow =
   | "cloud-login"
   | "terminal"
   | "spend-budget"
+  | "auto-run"
   | "other";
 
 export type NotifyEffect = "unread" | "os" | "voice";
@@ -51,6 +52,9 @@ export const NOTIFY_ROWS: NotifyRowDef[] = [
   { row: "terminal", label: "noti.row_terminal", hint: "noti.row_terminal_hint" },
   // A budget stop waits on a person to raise the cap, so its dot cannot be muted either.
   { row: "spend-budget", label: "noti.row_spend_budget", hint: "noti.row_spend_budget_hint", unreadFixed: true },
+  // A paused or waiting auto-run asks a person to act, and an overdue or unconfirmed run needs a look,
+  // so the dot cannot be muted.
+  { row: "auto-run", label: "noti.row_auto_run", hint: "noti.row_auto_run_hint", unreadFixed: true },
   { row: "other", label: "noti.row_other", hint: "noti.row_other_hint" },
 ];
 
@@ -81,6 +85,10 @@ const KIND_ROW: Record<string, NotifyRow> = {
   "gcp-login-required": "cloud-login",
   "terminal-notification": "terminal",
   "spend-budget": "spend-budget",
+  "memo-delivery-overdue": "auto-run",
+  "memo-queue-paused": "auto-run",
+  "memo-queue-waiting": "auto-run",
+  "memo-delivery-unconfirmed": "auto-run",
 };
 
 /** The row a notification kind belongs to. A kind this Console does not know (a newer CP) lands

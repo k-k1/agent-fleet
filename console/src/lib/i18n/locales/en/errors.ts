@@ -494,4 +494,5 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memo_queue_member_limit": "Auto-run sessions are already running up to the limit (4) across all categories. Try again when one has finished.",
   "err.memo_queue_bad_repo": "This category's repository is not a single folder name, so no session can be started in it.",
   "err.memo_queue_item_invalid": "A memo in this category cannot be sent to a session as it is (too long, too many attachments, or an unusable attachment path). Edit the memo and try again.",
+  "err.session_retired": "This session was stopped after its auto-run finished. Start the session first, then send again.",
 };

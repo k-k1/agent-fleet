@@ -449,7 +449,9 @@ var (
 )
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	body := map[string]any{"ok": true, "secrets_key": secretsKeyState, "secrets_key_next": secretsKeyNext, "secrets_key_start": secretsKeyStart}
+	body := map[string]any{"ok": true, "secrets_key": secretsKeyState, "secrets_key_next": secretsKeyNext, "secrets_key_start": secretsKeyStart,
+		// The CP hands a restricted member's create only to an Agent that reports this.
+		"route_policy": routepolicy.EnforceCapability}
 	if id := taskid.Current(); id != "" {
 		body["task_id"] = id // optional: absent outside ECS and on an Agent older than this field
 	}

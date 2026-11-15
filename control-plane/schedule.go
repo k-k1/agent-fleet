@@ -153,6 +153,16 @@ func applyScheduleDefaults(s *store.Schedule) {
 
 // validateScheduleDTO normalizes + validates a create input into a Schedule (id/ledger
 // unset). It enforces the enum fields and the spec/tz, and requires a prompt.
+// scheduleRoutePolicyRefusal is the credential policy at a schedule's save (ADR 0138 D12): a
+// route the policy forbids is not saved. An assistant or wake-only schedule launches no session,
+// and an empty selection is the Agent's to judge at the fire.
+func scheduleRoutePolicyRefusal(ctx context.Context, st store.Store, s store.Schedule) *apiError {
+	if s.SessionMode == "assistant" || s.SessionMode == scheduleModeWake {
+		return nil
+	}
+	return routePolicyCreateRefusal(ctx, st, s.TenantID, s.Route)
+}
+
 func validateScheduleDTO(mv store.MembershipView, in scheduleDTO) (store.Schedule, *apiError) {
 	s := store.Schedule{
 		MembershipID: mv.MembershipID, TenantID: mv.TenantID,
@@ -374,6 +384,10 @@ func (a scheduleAPI) create(w http.ResponseWriter, r *http.Request, mv store.Mem
 		writeAPIErr(w, aerr)
 		return
 	}
+	if aerr := scheduleRoutePolicyRefusal(r.Context(), a.mgr.store, s); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	if in.Gate != nil {
 		if _, aerr := applyGateDTO(r.Context(), a.mgr.store, &s, *in.Gate); aerr != nil {
 			writeAPIErr(w, aerr)
@@ -428,6 +442,10 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 	reuseChanged := (p.ReuseTarget != nil && sch.ReuseTarget != oldReuseTarget) ||
 		(p.SessionMode != nil && sch.SessionMode != oldSessionMode)
 	if aerr := validateScheduleFields(sch); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if aerr := scheduleRoutePolicyRefusal(r.Context(), a.mgr.store, sch); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
