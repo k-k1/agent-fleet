@@ -126,6 +126,25 @@ describe("row states", () => {
     expect(button("Sign in")).toBeUndefined(); // "Connected" next to "Sign in" reads as not signed in
   });
 
+  it("connected: a long scope list collapses to a closed disclosure with the count", async () => {
+    const scopes = Array.from({ length: 40 }, (_, i) => `api-${i}.read`);
+    setStatus({ state: "connected", scopes });
+    await mount(row());
+    const list = host!.querySelector<HTMLDetailsElement>('[data-testid="mcp-scope-list"]')!;
+    expect(list).toBeTruthy();
+    expect(list.open).toBe(false);
+    expect(list.querySelector("summary")!.textContent).toBe("Scopes (40)");
+    expect(list.textContent).toContain("api-0.read api-1.read");
+    expect(list.textContent).toContain("api-39.read");
+  });
+
+  it("connected: a short scope list stays inline", async () => {
+    setStatus({ state: "connected", scopes: Array.from({ length: 12 }, (_, i) => `s${i}`) });
+    await mount(row());
+    expect(host!.querySelector('[data-testid="mcp-scope-list"]')).toBeNull();
+    expect(text()).toContain("Scopes: s0 s1");
+  });
+
   it("names a pre-registered and a dynamically registered client", async () => {
     setStatus({ state: "connected", registration: "preregistered" });
     await mount(row());

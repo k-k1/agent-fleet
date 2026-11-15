@@ -9,6 +9,7 @@ import { disconnectOAuth, fetchOAuthStatus, saveClientId, startSignIn } from "./
 import { stepUpRequest } from "./mcpOAuth.ts";
 import type { OAuthRegistration, OAuthReturn, OAuthState, OAuthStatus } from "./mcpOAuth.ts";
 import { clearSameTab, markSameTab, onSignInDone, outcomeText } from "./mcpOAuthSignal.ts";
+import { ScopeList } from "./mcpScopeList.tsx";
 
 // openSignInTab opens the tab the authorization server will be shown in. It has to run in the
 // click's own task: the authorization URL only exists after an async start call, and a window
@@ -316,7 +317,7 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
         <div className="muted">
           {status?.expiresAt ? <div>{tr("mcp.oauth_expires", { when: fmtDateTime(status.expiresAt * 1000, DATETIME_FULL) })}</div> : null}
           {status?.scopes && status.scopes.length > 0 && (
-            <div className="mono">{tr("mcp.oauth_granted_scopes", { scopes: status.scopes.join(" ") })}</div>
+            <ScopeList scopes={status.scopes} inlineKey="mcp.oauth_granted_scopes" summaryKey="mcp.oauth_granted_scopes_summary" />
           )}
         </div>
       )}

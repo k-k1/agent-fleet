@@ -66,6 +66,19 @@ describe("OAuth connection-test result", () => {
     expect(el.querySelector("button")).toBeNull(); // no sign-in button yet
   });
 
+  it("collapses a long list of the scopes the server lists", () => {
+    setLocale("ja");
+    const scopesSupported = Array.from({ length: 13 }, (_, i) => `api-${i}.read`);
+    const el = render({ ...oauth, oauth: { ...oauth.oauth!, scopesSupported } });
+    const list = el.querySelector<HTMLDetailsElement>('[data-testid="mcp-scope-list"]')!;
+    expect(list.open).toBe(false);
+    expect(list.querySelector("summary")!.textContent).toBe("サーバーが挙げたスコープ（13 個）");
+    expect(list.textContent).toContain("api-12.read");
+    // A short list (the fixture's two) is not wrapped.
+    act(() => root!.render(<ProbeView probe={oauth} />));
+    expect(el.querySelector('[data-testid="mcp-scope-list"]')).toBeNull();
+  });
+
   it("words each problem code, and names the issuer it concerns", () => {
     setLocale("en");
     const el = render({

@@ -247,3 +247,13 @@
   flex-direction: column;
   gap: 10px;
 }
+
+/* A long OAuth scope list on a server row: closed by default, the summary shows the count. */
+.mcp-scopes > summary {
+  cursor: pointer;
+}
+
+.mcp-scopes > .mono {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
