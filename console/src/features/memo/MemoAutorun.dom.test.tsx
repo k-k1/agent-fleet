@@ -52,6 +52,7 @@ const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 const { errText } = await import("../../core/api/client.ts");
 const { deliveryStateKey } = await import("./queues.ts");
+const { resetShownNotes } = await import("./shownNotes.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -151,6 +152,7 @@ const bump = async () => {
 };
 
 beforeEach(() => {
+  resetShownNotes();
   localStorage.clear();
   servedMemos = [];
   servedCats = [aCat({ queue: true })];
@@ -757,27 +759,78 @@ describe("a note that changed while its card was on screen (#4209)", () => {
     expect(memoRelease).toHaveBeenCalledWith([{ id: "m1", contentHash: "h3" }]);
   });
 
-  it("drops the mark when the note leaves the card, and keeps nothing across a reload", async () => {
+  it("keeps the mark when the hash goes back to the first one (h1 -> h2 -> h1)", async () => {
     servedMemos = [held("m1", "h1")];
     await render();
     servedMemos = [held("m1", "h2")];
     await bump();
+    servedMemos = [held("m1", "h1")];
+    await bump();
     expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(1);
-    servedMemos = [aMemo({ id: "m1", state: "pending", provenance: "member" })]; // approved elsewhere
+    await press(); // confirms the text shown now
+    expect(memoRelease).not.toHaveBeenCalled();
+    await press();
+    expect(memoRelease).toHaveBeenCalledWith([{ id: "m1", contentHash: "h1" }]);
+  });
+
+  it("does not reuse a confirmation after the text moved on (h1 -> h2 confirmed -> h3 -> h2)", async () => {
+    servedMemos = [held("m1", "h1")];
+    await render();
+    servedMemos = [held("m1", "h2")];
     await bump();
-    expect(document.querySelector(".memo-release")).toBeNull();
-    // The same note comes back held with another hash: a card shown afresh, nothing marked.
-    servedMemos = [held("m1", "h9")];
+    await press();
+    servedMemos = [held("m1", "h3")];
     await bump();
-    expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(0);
-    // A reload draws afresh: remount with the edited note in the list.
+    servedMemos = [held("m1", "h2")];
+    await bump();
+    await press();
+    expect(memoRelease).not.toHaveBeenCalled();
+    await press();
+    expect(memoRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the record when the section is drawn again", async () => {
+    servedMemos = [held("m1", "h1")];
+    await render();
+    servedMemos = [held("m1", "h2")];
+    await bump();
     act(() => root?.unmount());
     root = createRoot(host);
-    servedMemos = [held("m1", "h10")];
+    await render();
+    expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(1);
+    await press();
+    expect(memoRelease).not.toHaveBeenCalled();
+  });
+
+  it("keeps the record when the note leaves the card and comes back with another text", async () => {
+    servedMemos = [held("m1", "h1")];
+    await render();
+    servedMemos = [aMemo({ id: "m1", state: "pending", provenance: "member" })];
+    await bump();
+    expect(document.querySelector(".memo-release")).toBeNull();
+    servedMemos = [held("m1", "h9")]; // a session edited it after it was approved
+    await bump();
+    expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(1);
+    await press();
+    expect(memoRelease).not.toHaveBeenCalled();
+  });
+
+  it("starts afresh after a page reload and once the note was approved", async () => {
+    servedMemos = [held("m1", "h1")];
+    await render();
+    servedMemos = [held("m1", "h2")];
+    await bump();
+    act(() => root?.unmount());
+    resetShownNotes(); // a reload: module memory is gone
+    root = createRoot(host);
     await render();
     expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(0);
     await press();
     expect(memoRelease).toHaveBeenCalledTimes(1);
+    // Approved: the record is forgotten, so the same note held again with other text is a new card.
+    servedMemos = [held("m1", "h5")];
+    await bump();
+    expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(0);
   });
 
   it("still marks the notes a refused stale release names", async () => {

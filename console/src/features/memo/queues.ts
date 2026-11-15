@@ -335,26 +335,78 @@ export function firstTurnWords(d: Pick<MemoDelivery, "firstTurn">): MsgKey | nul
 
 // ---- notes that changed under an open card -------------------------------------------------
 
-/** The content hash each held note had the first time a card showed it, kept per note until it
- *  leaves the held notes (approved, or gone). Nothing is persisted: a reload draws afresh. A note
- *  already known keeps its first hash whatever the list says now. */
-export function reconcileShown(prev: ReadonlyMap<string, string>, memos: readonly Memo[]): Map<string, string> {
-  const next = new Map<string, string>();
-  for (const m of memos) {
+/** What a card has shown of one held note: the hash it first showed, the one shown last, whether
+ *  the hash ever moved (latched: going back to the first hash does not clear it, because the
+ *  person may have read the middle one), and the hash the person confirmed reading. */
+export interface ShownNote {
+  first: string;
+  last: string;
+  changed: boolean;
+  ack: string;
+}
+
+// From these states a note cannot come back to the card. Pending can: a session that edits an
+// approved note puts it back to held with new text, which the person has not read.
+const consumed = (state: string | undefined): boolean => state === "claimed" || state === "delivered" || state === "unconfirmed" || state === "superseded";
+
+/** Advances the records by one list. Every move to another hash latches `changed` and drops the
+ *  confirmation, so a confirmed hash is never reused after the text moved on. A record lives until
+ *  the person approves the note (forgetShown), the note is consumed by a run, or it is gone from the
+ *  list; a note that is not held for a moment and then is again keeps it. `inScope` limits what this call may forget to one tenant's keys. */
+export function trackShown(
+  prev: ReadonlyMap<string, ShownNote>,
+  memos: readonly Memo[],
+  keyOf: (id: string) => string,
+  inScope: (key: string) => boolean,
+): Map<string, ShownNote> {
+  const next = new Map(prev);
+  const byKey = new Map(memos.map((m) => [keyOf(m.id), m]));
+  for (const key of prev.keys()) {
+    if (!inScope(key)) continue;
+    const m = byKey.get(key);
+    if (!m || consumed(m.state)) next.delete(key);
+  }
+  for (const [key, m] of byKey) {
     if (m.state !== "held" || !m.contentHash) continue;
-    next.set(m.id, prev.get(m.id) ?? m.contentHash);
+    const r = next.get(key);
+    if (!r) next.set(key, { first: m.contentHash, last: m.contentHash, changed: false, ack: "" });
+    else if (r.last !== m.contentHash) next.set(key, { ...r, last: m.contentHash, changed: true, ack: "" });
   }
   return next;
 }
 
-/** The notes whose hash is no longer the one the card first showed. */
-export function editedIds(first: ReadonlyMap<string, string>, memos: readonly Memo[]): Set<string> {
-  const out = new Set<string>();
+/** The notes marked as changed, and those whose current text the person has not confirmed. */
+export function shownStatus(
+  recs: ReadonlyMap<string, ShownNote>,
+  memos: readonly Memo[],
+  keyOf: (id: string) => string,
+): { edited: Set<string>; awaiting: Set<string> } {
+  const edited = new Set<string>();
+  const awaiting = new Set<string>();
   for (const m of memos) {
-    const h = first.get(m.id);
-    if (m.state === "held" && h !== undefined && m.contentHash && m.contentHash !== h) out.add(m.id);
+    const r = recs.get(keyOf(m.id));
+    if (m.state !== "held" || !r || !r.changed) continue;
+    edited.add(m.id);
+    if (r.ack !== m.contentHash) awaiting.add(m.id);
   }
-  return out;
+  return { edited, awaiting };
+}
+
+/** The given notes were approved by the person: their records are done. */
+export function forgetShown(prev: ReadonlyMap<string, ShownNote>, items: readonly Memo[], keyOf: (id: string) => string): Map<string, ShownNote> {
+  const next = new Map(prev);
+  for (const m of items) next.delete(keyOf(m.id));
+  return next;
+}
+
+/** The person has read what is shown now: the records of the given notes take their current hash. */
+export function confirmShown(prev: ReadonlyMap<string, ShownNote>, items: readonly Memo[], keyOf: (id: string) => string): Map<string, ShownNote> {
+  const next = new Map(prev);
+  for (const m of items) {
+    const r = next.get(keyOf(m.id));
+    if (r && r.changed && m.contentHash) next.set(keyOf(m.id), { ...r, ack: m.contentHash });
+  }
+  return next;
 }
 
 // ---- deliveries --------------------------------------------------------------------------

@@ -48,8 +48,9 @@ import { errText } from "../../core/api/client.ts";
 import { MemoQueueSettingsModal } from "./MemoQueueSettingsModal.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
 import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
+import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
-import { editedIds, isStaleRelease, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, reconcileShown, releaseCards, staleIdsOf } from "./queues.ts";
+import { isStaleRelease, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, staleIdsOf } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -147,6 +148,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const tr = useT();
 
   const [memos, setMemos] = useState<Memo[]>([]);
+  // False until the first read lands: the empty list before it is not "every note is gone".
+  const [memosLoaded, setMemosLoaded] = useState(false);
   const [cats, setCats] = useState<MemoCategory[]>([]);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -197,10 +200,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const [deliveriesFor, setDeliveriesFor] = useState<string | null>(null);
   const [releasing, setReleasing] = useState<string | null>(null); // release card key in flight
   const [changedIds, setChangedIds] = useState<ReadonlySet<string>>(new Set());
-  // The content hash each held note had when a card first showed it, and the hash of an edited
-  // note the person has confirmed they read. Both live in memory only: a reload draws afresh.
-  const firstShown = useRef<Map<string, string>>(new Map());
-  const [confirmed, setConfirmed] = useState<Readonly<Record<string, string>>>({});
+  // What the cards have shown of each held note lives in shownNotes.ts, outside this component, so
+  // drawing the section again does not forget it. Confirming bumps this counter to redraw.
+  const [shownTick, setShownTick] = useState(0);
   const [resuming, setResuming] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   // Section open/closed, owned here (controlled) so the leader command can force it open.
@@ -224,6 +226,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           // one; it never takes the memo list down with it.
           const qw = readMemoQueues(qRaw) ?? lastQueues.current;
           lastQueues.current = qw;
+          setMemosLoaded(true);
           const ser = JSON.stringify([marr, carr, qw]);
           if (ser !== serRef.current) {
             serRef.current = ser;
@@ -253,17 +256,13 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   }, [composeReq]);
 
   const blocks = useMemo(() => groupMemos(memos, cats), [memos, cats]);
-  // What a card showed first, against what the poll serves now. Idempotent for one list, so a
-  // double render cannot mark a note that did not change.
-  const edited = useMemo(() => {
-    firstShown.current = reconcileShown(firstShown.current, memos);
-    return editedIds(firstShown.current, memos);
-  }, [memos]);
-  const awaiting = useMemo(() => {
-    const out = new Set<string>();
-    for (const m of memos) if (edited.has(m.id) && confirmed[m.id] !== m.contentHash) out.add(m.id);
-    return out;
-  }, [edited, confirmed, memos]);
+  // What a card showed first, against what the poll serves now (shownNotes.ts). Idempotent for one
+  // list, so a double render marks nothing new.
+  const { edited, awaiting } = useMemo(
+    () => (memosLoaded ? trackNotes(tenant ?? "", memos) : { edited: new Set<string>(), awaiting: new Set<string>() }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [memos, memosLoaded, tenant, shownTick],
+  );
   // The composer only follows a target that is still on screen: a category deleted (or
   // renamed) while it was open would otherwise leave an open composer nowhere to render.
   const target = useMemo(() => {
@@ -297,6 +296,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         bumpMemos();
         return;
       }
+      forgetNotes(tenant ?? "", items);
       setChangedIds(new Set());
       toast(t("memo.release_done", { count: items.length }), { kind: "success" });
       bumpMemos();
@@ -308,12 +308,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   };
 
   // The person has read what changed: the next press on the card approves the text drawn now.
-  const confirmChange = (items: Memo[]) =>
-    setConfirmed((c) => {
-      const n = { ...c };
-      for (const m of items) if (edited.has(m.id) && m.contentHash) n[m.id] = m.contentHash;
-      return n;
-    });
+  const confirmChange = (items: Memo[]) => {
+    confirmNotes(tenant ?? "", items);
+    setShownTick((n) => n + 1);
+  };
 
   // Lifts a category's pause (the Control Plane's circuit breaker). Resolves true when lifted.
   const resume = async (categoryId: string): Promise<boolean> => {

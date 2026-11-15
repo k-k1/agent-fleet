@@ -7,7 +7,7 @@ import {
   draftBody,
   draftErrors,
   draftOf,
-  editedIds,
+  confirmShown,
   firstTurnWords,
   heldWords,
   memoOriginWords,
@@ -15,7 +15,8 @@ import {
   pendingCount,
   readDeliveries,
   readMemoQueues,
-  reconcileShown,
+  shownStatus,
+  trackShown,
   releaseCards,
   runModeOf,
   staleIdsOf,
@@ -199,19 +200,45 @@ describe("why a run is still open and how it went", () => {
 
 describe("notes that changed under an open card", () => {
   const held = (id: string, h: string) => memo({ id, state: "held", contentHash: h });
-  it("keeps the first hash of a note and marks a different one", () => {
-    const a = reconcileShown(new Map(), [held("1", "h1"), held("2", "h2")]);
-    const now = [held("1", "h1"), held("2", "h2b")];
-    const b = reconcileShown(a, now);
-    expect(b.get("2")).toBe("h2");
-    expect([...editedIds(b, now)]).toEqual(["2"]);
-    expect(reconcileShown(b, now).get("2")).toBe("h2"); // idempotent: a second render changes nothing
+  const key = (id: string) => "t\x00" + id;
+  const scope = (k: string) => k.startsWith("t\x00");
+  const step = (prev: ReturnType<typeof trackShown>, notes: Memo[]) => trackShown(prev, notes, key, scope);
+  const status = (recs: ReturnType<typeof trackShown>, notes: Memo[]) => shownStatus(recs, notes, key);
+
+  it("latches a change, so going back to the first hash does not clear it", () => {
+    let r = step(new Map(), [held("1", "h1")]);
+    expect(status(r, [held("1", "h1")]).edited.size).toBe(0);
+    r = step(r, [held("1", "h2")]);
+    r = step(r, [held("1", "h1")]);
+    const s = status(r, [held("1", "h1")]);
+    expect([...s.edited]).toEqual(["1"]);
+    expect([...s.awaiting]).toEqual(["1"]);
   });
-  it("forgets a note that left the held ones, so a return starts afresh", () => {
-    const a = reconcileShown(new Map(), [held("1", "h1")]);
-    const gone = reconcileShown(a, [memo({ id: "1", state: "pending" })]);
-    expect(gone.size).toBe(0);
-    expect(reconcileShown(gone, [held("1", "h9")]).get("1")).toBe("h9");
+  it("drops a confirmation when the hash moves again, even back to the confirmed one", () => {
+    let r = step(new Map(), [held("1", "h1")]);
+    r = step(r, [held("1", "h2")]);
+    r = confirmShown(r, [held("1", "h2")], key);
+    expect(status(r, [held("1", "h2")]).awaiting.size).toBe(0);
+    r = step(r, [held("1", "h3")]);
+    r = step(r, [held("1", "h2")]);
+    expect([...status(r, [held("1", "h2")]).awaiting]).toEqual(["1"]);
+  });
+  it("is idempotent for one list", () => {
+    const a = step(step(new Map(), [held("1", "h1")]), [held("1", "h1")]);
+    expect(status(a, [held("1", "h1")]).edited.size).toBe(0);
+  });
+  it("keeps a record while the note is pending or not listed as held, and forgets it when it is gone or consumed", () => {
+    let r = step(new Map(), [held("1", "h1")]);
+    r = step(r, [memo({ id: "1", state: "pending" })]);
+    expect(r.size).toBe(1);
+    r = step(r, [held("1", "h9")]);
+    expect([...status(r, [held("1", "h9")]).awaiting]).toEqual(["1"]);
+    expect(step(r, [memo({ id: "1", state: "delivered" })]).size).toBe(0);
+    expect(step(r, []).size).toBe(0);
+  });
+  it("forgets only what its own tenant owns", () => {
+    const other = new Map([["u\x00x", { first: "a", last: "a", changed: true, ack: "" }]]);
+    expect(step(other, []).has("u\x00x")).toBe(true);
   });
 });
 
