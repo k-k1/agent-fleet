@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
@@ -15,6 +16,7 @@ import (
 var (
 	_ agents.CredentialResolver = agentImpl{}
 	_ agents.PerCallRouter      = agentImpl{}
+	_ agents.CallBinder         = agentImpl{}
 )
 
 // RoutesPerCall implements agents.PerCallRouter: a call's route is its model's provider.
@@ -52,19 +54,80 @@ var credentialView = func() (keys map[string]string, pref string, account oauthS
 
 // ResolveLaunch implements agents.CredentialResolver: the route of the model the session is
 // launched on, from its provider id (ADR 0138 D2), and the credential the stored keys or the
-// account login give that provider. A session can change model later; this is the launch. A
-// launch on opencode's own default model (no model named), or on a provider whose payer cannot
-// be told, resolves to nothing rather than to a guess.
+// account login give that provider. A session can change model later; this is the launch. With no
+// model named, the model opencode will choose (defaultModel). A launch whose model or payer
+// cannot be told resolves to nothing rather than to a guess.
 func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
 	keys, pref, acct := credentialView()
-	return resolveModel(m.Model, keys, pref, acct, engineProviderIDs())
+	return resolveModel(launchModel(m.Model, append(globalConfigFiles(), projectConfigFiles(m)...)), keys, pref, acct,
+		engineProviderIDs())
 }
 
 // ModelLaunch is ResolveLaunch for an opencode run outside any session (the assistant chat and the
 // one-shots), on model.
 func ModelLaunch(model string) routes.Launch {
 	keys, pref, acct := credentialView()
-	return resolveModel(model, keys, pref, acct, engineProviderIDs())
+	return resolveModel(launchModel(model, globalConfigFiles()), keys, pref, acct, engineProviderIDs())
+}
+
+// launchModel is model when it names one, else defaultModel over the config files that apply.
+func launchModel(model string, files []string) string {
+	if _, _, ok := splitModel(model); ok {
+		return model
+	}
+	return defaultModel(files, catalogView())
+}
+
+// defaultModel is a model with the provider opencode will run a launch that names none on, or ""
+// when that cannot be told. opencode's documented order is the --model flag, then the config's
+// "model", then the last model used, then the first by its internal priority; af passes no flag
+// when none is chosen. So:
+//   - The config's "model", when the files that set one agree on it. Which of two disagreeing
+//     files wins is opencode's merge order, not a contract, so disagreement resolves to nothing,
+//     and so does a file that cannot be parsed but mentions "model".
+//   - Else, when every model opencode lists (catalog, its own list as last read) is on one
+//     provider: the last used model and the first by priority are then both on it.
+func defaultModel(files, catalog []string) string {
+	set := map[string]bool{}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var top struct {
+			Model *string `json:"model"`
+		}
+		if json.Unmarshal(stripJSONC(b), &top) != nil {
+			if strings.Contains(string(b), `"model"`) {
+				return ""
+			}
+			continue
+		}
+		if top.Model != nil && strings.TrimSpace(*top.Model) != "" {
+			set[strings.TrimSpace(*top.Model)] = true
+		}
+	}
+	switch len(set) {
+	case 0:
+	case 1:
+		for m := range set {
+			return m
+		}
+	default:
+		return ""
+	}
+	prov := ""
+	for _, id := range catalog {
+		p, _, ok := splitModel(id)
+		if !ok || prov != "" && p != prov {
+			return ""
+		}
+		prov = p
+	}
+	if prov == "" {
+		return ""
+	}
+	return catalog[0]
 }
 
 func resolveModel(model string, keys map[string]string, pref string, acct oauthState, engines []string) routes.Launch {
@@ -125,10 +188,43 @@ func resolveOpencodeAI(prov string, keys map[string]string, pref string, acct oa
 		return routes.Launch{}
 	case prov == "opencode":
 		// No credential at all: a free model, which still goes to opencode.ai and which the
-		// ledger files under Zen.
-		return routes.Launch{Route: routes.RouteOpencodeZen}
+		// ledger files under Zen. It has no credential to fingerprint, so it gets the one fixed
+		// binding of the keyless route (D5b: every row carries a binding).
+		return routes.Launch{Route: routes.RouteOpencodeZen, Binding: FreeBinding}
 	}
 	return routes.Launch{}
+}
+
+// FreeBinding is the binding of opencode.ai's free models, which run with no credential at all.
+var FreeBinding = credbind.Named(routes.RouteOpencodeZen, "free")
+
+// CallBinding implements agents.CallBinder: the binding of a session call opencode filed under
+// route, from the credentials it runs with now. Only the two opencode.ai routes are filed per call
+// (usagex.RouteOfOpencodeProvider), and a binding is given only when exactly one payer can be
+// (resolveOpencodeAI) and it pays on that route: an account login pays opencode.ai calls under
+// its own route id, so a call filed under Zen while one is signed in is left unbound.
+func (agentImpl) CallBinding(route string) string {
+	keys, pref, acct := credentialView()
+	return callBinding(route, keys, pref, acct)
+}
+
+func callBinding(route string, keys map[string]string, pref string, acct oauthState) string {
+	prov := ""
+	switch route {
+	case routes.RouteOpencodeZen:
+		prov = "opencode"
+	case routes.RouteOpencodeGo:
+		prov = "opencode-go"
+	default:
+		return ""
+	}
+	if pref == UsageOff {
+		return ""
+	}
+	if l := resolveOpencodeAI(prov, keys, pref, acct); l.Route == route {
+		return l.Binding
+	}
+	return ""
 }
 
 // engineProviderIDs are the provider ids of the deployment's engines in opencode's config (the
