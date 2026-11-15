@@ -271,7 +271,7 @@ These two have a notice of their own, and no line about the reason besides it.
 
 #### When there is no line
 
-In these cases nothing starts, and no line shows.
+In these cases the cause has no line of its own. When another reason from the table also holds, that line shows; when none does, no line shows.
 
 | Situation | What to do |
 |---|---|
