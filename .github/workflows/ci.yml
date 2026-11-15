@@ -417,6 +417,10 @@ jobs:
       # diffs a deployed stack against the repo (which is how it was found).
       - name: CloudFormation templates are ASCII-only
         run: ./deploy/local/cfn-ascii-test.sh
+      # AGENTS.md wants English comments everywhere, and nothing else reads a Dockerfile's
+      # comments, so review alone let them drift back to Japanese.
+      - name: Dockerfile comments are English
+        run: ./deploy/local/dockerfile-comment-lang-test.sh
       # The workspace egress policy is 47 generated blocks; a hand edit that lets one cover a
       # node address reopens every node to workspaces on GKE (ADR 0106, 2026-10-03 addendum).
       - name: workspace egress blocks match their generator
