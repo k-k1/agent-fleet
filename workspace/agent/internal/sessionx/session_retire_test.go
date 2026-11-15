@@ -1000,3 +1000,58 @@ func TestSweepLeavesARetiredSessionsEpisodeAlone(t *testing.T) {
 		t.Skip("the sweep does nothing to this episode here, so the guard cannot be told from it")
 	}
 }
+
+// A repeated retire writes a new intent; the mark takes its id (the first date stays), so a
+// person's start between that retire's mark and its end leaves the tombstone the recovery looks for.
+func TestRepeatedRetireCrashRespectsAPersonsStart(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+	postRetire(t, "p") // retire A, complete
+	first, _ := session.ReadMeta("c")
+	in := mustBeginRetire(t, "p") // retire B
+	for _, n := range []string{"p", "c"} {
+		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in, false)
+	}
+	if m, _ := session.ReadMeta("c"); m.RetireID != in.ID || m.RetiredAt != first.RetiredAt {
+		t.Fatalf("mark = %q at %q, want retire %q at the first date %q", m.RetireID, m.RetiredAt, in.ID, first.RetiredAt)
+	}
+	if err := clearRetired("c"); err != nil { // the crash, then a person's start
+		t.Fatal(err)
+	}
+	ReconcileRetired(context.Background())
+	if m, _ := session.ReadMeta("c"); m.RetiredAt != "" {
+		t.Fatal("the recovery of a repeated retire stopped a session a person had started")
+	}
+}
+
+// A start whose clearing of the mark fails does not claim success.
+func TestStartDoesNotClaimSuccessWhenClearingTheMarkFails(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "a"})
+	postRetire(t, "a")
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if err := os.Chmod(session.MetaDir(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(session.MetaDir(), 0o700) })
+	if f, err := os.CreateTemp(session.MetaDir(), "probe"); err == nil {
+		f.Close()
+		os.Remove(f.Name())
+		t.Skip("the meta directory stays writable here (running as root?)")
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/a/start", nil)
+	req.SetPathValue("name", "a")
+	rec := httptest.NewRecorder()
+	HandleStartSession(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "retire_clear_failed") {
+		t.Fatalf("/start = %d %s", rec.Code, rec.Body)
+	}
+	if m, _ := session.ReadMeta("a"); m.RetiredAt == "" {
+		t.Fatal("the mark was cleared although the write failed")
+	}
+}

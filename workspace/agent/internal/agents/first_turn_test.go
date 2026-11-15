@@ -14,7 +14,7 @@ func TestManagedMissedFirstEndMustNotAcceptALaterTurn(t *testing.T) {
 	captureNotifier(t)
 	const sid = "managed-first"
 	status.ArmFirstTurn(sid, false)
-	status.MarkFirstTurnDelivering(sid, "task")
+	status.MarkFirstTurnDelivering(sid, "c1")
 	MarkTurnStartRun(sid, TurnInput{Prompt: "the queue's task"})
 	// The Agent dies here; the first turn ends while nothing is running, and the record stays
 	// working. A person's turn starts after the restart.
@@ -31,8 +31,8 @@ func TestManagedFirstTurnSettlesWithTheOptimisticWorkingWrite(t *testing.T) {
 	captureNotifier(t)
 	const sid = "managed-ok"
 	status.ArmFirstTurn(sid, false)
-	status.MarkFirstTurnDelivering(sid, "task")
-	MarkTurnStartRun(sid, TurnInput{Prompt: "task"})
+	status.MarkFirstTurnDelivering(sid, "c1")
+	MarkTurnStartRun(sid, TurnInput{Prompt: "task", ClientMessageID: "c1"})
 	status.PersistRev(sid, "working") // markSessionWorking after Send
 	MarkTurnEnd(sid, TurnCompleted)
 	if got, ok := status.ReadFirstTurn(sid); !ok || got.Outcome != status.TurnOutcomeClean {
@@ -60,7 +60,7 @@ func TestTheSameInputStartedTwiceIsOneTurn(t *testing.T) {
 	captureNotifier(t)
 	const sid = "managed-twice"
 	status.ArmFirstTurn(sid, false)
-	status.MarkFirstTurnDelivering(sid, "task")
+	status.MarkFirstTurnDelivering(sid, "c1")
 	in := TurnInput{Prompt: "task", ClientMessageID: "c1"}
 	MarkTurnStartRun(sid, in)
 	MarkTurnStartRun(sid, in)
@@ -71,7 +71,7 @@ func TestTheSameInputStartedTwiceIsOneTurn(t *testing.T) {
 	// A different input while the first turn has not ended is a second turn.
 	const sid2 = "managed-two"
 	status.ArmFirstTurn(sid2, false)
-	status.MarkFirstTurnDelivering(sid2, "task")
+	status.MarkFirstTurnDelivering(sid2, "c1")
 	MarkTurnStartRun(sid2, in)
 	MarkTurnStartRun(sid2, TurnInput{Prompt: "other", ClientMessageID: "c2"})
 	MarkTurnEnd(sid2, TurnCompleted)
@@ -126,5 +126,21 @@ func TestRestartVoidsAnUnconfirmedOptimisticLedger(t *testing.T) {
 	MarkTurnEnd(sid, TurnCompleted)
 	if got, ok := status.ReadFirstTurn(sid); ok {
 		t.Fatalf("a ledger the restart found unconfirmed settled: %+v", got)
+	}
+}
+
+// The first start counts like every other: a driver's start of any input but the delivery's, even
+// before any optimistic write exists, is not the delivery's turn.
+func TestAFirstStartOfAnotherInputVoidsTheLedgerWithoutAnOptimisticWrite(t *testing.T) {
+	for name, in := range map[string]TurnInput{"no id": {Prompt: "x"}, "other id": {Prompt: "x", ClientMessageID: "other"}, "rewritten id": {Prompt: "x", ClientMessageID: "msg_q_d1"}} {
+		captureNotifier(t)
+		sid := "managed-first-wrong-" + name
+		status.ArmFirstTurn(sid, false)
+		status.MarkFirstTurnDelivering(sid, "q_d1")
+		MarkTurnStartRun(sid, in)
+		MarkTurnEnd(sid, TurnCompleted)
+		if got, ok := status.ReadFirstTurn(sid); ok {
+			t.Fatalf("%s: reported %+v", name, got)
+		}
 	}
 }

@@ -72,15 +72,17 @@ func retireGate(name string) *sync.RWMutex {
 var errSessionRetired = errors.New("session_retired: this session was retired; resume it from the Console first")
 
 // clearRetired takes the mark off a session a person started. Which retire's mark it was stays on
-// the meta (RetireClearedID), in the same update.
-func clearRetired(name string) {
-	UpdateSessionMeta(name, func(m *session.Meta) bool {
+// the meta (RetireClearedID), in the same update, and the update is a checked temp-and-rename
+// write: a failure is returned, and the start that asked reports it instead of claiming success.
+func clearRetired(name string) error {
+	_, _, err := updateSessionMetaChecked(name, func(m *session.Meta) bool {
 		if m.RetiredAt == "" {
 			return false
 		}
 		m.RetiredAt, m.RetireClearedID, m.RetireID = "", m.RetireID, ""
 		return true
 	})
+	return err
 }
 
 type autoStartKey struct{}
@@ -339,10 +341,15 @@ func retireIntentRoots() []string {
 // is reported as not ended.
 func markRetired(rep *retireReport, id string) {
 	_, _, err := updateSessionMetaChecked(rep.Name, func(m *session.Meta) bool {
-		if m.RetiredAt != "" {
+		// The first date stays; the id is this retire's, so a person's start clears the mark
+		// of the retire whose intent is on disk.
+		if m.RetiredAt != "" && m.RetireID == id {
 			return false
 		}
-		m.RetiredAt, m.RetireID = time.Now().UTC().Format(time.RFC3339), id
+		if m.RetiredAt == "" {
+			m.RetiredAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		m.RetireID = id
 		return true
 	})
 	if err != nil {

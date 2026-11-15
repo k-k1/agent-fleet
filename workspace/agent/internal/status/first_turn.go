@@ -130,6 +130,11 @@ func noteFirstTurnWrite(sid string, s SessionStatus) {
 			break
 		}
 		prev, had := Read(sid)
+		if s.turnStart && t.DeliveryID != "" && s.startKey != t.DeliveryID {
+			// A driver's start of any input but the delivery's own, the first one included.
+			t.Void = true
+			break
+		}
 		if s.turnStart && t.Starts >= 1 {
 			if s.startKey != "" && s.startKey == t.LastKey {
 				return // the same input started twice (a driver marks it at send and again on the native start)

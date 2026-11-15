@@ -93,7 +93,13 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	// A person's start makes a retired session an ordinary one again (ADR 0137 §6). The
 	// callers that start sessions on their own refuse a retired one before they get here.
 	if !auto {
-		clearRetired(name)
+		if err := clearRetired(name); err != nil {
+			// Started, but still marked: the mark keeps the Agent's own starts away, and the
+			// person can press start again.
+			httpx.WriteErr(w, http.StatusInternalServerError, "retire_clear_failed",
+				"the session started, but its retired mark could not be cleared: "+err.Error())
+			return
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
