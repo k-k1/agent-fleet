@@ -113,3 +113,35 @@ func TestEndedAfterAndTurnFailureOnSessionError(t *testing.T) {
 		t.Fatalf("an unusable mark read as failed: %q", got)
 	}
 }
+
+// An old turn's late session.error that lands after the mark but before this turn's user.message
+// is not this turn's failure (EndedAfter starts at the user line, TurnFailure must too); this
+// turn's own error after its user.message is.
+func TestTurnFailureIgnoresErrorBeforeTheTurnsUserMessage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("COPILOT_HOME", filepath.Join(t.TempDir(), ".copilot"))
+	m := session.Meta{Name: "co-late", Dir: t.TempDir(), Kind: session.KindCopilot}
+	if _, err := (agentImpl{}).BuildLaunch(m, agents.LaunchOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	p := EventsPath(SessionID(m))
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	const old = `{"type":"session.error","data":{"message":"old turn failed","errorType":"query"}}` + "\n"
+	const cur = `{"type":"session.error","data":{"message":"this turn failed","errorType":"query"}}` + "\n"
+	const user = `{"type":"user.message"}` + "\n"
+	const shutdown = `{"type":"session.shutdown"}` + "\n"
+	os.WriteFile(p, []byte(user+`{"type":"assistant.turn_end"}`+"\n"), 0o600)
+	mark, _ := TurnMark(m)
+
+	os.WriteFile(p, []byte(user+`{"type":"assistant.turn_end"}`+"\n"+old+user+shutdown), 0o600)
+	if after, _ := EndedAfter(m, mark); !after {
+		t.Fatal("the shutdown after the new user message was not an end")
+	}
+	if got := TurnFailure(m, mark); got != "" {
+		t.Fatalf("the previous turn's late error became this turn's failure: %q", got)
+	}
+	os.WriteFile(p, []byte(user+`{"type":"assistant.turn_end"}`+"\n"+old+user+cur), 0o600)
+	if got := TurnFailure(m, mark); got != "this turn failed" {
+		t.Fatalf("failure = %q, want this turn's own error", got)
+	}
+}

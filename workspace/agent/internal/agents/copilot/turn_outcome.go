@@ -118,13 +118,18 @@ func failureSince(path string, mark eventsMark) string {
 		return ""
 	}
 	defer f.Close()
-	return failureFrom(f, mark.offset(f))
+	return failureFrom(f, mark.offset(f), false)
 }
 
 // failureFrom is failureSince's read, from byte offset off of the open regular file f. Shared
 // with the Terminal route's TurnFailure, which has an offset from agents.FileSizeMark instead
 // of an eventsMark.
-func failureFrom(f *os.File, off int64) string {
+//
+// userResets is the Terminal route's: an old turn's late session.error can land after the mark
+// and before this turn's user.message (the same window EndedAfterOffset allows for a late end),
+// so a user.message starts the turn and drops what was read before it. The Managed route keeps
+// it off: its failed turn writes no user.message at all.
+func failureFrom(f *os.File, off int64, userResets bool) string {
 	if _, err := f.Seek(off, io.SeekStart); err != nil {
 		return ""
 	}
@@ -148,6 +153,10 @@ func failureFrom(f *os.File, off int64) string {
 			}
 		case "assistant.message", "assistant.turn_end":
 			msg = ""
+		case "user.message":
+			if userResets {
+				msg = ""
+			}
 		}
 	}
 	return strings.TrimSpace(clip(bridge.ScrubSecrets(msg)))
@@ -178,5 +187,5 @@ func TurnFailure(m session.Meta, mark string) string {
 		return ""
 	}
 	defer f.Close()
-	return failureFrom(f, off)
+	return failureFrom(f, off, true)
 }
