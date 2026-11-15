@@ -497,8 +497,8 @@ Left out of step 1 and tracked: filing a note added from a worktree under its ba
 page, limits and glossary (#4188); moving the new error codes beside the others (#4187).
 
 *Note, 2026-11-15 (step 2: #4149, built as #4200, #4216, #4233 and #4240).* Step 2 of §11 is merged. Step 1 was seen
-on a deployment the same day (#4148); nothing of step 2 has run on one yet. Building it settled the following, which
-the text above does not say or says differently.
+on a deployment the same day (#4148); nothing of step 2 has run on one yet. The points below are where building it
+made the text above concrete or departed from it. Where a point only confirms §6 or §7, it says so.
 
 - **What the Agent reports.** Per session row: `wakers` (its watches and its timers, built-in subscriptions and a
   notice being delivered included), or `wakersUnknown` when the Agent cannot tell. §6 also names a booked resume and
@@ -524,10 +524,12 @@ the text above does not say or says differently.
   a clock. Keeping a read, counting it and closing on it are one transaction behind the member's row lock. A delivery
   closes on the second read in a row with nothing holding it. While the workspace is stopped only a delivery last
   seen with nothing holding it may close.
-- **Closing, then stopping.** A clean close records that a retire is owed, and the retire is repeated on later ticks
-  until the Agent says `complete`. It never wakes a workspace. A 404 is not a confirmation; a session is taken as
-  gone only from a list read after the close. When the Agent says the root was released, the Control Plane stops
-  repeating: a person has the session.
+- **Closing, then stopping.** A clean close records that a retire is owed. A retire the Agent has not confirmed is
+  repeated on later ticks, and a stopped workspace is not woken for the retire of a delivery that has closed. The
+  repeats end with a result kept on the delivery: the Agent said `complete`; the Agent said the root was released (a
+  person has the session); everything but released children is stopped; the Agent refused the session as not a
+  root, which is a fault and is logged; or the session is missing from a list read after the close. A 404 is not a
+  confirmation.
 - **Two versions side by side.** A database constraint refuses a clean close of a delivery whose last report holds
   it, so a Control Plane older than step 2 cannot free that slot by its own rule. The count of clear reads does not
   trust a count the older rule wrote. Rollout rule, with step 1's: turn the tenant switch on only when every Control
@@ -538,8 +540,8 @@ the text above does not say or says differently.
   message, one fire per member per round.
 - **When a queue is open.** A window is a cron expression for its start, a length in minutes, and a time zone kept
   with the queue: the Control Plane does not know a member's zone, so the Console sends the browser's. A threshold
-  starts after a minute with nothing added, and the queue then drains; that it is draining is stored in the row, a
-  pause keeps it, and disabling the queue clears it. A window and a threshold together are refused.
+  waits a minute with nothing added and then drains, as §6 says; that it is draining is stored in the row, a pause
+  keeps it, and disabling the queue clears it. A window and a threshold together are refused.
 - **Back-off.** A delivery that was provably not sent returns its messages, and the queue then waits: five minutes,
   doubling to four hours. §6 says "the queue backs off" without a number.
 - **The breaker (§7).** It looks at the two newest deliveries whose first turn is recorded, counted since the last
@@ -547,13 +549,16 @@ the text above does not say or says differently.
   start by themselves and leaves "fire now" working.
 - **The usage limit (§7).** Kept per delivery as the agent kinds of the limited sessions in its tree, and compared
   with the queue's kind at the claim.
-- **Wakes made only to settle.** At most two per tick and one per member in ten minutes, each recorded as a closed
-  delivery row of its own outcome so that it counts toward the day. A workspace whose Agent does not report is never
-  woken for this, and no workspace is woken to retire.
-- **Overdue.** `maxTaskHours` per queue, 1 to 72, default 12, counted from when the delivery opened. One
-  notification. Retire only after an hour with no progress anywhere in the tree.
-- **Notifications.** Four kinds: overdue, paused, every run of a category waiting for the member, a message that
-  could not be confirmed as sent. Each is told once.
+- **Wakes made only to settle.** As §6 says for a `sending` delivery, and also for an open delivery that is overdue
+  and not yet retired, when such deliveries hold every slot of a queue that would otherwise fire. At most two per
+  tick and one per member in ten minutes, each recorded as a closed delivery row of its own outcome so that it
+  counts toward the day. A queue whose workspace is already recorded as having an Agent that does not report is not
+  woken for this; a workspace not yet read can be, and the check after the start then records it.
+- **Overdue.** As §6 says (12 hours by default, retire only after an hour with no progress anywhere in the tree).
+  New: the bound is a setting per queue, `maxTaskHours`, 1 to 72; it counts from when the delivery opened; the
+  member is told once.
+- **Notifications.** The four of §7 (paused, every slot waiting for a person, unconfirmed, overdue). New: each is
+  told once per occurrence, and "every slot waiting" once per set of deliveries.
 - **Words on screen.** Auto-run runs "at any time", "in a time window" or "once notes are waiting". A run that is
   still open says why: working, waiting for you, waiting for a usage limit, waiting on a watch or a timer, not known.
   Overdue is 期限超過 in Japanese (the owner's choice), and the button is 今すぐ実行, as for schedules. An approval
