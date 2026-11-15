@@ -42,7 +42,12 @@ const (
 	// A delivery open longer than max_task_hours is overdue (ADR 0137 section 6).
 	memoQueueMaxTaskHoursDefault = 12
 	memoQueueMaxTaskHoursMax     = 72
-	memoQueueInstructionMax      = 16 << 10
+	// Fires by themselves: the daily bound, the longest window and the largest threshold.
+	memoQueueMaxFiresDefault = 20
+	memoQueueMaxFiresMax     = 200
+	memoQueueWindowMax       = 24 * 60
+	memoQueueOpenAfterMax    = 100
+	memoQueueInstructionMax  = 16 << 10
 )
 
 // memoFace is the route a memo request arrived by.
@@ -276,7 +281,22 @@ type memoQueueDTO struct {
 	MaxActive   int     `json:"maxActive"`
 	Batch       int     `json:"batch"`
 	// MaxTaskHours is how long one of its deliveries may stay open before it is overdue.
-	MaxTaskHours int    `json:"maxTaskHours"`
+	MaxTaskHours int `json:"maxTaskHours"`
+	// When the queue fires by itself (ADR 0137 section 6): OpenCron, OpenMinutes and TZ are a
+	// window, OpenAfter a threshold, none of them always. MaxFiresPerDay bounds 24 hours.
+	OpenCron       string `json:"openCron"`
+	OpenMinutes    int    `json:"openMinutes"`
+	TZ             string `json:"tz"`
+	OpenAfter      int    `json:"openAfter"`
+	MaxFiresPerDay int    `json:"maxFiresPerDay"`
+	// State, set by the Control Plane: Paused is the circuit breaker (PausedAt, PausedReason),
+	// Draining a threshold queue that is emptying, and NoReportAt is set while its fires by
+	// themselves are held back because the workspace's Agent does not send the queue report.
+	Paused       bool   `json:"paused"`
+	PausedAt     string `json:"pausedAt"`
+	PausedReason string `json:"pausedReason"`
+	Draining     bool   `json:"draining"`
+	NoReportAt   string `json:"noReportAt"`
 	Enabled      bool   `json:"enabled"`
 	Generation   int    `json:"generation"`
 	CreatedAt    string `json:"createdAt"`
@@ -287,6 +307,8 @@ func memoQueueToDTO(q store.MemoQueue, c store.MemoCategory) memoQueueDTO {
 	return memoQueueDTO{CategoryID: q.CategoryID, Repo: c.Repo, Category: c.Name, Instruction: q.Instruction,
 		AgentKind: q.AgentKind, Model: q.Model, Effort: q.Effort, Route: q.Route, SpendCapUSD: q.SpendCapUSD,
 		Worktree: q.Worktree, MaxActive: q.MaxActive, Batch: q.Batch, MaxTaskHours: memoQueueTaskHours(q),
+		OpenCron: q.OpenCron, OpenMinutes: q.OpenMinutes, TZ: q.TZ, OpenAfter: q.OpenAfter, MaxFiresPerDay: memoQueueFiresPerDay(q),
+		Paused: q.Paused, PausedAt: q.PausedAt, PausedReason: q.PausedReason, Draining: q.Draining, NoReportAt: q.NoReportAt,
 		Enabled: q.Enabled, Generation: q.Generation, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}
 }
 
@@ -303,8 +325,21 @@ type memoQueueIn struct {
 	MaxActive   *int    `json:"maxActive"`
 	Batch       *int    `json:"batch"`
 	// MaxTaskHours is omitted for the default, like the numbers above.
-	MaxTaskHours *int `json:"maxTaskHours"`
-	Enabled      bool `json:"enabled"`
+	MaxTaskHours   *int   `json:"maxTaskHours"`
+	OpenCron       string `json:"openCron"`
+	OpenMinutes    int    `json:"openMinutes"`
+	TZ             string `json:"tz"`
+	OpenAfter      int    `json:"openAfter"`
+	MaxFiresPerDay *int   `json:"maxFiresPerDay"`
+	Enabled        bool   `json:"enabled"`
+}
+
+// memoQueueFiresPerDay is the queue's daily bound, the default for a row that never had one.
+func memoQueueFiresPerDay(q store.MemoQueue) int {
+	if q.MaxFiresPerDay < 1 {
+		return memoQueueMaxFiresDefault
+	}
+	return q.MaxFiresPerDay
 }
 
 // memoQueueTaskHours is the queue's overdue bound, the default for a row that never had one.
@@ -334,7 +369,12 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 		Batch:       memoQueueBatchDefault,
 		Enabled:     in.Enabled,
 
-		MaxTaskHours: memoQueueMaxTaskHoursDefault,
+		MaxTaskHours:   memoQueueMaxTaskHoursDefault,
+		MaxFiresPerDay: memoQueueMaxFiresDefault,
+		OpenCron:       strings.TrimSpace(in.OpenCron),
+		OpenMinutes:    in.OpenMinutes,
+		TZ:             strings.TrimSpace(in.TZ),
+		OpenAfter:      in.OpenAfter,
 	}
 	if q.AgentKind == "" {
 		q.AgentKind = "claude"
@@ -379,6 +419,33 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 	}
 	if q.MaxTaskHours < 1 || q.MaxTaskHours > memoQueueMaxTaskHoursMax {
 		return q, badQueueSettings(fmt.Sprintf("maxTaskHours must be between 1 and %d", memoQueueMaxTaskHoursMax))
+	}
+	if in.MaxFiresPerDay != nil {
+		q.MaxFiresPerDay = *in.MaxFiresPerDay
+	}
+	if q.MaxFiresPerDay < 1 || q.MaxFiresPerDay > memoQueueMaxFiresMax {
+		return q, badQueueSettings(fmt.Sprintf("maxFiresPerDay must be between 1 and %d", memoQueueMaxFiresMax))
+	}
+	if q.OpenAfter < 0 || q.OpenAfter > memoQueueOpenAfterMax {
+		return q, badQueueSettings(fmt.Sprintf("openAfter must be between 0 (off) and %d", memoQueueOpenAfterMax))
+	}
+	if q.OpenCron != "" {
+		if q.OpenAfter != 0 {
+			return q, badQueueSettings("a queue opens in a window or after a number of messages, not both")
+		}
+		if _, err := parseCron(q.OpenCron); err != nil {
+			return q, badQueueSettings("openCron: " + err.Error())
+		}
+		if q.OpenMinutes < 1 || q.OpenMinutes > memoQueueWindowMax {
+			return q, badQueueSettings(fmt.Sprintf("openMinutes must be between 1 and %d", memoQueueWindowMax))
+		}
+		if q.TZ != "" {
+			if _, err := time.LoadLocation(q.TZ); err != nil {
+				return q, badQueueSettings("tz is not an IANA time zone")
+			}
+		}
+	} else {
+		q.OpenMinutes, q.TZ = 0, ""
 	}
 	if len(q.Instruction) > memoQueueInstructionMax {
 		return q, badQueueSettings(fmt.Sprintf("instruction is at most %d bytes", memoQueueInstructionMax))
@@ -506,6 +573,21 @@ func (a memoAPI) deleteQueue(w http.ResponseWriter, r *http.Request, _ store.Ide
 	})
 	if aerr := memoTxResult(err); aerr != nil {
 		writeAPIErr(w, aerr)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// resumeQueue (POST /api/memo-queues/{categoryId}/resume) lifts the circuit breaker's pause and
+// restarts its count from now. Console only. A queue that is not paused answers the same.
+func (a memoAPI) resumeQueue(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	found, err := a.store.ResumeMemoQueue(r.Context(), mv.MembershipID, r.PathValue("categoryId"), store.DeliveryTS(time.Now()))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "queue not found"})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

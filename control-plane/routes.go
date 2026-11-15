@@ -620,6 +620,7 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/memo-queues", memo.withMembership(memo.listQueues))
 	mux.HandleFunc("PUT /api/memo-queues/{categoryId}", memo.withMembership(memo.putQueue))
 	mux.HandleFunc("DELETE /api/memo-queues/{categoryId}", memo.withMembership(memo.deleteQueue))
+	mux.HandleFunc("POST /api/memo-queues/{categoryId}/resume", memo.withMembership(memo.resumeQueue))
 	// Fire now and the delivery ledger (ADR 0137 section 6): Console only. The fire is a
 	// person's press, through the same reservation and claim as an automatic fire.
 	mux.HandleFunc("POST /api/memo-queues/{categoryId}/fire", memo.withResolved(memo.fire))

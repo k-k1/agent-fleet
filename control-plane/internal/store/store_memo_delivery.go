@@ -31,6 +31,10 @@ const (
 	DeliveryAborted = "aborted"
 	DeliveryUnknown = "unknown"
 	DeliveryNotSent = "not_sent"
+	// DeliveryWake is a closed row with no messages and no session: a wake made only to settle
+	// the deliveries of a stopped workspace (ADR 0137 section 6), kept so that it counts as a
+	// fire of the day.
+	DeliveryWake = "wake"
 )
 
 // MemoDelivery is one fire of a queue. QueueID is the queue's category id.
@@ -60,6 +64,8 @@ type MemoDelivery struct {
 	// RetireResult is how a pending retire ended: confirmed, released (a person started the
 	// session after the retire began), done, gone or fault.
 	RetireResult string
+	// Auto is set for a delivery the dispatcher fired by itself, not one a person pressed.
+	Auto bool
 	// TurnEndedAt is "" until the first turn of the delivery's session was seen to end. It and
 	// the two fields beside it are written once.
 	TurnOutcome, TurnEndedAt string
@@ -100,6 +106,9 @@ type MemoDeliveryStore interface {
 	GetMemoDelivery(ctx context.Context, id string) (MemoDelivery, bool, error)
 	// ListMemoDeliveries returns a queue's deliveries, newest first, at most limit.
 	ListMemoDeliveries(ctx context.Context, membershipID, queueID string, limit int) ([]MemoDelivery, error)
+	// ListRecentTurnDeliveries returns a queue's deliveries created after the given time whose
+	// first turn was recorded, newest first, at most limit.
+	ListRecentTurnDeliveries(ctx context.Context, queueID, after string, limit int) ([]MemoDelivery, error)
 	// ListLiveMemoDeliveries returns every delivery that is not closed, of every member,
 	// oldest first: the scheduler's work.
 	ListLiveMemoDeliveries(ctx context.Context) ([]MemoDelivery, error)
@@ -131,6 +140,11 @@ type MemoDeliveryTxOps interface {
 	// CountUnsentDeliveries counts the membership's deliveries in claimed or sending: the
 	// ones that have no session yet.
 	CountUnsentDeliveries() (int, error)
+	// CountDeliveriesCreatedSince counts the queue's deliveries created at or after since,
+	// whatever their state: the fires of the day, wakes included.
+	CountDeliveriesCreatedSince(queueID, since string) (int, error)
+	// CountWakesSince counts the queue's wakes made only to settle, created at or after since.
+	CountWakesSince(queueID, since string) (int, error)
 	// CountDeliveriesStartedSince counts the membership's deliveries other than except that
 	// are sending, or were sent or opened at or after since: the ones whose session a session
 	// count taken at since may not show.
@@ -169,17 +183,17 @@ type MemoDeliveryTxOps interface {
 const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, session, message_ids, idle_ticks,
 	created_at, sent_at, opened_at, closed_at, updated_at,
 	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at, retire_result,
-	turn_outcome, turn_ms, turn_ended_at FROM memo_delivery`
+	turn_outcome, turn_ms, turn_ended_at, auto FROM memo_delivery`
 
 func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	var d MemoDelivery
 	var ids string
-	var reported, retire int
+	var reported, retire, auto int
 	err := row.Scan(&d.ID, &d.MembershipID, &d.QueueID, &d.State, &d.Outcome, &d.Session, &ids, &d.IdleTicks,
 		&d.CreatedAt, &d.SentAt, &d.OpenedAt, &d.ClosedAt, &d.UpdatedAt,
 		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt, &d.RetireResult,
-		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt)
-	d.Reported, d.RetirePending = reported != 0, retire != 0
+		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto)
+	d.Reported, d.RetirePending, d.Auto = reported != 0, retire != 0, auto != 0
 	d.MessageIDs = []string{}
 	if err == nil && ids != "" {
 		_ = json.Unmarshal([]byte(ids), &d.MessageIDs)
@@ -212,13 +226,32 @@ func (s *SQL) GetMemoDelivery(ctx context.Context, id string) (MemoDelivery, boo
 }
 
 func (s *SQL) ListMemoDeliveries(ctx context.Context, membershipID, queueID string, limit int) ([]MemoDelivery, error) {
-	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE membership_id=? AND queue_id=?
-		ORDER BY created_at DESC, id DESC LIMIT ?`, membershipID, queueID, limit))
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND outcome<>?
+		ORDER BY created_at DESC, id DESC LIMIT ?`, membershipID, queueID, DeliveryWake, limit))
 }
 
 func (s *SQL) ListLiveMemoDeliveries(ctx context.Context) ([]MemoDelivery, error) {
 	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state IN (?,?,?)
 		ORDER BY created_at, id`, DeliveryClaimed, DeliverySending, DeliveryOpen))
+}
+
+func (s *SQL) ListRecentTurnDeliveries(ctx context.Context, queueID, after string, limit int) ([]MemoDelivery, error) {
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE queue_id=? AND turn_ended_at<>'' AND created_at>?
+		ORDER BY created_at DESC, id DESC LIMIT ?`, queueID, after, limit))
+}
+
+func (t memoTx) CountWakesSince(queueID, since string) (int, error) {
+	var n int
+	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_delivery WHERE membership_id=? AND queue_id=? AND created_at>=? AND outcome=?`,
+		t.mid, queueID, since, DeliveryWake).Scan(&n)
+	return n, err
+}
+
+func (t memoTx) CountDeliveriesCreatedSince(queueID, since string) (int, error) {
+	var n int
+	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_delivery WHERE membership_id=? AND queue_id=? AND created_at>=?`,
+		t.mid, queueID, since).Scan(&n)
+	return n, err
 }
 
 func (s *SQL) MarkMemoDeliveryIdle(ctx context.Context, id string, ticks int) (bool, error) {
@@ -332,9 +365,9 @@ func (t memoTx) CountLiveDeliveries(queueID string) (int, int, error) {
 func (t memoTx) InsertDelivery(d MemoDelivery) error {
 	ids, _ := json.Marshal(append([]string{}, d.MessageIDs...))
 	_, err := t.q.ExecContext(t.ctx, `INSERT INTO memo_delivery(id, membership_id, queue_id, state, outcome, session,
-		message_ids, idle_ticks, created_at, sent_at, opened_at, closed_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		message_ids, idle_ticks, created_at, sent_at, opened_at, closed_at, updated_at, auto) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		d.ID, t.mid, d.QueueID, d.State, d.Outcome, d.Session, string(ids), d.IdleTicks,
-		d.CreatedAt, d.SentAt, d.OpenedAt, d.ClosedAt, d.UpdatedAt)
+		d.CreatedAt, d.SentAt, d.OpenedAt, d.ClosedAt, d.UpdatedAt, b2i(d.Auto))
 	return err
 }
 

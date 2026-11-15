@@ -367,6 +367,41 @@ disables.
   appears. The delivery DTO carries `heldBy`, `heldSession`, `heldSeenAt`, `overdue`,
   `overdueAt` and `firstTurn`.
 
+  **The dispatcher** ([decisions/0137](../decisions/0137-message-queues.md) §6 and §7; it
+  runs after the settle pass, in the room the settle's sends left of the tick's two queue
+  slots, within a 45 second budget). It fires queues by themselves through the same
+  `memoReserveAndClaim` as "fire now", under the membership row's lock, so two Control
+  Planes never claim more than the free slots; every condition is read from stored state,
+  none from memory. A queue fires when its tenant switch is on, it is `enabled`, not
+  `paused`, open, has `pending` messages, and no session of the member that waits for a usage
+  limit (`held_by = limit`) belongs to a queue of the same agent kind. **Open**: always, or a
+  window (`openCron` matched within the last `openMinutes`, in the IANA zone `tz`, UTC when
+  empty), or a threshold (`openAfter` pending messages with nothing added or released for a
+  minute, then `draining` is kept in the row until nothing is pending). **Caps**:
+  `maxFiresPerDay` (default 20, 1–200) counts the deliveries created in the last 24 hours,
+  read inside the claim, wakes made only to settle included. **Order**: the member whose
+  oldest pending message waited longest, and in a member the queue with the oldest message,
+  one fire per member per round. **Circuit breaker**: the last two deliveries with a
+  recorded first turn, created since the queue was last resumed (`breaker_after`), that
+  both failed, were aborted, or ended within a minute without a clean end pause the queue
+  (`paused`, `paused_reason`) and notify once (`memo-queue-paused`);
+  `POST /api/memo-queues/{id}/resume` lifts it. A pause stops fires by themselves, not
+  "fire now". **An Agent that does not send `queueReport`** is not fired into by itself: a
+  running workspace is read and `no_report_at` set (shown in the queue DTO); a stopped one is
+  not read, and a delivery fired by itself (`memo_delivery.auto`) checks after its wake and
+  returns its messages when the report is missing. **Wakes made only to settle**: when every
+  slot of a queue with pending messages is held by a `sending` delivery, or an overdue one
+  waiting for its retire, in a stopped workspace, the workspace is woken (in one of the
+  tick's fire slots, at most once in ten minutes), recorded as a closed delivery with
+  outcome `wake` that counts as a fire of the day and is not listed. **Notifications**, each
+  once through its `EventID`: `memo-queue-paused`, `memo-queue-waiting` (every slot held by a
+  session that waits for a person, per set of deliveries) and `memo-delivery-unconfirmed`.
+  **Deletion guard**: an enabled queue blocks deleting its repository like an enabled
+  schedule (`schedule_in_use`). **Mixed versions**: an older Control Plane never fires by
+  itself, its settings PUT lists none of the new columns and so keeps every setting and
+  state (a pause too), and a queue it creates gets today's defaults (always open, 20 a
+  day). A new Control Plane's PUT replaces the settings and leaves the state alone.
+
 - **The reaper (idle stop)** — `AF_IDLE_SWEEP_INTERVAL` (1 minute). **On by default**:
   a session idles out after an hour (`AF_SESSION_IDLE_TIMEOUT`), a session waiting on a
   person — a question, a plan approval, a permission — after `AF_INTERACTION_IDLE_TIMEOUT`

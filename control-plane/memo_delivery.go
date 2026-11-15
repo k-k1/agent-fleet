@@ -120,6 +120,8 @@ type memoDeliveryDTO struct {
 	// Overdue is set once the delivery passed its queue's maxTaskHours, OverdueAt when.
 	Overdue   bool   `json:"overdue"`
 	OverdueAt string `json:"overdueAt"`
+	// Auto is set for a delivery the dispatcher fired by itself.
+	Auto bool `json:"auto"`
 	// Retire is where the retire of a closed delivery's session stands: "pending", or how it
 	// ended (confirmed, released: a person took the session over, done, gone, fault), "" when
 	// none was needed.
@@ -142,7 +144,7 @@ func memoDeliveryToDTO(d store.MemoDelivery) memoDeliveryDTO {
 		ids = []string{}
 	}
 	out := memoDeliveryDTO{ID: d.ID, State: d.State, Outcome: d.Outcome, Session: d.Session, MessageIDs: ids,
-		CreatedAt: d.CreatedAt, SentAt: d.SentAt, ClosedAt: d.ClosedAt, Overdue: d.OverdueAt != "", OverdueAt: d.OverdueAt}
+		CreatedAt: d.CreatedAt, SentAt: d.SentAt, ClosedAt: d.ClosedAt, Overdue: d.OverdueAt != "", OverdueAt: d.OverdueAt, Auto: d.Auto}
 	if d.State == store.DeliveryOpen && d.Reported {
 		out.HeldBy, out.HeldSession, out.HeldSeenAt = d.HeldBy, d.HeldSession, d.HeldSeenAt
 	}
@@ -208,7 +210,7 @@ func memoFireNow(ctx context.Context, mgr *manager, res *resolved, categoryID st
 	var out store.MemoDelivery
 	var refusal *apiError
 	err = mgr.store.MemoTx(ctx, res.mv.MembershipID, func(tx store.MemoTxOps) error {
-		d, aerr, err := memoReserveAndClaim(tx, categoryID, running, limit)
+		d, aerr, err := memoReserveAndClaim(tx, categoryID, running, limit, false)
 		if err != nil {
 			return err
 		}
@@ -222,10 +224,10 @@ func memoFireNow(ctx context.Context, mgr *manager, res *resolved, categoryID st
 	return out, refusal
 }
 
-// memoReserveAndClaim runs inside a MemoTx. running is the member's running metered sessions
+// memoReserveAndClaim runs inside a MemoTx. auto marks a delivery the dispatcher fires by itself. running is the member's running metered sessions
 // (-1 when unknown, then the quota is not checked, as the Console's create does), limit the
 // max_sessions cap (0 = none).
-func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit int) (store.MemoDelivery, *apiError, error) {
+func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit int, auto bool) (store.MemoDelivery, *apiError, error) {
 	none := store.MemoDelivery{}
 	c, ok, err := tx.GetCategory(categoryID)
 	if err != nil {
@@ -291,7 +293,7 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 	})
 	now := store.DeliveryTS(time.Now())
 	d := store.MemoDelivery{ID: store.NewID(), QueueID: c.ID, State: store.DeliveryClaimed, MessageIDs: []string{},
-		CreatedAt: now, UpdatedAt: now}
+		CreatedAt: now, UpdatedAt: now, Auto: auto}
 	// Pick the batch and check every message of it before anything is claimed: a refusal
 	// commits (the holds below stay), so a claim made before it would be left with no delivery.
 	var batch []store.Memo
@@ -357,6 +359,9 @@ func (a memoAPI) listDeliveries(w http.ResponseWriter, r *http.Request, _ store.
 // one of the tick's fire slots.
 type memoQueueTick interface {
 	settle(ctx context.Context, now time.Time) []store.MemoDelivery
+	// dispatch fires the queues that are open by themselves, at most room deliveries, and
+	// answers the claimed ones for the tick to send (memo_dispatch.go).
+	dispatch(ctx context.Context, now time.Time, room int) ([]store.MemoDelivery, []func(context.Context))
 	send(ctx context.Context, d store.MemoDelivery)
 }
 
@@ -376,6 +381,11 @@ type memoQueueRunner struct {
 	budget time.Duration
 	// settleBudget bounds one tick's settle pass (memoSettleBudget).
 	settleBudget time.Duration
+	// tickViews is the settle pass's view of each member's workspace in this tick, which the
+	// dispatch pass that follows reuses. A tick is one goroutine, so no lock.
+	tickViews map[string]*memoMemberView
+	// wakeJobs are the wakes made only to settle that this tick's dispatch pass decided on.
+	wakeJobs []func(context.Context)
 }
 
 func newMemoQueueRunner(mgr *manager, f *wakeFirer) *memoQueueRunner {
@@ -417,6 +427,7 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 	}
 	stale := store.DeliveryTS(now.Add(-r.budget))
 	views := map[string]*memoMemberView{}
+	r.tickViews = views // the dispatcher of this tick reads each workspace once, through the same views
 	hours := map[string]map[string]int{}
 	var sends []store.MemoDelivery
 	for _, d := range ds {
@@ -1154,9 +1165,16 @@ func (r *memoQueueRunner) closeNotSent(ctx context.Context, d store.MemoDelivery
 // cannot be found: its messages become unconfirmed, shown to the person and never fired again
 // by themselves. A duplicate would do the work twice.
 func (r *memoQueueRunner) closeUnknown(ctx context.Context, d store.MemoDelivery) {
-	if _, err := memoDeliveryMove(ctx, r.mgr.store, d, store.DeliverySending, store.DeliveryClosed, "", store.DeliveryUnknown,
-		func(tx store.MemoTxOps, _ string) error { return tx.UnconfirmDeliveryMessages(d.ID) }); err != nil {
+	won, err := memoDeliveryMove(ctx, r.mgr.store, d, store.DeliverySending, store.DeliveryClosed, "", store.DeliveryUnknown,
+		func(tx store.MemoTxOps, _ string) error { return tx.UnconfirmDeliveryMessages(d.ID) })
+	if err != nil {
 		log.Printf("memo queue: delivery %s: close as unknown: %v", d.ID, err)
+		return
+	}
+	if won {
+		// The messages are shown to the person and never fired again by themselves: tell them
+		// once. A close that lost the write to another Control Plane is told by that one.
+		r.notifyQueue(ctx, d, "memo-delivery-unconfirmed", "memo-unconfirmed-"+d.ID, map[string]any{"messages": len(d.MessageIDs)})
 	}
 }
 
@@ -1228,6 +1246,10 @@ func (r *memoQueueRunner) send(ctx context.Context, d store.MemoDelivery) {
 		return
 	}
 	if !r.wake(ctx, res, d) {
+		return
+	}
+	if d.Auto && !r.autoAgentReports(ctx, res, d) {
+		notSent("the Agent does not send the queue report, so nothing is fired into it by itself")
 		return
 	}
 	// The quota: the running sessions as the Agent counts them now, and, in the move to

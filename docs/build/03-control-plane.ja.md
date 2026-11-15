@@ -290,7 +290,35 @@ Workspace を起こさない。
   見えたら消す）まで tick ごとに繰り返す。枠は、報告が木に何も保持が無いと言った時点で通常の規則が
   空ける。人の返事を待つセッションは設計どおり占有のまま。配信のセッションの最初のターン
   （`queueTurn`）は、現れたときに配信へ写す。配信の DTO には `heldBy`・`heldSession`・
-  `heldSeenAt`・`overdue`・`overdueAt`・`firstTurn` が付く。
+  `overdueAt`・`firstTurn` が付く。
+
+  **dispatcher**（[decisions/0137](../decisions/0137-message-queues.ja.md) §6・§7。settle のあと、
+  tick のキュー用 2 枠のうち settle の送信が残した分で、45 秒の持ち時間で動く）。「今すぐ送る」と
+  同じ `memoReserveAndClaim` を membership の行のロックの下で通してキューが自分で発火するので、
+  2 つの Control Plane が空き枠より多く確保することはなく、条件はすべて保存した状態から読む
+  （メモリには持たない）。発火するのは、テナントのスイッチが on で、`enabled`、`paused` でなく、
+  開いていて、`pending` があり、同じ agent kind のキューに属するセッションで利用上限を待っているもの
+  （`held_by = limit`）がメンバーに無いとき。**開く条件**: 常時、窓（`openCron` が直近 `openMinutes`
+  以内に当たっている。IANA ゾーン `tz`、空なら UTC）、閾値（`openAfter` 件が pending で、1 分間
+  何も追加・リリースされていない。そのあと pending が空になるまで `draining` を行に残す）。**上限**:
+  `maxFiresPerDay`（既定 20、1〜200）は直近 24 時間に作った配信を数え、claim の中で読む。決済だけの
+  起こしも含む。**順序**: 最も長く待つメッセージを持つメンバー、メンバーの中では最も古い
+  メッセージのキュー、1 ラウンドにつきメンバー 1 発火。**サーキットブレーカー**: 最初のターンが
+  記録されていて、最後の再開（`breaker_after`）より後に作られた直近 2 つの配信が、どちらも失敗・
+  中断・クリーンな終わりなしの 1 分以内の終了だったとき、キューを止め（`paused`・`paused_reason`）、
+  1 回だけ通知する（`memo-queue-paused`）。`POST /api/memo-queues/{id}/resume` で戻す。一時停止が止める
+  のは自動の発火で、「今すぐ送る」は止めない。**`queueReport` を送らない Agent** には自動では
+  発火しない: 動いている Workspace は読んで `no_report_at` を立て（キューの DTO に出る）、止まって
+  いるものは読まない。自動で撃った配信（`memo_delivery.auto`）は起こしたあとに確かめ、報告が無ければ
+  メッセージを戻す。**決済だけの起こし**: pending があるキューの全枠が、止まった Workspace の
+  `sending` か、retire を待つ overdue の配信で埋まっているとき、Workspace を起こす（tick の発火枠の
+  1 つで、10 分に 1 回まで）。結果 `wake` の閉じた配信として記録し、その日の発火に数え、一覧には出さない。
+  **通知**（それぞれ `EventID` で 1 回）: `memo-queue-paused`、`memo-queue-waiting`（全枠が人の返事待ちの
+  セッションで埋まっている。配信の組ごと）、`memo-delivery-unconfirmed`。**削除ガード**: 有効な
+  キューはスケジュールと同じようにリポジトリの削除を止める（`schedule_in_use`）。**版が混在するとき**:
+  古い Control Plane は自分では発火せず、その設定 PUT は新しい列を 1 つも書かないので、設定も状態も
+  （一時停止も）そのまま残り、古い版が作ったキューは今までの既定値（常時開・1 日 20 回）になる。新しい
+  Control Plane の PUT は設定を置き換え、状態には触れない。
 
 - **reaper（idle-stop）** — `AF_IDLE_SWEEP_INTERVAL`（1 分）。**既定で有効**: セッションは 1 時間で
   （`AF_SESSION_IDLE_TIMEOUT`）、人の判断待ち — 質問・プラン承認・許可 — のセッションは
