@@ -639,3 +639,22 @@ func TestLedgerAtTakeRecordsDiscardedAndRemovedIDs(t *testing.T) {
 		}
 	}
 }
+
+// A queued input the gate refuses stays queued, in order, and is taken once the gate allows it.
+func TestQueuedTurnGateHoldsInput(t *testing.T) {
+	q := newQ(t, LedgerAtAccept)
+	allow := false
+	asked := ""
+	QueuedTurnGate = func(session string) bool { asked = session; return allow }
+	t.Cleanup(func() { QueuedTurnGate = nil })
+	q.Accept(member("a"))
+	q.Accept(member("b"))
+	if got := q.Take(); got != nil || asked != "tq" {
+		t.Fatalf("taken past a refusing gate: %+v (asked %q)", got, asked)
+	}
+	sameIDs(t, "queue held by the gate", q.Items(), "a", "b")
+	allow = true
+	if got := q.Take(); got == nil || got.In.ClientMessageID != "a" {
+		t.Fatalf("after the gate allows: %+v", got)
+	}
+}

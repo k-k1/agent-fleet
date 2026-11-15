@@ -77,6 +77,15 @@ func runtimeErrMessage(err error) string {
 // reason, when its CLI failed to install. Every managed input path (turn, input, answer, bridge,
 // carried) goes through it, so the refusal is not only on the explicit start endpoints.
 func resumeManaged(d agents.Driver, m session.Meta) (agents.ThreadHandle, error) {
+	return resumeManagedFor(d, m, true)
+}
+
+// resumeManagedFor is resumeManaged; input says whether the handle is wanted to deliver input
+// (a message of any origin, an answer, a queued prompt). Input to a live runtime is judged by the
+// credential policy on the session's evidence at every delivery (ADR 0138 D12), so a message is
+// refused with the reason, never delivered to a runtime the sweep is about to halt. A control that
+// delivers nothing (an interrupt, a queue edit) is not: stopping work is never refused.
+func resumeManagedFor(d agents.Driver, m session.Meta, input bool) (agents.ThreadHandle, error) {
 	// A retired session is not started by an input of any kind (peer, schedule, notice, a
 	// member's message): only a person's explicit start clears the mark. The read side is held
 	// across the check and the launch so a retire cannot land between them (retireGates).
@@ -91,6 +100,10 @@ func resumeManaged(d agents.Driver, m session.Meta) (agents.ThreadHandle, error)
 	if !ManagedAlive(m) {
 		if ref := startRefusalOf(m); ref != nil {
 			return nil, &StartRefusalError{ref}
+		}
+	} else if input {
+		if ref := storedLaunchPolicyRefusal(m); ref != nil {
+			return nil, &StartRefusalError{&SpawnRefusal{Status: ref.Status, Code: ref.Code, Message: ref.Message}}
 		}
 	}
 	return d.Resume(m)

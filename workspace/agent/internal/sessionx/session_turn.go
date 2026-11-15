@@ -231,7 +231,8 @@ func handleManagedTurn(lease *lifegate.Lease, w http.ResponseWriter, meta sessio
 		handleQueueEdit(w, d, meta, req)
 		return
 	}
-	h, err := resumeManaged(d, meta)
+	// An interrupt delivers nothing, so the credential policy does not stand in its way.
+	h, err := resumeManagedFor(d, meta, req.Op != "interrupt")
 	if err != nil {
 		writeRuntimeErr(w, err)
 		return
@@ -297,7 +298,7 @@ func handleQueueEdit(w http.ResponseWriter, d agents.Driver, meta session.Meta, 
 		h, _ = lh.LiveHandle(meta)
 	} else {
 		var err error
-		if h, err = resumeManaged(d, meta); err != nil {
+		if h, err = resumeManagedFor(d, meta, false); err != nil { // a queue edit delivers nothing
 			writeRuntimeErr(w, err)
 			return
 		}
