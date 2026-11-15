@@ -507,6 +507,10 @@ image generation, shared daemons) is inside this rule; D13's exception covers on
 - **Upgrade**: an Agent that does not report the policy capability is not trusted with a restricted member. The CP
   refuses its creates for a restricted member before waking, and the session-spawned path on such an Agent is the
   same unenforced window as an outage until the image is upgraded; the release notes say so.
+  - The capability is the Agent's `/healthz` field `route_policy` (`enforce-v1`). The CP asks it once the Workspace
+    runs, before handing over the create. A Workspace woken for the create runs the current image; one already running
+    may still run an older Agent. An Agent that does not answer is not trusted either, and a kind that runs no model
+    is not judged.
 
 **The points.**
 

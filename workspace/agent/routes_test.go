@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -87,7 +88,8 @@ func TestSmokeHealthzOpen(t *testing.T) {
 	secretsKeyState, secretsKeyNext, secretsKeyStart = secrets.KeyStateMigrated, true, "nonce-1"
 	w = smokeDo(t, h, "GET", "/healthz", "", "")
 	var got map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got["secrets_key"] != "migrated" || got["secrets_key_next"] != true || got["secrets_key_start"] != "nonce-1" || len(got) != 4 {
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got["secrets_key"] != "migrated" || got["secrets_key_next"] != true || got["secrets_key_start"] != "nonce-1" ||
+		got["route_policy"] != routepolicy.EnforceCapability || len(got) != 5 {
 		t.Fatalf("healthz body = %s (%v)", w.Body.String(), err)
 	}
 }

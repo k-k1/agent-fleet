@@ -141,6 +141,16 @@ func (d cpDeps) ProvidedRouteErr(ctx context.Context, membershipID, route string
 	return nil
 }
 
+func (d cpDeps) RoutePolicyErr(ctx context.Context, mv store.MembershipView, rt runtime.Runtime, kind, route string) error {
+	if aerr := routePolicyCreateRefusal(ctx, d.m.store, mv.TenantID, route); aerr != nil {
+		return errors.New(aerr.message)
+	}
+	if aerr := agentPolicyRefusal(ctx, d.m.store, mv.TenantID, kind, rt); aerr != nil {
+		return errors.New(aerr.message)
+	}
+	return nil
+}
+
 func (d cpDeps) ScheduleGuardErr(ctx context.Context, membershipID, repoName, sessionName string) error {
 	return scheduleGuardErr(ctx, d.m.store, membershipID, repoName, sessionName)
 }

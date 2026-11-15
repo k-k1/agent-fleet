@@ -105,6 +105,11 @@ type CP interface {
 	// ProvidedRouteErr is the create paths' pre-wake refusal of a provided route the member
 	// cannot use now (ADR 0129 D3); nil for every other route and for a usable one.
 	ProvidedRouteErr(ctx context.Context, membershipID, route string) error
+	// RoutePolicyErr is the credential policy's refusal of a create (ADR 0138 D12): its explicit
+	// route ("" for none, which the Agent judges) and, for a restricted member, an Agent at rt
+	// that does not enforce the policy. kind is the create's kind; one that runs no model is not
+	// judged.
+	RoutePolicyErr(ctx context.Context, mv store.MembershipView, rt runtime.Runtime, kind, route string) error
 	MemoList(ctx context.Context, membershipID string) (any, error)
 	// MemoCreate's connection is the authenticated connection id, recorded as the producer.
 	MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string) (any, error)
