@@ -78,9 +78,11 @@ export interface SessionState {
   watchCount?: number;
   /**
    * What would start the session again, from the Agent's row (absent when it holds nothing, and
-   * when `wakersUnknown`). stateInfo falls back to it when `watchCount` is not given.
+   * when `wakersUnknown`). `listed` is the size of the member's watch list; stateInfo uses only
+   * that, and only when `watchCount` is not given. `watches` / `timers` count built-in
+   * subscriptions and notices in delivery too, so they are not the number to print.
    */
-  wakers?: { watches: number; timers: number };
+  wakers?: { watches: number; timers: number; listed?: number };
   wakersUnknown?: boolean;
 }
 
@@ -255,11 +257,12 @@ export const stateInfo = (s: SessionState): StateInfo => {
       // command is the more urgent fact and keeps its own chip) and below a pending handoff
       // (an action the user has to take); 0 / absent keeps the plain idle chip.
       //
-      // N is watches + timers: the mirror lists every subscription of the session, time ones
-      // included, so a row's wakers sum shows the same N as the mirror header (the mirror's list
-      // leaves built-in subscriptions out and wakers.watches counts them, so they can differ by
-      // those). The mirror's live count wins over the row's when both are given.
-      const watches = s.watchCount ?? (s.wakers ? s.wakers.watches + s.wakers.timers : 0);
+      // N is the member's watch list size (timers included), so the row, the card and the mirror
+      // header print the same number. The row's `wakers.listed` carries it; watches + timers is
+      // never a stand-in because it also counts built-ins and notices in delivery, which the list
+      // leaves out. An Agent that does not send `listed` gives the plain idle chip rather than a
+      // wrong count. The mirror's live count wins over the row's when both are given.
+      const watches = s.watchCount ?? s.wakers?.listed ?? 0;
       if (watches > 0) return { cls: "on", icon: "eye", text: tCount("state.idle_watches", watches) };
       return { cls: "on", icon: "check", text: t("state.idle") };
   }

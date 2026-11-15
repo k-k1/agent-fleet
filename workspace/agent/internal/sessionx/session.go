@@ -362,19 +362,21 @@ func forkTitle(src session.Meta) string {
 
 // watchWakers is the engine's answer to "what does this session hold that could start it?",
 // replaceable by tests that must not build the Agent's engine.
-var watchWakers = func(name string) (watches, timers int, ok bool) { return watchEngine().Wakers(name) }
+var watchWakers = func(name string) (watches, timers, listed int, ok bool) {
+	return watchEngine().WakersListed(name)
+}
 
 // fillWakers sets what would start the session again, on live and stopped rows alike (ADR 0137
 // §6). Nothing is sent when it holds nothing; when the engine's state could not be read the row
 // says so instead, because a zero it is not sure of would let the Control Plane close a
 // delivery whose session a watch can still wake.
 func fillWakers(s *session.Session, m session.Meta) {
-	watches, timers, ok := watchWakers(m.Name)
+	watches, timers, listed, ok := watchWakers(m.Name)
 	switch {
 	case !ok:
 		s.WakersUnknown = true
-	case watches > 0 || timers > 0:
-		s.Wakers = &session.Wakers{Watches: watches, Timers: timers}
+	case watches > 0 || timers > 0 || listed > 0:
+		s.Wakers = &session.Wakers{Watches: watches, Timers: timers, Listed: listed}
 	}
 }
 

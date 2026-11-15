@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 470
+# count: 472
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -96,6 +96,7 @@ agentCatalogWire.sessions[].subdir string,omitempty
 agentCatalogWire.sessions[].title string,omitempty
 agentCatalogWire.sessions[].titleSetBy string,omitempty
 agentCatalogWire.sessions[].tokenSpends [number],omitempty
+agentCatalogWire.sessions[].wakers.listed number,omitempty
 agentCatalogWire.sessions[].wakers.timers number
 agentCatalogWire.sessions[].wakers.watches number
 agentCatalogWire.sessions[].wakersUnknown bool,omitempty
@@ -384,6 +385,7 @@ sessionWire.subdir string,omitempty
 sessionWire.title string,omitempty
 sessionWire.titleSetBy string,omitempty
 sessionWire.tokenSpends [number],omitempty
+sessionWire.wakers.listed number,omitempty
 sessionWire.wakers.timers number
 sessionWire.wakers.watches number
 sessionWire.wakersUnknown bool,omitempty

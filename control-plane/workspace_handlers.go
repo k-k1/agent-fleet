@@ -1063,6 +1063,8 @@ type sessionWire struct {
 type sessionWakers struct {
 	Watches int `json:"watches"`
 	Timers  int `json:"timers"`
+	// Listed is the Agent's count of what the member's watch list shows; nil from an older Agent.
+	Listed *int `json:"listed,omitempty"`
 }
 
 // sessionQueueTurn is the end of a queue delivery's first turn. Outcome is clean, turn-failed or
