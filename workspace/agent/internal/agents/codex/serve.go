@@ -64,6 +64,10 @@ type Supervisor struct {
 	stopping bool
 	// watching: one zero-demand watcher (agents.WatchIdle, idlestop.go) is running.
 	watching bool
+	// credRoute is the route of the login this supervisor started the daemon on, "" for an
+	// adopted one; securing marks a security restart in progress (policy_restart.go).
+	credRoute string
+	securing  bool
 }
 
 var supervisor = &Supervisor{}
@@ -161,6 +165,9 @@ func (s *Supervisor) Ensure() (*appClient, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	addr := s.Addr()
+	if err := s.policyAdmitLocked(addr); err != nil {
+		return nil, 0, err
+	}
 	if s.up && s.client != nil && s.client.alive() {
 		return s.client, s.gen, nil
 	}
@@ -277,6 +284,7 @@ func (s *Supervisor) startDaemonLocked(addr string) error {
 	if strings.HasPrefix(addr, "unix://") {
 		_ = os.Remove(strings.TrimPrefix(addr, "unix://")) // stale socket
 	}
+	route := daemonLogin() // read before the daemon reads auth.json
 	cmd := exec.Command("codex", "app-server", "--listen", addr)
 	tail, err := agents.StartWithStderrTail(cmd)
 	if err != nil {
@@ -288,7 +296,7 @@ func (s *Supervisor) startDaemonLocked(addr string) error {
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
 		if healthy(addr) {
-			s.cmd = cmd
+			s.cmd, s.credRoute = cmd, route
 			go s.waitDaemon(cmd, tail, s.gen+1) // Ensure increments gen right after
 			log.Printf("codex app-server: started (pid %d, %s)", cmd.Process.Pid, addr)
 			return nil
