@@ -200,8 +200,8 @@ directory belongs to someone else.
   pre-authenticated and token-renewing like `jira`: `confluence search "…"`, `confluence read PAGE_ID`,
   `confluence create "Title" SPACE --content "…"`, `confluence update PAGE_ID …`. Page
   `read`/`info`/`create`/`create-child`/`update`/`edit` and `space-lookup` are answered by the Agent's
-  own Confluence v2 shim (`workspace-agent confluence-page`, same command line): confluence-cli 2.x
-  uses the v1 `/content` and `/space` endpoints, which Atlassian removed (410). `--format markdown`
+  own Confluence v2 shim (`workspace-agent confluence-page`, same command line), whose Markdown
+  conversion handles Japanese where the CLI's does not. `--format markdown`
   (read and write) is UTF-8-safe for Japanese, emoji and `code`/**bold** next to Japanese; a file
   that is not UTF-8 is refused. Writes are sent once and never retried: after a "may or may not
   have been applied" message, search or `read` before repeating. An update that hits a version
@@ -211,9 +211,12 @@ directory belongs to someone else.
   reset or timeout (CLI: up to twice, only the last attempt shown, the way the jira wrapper does; Agent shim: its GETs, within about 20 s;
   `AF_CONFLUENCE_TIMEOUT` seconds bounds one attempt, default 60, 0 = none); writes (`create`, `update`,
   `delete`, `comment`, uploads, anything unknown) are never re-run, so after a failed or timed-out
-  write check Confluence before repeating it. `move`, `delete`, `children`, `find`,
-  `spaces`, `copy-tree`, versions, properties/front matter still use the CLI's v1 calls
-  and may answer 410. A grant from before the v2 page scopes gets one line naming the fix
+  write check Confluence before repeating it. `spaces`, plain `children` and `move` switch to
+  the v2 API by themselves; `delete`, `copy-tree`, `export`, `children --recursive --json` /
+  `--format tree` / `--type folders|all`, comment replies, inline comments given only
+  `--inline-selection` and `comment-resolve` need scopes the connection does not request
+  (401/403), and listing comments, other comment adds, attachments, versions and properties are
+  still v1 in the CLI and may answer 410. A grant from before the v2 page scopes gets one line naming the fix
   (administrator adds `read:page` / `write:page` / `read:space` to the Atlassian app, member
   reconnects Jira); report it. Never run
   `confluence init`, never set `CONFLUENCE_*` variables or `--profile` (a config of the user's own is

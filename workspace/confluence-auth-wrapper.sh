@@ -69,8 +69,9 @@ else
   done
 fi
 
-# The page core goes to the Agent's v2 shim, not to the CLI: confluence-cli 2.x reads, creates and
-# updates pages through the v1 /content and /space endpoints, which Atlassian has removed (410).
+# The page core goes to the Agent's v2 shim, not to the CLI: Atlassian has removed the v1 /content
+# and /space endpoints (410), and while confluence-cli 2.31.1 falls back to v2 itself, its Markdown
+# conversion leaves `**` around CJK punctuation unconverted (#3274).
 # The shim takes the connection from the store itself, so no token passes through this shell, and
 # it keeps the CLI's command line and output. Exit 64 means "no Atlassian connection": fall
 # through to the usual hint and the real CLI. Anything else is the shim's own answer. A stuck

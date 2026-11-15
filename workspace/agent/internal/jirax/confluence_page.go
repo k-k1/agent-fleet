@@ -3,17 +3,15 @@ package jirax
 // `workspace-agent confluence-page <sub> …` — the page core of the `confluence` wrapper
 // (workspace/confluence-auth-wrapper.sh), over Confluence's v2 REST API.
 //
-// Why it exists: confluence-cli 2.31 reads, creates and updates pages through the v1
-// /wiki/rest/api/content and /space endpoints, which Atlassian has removed on current Cloud sites
-// (410 Gone), and the v2 replacements need granular scopes the CLI never asked for. So the
-// subcommands that depend on those endpoints are answered here, with the CLI's own command line
-// and output shape, and everything that still works (search, comments, attachments, …) stays
-// with confluence-cli.
+// Why it exists: Atlassian has removed the v1 /wiki/rest/api/content and /space endpoints on
+// current Cloud sites (410 Gone). confluence-cli 2.31.1 falls back to v2 by itself, but its
+// Markdown→storage is markdown-it without CJK-friendly emphasis, so `**「括弧」**の` keeps its
+// asterisks; this shim's goldmark converter does not. So the page core is answered here, with the
+// CLI's own command line and output shape, and every other subcommand stays with confluence-cli.
+// Removing the shim once upstream converts CJK emphasis is #3274.
 //
-// Handled: read, info, create, create-child, update, edit, space-lookup. Not handled, and still
-// the CLI's v1 calls (expected to answer 410 until upstream moves them): move, delete, children,
-// copy-tree, find, spaces, versions, properties/front matter. Folders: create --type folder is refused here; the CLI lists folder
-// children over v2 itself (read:hierarchical-content:confluence, not requested).
+// Handled: read, info, create, create-child, update, edit, space-lookup. Folders: create --type
+// folder is refused here.
 //
 // Rules this file keeps:
 //   - the token is read from the store in this process and only ever goes into an Authorization
@@ -54,7 +52,7 @@ var confluencePageScopeList = []string{"read:page:confluence", "write:page:confl
 const confluencePageReconnect = "this Atlassian authorization predates the Confluence v2 page scopes " +
 	"(read:page:confluence, write:page:confluence, read:space:confluence), which page read/create/update need. " +
 	"The tenant administrator adds them to the Atlassian app, then reconnect Jira in Settings. " +
-	"(confluence search and comments keep working meanwhile.)"
+	"(confluence search keeps working meanwhile.)"
 
 // RunConfluencePage is `workspace-agent confluence-page <sub> args…`.
 func RunConfluencePage(args []string) {
