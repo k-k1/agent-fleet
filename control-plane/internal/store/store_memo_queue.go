@@ -48,9 +48,12 @@ type MemoQueue struct {
 	SpendCapUSD              float64
 	Worktree                 bool
 	MaxActive, Batch         int
-	Enabled                  bool
-	Generation               int
-	CreatedAt, UpdatedAt     string
+	// MaxTaskHours is how long a delivery of the queue may stay open before it is overdue
+	// (ADR 0137 section 6), 1 to 72.
+	MaxTaskHours         int
+	Enabled              bool
+	Generation           int
+	CreatedAt, UpdatedAt string
 }
 
 // MemoQueueStore is the queue half of the memo store.
@@ -243,13 +246,13 @@ func (t memoTx) DeleteCategory(id string) error {
 }
 
 const memoQueueCols = `SELECT category_id, membership_id, instruction, agent_kind, model, effort, route, spend_cap_usd,
-	worktree, max_active, batch, enabled, generation, created_at, updated_at FROM memo_queue`
+	worktree, max_active, batch, enabled, generation, created_at, updated_at, max_task_hours FROM memo_queue`
 
 func scanMemoQueue(row scanner) (MemoQueue, error) {
 	var q MemoQueue
 	var worktree, enabled int
 	err := row.Scan(&q.CategoryID, &q.MembershipID, &q.Instruction, &q.AgentKind, &q.Model, &q.Effort, &q.Route,
-		&q.SpendCapUSD, &worktree, &q.MaxActive, &q.Batch, &enabled, &q.Generation, &q.CreatedAt, &q.UpdatedAt)
+		&q.SpendCapUSD, &worktree, &q.MaxActive, &q.Batch, &enabled, &q.Generation, &q.CreatedAt, &q.UpdatedAt, &q.MaxTaskHours)
 	q.Worktree, q.Enabled = worktree != 0, enabled != 0
 	return q, err
 }
@@ -277,15 +280,16 @@ func (t memoTx) QueueOf(repo, category string) (MemoQueue, bool, error) {
 // existing row are kept: a settings change is not a reservation.
 func (t memoTx) PutQueue(q MemoQueue) error {
 	_, err := t.q.ExecContext(t.ctx, `INSERT INTO memo_queue(category_id, membership_id, instruction, agent_kind, model,
-		effort, route, spend_cap_usd, worktree, max_active, batch, enabled, generation, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		effort, route, spend_cap_usd, worktree, max_active, batch, enabled, generation, created_at, updated_at,
+		max_task_hours)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(category_id) DO UPDATE SET instruction=excluded.instruction, agent_kind=excluded.agent_kind,
 		  model=excluded.model, effort=excluded.effort, route=excluded.route, spend_cap_usd=excluded.spend_cap_usd,
 		  worktree=excluded.worktree, max_active=excluded.max_active, batch=excluded.batch, enabled=excluded.enabled,
-		  updated_at=excluded.updated_at
+		  max_task_hours=excluded.max_task_hours, updated_at=excluded.updated_at
 		WHERE memo_queue.membership_id=excluded.membership_id`,
 		q.CategoryID, t.mid, q.Instruction, q.AgentKind, q.Model, q.Effort, q.Route, q.SpendCapUSD,
-		b2i(q.Worktree), q.MaxActive, q.Batch, b2i(q.Enabled), q.Generation, q.CreatedAt, q.UpdatedAt)
+		b2i(q.Worktree), q.MaxActive, q.Batch, b2i(q.Enabled), q.Generation, q.CreatedAt, q.UpdatedAt, q.MaxTaskHours)
 	return err
 }
 

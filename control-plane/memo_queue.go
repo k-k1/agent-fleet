@@ -39,7 +39,10 @@ const (
 	memoQueueMaxActiveMax     = 6
 	memoQueueBatchDefault     = 1
 	memoQueueBatchMax         = 20
-	memoQueueInstructionMax   = 16 << 10
+	// A delivery open longer than max_task_hours is overdue (ADR 0137 section 6).
+	memoQueueMaxTaskHoursDefault = 12
+	memoQueueMaxTaskHoursMax     = 72
+	memoQueueInstructionMax      = 16 << 10
 )
 
 // memoFace is the route a memo request arrived by.
@@ -272,17 +275,19 @@ type memoQueueDTO struct {
 	Worktree    bool    `json:"worktree"`
 	MaxActive   int     `json:"maxActive"`
 	Batch       int     `json:"batch"`
-	Enabled     bool    `json:"enabled"`
-	Generation  int     `json:"generation"`
-	CreatedAt   string  `json:"createdAt"`
-	UpdatedAt   string  `json:"updatedAt"`
+	// MaxTaskHours is how long one of its deliveries may stay open before it is overdue.
+	MaxTaskHours int    `json:"maxTaskHours"`
+	Enabled      bool   `json:"enabled"`
+	Generation   int    `json:"generation"`
+	CreatedAt    string `json:"createdAt"`
+	UpdatedAt    string `json:"updatedAt"`
 }
 
 func memoQueueToDTO(q store.MemoQueue, c store.MemoCategory) memoQueueDTO {
 	return memoQueueDTO{CategoryID: q.CategoryID, Repo: c.Repo, Category: c.Name, Instruction: q.Instruction,
 		AgentKind: q.AgentKind, Model: q.Model, Effort: q.Effort, Route: q.Route, SpendCapUSD: q.SpendCapUSD,
-		Worktree: q.Worktree, MaxActive: q.MaxActive, Batch: q.Batch, Enabled: q.Enabled, Generation: q.Generation,
-		CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}
+		Worktree: q.Worktree, MaxActive: q.MaxActive, Batch: q.Batch, MaxTaskHours: memoQueueTaskHours(q),
+		Enabled: q.Enabled, Generation: q.Generation, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}
 }
 
 // memoQueueIn is a PUT body. Omitted numbers and worktree take their defaults: a PUT replaces
@@ -297,7 +302,17 @@ type memoQueueIn struct {
 	Worktree    *bool   `json:"worktree"`
 	MaxActive   *int    `json:"maxActive"`
 	Batch       *int    `json:"batch"`
-	Enabled     bool    `json:"enabled"`
+	// MaxTaskHours is omitted for the default, like the numbers above.
+	MaxTaskHours *int `json:"maxTaskHours"`
+	Enabled      bool `json:"enabled"`
+}
+
+// memoQueueTaskHours is the queue's overdue bound, the default for a row that never had one.
+func memoQueueTaskHours(q store.MemoQueue) int {
+	if q.MaxTaskHours < 1 {
+		return memoQueueMaxTaskHoursDefault
+	}
+	return q.MaxTaskHours
 }
 
 func badQueueSettings(msg string) *apiError {
@@ -318,6 +333,8 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 		MaxActive:   memoQueueMaxActiveDefault,
 		Batch:       memoQueueBatchDefault,
 		Enabled:     in.Enabled,
+
+		MaxTaskHours: memoQueueMaxTaskHoursDefault,
 	}
 	if q.AgentKind == "" {
 		q.AgentKind = "claude"
@@ -356,6 +373,12 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 	}
 	if q.Batch < 1 || q.Batch > memoQueueBatchMax {
 		return q, badQueueSettings(fmt.Sprintf("batch must be between 1 and %d", memoQueueBatchMax))
+	}
+	if in.MaxTaskHours != nil {
+		q.MaxTaskHours = *in.MaxTaskHours
+	}
+	if q.MaxTaskHours < 1 || q.MaxTaskHours > memoQueueMaxTaskHoursMax {
+		return q, badQueueSettings(fmt.Sprintf("maxTaskHours must be between 1 and %d", memoQueueMaxTaskHoursMax))
 	}
 	if len(q.Instruction) > memoQueueInstructionMax {
 		return q, badQueueSettings(fmt.Sprintf("instruction is at most %d bytes", memoQueueInstructionMax))

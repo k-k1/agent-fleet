@@ -309,14 +309,63 @@ disables.
   minutes) closes as `not_sent`; a `sending` one that old is settled by the Agent's
   `POST /sessions-idempotency/{key}/abandon` (200 open, 202 keep, 404 `not_created` close
   as `not_sent`, 503 look for a session with that `queueDelivery`: found open, not found
-  close as `unknown` with its messages `unconfirmed`, no answer keep); an `open` one
-  closes when its session is archived, deleted, stopped with no interaction carried, or
-  idle on two consecutive ticks (the count is kept in `memo_delivery.idle_ticks`). While
-  the workspace is stopped a `sending` delivery keeps its slot and an `open` one is
-  judged from the session mirror. A running workspace whose Agent does not answer, or one
-  starting or stopping, closes nothing. Then at most two queue sends share the tick's four
+  close as `unknown` with its messages `unconfirmed`, no answer keep); an `open`
+  one is decided by the **occupancy rule** (below). While the workspace is stopped a
+  `sending` delivery keeps its slot. A running workspace whose Agent does not answer, or
+  one starting or stopping, closes nothing. Then at most two queue sends share the tick's four
   parallel fires with the schedules. Every move of a delivery's state is a conditional
   write on that state, so of a slow sender and the reconciliation only one acts.
+
+  **The occupancy rule** ([decisions/0137](../decisions/0137-message-queues.md) §6, the
+  table). For a workspace whose Agent sends `queueReport: 1` on `GET /sessions`, an `open`
+  delivery keeps its slot while any session of its tree (its session, and every session
+  with `origin == "session"` whose `originSession` chain leads to it, at any depth; the
+  walk keeps the names it has seen, so a cycle ends it) is held: a machine works
+  (`machine`), a person has to act, also stopped with the interaction carried (`person`),
+  a usage limit is waited for, `limited` or a booked `rateLimitResumeAt` (`limit`),
+  `wakers` is not zero (`wakers`), or `wakersUnknown` is set or a state is not understood
+  (`unknown`). An archived session of the tree holds nothing. The delivery closes `clean`
+  on the second read in a row that finds none of these, and `aborted` when its session is
+  archived or gone from the Agent's list. Each read is kept first (`held_by`,
+  `held_session`, `held_seen_at`, `idle_ticks`, `progress_seen_at`), as one conditional
+  write behind the membership lock, with the count of clean reads worked out from the
+  stored row. Each read is numbered by the database before it begins (`read_gen`), and a
+  read with an older number than the kept one (`held_gen`) is refused, so no wall clock
+  decides the order; the close is made in the same transaction. A watch made between two
+  reads, or a newer read another Control Plane kept, defeats it. **While the workspace is stopped, or the Agent does not
+  answer, only a report that was read changes the answer**: a delivery last seen held
+  stays open whatever the mirror says, and one last seen with nothing holding it closes
+  from the mirror on a second tick, unless the mirror shows its session running or an
+  interaction carried. An Agent that does not send `queueReport` (or sends another
+  number) keeps the rule that needs no report: archived, deleted, stopped with nothing
+  carried, or idle on two consecutive ticks, and nothing is ever retired for it.
+
+  **Closing stops.** The clean close sets `retire_pending` in the same transaction. Each
+  tick then calls `POST /sessions/{name}/retire` for the closed deliveries that have it,
+  while their workspace is running and answers with `queueReport`. The Agent's own word ends it,
+  stored in `memo_delivery.retire_result`: `complete: true` (`confirmed`), the root `released`
+  (a person started the session after the retire began, so it is theirs now), a member below
+  the root released while everything else is stopped (`done`), the session no longer listed
+  by a successful report (`gone`), or 409 `retire_not_root` (`fault`, logged and not repeated:
+  a delivery's session is always a root). A 404 is never a confirmation, and a 503
+  `retire_wait_cancelled` or a timeout is repeated on a later tick (the Agent runs one retire
+  per root at a time, so the call can wait). It never wakes a stopped workspace, and a repeat does no harm.
+  A session that works again is retired like any other (a watch that fired again after a
+  failed retire looks the same), and no time bound ends the retire. A person who resumes the
+  session between our read and the Agent's start of the retire is not protected: #4218. An `aborted` close retires nothing.
+
+  **Overdue.** A delivery open longer than its queue's `maxTaskHours` (1–72, default 12)
+  is marked `overdue_at` and the member gets one notification (kind
+  `memo-delivery-overdue`, `EventID` `memo-overdue-<delivery>`, so two Control Planes tell
+  it once), for every delivery whether or not its Agent reports. Overdue frees nothing.
+  When a report is read and no session of the tree showed progress (a busy row whose
+  progress is fresh, or a background job younger than `busyProgressLapse`) for an hour, the
+  tree is retired, repeated each tick until the Agent confirms (`retired_at`; progress seen
+  later clears it). The slot then goes by the ordinary rule once the report says nothing
+  holds the tree; a session waiting for a person stays occupied by design. The first
+  turn of the delivery's session (`queueTurn`) is copied onto the delivery when it first
+  appears. The delivery DTO carries `heldBy`, `heldSession`, `heldSeenAt`, `overdue`,
+  `overdueAt` and `firstTurn`.
 
 - **The reaper (idle stop)** — `AF_IDLE_SWEEP_INTERVAL` (1 minute). **On by default**:
   a session idles out after an hour (`AF_SESSION_IDLE_TIMEOUT`), a session waiting on a

@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 448
+# count: 469
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -76,6 +76,9 @@ agentCatalogWire.sessions[].pr raw,omitempty
 agentCatalogWire.sessions[].progressAgeSec number,omitempty
 agentCatalogWire.sessions[].progressAt string,omitempty
 agentCatalogWire.sessions[].queueDelivery string,omitempty
+agentCatalogWire.sessions[].queueTurn.endedAt string
+agentCatalogWire.sessions[].queueTurn.ms number
+agentCatalogWire.sessions[].queueTurn.outcome string
 agentCatalogWire.sessions[].rateLimitResumeAt string,omitempty
 agentCatalogWire.sessions[].remoteUrl string
 agentCatalogWire.sessions[].repo string
@@ -93,6 +96,9 @@ agentCatalogWire.sessions[].subdir string,omitempty
 agentCatalogWire.sessions[].title string,omitempty
 agentCatalogWire.sessions[].titleSetBy string,omitempty
 agentCatalogWire.sessions[].tokenSpends [number],omitempty
+agentCatalogWire.sessions[].wakers.timers number
+agentCatalogWire.sessions[].wakers.watches number
+agentCatalogWire.sessions[].wakersUnknown bool,omitempty
 agentCatalogWire.sessions[].workingCopyId string,omitempty
 agentCatalogWire.sessions[].worktree bool,omitempty
 cliReleaseWire.fetchedAt string
@@ -232,9 +238,18 @@ memoDTO.sentAt string
 memoDTO.state string
 memoDeliveryDTO.closedAt string
 memoDeliveryDTO.createdAt string
+memoDeliveryDTO.firstTurn.endedAt string
+memoDeliveryDTO.firstTurn.ms number
+memoDeliveryDTO.firstTurn.outcome string
+memoDeliveryDTO.heldBy string
+memoDeliveryDTO.heldSeenAt string
+memoDeliveryDTO.heldSession string
 memoDeliveryDTO.id string
 memoDeliveryDTO.messageIds [string]
 memoDeliveryDTO.outcome string
+memoDeliveryDTO.overdue bool
+memoDeliveryDTO.overdueAt string
+memoDeliveryDTO.retire string
 memoDeliveryDTO.sentAt string
 memoDeliveryDTO.session string
 memoDeliveryDTO.state string
@@ -348,6 +363,9 @@ sessionWire.pr raw,omitempty
 sessionWire.progressAgeSec number,omitempty
 sessionWire.progressAt string,omitempty
 sessionWire.queueDelivery string,omitempty
+sessionWire.queueTurn.endedAt string
+sessionWire.queueTurn.ms number
+sessionWire.queueTurn.outcome string
 sessionWire.rateLimitResumeAt string,omitempty
 sessionWire.remoteUrl string
 sessionWire.repo string
@@ -365,6 +383,9 @@ sessionWire.subdir string,omitempty
 sessionWire.title string,omitempty
 sessionWire.titleSetBy string,omitempty
 sessionWire.tokenSpends [number],omitempty
+sessionWire.wakers.timers number
+sessionWire.wakers.watches number
+sessionWire.wakersUnknown bool,omitempty
 sessionWire.workingCopyId string,omitempty
 sessionWire.worktree bool,omitempty
 usageHourlyResponse.from string

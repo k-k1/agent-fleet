@@ -49,6 +49,8 @@ const (
 	// memoAgentCallWait each Agent call in it. Both run before the tick's fires start.
 	memoSettleBudget  = 60 * time.Second
 	memoAgentCallWait = 15 * time.Second
+	// memoRetireCallWait bounds one retire call: it stops every session of a tree.
+	memoRetireCallWait = 30 * time.Second
 	// memoDeliveryWriteWait bounds a delivery write made where no caller deadline applies (a
 	// send after its Agent call). A write that times out decides nothing: the next tick
 	// reconciles the delivery from its state.
@@ -108,6 +110,30 @@ type memoDeliveryDTO struct {
 	CreatedAt  string   `json:"createdAt"`
 	SentAt     string   `json:"sentAt"`
 	ClosedAt   string   `json:"closedAt"`
+	// HeldBy is why an open delivery still has its slot at the Agent's last report: machine,
+	// person, limit, wakers or unknown, "" when nothing holds it (or no report was read: a
+	// delivery of an Agent that does not report). HeldSession is the session of the tree that
+	// holds it, HeldSeenAt when that read began.
+	HeldBy      string `json:"heldBy"`
+	HeldSession string `json:"heldSession"`
+	HeldSeenAt  string `json:"heldSeenAt"`
+	// Overdue is set once the delivery passed its queue's maxTaskHours, OverdueAt when.
+	Overdue   bool   `json:"overdue"`
+	OverdueAt string `json:"overdueAt"`
+	// Retire is where the retire of a closed delivery's session stands: "pending", or how it
+	// ended (confirmed, released: a person took the session over, done, gone, fault), "" when
+	// none was needed.
+	Retire string `json:"retire"`
+	// FirstTurn is how the first turn of the delivery's session ended, null until it did.
+	FirstTurn *memoFirstTurnDTO `json:"firstTurn"`
+}
+
+// memoFirstTurnDTO is the end of a delivery's first turn: outcome is clean, turn-failed or
+// turn-aborted, and "" for a kind that records no reason.
+type memoFirstTurnDTO struct {
+	Outcome string `json:"outcome"`
+	Ms      int64  `json:"ms"`
+	EndedAt string `json:"endedAt"`
 }
 
 func memoDeliveryToDTO(d store.MemoDelivery) memoDeliveryDTO {
@@ -115,8 +141,19 @@ func memoDeliveryToDTO(d store.MemoDelivery) memoDeliveryDTO {
 	if ids == nil {
 		ids = []string{}
 	}
-	return memoDeliveryDTO{ID: d.ID, State: d.State, Outcome: d.Outcome, Session: d.Session, MessageIDs: ids,
-		CreatedAt: d.CreatedAt, SentAt: d.SentAt, ClosedAt: d.ClosedAt}
+	out := memoDeliveryDTO{ID: d.ID, State: d.State, Outcome: d.Outcome, Session: d.Session, MessageIDs: ids,
+		CreatedAt: d.CreatedAt, SentAt: d.SentAt, ClosedAt: d.ClosedAt, Overdue: d.OverdueAt != "", OverdueAt: d.OverdueAt}
+	if d.State == store.DeliveryOpen && d.Reported {
+		out.HeldBy, out.HeldSession, out.HeldSeenAt = d.HeldBy, d.HeldSession, d.HeldSeenAt
+	}
+	out.Retire = d.RetireResult
+	if d.RetirePending || (d.State == store.DeliveryClosed && d.Outcome == store.DeliveryClean && d.Reported && d.RetireResult == "") {
+		out.Retire = "pending"
+	}
+	if d.TurnEndedAt != "" {
+		out.FirstTurn = &memoFirstTurnDTO{Outcome: d.TurnOutcome, Ms: d.TurnMs, EndedAt: d.TurnEndedAt}
+	}
+	return out
 }
 
 // memoQueueRepoDir is the working copy a queue's sessions start from, relative to the
@@ -360,6 +397,14 @@ type memoMemberView struct {
 	liveOK   bool
 	mirror   []sessionWire
 	mirrorOK bool
+	// report is set when the Agent that answered sends the queue report (queueReport): only
+	// then do the rows say what would start a session, and may a delivery be closed on it and
+	// its sessions retired. gens is the number the database handed out for each open delivery
+	// of the member before that read began (the order of two reads, whatever the clocks say),
+	// and readAt when it began by the local clock, for display.
+	gens   map[string]int64
+	report bool
+	readAt string
 }
 
 func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.MemoDelivery {
@@ -372,6 +417,7 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 	}
 	stale := store.DeliveryTS(now.Add(-r.budget))
 	views := map[string]*memoMemberView{}
+	hours := map[string]map[string]int{}
 	var sends []store.MemoDelivery
 	for _, d := range ds {
 		if ctx.Err() != nil {
@@ -398,11 +444,13 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 			// While the workspace is stopped, or the Agent does not answer, the delivery keeps
 			// its slot: its session may exist.
 		case store.DeliveryOpen:
+			d = r.markOverdue(ctx, hours, d, now)
 			if v := r.view(ctx, views, d.MembershipID); v != nil {
 				r.closeIfDone(ctx, v, d, now)
 			}
 		}
 	}
+	r.retirePending(ctx, views, now)
 	return sends
 }
 
@@ -423,10 +471,22 @@ func (r *memoQueueRunner) view(ctx context.Context, views map[string]*memoMember
 	v := &memoMemberView{res: res}
 	switch res.rt.State(ctx) {
 	case "running":
+		// The read is numbered before it begins: of two reads of one delivery, by any Control
+		// Plane, the higher number is the later one. Without numbers nothing is kept.
+		gerr := r.mgr.store.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) (err error) {
+			v.gens, err = tx.ReserveDeliveryReads()
+			return err
+		})
+		if gerr != nil {
+			log.Printf("memo queue: reserve reads of %s: %v", membershipID, gerr)
+			v.gens = nil
+		}
+		v.readAt = store.DeliveryTS(time.Now())
 		cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
-		v.live, err = r.mgr.agentSessions(cctx, res.rt)
+		var env agentSessionsEnvelope
+		env, err = r.mgr.agentSessionsEnv(cctx, res.rt)
 		cancel()
-		v.liveOK = err == nil
+		v.live, v.liveOK, v.report = env.Sessions, err == nil, err == nil && env.reportsQueue()
 	case "stopped":
 		rows, err := r.mgr.store.ListSessions(ctx, res.ws.ID)
 		if err != nil {
@@ -513,11 +573,27 @@ func sessionNameOf(body []byte) string {
 	return s.Name
 }
 
-// closeIfDone closes an open delivery whose session is done (ADR 0137 section 6, the part that
-// needs no report from the Agent): archived, deleted, stopped with no interaction carried, or
-// idle on two consecutive ticks. A session where a machine is working, or a person has to act,
-// keeps it open. The rows of other states (limited, unknown) keep it open too.
+// closeIfDone decides an open delivery for this tick. A workspace whose Agent sends the queue
+// report gets the occupancy rule of ADR 0137 section 6 (closeIfDoneReported, and the kept last
+// report while the workspace is stopped). Every other delivery keeps the rule that needs no
+// report, and nothing is retired for it: an Agent that does not say what would start a session
+// again cannot be told to end it either.
 func (r *memoQueueRunner) closeIfDone(ctx context.Context, v *memoMemberView, d store.MemoDelivery, now time.Time) {
+	switch {
+	case v.liveOK && v.report:
+		r.closeIfDoneReported(ctx, v, d, now)
+	case !v.liveOK && v.mirrorOK && d.Reported:
+		r.closeIfDoneKept(ctx, v, d)
+	default:
+		r.closeIfDoneUnreported(ctx, v, d, now)
+	}
+}
+
+// closeIfDoneUnreported closes an open delivery whose session is done by what needs no report
+// from the Agent: archived, deleted, stopped with no interaction carried, or idle on two
+// consecutive ticks. A session where a machine is working, or a person has to act, keeps it
+// open. The rows of other states (limited, unknown) keep it open too.
+func (r *memoQueueRunner) closeIfDoneUnreported(ctx context.Context, v *memoMemberView, d store.MemoDelivery, now time.Time) {
 	if !v.liveOK && !v.mirrorOK {
 		// No observation this tick: the idle ticks are no longer consecutive.
 		r.markIdle(ctx, d, 0)
@@ -556,6 +632,466 @@ func (r *memoQueueRunner) closeIfDone(ctx context.Context, v *memoMemberView, d 
 		}
 	default:
 		r.markIdle(ctx, d, 0)
+	}
+}
+
+// --- Occupancy: the delivery's tree, what holds it, and what closing does ---------------------
+
+// deliveryTree is the delivery's session and every session it started, at any depth: a row with
+// origin "session" whose originSession chain leads to root. The root comes first. The walk keeps
+// the names it has seen, so a cycle in originSession ends it, and a chain through a session that
+// is gone ends at the gap (the Agent's list holds no row to continue from).
+func deliveryTree(rows []sessionWire, root string) []*sessionWire {
+	children := map[string][]*sessionWire{}
+	var rootRow *sessionWire
+	for i := range rows {
+		s := &rows[i]
+		if s.Name == root {
+			rootRow = s
+		} else if s.Origin == "session" && s.OriginSession != "" {
+			children[s.OriginSession] = append(children[s.OriginSession], s)
+		}
+	}
+	if rootRow == nil {
+		return nil
+	}
+	seen := map[string]bool{root: true}
+	out := []*sessionWire{rootRow}
+	for i := 0; i < len(out); i++ {
+		for _, c := range children[out[i].Name] {
+			if !seen[c.Name] {
+				seen[c.Name] = true
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+// hold ranks (store Held*): what is shown for a tree is the strongest reason found in it.
+var memoHoldRank = map[string]int{"": 0, store.HeldUnknown: 1, store.HeldWakers: 2, store.HeldLimit: 3, store.HeldPerson: 4, store.HeldMachine: 5}
+
+// sessionHold is why one session of a delivery's tree keeps the delivery open, "" when it does
+// not (ADR 0137 section 6, the table). bgMax is 0 as the rule has always been: the reaper's
+// background bound is about the workspace, not about a task.
+func sessionHold(s sessionWire, now time.Time) string {
+	why := ""
+	switch act := sessionActivityAt(s, now, 0); {
+	case !s.Alive:
+		// Stopped with the interaction carried: a person still has to answer.
+		if s.Carried != "" {
+			why = store.HeldPerson
+		}
+	case act == activityMachineBusy || busyState(s.State):
+		// A busy row whose progress has lapsed is not classed busy by the reaper, but it still
+		// has its slot: the overdue retire, not the reading of one row, ends such a task.
+		why = store.HeldMachine
+	case act == activityHumanWait:
+		why = store.HeldPerson
+	case act == activityUnknown:
+		why = store.HeldUnknown
+	}
+	if why == "" && (s.State == stateLimited || s.RateLimitResumeAt != "") {
+		why = store.HeldLimit
+	}
+	if why == "" && s.Wakers != nil && (s.Wakers.Watches > 0 || s.Wakers.Timers > 0) {
+		why = store.HeldWakers
+	}
+	if why == "" && s.WakersUnknown {
+		why = store.HeldUnknown
+	}
+	return why
+}
+
+// sessionProgress reports whether the row shows work going on that is not a stale one: a busy
+// row whose progress is fresh, or a background job younger than the progress bound. The keep-awake
+// pin is a person's wish and not progress.
+func sessionProgress(s sessionWire) bool {
+	if !s.Alive {
+		return false
+	}
+	if s.BackgroundBusy {
+		return !backgroundLapsed(s, busyProgressLapse)
+	}
+	return busyState(s.State) && !progressLapsed(s)
+}
+
+// treeHold is the strongest hold in a tree, the session that has it, and whether any session of
+// it shows progress. An archived session of the tree holds nothing.
+func treeHold(tree []*sessionWire, now time.Time) (why, session string, progress bool) {
+	for _, s := range tree {
+		if s.Archived {
+			continue
+		}
+		if sessionProgress(*s) {
+			progress = true
+		}
+		if h := sessionHold(*s, now); memoHoldRank[h] > memoHoldRank[why] {
+			why, session = h, s.Name
+		}
+	}
+	return why, session, progress
+}
+
+// closeIfDoneReported is the rule for an Agent that reports. It keeps what it read with the
+// delivery first, then closes the delivery when nothing has held it on two reads in a row.
+func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMemberView, d store.MemoDelivery, now time.Time) {
+	tree := deliveryTree(v.live, d.Session)
+	if len(tree) == 0 {
+		// Only the Agent's own list proves a deletion.
+		r.closeOpen(ctx, d, store.DeliveryAborted)
+		return
+	}
+	if tree[0].Archived {
+		r.closeOpen(ctx, d, store.DeliveryAborted)
+		return
+	}
+	why, who, progress := treeHold(tree, now)
+	gen, numbered := v.gens[d.ID]
+	if !numbered {
+		// No number for this read (the delivery opened after the numbers were handed out, or the
+		// database refused them): it cannot be ordered against another, so nothing is kept and
+		// the count of reads with nothing held starts again.
+		r.markIdle(ctx, d, 0)
+		return
+	}
+	o := store.DeliveryObservation{Gen: gen, At: v.readAt, HeldBy: why, HeldSession: who, Progress: progress,
+		ProgressAt: store.DeliveryTS(now)}
+	if t := tree[0].QueueTurn; t != nil && t.EndedAt != "" {
+		o.TurnOutcome, o.TurnMs, o.TurnEndedAt = t.Outcome, t.Ms, t.EndedAt
+	}
+	// Keeping the read, counting it, and closing on it are one transaction behind the membership
+	// lock, and the count is worked out from the stored row: another Control Plane's newer read
+	// that holds the delivery cannot be overwritten by a close made on this one's older copy.
+	var fresh *store.MemoDelivery
+	wctx, cancel := memoWriteCtx(ctx)
+	err := r.mgr.store.MemoTx(wctx, d.MembershipID, func(tx store.MemoTxOps) error {
+		ticks, kept, err := tx.ObserveDelivery(d.ID, o)
+		if err != nil || !kept {
+			return err // closed meanwhile, or a later read is kept: that one decides
+		}
+		if why != "" {
+			// The row as it is now, behind the lock: what an overdue retire decides on, not the
+			// copy this tick began with.
+			cur, ok, err := tx.GetDelivery(d.ID)
+			if err == nil && ok && cur.State == store.DeliveryOpen && cur.HeldGen == o.Gen {
+				fresh = &cur
+			}
+			return err
+		}
+		if ticks < 2 {
+			return nil
+		}
+		ok, err := tx.MoveDelivery(d.ID, store.DeliveryOpen, store.DeliveryClosed, "", store.DeliveryClean, store.DeliveryTS(time.Now()))
+		if err != nil || !ok {
+			return err
+		}
+		return tx.SetDeliveryRetirePending(d.ID)
+	})
+	cancel()
+	if err != nil {
+		log.Printf("memo queue: delivery %s: keep the report: %v", d.ID, err)
+		return
+	}
+	if fresh != nil {
+		fresh.OverdueAt = d.OverdueAt // set by this tick when the stored copy was written after it
+		if d.OverdueAt == "" {
+			return
+		}
+		r.retireOverdue(ctx, v, *fresh, progress, now)
+	}
+}
+
+// closeIfDoneKept decides while the workspace is stopped, from the report last kept. A delivery
+// last seen held stays open whatever the mirror shows: nothing was read that could change it.
+// One last seen with nothing holding it may close from the mirror, on a second tick, unless the
+// mirror shows the session itself running or an interaction carried.
+func (r *memoQueueRunner) closeIfDoneKept(ctx context.Context, v *memoMemberView, d store.MemoDelivery) {
+	if d.HeldBy != "" {
+		return
+	}
+	var row *sessionWire
+	for i := range v.mirror {
+		if v.mirror[i].Name == d.Session {
+			row = &v.mirror[i]
+			break
+		}
+	}
+	switch {
+	case row == nil:
+		// The mirror may predate the session: it proves nothing.
+	case row.Alive || row.Carried != "":
+		r.markIdle(ctx, d, 0)
+	default:
+		r.tickKept(ctx, d)
+	}
+}
+
+// tickKept counts one tick on the mirror for a delivery last seen with nothing holding it, and
+// closes it clean (retire recorded in the same transaction) on the second. Everything is read
+// and written behind the membership lock, from the stored row: a report another Control Plane
+// kept in the meantime that holds the delivery stops the close.
+func (r *memoQueueRunner) tickKept(ctx context.Context, d store.MemoDelivery) {
+	wctx, cancel := memoWriteCtx(ctx)
+	defer cancel()
+	err := r.mgr.store.MemoTx(wctx, d.MembershipID, func(tx store.MemoTxOps) error {
+		cur, ok, err := tx.GetDelivery(d.ID)
+		if err != nil || !ok || cur.State != store.DeliveryOpen || cur.HeldBy != "" || !cur.Reported {
+			return err
+		}
+		if cur.IdleTicks < 1 {
+			return tx.SetDeliveryIdleTicks(d.ID, 1)
+		}
+		ok, err = tx.MoveDelivery(d.ID, store.DeliveryOpen, store.DeliveryClosed, "", store.DeliveryClean, store.DeliveryTS(time.Now()))
+		if err != nil || !ok {
+			return err
+		}
+		return tx.SetDeliveryRetirePending(d.ID)
+	})
+	if err != nil {
+		log.Printf("memo queue: delivery %s: tick on the mirror: %v", d.ID, err)
+	}
+}
+
+// --- Overdue ---------------------------------------------------------------------------------
+
+// memoOverdueKind is the notification kind of an overdue delivery.
+const memoOverdueKind = "memo-delivery-overdue"
+
+// taskHours is the overdue bound of the delivery's queue.
+func (r *memoQueueRunner) taskHours(ctx context.Context, cache map[string]map[string]int, d store.MemoDelivery) int {
+	byQueue, ok := cache[d.MembershipID]
+	if !ok {
+		byQueue = map[string]int{}
+		cache[d.MembershipID] = byQueue
+		qs, err := r.mgr.store.ListMemoQueues(ctx, d.MembershipID)
+		if err != nil {
+			log.Printf("memo queue: list queues of %s: %v", d.MembershipID, err)
+		}
+		for _, q := range qs {
+			byQueue[q.CategoryID] = memoQueueTaskHours(q)
+		}
+	}
+	if h, ok := byQueue[d.QueueID]; ok {
+		return h
+	}
+	return memoQueueMaxTaskHoursDefault
+}
+
+// markOverdue notes, and tells the member once, that an open delivery passed its queue's
+// max_task_hours. It returns d with OverdueAt set when the delivery is marked. Overdue frees
+// nothing: it only lets the retire below begin. The notification goes first and is idempotent
+// through its EventID, so two Control Planes, or a write that fails and is tried again, tell the
+// member once.
+func (r *memoQueueRunner) markOverdue(ctx context.Context, cache map[string]map[string]int, d store.MemoDelivery, now time.Time) store.MemoDelivery {
+	if d.OverdueAt != "" {
+		return d
+	}
+	since := d.OpenedAt
+	if since == "" {
+		since = d.CreatedAt
+	}
+	hours := r.taskHours(ctx, cache, d)
+	if since > store.DeliveryTS(now.Add(-time.Duration(hours)*time.Hour)) {
+		return d
+	}
+	label := d.QueueID
+	if cats, err := r.mgr.store.ListCategories(ctx, d.MembershipID); err == nil {
+		for _, c := range cats {
+			if c.ID == d.QueueID {
+				label = c.Repo + "/" + c.Name
+			}
+		}
+	}
+	payload, _ := json.Marshal(map[string]any{"delivery_id": d.ID, "queue_id": d.QueueID, "session": d.Session,
+		"label": label, "max_task_hours": hours})
+	at := now.UTC().Format(time.RFC3339)
+	if err := r.mgr.store.InsertNotification(ctx, store.Notification{
+		EventID: "memo-overdue-" + d.ID, MembershipID: d.MembershipID, Kind: memoOverdueKind,
+		TargetType: "memo-queue", TargetID: d.QueueID, DisplayName: label, Payload: string(payload), CreatedAt: at,
+	}); err != nil {
+		log.Printf("memo queue: delivery %s: notify overdue: %v", d.ID, err)
+		return d
+	}
+	stamp := store.DeliveryTS(now)
+	if _, err := r.mgr.store.MarkMemoDeliveryOverdue(ctx, d.ID, stamp); err != nil {
+		log.Printf("memo queue: delivery %s: mark overdue: %v", d.ID, err)
+		return d
+	}
+	d.OverdueAt = stamp
+	return d
+}
+
+// retireOverdue retires the tree of an overdue delivery that still has its slot, once no session
+// of the tree has shown progress for busyProgressLapse. It frees nothing by itself: the ordinary
+// rule does, when the next report says that nothing holds the tree. An unconfirmed retire is
+// repeated on the next tick, a confirmed one is not (progress seen later clears the record).
+func (r *memoQueueRunner) retireOverdue(ctx context.Context, v *memoMemberView, d store.MemoDelivery, progress bool, now time.Time) {
+	if d.OverdueAt == "" || d.RetiredAt != "" || progress || !v.report {
+		return
+	}
+	last := d.OpenedAt
+	if d.ProgressSeenAt > last {
+		last = d.ProgressSeenAt
+	}
+	if last > store.DeliveryTS(now.Add(-busyProgressLapse)) {
+		return
+	}
+	// Whatever the answer, only a retry-worthy one is repeated: a complete retire, a person who
+	// took the session over (the Agent's word: released) and a fault that repeating cannot mend
+	// are recorded, and progress seen later clears the record.
+	if res := r.retire(ctx, v.res, d.Session); res != retireRepeat {
+		wctx, cancel := memoWriteCtx(ctx)
+		defer cancel()
+		if _, err := r.mgr.store.MarkMemoDeliveryRetired(wctx, d.ID, store.DeliveryTS(time.Now())); err != nil {
+			log.Printf("memo queue: delivery %s: mark retired: %v", d.ID, err)
+		}
+	}
+}
+
+// --- Retire ----------------------------------------------------------------------------------
+
+// retireWire is the Agent's answer to POST /sessions/{name}/retire (workspace/agent sessionx
+// retireResp): the session and every session it started, each with what it could not end, and
+// Complete, true only when every session was retired: none released, nothing unended.
+type retireWire struct {
+	Sessions []struct {
+		Name    string `json:"name"`
+		Stopped bool   `json:"stopped"`
+		// Released: a person started the session (or one above it) after the retire began, and
+		// the Agent left it and everything under it alone.
+		Released bool     `json:"released"`
+		Unended  []string `json:"unended"`
+	} `json:"sessions"`
+	Complete bool `json:"complete"`
+}
+
+// retireResult is what a retire call came to.
+type retireResult string
+
+const (
+	// retireRepeat: no confirmation (no answer, an error, a wait that was cancelled, a session the
+	// Agent could not end or stop). The call is safe to repeat and the caller does, next tick.
+	retireRepeat retireResult = ""
+	// retireConfirmed: the Agent said complete.
+	retireConfirmed retireResult = "confirmed"
+	// retireReleased: a person started the delivery's session after the retire began, and the
+	// Agent left it alone. That is the Agent's word that the session is theirs now.
+	retireReleased retireResult = "released"
+	// retireDone: the root was stopped and everything under it that was not released is stopped
+	// and ended, but a session below the root was released to a person. Not complete, and
+	// repeating would only meet the same released session: the retire stops here.
+	retireDone retireResult = "done"
+	// retireFault: the Agent refused it as not a root (409 retire_not_root). A delivery's session
+	// is always a root, so this is a fault, logged and not repeated.
+	retireFault retireResult = "fault"
+)
+
+// retire asks the Agent to end everything that would start the session or the sessions it started
+// and to stop them all, and reports what came of it. Only the Agent's own `complete` is a
+// confirmation. A 404 is not one: a gateway or an Agent without the route answers it as well.
+// That a session is gone is proven by a successful report that no longer lists it
+// (retirePending), never by this call. The Agent runs one retire of a root at a time and makes
+// a second request wait for the first, so the call keeps its own timeout, and a timeout or a
+// cancelled wait (503 retire_wait_cancelled) is a repeat on a later tick.
+func (r *memoQueueRunner) retire(ctx context.Context, res *resolved, session string) retireResult {
+	cctx, cancel := context.WithTimeout(ctx, memoRetireCallWait)
+	defer cancel()
+	req, err := http.NewRequestWithContext(cctx, http.MethodPost,
+		res.rt.Endpoint()+"/sessions/"+url.PathEscape(session)+"/retire", nil)
+	if err != nil {
+		return retireRepeat
+	}
+	if res.rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+res.rt.Token())
+	}
+	resp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		log.Printf("memo queue: retire %s: %v", session, err)
+		return retireRepeat
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusConflict && agentErrCode(b) == "retire_not_root" {
+		log.Printf("memo queue: retire %s: the Agent says it is not a root, which a delivery's session always is", session)
+		return retireFault
+	}
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("memo queue: retire %s: the Agent answered %s (%s)", session, resp.Status, agentErrCode(b))
+		return retireRepeat
+	}
+	var out retireWire
+	if json.Unmarshal(b, &out) != nil || len(out.Sessions) == 0 || out.Sessions[0].Name != session {
+		return retireRepeat
+	}
+	if out.Complete {
+		return retireConfirmed
+	}
+	if out.Sessions[0].Released {
+		return retireReleased
+	}
+	released := false
+	for _, s := range out.Sessions {
+		if s.Released {
+			released = true
+			continue
+		}
+		if !s.Stopped || len(s.Unended) > 0 {
+			log.Printf("memo queue: retire %s: %s is not done: %v", session, s.Name, s.Unended)
+			return retireRepeat
+		}
+	}
+	if released {
+		return retireDone
+	}
+	return retireRepeat // not complete and nothing to explain it: do not guess
+}
+
+// retirePending retires the sessions of the deliveries a clean close left to it, until the Agent
+// confirms. It never wakes a workspace: a stopped one, or one that does not answer or does not
+// send the report, is left for a later tick. A session that works again is retired like any
+// other: a watch that fired after a failed retire looks exactly like that, and it is the case the
+// retire is for. What ends a pending retire is the Agent's word (complete, or released: a person
+// started the session after the retire began) or the session's absence from a successful report,
+// never elapsed time, which proves neither a person's resume nor that the retire is not needed.
+// The result is stored with the delivery. Between our read and the Agent's start of the retire a
+// person may resume the session: that window is #4218.
+func (r *memoQueueRunner) retirePending(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
+	if ctx.Err() != nil {
+		return
+	}
+	ds, err := r.mgr.store.ListRetirePendingDeliveries(ctx)
+	if err != nil {
+		log.Printf("memo queue: list pending retires: %v", err)
+		return
+	}
+	for _, d := range ds {
+		if ctx.Err() != nil {
+			return
+		}
+		v := r.view(ctx, views, d.MembershipID)
+		if v == nil || !v.liveOK || !v.report {
+			continue
+		}
+		// A root missing from a successful report is a deleted session: a delivery is closed
+		// clean only after reads that listed its root (an absent root closes it aborted), so the
+		// session existed when it closed, whatever tick of this one the cached read was taken in.
+		if len(deliveryTree(v.live, d.Session)) == 0 {
+			r.finishRetire(ctx, d, "gone")
+			continue
+		}
+		if res := r.retire(ctx, v.res, d.Session); res != retireRepeat {
+			r.finishRetire(ctx, d, string(res))
+		}
+	}
+}
+
+// finishRetire ends a pending retire and keeps why: confirmed, released, done, gone or fault.
+func (r *memoQueueRunner) finishRetire(ctx context.Context, d store.MemoDelivery, result string) {
+	wctx, cancel := memoWriteCtx(ctx)
+	defer cancel()
+	if _, err := r.mgr.store.FinishDeliveryRetire(wctx, d.ID, store.DeliveryTS(time.Now()), result); err != nil {
+		log.Printf("memo queue: delivery %s: finish retire: %v", d.ID, err)
 	}
 }
 

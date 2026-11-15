@@ -316,7 +316,20 @@ type agentSessionsEnvelope struct {
 	RepoJobs  int             `json:"repoJobs"`
 	ImageJobs int             `json:"imageJobs"`
 	Limits    json.RawMessage `json:"limits,omitempty"`
+	// QueueReport is the marker of an Agent that reports what would start a session again
+	// (sessionWire.Wakers, ADR 0137 section 6), and the version of that report. The rows of an
+	// older Agent carry no wakers either, and an Agent omits them when there are none, so only
+	// this number tells "nothing would start it" from "this Agent does not say".
+	QueueReport int `json:"queueReport,omitempty"`
 }
+
+// queueReportVersion is the one version of the report this Control Plane understands. Any other
+// number is treated as no report: the delivery keeps the rule that needs none, and nothing is
+// retired for it.
+const queueReportVersion = 1
+
+// reportsQueue says the Agent that sent this envelope reports what would start a session.
+func (e agentSessionsEnvelope) reportsQueue() bool { return e.QueueReport == queueReportVersion }
 
 // jobsRunning reports whether session-less work is in flight in the workspace.
 func (e agentSessionsEnvelope) jobsRunning() bool { return e.RepoJobs > 0 || e.ImageJobs > 0 }

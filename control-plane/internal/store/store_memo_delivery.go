@@ -38,9 +38,56 @@ type MemoDelivery struct {
 	ID, MembershipID, QueueID string
 	State, Outcome, Session   string
 	MessageIDs                []string
-	// IdleTicks counts the consecutive scheduler ticks that saw the session idle.
+	// IdleTicks counts the consecutive scheduler ticks that saw nothing hold the delivery.
 	IdleTicks                                        int
 	CreatedAt, SentAt, OpenedAt, ClosedAt, UpdatedAt string
+
+	// The last report of the Agent that was actually read (ADR 0137 section 6), kept with the
+	// delivery so that the answer does not change while the workspace is stopped.
+	// HeldBy is one of the Held* values, empty when nothing held the delivery at the read that
+	// began at HeldSeenAt, and HeldSession the session of the tree that held it. ProgressSeenAt
+	// is when a session of the tree last showed progress. Reported is set once a read of an
+	// Agent that sends the queue report has been kept: only then is this a report and not a
+	// default.
+	HeldBy, HeldSession, HeldSeenAt, ProgressSeenAt string
+	// ReadGen is the last read reserved for the delivery, HeldGen the one behind the kept report.
+	ReadGen, HeldGen int64
+	Reported         bool
+	// OverdueAt is when the delivery passed its queue's max_task_hours. RetirePending is set by
+	// a clean close until the Agent confirms the retire, RetiredAt is when it last did.
+	OverdueAt, RetiredAt string
+	RetirePending        bool
+	// RetireResult is how a pending retire ended: confirmed, released (a person started the
+	// session after the retire began), done, gone or fault.
+	RetireResult string
+	// TurnEndedAt is "" until the first turn of the delivery's session was seen to end. It and
+	// the two fields beside it are written once.
+	TurnOutcome, TurnEndedAt string
+	TurnMs                   int64
+}
+
+// What holds an open delivery (memo_delivery.held_by).
+const (
+	HeldMachine = "machine"
+	HeldPerson  = "person"
+	HeldLimit   = "limit"
+	HeldWakers  = "wakers"
+	HeldUnknown = "unknown"
+)
+
+// DeliveryObservation is one read of the Agent for an open delivery. Gen is the number the
+// database handed out for the read before it began (ReserveDeliveryReads): of two reads of one
+// delivery the higher number is the later, whatever the clocks of the Control Planes say. At is
+// the read's start by the local clock, kept for display only.
+type DeliveryObservation struct {
+	Gen                 int64
+	At                  string
+	HeldBy, HeldSession string
+	// Progress says a session of the tree showed progress, at ProgressAt (the tick's time).
+	Progress                 bool
+	ProgressAt               string
+	TurnOutcome, TurnEndedAt string
+	TurnMs                   int64
 }
 
 // DeliveryTS formats a delivery timestamp. Fixed width, so that the text order of two stamps
@@ -59,6 +106,18 @@ type MemoDeliveryStore interface {
 	// MarkMemoDeliveryIdle records how many consecutive ticks saw an open delivery's session
 	// idle. False means the delivery is no longer open.
 	MarkMemoDeliveryIdle(ctx context.Context, id string, ticks int) (bool, error)
+	// MarkMemoDeliveryOverdue records that the member was told the delivery is overdue. False
+	// means it was already recorded, or the delivery is no longer open.
+	MarkMemoDeliveryOverdue(ctx context.Context, id, at string) (bool, error)
+	// MarkMemoDeliveryRetired records an Agent's confirmed retire of an open delivery's tree.
+	MarkMemoDeliveryRetired(ctx context.Context, id, at string) (bool, error)
+	// ListRetirePendingDeliveries returns the closed deliveries whose session still has to be
+	// retired, oldest first: the ones marked pending, and every clean close of a reported
+	// delivery without a result (an older binary's close sets no mark).
+	ListRetirePendingDeliveries(ctx context.Context) ([]MemoDelivery, error)
+	// FinishDeliveryRetire clears the pending retire of a closed delivery and keeps result
+	// (confirmed, released, done, gone, fault). retired_at is set only for a confirmed one.
+	FinishDeliveryRetire(ctx context.Context, id, at, result string) (bool, error)
 }
 
 // MemoDeliveryTxOps are the delivery reads and writes a MemoTx may make, scoped to its
@@ -90,16 +149,37 @@ type MemoDeliveryTxOps interface {
 	DeliverDeliveryMessages(delivery, at string) error
 	// UnconfirmDeliveryMessages marks them unconfirmed: never fired again by themselves.
 	UnconfirmDeliveryMessages(delivery string) error
+	// ReserveDeliveryReads hands out, for each open delivery of the membership, the number of
+	// the read about to begin. Call it before the Agent is asked.
+	ReserveDeliveryReads() (map[string]int64, error)
+	// ObserveDelivery keeps a read of an Agent that sends the queue report with an open delivery
+	// and answers the consecutive reads that found nothing holding it (0, 1 or 2). The count is
+	// worked out from the stored row, never from a copy read earlier. A read whose number is
+	// older than the kept one is refused (kept false): it still resets the count when it found
+	// a hold, so a stale read can never help a close. Progress clears retired_at, and a first
+	// turn is copied only while none is recorded.
+	ObserveDelivery(id string, o DeliveryObservation) (idleTicks int, kept bool, err error)
+	// SetDeliveryIdleTicks sets the count of an open delivery that no report was read for.
+	SetDeliveryIdleTicks(id string, ticks int) error
+	// SetDeliveryRetirePending marks a closed delivery as awaiting the Agent's confirmed retire.
+	// Called in the transaction of the clean close, so the close and the mark are one write.
+	SetDeliveryRetirePending(id string) error
 }
 
 const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, session, message_ids, idle_ticks,
-	created_at, sent_at, opened_at, closed_at, updated_at FROM memo_delivery`
+	created_at, sent_at, opened_at, closed_at, updated_at,
+	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at, retire_result,
+	turn_outcome, turn_ms, turn_ended_at FROM memo_delivery`
 
 func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	var d MemoDelivery
 	var ids string
+	var reported, retire int
 	err := row.Scan(&d.ID, &d.MembershipID, &d.QueueID, &d.State, &d.Outcome, &d.Session, &ids, &d.IdleTicks,
-		&d.CreatedAt, &d.SentAt, &d.OpenedAt, &d.ClosedAt, &d.UpdatedAt)
+		&d.CreatedAt, &d.SentAt, &d.OpenedAt, &d.ClosedAt, &d.UpdatedAt,
+		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt, &d.RetireResult,
+		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt)
+	d.Reported, d.RetirePending = reported != 0, retire != 0
 	d.MessageIDs = []string{}
 	if err == nil && ids != "" {
 		_ = json.Unmarshal([]byte(ids), &d.MessageIDs)
@@ -144,6 +224,101 @@ func (s *SQL) ListLiveMemoDeliveries(ctx context.Context) ([]MemoDelivery, error
 func (s *SQL) MarkMemoDeliveryIdle(ctx context.Context, id string, ticks int) (bool, error) {
 	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET idle_ticks=?, updated_at=? WHERE id=? AND state=?`,
 		ticks, DeliveryTS(time.Now()), id, DeliveryOpen))
+}
+
+func (t memoTx) ReserveDeliveryReads() (map[string]int64, error) {
+	if _, err := t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET read_gen=read_gen+1 WHERE membership_id=? AND state=?`,
+		t.mid, DeliveryOpen); err != nil {
+		return nil, err
+	}
+	rows, err := t.q.QueryContext(t.ctx, `SELECT id, read_gen FROM memo_delivery WHERE membership_id=? AND state=?`, t.mid, DeliveryOpen)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var gen int64
+		if err := rows.Scan(&id, &gen); err != nil {
+			return nil, err
+		}
+		out[id] = gen
+	}
+	return out, rows.Err()
+}
+
+func (t memoTx) ObserveDelivery(id string, o DeliveryObservation) (int, bool, error) {
+	held, progress := 0, 0
+	if o.HeldBy != "" {
+		held = 1
+	}
+	if o.Progress {
+		progress = 1
+	}
+	kept, err := affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET held_by=?, held_session=?, held_seen_at=?, held_gen=?,
+		  reported=1, updated_at=?,
+		  idle_ticks=CASE WHEN ?=1 THEN 0 WHEN reported=1 AND idle_ticks>=1 THEN 2 ELSE 1 END,
+		  progress_seen_at=CASE WHEN ?=1 THEN ? ELSE progress_seen_at END,
+		  retired_at=CASE WHEN ?=1 THEN '' ELSE retired_at END,
+		  turn_outcome=CASE WHEN turn_ended_at='' AND ?<>'' THEN ? ELSE turn_outcome END,
+		  turn_ms=CASE WHEN turn_ended_at='' AND ?<>'' THEN ? ELSE turn_ms END,
+		  turn_ended_at=CASE WHEN turn_ended_at='' THEN ? ELSE turn_ended_at END
+		WHERE id=? AND membership_id=? AND state=? AND held_gen<=?`,
+		o.HeldBy, o.HeldSession, o.At, o.Gen, DeliveryTS(time.Now()),
+		held, progress, o.ProgressAt, progress,
+		o.TurnEndedAt, o.TurnOutcome, o.TurnEndedAt, o.TurnMs, o.TurnEndedAt,
+		id, t.mid, DeliveryOpen, o.Gen))
+	if err != nil {
+		return 0, false, err
+	}
+	if !kept && held == 1 {
+		if _, err := t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET idle_ticks=0 WHERE id=? AND membership_id=? AND state=?`,
+			id, t.mid, DeliveryOpen); err != nil {
+			return 0, false, err
+		}
+	}
+	cur, ok, err := t.GetDelivery(id)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	return cur.IdleTicks, kept, nil
+}
+
+func (t memoTx) SetDeliveryIdleTicks(id string, ticks int) error {
+	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET idle_ticks=? WHERE id=? AND membership_id=? AND state=?`,
+		ticks, id, t.mid, DeliveryOpen)
+	return err
+}
+
+func (s *SQL) MarkMemoDeliveryOverdue(ctx context.Context, id, at string) (bool, error) {
+	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET overdue_at=?, updated_at=? WHERE id=? AND state=? AND overdue_at=''`,
+		at, at, id, DeliveryOpen))
+}
+
+func (s *SQL) MarkMemoDeliveryRetired(ctx context.Context, id, at string) (bool, error) {
+	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET retired_at=?, updated_at=? WHERE id=? AND state=?`,
+		at, at, id, DeliveryOpen))
+}
+
+func (s *SQL) ListRetirePendingDeliveries(ctx context.Context) ([]MemoDelivery, error) {
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state=? AND retire_result='' AND (retire_pending=1 OR (outcome=? AND reported=1))
+		ORDER BY closed_at, id`, DeliveryClosed, DeliveryClean))
+}
+
+func (s *SQL) FinishDeliveryRetire(ctx context.Context, id, at, result string) (bool, error) {
+	retired := ""
+	if result == "confirmed" {
+		retired = at
+	}
+	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET retire_pending=0, retired_at=?, retire_result=?, updated_at=?
+		WHERE id=? AND state=? AND retire_result=''`, retired, result, at, id, DeliveryClosed))
+}
+
+func (t memoTx) SetDeliveryRetirePending(id string) error {
+	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET retire_pending=1 WHERE id=? AND membership_id=? AND state=?`,
+		id, t.mid, DeliveryClosed)
+	return err
 }
 
 func (t memoTx) CountLiveDeliveries(queueID string) (int, int, error) {

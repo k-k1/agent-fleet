@@ -241,12 +241,56 @@ Workspace を起こさない。
   同じく古い `sending` は Agent の `POST /sessions-idempotency/{key}/abandon` の答えで決める
   （200 は open、202 は保持、404 `not_created` は `not_sent` で閉じる、503 はその `queueDelivery`
   を持つセッションを探し、あれば open、無ければ `unknown` で閉じてメッセージは `unconfirmed`、
-  答えが無ければ保持）。`open` はセッションがアーカイブ・削除されたとき、運ぶ対話なしで止まった
-  とき、2 tick 続けて idle だったときに閉じる（回数は `memo_delivery.idle_ticks` に残す）。
-  Workspace が止まっている間、`sending` は枠を保持し、`open` はセッションのミラーで判断する。
+  答えが無ければ保持）。`open` は**占有の規則**（下）で決める。
+  Workspace が止まっている間、`sending` は枠を保持する。
   動いているのに Agent が答えない Workspace や、起動中・停止中の Workspace では何も閉じない。
   そのあと、キューの送信は最大 2 本まで、tick の並列 4 発火をスケジュールと分け合う。配信の状態の
   移動はすべてその状態への条件付き書き込みなので、遅れた送信と照合のどちらか一方だけが動く。
+
+  **占有の規則**（[decisions/0137](../decisions/0137-message-queues.ja.md) §6 の表）。
+  `GET /sessions` に `queueReport: 1` を載せる Agent の Workspace では、`open` の配信は、
+  その木（配信のセッションと、`origin == "session"` で `originSession` の連鎖がそこへ着く
+  全セッション。深さを問わない。辿るときに名前を覚えるので循環は終わる）のどれかが
+  保持されている間、枠を持つ: 機械が働いている（`machine`）、人が動く必要がある。運ぶ対話つきで
+  停止中も含む（`person`）、利用上限を待っている。`limited` か予約済みの `rateLimitResumeAt`（`limit`）、
+  `wakers` が 0 でない（`wakers`）、`wakersUnknown` が立っている、または状態が分からない（`unknown`）。
+  木の中のアーカイブ済みセッションは何も保持しない。どれにも当たらない読み取りが 2 回続いたとき
+  `clean` で閉じ、セッションがアーカイブされたか Agent の一覧から消えたとき `aborted` で閉じる。
+  読み取りは先に配信へ保存する（`held_by`・`held_session`・`held_seen_at`・`idle_ticks`・
+  `progress_seen_at`）。membership のロックの後ろで書き、clean な読み取りの回数は保存済みの行から
+  数える。読み取りは始める前にデータベースが番号を振り（`read_gen`）、保存済み（`held_gen`）より
+  古い番号の読み取りは断るので、時計は順序を決めない。閉じるのも同じトランザクション。2 回の読み取りの間に作られた watch や、
+  別の Control Plane が保存した新しい読み取りは、これで閉じるのを止める。**Workspace が止まって
+  いる間や Agent が答えない間は、読めた報告だけが答えを変える**: 最後に保持されていた配信は
+  ミラーが何と言っても open のまま、何も保持されていなかった配信は、ミラーがそのセッションの稼働中
+  や運ぶ対話を示さない限り 2 回目の tick でミラーから閉じる。`queueReport` を送らない Agent
+  （別の数を送る Agent も）は、報告のいらない規則のまま（アーカイブ・削除・運ぶ対話なしの停止・
+  2 tick 続けての idle）で、何も retire しない。
+
+  **閉じたら止める。** クリーンな close は同じトランザクションで `retire_pending` を立てる。
+  以後の tick は、それが立った閉じた配信について、Workspace が動いていて `queueReport` を返す間
+  `POST /sessions/{name}/retire` を呼ぶ。終わらせるのは Agent 自身の言葉で、
+  `memo_delivery.retire_result` に残す: `complete: true`（`confirmed`）、root が `released`
+  （retire が始まったあとに人がそのセッションを起動した。もう人のもの）、root の下の一部だけが
+  released で残りは止まっている（`done`）、成功した報告がそのセッションをもう載せていない（`gone`）、
+  409 `retire_not_root`（`fault`。ログに残し、繰り返さない。配信のセッションは必ず root）。
+  404 は確認にならず、503 `retire_wait_cancelled` やタイムアウトは後の tick で繰り返す
+  （Agent は root ごとに 1 度に 1 つの retire しか走らせず、呼び出しが待たされることがある）。
+  止まった Workspace は起こさない。また機械が働き出したセッションも他と同じく retire する
+  （失敗した retire のあとで watch が再発火した場合と見分けがつかないため）。時間では終わらない。
+  読み取りから Agent が retire を始めるまでの間に人が再開したセッションは守れない: #4218。
+  `aborted` の close は何も retire しない。
+
+  **Overdue。** キューの `maxTaskHours`（1〜72、既定 12）より長く open の配信には `overdue_at` を
+  付け、メンバーへ通知を 1 件出す（kind `memo-delivery-overdue`、`EventID` は
+  `memo-overdue-<配信>` なので 2 つの Control Plane でも 1 回）。Agent が報告するかどうかにかかわらず
+  全配信が対象。Overdue だけでは何も空かない。報告が読めて、木のどのセッションも 1 時間
+  進捗を見せなかった（busy の行で進捗が新しい、または `busyProgressLapse` より若い
+  バックグラウンドジョブ）ときに木を retire し、Agent が確認する（`retired_at`。あとで進捗が
+  見えたら消す）まで tick ごとに繰り返す。枠は、報告が木に何も保持が無いと言った時点で通常の規則が
+  空ける。人の返事を待つセッションは設計どおり占有のまま。配信のセッションの最初のターン
+  （`queueTurn`）は、現れたときに配信へ写す。配信の DTO には `heldBy`・`heldSession`・
+  `heldSeenAt`・`overdue`・`overdueAt`・`firstTurn` が付く。
 
 - **reaper（idle-stop）** — `AF_IDLE_SWEEP_INTERVAL`（1 分）。**既定で有効**: セッションは 1 時間で
   （`AF_SESSION_IDLE_TIMEOUT`）、人の判断待ち — 質問・プラン承認・許可 — のセッションは

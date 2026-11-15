@@ -115,6 +115,9 @@ var sessionWireBinding = map[string]string{
 	"MovedTo":              "movedTo",
 	"QueueDelivery":        "queueDelivery",
 	"InputNotDelivered":    "inputNotDelivered",
+	"Wakers":               "wakers",
+	"WakersUnknown":        "wakersUnknown",
+	"QueueTurn":            "queueTurn",
 }
 
 // --- 2. exemption tables for the correspondence check (the family list itself is
@@ -149,6 +152,11 @@ var goOnlyExempt = map[string]string{
 	// Not a gap: the Control Plane slice of message queues relays it before the Console slice
 	// (#4164) declares it. That slice removes this entry when it adds the key to Session.
 	"queueDelivery": "the Console declares it in the message-queue Console slice (#4164)",
+	// The queue reads these three off the session list (ADR 0137 sections 6 and 7) and the
+	// Console slice declares them with the rest of its queue display.
+	"wakers":        "the Console declares it in the message-queue Console slice (#4164)",
+	"wakersUnknown": "the Console declares it in the message-queue Console slice (#4164)",
+	"queueTurn":     "the Console declares it in the message-queue Console slice (#4164)",
 }
 
 // sessionContractFamily describes the sessionWire family. The body of the check lives in
