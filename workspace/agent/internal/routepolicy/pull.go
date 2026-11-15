@@ -163,7 +163,11 @@ func (s *Store) seedFromEnv() {
 }
 
 // Sync takes one live answer into the store, logging what changed. It is the puller's step.
+//
+// Whatever its outcome, it settles a start that could record no floor: an answer has been taken,
+// or the CP cannot be reached and what is on disk decides.
 func (s *Store) Sync(ctx context.Context, why string) error {
+	defer s.settled()
 	p, err := Fetch(ctx)
 	if err != nil {
 		return err
@@ -209,6 +213,9 @@ func (s *Store) Run(ctx context.Context) {
 
 func (s *Store) run(ctx context.Context, rnd func() float64, after func(time.Duration) <-chan time.Time, now func() time.Time) {
 	wait := time.Duration(rnd() * float64(firstMax))
+	if s.State().Holding {
+		wait = 0 // new work waits on this pull, and one Agent's restart is no herd
+	}
 	failures := 0
 	for {
 		select {

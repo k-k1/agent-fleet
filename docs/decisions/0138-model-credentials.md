@@ -471,6 +471,11 @@ image generation, shared daemons) is inside this rule; D13's exception covers on
 - The CP gives each policy a **revision**, increasing per member. The Agent accepts a policy only with a revision
   higher than the one it holds, and keeps the held one on disk, so a restart, an out-of-order answer or a stale cache
   can never restore a weaker rule.
+  - The held revision's floor is recorded twice: beside the copy in the config directory, and in the state
+    directory, which is local disk where the config directory is a network mount. So a config directory that
+    stops taking writes cannot bring the older copy back at a restart.
+  - When at a start neither directory can be written, new work waits for the first pull to settle. Only when the
+    CP cannot be reached does the Agent judge by what is on disk, as in any outage.
 - The Workspace receives the effective policy at start (environment); the Agent then pulls it from a new internal
   endpoint, like `/internal/route/check` (ADR 0129, Q1 part 2), **at least every 30 seconds**. The CP also says in
   the answer whether any layer restricts anything for this member, and sends the deployment's ceiling separately.

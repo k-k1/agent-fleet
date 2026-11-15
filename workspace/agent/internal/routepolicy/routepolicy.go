@@ -15,10 +15,15 @@
 //   - The copy on disk is written file-synced then renamed then directory-synced, behind a floor
 //     record written first: the revision being taken and whether it restricts. The floor is the
 //     anti-replay mark that survives a lost copy (Open says how each case is held): a restart
-//     never holds a copy older than the floor, nor a copy no valid floor vouches for. When even
-//     the floor cannot be written (an unwritable config directory), the newer rule is enforced
-//     in memory and the error logged, and a restart reads the last floor and copy that landed:
-//     #4198.
+//     never holds a copy older than the floor, nor a copy no valid floor vouches for.
+//   - The floor is written twice, beside the copy and as a mirror in the state directory, which
+//     is another volume on the runtimes where the config directory is a network mount. When the
+//     config directory cannot be written, the newer rule is enforced in memory and the mirror
+//     records it, so a restart holds the higher of the two floors and never the older copy.
+//   - When at a start neither directory can be written, nothing on disk can be trusted to show
+//     the last rule in force, so new work waits for the first pull to settle: the CP's answer
+//     decides, and only when the CP cannot be reached does the Agent judge by what is on disk,
+//     as it would during any outage.
 package routepolicy
 
 import (
@@ -53,6 +58,10 @@ func (p Policy) restricting() bool { return p.Restricted || p.CeilingRestricted 
 // FreshnessLimit is how long a restricting policy is trusted without a confirmation: the route
 // gateway's rule for its Settings pull (ADR 0128 note of 2026-11-05).
 const FreshnessLimit = 15 * time.Minute
+
+// ErrUnrecorded is the refusal of new work after a start at which no floor could be written,
+// until the first pull settles. It lasts one pull: the first is made at once in that case.
+var ErrUnrecorded = errors.New("the credential policy cannot be recorded on disk and the Control Plane has not answered since the Agent started, so new work waits for its answer")
 
 // ErrUnconfirmed is the refusal of new work while a restricting policy cannot be confirmed.
 var ErrUnconfirmed = errors.New("the credential policy cannot be confirmed: the Control Plane has not answered for over 15 minutes, so new work is refused until it does")
@@ -100,8 +109,19 @@ const (
 	floorUntrusted // present but unreadable, malformed or incomplete
 )
 
-func readFloor(path string) (floor, floorState) {
-	b, err := os.ReadFile(floorPath(path))
+func floorOf(h held) floor {
+	return floor{Revision: h.Policy.Revision, Restricting: h.Policy.restricting(), SeenStart: h.SeenStart}
+}
+
+// above reports whether floor a records a stricter state than b: a higher revision, or the same
+// one restricting where b does not (an unknown start marker taken at the held revision).
+func (a floor) above(b floor) bool {
+	return a.Revision > b.Revision || a.Revision == b.Revision && a.Restricting && !b.Restricting
+}
+
+// readFloor reads the floor record at file (floorPath of the copy, or the mirror).
+func readFloor(file string) (floor, floorState) {
+	b, err := os.ReadFile(file)
 	if errors.Is(err, os.ErrNotExist) {
 		return floor{}, floorMissing
 	}
@@ -133,6 +153,9 @@ type State struct {
 	LastOK time.Time
 	// Placeholder: the held policy stands in for one that could not be read; it allows nothing.
 	Placeholder bool
+	// Holding: the Agent started unable to record a floor anywhere, and no pull has settled
+	// since; new work waits for one.
+	Holding bool
 }
 
 // Restricting reports whether the freshness rule applies: the held policy restricts anything or
@@ -141,7 +164,7 @@ func (s State) Restricting() bool { return s.Held && s.Policy.restricting() }
 
 // Confirmed reports whether new work may be judged by the held policy at now.
 func (s State) Confirmed(now time.Time) bool {
-	return !s.Restricting() || now.Sub(s.LastOK) <= FreshnessLimit
+	return !s.Holding && (!s.Restricting() || now.Sub(s.LastOK) <= FreshnessLimit)
 }
 
 // Store holds the policy. Use Open.
@@ -153,16 +176,30 @@ type Store struct {
 	// it. Any doubt (a failed floor write, a floor Open could not vouch for) clears it, and the
 	// next take writes the floor again before reporting anything durable.
 	floorOK bool
+	// mirror is the second floor's path ("" for none); mirrorOK is floorOK for it.
+	mirror   string
+	mirrorOK bool
+	// holding: see State.Holding. Set by Open, cleared by the first pull that settles.
+	holding bool
 	now     func() time.Time
 }
 
 // Path is where the Agent keeps its copy, in the durable config directory.
 func Path() string { return filepath.Join(paths.AgentConfigDir(), "route-policy.json") }
 
+// MirrorPath is where the Agent keeps the second floor, in the state directory: local disk on
+// every runtime, so it is written when a network-mounted config directory is not.
+func MirrorPath() string { return filepath.Join(paths.AgentStateDir(), "route-policy.floor") }
+
 func floorPath(path string) string { return path + ".floor" }
 
-// Open loads the copy at path behind its floor.
-//   - Neither file: nothing held (a first boot).
+// Open loads the copy at path behind its floor and the floor mirror (mirror; "" for none). The
+// floor it judges by is the one beside the copy, raised to the mirror when the mirror records a
+// stricter state, or replaced by it when neither the floor nor the copy is left; a mirror that is
+// missing or malformed counts for nothing (an Agent from before it, a lost home volume). At a tie
+// on revision and restriction the floor beside the copy keeps its receipt: if the mirror's is the
+// newer, the marker it names is taken again, which only restricts until the next live answer.
+//   - No floor and no copy: nothing held (a first boot).
 //   - A valid copy above a valid floor, or at its revision and agreeing with it on whether it
 //     restricts: the copy.
 //   - A valid floor above the copy, or over a copy that is missing or unreadable: the floor's own
@@ -170,11 +207,30 @@ func floorPath(path string) string { return path + ".floor" }
 //     at its revision when it does.
 //   - A floor that is missing beside a copy, or unreadable, malformed or incomplete: nothing can
 //     vouch for the copy, so a placeholder that only a live pull replaces.
-func Open(path string) *Store {
-	s := &Store{path: path, now: time.Now}
-	f, fs := readFloor(path)
+//
+// When neither the copy's directory nor the mirror's can be written now, the Store starts holding
+// (State.Holding).
+func Open(path, mirror string) *Store {
+	s := &Store{path: path, mirror: mirror, now: time.Now}
+	f, fs := readFloor(floorPath(path))
+	m, ms := floor{}, floorMissing
+	if mirror != "" {
+		m, ms = readFloor(mirror)
+	}
 	c, copyErr := readCopy(path)
 	copyMissing := errors.Is(copyErr, os.ErrNotExist)
+	raised := false
+	switch {
+	case ms == floorUntrusted:
+		log.Printf("route policy: ignoring the floor mirror at %s: unreadable or incomplete", mirror)
+	case ms != floorOK:
+	case fs == floorOK && m.above(f), fs == floorMissing && copyMissing:
+		// A mirror stands in for a missing floor only when the copy is gone too (the config
+		// directory lost as a whole). Beside a surviving copy it could be the stale one of the
+		// two, and at a tie a stale unrestricted floor would bless a placeholder's revision as
+		// unrestricted; that case stays below, where nothing vouches for the copy.
+		f, fs, raised = m, floorOK, true
+	}
 	switch {
 	case fs == floorMissing && copyMissing:
 	case fs == floorOK && copyErr == nil && (c.Policy.Revision > f.Revision || c.Policy.Revision == f.Revision && f.Restricting == c.Policy.restricting()):
@@ -201,13 +257,46 @@ func Open(path string) *Store {
 		if copyErr == nil {
 			rev = c.Policy.Revision
 		}
+		if ms == floorOK {
+			rev = max(rev, m.Revision)
+		}
 		log.Printf("route policy: the floor at %s cannot vouch for the copy; allowing nothing until the Control Plane answers", floorPath(path))
 		s.h = placeholder(rev, true)
 		if copyErr == nil {
 			s.h.SeenStart = c.SeenStart
 		}
 	}
+	if raised {
+		s.floorOK = false // the floor beside the copy is behind the mirror: rewritten at the next take
+	}
+	s.mirrorOK = s.h.Held && ms == floorOK && m == floorOf(s.h)
+	if !writable(filepath.Dir(path)) && (mirror == "" || !writable(filepath.Dir(mirror))) {
+		log.Printf("route policy: no floor can be recorded (%s unwritable, mirror %q too); new work waits for the first pull",
+			filepath.Dir(path), mirror)
+		s.holding = true
+	}
 	return s
+}
+
+// writable reports whether a file can be created, written and synced in dir now: the test for a
+// read-only mount and for a full disk alike.
+func writable(dir string) bool {
+	if os.MkdirAll(dir, 0o700) != nil {
+		return false
+	}
+	f, err := os.CreateTemp(dir, ".route-policy-probe.*")
+	if err != nil {
+		return false
+	}
+	defer os.Remove(f.Name())
+	_, err = f.Write([]byte("probe\n"))
+	if err == nil {
+		err = syncFile(f)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err == nil
 }
 
 func copyErrOr(err error, alt string) string {
@@ -249,7 +338,20 @@ func readCopy(path string) (held, error) {
 func (s *Store) State() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return State{Policy: s.h.Policy, Held: s.h.Held, LastOK: time.Unix(s.h.LastOK, 0), Placeholder: s.h.Placeholder}
+	return State{Policy: s.h.Policy, Held: s.h.Held, LastOK: time.Unix(s.h.LastOK, 0), Placeholder: s.h.Placeholder,
+		Holding: s.holding}
+}
+
+// settled ends the hold of a start that could record no floor: a pull answered (Accept already
+// took it) or failed (the CP cannot be reached, so what is on disk decides, as in any outage).
+func (s *Store) settled() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.holding {
+		s.holding = false
+		log.Printf("route policy: the first pull settled; judging new work by %s", State{Policy: s.h.Policy, Held: s.h.Held,
+			Placeholder: s.h.Placeholder}.Describe())
+	}
 }
 
 // Accept takes a live answer from the CP (a pull). A strictly higher revision, the first answer
@@ -306,7 +408,7 @@ func (s *Store) take(p Policy, confirmedAt int64, live bool) (bool, error) {
 	default:
 		replace = p.Revision > cur.Policy.Revision
 	}
-	if !replace && (p.Revision < cur.Policy.Revision || confirmedAt <= cur.LastOK && s.floorOK) {
+	if !replace && (p.Revision < cur.Policy.Revision || confirmedAt <= cur.LastOK && s.floorOK && (s.mirrorOK || s.mirror == "")) {
 		return false, nil // a replay, or nothing new to record
 	}
 	next := cur
@@ -320,25 +422,41 @@ func (s *Store) take(p Policy, confirmedAt int64, live bool) (bool, error) {
 	return replace, s.persistLocked(next)
 }
 
-// persistLocked holds next and records it: the floor first whenever it may not match (so a copy
-// that then fails to land is caught at the next start), then the copy. next is held in memory
-// whatever the disk does: it is the rule to enforce now. s.mu must be held.
+// persistLocked holds next and records it: the floor and its mirror first whenever they may not
+// match (so a copy that then fails to land is caught at the next start), then the copy. next is
+// held in memory whatever the disk does: it is the rule to enforce now. s.mu must be held.
+//
+// The copy is not written when the floor beside it failed: at a tie a floor that disagrees with
+// the copy is taken as the newer of the two, so a copy landing over an older floor at its own
+// revision would be read back as the older, looser state.
 func (s *Store) persistLocked(next held) error {
-	want := floor{Revision: next.Policy.Revision, Restricting: next.Policy.restricting(), SeenStart: next.SeenStart}
-	floorMatches := s.floorOK && s.h.Held && s.h.Policy.Revision == want.Revision && s.h.Policy.restricting() == want.Restricting &&
-		s.h.SeenStart == want.SeenStart
+	want := floorOf(next)
+	same := s.h.Held && floorOf(s.h) == want
 	s.h = next
-	if !floorMatches {
+	var errs []error
+	if !s.floorOK || !same {
 		s.floorOK = false
 		if err := writeJSON(floorPath(s.path), want); err != nil {
-			return fmt.Errorf("recording the policy floor: %w", err)
+			errs = append(errs, fmt.Errorf("recording the policy floor: %w", err))
+		} else {
+			s.floorOK = true
 		}
-		s.floorOK = true
+	}
+	if s.mirror != "" && (!s.mirrorOK || !same) {
+		s.mirrorOK = false
+		if err := writeJSON(s.mirror, want); err != nil {
+			errs = append(errs, fmt.Errorf("recording the policy floor mirror: %w", err))
+		} else {
+			s.mirrorOK = true
+		}
+	}
+	if !s.floorOK {
+		return errors.Join(errs...)
 	}
 	if err := writeJSON(s.path, next); err != nil {
-		return fmt.Errorf("recording the policy: %w", err)
+		errs = append(errs, fmt.Errorf("recording the policy: %w", err))
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Durability seams: a test injects failures through these.
@@ -388,9 +506,13 @@ func writeJSON(path string, v any) error {
 }
 
 // Gate is the enforcement points' question for new work: nil when it may be judged by the held
-// policy now, ErrUnconfirmed when a restricting policy has gone unconfirmed past FreshnessLimit.
+// policy now, ErrUnrecorded while a start that could record no floor waits for its first pull,
+// ErrUnconfirmed when a restricting policy has gone unconfirmed past FreshnessLimit.
 func (s *Store) Gate() error {
-	if st := s.State(); !st.Confirmed(s.now()) {
+	switch st := s.State(); {
+	case st.Holding:
+		return ErrUnrecorded
+	case !st.Confirmed(s.now()):
 		return ErrUnconfirmed
 	}
 	return nil

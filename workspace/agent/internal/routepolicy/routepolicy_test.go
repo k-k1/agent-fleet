@@ -22,13 +22,13 @@ func testStore(t *testing.T) (*Store, *time.Time) {
 func storeAt(t *testing.T, path string) (*Store, *time.Time) {
 	t.Helper()
 	now := time.Unix(1_800_000_000, 0)
-	s := Open(path)
+	s := Open(path, filepath.Join(t.TempDir(), "state", "route-policy.floor"))
 	s.now = func() time.Time { return now }
 	return s, &now
 }
 
 func reopen(s *Store) *Store {
-	r := Open(s.path)
+	r := Open(s.path, s.mirror)
 	r.now = s.now
 	return r
 }
@@ -184,13 +184,13 @@ func TestLostCopyFailsClosedOnlyWhenRestricting(t *testing.T) {
 		})
 	}
 	// No floor and no copy: a first boot holds nothing.
-	if st := Open(filepath.Join(t.TempDir(), "none.json")).State(); st.Held {
+	if st := Open(filepath.Join(t.TempDir(), "none.json"), "").State(); st.Held {
 		t.Errorf("a first boot holds %+v", st)
 	}
 }
 
-// A copy that fails to land behind a written floor is caught at the next start; the floor, the
-// copy's bytes, its name and its directory are synced in that order.
+// A copy that fails to land behind a written floor is caught at the next start; the floor, its
+// mirror, the copy's bytes, its name and its directory are synced in that order.
 func TestDurableWriteAndRestartOrdering(t *testing.T) {
 	s, _ := testStore(t)
 	if _, err := s.Accept(open1); err != nil {
@@ -201,6 +201,10 @@ func TestDurableWriteAndRestartOrdering(t *testing.T) {
 	var events []string
 	name := func(p string) string {
 		switch b := filepath.Base(p); {
+		case strings.Contains(b, "probe"):
+			return "probe"
+		case filepath.Base(filepath.Dir(p)) == "state":
+			return "mirror"
 		case strings.Contains(b, ".floor"):
 			return "floor"
 		default:
@@ -213,7 +217,7 @@ func TestDurableWriteAndRestartOrdering(t *testing.T) {
 	if _, err := s.Accept(strict2); err != nil {
 		t.Fatal(err)
 	}
-	want := "sync:floor rename:floor syncdir sync:copy rename:copy syncdir"
+	want := "sync:floor rename:floor syncdir sync:mirror rename:mirror syncdir sync:copy rename:copy syncdir"
 	if got := strings.Join(events, " "); got != want {
 		t.Errorf("order = %s, want %s", got, want)
 	}
