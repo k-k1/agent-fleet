@@ -2496,6 +2496,90 @@ const SCENES = [
     })()`,
     settle: 2000,
   },
+  {
+    // The category row with the line that says why nothing starts (outside the time window, with the next start).
+    name: "autorun-waiting",
+    guide: true,
+    stubEnv: { SHOT_AUTORUN_GUIDE: "waiting" },
+    clip: [".memo-cat-head", ".memo-q-notices"],
+    pad: 4,
+    sections: { assistant: 0, workitems: 0, memos: 1, schedules: 0, repos: 0, files: 0 },
+    width: 1300,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".memo-q-notices"); i++) await new Promise((r) => setTimeout(r, 200));
+      // The rail is narrow enough to cut the category's name when it carries two badges: let it
+      // be as wide as the page's other crops of this pane.
+      for (let el = document.querySelector(".memo-cat-head"); el && el !== document.body; el = el.parentElement) {
+        if (el.clientWidth > 0 && el.clientWidth < 560) { el.style.width = "560px"; el.style.minWidth = "560px"; el.style.maxWidth = "none"; el.style.flex = "none"; }
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    })()`,
+    verify: `!!document.querySelector(".memo-q-notices")`,
+    settle: 1500,
+  },
+  {
+    // A paused category: the badge on its row and the notice with Resume.
+    name: "autorun-paused",
+    guide: true,
+    stubEnv: { SHOT_AUTORUN_GUIDE: "paused" },
+    clip: [".memo-cat-head", ".memo-q-notices"],
+    pad: 4,
+    sections: { assistant: 0, workitems: 0, memos: 1, schedules: 0, repos: 0, files: 0 },
+    width: 1300,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".memo-q-notices"); i++) await new Promise((r) => setTimeout(r, 200));
+      // The rail is narrow enough to cut the category's name when it carries two badges: let it
+      // be as wide as the page's other crops of this pane.
+      for (let el = document.querySelector(".memo-cat-head"); el && el !== document.body; el = el.parentElement) {
+        if (el.clientWidth > 0 && el.clientWidth < 560) { el.style.width = "560px"; el.style.minWidth = "560px"; el.style.maxWidth = "none"; el.style.flex = "none"; }
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    })()`,
+    verify: `!!document.querySelector(".memo-q-notices")`,
+    settle: 1500,
+  },
+  {
+    // A category whose workspace has to be restarted before runs start by themselves.
+    name: "autorun-norep",
+    guide: true,
+    stubEnv: { SHOT_AUTORUN_GUIDE: "norep" },
+    clip: [".memo-cat-head", ".memo-q-notices"],
+    pad: 4,
+    sections: { assistant: 0, workitems: 0, memos: 1, schedules: 0, repos: 0, files: 0 },
+    width: 1300,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".memo-q-notices"); i++) await new Promise((r) => setTimeout(r, 200));
+      // The rail is narrow enough to cut the category's name when it carries two badges: let it
+      // be as wide as the page's other crops of this pane.
+      for (let el = document.querySelector(".memo-cat-head"); el && el !== document.body; el = el.parentElement) {
+        if (el.clientWidth > 0 && el.clientWidth < 560) { el.style.width = "560px"; el.style.minWidth = "560px"; el.style.maxWidth = "none"; el.style.flex = "none"; }
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    })()`,
+    verify: `!!document.querySelector(".memo-q-notices")`,
+    settle: 1500,
+  },
+  {
+    // Tenant settings › Operations › Memo auto-run: the switch in its initial "block" state.
+    name: "autorun-admin",
+    guide: true,
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_OUTSIDE: "1" },
+    clip: ".memo-queues",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "home" })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${openTenantSection("/^(メモの自動実行|Memo auto-run)$/")}
+    })()`,
+    settle: 1000,
+  },
   // ---- end memo auto-run pages ----
   // ---- end chat pages ----
   // ---- outside-access and security pages (SHOT_OUTSIDE_GUIDE) ----
