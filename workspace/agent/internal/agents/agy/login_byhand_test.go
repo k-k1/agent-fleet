@@ -77,7 +77,7 @@ func TestAgyLoginByHand(t *testing.T) {
 	if _, err := f.Ptmx.Write([]byte(keyEnter)); err != nil {
 		t.Fatal(err)
 	}
-	if err := driveOnboarding(f, 120*time.Second); err != nil {
+	if err := driveOnboarding(f, 120*time.Second, SignedIn); err != nil {
 		t.Fatalf("login did not complete: %v", err)
 	}
 	enforceTelemetryOff()

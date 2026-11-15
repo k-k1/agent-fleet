@@ -91,10 +91,10 @@ var Entries = []string{
 	// requires every store under AgentStateDir to be named. Introduced directly under
 	// AgentStateDir.
 	"kiro-acp",
-	// Staging homes of codex device sign-ins (agents/codex stage.go). Transient: a home lives
-	// for one flow and is swept after it, so nothing is lost by leaving it behind; listed for
-	// the drift test. Introduced directly under AgentStateDir.
-	"codex-login",
+	// Staging homes of sign-ins (agents/staging.go). Transient: a home lives for one flow and
+	// is swept after it, so nothing is lost by leaving it behind; listed for the drift test.
+	// Introduced directly under AgentStateDir.
+	"login-staging",
 	"session-report",
 	"session-resume",
 	"session-translations",

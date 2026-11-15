@@ -63,7 +63,7 @@ The connected cards of claude, codex, Antigravity, Cursor, Kiro and Muse Code ha
 2. Go on in the confirmation; it reopens the sign-in page
 3. Sign in the usual way
 
-Running sessions are not stopped. claude and codex keep the current sign-in until the new one completes: if that sign-in fails or you press "**Back**", the old one stays in use. Antigravity, Cursor, Kiro and Muse Code sign out first, so for them a failed or abandoned sign-in leaves the agent "**Not connected**" until you connect it again.
+Running sessions are not stopped. The current sign-in stays in use until the new one completes: if that sign-in fails, or you press "**Back**" or "**Cancel**", the old one is kept.
 
 ## Choose the behavior
 

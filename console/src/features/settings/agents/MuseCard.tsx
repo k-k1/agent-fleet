@@ -4,7 +4,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
-import { useReauth } from "../parts/useReauth.ts";
+import { useActiveFlow } from "../parts/useActiveFlow.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { CardSettings, ConnPaused, LaunchDefaults, type DeviceFlow } from "./AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
@@ -39,6 +39,7 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
+  const active = useActiveFlow();
   const [flow, setFlow] = useState<DeviceFlow | null>(null);
   const [installing, setInstalling] = useState<null | "installing" | "error">(null);
   const [mode, setMode] = useState<"idle" | "key">("idle");
@@ -122,19 +123,25 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
         toast(tr("agents.muse_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
       }
+      active.begin(res.flow_id);
       setFlow({ url: res.url, user_code: res.user_code, flow_id: res.flow_id, status: tr("git.oauth_waiting") });
       poll({
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
-        onExpire: () => setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
+        onExpire: () => {
+          if (active.is(res.flow_id)) setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired") } : f));
+        },
         step: async () => {
+          if (!active.is(res.flow_id)) return { stop: true };
           let p;
           try {
             p = await apiJSON("api/connections/muse/poll", "POST", { flow_id: res.flow_id });
           } catch {
             p = null;
           }
+          if (!active.is(res.flow_id)) return { stop: true };
           if (p && p.connected) {
+            active.end();
             setFlow(null);
             reload();
             return { stop: true };
@@ -143,7 +150,8 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
           // approval. Saying so ends the wait instead of spinning to the 15-minute deadline for
           // something that can no longer happen (the Agent reports it; see auth.go's HandlePoll).
           if (p && p.failed) {
-            setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired") } : f));
+            active.end();
+            setFlow((f) => (f ? { ...f, status: tr("provider.login_ended", { msg: p.detail || "" }) } : f));
             return { stop: true };
           }
           return { stop: false, nextMs: 2500 };
@@ -171,19 +179,20 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
     }
   };
 
-  const reauth = useReauth("muse", reload, setBusy);
   // Signs in the way the card was connected: the device flow for an account sign-in, the key
   // form for a pasted API key (`metered`). The device flow would silently move a metered
-  // workspace onto the subscription, and the key route refuses while a sign-in exists.
-  const reauthMuse = () =>
-    reauth(async () => {
-      if (st?.metered) {
-        setKeyReauth(true);
-        setMode("key");
-      } else await startLogin();
-    });
+  // workspace onto the subscription. Neither signs out first: the device flow signs in under a
+  // staging home and replaces the login only when it completes, and a key replaces a key only
+  // when one is submitted.
+  const reauthMuse = async () => {
+    if (st?.metered) {
+      setKeyReauth(true);
+      setMode("key");
+    } else await startLogin();
+  };
   const disconnect = async () => {
     await raw("api/connections/muse", { method: "DELETE" });
+    active.end();
     setFlow(null);
     setMode("idle");
     setKeyReauth(false);
@@ -203,14 +212,19 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
       {!running ? (
         <ConnPaused />
       ) : flow ? (
-        // Before the connection state: re-auth opens the flow while the refetch that clears
-        // "connected" is still on its way (or failed).
+        // Before the connection state: re-auth opens the flow while the card is still connected.
         <div className="p-body">
           {/* Device flow: a URL with the code embedded plus the code on its own, to compare in the
               browser. muse polls Meta itself, so there is nothing to paste back. */}
           <DeviceSteps code={flow.user_code} url={flow.url} status={flow.status} />
           <div className="flow">
-            <button className="ghost" onClick={() => setFlow(null)}>
+            <button
+              className="ghost"
+              onClick={() => {
+                active.end();
+                setFlow(null);
+              }}
+            >
               {tr("common.cancel")}
             </button>
           </div>

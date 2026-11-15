@@ -19,6 +19,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
@@ -118,33 +119,30 @@ var loginFlows = agents.NewFlowStore(loginFlowTTL)
 // HandleStart launches the interactive login, scrapes the authorize URL, and
 // returns it with a flow_id the client polls. The cursor process is kept alive to
 // do the Cursor-side polling. POST /connections/cursor/start.
+//
+// The login runs under a staging HOME (agents.StagedPoll): a signed-in cursor prints no login
+// URL, so this is also what lets a connected card sign in again while the current login stays
+// in use.
 func HandleStart(w http.ResponseWriter, r *http.Request) {
 	if _, err := exec.LookPath(bin()); err != nil {
 		httpx.WriteErr(w, http.StatusConflict, "cursor_unsupported", "cursor-agent not found (the image may predate it)")
 		return
 	}
-	if loggedInFresh() {
-		// A signed-in cursor prints no login URL — the scrape below would just hang.
-		httpx.WriteErr(w, http.StatusConflict, "already_connected", "already connected; disconnect first to re-authenticate")
-		return
-	}
 	loginFlows.Reap()
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteCursorLogin)
-	if !began {
+	stage, err := agents.NewStagingHome("cursor")
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "stage_failed", err.Error())
 		return
 	}
 	cmd := exec.Command(bin(), disableAutoUpdateFlag, "login")
-	cmd.Env = EnvWithoutCI(append(os.Environ(), "TERM=xterm-256color", "NO_OPEN_BROWSER=1")) // CI is stripped (ci_env.go)
+	cmd.Env = agents.WithHome(EnvWithoutCI(append(os.Environ(), "TERM=xterm-256color", "NO_OPEN_BROWSER=1")), stage) // CI is stripped (ci_env.go)
 	f, err := agents.StartFlow(cmd)
 	if err != nil {
-		loginOp.Finish()
-	} else {
-		f.LoginOp = loginOp
-	}
-	if err != nil {
+		_ = os.RemoveAll(stage)
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
 	}
+	agents.Stage(f, stage)
 	url := sanitizeURL(f.WaitFor(loginURLRe, 20*time.Second))
 	if url == "" {
 		f.Close()
@@ -171,28 +169,24 @@ type pollReq struct {
 	FlowID string `json:"flow_id"`
 }
 
-// HandlePoll reports whether the browser approval has completed. On success it
-// tears down the flow; cursor has written auth.json by then.
-// POST /connections/cursor/poll.
+// HandlePoll reports whether the browser approval has completed. On success it installs the
+// staged login and tears down the flow. POST /connections/cursor/poll.
 func HandlePoll(w http.ResponseWriter, r *http.Request) {
 	var req pollReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if loggedInFresh() {
-		// stored: this call consumed a live flow, i.e. it is the one that saw the sign-in
-		// finish. A repeat, or a poll with no flow while already signed in, says connected
-		// without it; the Control Plane audits only the former.
-		stored := false
-		if f := loginFlows.Take(req.FlowID); f != nil {
-			f.Close()
-			stored = true
-		}
-		invalidateStatus()
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
+	loginPoll.Serve(w, req.FlowID)
+}
+
+// loginPoll reads the package's seams through closures so a test can substitute them.
+var loginPoll = &agents.StagedPoll{
+	Flows:        loginFlows,
+	Logins:       []string{routes.RouteCursorLogin},
+	SignedInAt:   func(home string) bool { return signedInAt(home) },
+	Install:      func(stage string) error { return installLogin(stage, paths.HomeDir()) },
+	LiveSignedIn: func() bool { return loggedInFresh() },
+	Installed:    invalidateStatus,
 }
 
 // HandleDisconnect signs cursor out (clears ~/.config/cursor/auth.json) via the
@@ -213,10 +207,17 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 
 // loggedInFresh runs an UNCACHED `cursor-agent status --format json` for the login
 // poll (probeStatus caches 30s — too stale for a live poll loop).
-func loggedInFresh() bool {
+func loggedInFresh() bool { return statusAuthenticated("") }
+
+// statusAuthenticated is that probe against home ("" = the live one).
+func statusAuthenticated(home string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := probeCmd(ctx, disableAutoUpdateFlag, "status", "--format", "json").Output()
+	cmd := probeCmd(ctx, disableAutoUpdateFlag, "status", "--format", "json")
+	if home != "" {
+		cmd.Env = agents.WithHome(cmd.Env, home)
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}

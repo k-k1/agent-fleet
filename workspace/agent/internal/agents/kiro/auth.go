@@ -19,6 +19,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
@@ -128,33 +129,30 @@ var loginFlows = agents.NewFlowStore(loginFlowTTL)
 // HandleStart launches the interactive device-flow login, scrapes the URL + code,
 // and returns them with a flow_id the client polls. The kiro process is kept alive
 // to do the AWS-side polling. POST /connections/kiro/start.
+//
+// The login runs under a staging HOME (agents.StagedPoll): a signed-in kiro prints no login
+// URL, so this is also what lets a connected card sign in again while the current login stays
+// in use.
 func HandleStart(w http.ResponseWriter, r *http.Request) {
 	if _, err := exec.LookPath(bin()); err != nil {
 		httpx.WriteErr(w, http.StatusConflict, "kiro_unsupported", "kiro-cli not found (it may not be installed)")
 		return
 	}
-	if loggedInFresh() {
-		// A signed-in kiro prints no login URL — the scrape below would just hang.
-		httpx.WriteErr(w, http.StatusConflict, "already_connected", "already connected; disconnect first to re-authenticate")
-		return
-	}
 	loginFlows.Reap()
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteKiroLogin)
-	if !began {
+	stage, err := agents.NewStagingHome("kiro")
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "stage_failed", err.Error())
 		return
 	}
 	cmd := exec.Command(bin(), "login", "--license", "free", "--use-device-flow")
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = agents.WithHome(append(os.Environ(), "TERM=xterm-256color"), stage)
 	f, err := agents.StartFlow(cmd)
 	if err != nil {
-		loginOp.Finish()
-	} else {
-		f.LoginOp = loginOp
-	}
-	if err != nil {
+		_ = os.RemoveAll(stage)
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
 	}
+	agents.Stage(f, stage)
 	url := loginURLRe.FindString(f.WaitFor(loginURLRe, 20*time.Second))
 	if url == "" {
 		f.Close()
@@ -170,28 +168,24 @@ type pollReq struct {
 	FlowID string `json:"flow_id"`
 }
 
-// HandlePoll reports whether the browser approval has completed. On success it
-// tears down the flow; kiro has written its credentials by then.
-// POST /connections/kiro/poll.
+// HandlePoll reports whether the browser approval has completed. On success it installs the
+// staged login and tears down the flow. POST /connections/kiro/poll.
 func HandlePoll(w http.ResponseWriter, r *http.Request) {
 	var req pollReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if loggedInFresh() {
-		// stored: this call consumed a live flow, i.e. it is the one that saw the sign-in
-		// finish. A repeat, or a poll with no flow while already signed in, says connected
-		// without it; the Control Plane audits only the former.
-		stored := false
-		if f := loginFlows.Take(req.FlowID); f != nil {
-			f.Close()
-			stored = true
-		}
-		invalidateStatus()
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
+	loginPoll.Serve(w, req.FlowID)
+}
+
+// loginPoll reads the package's seams through closures so a test can substitute them.
+var loginPoll = &agents.StagedPoll{
+	Flows:        loginFlows,
+	Logins:       []string{routes.RouteKiroLogin},
+	SignedInAt:   func(home string) bool { return signedInAt(home) },
+	Install:      func(stage string) error { return installLogin(stage, paths.HomeDir()) },
+	LiveSignedIn: func() bool { return loggedInFresh() },
+	Installed:    invalidateStatus,
 }
 
 // HandleDisconnect signs kiro out (clears ~/.local/share/kiro-cli auth) via the
@@ -212,10 +206,17 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 
 // loggedInFresh runs an UNCACHED `kiro-cli whoami -f json` for the login poll
 // (probeStatus caches 30s — too stale for a live poll loop).
-func loggedInFresh() bool {
+func loggedInFresh() bool { return whoamiOK("") }
+
+// whoamiOK is that probe against home ("" = the live one).
+func whoamiOK(home string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin(), "whoami", "-f", "json").Output()
+	cmd := exec.CommandContext(ctx, bin(), "whoami", "-f", "json")
+	if home != "" {
+		cmd.Env = agents.WithHome(os.Environ(), home)
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}

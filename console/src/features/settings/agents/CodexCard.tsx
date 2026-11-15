@@ -200,7 +200,7 @@ export function CodexCard({
             {st.email || (st.method === "apikey" ? tr("agents.codex_apikey_label") : "ChatGPT")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
-          <ReauthButton keepsLogin disabled={busy} onClick={() => void reauth()} />
+          <ReauthButton disabled={busy} onClick={() => void reauth()} />
           <DisconnectButton disabled={busy} onClick={disconnect} />
         </div>
       ) : (

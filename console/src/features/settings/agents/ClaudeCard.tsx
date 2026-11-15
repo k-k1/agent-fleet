@@ -171,7 +171,7 @@ export function ClaudeCard({
                     tr("conn.expires_soon")}
             </span>
           )}
-          <ReauthButton keepsLogin disabled={busy} onClick={() => void reauth()} />
+          <ReauthButton disabled={busy} onClick={() => void reauth()} />
           <DisconnectButton onClick={disconnect} />
         </div>
       ) : (

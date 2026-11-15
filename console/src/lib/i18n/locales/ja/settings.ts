@@ -184,12 +184,10 @@ export const settings = {
   "provider.disconnect_confirm_body": "保存された認証情報はワークスペースから削除されます。再接続はいつでも可能です。",
   "provider.reauth": "再認証",
   "provider.reauth_title": "ログインし直す（トークンの期限切れ・失効時）",
-  "provider.reauth_signout_failed": "サインアウトできなかったため（{msg}）、再認証を始めませんでした。",
   "provider.reauth_confirm_title": "再認証しますか？",
   "provider.reauth_confirm_body":
-    "一度サインアウトしてから、ログイン画面を開き直します。稼働中のセッションは終了しません。",
-  "provider.reauth_confirm_body_keep":
     "ログイン画面を開きます。新しいログインが完了するまでは今のログインのまま使えます。途中でやめても今のログインは残ります。稼働中のセッションは終了しません。",
+  "provider.login_ended": "ログインが終了しました。やり直してください: {msg}",
   "provider.step_copy_code": "コードをコピー",
   "provider.step_open_link": "リンクを開いて貼り付け",
   "provider.step_open_link_only": "リンクを開く",

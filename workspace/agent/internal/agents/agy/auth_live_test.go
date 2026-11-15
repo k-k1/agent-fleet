@@ -47,33 +47,52 @@ func TestHandleStartLive(t *testing.T) {
 	if strings.Count(res.URL, "https://") != 1 {
 		t.Fatalf("URL not de-duplicated: %q", res.URL)
 	}
-	// Drop the pending flow so the agy process doesn't linger.
-	if f := flows.Take(res.FlowID); f != nil {
-		f.Close()
-	}
-	// The login dir must have been pre-trusted for the onboarding's final screen.
-	b, err := os.ReadFile(settingsPath())
+	// The login dir must have been pre-trusted for the onboarding's final screen, in the
+	// staging home the flow's agy reads.
+	f := flows.Get(res.FlowID)
+	b, err := os.ReadFile(filepath.Join(f.Dir, ".gemini", "antigravity-cli", "settings.json"))
 	if err != nil {
-		t.Fatalf("settings.json not written: %v", err)
+		t.Fatalf("staging settings.json not written: %v", err)
 	}
 	if !strings.Contains(string(b), filepath.Join(stateDir(), "login-flow")) {
 		t.Fatalf("login dir not pre-trusted: %s", b)
 	}
+	// Drop the pending flow so the agy process doesn't linger.
+	if f := flows.Take(res.FlowID); f != nil {
+		f.Close()
+	}
 }
 
-// Live already-connected gate: with the real HOME (signed in), HandleStart must
-// refuse instead of hanging on a selector that will never appear.
-func TestHandleStartAlreadyConnectedLive(t *testing.T) {
+// Live re-authentication start: with the real HOME (signed in), HandleStart still reaches the
+// authorize URL, because agy runs under a staging home, and the live token is not touched.
+func TestHandleStartWhileSignedInLive(t *testing.T) {
 	if os.Getenv("AF_AGY_LIVE") == "" {
-		t.Skip("set AF_AGY_LIVE=1 to run the live agy auth gate test")
+		t.Skip("set AF_AGY_LIVE=1 to run the live agy re-authentication start")
 	}
 	if !SignedIn() {
 		t.Skip("agy is not signed in")
 	}
-	req := httptest.NewRequest("POST", "/connections/agy/start", nil)
+	before, err := os.Stat(tokenPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/connections/agy/start", strings.NewReader(`{"method":"oauth"}`))
 	w := httptest.NewRecorder()
 	HandleStart(w, req)
-	if w.Code != 409 {
-		t.Fatalf("want 409 already_connected, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var res struct {
+		FlowID string `json:"flow_id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if f := flows.Take(res.FlowID); f != nil {
+		f.Close()
+	}
+	after, err := os.Stat(tokenPath())
+	if err != nil || !after.ModTime().Equal(before.ModTime()) || after.Size() != before.Size() {
+		t.Fatalf("the live token changed: before %v, after %v (%v)", before.ModTime(), after, err)
 	}
 }

@@ -187,12 +187,10 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "provider.disconnect_confirm_body": "The stored credentials are removed from the workspace. You can reconnect anytime.",
   "provider.reauth": "Re-authenticate",
   "provider.reauth_title": "Sign in again (expired or revoked token)",
-  "provider.reauth_signout_failed": "Could not sign out ({msg}), so re-authentication did not start.",
   "provider.reauth_confirm_title": "Re-authenticate?",
   "provider.reauth_confirm_body":
-    "This signs out first, then reopens the sign-in page. Running sessions are not stopped.",
-  "provider.reauth_confirm_body_keep":
     "This opens the sign-in page. The current login stays in use until the new sign-in completes, and stays if you back out. Running sessions are not stopped.",
+  "provider.login_ended": "The sign-in ended. Start again: {msg}",
   "provider.step_copy_code": "Copy the code",
   "provider.step_open_link": "Open the link and paste",
   "provider.step_open_link_only": "Open the link",
