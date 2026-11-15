@@ -36,6 +36,8 @@ type FirstTurn struct {
 	// Delivering: the prompt's delivery began (MarkFirstTurnDelivering). A turn that starts
 	// before it is somebody else's, and voids the ledger.
 	Delivering bool `json:"delivering,omitempty"`
+	// FirstPrompt is the prompt id of the first turn when the kind has one (claude, codex hooks).
+	FirstPrompt string `json:"firstPrompt,omitempty"`
 	// Starts counts the turn starts seen since ArmedAt; StartAt is the first one's time.
 	Starts  int    `json:"starts,omitempty"`
 	StartAt string `json:"startAt,omitempty"`
@@ -110,17 +112,21 @@ func noteFirstTurnWrite(sid string, s SessionStatus) {
 	}
 	switch {
 	case s.State == "working":
-		prev, had := Read(sid)
-		newPrompt := had && prev.State == "working" && s.PromptID != "" && prev.PromptID != "" && s.PromptID != prev.PromptID
-		if newPrompt {
-			// A different prompt id while the record says working: a new turn whose start was
-			// not seen as one (the first turn's end was missed).
+		// The ledger holds the first turn's own prompt id, so a later turn is told apart even
+		// when the record in between was lost or never changed state.
+		if t.FirstPrompt != "" && s.PromptID != "" && s.PromptID != t.FirstPrompt {
 			t.Void = true
 			break
 		}
-		if had && (prev.State != "idle" || prev.InputNotDelivered) {
+		prev, had := Read(sid)
+		start := s.turnStart || !had || (prev.State == "idle" && !prev.InputNotDelivered)
+		if !start {
 			// A heartbeat, the answer to a question or permission, or the input of this same turn
 			// turning up after the list had called it undelivered: the same turn.
+			if t.FirstPrompt == "" && t.Starts == 1 && s.PromptID != "" {
+				t.FirstPrompt = s.PromptID
+				break
+			}
 			return
 		}
 		t.Starts++
@@ -130,10 +136,15 @@ func noteFirstTurnWrite(sid string, s SessionStatus) {
 		switch t.Starts {
 		case 1:
 			t.StartAt = time.Now().Format(time.RFC3339Nano)
+			t.FirstPrompt = s.PromptID
 		default:
 			t.Void = true
 		}
 	case s.TurnEnd:
+		if t.FirstPrompt != "" && s.PromptID != "" && s.PromptID != t.FirstPrompt {
+			t.Void = true // the end of another prompt's turn
+			break
+		}
 		settleFirstTurn(&t, s.TurnEndAt, s.TurnEndReason)
 	default:
 		return
@@ -178,4 +189,13 @@ func noteObservedFirstTurnEnd(sid, at string) {
 	}
 	settleFirstTurn(&t, at, "")
 	_ = firstTurns.Write(sid, t)
+}
+
+// PersistTurnStart is the write of a turn the driver started itself (agents.MarkTurnStart*): it is
+// a turn start whatever the record said before. A Managed turn's start carries no prompt id and
+// the record may still say working from a turn whose end nobody saw (the Agent was not running),
+// so the state alone cannot tell this start from a heartbeat.
+func PersistTurnStart(sid string) {
+	persist(sid, SessionStatus{State: "working", turnStart: true})
+	RemoveCompletionKey(sid)
 }

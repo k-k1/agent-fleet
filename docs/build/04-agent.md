@@ -116,7 +116,8 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
   on the row of a session that has `queueDelivery`. `outcome` is `clean`, `turn-failed` or
   `turn-aborted`, the values a scheduled run records, and empty for a kind that records no
   reason. It lives in its own ledger (`status.FirstTurn`), armed before the prompt is delivered
-  and settled by the first end that follows exactly one turn start, so a stop does not delete
+  and settled by the first end that follows exactly one turn start (a driver's own turn start
+  counts as one whatever the record said; the first prompt id is kept and a different one voids), so a stop does not delete
   it and a later turn never changes it. When that cannot be shown (a start or an end was
   missed, the status deleted by a stop in between) the field stays absent for good.
 - **Every path that folds a session away promotes its carried work first**

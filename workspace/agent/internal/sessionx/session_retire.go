@@ -97,6 +97,8 @@ type retireReport struct {
 	// Unended is what could not be ended, each with the reason. The Control Plane keeps a
 	// delivery's slot while this is not empty.
 	Unended []string `json:"unended"`
+	// resumeIDs are the booked resumes found under the gate; only those are cancelled.
+	resumeIDs []string
 }
 
 // retireResp is POST /sessions/{name}/retire's answer. Sessions lists the session and all it
@@ -119,7 +121,12 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	in := beginRetire(name)
+	in, err := beginRetire(name)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "retire_intent_unwritable",
+			"the retire could not be recorded, so nothing was ended: "+err.Error())
+		return
+	}
 	reports := retireTree(r.Context(), name, in)
 	finishRetire(in, reports)
 	httpx.WriteJSON(w, http.StatusOK, retireResp{Sessions: reports})
@@ -159,7 +166,7 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 		for _, rep := range fresh {
 			// A session this retire had already marked and a person has resumed since is theirs
 			// again: a recovery leaves it alone.
-			retireOne(ctx, rep, in, in.wasMember(rep.Name))
+			retireOne(ctx, rep, in, in.wasMarked(rep.Name))
 		}
 		if !waitSpawns(ctx, order) {
 			order[0].Unended = appendNew(order[0].Unended, "a child create was still in flight; retire again once it has finished")
@@ -186,8 +193,22 @@ func retireOne(ctx context.Context, rep *retireReport, in *retireIntent, onlyIfM
 			return
 		}
 	}
+	// The intent names the session before the mark is written and confirms it after, so a crash
+	// in between is told from a person's resume: a pending member without a mark was never marked.
+	if err := in.pending(rep.Name); err != nil {
+		rep.Unended = appendNew(rep.Unended, "the retire intent could not be written, nothing was marked: "+err.Error())
+		g.Unlock()
+		return
+	}
 	markRetired(rep)
-	in.addMember(rep.Name)
+	if cur, ok := session.ReadMeta(rep.Name); ok && isRetired(cur) {
+		if err := in.confirm(rep.Name); err != nil {
+			rep.Unended = appendNew(rep.Unended, "the retire intent could not be updated: "+err.Error())
+		}
+	}
+	// The resume's ids are fixed here, under the gate: a person's start after this point may book
+	// a resume of its own, which this retire must not cancel.
+	rep.resumeIDs = bookedResumeIDs(rep.Name)
 	endSubscriptions(ctx, rep)
 	stopRetired(rep)
 	endSubscriptions(ctx, rep)
@@ -195,44 +216,86 @@ func retireOne(ctx context.Context, rep *retireReport, in *retireIntent, onlyIfM
 	cancelResume(rep)
 }
 
-// retireIntent is the durable record of a retire in progress: its root and the sessions already
-// marked. It is what lets the start-up recovery finish a tree whose root alone was marked when
-// the process died, and tell a session a person has resumed since from one never reached.
+// retireIntent is the durable record of a retire in progress: its root and the sessions it has
+// marked (or is about to). It lets the start-up recovery finish a tree whose root alone was
+// marked when the process died, and tell a session a person has resumed since from one never
+// reached.
 type retireIntent struct {
-	Root    string   `json:"root"`
-	Members []string `json:"members,omitempty"`
+	Root    string         `json:"root"`
+	Members []retireMember `json:"members,omitempty"`
+}
+
+// retireMember is a session of the tree. Marked is set once its mark is on disk; before that it
+// only says the retire was about to mark it.
+type retireMember struct {
+	Name   string `json:"name"`
+	Marked bool   `json:"marked,omitempty"`
 }
 
 var retireIntents = fstore.JSON[retireIntent](paths.AgentStateDir, "session-retire-intent", ".json")
 var retireIntentMu sync.Mutex
 
-func (in *retireIntent) wasMember(name string) bool {
-	return in != nil && slices.Contains(in.Members, name)
+// wasMarked reports whether the intent saw name's mark on disk: a mark found missing now is a
+// person's start.
+func (in *retireIntent) wasMarked(name string) bool {
+	if in == nil {
+		return false
+	}
+	return slices.ContainsFunc(in.Members, func(m retireMember) bool { return m.Name == name && m.Marked })
 }
 
-func (in *retireIntent) addMember(name string) {
+func (in *retireIntent) set(name string, marked bool) error {
 	if in == nil {
-		return
+		return nil
 	}
 	retireIntentMu.Lock()
 	defer retireIntentMu.Unlock()
-	if !slices.Contains(in.Members, name) {
-		in.Members = append(in.Members, name)
-		_ = retireIntents.Write(in.Root, *in)
+	next := *in
+	next.Members = slices.Clone(in.Members)
+	if i := slices.IndexFunc(next.Members, func(m retireMember) bool { return m.Name == name }); i >= 0 {
+		if next.Members[i].Marked || !marked {
+			return nil
+		}
+		next.Members[i].Marked = true
+	} else {
+		next.Members = append(next.Members, retireMember{Name: name, Marked: marked})
 	}
+	if err := writeRetireIntent(next); err != nil {
+		return err
+	}
+	*in = next
+	return nil
+}
+
+func (in *retireIntent) pending(name string) error { return in.set(name, false) }
+func (in *retireIntent) confirm(name string) error { return in.set(name, true) }
+
+// writeRetireIntent writes through a read-back: fstore's Write reports the error of the write
+// itself, which is what is needed here, and the read-back catches a directory that accepted it
+// and keeps nothing.
+func writeRetireIntent(in retireIntent) error {
+	if err := retireIntents.Write(in.Root, in); err != nil {
+		return err
+	}
+	if got, ok := retireIntents.Read(in.Root); !ok || got.Root != in.Root {
+		return errors.New("the intent could not be read back")
+	}
+	return nil
 }
 
 // beginRetire records the intent before anything is marked; an existing one for the same root is
-// continued, so its members stay known.
-func beginRetire(root string) *retireIntent {
+// continued, so its members stay known. Without a durable intent nothing may be marked.
+func beginRetire(root string) (*retireIntent, error) {
 	retireIntentMu.Lock()
 	defer retireIntentMu.Unlock()
 	in, ok := retireIntents.Read(root)
 	if !ok {
 		in = retireIntent{Root: root}
-		_ = retireIntents.Write(root, in)
+		if err := writeRetireIntent(in); err != nil {
+			return nil, err
+		}
 	}
-	return &in
+	return &in, nil
 }
 
 // finishRetire drops the intent once nothing is left unended; otherwise it stays for the next
@@ -280,7 +343,11 @@ func ReconcileRetired(ctx context.Context) int {
 	done := 0
 	covered := map[string]bool{}
 	for _, root := range retireIntentRoots() {
-		in := beginRetire(root)
+		in, err := beginRetire(root)
+		if err != nil {
+			log.Printf("retire: the intent of %s cannot be read or written: %v", root, err)
+			continue
+		}
 		if m, ok := session.ReadMeta(root); !ok || !isRetired(m) {
 			retireIntentMu.Lock()
 			retireIntents.Remove(root)
@@ -357,7 +424,7 @@ func endSubscriptions(ctx context.Context, rep *retireReport) {
 
 // cancelResume cancels the booked usage-limit resume.
 func cancelResume(rep *retireReport) {
-	cancelled, left := cancelBookedResume(rep.Name)
+	cancelled, left := cancelBookedResume(rep.Name, rep.resumeIDs)
 	rep.ResumeCancelled = rep.ResumeCancelled || cancelled
 	rep.Unended = appendNew(rep.Unended, left...)
 }
@@ -371,23 +438,33 @@ func appendNew(list []string, add ...string) []string {
 	return list
 }
 
-// cancelBookedResume cancels the usage-limit resume the session has booked at the Control Plane
-// and closes its episode, so the row reports no rateLimitResumeAt and the sweep books nothing
-// for a stopped session. An id whose delete the Control Plane has not confirmed stays recorded
-// for the sweep to retry (rate_limit_cleanup.go), and a fire of it that comes first is refused
-// (refuseCancelledResume); it is reported here as not ended.
-func cancelBookedResume(name string) (cancelled bool, unended []string) {
+// bookedResumeIDs reads the resume bookings the session's episode holds now.
+func bookedResumeIDs(name string) []string {
+	st, has := RateLimitStates.Read(name)
+	if !has {
+		return nil
+	}
+	var ids []string
+	for _, id := range []string{st.ScheduleID, st.MovedFrom} {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// cancelBookedResume cancels the given usage-limit bookings of the session at the Control Plane
+// and closes the episode that held them, so the row reports no rateLimitResumeAt and the sweep
+// books nothing for a stopped session. An id whose delete the Control Plane has not confirmed
+// stays recorded for the sweep to retry (rate_limit_cleanup.go), and a fire of it that comes
+// first is refused (refuseCancelledResume); it is reported here as not ended. Only the ids the
+// retire found are cancelled, and the episode is removed only while it still names one of them:
+// a person's start after the retire may have booked a resume of its own.
+func cancelBookedResume(name string, ids []string) (cancelled bool, unended []string) {
 	mu := rateLimitEpisodeLock(name)
 	mu.Lock()
 	defer mu.Unlock()
-	st, has := RateLimitStates.Read(name)
-	if !has {
-		return false, nil
-	}
-	for _, id := range []string{st.ScheduleID, st.MovedFrom} {
-		if id == "" {
-			continue
-		}
+	for _, id := range ids {
 		if err := recordRateLimitCancelKeep(name, id, retireCancelKeep); err != nil {
 			unended = append(unended, fmt.Sprintf("usage-limit resume %s: cancellation could not be recorded: %v", id, err))
 			_ = cancelRateLimitSchedule(name, id)
@@ -400,7 +477,8 @@ func cancelBookedResume(name string) (cancelled bool, unended []string) {
 			cancelled = true
 		}
 	}
-	if len(unended) == 0 {
+	if st, has := RateLimitStates.Read(name); has && len(unended) == 0 &&
+		(slices.Contains(ids, st.ScheduleID) || (st.ScheduleID == "" && st.MovedFrom != "" && slices.Contains(ids, st.MovedFrom))) {
 		RateLimitStates.Remove(name)
 	}
 	return cancelled, unended

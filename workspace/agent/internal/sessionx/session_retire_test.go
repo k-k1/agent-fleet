@@ -691,7 +691,7 @@ func TestReconcileRetiredFindsChildrenNeverMarked(t *testing.T) {
 	writeMeta(t, session.Meta{Name: "p"})
 	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
 	r.hold(t, "c")
-	in := beginRetire("p")
+	in := mustBeginRetire(t, "p")
 	retireOne(context.Background(), &retireReport{Name: "p", Unended: []string{}}, in, false) // the crash comes here
 	if m, _ := session.ReadMeta("c"); m.RetiredAt != "" {
 		t.Fatal("setup: the child is marked")
@@ -716,7 +716,7 @@ func TestReconcileRetiredLeavesASessionAPersonResumed(t *testing.T) {
 	r := newRetireEnv(t)
 	writeMeta(t, session.Meta{Name: "p"})
 	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
-	in := beginRetire("p")
+	in := mustBeginRetire(t, "p")
 	for _, n := range []string{"p", "c"} {
 		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in, false)
 	}
@@ -815,5 +815,124 @@ func TestInitialPromptDeliveryDoesNotTakeATurnStartedDuringTheBootWait(t *testin
 	status.PersistTurnEnd(sid, "idle")
 	if got, ok := status.ReadFirstTurn(sid); ok {
 		t.Fatalf("a turn started during the boot wait was reported as the delivery's: %+v", got)
+	}
+}
+
+func mustBeginRetire(t *testing.T, root string) *retireIntent {
+	t.Helper()
+	in, err := beginRetire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return in
+}
+
+// The watch wake starts a stopped owner from inside Ready. A retire that begins meanwhile holds the
+// retire gate and ends the owner's subscriptions, which reaches the sink's lock: the start must
+// not run under that lock, or the two wait for each other.
+func TestWatchWakeAndRetireDoNotWaitForEachOther(t *testing.T) {
+	r := newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "a"})
+	r.hold(t, "a")
+	sink := newWatchSink()
+	e := watch.New(watchDiskStore{}, sink, stubSource{}, &watch.Time{})
+	e.Barred = watchBarred
+	e.SetWaker(r.w)
+	useWatchEngine(t, e)
+	prev := watchStart
+	watchStart = func(name string) error { postRetire(t, name); return nil } // the retire lands during the start
+	t.Cleanup(func() { watchStart = prev })
+	done := make(chan struct{})
+	go func() { sink.Ready("a", time.Now()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Ready and retire wait for each other")
+	}
+}
+
+func TestRetireWritesItsIntentBeforeMarkingAndSaysSoWhenItCannot(t *testing.T) {
+	r := newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "a"})
+	writeMeta(t, session.Meta{Name: "k", Origin: session.OriginSession, OriginSession: "a"})
+	r.hold(t, "a")
+	if err := os.MkdirAll(retireIntents.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(retireIntents.Dir(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(retireIntents.Dir(), 0o700) })
+	if f, err := os.Create(filepath.Join(retireIntents.Dir(), "probe")); err == nil {
+		f.Close()
+		t.Skip("the directory stays writable here (running as root?)")
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/a/retire", nil)
+	req.SetPathValue("name", "a")
+	rec := httptest.NewRecorder()
+	HandleSessionRetire(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "retire_intent_unwritable") {
+		t.Fatalf("retire without a writable intent = %d %s", rec.Code, rec.Body)
+	}
+	if m, _ := session.ReadMeta("a"); m.RetiredAt != "" {
+		t.Fatal("a session was marked although its retire could not be recorded")
+	}
+	if w, _, _ := r.e.Wakers("a"); w != 1 {
+		t.Fatalf("subscriptions were ended without a recorded intent: %d", w)
+	}
+
+	// The root's intent exists, a member's cannot be written: that member is not marked and the
+	// report says so.
+	_ = os.Chmod(retireIntents.Dir(), 0o700)
+	in := mustBeginRetire(t, "a")
+	if err := os.Chmod(retireIntents.Dir(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	rep := &retireReport{Name: "k", Unended: []string{}}
+	retireOne(context.Background(), rep, in, false)
+	if m, _ := session.ReadMeta("k"); m.RetiredAt != "" || len(rep.Unended) == 0 {
+		t.Fatalf("member marked without its intent: retiredAt=%q unended=%v", m.RetiredAt, rep.Unended)
+	}
+}
+
+// A person's start after the retire found the episode may book a resume of its own; the retire
+// cancels only what it found under its gate.
+func TestRetireDoesNotCancelAResumeABookedAfterItsGate(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "a"})
+	var dropped []string
+	var mu sync.Mutex
+	prev := dropRateLimitSchedule
+	dropRateLimitSchedule = func(id string) error { mu.Lock(); dropped = append(dropped, id); mu.Unlock(); return nil }
+	t.Cleanup(func() { dropRateLimitSchedule = prev })
+	at := time.Now().Add(time.Hour).Format(time.RFC3339)
+	if err := RateLimitStates.Write("a", rateLimitState{At: at, ResumeAt: at, ScheduleID: "sch_old"}); err != nil {
+		t.Fatal(err)
+	}
+	ep := rateLimitEpisodeLock("a")
+	ep.Lock() // holds the retire's cancel back, after it left the gate
+	done := make(chan struct{})
+	go func() { postRetire(t, "a"); close(done) }()
+	for i := 0; i < 200; i++ { // the retire has marked, stopped and released the gate
+		if m, _ := session.ReadMeta("a"); m.RetiredAt != "" && m.StoppedAt != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	clearRetired("a") // the person's start
+	if err := RateLimitStates.Write("a", rateLimitState{At: at, ResumeAt: at, ScheduleID: "sch_new"}); err != nil {
+		t.Fatal(err)
+	}
+	ep.Unlock()
+	<-done
+	st, has := RateLimitStates.Read("a")
+	if !has || st.ScheduleID != "sch_new" {
+		t.Fatalf("the person's new episode was removed: %+v %v", st, has)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(dropped, ",") != "sch_old" {
+		t.Fatalf("cancelled %v, want only sch_old", dropped)
 	}
 }

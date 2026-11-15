@@ -193,47 +193,60 @@ func (s *watchSink) OwnerExists(owner string) bool {
 
 func (s *watchSink) Ready(name string, now time.Time) watch.Readiness {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	r, start := s.readyLocked(name, now)
+	s.mu.Unlock()
+	if start != "" {
+		// Outside s.mu: the start handler takes the retire gate, and a retire holds that gate
+		// while it ends the owner's subscriptions, which reaches Forget and s.mu.
+		s.startOwner(start)
+	}
+	return r
+}
+
+// readyLocked is Ready under s.mu; start names an owner to start once the lock is released.
+func (s *watchSink) readyLocked(name string, now time.Time) (r watch.Readiness, start string) {
 	m, ok := session.ReadMeta(name)
 	if !ok {
 		s.forgetLocked(name)
-		return watch.Gone
+		return watch.Gone, ""
 	}
 	if m.Archived || !peerTargetAllowed(NormalizeKind(m.Kind)) {
 		// A watch a session made ends with that session; one that cannot take a prompt could
 		// not have called watch. A built-in falls back to the member.
 		s.forgetLocked(name)
-		return watch.Unreachable
+		return watch.Unreachable, ""
 	}
 	if isRetired(m) {
 		// Retired (ADR 0137 §6): nothing here starts it. Its session watches end with it; a
 		// built-in falls back to the member, as for an archived owner.
 		s.forgetLocked(name)
-		return watch.Unreachable
+		return watch.Unreachable, ""
 	}
 	if !watchAlive(m) {
-		s.wake(m, now)
+		if s.wakeDue(m, now) {
+			start = m.Name
+		}
 		delete(s.readyOnce, name)
-		return watch.Wait
+		return watch.Wait, start
 	}
 	if m.InitialPromptState == session.InitialPromptPending || watchBusy(m) || !watchReady(m) {
 		delete(s.readyOnce, name)
-		return watch.Wait
+		return watch.Wait, ""
 	}
 	if s.waking == name {
 		s.waking = ""
 	}
 	if !s.readyOnce[name] {
 		s.readyOnce[name] = true
-		return watch.Wait // the second look, a tick from now, sends it
+		return watch.Wait, "" // the second look, a tick from now, sends it
 	}
 	// The last look before the engine claims the event: a turn may have started since.
 	if fresh, ok := session.ReadMeta(name); !ok || fresh.Archived || !watchReady(fresh) {
 		delete(s.readyOnce, name)
-		return watch.Wait
+		return watch.Wait, ""
 	}
 	delete(s.readyOnce, name) // its turn starts with this notice; the next one waits for two looks
-	return watch.Ready
+	return watch.Ready, ""
 }
 
 func (s *watchSink) Inject(sub watch.Subscription, evs []watch.Event) error {
@@ -310,14 +323,14 @@ func (s *watchSink) forgetLocked(name string) {
 	}
 }
 
-// wake starts a stopped owner so it can be told: one start at a time across the Agent, never the
-// same owner twice within watchWakeRetry.
-func (s *watchSink) wake(m session.Meta, now time.Time) {
+// wakeDue decides whether to start a stopped owner now: one start at a time across the Agent,
+// never the same owner twice within watchWakeRetry. It only books the decision; startOwner starts.
+func (s *watchSink) wakeDue(m session.Meta, now time.Time) bool {
 	if s.waking != "" && s.waking != m.Name && now.Sub(s.wakingAt) < watchWakeWait {
-		return
+		return false
 	}
 	if at, ok := s.wokeAt[m.Name]; ok && now.Sub(at) < watchWakeRetry {
-		return
+		return false
 	}
 	s.waking, s.wakingAt = m.Name, now
 	s.wokeAt[m.Name] = now
@@ -326,12 +339,21 @@ func (s *watchSink) wake(m session.Meta, now time.Time) {
 			delete(s.wokeAt, n)
 		}
 	}
-	if err := watchStart(m.Name); err != nil {
-		log.Printf("watch: could not start %s to deliver a watch event: %v", m.Name, err)
-		s.waking = ""
+	return true
+}
+
+// startOwner starts a stopped owner, without s.mu held.
+func (s *watchSink) startOwner(name string) {
+	if err := watchStart(name); err != nil {
+		log.Printf("watch: could not start %s to deliver a watch event: %v", name, err)
+		s.mu.Lock()
+		if s.waking == name {
+			s.waking = ""
+		}
+		s.mu.Unlock()
 		return
 	}
-	log.Printf("watch: started %s to deliver a watch event", m.Name)
+	log.Printf("watch: started %s to deliver a watch event", name)
 }
 
 // watchReq is POST /sessions/{name}/watches.
