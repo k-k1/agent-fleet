@@ -1,7 +1,9 @@
 package claude
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -44,6 +46,22 @@ func TestAwaitLoginAcceptsTheCLIsSuccess(t *testing.T) {
 	g := flowOf(t, "exit 0")
 	if ok, msg := awaitLogin(g, 5*time.Second); !ok {
 		t.Fatalf("awaitLogin = false (%q) after a clean exit", msg)
+	}
+}
+
+// The marker can come before the CLI's last write. On a re-authentication status already reads
+// loggedIn from the old login, so returning on the marker would let the caller's Close kill the
+// CLI mid-write: awaitLogin has to see it exit first.
+func TestAwaitLoginLetsTheCLIFinishWriting(t *testing.T) {
+	withLoggedIn(t, true)
+	done := filepath.Join(t.TempDir(), "written")
+	f := flowOf(t, "echo 'Login successful.'; sleep 1; touch "+done)
+	if ok, msg := awaitLogin(f, 10*time.Second); !ok {
+		t.Fatalf("awaitLogin = false (%q)", msg)
+	}
+	f.Close()
+	if _, err := os.Stat(done); err != nil {
+		t.Fatal("awaitLogin returned before the CLI finished; Close cut its last write")
 	}
 }
 

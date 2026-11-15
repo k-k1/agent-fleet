@@ -417,6 +417,7 @@ export const settings = {
   "agents.idle_compaction": "アイドル中の自動圧縮",
   "agents.note_claude_idle_compaction":
     "長い会話（20 万トークン以上）のセッションが放置されていると、最後の操作からおよそ 54 分後、1 時間のプロンプトキャッシュが切れる直前に、Claude Code が自分で会話を圧縮します。次のターンで会話全体をキャッシュに書き直さずに済むので安くなりますが、戻ってきたときには会話が要約されています。既定ではオンです（Claude Code の既定どおり）。ワークスペースのユーザー設定の Claude settings.json に idleCompaction を書きます。プロジェクトやローカルの Claude 設定ファイルで上書きされることもあります。確実に反映されるのは、変更後に起動または再開したセッションからです。",
+  "agents.codex_device_failed": "Codex のログインが終了しました。やり直してください: {msg}",
   "agents.codex_auth_failed": "Codex の認証を開始できませんでした: {msg}",
   "agents.codex_device_disabled": "device code ログインが無効かもしれません",
   "agents.codex_apikey_label": "API キー",

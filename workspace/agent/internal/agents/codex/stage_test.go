@@ -155,3 +155,51 @@ func TestCodexLoginHonoursStagingHome(t *testing.T) {
 		t.Fatalf("login under the staging home touched the live one: %v", err)
 	}
 }
+
+// A flow reaped while the staging probe runs is answered as not connected, not a nil Close.
+func TestDevicePollFlowReapedDuringProbe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	id, _ := stagedFlow(t)
+	prev := loggedInAt
+	loggedInAt = func(string) bool {
+		if f := flows.Take(id); f != nil { // what Reap does from another request
+			f.Close()
+		}
+		return true
+	}
+	t.Cleanup(func() { loggedInAt = prev })
+	if got := poll(t, id); got["connected"] != false {
+		t.Fatalf("poll = %v, want connected false", got)
+	}
+	if _, err := os.Stat(filepath.Join(codexHome(), "auth.json")); !os.IsNotExist(err) {
+		t.Fatalf("a reaped flow installed a login: %v", err)
+	}
+}
+
+// A codex that exited without signing in ends the flow at once instead of being polled to its
+// deadline.
+func TestDevicePollReportsAnEndedFlow(t *testing.T) {
+	stage := t.TempDir()
+	f, err := agents.StartFlow(exec.Command("sh", "-c", "echo 'device code expired'; exit 1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Dir = stage
+	<-f.WaitEnded()
+	id := flows.Put(f)
+	t.Cleanup(func() {
+		if f := flows.Take(id); f != nil {
+			f.Close()
+		}
+	})
+	prev := loggedInAt
+	loggedInAt = func(string) bool { return false }
+	t.Cleanup(func() { loggedInAt = prev })
+	got := poll(t, id)
+	if got["connected"] != false || got["failed"] != true || got["detail"] != "device code expired" {
+		t.Fatalf("poll = %v, want failed with codex's output", got)
+	}
+	if flows.Get(id) != nil {
+		t.Fatal("the ended flow is still registered")
+	}
+}

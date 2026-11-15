@@ -23,6 +23,7 @@ vi.mock("../../../ui/ConfirmProvider.tsx", () => ({
 }));
 
 const { CodexCard } = await import("./CodexCard.tsx");
+const { t: tr } = await import("../../../lib/i18n/index.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -103,7 +104,7 @@ describe("CodexCard re-authenticate", () => {
     await act(async () => {
       reauthButton()!.click();
     });
-    const back = [...host!.querySelectorAll("button")].find((b) => b.textContent === "戻る" || b.textContent === "Back");
+    const back = [...host!.querySelectorAll("button")].find((b) => b.textContent === tr("common.back"));
     expect(back).toBeTruthy();
     await act(async () => {
       back!.click();
@@ -111,6 +112,50 @@ describe("CodexCard re-authenticate", () => {
     expect(host?.textContent).not.toContain("ABCD-EFGHI");
     expect(reauthButton()).toBeTruthy();
     expect(calls).toEqual(["POST api/connections/codex/device/start"]);
+  });
+
+  // After Back, a code approved later must not install a login the user chose not to take.
+  it("stops polling the abandoned flow", async () => {
+    vi.useFakeTimers();
+    try {
+      apiJSON.mockImplementation(() => Promise.resolve({ connected: false }));
+      await mount({ connected: true, method: "chatgpt", email: "c@example.com" });
+      await act(async () => {
+        reauthButton()!.click();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(apiJSON).toHaveBeenCalledTimes(1);
+      const back = [...host!.querySelectorAll("button")].find((b) => b.textContent === tr("common.back"));
+      await act(async () => {
+        back!.click();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30000);
+      });
+      expect(apiJSON).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows the end of a device flow the Agent reports as failed, and stops", async () => {
+    vi.useFakeTimers();
+    try {
+      apiJSON.mockImplementation(() => Promise.resolve({ connected: false, failed: true, detail: "expired" }));
+      await mount({ connected: true, method: "chatgpt", email: "c@example.com" });
+      await act(async () => {
+        reauthButton()!.click();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30000);
+      });
+      expect(apiJSON).toHaveBeenCalledTimes(1);
+      expect(host?.textContent).toContain(tr("agents.codex_device_failed", { msg: "expired" }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("runs one re-authentication at a time", async () => {

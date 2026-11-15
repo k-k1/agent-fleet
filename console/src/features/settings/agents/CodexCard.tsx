@@ -47,6 +47,9 @@ export function CodexCard({
   const [dev, setDev] = useState<DeviceFlow | null>(null);
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
+  // The device flow the card is showing. A poll whose flow is no longer this one stops: after
+  // Back, a code approved later must not replace the login the user chose to keep.
+  const activeFlow = useRef<string | null>(null);
 
   const startDevice = async () => {
     setBusy(true);
@@ -56,22 +59,34 @@ export function CodexCard({
         toast(tr("agents.codex_auth_failed", { msg: res?.error ? errDetail(res.error) : tr("agents.codex_device_disabled") }));
         return;
       }
+      activeFlow.current = res.flow_id;
       setMode("device");
       setDev({ user_code: res.user_code, url: res.url, flow_id: res.flow_id, status: tr("git.oauth_waiting") });
       poll({
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
-        onExpire: () => setDev((d) => (d ? { ...d, status: tr("git.oauth_expired") } : d)),
+        onExpire: () => {
+          if (activeFlow.current === res.flow_id) setDev((d) => (d ? { ...d, status: tr("git.oauth_expired") } : d));
+        },
         step: async () => {
+          if (activeFlow.current !== res.flow_id) return { stop: true };
           let p;
           try {
             p = await apiJSON("api/connections/codex/device/poll", "POST", { flow_id: res.flow_id });
           } catch {
             p = null;
           }
+          if (activeFlow.current !== res.flow_id) return { stop: true };
           if (p && p.connected) {
+            activeFlow.current = null;
             setMode("idle");
             reload();
+            return { stop: true };
+          }
+          if (p && p.failed) {
+            // codex exited without signing in (refused, expired, broken): nothing more will come.
+            activeFlow.current = null;
+            setDev((d) => (d ? { ...d, status: tr("agents.codex_device_failed", { msg: p.detail || "" }) } : d));
             return { stop: true };
           }
           return { stop: false, nextMs: 2500 };
@@ -123,6 +138,7 @@ export function CodexCard({
     }
   };
   const back = () => {
+    activeFlow.current = null;
     setMode("idle");
     setDev(null);
     setKey("");
@@ -172,7 +188,7 @@ export function CodexCard({
             <button disabled={busy || !key.trim()} onClick={saveKey}>
               {tr("conn.connect")}
             </button>
-            <button className="ghost" onClick={back}>
+            <button className="ghost" disabled={busy} onClick={back}>
               {tr("common.back")}
             </button>
           </div>

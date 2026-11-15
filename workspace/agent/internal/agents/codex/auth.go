@@ -250,11 +250,27 @@ func HandleDevicePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stage := f.Dir
+	ended := f.Ended() // before the probe: a codex that exited and wrote nothing has failed
 	if !loggedInAt(stage) {
+		if ended {
+			// Refused, expired or broken: nothing more can arrive, so say so instead of
+			// letting the client poll out its deadline.
+			detail := outputTail(f.Clean(), 3)
+			if t := flows.Take(req.FlowID); t != nil {
+				t.Close()
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false, "failed": true, "detail": detail})
+			return
+		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
 		return
 	}
-	f = flows.Take(req.FlowID)
+	// The flow can have been reaped (and its staging home removed) while the probe ran:
+	// Reap does not take pollMu.
+	if f = flows.Take(req.FlowID); f == nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
+		return
+	}
 	defer f.Close() // removes the staging directory, after the copy below
 	loginOp, began := agents.BeginLoginChange(w, routes.RouteChatGPTSubscription)
 	if !began {
