@@ -119,6 +119,11 @@ func driveStateBefore(m session.Meta, alive, heal bool) string {
 			notifyPolledTurnEnd(m, st)
 			return st
 		}
+		// The stale rule agy has, taken by kiro as well (#4047).
+		sid := session.UUID(m.Dir, m.Name)
+		if status.LiveState(sid) == "working" && !status.RecentlyWorking(sid) {
+			return "idle"
+		}
 	}
 	if m.Kind == session.KindMuse {
 		if st := stubState(m); st != "" {
@@ -174,7 +179,7 @@ func driveStateBefore(m session.Meta, alive, heal bool) string {
 
 // TestDriveStateMatchesBeforeLiveStateTraits runs both copies on the same fixtures and compares
 // the answer and the status store left behind. The stored state "working-old" is a "working"
-// past the warm-up, which agy's stale rule turns idle.
+// past the warm-up, which the stale rule of agy and kiro turns idle.
 func TestDriveStateMatchesBeforeLiveStateTraits(t *testing.T) {
 	isolateAgentState(t)
 	prevPane := readPane

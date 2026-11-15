@@ -44,7 +44,7 @@ func TestLiveStateTraitsMatchOldConditions(t *testing.T) {
 	oldPolled := func(k string) bool {
 		return k == session.KindAgy || k == session.KindCopilot || k == session.KindCursor || k == session.KindKiro
 	}
-	oldStale := func(k string) bool { return k == session.KindAgy }
+	oldStale := func(k string) bool { return k == session.KindAgy || k == session.KindKiro }
 	// `m.DriverKind() == session.DriverManaged && NormalizeKind(m.Kind) == session.KindCodex && ... codex.IsRateLimited`
 	// and `m.Kind == session.KindMuse && ... museRateLimited`.
 	oldLimited := func(k string) (fn any, managedOnly bool) {
