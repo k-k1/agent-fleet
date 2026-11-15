@@ -489,11 +489,17 @@ func (s *Store) take(p Policy, confirmedAt int64, live bool) (bool, error) {
 	default:
 		replace = p.Revision > cur.Policy.Revision
 	}
+	// The approved self-hosted endpoints of the held revision are taken from an answer at that
+	// same revision when they differ. The CP computes one answer per revision, so a difference can
+	// only be a copy written by an Agent whose parse dropped them; without this repair such a copy
+	// would refuse its approved hosts until the policy's revision moves.
+	repair := !replace && cur.Held && !cur.Placeholder && p.Revision == cur.Policy.Revision &&
+		!(slices.Equal(p.Endpoints, cur.Policy.Endpoints) && slices.Equal(p.EndpointRoutes, cur.Policy.EndpointRoutes))
 	if live && (replace || p.Revision >= cur.Policy.Revision) {
 		// The CP's current answer: the held policy is now what it says, recorded or not.
 		s.releaseLocked("the Control Plane answered")
 	}
-	if !replace && (p.Revision < cur.Policy.Revision || confirmedAt <= cur.LastOK && s.floorOK && (s.mirrorOK || s.mirror == "")) {
+	if !replace && !repair && (p.Revision < cur.Policy.Revision || confirmedAt <= cur.LastOK && s.floorOK && (s.mirrorOK || s.mirror == "")) {
 		return false, nil // a replay, or nothing new to record
 	}
 	next := cur
@@ -501,10 +507,15 @@ func (s *Store) take(p Policy, confirmedAt int64, live bool) (bool, error) {
 	case replace:
 		// A new revision is confirmed by what brought it, never by a confirmation of an older one.
 		next = held{Policy: p, Held: true, LastOK: confirmedAt, SeenStart: cur.SeenStart}
-	case confirmedAt > next.LastOK:
-		next.LastOK = confirmedAt
+	default:
+		if repair {
+			next.Policy.Endpoints, next.Policy.EndpointRoutes = p.Endpoints, p.EndpointRoutes
+		}
+		if confirmedAt > next.LastOK {
+			next.LastOK = confirmedAt
+		}
 	}
-	return replace, s.persistLocked(next)
+	return replace || repair, s.persistLocked(next)
 }
 
 // persistLocked holds next and records it: the floor and its mirror first whenever they may not

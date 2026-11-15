@@ -66,3 +66,49 @@ func TestApprovedEndpointsSurviveTheWire(t *testing.T) {
 	s2.seedFromEnv()
 	approvesTheHost(t, "from the start environment", s2.State().Policy)
 }
+
+// A copy written before parse kept the endpoints holds the current revision without them. An
+// answer at that same revision, live or the start environment's, repairs it, and the repair
+// survives a restart; an older answer (a replay) repairs nothing.
+func TestAnEndpointLessCopyIsRepairedAtTheSameRevision(t *testing.T) {
+	truncated, err := parse([]byte(`{"revision":7,"restricted":true,"ceilingRestricted":true,"allowed":["anthropic-api"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := parse([]byte(approvedHostWire(7, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	older, err := parse([]byte(approvedHostWire(6, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, how := range []string{"live", "start environment"} {
+		s, now := testStore(t)
+		if _, err := s.Accept(truncated); err != nil {
+			t.Fatal(err)
+		}
+		r := reopen(s)
+		if r.State().Policy.AllowsAt(memberLlamacpp, "llm.lab.example.net") {
+			t.Fatal("the premise: the old copy refuses the approved host")
+		}
+		if _, err := r.Accept(older); err != nil {
+			t.Fatal(err)
+		}
+		if r.State().Policy.AllowsAt(memberLlamacpp, "llm.lab.example.net") {
+			t.Errorf("%s: an older revision repaired the copy", how)
+		}
+		var changed bool
+		if how == "live" {
+			changed, err = r.Accept(full)
+		} else {
+			changed, err = r.Seed(full, now.Unix())
+		}
+		if err != nil || !changed {
+			t.Fatalf("%s: the same-revision answer changed nothing (%v)", how, err)
+		}
+		approvesTheHost(t, how, r.State().Policy)
+		approvesTheHost(t, how+", after a restart", reopen(r).State().Policy)
+	}
+	WaitListeners()
+}
