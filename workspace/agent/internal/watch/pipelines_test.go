@@ -456,3 +456,87 @@ func TestPipelineWatchCountsARunStartedJustBeforeTheWatchOnce(t *testing.T) {
 		})
 	}
 }
+
+// plWithStage is a run body in the shape Bitbucket returns for an unfinished run: state.name stays
+// IN_PROGRESS and state.stage.name says RUNNING, PAUSED or HALTED.
+func plWithStage(build int64, stage string) map[string]any {
+	b := plRunBody(build, "IN_PROGRESS", "", "2026-11-10T01:00:00.123456789Z", "", "main", "")
+	b["state"] = map[string]any{"name": "IN_PROGRESS", "stage": map[string]any{"name": stage}}
+	return b
+}
+
+// A run parked on a manual step stays IN_PROGRESS for as long as nobody acts; it is read at the idle
+// interval, and the one-minute interval returns when the stage moves on.
+func TestPollPipelineParkedRunsAreReadAtTheIdleInterval(t *testing.T) {
+	f := newFakeGitHub()
+	p := newTestPipelines(t, f)
+	ctx := context.Background()
+	const subj = SubjectID("bitbucket:w/r/pipelines/runs/55")
+	var cur json.RawMessage
+	for _, c := range []struct {
+		stage string
+		want  time.Duration
+	}{
+		{"PAUSED", plIdleAfter},
+		{"HALTED", plIdleAfter},
+		{"RUNNING", plBusyAfter},
+		{"PAUSED", plIdleAfter},
+		{"RUNNING", plBusyAfter},
+	} {
+		f.bodies[plRunPathOf(55)] = plWithStage(55, c.stage)
+		evs, next, hint, err := p.Poll(ctx, subj, cur, nil)
+		if err != nil || len(evs) != 0 || hint.Settled || hint.After != c.want {
+			t.Fatalf("%s: events=%v err=%v hint=%+v, want after %v", c.stage, evs, err, hint, c.want)
+		}
+		cur = next
+	}
+	// The same run in the stage field's absence (older answers) is still taken as running.
+	b := plRunBody(55, "IN_PROGRESS", "", "2026-11-10T01:00:00Z", "", "main", "")
+	f.bodies[plRunPathOf(55)] = b
+	if _, _, hint, _ := p.Poll(ctx, subj, cur, nil); hint.After != plBusyAfter {
+		t.Fatalf("no stage: %+v", hint)
+	}
+	// A parked run of a next-run watch is read at the idle interval too, and finishing is still told.
+	floorUnix := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC).Unix()
+	pip := plPipSubject("w/r", "", "main", 30, floorUnix)
+	f.bodies[plList50] = map[string]any{"values": []any{plWithStage(31, "HALTED")}}
+	evs, cur, hint, err := p.Poll(ctx, pip, nil, nil)
+	if err != nil || len(evs) != 0 || hint.After != plIdleAfter {
+		t.Fatalf("parked pipeline: %v %v %+v", evs, err, hint)
+	}
+	f.bodies[plList50] = map[string]any{"values": []any{
+		plRunBody(31, "COMPLETED", "SUCCESSFUL", "2026-11-10T01:00:00Z", "2026-11-10T03:00:00Z", "main", ""),
+	}}
+	if evs, _, _, err = p.Poll(ctx, pip, cur, nil); err != nil || types(evs) != EventRunCompleted {
+		t.Fatalf("finished after parking: %v %v", evs, err)
+	}
+}
+
+// A run started by a pull request has target.ref_name null and its branch in target.source: the
+// Data line names that branch, while the watch's identity and its @branch filter stay on ref_name.
+func TestPullRequestRunDataLineNamesItsSourceBranch(t *testing.T) {
+	f := newFakeGitHub()
+	p := newTestPipelines(t, f)
+	ctx := context.Background()
+	pr := plRunBody(60, "COMPLETED", "SUCCESSFUL", "2026-11-10T01:00:00.5Z", "2026-11-10T01:05:00.5Z", "", "**")
+	pr["target"] = map[string]any{
+		"type": "pipeline_pullrequest_target", "ref_name": nil, "source": "feature/login", "destination": "main",
+		"selector": map[string]any{"type": "pull-requests", "pattern": "**"},
+	}
+	f.bodies[plRunPathOf(60)] = pr
+	evs, _, _, err := p.Poll(ctx, "bitbucket:w/r/pipelines/runs/60", nil, nil)
+	if err != nil || len(evs) != 1 || len(evs[0].Data) != 1 || evs[0].Data[0].Text != "Pipeline run on feature/login" {
+		t.Fatalf("pull request run: %v %+v", err, evs)
+	}
+	// A branch run keeps naming ref_name.
+	f.bodies[plRunPathOf(61)] = plRunBody(61, "COMPLETED", "SUCCESSFUL", "2026-11-10T01:00:00Z", "2026-11-10T01:05:00Z", "main", "")
+	if evs, _, _, err = p.Poll(ctx, "bitbucket:w/r/pipelines/runs/61", nil, nil); err != nil || evs[0].Data[0].Text != "Pipeline run on main" {
+		t.Fatalf("branch run: %v %+v", err, evs)
+	}
+	// An @branch next-run watch does not take the pull request run: the label is the only change.
+	floorUnix := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC).Unix()
+	f.bodies[plList50] = map[string]any{"values": []any{pr}}
+	if evs, _, _, err = p.Poll(ctx, plPipSubject("w/r", "", "feature/login", 59, floorUnix), nil, nil); err != nil || len(evs) != 0 {
+		t.Fatalf("branch filter took a pull request run: %v %v", evs, err)
+	}
+}

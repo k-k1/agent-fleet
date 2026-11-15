@@ -93,7 +93,7 @@ Bitbucket Pipelines works the same way, with `source` set to `bitbucket` (a `bit
 | `w/r:pipelines`, with a custom pipeline `w/r:pipelines/nightly`, with a branch `w/r:pipelines@main` or both `w/r:pipelines/nightly@main` | the next run (of that custom pipeline, on that branch) completes. A run that started after the watch was made, or about 10 minutes before it (rounded down to the minute, so up to a minute longer), counts (same rule as for GitHub, including the one-notice and repeat behaviour) |
 
 - A stopped (cancelled) or expired run counts as failed, as a cancelled Actions run does. The notice says the run number and the result; the branch and the names of failed steps are quoted data
-- Bitbucket allows few requests an hour, so a workspace can hold at most 5 Pipelines watches, and a run is checked about once a minute while it runs (every 5 minutes while waiting for the next one). Your Bitbucket connection needs permission to read Pipelines; if it lacks it, the agent is told to reconnect
+- Bitbucket allows few requests an hour, so a workspace can hold at most 5 Pipelines watches, and a run is checked about once a minute while it runs (every 5 minutes while it waits on a manual step, or while waiting for the next one). Your Bitbucket connection needs permission to read Pipelines; if it lacks it, the agent is told to reconnect
 - A new run is recognised from Bitbucket's own build numbers and timestamps, and only the repository's latest 250 runs are searched for the branch; a quiet branch among very busy ones can be missed
 
 ### GitHub releases and tags

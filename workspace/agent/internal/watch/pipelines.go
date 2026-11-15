@@ -207,9 +207,15 @@ type plRun struct {
 		Result struct {
 			Name string `json:"name"`
 		} `json:"result"`
+		// Stage is set while the run is IN_PROGRESS: RUNNING, or PAUSED / HALTED when it waits.
+		Stage struct {
+			Name string `json:"name"`
+		} `json:"stage"`
 	} `json:"state"`
 	Target struct {
-		RefName  string `json:"ref_name"`
+		RefName string `json:"ref_name"`
+		// Source is the branch of a pull request run, whose ref_name is null.
+		Source   string `json:"source"`
 		Selector struct {
 			Pattern string `json:"pattern"`
 		} `json:"selector"`
@@ -514,10 +520,27 @@ func plStartedAfter(r plRun, floorBuild, floorUnix int64) bool {
 	return t.Unix() >= floorUnix
 }
 
+// plBranchLabel names the branch a run is about for the Data line only. A pull request run has no
+// ref_name (null); its branch is target.source. Identity, version and the @branch filter stay on
+// ref_name, so what a watch matches is unchanged.
+func plBranchLabel(r plRun) string {
+	if r.Target.RefName != "" {
+		return r.Target.RefName
+	}
+	return r.Target.Source
+}
+
 func plDone(r plRun) bool { return r.State.Name == "COMPLETED" }
 
+// plWait is how long to leave a run that is not finished. A run parked on a manual step stays
+// IN_PROGRESS (stage PAUSED or HALTED) for as long as nobody acts, in live data for years, so it
+// is read at the idle interval: polling it every minute would spend about 60 of the account's
+// 1,000 hourly requests for nothing.
 func plWait(r plRun) time.Duration {
 	if r.State.Name == "IN_PROGRESS" {
+		if s := r.State.Stage.Name; s == "PAUSED" || s == "HALTED" {
+			return plIdleAfter
+		}
 		return plBusyAfter
 	}
 	return plQueuedAfter
@@ -548,7 +571,7 @@ func (p *BitbucketPipelines) runEvents(ctx context.Context, subject SubjectID, r
 		version = fmt.Sprintf("%d:%d", run.BuildNumber, t.Unix())
 	}
 	summary := fmt.Sprintf("%s completed: %s.", label, plResultWord(run.State.Result.Name))
-	data := []DataItem{{Text: "Pipeline run on " + run.Target.RefName, URL: plRunURL(repo, run.BuildNumber)}}
+	data := []DataItem{{Text: "Pipeline run on " + plBranchLabel(run), URL: plRunURL(repo, run.BuildNumber)}}
 	failed := plFailedResults[run.State.Result.Name]
 	if failed {
 		if cur.StepsKey != version {
