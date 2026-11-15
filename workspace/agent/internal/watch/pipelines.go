@@ -216,10 +216,10 @@ type plRun struct {
 }
 
 type plTarget struct {
-	// RefName is kept raw so that absent, null (a pull request run), "" and a name stay
-	// distinguishable; read it through refName and refNull.
+	// RefName is kept raw so that "" can be told from a missing value; read it through refName
+	// and refMissing.
 	RefName json.RawMessage `json:"ref_name"`
-	// Source is the branch of a pull request run, whose ref_name is null.
+	// Source is the branch of a pull request run, which carries no ref_name key.
 	Source   string `json:"source"`
 	Selector struct {
 		Pattern string `json:"pattern"`
@@ -532,15 +532,18 @@ func (t plTarget) refName() string {
 	return s
 }
 
-// refNull reports an explicit null, as against absent, "" or a name.
-func (t plTarget) refNull() bool { return string(t.RefName) == "null" }
+// refMissing reports that the run has no ref_name value: the key is absent (measured: all 192 pull
+// request runs read from a live workspace have no such key) or null. An explicit "" is a value.
+func (t plTarget) refMissing() bool {
+	return len(t.RefName) == 0 || string(t.RefName) == "null"
+}
 
-// plBranchLabel names the branch a run is about for the Data line only. A pull request run has an
-// explicit null ref_name and its branch in target.source; only that falls back, so an absent or
-// empty ref_name keeps its empty label as before. Identity, version and the @branch filter stay on
+// plBranchLabel names the branch a run is about for the Data line only. A pull request run has no
+// ref_name (absent, or null) and its branch in target.source; only that falls back, so an empty
+// ref_name keeps its empty label as before. Identity, version and the @branch filter stay on
 // refName, so what a watch matches is unchanged.
 func plBranchLabel(r plRun) string {
-	if r.Target.refNull() {
+	if r.Target.refMissing() {
 		return r.Target.Source
 	}
 	return r.Target.refName()

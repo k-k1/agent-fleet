@@ -512,15 +512,16 @@ func TestPollPipelineParkedRunsAreReadAtTheIdleInterval(t *testing.T) {
 	}
 }
 
-// A run started by a pull request has target.ref_name null and its branch in target.source: the
-// Data line names that branch, while the watch's identity and its @branch filter stay on ref_name.
+// A run started by a pull request has no target.ref_name key (the shape Bitbucket returns) and its
+// branch in target.source: the Data line names that branch, while the watch's identity and its
+// @branch filter stay on ref_name.
 func TestPullRequestRunDataLineNamesItsSourceBranch(t *testing.T) {
 	f := newFakeGitHub()
 	p := newTestPipelines(t, f)
 	ctx := context.Background()
 	pr := plRunBody(60, "COMPLETED", "SUCCESSFUL", "2026-11-10T01:00:00.5Z", "2026-11-10T01:05:00.5Z", "", "**")
 	pr["target"] = map[string]any{
-		"type": "pipeline_pullrequest_target", "ref_name": nil, "source": "feature/login", "destination": "main",
+		"type": "pipeline_pullrequest_target", "source": "feature/login", "destination": "main",
 		"selector": map[string]any{"type": "pull-requests", "pattern": "**"},
 	}
 	f.bodies[plRunPathOf(60)] = pr
@@ -541,18 +542,20 @@ func TestPullRequestRunDataLineNamesItsSourceBranch(t *testing.T) {
 	}
 }
 
-// Only an explicit null ref_name falls back to the source branch: an absent or empty one keeps its
-// empty label, a name is shown as before, and with neither the label is empty as it was.
-func TestBranchLabelFallsBackOnlyForANullRefName(t *testing.T) {
+// A ref_name that is absent (what Bitbucket sends for a pull request run) or null falls back to the
+// source branch; an empty one keeps its empty label, a name is shown as before, and with no source
+// either the label is empty as it was.
+func TestBranchLabelFallsBackForAnAbsentOrNullRefName(t *testing.T) {
 	for _, c := range []struct {
 		name, target, want string
 	}{
 		{"null ref_name", `{"ref_name":null,"source":"feature/login"}`, "feature/login"},
-		{"absent ref_name", `{"source":"feature/login"}`, ""},
+		{"absent ref_name", `{"source":"feature/login"}`, "feature/login"},
 		{"empty ref_name, source set", `{"ref_name":"","source":"feature/login"}`, ""},
 		{"ref_name and source", `{"ref_name":"main","source":"feature/login"}`, "main"},
 		{"null ref_name, empty source", `{"ref_name":null,"source":""}`, ""},
 		{"null ref_name, no source", `{"ref_name":null}`, ""},
+		{"absent ref_name, no source", `{}`, ""},
 	} {
 		var r plRun
 		if err := json.Unmarshal([]byte(`{"target":`+c.target+`}`), &r); err != nil {
@@ -561,7 +564,7 @@ func TestBranchLabelFallsBackOnlyForANullRefName(t *testing.T) {
 		if got := plBranchLabel(r); got != c.want {
 			t.Errorf("%s: label %q, want %q", c.name, got, c.want)
 		}
-		// Identity and the @branch filter read ref_name as before: "" for null and empty alike.
+		// Identity and the @branch filter read ref_name as before: "" for absent, null and empty alike.
 		wantRef := ""
 		if strings.Contains(c.target, `"main"`) {
 			wantRef = "main"
