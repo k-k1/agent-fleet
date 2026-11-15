@@ -27,12 +27,11 @@ import (
 const tenantMemberDefaultsMaxBody = 4 << 10
 
 // memberDefaultAgents are the kinds a tenant may name: the ones a member connects with their own
-// account. shell and ssm need no connection, lcpp is governed by engine access, and agy is
-// experimental. This is CP policy, not a catalog fact: the Console derives its
+// account. shell and ssm need no connection and lcpp is governed by engine access. This is CP policy, not a catalog fact: the Console derives its
 // MEMBER_DEFAULT_AGENTS from the registry's memberDefault cap, and
 // console/src/agents/derivedKindLists.test.ts reads this line and holds the two equal, in order
 // (SESSION_KINDS order, which is also the order of the refusal text below).
-var memberDefaultAgents = []string{"claude", "codex", "cursor", "copilot", "kiro", "opencode", "muse"}
+var memberDefaultAgents = []string{"claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "muse"}
 
 // tenantMemberDefaultsWire is the stored document, the admin PUT body and, for members, the
 // `defaults` of GET /api/me/ui-state. Read by core/store/uiState.ts and the tenant editor
@@ -255,7 +254,10 @@ var (
 
 var (
 	// A model id is a short token (claude-opus-4-7, gpt-5.2, bedrock-style ids with : and /).
-	launchModelRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@#\[\]-]{0,99}$`)
+	// Spaces and parentheses are for agy's older CLI, whose id is its display name
+	// ("Gemini 3.5 Flash (Medium)", workspace/agent/internal/agents/agy/models.go); it may not
+	// end in a space. console/src/features/repos/tenantLaunchDefaults.ts holds the same pattern.
+	launchModelRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._:/@#\[\]() -]{0,98}[A-Za-z0-9._:/@#\[\]()-])?$`)
 	// "owner/name", optionally with subgroups (GitLab): the path half of a remote, no host.
 	teamRepoRe = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+){1,3}$`)
 	awsAcctRe  = regexp.MustCompile(`^[0-9]{12}$`)

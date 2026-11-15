@@ -90,7 +90,7 @@ source_of_truth: "Console のワークスペース操作バーの「はじめる
 | cursor | Cursor（Cursor のプランが必要です） |
 | copilot | GitHub Copilot（GitHub の接続をそのまま使います） |
 | kiro | Kiro |
-| agy | Antigravity（試験的な対応です） |
+| agy | Antigravity |
 | opencode | OpenCode |
 | lcpp | ワークスペースの llama.cpp エンジン。ログインは要りません。⚙設定 →「エージェント」の「**llama.cpp を使う**」がオンのときだけ並びます |
 | muse | Muse Code。導入してログインすると並びます |

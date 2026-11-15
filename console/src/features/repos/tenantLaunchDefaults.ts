@@ -62,7 +62,9 @@ export function tenantBudget(st: MemberUIState, _kind: string, s: Settings): str
 }
 
 export const MAX_OWN_BUDGET = 10000;
-const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@#[\]-]{0,99}$/;
+// Same pattern as launchModelRe in control-plane/tenant_member_defaults.go. Spaces and
+// parentheses are for agy's older CLI, whose id is its display name ("Gemini 3.5 Flash (Medium)").
+const MODEL_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._:/@#[\]() -]{0,98}[A-Za-z0-9._:/@#[\]()-])?$/;
 
 /** Why the dialog's current values cannot be saved as the member's default (the CP would answer
  *  400), or "" when they can. Keeps the button honest instead of failing silently. */

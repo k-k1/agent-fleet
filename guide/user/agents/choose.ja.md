@@ -32,7 +32,7 @@ Agent Fleet は、Claude・Codex・OpenCode など 9 種類のコーディング
 | GitHub Copilot のサブスク（Free を含む） | copilot | [GitHub Copilot を接続する](copilot.ja.md) |
 | Cursor のアカウント | cursor | [Cursor を接続する](cursor.ja.md) |
 | AWS Builder ID、Kiro のプラン | kiro | [Kiro を接続する](kiro.ja.md) |
-| Google アカウント（実験枠） | agy | [Antigravity を接続する](agy.ja.md) |
+| Google アカウント | agy | [Antigravity を接続する](agy.ja.md) |
 | Meta のアカウント、Meta の API キー | muse | [Muse Code を接続する](muse.ja.md) |
 | なし（配備の llama.cpp エンジンを使う） | lcpp | [lcpp を使う](lcpp.ja.md) |
 

@@ -337,7 +337,6 @@ describe("RemainingUsageChip: equivalence with the chips it replaced", () => {
       "ws-fold-list",
       "github.com/settings/copilot",
       " · upgradable", // copilot's plan line suffix
-      "Experimental slot", // agy's note
       'aria-expanded="true"',
     ])
       expect(all, needle).toContain(needle);
