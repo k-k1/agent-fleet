@@ -9,6 +9,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/skillcurator"
@@ -541,6 +542,8 @@ func buildMux() *http.ServeMux {
 	// The kind catalog (#1077): every registered kind with its caps, for the CP and Console
 	// to derive their kind lists from.
 	mux.HandleFunc("GET /agents/kinds", handleAgentKinds)
+	// The credential policy this Workspace holds and whether it is confirmed (ADR 0138 D12).
+	mux.HandleFunc("GET /route-policy", routepolicy.HandleState)
 	// Agent memory version control (docs/log/39 / ADR 0022 P1-P3): snapshots claude/codex
 	// memory md into a bare repo, giving history, diffs, rollback to a chosen point and
 	// transfer between environments.

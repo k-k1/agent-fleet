@@ -1,6 +1,7 @@
 package routepolicysrv
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -21,6 +22,11 @@ type CP interface {
 	// TenantAdminFor resolves the caller and the tenant by slug and requires an administrator of
 	// it, answering the refusal itself.
 	TenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (store.Identity, store.Tenant, bool)
+	// VerifyBridge checks a Workspace bridge token under the membership's current bridge epoch
+	// (so a rotation or removal kills it) and returns the membership id.
+	VerifyBridge(ctx context.Context, signKey []byte, token string, verify func([]byte, string) (string, bool)) (string, bool)
+	// SigningRoot is the root the bridge tokens' keys are derived from.
+	SigningRoot() []byte
 }
 
 // withSuperAdmin gates a handler on super_admin.

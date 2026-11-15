@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/taskid"
 	"log"
 	"net"
@@ -91,6 +92,9 @@ func serve() {
 		log.Printf("aws: workload credentials withheld from sessions (%s unset, IMDS disabled; %s=1 keeps them)",
 			strings.Join(removed, ", "), awsx.WorkloadOptIn)
 	}
+	// The credential policy's bridge token leaves the environment here too, for the same reason,
+	// and the start environment's policy is held before any create can ask (ADR 0138 D12).
+	routepolicy.Shared()
 
 	// Take the listening socket BEFORE any of the boot work below, and die if it is busy.
 	// Every step from here to Serve mutates container-wide state — the credential store, the
@@ -229,6 +233,8 @@ func serve() {
 	// Pull the tenant's branch naming rules (ADR 0103 decision 10). Backgrounded and
 	// fail-open like the MCP pull: an unreachable CP keeps the last copy.
 	startBranchRulesTenantSync()
+	// The credential policy (ADR 0138 D12): the start environment's copy, then a pull every 30 s.
+	go routepolicy.Shared().Run(context.Background())
 	awsx.LoginAWSBin = ensureAWSCLI
 	gcpx.LoginGCloudBin = ensureGCloud
 	startTerminalHistoryJanitor()

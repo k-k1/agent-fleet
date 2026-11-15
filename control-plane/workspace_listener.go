@@ -33,6 +33,8 @@ var workspaceRoutes = map[string]bool{
 	"GET /internal/docs": true,
 	// Branch naming rules (AF_BRANCH_RULES_TOKEN).
 	"GET /internal/branch-rules": true,
+	// Credential policy (AF_ROUTE_POLICY_TOKEN, ADR 0138 D12).
+	"GET /internal/route-policy": true,
 	// Tenant MCP registry and the OAuth relay for its servers (AF_MCP_TOKEN).
 	"GET /internal/mcp-servers":                    true,
 	"POST /internal/mcp-servers/{id}/oauth/token":  true,
