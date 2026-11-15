@@ -65,6 +65,7 @@ source_of_truth: "コード（本書は地図と設計意図）"
 | 操作 | エンドポイント | 効果 |
 |---|---|---|
 | halt | `POST /sessions/{name}/halt` | driver を止め、メタデータは残す。停止中として一覧に残り、再開できる |
+| retire | `POST /sessions/{name}/retire` | セッションを再び起動しうるものを Agent が持っている分すべて終わらせ、そのセッションが始めたセッションにも同じことをして、全部を halt する。下記 |
 | 削除 | `DELETE /sessions/{name}[?stop=1]`、または旧名の `POST /sessions/{name}/stop` | セッションを**ごみ箱へ移す**（`trashSession`、[decisions/0101](../decisions/0101-session-delete-via-trash.ja.md)）。下記 |
 | archive / restore | `POST /sessions/{name}/archive`・`…/restore` | 行を隠す／停止中として戻す |
 | recreate | `POST /sessions/{name}/recreate` | 旧スロットをアーカイブし、同じディレクトリ・kind・driver・設定で新しい会話を始める。起動に失敗したら旧スロットを戻す |
@@ -78,6 +79,29 @@ source_of_truth: "コード（本書は地図と設計意図）"
   - **削除は作業コピーに触らない**。だから戻したセッションが消えたフォルダへ戻ることはない。
 - **セッションを畳む経路はどれも、持ち越し中の作業を先に昇格させる**（`PromoteCarriedFor`。
   kill やハンドル破棄より前）。そういう経路を新しく足すときも同じにすること。
+- **セッションを再び起動しうるものと retire**（ADR 0137 §6）。halt は watch・タイマー・予約済みの
+  利用上限の再開を残し、どれもセッションを起動し直す。生きている行も停止中の行も、まだ持っているものを
+  行に載せる。
+  - `wakers: {watches, timers}` は、セッションが持ち、まだそれを起動するか入力を入れうる購読の数。
+    組み込みの PR 購読と、通知を配達している最中のものは数える。メンバー宛ての組み込みは数えない。
+    `notify: parent` の watch は親に数える。`timers` は期限のあるもの。両方 0 なら項目ごと出さない。
+    watch の状態を読めないときは `wakers` を付けず `wakersUnknown: true` を付ける。確信のない 0 は
+    返さない（`Engine.Wakers`、`internal/watch/owner.go`）。
+  - `POST /sessions/{name}/retire` は、そのセッションと、それが始めた全セッション（深さを問わない。
+    `origin == "session"` と `originSession` の連鎖で、`spendDescendants` と同じ辿り方）について、
+    上のものを全部終わらせ、予約済みの再開を取り消し、halt する。答えは、セッションの一覧、それぞれで
+    終わらせたもの、終わらせられなかったもの（Control Plane が確認しなかった取り消しで、再試行される）。
+    2 回目は同じセッションを返し、それ以上は何も終わらせない。MCP ツールは無い。
+  - meta の `retiredAt` が、終わらせたものを終わったままにする。これが付いていて停止中のあいだ、
+    watch の sink は起動も注入もせず、エンジンは新しい購読と組み込みを断り、予約された利用上限の
+    再開も断る。`POST /sessions/{name}/start` が外すので、利用者が Console から再開すれば
+    普通のセッションに戻る。
+- **キュー配信の最初のターンの終わり方**（ADR 0137 §7）: `queueDelivery` を持つセッションの行に
+  `queueTurn: {outcome, ms, endedAt}`。`outcome` は `clean`・`turn-failed`・`turn-aborted`
+  （スケジュール実行が記録する値）で、理由を記録しない kind では空。専用の台帳（`status.FirstTurn`）に
+  持つ。プロンプトを配る前に用意し、ターンの開始がちょうど 1 回あった後の最初の終了で確定する。
+  だから停止で消えず、後のターンが書き換えることもない。それを示せないとき（開始か終了を見逃した、
+  間の停止で status が消えた）は、項目を出さないままにする。
 
 ### 再開
 

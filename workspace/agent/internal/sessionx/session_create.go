@@ -17,6 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
@@ -699,6 +700,11 @@ func (c *createRun) publish(m session.Meta) bool {
 // from, deliver that task, and answer the create.
 func (c *createRun) launch(meta session.Meta) {
 	req, name := c.req, c.name
+	if req.QueueDelivery != nil {
+		// Before anything can start a turn: the ledger counts the starts that follow
+		// (status.FirstTurn). A kind that records no end reason keeps the outcome empty.
+		status.ArmFirstTurn(session.UUID(meta.Dir, name), liveStateTraits(meta.Kind).PolledTurnEnd)
+	}
 	if meta.DriverKind() == session.DriverManaged {
 		// managed (docs/log/27 P2): no tmux pane — the driver opens a thread on the shared
 		// runtime. The first prompt needs no boot-screen scraping and can just be sent

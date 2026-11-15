@@ -210,6 +210,23 @@ var nameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
 // ValidName reports whether s is a well-formed session name (slug).
 func ValidName(s string) bool { return nameRe.MatchString(s) }
 
+// QueueTurn is the end of a queue delivery's first turn. Outcome is clean, turn-failed or
+// turn-aborted, the words a scheduled run records, and empty for a kind that records no reason.
+// Ms runs from the turn's start to its end; EndedAt is RFC 3339.
+type QueueTurn struct {
+	Outcome string `json:"outcome"`
+	Ms      int64  `json:"ms"`
+	EndedAt string `json:"endedAt"`
+}
+
+// Wakers counts the subscriptions a session owns that can start it again or put input into it:
+// the ones with a due time (Timers) and the rest (Watches), built-in ones and one whose notice is
+// being delivered included.
+type Wakers struct {
+	Watches int `json:"watches"`
+	Timers  int `json:"timers"`
+}
+
 // Session is the wire representation of a Claude session (one tmux session).
 type Session struct {
 	Name string `json:"name"`
@@ -260,6 +277,17 @@ type Session struct {
 	// (ADR 0137 §6). The Control Plane finds the session a delivery created by it, so its
 	// sessionWire has to carry it too.
 	QueueDelivery string `json:"queueDelivery,omitempty"`
+	// QueueTurn is how the first turn of that delivery ended (ADR 0137 §7), on the row of a
+	// session that has QueueDelivery. Absent until the turn ends, when the prompt was never
+	// delivered, and for good when the Agent cannot show that the end it saw was the first
+	// turn's. The Control Plane's circuit breaker reads it, so its sessionWire has to carry it.
+	QueueTurn *QueueTurn `json:"queueTurn,omitempty"`
+	// Wakers is what would start this session again, or put input into it, while it waits
+	// (ADR 0137 §6). Omitted when it holds nothing; WakersUnknown says the Agent could not read
+	// its watch state, which is not the same as holding nothing. The Control Plane keeps both
+	// with the row, so its sessionWire has to carry them too.
+	Wakers        *Wakers `json:"wakers,omitempty"`
+	WakersUnknown bool    `json:"wakersUnknown,omitempty"`
 	// TitleSetBy mirrors Meta.TitleSetBy ("user" | "parent" | ""): who last set Title. It
 	// rides the wire so a reader outside this process can tell a name the user chose from one
 	// a parent wrote — the same reason Origin / OriginSession are here. Display-only for now;
@@ -809,6 +837,11 @@ type Meta struct {
 	// §6), "" for every other session. Recreate and fork do not inherit it: one delivery names
 	// one session.
 	QueueDelivery string `json:"queueDelivery,omitempty"`
+	// RetiredAt is when POST /sessions/{name}/retire ended everything the Agent holds that could
+	// start this session (ADR 0137 §6), RFC 3339. While it is set and the session is stopped,
+	// no watch notice, built-in subscription, timer or booked usage-limit resume may start it;
+	// a person starting it clears the mark, and it is an ordinary session again.
+	RetiredAt string `json:"retiredAt,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so
 	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached

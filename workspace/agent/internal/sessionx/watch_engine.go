@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,18 @@ type watchDiskStore struct{}
 func (watchDiskStore) Load() (watch.State, bool) { return watchStateStore.Read(watchStateKey) }
 func (watchDiskStore) Save(s watch.State) error  { return watchStateStore.Write(watchStateKey, s) }
 
+// Unreadable is true for a state file that is there with content and does not decode, as opposed
+// to one that was never written: the engine starts empty in both cases, and only the first one
+// means its counts are not to be trusted (watch.StateUnreadable).
+func (watchDiskStore) Unreadable() bool {
+	fi, err := os.Stat(watchStateStore.Path(watchStateKey))
+	if err != nil || fi.Size() == 0 {
+		return false
+	}
+	_, ok := watchStateStore.Read(watchStateKey)
+	return !ok
+}
+
 // Side effects, replaceable by tests.
 var (
 	watchAlive  = SessionAlive
@@ -72,6 +85,7 @@ func watchEngine() *watch.Engine {
 			watch.NewGitHubReleases(gh), watch.NewGitHubTags(gh),
 			watch.NewBitbucketPipelines(bitbucketAuth, renewBitbucketAuth), &watch.FleetSource{Fleet: watchFleet{}})
 		watchEngineInst.SetWaker(cpWaker{})
+		watchEngineInst.Barred = watchBarred
 		watchEngineInst.Dynamic = watchMCPSources().Lookup
 	})
 	return watchEngineInst
@@ -188,6 +202,12 @@ func (s *watchSink) Ready(name string, now time.Time) watch.Readiness {
 		s.forgetLocked(name)
 		return watch.Unreachable
 	}
+	if retiredAndStopped(m) {
+		// Retired (ADR 0137 §6): nothing here starts it. Its session watches end with it; a
+		// built-in falls back to the member, as for an archived owner.
+		s.forgetLocked(name)
+		return watch.Unreachable
+	}
 	if !watchAlive(m) {
 		s.wake(m, now)
 		delete(s.readyOnce, name)
@@ -218,6 +238,11 @@ func (s *watchSink) Inject(sub watch.Subscription, evs []watch.Event) error {
 		return nil
 	}
 	name := sub.Owner
+	// A notice claimed before the retire and delivered after it: injecting into a stopped
+	// Managed session resumes it.
+	if m, ok := session.ReadMeta(name); ok && retiredAndStopped(m) {
+		return errors.New("session " + name + " is retired")
+	}
 	var text string
 	if sub.Builtin != "" {
 		render, ok := builtinNoticeText[sub.Builtin]

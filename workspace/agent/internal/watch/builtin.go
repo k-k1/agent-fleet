@@ -97,6 +97,9 @@ func (e *Engine) SyncBuiltins(purpose string, specs []BuiltinSpec) {
 		if !TokenOK(string(sp.Subject)) {
 			continue
 		}
+		if sp.Notify != NotifyMember && e.Barred != nil && e.Barred(sp.Owner) {
+			continue // a retired owner is not started by a subscription made again for it
+		}
 		id := BuiltinID(purpose, sp.Subject)
 		if _, dup := want[id]; !dup {
 			want[id] = sp

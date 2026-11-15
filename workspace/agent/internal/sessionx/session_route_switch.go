@@ -730,7 +730,15 @@ func recoverRouteSwitch(name string, rec routeSwitchRecord) {
 // "the limit has reset, carry on" that was in flight when a switch started would be typed into
 // the session on the metered route.
 func refuseCancelledResume(name, source, prompt, scheduleID string) bool {
-	if scheduleID == "" || injectionSource(source) != TurnSourceSchedule || !isRateLimitResumePrompt(prompt) {
+	if injectionSource(source) != TurnSourceSchedule || !isRateLimitResumePrompt(prompt) {
+		return false
+	}
+	// A retired, stopped session takes no resume at all, whatever became of its booking's
+	// cancel: that is what retire promised (ADR 0137 §6).
+	if m, ok := session.ReadMeta(name); ok && retiredAndStopped(m) {
+		return true
+	}
+	if scheduleID == "" {
 		return false
 	}
 	if rateLimitCancelRecorded(scheduleID) {

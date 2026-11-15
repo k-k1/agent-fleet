@@ -78,6 +78,9 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// A person's start makes a retired session an ordinary one again (ADR 0137 §6). The
+	// callers that start sessions on their own refuse a retired one before they get here.
+	clearRetired(name)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
