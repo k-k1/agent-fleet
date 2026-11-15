@@ -123,12 +123,16 @@ var loginCodeRe = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4}\b`)
 // The device-approval window is short; don't keep orphan login PTYs around.
 const loginFlowTTL = 15 * time.Minute
 
-var loginFlows = agents.NewFlowStore(loginFlowTTL)
+var loginFlows = agents.NewFlowStore(loginFlowTTL).GuardLogins(routes.RouteKiroLogin)
 
 // HandleStart launches the interactive device-flow login, scrapes the URL + code,
 // and returns them with a flow_id the client polls. The kiro process is kept alive
 // to do the AWS-side polling. POST /connections/kiro/start.
 func HandleStart(w http.ResponseWriter, r *http.Request) {
+	if ref := agents.CredentialEntryRefusal(routes.RouteKiroLogin); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	if _, err := exec.LookPath(bin()); err != nil {
 		httpx.WriteErr(w, http.StatusConflict, "kiro_unsupported", "kiro-cli not found (it may not be installed)")
 		return

@@ -41,7 +41,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
 // oauthIntegrationID / oauthMethodID are fixed IDs on the opencode side (measured): the
@@ -325,6 +327,10 @@ func waitOAuthMethod(addr string, timeout time.Duration) error {
 // HandleOAuthStart begins the Console device flow and returns the verification URL
 // with a flow_id the Console polls. POST /connections/opencode/oauth/start.
 func HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
+	if ref := agents.CredentialEntryRefusal(routes.RouteOpencodeAccount); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	if !Available() {
 		httpx.WriteErr(w, http.StatusConflict, "opencode_unsupported", "opencode not found (the image may predate it)")
 		return

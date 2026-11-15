@@ -57,7 +57,7 @@ const (
 // The pasted OAuth code is short-lived; don't keep orphan PTYs around.
 const flowTTL = 10 * time.Minute
 
-var flows = agents.NewFlowStore(flowTTL)
+var flows = agents.NewFlowStore(flowTTL).GuardLogins(routes.RouteAgyLogin)
 
 // hostcapsOK rejects an auth request on hosts where agy can't run (binary
 // absent / no usable RDRAND) — the same gate as the Console's kind selector and
@@ -81,6 +81,10 @@ type startReq struct {
 // waits for the authorize URL, and returns it with a flow_id the client uses to
 // submit the code. POST /connections/agy/start.
 func HandleStart(w http.ResponseWriter, r *http.Request) {
+	if ref := agents.CredentialEntryRefusal(routes.RouteAgyLogin); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	if !hostcapsOK(w) {
 		return
 	}

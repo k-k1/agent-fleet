@@ -183,12 +183,16 @@ var loginCodeRe = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4}\b`)
 // The device-approval window is short; don't keep orphan login children around.
 const loginFlowTTL = 15 * time.Minute
 
-var loginFlows = agents.NewFlowStore(loginFlowTTL)
+var loginFlows = agents.NewFlowStore(loginFlowTTL).GuardLogins(routes.RouteMuseLogin)
 
 // HandleStart launches the device-code login, scrapes the URL and code, and returns them
 // with a flow_id the client polls. The muse process is kept alive because it is the thing
 // doing the Meta-side polling. POST /connections/muse/start.
 func HandleStart(w http.ResponseWriter, r *http.Request) {
+	if ref := agents.CredentialEntryRefusal(routes.RouteMuseLogin); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	if !Installed() {
 		httpx.WriteErr(w, http.StatusConflict, "muse_unsupported", "Muse Code is not installed")
 		return
@@ -314,6 +318,10 @@ type keyReq struct {
 // flat-rate subscription onto metered billing, in one unconfirmed button press. Disconnecting
 // first makes that a deliberate two-step, and the card says so.
 func HandleAPIKey(w http.ResponseWriter, r *http.Request) {
+	if ref := agents.CredentialEntryRefusal(routes.RouteMetaAPI); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	if !Installed() {
 		httpx.WriteErr(w, http.StatusConflict, "muse_unsupported", "Muse Code is not installed")
 		return

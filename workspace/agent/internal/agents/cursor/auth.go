@@ -113,12 +113,16 @@ var loginURLRe = regexp.MustCompile(`https://cursor\.com/loginDeepControl\?\S+`)
 // The device-approval window is short; don't keep orphan login PTYs around.
 const loginFlowTTL = 10 * time.Minute
 
-var loginFlows = agents.NewFlowStore(loginFlowTTL)
+var loginFlows = agents.NewFlowStore(loginFlowTTL).GuardLogins(routes.RouteCursorLogin)
 
 // HandleStart launches the interactive login, scrapes the authorize URL, and
 // returns it with a flow_id the client polls. The cursor process is kept alive to
 // do the Cursor-side polling. POST /connections/cursor/start.
 func HandleStart(w http.ResponseWriter, r *http.Request) {
+	if ref := agents.CredentialEntryRefusal(routes.RouteCursorLogin); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	if _, err := exec.LookPath(bin()); err != nil {
 		httpx.WriteErr(w, http.StatusConflict, "cursor_unsupported", "cursor-agent not found (the image may predate it)")
 		return

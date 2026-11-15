@@ -137,6 +137,10 @@ type keyReq struct {
 // `codex login --with-api-key` (codex writes its own auth.json).
 // POST /connections/codex/api-key.
 func HandleAPIKey(w http.ResponseWriter, r *http.Request) {
+	if ref := agents.CredentialEntryRefusal(routes.RouteOpenAIAPI); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	var req keyReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -176,7 +180,7 @@ var (
 // the URL + code. The device code expires in ~15 min.
 const flowTTL = 16 * time.Minute
 
-var flows = agents.NewFlowStore(flowTTL)
+var flows = agents.NewFlowStore(flowTTL).GuardLogins(routes.RouteChatGPTSubscription)
 
 // HandleDeviceStart launches `codex login --device-auth`, scrapes the
 // verification URL + one-time code, and returns them with a flow_id the client
@@ -189,6 +193,10 @@ var flows = agents.NewFlowStore(flowTTL)
 // HandleDevicePoll installs the staged auth.json once the sign-in completes; until then the
 // current login stays in use, and an abandoned flow only removes its staging directory.
 func HandleDeviceStart(w http.ResponseWriter, r *http.Request) {
+	if ref := agents.CredentialEntryRefusal(routes.RouteChatGPTSubscription); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	flows.Reap()
 	stage, err := newStagingHome()
 	if err != nil {
