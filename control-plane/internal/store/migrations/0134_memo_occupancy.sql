@@ -4,8 +4,9 @@
 -- not change while the workspace is stopped or the Agent is silent.
 -- held_by is why the delivery was last seen held (machine, person, limit, wakers, unknown, or
 -- empty when nothing held it), held_session the session it was seen in, held_seen_at when the
--- read that said so began. A write from an older read is refused, so a late answer cannot undo a
--- newer one. progress_seen_at is when a session of the tree last showed progress. reported is 1
+-- read that said so began (for display). read_gen is a counter the database hands out before each
+-- read and held_gen the one behind the kept report. A report from an older read is refused, so a
+-- late answer cannot undo a newer one, and no wall clock decides the order. progress_seen_at is when a session of the tree last showed progress. reported is 1
 -- once a read of an Agent that sends the queue report has been kept.
 -- overdue_at is when the delivery passed its queue's max_task_hours and the member was told.
 -- retire_pending is 1 from a clean close until the Agent confirms that the session was retired,
@@ -19,6 +20,8 @@ ALTER TABLE memo_queue ADD COLUMN max_task_hours INTEGER NOT NULL DEFAULT 12;
 ALTER TABLE memo_delivery ADD COLUMN held_by TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_delivery ADD COLUMN held_session TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_delivery ADD COLUMN held_seen_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE memo_delivery ADD COLUMN read_gen INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE memo_delivery ADD COLUMN held_gen INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE memo_delivery ADD COLUMN progress_seen_at TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_delivery ADD COLUMN reported INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE memo_delivery ADD COLUMN overdue_at TEXT NOT NULL DEFAULT '';

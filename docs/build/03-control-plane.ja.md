@@ -257,8 +257,9 @@ Workspace を起こさない。
   木の中のアーカイブ済みセッションは何も保持しない。どれにも当たらない読み取りが 2 回続いたとき
   `clean` で閉じ、セッションがアーカイブされたか Agent の一覧から消えたとき `aborted` で閉じる。
   読み取りは先に配信へ保存する（`held_by`・`held_session`・`held_seen_at`・`idle_ticks`・
-  `progress_seen_at`）。始まりがもっと遅い読み取りが保存済みなら書けない条件付き書き込みで、
-  閉じるときは membership のロックの後ろで配信を読み直す。2 回の読み取りの間に作られた watch や、
+  `progress_seen_at`）。membership のロックの後ろで書き、clean な読み取りの回数は保存済みの行から
+  数える。読み取りは始める前にデータベースが番号を振り（`read_gen`）、保存済み（`held_gen`）より
+  古い番号の読み取りは断るので、時計は順序を決めない。閉じるのも同じトランザクション。2 回の読み取りの間に作られた watch や、
   別の Control Plane が保存した新しい読み取りは、これで閉じるのを止める。**Workspace が止まって
   いる間や Agent が答えない間は、読めた報告だけが答えを変える**: 最後に保持されていた配信は
   ミラーが何と言っても open のまま、何も保持されていなかった配信は、ミラーがそのセッションの稼働中
@@ -270,8 +271,10 @@ Workspace を起こさない。
   以後の tick は、それが立った閉じた配信について、Workspace が動いていて `queueReport` を返す間
   `POST /sessions/{name}/retire` を呼び、Agent が確認したら下ろす（答えの全セッションが
   stopped で `unended` が空。404 `not_found` も確認とみなす: 残るものが無い）。止まった Workspace は
-  起こさず、繰り返しても害は無い。木の中でまた機械が働くか人に何かが問われていれば、人が引き取った
-  のでその retire は諦める。`aborted` の close は何も retire しない。
+  起こさず、繰り返しても害は無い。木の中でまた機械が働くか人に何かが問われている間はその tick を見送って後の tick で
+  やり直し、諦めない（失敗した retire のあとで watch がまた発火した場合と見分けがつかないため）。
+  終わるのは Agent の確認、成功した報告がそのセッションをもう載せなくなったとき（route の 404
+  は確認ではない）、または 24 時間後。`aborted` の close は何も retire しない。
 
   **Overdue。** キューの `maxTaskHours`（1〜72、既定 12）より長く open の配信には `overdue_at` を
   付け、メンバーへ通知を 1 件出す（kind `memo-delivery-overdue`、`EventID` は

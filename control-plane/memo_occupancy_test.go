@@ -249,33 +249,82 @@ func TestMemoOccupancyLateReportDoesNotCloseEarly(t *testing.T) {
 	})
 }
 
-func TestMemoOccupancyOlderReadIsRefused(t *testing.T) {
+// reserve and observe drive the store the way two Control Plane processes do: each reserves its
+// read's number before it reads, and keeps the read later.
+func reserve(t *testing.T, st store.MemoStore, e *deliveryEnv, id string) int64 {
+	t.Helper()
+	var gens map[string]int64
+	if err := st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) (err error) {
+		gens, err = tx.ReserveDeliveryReads()
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return gens[id]
+}
+
+func observe(t *testing.T, st store.MemoStore, e *deliveryEnv, id string, o store.DeliveryObservation) (int, bool) {
+	t.Helper()
+	var ticks int
+	var kept bool
+	if err := st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) (err error) {
+		ticks, kept, err = tx.ObserveDelivery(id, o)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return ticks, kept
+}
+
+// The order of two reads is the number the database handed out, not a clock, and the count of
+// reads with nothing held is worked out from the stored row. So: a later read that holds the
+// delivery is kept even from a Control Plane whose clock is behind, an older read that found
+// nothing cannot be kept over it (and cannot add a tick), and a clean read after a hold counts
+// one, not the two a copy read before the hold would have made.
+func TestMemoOccupancyReadOrderIsTheDatabasesNotTheClocks(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		_, d := e.openReported(nil)
-		ctx := context.Background()
-		newer := store.DeliveryTS(time.Now().Add(time.Minute))
-		older := store.DeliveryTS(time.Now())
-		if ok, err := e.other.ObserveMemoDelivery(ctx, d.ID, store.DeliveryObservation{At: newer, HeldBy: store.HeldWakers, HeldSession: d.Session}); err != nil || !ok {
-			t.Fatalf("newer read: %v %v", ok, err)
+		past := store.DeliveryTS(time.Now().Add(-time.Hour)) // a clock an hour behind
+		future := store.DeliveryTS(time.Now().Add(time.Hour))
+
+		// A reserves read 1, B reserves read 2. A's clock is ahead, B's behind.
+		a := reserve(t, e.st, e, d.ID)
+		b := reserve(t, e.other, e, d.ID)
+		if b <= a {
+			t.Fatalf("numbers %d %d", a, b)
 		}
-		if ok, err := e.st.ObserveMemoDelivery(ctx, d.ID, store.DeliveryObservation{At: older, IdleTicks: 2}); err != nil || ok {
-			t.Fatalf("an older read was kept: %v %v", ok, err)
+		// B (later read, slow clock) saw a watch, A (older read, fast clock) saw nothing.
+		if _, kept := observe(t, e.other, e, d.ID, store.DeliveryObservation{Gen: b, At: past, HeldBy: store.HeldWakers, HeldSession: d.Session}); !kept {
+			t.Fatal("the later read was refused")
 		}
-		// This tick reads nothing held, but a read that began later is already kept.
-		for i := 0; i < 3; i++ {
-			e.settleNow(time.Now())
-		}
+		ticks, kept := observe(t, e.st, e, d.ID, store.DeliveryObservation{Gen: a, At: future})
 		got := e.delivery(d.ID)
-		if got.State != store.DeliveryOpen || got.HeldBy != store.HeldWakers || got.HeldSeenAt != newer {
-			t.Fatalf("the newer read must decide: %+v", got)
+		if kept || ticks != 0 || got.HeldBy != store.HeldWakers || got.HeldGen != b {
+			t.Fatalf("an older clean read beat a later hold: kept=%v ticks=%d %+v", kept, ticks, got)
 		}
-		// closeClean re-reads behind the lock: a delivery that another process holds is not closed
-		// on this one's stale count.
-		stale := got
-		stale.IdleTicks = 2
-		e.runner().closeClean(ctx, stale, 2)
-		if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
-			t.Fatalf("closed on a stale count: %+v", got)
+		// An older read that found a hold resets the count even when it is refused.
+		c := reserve(t, e.st, e, d.ID)
+		if ticks, _ := observe(t, e.st, e, d.ID, store.DeliveryObservation{Gen: c}); ticks != 1 {
+			t.Fatalf("clean read after a hold counts 1, got %d", ticks)
+		}
+		if _, kept := observe(t, e.other, e, d.ID, store.DeliveryObservation{Gen: b, HeldBy: store.HeldMachine}); kept {
+			t.Fatal("an older read replaced a newer one")
+		}
+		if got := e.delivery(d.ID); got.IdleTicks != 0 {
+			t.Fatalf("a refused hold must still reset the count: %+v", got)
+		}
+		// The stale-copy case: a process that holds a copy of the row with IdleTicks 1 cannot
+		// close on one clean read after another process kept a hold.
+		x := reserve(t, e.st, e, d.ID)
+		observe(t, e.st, e, d.ID, store.DeliveryObservation{Gen: x})
+		y := reserve(t, e.other, e, d.ID)
+		observe(t, e.other, e, d.ID, store.DeliveryObservation{Gen: y, HeldBy: store.HeldWakers, HeldSession: d.Session})
+		z := reserve(t, e.st, e, d.ID)
+		if ticks, _ := observe(t, e.st, e, d.ID, store.DeliveryObservation{Gen: z}); ticks != 1 {
+			t.Fatalf("one clean read after a hold made %d", ticks)
+		}
+		if e.delivery(d.ID).State != store.DeliveryOpen {
+			t.Fatal("closed on a single clean read")
 		}
 	})
 }
@@ -475,12 +524,65 @@ func TestMemoOccupancyRetireNeverWakesAndAbortRetiresNothing(t *testing.T) {
 		if !e.delivery(d.ID).RetirePending || agent.retireCalls() == 0 {
 			t.Fatal("an error answer is not a confirmation")
 		}
-		// A person resumed the session and a machine works in it: the retire is given up.
+		// A session that came back to work (a watch fired again after the failed retire) is not
+		// given up on: it is skipped while it works and retired when it is idle again.
 		agent.setRow(d.Session, map[string]any{"alive": true, "state": "working", "progressAgeSec": 1})
 		before := agent.retireCalls()
 		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); !got.RetirePending || agent.retireCalls() != before {
+			t.Fatalf("gave up or retired a working session: %+v", got)
+		}
+		agent.mu.Lock()
+		agent.retireStatus = 0
+		agent.mu.Unlock()
+		agent.setRow(d.Session, map[string]any{"state": "idle", "progressAgeSec": 0})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.RetirePending || got.RetiredAt == "" {
+			t.Fatalf("not retired once idle: %+v", got)
+		}
+	})
+	// Past memoRetireGiveUp a pending retire is dropped.
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.mu.Lock()
+		agent.retireStatus = http.StatusBadGateway
+		agent.mu.Unlock()
+		e.settleNow(time.Now())
+		e.settleNow(time.Now())
+		before := agent.retireCalls()
+		e.settleNow(time.Now().Add(memoRetireGiveUp + time.Hour))
 		if got := e.delivery(d.ID); got.RetirePending || got.RetiredAt != "" || agent.retireCalls() != before {
-			t.Fatalf("retired work a person took over: %+v", got)
+			t.Fatalf("%+v", got)
+		}
+	})
+}
+
+// A 404 from the retire route is not "the session is gone": a gateway, or an Agent without the
+// route, answers it too, so it is never a confirmation. Absence is proven by a successful report
+// that no longer lists the session, and then no call is made.
+func TestMemoOccupancyRetire404IsNotAConfirmation(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.mu.Lock()
+		agent.retireStatus = http.StatusNotFound // agentErr writes code "boom"
+		agent.retireCode = "not_found"
+		agent.mu.Unlock()
+		for i := 0; i < 4; i++ {
+			e.settleNow(time.Now())
+		}
+		got := e.delivery(d.ID)
+		if got.State != store.DeliveryClosed || !got.RetirePending || got.RetiredAt != "" {
+			t.Fatalf("a route 404 confirmed the retire: %+v", got)
+		}
+		calls := agent.retireCalls()
+		if calls < 2 {
+			t.Fatalf("not repeated: %d", calls)
+		}
+		// The session is gone from the Agent's list: pending ends without a call.
+		agent.dropRow(d.Session)
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.RetirePending || got.RetiredAt != "" || agent.retireCalls() != calls {
+			t.Fatalf("%+v", got)
 		}
 	})
 }

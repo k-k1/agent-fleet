@@ -95,6 +95,8 @@ type fakeQueueAgent struct {
 	retires      []string
 	retireFail   int
 	retireStatus int
+	// retireCode is the error code of retireStatus's answer, "boom" when empty.
+	retireCode string
 }
 
 func newFakeQueueAgent(t *testing.T) *fakeQueueAgent {
@@ -229,7 +231,11 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 func (a *fakeQueueAgent) serveRetire(w http.ResponseWriter, name string) {
 	a.retires = append(a.retires, name)
 	if a.retireStatus != 0 {
-		agentErr(w, a.retireStatus, "boom")
+		code := a.retireCode
+		if code == "" {
+			code = "boom"
+		}
+		agentErr(w, a.retireStatus, code)
 		return
 	}
 	var tree []map[string]any

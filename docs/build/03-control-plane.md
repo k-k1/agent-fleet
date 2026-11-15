@@ -328,9 +328,11 @@ disables.
   on the second read in a row that finds none of these, and `aborted` when its session is
   archived or gone from the Agent's list. Each read is kept first (`held_by`,
   `held_session`, `held_seen_at`, `idle_ticks`, `progress_seen_at`), as one conditional
-  write that a read that began earlier cannot make, and the close re-reads the delivery
-  behind the membership lock: a watch made between two reads, or a newer read another
-  Control Plane kept, defeats it. **While the workspace is stopped, or the Agent does not
+  write behind the membership lock, with the count of clean reads worked out from the
+  stored row. Each read is numbered by the database before it begins (`read_gen`), and a
+  read with an older number than the kept one (`held_gen`) is refused, so no wall clock
+  decides the order; the close is made in the same transaction. A watch made between two
+  reads, or a newer read another Control Plane kept, defeats it. **While the workspace is stopped, or the Agent does not
   answer, only a report that was read changes the answer**: a delivery last seen held
   stays open whatever the mirror says, and one last seen with nothing holding it closes
   from the mirror on a second tick, unless the mirror shows its session running or an
@@ -343,8 +345,10 @@ disables.
   while their workspace is running and answers with `queueReport`, and clears it when the
   Agent confirms (every session of the answer stopped, `unended` empty; a 404 `not_found`
   counts: nothing is left). It never wakes a stopped workspace, and a repeat does no harm.
-  If a machine works in the tree again or a person is asked something, the person took the
-  session over and the retire is given up. An `aborted` close retires nothing.
+  While a machine works in the tree again or a person is asked something the retire waits
+  for a later tick, and is not given up: a watch that fired again after a failed retire
+  looks the same. It ends on the Agent's confirmation, when a successful report no longer
+  lists the session (a 404 from the route is not a confirmation), or after 24 hours. An `aborted` close retires nothing.
 
   **Overdue.** A delivery open longer than its queue's `maxTaskHours` (1–72, default 12)
   is marked `overdue_at` and the member gets one notification (kind
