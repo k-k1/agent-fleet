@@ -136,8 +136,18 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 	// One retire of a root at a time, from the intent to the end, recovery included: a second
 	// request waits for the first, so an older run never goes on with a tree a newer one has
 	// already been through and a person has resumed since.
-	unlock := lockRetireRoot(name)
+	unlock, err := lockRetireRoot(r.Context(), name)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "retire_wait_cancelled",
+			"another retire of this session was still running and this request's deadline passed; nothing was done")
+		return
+	}
 	defer unlock()
+	if r.Context().Err() != nil { // the lock came free as the deadline passed
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "retire_wait_cancelled",
+			"this request's deadline passed before the retire started; nothing was done")
+		return
+	}
 	in, err := beginRetire(name)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "retire_intent_unwritable",
@@ -183,7 +193,7 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 		for _, rep := range fresh {
 			// A session this retire had already marked and a person has resumed since is theirs
 			// again: a recovery leaves it alone.
-			retireOne(ctx, rep, in, false)
+			retireOne(ctx, rep, in)
 		}
 		if !waitSpawns(ctx, order) {
 			order[0].Unended = appendNew(order[0].Unended, "a child create was still in flight; retire again once it has finished")
@@ -203,17 +213,16 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 // holds now was booked before it. Every step is safe to repeat.
 //
 // A retire acts on a member whose meta says a person cleared this same retire's mark (RetireClearedID)
-// not at all, and on every other session of its tree, reached before or not. force is the recovery
-// of a mark with no intent: it acts only while the mark is still there.
-func retireOne(ctx context.Context, rep *retireReport, in *retireIntent, force bool) {
+// not at all, and on every other session of its tree, reached before or not.
+func retireOne(ctx context.Context, rep *retireReport, in *retireIntent) {
 	g := retireGate(rep.Name)
 	g.Lock()
 	defer g.Unlock()
 	cur, ok := session.ReadMeta(rep.Name)
-	if ok && !isRetired(cur) && (force || (in != nil && cur.RetireClearedID == in.ID)) {
+	if ok && !isRetired(cur) && cur.RetireClearedID == in.ID {
 		return // a person started it since
 	}
-	markRetired(rep, in.id())
+	markRetired(rep, in.ID)
 	endSubscriptions(ctx, rep)
 	stopRetired(rep)
 	endSubscriptions(ctx, rep)
@@ -226,13 +235,6 @@ func retireOne(ctx context.Context, rep *retireReport, in *retireIntent, force b
 type retireIntent struct {
 	Root string `json:"root"`
 	ID   string `json:"id"`
-}
-
-func (in *retireIntent) id() string {
-	if in == nil {
-		return ""
-	}
-	return in.ID
 }
 
 var retireIntents = fstore.JSON[retireIntent](paths.AgentStateDir, "session-retire-intent", ".json")
@@ -299,10 +301,16 @@ func waitSpawns(ctx context.Context, reps []*retireReport) bool {
 // to be tried at the next start. It returns the number of retires that are now complete.
 func ReconcileRetired(ctx context.Context) int {
 	done := 0
-	covered := map[string]bool{}
 	for _, root := range retireIntentRoots() {
+		unlock, err := lockRetireRoot(ctx, root)
+		if err != nil {
+			continue
+		}
+		// Everything below is read under the root's lock: a request that held it may have
+		// replaced or finished the intent, or a person may have resumed the root.
 		in, ok := retireIntents.Read(root)
 		if !ok {
+			unlock()
 			continue
 		}
 		m, exists := session.ReadMeta(root)
@@ -310,35 +318,16 @@ func ReconcileRetired(ctx context.Context) int {
 			retireIntentMu.Lock()
 			retireIntents.Remove(root) // gone, or a person resumed the root: nothing to finish
 			retireIntentMu.Unlock()
-			continue
-		}
-		unlock := lockRetireRoot(root)
-		// Read again under the lock: a request that held it may have replaced or finished the intent.
-		in, ok = retireIntents.Read(root)
-		if !ok {
 			unlock()
 			continue
 		}
 		reps := retireTree(ctx, root, &in)
-		for _, r := range reps {
-			covered[r.Name] = true
-		}
 		finishRetire(&in, reps)
 		unlock()
 		if _, still := retireIntents.Read(root); !still {
 			done++
 		} else {
 			log.Printf("retire: %s is not finished, it is tried again at the next start", root)
-		}
-	}
-	for _, m := range session.ListMetas() {
-		if m.Archived || !isRetired(m) || covered[m.Name] {
-			continue
-		}
-		rep := &retireReport{Name: m.Name, Unended: []string{}}
-		retireOne(ctx, rep, nil, true)
-		if len(rep.Unended) == 0 {
-			done++
 		}
 	}
 	return done
@@ -365,8 +354,8 @@ func markRetired(rep *retireReport, id string) {
 	_, _, err := updateSessionMetaChecked(rep.Name, func(m *session.Meta) bool {
 		// The first date stays; the id is this retire's, so a person's start clears the mark
 		// of the retire whose intent is on disk.
-		if m.RetiredAt != "" && m.RetireID == id {
-			return false
+		if m.RetiredAt != "" && (m.RetireID == id || id == "") {
+			return false // an id-less caller (no intent) never overwrites a retire's id
 		}
 		if m.RetiredAt == "" {
 			m.RetiredAt = time.Now().UTC().Format(time.RFC3339)
@@ -476,13 +465,18 @@ func retireRootOf(m session.Meta) string {
 	return m.Name
 }
 
-var retireRoots sync.Map // root name -> *sync.Mutex
+var retireRoots sync.Map // root name -> chan struct{} (capacity 1)
 
-// lockRetireRoot serialises the whole of a retire of one root, from its intent to its end.
-// Lock order: this, then the per-session gates.
-func lockRetireRoot(root string) (unlock func()) {
-	v, _ := retireRoots.LoadOrStore(root, &sync.Mutex{})
-	mu := v.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+// lockRetireRoot serialises the whole of a retire of one root, from its intent to its end. Lock
+// order: this, then the per-session gates. The wait ends with ctx: a request whose deadline passed
+// while it waited does not run later.
+func lockRetireRoot(ctx context.Context, root string) (unlock func(), err error) {
+	v, _ := retireRoots.LoadOrStore(root, make(chan struct{}, 1))
+	ch := v.(chan struct{})
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }

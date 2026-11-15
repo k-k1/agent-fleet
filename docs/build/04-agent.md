@@ -108,7 +108,7 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     never meets a mark written by a retire of another root (the Control Plane retires a delivery's
     own session, which is always a root). At most one retire of a root runs at a time, from its
     intent to its end, and the start-up recovery takes the same per-root lock: a second request
-    waits for the first (bounded by its own deadline) and then runs.
+    waits for the first and then runs; a request whose deadline passed while it waited (or as the lock came free) answers 503 `retire_wait_cancelled` and does nothing. A marked session with no intent is a finished retire and is left alone by the recovery.
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
     written, the watch sink never starts or injects into the session, a Managed input (any
     origin) is refused with `409 session_retired`, an automatic `/start` is refused, the session

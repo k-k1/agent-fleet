@@ -641,6 +641,8 @@ func TestReconcileRetiredFinishesWhatACrashLeft(t *testing.T) {
 		if stopped {
 			m.StoppedAt = "2026-11-15T10:00:01Z"
 		}
+		in := mustBeginRetire(t, "a") // the intent is written before anything is marked
+		m.RetireID = in.ID
 		writeMeta(t, m)
 		fresh := watch.New(watchDiskStore{}, newWatchSink(), stubSource{}, &watch.Time{})
 		fresh.Barred = watchBarred
@@ -689,7 +691,7 @@ func TestReconcileRetiredFindsChildrenNeverMarked(t *testing.T) {
 	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
 	r.hold(t, "c")
 	in := mustBeginRetire(t, "p")
-	retireOne(context.Background(), &retireReport{Name: "p", Unended: []string{}}, in, false) // the crash comes here
+	retireOne(context.Background(), &retireReport{Name: "p", Unended: []string{}}, in) // the crash comes here
 	if m, _ := session.ReadMeta("c"); m.RetiredAt != "" {
 		t.Fatal("setup: the child is marked")
 	}
@@ -715,7 +717,7 @@ func TestReconcileRetiredLeavesASessionAPersonResumed(t *testing.T) {
 	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
 	in := mustBeginRetire(t, "p")
 	for _, n := range []string{"p", "c"} {
-		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in, false)
+		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in)
 	}
 	clearRetired("c") // the person's start
 	r.hold(t, "c")
@@ -891,7 +893,7 @@ func TestReconcileRetiredFinishesUnreachedSkipsReleasedAndEndsMarked(t *testing.
 	}
 	in := mustBeginRetire(t, "p")
 	for _, n := range []string{"p", "marked", "released"} { // the crash comes before "unreached"
-		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in, false)
+		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in)
 	}
 	clearRetired("released") // a person's start, which leaves the tombstone in the same write
 	r.hold(t, "released")
@@ -921,7 +923,7 @@ func TestReconcileRetiredReadsAMemberUnderTheGate(t *testing.T) {
 	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
 	in := mustBeginRetire(t, "p")
 	for _, n := range []string{"p", "c"} {
-		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in, false)
+		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in)
 	}
 	g := retireGate("c")
 	g.RLock() // a person's /start in progress
@@ -1008,7 +1010,7 @@ func TestRepeatedRetireCrashRespectsAPersonsStart(t *testing.T) {
 	first, _ := session.ReadMeta("c")
 	in := mustBeginRetire(t, "p") // retire B
 	for _, n := range []string{"p", "c"} {
-		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in, false)
+		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in)
 	}
 	if m, _ := session.ReadMeta("c"); m.RetireID != in.ID || m.RetiredAt != first.RetiredAt {
 		t.Fatalf("mark = %q at %q, want retire %q at the first date %q", m.RetireID, m.RetiredAt, in.ID, first.RetiredAt)
@@ -1106,5 +1108,69 @@ func TestTwoRetiresOfOneRootAreSerialised(t *testing.T) {
 	<-doneB
 	if _, still := retireIntents.Read("p"); still {
 		t.Fatal("an intent is left after both retires finished")
+	}
+}
+
+// A request whose deadline passed while it waited for the root's lock does not run later.
+func TestAWaitingRetireRequestThatWasCancelledDoesNotRunLater(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	unlock, err := lockRetireRoot(context.Background(), "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/sessions/p/retire", nil).WithContext(ctx)
+	req.SetPathValue("name", "p")
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { HandleSessionRetire(rec, req); close(done) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+	unlock()
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "retire_wait_cancelled") {
+		t.Fatalf("answer = %d %s", rec.Code, rec.Body)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if m, _ := session.ReadMeta("p"); m.RetiredAt != "" {
+		t.Fatal("a cancelled request retired the session after the lock was released")
+	}
+}
+
+// A marked session with no intent is a retire that finished; the recovery leaves it alone, and so
+// never writes an id over the one a newer retire has on it. (The reviewer's order: a recovery
+// pass reading a stale snapshot while a new retire marks.)
+func TestRecoveryLeavesAFinishedRetireAndANewerIdAlone(t *testing.T) {
+	r := newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	r.hold(t, "p")
+	UpdateSessionMeta("p", func(m *session.Meta) bool { m.RetiredAt, m.RetireID = "2026-11-15T10:00:00Z", "B"; return true })
+	if n := ReconcileRetired(context.Background()); n != 0 {
+		t.Fatalf("reconciled %d with no intent", n)
+	}
+	if m, _ := session.ReadMeta("p"); m.RetireID != "B" {
+		t.Fatalf("the id was overwritten: %q", m.RetireID)
+	}
+	if w, tm, _ := r.e.Wakers("p"); w != 1 || tm != 1 {
+		t.Fatalf("the recovery ended a session no intent names: %d %d", w, tm)
+	}
+}
+
+// A request whose lock came free just as its deadline passed does not run.
+func TestRetireRequestWithACancelledContextDoesNotRunEvenWhenTheLockIsFree(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/sessions/p/retire", nil).WithContext(ctx)
+	req.SetPathValue("name", "p")
+	rec := httptest.NewRecorder()
+	HandleSessionRetire(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("answer = %d %s", rec.Code, rec.Body)
+	}
+	if m, _ := session.ReadMeta("p"); m.RetiredAt != "" {
+		t.Fatal("a cancelled request retired the session")
 	}
 }
