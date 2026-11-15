@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
 
 const failedTurnsFixture = "testdata/failed_turns_events.jsonl"
@@ -30,13 +28,13 @@ func TestFailureSinceRecordedFailedTurns(t *testing.T) {
 	}
 	// First prompt: the file holds only session.start when the turn is sent.
 	write(lines[0])
-	mark, _ := agents.FileSizeMark(p)
+	mark := takeEventsMark(p)
 	write(lines[0] + lines[1])
 	if got := failureSince(p, mark); got != want {
 		t.Fatalf("first turn failure = %q, want %q", got, want)
 	}
 	// A turn sent after the first failure sees only what was appended after it.
-	mark, _ = agents.FileSizeMark(p)
+	mark = takeEventsMark(p)
 	if got := failureSince(p, mark); got != "" {
 		t.Errorf("nothing appended, yet failure = %q", got)
 	}
@@ -45,7 +43,7 @@ func TestFailureSinceRecordedFailedTurns(t *testing.T) {
 		t.Errorf("second turn failure = %q, want %q", got, want)
 	}
 	// The whole recorded file read from its start (no usable mark) still ends in the failure.
-	if got := failureSince(failedTurnsFixture, ""); got != want {
+	if got := failureSince(failedTurnsFixture, eventsMark{}); got != want {
 		t.Errorf("unmarked failure = %q, want %q", got, want)
 	}
 }
@@ -56,11 +54,11 @@ func TestFailureSinceRecordedFailedTurns(t *testing.T) {
 // rotation one.
 func TestFailureSinceFileReplacedDuringTurn(t *testing.T) {
 	const failLine = `{"type":"session.error","data":{"message":"Execution failed: new","errorType":"query"}}` + "\n"
-	// A head of a few KiB made of ordinary events, so the mark has a real size and fingerprint.
+	// A head of a few KiB made of events that do not end a turn, so the mark has a real size and fingerprint.
 	var old strings.Builder
 	old.WriteString(`{"type":"session.start","data":{"sessionId":"old"}}` + "\n")
 	for old.Len() < 8193 {
-		old.WriteString(`{"type":"assistant.message","data":{"content":"filler filler filler filler"}}` + "\n")
+		old.WriteString(`{"type":"session.info","data":{"message":"filler filler filler filler"}}` + "\n")
 	}
 	for name, replace := range map[string]func(p string){
 		"truncated": func(p string) {
@@ -73,6 +71,35 @@ func TestFailureSinceFileReplacedDuringTurn(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(p, []byte(failLine), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"rotated, same header and padding, larger than the mark": func(p string) {
+			// The case a head fingerprint alone misses: the replacement keeps the session header
+			// and the same padding, regrows past the old size, and only the file identity and
+			// the bytes around the mark differ.
+			if err := os.Rename(p, p+".old"); err != nil {
+				t.Fatal(err)
+			}
+			head, rest, _ := strings.Cut(old.String(), "\n")
+			if err := os.WriteFile(p, []byte(head+"\n"+failLine+rest+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"replaced by a file whose head and tail bytes at the mark are unchanged": func(p string) {
+			// Only the file identity tells this one: the new error line is inserted mid-file, sized
+			// to a whole number of padding lines so that the bytes at both ends of the old region
+			// are identical, and the old size is the offset a size-only reader would resume from.
+			if err := os.Rename(p, p+".old"); err != nil {
+				t.Fatal(err)
+			}
+			const padLine = `{"type":"session.info","data":{"message":"filler filler filler filler"}}` + "\n"
+			// Trailing spaces inside the message (trimmed from the reported text) round it up.
+			spaces := (len(padLine) - len(failLine)%len(padLine)) % len(padLine)
+			mid := strings.Replace(failLine, `new"`, `new`+strings.Repeat(" ", spaces)+`"`, 1)
+			text := old.String()
+			cut := len(text) - 12*len(padLine) // well inside the padding, clear of the fingerprinted tail
+			if err := os.WriteFile(p, []byte(text[:cut]+mid+text[cut:]+padLine), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		},
@@ -91,10 +118,7 @@ func TestFailureSinceFileReplacedDuringTurn(t *testing.T) {
 			if err := os.WriteFile(p, []byte(old.String()), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			mark, ok := agents.FileSizeMark(p)
-			if !ok {
-				t.Fatal("no mark")
-			}
+			mark := takeEventsMark(p)
 			replace(p)
 			if got := failureSince(p, mark); got != "Execution failed: new" {
 				t.Errorf("failure = %q, want the new file's error", got)
@@ -119,12 +143,12 @@ func TestFailureSinceIgnoresNoticeAndAnsweredTurns(t *testing.T) {
 			if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if got := failureSince(p, "0"); got != "" {
+			if got := failureSince(p, eventsMark{}); got != "" {
 				t.Errorf("failure = %q, want none", got)
 			}
 		})
 	}
-	if got := failureSince(filepath.Join(t.TempDir(), "missing.jsonl"), "0"); got != "" {
+	if got := failureSince(filepath.Join(t.TempDir(), "missing.jsonl"), eventsMark{}); got != "" {
 		t.Errorf("missing file: failure = %q", got)
 	}
 }
@@ -135,7 +159,7 @@ func TestFailureSinceScrubsSecrets(t *testing.T) {
 	if err := os.WriteFile(p, []byte(line), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := failureSince(p, "0")
+	got := failureSince(p, eventsMark{})
 	if got == "" || strings.Contains(got, "ghp_abcdef") {
 		t.Errorf("failure = %q", got)
 	}
