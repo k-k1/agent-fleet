@@ -504,3 +504,56 @@ func TestWatchRecordsStoppedWhenKilledBySIGTERM(t *testing.T) {
 		t.Fatalf("SIGTERM death = %+v, want stopped/sig 15", ex)
 	}
 }
+
+// A runtime that answers a failed turn with a clean stopReason is judged by its TurnWatch
+// hook: the failure text turns the turn into TurnFailed and reaches the status store as the
+// turn-failed reason, while a quiet watch keeps the ordinary completion.
+func TestTurnWatchFailureOnCleanStopReason(t *testing.T) {
+	for _, tc := range []struct {
+		name, failure string
+		want          agents.TurnState
+		reason        string
+	}{
+		{"failed", "Execution failed: Model is not available.", agents.TurnFailed, status.TurnEndReasonFailed},
+		{"fine", "", agents.TurnCompleted, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, f := newTestHandle(t)
+			var watched string
+			h.hooks.TurnWatch = func(sid string) func() string {
+				watched = sid
+				return func() string { return tc.failure }
+			}
+			if err := h.Send(agents.TurnInput{Prompt: "hi", ClientMessageID: "m1"}); err != nil {
+				t.Fatal(err)
+			}
+			id := <-f.gotPrompt
+			waitState(t, h, agents.TurnRunning)
+			f.reply(id, map[string]any{"stopReason": "end_turn"})
+			waitState(t, h, tc.want)
+			waitPumpIdle(t, h)
+			if watched != "sess-1" {
+				t.Errorf("TurnWatch got sid %q", watched)
+			}
+			if st, ok := status.Read("slot-1"); !ok || st.TurnEndReason != tc.reason {
+				t.Errorf("status = %+v ok=%v, want reason %q", st, ok, tc.reason)
+			}
+		})
+	}
+}
+
+// The outcome function is only consulted for a turn that otherwise completed: a cancelled turn
+// stays cancelled whatever the log says.
+func TestTurnWatchIgnoredForCancelledTurn(t *testing.T) {
+	h, f := newTestHandle(t)
+	h.hooks.TurnWatch = func(string) func() string { return func() string { return "boom" } }
+	_ = h.Send(agents.TurnInput{Prompt: "hi", ClientMessageID: "m1"})
+	id := <-f.gotPrompt
+	waitState(t, h, agents.TurnRunning)
+	f.reply(id, map[string]any{"stopReason": "cancelled"})
+	waitState(t, h, agents.TurnCancelled)
+	waitPumpIdle(t, h)
+	if st, _ := status.Read("slot-1"); st.TurnEndReason != "" {
+		t.Errorf("cancelled turn got reason %q", st.TurnEndReason)
+	}
+}
