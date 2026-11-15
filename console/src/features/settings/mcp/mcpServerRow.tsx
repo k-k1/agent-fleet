@@ -6,6 +6,7 @@ import { isOAuthRequired, needsMemberSecrets, probeErrText } from "./mcpWire.ts"
 import type { McpServer, OAuthReport, ProbeResult } from "./mcpWire.ts";
 import { Meta } from "../parts/mcpForm.tsx";
 import { EgressNote } from "./EgressNote.tsx";
+import { ScopeList } from "./mcpScopeList.tsx";
 import { OAuthPanel, useOAuthFlow } from "./mcpOAuthPanel.tsx";
 import type { OAuthReturn } from "./mcpOAuth.ts";
 import type { EgressCheck } from "./egressCheck.ts";
@@ -219,7 +220,7 @@ function OAuthProbeView({ report, onSignIn }: { report: OAuthReport; onSignIn?: 
         )}
         {report.challengedScope && <div className="muted mono">{tr("mcp.oauth_scope", { scope: report.challengedScope })}</div>}
         {report.scopesSupported && report.scopesSupported.length > 0 && (
-          <div className="muted mono">{tr("mcp.oauth_scopes", { scopes: report.scopesSupported.join(" ") })}</div>
+          <ScopeList scopes={report.scopesSupported} inlineKey="mcp.oauth_scopes" summaryKey="mcp.oauth_scopes_summary" className="muted" />
         )}
         {(report.servers || []).map((s) => (
           <div className="mcp-probe-as" key={s.issuer}>
