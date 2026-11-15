@@ -9,6 +9,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -59,11 +60,17 @@ func keyEnv() []string {
 	// engine are independent: a workspace can have no provider key at all and still be
 	// entitled to the engine. Same for an unreadable store: that is a reason to lose the keys,
 	// not a reason to lose the engine.
+	// Under a restriction, a key whose routes the credential policy all forbids is withheld, and
+	// so is the engine token when af-engine-llm is (policy_isolation.go).
+	hide, restricted := policyRestriction()
 	if s, err := secrets.Load(); err == nil {
 		noOpencodeAI := UsagePref() == UsageFree || UsagePref() == UsageOwn
 		names := make([]string, 0, len(s.Opencode))
 		for k := range s.Opencode {
 			if noOpencodeAI && k == opencodeKeyEnv {
+				continue
+			}
+			if restricted && !keyAllowed(hide, k) {
 				continue
 			}
 			names = append(names, k)
@@ -83,6 +90,9 @@ func keyEnv() []string {
 	// Workspace-scoped for the same reason: one daemon serves every session in the workspace,
 	// so there is no session to scope it to at this point. BuildLaunch overrides it with a
 	// session-scoped one where the route allows that.
+	if restricted && !hide.Allows(routes.RouteAFEngineLLM) {
+		return out
+	}
 	return append(out, EngineEnv("")...)
 }
 
