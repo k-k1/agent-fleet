@@ -390,3 +390,22 @@ func TestClipKeepsUTF8(t *testing.T) {
 		t.Fatalf("missing marker")
 	}
 }
+
+// A turn that died with session.error and no turn_end (the recorded shape, #4083) must not read
+// working forever; the fallback notice and an error that output followed must not end it.
+func TestLiveStateSessionError(t *testing.T) {
+	const user = `{"type":"user.message","data":{"content":"x"}}` + "\n"
+	const fail = `{"type":"session.error","data":{"message":"Execution failed: Model \"m\" is not available.","errorType":"query"}}` + "\n"
+	const notice = `{"type":"session.error","data":{"message":"Model \"m\" from --model flag is not available. Using \"auto\" instead.","errorType":"model"}}` + "\n"
+	cases := map[string]struct{ events, want string }{
+		"error after the input ends the turn": {user + fail, "idle"},
+		"fallback notice is not a failure":    {user + notice, "working"},
+		"output after the error is a retry":   {user + fail + `{"type":"assistant.message","data":{}}` + "\n", "working"},
+		"next input reopens":                  {user + fail + user, "working"},
+	}
+	for name, c := range cases {
+		if got := liveStateFromFile(writeFixture(t, c.events)); got != c.want {
+			t.Errorf("%s: state %q, want %q", name, got, c.want)
+		}
+	}
+}

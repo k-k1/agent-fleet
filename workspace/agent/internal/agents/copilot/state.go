@@ -11,6 +11,9 @@ package copilot
 //     the permission menu or a plan-mode approval)
 //   - a user.message / assistant.turn_start with no assistant.turn_end after it -> "working"
 //     (a turn in progress; the gap before turn_start while routing is caught from user.message)
+//   - a session.error that is a failure (isTurnError) closes the open turn: a turn that died
+//     writes no turn_end, and without this it would read "working" forever; assistant output
+//     after it (a retry) reopens it
 //   - anything else -> "idle"
 //   - no session id yet, or no file -> "" (starting up / unknown - the caller treats it as no
 //     state)
@@ -78,6 +81,7 @@ func liveStateDetailFromFile(path string) (string, string) {
 // stays empty when it cannot be read.
 func classifyDetail(r io.Reader) (string, string) {
 	open := false                 // after user.message / turn_start, before turn_end
+	errored := false              // closed by a session.error, not by a turn_end
 	perms := map[string]bool{}    // requestIds requested and not yet completed
 	detail := map[string]string{} // requestId -> what it asked for (only where readable)
 	last := ""                    // the last requested id (this is the one displayed)
@@ -96,6 +100,7 @@ func classifyDetail(r io.Reader) (string, string) {
 				Tool     string `json:"tool"`
 				Command  string `json:"command"`
 				Title    string `json:"title"`
+				Message  string `json:"message"`
 			} `json:"data"`
 		}
 		if json.Unmarshal(sc.Bytes(), &ev) != nil {
@@ -104,8 +109,24 @@ func classifyDetail(r io.Reader) (string, string) {
 		switch ev.Type {
 		case "user.message", "assistant.turn_start":
 			open = true
+		case "assistant.message", "tool.execution_start":
+			// Output after a session.error means the turn went on (a retry): working again.
+			// Before any error this changes nothing, the turn is already open.
+			if errored {
+				open = true
+				errored = false
+			}
 		case "assistant.turn_end":
 			open = false
+			errored = false
+		case "session.error":
+			// A turn that died with an error writes no turn_end (recorded: session.error is the
+			// last line), so without this it reads working forever. The model-fallback notice
+			// is not a failure: the turn runs on.
+			if isTurnError(ev.Data.Message) {
+				open = false
+				errored = true
+			}
 		case "permission.requested":
 			if ev.Data.RequestID != "" {
 				perms[ev.Data.RequestID] = true
@@ -169,7 +190,7 @@ func EndedAfter(m session.Meta, mark string) (after, known bool) {
 		return false, false
 	}
 	return agents.EndedAfterOffset(EventsPath(sid), mark, tailWindow,
-		typeIs("user.message"), typeIs("assistant.turn_end", "session.shutdown"))
+		typeIs("user.message"), turnEnd)
 }
 
 // InputSeen reports whether the new input's user.message reached events.jsonl at or after mark
@@ -197,4 +218,19 @@ func typeIs(types ...string) func([]byte) bool {
 		}
 		return false
 	}
+}
+
+// turnEnd is a line that closes a turn: assistant.turn_end, session.shutdown, or a session.error
+// that is a failure (classifyDetail reads all three as closed).
+func turnEnd(line []byte) bool {
+	if typeIs("assistant.turn_end", "session.shutdown")(line) {
+		return true
+	}
+	var ev struct {
+		Type string `json:"type"`
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	return json.Unmarshal(line, &ev) == nil && ev.Type == "session.error" && isTurnError(ev.Data.Message)
 }

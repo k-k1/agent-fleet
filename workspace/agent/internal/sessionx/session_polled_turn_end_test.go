@@ -287,3 +287,45 @@ func armedOperatorConversation(t *testing.T, m session.Meta) string {
 	chatx.AddInstruction(m.Name, conv.ID, TurnSourceOperator)
 	return conv.ID
 }
+
+// A Terminal turn that ends with session.error alone (no turn_end) reads idle and is reported as
+// failed, with the provider's text and the turn-failed reason; the fallback notice is not.
+func TestPolledTurnEndReportsSessionErrorAsFailed(t *testing.T) {
+	const fail = `{"type":"session.error","data":{"message":"Execution failed: Model \"m\" is not available.","errorType":"query"}}`
+	const notice = `{"type":"session.error","data":{"message":"Model \"m\" from --model flag is not available. Using \"auto\" instead.","errorType":"model"}}`
+	for _, c := range []struct {
+		name, errLine string
+		wantState     string
+		wantIdle      bool
+	}{{"failure", fail, agents.StateFailed, true}, {"fallback notice", notice, "", false}} {
+		t.Run(c.name, func(t *testing.T) {
+			m, sid, turnEnded := polledTurnEndFixture(t, "copilot_err_"+strings.ReplaceAll(c.name, " ", "_"))
+			turnEnded()
+			var got struct {
+				state, excerpt string
+			}
+			agents.SetStateNotifier(func(_, _, state, excerpt string) { got.state, got.excerpt = state, excerpt })
+			t.Cleanup(func() { agents.SetStateNotifier(nil) })
+
+			startTurn(m)
+			appendEvents(t, m, `{"type":"user.message"}`, c.errLine)
+			st := DriveState(m, true, false)
+			if c.wantIdle != (st == "idle") {
+				t.Fatalf("state = %q", st)
+			}
+			rec, _ := status.Read(sid)
+			if !c.wantIdle {
+				if rec.TurnEndReason != "" || got.state != "" {
+					t.Fatalf("a normal turn was marked: %+v %+v", rec, got)
+				}
+				return
+			}
+			if rec.TurnEndReason != status.TurnEndReasonFailed {
+				t.Errorf("turn end reason = %q, want %q", rec.TurnEndReason, status.TurnEndReasonFailed)
+			}
+			if got.state != c.wantState || !strings.Contains(got.excerpt, "is not available") {
+				t.Errorf("notifier got %+v", got)
+			}
+		})
+	}
+}
