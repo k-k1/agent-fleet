@@ -207,13 +207,23 @@ type plRun struct {
 		Result struct {
 			Name string `json:"name"`
 		} `json:"result"`
+		// Stage is set while the run is IN_PROGRESS: RUNNING, or PAUSED / HALTED when it waits.
+		Stage struct {
+			Name string `json:"name"`
+		} `json:"stage"`
 	} `json:"state"`
-	Target struct {
-		RefName  string `json:"ref_name"`
-		Selector struct {
-			Pattern string `json:"pattern"`
-		} `json:"selector"`
-	} `json:"target"`
+	Target plTarget `json:"target"`
+}
+
+type plTarget struct {
+	// RefName is kept raw so that absent, null (a pull request run), "" and a name stay
+	// distinguishable; read it through refName and refNull.
+	RefName json.RawMessage `json:"ref_name"`
+	// Source is the branch of a pull request run, whose ref_name is null.
+	Source   string `json:"source"`
+	Selector struct {
+		Pattern string `json:"pattern"`
+	} `json:"selector"`
 }
 
 type plPage struct {
@@ -430,7 +440,7 @@ func (p *BitbucketPipelines) pollPipeline(ctx context.Context, subject SubjectID
 	wait := time.Duration(0)
 	for i := range runs {
 		r := &runs[i]
-		if (branch != "" && r.Target.RefName != branch) || (name != "" && r.Target.Selector.Pattern != name) {
+		if (branch != "" && r.Target.refName() != branch) || (name != "" && r.Target.Selector.Pattern != name) {
 			continue
 		}
 		if !plStartedAfter(*r, floorBuild, floorUnix) {
@@ -514,10 +524,39 @@ func plStartedAfter(r plRun, floorBuild, floorUnix int64) bool {
 	return t.Unix() >= floorUnix
 }
 
+// refName is ref_name as before: "" for absent, null and empty alike, which is what identity and
+// the @branch filter use.
+func (t plTarget) refName() string {
+	var s string
+	_ = json.Unmarshal(t.RefName, &s) // absent or null leaves ""
+	return s
+}
+
+// refNull reports an explicit null, as against absent, "" or a name.
+func (t plTarget) refNull() bool { return string(t.RefName) == "null" }
+
+// plBranchLabel names the branch a run is about for the Data line only. A pull request run has an
+// explicit null ref_name and its branch in target.source; only that falls back, so an absent or
+// empty ref_name keeps its empty label as before. Identity, version and the @branch filter stay on
+// refName, so what a watch matches is unchanged.
+func plBranchLabel(r plRun) string {
+	if r.Target.refNull() {
+		return r.Target.Source
+	}
+	return r.Target.refName()
+}
+
 func plDone(r plRun) bool { return r.State.Name == "COMPLETED" }
 
+// plWait is how long to leave a run that is not finished. A run parked on a manual step stays
+// IN_PROGRESS (stage PAUSED or HALTED) for as long as nobody acts, in live data for years, so it
+// is read at the idle interval: polling it every minute would spend about 60 of the account's
+// 1,000 hourly requests for nothing.
 func plWait(r plRun) time.Duration {
 	if r.State.Name == "IN_PROGRESS" {
+		if s := r.State.Stage.Name; s == "PAUSED" || s == "HALTED" {
+			return plIdleAfter
+		}
 		return plBusyAfter
 	}
 	return plQueuedAfter
@@ -548,7 +587,7 @@ func (p *BitbucketPipelines) runEvents(ctx context.Context, subject SubjectID, r
 		version = fmt.Sprintf("%d:%d", run.BuildNumber, t.Unix())
 	}
 	summary := fmt.Sprintf("%s completed: %s.", label, plResultWord(run.State.Result.Name))
-	data := []DataItem{{Text: "Pipeline run on " + run.Target.RefName, URL: plRunURL(repo, run.BuildNumber)}}
+	data := []DataItem{{Text: "Pipeline run on " + plBranchLabel(run), URL: plRunURL(repo, run.BuildNumber)}}
 	failed := plFailedResults[run.State.Result.Name]
 	if failed {
 		if cur.StepsKey != version {
