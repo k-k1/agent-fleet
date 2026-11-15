@@ -26,6 +26,7 @@ The basics of reading it are in [Read a session's state](../user/sessions/status
 | Ready · subagent running | It accepts input, but a subagent is running |
 | Ready · background command running | It accepts input, but a background command is running |
 | Ready · handoff to launch | Nobody has launched the last handoff the session proposed. The row shows the short "Handoff" |
+| Ready · 3 watches | It accepts input and waits for a watch notice. The number is the size of the watch list in the chat view, timers included. The agent's own PR-feedback subscriptions and notices being delivered are not counted. It also shows on session list rows and Home cards. Background work or a pending handoff takes precedence. An older Agent that does not report the count shows plain "Ready" ([Seeing and ending a session's watches](../user/fleet/pr-feedback.md#seeing-and-ending-a-sessions-watches)) |
 | Question | It waits for an answer to a question |
 | Plan ready | It waits for you to approve or reject a plan |
 | Awaiting permission | It waits for permission to run a command or make an edit |
@@ -181,6 +182,9 @@ The marks the chat view puts on a prompt you did not type.
 | Via MCP: … | Input an outside assistant or client sent over an MCP connection. It never stands in for your approval |
 | Started by … · Started by another session | The first prompt of a session another session started ([Start child sessions from a session](../user/fleet/child-sessions.md)) |
 | Stalled-tree notice | A prompt Agent Fleet sends a parent once all its children have gone quiet |
+| Watch notice | An automated notice from the agent: a PR or other event the session watches has changed ([A session watches a pull request itself](../user/fleet/pr-feedback.md#a-session-watches-a-pull-request-itself), [Start child sessions from a session](../user/fleet/child-sessions.md)) |
+| PR feedback | An automated notice from the agent: new review feedback arrived on a pull request ([Tell a session about its pull request's review](../user/fleet/pr-feedback.md)) |
+| Notice | Any other automated notice from the agent |
 
 ## Right-click menus
 

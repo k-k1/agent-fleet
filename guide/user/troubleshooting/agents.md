@@ -84,6 +84,8 @@ The model picked at launch is not in your Copilot plan. Your GitHub connection i
 A Copilot Free plan offers only Auto, which copilot now calls **Copilot Fusion**. Its `/model` list still shows the other models, but every one of them fails like this.
 Start the session again with **"Default"** as the model. To pick a specific model, the GitHub account needs a paid Copilot plan.
 
+A provider error like this one now appears as error text in the conversation, and `get_session_output` returns the same text. The turn ends as a failed turn, so a parent session's `fleet.session.idle` watch and the status reason see it as turn-failed.
+
 ## An opencode session stays "working" and nothing comes back
 
 Look above the conversation for **"The provider returned an error and the agent is retrying (attempt N): …"**.
