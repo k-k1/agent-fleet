@@ -3,6 +3,7 @@ package statemig
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -266,5 +267,33 @@ func TestARefreshedTokenIsLeftOnTheOldVolume(t *testing.T) {
 	if len(res.SkippedPaths) != 1 || res.SkippedPaths[0] != real {
 		t.Fatalf("SkippedPaths = %v, want [%s] — leaving a rotated token behind can cost a "+
 			"re-login, so it has to reach the boot log", res.SkippedPaths, real)
+	}
+}
+
+// The credential policy keeps its copy and floor in the config directory and only the floor's
+// mirror in the state directory (internal/routepolicy). On an existing Workspace the migration
+// moves neither the copy nor its floor, and has no mirror to move: the two volumes stay apart.
+func TestRoutePolicyStaysOnItsVolumes(t *testing.T) {
+	src, dst, _ := seed(t)
+	write(t, filepath.Join(src, "route-policy.json"), `{"held":true}`)
+	write(t, filepath.Join(src, "route-policy.json.floor"), `{"revision":2,"restricting":true}`)
+	if res := run(src, dst, false); len(res.Errs) > 0 {
+		t.Fatalf("errors: %v", res.Errs)
+	}
+	for _, name := range []string{"route-policy.json", "route-policy.json.floor"} {
+		if read(t, filepath.Join(src, name)) == "" {
+			t.Errorf("%s left the config directory", name)
+		}
+		if _, err := os.Stat(filepath.Join(dst, name)); !os.IsNotExist(err) {
+			t.Errorf("%s appeared in the state directory: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dst, "route-policy.floor")); !os.IsNotExist(err) {
+		t.Errorf("a mirror appeared from nowhere: %v", err)
+	}
+	for _, e := range Entries {
+		if strings.HasPrefix(e, "route-policy.json") {
+			t.Errorf("%q is listed: the copy and its floor must stay beside each other in the config directory", e)
+		}
 	}
 }

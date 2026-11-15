@@ -263,3 +263,149 @@ func TestStartWithoutAWritableFloorWaitsForTheFirstPull(t *testing.T) {
 		<-done2
 	})
 }
+
+// Within one revision the state moves both ways: a start marker restricts, a live answer clears
+// it. When only the mirror recorded the clearing, the restart holds the cleared state and keeps
+// the marker's receipt, so the marker does not block an unrestricted tenant again. Whether the
+// marker's placeholder landed beside the copy or only in the mirror makes no difference.
+func TestMirrorKeepsAClearedMarkerAtTheSameRevision(t *testing.T) {
+	for name, markerLanded := range map[string]bool{"marker beside the copy": true, "marker only in the mirror": false} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := testStore(t)
+			if _, err := s.Accept(open1); err != nil {
+				t.Fatal(err)
+			}
+			var restore func()
+			if !markerLanded {
+				restore = failIn(t, filepath.Dir(s.path))
+			}
+			if _, err := s.SeedUnknown("m1"); markerLanded && err != nil {
+				t.Fatal(err)
+			}
+			if markerLanded {
+				restore = failIn(t, filepath.Dir(s.path))
+			}
+			if _, err := s.Accept(open1); err == nil {
+				t.Fatal("control: the write into the config directory did not fail")
+			}
+			if s.Gate() != nil || !s.Allows("openai-api") {
+				t.Fatal("control: the live answer did not clear the marker in memory")
+			}
+			restore()
+			r := reopen(s)
+			if changed, err := r.SeedUnknown("m1"); err != nil || changed {
+				t.Fatalf("the marker was taken again: %v %v", changed, err)
+			}
+			if r.Gate() != nil || !r.Allows("openai-api") || r.State().Placeholder {
+				t.Fatalf("the cleared state the mirror recorded was lost: %+v", r.State())
+			}
+		})
+	}
+}
+
+// Floors from before the sequence number tell no order at one revision: the restricting one is
+// taken, the safe direction.
+func TestLegacyFloorsAtATieTakeTheRestrictingOne(t *testing.T) {
+	a := floor{Revision: 3, Restricting: true}
+	b := floor{Revision: 3}
+	if !a.newer(b) || b.newer(a) {
+		t.Error("between unnumbered floors at one revision the restricting one must win")
+	}
+	if c := (floor{Revision: 3, Seq: 2}); !c.newer(a) || a.newer(c) {
+		t.Error("a numbered floor written later must win at one revision")
+	}
+	if d := (floor{Revision: 4}); !d.newer(floor{Revision: 3, Restricting: true, Seq: 9}) {
+		t.Error("a higher revision must win whatever the sequence")
+	}
+}
+
+// The hold of a start with no writable floor ends only on the CP's current answer or on a pull
+// that shows the CP cannot answer (no connection, a 5xx). A replayed answer, a malformed 200 and
+// a refusal keep it: the CP answered, and nothing it said confirms the held policy. A current
+// answer after them still releases it.
+func TestHoldEndsOnlyOnACurrentAnswerOrAnOutage(t *testing.T) {
+	var status int
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		fmt.Fprint(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_CP_INTERNAL_URL", "")
+	tokenOnce, token = sync.Once{}, "afc_tok"
+	tokenOnce.Do(func() {})
+	t.Cleanup(func() { tokenOnce, token = sync.Once{}, "" })
+	oldF := syncFile
+	t.Cleanup(func() { syncFile = oldF })
+	holding := func(t *testing.T) *Store {
+		syncFile = oldF
+		s, _ := testStore(t)
+		if _, err := s.Accept(Policy{Revision: 1, Allowed: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+		syncFile = func(*os.File) error { return errors.New("injected: both disks unwritable") }
+		r := reopen(s)
+		if !errors.Is(r.Gate(), ErrUnrecorded) {
+			t.Fatal("control: the start does not hold")
+		}
+		return r
+	}
+	current := `{"revision":1,"restricted":false,"ceilingRestricted":false,"allowed":[]}`
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+	}{
+		"replayed revision": {200, `{"revision":0,"restricted":false,"ceilingRestricted":false,"allowed":[]}`},
+		"malformed 200":     {200, `{`},
+		"partial 200":       {200, `{"revision":1,"allowed":[]}`},
+		"unauthorised":      {401, `{}`},
+		"forbidden":         {403, `{}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := holding(t)
+			status, body = tc.status, tc.body
+			_ = r.Sync(context.Background(), "test")
+			if !errors.Is(r.Gate(), ErrUnrecorded) {
+				t.Fatalf("released by an answer that confirms nothing: %+v", r.State())
+			}
+			status, body = 200, current
+			_ = r.Sync(context.Background(), "test")
+			if r.State().Holding || r.Gate() != nil {
+				t.Fatalf("the current answer did not release it: %+v", r.State())
+			}
+		})
+	}
+	for name, st := range map[string]int{"500": 500, "503": 503} {
+		t.Run(name, func(t *testing.T) {
+			r := holding(t)
+			status, body = st, "down"
+			_ = r.Sync(context.Background(), "test")
+			if r.State().Holding {
+				t.Fatalf("a %d did not release it", st)
+			}
+		})
+	}
+	t.Run("no connection", func(t *testing.T) {
+		r := holding(t)
+		dead := httptest.NewServer(http.NotFoundHandler())
+		dead.Close()
+		t.Setenv("AF_CP_BASE_URL", dead.URL)
+		if err := r.Sync(context.Background(), "test"); err == nil {
+			t.Fatal("control: the pull reached a closed server")
+		}
+		if r.State().Holding {
+			t.Fatal("a pull with no connection did not release it")
+		}
+	})
+	t.Run("no bridge", func(t *testing.T) {
+		r := holding(t)
+		t.Setenv("AF_CP_BASE_URL", "")
+		if err := r.Sync(context.Background(), "test"); !errors.Is(err, ErrBridgeOff) {
+			t.Fatalf("control: %v", err)
+		}
+		if r.State().Holding {
+			t.Fatal("a deployment that distributes no policy kept the hold")
+		}
+	})
+}

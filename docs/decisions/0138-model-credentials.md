@@ -473,9 +473,11 @@ image generation, shared daemons) is inside this rule; D13's exception covers on
   can never restore a weaker rule.
   - The held revision's floor is recorded twice: beside the copy in the config directory, and in the state
     directory, which is local disk where the config directory is a network mount. So a config directory that
-    stops taking writes cannot bring the older copy back at a restart.
-  - When at a start neither directory can be written, new work waits for the first pull to settle. Only when the
-    CP cannot be reached does the Agent judge by what is on disk, as in any outage.
+    stops taking writes cannot bring the older copy back at a restart. Each floor write is numbered, so the newer of
+    two floors at one revision is known: a start marker restricts within a revision and a live answer clears it.
+  - When at a start neither directory can be written, new work waits for the CP's current answer. Only when a pull
+    shows the CP cannot be reached (no connection, a 5xx, no bridge) does the Agent judge by what is on disk, as in
+    any outage. A replayed, malformed or refused answer keeps it waiting.
 - The Workspace receives the effective policy at start (environment); the Agent then pulls it from a new internal
   endpoint, like `/internal/route/check` (ADR 0129, Q1 part 2), **at least every 30 seconds**. The CP also says in
   the answer whether any layer restricts anything for this member, and sends the deployment's ceiling separately.

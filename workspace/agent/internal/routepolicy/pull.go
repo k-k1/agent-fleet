@@ -9,6 +9,7 @@ import (
 	"log"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -27,6 +28,29 @@ const (
 
 // bridgePath is the CP's answer (control-plane routepolicysrv.BridgePath).
 const bridgePath = "/internal/route-policy"
+
+// statusError is an answer of the CP other than 200.
+type statusError struct {
+	code int
+	body string
+}
+
+func (e statusError) Error() string {
+	return fmt.Sprintf("CP route policy answered %d: %s", e.code, e.body)
+}
+
+// unreachable reports a pull failure that shows the CP cannot answer: no HTTP answer at all, a
+// 5xx (the CP or the ingress in front of it down), or no bridge in this deployment (no policy
+// will ever come). A 4xx is a CP that answers and refuses, and a malformed 200 is an answer that
+// cannot be read; neither shows an outage, so neither lets a start without a floor go on.
+func unreachable(err error) bool {
+	var se statusError
+	if errors.As(err, &se) {
+		return se.code >= 500
+	}
+	var ue *url.Error
+	return errors.Is(err, ErrBridgeOff) || errors.As(err, &ue)
+}
 
 // ErrBridgeOff reports a deployment that injects no bridge (no PUBLIC_BASE_URL, a CP older than
 // the policy): there is then no policy to hold, which is a normal state.
@@ -69,7 +93,7 @@ func Fetch(ctx context.Context) (Policy, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return Policy{}, fmt.Errorf("CP route policy answered %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return Policy{}, statusError{code: resp.StatusCode, body: strings.TrimSpace(string(body))}
 	}
 	return parse(body)
 }
@@ -164,12 +188,14 @@ func (s *Store) seedFromEnv() {
 
 // Sync takes one live answer into the store, logging what changed. It is the puller's step.
 //
-// Whatever its outcome, it settles a start that could record no floor: an answer has been taken,
-// or the CP cannot be reached and what is on disk decides.
+// A start that could record no floor is released by the CP's current answer (Accept), or by a
+// failure that shows the CP cannot answer at all (unreachable): what is on disk then decides.
 func (s *Store) Sync(ctx context.Context, why string) error {
-	defer s.settled()
 	p, err := Fetch(ctx)
 	if err != nil {
+		if ctx.Err() == nil && unreachable(err) {
+			s.release("the Control Plane cannot be reached")
+		}
 		return err
 	}
 	changed, err := s.Accept(p)
