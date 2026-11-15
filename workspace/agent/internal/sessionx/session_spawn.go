@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,11 @@ func reserveSpawnSlot(parent string) error {
 	// Read the limit here, not once at startup: it is a user setting now (Settings > Agents >
 	// Session), and a refusal quoting yesterday's number is the invisible limit ADR 0073
 	// decision 6 refuses to have.
+	// Read under the same lock retire's wait takes, so a create either sees the mark and is
+	// refused, or is counted before retire looks for creates in flight.
+	if m, ok := session.ReadMeta(parent); ok && isRetired(m) {
+		return errors.New("このセッションは retire 済みのため、子セッションを作れません（Console で再開すると解除されます）")
+	}
 	limit := session.SpawnChildLimit()
 	if have := countChildren(parent) + spawnInflight.n[parent]; have >= limit {
 		return fmt.Errorf("このセッションは既に子セッションを %d 本持っています（上限 %d）。"+

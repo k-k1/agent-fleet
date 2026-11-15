@@ -445,6 +445,7 @@ func prepareReviewerSession(reviewer string) error {
 	}
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/sessions/"+reviewer+"/start", nil)
 	req.SetPathValue("name", reviewer)
+	req = asAutomaticStart(req) // the member did not press this
 	rec := &captureWriter{header: http.Header{}}
 	HandleStartSession(rec, req)
 	if rec.status < 200 || rec.status >= 300 {

@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
@@ -704,11 +705,17 @@ func (c *createRun) publish(m session.Meta) bool {
 func (c *createRun) launch(meta session.Meta) {
 	req, name := c.req, c.name
 	// The credential the session is about to start on must still be the one judged (checkRoute):
-	// the working copy took time, and a login replaced meanwhile is refused, not started.
+	// the working copy took time, and a login replaced meanwhile is refused, not started. First,
+	// so a refused launch arms nothing.
 	if ref := handoffRefusal(meta); ref != nil {
 		unbindStudioAfterFailedLaunch(c.studio, name)
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 		return
+	}
+	if req.QueueDelivery != nil {
+		// Before anything can start a turn: the ledger counts the starts that follow
+		// (status.FirstTurn). A kind that records no end reason keeps the outcome empty.
+		status.ArmFirstTurn(session.UUID(meta.Dir, name), liveStateTraits(meta.Kind).PolledTurnEnd)
 	}
 	if meta.DriverKind() == session.DriverManaged {
 		// managed (docs/log/27 P2): no tmux pane — the driver opens a thread on the shared
@@ -730,7 +737,14 @@ func (c *createRun) launch(meta session.Meta) {
 		// The row stays either way: a failed launch task is reported as before.
 		defer chatx.MarkInstrSent(name, req.instr)
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
-			if err := h.Send(agents.TurnInput{Prompt: p, Origin: createTurnOrigin(req, c.spawnParent),
+			// The delivery's input carries an id of its own, so the driver's start of exactly this
+			// input is what confirms the first turn (status.FirstTurn).
+			deliveryID := ""
+			if req.QueueDelivery != nil {
+				deliveryID = "q_" + req.QueueDelivery.ID
+			}
+			status.MarkFirstTurnDelivering(session.UUID(meta.Dir, name), deliveryID)
+			if err := h.Send(agents.TurnInput{Prompt: p, ClientMessageID: deliveryID, Origin: createTurnOrigin(req, c.spawnParent),
 				Instr: req.instr, Schedule: scheduleRefOf(req.Source, req.ScheduleID, req.ScheduleSlot)}); err != nil {
 				log.Printf("managed initial prompt %s: %v", name, err)
 				meta.InitialPromptState = session.InitialPromptFailed

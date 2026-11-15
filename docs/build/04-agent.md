@@ -70,6 +70,7 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
 | Operation | Endpoint | Effect |
 |---|---|---|
 | halt | `POST /sessions/{name}/halt` | stops the driver, keeps the metadata; the row stays as stopped and can be resumed |
+| retire | `POST /sessions/{name}/retire` | ends everything the Agent holds that would start the session again, and the same for every session it started, then halts them all; see below |
 | delete | `DELETE /sessions/{name}[?stop=1]`, or its old name `POST /sessions/{name}/stop` | moves the session **to the trash** (`trashSession`, [decisions/0101](../decisions/0101-session-delete-via-trash.md)); see below |
 | archive / restore | `POST /sessions/{name}/archive`, `…/restore` | hides the row and brings it back as stopped |
 | recreate | `POST /sessions/{name}/recreate` | archives the old slot and starts a new conversation with the same directory, kind, driver and settings; if the launch fails, the old slot is restored |
@@ -84,6 +85,58 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
   - `POST /cleanup/archives/{id}/restore` brings a trashed session back.
   - **Deleting never touches the working copy**, so a restored session does not come
     back to a missing folder.
+- **What would start a session again, and retire** (ADR 0137 §6). A halt keeps a session's
+  watches, timers and booked usage-limit resume, and each of them starts it again. The row
+  of every live and stopped session says what it still holds:
+  - `wakers: {watches, timers}` counts the subscriptions the session owns that can still start
+    it or put input into it: built-in pull request subscriptions and one whose notice is being
+    delivered count, a built-in told to the member does not, and a `notify: parent` watch counts
+    on the parent. A `timers` entry is one with a due time. The field is omitted when both are
+    zero. When the watch state cannot be read the row carries `wakersUnknown: true` and no
+    `wakers`, never zeros the Agent is not sure of (`Engine.Wakers`,
+    `internal/watch/owner.go`).
+  - `GET /sessions` carries `"queueReport": 1` beside `sessions`, so a Control Plane can tell an
+    Agent that omits `wakers` because the session holds nothing from an older one that does not say.
+  - `POST /sessions/{name}/retire` ends all of that for the session and for every session it
+    started at any depth (`origin == "session"` and the `originSession` chain, the walk
+    `spendDescendants` makes), cancels their booked resumes, then halts them. The answer lists
+    the sessions, what was ended for each and what could not be ended (a cancel the Control
+    Plane did not confirm, which is retried). A session a person started while the retire ran is
+    reported `released: true` with its real state (`running`), never `stopped`: a retire never
+    touches a session whose meta carries its own id as `retireClearedID`, nor anything under it
+    (the ancestors are read again under each member's gate; the walk does not descend below a
+    released member). The response's `complete` is false when any session was released or has
+    anything unended; the Control Plane must not read the delivery as ended then. A second call lists the same sessions and ends
+    nothing more. There is no MCP tool.
+    Retire is for roots only: a session another session started is refused with
+    `409 retire_not_root` naming its root, so the trees of two retires are disjoint and an intent
+    never meets a mark written by a retire of another root (the Control Plane retires a delivery's
+    own session, which is always a root). At most one retire of a root runs at a time, from its
+    intent to its end, and the start-up recovery takes the same per-root lock: a second request
+    waits for the first and then runs; a request whose deadline passed while it waited (or as the lock came free) answers 503 `retire_wait_cancelled` and does nothing. A marked session with no intent is a finished retire and is left alone by the recovery.
+  - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
+    written, the watch sink never starts or injects into the session, a Managed input (any
+    origin) is refused with `409 session_retired`, an automatic `/start` is refused, the session
+    reserves no child slot, the engine refuses new subscriptions and built-ins for it, and a
+    scheduled usage-limit resume is refused. A retire's intent (root and a retire id) is kept on disk and the Agent
+    finishes an interrupted one (tree included) at its next start, reading each member under its
+    gate: the mark of that retire is finished, the tombstone a person's start leaves in the same
+    meta write (`retireClearedID`) is left alone, and a session with neither was never reached and
+    is marked for the first time. The usage-limit booking path refuses a marked session, so the
+    retire cancels whatever the episode holds. Lock order: a retire takes its root's lock first; every start and input
+    takes the lifecycle gate, then the session's retire gate.
+    `POST /sessions/{name}/start` clears it, so a person resuming the session from the Console
+    makes it an ordinary session again.
+- **How a queue delivery's first turn ended** (ADR 0137 §7): `queueTurn: {outcome, ms, endedAt}`
+  on the row of a session that has `queueDelivery`. `outcome` is `clean`, `turn-failed` or
+  `turn-aborted`, the values a scheduled run records, and empty for a kind that records no
+  reason. It lives in its own ledger (`status.FirstTurn`), armed before the prompt is delivered
+  and settled by the first end that follows exactly one turn start (a driver's own turn start
+  counts as one whatever the record said; the create's optimistic working write is confirmed only by
+  the start of the delivery's own input, by its ClientMessageID, and any other start, a start with no
+  id, or an Agent restart that finds it unconfirmed voids the ledger; the first prompt id is kept too), so a stop does not delete
+  it and a later turn never changes it. When that cannot be shown (a start or an end was
+  missed, the status deleted by a stop in between) the field stays absent for good.
 - **Every path that folds a session away promotes its carried work first**
   (`PromoteCarriedFor`, before any kill or handle drop). A new path of that kind must do
   the same.

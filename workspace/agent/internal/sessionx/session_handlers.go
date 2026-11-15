@@ -278,6 +278,10 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	// The reaper reads this list on every sweep, so it costs no extra request.
 	body := map[string]any{
 		"sessions": sessions, "repoJobs": repoJobsRunning(), "imageJobs": imageJobsActive(),
+		// queueReport says this Agent reports wakers / wakersUnknown on its rows (ADR 0137 §6).
+		// wakers is omitted when zero, so without the marker the Control Plane cannot tell
+		// "nothing would start this session" from "this Agent does not say".
+		"queueReport": queueReportVersion,
 	}
 	// The limit snapshot (ADR 0111 decision 6) rides the same response for the reaper, which
 	// asks for it. Other callers (the Console's list, through the CP) do not, and pay nothing.
@@ -286,6 +290,9 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, body)
 }
+
+// queueReportVersion is the value of the list envelope's queueReport marker.
+const queueReportVersion = 1
 
 // HandleSessionCatalog is the sharing inventory. Unlike the ordinary list it
 // includes archived rows, but only kinds with a structured transcript. With ?since= it

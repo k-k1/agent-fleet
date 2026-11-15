@@ -31,6 +31,7 @@ package sessionx
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -568,8 +569,14 @@ func prFeedbackMember(kind string, sub watch.Subscription, what, once string) er
 
 // startSessionInProcess starts a stopped session through the Console's own start route.
 func startSessionInProcess(name string) error {
+	// HandleStartSession below clears the retired mark, because it is also what a person's start
+	// presses; this caller is not a person.
+	if m, ok := session.ReadMeta(name); ok && m.RetiredAt != "" {
+		return errors.New("session " + name + " is retired")
+	}
 	req, _ := http.NewRequest(http.MethodPost, "/sessions/"+name+"/start", nil)
 	req.SetPathValue("name", name)
+	req = asAutomaticStart(req)
 	rec := &captureWriter{header: http.Header{}}
 	HandleStartSession(rec, req)
 	if rec.status != 0 && (rec.status < 200 || rec.status >= 300) {
