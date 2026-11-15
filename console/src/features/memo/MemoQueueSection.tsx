@@ -222,6 +222,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       Promise.all([memoList(), memoCategoryList(), memoQueueList().catch(() => null)])
         .then(([mList, cList, qRaw]) => {
           if (!alive) return;
+          // An error body (api() resolves HTTP errors as {error}) is a failed read, not an empty
+          // list: keep what is on screen, and with it the records of the changed notes.
+          const readOk = (v: unknown) => v === null || Array.isArray(v);
+          if (!readOk(mList) || !readOk(cList)) return;
           const marr = Array.isArray(mList) ? mList : [];
           const carr = Array.isArray(cList) ? cList : [];
           // A failed settings read (an older Control Plane, an error body) keeps the last good

@@ -838,6 +838,30 @@ describe("a note that changed while its card was on screen (#4209)", () => {
     await switchTo("");
   });
 
+  it("keeps the mark through a failed read of the notes (an error body is not an empty list)", async () => {
+    servedMemos = [held("m1", "h1")];
+    await render();
+    servedMemos = [held("m1", "h2")];
+    await bump();
+    expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(1);
+    servedMemos = { error: { code: "http_502", message: "bad gateway" } } as unknown as Memo[];
+    await bump();
+    expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(1); // still on screen, still marked
+    servedMemos = [held("m1", "h2")];
+    await bump();
+    expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(1);
+    await press();
+    expect(memoRelease).not.toHaveBeenCalled();
+  });
+
+  it("a failed first read does not count as a loaded list, so the first good read starts the records", async () => {
+    servedMemos = { error: { code: "http_502" } } as unknown as Memo[];
+    await render();
+    servedMemos = [held("m1", "h1")];
+    await bump();
+    expect(document.querySelector(".memo-release")).not.toBeNull();
+  });
+
   it("starts afresh after a page reload and once the note was approved", async () => {
     servedMemos = [held("m1", "h1")];
     await render();
