@@ -116,6 +116,13 @@ A schedule that would otherwise wake an agent just to find nothing (for example 
 - The line under the gate shows when it was last checked and what it decided. A failed check shows **Gate check failed** in the run history and is notified once
 - A gate needs a recurring schedule (cron or interval) that starts a new session each time. The query has to be one of your own **Saved queries** under the left rail's **Issue tracker** ([Connect an issue tracker](../integrations/issue-tracker.md))
 
+## A schedule or auto-run?
+
+| You want | Use |
+|---|---|
+| The same prompt at set times or intervals | A schedule (this page) |
+| The memos you collected, worked through by sessions following one instruction, whenever they are waiting or in a window | [Auto-run](../chat/memo-auto-run.md) |
+
 ## When it goes wrong
 
 ### It did not run at the set time

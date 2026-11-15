@@ -160,6 +160,10 @@ The pill and its detail lines can also show:
 | Awaiting approval · Approved · Rejected · Decided | Plan card | The decision on a plan |
 | Question left unanswered at stop · Plan awaiting approval at stop · Permission requested at stop | Card in the conversation | What was on screen when the session stopped. Answering resumes the session and delivers it ([Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left)) |
 | Paused | Schedule row | A paused schedule ([Run at a set time](../user/fleet/schedules.md)) |
+| Auto-run · Auto-run off | Memo queue, category header | The category has auto-run settings. "Auto-run off" means "Run by itself" is off ([Run memos automatically](../user/chat/memo-auto-run.md)) |
+| Paused | Memo queue, category header | Auto-run stopped starting runs by itself after two failed runs. "Resume" lifts it ([Run memos automatically](../user/chat/memo-auto-run.md#pause-and-resume)) |
+| Waits for approval · Waiting to run · Starting · Sent · Needs a look | Memo row in an auto-run category | The state of the memo ([Run memos automatically](../user/chat/memo-auto-run.md#read-the-run-history)) |
+| Starting · Running · Done · Stopped · Needs a look · Not sent · Overdue | Run history of a category | The state of a run, and whether it is overdue ([Run memos automatically](../user/chat/memo-auto-run.md#read-the-run-history)) |
 | Safe · Review · Keep | Cleanup screen | Whether it is safe to clear away ([Clear away finished sessions](../user/sessions/cleanup.md#tidy-up-in-bulk-cleanup)) |
 
 ### Where a prompt came from
@@ -170,6 +174,7 @@ The marks the chat view puts on a prompt you did not type.
 |---|---|
 | From operator | The Fleet Operator ([Hand work to the Fleet Operator](../user/fleet/operator.md)) |
 | Scheduled · Manual fire | A schedule ([Run at a set time](../user/fleet/schedules.md)) |
+| Auto-run | A memo category's auto-run, by itself or with "Run now" ([Run memos automatically](../user/chat/memo-auto-run.md)) |
 | Auto-resume | An automatic resume after an interruption |
 | From … · From another session | A message from another session ([Let sessions message each other](../user/fleet/messages.md)) |
 | From Slack · From Discord | Input that arrived as a chat reply |

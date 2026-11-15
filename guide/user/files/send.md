@@ -43,6 +43,7 @@ A stopped session cannot be sent to. Resume it first, or pick another destinatio
 
 Write a "**Category (when adding to the queue; optional)**" and press "**Add to queue**" to hold it in the memo queue
 instead of sending it now. What you hold can be sent per category in one go ([Collect memos and hand them over](../chat/memos.md)).
+In a category that has auto-run settings, the memo waits to be run as a session ([Run memos automatically](../chat/memo-auto-run.md)).
 
 ## Have a whole file translated or summarised
 
