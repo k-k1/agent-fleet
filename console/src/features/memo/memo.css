@@ -980,3 +980,49 @@
   color: var(--muted);
   font-size: 11px;
 }
+.memo-q-badge.paused {
+  color: var(--warn, var(--accent));
+  border-color: var(--warn, var(--accent));
+}
+.memo-q-when {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.memo-q-when-opt {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 2px 0;
+}
+.memo-q-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+}
+.memo-q-paused,
+.memo-q-noreport {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--warn, var(--accent));
+}
+.memo-d-held,
+.memo-d-tag,
+.memo-d-turn {
+  font-size: 11px;
+  color: var(--muted);
+}
+.memo-d-tag.overdue {
+  color: var(--warn, var(--accent));
+  border: 1px solid var(--warn, var(--accent));
+  border-radius: 9px;
+  padding: 0 6px;
+}
+.memo-d-turn.bad {
+  color: var(--warn, var(--accent));
+}

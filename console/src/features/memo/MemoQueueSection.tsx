@@ -32,6 +32,7 @@ import {
   memoImageGC,
   memoQueueList,
   memoRelease,
+  memoQueueResume,
 } from "./api.ts";
 import { useMemoStore } from "./store.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
@@ -43,11 +44,12 @@ import { useDraft } from "../../lib/draft.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { useSettings } from "../../lib/settings.ts";
 import type { Memo, MemoCategory, MemoAttachment, MemoQueue } from "../../types/memo.ts";
-import { errDetail, errText } from "../../core/api/client.ts";
+import { errText } from "../../core/api/client.ts";
 import { MemoQueueSettingsModal } from "./MemoQueueSettingsModal.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
 import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
-import { isStaleRelease, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, staleIdsOf } from "./queues.ts";
+import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
+import { editedIds, isStaleRelease, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, reconcileShown, releaseCards, staleIdsOf } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -139,6 +141,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const memosKey = useMemoStore((s) => s.tick);
   const bumpMemos = useMemoStore((s) => s.bump);
   const composeReq = useMemoStore((s) => s.composeReq);
+  const reveal = useMemoStore((s) => s.reveal);
   const toast = useToast();
   const askConfirm = useConfirm();
   const tr = useT();
@@ -194,6 +197,11 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const [deliveriesFor, setDeliveriesFor] = useState<string | null>(null);
   const [releasing, setReleasing] = useState<string | null>(null); // release card key in flight
   const [changedIds, setChangedIds] = useState<ReadonlySet<string>>(new Set());
+  // The content hash each held note had when a card first showed it, and the hash of an edited
+  // note the person has confirmed they read. Both live in memory only: a reload draws afresh.
+  const firstShown = useRef<Map<string, string>>(new Map());
+  const [confirmed, setConfirmed] = useState<Readonly<Record<string, string>>>({});
+  const [resuming, setResuming] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   // Section open/closed, owned here (controlled) so the leader command can force it open.
   const [openStored, setSectionOpen] = useFold(SECTION_KEY);
@@ -245,6 +253,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   }, [composeReq]);
 
   const blocks = useMemo(() => groupMemos(memos, cats), [memos, cats]);
+  // What a card showed first, against what the poll serves now. Idempotent for one list, so a
+  // double render cannot mark a note that did not change.
+  const edited = useMemo(() => {
+    firstShown.current = reconcileShown(firstShown.current, memos);
+    return editedIds(firstShown.current, memos);
+  }, [memos]);
+  const awaiting = useMemo(() => {
+    const out = new Set<string>();
+    for (const m of memos) if (edited.has(m.id) && confirmed[m.id] !== m.contentHash) out.add(m.id);
+    return out;
+  }, [edited, confirmed, memos]);
   // The composer only follows a target that is still on screen: a category deleted (or
   // renamed) while it was open would otherwise leave an open composer nowhere to render.
   const target = useMemo(() => {
@@ -274,7 +293,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         if (isStaleRelease(res)) {
           setChangedIds(new Set(staleIdsOf(res)));
           toast(t("memo.release_stale"), { kind: "warn" });
-        } else toast(errDetail(res.error) || t("memo.release_failed"), { kind: "warn" });
+        } else toast(errText(res.error) || t("memo.release_failed"), { kind: "warn" });
         bumpMemos();
         return;
       }
@@ -287,6 +306,52 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       setReleasing(null);
     }
   };
+
+  // The person has read what changed: the next press on the card approves the text drawn now.
+  const confirmChange = (items: Memo[]) =>
+    setConfirmed((c) => {
+      const n = { ...c };
+      for (const m of items) if (edited.has(m.id) && m.contentHash) n[m.id] = m.contentHash;
+      return n;
+    });
+
+  // Lifts a category's pause (the Control Plane's circuit breaker). Resolves true when lifted.
+  const resume = async (categoryId: string): Promise<boolean> => {
+    setResuming(true);
+    try {
+      const res = await memoQueueResume(categoryId);
+      if (res?.error) {
+        toast(errText(res.error) || t("memo.paused_resume_failed"), { kind: "warn" });
+        return false;
+      }
+      toast(t("memo.paused_resume_done"), { kind: "success" });
+      bumpMemos();
+      return true;
+    } catch {
+      toast(t("memo.paused_resume_failed"), { kind: "warn" });
+      return false;
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  // A notification asked to show a category: open the section, unfold the category, bring it into
+  // view, and open its run history for the kinds that ask what happened to a run.
+  const revealN = useRef(reveal.n);
+  useEffect(() => {
+    if (reveal.n === revealN.current || !reveal.id) return;
+    const c = cats.find((x) => x.id === reveal.id);
+    // Not loaded yet: the effect runs again when the categories arrive.
+    if (!c) return;
+    revealN.current = reveal.n;
+    setOpen(true);
+    setCollapsedCats((s) => ({ ...s, [groupKey(c.repo, c.name)]: false }));
+    if (reveal.history) setDeliveriesFor(c.id);
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-memo-cat="${CSS.escape(c.id)}"]`)?.scrollIntoView({ block: "nearest" });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal.n, cats]);
 
   // ---- composer ----------------------------------------------------------------
   const openComposer = () => {
@@ -790,6 +855,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   return (
                     <div
                       key={g.category || "\x00unfiled"}
+                      data-memo-cat={cat?.id}
                       className={"memo-cat" + (dropCat === dropKey ? " drop" : "")}
                       onDragOver={(e) => {
                         if (dragMemo.current || dragCat.current) {
@@ -892,6 +958,11 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             {tr(queue && !queue.enabled ? "memo.autorun_badge_off" : "memo.autorun_badge")}
                           </span>
                         )}
+                        {queue?.paused && (
+                          <span className="memo-q-badge paused" title={tr("memo.autorun_badge_paused_title")}>
+                            {tr("memo.autorun_badge_paused")}
+                          </span>
+                        )}
 
                         {ids.length > 0 && (
                           <button
@@ -961,6 +1032,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                         )}
                       </div>
 
+                      {queue && <MemoQueueNotices queue={queue} busy={resuming} onResume={() => void resume(queue.categoryId)} />}
+
                       {targetKey === dropKey && composer}
 
                       {cards.map((c) => (
@@ -969,6 +1042,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           card={c}
                           busy={releasing === dropKey + "\x00" + c.key}
                           changedIds={changedIds}
+                          edited={edited}
+                          awaiting={awaiting}
+                          onConfirm={confirmChange}
                           onRelease={(items) => void release(dropKey + "\x00" + c.key, items)}
                         />
                       ))}
@@ -1120,9 +1196,11 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             key={c.id}
             categoryId={c.id}
             categoryName={c.name}
+            queue={queueByCat.get(c.id)}
             waiting={pendingCount(memos.filter((m) => m.repo === c.repo && m.category === c.name))}
             onClose={() => setDeliveriesFor(null)}
             onFired={bumpMemos}
+            onResume={() => resume(c.id)}
           />
         );
       })()}

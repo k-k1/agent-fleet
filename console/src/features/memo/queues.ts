@@ -6,6 +6,7 @@
 // ADR 0105). Every working term lives in one catalogue key (memo.state_*, memo.autorun*, ...),
 // so the owner can change a word with one line.
 import type { MsgKey } from "../../lib/i18n/index.ts";
+import { browserTimeZone, isValidTimeZone } from "../../lib/intl.ts";
 import type { Memo, MemoDelivery, MemoQueue, MemoQueueInput, MemoQueuesWire } from "../../types/memo.ts";
 
 // Limits the Control Plane enforces (control-plane/memo_queue.go). The form checks them first
@@ -14,6 +15,14 @@ export const QUEUE_MAX_ACTIVE_MAX = 6;
 export const QUEUE_BATCH_MAX = 20;
 export const QUEUE_INSTRUCTION_MAX_BYTES = 16 << 10;
 export const QUEUE_SPEND_MAX = 10000;
+export const QUEUE_TASK_HOURS_MAX = 72;
+export const QUEUE_FIRES_PER_DAY_MAX = 200;
+export const QUEUE_WINDOW_MAX_MINUTES = 24 * 60;
+export const QUEUE_OPEN_AFTER_MAX = 100;
+// What a row that never had these gets (the Control Plane's own defaults).
+export const QUEUE_TASK_HOURS_DEFAULT = 12;
+export const QUEUE_FIRES_PER_DAY_DEFAULT = 20;
+export const QUEUE_WINDOW_DEFAULT_MINUTES = 60;
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -34,6 +43,17 @@ function readQueue(v: unknown): MemoQueue | null {
     worktree: v.worktree !== false,
     maxActive: num(v.maxActive, 2),
     batch: num(v.batch, 1),
+    maxTaskHours: num(v.maxTaskHours, QUEUE_TASK_HOURS_DEFAULT),
+    openCron: str(v.openCron),
+    openMinutes: num(v.openMinutes, 0),
+    tz: str(v.tz),
+    openAfter: num(v.openAfter, 0),
+    maxFiresPerDay: num(v.maxFiresPerDay, QUEUE_FIRES_PER_DAY_DEFAULT),
+    paused: v.paused === true,
+    pausedAt: str(v.pausedAt),
+    pausedReason: str(v.pausedReason),
+    draining: v.draining === true,
+    noReportAt: str(v.noReportAt),
     enabled: v.enabled === true,
     generation: num(v.generation, 0),
     createdAt: str(v.createdAt),
@@ -73,6 +93,14 @@ export function readDeliveries(raw: unknown): MemoDelivery[] | null {
       createdAt: str(d.createdAt),
       sentAt: str(d.sentAt),
       closedAt: str(d.closedAt),
+      heldBy: str(d.heldBy),
+      heldSession: str(d.heldSession),
+      heldSeenAt: str(d.heldSeenAt),
+      overdue: d.overdue === true,
+      overdueAt: str(d.overdueAt),
+      auto: d.auto === true,
+      retire: str(d.retire),
+      firstTurn: isObj(d.firstTurn) ? { outcome: str(d.firstTurn.outcome), ms: num(d.firstTurn.ms, 0), endedAt: str(d.firstTurn.endedAt) } : null,
     });
   }
   return out;
@@ -157,6 +185,9 @@ export const isStaleRelease = (res: unknown): boolean =>
 
 // ---- settings form -----------------------------------------------------------------------
 
+/** The three ways a category runs by itself (ADR 0137 §6). */
+export type RunMode = "always" | "window" | "threshold";
+
 /** The form's state: numbers stay strings while typed, so "" and "1e" are representable. */
 export interface QueueDraft {
   instruction: string;
@@ -167,10 +198,21 @@ export interface QueueDraft {
   worktree: boolean;
   maxActive: string;
   batch: string;
+  runMode: RunMode;
+  openCron: string;
+  openMinutes: string;
+  tz: string;
+  openAfter: string;
+  maxFiresPerDay: string;
+  maxTaskHours: string;
   enabled: boolean;
 }
 
+export const runModeOf = (q: Pick<MemoQueue, "openCron" | "openAfter"> | undefined): RunMode =>
+  q && q.openCron ? "window" : q && q.openAfter > 0 ? "threshold" : "always";
+
 export function draftOf(q: MemoQueue | undefined): QueueDraft {
+  const mode = runModeOf(q);
   return {
     instruction: q?.instruction ?? "",
     agentKind: q?.agentKind || "claude",
@@ -180,11 +222,30 @@ export function draftOf(q: MemoQueue | undefined): QueueDraft {
     worktree: q?.worktree ?? true,
     maxActive: String(q?.maxActive ?? 2),
     batch: String(q?.batch ?? 1),
+    runMode: mode,
+    openCron: q?.openCron ?? "",
+    openMinutes: String(q && q.openMinutes > 0 ? q.openMinutes : QUEUE_WINDOW_DEFAULT_MINUTES),
+    // A workspace's zone is not known here: a window the person has not set yet follows the
+    // browser. A window that is saved keeps what it was saved with (empty = UTC).
+    tz: mode === "window" ? (q?.tz ?? "") : browserTimeZone(),
+    openAfter: String(q && q.openAfter > 0 ? q.openAfter : 3),
+    maxFiresPerDay: String(q?.maxFiresPerDay ?? QUEUE_FIRES_PER_DAY_DEFAULT),
+    maxTaskHours: String(q?.maxTaskHours ?? QUEUE_TASK_HOURS_DEFAULT),
     enabled: q?.enabled ?? false,
   };
 }
 
-export type DraftField = "instruction" | "spendCapUsd" | "maxActive" | "batch";
+export type DraftField =
+  | "instruction"
+  | "spendCapUsd"
+  | "maxActive"
+  | "batch"
+  | "openCron"
+  | "openMinutes"
+  | "tz"
+  | "openAfter"
+  | "maxFiresPerDay"
+  | "maxTaskHours";
 export type DraftErrors = Partial<Record<DraftField, MsgKey>>;
 
 const wholeIn = (s: string, lo: number, hi: number): boolean => {
@@ -192,7 +253,9 @@ const wholeIn = (s: string, lo: number, hi: number): boolean => {
   return /^\d+$/.test(t) && Number(t) >= lo && Number(t) <= hi;
 };
 
-/** What the form can say before the Control Plane does. One key per field. */
+/** What the form can say before the Control Plane does. One key per field. Only the fields of the
+ *  chosen way to run are checked: the others are not sent. The cron field is checked for its
+ *  shape alone (five fields); the Control Plane parses it and its refusal is shown as it comes. */
 export function draftErrors(d: QueueDraft): DraftErrors {
   const e: DraftErrors = {};
   const bytes = new TextEncoder().encode(d.instruction.trim()).length;
@@ -202,12 +265,24 @@ export function draftErrors(d: QueueDraft): DraftErrors {
   if (!/^\d+(\.\d+)?$/.test(spend) || Number(spend) > QUEUE_SPEND_MAX) e.spendCapUsd = "memo.q_err_budget";
   if (!wholeIn(d.maxActive, 1, QUEUE_MAX_ACTIVE_MAX)) e.maxActive = "memo.q_err_max_active";
   if (!wholeIn(d.batch, 1, QUEUE_BATCH_MAX)) e.batch = "memo.q_err_batch";
+  if (!wholeIn(d.maxFiresPerDay, 1, QUEUE_FIRES_PER_DAY_MAX)) e.maxFiresPerDay = "memo.q_err_fires";
+  if (!wholeIn(d.maxTaskHours, 1, QUEUE_TASK_HOURS_MAX)) e.maxTaskHours = "memo.q_err_task_hours";
+  if (d.runMode === "window") {
+    if (d.openCron.trim().split(/\s+/).filter(Boolean).length !== 5) e.openCron = "memo.q_err_cron";
+    if (!wholeIn(d.openMinutes, 1, QUEUE_WINDOW_MAX_MINUTES)) e.openMinutes = "memo.q_err_window";
+    if (d.tz.trim() !== "" && !isValidTimeZone(d.tz.trim())) e.tz = "memo.q_err_tz";
+  } else if (d.runMode === "threshold") {
+    if (!wholeIn(d.openAfter, 1, QUEUE_OPEN_AFTER_MAX)) e.openAfter = "memo.q_err_open_after";
+  }
   return e;
 }
 
-/** The PUT body. A PUT replaces the whole row, so the route, which this form does not edit, is
- *  sent back as it was or it would be blanked. Only call with no errors. */
+/** The PUT body. A PUT replaces the whole row, so every setting is sent: the route, which this
+ *  form does not edit, as it was, and the fields of a way to run that was not chosen as their
+ *  "off" values (the Control Plane clears them the same way). The read-only state (paused,
+ *  noReportAt, ...) is never part of it. Only call with no errors. */
 export function draftBody(d: QueueDraft, route: string): MemoQueueInput {
+  const window = d.runMode === "window";
   return {
     instruction: d.instruction.trim(),
     agentKind: d.agentKind.trim(),
@@ -218,8 +293,68 @@ export function draftBody(d: QueueDraft, route: string): MemoQueueInput {
     worktree: d.worktree,
     maxActive: Number(d.maxActive.trim()),
     batch: Number(d.batch.trim()),
+    maxTaskHours: Number(d.maxTaskHours.trim()),
+    openCron: window ? d.openCron.trim().split(/\s+/).join(" ") : "",
+    openMinutes: window ? Number(d.openMinutes.trim()) : 0,
+    tz: window ? d.tz.trim() : "",
+    openAfter: d.runMode === "threshold" ? Number(d.openAfter.trim()) : 0,
+    maxFiresPerDay: Number(d.maxFiresPerDay.trim()),
     enabled: d.enabled,
   };
+}
+
+// ---- what a run is waiting for, and how it went --------------------------------------------
+
+const HELD_KEYS: Record<string, MsgKey> = {
+  machine: "memo.d_held_machine",
+  person: "memo.d_held_person",
+  limit: "memo.d_held_limit",
+  wakers: "memo.d_held_wakers",
+  unknown: "memo.d_held_unknown",
+};
+
+/** Why a run that is still open keeps its place. null = nothing to say: the run is not open, or the
+ *  Agent has not reported (an older one). A reason this Console does not know reads as unknown. */
+export function heldWords(d: Pick<MemoDelivery, "state" | "heldBy">): MsgKey | null {
+  if (d.state !== "open" || !d.heldBy) return null;
+  return HELD_KEYS[d.heldBy] ?? "memo.d_held_unknown";
+}
+
+const TURN_KEYS: Record<string, MsgKey> = {
+  clean: "memo.d_turn_clean",
+  "turn-failed": "memo.d_turn_failed",
+  "turn-aborted": "memo.d_turn_aborted",
+};
+
+/** How the first turn of a run's session ended; null until it did. An outcome the kind does not
+ *  record ("") reads as ended. */
+export function firstTurnWords(d: Pick<MemoDelivery, "firstTurn">): MsgKey | null {
+  if (!d.firstTurn) return null;
+  return TURN_KEYS[d.firstTurn.outcome] ?? "memo.d_turn_ended";
+}
+
+// ---- notes that changed under an open card -------------------------------------------------
+
+/** The content hash each held note had the first time a card showed it, kept per note until it
+ *  leaves the held notes (approved, or gone). Nothing is persisted: a reload draws afresh. A note
+ *  already known keeps its first hash whatever the list says now. */
+export function reconcileShown(prev: ReadonlyMap<string, string>, memos: readonly Memo[]): Map<string, string> {
+  const next = new Map<string, string>();
+  for (const m of memos) {
+    if (m.state !== "held" || !m.contentHash) continue;
+    next.set(m.id, prev.get(m.id) ?? m.contentHash);
+  }
+  return next;
+}
+
+/** The notes whose hash is no longer the one the card first showed. */
+export function editedIds(first: ReadonlyMap<string, string>, memos: readonly Memo[]): Set<string> {
+  const out = new Set<string>();
+  for (const m of memos) {
+    const h = first.get(m.id);
+    if (m.state === "held" && h !== undefined && m.contentHash && m.contentHash !== h) out.add(m.id);
+  }
+  return out;
 }
 
 // ---- deliveries --------------------------------------------------------------------------

@@ -20,7 +20,8 @@ import { useSchedulesStore } from "../schedules/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { openMemoryView } from "../memory/open.ts";
 import { destinationShown, opensConversation, unseenConversationEventIDs, unseenSessionEventIDs } from "./read.ts";
-import { notificationWording } from "./wording.ts";
+import { isMemoQueueKind, notificationWording } from "./wording.ts";
+import { useMemoStore } from "../memo/store.ts";
 import { notificationEffectOn, notificationRow } from "./effects.ts";
 import { notifyCell } from "./prefs.ts";
 import { useAwsLoginStore } from "../awslogin/store.ts";
@@ -221,6 +222,12 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   // resolution below, which would end in an unrelated "session not in the list" warning.
   if (n.target.type === "schedule" && n.target.id) {
     useSchedulesStore.getState().revealSchedule(n.target.id);
+    return { opened: true };
+  }
+  // An auto-run notification (ADR 0137): the destination is the category, and for the kinds that ask
+  // "what happened to that run" its run history. The target is read for its type and id only.
+  if (isMemoQueueKind(n.kind) && n.target.type === "memo-queue" && n.target.id) {
+    useMemoStore.getState().revealCategory(n.target.id, n.kind !== "memo-queue-paused");
     return { opened: true };
   }
   // An admin notice about a member (#2427): open that member's detail in tenant settings.

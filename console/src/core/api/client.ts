@@ -182,6 +182,8 @@ const BILINGUAL_MESSAGE_CODES = new Set([
   "stop_in_progress",
   "stopped_prompt_in_box",
   "terminal_busy",
+  // The Agent's refusal of input to a session it retired: its message only repeats the line.
+  "session_retired",
   // The invite refusals whose English message only repeats the catalogue line.
   "identity_in_other_tenant",
   "identity_bound_to_other_tenant",
@@ -1495,6 +1497,10 @@ export const memoRelease = (items: { id: string; contentHash: string }[]): Promi
   apiJSON("api/memos/release", "POST", { items });
 export const memoQueueFire = (categoryId: string): Promise<MemoWriteResult> =>
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/fire`, "POST", {});
+// Lifts a pause: the Control Plane stopped starting runs by itself after two in a row failed at
+// their first turn. 204 without a body on success.
+export const memoQueueResume = (categoryId: string): Promise<MemoWriteResult> =>
+  apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/resume`, "POST", {});
 export const memoQueueDeliveries = (categoryId: string): Promise<unknown> =>
   api(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries`);
 
