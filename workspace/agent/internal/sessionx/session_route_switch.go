@@ -507,7 +507,9 @@ func (r *routeSwitchRun) resume() error {
 	if ref := startRefusalOf(cur); ref != nil {
 		return errors.New(ref.Message)
 	}
-	recallSettings(&cur)
+	if ref := recallAndJudge(&cur); ref != nil {
+		return errors.New(ref.Message)
+	}
 	if err := routeSwitchLaunch(cur, false); err != nil {
 		return fmt.Errorf("starting on %s: %w", r.rec.To.Route, err)
 	}
@@ -628,8 +630,9 @@ func rollbackRouteSwitch(name string, rec routeSwitchRecord) (relaunch, rollback
 		if m, ok := session.ReadMeta(name); ok && !routeSwitchAlive(m) {
 			if ref := startRefusalOf(m); ref != nil {
 				relaunch = errors.New(ref.Message)
+			} else if ref := recallAndJudge(&m); ref != nil {
+				relaunch = errors.New(ref.Message)
 			} else {
-				recallSettings(&m)
 				if err := routeSwitchLaunch(m, false); err != nil {
 					relaunch = err
 				} else {

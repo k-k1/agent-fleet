@@ -159,10 +159,23 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 	if ref := startRefusalOf(m); ref != nil {
 		return &StartRefusalError{ref}
 	}
-	recallSettings(&m)
+	if ref := recallAndJudge(&m); ref != nil {
+		return &StartRefusalError{ref}
+	}
 	if err := startSessionTmux(m, ssmForce); err != nil {
 		log.Printf("resume %s: %v", name, err)
 		return err
+	}
+	return nil
+}
+
+// recallAndJudge is recallSettings followed by the credential policy on what will actually be
+// launched: the recalled model can be another provider's (opencode), so the start check made on
+// the stored settings does not cover it.
+func recallAndJudge(m *session.Meta) *SpawnRefusal {
+	recallSettings(m)
+	if ref := storedLaunchPolicyRefusal(*m); ref != nil {
+		return &SpawnRefusal{Status: ref.Status, Code: ref.Code, Message: ref.Message}
 	}
 	return nil
 }

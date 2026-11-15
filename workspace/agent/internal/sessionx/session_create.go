@@ -703,6 +703,13 @@ func (c *createRun) publish(m session.Meta) bool {
 // from, deliver that task, and answer the create.
 func (c *createRun) launch(meta session.Meta) {
 	req, name := c.req, c.name
+	// The credential the session is about to start on must still be the one judged (checkRoute):
+	// the working copy took time, and a login replaced meanwhile is refused, not started.
+	if ref := handoffRefusal(meta); ref != nil {
+		unbindStudioAfterFailedLaunch(c.studio, name)
+		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	if meta.DriverKind() == session.DriverManaged {
 		// managed (docs/log/27 P2): no tmux pane — the driver opens a thread on the shared
 		// runtime. The first prompt needs no boot-screen scraping and can just be sent

@@ -1121,6 +1121,11 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	if ag.Caps().UsesLabel {
 		meta.Label = sessionLabelFor(src.Dir, title, meta.Name)
 	}
+	// At the handoff, the credential must still be the one the policy judged above.
+	if ref := handoffRefusal(meta); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	if meta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(meta)
 		if !ok {
@@ -1623,6 +1628,13 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		if newMeta.Studio != "" && imagegen.BindStudioSession != nil {
 			_, _ = imagegen.BindStudioSession(newMeta.Studio, m.Name, newMeta.Name)
 		}
+	}
+	// At the handoff, the credential must still be the one the policy judged before the archive.
+	if ref := handoffRefusal(newMeta); ref != nil {
+		undoStudio()
+		unarchiveAfterFailedRecreate(m.Name)
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
 	}
 	if newMeta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(newMeta)
