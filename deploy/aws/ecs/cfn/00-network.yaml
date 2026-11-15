@@ -623,21 +623,22 @@ Resources:
               done
               MAC=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI" \
                 --query 'NetworkInterfaces[0].MacAddress' --output text)
-              DEV=""
+              # udev renames the interface: settle first (PARAMETERS.md, "Egress gateway").
+              settle_dev() { udevadm settle --timeout=60 || true; DEV=$(ip -o link | awk -v m="$MAC" 'index($0, m) { sub(":", "", $2); print $2 }'); [ -n "$DEV" ]; }
               for _ in $(seq 1 90); do
-                DEV=$(ip -o link | awk -v m="$MAC" 'index($0, m) { sub(":", "", $2); print $2 }')
-                [ -n "$DEV" ] && break
+                settle_dev && break
                 sleep 2
               done
-              [ -n "$DEV" ]
-              # All traffic leaves through it (the Elastic IP): its default route must win, on
-              # this boot and every later one. amazon-ec2-net-utils writes RouteMetric=512+n in
-              # /run/systemd/network/70-<dev>.network.d/eni.conf; drop-ins merge in file-name
-              # order whatever their directory, so ours is named to sort after eni.conf.
-              mkdir -p /etc/af-egress "/etc/systemd/network/70-$DEV.network.d"
-              echo "$DEV" > /etc/af-egress/dev
-              printf '[DHCPv4]\nRouteMetric=100\n' > "/etc/systemd/network/70-$DEV.network.d/zz-af-egress.conf"
-              networkctl reload
+              # Its default route must win on every boot; the drop-in sorts after eni.conf.
+              place_dropin() {
+                settle_dev
+                mkdir -p /etc/af-egress "/etc/systemd/network/70-$DEV.network.d"
+                echo "$DEV" > /etc/af-egress/dev
+                printf '[DHCPv4]\nRouteMetric=100\n' > "/etc/systemd/network/70-$DEV.network.d/zz-af-egress.conf"
+                networkctl reload
+              }
+              place_dropin; OLD=$DEV; settle_dev
+              if [ "$DEV" != "$OLD" ]; then place_dropin; fi
               networkctl reconfigure "$DEV"
               # And a check on every boot that sets the route by hand if the drop-in did not take.
               cat > /usr/local/sbin/af-egress-route <<'EOF'

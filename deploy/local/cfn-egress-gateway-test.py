@@ -37,6 +37,10 @@ parses. So this fails when
     host verification refuses S3, ECR and STS, #2759), the relay and Squid disagree on its
     two ports, Squid trusts a PROXY header from anything but loopback, or the relay is not
     installed, started, or run as squid;
+  - the user data resolves the hot-attached interface before udev has renamed it (eth0 -> ens6,
+    #4211): the slice from the MAC lookup to `networkctl reconfigure` is run under bash with stub
+    ip / udevadm / networkctl, and must end on the final name in /etc/af-egress/dev, in the
+    drop-in directory and in the reconfigure call, whichever udev settle call the rename lands on;
   - af-egress-install stops retrying within a minute before the agent has its first policy
     (a missing configuration or token, or no policy yet), or the 10-minute timer that picks up
     releases goes away (#2758).
@@ -48,7 +52,9 @@ exit 0 pass, 1 a check failed, 2 the check could not run.
 import copy
 import os
 import re
+import subprocess
 import sys
+import tempfile
 
 try:
     import yaml
@@ -302,6 +308,72 @@ def check(net, ingress, platform, doc_lines):
     f += check_relay(ud)
     f += check_tcp_relay(ud)
     f += check_first_policy(ud)
+    f += check_dev_rename(ud)
+    return f
+
+
+_RENAME_RUNS = {}  # slice -> findings: ~100 controls share the same slice, and each run forks bash
+
+
+def check_dev_rename(ud):
+    """#4211: run the user data's interface steps against an interface that is renamed late."""
+    start = ud.find("settle_dev() {")
+    end_marker = 'networkctl reconfigure "$DEV"\n'
+    end = ud.find(end_marker)
+    if start < 0 or end < 0 or end < start:
+        return ["user data has no settle_dev ... networkctl reconfigure slice to run"]
+    seg = ud[start:end + len(end_marker)].replace("/etc/", "$T/etc/")
+    if seg not in _RENAME_RUNS:
+        _RENAME_RUNS[seg] = _run_dev_rename(seg)
+    return _RENAME_RUNS[seg]
+
+
+def _run_dev_rename(seg):
+    f = []
+    # The rename lands on the Nth `udevadm settle` (settle waits for it) or, failing that, on the
+    # 4th `ip` call (time passing): 1 = the first lookup already sees it, 2 and 3 = only a later
+    # lookup does (the drop-in is then placed under the old name and redone).
+    for n in (1, 2, 3):
+        with tempfile.TemporaryDirectory() as t:
+            bin_ = os.path.join(t, "bin")
+            os.mkdir(bin_)
+            stubs = {
+                "sleep": "exit 0",
+                "udevadm": 'c=$(cat "$T/n" 2>/dev/null || echo 0); echo $((c+1)) > "$T/n"; '
+                           '[ $((c+1)) -ge "$RENAME_AT" ] && touch "$T/renamed"; exit 0',
+                "ip": 'c=$(cat "$T/ipn" 2>/dev/null || echo 0); echo $((c+1)) > "$T/ipn"; '
+                      '[ $((c+1)) -ge 4 ] && touch "$T/renamed"; '
+                      'if [ -e "$T/renamed" ]; then dev=ens6; else dev=eth0; fi; '
+                      'echo "1: lo: <LOOPBACK> link/loopback 00:00:00:00:00:00"; '
+                      'echo "3: $dev: <BROADCAST> link/ether $MAC brd ff:ff:ff:ff:ff:ff"',
+                "networkctl": 'if [ "$1" = reconfigure ]; then cur=eth0; [ -e "$T/renamed" ] && cur=ens6; '
+                              '[ "$2" = "$cur" ] || { echo "networkctl reconfigure $2: No such device" >&2; exit 1; }; '
+                              'echo "$2" > "$T/reconfigured"; fi; exit 0',
+            }
+            for name, body in stubs.items():
+                path = os.path.join(bin_, name)
+                with open(path, "w") as fh:
+                    fh.write("#!/bin/bash\n" + body + "\n")
+                os.chmod(path, 0o755)
+            script = "set -euxo pipefail\nmkdir -p \"$T/etc\"\n" + seg
+            env = dict(os.environ, T=t, MAC="02:aa:bb:cc:dd:ee", RENAME_AT=str(n),
+                       PATH=bin_ + ":" + os.environ["PATH"])
+            try:
+                r = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                f.append("interface steps hang (rename at settle %d)" % n)
+                continue
+            def read(rel):
+                try:
+                    with open(os.path.join(t, rel)) as fh:
+                        return fh.read().strip()
+                except OSError:
+                    return None
+            if r.returncode != 0:
+                f.append("interface steps fail when udev renames at settle %d: %s" % (n, r.stderr.strip().splitlines()[-1:]))
+            elif read("etc/af-egress/dev") != "ens6" or read("reconfigured") != "ens6" \
+                    or not os.path.exists(os.path.join(t, "etc/systemd/network/70-ens6.network.d/zz-af-egress.conf")):
+                f.append("interface steps end on the wrong name when udev renames at settle %d" % n)
     return f
 
 
@@ -724,6 +796,9 @@ def main():
         ("install succeeds without a policy", m(lambda t: set_ud(t, lambda s: s.replace("sleep 2; done\nexit 1\nEOF", "sleep 2; done\nEOF")))),
         ("bootstrap file taken for a policy", m(lambda t: set_ud(t, lambda s: s.replace("grep -q '^# mode: '", "grep -q '^# '")))),
         ("release timer gone", m(lambda t: set_ud(t, lambda s: s.replace("OnUnitInactiveSec=10min", "OnUnitInactiveSec=30s")))),
+        ("no udev settle before the lookup", m(lambda t: set_ud(t, lambda s: s.replace("udevadm settle --timeout=60 || true;", "true;")))),
+        ("name not re-resolved after the drop-in", m(lambda t: set_ud(t, lambda s: s.replace(
+            'if [ "$DEV" != "$OLD" ]; then place_dropin; fi\n', "")))),
         ("route check only on first boot", m(lambda t: set_ud(t, lambda s: s.replace(
             "[Install]\nWantedBy=multi-user.target\nEOF\nsystemctl daemon-reload\nsystemctl enable --now af-egress-route.service", "EOF\nsystemctl daemon-reload\nsystemctl enable --now af-egress-route.service")))),
     ]
