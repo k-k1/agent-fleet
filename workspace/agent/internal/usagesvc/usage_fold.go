@@ -938,7 +938,6 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 		out = append(out, usageRecordsOf(m, r)...)
 	}
 	out = dropGatewayCounted(m, out)
-	stampCallBindings(m, out)
 	// If the rows could not be written, do not advance the watermark. The same turns come
 	// back as a delta on the next pass, so what was missed is always recovered once the
 	// write works again (a partially written batch is dropped by the aggregation side's
@@ -1091,35 +1090,6 @@ func stampLaunch(m session.Meta, rec *usagex.Record) {
 	}
 	if rec.Connection == "" {
 		rec.Connection = l.Binding
-	}
-}
-
-// stampCallBindings fills the binding of a per-call kind's rows (agents.PerCallRouter) that carry
-// a route of their own and no binding, from the kind's agents.CallBinder: the credentials it runs
-// with as the ledger records the calls, which for the session fold is shortly after they ran. A
-// row without a route stays unbound: a binding for an unknown route proves nothing. The binder is
-// asked once per route per batch (it reads the credential store).
-func stampCallBindings(m session.Meta, recs []usagex.Record) {
-	a, ok := sessionx.RegisteredAgent(m.Kind)
-	if !ok {
-		return
-	}
-	cb, ok := a.(agents.CallBinder)
-	if _, per := a.(agents.PerCallRouter); !ok || !per {
-		return
-	}
-	seen := map[string]string{}
-	for i := range recs {
-		r := &recs[i]
-		if r.Route == "" || r.Connection != "" {
-			continue
-		}
-		b, done := seen[r.Route]
-		if !done {
-			b = cb.CallBinding(r.Route)
-			seen[r.Route] = b
-		}
-		r.Connection = b
 	}
 }
 

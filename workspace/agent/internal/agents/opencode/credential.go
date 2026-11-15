@@ -8,6 +8,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -16,7 +17,6 @@ import (
 var (
 	_ agents.CredentialResolver = agentImpl{}
 	_ agents.PerCallRouter      = agentImpl{}
-	_ agents.CallBinder         = agentImpl{}
 )
 
 // RoutesPerCall implements agents.PerCallRouter: a call's route is its model's provider.
@@ -67,7 +67,11 @@ func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
 // one-shots), on model.
 func ModelLaunch(model string) routes.Launch {
 	keys, pref, acct := credentialView()
-	return resolveModel(launchModel(model, globalConfigFiles()), keys, pref, acct, engineProviderIDs())
+	// The chat runs in a working directory under the state directory whose own config (af's)
+	// sets no model; the directories above it (the home directory's opencode.json among them)
+	// are read like any project's.
+	files := append(globalConfigFiles(), projectConfigFiles(session.Meta{Dir: paths.AgentStateDir()})...)
+	return resolveModel(launchModel(model, files), keys, pref, acct, engineProviderIDs())
 }
 
 // launchModel is model when it names one, else defaultModel over the config files that apply.
@@ -75,19 +79,22 @@ func launchModel(model string, files []string) string {
 	if _, _, ok := splitModel(model); ok {
 		return model
 	}
-	return defaultModel(files, catalogView())
+	return defaultModel(files)
 }
 
-// defaultModel is a model with the provider opencode will run a launch that names none on, or ""
-// when that cannot be told. opencode's documented order is the --model flag, then the config's
-// "model", then the last model used, then the first by its internal priority; af passes no flag
-// when none is chosen. So:
-//   - The config's "model", when the files that set one agree on it. Which of two disagreeing
-//     files wins is opencode's merge order, not a contract, so disagreement resolves to nothing,
-//     and so does a file that cannot be parsed but mentions "model".
-//   - Else, when every model opencode lists (catalog, its own list as last read) is on one
-//     provider: the last used model and the first by priority are then both on it.
-func defaultModel(files, catalog []string) string {
+// defaultModel is the model opencode will run a launch that names none on, or "" when that
+// cannot be told. opencode's documented order is the --model flag (af passes none), then the
+// config's "model", then the last model used, then the first by its internal priority. Only the
+// config can be read with certainty:
+//   - The config's "model", when the files that set one agree. Which of two disagreeing files
+//     wins is opencode's merge order, not a contract, so disagreement resolves to nothing, and so
+//     does a file that cannot be parsed but mentions "model".
+//   - An agent (or a legacy mode) with a model of its own overrides it for that agent, so a file
+//     that sets one resolves to nothing.
+//   - Without a configured model, nothing: the last model used and opencode's priority depend on
+//     the providers this launch's project and opencode's own credential store make available,
+//     which nothing af holds proves at launch.
+func defaultModel(files []string) string {
 	set := map[string]bool{}
 	for _, f := range files {
 		b, err := os.ReadFile(f)
@@ -95,7 +102,9 @@ func defaultModel(files, catalog []string) string {
 			continue
 		}
 		var top struct {
-			Model *string `json:"model"`
+			Model *string                    `json:"model"`
+			Agent map[string]json.RawMessage `json:"agent"`
+			Mode  map[string]json.RawMessage `json:"mode"`
 		}
 		if json.Unmarshal(stripJSONC(b), &top) != nil {
 			if strings.Contains(string(b), `"model"`) {
@@ -103,31 +112,27 @@ func defaultModel(files, catalog []string) string {
 			}
 			continue
 		}
+		for _, entries := range []map[string]json.RawMessage{top.Agent, top.Mode} {
+			for _, raw := range entries {
+				var a struct {
+					Model *string `json:"model"`
+				}
+				if json.Unmarshal(raw, &a) == nil && a.Model != nil && strings.TrimSpace(*a.Model) != "" {
+					return ""
+				}
+			}
+		}
 		if top.Model != nil && strings.TrimSpace(*top.Model) != "" {
 			set[strings.TrimSpace(*top.Model)] = true
 		}
 	}
-	switch len(set) {
-	case 0:
-	case 1:
-		for m := range set {
-			return m
-		}
-	default:
+	if len(set) != 1 {
 		return ""
 	}
-	prov := ""
-	for _, id := range catalog {
-		p, _, ok := splitModel(id)
-		if !ok || prov != "" && p != prov {
-			return ""
-		}
-		prov = p
+	for m := range set {
+		return m
 	}
-	if prov == "" {
-		return ""
-	}
-	return catalog[0]
+	return ""
 }
 
 func resolveModel(model string, keys map[string]string, pref string, acct oauthState, engines []string) routes.Launch {
@@ -197,35 +202,6 @@ func resolveOpencodeAI(prov string, keys map[string]string, pref string, acct oa
 
 // FreeBinding is the binding of opencode.ai's free models, which run with no credential at all.
 var FreeBinding = credbind.Named(routes.RouteOpencodeZen, "free")
-
-// CallBinding implements agents.CallBinder: the binding of a session call opencode filed under
-// route, from the credentials it runs with now. Only the two opencode.ai routes are filed per call
-// (usagex.RouteOfOpencodeProvider), and a binding is given only when exactly one payer can be
-// (resolveOpencodeAI) and it pays on that route: an account login pays opencode.ai calls under
-// its own route id, so a call filed under Zen while one is signed in is left unbound.
-func (agentImpl) CallBinding(route string) string {
-	keys, pref, acct := credentialView()
-	return callBinding(route, keys, pref, acct)
-}
-
-func callBinding(route string, keys map[string]string, pref string, acct oauthState) string {
-	prov := ""
-	switch route {
-	case routes.RouteOpencodeZen:
-		prov = "opencode"
-	case routes.RouteOpencodeGo:
-		prov = "opencode-go"
-	default:
-		return ""
-	}
-	if pref == UsageOff {
-		return ""
-	}
-	if l := resolveOpencodeAI(prov, keys, pref, acct); l.Route == route {
-		return l.Binding
-	}
-	return ""
-}
 
 // engineProviderIDs are the provider ids of the deployment's engines in opencode's config (the
 // entries af wrote, carrying engineProviderMarker).

@@ -72,14 +72,6 @@ type PerCallRouter interface {
 	RoutesPerCall()
 }
 
-// CallBinder is an optional capability of a PerCallRouter: the binding of a session call the
-// kind filed under route, from the credentials it runs with when the ledger records the call, ""
-// when they do not prove who paid on that route. The ledger asks it for a call that carries a
-// route and no binding; the launch record is never used for such a kind.
-type CallBinder interface {
-	CallBinding(route string) string
-}
-
 // LaunchBinder is an optional capability of a CredentialResolver: the launch record's binding of
 // an explicit selection, where the stored connection does not identify the credential instance
 // (a subscription selection names no connection) or is not fit to travel (a plain key

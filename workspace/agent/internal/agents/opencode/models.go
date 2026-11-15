@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -83,26 +82,6 @@ func Models() []string {
 	modelsAt = time.Now()
 	modelsEnvKey = envKey
 	return modelsList
-}
-
-// catalogProofAge bounds how old a catalog may be and still prove a launch's provider
-// (defaultModel). Every change of what opencode can list moves the env key (a key) or invalidates
-// the catalog (a login), so the bound is only a backstop.
-const catalogProofAge = 10 * time.Minute
-
-// catalogView is the catalog as last read, without reading it: nil when none was read, when it
-// was invalidated, when it was read under another provider environment than the current one, or
-// when a read is under way (a launch must not wait on the ~1 s CLI). A seam for tests.
-var catalogView = func() []string {
-	envKey := sha256.Sum256([]byte(strings.Join(CurrentLaunch().Env(), "\x00")))
-	if !modelsMu.TryLock() {
-		return nil
-	}
-	defer modelsMu.Unlock()
-	if modelsList == nil || modelsAt.IsZero() || modelsEnvKey != envKey || time.Since(modelsAt) > catalogProofAge {
-		return nil
-	}
-	return slices.Clone(modelsList)
 }
 
 // daemonModel is one entry of GET /api/model (measured against the live OpenAPI).
