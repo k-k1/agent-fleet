@@ -21,6 +21,8 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/providedroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/routegateway"
+	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicysrv"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -352,6 +354,60 @@ func providedRouteCreateRefusal(ctx context.Context, membershipID, route string)
 			status = http.StatusForbidden
 		}
 		return &apiError{status, ref.Code, ref.Message}
+	}
+	return nil
+}
+
+// routePolicyCreateRefusal is the credential policy's pre-wake refusal of a create's explicit
+// route (ADR 0138 D12): a session create, a schedule's save and fire. nil for an empty selection,
+// which only the Agent can resolve (D11), and while the tenant's policy restricts nothing.
+func routePolicyCreateRefusal(ctx context.Context, st store.Store, tenantID, route string) *apiError {
+	if e := routepolicysrv.RouteRefusal(ctx, st, tenantID, route); e != nil {
+		return &apiError{e.Status, e.Code, e.Message}
+	}
+	return nil
+}
+
+// agentRoutePolicy reads the "route_policy" capability of a running Agent from its /healthz
+// (routepolicysrv.AgentEnforceCapability). answered is false while it does not answer 200. A seam
+// for tests.
+var agentRoutePolicy = func(ctx context.Context, rt runtime.Runtime) (reported string, answered bool) {
+	if rt == nil || rt.Endpoint() == "" {
+		return "", false
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/healthz", nil)
+	if err != nil {
+		return "", false
+	}
+	resp, err := homeKeyHealthzClient.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	var r struct {
+		RoutePolicy string `json:"route_policy"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&r) != nil {
+		return "", false
+	}
+	return r.RoutePolicy, true
+}
+
+// agentPolicyRefusal is D12's Upgrade rule, asked once the Workspace is running and before a
+// create is handed to it: a restricted member's create is refused when the Agent does not report
+// that it enforces the policy. A Workspace woken for the create runs the current image; one that
+// was already running may still run an Agent from before enforcement. nil for an unrestricted
+// member, or a kind that runs no model, without asking the Agent anything.
+func agentPolicyRefusal(ctx context.Context, st store.Store, tenantID, kind string, rt runtime.Runtime) *apiError {
+	if agentroutes.RunsNoModel(kind) || !routepolicysrv.Restricted(ctx, st, tenantID) {
+		return nil
+	}
+	reported, answered := agentRoutePolicy(ctx, rt)
+	if e := routepolicysrv.AgentRefusal(reported, answered); e != nil {
+		return &apiError{e.Status, e.Code, e.Message}
 	}
 	return nil
 }

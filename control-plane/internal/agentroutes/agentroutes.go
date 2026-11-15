@@ -97,6 +97,21 @@ func RoutesOf(kind string) []string {
 	return nil
 }
 
+// RunsNoModel reports a kind the snapshot knows that declares no route, selectable or fixed: it
+// runs no model credential (shell, ssm), so the credential policy has nothing to judge. An
+// unknown kind is not one: it is judged. An empty kind means claude.
+func RunsNoModel(kind string) bool {
+	if kind == "" {
+		kind = "claude"
+	}
+	for _, k := range snapshot.Kinds {
+		if k.Kind == kind {
+			return len(k.Routes) == 0 && len(k.Fixed) == 0
+		}
+	}
+	return false
+}
+
 // Lookup finds a route by its exact id.
 func Lookup(id string) (Route, bool) {
 	for _, r := range snapshot.Routes {

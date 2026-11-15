@@ -129,3 +129,28 @@ describe("TenantMemberDefaultsPanel budget field (C1)", () => {
     expect(alertText()).toContain(t("tenant.member_defaults_budget_invalid"));
   });
 });
+
+describe("TenantMemberDefaultsPanel model field", () => {
+  const model = () =>
+    Array.from(document.querySelectorAll<HTMLLabelElement>("label.admin-fld"))
+      .find((l) => (l.textContent || "").includes(t("tenant.member_defaults_model")))!
+      .querySelector("input")!;
+
+  it("keeps spaces typed key by key and sends the model trimmed", async () => {
+    api.mockResolvedValue({ tenant: "acme", defaults: { agent: "" } });
+    await mount();
+    const id = "Gemini 3.5 Flash (Medium)";
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    for (let i = 1; i <= id.length + 1; i++) {
+      const typed = i <= id.length ? id.slice(0, i) : id + " ";
+      await act(async () => {
+        setter.call(model(), typed);
+        model().dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(model().value).toBe(typed);
+    }
+    apiJSON.mockResolvedValue({ tenant: "acme", defaults: { agent: "" } });
+    await act(async () => button(t("common.save")).click());
+    expect(apiJSON.mock.calls[0][2].launch.model).toBe(id);
+  });
+});

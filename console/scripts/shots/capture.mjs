@@ -1797,7 +1797,7 @@ const SCENES = [
     settle: 2500,
   },
   {
-    // The Antigravity card before connecting: the experimental-slot label and OAuth.
+    // The Antigravity card before connecting: the OAuth method and connect button.
     name: "agents-agy",
     guide: true,
     stubEnv: { SHOT_AGENTS_GUIDE: "1" },

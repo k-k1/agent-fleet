@@ -87,7 +87,7 @@ export interface AgentCaps {
   skillsCatalog: boolean;
   // A member connects it with an account of their own, so a tenant may name it as the default
   // agent (ADR 0114 decision 8) and connecting it completes the first-run card. shell and ssm
-  // need no connection, lcpp is governed by engine access, and agy is experimental.
+  // need no connection and lcpp is governed by engine access.
   // control-plane/tenant_member_defaults.go accepts exactly these (memberDefaultAgents;
   // derivedKindLists.test.ts reads it).
   memberDefault: boolean;
@@ -405,6 +405,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
       slashSkillsManaged: true, // injection is a plain prompt (agy has no managed mode; stated anyway)
       runsInDir: true,
       launchableFromRepo: true,
+      memberDefault: true,
     }),
     // Hidden on hosts that cannot run agy (supported === false — the RDRAND guard,
     // docs/log/32 Track B); an unfetched conns bag falls back to visible

@@ -131,7 +131,11 @@ describe("tenant launch defaults prefill", () => {
     const ok = ["claude", "codex"];
     expect(ownLaunchProblem("codex", ok, "gpt-x", 5)).toBe("");
     expect(ownLaunchProblem("agy", ok, "", null)).toBe("agent");
-    expect(ownLaunchProblem("codex", ok, "has space", null)).toBe("model");
+    expect(ownLaunchProblem("codex", ok, "trailing ", null)).toBe("model");
+    expect(ownLaunchProblem("codex", ok, "semi;colon", null)).toBe("model");
+    expect(ownLaunchProblem("codex", ok, "x".repeat(101), null)).toBe("model");
+    expect(ownLaunchProblem("agy", ["agy"], "Gemini 3.5 Flash (Medium)", null)).toBe("");
+    expect(ownLaunchProblem("codex", ok, "x".repeat(100), null)).toBe("");
     expect(ownLaunchProblem("codex", ok, "provider/m#high", null)).toBe("");
     expect(ownLaunchProblem("codex", ok, "", 12000)).toBe("budget");
     expect(ownLaunchProblem("codex", ok, "", Number.NaN)).toBe("budget");

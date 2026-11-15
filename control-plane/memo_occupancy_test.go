@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -806,6 +807,134 @@ func TestMemoOccupancyOlderControlPlaneCannotCloseAHeldDelivery(t *testing.T) {
 		e.settleNow(time.Now())
 		if got := e.delivery(d.ID); got.RetireResult != "confirmed" || agent.retireCalls() != 1 {
 			t.Fatalf("calls %d, %+v", agent.retireCalls(), got)
+		}
+	})
+}
+
+// A count written by the rule for an Agent that does not report (MarkMemoDeliveryIdle, all an
+// older Control Plane has) is no clear read of the report: with the kept report holding the
+// delivery, the next clear read counts one, not two, and does not close.
+func TestMemoOccupancyLegacyIdleCountIsNotAClearRead(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.setRow(d.Session, map[string]any{"wakers": map[string]any{"watches": 1, "timers": 0}})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.HeldBy != store.HeldWakers || got.IdleTicks != 0 {
+			t.Fatalf("%+v", got)
+		}
+		// An older Control Plane sees the session idle and writes its count.
+		if ok, err := e.other.MarkMemoDeliveryIdle(context.Background(), d.ID, 1); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+		agent.setRow(d.Session, map[string]any{"wakers": nil})
+		e.settleNow(time.Now())
+		got := e.delivery(d.ID)
+		if got.State != store.DeliveryOpen || got.IdleTicks != 1 {
+			t.Fatalf("one clear read closed on the legacy count: %+v", got)
+		}
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed {
+			t.Fatalf("two clear reads must close: %+v", got)
+		}
+	})
+}
+
+// `gone` is decided from a read that began after the delivery closed, not from the tick's cached
+// list: a cached list that predates the session does not end a pending retire.
+func TestMemoOccupancyGoneNeedsAReadAfterTheClose(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.mu.Lock()
+		agent.retireStatus = http.StatusBadGateway
+		agent.mu.Unlock()
+		e.settleNow(time.Now())
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || !got.RetirePending {
+			t.Fatalf("%+v", got)
+		}
+		agent.mu.Lock()
+		agent.retireStatus = 0
+		agent.mu.Unlock()
+		// The cached list of this tick was taken before the session existed.
+		r := e.runner()
+		views := map[string]*memoMemberView{}
+		v := r.view(context.Background(), views, e.members["a"])
+		v.live = nil
+		r.retirePending(context.Background(), views, time.Now())
+		got := e.delivery(d.ID)
+		if got.RetireResult != "confirmed" || agent.retireCalls() < 2 {
+			t.Fatalf("a stale cache decided gone: calls %d, %+v", agent.retireCalls(), got)
+		}
+	})
+	// A session that is gone from a read made after the close is gone.
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.mu.Lock()
+		agent.retireStatus = http.StatusBadGateway
+		agent.mu.Unlock()
+		e.settleNow(time.Now())
+		e.settleNow(time.Now())
+		agent.dropRow(d.Session)
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.RetireResult != "gone" || got.RetirePending {
+			t.Fatalf("%+v", got)
+		}
+	})
+}
+
+// A pass whose first-turn reads run into a slow workspace stamps what it reached with a context
+// that does not inherit its deadline, so the next tick goes on with the ones behind it and the
+// breaker sees a failed first turn there.
+func TestMemoOccupancyClosedTurnsProgressSurvivesTheDeadline(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", nil, 0)
+		// A second member whose workspace never answers /sessions in time.
+		slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(10 * time.Second):
+			}
+		}))
+		t.Cleanup(slow.Close)
+		ws := store.Workspace{ID: "ws-c", TenantID: e.t1.ID, MembershipID: e.members["c"], ContainerName: "c", Network: "n",
+			DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: store.NowTS()}
+		if err := e.st.CreateWorkspace(context.Background(), ws); err != nil {
+			t.Fatal(err)
+		}
+		e.mgr.mu.Lock()
+		e.mgr.rts[e.members["c"]] = cachedRT{rt: stubRuntime{endpoint: slow.URL, token: "tok", state: "running"}, ws: ws}
+		e.mgr.mu.Unlock()
+		insert := func(membership, queue, session string, closedAgo time.Duration) string {
+			id := store.NewID()
+			ts := store.DeliveryTS(time.Now().Add(-closedAgo))
+			if err := e.st.MemoTx(context.Background(), membership, func(tx store.MemoTxOps) error {
+				return tx.InsertDelivery(store.MemoDelivery{ID: id, QueueID: queue, State: store.DeliveryClosed, Outcome: store.DeliveryClean,
+					Session: session, MessageIDs: []string{}, CreatedAt: ts, UpdatedAt: ts, ClosedAt: ts, Reported: true, RetireResult: "confirmed"})
+			}); err != nil {
+				t.Fatal(err)
+			}
+			return id
+		}
+		insert(e.members["c"], "qc", "slow-session", 3*time.Hour) // first in line, never answers
+		real := insert(e.members["a"], q, "real-1", time.Hour)
+		agent.mu.Lock()
+		agent.rows = append(agent.rows, map[string]any{"name": "real-1", "kind": "claude", "alive": false, "state": "",
+			"queueTurn": map[string]any{"outcome": "turn-failed", "ms": 4000, "endedAt": "2026-11-15T01:00:00Z"}})
+		agent.mu.Unlock()
+		r := e.runner()
+		// The pass's budget runs out inside the slow workspace.
+		tctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		r.collectClosedTurns(tctx, map[string]*memoMemberView{}, time.Now())
+		cancel()
+		if got := e.delivery(real); got.TurnEndedAt != "" {
+			t.Fatalf("the later delivery was reached in a pass that had run out: %+v", got)
+		}
+		// The next tick starts with the delivery not reached and records the failed first turn.
+		tctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		r.collectClosedTurns(tctx, map[string]*memoMemberView{}, time.Now())
+		cancel()
+		if got := e.delivery(real); got.TurnOutcome != "turn-failed" {
+			t.Fatalf("progress was lost with the deadline: the slow head is tried first again: %+v", got)
 		}
 	})
 }

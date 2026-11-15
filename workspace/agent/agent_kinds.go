@@ -7,6 +7,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
@@ -73,7 +74,13 @@ func buildKindCatalog(live bool) kindCatalogWire {
 	if live {
 		usable = usableRoutesOf(kinds)
 	}
+	// The live catalog hides what the credential policy forbids (ADR 0138 D10a): a kind none of
+	// whose routes is allowed is absent, and one with some allowed lists only those.
+	hide, hiding := routepolicy.Hiding()
 	for _, k := range kinds {
+		if live && hiding && hide.HidesKind(kindRoutesOf(k)) {
+			continue
+		}
 		c := sessionx.AgentOf(k).Caps()
 		e := kindEntryWire{
 			Kind:           k,
@@ -102,15 +109,37 @@ func buildKindCatalog(live bool) kindCatalogWire {
 			}
 			if u, ok := usable[k]; ok {
 				u = slices.Sorted(slices.Values(u))
+				if hiding {
+					u = hide.Filter(u)
+				}
 				if u == nil {
 					u = []string{}
 				}
 				e.UsableRoutes = &u
 			}
+			if hiding {
+				e.Routes, e.FixedRoutes = hide.Filter(e.Routes), hide.Filter(e.FixedRoutes)
+			}
 		}
 		out.Kinds = append(out.Kinds, e)
 	}
 	return out
+}
+
+// kindRoutesOf is every route kind may run on: the selectable routes it offers or declares and the
+// fixed ones it resolves to with no selection. Empty for a kind that runs no model.
+func kindRoutesOf(kind string) []string {
+	a, ok := sessionx.RegisteredAgent(kind)
+	if !ok {
+		return nil
+	}
+	var out []string
+	if ro, ok := a.(agents.RouteOfferer); ok {
+		out = append(out, ro.OfferedRoutes()...)
+	} else if ra, ok := a.(agents.RouteAdapter); ok {
+		out = append(out, ra.Routes()...)
+	}
+	return append(out, agents.FixedRoutesOf(a)...)
 }
 
 // usableRoutesBudget bounds how long the catalog waits for the kinds' UsableRoutes. Some read a

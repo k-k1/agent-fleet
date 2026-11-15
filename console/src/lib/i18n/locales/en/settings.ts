@@ -341,7 +341,6 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.agy_auth_failed": "Failed to start Antigravity auth: {msg}",
   "agents.agy_desc": "Antigravity CLI (agy) Google OAuth connection. Paste the code after approving to finish.",
   "agents.agy_desc_flow": "Antigravity CLI Google OAuth connection. Sign-in opens in a new tab.",
-  "agents.agy_exp_label": "Experimental slot (small quota, shared with the Antigravity IDE / Jules)",
   "agents.agy_method_label": "Auth method",
   "agents.agy_method_oauth": "Google OAuth",
   "agents.agy_method_gcp": "GCP project (coming soon)",

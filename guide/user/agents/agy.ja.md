@@ -8,21 +8,21 @@ source_of_truth: "Console の設定 >「エージェント」の Antigravity カ
 [English](agy.md) | 日本語
 
 Google アカウントでログインすると、Antigravity CLI（agy）をセッションで動かせます。
-agy は実験枠です。利用枠は小さく、Antigravity IDE や Jules と共有です。
+利用枠は同じ Google アカウントの Antigravity IDE や Jules と共有です。
 
 ## 全体像
 
 | あなたがやること | 起きること |
 |---|---|
-| Antigravity のカードで Google のログインをする | 起動メニューに「Antigravity を起動（実験枠）」が並ぶ |
+| Antigravity のカードで Google のログインをする | 起動メニューに「Antigravity を起動」が並ぶ |
 | 動作設定を選ぶ | 次に起動する agy のセッションから使われる |
 | ログインが切れたら再認証する | もう一度ログインの手順を踏む |
 
 ## 接続する
 
-**⚙設定 →「エージェント」** の **Antigravity** カードで操作します。カードには「**実験枠（クォータ小・Antigravity IDE / Jules と共有）**」と出ています。
+**⚙設定 →「エージェント」** の **Antigravity** カードで操作します。
 
-![接続前の Antigravity カード。実験枠の表示、認証方式の「Google OAuth」、「OAuth 接続」のボタンがある](../../assets/agents-agy-ja-light.webp)
+![接続前の Antigravity カード。認証方式の「Google OAuth」、「OAuth 接続」のボタンがある](../../assets/agents-agy-ja-light.webp)
 
 1. 「**OAuth 接続**」を押すと、Google のログインが新しいタブで開きます。開かないときは「**ログインリンク ↗**」から開きます
 2. 自分のブラウザで承認します

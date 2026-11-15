@@ -83,9 +83,6 @@ export function AgyCard({
         ) : undefined
       }
     >
-      {/* "Experimental slot" label — always visible, connected or not: it states the
-          terms under which this agent may be used. */}
-      <p className="ps-note ps-note-warn p-card-note">{tr("agents.agy_exp_label")}</p>
       {/* agy runs here only because its FIPS build's hardware RNG was masked out
           (workspace/agent/internal/hostcaps). Legitimate, but not the shipped
           configuration — state it rather than leave it to a log nobody reads. */}

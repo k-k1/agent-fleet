@@ -12,6 +12,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
@@ -132,6 +134,13 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "unknown_kind", "no model catalog for this kind")
 		return
 	}
+	// A harness the credential policy forbids altogether offers nothing, and its CLI is not asked
+	// (ADR 0138 D10a).
+	hide, hiding := routepolicy.Hiding()
+	if hiding && hide.HidesKind(kindRoutesOf(r.PathValue("kind"))) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"models": []agents.ModelChoice{}, "reason": "route_policy"})
+		return
+	}
 	ml := lister.ListModels(agents.ModelQuery{Ctx: r.Context(), CustomModels: claudeCustom, CatalogPref: catalogPref})
 	// enumerated is what the CLI/daemon answered before the kind's own shaping (opencode's
 	// billing route), -1 for a kind that does none; route is the route the menu was actually
@@ -161,6 +170,14 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		list = sessionx.FilterVisibleModelsIn(sessionx.EffectiveHiddenWith(r.PathValue("kind"), hiddenRaw, claudeCustom), list)
 	} else {
 		list = sessionx.FilterVisibleModels(r.PathValue("kind"), list)
+	}
+	// What the credential policy forbids is not offered (ADR 0138 D10a), after the member's own
+	// hiding: an empty menu then says so (reason "route_policy").
+	policyEmptied := false
+	if hiding {
+		before := len(list)
+		list = policyVisibleModels(r.PathValue("kind"), hide, list)
+		policyEmptied = before > 0 && len(list) == 0
 	}
 	if list == nil {
 		list = []agents.ModelChoice{}
@@ -193,7 +210,37 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	if reason := emptyReason(enumerated, offered, len(list)); reason != "" {
 		out["reason"] = reason
 	}
+	if policyEmptied {
+		out["reason"] = "route_policy"
+	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// policyVisibleModels is list narrowed to what p lets the kind launch (ADR 0138 D10a). A kind none
+// of whose routes p allows offers nothing (the handler answers it before listing). A kind whose
+// route follows its model
+// (agents.PerCallRouter, unless it resolves one route per connection) offers the models whose
+// route its resolver proves allowed; one whose route cannot be told is not offered either, since
+// a launch on it would be refused (D11). Every other kind keeps its list: its route does not
+// depend on the model.
+func policyVisibleModels(kind string, p routepolicy.Policy, list []agents.ModelChoice) []agents.ModelChoice {
+	if p.HidesKind(kindRoutesOf(kind)) {
+		return nil
+	}
+	a, _ := sessionx.RegisteredAgent(kind)
+	cr, resolves := a.(agents.CredentialResolver)
+	_, perCall := a.(agents.PerCallRouter)
+	_, oneRoute := a.(agents.OneRouteResolver)
+	if !resolves || !perCall || oneRoute {
+		return list
+	}
+	var out []agents.ModelChoice
+	for _, m := range list {
+		if l := cr.ResolveLaunch(session.Meta{Kind: kind, Model: m.ID}); l.Route != "" && p.Allows(l.Route) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // recommendedFromFallback names the tiers of rec that are a pinned fallback

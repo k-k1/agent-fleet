@@ -50,15 +50,33 @@ type MemoQueue struct {
 	MaxActive, Batch         int
 	// MaxTaskHours is how long a delivery of the queue may stay open before it is overdue
 	// (ADR 0137 section 6), 1 to 72.
-	MaxTaskHours         int
-	Enabled              bool
-	Generation           int
-	CreatedAt, UpdatedAt string
+	MaxTaskHours int
+	// Fires by themselves (ADR 0137 section 6). OpenCron, OpenMinutes and TZ are a window, OpenAfter
+	// a threshold, none of them always open. MaxFiresPerDay bounds the deliveries of 24 hours.
+	OpenCron, TZ           string
+	OpenMinutes, OpenAfter int
+	MaxFiresPerDay         int
+	// State, never written by the settings PUT: Draining is a threshold queue emptying, Paused
+	// the circuit breaker (PausedAt, PausedReason), BreakerAfter the time from which the breaker
+	// counts deliveries, NoReportAt when a fire found an Agent that sends no queue report.
+	Draining, Paused                                 bool
+	PausedAt, PausedReason, BreakerAfter, NoReportAt string
+	Enabled                                          bool
+	Generation                                       int
+	CreatedAt, UpdatedAt                             string
 }
 
 // MemoQueueStore is the queue half of the memo store.
 type MemoQueueStore interface {
 	ListMemoQueues(ctx context.Context, membershipID string) ([]MemoQueue, error)
+	// ListEnabledMemoQueues returns every enabled queue of every member, and a queue that is not
+	// enabled but still marked draining so that the mark is cleared: the dispatcher's work.
+	ListEnabledMemoQueues(ctx context.Context) ([]MemoQueue, error)
+	// ListQueuePendingStats counts the pending messages of every enabled queue, by category id.
+	ListQueuePendingStats(ctx context.Context) (map[string]QueuePending, error)
+	// SetMemoQueueDraining and SetMemoQueueNoReport write the dispatcher's state columns.
+	SetMemoQueueDraining(ctx context.Context, queueID string, on bool) error
+	SetMemoQueueNoReport(ctx context.Context, queueID, at string) error
 	// MemoTx runs f in one transaction that holds the membership's lock first, so every
 	// queue-relevant memo write of a member is serialized behind the others. Before f it
 	// takes back the member's stale send reservations, so f never sees one. f's error
@@ -97,6 +115,25 @@ type MemoTxOps interface {
 	QueueOf(repo, category string) (MemoQueue, bool, error)
 	PutQueue(q MemoQueue) error
 	DeleteQueue(categoryID string) error
+	// SetQueueDraining writes the draining state inside the transaction of a fire.
+	SetQueueDraining(categoryID string, on bool) error
+	// LockTenantSwitch takes the member's tenant row, so that turning memo queues off waits for
+	// this transaction, and answers the switch as it is now.
+	LockTenantSwitch() (bool, error)
+	// CountLimitedDeliveries counts the member's open deliveries whose last kept report showed a
+	// session of the tree waiting for a usage limit under agent kind kind.
+	CountLimitedDeliveries(kind string) (int, error)
+	// RecentQueueDeliveries returns a queue's newest deliveries, wakes left out.
+	RecentQueueDeliveries(queueID string, limit int) ([]MemoDelivery, error)
+	// LiveQueueDeliveries returns the deliveries of a queue that are not closed.
+	LiveQueueDeliveries(queueID string) ([]MemoDelivery, error)
+	// RecentTurnDeliveries returns a queue's deliveries created after the given time whose
+	// first turn was recorded, newest first, at most limit.
+	RecentTurnDeliveries(queueID, after string, limit int) ([]MemoDelivery, error)
+	// PauseQueue pauses a queue that is not paused. False means it already was.
+	PauseQueue(categoryID, at, reason string) (bool, error)
+	// ResumeQueue lifts a pause and sets the time the breaker counts from.
+	ResumeQueue(categoryID, at string) (bool, error)
 
 	MemoDeliveryTxOps
 }
@@ -123,7 +160,21 @@ func (s *SQL) MemoTx(ctx context.Context, membershipID string, f func(MemoTxOps)
 	if err := f(memoTx{ctx: ctx, q: tx, mid: membershipID}); err != nil {
 		return err
 	}
+	if err := endEmptyDrains(ctx, tx, membershipID); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+// endEmptyDrains ends the draining of a queue of the member that has no pending message left, in
+// the transaction that left it so (a claim, a delete, a move to held): the moment of "nothing
+// pending" is then never missed, and a message added afterwards starts a new batch that has to
+// reach its threshold again. Every write of a pending message runs in a MemoTx.
+func endEmptyDrains(ctx context.Context, q memoQuerier, membershipID string) error {
+	_, err := q.ExecContext(ctx, `UPDATE memo_queue SET draining=0 WHERE membership_id=? AND draining=1 AND NOT EXISTS (
+		SELECT 1 FROM memo m JOIN memo_category c ON c.membership_id=m.membership_id AND c.repo=m.repo AND c.name=m.category
+		WHERE c.id=memo_queue.category_id AND m.state=?)`, membershipID, MemoStatePending)
+	return err
 }
 
 // sweepStaleMemoSends takes back the send reservations older than MemoSendStaleAfter. Whether
@@ -246,14 +297,18 @@ func (t memoTx) DeleteCategory(id string) error {
 }
 
 const memoQueueCols = `SELECT category_id, membership_id, instruction, agent_kind, model, effort, route, spend_cap_usd,
-	worktree, max_active, batch, enabled, generation, created_at, updated_at, max_task_hours FROM memo_queue`
+	worktree, max_active, batch, enabled, generation, created_at, updated_at, max_task_hours,
+	open_cron, open_minutes, tz, open_after, max_fires_per_day, draining, paused, paused_at, paused_reason, breaker_after,
+	no_report_at FROM memo_queue`
 
 func scanMemoQueue(row scanner) (MemoQueue, error) {
 	var q MemoQueue
-	var worktree, enabled int
+	var worktree, enabled, draining, paused int
 	err := row.Scan(&q.CategoryID, &q.MembershipID, &q.Instruction, &q.AgentKind, &q.Model, &q.Effort, &q.Route,
-		&q.SpendCapUSD, &worktree, &q.MaxActive, &q.Batch, &enabled, &q.Generation, &q.CreatedAt, &q.UpdatedAt, &q.MaxTaskHours)
-	q.Worktree, q.Enabled = worktree != 0, enabled != 0
+		&q.SpendCapUSD, &worktree, &q.MaxActive, &q.Batch, &enabled, &q.Generation, &q.CreatedAt, &q.UpdatedAt, &q.MaxTaskHours,
+		&q.OpenCron, &q.OpenMinutes, &q.TZ, &q.OpenAfter, &q.MaxFiresPerDay, &draining, &paused, &q.PausedAt, &q.PausedReason,
+		&q.BreakerAfter, &q.NoReportAt)
+	q.Worktree, q.Enabled, q.Draining, q.Paused = worktree != 0, enabled != 0, draining != 0, paused != 0
 	return q, err
 }
 
@@ -281,15 +336,18 @@ func (t memoTx) QueueOf(repo, category string) (MemoQueue, bool, error) {
 func (t memoTx) PutQueue(q MemoQueue) error {
 	_, err := t.q.ExecContext(t.ctx, `INSERT INTO memo_queue(category_id, membership_id, instruction, agent_kind, model,
 		effort, route, spend_cap_usd, worktree, max_active, batch, enabled, generation, created_at, updated_at,
-		max_task_hours)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		max_task_hours, open_cron, open_minutes, tz, open_after, max_fires_per_day)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(category_id) DO UPDATE SET instruction=excluded.instruction, agent_kind=excluded.agent_kind,
 		  model=excluded.model, effort=excluded.effort, route=excluded.route, spend_cap_usd=excluded.spend_cap_usd,
 		  worktree=excluded.worktree, max_active=excluded.max_active, batch=excluded.batch, enabled=excluded.enabled,
-		  max_task_hours=excluded.max_task_hours, updated_at=excluded.updated_at
+		  max_task_hours=excluded.max_task_hours, open_cron=excluded.open_cron, open_minutes=excluded.open_minutes,
+		  tz=excluded.tz, open_after=excluded.open_after, max_fires_per_day=excluded.max_fires_per_day,
+		  updated_at=excluded.updated_at
 		WHERE memo_queue.membership_id=excluded.membership_id`,
 		q.CategoryID, t.mid, q.Instruction, q.AgentKind, q.Model, q.Effort, q.Route, q.SpendCapUSD,
-		b2i(q.Worktree), q.MaxActive, q.Batch, b2i(q.Enabled), q.Generation, q.CreatedAt, q.UpdatedAt, q.MaxTaskHours)
+		b2i(q.Worktree), q.MaxActive, q.Batch, b2i(q.Enabled), q.Generation, q.CreatedAt, q.UpdatedAt, q.MaxTaskHours,
+		q.OpenCron, q.OpenMinutes, q.TZ, q.OpenAfter, q.MaxFiresPerDay)
 	return err
 }
 
@@ -314,4 +372,102 @@ func (s *SQL) ListMemoQueues(ctx context.Context, membershipID string) ([]MemoQu
 		out = append(out, q)
 	}
 	return out, rows.Err()
+}
+
+// QueuePending is what a queue has waiting: how many pending messages, the creation time of the
+// oldest, and the latest time any of them was created or released.
+type QueuePending struct {
+	Count          int
+	Oldest, Latest string
+}
+
+func (s *SQL) ListEnabledMemoQueues(ctx context.Context) ([]MemoQueue, error) {
+	rows, err := s.db.QueryContext(ctx, memoQueueCols+` WHERE enabled=1 OR draining=1 ORDER BY created_at, category_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []MemoQueue{}
+	for rows.Next() {
+		q, err := scanMemoQueue(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQL) ListQueuePendingStats(ctx context.Context) (map[string]QueuePending, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at)
+		FROM memo m
+		JOIN memo_category c ON c.membership_id=m.membership_id AND c.repo=m.repo AND c.name=m.category
+		JOIN memo_queue q ON q.category_id=c.id
+		WHERE q.enabled=1 AND m.state=? GROUP BY c.id`, MemoStatePending)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]QueuePending{}
+	for rows.Next() {
+		var id string
+		var p QueuePending
+		var maxCreated, maxReleased string
+		if err := rows.Scan(&id, &p.Count, &p.Oldest, &maxCreated, &maxReleased); err != nil {
+			return nil, err
+		}
+		p.Latest = maxCreated
+		if maxReleased > p.Latest {
+			p.Latest = maxReleased
+		}
+		out[id] = p
+	}
+	return out, rows.Err()
+}
+
+func (s *SQL) SetMemoQueueDraining(ctx context.Context, queueID string, on bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE memo_queue SET draining=? WHERE category_id=?`, b2i(on), queueID)
+	return err
+}
+
+func (s *SQL) SetMemoQueueNoReport(ctx context.Context, queueID, at string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE memo_queue SET no_report_at=? WHERE category_id=? AND no_report_at<>?`, at, queueID, at)
+	return err
+}
+
+func (t memoTx) SetQueueDraining(categoryID string, on bool) error {
+	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_queue SET draining=? WHERE category_id=? AND membership_id=?`, b2i(on), categoryID, t.mid)
+	return err
+}
+
+func (t memoTx) LockTenantSwitch() (bool, error) {
+	if _, err := t.q.ExecContext(t.ctx, `UPDATE tenant SET memo_queues=memo_queues
+		WHERE id=(SELECT tenant_id FROM membership WHERE id=?)`, t.mid); err != nil {
+		return false, err
+	}
+	var v int
+	err := t.q.QueryRowContext(t.ctx, `SELECT memo_queues FROM tenant WHERE id=(SELECT tenant_id FROM membership WHERE id=?)`, t.mid).Scan(&v)
+	return v != 0, err
+}
+
+func (t memoTx) CountLimitedDeliveries(kind string) (int, error) {
+	var n int
+	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_delivery WHERE membership_id=? AND state=? AND limit_kinds LIKE ?`,
+		t.mid, DeliveryOpen, "%,"+kind+",%").Scan(&n)
+	return n, err
+}
+
+func (t memoTx) PauseQueue(categoryID, at, reason string) (bool, error) {
+	return affected(t.q.ExecContext(t.ctx, `UPDATE memo_queue SET paused=1, paused_at=?, paused_reason=?, updated_at=?
+		WHERE category_id=? AND membership_id=? AND paused=0`, at, reason, at, categoryID, t.mid))
+}
+
+func (t memoTx) ResumeQueue(categoryID, at string) (bool, error) {
+	_, ok, err := t.GetQueue(categoryID)
+	if err != nil || !ok {
+		return false, err
+	}
+	_, err = t.q.ExecContext(t.ctx, `UPDATE memo_queue SET paused=0, paused_at='', paused_reason='', breaker_after=?, updated_at=?
+		WHERE category_id=? AND membership_id=? AND paused=1`, at, at, categoryID, t.mid)
+	return true, err
 }

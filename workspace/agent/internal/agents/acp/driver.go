@@ -99,6 +99,13 @@ type Hooks struct {
 	Load func(cl *Client, sid string) (json.RawMessage, error)
 	// Spawned runs once a spawn committed, with the runtime's currentModelId. nil: nothing.
 	Spawned func(modelID string)
+	// TurnWatch is called once per turn, just before session/prompt is written, with the
+	// runtime's session id. The function it returns runs only after session/prompt answered
+	// without a transport error or an interruption, and returns the turn's failure text ("" =
+	// the turn went fine). A runtime that reports a failed turn as a clean stopReason (copilot:
+	// end_turn plus a session.error in its own log) needs it, else the turn is recorded as
+	// completed. nil: the stopReason alone decides.
+	TurnWatch func(sid string) (outcome func() string)
 }
 
 var (
@@ -733,7 +740,8 @@ func (h *Handle) resumePump() {
 func (h *Handle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 	defer lease.Release()
 	agents.MarkTurnStartRun(h.slotSid, t.In)
-	defer func() { agents.MarkTurnEnd(h.slotSid, h.TurnState()) }()
+	failure := ""
+	defer func() { agents.MarkTurnEndErr(h.slotSid, h.TurnState(), failure) }()
 	h.setState(agents.TurnStarting)
 	if h.beforeCommit != nil {
 		h.beforeCommit()
@@ -763,6 +771,10 @@ func (h *Handle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 		h.buf.AddUserTurn(t.In.Prompt)
 	}
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
+	var outcome func() string
+	if h.hooks.TurnWatch != nil {
+		outcome = h.hooks.TurnWatch(sid)
+	}
 	written := false
 	if stream {
 		h.calls.Reset() // a turn boundary on a live connection: nothing from before it is open
@@ -814,6 +826,12 @@ func (h *Handle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 	case out.StopReason == "refusal":
 		h.setState(agents.TurnFailed)
 	default: // end_turn / max_tokens / …
+		if outcome != nil {
+			if failure = outcome(); failure != "" {
+				h.setState(agents.TurnFailed)
+				return
+			}
+		}
 		h.setState(agents.TurnCompleted)
 	}
 }

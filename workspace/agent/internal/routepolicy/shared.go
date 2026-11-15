@@ -28,6 +28,11 @@ func Shared() *Store {
 	return shared
 }
 
+// EnforceCapability is what /healthz reports as "route_policy": this Agent enforces the policy at
+// its create and start points, so the Control Plane may hand it a restricted member's create
+// (ADR 0138 D12, Upgrade). It must equal the Control Plane's routepolicysrv.AgentEnforceCapability.
+const EnforceCapability = "enforce-v1"
+
 // stateWire is GET /route-policy: the held policy and its freshness, for the Console and for
 // diagnosis. Nothing in it is secret.
 type stateWire struct {
