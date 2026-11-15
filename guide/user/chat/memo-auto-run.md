@@ -235,7 +235,7 @@ They arrive in the notification center. In **⚙ Settings → "Notifications"**,
 
 ### Nothing starts by itself
 
-When memos are waiting to run and nothing starts, one line under the category's header says why. The same line is at the top of the run history. Read it first.
+When memos are waiting to run and nothing starts, a line under the category's header says why, or a notice does (the pause, a workspace to restart). The same are at the top of the run history. Read them first.
 
 ![The line under a category's header: "It is outside the time set for auto-run. The next run can start at 11/16, 22:00."](../../assets/chatpages-autorun-waiting-en-light.webp)
 
@@ -260,7 +260,7 @@ When memos are waiting to run and nothing starts, one line under the category's 
 
 #### When another notice shows
 
-These two have a notice of their own, and no line about the reason besides it.
+The pause and the restart each have a notice of their own. A line for another reason can show beside it.
 
 | The notice on screen | What it means and what to do |
 |---|---|
