@@ -7,6 +7,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -40,6 +41,10 @@ func (s stubResolver) UsableRoutes() []string {
 // The live kind catalog reports each kind's usable routes; "none" is an empty list, and a kind
 // that does not answer within the budget is left out (unknown) instead of holding the answer up.
 func TestKindCatalogUsableRoutes(t *testing.T) {
+	// The catalog reads the held policy; the Agent's own store, opened on first use, takes the
+	// start environment and the tmux server with it, which in a live Workspace has taken up to 16 s
+	// (measured) and broke the budget below.
+	useHidingPolicy(t, routepolicy.Policy{Revision: 1})
 	old := usableRoutesBudget
 	usableRoutesBudget = 300 * time.Millisecond
 	t.Cleanup(func() { usableRoutesBudget = old })
