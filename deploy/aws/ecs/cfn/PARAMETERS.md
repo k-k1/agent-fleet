@@ -1329,8 +1329,18 @@ are redirected to Squid and the 443 relay, 3128 is the explicit proxy, and every
 entry and records the rest. A security group cannot name ports an organisation adds later and drops
 without a record, so nftables' `input` chain admits only 3128 and the redirected flows. The group has
 no egress rules (all outbound), which the relay needs to dial named ports (ADR 0122, addendum
-2026-11-05; guide/operate/aws-ecs/egress-gateway.md). The template is within 19 bytes of its size budget
+2026-11-05; guide/operate/aws-ecs/egress-gateway.md). The template is within a few bytes of its size budget
 (`cfn-template-size-test.py`): put prose here, not in the template.
+
+The user data finds the hot-attached interface by MAC, and udev renames it (`eth1` to `ens6`) a moment
+after it appears. A name read before the rename is gone when `networkctl reconfigure` runs
+(`No such device`), and `set -e` then ends the script before Squid is installed (#4211). So every
+lookup is preceded by a bounded `udevadm settle`; a timeout (nonzero status: the queue is not empty,
+so the name may still change) counts as "not resolved yet" and is retried, never trusted. The name is resolved again after the route-metric drop-in is placed, and the drop-in and
+`/etc/af-egress/dev` (read by `af-egress-route` on every boot) are redone if it changed. Under the
+default network the drop-in must also sort after amazon-ec2-net-utils' `eni.conf`
+(`/run/systemd/network/70-<dev>.network.d/`; drop-ins merge in file-name order whatever their
+directory), which is why it is named `zz-af-egress.conf`.
 
 ### Egress gateway group
 
