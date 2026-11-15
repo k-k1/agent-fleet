@@ -141,6 +141,10 @@ export interface Session {
   // notification, so without this the row of a session that handed its next step on is the row
   // of one with nothing left to do.
   handoffPending?: boolean;
+  // The Agent marked a hook-less kind idle because the input of its last turn never reached
+  // the CLI (agy / copilot / cursor, after a 30-45 s window). Not a turn end: the prompt may
+  // still sit unsent in the composer. Cleared by the Agent on a resend or the next turn.
+  inputNotDelivered?: boolean;
   // The opening line of the agent's newest utterance — one line, already whitespace-collapsed
   // and capped at 120 runes by the Agent (ADR 0078 decision 12). Absent until the session has
   // said something, and for agy, shell and ssm. Display only, on the overview card:

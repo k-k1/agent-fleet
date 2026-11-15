@@ -71,8 +71,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   // has launched (the session is done; the next step is a press away and shows up nowhere
   // else). Everything else (waiting for input / running / stopped …) collapses to an
   // icon-only chip; the text moves to title.
+  // An input that never reached the CLI keeps its text too: the row reads idle otherwise.
   // A stopped row with a booked auto-resume keeps its text too (just the clock, st.short).
-  const loud = st.cls.includes("question") || st.cls.includes("handoff") || st.cls.includes("resume");
+  const loud = st.cls.includes("question") || st.cls.includes("handoff") || st.cls.includes("resume") || st.cls.includes("undelivered");
   // Whether this session's answer is being read aloud. Mirror narration, summaries and
   // session notifications all put the originating session name into the tts store; a
   // pending synthesis (preparing) counts too.
