@@ -83,8 +83,8 @@ confluence --help
 
 `spaces`・オプションなしの `children`・`move` は、Atlassian の新しい API に自動で切り替わります。次のものはまだ失敗します。
 
-- 「410」（Atlassian が廃止した API をまだ使っている）: コメントの一覧と追加、添付ファイル、ページのバージョン、プロパティ（front matter）
-- 「401」や「403」（必要な権限を接続が要求していない）: `delete`・`copy-tree`・`export`、`--recursive --json`・`--format tree`・`--type folders` / `all` を付けた `children`、コメントへの返信（`--parent`）、インラインコメント、`comment-resolve`
+- 「410」（Atlassian が廃止した API をまだ使っている）: コメントの一覧、フッターコメントの追加と `--inline-properties`・`--inline-original-selection`・`--inline-marker-ref` を使うインラインコメントの追加、添付ファイル、ページのバージョン、プロパティ（front matter）
+- 「401」や「403」（必要な権限を接続が要求していない）: `delete`・`copy-tree`・`export`、`--recursive --json`・`--format tree`・`--type folders` / `all` を付けた `children`、コメントへの返信（`--parent`）、`--inline-selection` だけを指定したインラインコメント、`comment-resolve`
 
 フォルダは `create --type folder` で作れません。
 

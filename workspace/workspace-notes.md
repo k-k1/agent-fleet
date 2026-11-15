@@ -213,9 +213,10 @@ directory belongs to someone else.
   `delete`, `comment`, uploads, anything unknown) are never re-run, so after a failed or timed-out
   write check Confluence before repeating it. `spaces`, plain `children` and `move` switch to
   the v2 API by themselves; `delete`, `copy-tree`, `export`, `children --recursive --json` /
-  `--format tree` / `--type folders|all`, comment replies, inline comments and `comment-resolve`
-  need scopes the connection does not request (401/403), and listing or adding comments,
-  attachments, versions and properties are still v1 in the CLI and may answer 410. A grant from before the v2 page scopes gets one line naming the fix
+  `--format tree` / `--type folders|all`, comment replies, inline comments given only
+  `--inline-selection` and `comment-resolve` need scopes the connection does not request
+  (401/403), and listing comments, other comment adds, attachments, versions and properties are
+  still v1 in the CLI and may answer 410. A grant from before the v2 page scopes gets one line naming the fix
   (administrator adds `read:page` / `write:page` / `read:space` to the Atlassian app, member
   reconnects Jira); report it. Never run
   `confluence init`, never set `CONFLUENCE_*` variables or `--profile` (a config of the user's own is

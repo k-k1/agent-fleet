@@ -471,11 +471,12 @@ them in for one `exec`:
   `delete`, `copy-tree`, `export`, `children --recursive --json` and `children --format tree` also
   read ancestors and need `read:content.metadata:confluence` (plus `delete:*` for delete);
   `children --type folders|all` needs `read:hierarchical-content:confluence`. Neither is requested,
-  so those answer 401 or 403. Listing and adding page comments, attachments, versions and
-  properties are still v1 in the CLI and answer 410 on a site where Atlassian removed them
-  (comments and attachments did, live); comment replies (`--parent`), inline comments and
-  `comment-resolve` go to v2 and need `read:comment:confluence` / `write:comment:confluence`,
-  also not requested. The shim stays for the page core
+  so those answer 401 or 403. Listing comments, adding a footer comment or an inline comment with
+  `--inline-properties` / `--inline-original-selection` / `--inline-marker-ref`, attachments,
+  versions and properties are still v1 in the CLI and answer 410 on a site where Atlassian removed
+  them (comments and attachments did, live); comment replies (`--parent`), inline comments given
+  only `--inline-selection`, and `comment-resolve` go to v2 and need `read:comment:confluence` /
+  `write:comment:confluence`, also not requested. The shim stays for the page core
   because the CLI's Markdown→storage is markdown-it without CJK-friendly emphasis:
   `**「括弧」**の` keeps its asterisks. Removing it, and the scopes that removal needs, is #3274.
 - **Read-only retry**: `readonly_cmd` in the wrapper re-runs the subcommands it lists

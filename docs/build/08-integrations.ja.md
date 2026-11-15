@@ -428,10 +428,11 @@ Jira は git でなく作業項目インボックス
   `move` が v2 で動く（`spaces` と `children` は 2026-11-15 に実機で確認）。`delete`・`copy-tree`・`export`・
   `children --recursive --json`・`children --format tree` は祖先を読むため `read:content.metadata:confluence`
   （delete はさらに `delete:*`）、`children --type folders|all` は `read:hierarchical-content:confluence` が要り、
-  どちらも未要求なので 401 か 403 になる。ページコメントの一覧と追加・添付・バージョン・プロパティは CLI でも
-  まだ v1 で、Atlassian が廃止したサイトでは 410 になる（コメントと添付は実機で 410）。コメントへの返信
-  （`--parent`）・インラインコメント・`comment-resolve` は v2 を使い、`read:comment:confluence` /
-  `write:comment:confluence` が要るが、これも未要求。ページ操作の shim を残すのは、CLI の Markdown→storage が CJK 対応の強調を持たない
+  どちらも未要求なので 401 か 403 になる。コメントの一覧、フッターコメントの追加と `--inline-properties`・
+  `--inline-original-selection`・`--inline-marker-ref` を使うインラインコメントの追加、添付・バージョン・
+  プロパティは CLI でもまだ v1 で、Atlassian が廃止したサイトでは 410 になる（コメントと添付は実機で 410）。
+  コメントへの返信（`--parent`）、`--inline-selection` だけを指定したインラインコメント、`comment-resolve` は
+  v2 を使い、`read:comment:confluence` / `write:comment:confluence` が要るが、これも未要求。ページ操作の shim を残すのは、CLI の Markdown→storage が CJK 対応の強調を持たない
   markdown-it で、`**「括弧」**の` のアスタリスクが残るため。shim の撤去と、そのために要るスコープは #3274。
 - **読み取りのリトライ**: ラッパーの `readonly_cmd` に挙げたサブコマンド（`attachments` は
   `-d`/`--download`/`--dest` なしのときだけ）は、CLI 自身のエラー行から読んだ通信エラー（ECONNRESET・

@@ -84,8 +84,8 @@ re-run on their own. Search for the title or read the page before running it aga
 
 `spaces`, `children` without options, and `move` switch to Atlassian's newer API by themselves. The rest of this list still fails:
 
-- With "410" (they still use an API Atlassian has removed): listing and adding comments, attachments, page versions and properties (front matter)
-- With "401" or "403" (the connection does not ask for the permission they need): `delete`, `copy-tree`, `export`; `children` with `--recursive --json`, `--format tree` or `--type folders` / `all`; replying to a comment (`--parent`), inline comments and `comment-resolve`
+- With "410" (they still use an API Atlassian has removed): listing comments, adding a footer comment or an inline comment with `--inline-properties`, `--inline-original-selection` or `--inline-marker-ref`, attachments, page versions and properties (front matter)
+- With "401" or "403" (the connection does not ask for the permission they need): `delete`, `copy-tree`, `export`; `children` with `--recursive --json`, `--format tree` or `--type folders` / `all`; replying to a comment (`--parent`), an inline comment given only `--inline-selection`, and `comment-resolve`
 
 Folders cannot be created with `create --type folder`.
 
