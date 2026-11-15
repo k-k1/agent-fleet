@@ -95,6 +95,8 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     zero. When the watch state cannot be read the row carries `wakersUnknown: true` and no
     `wakers`, never zeros the Agent is not sure of (`Engine.Wakers`,
     `internal/watch/owner.go`).
+  - `GET /sessions` carries `"queueReport": 1` beside `sessions`, so a Control Plane can tell an
+    Agent that omits `wakers` because the session holds nothing from an older one that does not say.
   - `POST /sessions/{name}/retire` ends all of that for the session and for every session it
     started at any depth (`origin == "session"` and the `originSession` chain, the walk
     `spendDescendants` makes), cancels their booked resumes, then halts them. The answer lists

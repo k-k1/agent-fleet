@@ -23,11 +23,11 @@ type StateUnreadable interface {
 // built-in delivered to the member puts nothing into the session. One whose deliveries are
 // spent and that holds nothing pending cannot fire again; everything else counts, a claimed
 // notice (Done) and an ended notice waiting for delivery included.
-func (s Subscription) wakesOwner(now time.Time) bool {
+func (e *Engine) wakesOwner(s Subscription, now time.Time) bool {
 	if s.Notify == NotifyMember {
 		return false
 	}
-	if s.Done {
+	if s.Done || e.inflight[s.ID] > 0 {
 		return true
 	}
 	if s.Builtin != "" {
@@ -48,7 +48,7 @@ func (e *Engine) Wakers(owner string) (watches, timers int, ok bool) {
 	}
 	now := e.now()
 	for _, s := range e.state.Subs {
-		if s.Owner != owner || !s.wakesOwner(now) {
+		if s.Owner != owner || !e.wakesOwner(s, now) {
 			continue
 		}
 		if !s.Due.IsZero() {
@@ -87,7 +87,7 @@ func (e *Engine) EndOwner(ctx context.Context, owner string) (ended Ended, unend
 	var keep []Subscription
 	var bookings []string
 	for _, s := range e.state.Subs {
-		if s.Owner != owner || !s.wakesOwner(now) {
+		if s.Owner != owner || !e.wakesOwner(s, now) {
 			keep = append(keep, s)
 			continue
 		}
@@ -135,4 +135,16 @@ func (e *Engine) cancelBookings(ctx context.Context, ids []string) []string {
 		}
 	}
 	return left
+}
+
+// markInflightLocked adds d to the in-flight count of c's subscription and its twins'.
+func (e *Engine) markInflightLocked(c claimed, d int) {
+	if e.inflight == nil {
+		e.inflight = map[string]int{}
+	}
+	for _, x := range append([]claimed{c}, c.twins...) {
+		if e.inflight[x.sub.ID] += d; e.inflight[x.sub.ID] <= 0 {
+			delete(e.inflight, x.sub.ID)
+		}
+	}
 }

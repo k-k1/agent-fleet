@@ -725,6 +725,7 @@ func (c *createRun) launch(meta session.Meta) {
 		// The row stays either way: a failed launch task is reported as before.
 		defer chatx.MarkInstrSent(name, req.instr)
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
+			status.MarkFirstTurnDelivering(session.UUID(meta.Dir, name))
 			if err := h.Send(agents.TurnInput{Prompt: p, Origin: createTurnOrigin(req, c.spawnParent),
 				Instr: req.instr, Schedule: scheduleRefOf(req.Source, req.ScheduleID, req.ScheduleSlot)}); err != nil {
 				log.Printf("managed initial prompt %s: %v", name, err)

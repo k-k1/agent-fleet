@@ -443,6 +443,7 @@ func TestRowQueueTurnHoldsTheFirstTurnAcrossAStopAndALaterTurn(t *testing.T) {
 		t.Fatalf("a turn that has not ended is reported: %+v", s.QueueTurn)
 	}
 	status.ArmFirstTurn(sid, false)
+	status.MarkFirstTurnDelivering(sid)
 	status.Persist(sid, "working")
 	time.Sleep(10 * time.Millisecond)
 	status.PersistTurnEndReason(sid, "idle", status.TurnEndReasonAborted)
@@ -472,6 +473,7 @@ func TestRowQueueTurnOfAKindWithoutHooksHasNoOutcomeButTimes(t *testing.T) {
 	newRetireEnv(t)
 	m, sid := queueRow(t, "q2", session.KindClaude)
 	status.ArmFirstTurn(sid, true)
+	status.MarkFirstTurnDelivering(sid)
 	status.Persist(sid, "working")
 	status.PersistTurnEnd(sid, "idle")
 	got := wireSession(m, false).QueueTurn
@@ -488,6 +490,7 @@ func TestRowQueueTurnIsAbsentWhenTheEndSeenMayBeALaterTurns(t *testing.T) {
 	newRetireEnv(t)
 	m, sid := queueRow(t, "q3", session.KindClaude)
 	status.ArmFirstTurn(sid, false)
+	status.MarkFirstTurnDelivering(sid)
 	status.Persist(sid, "working")
 	status.Remove(sid) // stopped before the end was seen
 	status.Persist(sid, "working")
@@ -501,6 +504,7 @@ func TestRowQueueTurnIsAbsentWhenThePromptWasNeverDelivered(t *testing.T) {
 	newRetireEnv(t)
 	m, sid := queueRow(t, "q4", session.KindClaude)
 	status.ArmFirstTurn(sid, false)
+	status.MarkFirstTurnDelivering(sid)
 	status.Persist(sid, "working")
 	status.PersistTurnEnd(sid, "idle")
 	m.InitialPromptState = session.InitialPromptFailed
@@ -521,8 +525,8 @@ func TestRetireEndsAWatchMadeWhileTheSessionWasStillRunning(t *testing.T) {
 	r := newRetireEnv(t)
 	writeMeta(t, session.Meta{Name: "a"})
 	r.hold(t, "a")
-	r.alive["a"] = true // mid-turn: not barred yet
 	r.e.SetWaker(&cancelHook{retireWaker: r.w, fn: func() {
+		r.e.Barred = nil // a call that passed the check before the mark was written
 		_, err := r.e.Subscribe(context.Background(), watch.Request{Owner: "a", Source: "github", Ref: "o/r#2", Types: []string{"pr.merged"}})
 		if err != nil {
 			t.Errorf("late watch: %v", err)
@@ -534,5 +538,147 @@ func TestRetireEndsAWatchMadeWhileTheSessionWasStillRunning(t *testing.T) {
 	}
 	if out.Sessions[0].Ended.Watches != 2 {
 		t.Fatalf("report = %+v, want both watches ended", out.Sessions[0])
+	}
+}
+
+// The list envelope names the contract this Agent reports under, so a Control Plane can tell an
+// Agent that omits wakers because it holds nothing from one that does not say.
+func TestListEnvelopeCarriesQueueReport(t *testing.T) {
+	newRetireEnv(t)
+	rec := httptest.NewRecorder()
+	HandleListSessions(rec, httptest.NewRequest(http.MethodGet, "/sessions", nil))
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil || string(env["queueReport"]) != "1" {
+		t.Fatalf("envelope = %s (%v)", rec.Body, err)
+	}
+}
+
+// A retired session is not started by an input of any kind, and an automatic start is refused;
+// only a person's start clears the mark.
+func TestRetiredSessionRefusesAutomaticStartsAndInputs(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "a"})
+	postRetire(t, "a")
+	m, _ := session.ReadMeta("a")
+	if _, err := resumeManaged(nil, m); !errors.Is(err, errSessionRetired) {
+		t.Fatalf("a managed input started a retired session: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/a/start", nil)
+	req.SetPathValue("name", "a")
+	rec := httptest.NewRecorder()
+	HandleStartSession(rec, asAutomaticStart(req))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "session_retired") {
+		t.Fatalf("automatic start = %d %s", rec.Code, rec.Body)
+	}
+	if m, _ := session.ReadMeta("a"); m.RetiredAt == "" {
+		t.Fatal("an automatic start cleared the mark")
+	}
+	if err := reserveSpawnSlot("a"); err == nil {
+		t.Fatal("a retired session reserved a child slot")
+	}
+}
+
+// A start that checked the mark holds the gate until its launch is done, so a retire waits for it
+// instead of landing in between.
+func TestRetireWaitsForAStartInProgress(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "a"})
+	g := retireGate("a")
+	g.RLock()
+	done := make(chan struct{})
+	go func() { postRetire(t, "a"); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("retire finished while a start held the gate")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if m, _ := session.ReadMeta("a"); m.RetiredAt != "" {
+		t.Fatal("retire marked the session under a start in progress")
+	}
+	g.RUnlock()
+	<-done
+	if m, _ := session.ReadMeta("a"); m.RetiredAt == "" {
+		t.Fatal("retire did not run after the start finished")
+	}
+}
+
+// A create that reserved a slot before the retire and publishes after it is found and retired.
+func TestRetireFindsAChildPublishedWhileItRuns(t *testing.T) {
+	r := newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	spawnInflight.mu.Lock()
+	spawnInflight.n["p"] = 1
+	spawnInflight.mu.Unlock()
+	r.hold(t, "p")
+	done := make(chan []retireReport, 1)
+	go func() { _, out := postRetire(t, "p"); done <- out.Sessions }()
+	time.Sleep(400 * time.Millisecond)
+	writeMeta(t, session.Meta{Name: "late", Origin: session.OriginSession, OriginSession: "p"})
+	if _, err := r.e.Subscribe(context.Background(), watch.Request{Owner: "late", Source: "github", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
+		t.Fatal(err)
+	}
+	spawnInflight.mu.Lock()
+	delete(spawnInflight.n, "p")
+	spawnInflight.mu.Unlock()
+	got := <-done
+	if retiredNames(got) != "p,late" {
+		t.Fatalf("retired %s", retiredNames(got))
+	}
+	if m, _ := session.ReadMeta("late"); m.RetiredAt == "" {
+		t.Fatal("the late child is not retired")
+	}
+	if w, _, _ := r.e.Wakers("late"); w != 0 {
+		t.Fatalf("the late child still holds %d", w)
+	}
+}
+
+// A previous process died after the mark (the session still runs) or after the stop (the
+// subscriptions were not swept): the next process finishes it with a fresh engine.
+func TestReconcileRetiredFinishesWhatACrashLeft(t *testing.T) {
+	for _, stopped := range []bool{false, true} {
+		r := newRetireEnv(t)
+		writeMeta(t, session.Meta{Name: "a"})
+		r.hold(t, "a")
+		m := session.Meta{Name: "a", RetiredAt: "2026-11-15T10:00:00Z"}
+		if stopped {
+			m.StoppedAt = "2026-11-15T10:00:01Z"
+		}
+		writeMeta(t, m)
+		fresh := watch.New(watchDiskStore{}, newWatchSink(), stubSource{}, &watch.Time{})
+		fresh.Barred = watchBarred
+		fresh.SetWaker(r.w)
+		useWatchEngine(t, fresh)
+		if w, tm, _ := fresh.Wakers("a"); w+tm != 2 {
+			t.Fatalf("stopped=%v setup: %d %d", stopped, w, tm)
+		}
+		if n := ReconcileRetired(); n != 1 {
+			t.Fatalf("stopped=%v: reconciled %d", stopped, n)
+		}
+		if w, tm, _ := fresh.Wakers("a"); w+tm != 0 {
+			t.Fatalf("stopped=%v: still holds %d %d", stopped, w, tm)
+		}
+		if got, _ := session.ReadMeta("a"); got.RetiredAt == "" {
+			t.Fatalf("stopped=%v: the mark was lost", stopped)
+		}
+	}
+}
+
+// An empty or undecodable state file is not "holds nothing".
+func TestRowWithAnEmptyOrBrokenWatchStateIsUnknown(t *testing.T) {
+	for name, content := range map[string][]byte{"empty": {}, "cut": []byte(`{"subs":[`)} {
+		r := newRetireEnv(t)
+		writeMeta(t, session.Meta{Name: "a"})
+		if err := os.MkdirAll(filepath.Dir(watchStateStore.Path(watchStateKey)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(watchStateStore.Path(watchStateKey), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		useWatchEngine(t, watch.New(watchDiskStore{}, newWatchSink(), stubSource{}, &watch.Time{}))
+		m, _ := session.ReadMeta("a")
+		if s := wireSession(m, false); !s.WakersUnknown || s.Wakers != nil {
+			t.Fatalf("%s: wakers=%+v unknown=%v", name, s.Wakers, s.WakersUnknown)
+		}
+		_ = r
 	}
 }

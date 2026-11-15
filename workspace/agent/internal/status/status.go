@@ -424,6 +424,7 @@ func Remove(sid string) {
 	unlock, locked := lockSid(sid)
 	defer unlock()
 	statusFiles.Remove(sid)
+	voidOpenFirstTurn(sid)
 	// Unlinking the lock file without holding it would let a second holder lock a fresh
 	// inode alongside the first; on timeout the file stays until the next Remove.
 	if locked {

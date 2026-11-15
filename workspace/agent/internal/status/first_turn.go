@@ -33,6 +33,9 @@ type FirstTurn struct {
 	// NoReason marks a kind that records no reason for a turn end (the hook-less TUI kinds): its
 	// outcome stays empty however the end was seen.
 	NoReason bool `json:"noReason,omitempty"`
+	// Delivering: the prompt's delivery began (MarkFirstTurnDelivering). A turn that starts
+	// before it is somebody else's, and voids the ledger.
+	Delivering bool `json:"delivering,omitempty"`
 	// Starts counts the turn starts seen since ArmedAt; StartAt is the first one's time.
 	Starts  int    `json:"starts,omitempty"`
 	StartAt string `json:"startAt,omitempty"`
@@ -48,15 +51,40 @@ type FirstTurn struct {
 
 var firstTurns = fstore.JSON[FirstTurn](paths.AgentStateDir, "session-first-turn", ".json")
 
-// ArmFirstTurn starts the ledger for sid. Arming twice keeps the first ledger: a session has one
-// first turn.
+// ArmFirstTurn starts the ledger for sid, replacing any older one: it is called by the create
+// of a delivery's session, and a name and directory that are used again are a new session.
 func ArmFirstTurn(sid string, noReason bool) {
 	unlock, _ := lockSid(sid)
 	defer unlock()
-	if _, ok := firstTurns.Read(sid); ok {
+	_ = firstTurns.Write(sid, FirstTurn{ArmedAt: time.Now().Format(time.RFC3339Nano), NoReason: noReason})
+}
+
+// MarkFirstTurnDelivering records that the delivery's prompt is about to be sent. A turn already
+// seen is not the prompt's, so it voids the ledger instead.
+func MarkFirstTurnDelivering(sid string) {
+	unlock, _ := lockSid(sid)
+	defer unlock()
+	t, ok := firstTurns.Read(sid)
+	if !ok || t.Done || t.Void {
 		return
 	}
-	_ = firstTurns.Write(sid, FirstTurn{ArmedAt: time.Now().Format(time.RFC3339Nano), NoReason: noReason})
+	if t.Starts > 0 {
+		t.Void = true
+	} else {
+		t.Delivering = true
+	}
+	_ = firstTurns.Write(sid, t)
+}
+
+// voidOpenFirstTurn is called with the per-sid lock held when the status record is deleted (a
+// stop, a heal): a turn still open is one whose end may now go unseen. A settled ledger stays.
+func voidOpenFirstTurn(sid string) {
+	t, ok := firstTurns.Read(sid)
+	if !ok || t.Done || t.Void || t.Starts == 0 {
+		return
+	}
+	t.Void = true
+	_ = firstTurns.Write(sid, t)
 }
 
 // ReadFirstTurn returns the settled first turn of sid; ok is false until it has ended, and for
@@ -83,12 +111,22 @@ func noteFirstTurnWrite(sid string, s SessionStatus) {
 	switch {
 	case s.State == "working":
 		prev, had := Read(sid)
+		newPrompt := had && prev.State == "working" && s.PromptID != "" && prev.PromptID != "" && s.PromptID != prev.PromptID
+		if newPrompt {
+			// A different prompt id while the record says working: a new turn whose start was
+			// not seen as one (the first turn's end was missed).
+			t.Void = true
+			break
+		}
 		if had && (prev.State != "idle" || prev.InputNotDelivered) {
 			// A heartbeat, the answer to a question or permission, or the input of this same turn
 			// turning up after the list had called it undelivered: the same turn.
 			return
 		}
 		t.Starts++
+		if !t.Delivering {
+			t.Void = true // a turn that is not the delivery's prompt's
+		}
 		switch t.Starts {
 		case 1:
 			t.StartAt = time.Now().Format(time.RFC3339Nano)

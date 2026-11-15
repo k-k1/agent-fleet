@@ -114,6 +114,10 @@ type Engine struct {
 	// loadFailed: the stored state exists and could not be read, so the empty state in use is
 	// a fallback and not a fact (Wakers).
 	loadFailed bool
+	// inflight counts, per subscription ID, the claimed notices being delivered: a capped
+	// built-in has nothing pending then and a deadline watch may cross its deadline, yet the
+	// notice is still going into the owner (Wakers, EndOwner).
+	inflight map[string]int
 }
 
 // New builds an engine over the given sources.
@@ -890,6 +894,9 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 		}
 		claims = nil
 	}
+	for _, c := range claims {
+		e.markInflightLocked(c, 1)
+	}
 	e.mu.Unlock()
 	for _, o := range gone {
 		e.sink.Forget(o)
@@ -903,6 +910,7 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 			err = e.sink.Inject(c.sub, c.evs)
 		}
 		e.mu.Lock()
+		e.markInflightLocked(c, -1)
 		if err != nil {
 			e.releaseLocked(c)
 		} else {

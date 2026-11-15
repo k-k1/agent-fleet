@@ -9,6 +9,7 @@ func armed(t *testing.T, sid string, noReason bool) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	ArmFirstTurn(sid, noReason)
+	MarkFirstTurnDelivering(sid)
 }
 
 func TestFirstTurnSettlesOnceWhateverFollows(t *testing.T) {
@@ -122,4 +123,77 @@ func TestFirstTurnReopenedInputIsTheSameTurn(t *testing.T) {
 	if _, ok := ReadFirstTurn(sid); !ok {
 		t.Fatal("the reopened input voided the first turn")
 	}
+}
+
+// The first end was missed and a second prompt's turn follows on a record that still says
+// working: a different prompt id is a new turn, not a heartbeat.
+func TestFirstTurnDifferentPromptWhileWorkingVoids(t *testing.T) {
+	const sid = "ft-prompt"
+	armed(t, sid, false)
+	PersistOpen(sid, "working", "first")
+	PersistOpen(sid, "working", "first")
+	PersistOpen(sid, "working", "second")
+	PersistTurnEndFor(sid, "idle", "", "second")
+	if got, ok := ReadFirstTurn(sid); ok {
+		t.Fatalf("the second prompt's end settled the first turn: %+v", got)
+	}
+}
+
+// Deleting the status record (a stop, a heal) with the turn open voids the ledger; a settled one
+// is kept.
+func TestFirstTurnRemoveVoidsAnOpenLedgerAndKeepsASettledOne(t *testing.T) {
+	armed(t, "ft-rm-open", false)
+	Persist("ft-rm-open", "working")
+	Remove("ft-rm-open")
+	Persist("ft-rm-open", "working")
+	PersistTurnEnd("ft-rm-open", "idle")
+	if got, ok := ReadFirstTurn("ft-rm-open"); ok {
+		t.Fatalf("an end after a removal settled the ledger: %+v", got)
+	}
+	armed(t, "ft-rm-done", false)
+	Persist("ft-rm-done", "working")
+	PersistTurnEnd("ft-rm-done", "idle")
+	Remove("ft-rm-done")
+	if _, ok := ReadFirstTurn("ft-rm-done"); !ok {
+		t.Fatal("a stop deleted a settled first turn")
+	}
+}
+
+// A person typing before the delivery began owns that turn: it is not the prompt's.
+func TestFirstTurnBeforeDeliveryIsNotThePromptsTurn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const sid = "ft-early"
+	ArmFirstTurn(sid, false)
+	Persist(sid, "working") // a person's input, the prompt not yet sent
+	PersistTurnEnd(sid, "idle")
+	MarkFirstTurnDelivering(sid)
+	Persist(sid, "working")
+	PersistTurnEnd(sid, "idle")
+	if got, ok := ReadFirstTurn(sid); ok {
+		t.Fatalf("a turn before the delivery settled the ledger: %+v", got)
+	}
+	// And a start seen before the mark voids it even when nothing follows.
+	ArmFirstTurn("ft-early2", false)
+	Persist("ft-early2", "working")
+	MarkFirstTurnDelivering("ft-early2")
+	Persist("ft-early2", "idle")
+	Persist("ft-early2", "working")
+	PersistTurnEnd("ft-early2", "idle")
+	if _, ok := ReadFirstTurn("ft-early2"); ok {
+		t.Fatal("a ledger whose turn began before the delivery was kept")
+	}
+}
+
+func TestArmReplacesALedgerOfAReusedName(t *testing.T) {
+	armed(t, "ft-reuse", false)
+	Persist("ft-reuse", "working")
+	PersistTurnEnd("ft-reuse", "idle")
+	if _, ok := ReadFirstTurn("ft-reuse"); !ok {
+		t.Fatal("setup")
+	}
+	ArmFirstTurn("ft-reuse", false)
+	if _, ok := ReadFirstTurn("ft-reuse"); ok {
+		t.Fatal("a new session of the same name kept the old session's first turn")
+	}
+	RemoveFirstTurn("ft-reuse")
 }

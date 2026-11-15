@@ -50,6 +50,16 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
+	// From the check of the retired mark to the end of the launch (and the clearing of the
+	// mark), so a retire cannot slip between them (retireGates).
+	g := retireGate(name)
+	g.RLock()
+	defer g.RUnlock()
+	auto := r.Context().Value(autoStartKey{}) != nil
+	if cur, ok := session.ReadMeta(name); ok && auto && isRetired(cur) {
+		httpx.WriteErr(w, http.StatusConflict, "session_retired", errSessionRetired.Error())
+		return
+	}
 	lease, ok := enterSessionGate(w, r, name)
 	if !ok {
 		return
@@ -80,7 +90,9 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// A person's start makes a retired session an ordinary one again (ADR 0137 §6). The
 	// callers that start sessions on their own refuse a retired one before they get here.
-	clearRetired(name)
+	if !auto {
+		clearRetired(name)
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

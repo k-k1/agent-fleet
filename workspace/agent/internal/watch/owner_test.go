@@ -208,3 +208,28 @@ func TestBarredOwnerGetsNoNewSubscriptionAndNoBuiltin(t *testing.T) {
 		t.Fatalf("a session that is no longer barred gets its built-in again: %d", w)
 	}
 }
+
+// A built-in at its delivery cap has nothing pending once claimed, yet its last notice is still
+// going into the owner: it counts, and a retire in that moment ends it.
+func TestWakersCountsAClaimedCappedBuiltinWhileItIsDelivered(t *testing.T) {
+	sink := &fakeSink{answer: Ready}
+	e, _, c := newTestEngine(&fakeSource{}, sink)
+	sp := ciSpec("a")
+	sp.Max = 1
+	e.SyncBuiltins("ci", []BuiltinSpec{sp})
+	observe(e, ev("pr.checks.failed", "h1"))
+	var during int
+	var ended Ended
+	sink.onInject = func() {
+		during, _, _ = e.Wakers("a")
+		ended, _, _ = e.EndOwner(context.Background(), "a")
+	}
+	e.Tick(context.Background())
+	c.add(time.Minute)
+	if during != 1 || ended.Builtins != 1 {
+		t.Fatalf("during delivery: counted %d, ended %+v; want 1 and one built-in", during, ended)
+	}
+	if w, _, _ := e.Wakers("a"); w != 0 {
+		t.Fatalf("after the delivery: %d", w)
+	}
+}

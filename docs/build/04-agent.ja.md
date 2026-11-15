@@ -87,6 +87,8 @@ source_of_truth: "コード（本書は地図と設計意図）"
     `notify: parent` の watch は親に数える。`timers` は期限のあるもの。両方 0 なら項目ごと出さない。
     watch の状態を読めないときは `wakers` を付けず `wakersUnknown: true` を付ける。確信のない 0 は
     返さない（`Engine.Wakers`、`internal/watch/owner.go`）。
+  - `GET /sessions` は `sessions` の隣に `"queueReport": 1` を載せる。Control Plane が、何も持たないから
+    `wakers` を省く Agent と、何も言わない古い Agent を見分けるため。
   - `POST /sessions/{name}/retire` は、そのセッションと、それが始めた全セッション（深さを問わない。
     `origin == "session"` と `originSession` の連鎖で、`spendDescendants` と同じ辿り方）について、
     上のものを全部終わらせ、予約済みの再開を取り消し、halt する。答えは、セッションの一覧、それぞれで

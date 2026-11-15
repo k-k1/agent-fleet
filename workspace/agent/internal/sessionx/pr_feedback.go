@@ -576,6 +576,7 @@ func startSessionInProcess(name string) error {
 	}
 	req, _ := http.NewRequest(http.MethodPost, "/sessions/"+name+"/start", nil)
 	req.SetPathValue("name", name)
+	req = asAutomaticStart(req)
 	rec := &captureWriter{header: http.Header{}}
 	HandleStartSession(rec, req)
 	if rec.status != 0 && (rec.status < 200 || rec.status >= 300) {

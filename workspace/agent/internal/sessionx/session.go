@@ -380,10 +380,10 @@ func fillWakers(s *session.Session, m session.Meta) {
 
 // fillQueueTurn sets how a queue delivery's first turn ended (ADR 0137 §7). The ledger is
 // settled once (status.FirstTurn) and survives a stop and a restart. A delivery whose prompt
-// never went in has no first turn, whatever the ledger says.
+// never went in, or whose delivery nothing confirmed (unknown after a restart), has no first turn,
+// whatever the ledger says.
 func fillQueueTurn(s *session.Session, m session.Meta) {
-	if m.QueueDelivery == "" || m.InitialPromptState == session.InitialPromptFailed ||
-		m.InitialPromptState == session.InitialPromptPending {
+	if m.QueueDelivery == "" || m.InitialPromptState != session.InitialPromptDelivered {
 		return
 	}
 	t, ok := status.ReadFirstTurn(session.UUID(m.Dir, m.Name))
