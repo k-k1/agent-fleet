@@ -623,3 +623,142 @@ func TestRetireRefusesABadBody(t *testing.T) {
 		t.Fatal("a refused request retired the session")
 	}
 }
+
+// A read of the meta that lands in the middle of an ordinary writer (which truncates and rewrites
+// the file under the meta lock) must not stand for "no act": once the writer is done the retire
+// sees the act and releases the session, for the member and for what is above it.
+func TestRetireDoesNotReadAHalfWrittenMetaAsNoAct(t *testing.T) {
+	newActEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+	listed := listActMark(t)
+	notePersonAct("p")
+	notePersonAct("c")
+	in, err := beginRetire("p", listed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"p", "c"} {
+		path := session.MetaPath(name)
+		full, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sessionLockMu.Lock() // an ordinary writer, between its truncate and its write
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		rep := &retireReport{Name: name, Unended: []string{}}
+		go func() { retireOne(context.Background(), rep, in); close(done) }()
+		select {
+		case <-done:
+			sessionLockMu.Unlock()
+			t.Fatalf("%s: the retire went on with a meta it could not read", name)
+		case <-time.After(300 * time.Millisecond):
+		}
+		if err := os.WriteFile(path, full, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		sessionLockMu.Unlock()
+		<-done
+		if m, _ := session.ReadMeta(name); m.RetiredAt != "" || !rep.Released {
+			t.Fatalf("%s: marked or not released after the writer finished: %+v %+v", name, rep, m)
+		}
+	}
+}
+
+// A meta that exists but cannot be read (a writer that is not under the meta lock, caught between
+// truncate and write) is in doubt: the member, or a member below an ancestor like that, is
+// neither marked nor stopped, the answer says so, and a repeat once the file is whole decides
+// on the act as it should.
+func TestRetireLeavesAnUnreadableMetaInDoubt(t *testing.T) {
+	for _, which := range []string{"member", "ancestor"} {
+		t.Run(which, func(t *testing.T) {
+			newActEnv(t)
+			writeMeta(t, session.Meta{Name: "p"})
+			writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+			listed := listActMark(t)
+			notePersonAct("c")
+			path := session.MetaPath("c")
+			if which == "ancestor" {
+				path = session.MetaPath("p")
+			}
+			full, _ := os.ReadFile(path)
+			if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			in, _ := beginRetire("p", listed)
+			rep := &retireReport{Name: "c", Unended: []string{}}
+			retireOne(context.Background(), rep, in)
+			if rep.Stopped || rep.Released || len(rep.Unended) == 0 {
+				t.Fatalf("an unreadable meta was not left in doubt: %+v", rep)
+			}
+			if err := os.WriteFile(path, full, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if m, _ := session.ReadMeta("c"); m.RetiredAt != "" {
+				t.Fatal("marked while in doubt")
+			}
+			rep = &retireReport{Name: "c", Unended: []string{}}
+			retireOne(context.Background(), rep, in)
+			if !rep.Released || rep.Stopped {
+				t.Fatalf("the repeat did not see the act: %+v", rep)
+			}
+		})
+	}
+}
+
+// The terminal's own replies are not a person's act; a key, a mouse report, a reply with a key in
+// the same write, and a reply cut across two writes are.
+func TestPaneRepliesAreNotActs(t *testing.T) {
+	replies := map[string]string{
+		"DA1":           "\x1b[?62;4c",
+		"DA2":           "\x1b[>0;276;0c",
+		"DSR status":    "\x1b[0n",
+		"cursor":        "\x1b[24;80R",
+		"focus in":      "\x1b[I",
+		"focus out":     "\x1b[O",
+		"mode report":   "\x1b[?2004;2$y",
+		"OSC 11 (BEL)":  "\x1b]11;rgb:0000/0000/0000\x07",
+		"OSC 10 (ST)":   "\x1b]10;rgb:ffff/ffff/ffff\x1b\\",
+		"DCS xtversion": "\x1bP>|xterm.js(5.5.0)\x1b\\",
+		"several":       "\x1b[?62;4c\x1b[>0;276;0c\x1b[I",
+		"DCS DECRQSS":   "\x1bP1$r0m\x1b\\",
+		"OSC 4 palette": "\x1b]4;1;rgb:cccc/0000/0000\x07",
+	}
+	acts := map[string]string{
+		"a key":                   "a",
+		"enter":                   "\r",
+		"arrow":                   "\x1b[A",
+		"mouse report":            "\x1b[<0;10;5M",
+		"reply then key":          "\x1b[I" + "x",
+		"key then reply":          "x\x1b[I",
+		"reply cut (first half)":  "\x1b]11;rgb:0000/00",
+		"reply cut (second half)": "00/0000\x07",
+		"cut csi":                 "\x1b[?62;4",
+		"unknown osc":             "\x1b]52;c;aGk=\x07",
+		"empty":                   "",
+	}
+	check := func(name, in string, wantAct bool) {
+		newActEnv(t)
+		writeMeta(t, session.Meta{Name: "s"})
+		listed := listActMark(t)
+		if !NotePersonActInput("s", []byte(in)) {
+			t.Fatalf("%s: dropped", name)
+		}
+		_, out := postRetireIf(t, "s", listed)
+		if got := reportOf(out, "s").Released; got != wantAct {
+			t.Errorf("%s: act=%v, want %v", name, got, wantAct)
+		}
+	}
+	for n, in := range replies {
+		check(n, in, false)
+	}
+	for n, in := range acts {
+		if n == "empty" {
+			continue
+		}
+		check(n, in, true)
+	}
+}

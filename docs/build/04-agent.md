@@ -148,7 +148,12 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     relaunches: these three go round `/start`, so each holds the retire gate's read side across the
     launch and is refused with `409 session_retired` on a session a retire has marked (resume it
     first); the chat bridge's replies and button clicks (`injectSessionPrompt` with a member origin);
-    keystrokes in the terminal pane (`/ws/pty`, recorded before the lifecycle gate is taken). Failing
+    keystrokes in the terminal pane (`/ws/pty`, recorded before the lifecycle gate is taken), except
+    a write made only of complete, known replies of the terminal itself (device attribute, status,
+    cursor position and mode reports, focus in / out, OSC colour and DCS replies), which is not an
+    act; a reply followed by a key in one write, a reply cut across two writes, a mouse report and
+    anything not recognised in full are acts (a member who switches the browser tab sends a focus
+    report, and that must not release a session nobody touched). Failing
     to get the gate's read side is not evidence that the session is marked (a pending retire also
     stops new readers while a long `/start` holds one), and a retired mark in the meta may be an
     older retire's: the key is held until it can record under the read side (on a session the retire
@@ -156,11 +161,19 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     input with an origin (peer, schedule, `/mcp`, notice, auto-resume, a queue delivery's prompt).
     A retire whose `ifNoActSince` is above the Agent's own counter (a restored older state file)
     cannot be ordered here, so it reads as an act: the tree is released, never retired. The
-    monotonic guarantee holds while the state file survives. **Known gap:** a restored older copy of
-    `act-mark/mark.json` that reuses numbers already handed out cannot be told from a live counter
-    (one rollback-able counter cannot prove it); a retire whose number is then at or below the
-    counter is judged as usual and can stop a session a person acted on in that window. Restoring
-    Agent state is outside the guarantee.
+    monotonic guarantee holds while the state file survives. **Known gap (#4265):** restoring an
+    older copy of `act-mark/mark.json` is not enough by itself, because a restart begins at the
+    higher of the restored ceiling and the clock. A number handed out before the restore is reused
+    only when it is above both: the clock is behind it (stepped back, or the counter had run ahead
+    of it) or the restore falls inside the block reserved ahead of the clock. A retire whose number
+    is then at or below the counter cannot be told from one that was reused, and can stop a session a
+    person acted on. Restoring Agent state is outside the guarantee until the Control Plane echoes
+    an incarnation identity.
+  - **A meta that cannot be read is in doubt.** The retire decides, and writes the mark or the
+    release, in one checked meta update on the meta that update reads under the meta lock. A member
+    whose meta exists but cannot be read, or whose ancestor's cannot, is neither marked nor stopped
+    in that pass and is reported in `unended` (so `complete` is false and the Control Plane repeats);
+    the start-up recovery keeps the intent of a root it cannot read.
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
     written, the watch sink never starts or injects into the session, a Managed input (any
     origin) is refused with `409 session_retired`, an automatic `/start` is refused, the session
