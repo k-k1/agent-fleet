@@ -844,7 +844,7 @@
       "name": "flush_memos"
     },
     "get_agent_usage": {
-      "description": "Subscription usage and rate limits for the agent CLIs in your Workspace (claude, codex, agy and muse; opencode, copilot, cursor and kiro have no usage source). claude and codex report fiveHour / sevenDay windows with pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts); codex may add planType and resetCredits. agy has a different shape: account / plan plus groups (each quota pool's label, remainingPct and resetsAt — e.g. the experimental Starter pool). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds. Use when asked how much quota remains or when a limit resets.",
+      "description": "Subscription usage and rate limits for the agent CLIs in your Workspace (claude, codex, agy and muse; opencode, copilot, cursor and kiro have no usage source). claude and codex report fiveHour / sevenDay windows with pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts); codex may add planType and resetCredits. agy has a different shape: account / plan plus groups (each quota pool's label, remainingPct and resetsAt — e.g. the Starter pool). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds. Use when asked how much quota remains or when a limit resets.",
       "inputSchema": {
         "properties": {},
         "type": "object"

@@ -18,7 +18,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "agent.launch_hint.cursor": "Launch Cursor",
   "agent.launch_hint.kiro": "Launch Kiro",
   "agent.launch_hint.opencode": "Launch OpenCode",
-  "agent.launch_hint.agy": "Launch Antigravity (experimental)",
+  "agent.launch_hint.agy": "Launch Antigravity",
   "agent.launch_hint.copilot": "Launch GitHub Copilot",
   // lcpp (ADR 0093): registered but not launchable yet — kept out of every launch picker
   // (registry.ts repoLaunchKinds), so this string renders nowhere today.

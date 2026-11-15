@@ -27,12 +27,11 @@ import (
 const tenantMemberDefaultsMaxBody = 4 << 10
 
 // memberDefaultAgents are the kinds a tenant may name: the ones a member connects with their own
-// account. shell and ssm need no connection, lcpp is governed by engine access, and agy is
-// experimental. This is CP policy, not a catalog fact: the Console derives its
+// account. shell and ssm need no connection and lcpp is governed by engine access. This is CP policy, not a catalog fact: the Console derives its
 // MEMBER_DEFAULT_AGENTS from the registry's memberDefault cap, and
 // console/src/agents/derivedKindLists.test.ts reads this line and holds the two equal, in order
 // (SESSION_KINDS order, which is also the order of the refusal text below).
-var memberDefaultAgents = []string{"claude", "codex", "cursor", "copilot", "kiro", "opencode", "muse"}
+var memberDefaultAgents = []string{"claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "muse"}
 
 // tenantMemberDefaultsWire is the stored document, the admin PUT body and, for members, the
 // `defaults` of GET /api/me/ui-state. Read by core/store/uiState.ts and the tenant editor

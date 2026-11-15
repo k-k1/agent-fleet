@@ -187,8 +187,8 @@ Ctrl+C も割り込みになります。キーをそのままプログラムへ�
 
 ## 3. エージェントの種類
 
-主要 6 つ（claude / codex / opencode / copilot / cursor / kiro）に加えて、マネージド専用の
-muse（Muse Code）と lcpp（フリート自前の llama.cpp エンジン）、実験枠の agy（Antigravity）が
+主要 7 つ（claude / codex / opencode / copilot / cursor / kiro / agy（Antigravity））に加えて、
+マネージド専用の muse（Muse Code）と lcpp（フリート自前の llama.cpp エンジン）が
 あります。エージェント以外のセッション種別として shell と ssm があります。
 接続はすべて **⚙設定 →「エージェント」タブ**（ワークスペースの起動が必要）。接続の変更は即時、
 挙動の設定は**新しいセッションから**効きます。

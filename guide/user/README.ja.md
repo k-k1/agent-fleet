@@ -87,7 +87,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [GitHub Copilot を接続する](agents/copilot.ja.md) | GitHub の接続だけで Copilot CLI を動かす |
 | [Cursor を接続する](agents/cursor.ja.md) | Cursor のアカウントで Cursor CLI を動かす |
 | [Kiro を接続する](agents/kiro.ja.md) | Kiro を導入し、Builder ID などで動かす |
-| [Antigravity を接続する](agents/agy.ja.md) | Google アカウントで Antigravity CLI を動かす（実験枠） |
+| [Antigravity を接続する](agents/agy.ja.md) | Google アカウントで Antigravity CLI を動かす |
 | [Muse Code を接続する](agents/muse.ja.md) | Muse Code を導入し、Meta のアカウントか API キーで動かす |
 | [lcpp を使う](agents/lcpp.ja.md) | 配備の llama.cpp エンジンや自分の llama-server でセッションを動かす |
 | [料金と使用量を確かめる](agents/usage.ja.md) | モデルの定価、利用枠の残り、トークンを何に使ったかを見る。RTK で節約する |

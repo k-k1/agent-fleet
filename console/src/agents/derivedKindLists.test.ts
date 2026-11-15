@@ -60,7 +60,7 @@ describe("derived kind lists equal the literals they replaced", () => {
 
   it("MEMBER_DEFAULT_AGENTS, in SESSION_KINDS order", () => {
     // was: claude codex opencode cursor copilot kiro muse
-    expect(onFrozen(MEMBER_DEFAULT_AGENTS)).toEqual(["claude", "codex", "cursor", "copilot", "kiro", "opencode", "muse"]);
+    expect(onFrozen(MEMBER_DEFAULT_AGENTS)).toEqual(["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "muse"]);
     expect(MEMBER_DEFAULT_AGENTS).toEqual(SESSION_KINDS.filter((k) => AGENTS[k].caps.memberDefault));
   });
 

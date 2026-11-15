@@ -168,8 +168,6 @@ export const AGY_USAGE: RemainingSource = {
       .filter((l) => Date.parse(l.resetsAt) > now)
       .map((l) => ({ id: l.model, label: l.label, resetsAt: l.resetsAt })),
   accountField: "account",
-  // The Starter pool is tiny and shared with the Antigravity IDE / Jules (docs/log/32 Track C-3).
-  noteKey: "agents.agy_exp_label",
 };
 
 // In bar order, after USAGE_SOURCES.
