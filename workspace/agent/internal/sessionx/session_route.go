@@ -104,6 +104,14 @@ func (c *createRun) checkRoute() bool {
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 		return false
 	}
+	// The credential policy, once the selection is known valid (ADR 0138 D11, D12). The launch it
+	// judged is the one recorded (armMeta).
+	ref, judged := newLaunchPolicyRefusal(c.req.Kind, c.req.Route, session.Meta{Kind: c.kind, Model: c.req.Model, Driver: c.driver})
+	if ref != nil {
+		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
+		return false
+	}
+	c.judgedLaunch = judged
 	// Stored in the form the adapter binds to the connection instance it was just checked on.
 	if c.req.Route != nil {
 		if a, _ := RegisteredAgent(NormalizeKind(c.req.Kind)); a != nil {
@@ -132,6 +140,10 @@ func startRefusalOf(m session.Meta) *SpawnRefusal {
 		return ref
 	}
 	if ref := checkRouteLive(context.Background(), m.Kind, m.Route, m.Model, m.DriverKind()); ref != nil {
+		return &SpawnRefusal{Status: ref.Status, Code: ref.Code, Message: ref.Message}
+	}
+	// The credential policy, on the session's launch-time evidence (ADR 0138 D11).
+	if ref := storedLaunchPolicyRefusal(m); ref != nil {
 		return &SpawnRefusal{Status: ref.Status, Code: ref.Code, Message: ref.Message}
 	}
 	return nil

@@ -254,6 +254,17 @@ const (
 	CodeRouteSettings = "route_settings_conflict"
 )
 
+// Refusal codes of the credential policy (ADR 0138 D11, D12), on every create and start path.
+const (
+	// CodePolicyForbidden: the route the launch names or resolves to is not allowed.
+	CodePolicyForbidden = "route_forbidden"
+	// CodePolicyRequired: the launch names no route and resolves to none the policy can judge, or
+	// the stored session has no launch-time record that proves its route; the member names one.
+	CodePolicyRequired = "route_required"
+	// CodePolicyUnconfirmed: the held policy cannot be confirmed or recorded now, so new work waits.
+	CodePolicyUnconfirmed = "policy_unconfirmed"
+)
+
 // Refusal codes of the switch away from a stopped subscription (decision 10).
 const (
 	// CodeSwitchUnsupported: the harness declares no route to switch to.

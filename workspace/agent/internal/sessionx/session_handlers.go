@@ -1054,6 +1054,12 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
+	// A fork is a new launch, judged by the credential policy like a create (ADR 0138 D12).
+	policyRef, judged := newLaunchPolicyRefusal(src.Kind, src.Route, src)
+	if policyRef != nil {
+		httpx.WriteErr(w, policyRef.Status, policyRef.Code, policyRef.Message)
+		return
+	}
 	// "Does point-forking exist at all" depends only on the request, so answer it before
 	// looking at the conversation's state. Later on, an `at` sent to an unsupported kind
 	// would come back with an unrelated reason such as "no conversation to fork yet",
@@ -1115,11 +1121,17 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	// The driver is inherited: forking a managed session stays managed (copied through the
 	// runtime's fork API, docs/log/27 P2), while tui keeps the CLI fork launch.
 	meta := forkMeta(src, forkName, title, forkFrom, forkAt)
-	// A fork is a launch of its own: it records what it starts on now (ADR 0138 D11).
-	meta.LaunchRoute = launchRouteOf(meta)
+	// A fork is a launch of its own: it records what it starts on now (ADR 0138 D11), the
+	// resolution the policy judged when it judged one.
+	meta.LaunchRoute = judgedOr(judged, meta)
 
 	if ag.Caps().UsesLabel {
 		meta.Label = sessionLabelFor(src.Dir, title, meta.Name)
+	}
+	// At the handoff, the credential must still be the one the policy judged above.
+	if ref := handoffRefusal(meta); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
 	}
 	if meta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(meta)
@@ -1554,6 +1566,13 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
+	// The new slot is a new launch: the credential policy judges it like a create, before the old
+	// identity is archived and killed.
+	policyRef, judged := newLaunchPolicyRefusal(m.Kind, m.Route, m)
+	if policyRef != nil {
+		httpx.WriteErr(w, policyRef.Status, policyRef.Code, policyRef.Message)
+		return
+	}
 	// Archive the old identity: kill its tmux, clear the live status cache, hide it from
 	// the active list. Keep the meta + jsonl (and any captured resume id) so it restores.
 	// Captured BEFORE the kill below, same reason as HandleArchiveSession: once Archived is
@@ -1608,7 +1627,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title, newMeta.Name)
 	}
 	// The new slot is a new launch, recorded on what it starts on now (ADR 0138 D11).
-	newMeta.LaunchRoute = launchRouteOf(newMeta)
+	newMeta.LaunchRoute = judgedOr(judged, newMeta)
 	// The new slot takes the studio over before it launches, for the same reason as a create;
 	// a launch that fails hands it back to the old slot.
 	rebindStudioOnRecreate(&newMeta, m.Name)
@@ -1616,6 +1635,13 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		if newMeta.Studio != "" && imagegen.BindStudioSession != nil {
 			_, _ = imagegen.BindStudioSession(newMeta.Studio, m.Name, newMeta.Name)
 		}
+	}
+	// At the handoff, the credential must still be the one the policy judged before the archive.
+	if ref := handoffRefusal(newMeta); ref != nil {
+		undoStudio()
+		unarchiveAfterFailedRecreate(m.Name)
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
 	}
 	if newMeta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(newMeta)

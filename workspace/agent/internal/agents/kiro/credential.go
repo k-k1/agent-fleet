@@ -7,7 +7,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-var _ agents.CredentialResolver = agentImpl{}
+var _ agents.OneRouteResolver = agentImpl{}
 
 // Login is what a kiro session runs on (ADR 0138 D2, D5b): kiro-login, bound to the account
 // `kiro-cli whoami` reports. It reads the cached probe without waiting (Peek): a create must not
@@ -23,6 +23,9 @@ func Login() routes.Launch {
 
 // ResolveLaunch implements agents.CredentialResolver.
 func (agentImpl) ResolveLaunch(session.Meta) routes.Launch { return Login() }
+
+// ResolvesOneRoute implements agents.OneRouteResolver.
+func (agentImpl) ResolvesOneRoute() {}
 
 // UsableRoutes implements agents.CredentialResolver: the login route while signed in.
 func (agentImpl) UsableRoutes() []string {

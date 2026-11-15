@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -44,6 +45,9 @@ type createRun struct {
 	// title is the cleaned request title, and driver the validated driver ("" = tui).
 	title  string
 	driver string
+	// judgedLaunch is the launch the credential policy resolved and judged (checkRoute), nil when
+	// it resolved none; armMeta records it rather than resolving again.
+	judgedLaunch *routes.Launch
 	// subdir is the cleaned subdir, checked to exist beneath the resolved working copy.
 	subdir string
 
@@ -640,8 +644,8 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 	}
 	applyCreateLinks(&meta, req)
 	// After the route has been checked and bound (checkRoute), before anything starts: the record
-	// is what the session launches on.
-	meta.LaunchRoute = launchRouteOf(meta)
+	// is what the session launches on, the resolution the policy judged when it judged one.
+	meta.LaunchRoute = judgedOr(c.judgedLaunch, meta)
 	if req.QueueDelivery != nil {
 		meta.QueueDelivery = req.QueueDelivery.ID
 	}
@@ -700,6 +704,14 @@ func (c *createRun) publish(m session.Meta) bool {
 // from, deliver that task, and answer the create.
 func (c *createRun) launch(meta session.Meta) {
 	req, name := c.req, c.name
+	// The credential the session is about to start on must still be the one judged (checkRoute):
+	// the working copy took time, and a login replaced meanwhile is refused, not started. First,
+	// so a refused launch arms nothing.
+	if ref := handoffRefusal(meta); ref != nil {
+		unbindStudioAfterFailedLaunch(c.studio, name)
+		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	if req.QueueDelivery != nil {
 		// Before anything can start a turn: the ledger counts the starts that follow
 		// (status.FirstTurn). A kind that records no end reason keeps the outcome empty.

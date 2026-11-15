@@ -8,7 +8,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-var _ agents.CredentialResolver = agentImpl{}
+var _ agents.OneRouteResolver = agentImpl{}
 
 // githubLogin is the GitHub account of the member's GitHub connection (the handle cached at
 // connect time), "" without one. A seam for tests.
@@ -34,6 +34,9 @@ func Login() routes.Launch {
 
 // ResolveLaunch implements agents.CredentialResolver.
 func (agentImpl) ResolveLaunch(session.Meta) routes.Launch { return Login() }
+
+// ResolvesOneRoute implements agents.OneRouteResolver.
+func (agentImpl) ResolvesOneRoute() {}
 
 // UsableRoutes implements agents.CredentialResolver: copilot-login while a GitHub connection
 // exists.

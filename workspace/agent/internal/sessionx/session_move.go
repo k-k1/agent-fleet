@@ -324,6 +324,11 @@ func checkMoveRequest(ctx context.Context, src session.Meta, req moveRequest) er
 	if ref := checkRouteLive(ctx, req.Kind, req.Route, req.Model, req.Driver); ref != nil {
 		return &moveError{Status: ref.Status, Code: ref.Code, Message: ref.Message}
 	}
+	// The target is a new launch; its create judges it again, but a refused one must not cost
+	// the source either.
+	if ref, _ := newLaunchPolicyRefusal(req.Kind, req.Route, session.Meta{Kind: req.Kind, Model: req.Model, Driver: req.Driver}); ref != nil {
+		return &moveError{Status: ref.Status, Code: ref.Code, Message: ref.Message}
+	}
 	return nil
 }
 

@@ -64,6 +64,16 @@ type CredentialResolver interface {
 	UsableRoutes() []string
 }
 
+// OneRouteResolver marks a CredentialResolver whose launch with no selection runs on exactly the
+// one route its current login mode or connection resolves to (ADR 0138 D11b: agy, copilot,
+// cursor, kiro, muse and codex by their login mode, lcpp by its connection). Under a restriction
+// such a create is judged on that route. A kind without it (claude, whose empty selection keeps
+// the CLI's own rules; opencode, whose route follows the model) must name its route instead.
+type OneRouteResolver interface {
+	CredentialResolver
+	ResolvesOneRoute()
+}
+
 // PerCallRouter marks a kind whose calls within one session may run on another route or another
 // credential than the one it was launched on (opencode: the route follows the model's provider,
 // and the model can be changed mid-session; lcpp: every call resolves its endpoint anew). The

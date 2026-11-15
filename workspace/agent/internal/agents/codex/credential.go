@@ -14,7 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-var _ agents.CredentialResolver = agentImpl{}
+var _ agents.OneRouteResolver = agentImpl{}
 
 // apiKeySlot names codex's own copy of an OpenAI key in a binding, so it never shares one with
 // the shared OPENAI_API_KEY opencode receives although both are openai-api (ADR 0138 D2).
@@ -108,6 +108,9 @@ func idTokenAccount(idToken string) string {
 
 // ResolveLaunch implements agents.CredentialResolver.
 func (agentImpl) ResolveLaunch(session.Meta) routes.Launch { return Login() }
+
+// ResolvesOneRoute implements agents.OneRouteResolver.
+func (agentImpl) ResolvesOneRoute() {}
 
 // UsableRoutes implements agents.CredentialResolver: the one route the current login is on.
 func (agentImpl) UsableRoutes() []string {
