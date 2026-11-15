@@ -31,10 +31,19 @@ const routeCatalogSnapshotPath = "../../control-plane/internal/agentroutes/catal
 // provider (ADR 0138 D2). The CP validates a selection against it before it wakes a Workspace
 // (ADR 0128 decision 12).
 type routeCatalogWire struct {
-	Routes   []routes.Route   `json:"routes"`
-	Kinds    []routeKindWire  `json:"kinds"`
-	Chat     []routeOwnerWire `json:"chat"`
-	Imagegen []routeOwnerWire `json:"imagegen"`
+	Routes []routes.Route `json:"routes"`
+	// Destinations is every destination with its vendor host patterns (none for the engine, an
+	// approved endpoint and unclassified): the CP's vocabulary and its refusal of a vendor host
+	// as a self-hosted endpoint (ADR 0138 §2).
+	Destinations []routeDestinationWire `json:"destinations"`
+	Kinds        []routeKindWire        `json:"kinds"`
+	Chat         []routeOwnerWire       `json:"chat"`
+	Imagegen     []routeOwnerWire       `json:"imagegen"`
+}
+
+type routeDestinationWire struct {
+	ID    routes.Destination `json:"id"`
+	Hosts []string           `json:"hosts,omitempty"`
 }
 
 type routeKindWire struct {
@@ -60,6 +69,9 @@ func routeOwners(m map[string][]string) []routeOwnerWire {
 func buildRouteCatalog() routeCatalogWire {
 	out := routeCatalogWire{Routes: routes.Catalogue(),
 		Chat: routeOwners(chatx.ChatBackendRoutes()), Imagegen: routeOwners(imagegen.ProviderRoutes())}
+	for _, d := range routes.Destinations() {
+		out.Destinations = append(out.Destinations, routeDestinationWire{ID: d, Hosts: routes.VendorHosts(d)})
+	}
 	for _, k := range sessionx.RegisteredKinds() {
 		rs, fixed := []string{}, []string{}
 		if a, ok := sessionx.RegisteredAgent(k); ok {

@@ -20,8 +20,11 @@ const EnvCeiling = "AF_MODEL_ROUTE_CEILING"
 //
 // classes and destinations name either the values allowed ("destinations=aws-bedrock") or, every
 // item prefixed with "-", the values removed from all ("classes=-subscription"); a list mixing
-// the two forms is refused. except and deny are route ids (D1d). Anything unparsable, unknown or
-// a per-connection route in except is an error, never "allow all": the caller refuses to start.
+// the two forms is refused. except and deny are route ids (D1d). endpoints are the host patterns
+// that may be approved as self-hosted endpoints at all (an exact host or "*.suffix"; unset under
+// a ceiling that restricts destinations, none may). Anything unparsable, unknown, a per-connection
+// route in except or a pattern on a vendor's hosts is an error, never "allow all": the caller
+// refuses to start.
 func ParseCeiling(s string) (Rule, error) {
 	var r Rule
 	seen := map[string]bool{}
@@ -62,8 +65,11 @@ func ParseCeiling(s string) (Rule, error) {
 			r.Except = items
 		case "deny":
 			r.Deny = items
+		case "endpoints":
+			l := append([]string{}, items...)
+			r.Endpoints = &l
 		default:
-			return Rule{}, fmt.Errorf("unknown key %q (classes, destinations, except, deny)", key)
+			return Rule{}, fmt.Errorf("unknown key %q (classes, destinations, except, deny, endpoints)", key)
 		}
 	}
 	if err := r.Validate(); err != nil {

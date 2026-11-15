@@ -120,6 +120,14 @@ type routeDecisionWire struct {
 	ForbiddenBy []string `json:"forbiddenBy,omitempty"`
 }
 
+// endpointDecisionWire is one host the tenant rule approves, for an administrator: whether it is
+// approved in effect, and what keeps it from being (a layer above, or "vendor").
+type endpointDecisionWire struct {
+	Host       string   `json:"host"`
+	Approved   bool     `json:"approved"`
+	ExcludedBy []string `json:"excludedBy,omitempty"`
+}
+
 type tenantPolicyWire struct {
 	Ceiling    ceilingWire         `json:"ceiling"`
 	Deployment policyLayerWire     `json:"deployment"`
@@ -128,6 +136,11 @@ type tenantPolicyWire struct {
 	Restricted bool                `json:"restricted"`
 	Revision   int64               `json:"revision"`
 	Routes     []routeDecisionWire `json:"routes"`
+	// Endpoints is the tenant rule's hosts and their effect (ADR 0138 §2); EndpointRoutes the
+	// per-connection routes every layer allows on an approved one.
+	Endpoints      []endpointDecisionWire `json:"endpoints"`
+	EndpointRoutes []string               `json:"endpointRoutes"`
+	layers         routepolicy.Layers
 }
 
 func layerOf(row store.RoutePolicyRow) (policyLayerWire, error) {
@@ -180,7 +193,16 @@ func TenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantP
 		}
 	}
 	layers := routepolicy.Layers{Ceiling: c.rule, Deployment: out.Deployment.Rule, TenantCap: out.Cap.Rule, Tenant: out.Tenant.Rule}
+	out.layers = layers
 	out.Restricted = layers.Restricted()
+	out.Endpoints = []endpointDecisionWire{}
+	if hosts := out.Tenant.Rule.Endpoints; hosts != nil {
+		for _, h := range *hosts {
+			by := layers.EndpointExcludedBy(h)
+			out.Endpoints = append(out.Endpoints, endpointDecisionWire{Host: h, Approved: len(by) == 0, ExcludedBy: by})
+		}
+	}
+	out.EndpointRoutes = append([]string{}, layers.EndpointRoutes()...)
 	out.Routes = []routeDecisionWire{}
 	for _, rt := range agentroutes.Routes() {
 		by := layers.ForbiddenBy(rt.ID)
@@ -219,6 +241,11 @@ func readRule(w http.ResponseWriter, r *http.Request, above *routepolicy.Rule) (
 		if wider := in.Exceeds(*above); len(wider) > 0 {
 			writeAPIErr(w, &APIError{http.StatusBadRequest, "route_policy_exceeds_ceiling",
 				fmt.Sprintf("the deployment's ceiling forbids routes this rule would allow: %v; a layer below the ceiling can only narrow it", wider)})
+			return in, "", false
+		}
+		if wider := in.EndpointsExceed(*above); len(wider) > 0 {
+			writeAPIErr(w, &APIError{http.StatusBadRequest, "route_policy_exceeds_ceiling",
+				fmt.Sprintf("the deployment's ceiling does not let these endpoint patterns be approved: %v; a layer below the ceiling can only narrow it", wider)})
 			return in, "", false
 		}
 	}
@@ -285,15 +312,38 @@ func (a admin) putCap(w http.ResponseWriter, r *http.Request) {
 }
 
 // putTenant is the tenant_admin's own rule. It may name exceptions the layers above do not have:
-// those reopen nothing (D1d, D7a), so they are stored as written rather than refused.
+// those reopen nothing (D1d, D7a), so they are stored as written rather than refused. Its
+// endpoints are the hosts it approves as self-hosted (ADR 0138 §2): exact hosts only, each one
+// the layers above let through now, and never a vendor's. A layer above that narrows later leaves
+// the host stored but no longer approved.
 func (a admin) putTenant(w http.ResponseWriter, r *http.Request) {
 	ident, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	if _, rule, ok := readRule(w, r, nil); ok {
-		a.putLayer(w, r, ident, store.RoutePolicyTenant, t, rule)
+	in, rule, ok := readRule(w, r, nil)
+	if !ok {
+		return
 	}
+	if in.Endpoints != nil {
+		if err := in.ExactEndpoints(); err != nil {
+			writeAPIErr(w, &APIError{http.StatusBadRequest, "invalid_route_policy", err.Error()})
+			return
+		}
+		v, err := TenantPolicy(r.Context(), a.cp.Store(), t.ID)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		for _, h := range *in.Endpoints {
+			if by := v.layers.EndpointExcludedBy(h); len(by) > 0 {
+				writeAPIErr(w, &APIError{http.StatusBadRequest, "route_policy_endpoint_not_approvable",
+					fmt.Sprintf("%s cannot be approved as a self-hosted endpoint: excluded by %v", h, by)})
+				return
+			}
+		}
+	}
+	a.putLayer(w, r, ident, store.RoutePolicyTenant, t, rule)
 }
 
 func (a admin) getTenant(w http.ResponseWriter, r *http.Request) {
