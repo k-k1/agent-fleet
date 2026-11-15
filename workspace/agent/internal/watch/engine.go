@@ -504,13 +504,17 @@ type Listed struct {
 }
 
 // List returns owner's subscriptions, oldest first.
+// isListed is what List shows an owner as its watches: not a built-in, not a claimed notice. The
+// session row's listed count (WakersListed) uses the same rule so the two never disagree.
+func isListed(s Subscription) bool { return !s.Done && s.Builtin == "" }
+
 func (e *Engine) List(owner string) []Listed {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.load()
 	out := []Listed{}
 	for _, s := range e.state.Subs {
-		if s.Owner != owner || s.Done || s.Builtin != "" {
+		if s.Owner != owner || !isListed(s) {
 			continue
 		}
 		ss := e.state.Subjects[s.Subject]

@@ -40,15 +40,30 @@ func (e *Engine) wakesOwner(s Subscription, now time.Time) bool {
 // and watches (the rest, built-in ones included). ok is false when the engine could not read its
 // state, and the counts mean nothing then.
 func (e *Engine) Wakers(owner string) (watches, timers int, ok bool) {
+	watches, timers, _, ok = e.WakersListed(owner)
+	return watches, timers, ok
+}
+
+// WakersListed is Wakers plus listed: how many subscriptions of owner List shows, which is what
+// the member sees as the session's watches. It differs from watches+timers because Wakers counts
+// built-in subscriptions and notices being delivered, which List leaves out, and List shows an
+// expired one that is not yet pruned, which Wakers does not.
+func (e *Engine) WakersListed(owner string) (watches, timers, listed int, ok bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.load()
 	if e.loadFailed {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	now := e.now()
 	for _, s := range e.state.Subs {
-		if s.Owner != owner || !e.wakesOwner(s, now) {
+		if s.Owner != owner {
+			continue
+		}
+		if isListed(s) {
+			listed++
+		}
+		if !e.wakesOwner(s, now) {
 			continue
 		}
 		if !s.Due.IsZero() {
@@ -57,7 +72,7 @@ func (e *Engine) Wakers(owner string) (watches, timers int, ok bool) {
 			watches++
 		}
 	}
-	return watches, timers, true
+	return watches, timers, listed, true
 }
 
 // Ended is what EndOwner removed.

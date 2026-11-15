@@ -225,6 +225,10 @@ type QueueTurn struct {
 type Wakers struct {
 	Watches int `json:"watches"`
 	Timers  int `json:"timers"`
+	// Listed is how many subscriptions the member's watch list shows for the session (timers
+	// included, built-in and claimed notices not), the number the Console prints as "N watches".
+	// Always sent by this Agent, so a row without it comes from an older one.
+	Listed int `json:"listed"`
 }
 
 // Session is the wire representation of a Claude session (one tmux session).

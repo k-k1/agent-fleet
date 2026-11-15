@@ -233,3 +233,36 @@ func TestWakersCountsAClaimedCappedBuiltinWhileItIsDelivered(t *testing.T) {
 		t.Fatalf("after the delivery: %d", w)
 	}
 }
+
+// listed is the number the session row prints as "N watches", so it has to be what the member's
+// watch list shows: built-ins and a notice being delivered count as wakers but are not listed.
+func TestWakersListedMatchesTheMemberList(t *testing.T) {
+	e, _, _ := newTestEngine(&fakeSource{}, &fakeSink{answer: Wait})
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	check := func(step string, wantListed int) {
+		t.Helper()
+		w, tm, listed, ok := e.WakersListed("a")
+		if !ok || listed != wantListed || listed != len(e.List("a")) {
+			t.Fatalf("%s: watches=%d timers=%d listed=%d list=%d ok=%v, want listed %d", step, w, tm, listed, len(e.List("a")), ok, wantListed)
+		}
+	}
+	// Only a built-in: it wakes the owner, the member's list is empty.
+	if w, _, _ := e.Wakers("a"); w != 1 {
+		t.Fatalf("a built-in is not counted as a waker: %d", w)
+	}
+	check("built-in only", 0)
+
+	subscribe(t, e, "a", "o/r#1", "pr.merged")
+	check("one watch", 1)
+
+	// A claimed notice still wakes the owner but has left the list.
+	for i := range e.state.Subs {
+		if e.state.Subs[i].Builtin == "" {
+			e.state.Subs[i].Done = true
+		}
+	}
+	if w, _, _ := e.Wakers("a"); w != 2 {
+		t.Fatalf("a claimed notice is not counted as a waker: %d", w)
+	}
+	check("notice being delivered", 0)
+}

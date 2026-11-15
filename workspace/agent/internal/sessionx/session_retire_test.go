@@ -381,12 +381,12 @@ func TestRowReportsWakersLiveStoppedAndAcrossARestart(t *testing.T) {
 	r.hold(t, "a")
 	for _, alive := range []bool{true, false} {
 		s := wireSession(m, alive)
-		if s.Wakers == nil || s.Wakers.Watches != 1 || s.Wakers.Timers != 1 || s.WakersUnknown {
+		if s.Wakers == nil || s.Wakers.Watches != 1 || s.Wakers.Timers != 1 || s.Wakers.Listed != 2 || s.WakersUnknown {
 			t.Fatalf("alive=%v wakers=%+v unknown=%v", alive, s.Wakers, s.WakersUnknown)
 		}
 	}
 	b, err := json.Marshal(wireSession(m, false))
-	if err != nil || !strings.Contains(string(b), `"wakers":{"watches":1,"timers":1}`) || strings.Contains(string(b), "wakersUnknown") {
+	if err != nil || !strings.Contains(string(b), `"wakers":{"watches":1,"timers":1,"listed":2}`) || strings.Contains(string(b), "wakersUnknown") {
 		t.Fatalf("wire = %s %v", b, err)
 	}
 
