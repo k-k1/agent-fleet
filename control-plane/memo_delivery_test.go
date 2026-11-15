@@ -86,6 +86,15 @@ type fakeQueueAgent struct {
 	sessionsDown bool
 	// reserveBarrier, when set, holds every reserve until all it counts have arrived.
 	reserveBarrier *sync.WaitGroup
+	// report makes GET /sessions send the envelope's queueReport marker (an Agent of step 2b).
+	report bool
+	// reportVersion, when not 0, is the version sent instead of 1.
+	reportVersion int
+	// retires is every retire call, in order. retireFail answers that many of them with a
+	// session it could not end, retireStatus (when set) answers every call with that status.
+	retires      []string
+	retireFail   int
+	retireStatus int
 }
 
 func newFakeQueueAgent(t *testing.T) *fakeQueueAgent {
@@ -115,7 +124,16 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 			agentErr(w, http.StatusBadGateway, "down")
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"sessions": a.rows})
+		env := map[string]any{"sessions": a.rows}
+		if a.report {
+			env["queueReport"] = 1
+			if a.reportVersion != 0 {
+				env["queueReport"] = a.reportVersion
+			}
+		}
+		_ = json.NewEncoder(w).Encode(env)
+	case r.Method == "POST" && strings.HasPrefix(path, "/sessions/") && strings.HasSuffix(path, "/retire"):
+		a.serveRetire(w, strings.TrimSuffix(strings.TrimPrefix(path, "/sessions/"), "/retire"))
 	case r.Method == "POST" && strings.HasPrefix(path, "/sessions-idempotency/") && strings.HasSuffix(path, "/reserve"):
 		key := strings.TrimSuffix(strings.TrimPrefix(path, "/sessions-idempotency/"), "/reserve")
 		if a.createMode == "noreserve" {
@@ -203,6 +221,67 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// serveRetire answers POST /sessions/{name}/retire the way the Agent does: the session and every
+// session it started (origin "session", any depth), each ended and stopped, the named one first.
+// Ending clears a row's wakers and booked resume and stops it. The caller holds a.mu.
+func (a *fakeQueueAgent) serveRetire(w http.ResponseWriter, name string) {
+	a.retires = append(a.retires, name)
+	if a.retireStatus != 0 {
+		agentErr(w, a.retireStatus, "boom")
+		return
+	}
+	var tree []map[string]any
+	seen := map[string]bool{}
+	var walk func(n string)
+	walk = func(n string) {
+		for _, r := range a.rows {
+			if r["name"] == n && !seen[n] {
+				seen[n] = true
+				tree = append(tree, r)
+				for _, c := range a.rows {
+					if c["origin"] == "session" && c["originSession"] == n {
+						walk(c["name"].(string))
+					}
+				}
+			}
+		}
+	}
+	walk(name)
+	if len(tree) == 0 {
+		agentErr(w, http.StatusNotFound, "not_found")
+		return
+	}
+	fail := a.retireFail > 0
+	if fail {
+		a.retireFail--
+	}
+	type rep struct {
+		Name    string   `json:"name"`
+		Stopped bool     `json:"stopped"`
+		Unended []string `json:"unended"`
+	}
+	out := []rep{}
+	for _, r := range tree {
+		x := rep{Name: r["name"].(string), Stopped: true, Unended: []string{}}
+		if fail {
+			x.Stopped, x.Unended = false, []string{"stop: boom"}
+		} else {
+			r["alive"], r["state"] = false, ""
+			delete(r, "wakers")
+			delete(r, "wakersUnknown")
+			delete(r, "rateLimitResumeAt")
+		}
+		out = append(out, x)
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"sessions": out})
+}
+
+func (a *fakeQueueAgent) retireCalls() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.retires)
 }
 
 // validQueueDelivery is the part of the Agent's checkQueueDelivery the CP has to respect.

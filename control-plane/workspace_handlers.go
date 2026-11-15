@@ -1038,6 +1038,34 @@ type sessionWire struct {
 	// Dropped here, a create whose answer was lost is closed as unknown although its session
 	// exists. No DB-mirror column: that lookup only happens with the Agent answering.
 	QueueDelivery string `json:"queueDelivery,omitempty"`
+	// Wakers is what would start the session again or put input into it while it waits (ADR 0137
+	// section 6), as the Agent reports it, omitted when it holds nothing. WakersUnknown says the
+	// Agent could not read its watch state, which is not the same as holding nothing. Only an
+	// Agent that sends the envelope's queueReport says either, so an absent Wakers means "nothing"
+	// only when that marker came with it (agentSessionsEnvelope.QueueReport). Dropped here, a
+	// delivery would close under a session a watch can still wake. No DB-mirror column: the queue
+	// keeps what it last read with the delivery instead (store MemoDelivery.HeldBy).
+	Wakers        *sessionWakers `json:"wakers,omitempty"`
+	WakersUnknown bool           `json:"wakersUnknown,omitempty"`
+	// QueueTurn is how the first turn of the session's queue delivery ended, on the row of a
+	// session that has QueueDelivery. The delivery keeps a copy when it first appears. No
+	// DB-mirror column: the copy on the delivery is what survives a stop.
+	QueueTurn *sessionQueueTurn `json:"queueTurn,omitempty"`
+}
+
+// sessionWakers is the Agent's count of the subscriptions a session owns that can start it: the
+// ones with a due time (Timers) and the rest (Watches).
+type sessionWakers struct {
+	Watches int `json:"watches"`
+	Timers  int `json:"timers"`
+}
+
+// sessionQueueTurn is the end of a queue delivery's first turn. Outcome is clean, turn-failed or
+// turn-aborted and empty for a kind that records no reason. EndedAt is RFC 3339.
+type sessionQueueTurn struct {
+	Outcome string `json:"outcome"`
+	Ms      int64  `json:"ms"`
+	EndedAt string `json:"endedAt"`
 }
 
 // sessionRows turns the Agent's session list into DB mirror rows. Every writer of the
