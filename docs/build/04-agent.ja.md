@@ -116,6 +116,11 @@ source_of_truth: "コード（本書は地図と設計意図）"
   まま Agent が再起動した場合は ledger を void にする。最初の prompt id も保持する）。
   だから停止で消えず、後のターンが書き換えることもない。それを示せないとき（開始か終了を見逃した、
   間の停止で status が消えた）は、項目を出さないままにする。
+  人が中断した最初のターンは `turn-aborted` と読ませ、ブレーカーが数える。Managed driver の
+  cancelled の終了は開いている台帳に印を付ける（`status.NoteFirstTurnCancelled`。status の終了理由は
+  空のまま）。Esc で Stop フックが走らない Terminal の claude は、ペインの自己修復（`claude.HealIdle`）が
+  transcript の `[Request interrupted by user…]` から確定する（ターン開始より古い記録は使わない）。
+  そのような根拠がない kind は項目が無いか outcome が空のままで、ブレーカーの 1 分の規則が受け持つ。
 
 ### 再開
 

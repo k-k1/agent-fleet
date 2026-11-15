@@ -260,6 +260,11 @@ func MarkTurnEndErr(sid string, st TurnState, failure string) {
 	} else if st == TurnAborted {
 		reason = status.TurnEndReasonAborted
 	}
+	if st == TurnCancelled {
+		// Cut short by an interrupt or a stop: not a clean end for the delivery's first turn,
+		// though the status record keeps no reason (a resume or a report would act on one).
+		status.NoteFirstTurnCancelled(sid)
+	}
 	status.PersistTurnEndReason(sid, "idle", reason)
 	recordTurnEnd(sid, time.Now(), reason, runOf(sid))
 	if st == TurnFailed {

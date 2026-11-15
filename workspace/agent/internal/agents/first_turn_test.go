@@ -144,3 +144,54 @@ func TestAFirstStartOfAnotherInputVoidsTheLedgerWithoutAnOptimisticWrite(t *test
 		}
 	}
 }
+
+// A Managed first turn that is interrupted ends as cancelled. It did not end cleanly, so the
+// ledger reads turn-aborted, while the status record's own end reason stays empty: a resume or a
+// report acts on that one.
+func TestInterruptedManagedFirstTurnIsAborted(t *testing.T) {
+	captureNotifier(t)
+	const sid = "managed-cancelled"
+	status.ArmFirstTurn(sid, false)
+	status.MarkFirstTurnDelivering(sid, "c1")
+	MarkTurnStartRun(sid, TurnInput{Prompt: "task", ClientMessageID: "c1"})
+	status.PersistRev(sid, "working") // markSessionWorking after Send
+	MarkTurnEndErr(sid, TurnCancelled, "")
+	got, ok := status.ReadFirstTurn(sid)
+	if !ok || got.Outcome != status.TurnEndReasonAborted {
+		t.Fatalf("first turn = %+v ok=%v, want turn-aborted", got, ok)
+	}
+	if st, _ := status.Read(sid); st.TurnEndReason != "" {
+		t.Fatalf("the status record's end reason changed: %q", st.TurnEndReason)
+	}
+}
+
+// A later turn that is interrupted is not the first turn's end, whatever the first one was.
+func TestInterruptedSecondManagedTurnLeavesTheFirstTurnAlone(t *testing.T) {
+	captureNotifier(t)
+	const sid = "managed-cancelled-later"
+	status.ArmFirstTurn(sid, false)
+	status.MarkFirstTurnDelivering(sid, "c1")
+	MarkTurnStartRun(sid, TurnInput{Prompt: "task", ClientMessageID: "c1"})
+	MarkTurnEnd(sid, TurnCompleted)
+	MarkTurnStartRun(sid, TurnInput{Prompt: "more", ClientMessageID: "c2"})
+	MarkTurnEndErr(sid, TurnCancelled, "")
+	got, ok := status.ReadFirstTurn(sid)
+	if !ok || got.Outcome != status.TurnOutcomeClean {
+		t.Fatalf("first turn = %+v ok=%v, want clean", got, ok)
+	}
+}
+
+// A Managed first turn that really fails reaches the ledger with its reason, retryable or not.
+func TestFailedManagedFirstTurnIsReported(t *testing.T) {
+	for st, want := range map[TurnState]string{TurnFailed: status.TurnEndReasonFailed, TurnAborted: status.TurnEndReasonAborted} {
+		captureNotifier(t)
+		sid := "managed-" + string(st)
+		status.ArmFirstTurn(sid, false)
+		status.MarkFirstTurnDelivering(sid, "c1")
+		MarkTurnStartRun(sid, TurnInput{Prompt: "task", ClientMessageID: "c1"})
+		MarkTurnEndErr(sid, st, "the model was refused")
+		if got, ok := status.ReadFirstTurn(sid); !ok || got.Outcome != want {
+			t.Fatalf("%s: first turn = %+v ok=%v, want %s", st, got, ok, want)
+		}
+	}
+}
