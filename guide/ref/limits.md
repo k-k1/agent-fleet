@@ -58,7 +58,7 @@ Fixed in the product, for [Run memos automatically](../user/chat/memo-auto-run.m
 | A memo a session or an `/mcp` connection adds to an auto-run category | 16 KiB. The text cannot start with `[agent-fleet:` | The memo is refused |
 | Memos a session or an `/mcp` connection adds | 30 a minute in total, across a member's categories | The memo is refused until the minute has passed |
 | A memo when it is run | Text up to 64 KiB, up to 20 images, a file path up to 4,096 bytes | "Run now" is refused and says to edit the memo. A run by itself does not start while that memo is the next one to run |
-| Memos typed into a session's first prompt | Up to 8 KiB all together, with no image | Beyond it, or with an image, the memos go to a file in the session's work folder and the prompt points to it |
+| Memos typed into a session's first prompt | Up to 8 KiB for the memo part, counting the origin lines and quotation marks added around the memos, with no image | Beyond it, or with an image, the memos go to a file in the session's work folder and the prompt points to it |
 | Length of a time window ("Window length (minutes)") | 1 to 1,440 minutes | Saving is refused |
 | Number that starts a run ("Notes waiting to run") | 1 to 100, and no new memo for 1 minute | Starts once reached. It keeps going until none is left |
 | Runs per day | 1 to 200, starts at 20, counted over the last 24 hours | Nothing starts by itself until older runs pass 24 hours. "Run now" is not stopped, but its runs are counted |

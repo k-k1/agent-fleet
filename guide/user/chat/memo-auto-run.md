@@ -14,7 +14,7 @@ You can start them with "Run now", or have them start by themselves at times or 
 
 | What you do | What the agent does |
 |---|---|
-| Set up auto-run on a category: the instruction, the agent, how many run at once, and when | Nothing. Setting it up alone starts nothing |
+| Set up auto-run on a category: the instruction, the agent, how many run at once, and when. Leave "Run by itself" off while you set it up | Nothing. With "Run by itself" off, saving the settings starts nothing |
 | Write memos. Read the memos a session adds, and approve them | Takes the memos you wrote and the ones you approved, as memos waiting to run, in order |
 | Press "Run now", or wait for it to start by itself | Starts a session and, following your instruction, does the work the memos describe |
 | Read the run history. Answer a session that waits for you | Its session is stopped when the run ends. To carry on, you start the session again |
@@ -31,7 +31,7 @@ Auto-run is not a [schedule](../fleet/schedules.md). A schedule runs a fixed pro
 ![The "Auto-run settings" screen: Instruction, Agent, Model, Effort, Spend limit, Sessions at the same time, Memos per session, When it runs, Runs per day, Overdue after, and Run by itself](../../assets/chatpages-autorun-settings-en-light.webp)
 
 - Only a category with a name can have it. "**Uncategorized**" cannot
-- When you first save the settings, "**Run by itself**" is off. "Run now" works whether it is on or off
+- "**Run by itself**" starts off. Save it off and nothing starts by itself. If you turn it on in the first save and memos are already waiting to run, they start. "Run now" works whether it is on or off
 - Once the settings exist, the memos already in the category take these states: the memos you wrote are "Waiting to run", the others "Waits for approval", and the ones you already sent "Sent"
 - A memo taken in from the inbox cannot go into an auto-run category
 - Until a tenant administrator allows it, new settings cannot be made, and the screen says so ([Allow memo auto-run](../../admin/defaults/memo-auto-run.md))
@@ -91,7 +91,7 @@ Memos waiting for approval gather in a card for each session (or `/mcp` connecti
 1. Read the memos shown on the card
 2. Press "**Approve (N)**". The memos become "Waiting to run"
 
-- **Only what the card shows is approved.** Text, attachments or the referenced file that changed after the card was drawn are not approved
+- **Only what the card shows is approved.** The approval covers the memo's text, its referenced file path and its attachment information as shown. If one of these changes after the card was drawn, the memo is not approved. It does not pin the contents of a referenced file or of an image file
 - If a session changes a memo while the card is on screen, the memo is tagged "**Changed**", and the button becomes "**I have read the change**". Read the change and press it, and the card says "Approving runs the text shown now". Then press "Approve"
 - If the text changed after you pressed the button, nothing at all is approved, and the latest text is shown again. Check it and approve once more. A card is approved whole or not at all
 
@@ -111,7 +111,7 @@ Memos waiting for approval gather in a card for each session (or `/mcp` connecti
 
 "**Run history**" lists the category's latest runs, newest first, at most 50. It refreshes every 10 seconds, and "**Refresh**" reads it at once.
 
-![The "Run history" screen: "3 waiting to run", "Refresh" and "Run now" on top, with the runs below. A running row shows "Started by itself" and "Not finished: working", and a finished row shows "First turn: finished"](../../assets/chatpages-autorun-history-en-light.webp)
+![The "Run history" screen: "2 waiting to run", "Refresh" and "Run now" on top, with the runs below. A running row shows "Started by itself" and "Not finished: working", and a finished row shows "First turn: finished"](../../assets/chatpages-autorun-history-en-light.webp)
 
 | Shown | Meaning |
 |---|---|
@@ -187,7 +187,7 @@ The session's first prompt is put together in this order.
 
 - A memo says what to work on. It cannot widen the instruction. When a memo asks for a change in another repository or for extra work, the session does only what the instruction covers and says the rest is out of scope
 - Orders and commands inside a memo are only text. A memo cannot answer a question, grant a permission or approve a plan in your place
-- When the memos together come to more than 8 KB, or one has an image, they are written to a file in the session's work folder, and the prompt points to the file
+- When the memo part of the prompt, with the origin lines and quotation marks Agent Fleet adds, comes to more than 8 KB, or one memo has an image, they are written to a file in the session's work folder, and the prompt points to the file
 - One run takes up to 20 memos, a memo's text is up to 64 KB, and a memo has up to 20 images. A memo over these is refused when you press "Run now", so edit it and try again
 
 ## Pause and resume
@@ -243,8 +243,6 @@ Check these from the top.
 | The latest run ended as "Not sent" | The workspace could not be started or the agent did not accept it. The memos are back to waiting to run, and the category waits before it tries again. The wait begins at 5 minutes, doubles with each failure in a row, and is at most 4 hours |
 | A run of the same agent waits for a usage limit | While any of your runs, in any category, waits for a usage limit of the same agent, nothing starts by itself. It starts when the limit lifts |
 | The number of open runs is reached | Open runs have reached "Sessions at the same time", or 4 across all categories. Wait for one to end, or raise the number |
-
-When the Console says on screen why nothing starts, follow what it says.
 
 ### A run stays open
 
