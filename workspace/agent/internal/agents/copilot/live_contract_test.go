@@ -124,3 +124,50 @@ func TestLiveModels(t *testing.T) {
 		}
 	}
 }
+
+// liveRefusedModel is an id the CLI lists but the live account cannot run (measured: "Execution
+// failed: Model … is not available."). An id the CLI does not know at all is NOT the same: it
+// ignores --model, notes it in a session.error ("Using auto instead") and runs the turn. Revisit
+// the id if the account gains access to it.
+const liveRefusedModel = "claude-haiku-5.5"
+
+// TestLiveRefusedModelFailsTurn is the contract the TurnWatch hook rests on: a turn the CLI
+// refuses (unknown --model) is answered with stopReason end_turn, and the driver must still end
+// it as failed, with the provider's text, from events.jsonl alone.
+func TestLiveRefusedModelFailsTurn(t *testing.T) {
+	liveGate(t)
+	tok := Token()
+	if tok == "" {
+		t.Skip("no gh auth token (GitHub not connected) — skipping the live test")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("COPILOT_HOME", t.TempDir())
+	t.Setenv("COPILOT_GITHUB_TOKEN", tok)
+
+	h := newThreadHandle("live-bad", t.TempDir(), "live-slot-bad")
+	if err := h.Spawn(agents.ThreadSettings{Model: liveRefusedModel}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	t.Cleanup(func() { DropHandle("live-bad"); Shutdown() })
+	handlesMu.Lock()
+	handles["live-bad"] = h
+	handlesMu.Unlock()
+
+	if err := h.Send(agents.TurnInput{Prompt: "Reply with exactly: LIVE-OK", ClientMessageID: "bad1"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitState(t, h, agents.TurnRunning) // a fresh handle reads completed until the turn starts
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) && h.TurnState() != agents.TurnFailed && h.TurnState() != agents.TurnCompleted {
+		time.Sleep(500 * time.Millisecond)
+	}
+	if st := h.TurnState(); st != agents.TurnFailed {
+		raw, _ := os.ReadFile(EventsPath(h.SidForTest()))
+		t.Logf("events.jsonl:\n%s", raw)
+		t.Fatalf("refused-model turn ended %s, want failed", st)
+	}
+	turns := parseEvents(EventsPath(h.SidForTest()))
+	if len(turns) == 0 || !strings.Contains(turns[len(turns)-1].Text, liveRefusedModel) {
+		t.Fatalf("transcript lacks the provider error: %+v", turns)
+	}
+}

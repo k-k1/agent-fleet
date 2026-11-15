@@ -274,7 +274,7 @@ type threadHandle struct {
 }
 
 func newThreadHandle(name, dir, slotSid string) *threadHandle {
-	return &threadHandle{Handle: acp.NewHandle(kind, acp.Hooks{}, name, dir, slotSid)}
+	return &threadHandle{Handle: acp.NewHandle(kind, acp.Hooks{TurnWatch: turnWatch}, name, dir, slotSid)}
 }
 
 // command builds the `copilot --acp` child.

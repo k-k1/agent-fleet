@@ -124,6 +124,10 @@ func parseEvents(path string) []transcript.Turn {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)
 	idx := 0
+	// inSpan is true between assistant.turn_start and assistant.turn_end. A session.error outside a
+	// span is a whole failed turn (measured: the CLI writes no user.message and no turn events
+	// for it), so it must not fold into the neighbouring error turn.
+	inSpan := false
 	for sc.Scan() {
 		idx++
 		var ev event
@@ -139,6 +143,7 @@ func parseEvents(path string) []transcript.Turn {
 				continue
 			}
 			flush()
+			inSpan = false
 			turns = append(turns, transcript.Turn{
 				Role: "user", Text: d.Content, TS: ev.TS, Idx: idx,
 				Parts:    []transcript.Part{{Kind: "text", Text: d.Content}},
@@ -150,6 +155,7 @@ func parseEvents(path string) []transcript.Turn {
 			}
 			_ = json.Unmarshal(ev.Data, &d)
 			flush()
+			inSpan = true
 			cur = &transcript.Turn{Role: "assistant", TS: ev.TS, Idx: idx, Model: d.Model}
 		case "assistant.message":
 			var d struct {
@@ -225,6 +231,9 @@ func parseEvents(path string) []transcript.Turn {
 			if json.Unmarshal(ev.Data, &d) != nil || d.Message == "" || isModelFallbackNotice(d.Message) {
 				continue
 			}
+			if !inSpan {
+				flush()
+			}
 			ensureCur(idx, ev.TS, "")
 			label := "error"
 			if d.ErrorType != "" {
@@ -233,7 +242,11 @@ func parseEvents(path string) []transcript.Turn {
 			// The provider's own text, quoted as recorded; only secret-shaped substrings
 			// are scrubbed, because the message can echo a request header or URL.
 			cur.Parts = append(cur.Parts, transcript.Part{Kind: "error", Info: label, Text: clip(bridge.ScrubSecrets(d.Message))})
+			if !inSpan {
+				flush()
+			}
 		case "assistant.turn_end":
+			inSpan = false
 			if cur != nil && ev.TS != "" {
 				cur.EndTS = ev.TS // the authoritative end of the span
 			}
