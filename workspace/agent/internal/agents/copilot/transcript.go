@@ -228,7 +228,7 @@ func parseEvents(path string) []transcript.Turn {
 				Message   string `json:"message"`
 				ErrorType string `json:"errorType"`
 			}
-			if json.Unmarshal(ev.Data, &d) != nil || d.Message == "" || isModelFallbackNotice(d.Message) {
+			if json.Unmarshal(ev.Data, &d) != nil || !isTurnError(d.Message) {
 				continue
 			}
 			if !inSpan {

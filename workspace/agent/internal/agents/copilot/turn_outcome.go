@@ -16,7 +16,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // turnWatch implements acp.Hooks.TurnWatch: it marks events.jsonl when the turn is sent, and the
@@ -116,7 +118,19 @@ func failureSince(path string, mark eventsMark) string {
 		return ""
 	}
 	defer f.Close()
-	if _, err := f.Seek(mark.offset(f), io.SeekStart); err != nil {
+	return failureFrom(f, mark.offset(f), false)
+}
+
+// failureFrom is failureSince's read, from byte offset off of the open regular file f. Shared
+// with the Terminal route's TurnFailure, which has an offset from agents.FileSizeMark instead
+// of an eventsMark.
+//
+// userResets is the Terminal route's: an old turn's late session.error can land after the mark
+// and before this turn's user.message (the same window EndedAfterOffset allows for a late end),
+// so a user.message starts the turn and drops what was read before it. The Managed route keeps
+// it off: its failed turn writes no user.message at all.
+func failureFrom(f *os.File, off int64, userResets bool) string {
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
 		return ""
 	}
 	msg := ""
@@ -134,12 +148,44 @@ func failureSince(path string, mark eventsMark) string {
 		}
 		switch ev.Type {
 		case "session.error":
-			if ev.Data.Message != "" && !isModelFallbackNotice(ev.Data.Message) {
+			if isTurnError(ev.Data.Message) {
 				msg = ev.Data.Message
 			}
 		case "assistant.message", "assistant.turn_end":
 			msg = ""
+		case "user.message":
+			if userResets {
+				msg = ""
+			}
 		}
 	}
 	return strings.TrimSpace(clip(bridge.ScrubSecrets(msg)))
+}
+
+// isTurnError reports whether a session.error message is a turn failure: it has text and is not
+// the "--model … Using auto instead" notice (isModelFallbackNotice), after which the turn runs.
+// The one place that filter lives; the transcript, the live classifier and both routes' failure
+// readers ask it.
+func isTurnError(msg string) bool {
+	return msg != "" && !isModelFallbackNotice(msg)
+}
+
+// TurnFailure is agents.LiveStateTraits.TurnFailure: the Terminal route's counterpart of
+// turnWatch, reading the failure from the lines events.jsonl gained after the turn's mark.
+func TurnFailure(m session.Meta, mark string) string {
+	sid := SessionID(m)
+	if sid == "" {
+		return ""
+	}
+	path := EventsPath(sid)
+	off, ok := agents.FileMarkOffset(path, mark)
+	if !ok {
+		return ""
+	}
+	f, err := openRegular(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	return failureFrom(f, off, true)
 }

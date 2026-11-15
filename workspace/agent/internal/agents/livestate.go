@@ -65,7 +65,18 @@ type LiveStateTraits struct {
 	// before the input counts as not delivered. It only bounds a transient: an input that lands
 	// later is picked up again by InputSeen, so too short costs a brief idle, never a lost turn.
 	InputWindow time.Duration
+	// TurnFailure reads, for a polled turn that just ended, why it failed ("" = it did not): the
+	// failure text, from the source lines after mark. Without it a hook-less kind whose failed
+	// turn the source records (copilot's session.error) ends as a clean idle, indistinguishable
+	// from a finished one in the report and the turn-failed status reason. Called only after
+	// idleEndsThisTurn agreed the turn ended.
+	TurnFailure func(m session.Meta, mark string) string
 }
+
+// FileMarkOffset is the byte offset of a FileSizeMark taken on path, ok=false when the mark is
+// unparseable or path is no longer the file it was taken from. For a kind's TurnFailure, which
+// reads only the lines the turn appended.
+func FileMarkOffset(path, mark string) (int64, bool) { return parseFileMark(path, mark) }
 
 // scanLines calls fn with the byte offset and text of each line in at most the last window
 // bytes of the file at path, returning the file size it saw and the offset the first reported
