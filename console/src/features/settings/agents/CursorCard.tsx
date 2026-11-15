@@ -4,7 +4,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
-import { useReauth } from "../parts/useReauth.ts";
+import { useActiveFlow } from "../parts/useActiveFlow.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { CardSettings, ConnPaused, LaunchDefaults, type DeviceFlow } from "./AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
@@ -20,6 +20,7 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: Prov
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
+  const active = useActiveFlow();
   const [flow, setFlow] = useState<DeviceFlow | null>(null);
   const [busy, setBusy] = useState(false);
   const unsupported = st?.supported === false;
@@ -32,21 +33,38 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: Prov
         toast(tr("agents.cursor_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
       }
+      active.begin(res.flow_id);
       setFlow({ url: res.url, flow_id: res.flow_id, status: tr("git.oauth_waiting") });
       poll({
         deadlineMs: 10 * 60 * 1000,
         firstDelayMs: 3000,
-        onExpire: () => setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
+        onExpire: () => {
+          if (active.is(res.flow_id)) setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired"), ended: true } : f));
+        },
         step: async () => {
+          if (!active.is(res.flow_id)) return { stop: true };
           let p;
           try {
             p = await apiJSON("api/connections/cursor/poll", "POST", { flow_id: res.flow_id });
           } catch {
             p = null;
           }
+          if (!active.is(res.flow_id)) return { stop: true };
           if (p && p.connected) {
+            active.end();
             setFlow(null);
             reload();
+            return { stop: true };
+          }
+          // The sign-in child exited without signing in (an expired code, a refused approval):
+          // nothing more can arrive, so end the wait instead of spinning to the deadline.
+          // An error answer means the Agent took the flow and could not install it: nothing
+          // more will come for this flow either.
+          if (p && (p.failed || p.error)) {
+            active.end();
+            const msg = p.failed ? p.detail || "" : errDetail(p.error);
+            const status = msg ? tr("provider.login_ended_detail", { msg }) : tr("provider.login_ended");
+            setFlow((f) => (f ? { ...f, status, ended: true } : f));
             return { stop: true };
           }
           return { stop: false, nextMs: 2500 };
@@ -56,9 +74,9 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: Prov
       setBusy(false);
     }
   };
-  const reauth = useReauth("cursor", reload, setBusy);
   const disconnect = async () => {
     await raw("api/connections/cursor", { method: "DELETE" });
+    active.end();
     setFlow(null);
     reload();
   };
@@ -78,13 +96,18 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: Prov
       ) : unsupported ? (
         <div className="p-desc">{tr("agents.cursor_unsupported", { reason: st?.reason || "" })}</div>
       ) : flow ? (
-        // Before the connection state: re-auth opens the flow while the refetch that clears
-        // "connected" is still on its way (or failed).
+        // Before the connection state: re-auth opens the flow while the card is still connected.
         <div className="p-body">
           {/* No pasted code — cursor approves entirely in the browser, then self-polls. */}
-          <DeviceSteps url={flow.url} status={flow.status} />
+          <DeviceSteps url={flow.url} status={flow.status} ended={flow.ended} />
           <div className="flow">
-            <button className="ghost" onClick={() => setFlow(null)}>
+            <button
+              className="ghost"
+              onClick={() => {
+                active.end();
+                setFlow(null);
+              }}
+            >
               {tr("common.cancel")}
             </button>
           </div>
@@ -94,7 +117,7 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: Prov
           <span className="p-em" title={st.email || ""}>
             {st.email || "Cursor"}
           </span>
-          <ReauthButton disabled={busy} onClick={() => void reauth(startLogin)} />
+          <ReauthButton disabled={busy} onClick={() => void startLogin()} />
           <DisconnectButton disabled={busy} onClick={disconnect} />
         </div>
       ) : (

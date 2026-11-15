@@ -88,8 +88,11 @@ func hasValue(raw json.RawMessage) bool {
 // readCredential parses auth.json. A missing file, an unparseable one and an empty
 // `providers` all mean the same thing to the card — not connected — and none of them is an
 // error worth surfacing: the member's next action is the same either way.
-func readCredential() credential {
-	b, err := os.ReadFile(authPath())
+func readCredential() credential { return readCredentialAt(authPath()) }
+
+// readCredentialAt is readCredential for the auth.json at path.
+func readCredentialAt(path string) credential {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return credential{}
 	}
@@ -188,34 +191,31 @@ var loginFlows = agents.NewFlowStore(loginFlowTTL)
 // HandleStart launches the device-code login, scrapes the URL and code, and returns them
 // with a flow_id the client polls. The muse process is kept alive because it is the thing
 // doing the Meta-side polling. POST /connections/muse/start.
+//
+// The login runs under a staging HOME (agents.StagedPoll): a signed-in muse prints no login
+// URL, so this is also what lets a connected card sign in again while the current login stays
+// in use.
 func HandleStart(w http.ResponseWriter, r *http.Request) {
 	if !Installed() {
 		httpx.WriteErr(w, http.StatusConflict, "muse_unsupported", "Muse Code is not installed")
 		return
 	}
-	if readCredential().Present {
-		// A signed-in muse prints no login URL, so the scrape below would only time out.
-		httpx.WriteErr(w, http.StatusConflict, "already_connected", "already connected; disconnect first to re-authenticate")
-		return
-	}
 	loginFlows.Reap()
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteMuseLogin)
-	if !began {
+	stage, err := agents.NewStagingHome("muse")
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "stage_failed", err.Error())
 		return
 	}
 	cmd := exec.Command(Bin(), "login")
 	// The pin is AF's, not the launcher's, on the login path too (decision 8).
-	cmd.Env = append(os.Environ(), "MUSE_NO_AUTO_UPDATE=1")
+	cmd.Env = agents.WithHome(append(os.Environ(), "MUSE_NO_AUTO_UPDATE=1"), stage)
 	f, err := agents.StartPipeFlow(cmd)
 	if err != nil {
-		loginOp.Finish()
-	} else {
-		f.LoginOp = loginOp
-	}
-	if err != nil {
+		_ = os.RemoveAll(stage)
 		httpx.WriteErr(w, http.StatusInternalServerError, "spawn_failed", err.Error())
 		return
 	}
+	agents.Stage(f, stage)
 	url := f.WaitFor(loginURLRe, 20*time.Second)
 	if url == "" {
 		detail := strings.TrimSpace(f.Clean())
@@ -237,39 +237,32 @@ type pollReq struct {
 
 // HandlePoll reports whether the browser approval has landed. POST /connections/muse/poll.
 //
-// The signal is auth.json, not the child's output: muse writes the credential before it says
-// anything, and a reader of its final line would be guessing at wording that is not a
-// contract. A child that has EXITED without one, though, is a finished failure — an expired
-// code, a refused approval — and reporting that ends the poll instead of leaving the card
-// spinning to its 15-minute deadline for something that can no longer happen.
+// The signal is the staged auth.json, not the child's output: muse writes the credential before
+// it says anything, and a reader of its final line would be guessing at wording that is not a
+// contract.
 func HandlePoll(w http.ResponseWriter, r *http.Request) {
 	var req pollReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if readCredential().Present {
-		// stored: this call consumed a live flow (see the cursor poll); a repeat or a
-		// flow-less poll while signed in reports connected without it.
-		stored := false
-		if f := loginFlows.Take(req.FlowID); f != nil {
-			f.Close()
-			stored = true
-		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
-		return
-	}
-	// An unknown or already-reaped flow id leaves nothing to wait on; report it as still
-	// unconnected rather than as a failure, because the TTL reaper is one of the ways to get
-	// here and it says nothing about the approval.
-	f := loginFlows.Get(req.FlowID)
-	if f == nil || !f.Ended() {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
-		return
-	}
-	detail := strings.TrimSpace(f.Clean())
-	loginFlows.Take(req.FlowID)
-	f.Close()
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false, "failed": true, "detail": detail})
+	loginPoll.Serve(w, req.FlowID)
+}
+
+// loginPoll reads the package's seams through closures so a test can substitute them.
+//
+// Only auth.json is installed. A sign-in also writes model-catalog/*.credential under the data
+// directory, named by a digest and read here as a cache muse keeps for itself; that a home with
+// only the new auth.json works was not exercised end to end (it spends the member's usage).
+var loginPoll = &agents.StagedPoll{
+	Flows:  loginFlows,
+	Logins: []string{routes.RouteMuseLogin},
+	SignedInAt: func(home string) bool {
+		return readCredentialAt(filepath.Join(home, ".config", "muse", "auth.json")).Present
+	},
+	Install: func(stage string) error {
+		return agents.InstallFile(filepath.Join(stage, ".config", "muse", "auth.json"), authPath(), 0o600)
+	},
+	LiveSignedIn: func() bool { return readCredential().Present },
 }
 
 // HandleDisconnect signs muse out with `muse logout`, which removes the stored credential

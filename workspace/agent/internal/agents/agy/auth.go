@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/hostcaps"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
@@ -100,37 +101,38 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_method", "method must be oauth or gcp-project")
 		return
 	}
-	if SignedIn() {
-		// A signed-in agy shows no login selector — the flow below would just hang.
-		httpx.WriteErr(w, http.StatusConflict, "already_connected", "already connected; disconnect first to re-authenticate")
-		return
-	}
 	flows.Reap()
 
-	// Launch in a dedicated empty dir, pre-trusted so the onboarding's final
-	// workspace-trust prompt targets a harmless path (never the whole home) and
-	// is skipped outright.
-	loginDir := filepath.Join(stateDir(), "login-flow")
-	_ = os.MkdirAll(loginDir, 0o700)
-	EnsureWorkspaceTrusted(loginDir)
-
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteAgyLogin)
-	if !began {
+	// agy signs in under a staging HOME and HandleComplete installs only the token file: a
+	// signed-in agy shows no login selector, so this is what lets a connected card sign in
+	// again, and the current login stays in use until the new one completes. A fresh home runs
+	// the whole onboarding, which driveOnboarding answers.
+	stage, err := agents.NewStagingHome("agy")
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "stage_failed", err.Error())
 		return
 	}
+	// Launch in a dedicated empty dir, pre-trusted in the staging settings so the onboarding's
+	// final workspace-trust prompt targets a harmless path (never the whole home) and is
+	// skipped outright.
+	loginDir := filepath.Join(stateDir(), "login-flow")
+	_ = os.MkdirAll(loginDir, 0o700)
+	if err := seedStagingSettings(stage, loginDir); err != nil {
+		_ = os.RemoveAll(stage)
+		httpx.WriteErr(w, http.StatusInternalServerError, "stage_failed", err.Error())
+		return
+	}
+
 	cmd := exec.Command("agy")
 	cmd.Dir = loginDir
-	cmd.Env = Env(append(os.Environ(), "TERM=xterm-256color"))
+	cmd.Env = Env(agents.WithHome(append(os.Environ(), "TERM=xterm-256color"), stage))
 	f, err := agents.StartFlow(cmd)
 	if err != nil {
-		loginOp.Finish()
-	} else {
-		f.LoginOp = loginOp
-	}
-	if err != nil {
+		_ = os.RemoveAll(stage)
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
 	}
+	agents.Stage(f, stage)
 
 	// "Select login method:" — option 1 (Google OAuth) is pre-selected; Enter picks it.
 	if f.WaitFor(selectorRe, 20*time.Second) == "" {
@@ -209,8 +211,18 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := driveOnboarding(f, 60*time.Second); err != nil {
+	staged := tokenPathIn(f.Dir)
+	if err := driveOnboarding(f, 60*time.Second, func() bool { return fileExists(staged) }); err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "login_failed", "login did not complete ("+err.Error()+")")
+		return
+	}
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteAgyLogin)
+	if !began {
+		return
+	}
+	defer loginOp.Finish()
+	if err := installLogin(f.Dir, paths.HomeDir()); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "install_failed", "the sign-in completed, but its login could not be installed: "+err.Error())
 		return
 	}
 	// The main-screen header shows "email (plan)" — capture it for Status()'s
@@ -224,11 +236,12 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 }
 
 // driveOnboarding answers the post-code onboarding screens as they appear, each
-// exactly once, until the main screen is reached with the token on disk. A
+// exactly once, until the main screen is reached with the token on disk (signedIn, which
+// looks where this flow's agy writes it). A
 // re-login (already onboarded) shows none of them. Returns nil on success;
 // a timeout is the usual failure (wrong or expired code — agy prints no
 // scrapeable error line, it just stays put).
-func driveOnboarding(f *agents.Flow, timeout time.Duration) error {
+func driveOnboarding(f *agents.Flow, timeout time.Duration, signedIn func() bool) error {
 	deadline := time.Now().Add(timeout)
 	done := map[string]bool{}
 	// step answers screen `name` (matched by re on the accumulated output) once,
@@ -245,7 +258,7 @@ func driveOnboarding(f *agents.Flow, timeout time.Duration) error {
 	}
 	for time.Now().Before(deadline) {
 		out := f.Clean()
-		if readyRe.MatchString(out) && SignedIn() {
+		if readyRe.MatchString(out) && signedIn() {
 			return nil
 		}
 		// Color scheme: Enter confirms the default "terminal".

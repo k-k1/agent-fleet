@@ -203,8 +203,7 @@ func HandleDeviceStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
 	}
-	f.Dir = stage
-	f.OnClose = func() { _ = os.RemoveAll(stage) }
+	agents.Stage(f, stage)
 
 	url := f.WaitFor(urlRe, 20*time.Second)
 	if url == "" {
@@ -227,62 +226,22 @@ type pollReq struct {
 // HandleDevicePoll reports whether the device-auth login has completed. On
 // success it installs the staged auth.json and tears down the flow.
 // POST /connections/codex/device/poll.
-//
-// Only the staged home is consulted while the flow is live: the global login state is the one
-// being replaced, and reading it would report a re-authentication done before the user approved
-// anything.
 func HandleDevicePoll(w http.ResponseWriter, r *http.Request) {
 	var req pollReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	pollMu.Lock()
-	defer pollMu.Unlock()
-	f := flows.Get(req.FlowID)
-	if f == nil {
-		// A repeat poll of a flow this process already installed says connected without
-		// "stored"; the Control Plane audits only the call that saw the sign-in finish.
-		if installed.has(req.FlowID) && loggedIn() {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": false})
-			return
-		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
-		return
-	}
-	stage := f.Dir
-	ended := f.Ended() // before the probe: a codex that exited and wrote nothing has failed
-	if !loggedInAt(stage) {
-		if ended {
-			// Refused, expired or broken: nothing more can arrive, so say so instead of
-			// letting the client poll out its deadline.
-			detail := outputTail(f.Clean(), 3)
-			if t := flows.Take(req.FlowID); t != nil {
-				t.Close()
-			}
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false, "failed": true, "detail": detail})
-			return
-		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
-		return
-	}
-	// The flow can have been reaped (and its staging home removed) while the probe ran:
-	// Reap does not take pollMu.
-	if f = flows.Take(req.FlowID); f == nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
-		return
-	}
-	defer f.Close() // removes the staging directory, after the copy below
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteChatGPTSubscription)
-	if !began {
-		return
-	}
-	defer loginOp.Finish()
-	if err := installAuth(stage, codexHome()); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "install_failed", "codex signed in, but its login could not be installed: "+err.Error())
-		return
-	}
-	installed.add(req.FlowID)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": true})
+	devicePoll.Serve(w, req.FlowID)
+}
+
+// devicePoll reads the package's seams through closures so a test can substitute them.
+var devicePoll = &agents.StagedPoll{
+	Flows:        flows,
+	Logins:       []string{routes.RouteChatGPTSubscription},
+	SignedInAt:   func(home string) bool { return loggedInAt(home) },
+	Install:      func(stage string) error { return installAuth(stage, codexHome()) },
+	LiveSignedIn: func() bool { return loggedIn() },
+	Detail:       func(f *agents.Flow) string { return outputTail(f.Clean(), 3) },
 }
 
 // HandleDisconnect logs codex out (clears auth.json) via the CLI.

@@ -152,7 +152,8 @@ describe("CodexCard re-authenticate", () => {
         await vi.advanceTimersByTimeAsync(30000);
       });
       expect(apiJSON).toHaveBeenCalledTimes(1);
-      expect(host?.textContent).toContain(tr("agents.codex_device_failed", { msg: "expired" }));
+      expect(host?.textContent).toContain(tr("provider.login_ended_detail", { msg: "expired" }));
+      expect(host?.querySelector(".p-waiting .codicon")).toBeNull(); // no spinner on an ended flow
     } finally {
       vi.useRealTimers();
     }

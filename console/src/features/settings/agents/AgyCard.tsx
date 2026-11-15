@@ -4,7 +4,6 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
-import { useReauth } from "../parts/useReauth.ts";
 import { CardSettings, ConnPaused, LaunchDefaults, RtkRow, type LoginFlow } from "./AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
 import { type AgentRtkPatch, type AgentRtkSettings } from "../api.ts";
@@ -66,7 +65,6 @@ export function AgyCard({
       setBusy(false);
     }
   };
-  const reauth = useReauth("agy", reload, setBusy);
   const disconnect = async () => {
     await raw("api/connections/agy", { method: "DELETE" });
     reload();
@@ -92,8 +90,7 @@ export function AgyCard({
       ) : unsupported ? (
         <div className="p-desc">{tr("agents.agy_unsupported", { reason: st?.reason || "" })}</div>
       ) : flow ? (
-        // Before the connection state: re-auth opens the flow while the refetch that clears
-        // "connected" is still on its way (or failed).
+        // Before the connection state: re-auth opens the flow while the card is still connected.
         <>
           <div className="p-desc">{tr("agents.agy_desc_flow")}</div>
           <div className="p-body">
@@ -142,7 +139,7 @@ export function AgyCard({
             {st.email || tr("conn.connected")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
-          <ReauthButton disabled={busy} onClick={() => void reauth(start)} />
+          <ReauthButton disabled={busy} onClick={() => void start()} />
           <DisconnectButton disabled={busy} onClick={disconnect} />
         </div>
       ) : (

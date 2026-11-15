@@ -289,28 +289,24 @@ func TestHandleAPIKeyRejectsAnEmptyKey(t *testing.T) {
 	}
 }
 
-// A signed-in muse prints no login URL, so starting one would only burn the 20-second scrape
-// timeout and hand the card a bad error. And with no binary there is nothing to start.
-func TestHandleStartRefusesWhenItCannotProduceAURL(t *testing.T) {
+// With no binary there is nothing to start.
+func TestHandleStartRefusesWithoutTheBinary(t *testing.T) {
 	museHome(t)
 	t.Setenv("AGENT_MUSE_BIN", filepath.Join(t.TempDir(), "absent"))
 	if rec := post(t, HandleStart, "{}"); rec.Code != http.StatusConflict || errCode(t, rec) != "muse_unsupported" {
 		t.Fatalf("not installed: status=%d body=%s", rec.Code, rec.Body.String())
 	}
-
-	fakeMuse(t, "echo the binary must not be reached >&2; exit 9\n")
-	writeAuth(t, accountJSON)
-	if rec := post(t, HandleStart, "{}"); rec.Code != http.StatusConflict || errCode(t, rec) != "already_connected" {
-		t.Fatalf("already connected: status=%d body=%s", rec.Code, rec.Body.String())
-	}
 }
 
-// The happy path of the scrape, against a fake that prints what muse prints. It also pins
-// that the login child is NOT given a terminal — the fake refuses on a TTY the way the real
-// binary effectively does, by stopping before the URL.
+// The happy path of the scrape, against a fake that prints what muse prints, run as a
+// re-authentication: a login is already in place. It also pins that the login child is NOT given
+// a terminal (the fake refuses on a TTY the way the real binary effectively does, by stopping
+// before the URL) and runs under the staging HOME, and that the live login is replaced only
+// once the staged one exists.
 func TestHandleStartScrapesTheURLAndCode(t *testing.T) {
 	museHome(t)
 	fakeMuse(t, `if [ -t 1 ]; then echo "Press Enter to open it in your browser:"; sleep 30; fi
+echo "home=$HOME"
 echo "Open this page to sign in:"
 echo "  https://auth.meta.com/oauth/device/?code=NHBV-RVBT"
 echo "confirm this code matches:"
@@ -318,7 +314,8 @@ echo "  NHBV-RVBT"
 echo "Waiting for approval..."
 sleep 30
 `)
-	writeAuth(t, loggedOutJSON)
+	oldLogin := strings.Replace(accountJSON, "probe@example.com", "old@example.com", 1)
+	writeAuth(t, oldLogin)
 	rec := post(t, HandleStart, "{}")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -334,21 +331,40 @@ sleep 30
 	if got.URL != "https://auth.meta.com/oauth/device/?code=NHBV-RVBT" || got.UserCode != "NHBV-RVBT" || got.FlowID == "" {
 		t.Fatalf("scraped %+v", got)
 	}
+	f := loginFlows.Get(got.FlowID)
 	t.Cleanup(func() {
 		if f := loginFlows.Take(got.FlowID); f != nil {
 			f.Close()
 		}
 	})
+	if f.Dir == "" || !strings.Contains(f.Clean(), "home="+f.Dir) {
+		t.Fatalf("login child did not run under the staging home %q: %q", f.Dir, f.Clean())
+	}
 
-	// The poll signal is the credential, not the child's wording.
+	// The poll signal is the staged credential, not the child's wording, and not the live login.
 	rec = post(t, HandlePoll, `{"flow_id":"`+got.FlowID+`"}`)
 	if !strings.Contains(rec.Body.String(), `"connected":false`) {
 		t.Fatalf("poll before approval: %s", rec.Body.String())
 	}
-	writeAuth(t, accountJSON)
+	if c := readCredential(); c.Email != "old@example.com" {
+		t.Fatalf("live login changed before approval: %+v", c)
+	}
+	staged := filepath.Join(f.Dir, ".config", "muse", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(staged), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, []byte(accountJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	rec = post(t, HandlePoll, `{"flow_id":"`+got.FlowID+`"}`)
 	if !strings.Contains(rec.Body.String(), `"connected":true`) {
 		t.Fatalf("poll after approval: %s", rec.Body.String())
+	}
+	if c := readCredential(); c.Email != "probe@example.com" {
+		t.Fatalf("live login after approval: %+v", c)
+	}
+	if _, err := os.Stat(f.Dir); !os.IsNotExist(err) {
+		t.Fatalf("staging home left behind: %v", err)
 	}
 }
 
@@ -434,38 +450,47 @@ func TestHandleDisconnectJudgesTheCredential(t *testing.T) {
 }
 
 // "stored" is what the Control Plane audits a sign-in by: only the poll that consumed a live
-// flow says it. A repeat of that poll, and a flow-less poll while already signed in, answer
-// connected without it, so neither can add an audit row.
+// flow says it. A repeat of that poll answers connected without it, and a poll with no flow is
+// not connected at all (the live login is not this flow's sign-in), so neither adds an audit row.
 func TestHandlePollSaysStoredOnlyForTheCallThatConsumedTheFlow(t *testing.T) {
 	museHome(t)
 	writeAuth(t, accountJSON)
 
-	stored := func(body string) bool {
+	answer := func(body string) (connected, stored bool) {
 		var out struct {
 			Connected bool `json:"connected"`
 			Stored    bool `json:"stored"`
 		}
-		if err := json.Unmarshal([]byte(body), &out); err != nil || !out.Connected {
-			t.Fatalf("poll body %q: want connected", body)
+		if err := json.Unmarshal([]byte(body), &out); err != nil {
+			t.Fatalf("poll body %q: %v", body, err)
 		}
-		return out.Stored
+		return out.Connected, out.Stored
 	}
-	if stored(post(t, HandlePoll, `{}`).Body.String()) {
-		t.Fatal("a poll with no flow while signed in said stored")
+	if c, _ := answer(post(t, HandlePoll, `{}`).Body.String()); c {
+		t.Fatal("a poll with no flow read the live login as its sign-in")
 	}
-	if stored(post(t, HandlePoll, `{"flow_id":"nope"}`).Body.String()) {
-		t.Fatal("a poll with an unknown flow said stored")
+	if c, _ := answer(post(t, HandlePoll, `{"flow_id":"nope"}`).Body.String()); c {
+		t.Fatal("a poll with an unknown flow read the live login as its sign-in")
 	}
 	live, err := agents.StartPipeFlow(exec.Command("sh", "-c", "sleep 30"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	stage := t.TempDir()
+	agents.Stage(live, stage)
+	staged := filepath.Join(stage, ".config", "muse", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(staged), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, []byte(accountJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	id := loginFlows.Put(live)
 	body := `{"flow_id":"` + id + `"}`
-	if !stored(post(t, HandlePoll, body).Body.String()) {
-		t.Fatal("the poll that consumed the live flow did not say stored")
+	if c, st := answer(post(t, HandlePoll, body).Body.String()); !c || !st {
+		t.Fatal("the poll that consumed the live flow did not say connected and stored")
 	}
-	if stored(post(t, HandlePoll, body).Body.String()) {
-		t.Fatal("a repeat of the same poll said stored again")
+	if c, st := answer(post(t, HandlePoll, body).Body.String()); !c || st {
+		t.Fatal("a repeat of the same poll did not say connected without stored")
 	}
 }

@@ -66,7 +66,7 @@ export function CodexCard({
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
         onExpire: () => {
-          if (activeFlow.current === res.flow_id) setDev((d) => (d ? { ...d, status: tr("git.oauth_expired") } : d));
+          if (activeFlow.current === res.flow_id) setDev((d) => (d ? { ...d, status: tr("git.oauth_expired"), ended: true } : d));
         },
         step: async () => {
           if (activeFlow.current !== res.flow_id) return { stop: true };
@@ -83,10 +83,13 @@ export function CodexCard({
             reload();
             return { stop: true };
           }
-          if (p && p.failed) {
-            // codex exited without signing in (refused, expired, broken): nothing more will come.
+          // codex exited without signing in (refused, expired, broken), or the Agent took the
+          // flow and could not install it (an error answer): nothing more will come.
+          if (p && (p.failed || p.error)) {
             activeFlow.current = null;
-            setDev((d) => (d ? { ...d, status: tr("agents.codex_device_failed", { msg: p.detail || "" }) } : d));
+            const msg = p.failed ? p.detail || "" : errDetail(p.error);
+            const status = msg ? tr("provider.login_ended_detail", { msg }) : tr("provider.login_ended");
+            setDev((d) => (d ? { ...d, status, ended: true } : d));
             return { stop: true };
           }
           return { stop: false, nextMs: 2500 };
@@ -160,7 +163,7 @@ export function CodexCard({
             the card is still connected. */
       mode === "device" && dev ? (
         <div className="p-body">
-          <DeviceSteps code={dev.user_code} url={dev.url} status={dev.status} />
+          <DeviceSteps code={dev.user_code} url={dev.url} status={dev.status} ended={dev.ended} />
           <Hint>
             {tr("agents.codex_hint1_1")}
             <a href="https://chatgpt.com/#settings/Security" target="_blank" rel="noopener" className="flow-link">
@@ -200,7 +203,7 @@ export function CodexCard({
             {st.email || (st.method === "apikey" ? tr("agents.codex_apikey_label") : "ChatGPT")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
-          <ReauthButton keepsLogin disabled={busy} onClick={() => void reauth()} />
+          <ReauthButton disabled={busy} onClick={() => void reauth()} />
           <DisconnectButton disabled={busy} onClick={disconnect} />
         </div>
       ) : (
