@@ -1,7 +1,7 @@
 // A codex login revoked server side still reads as connected (the status is read from local
-// files), so the connected card is the only place a re-authentication can be offered. It must
-// sign out first and then sign in the way the card was connected: the device flow for ChatGPT,
-// the key form for an API key.
+// files), so the connected card is the only place a re-authentication can be offered. It signs
+// in the way the card was connected — the device flow for ChatGPT, the key form for an API key —
+// and never signs out first: the current login stays until the new sign-in completes.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -23,6 +23,7 @@ vi.mock("../../../ui/ConfirmProvider.tsx", () => ({
 }));
 
 const { CodexCard } = await import("./CodexCard.tsx");
+const { t: tr } = await import("../../../lib/i18n/index.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -88,49 +89,80 @@ describe("CodexCard re-authenticate", () => {
     expect(reauthButton()).toBeNull();
   });
 
-  it("signs out, then starts the device flow for a ChatGPT login", async () => {
-    const reload = vi.fn();
-    await mount({ connected: true, method: "chatgpt", email: "c@example.com" }, reload);
+  it("starts the device flow for a ChatGPT login without signing out", async () => {
+    await mount({ connected: true, method: "chatgpt", email: "c@example.com" });
     await act(async () => {
       reauthButton()!.click();
     });
-    expect(calls).toEqual(["DELETE api/connections/codex", "POST api/connections/codex/device/start"]);
-    expect(reload).toHaveBeenCalled();
-    // st is still connected here (the refetch has not landed, or failed): the code must show anyway.
+    expect(calls).toEqual(["POST api/connections/codex/device/start"]);
+    // st is still connected: the code must show anyway.
     expect(host?.textContent).toContain("ABCD-EFGHI");
   });
 
-  // The device poll answers from the global login state, so a revoked login left behind by a
-  // failed sign-out would close the new flow at once and read as success.
-  it("stops with a message when the sign-out fails or errors", async () => {
-    for (const fail of [
-      () => Promise.resolve(new Response("{}", { status: 502 })),
-      () => Promise.reject(new Error("network down")),
-    ]) {
-      calls.length = 0;
-      raw.mockImplementationOnce((path: string, init?: { method?: string }) => {
-        calls.push(`${init?.method || "GET"} ${path}`);
-        return fail();
-      });
-      const reload = vi.fn();
-      await mount({ connected: true, method: "chatgpt", email: "c@example.com" }, reload);
+  it("goes back to the connected card when the flow is abandoned", async () => {
+    await mount({ connected: true, method: "chatgpt", email: "c@example.com" });
+    await act(async () => {
+      reauthButton()!.click();
+    });
+    const back = [...host!.querySelectorAll("button")].find((b) => b.textContent === tr("common.back"));
+    expect(back).toBeTruthy();
+    await act(async () => {
+      back!.click();
+    });
+    expect(host?.textContent).not.toContain("ABCD-EFGHI");
+    expect(reauthButton()).toBeTruthy();
+    expect(calls).toEqual(["POST api/connections/codex/device/start"]);
+  });
+
+  // After Back, a code approved later must not install a login the user chose not to take.
+  it("stops polling the abandoned flow", async () => {
+    vi.useFakeTimers();
+    try {
+      apiJSON.mockImplementation(() => Promise.resolve({ connected: false }));
+      await mount({ connected: true, method: "chatgpt", email: "c@example.com" });
       await act(async () => {
         reauthButton()!.click();
       });
-      expect(calls).toEqual(["DELETE api/connections/codex"]);
-      expect(reload).not.toHaveBeenCalled();
-      expect(toast).toHaveBeenCalledTimes(1);
-      toast.mockClear();
-      act(() => root?.unmount());
-      host?.remove();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(apiJSON).toHaveBeenCalledTimes(1);
+      const back = [...host!.querySelectorAll("button")].find((b) => b.textContent === tr("common.back"));
+      await act(async () => {
+        back!.click();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30000);
+      });
+      expect(apiJSON).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows the end of a device flow the Agent reports as failed, and stops", async () => {
+    vi.useFakeTimers();
+    try {
+      apiJSON.mockImplementation(() => Promise.resolve({ connected: false, failed: true, detail: "expired" }));
+      await mount({ connected: true, method: "chatgpt", email: "c@example.com" });
+      await act(async () => {
+        reauthButton()!.click();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30000);
+      });
+      expect(apiJSON).toHaveBeenCalledTimes(1);
+      expect(host?.textContent).toContain(tr("agents.codex_device_failed", { msg: "expired" }));
+    } finally {
+      vi.useRealTimers();
     }
   });
 
   it("runs one re-authentication at a time", async () => {
-    let release: (r: Response) => void = () => {};
-    raw.mockImplementationOnce((path: string, init?: { method?: string }) => {
+    let release: (r: unknown) => void = () => {};
+    api.mockImplementationOnce((path: string, init?: { method?: string }) => {
       calls.push(`${init?.method || "GET"} ${path}`);
-      return new Promise<Response>((res) => (release = res));
+      return new Promise((res) => (release = res));
     });
     await mount({ connected: true, method: "chatgpt", email: "c@example.com" });
     await act(async () => {
@@ -141,21 +173,18 @@ describe("CodexCard re-authenticate", () => {
       reauthButton()!.click(); // a disabled button ignores this; the in-flight guard is the backstop
     });
     await act(async () => {
-      release(new Response("{}"));
+      release({ url: "https://auth.openai.com/codex/device", user_code: "ABCD-EFGHI", flow_id: "f1" });
     });
-    expect(calls).toEqual(["DELETE api/connections/codex", "POST api/connections/codex/device/start"]);
+    expect(calls).toEqual(["POST api/connections/codex/device/start"]);
   });
 
   // The device flow would switch an API-key workspace to a ChatGPT subscription.
-  it("signs out and opens the key form, not the device flow, for an API key", async () => {
-    const reload = vi.fn();
-    await mount({ connected: true, method: "apikey" }, reload);
+  it("opens the key form, not the device flow, for an API key, without signing out", async () => {
+    await mount({ connected: true, method: "apikey" });
     await act(async () => {
       reauthButton()!.click();
     });
-    expect(calls).toEqual(["DELETE api/connections/codex"]);
-    expect(reload).toHaveBeenCalled();
-    // The key form shows without waiting for the refetch that clears "connected".
+    expect(calls).toEqual([]);
     expect(host?.querySelector('input[type="password"]')).toBeTruthy();
   });
 });

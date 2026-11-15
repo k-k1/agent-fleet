@@ -104,17 +104,25 @@ export function DisconnectButton({ onClick, disabled }: { onClick: () => void; d
 // the card still reads as connected) forced the user to guess that disconnect-then-connect
 // was the fix.
 //
-// It really does sign out first (the CLI owns its credentials; there is no refresh command),
-// so it asks before acting the way disconnect does — but it is not framed as destructive: the
-// OAuth flow opens immediately afterwards, and abandoning it leaves the card in its ordinary
-// disconnected state with connect available.
-export function ReauthButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+// keepsLogin says the kind signs in again over its current login, which stays in use until the
+// new sign-in completes; without it the kind signs out first. The confirmation states which,
+// since only the latter leaves the card disconnected when the flow is abandoned. It asks before
+// acting the way disconnect does, but is not framed as destructive.
+export function ReauthButton({
+  onClick,
+  disabled,
+  keepsLogin,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  keepsLogin?: boolean;
+}) {
   const tr = useT();
   const askConfirm = useConfirm();
   const handle = async () => {
     const ok = await askConfirm({
       title: tr("provider.reauth_confirm_title"),
-      body: tr("provider.reauth_confirm_body"),
+      body: tr(keepsLogin ? "provider.reauth_confirm_body_keep" : "provider.reauth_confirm_body"),
       confirmLabel: tr("provider.reauth"),
       danger: false, // the default is danger; this is a recovery action, so use a normal button
     });

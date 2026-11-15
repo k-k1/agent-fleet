@@ -40,25 +40,21 @@ const flowTTL = 10 * time.Minute
 var flows = agents.NewFlowStore(flowTTL)
 
 // HandleStart launches setup-token, waits for the authorize URL, and
-// returns it with a flow_id the client uses to submit the code.
+// returns it with a flow_id the client uses to submit the code. It does not sign out an existing
+// login: re-authentication runs this over it, and the old credentials stay in use until the new
+// sign-in completes.
 // POST /connections/claude/start.
 func HandleStart(w http.ResponseWriter, r *http.Request) {
 	flows.Reap()
 	// Real subscription login (writes .credentials.json with a refresh token).
 	// CLAUDE_CONFIG_DIR is inherited from os.Environ() so creds land where sessions
 	// read them. Same authorize URL as setup-token (claude.com/cai/oauth/authorize).
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteAnthropicSubscription)
-	if !began {
-		return
-	}
+	//
+	// The login change is recorded in HandleComplete, not here: the CLI writes nothing until a
+	// code is accepted, so a flow abandoned before then must leave the login's generation alone.
 	cmd := exec.Command("claude", "auth", "login", "--claudeai")
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	f, err := agents.StartFlow(cmd)
-	if err != nil {
-		loginOp.Finish()
-	} else {
-		f.LoginOp = loginOp
-	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
@@ -97,7 +93,14 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "no_flow", "unknown or expired flow_id")
 		return
 	}
-	defer f.Close()
+	defer f.Close() // also finishes the login change begun below
+
+	// From here the CLI may replace the credentials: record the change before the code goes in.
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteAnthropicSubscription)
+	if !began {
+		return
+	}
+	f.LoginOp = loginOp
 
 	// Submit the code, then send Enter as a SEPARATE keystroke after a short
 	// delay. Ink ignores the carriage return if it arrives in the same write as
@@ -144,23 +147,54 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "claude"})
 }
 
-// awaitLogin polls `claude auth status` until login succeeds, or surfaces an
-// OAuth error from the flow output, until the timeout. `claude auth login` prints
-// "OAuth error: …" on a bad/expired code, which we return instead of a generic
-// timeout.
+// awaitLogin waits for the login process to report a finished sign-in, or surfaces an OAuth
+// error from the flow output, until the timeout. `claude auth login` prints "OAuth error: …" on
+// a bad/expired code, which we return instead of a generic timeout.
+//
+// `claude auth status` alone cannot tell completion: re-authentication runs this flow over the
+// login it replaces (measured on 2.1.325: the old .credentials.json and oauthAccount stay
+// untouched until the code is accepted), so status reads loggedIn before any code is entered.
+// The login process's own word — "Login successful." or a clean exit — is what says the new
+// sign-in happened; status is then checked so a CLI that exits 0 without credentials is not
+// reported as connected.
 func awaitLogin(f *agents.Flow, timeout time.Duration) (ok bool, oauthErr string) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if loggedIn() {
-			return true, ""
-		}
-		if m := errRe.FindString(f.Clean()); m != "" {
+		ended := f.Ended() // before the output, so the last chunk is always looked at
+		out := f.Clean()
+		if m := errRe.FindString(out); m != "" {
 			return false, strings.TrimSpace(m)
+		}
+		if strings.Contains(out, loginDoneMarker) || f.ExitedOK() {
+			// Let the CLI finish writing before anything is probed or killed: the caller's
+			// Close kills it, and the marker can precede the last write.
+			wait := min(exitGrace, time.Until(deadline))
+			select {
+			case <-f.WaitEnded():
+			case <-time.After(wait):
+			}
+			if loggedInProbe() {
+				return true, ""
+			}
+			if f.Ended() {
+				return false, ""
+			}
+		} else if ended {
+			return false, "" // exited non-zero without an OAuth error
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
 	return false, ""
 }
+
+// loginDoneMarker is what `claude auth login` prints once the new credentials are stored.
+const loginDoneMarker = "Login successful"
+
+// exitGrace bounds the wait for the CLI to exit after it reported success.
+const exitGrace = 5 * time.Second
+
+// loggedInProbe is loggedIn, a seam for tests.
+var loggedInProbe = loggedIn
 
 // LoggedIn is the exported form of loggedIn for cross-package availability checks
 // (the assistant chat / title suggestion pick the first authenticated backend).

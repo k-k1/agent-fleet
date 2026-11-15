@@ -182,24 +182,29 @@ var flows = agents.NewFlowStore(flowTTL)
 // verification URL + one-time code, and returns them with a flow_id the client
 // polls. The codex process is kept alive to do the OpenAI-side polling.
 // POST /connections/codex/device/start.
+//
+// codex signs in under a staging CODEX_HOME, never the live one: measured on 0.169.0,
+// `codex login --device-auth` deletes the existing auth.json as soon as it starts, so signing in
+// in place would drop a working login for a device code the user may never approve.
+// HandleDevicePoll installs the staged auth.json once the sign-in completes; until then the
+// current login stays in use, and an abandoned flow only removes its staging directory.
 func HandleDeviceStart(w http.ResponseWriter, r *http.Request) {
 	flows.Reap()
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteChatGPTSubscription)
-	if !began {
+	stage, err := newStagingHome()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "stage_failed", err.Error())
 		return
 	}
 	cmd := exec.Command("codex", "login", "--device-auth")
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "CODEX_HOME="+stage)
 	f, err := agents.StartFlow(cmd)
 	if err != nil {
-		loginOp.Finish()
-	} else {
-		f.LoginOp = loginOp
-	}
-	if err != nil {
+		_ = os.RemoveAll(stage)
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
 	}
+	f.Dir = stage
+	f.OnClose = func() { _ = os.RemoveAll(stage) }
 
 	url := f.WaitFor(urlRe, 20*time.Second)
 	if url == "" {
@@ -220,26 +225,64 @@ type pollReq struct {
 }
 
 // HandleDevicePoll reports whether the device-auth login has completed. On
-// success it tears down the flow; codex has written auth.json by then.
+// success it installs the staged auth.json and tears down the flow.
 // POST /connections/codex/device/poll.
+//
+// Only the staged home is consulted while the flow is live: the global login state is the one
+// being replaced, and reading it would report a re-authentication done before the user approved
+// anything.
 func HandleDevicePoll(w http.ResponseWriter, r *http.Request) {
 	var req pollReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if loggedIn() {
-		// stored: this call consumed a live flow, i.e. it is the one that saw the sign-in
-		// finish. A repeat, or a poll with no flow while already signed in, says connected
-		// without it; the Control Plane audits only the former.
-		stored := false
-		if f := flows.Take(req.FlowID); f != nil {
-			f.Close()
-			stored = true
+	pollMu.Lock()
+	defer pollMu.Unlock()
+	f := flows.Get(req.FlowID)
+	if f == nil {
+		// A repeat poll of a flow this process already installed says connected without
+		// "stored"; the Control Plane audits only the call that saw the sign-in finish.
+		if installed.has(req.FlowID) && loggedIn() {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": false})
+			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
+	stage := f.Dir
+	ended := f.Ended() // before the probe: a codex that exited and wrote nothing has failed
+	if !loggedInAt(stage) {
+		if ended {
+			// Refused, expired or broken: nothing more can arrive, so say so instead of
+			// letting the client poll out its deadline.
+			detail := outputTail(f.Clean(), 3)
+			if t := flows.Take(req.FlowID); t != nil {
+				t.Close()
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false, "failed": true, "detail": detail})
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
+		return
+	}
+	// The flow can have been reaped (and its staging home removed) while the probe ran:
+	// Reap does not take pollMu.
+	if f = flows.Take(req.FlowID); f == nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
+		return
+	}
+	defer f.Close() // removes the staging directory, after the copy below
+	loginOp, began := agents.BeginLoginChange(w, routes.RouteChatGPTSubscription)
+	if !began {
+		return
+	}
+	defer loginOp.Finish()
+	if err := installAuth(stage, codexHome()); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "install_failed", "codex signed in, but its login could not be installed: "+err.Error())
+		return
+	}
+	installed.add(req.FlowID)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": true})
 }
 
 // HandleDisconnect logs codex out (clears auth.json) via the CLI.
