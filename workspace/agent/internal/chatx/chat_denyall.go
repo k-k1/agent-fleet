@@ -139,11 +139,16 @@ const denyAllProbePrompt = "/help"
 // sent anyway would spend one on a near-certain failure.
 func resolveDenyAllKind(feature string, tier OneShotTier) (string, error) {
 	parked := func(k string) bool { return routeAvoid(k, denyAllModel(feature, tier, k)) }
+	// The credential policy (ADR 0138 D12): a backend whose call it would refuse is never chosen.
+	allowed := func(k string) bool { return chatKindAllowed(k, denyAllModel(feature, tier, k)) }
 	if pin := aiFeatureAgentPref(feature); oneShotRunnable(pin) {
 		if !DenyAllKind(pin) {
 			return "", fmt.Errorf("%w: the pinned backend %q cannot run without tools", ErrDenyAllUnavailable, pin)
 		}
 		if headlessAgentAvailable(pin) {
+			if !allowed(pin) {
+				return "", fmt.Errorf("%w: the pinned backend %q runs on a route the credential policy does not allow", ErrDenyAllUnavailable, pin)
+			}
 			if parked(pin) {
 				return "", fmt.Errorf("%w: the pinned backend %q is rate-limited", ErrDenyAllUnavailable, pin)
 			}
@@ -151,7 +156,7 @@ func resolveDenyAllKind(feature string, tier OneShotTier) (string, error) {
 		}
 	}
 	for _, k := range oneShotOrder() {
-		if DenyAllKind(k) && headlessAgentAvailable(k) && !parked(k) {
+		if DenyAllKind(k) && headlessAgentAvailable(k) && !parked(k) && allowed(k) {
 			return k, nil
 		}
 	}
@@ -194,7 +199,10 @@ func runClaudeDenyAll(ctx context.Context, persona, prompt, selected string) (st
 		return "", err
 	}
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: selected}
-	call.Route, call.Connection = chatLaunch(session.KindClaude, selected)
+	var policyErr error
+	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindClaude, selected); policyErr != nil {
+		return "", policyErr
+	}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	started := routeNow()
 	cmd := claudeOneShotCmd(ctx, claudeOneShotArgsFormat(persona, selected, true))

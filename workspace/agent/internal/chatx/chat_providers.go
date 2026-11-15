@@ -247,7 +247,7 @@ var DefaultHeadlessOrder = []string{session.KindClaude, session.KindCodex, sessi
 // points at the CLI the user cares about most.
 func preferredFrom(order []string) string {
 	for _, k := range order {
-		if headlessAgentAvailable(k) {
+		if headlessAgentAvailable(k) && chatKindAllowed(k, "") {
 			return k
 		}
 	}
@@ -361,7 +361,10 @@ func (ClaudeChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 	// exactly one row is left whichever path is taken — success, an error result, a failed
 	// exec or a parse failure.
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
-	call.Route, call.Connection = chatLaunch(session.KindClaude, "")
+	var policyErr error
+	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindClaude, ""); policyErr != nil {
+		return "", policyErr
+	}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", c.personaOf()}
@@ -465,7 +468,10 @@ func (ClaudeChat) SendStream(ctx context.Context, c *ChatConversation, prompt st
 	c.StartTurn()
 	// Usage ledger (ADR 0029 §3) — as in Send, exactly one record on every path.
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
-	call.Route, call.Connection = chatLaunch(session.KindClaude, "")
+	var policyErr error
+	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindClaude, ""); policyErr != nil {
+		return "", nil, policyErr
+	}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	// stream-json requires --verbose with -p; --include-partial-messages adds the
 	// per-token text_delta events we forward for live display.
@@ -611,7 +617,10 @@ func (codexChat) Send(ctx context.Context, c *ChatConversation, prompt string) (
 	// requested only when -m was passed and degrades to default_unknown otherwise.
 	model := chatModelFor(c, session.KindCodex) // a pin on another kind resolves via this CLI's config
 	call := usagex.Call{Kind: session.KindCodex, ModelReq: model}
-	call.Route, call.Connection = chatLaunch(session.KindCodex, model)
+	var policyErr error
+	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindCodex, model); policyErr != nil {
+		return "", policyErr
+	}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	// The default read-only sandbox is exactly the chat contract (no file writes, no
 	// state mutation) — the claude side enforces the same via --disallowedTools. Global
@@ -806,7 +815,10 @@ func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string
 	c.StartTurn()
 	pinned := chatModelFor(c, session.KindOpencode)                   // a pin on another kind resolves via this CLI's config
 	call := usagex.Call{Kind: session.KindOpencode, ModelReq: pinned} // usage ledger (ADR 0029 §3)
-	call.Route, call.Connection = chatLaunch(session.KindOpencode, pinned)
+	var policyErr error
+	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindOpencode, pinned); policyErr != nil {
+		return "", policyErr
+	}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	dir := opencodeChatDir(c)
 	args := opencodeRunArgs()
@@ -1248,7 +1260,10 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (st
 	// Usage ledger (ADR 0029 §3): agy returns plain text only, so measured=none — the tokens
 	// are "not measured" rather than 0, and only the call count is recorded.
 	call := usagex.Call{Kind: session.KindAgy, ModelReq: chatModelFor(c, session.KindAgy), Measured: usagex.MeasuredNone}
-	call.Route, call.Connection = chatLaunch(session.KindAgy, "")
+	var policyErr error
+	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindAgy, ""); policyErr != nil {
+		return "", policyErr
+	}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	home, wd, err := chatAgyHome(c)
 	if err != nil {
@@ -1619,7 +1634,10 @@ func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 	// Usage ledger (ADR 0029 §3). Measured: cursor puts no model on its result, so this stops
 	// at requested. "auto" passes no --model, so the resolved model is unknown = default_unknown.
 	call := usagex.Call{Kind: session.KindCursor}
-	call.Route, call.Connection = chatLaunch(session.KindCursor, "")
+	var policyErr error
+	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindCursor, ""); policyErr != nil {
+		return "", policyErr
+	}
 	pinned := chatModelFor(c, session.KindCursor) // a pin on another kind resolves via this CLI's config
 	if pinned != "" && pinned != "auto" {
 		call.ModelReq = pinned
@@ -2339,7 +2357,13 @@ func oneShotRunOn(ctx context.Context, kind, feature string, tier OneShotTier, p
 		call.Kind = kind
 		return "", "", "", fmt.Errorf("AI assist cannot run on %q", kind)
 	}
-	call.Route, call.Connection = chatLaunch(kind, selected)
+	if !chatLaunchLater[kind] {
+		var policyErr error
+		if call.Route, call.Connection, policyErr = chatLaunchChecked(kind, selected); policyErr != nil {
+			call.Kind = kind
+			return "", "", "", policyErr
+		}
+	}
 	out, e := r.runOneShot(ctx, &call, run)
 	return out, "", "", e
 }
@@ -2379,7 +2403,7 @@ func oneShotOnCodex(ctx context.Context, call *usagex.Call, run oneShotRun) (str
 // settings name none), set on the call with the route and binding resolved on that model:
 // opencode's route follows the model's provider, so it is resolved again here, not on the model
 // oneShotRunOn saw before the recommendation (ADR 0138 D2).
-func opencodeOneShotModel(call *usagex.Call, selected string, configured bool, kind string, tier OneShotTier) string {
+func opencodeOneShotModel(call *usagex.Call, selected string, configured bool, kind string, tier OneShotTier) (string, error) {
 	m := selected
 	if !configured {
 		m = recommendedOneShotModel(kind, tier) // AF_TITLE_MODEL_OPENCODE first, as for "recommended"
@@ -2387,8 +2411,9 @@ func opencodeOneShotModel(call *usagex.Call, selected string, configured bool, k
 	if m != "" {
 		call.ModelReq = m
 	}
-	call.Route, call.Connection = chatLaunch(session.KindOpencode, m)
-	return m
+	var err error
+	call.Route, call.Connection, err = chatLaunchChecked(session.KindOpencode, m)
+	return m, err
 }
 
 // oneShotOnOpencode runs one one-shot on opencode (oneShotRunOn).
@@ -2410,7 +2435,10 @@ func oneShotOnOpencode(ctx context.Context, call *usagex.Call, run oneShotRun) (
 	// it, while the configured default answers fine (measured 2026-07-25). A hard failure of
 	// title/branch/reply suggestions is worse than their token cost, so opencode keeps the
 	// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
-	m := opencodeOneShotModel(call, selected, configured, kind, tier)
+	m, err := opencodeOneShotModel(call, selected, configured, kind, tier)
+	if err != nil {
+		return "", err
+	}
 	if m != "" {
 		args = append(args, "--model", m)
 	}

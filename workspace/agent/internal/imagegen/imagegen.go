@@ -23,6 +23,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -533,6 +534,27 @@ var providerRanks = []providerRank{
 	{ID: ProviderCodex},
 }
 
+// ErrRoutePolicy marks an image call the credential policy refuses before it runs (ADR 0138 D12).
+var ErrRoutePolicy = errors.New("the credential policy does not allow this image provider")
+
+// providerPolicyErr is the credential policy's answer for a call on provider id, about to run on
+// launch: nil when it may run. Under a restriction a call whose route cannot be told is refused
+// too; while the policy cannot be confirmed or recorded, every call waits (the store's Gate).
+func providerPolicyErr(id string, launch routes.Launch) error {
+	if err := routepolicy.Active().Gate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrRoutePolicy, err)
+	}
+	p, restricted := routepolicy.Hiding()
+	switch {
+	case !restricted:
+	case launch.Route == "":
+		return fmt.Errorf("%w: the route %s would run on cannot be told", ErrRoutePolicy, id)
+	case !p.Allows(launch.Route):
+		return fmt.Errorf("%w: %s would run on %s", ErrRoutePolicy, id, launch.Route)
+	}
+	return nil
+}
+
 // providerRoutes is the routes each image provider can run on (ADR 0138 D2). The codex provider
 // runs on whichever login codex's auth.json holds (it accepts an API-key login), agy on its own
 // Google login, and the fleet's providers on the deployment's engine. TestProviderRoutes holds
@@ -950,8 +972,14 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 			return Stored{}, err
 		}
 
-		started := time.Now()
 		launch := providerLaunch(p)
+		// The credential policy, at the point the call would run (ADR 0138 D12): a provider on a
+		// route it forbids is not called, and the order moves on to the next one.
+		if err := providerPolicyErr(name, launch); err != nil {
+			attempts = append(attempts, attemptFailure{id: name, err: err})
+			continue
+		}
+		started := time.Now()
 		res, err := p.Generate(ctx, req)
 		// Record on every path, including the failed one: an attempt that burned driver tokens
 		// and produced nothing still consumed the user's plan, and a row with ok:false is what

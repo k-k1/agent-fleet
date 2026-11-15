@@ -17,6 +17,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
 // withJobQueue installs a fresh queue for one test and stops its workers afterwards. The
@@ -1141,5 +1144,25 @@ func TestOutDirThatBecomesUnacceptableBeforeStoreFailsTheJob(t *testing.T) {
 	waitFor(t, "the job to fail", func() bool { return stateOf(q, res.Jobs[0].ID) == JobFailed })
 	if ents, _ := os.ReadDir(filepath.Join(root, "pictures")); len(ents) != 0 {
 		t.Errorf("files were written anyway: %v", ents)
+	}
+}
+
+// A queued job is judged when it would run (ADR 0138 D12): on a route the credential policy
+// forbids it fails with the reason and its provider is never called.
+func TestQueuedJobOnAForbiddenRouteFailsWithoutRunning(t *testing.T) {
+	q := withJobQueue(t)
+	p := newGateProvider(t)
+	withStubProvider(t, p)
+	s := routepolicy.Open(filepath.Join(t.TempDir(), "rp.json"), "")
+	if _, err := s.Accept(routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []string{routes.RouteOpenAIAPI}}); err != nil {
+		t.Fatal(err)
+	}
+	old := routepolicy.Active
+	routepolicy.Active = func() *routepolicy.Store { return s }
+	t.Cleanup(func() { routepolicy.Active = old })
+	job := enqueue(t, q, JobSpec{Request: Request{Prompt: "a fox"}})
+	waitFor(t, "the job to fail", func() bool { return stateOf(q, job.Jobs[0].ID) == JobFailed })
+	if len(p.requests()) != 0 {
+		t.Errorf("the engine was called on a forbidden route: %v", p.requests())
 	}
 }

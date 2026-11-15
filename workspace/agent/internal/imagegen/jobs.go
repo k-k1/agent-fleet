@@ -542,8 +542,12 @@ func (q *jobQueue) run(j *jobRec) {
 	req.OnPhase = func(p Phase) { q.setPhase(j, p) }
 	req.OnUpstream = func(id string) { q.setUpstream(j, id) }
 
-	started := jobsNow()
 	launch := providerLaunch(prov)
+	if err := providerPolicyErr(j.provider, launch); err != nil {
+		q.finish(j, nil, nil, err)
+		return
+	}
+	started := jobsNow()
 	res, err := prov.Generate(q.stop, req)
 	ok := err == nil && len(res.Images) > 0
 	// The ledger row is written on every path, including the failed one: an attempt that spent
