@@ -486,6 +486,10 @@ describe("when a category runs", () => {
 
   it("a time window asks for the cron field, a length and a zone that starts as the browser's", async () => {
     const zone = vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({ timeZone: "Asia/Tokyo" } as Intl.ResolvedDateTimeFormatOptions);
+    // browserTimeZone() caches for a second; a read that landed just before the spy would
+    // answer the old zone (seen in CI), so step the clock past the cache.
+    const realNow = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(realNow + 60_000);
     try {
       await render();
       await openSettingsDialog();
@@ -510,6 +514,7 @@ describe("when a category runs", () => {
       expect(bodySent()).toMatchObject({ openCron: "0 9 * * 1-5", openMinutes: 120, tz: "Asia/Tokyo", openAfter: 0 });
     } finally {
       zone.mockRestore();
+      clock.mockRestore();
     }
   });
 
