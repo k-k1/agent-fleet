@@ -99,6 +99,10 @@ type retireReport struct {
 	// ResumeCancelled is true when a booked usage-limit resume was cancelled.
 	ResumeCancelled bool `json:"resumeCancelled"`
 	Stopped         bool `json:"stopped"`
+	// Released: a person started this session (or one above it) after the retire began, so the
+	// retire left it, and everything under it, alone. Running is its real state then.
+	Released bool `json:"released"`
+	Running  bool `json:"running"`
 	// Unended is what could not be ended, each with the reason. The Control Plane keeps a
 	// delivery's slot while this is not empty.
 	Unended []string `json:"unended"`
@@ -108,6 +112,9 @@ type retireReport struct {
 // started, the named one first. A repeated call lists the same sessions and ends nothing more.
 type retireResp struct {
 	Sessions []retireReport `json:"sessions"`
+	// Complete is true when every session was retired: none was released, none has anything
+	// unended. A retire that met a released session is not complete.
+	Complete bool `json:"complete"`
 }
 
 // HandleSessionRetire (POST /sessions/{name}/retire) ends everything the Agent holds that could
@@ -156,7 +163,7 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 	}
 	reports := retireTree(r.Context(), name, in)
 	finishRetire(in, reports)
-	httpx.WriteJSON(w, http.StatusOK, retireResp{Sessions: reports})
+	httpx.WriteJSON(w, http.StatusOK, retireResp{Sessions: reports, Complete: retireComplete(reports)})
 }
 
 // retireTree retires root and everything it started. The walk repeats until it finds nobody new,
@@ -171,8 +178,11 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 		if round == 0 {
 			names = append(names, root)
 		}
-		for _, d := range spendDescendants(root, session.ListMetas()) {
-			names = append(names, d.Name)
+		metas := session.ListMetas()
+		for _, d := range spendDescendants(root, metas) {
+			if !underReleased(d, metas, seen, in.ID) {
+				names = append(names, d.Name)
+			}
 		}
 		var fresh []*retireReport
 		for _, n := range names {
@@ -191,12 +201,17 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 			break
 		}
 		for _, rep := range fresh {
-			// A session this retire had already marked and a person has resumed since is theirs
-			// again: a recovery leaves it alone.
 			retireOne(ctx, rep, in)
 		}
 		if !waitSpawns(ctx, order) {
 			order[0].Unended = appendNew(order[0].Unended, "a child create was still in flight; retire again once it has finished")
+		}
+	}
+	// What the answer says is the state now: a session a person started after this retire marked it
+	// is released and running, not stopped.
+	for _, rep := range order {
+		if cur, ok := session.ReadMeta(rep.Name); ok && releasedFrom(cur, in.ID) {
+			rep.Released, rep.Running, rep.Stopped = true, SessionAlive(cur), false
 		}
 	}
 	out := make([]retireReport, 0, len(order))
@@ -212,15 +227,27 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 // guard: the automatic booking path refuses a session that carries it, so whatever the episode
 // holds now was booked before it. Every step is safe to repeat.
 //
-// A retire acts on a member whose meta says a person cleared this same retire's mark (RetireClearedID)
-// not at all, and on every other session of its tree, reached before or not.
+// A retire never touches a session a person has released from it (the meta carries this retire's
+// id as RetireClearedID), nor anything under such a session: the ancestors are read here, under
+// the member's own gate, not from the walk's snapshot. Every other session of its tree is retired,
+// reached before or not.
+//
+// This relies on two facts. A session can make children only while it runs, and a marked
+// session reserves no child slot (reserveSpawnSlot), so a child made after a person's start of its
+// parent was made after that start cleared the mark (/start clears it after the launch, so a spawn
+// in between is refused). And /start answers success only after the mark is cleared, with the
+// tombstone in the same checked write (HandleStartSession). A released session's new children
+// therefore always have a released ancestor when the walk finds them.
 func retireOne(ctx context.Context, rep *retireReport, in *retireIntent) {
 	g := retireGate(rep.Name)
 	g.Lock()
 	defer g.Unlock()
 	cur, ok := session.ReadMeta(rep.Name)
-	if ok && !isRetired(cur) && cur.RetireClearedID == in.ID {
-		return // a person started it since
+	if ok && (releasedFrom(cur, in.ID) || releasedAncestor(cur, in.ID)) {
+		// A person started it, or a session above it, since this retire began: it and everything
+		// below it are theirs. Nothing is marked, stopped or ended, and the answer says so.
+		rep.Released, rep.Running = true, SessionAlive(cur)
+		return
 	}
 	markRetired(rep, in.ID)
 	endSubscriptions(ctx, rep)
@@ -295,10 +322,10 @@ func waitSpawns(ctx context.Context, reps []*retireReport) bool {
 }
 
 // ReconcileRetired finishes the retires the previous Agent process did not: each recorded intent
-// is walked again from its root (so children never reached are retired), and a marked session
-// with no intent (a mark whose intent could not be written) is finished on its own. A session
-// whose mark a person cleared since is left alone. What still cannot be ended keeps its intent,
-// to be tried at the next start. It returns the number of retires that are now complete.
+// is walked again from its root, under the root's lock (so children never reached are retired).
+// A marked session with no intent is a retire that finished and is left alone. A session whose
+// mark a person cleared since is left alone. What still cannot be ended keeps its intent, to be
+// tried at the next start. It returns the number of retires that are now complete.
 func ReconcileRetired(ctx context.Context) int {
 	done := 0
 	for _, root := range retireIntentRoots() {
@@ -479,4 +506,60 @@ func lockRetireRoot(ctx context.Context, root string) (unlock func(), err error)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// releasedFrom reports whether a person's start released m from the retire id.
+func releasedFrom(m session.Meta, id string) bool {
+	return !isRetired(m) && m.RetireClearedID == id
+}
+
+// releasedAncestor reports whether any session above m (origin=session chain, up to the root) was
+// released from the retire id. Loop-safe; a missing ancestor ends the climb.
+func releasedAncestor(m session.Meta, id string) bool {
+	seen := map[string]bool{m.Name: true}
+	for session.OriginOf(m) == session.OriginSession && m.OriginSession != "" && !seen[m.OriginSession] {
+		parent, ok := session.ReadMeta(m.OriginSession)
+		if !ok {
+			return false
+		}
+		if releasedFrom(parent, id) {
+			return true
+		}
+		seen[parent.Name] = true
+		m = parent
+	}
+	return false
+}
+
+// underReleased reports whether a session of the walk sits below one this retire found released.
+func underReleased(d session.Meta, metas []session.Meta, seen map[string]*retireReport, id string) bool {
+	byName := map[string]session.Meta{}
+	for _, m := range metas {
+		byName[m.Name] = m
+	}
+	visited := map[string]bool{d.Name: true}
+	for cur := d; session.OriginOf(cur) == session.OriginSession && cur.OriginSession != "" && !visited[cur.OriginSession]; {
+		if rep := seen[cur.OriginSession]; rep != nil && rep.Released {
+			return true
+		}
+		if a, ok := byName[cur.OriginSession]; ok && releasedFrom(a, id) {
+			return true // released already when the walk read the metas; the member's own gate rechecks
+		}
+		visited[cur.OriginSession] = true
+		p, ok := byName[cur.OriginSession]
+		if !ok {
+			return false
+		}
+		cur = p
+	}
+	return false
+}
+
+func retireComplete(reports []retireReport) bool {
+	for _, r := range reports {
+		if r.Released || len(r.Unended) > 0 {
+			return false
+		}
+	}
+	return len(reports) > 0
 }

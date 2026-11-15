@@ -92,7 +92,7 @@ source_of_truth: "コード（本書は地図と設計意図）"
   - `POST /sessions/{name}/retire` は、そのセッションと、それが始めた全セッション（深さを問わない。
     `origin == "session"` と `originSession` の連鎖で、`spendDescendants` と同じ辿り方）について、
     上のものを全部終わらせ、予約済みの再開を取り消し、halt する。答えは、セッションの一覧、それぞれで
-    終わらせたもの、終わらせられなかったもの（Control Plane が確認しなかった取り消しで、再試行される）。
+    終わらせたもの、終わらせられなかったもの（Control Plane が確認しなかった取り消しで、再試行される）と、retire の最中に人が start したセッション。後者は `released: true` で実際の状態（`running`）を返し、`stopped` とは言わない。retire はそれとその下を一切触らず、答えの `complete` は false になる。
     2 回目は同じセッションを返し、それ以上は何も終わらせない。MCP ツールは無い。
     retire は root 専用で、他のセッションが始めたセッションには、root の名前を添えた
     `409 retire_not_root` を返す。だから 2 つの retire の木は交わらず、意図が別の root の retire の

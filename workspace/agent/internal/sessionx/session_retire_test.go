@@ -1174,3 +1174,121 @@ func TestRetireRequestWithACancelledContextDoesNotRunEvenWhenTheLockIsFree(t *te
 		t.Fatal("a cancelled request retired the session")
 	}
 }
+
+// A person's start of the root during a retire of its tree releases it. The retire never touches
+// it again, nor anything made under it afterwards, and the answer says what is true now: the
+// session is released and running, not stopped, and the retire is not complete.
+func TestRetireLeavesWhatAPersonReleasedAndWhatGrowsUnderIt(t *testing.T) {
+	r := newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	g := retireGate("c")
+	g.RLock() // the retire stops at c, after it has marked and stopped p
+	var out retireResp
+	done := make(chan struct{})
+	go func() { _, out = postRetire(t, "p"); close(done) }()
+	for i := 0; i < 200; i++ {
+		if m, _ := session.ReadMeta("p"); m.RetiredAt != "" && m.StoppedAt != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/p/start", nil) // a person starts p: 200, mark cleared
+	req.SetPathValue("name", "p")
+	rec := httptest.NewRecorder()
+	HandleStartSession(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/start = %d %s", rec.Code, rec.Body)
+	}
+	// Then p, running again, makes a child with a watch and a timer.
+	writeMeta(t, session.Meta{Name: "x", Origin: session.OriginSession, OriginSession: "p"})
+	r.hold(t, "x")
+	g.RUnlock()
+	<-done
+
+	if m, _ := session.ReadMeta("x"); m.RetiredAt != "" {
+		t.Fatal("a child made after the person's start was retired by the old retire")
+	}
+	if w, tm, _ := r.e.Wakers("x"); w != 1 || tm != 1 {
+		t.Fatalf("the child's work was ended: %d %d", w, tm)
+	}
+	byName := map[string]retireReport{}
+	for _, rep := range out.Sessions {
+		byName[rep.Name] = rep
+	}
+	if p := byName["p"]; !p.Released || !p.Running || p.Stopped {
+		t.Fatalf("p reported %+v, want released, running and not stopped", p)
+	}
+	if out.Complete {
+		t.Fatal("a retire that met a released session was reported complete")
+	}
+	if x, ok := byName["x"]; ok && (x.Stopped || x.Ended != (watch.Ended{})) {
+		t.Fatalf("x was acted on: %+v", x)
+	}
+}
+
+// The grandchild case: a person starts c, c makes y; y is left alone and c is not stopped again.
+func TestRetireLeavesAChildOfAReleasedChild(t *testing.T) {
+	r := newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+	in := mustBeginRetire(t, "p")
+	for _, n := range []string{"p", "c"} {
+		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in)
+	}
+	if err := clearRetired("c"); err != nil { // a person starts c
+		t.Fatal(err)
+	}
+	writeMeta(t, session.Meta{Name: "y", Origin: session.OriginSession, OriginSession: "c"})
+	r.hold(t, "y")
+	r.hold(t, "c")
+	reps := retireTree(context.Background(), "p", in) // the walk's next round
+	for _, n := range []string{"c", "y"} {
+		if m, _ := session.ReadMeta(n); m.RetiredAt != "" {
+			t.Fatalf("%s was retired below a released session", n)
+		}
+		if w, tm, _ := r.e.Wakers(n); w != 1 || tm != 1 {
+			t.Fatalf("%s lost its work: %d %d", n, w, tm)
+		}
+	}
+	for _, rep := range reps {
+		if rep.Name == "c" && !rep.Released {
+			t.Fatalf("c is not reported released: %+v", rep)
+		}
+		if rep.Name == "y" {
+			t.Fatalf("the walk descended below a released member: %+v", rep)
+		}
+	}
+}
+
+// The ancestors are read under the member's own gate, not from the walk's snapshot: a person's start
+// of the parent that lands between the walk's listing and the member's gate still releases it.
+func TestRetireReadsTheAncestorsUnderTheMembersGate(t *testing.T) {
+	r := newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "x", Origin: session.OriginSession, OriginSession: "p"})
+	r.hold(t, "x")
+	in := mustBeginRetire(t, "p")
+	retireOne(context.Background(), &retireReport{Name: "p", Unended: []string{}}, in) // p is marked by this retire
+	g := retireGate("x")
+	g.RLock() // the walk lists x, then waits for its gate
+	done := make(chan struct{})
+	go func() { retireTree(context.Background(), "p", in); close(done) }()
+	time.Sleep(300 * time.Millisecond)
+	if err := clearRetired("p"); err != nil { // a person starts p meanwhile
+		t.Fatal(err)
+	}
+	g.RUnlock()
+	<-done
+	if m, _ := session.ReadMeta("x"); m.RetiredAt != "" {
+		t.Fatal("x was retired under a parent released after the walk listed it")
+	}
+	if w, tm, _ := r.e.Wakers("x"); w != 1 || tm != 1 {
+		t.Fatalf("x lost its work: %d %d", w, tm)
+	}
+}
