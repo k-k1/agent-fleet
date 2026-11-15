@@ -207,7 +207,7 @@ func TestPaneTypingWaitsForTheRetireAndRecordsOnTheMarkedSession(t *testing.T) {
 	select {
 	case <-done:
 		t.Fatal("the key went on before the retire was done")
-	case <-time.After(300 * time.Millisecond):
+	case <-time.After(2500 * time.Millisecond): // past the 2 s the unrecorded bypass used to wait
 	}
 	g.Unlock()
 	if ok := <-done; !ok {
@@ -215,6 +215,24 @@ func TestPaneTypingWaitsForTheRetireAndRecordsOnTheMarkedSession(t *testing.T) {
 	}
 	if m, _ := session.ReadMeta("a"); m.PersonActMark == 0 {
 		t.Fatal("the key was not recorded")
+	}
+}
+
+// A key that cannot be recorded within the hold bound is dropped: not sent, not recorded.
+func TestPaneTypingIsDroppedWhenTheGateCannotBeTaken(t *testing.T) {
+	newActEnv(t)
+	prev := paneActHold
+	paneActHold = 200 * time.Millisecond
+	t.Cleanup(func() { paneActHold = prev })
+	writeMeta(t, session.Meta{Name: "a"})
+	g := retireGate("a")
+	g.Lock()
+	defer g.Unlock()
+	if NotePersonActPane("a") {
+		t.Fatal("a key that could not be recorded was sent")
+	}
+	if m, _ := session.ReadMeta("a"); m.PersonActMark != 0 {
+		t.Fatal("a dropped key was recorded")
 	}
 }
 
@@ -243,7 +261,7 @@ func TestPaneTypingIsNotSentOnAFailedTryOrAnOldMark(t *testing.T) {
 	select {
 	case <-done:
 		t.Fatal("the key went through unrecorded behind a pending retire and an old mark")
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(2500 * time.Millisecond): // past the 2 s the unrecorded bypass used to wait
 	}
 	g.RUnlock()
 	<-retired

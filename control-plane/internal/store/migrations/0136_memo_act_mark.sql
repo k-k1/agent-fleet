@@ -7,7 +7,7 @@
 -- decision is made, so a later read cannot move the condition of a retire whose answer was lost.
 -- memo_delivery.retire_gen is the generation (held_gen) of the report that mark was frozen from, 0 when
 -- nothing is frozen, so that a frozen mark of 0 is told from none and a freeze is one conditional write.
--- Forward compatible: a column only, default 0. An older Control Plane never reads it and sends its
+-- Forward compatible: additive columns only, each default 0. An older Control Plane never reads them and sends its
 -- retire with no body, which is the unconditional retire.
 ALTER TABLE memo_delivery ADD COLUMN act_mark INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE memo_delivery ADD COLUMN retire_act_mark INTEGER NOT NULL DEFAULT 0;
