@@ -11,9 +11,11 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // usePolicy makes the enforcement points judge by a store that holds p, confirmed now.
@@ -512,5 +514,187 @@ func TestOpencodePayerChangeIsAReplacement(t *testing.T) {
 		if got := ref != nil; got != tc.refused {
 			t.Errorf("%s: refusal %+v, want refused=%v", name, ref, tc.refused)
 		}
+	}
+}
+
+// The sweep judges every live session under the policy (D12): a session with no stored route on
+// its launch record, one with no record at all, and one on a forbidden explicit route are halted,
+// resumably, with a route-stopped notice; an allowed one, a shell, and a stopped session are
+// left alone. While the policy cannot be confirmed, nothing is halted.
+func TestSweepHaltsWhatThePolicyForbids(t *testing.T) {
+	isolateAgentState(t)
+	mk := func(name, kind string, sel *routes.Selection, rec *routes.Launch, live bool) session.Meta {
+		m := session.Meta{Name: name, Kind: kind, Dir: t.TempDir(), Route: sel, LaunchRoute: rec, CreatedAt: "2026-11-15T10:00:00+09:00"}
+		session.WriteMeta(m)
+		if live {
+			if out, err := tmuxx.Cmd("new-session", "-d", "-s", session.TmuxName(name), "sleep 120").CombinedOutput(); err != nil {
+				t.Fatalf("tmux: %v %s", err, out)
+			}
+			t.Cleanup(func() { _ = tmuxx.Cmd("kill-session", "-t", session.TmuxName(name)).Run() })
+		}
+		return m
+	}
+	alive := func(m session.Meta) bool { return tmuxx.HasSession(session.TmuxName(m.Name)) }
+	sub := &routes.Launch{Route: routes.RouteAnthropicSubscription, Binding: "anthropic-subscription@a"}
+	api := &routes.Launch{Route: routes.RouteAnthropicAPI, Binding: "ANTHROPIC_API_KEY@k"}
+	onSub := mk("pw-sub", session.KindClaude, nil, sub, true)
+	noRec := mk("pw-norec", session.KindClaude, nil, nil, true)
+	explicit := mk("pw-explicit", session.KindClaude, &routes.Selection{Route: routes.RouteAnthropicSubscription}, nil, true)
+	allowed := mk("pw-api", session.KindClaude, nil, api, true)
+	shell := mk("pw-shell", session.KindShell, nil, nil, true)
+
+	// An unconfirmed restricting policy halts nothing: running sessions are left alone.
+	s := routepolicy.Open(filepath.Join(t.TempDir(), "rp.json"), "")
+	if _, err := s.Seed(noSubscriptions, time.Now().Add(-time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	old := routePolicyStore
+	routePolicyStore = func() *routepolicy.Store { return s }
+	SweepRouteGuards(time.Now())
+	routePolicyStore = old
+	for _, m := range []session.Meta{onSub, noRec, explicit, allowed, shell} {
+		if !alive(m) {
+			t.Fatalf("%s was halted while the policy could not be confirmed", m.Name)
+		}
+	}
+
+	usePolicy(t, noSubscriptions)
+	SweepRouteGuards(time.Now())
+	for _, m := range []session.Meta{onSub, noRec, explicit} {
+		if alive(m) {
+			t.Errorf("%s is still running on a route the policy forbids", m.Name)
+		}
+	}
+	for _, m := range []session.Meta{allowed, shell} {
+		if !alive(m) {
+			t.Errorf("%s was halted", m.Name)
+		}
+	}
+	stopped := map[string]string{}
+	for _, ev := range notice.List() {
+		if ev.Kind == "route-stopped" {
+			stopped[ev.SessionName], _ = ev.Payload["code"].(string)
+		}
+	}
+	if stopped[onSub.Name] != routes.CodePolicyForbidden || stopped[noRec.Name] != routes.CodePolicyRequired ||
+		stopped[explicit.Name] != routes.CodePolicyForbidden || len(stopped) != 3 {
+		t.Errorf("route-stopped notices = %v", stopped)
+	}
+	// Halted means resumable, and the start is refused while the cause remains.
+	m, _ := session.ReadMeta(onSub.Name)
+	if m.Archived || startRefusalOf(m) == nil {
+		t.Errorf("after the halt: archived=%v, start refusal %+v", m.Archived, startRefusalOf(m))
+	}
+}
+
+// Input to a live Managed runtime is judged at every delivery: on a forbidden route it is refused
+// with the reason, never delivered; an interrupt still goes through.
+func TestLiveManagedInputIsJudgedAtEveryDelivery(t *testing.T) {
+	home := writebackEnv(t)
+	usePolicy(t, noSubscriptions)
+	m := session.Meta{Name: "pin1", Dir: home, Kind: session.KindCodex, Driver: session.DriverManaged,
+		LaunchRoute: &routes.Launch{Route: routes.RouteChatGPTSubscription, Binding: "chatgpt-subscription@a"}}
+	session.WriteMeta(m)
+	resumed := 0
+	d := &lockingDriver{onResume: func() { resumed++ }}
+	useLockingDriver(t, session.KindCodex, d)
+	launch := &routes.Launch{Route: routes.RouteOpenAIAPI, Binding: "OPENAI_API_KEY@k"}
+	t.Cleanup(agentreg.SwapForTest(session.KindCodex, liveAgent{oneRouteAgent{Agent: AgentOf(session.KindCodex), launch: launch}}))
+	if _, err := resumeManaged(d, m); err == nil {
+		t.Fatal("input to a live runtime on a forbidden route was delivered")
+	} else {
+		var re *StartRefusalError
+		if !errors.As(err, &re) || re.Ref.Code != routes.CodePolicyForbidden {
+			t.Errorf("refusal = %v, want %s", err, routes.CodePolicyForbidden)
+		}
+	}
+	if _, err := resumeManagedFor(d, m, false); err != nil {
+		t.Errorf("an interrupt was refused: %v", err)
+	}
+	if resumed != 1 {
+		t.Errorf("the runtime was resumed %d times, want once (the interrupt)", resumed)
+	}
+	m.LaunchRoute = launch
+	if _, err := resumeManaged(d, m); err != nil {
+		t.Errorf("input on an allowed route: %v", err)
+	}
+}
+
+// liveAgent is a one-route kind whose Managed runtime is alive.
+type liveAgent struct{ oneRouteAgent }
+
+func (liveAgent) ManagedRuntime() agents.ManagedRuntimeOps {
+	return agents.ManagedRuntimeOps{Alive: func(string) bool { return true }, Busy: func(string) bool { return false },
+		InFlight: func(string) bool { return false }, Drop: func(string) {}, RemoveLedger: func(string) {}}
+}
+
+// interruptDriver answers Resume with a handle that can be interrupted and records it.
+type interruptDriver struct {
+	agents.Driver
+	interrupted *bool
+}
+
+func (d interruptDriver) Resume(session.Meta) (agents.ThreadHandle, error) {
+	return interruptHandle{interrupted: d.interrupted}, nil
+}
+
+type interruptHandle struct {
+	agents.ThreadHandle
+	interrupted *bool
+}
+
+func (h interruptHandle) Interrupt(agents.InterruptOpts) (agents.InterruptResult, error) {
+	*h.interrupted = true
+	return agents.InterruptResult{}, nil
+}
+
+// Through /turn on a live Managed session on a forbidden route: a message is refused with the
+// policy's code, an interrupt still stops the turn.
+func TestTurnOnAForbiddenRouteRefusesMessagesNotInterrupts(t *testing.T) {
+	home := writebackEnv(t)
+	usePolicy(t, noSubscriptions)
+	t.Cleanup(agentreg.SwapForTest(session.KindCodex, liveAgent{oneRouteAgent{Agent: AgentOf(session.KindCodex),
+		launch: &routes.Launch{Route: routes.RouteChatGPTSubscription, Binding: "chatgpt-subscription@a"}}}))
+	interrupted := false
+	prev, had := managedDrivers[session.KindCodex]
+	managedDrivers[session.KindCodex] = interruptDriver{interrupted: &interrupted}
+	t.Cleanup(func() {
+		if had {
+			managedDrivers[session.KindCodex] = prev
+		} else {
+			delete(managedDrivers, session.KindCodex)
+		}
+	})
+	session.WriteMeta(session.Meta{Name: "pturn1", Dir: home, Kind: session.KindCodex, Driver: session.DriverManaged,
+		LaunchRoute: &routes.Launch{Route: routes.RouteChatGPTSubscription, Binding: "chatgpt-subscription@a"}})
+	rec := callHandler(HandleSessionTurn, http.MethodPost, "pturn1", `{"op":"start","prompt":"hi"}`)
+	if routeCode(t, rec.Body.String()) != routes.CodePolicyForbidden {
+		t.Errorf("a message: %d %s, want %s", rec.Code, rec.Body.String(), routes.CodePolicyForbidden)
+	}
+	rec = callHandler(HandleSessionTurn, http.MethodPost, "pturn1", `{"op":"interrupt"}`)
+	if rec.Code != http.StatusOK || !interrupted {
+		t.Errorf("an interrupt: %d %s interrupted=%v", rec.Code, rec.Body.String(), interrupted)
+	}
+}
+
+// A queued input becomes a turn only while the policy would leave the session running.
+func TestQueuedTurnsAreHeldOnAForbiddenRoute(t *testing.T) {
+	writebackEnv(t)
+	usePolicy(t, noSubscriptions)
+	session.WriteMeta(session.Meta{Name: "pq1", Kind: session.KindCodex, Driver: session.DriverManaged,
+		LaunchRoute: &routes.Launch{Route: routes.RouteChatGPTSubscription}})
+	session.WriteMeta(session.Meta{Name: "pq2", Kind: session.KindCodex, Driver: session.DriverManaged,
+		LaunchRoute: &routes.Launch{Route: routes.RouteOpenAIAPI}})
+	if queuedTurnAllowed("pq1") {
+		t.Error("a queued input was delivered on a forbidden route")
+	}
+	if !queuedTurnAllowed("pq2") || !queuedTurnAllowed("no-such-session") {
+		t.Error("an allowed session's queued input was held")
+	}
+	prevGate, prevDrop := agents.QueuedTurnGate, agents.OnHeldDropped
+	t.Cleanup(func() { agents.QueuedTurnGate, agents.OnHeldDropped = prevGate, prevDrop })
+	InstallHeldDropHook()
+	if agents.QueuedTurnGate == nil || agents.QueuedTurnGate("pq1") {
+		t.Error("the gate is not installed at boot")
 	}
 }

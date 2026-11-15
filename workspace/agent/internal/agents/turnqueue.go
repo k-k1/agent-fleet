@@ -182,6 +182,13 @@ type TurnQueue struct {
 	recorded map[string]bool
 }
 
+// QueuedTurnGate, when set, is asked before a queued input becomes a turn: false keeps it queued,
+// held and not delivered, and the pump stops until new input or a resume starts it again. The
+// credential policy uses it (ADR 0138 D12) so input accepted before a tightening is never delivered
+// to a runtime the sweep is about to halt. It runs under the driver's handle lock: it must be cheap
+// and never block. Set once at boot.
+var QueuedTurnGate func(session string) bool
+
 // NewTurnQueue builds the queue of session name. ledger may be nil (no deduplication).
 func NewTurnQueue(name string, ledger *MsgLedger, at LedgerPoint) *TurnQueue {
 	return &TurnQueue{name: name, ledger: ledger, at: at, now: time.Now}
@@ -336,6 +343,9 @@ func (q *TurnQueue) Episode() bool { return q.episode }
 // here, as the drivers did before.
 func (q *TurnQueue) Take() *Taken {
 	if q.head != nil {
+		return nil
+	}
+	if len(q.queue) > 0 && QueuedTurnGate != nil && !QueuedTurnGate(q.name) {
 		return nil
 	}
 	for len(q.queue) > 0 {

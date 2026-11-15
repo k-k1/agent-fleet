@@ -149,27 +149,34 @@ func startRefusalOf(m session.Meta) *SpawnRefusal {
 	return nil
 }
 
-// SweepRouteGuards is one pass over every running session with an explicit route (the
-// reconciler's tick). A route's credential is fixed at process start, but the CLI re-reads its
-// settings while it runs; when the kind's RouteWatcher says the route no longer holds, the session
-// is stopped (the same halt as the stop button, so it stays resumable) and the member is
+// SweepRouteGuards is one pass over every running session (the reconciler's tick). Two guards:
+//   - The credential policy (ADR 0138 D12): every live session, with or without a stored route,
+//     is judged on its evidence (runningPolicyRefusal) and halted when the policy forbids it.
+//   - The route's own guard: a route's credential is fixed at process start, but the CLI re-reads
+//     its settings while it runs; when the kind's RouteWatcher says an explicit route no longer
+//     holds, the session is halted.
+//
+// Halted is the same halt as the stop button, so the session stays resumable, and the member is
 // told why. Starting it again is refused while the cause remains (startRefusalOf). Fail closed:
-// a session that could be spending on another account is not left running.
+// a session that could be spending on another account, or on a route the policy forbids, is not
+// left running.
 func SweepRouteGuards(now time.Time) {
 	for _, m := range session.ListMetas() {
 		// Liveness is judged on the process, never on StoppedAt: a Terminal resume (/start) leaves
 		// the old mark in place until the next session list clears it, and a session that is
-		// running must not escape the guard until somebody reads the list.
-		if m.Route == nil || m.Archived || !session.ValidName(m.Name) {
+		// running must not escape the guard until somebody reads the list. It is asked only once a
+		// guard would halt the session: the judgements read no process state.
+		if m.Archived || !session.ValidName(m.Name) {
 			continue
 		}
-		a, _ := RegisteredAgent(NormalizeKind(m.Kind))
-		w, ok := a.(agents.RouteWatcher)
-		if !ok || !SessionAlive(m) {
-			continue
+		ref := runningPolicyRefusal(m)
+		if ref == nil && m.Route != nil {
+			a, _ := RegisteredAgent(NormalizeKind(m.Kind))
+			if w, ok := a.(agents.RouteWatcher); ok {
+				ref = w.RouteHeld(m)
+			}
 		}
-		ref := w.RouteHeld(m)
-		if ref == nil {
+		if ref == nil || !SessionAlive(m) {
 			continue
 		}
 		halted, err := haltSessionMeta(m)
@@ -179,8 +186,12 @@ func SweepRouteGuards(now time.Time) {
 		}
 		log.Printf("route-guard: stopped %s at %s: %s", m.Name, now.Format(time.RFC3339), ref.Message)
 		ev := notice.New("route-stopped", halted.Name, halted.Kind, session.Display(halted))
-		ev.Payload["route"] = m.Route.Route
+		ev.Payload["route"] = routeNameOf(m.Route)
+		if m.Route == nil && m.LaunchRoute != nil {
+			ev.Payload["route"] = m.LaunchRoute.Route
+		}
 		ev.Payload["reason"] = ref.Message
+		ev.Payload["code"] = ref.Code
 		_ = notice.Put(ev)
 	}
 }

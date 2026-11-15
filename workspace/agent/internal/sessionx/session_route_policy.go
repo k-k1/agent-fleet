@@ -178,6 +178,36 @@ func sameDestination(a, b string) bool {
 	return okA && okB && ra.Destination == rb.Destination
 }
 
+// runningPolicyRefusal is the sweep's judgement of a session that is running (D12, "A session
+// already running"): an explicit selection on its route, any other session on its launch-time
+// record, and a session with no record (or one that could not tell its route) is refused under a
+// restriction, since nothing proves what it runs on. While the policy cannot be confirmed or
+// recorded, running sessions are left alone: only new work waits for the Control Plane.
+func runningPolicyRefusal(m session.Meta) *agents.RouteRefusal {
+	if !modelKind(m.Kind) || routePolicyStore().Gate() != nil {
+		return nil
+	}
+	p, restricted := restrictingPolicy()
+	if !restricted {
+		return nil
+	}
+	route := ""
+	switch {
+	case m.Route != nil:
+		route = m.Route.Normalize().Route
+	case m.LaunchRoute != nil && m.LaunchRoute.Route != "":
+		route = m.LaunchRoute.Route
+	default:
+		return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodePolicyRequired,
+			Message: "the credential policy restricts the routes " + m.Kind + " may run on, and nothing records the route this session was launched on"}
+	}
+	if !p.Allows(route) {
+		return &agents.RouteRefusal{Status: http.StatusForbidden, Code: routes.CodePolicyForbidden,
+			Message: fmt.Sprintf("the credential policy no longer allows %s on %s", m.Kind, route)}
+	}
+	return nil
+}
+
 // handoffRefusal is the check at the moment a new launch is handed to its runtime (a create, a
 // fork, a recreate, on either execution method): the session is judged on the launch record it
 // carries, which is what the policy judged when it was created. A credential that changed in

@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // scheduleRefOf is the scheduled run a send belongs to: only a schedule source names one.
@@ -45,7 +46,19 @@ func scheduleDeliveryOf(source, id, slot string, d *chatx.ScheduleDelivery) *cha
 // InstallHeldDropHook routes held operator and scheduled prompts that are dropped before they
 // ran to their reports. Called once at boot, before anything is queued and before SweepHeld,
 // whose drops it must see.
-func InstallHeldDropHook() { agents.OnHeldDropped = noteHeldDropped }
+func InstallHeldDropHook() {
+	agents.OnHeldDropped = noteHeldDropped
+	agents.QueuedTurnGate = queuedTurnAllowed
+}
+
+// queuedTurnAllowed is agents.QueuedTurnGate: a queued input becomes a turn only while the
+// credential policy would leave the session running (runningPolicyRefusal, the sweep's own
+// judgement, read from the stored meta without resolving any credential: it runs under a
+// driver's handle lock).
+func queuedTurnAllowed(name string) bool {
+	m, ok := session.ReadMeta(name)
+	return !ok || runningPolicyRefusal(m) == nil
+}
 
 // noteHeldDropped runs under a driver's handle lock: the ledger write is local, and the
 // Control Plane call goes on its own goroutine.
