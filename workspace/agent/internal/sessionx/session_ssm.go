@@ -50,11 +50,23 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
+	// Lock order everywhere: the lifecycle gate, then the retire gate (a Managed input holds a
+	// lifecycle lease when it reaches resumeManaged). The retire gate is held from the check of
+	// the retired mark to the end of the launch and the clearing of the mark, so a retire cannot
+	// slip between them (retireGates).
 	lease, ok := enterSessionGate(w, r, name)
 	if !ok {
 		return
 	}
 	defer lease.Release()
+	g := retireGate(name)
+	g.RLock()
+	defer g.RUnlock()
+	auto := r.Context().Value(autoStartKey{}) != nil
+	if cur, ok := session.ReadMeta(name); ok && auto && isRetired(cur) {
+		httpx.WriteErr(w, http.StatusConflict, "session_retired", errSessionRetired.Error())
+		return
+	}
 	if _, ok := session.ReadMeta(name); !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
@@ -77,6 +89,17 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
 		}
 		return
+	}
+	// A person's start makes a retired session an ordinary one again (ADR 0137 §6). The
+	// callers that start sessions on their own refuse a retired one before they get here.
+	if !auto {
+		if err := clearRetired(name); err != nil {
+			// Started, but still marked: the mark keeps the Agent's own starts away, and the
+			// person can press start again.
+			httpx.WriteErr(w, http.StatusInternalServerError, "retire_clear_failed",
+				"the session started, but its retired mark could not be cleared: "+err.Error())
+			return
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

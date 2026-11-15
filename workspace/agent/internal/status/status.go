@@ -24,8 +24,12 @@ import (
 )
 
 type SessionStatus struct {
-	State string `json:"state"` // "working" | "idle"
-	TS    string `json:"ts"`    // RFC3339
+	// turnStart marks a write made by a driver that started a turn itself (PersistTurnStart); it is
+	// never stored.
+	turnStart bool
+	startKey  string
+	State     string `json:"state"` // "working" | "idle"
+	TS        string `json:"ts"`    // RFC3339
 	// TurnEnd marks an idle that was written by a turn's ACTUAL end (Stop hook /
 	// MarkTurnEnd completed|failed|aborted) — as opposed to an idle written because we
 	// do NOT know what is going on: the SessionStart reset, or a managed driver that
@@ -304,7 +308,9 @@ func RecordTurnEnd(sid string) {
 	if !ok || st.State != "working" || st.Rev == "" || ObservedTurnEnd(sid) != "" {
 		return
 	}
+	at := time.Now().Format(time.RFC3339Nano)
 	_ = observedEnds.Write(sid, observedEnd{Rev: st.Rev, At: time.Now().Format(time.RFC3339)})
+	noteObservedFirstTurnEnd(sid, at)
 }
 
 // ObservedTurnEnd returns the end a poll observed for the turn the status record is CURRENTLY
@@ -386,6 +392,7 @@ func persist(sid string, s SessionStatus) string {
 func persistLocked(sid string, s SessionStatus) string {
 	s.TS = time.Now().Format(time.RFC3339)
 	s.Rev = newRev()
+	noteFirstTurnWrite(sid, s)
 	write(sid, s)
 	return s.Rev
 }
@@ -421,6 +428,7 @@ func Remove(sid string) {
 	unlock, locked := lockSid(sid)
 	defer unlock()
 	statusFiles.Remove(sid)
+	voidOpenFirstTurn(sid)
 	// Unlinking the lock file without holding it would let a second holder lock a fresh
 	// inode alongside the first; on timeout the file stays until the next Remove.
 	if locked {

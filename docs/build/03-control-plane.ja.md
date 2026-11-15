@@ -269,12 +269,17 @@ Workspace を起こさない。
 
   **閉じたら止める。** クリーンな close は同じトランザクションで `retire_pending` を立てる。
   以後の tick は、それが立った閉じた配信について、Workspace が動いていて `queueReport` を返す間
-  `POST /sessions/{name}/retire` を呼び、Agent が確認したら下ろす（答えの全セッションが
-  stopped で `unended` が空。404 は確認にならない）。止まった Workspace は
-  起こさず、繰り返しても害は無い。木の中でまた機械が働くか人に何かが問われている間はその tick を見送って後の tick で
-  やり直し、諦めない（失敗した retire のあとで watch がまた発火した場合と見分けがつかないため）。
-  終わるのは Agent の確認、成功した報告がそのセッションをもう載せなくなったとき（route の 404
-  は確認ではない）。時間では終わらない。`aborted` の close は何も retire しない。
+  `POST /sessions/{name}/retire` を呼ぶ。終わらせるのは Agent 自身の言葉で、
+  `memo_delivery.retire_result` に残す: `complete: true`（`confirmed`）、root が `released`
+  （retire が始まったあとに人がそのセッションを起動した。もう人のもの）、root の下の一部だけが
+  released で残りは止まっている（`done`）、成功した報告がそのセッションをもう載せていない（`gone`）、
+  409 `retire_not_root`（`fault`。ログに残し、繰り返さない。配信のセッションは必ず root）。
+  404 は確認にならず、503 `retire_wait_cancelled` やタイムアウトは後の tick で繰り返す
+  （Agent は root ごとに 1 度に 1 つの retire しか走らせず、呼び出しが待たされることがある）。
+  止まった Workspace は起こさない。また機械が働き出したセッションも他と同じく retire する
+  （失敗した retire のあとで watch が再発火した場合と見分けがつかないため）。時間では終わらない。
+  読み取りから Agent が retire を始めるまでの間に人が再開したセッションは守れない: #4218。
+  `aborted` の close は何も retire しない。
 
   **Overdue。** キューの `maxTaskHours`（1〜72、既定 12）より長く open の配信には `overdue_at` を
   付け、メンバーへ通知を 1 件出す（kind `memo-delivery-overdue`、`EventID` は

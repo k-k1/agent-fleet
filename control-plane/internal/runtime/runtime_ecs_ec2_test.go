@@ -6130,3 +6130,48 @@ func TestECSEC2TmpfsOptsOverride(t *testing.T) {
 		t.Errorf("override = %v, want [noexec nosuid nodev]", got)
 	}
 }
+
+// The start policy changes at every start (its issuedAt) and travels through the secret channel,
+// so re-waking the same slot with only that changed reuses the task definition while the new
+// value reaches the container.
+func TestECSEC2FreshStartPolicyKeepsTheTaskDefinition(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	policy := func(issued int) string {
+		return fmt.Sprintf(`AF_ROUTE_POLICY={"revision":0,"restricted":false,"ceilingRestricted":false,"allowed":[],"issuedAt":%d}`, issued)
+	}
+	h.rt.base.extraEnv = []string{policy(1)}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.rt.base.extraEnv = []string{policy(2)}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 1 {
+		t.Fatalf("regCalls = %d, want 1: a fresh start policy must not register a new task definition", len(h.ecs.regCalls))
+	}
+	for _, c := range h.ecs.regCalls[0].ContainerDefinitions {
+		for _, kv := range c.Environment {
+			if aws.ToString(kv.Name) == "AF_ROUTE_POLICY" {
+				t.Errorf("AF_ROUTE_POLICY is plain task-definition environment: %q", aws.ToString(kv.Value))
+			}
+		}
+	}
+	var last string
+	for _, p := range h.ssm.puts {
+		if strings.HasSuffix(aws.ToString(p.Name), "/"+secretEnvParamSuffix("AF_ROUTE_POLICY")) {
+			last = aws.ToString(p.Value)
+		}
+	}
+	if !strings.Contains(last, `"issuedAt":2`) {
+		t.Errorf("the second start's policy did not reach its parameter: %q", last)
+	}
+}

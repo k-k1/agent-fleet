@@ -80,12 +80,12 @@ The connection has expired or been revoked, or it lacks the Confluence scopes. C
 The connection dropped after the request was sent, so it is not known whether the page was written. Writes are never
 re-run on their own. Search for the title or read the page before running it again.
 
-### Some commands fail with "410"
+### Some commands fail with "410", "401" or "403"
 
-These commands still use an old API that Atlassian has removed, so they can fail.
+`spaces`, `children` without options, and `move` switch to Atlassian's newer API by themselves. The rest of this list still fails:
 
-- `move`, `delete`, `children`, `find`, `spaces`, `copy-tree`
-- Page versions and properties (front matter)
+- With "410" (they still use an API Atlassian has removed): listing comments, adding a footer comment or an inline comment with `--inline-properties`, `--inline-original-selection` or `--inline-marker-ref`, attachments, page versions and properties (front matter)
+- With "401" or "403" (the connection does not ask for the permission they need): `delete`, `copy-tree`, `export`; `children` with `--recursive --json`, `--format tree` or `--type folders` / `all`; replying to a comment (`--parent`), an inline comment given only `--inline-selection`, and `comment-resolve`
 
 Folders cannot be created with `create --type folder`.
 

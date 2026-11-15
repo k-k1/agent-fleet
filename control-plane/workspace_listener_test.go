@@ -237,6 +237,7 @@ func TestWorkspaceListenerServesKnownAgentCalls(t *testing.T) {
 	calls := []struct{ method, path string }{
 		{"GET", "/internal/docs"},
 		{"GET", "/internal/branch-rules"},
+		{"GET", "/internal/route-policy"},
 		{"PUT", "/internal/watch-subjects"},
 		{"GET", "/internal/mcp-servers"},
 		{"GET", "/internal/aws-profiles"},

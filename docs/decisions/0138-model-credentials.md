@@ -243,7 +243,21 @@ not see muse or cursor at all.
   A custom opencode key is `custom-api`, destination `unclassified`. Existing ids keep their names. opencode's free
   models carry no credential but still send prompts to opencode.ai; the ledger files them under `opencode-zen`
   (provider `opencode`, `usagex/ledger.go:146-148`), so they follow Zen's class and destination. Whether a free call
-  always reports that provider is **not measured**.
+  always reports that provider is **not measured**. Having no credential to fingerprint, they carry the one fixed
+  binding `opencode-zen@free` (D5b) wherever their credentials are resolved when the call starts: the launch record
+  and the assistant chat's rows.
+- **An opencode launch with no model named does not resolve.** Nothing af reads at launch proves which model it will
+  run:
+  - opencode falls back from a configured `model` that is unavailable or disabled
+    (https://opencode.ai/docs/models/#defaults);
+  - an agent's own model, from JSON or Markdown and global or project files, overrides it;
+  - the last model used, and opencode's own priority, depend on what the project and opencode's credential store make
+    available.
+  - Its record stays `{}`, and an unresolved record is no record. Under a restriction a create follows D11b's order (the
+    member's default route, else `route_required`, which tells the member to name a model or set a default route). A
+    resume or a running session is judged as having none.
+  - Follow-ups: #4227 (an authoritative per-directory answer from opencode) and #4228 (per-call bindings for
+    opencode's session rows).
 - **A kind with more than one login mode resolves per mode, at execution.** muse resolves to `muse-login` or
   `meta-api` from its `mechanism` (`muse/auth.go:96-130`, with `META_API_KEY` in the Agent's environment counting as
   `meta-api`, since it overrides the login); codex resolves to `chatgpt-subscription` or `openai-api` from
@@ -471,6 +485,13 @@ image generation, shared daemons) is inside this rule; D13's exception covers on
 - The CP gives each policy a **revision**, increasing per member. The Agent accepts a policy only with a revision
   higher than the one it holds, and keeps the held one on disk, so a restart, an out-of-order answer or a stale cache
   can never restore a weaker rule.
+  - The held revision's floor is recorded twice: beside the copy in the config directory, and in the state
+    directory, which is local disk where the config directory is a network mount. So a config directory that
+    stops taking writes cannot bring the older copy back at a restart. Each floor write is numbered, so the newer of
+    two floors at one revision is known: a start marker restricts within a revision and a live answer clears it.
+  - When at a start neither directory can be written, new work waits for the CP's current answer. Only when a pull
+    shows the CP cannot be reached (no connection, a 5xx, no bridge) does the Agent judge by what is on disk, as in
+    any outage. A replayed, malformed or refused answer keeps it waiting.
 - The Workspace receives the effective policy at start (environment); the Agent then pulls it from a new internal
   endpoint, like `/internal/route/check` (ADR 0129, Q1 part 2), **at least every 30 seconds**. The CP also says in
   the answer whether any layer restricts anything for this member, and sends the deployment's ceiling separately.

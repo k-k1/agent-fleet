@@ -45,8 +45,13 @@ func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return S
 // (2.14.1's triggers are AgentSpawn/PrePrompt/PreToolUse/PostToolUse only, measured in docs/log/43
 // §5-1), so that poll is where a Terminal turn ends. A pending approval reads "question", not idle;
 // before the footer is drawn it has no opinion.
+//
+// StaleWorkingIdle: a pane has no position to pin an input to (no TurnMark/InputSeen), so an
+// input that never reaches the CLI cannot be told from a slow start. Without the trait DriveState
+// keeps the stored "working" for as long as the pane says nothing, while the list reads idle once
+// the warm-up ends.
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
-	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true}
+	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, StaleWorkingIdle: true}
 }
 
 // UsageMeasured is agents.UsageMeasurer: usagex.MeasuredNone: no tokens in the transcript.

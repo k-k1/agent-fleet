@@ -66,6 +66,21 @@ describe("SessionRow state chip", () => {
     expect(host.querySelector<HTMLElement>(".sess-btn")?.title).toContain(t("state.idle_handoff"));
   });
 
+  it("shows the short wording, with the full one on the tooltip, when the input was not delivered", async () => {
+    await render({ kind: "copilot", inputNotDelivered: true });
+    expect(chip()?.className).not.toContain("mini");
+    expect(chip()?.textContent?.trim()).toBe(t("state.input_not_delivered_short"));
+    expect(chip()?.title).toBe(t("state.input_not_delivered"));
+  });
+
+  it("is back to the plain waiting-for-input icon once the flag clears, and without it", async () => {
+    await render({ kind: "copilot", inputNotDelivered: true });
+    await render({ kind: "copilot", inputNotDelivered: false });
+    expect(chip()?.className).toContain("mini");
+    expect(chip()?.textContent?.trim()).toBe("");
+    expect(chip()?.title).toBe(t("state.idle"));
+  });
+
   it("shows it on a stopped row too", async () => {
     await render({ alive: false, handoffPending: true });
     expect(chip()?.textContent?.trim()).toBe(t("state.handoff_short"));

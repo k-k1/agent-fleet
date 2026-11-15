@@ -69,6 +69,8 @@ export interface SessionState {
   carried?: string;
   /** The last handoff this session proposed has not been launched. Live and stopped rows alike. */
   handoffPending?: boolean;
+  /** The Agent settled the session to idle because the input of its last turn never reached the CLI. */
+  inputNotDelivered?: boolean;
   /**
    * Live watches the session is waiting on. Only the mirror header knows it (the transcript
    * poll carries the list); session rows have no such field on their wire, so they never set it.
@@ -230,6 +232,13 @@ export const stateInfo = (s: SessionState): StateInfo => {
       // back to the generic text rather than showing nothing.
       if (s.backgroundBusy)
         return { cls: "bg", icon: "loading", spin: true, text: t(backgroundBusyKey(s.backgroundBusyReason)) };
+      // Idle only because the input never reached the CLI (hook-less kinds): not a finished
+      // turn, and the composer may still hold the prompt. Ranked above the handoff and watch
+      // chips because the next move is the member's (resend or open the terminal), and below
+      // backgroundBusy, which is a fact about work that really is running. The Agent clears the
+      // flag on a resend or the next turn, so the chip needs no state of its own.
+      if (s.inputNotDelivered)
+        return { cls: "question undelivered", icon: "warning", text: t("state.input_not_delivered"), short: t("state.input_not_delivered_short") };
       // Idle, and the turn left a handoff proposal behind that nobody has launched. Ranked
       // BELOW backgroundBusy on purpose: background work still finishes on its own and the
       // handoff chip takes its place as soon as it does, whereas a session showing the plain

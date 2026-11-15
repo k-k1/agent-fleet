@@ -284,8 +284,12 @@ func (a *fakeQueueAgent) serveRetire(w http.ResponseWriter, name string) {
 		mark(a.retireRelease)
 	}
 	type rep struct {
-		Name            string   `json:"name"`
-		Ended           struct{} `json:"ended"`
+		Name  string `json:"name"`
+		Ended struct {
+			Watches  int `json:"watches"`
+			Timers   int `json:"timers"`
+			Builtins int `json:"builtins"`
+		} `json:"ended"`
 		ResumeCancelled bool     `json:"resumeCancelled"`
 		Stopped         bool     `json:"stopped"`
 		Released        bool     `json:"released"`

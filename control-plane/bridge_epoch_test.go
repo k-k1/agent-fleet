@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicysrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/watchingress"
 	"io"
 	"net/http"
@@ -39,6 +40,7 @@ func bridgeFamilies() []struct {
 		{"AF_GCP_PROFILES_TOKEN", gcpProfilesSignKey, verifyGCPProfilesToken},
 		{"AF_BRANCH_RULES_TOKEN", branchRulesSignKey, verifyBranchRulesToken},
 		{"AF_WATCH_TOKEN", watchingress.SignKey, watchingress.VerifyToken},
+		{"AF_ROUTE_POLICY_TOKEN", routepolicysrv.SignKey, routepolicysrv.VerifyToken},
 		// Only injected with AF_PROVIDED_ROUTES=1; the rotation test switches it on.
 		{"AF_ROUTE_ISSUE_TOKEN", routegateway.SignKey, routegateway.VerifyIssueToken},
 	}

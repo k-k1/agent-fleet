@@ -342,12 +342,17 @@ disables.
 
   **Closing stops.** The clean close sets `retire_pending` in the same transaction. Each
   tick then calls `POST /sessions/{name}/retire` for the closed deliveries that have it,
-  while their workspace is running and answers with `queueReport`, and clears it when the
-  Agent confirms (every session of the answer stopped, `unended` empty; a 404 is never one). It never wakes a stopped workspace, and a repeat does no harm.
-  While a machine works in the tree again or a person is asked something the retire waits
-  for a later tick, and is not given up: a watch that fired again after a failed retire
-  looks the same. It ends on the Agent's confirmation, when a successful report no longer
-  lists the session (a 404 from the route is not a confirmation). No time bound ends it. An `aborted` close retires nothing.
+  while their workspace is running and answers with `queueReport`. The Agent's own word ends it,
+  stored in `memo_delivery.retire_result`: `complete: true` (`confirmed`), the root `released`
+  (a person started the session after the retire began, so it is theirs now), a member below
+  the root released while everything else is stopped (`done`), the session no longer listed
+  by a successful report (`gone`), or 409 `retire_not_root` (`fault`, logged and not repeated:
+  a delivery's session is always a root). A 404 is never a confirmation, and a 503
+  `retire_wait_cancelled` or a timeout is repeated on a later tick (the Agent runs one retire
+  per root at a time, so the call can wait). It never wakes a stopped workspace, and a repeat does no harm.
+  A session that works again is retired like any other (a watch that fired again after a
+  failed retire looks the same), and no time bound ends the retire. A person who resumes the
+  session between our read and the Agent's start of the retire is not protected: #4218. An `aborted` close retires nothing.
 
   **Overdue.** A delivery open longer than its queue's `maxTaskHours` (1–72, default 12)
   is marked `overdue_at` and the member gets one notification (kind

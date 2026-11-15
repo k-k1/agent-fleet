@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/taskid"
 	"log"
 	"net"
@@ -91,6 +92,9 @@ func serve() {
 		log.Printf("aws: workload credentials withheld from sessions (%s unset, IMDS disabled; %s=1 keeps them)",
 			strings.Join(removed, ", "), awsx.WorkloadOptIn)
 	}
+	// The credential policy's bridge token leaves the environment here too, for the same reason,
+	// and the start environment's policy is held before any create can ask (ADR 0138 D12).
+	routepolicy.Shared()
 
 	// Take the listening socket BEFORE any of the boot work below, and die if it is busy.
 	// Every step from here to Serve mutates container-wide state — the credential store, the
@@ -229,6 +233,8 @@ func serve() {
 	// Pull the tenant's branch naming rules (ADR 0103 decision 10). Backgrounded and
 	// fail-open like the MCP pull: an unreachable CP keeps the last copy.
 	startBranchRulesTenantSync()
+	// The credential policy (ADR 0138 D12): the start environment's copy, then a pull every 30 s.
+	go routepolicy.Shared().Run(context.Background())
 	awsx.LoginAWSBin = ensureAWSCLI
 	gcpx.LoginGCloudBin = ensureGCloud
 	startTerminalHistoryJanitor()
@@ -272,6 +278,9 @@ func serve() {
 	imagegen.ClearInputSets()
 	// A session whose initial prompt was still being typed when the previous process ended
 	// would read "sending" forever (ADR 0100 decision 2); settle those as unknown.
+	// A first-turn ledger still waiting for its input's start may belong to an input this process
+	// lost; its turn is not to be reported (status.FirstTurn).
+	status.VoidUnconfirmedFirstTurns()
 	if n := sessionx.RecoverPendingInitialPrompts(); n > 0 {
 		log.Printf("initial-prompt: %d pending delivery(ies) from the previous process marked unknown", n)
 	}
@@ -385,6 +394,13 @@ func serve() {
 	sessionx.StartStalledTreeWatch()
 	sessionx.StartPRFeedbackWatch()
 	sessionx.StartWatchEngine()
+	// A retire the previous process did not finish (marked, still running or not yet swept).
+	go func() {
+		time.Sleep(45 * time.Second) // after tmux and the drivers are up
+		if n := sessionx.ReconcileRetired(context.Background()); n > 0 {
+			log.Printf("retire: finished %d retire(s) the previous process had begun", n)
+		}
+	}()
 
 	// Self-hosted inference engines (ADR 0071 P0): ask the CP which engines this deployment
 	// runs and declare them in opencode's config, so `llamacpp/<model>` is in the launch

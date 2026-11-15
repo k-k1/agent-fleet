@@ -451,7 +451,7 @@ them in for one `exec`:
   member to reconnect Jira instead of running into a bare 401. Unknown scopes (an older store,
   a failed lookup) are never a refusal. The verdict is the union over every accessible-resources row with the site's id (Jira and Confluence rows share it). Settings shows the same verdict
   (`confluenceScopes: "missing"` in the connection status).
-- **Page core over v2 (2026-11-03, #3266).** confluence-cli 2.31 reads, creates and updates pages
+- **Page core over v2 (2026-11-03, #3266).** confluence-cli 2.31.0 read, created and updated pages
   through the v1 `/content` and `/space` endpoints, which current Cloud sites answer with 410.
   `workspace-agent confluence-page` (`internal/jirax/confluence_page.go`) takes `read`, `info`,
   `create`, `create-child`, `update`, `edit` and `space-lookup` from the wrapper and calls
@@ -462,9 +462,23 @@ them in for one `exec`:
   emoji, `code`/**bold** beside Japanese, lists, tables. The group gained the granular
   `read:page`, `write:page`, `read:space` scopes; `confluenceScopes` reads `"outdated"` for a grant
   with Confluence scopes but not those (Settings shows a reconnect hint; `confluence-cred` still
-  serves it, search and comments work). Writes are sent once; update sends `version+1` so a
-  concurrent edit is a 409. Still on v1 and expected to 410: move, delete, children, find, spaces,
-  copy-tree, versions, properties. Folders: the shim refuses `create --type folder`; the CLI lists folder children over v2 `/pages/{id}/direct-children` (`read:hierarchical-content:confluence`, not requested).
+  serves it, and search works). Writes are sent once; update sends `version+1` so a
+  concurrent edit is a 409. Folders: the shim refuses `create --type folder`.
+- **The CLI's own v2 fallback (2.31.1, #3274).** From 2.31.1 confluence-cli switches a command to
+  `/wiki/api/v2` once a v1 endpoint answers 410 (only on a host it takes for Cloud; the
+  `api.atlassian.com` gateway always is). With the scopes the group requests, `spaces`, plain
+  `children` and `move` work over v2 (`spaces` and `children` checked live, 2026-11-15).
+  `delete`, `copy-tree`, `export`, `children --recursive --json` and `children --format tree` also
+  read ancestors and need `read:content.metadata:confluence` (plus `delete:*` for delete);
+  `children --type folders|all` needs `read:hierarchical-content:confluence`. Neither is requested,
+  so those answer 401 or 403. Listing comments, adding a footer comment or an inline comment with
+  `--inline-properties` / `--inline-original-selection` / `--inline-marker-ref`, attachments,
+  versions and properties are still v1 in the CLI and answer 410 on a site where Atlassian removed
+  them (comments and attachments did, live); comment replies (`--parent`), inline comments given
+  only `--inline-selection`, and `comment-resolve` go to v2 and need `read:comment:confluence` /
+  `write:comment:confluence`, also not requested. The shim stays for the page core
+  because the CLI's Markdown→storage is markdown-it without CJK-friendly emphasis:
+  `**「括弧」**の` keeps its asterisks. Removing it, and the scopes that removal needs, is #3274.
 - **Read-only retry**: `readonly_cmd` in the wrapper re-runs the subcommands it lists
   (`attachments` only without `-d`/`--download`/`--dest`) up to twice after a transport error read
   from the CLI's own error line (ECONNRESET, ETIMEDOUT, …; never an HTTP status), replaying only the

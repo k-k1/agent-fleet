@@ -35,6 +35,12 @@ var secretEnvNames = []string{
 	"AF_GCP_PROFILES_TOKEN",
 	"AF_BRANCH_RULES_TOKEN",
 	"AF_WATCH_TOKEN",
+	"AF_ROUTE_POLICY_TOKEN",
+	// Not a credential: the effective credential policy at start (ADR 0138 D12). It changes at
+	// every start (its issuedAt), so as plain task-definition environment it would make every
+	// wake register a new revision on ECS; this channel delivers a fresh value per start under
+	// a task definition that stays the same.
+	"AF_ROUTE_POLICY",
 	"AF_INTERNAL_GIT_TOKEN",
 	"AF_DEV_IDP_CLIENT_SECRET",
 }

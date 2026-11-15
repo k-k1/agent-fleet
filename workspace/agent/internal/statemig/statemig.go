@@ -59,6 +59,10 @@ var Entries = []string{
 	// A hook-less kind's source position at turn start (status.RecordTurnMark). Introduced
 	// directly under AgentStateDir.
 	"session-turn-mark",
+	// A queue delivery's first turn (status.FirstTurn). Introduced directly under AgentStateDir.
+	"session-first-turn",
+	// A retire in progress, for the start-up recovery (sessionx session_retire.go).
+	"session-retire-intent",
 	"session-injections",
 	"session-auth-resume",
 	"session-abort-resume",
@@ -176,6 +180,11 @@ var Entries = []string{
 	// The last observed usage of every agent kind (internal/usagestore, #3127). Introduced
 	// directly under AgentStateDir; it never existed under .config.
 	"usage-last.json",
+	// The credential policy's floor mirror (internal/routepolicy MirrorPath, ADR 0138 D12).
+	// Introduced directly under AgentStateDir; it never existed under .config. The copy and its
+	// own floor (route-policy.json, route-policy.json.floor) stay in the config directory and must
+	// never be listed here: the mirror is worth something only on the other volume.
+	"route-policy.floor",
 	// The route gateway's Unix socket (internal/routegw). Recreated by every Agent start and
 	// never under .config, so run() no-ops on it.
 	"route-gateway.sock",
