@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -404,8 +405,15 @@ func TestLiveStateSessionError(t *testing.T) {
 		"next input reopens":                  {user + fail + user, "working"},
 	}
 	for name, c := range cases {
-		if got := liveStateFromFile(writeFixture(t, c.events)); got != c.want {
+		p := writeFixture(t, c.events)
+		old := time.Now().Add(-time.Minute)
+		os.Chtimes(p, old, old) // settled: the file has been quiet past errSettle
+		if got := liveStateFromFile(p); got != c.want {
 			t.Errorf("%s: state %q, want %q", name, got, c.want)
 		}
+	}
+	// A fresh error may still be followed by a retry's output: not final yet.
+	if got := liveStateFromFile(writeFixture(t, user+fail)); got != "working" {
+		t.Errorf("unsettled error: state %q, want working", got)
 	}
 }

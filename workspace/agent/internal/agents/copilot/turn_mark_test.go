@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -93,6 +94,11 @@ func TestEndedAfterAndTurnFailureOnSessionError(t *testing.T) {
 		t.Fatalf("fallback notice read as a failure: %q", got)
 	}
 	os.WriteFile(p, []byte(user+fail+user+notice+fail), 0o600)
+	if after, _ := EndedAfter(m, mark); after {
+		t.Fatal("a fresh error ended the turn before it settled")
+	}
+	old := time.Now().Add(-time.Minute)
+	os.Chtimes(p, old, old)
 	if after, known := EndedAfter(m, mark); !after || !known {
 		t.Fatalf("the error did not end the turn: %v %v", after, known)
 	}

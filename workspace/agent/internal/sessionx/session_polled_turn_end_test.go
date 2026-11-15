@@ -301,19 +301,24 @@ func TestPolledTurnEndReportsSessionErrorAsFailed(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			m, sid, turnEnded := polledTurnEndFixture(t, "copilot_err_"+strings.ReplaceAll(c.name, " ", "_"))
 			turnEnded()
-			var got struct {
-				state, excerpt string
-			}
-			agents.SetStateNotifier(func(_, _, state, excerpt string) { got.state, got.excerpt = state, excerpt })
+			type note struct{ state, excerpt string }
+			fired := make(chan note, 8) // the notifier runs on its own goroutine
+			agents.SetStateNotifier(func(_, _, state, excerpt string) { fired <- note{state, excerpt} })
 			t.Cleanup(func() { agents.SetStateNotifier(nil) })
 
 			startTurn(m)
 			appendEvents(t, m, `{"type":"user.message"}`, c.errLine)
+			settleEvents(t, m)
 			st := DriveState(m, true, false)
 			if c.wantIdle != (st == "idle") {
 				t.Fatalf("state = %q", st)
 			}
 			rec, _ := status.Read(sid)
+			var got note
+			select {
+			case got = <-fired:
+			case <-time.After(time.Second):
+			}
 			if !c.wantIdle {
 				if rec.TurnEndReason != "" || got.state != "" {
 					t.Fatalf("a normal turn was marked: %+v %+v", rec, got)
@@ -327,5 +332,55 @@ func TestPolledTurnEndReportsSessionErrorAsFailed(t *testing.T) {
 				t.Errorf("notifier got %+v", got)
 			}
 		})
+	}
+}
+
+// settleEvents backdates events.jsonl past the copilot error-settle window.
+func settleEvents(t *testing.T, m session.Meta) {
+	t.Helper()
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(copilot.EventsPath(copilot.SessionID(m)), old, old); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A session.error the CLI recovers from (retry output appended afterwards) must not be taken as
+// the turn's end by a poll that lands in between: no failure, no consumed report arm, and the
+// real turn_end still notifies once, as a completion.
+func TestPolledSessionErrorThenRecoveryIsNotFailed(t *testing.T) {
+	m, sid, turnEnded := polledTurnEndFixture(t, "copilot_err_recover")
+	turnEnded()
+	fired := make(chan string, 8) // the notifier runs on its own goroutine
+	agents.SetStateNotifier(func(_, _, state, _ string) { fired <- state })
+	notified := func() (states []string) {
+		for {
+			select {
+			case st := <-fired:
+				states = append(states, st)
+			case <-time.After(300 * time.Millisecond):
+				return states
+			}
+		}
+	}
+	t.Cleanup(func() { agents.SetStateNotifier(nil) })
+
+	startTurn(m)
+	appendEvents(t, m, `{"type":"user.message"}`, `{"type":"session.error","data":{"message":"stream hiccup","errorType":"query"}}`)
+	if st, n := DriveState(m, true, false), notified(); st != "working" || len(n) != 0 {
+		t.Fatalf("a fresh error ended the turn: state %q, notified %v", st, n)
+	}
+	appendEvents(t, m, `{"type":"assistant.message","data":{}}`)
+	settleEvents(t, m)
+	if st, n := DriveState(m, true, false), notified(); st != "working" || len(n) != 0 {
+		t.Fatalf("recovery output did not reopen the turn: state %q, notified %v", st, n)
+	}
+	appendEvents(t, m, `{"type":"assistant.turn_end"}`)
+	if st := DriveState(m, true, false); st != "idle" {
+		t.Fatalf("state = %q after turn_end", st)
+	}
+	rec, _ := status.Read(sid)
+	states := notified()
+	if rec.TurnEndReason != "" || len(states) != 1 || states[0] == agents.StateFailed {
+		t.Fatalf("the recovered turn was not a clean single completion: %+v %v", rec, states)
 	}
 }

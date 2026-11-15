@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -65,21 +66,46 @@ func liveStateDetailFromFile(path string) (string, string) {
 		return "", ""
 	}
 	defer f.Close()
-	if st, err := f.Stat(); err == nil && st.Size() > tailWindow {
-		if _, err := f.Seek(st.Size()-tailWindow, io.SeekStart); err == nil {
+	var st, detail string
+	var errTail bool
+	if fi, err := f.Stat(); err == nil && fi.Size() > tailWindow {
+		if _, err := f.Seek(fi.Size()-tailWindow, io.SeekStart); err == nil {
 			// Reading from the middle, so the first line is probably truncated - drop it.
 			br := bufio.NewReader(f)
 			_, _ = br.ReadString('\n')
-			return classifyDetail(br)
+			st, detail, errTail = classify(br)
+		} else {
+			st, detail, errTail = classify(bufio.NewReader(f))
 		}
+	} else {
+		st, detail, errTail = classify(bufio.NewReader(f))
 	}
-	return classifyDetail(bufio.NewReader(f))
+	if st == "idle" && errTail && errorUnsettledPath(path) {
+		return "working", ""
+	}
+	return st, detail
 }
+
+// errSettle is how long events.jsonl must stay unchanged after a failure-grade session.error
+// before that error is taken as the turn's final outcome. The CLI can write a session.error and
+// then recover (a retry) by appending assistant output; a poll that read the error as the end
+// would notify and consume the report arm for a turn that goes on, and the real turn_end would
+// then not notify. Nothing the CLI writes promises that no recovery follows, so the file going
+// quiet is the evidence. A failed turn costs this much latency; a variable so tests can set it.
+var errSettle = 5 * time.Second
 
 // classifyDetail classifies the state and adds what an outstanding permission was asking for
 // (for the docs/log/75 P5 carry-over). detail is filled only while waiting on a permission, and
 // stays empty when it cannot be read.
 func classifyDetail(r io.Reader) (string, string) {
+	st, detail, _ := classify(r)
+	return st, detail
+}
+
+// classify is classifyDetail that also says whether the turn was closed by a trailing
+// failure-grade session.error rather than a turn_end (the verdict the caller may hold back until
+// the error has settled).
+func classify(r io.Reader) (string, string, bool) {
 	open := false                 // after user.message / turn_start, before turn_end
 	errored := false              // closed by a session.error, not by a turn_end
 	perms := map[string]bool{}    // requestIds requested and not yet completed
@@ -146,17 +172,17 @@ func classifyDetail(r io.Reader) (string, string) {
 	}
 	if len(perms) > 0 {
 		if perms[last] {
-			return "question", detail[last]
+			return "question", detail[last], false
 		}
 		for id := range perms {
-			return "question", detail[id]
+			return "question", detail[id], false
 		}
-		return "question", ""
+		return "question", "", false
 	}
 	if open {
-		return "working", ""
+		return "working", "", false
 	}
-	return "idle", ""
+	return "idle", "", errored
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -189,8 +215,12 @@ func EndedAfter(m session.Meta, mark string) (after, known bool) {
 	if sid == "" {
 		return false, false
 	}
+	end := turnEnd
+	if p := EventsPath(sid); errorUnsettledPath(p) {
+		end = typeIs("assistant.turn_end", "session.shutdown") // see errSettle
+	}
 	return agents.EndedAfterOffset(EventsPath(sid), mark, tailWindow,
-		typeIs("user.message"), turnEnd)
+		typeIs("user.message"), end)
 }
 
 // InputSeen reports whether the new input's user.message reached events.jsonl at or after mark
@@ -233,4 +263,11 @@ func turnEnd(line []byte) bool {
 		} `json:"data"`
 	}
 	return json.Unmarshal(line, &ev) == nil && ev.Type == "session.error" && isTurnError(ev.Data.Message)
+}
+
+// errorUnsettledPath reports whether the file was written to within errSettle (an unreadable
+// mtime counts as settled: "when in doubt" must not leave a dead turn working forever).
+func errorUnsettledPath(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && time.Since(fi.ModTime()) < errSettle
 }
