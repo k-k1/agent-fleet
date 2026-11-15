@@ -72,10 +72,16 @@ export interface SessionState {
   /** The Agent settled the session to idle because the input of its last turn never reached the CLI. */
   inputNotDelivered?: boolean;
   /**
-   * Live watches the session is waiting on. Only the mirror header knows it (the transcript
-   * poll carries the list); session rows have no such field on their wire, so they never set it.
+   * Live watches the session is waiting on, as counted by the mirror header from its own
+   * subscription list. Session rows never carry it; they carry `wakers` instead.
    */
   watchCount?: number;
+  /**
+   * What would start the session again, from the Agent's row (absent when it holds nothing, and
+   * when `wakersUnknown`). stateInfo falls back to it when `watchCount` is not given.
+   */
+  wakers?: { watches: number; timers: number };
+  wakersUnknown?: boolean;
 }
 
 // handoffChip is the "…, and a handoff is waiting to be launched" chip, in the two run states
@@ -248,8 +254,13 @@ export const stateInfo = (s: SessionState): StateInfo => {
       // user cannot otherwise see from the header. Ranked below backgroundBusy (a running
       // command is the more urgent fact and keeps its own chip) and below a pending handoff
       // (an action the user has to take); 0 / absent keeps the plain idle chip.
-      if (s.watchCount && s.watchCount > 0)
-        return { cls: "on", icon: "eye", text: tCount("state.idle_watches", s.watchCount) };
+      //
+      // N is watches + timers: the mirror lists every subscription of the session, time ones
+      // included, so a row's wakers sum shows the same N as the mirror header (the mirror's list
+      // leaves built-in subscriptions out and wakers.watches counts them, so they can differ by
+      // those). The mirror's live count wins over the row's when both are given.
+      const watches = s.watchCount ?? (s.wakers ? s.wakers.watches + s.wakers.timers : 0);
+      if (watches > 0) return { cls: "on", icon: "eye", text: tCount("state.idle_watches", watches) };
       return { cls: "on", icon: "check", text: t("state.idle") };
   }
 };

@@ -245,6 +245,20 @@ describe("stateInfo (idle with live watches)", () => {
     expect(stateInfo({ ...idle, watchCount: 2 }).text).not.toBe(t("state.idle"));
   });
 
+  it("falls back to the row's wakers (watches + timers) when watchCount is absent", () => {
+    expect(stateInfo({ ...idle, wakers: { watches: 2, timers: 1 } }).text).toBe(tCount("state.idle_watches", 3));
+    expect(stateInfo({ ...idle, wakers: { watches: 0, timers: 1 } }).text).toBe(tCount("state.idle_watches", 1));
+    // The mirror's live count wins over the row.
+    expect(stateInfo({ ...idle, watchCount: 5, wakers: { watches: 1, timers: 0 } }).text).toBe(tCount("state.idle_watches", 5));
+  });
+
+  it("keeps the plain chip for empty or unknown wakers, and for a stopped session", () => {
+    expect(stateInfo({ ...idle, wakers: { watches: 0, timers: 0 } }).text).toBe(t("state.idle"));
+    expect(stateInfo({ ...idle, wakersUnknown: true }).text).toBe(t("state.idle"));
+    expect(stateInfo({ kind: "claude", alive: false, wakers: { watches: 2, timers: 1 } }).text).toBe(t("state.stopped"));
+    expect(stateInfo({ ...idle, wakers: { watches: 2, timers: 0 }, backgroundBusy: true }).text).not.toBe(tCount("state.idle_watches", 2));
+  });
+
   it("is the plain chip with 0 or no watches", () => {
     expect(stateInfo({ ...idle, watchCount: 0 }).text).toBe(t("state.idle"));
     expect(stateInfo(idle).text).toBe(t("state.idle"));
