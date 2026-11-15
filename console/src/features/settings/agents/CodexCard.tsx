@@ -107,35 +107,25 @@ export function CodexCard({
   // way the card was connected: the device flow for ChatGPT, the key form for an API key —
   // the device flow would silently switch an API-key workspace to a subscription.
   //
-  // A sign-out that failed must stop here: the device poll answers "connected" from the global
-  // login state, so a revoked login left in place would close the new flow on its first poll
-  // and read as success. One run at a time (reauthing): a second confirm while the first is in
-  // flight would open a second device flow and leave the two racing.
+  // It does not sign out: the Agent runs the device flow under a staging home and replaces
+  // auth.json only once the new sign-in completes, and the key route overwrites it only when a
+  // key is submitted, so backing out of either keeps the current login. One run at a time
+  // (reauthing): a second confirm while the first is in flight would open a second device flow.
   const reauthing = useRef(false);
   const reauth = async () => {
     if (reauthing.current) return;
     reauthing.current = true;
-    setBusy(true);
     try {
-      const viaKey = st?.method === "apikey";
-      let failure = "";
-      try {
-        const r = await raw("api/connections/codex", { method: "DELETE" });
-        if (!r.ok) failure = `HTTP ${r.status}`;
-      } catch (e) {
-        failure = e instanceof Error ? e.message : String(e);
-      }
-      if (failure) {
-        toast(tr("provider.reauth_signout_failed", { msg: failure }));
-        return;
-      }
-      reload(); // put the status pill back to "not connected"; the flow view below does not wait for it
-      if (viaKey) setMode("key");
+      if (st?.method === "apikey") setMode("key");
       else await startDevice();
     } finally {
       reauthing.current = false;
-      setBusy(false);
     }
+  };
+  const back = () => {
+    setMode("idle");
+    setDev(null);
+    setKey("");
   };
 
   return (
@@ -151,7 +141,7 @@ export function CodexCard({
       {!running ? (
         <ConnPaused />
       ) : /* The flow before the connection state, as on the Claude card: re-auth opens it while
-            the api/connections refetch that clears "connected" is still on its way (or failed). */
+            the card is still connected. */
       mode === "device" && dev ? (
         <div className="p-body">
           <DeviceSteps code={dev.user_code} url={dev.url} status={dev.status} />
@@ -162,6 +152,11 @@ export function CodexCard({
             </a>
             {tr("agents.codex_hint1_2")}
           </Hint>
+          <div className="flow">
+            <button className="ghost" onClick={back}>
+              {tr("common.back")}
+            </button>
+          </div>
         </div>
       ) : mode === "key" ? (
         <div className="p-body">
@@ -177,7 +172,7 @@ export function CodexCard({
             <button disabled={busy || !key.trim()} onClick={saveKey}>
               {tr("conn.connect")}
             </button>
-            <button className="ghost" onClick={() => setMode("idle")}>
+            <button className="ghost" onClick={back}>
               {tr("common.back")}
             </button>
           </div>
@@ -189,7 +184,7 @@ export function CodexCard({
             {st.email || (st.method === "apikey" ? tr("agents.codex_apikey_label") : "ChatGPT")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
-          <ReauthButton disabled={busy} onClick={() => void reauth()} />
+          <ReauthButton keepsLogin disabled={busy} onClick={() => void reauth()} />
           <DisconnectButton disabled={busy} onClick={disconnect} />
         </div>
       ) : (

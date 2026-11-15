@@ -188,6 +188,8 @@ export const settings = {
   "provider.reauth_confirm_title": "再認証しますか？",
   "provider.reauth_confirm_body":
     "一度サインアウトしてから、ログイン画面を開き直します。稼働中のセッションは終了しません。",
+  "provider.reauth_confirm_body_keep":
+    "ログイン画面を開きます。新しいログインが完了するまでは今のログインのまま使えます。途中でやめても今のログインは残ります。稼働中のセッションは終了しません。",
   "provider.step_copy_code": "コードをコピー",
   "provider.step_open_link": "リンクを開いて貼り付け",
   "provider.step_open_link_only": "リンクを開く",

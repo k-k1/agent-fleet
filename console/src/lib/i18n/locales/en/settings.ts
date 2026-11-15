@@ -191,6 +191,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "provider.reauth_confirm_title": "Re-authenticate?",
   "provider.reauth_confirm_body":
     "This signs out first, then reopens the sign-in page. Running sessions are not stopped.",
+  "provider.reauth_confirm_body_keep":
+    "This opens the sign-in page. The current login stays in use until the new sign-in completes, and stays if you back out. Running sessions are not stopped.",
   "provider.step_copy_code": "Copy the code",
   "provider.step_open_link": "Open the link and paste",
   "provider.step_open_link_only": "Open the link",

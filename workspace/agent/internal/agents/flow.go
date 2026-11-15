@@ -44,6 +44,15 @@ type Flow struct {
 	// LoginOp is the credential change this flow is making (BeginLoginChange), finished by Close
 	// whatever the flow's outcome, so its pending mark never outlives the flow's process.
 	LoginOp *credbind.Op
+	// OnClose runs once the process has been reaped, on every path that closes the flow
+	// (completion, cancellation, the store's reap). A flow that signs in under a staging
+	// directory removes it here, so an abandoned sign-in leaves no credentials behind.
+	OnClose func()
+	// Dir is the staging directory the flow's CLI signs in under, when it has one.
+	Dir string
+
+	reapOnce sync.Once
+	waitErr  error
 }
 
 // StartFlow launches cmd under a PTY (TERM set by the caller on cmd.Env) and
@@ -135,6 +144,23 @@ func (f *Flow) Ended() bool {
 //	}
 func (f *Flow) WaitEnded() <-chan struct{} { return f.endedCh }
 
+// ExitedOK reports that the child has exited with status 0. False while its output is still
+// open, so it never blocks on a running login. A login CLI that exits 0 has finished its
+// sign-in; the status commands cannot say that while an older login is still in place.
+func (f *Flow) ExitedOK() bool {
+	if !f.Ended() {
+		return false
+	}
+	return f.reap() == nil
+}
+
+// reap waits for the child exactly once; ExitedOK and Close both go through it, since a
+// second Cmd.Wait only returns "Wait was already called".
+func (f *Flow) reap() error {
+	f.reapOnce.Do(func() { f.waitErr = f.Cmd.Wait() })
+	return f.waitErr
+}
+
 // Clean returns the accumulated PTY output with ANSI/control noise removed.
 func (f *Flow) Clean() string {
 	f.mu.Lock()
@@ -157,10 +183,13 @@ func (f *Flow) Close() {
 	if f.rd != nil {
 		_ = f.rd.Close()
 	}
-	_ = f.Cmd.Wait()
+	_ = f.reap()
 	// After the process is gone: nothing can write the credential once the new generation is
 	// recorded.
 	f.LoginOp.Finish()
+	if f.OnClose != nil {
+		f.OnClose()
+	}
 }
 
 // WaitFor polls the flow's cleaned output until re matches, the timeout hits, or the child's

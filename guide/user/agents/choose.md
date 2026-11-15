@@ -60,10 +60,10 @@ Open **⚙Settings → Agents** and connect on the card of the agent you want. T
 The connected cards of claude, codex, Antigravity, Cursor, Kiro and Muse Code have "**Re-authenticate**" next to "**Disconnect**".
 
 1. Press "**Re-authenticate**"
-2. Go on in the confirmation; it signs out first, then reopens the sign-in page
+2. Go on in the confirmation; it reopens the sign-in page
 3. Sign in the usual way
 
-Running sessions are not stopped. If that sign-in fails or you abandon it, the agent stays "**Not connected**" until you connect it again.
+Running sessions are not stopped. claude and codex keep the current sign-in until the new one completes: if that sign-in fails or you press "**Back**", the old one stays in use. Antigravity, Cursor, Kiro and Muse Code sign out first, so for them a failed or abandoned sign-in leaves the agent "**Not connected**" until you connect it again.
 
 ## Choose the behavior
 

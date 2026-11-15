@@ -73,14 +73,17 @@ export function ClaudeCard({
     reload();
   };
   // Re-authenticate. claude owns its own .credentials.json and has no refresh-only command, so
-  // this signs out and reopens the same OAuth flow as one action. When the token is revoked
-  // server side, `claude auth status` still reports loggedIn from the local credentials and the
-  // card stays "connected" — without this control, an expired login can only be fixed by
-  // guessing at disconnect.
-  const reauth = async () => {
-    await raw("api/connections/claude", { method: "DELETE" });
-    reload(); // put the status pill back to "not connected"; the flow view below takes over first
-    await start();
+  // this reopens the same OAuth flow. When the token is revoked server side, `claude auth status`
+  // still reports loggedIn from the local credentials and the card stays "connected" — without
+  // this control, an expired login can only be fixed by guessing at disconnect.
+  //
+  // It does not sign out first: `claude auth login` leaves the current credentials in place
+  // until the pasted code is accepted, and the Agent waits for the CLI's own success rather
+  // than for status, so backing out of the flow keeps the login sessions are using.
+  const reauth = () => start();
+  const back = () => {
+    setFlow(null);
+    setCode("");
   };
 
   return (
@@ -104,9 +107,8 @@ export function ClaudeCard({
     >
       {!running ? (
         <ConnPaused />
-      ) : /* Check the flow before the connection state: re-auth runs sign-out then flow-start,
-            and the api/connections refetch lands later. Checking "connected" first would hide
-            the just-opened code field for that instant. */
+      ) : /* Check the flow before the connection state: re-auth opens the flow while the card is
+            still connected, and checking "connected" first would hide the code field. */
       flow ? (
         <>
           <div className="p-desc">{tr("agents.claude_desc_flow")}</div>
@@ -141,6 +143,9 @@ export function ClaudeCard({
               <button disabled={busy} onClick={complete}>
                 {tr("agents.complete")}
               </button>
+              <button className="ghost" disabled={busy} onClick={back}>
+                {tr("common.back")}
+              </button>
             </div>
           </div>
         </>
@@ -166,7 +171,7 @@ export function ClaudeCard({
                     tr("conn.expires_soon")}
             </span>
           )}
-          <ReauthButton onClick={() => void reauth()} />
+          <ReauthButton keepsLogin disabled={busy} onClick={() => void reauth()} />
           <DisconnectButton onClick={disconnect} />
         </div>
       ) : (
