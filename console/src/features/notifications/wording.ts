@@ -49,6 +49,10 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "pr-closed": "noti.kind_pr_closed",
   "pr-feedback": "noti.kind_pr_feedback",
   "pr-conflict": "noti.kind_pr_conflict",
+  "memo-delivery-overdue": "noti.kind_memo_delivery_overdue",
+  "memo-queue-paused": "noti.kind_memo_queue_paused",
+  "memo-queue-waiting": "noti.kind_memo_queue_waiting",
+  "memo-delivery-unconfirmed": "noti.kind_memo_delivery_unconfirmed",
 };
 
 /** Translated row heading; only an unknown kind (new CP with an old Console) falls back to the raw identifier. */
@@ -63,6 +67,7 @@ export function notificationKindLabel(kind: string): string {
 // does not say which conversation the report was for, and clicking is the only way to find out.
 export function notificationRowSubtitle(n: NotificationWordingInput): string {
   const conv = typeof n.payload.conversationTitle === "string" ? n.payload.conversationTitle : "";
+  if (isMemoQueueKind(n.kind)) return memoQueueLabel(n.displayName);
   if (n.kind === "session-report" && conv) return `${n.displayName} → ${conv}`;
   // arch-residue has no session, so displayName is empty and the default would leave the row
   // showing nothing but a timestamp — which is what a member saw. Clicking it opens nothing by
@@ -81,6 +86,13 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
   }
   return n.displayName;
 }
+
+// The auto-run kinds (ADR 0137): target type memo-queue, target id the category, display name the
+// repository and category as "repo/category" ("/category" for the common bucket).
+export const isMemoQueueKind = (kind: string) =>
+  kind === "memo-delivery-overdue" || kind === "memo-queue-paused" || kind === "memo-queue-waiting" || kind === "memo-delivery-unconfirmed";
+
+const memoQueueLabel = (displayName: string) => displayName.replace(/^\/+/, "");
 
 const isPRKind = (kind: string) =>
   kind === "pr-ready" || kind === "pr-merged" || kind === "pr-closed" || kind === "pr-feedback" || kind === "pr-conflict";
@@ -165,6 +177,17 @@ function terminalNotificationText(payload: Record<string, unknown>): string {
 
 export function notificationWording(n: NotificationWordingInput): { title: string; body: string; speech: string } {
   const name = n.displayName || t("notif.default_name");
+  if (isMemoQueueKind(n.kind)) {
+    // Words for a category, not a session: the name is the category, and the click opens it.
+    const label = memoQueueLabel(n.displayName) || t("memo.uncategorized");
+    const which =
+      n.kind === "memo-delivery-overdue" ? "overdue" : n.kind === "memo-queue-paused" ? "paused" : n.kind === "memo-queue-waiting" ? "waiting" : "unconfirmed";
+    return {
+      title: t(`notif.memo_${which}.title`),
+      body: t(`notif.memo_${which}.body`, { name: label }),
+      speech: t(`notif.memo_${which}.speech`, { name: label }),
+    };
+  }
   if (n.kind === "answer-ready") return { title: t("notif.answer_ready.title"), body: name, speech: t("notif.answer_ready.speech", { name }) };
   if (n.kind === "question") return { title: t("notif.question.title"), body: name, speech: t("notif.question.speech", { name }) };
   if (n.kind === "plan-approval") return { title: t("notif.plan_approval.title"), body: name, speech: t("notif.plan_approval.speech", { name }) };
@@ -481,6 +504,19 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       speech: t("notif.start_deadline.speech"),
     };
   }
+  if (n.kind === "usage-reset") {
+    return usageResetWording(n);
+  }
+  // A kind this Console does not know (a newer Control Plane, or a kind whose wording has not
+  // landed yet): never borrow another kind's text. The identifier and the name say what arrived.
+  return {
+    title: t("notif.unknown.title"),
+    body: n.displayName ? t("notif.unknown.body", { kind: n.kind, name: n.displayName }) : t("notif.unknown.body_bare", { kind: n.kind }),
+    speech: t("notif.unknown.speech"),
+  };
+}
+
+function usageResetWording(n: NotificationWordingInput): { title: string; body: string; speech: string } {
   const rawSource = String(n.payload.source || n.displayName || "AI");
   const source = rawSource === "claude" ? "Claude" : rawSource === "codex" ? "Codex" : rawSource;
   const win = n.payload.windowKey === "5h" ? t("notif.window.5h") : t("notif.window.week");

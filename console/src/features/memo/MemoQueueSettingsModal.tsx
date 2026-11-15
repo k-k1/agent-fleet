@@ -1,7 +1,11 @@
-// The auto-run settings of one memo category (ADR 0137 §3, §10): the standing instruction, the
+// The auto-run settings of one memo category (ADR 0137 §3, §6, §10): the standing instruction, the
 // consumer (agent, model, effort), the spend limit, a new worktree per run, how many sessions
-// run at once, how many messages go to one session, and on or off. Written through the Console
-// only; nothing in the workspace can create or change them.
+// run at once, how many messages go to one session, when it runs by itself (any time, a time
+// window, or once enough notes are waiting), runs per day, when a run counts as overdue, and on
+// or off. Written through the Console only; nothing in the workspace can create or change them.
+//
+// A save replaces the whole row, so draftBody sends every setting the dialog loaded, including
+// the route it does not show. The read-only state (paused, noReportAt, ...) is never sent.
 //
 // With the tenant's switch off the dialog says so instead of offering to save. Removing the
 // settings stays possible then: the Control Plane does not gate DELETE.
@@ -10,22 +14,32 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { t, useT } from "../../lib/i18n/index.ts";
-import { errDetail } from "../../core/api/client.ts";
+import { t, useT, type MsgKey } from "../../lib/i18n/index.ts";
+import { errText } from "../../core/api/client.ts";
 import { scheduledKinds } from "../../agents/registry.ts";
 import type { MemoQueue } from "../../types/memo.ts";
 import { memoQueueDelete, memoQueuePut } from "./api.ts";
 import {
   QUEUE_BATCH_MAX,
+  QUEUE_FIRES_PER_DAY_MAX,
   QUEUE_INSTRUCTION_MAX_BYTES,
   QUEUE_MAX_ACTIVE_MAX,
+  QUEUE_OPEN_AFTER_MAX,
   QUEUE_SPEND_MAX,
+  QUEUE_TASK_HOURS_MAX,
+  QUEUE_WINDOW_MAX_MINUTES,
+  type RunMode,
   draftBody,
   draftErrors,
   draftOf,
 } from "./queues.ts";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const RUN_MODES: { mode: RunMode; label: MsgKey; hint: MsgKey }[] = [
+  { mode: "always", label: "memo.q_when_always", hint: "memo.q_when_always_hint" },
+  { mode: "window", label: "memo.q_when_window", hint: "memo.q_when_window_hint" },
+  { mode: "threshold", label: "memo.q_when_threshold", hint: "memo.q_when_threshold_hint" },
+];
 
 interface Props {
   categoryName: string;
@@ -58,6 +72,12 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
     spendCapUsd: QUEUE_SPEND_MAX,
     maxActive: QUEUE_MAX_ACTIVE_MAX,
     batch: QUEUE_BATCH_MAX,
+    openCron: 0,
+    openMinutes: QUEUE_WINDOW_MAX_MINUTES,
+    tz: 0,
+    openAfter: QUEUE_OPEN_AFTER_MAX,
+    maxFiresPerDay: QUEUE_FIRES_PER_DAY_MAX,
+    maxTaskHours: QUEUE_TASK_HOURS_MAX,
   };
   const show = (f: keyof typeof errors) => (tried && errors[f] ? tr(errors[f]!, { max: maxOf[f] }) : null);
   const blocked = !tenantEnabled;
@@ -70,7 +90,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
     try {
       const res = await memoQueuePut(categoryId, draftBody(draft, queue?.route ?? ""));
       if (res?.error) {
-        toast(errDetail(res.error) || t("memo.q_save_failed"), { kind: "warn" });
+        toast(errText(res.error) || t("memo.q_save_failed"), { kind: "warn" });
         return;
       }
       toast(t("memo.q_saved"), { kind: "success" });
@@ -251,6 +271,103 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
           <input type="checkbox" checked={draft.worktree} disabled={blocked} onChange={(e) => set("worktree", e.target.checked)} />
           <span>{tr("memo.q_worktree")}</span>
         </label>
+
+        <fieldset className="ui-field memo-q-when" disabled={blocked}>
+          <legend className="ui-field-label">{tr("memo.q_when")}</legend>
+          {RUN_MODES.map((m) => (
+            <label key={m.mode} className="memo-q-when-opt">
+              <input type="radio" name="memo-q-when" checked={draft.runMode === m.mode} onChange={() => set("runMode", m.mode)} />
+              <span>
+                {tr(m.label)}
+                <span className="ui-field-hint"> — {tr(m.hint)}</span>
+              </span>
+            </label>
+          ))}
+          {draft.runMode === "window" && (
+            <div className="ui-field-row">
+              <div className="ui-field">
+                <label className="ui-field-label" htmlFor="memo-q-open-cron">
+                  {tr("memo.q_open_cron")}
+                </label>
+                <input
+                  id="memo-q-open-cron"
+                  type="text"
+                  value={draft.openCron}
+                  placeholder="0 9 * * *"
+                  onChange={(e) => set("openCron", e.target.value)}
+                  spellCheck={false}
+                />
+                {fieldErr("openCron") ?? <div className="ui-field-hint">{tr("sched.spec_hint_cron")}</div>}
+              </div>
+              <div className="ui-field memo-q-narrow">
+                <label className="ui-field-label" htmlFor="memo-q-open-minutes">
+                  {tr("memo.q_open_minutes")}
+                </label>
+                <input
+                  id="memo-q-open-minutes"
+                  type="text"
+                  inputMode="numeric"
+                  value={draft.openMinutes}
+                  onChange={(e) => set("openMinutes", e.target.value)}
+                />
+                {fieldErr("openMinutes")}
+              </div>
+              <div className="ui-field">
+                <label className="ui-field-label" htmlFor="memo-q-tz">
+                  {tr("sched.f_tz")}
+                </label>
+                <input id="memo-q-tz" type="text" value={draft.tz} placeholder="UTC" onChange={(e) => set("tz", e.target.value)} spellCheck={false} />
+                {fieldErr("tz") ?? <div className="ui-field-hint">{tr("memo.q_tz_hint")}</div>}
+              </div>
+            </div>
+          )}
+          {draft.runMode === "threshold" && (
+            <div className="ui-field memo-q-narrow">
+              <label className="ui-field-label" htmlFor="memo-q-open-after">
+                {tr("memo.q_open_after")}
+              </label>
+              <input
+                id="memo-q-open-after"
+                type="text"
+                inputMode="numeric"
+                value={draft.openAfter}
+                onChange={(e) => set("openAfter", e.target.value)}
+              />
+              {fieldErr("openAfter")}
+            </div>
+          )}
+        </fieldset>
+
+        <div className="ui-field-row">
+          <div className="ui-field memo-q-narrow">
+            <label className="ui-field-label" htmlFor="memo-q-fires">
+              {tr("memo.q_fires")}
+            </label>
+            <input
+              id="memo-q-fires"
+              type="text"
+              inputMode="numeric"
+              value={draft.maxFiresPerDay}
+              disabled={blocked}
+              onChange={(e) => set("maxFiresPerDay", e.target.value)}
+            />
+            {fieldErr("maxFiresPerDay") ?? <div className="ui-field-hint">{tr("memo.q_fires_hint")}</div>}
+          </div>
+          <div className="ui-field memo-q-narrow">
+            <label className="ui-field-label" htmlFor="memo-q-task-hours">
+              {tr("memo.q_task_hours")}
+            </label>
+            <input
+              id="memo-q-task-hours"
+              type="text"
+              inputMode="numeric"
+              value={draft.maxTaskHours}
+              disabled={blocked}
+              onChange={(e) => set("maxTaskHours", e.target.value)}
+            />
+            {fieldErr("maxTaskHours") ?? <div className="ui-field-hint">{tr("memo.q_task_hours_hint")}</div>}
+          </div>
+        </div>
 
         <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
           <input type="checkbox" checked={draft.enabled} disabled={blocked} onChange={(e) => set("enabled", e.target.checked)} />

@@ -93,16 +93,47 @@ export interface MemoQueue {
   worktree: boolean;
   maxActive: number;
   batch: number;
+  /** Hours after which a run that is still open counts as overdue. */
+  maxTaskHours: number;
+  /** When it runs by itself: openCron + openMinutes + tz is a time window, openAfter a number of
+   *  waiting notes, neither means any time. maxFiresPerDay bounds the runs of 24 hours. */
+  openCron: string;
+  openMinutes: number;
+  tz: string;
+  openAfter: number;
+  maxFiresPerDay: number;
+  /** Read-only state the Control Plane sets: never part of a PUT. */
+  paused: boolean;
+  pausedAt: string;
+  pausedReason: string;
+  draining: boolean;
+  /** Set while its runs by itself are held back because the workspace's Agent is too old to report. */
+  noReportAt: string;
   enabled: boolean;
   generation: number;
   createdAt: string;
   updatedAt: string;
 }
 
-/** The PUT body: a PUT replaces the whole row, so every field is sent. */
+/** The PUT body: a PUT replaces the whole row, so every setting is sent, and nothing read-only. */
 export type MemoQueueInput = Pick<
   MemoQueue,
-  "instruction" | "agentKind" | "model" | "effort" | "route" | "spendCapUsd" | "worktree" | "maxActive" | "batch" | "enabled"
+  | "instruction"
+  | "agentKind"
+  | "model"
+  | "effort"
+  | "route"
+  | "spendCapUsd"
+  | "worktree"
+  | "maxActive"
+  | "batch"
+  | "maxTaskHours"
+  | "openCron"
+  | "openMinutes"
+  | "tz"
+  | "openAfter"
+  | "maxFiresPerDay"
+  | "enabled"
 >;
 
 /** GET /api/memo-queues. tenantEnabled false: the tenant's administrator has not allowed new queues. */
@@ -121,6 +152,20 @@ export interface MemoDelivery {
   createdAt: string;
   sentAt: string;
   closedAt: string;
+  /** Why a run that is still open keeps its place, at the Agent's last report: machine, person,
+   *  limit, wakers or unknown; "" when nothing holds it or no report was read. */
+  heldBy: string;
+  /** The session of the tree that holds it, and when that was read. */
+  heldSession: string;
+  heldSeenAt: string;
+  overdue: boolean;
+  overdueAt: string;
+  /** Started by the Control Plane itself rather than by "Run now". */
+  auto: boolean;
+  /** Where wrapping up the session stands; "released" = a person took the session over. */
+  retire: string;
+  /** How the first turn of the session ended; null until it did. */
+  firstTurn: { outcome: string; ms: number; endedAt: string } | null;
 }
 
 // Body sent to POST /api/memo-categories.
