@@ -46,6 +46,14 @@ func notifyPolledTurnEnd(m session.Meta, state string) {
 	if state != "idle" || status.LiveState(sid) != "working" || !idleEndsThisTurn(m, sid) {
 		return
 	}
+	if t := liveStateTraits(m.Kind); t.TurnFailure != nil {
+		if mark, ok := status.TurnMarkOf(sid); ok {
+			if failure := t.TurnFailure(m, mark); failure != "" {
+				agents.MarkTurnEndErr(sid, agents.TurnFailed, failure)
+				return
+			}
+		}
+	}
 	agents.MarkTurnEnd(sid, agents.TurnCompleted)
 }
 

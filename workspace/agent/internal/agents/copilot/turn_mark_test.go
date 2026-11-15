@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -65,5 +66,82 @@ func TestInputSeen(t *testing.T) {
 	os.WriteFile(p, []byte("x\n"), 0o600) // truncated below the mark
 	if _, known := InputSeen(m, mark); known {
 		t.Fatal("a rotated source was compared")
+	}
+}
+
+// A failed turn has no turn_end: its session.error is the end, and TurnFailure reads its text from
+// the lines after the mark only (an older failure must not taint the next turn).
+func TestEndedAfterAndTurnFailureOnSessionError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("COPILOT_HOME", filepath.Join(t.TempDir(), ".copilot"))
+	m := session.Meta{Name: "co-fail", Dir: t.TempDir(), Kind: session.KindCopilot}
+	if _, err := (agentImpl{}).BuildLaunch(m, agents.LaunchOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	p := EventsPath(SessionID(m))
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	const fail = `{"type":"session.error","data":{"message":"Execution failed: Model \"m\" is not available.","errorType":"query"}}` + "\n"
+	const notice = `{"type":"session.error","data":{"message":"Model \"m\" from --model flag is not available. Using \"auto\" instead.","errorType":"model"}}` + "\n"
+	const user = `{"type":"user.message"}` + "\n"
+	os.WriteFile(p, []byte(user+fail), 0o600) // an older failed turn
+	mark, _ := TurnMark(m)
+
+	os.WriteFile(p, []byte(user+fail+user+notice), 0o600)
+	if after, _ := EndedAfter(m, mark); after {
+		t.Fatal("the fallback notice ended the turn")
+	}
+	if got := TurnFailure(m, mark); got != "" {
+		t.Fatalf("fallback notice read as a failure: %q", got)
+	}
+	os.WriteFile(p, []byte(user+fail+user+notice+fail), 0o600)
+	if after, _ := EndedAfter(m, mark); after {
+		t.Fatal("a fresh error ended the turn before it settled")
+	}
+	old := time.Now().Add(-time.Minute)
+	os.Chtimes(p, old, old)
+	if after, known := EndedAfter(m, mark); !after || !known {
+		t.Fatalf("the error did not end the turn: %v %v", after, known)
+	}
+	if got := TurnFailure(m, mark); got != `Execution failed: Model "m" is not available.` {
+		t.Fatalf("failure = %q", got)
+	}
+	os.WriteFile(p, []byte(user+fail+user+fail+`{"type":"assistant.message"}`+"\n"+`{"type":"assistant.turn_end"}`+"\n"), 0o600)
+	if got := TurnFailure(m, mark); got != "" {
+		t.Fatalf("an answered turn read as failed: %q", got)
+	}
+	if got := TurnFailure(m, "bogus"); got != "" {
+		t.Fatalf("an unusable mark read as failed: %q", got)
+	}
+}
+
+// An old turn's late session.error that lands after the mark but before this turn's user.message
+// is not this turn's failure (EndedAfter starts at the user line, TurnFailure must too); this
+// turn's own error after its user.message is.
+func TestTurnFailureIgnoresErrorBeforeTheTurnsUserMessage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("COPILOT_HOME", filepath.Join(t.TempDir(), ".copilot"))
+	m := session.Meta{Name: "co-late", Dir: t.TempDir(), Kind: session.KindCopilot}
+	if _, err := (agentImpl{}).BuildLaunch(m, agents.LaunchOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	p := EventsPath(SessionID(m))
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	const old = `{"type":"session.error","data":{"message":"old turn failed","errorType":"query"}}` + "\n"
+	const cur = `{"type":"session.error","data":{"message":"this turn failed","errorType":"query"}}` + "\n"
+	const user = `{"type":"user.message"}` + "\n"
+	const shutdown = `{"type":"session.shutdown"}` + "\n"
+	os.WriteFile(p, []byte(user+`{"type":"assistant.turn_end"}`+"\n"), 0o600)
+	mark, _ := TurnMark(m)
+
+	os.WriteFile(p, []byte(user+`{"type":"assistant.turn_end"}`+"\n"+old+user+shutdown), 0o600)
+	if after, _ := EndedAfter(m, mark); !after {
+		t.Fatal("the shutdown after the new user message was not an end")
+	}
+	if got := TurnFailure(m, mark); got != "" {
+		t.Fatalf("the previous turn's late error became this turn's failure: %q", got)
+	}
+	os.WriteFile(p, []byte(user+`{"type":"assistant.turn_end"}`+"\n"+old+user+cur), 0o600)
+	if got := TurnFailure(m, mark); got != "this turn failed" {
+		t.Fatalf("failure = %q, want this turn's own error", got)
 	}
 }

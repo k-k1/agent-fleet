@@ -11,6 +11,9 @@ package copilot
 //     the permission menu or a plan-mode approval)
 //   - a user.message / assistant.turn_start with no assistant.turn_end after it -> "working"
 //     (a turn in progress; the gap before turn_start while routing is caught from user.message)
+//   - a session.error that is a failure (isTurnError) closes the open turn: a turn that died
+//     writes no turn_end, and without this it would read "working" forever; assistant output
+//     after it (a retry) reopens it
 //   - anything else -> "idle"
 //   - no session id yet, or no file -> "" (starting up / unknown - the caller treats it as no
 //     state)
@@ -20,6 +23,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -62,22 +66,48 @@ func liveStateDetailFromFile(path string) (string, string) {
 		return "", ""
 	}
 	defer f.Close()
-	if st, err := f.Stat(); err == nil && st.Size() > tailWindow {
-		if _, err := f.Seek(st.Size()-tailWindow, io.SeekStart); err == nil {
+	var st, detail string
+	var errTail bool
+	if fi, err := f.Stat(); err == nil && fi.Size() > tailWindow {
+		if _, err := f.Seek(fi.Size()-tailWindow, io.SeekStart); err == nil {
 			// Reading from the middle, so the first line is probably truncated - drop it.
 			br := bufio.NewReader(f)
 			_, _ = br.ReadString('\n')
-			return classifyDetail(br)
+			st, detail, errTail = classify(br)
+		} else {
+			st, detail, errTail = classify(bufio.NewReader(f))
 		}
+	} else {
+		st, detail, errTail = classify(bufio.NewReader(f))
 	}
-	return classifyDetail(bufio.NewReader(f))
+	if st == "idle" && errTail && errorUnsettledPath(path) {
+		return "working", ""
+	}
+	return st, detail
 }
+
+// errSettle is how long events.jsonl must stay unchanged after a failure-grade session.error
+// before that error is taken as the turn's final outcome. The CLI can write a session.error and
+// then recover (a retry) by appending assistant output; a poll that read the error as the end
+// would notify and consume the report arm for a turn that goes on, and the real turn_end would
+// then not notify. Nothing the CLI writes promises that no recovery follows, so the file going
+// quiet is the evidence. A failed turn costs this much latency; a variable so tests can set it.
+var errSettle = 5 * time.Second
 
 // classifyDetail classifies the state and adds what an outstanding permission was asking for
 // (for the docs/log/75 P5 carry-over). detail is filled only while waiting on a permission, and
 // stays empty when it cannot be read.
 func classifyDetail(r io.Reader) (string, string) {
+	st, detail, _ := classify(r)
+	return st, detail
+}
+
+// classify is classifyDetail that also says whether the turn was closed by a trailing
+// failure-grade session.error rather than a turn_end (the verdict the caller may hold back until
+// the error has settled).
+func classify(r io.Reader) (string, string, bool) {
 	open := false                 // after user.message / turn_start, before turn_end
+	errored := false              // closed by a session.error, not by a turn_end
 	perms := map[string]bool{}    // requestIds requested and not yet completed
 	detail := map[string]string{} // requestId -> what it asked for (only where readable)
 	last := ""                    // the last requested id (this is the one displayed)
@@ -96,6 +126,7 @@ func classifyDetail(r io.Reader) (string, string) {
 				Tool     string `json:"tool"`
 				Command  string `json:"command"`
 				Title    string `json:"title"`
+				Message  string `json:"message"`
 			} `json:"data"`
 		}
 		if json.Unmarshal(sc.Bytes(), &ev) != nil {
@@ -104,8 +135,24 @@ func classifyDetail(r io.Reader) (string, string) {
 		switch ev.Type {
 		case "user.message", "assistant.turn_start":
 			open = true
+		case "assistant.message", "tool.execution_start":
+			// Output after a session.error means the turn went on (a retry): working again.
+			// Before any error this changes nothing, the turn is already open.
+			if errored {
+				open = true
+				errored = false
+			}
 		case "assistant.turn_end":
 			open = false
+			errored = false
+		case "session.error":
+			// A turn that died with an error writes no turn_end (recorded: session.error is the
+			// last line), so without this it reads working forever. The model-fallback notice
+			// is not a failure: the turn runs on.
+			if isTurnError(ev.Data.Message) {
+				open = false
+				errored = true
+			}
 		case "permission.requested":
 			if ev.Data.RequestID != "" {
 				perms[ev.Data.RequestID] = true
@@ -125,17 +172,17 @@ func classifyDetail(r io.Reader) (string, string) {
 	}
 	if len(perms) > 0 {
 		if perms[last] {
-			return "question", detail[last]
+			return "question", detail[last], false
 		}
 		for id := range perms {
-			return "question", detail[id]
+			return "question", detail[id], false
 		}
-		return "question", ""
+		return "question", "", false
 	}
 	if open {
-		return "working", ""
+		return "working", "", false
 	}
-	return "idle", ""
+	return "idle", "", errored
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -168,8 +215,12 @@ func EndedAfter(m session.Meta, mark string) (after, known bool) {
 	if sid == "" {
 		return false, false
 	}
+	end := turnEnd
+	if p := EventsPath(sid); errorUnsettledPath(p) {
+		end = typeIs("assistant.turn_end", "session.shutdown") // see errSettle
+	}
 	return agents.EndedAfterOffset(EventsPath(sid), mark, tailWindow,
-		typeIs("user.message"), typeIs("assistant.turn_end", "session.shutdown"))
+		typeIs("user.message"), end)
 }
 
 // InputSeen reports whether the new input's user.message reached events.jsonl at or after mark
@@ -197,4 +248,26 @@ func typeIs(types ...string) func([]byte) bool {
 		}
 		return false
 	}
+}
+
+// turnEnd is a line that closes a turn: assistant.turn_end, session.shutdown, or a session.error
+// that is a failure (classifyDetail reads all three as closed).
+func turnEnd(line []byte) bool {
+	if typeIs("assistant.turn_end", "session.shutdown")(line) {
+		return true
+	}
+	var ev struct {
+		Type string `json:"type"`
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	return json.Unmarshal(line, &ev) == nil && ev.Type == "session.error" && isTurnError(ev.Data.Message)
+}
+
+// errorUnsettledPath reports whether the file was written to within errSettle (an unreadable
+// mtime counts as settled: "when in doubt" must not leave a dead turn working forever).
+func errorUnsettledPath(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && time.Since(fi.ModTime()) < errSettle
 }
