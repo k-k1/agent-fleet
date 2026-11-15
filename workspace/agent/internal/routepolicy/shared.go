@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 var (
@@ -18,6 +19,9 @@ var (
 func Shared() *Store {
 	sharedOnce.Do(func() {
 		captureToken()
+		// A tmux server started before the token left this environment (a pane's environment
+		// comes from the server) keeps it in its global environment; every launch unsets it.
+		tmuxx.AddLaunchEnv([]string{EnvToken}, nil)
 		shared = Open(Path())
 		shared.seedFromEnv()
 	})

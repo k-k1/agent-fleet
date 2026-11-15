@@ -155,7 +155,8 @@ func TestLostCopyFailsClosedOnlyWhenRestricting(t *testing.T) {
 			_ = os.WriteFile(p, []byte(`{"policy":{"revision":2,"allowed":[]},"held":true,"lastOk":1}`), 0o600)
 		}, true, true},
 		{"restricting, floor unreadable", strict2, func(p string) { _ = os.WriteFile(floorPath(p), []byte("{"), 0o600); _ = os.Remove(p) }, true, true},
-		{"unrestricted, copy corrupted", open1, func(p string) { _ = os.WriteFile(p, []byte("{"), 0o600) }, false, false},
+		// The floor alone is the whole of an unrestricted policy: held, blocking nothing.
+		{"unrestricted, copy corrupted", open1, func(p string) { _ = os.WriteFile(p, []byte("{"), 0o600) }, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := testStore(t)
@@ -334,7 +335,7 @@ func TestSeedFromEnv(t *testing.T) {
 		t.Fatalf("start policy: %+v", st)
 	}
 	u, _ := testStore(t)
-	t.Setenv(EnvPolicy, `{"unknown":true}`)
+	t.Setenv(EnvPolicy, `{"unknown":true,"issuedAt":1}`)
 	u.seedFromEnv()
 	if st := u.State(); !st.Placeholder || u.Allows("bedrock-deployment") || u.Gate() == nil {
 		t.Errorf("unknown start: %+v", st)
@@ -384,7 +385,7 @@ func TestRunStopsOnCancel(t *testing.T) {
 	done := make(chan struct{})
 	never := make(chan time.Time)
 	go func() {
-		s.run(ctx, func() float64 { return 0 }, func(time.Duration) <-chan time.Time { return never })
+		s.run(ctx, func() float64 { return 0 }, func(time.Duration) <-chan time.Time { return never }, time.Now)
 		close(done)
 	}()
 	cancel()
@@ -393,4 +394,161 @@ func TestRunStopsOnCancel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not stop on cancel")
 	}
+}
+
+// A floor write that failed is repaired by the next confirmation before it reports anything
+// durable: a restart after a corrupted copy then still holds the restriction.
+func TestRetryRepairsAFailedFloor(t *testing.T) {
+	s, now := testStore(t)
+	if _, err := s.Accept(open1); err != nil {
+		t.Fatal(err)
+	}
+	old := rename
+	t.Cleanup(func() { rename = old })
+	rename = func(a, b string) error {
+		if b == floorPath(s.path) {
+			return errors.New("injected floor failure")
+		}
+		return old(a, b)
+	}
+	if _, err := s.Accept(strict2); err == nil {
+		t.Fatal("control: the floor write did not fail")
+	}
+	rename = old
+	*now = now.Add(time.Second)
+	if _, err := s.Accept(strict2); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := reopen(s); r.Allows("openai-api") || r.Gate() == nil {
+		t.Fatalf("the confirmed retry left an unrestricted floor: %+v", r.State())
+	}
+}
+
+// A floor that cannot be read, or is incomplete, vouches for no copy: an older unrestricted copy
+// behind it is not held, and only a live answer replaces the placeholder.
+func TestUntrustedFloorCannotBlessAnOldCopy(t *testing.T) {
+	for _, bad := range []string{"{", "{}", "null", `{"revision":2}`, `{"restricting":false}`} {
+		t.Run(bad, func(t *testing.T) {
+			s, now := testStore(t)
+			if _, err := s.Accept(open1); err != nil {
+				t.Fatal(err)
+			}
+			old := rename
+			t.Cleanup(func() { rename = old })
+			rename = func(a, b string) error {
+				if b == s.path {
+					return errors.New("injected copy failure")
+				}
+				return old(a, b)
+			}
+			if _, err := s.Accept(strict2); err == nil {
+				t.Fatal("control: the copy write did not fail")
+			}
+			rename = old
+			if err := os.WriteFile(floorPath(s.path), []byte(bad), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			r := reopen(s)
+			if r.Allows("openai-api") || r.Gate() == nil {
+				t.Fatalf("an untrusted floor blessed the old unrestricted copy: %+v", r.State())
+			}
+			if changed, _ := r.Seed(open1, now.Unix()); changed {
+				t.Error("a start environment replaced a placeholder only a live pull may replace")
+			}
+			if changed, err := r.Accept(strict2); !changed || err != nil || r.State().Placeholder {
+				t.Errorf("a live answer did not replace it: %v %v %+v", changed, err, r.State())
+			}
+		})
+	}
+}
+
+// An unrestricted floor keeps its revision when its copy is lost: an older restricting answer
+// replayed after the restart is refused, and the tenant loosened at that revision is not blocked.
+func TestUnrestrictedFloorKeepsItsRevision(t *testing.T) {
+	s, _ := testStore(t)
+	if _, err := s.Accept(strict2); err != nil {
+		t.Fatal(err)
+	}
+	old := rename
+	t.Cleanup(func() { rename = old })
+	rename = func(a, b string) error {
+		if b == s.path {
+			return errors.New("injected copy failure")
+		}
+		return old(a, b)
+	}
+	if _, err := s.Accept(Policy{Revision: 3, Allowed: []string{}}); err == nil {
+		t.Fatal("control: the copy write did not fail")
+	}
+	rename = old
+	r := reopen(s)
+	if st := r.State(); st.Placeholder || st.Policy.Revision != 3 || !r.Allows("bedrock") || r.Gate() != nil {
+		t.Fatalf("after the restart: %+v", st)
+	}
+	if changed, err := r.Accept(strict2); err != nil || changed || !r.Allows("bedrock") {
+		t.Fatalf("an older restricting answer was taken after the restart: changed=%v %+v", changed, r.State())
+	}
+}
+
+// The unknown start marker supersedes an older copy that knows of no ceiling, and a later live
+// loosening supersedes the marker again, across a restart with the same old environment.
+func TestUnknownStartOrdering(t *testing.T) {
+	s, now := testStore(t)
+	if _, err := s.Accept(open1); err != nil {
+		t.Fatal(err)
+	}
+	issued := now.Add(time.Minute).Unix()
+	*now = now.Add(2 * time.Minute)
+	t.Setenv(EnvPolicy, fmt.Sprintf(`{"unknown":true,"issuedAt":%d}`, issued))
+	s.seedFromEnv()
+	if s.Allows("openai-api") || s.Gate() == nil {
+		t.Fatalf("the unknown start under a restricting ceiling left the old open copy in force: %+v", s.State())
+	}
+	// The CP answers again: the tenant is in fact unrestricted at revision 1.
+	*now = now.Add(time.Minute)
+	if changed, err := s.Accept(open1); !changed || err != nil {
+		t.Fatalf("the live answer did not replace the placeholder: %v %v", changed, err)
+	}
+	// A restart in the same container, with the same old marker: the live answer stays.
+	r := reopen(s)
+	r.seedFromEnv()
+	if !r.Allows("openai-api") || r.Gate() != nil || r.State().Placeholder {
+		t.Fatalf("an old unknown marker re-blocked a tenant a later live answer loosened: %+v", r.State())
+	}
+}
+
+// A healthy period runs from one request's start to the next's: a slow answer does not stretch it.
+func TestHealthyCadenceCountsFromRequestStart(t *testing.T) {
+	var clock time.Time = time.Unix(1_800_000_000, 0)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clock = clock.Add(20 * time.Second) // the answer takes 20 s
+		fmt.Fprint(w, `{"revision":1,"restricted":false,"ceilingRestricted":false,"allowed":[],"issuedAt":1}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_CP_INTERNAL_URL", "")
+	tokenOnce, token = sync.Once{}, "afc_tok"
+	tokenOnce.Do(func() {})
+	t.Cleanup(func() { tokenOnce, token = sync.Once{}, "" })
+	s, _ := testStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	waits := make(chan time.Duration, 4)
+	fire := make(chan time.Time)
+	done := make(chan struct{})
+	go func() {
+		s.run(ctx, func() float64 { return 0.999 }, func(d time.Duration) <-chan time.Time { waits <- d; return fire },
+			func() time.Time { return clock })
+		close(done)
+	}()
+	<-waits // the first, jittered wait
+	fire <- clock
+	if got := <-waits; got > healthyMax-20*time.Second+time.Second {
+		t.Errorf("after a 20 s answer the next pull waits %v; the period would exceed %v", got, healthyMax)
+	}
+	cancel()
+	<-done
 }

@@ -114,7 +114,11 @@ func readStartEnv() (startEnv, bool) {
 		return startEnv{}, false
 	}
 	if meta.Unknown {
-		return startEnv{unknown: true}, true
+		if meta.IssuedAt == nil {
+			log.Printf("route policy: %s says unknown without issuedAt", EnvPolicy)
+			return startEnv{}, false
+		}
+		return startEnv{unknown: true, issuedAt: *meta.IssuedAt}, true
 	}
 	p, err := parse([]byte(v))
 	if err != nil || meta.IssuedAt == nil {
@@ -138,8 +142,13 @@ func (s *Store) seedFromEnv() {
 	switch {
 	case !ok:
 	case e.unknown:
-		s.SeedUnknown()
-		log.Printf("route policy (start): the Control Plane could not compute it under a restricting ceiling; %s", s.State().Describe())
+		changed, err := s.SeedUnknown(e.issuedAt)
+		if err != nil {
+			log.Printf("route policy (start): %v", err)
+		}
+		if changed {
+			log.Printf("route policy (start): the Control Plane could not compute it under a restricting ceiling; %s", s.State().Describe())
+		}
 	default:
 		changed, err := s.Seed(e.policy, e.issuedAt)
 		if err != nil {
@@ -193,10 +202,10 @@ func nextDelay(failures int, rnd float64) time.Duration {
 // Run pulls after a short jittered wait, then on the schedule above, until ctx ends. Boot does not
 // wait on it: the start environment was taken when the store was opened (Shared).
 func (s *Store) Run(ctx context.Context) {
-	s.run(ctx, rand.Float64, func(d time.Duration) <-chan time.Time { return time.After(d) })
+	s.run(ctx, rand.Float64, func(d time.Duration) <-chan time.Time { return time.After(d) }, time.Now)
 }
 
-func (s *Store) run(ctx context.Context, rnd func() float64, after func(time.Duration) <-chan time.Time) {
+func (s *Store) run(ctx context.Context, rnd func() float64, after func(time.Duration) <-chan time.Time, now func() time.Time) {
 	wait := time.Duration(rnd() * float64(firstMax))
 	failures := 0
 	for {
@@ -205,6 +214,7 @@ func (s *Store) run(ctx context.Context, rnd func() float64, after func(time.Dur
 			return
 		case <-after(wait):
 		}
+		started := now()
 		// Logged on the transitions only: a long outage is one line when it starts and one when
 		// it ends.
 		switch err := s.Sync(ctx, "pull"); {
@@ -225,5 +235,10 @@ func (s *Store) run(ctx context.Context, rnd func() float64, after func(time.Dur
 			failures = 0
 		}
 		wait = nextDelay(failures, rnd())
+		if failures == 0 {
+			// A healthy period runs from one request's start to the next's, so a slow answer
+			// does not stretch it past healthyMax.
+			wait = max(wait-now().Sub(started), 0)
+		}
 	}
 }

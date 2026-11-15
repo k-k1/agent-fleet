@@ -52,6 +52,9 @@ type MemberPolicy struct {
 // answer, rather than starting with no policy at all.
 type unknownPolicy struct {
 	Unknown bool `json:"unknown"`
+	// IssuedAt orders the marker against the Agent's held copy: it supersedes a copy confirmed
+	// before it, never one a later live answer confirmed.
+	IssuedAt int64 `json:"issuedAt"`
 }
 
 // MemberPolicyOf is the effective policy of a member of tenantID.
@@ -84,7 +87,7 @@ func PolicyEnv(ctx context.Context, st store.Store, tenantID string) []string {
 	case err == nil:
 		v = p
 	case currentCeiling().rule.Restricted():
-		v = unknownPolicy{Unknown: true}
+		v = unknownPolicy{Unknown: true, IssuedAt: nowUnix()}
 	default:
 		return nil
 	}
