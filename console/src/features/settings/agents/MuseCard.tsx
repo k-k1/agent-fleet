@@ -129,7 +129,7 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
         onExpire: () => {
-          if (active.is(res.flow_id)) setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired") } : f));
+          if (active.is(res.flow_id)) setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired"), ended: true } : f));
         },
         step: async () => {
           if (!active.is(res.flow_id)) return { stop: true };
@@ -149,9 +149,13 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
           // The sign-in child exited without writing a credential — an expired code, a refused
           // approval. Saying so ends the wait instead of spinning to the 15-minute deadline for
           // something that can no longer happen (the Agent reports it; see auth.go's HandlePoll).
-          if (p && p.failed) {
+          // An error answer means the Agent took the flow and could not install it: nothing
+          // more will come for this flow either.
+          if (p && (p.failed || p.error)) {
             active.end();
-            setFlow((f) => (f ? { ...f, status: tr("provider.login_ended", { msg: p.detail || "" }) } : f));
+            const msg = p.failed ? p.detail || "" : errDetail(p.error);
+            const status = msg ? tr("provider.login_ended_detail", { msg }) : tr("provider.login_ended");
+            setFlow((f) => (f ? { ...f, status, ended: true } : f));
             return { stop: true };
           }
           return { stop: false, nextMs: 2500 };
@@ -216,7 +220,7 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
         <div className="p-body">
           {/* Device flow: a URL with the code embedded plus the code on its own, to compare in the
               browser. muse polls Meta itself, so there is nothing to paste back. */}
-          <DeviceSteps code={flow.user_code} url={flow.url} status={flow.status} />
+          <DeviceSteps code={flow.user_code} url={flow.url} status={flow.status} ended={flow.ended} />
           <div className="flow">
             <button
               className="ghost"

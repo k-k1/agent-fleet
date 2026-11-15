@@ -57,3 +57,21 @@ func TestInstallLoginWithoutStagedTokens(t *testing.T) {
 		t.Fatalf("live tokens touched: %s", b)
 	}
 }
+
+// A sign-in that wrote no account cache still drops the previous account's.
+func TestInstallLoginDropsTheOldCacheWhenNoneIsStaged(t *testing.T) {
+	stage, home := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(stage, ".config/cursor/auth.json"), `{"accessToken":"new"}`, 0o600)
+	writeFile(t, filepath.Join(home, ".cursor/cli-config.json"), `{"authInfo":{"email":"old@example.com"},"channel":"static"}`, 0o644)
+	if err := installLogin(stage, home); err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	b, _ := os.ReadFile(filepath.Join(home, ".cursor/cli-config.json"))
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg["authInfo"]; ok || cfg["channel"] != "static" {
+		t.Fatalf("cli-config = %v", cfg)
+	}
+}

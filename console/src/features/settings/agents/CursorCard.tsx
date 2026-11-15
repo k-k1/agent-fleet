@@ -39,7 +39,7 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: Prov
         deadlineMs: 10 * 60 * 1000,
         firstDelayMs: 3000,
         onExpire: () => {
-          if (active.is(res.flow_id)) setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired") } : f));
+          if (active.is(res.flow_id)) setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired"), ended: true } : f));
         },
         step: async () => {
           if (!active.is(res.flow_id)) return { stop: true };
@@ -58,9 +58,13 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: Prov
           }
           // The sign-in child exited without signing in (an expired code, a refused approval):
           // nothing more can arrive, so end the wait instead of spinning to the deadline.
-          if (p && p.failed) {
+          // An error answer means the Agent took the flow and could not install it: nothing
+          // more will come for this flow either.
+          if (p && (p.failed || p.error)) {
             active.end();
-            setFlow((f) => (f ? { ...f, status: tr("provider.login_ended", { msg: p.detail || "" }) } : f));
+            const msg = p.failed ? p.detail || "" : errDetail(p.error);
+            const status = msg ? tr("provider.login_ended_detail", { msg }) : tr("provider.login_ended");
+            setFlow((f) => (f ? { ...f, status, ended: true } : f));
             return { stop: true };
           }
           return { stop: false, nextMs: 2500 };
@@ -95,7 +99,7 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: Prov
         // Before the connection state: re-auth opens the flow while the card is still connected.
         <div className="p-body">
           {/* No pasted code — cursor approves entirely in the browser, then self-polls. */}
-          <DeviceSteps url={flow.url} status={flow.status} />
+          <DeviceSteps url={flow.url} status={flow.status} ended={flow.ended} />
           <div className="flow">
             <button
               className="ghost"

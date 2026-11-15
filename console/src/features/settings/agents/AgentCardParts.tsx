@@ -20,7 +20,8 @@ export type LoginFlow = { url: string; flow_id: string };
 
 /** A device-code sign-in in flight: adds the status line, plus the code (`user_code`; opencode
  *  keeps it in `code`) and opencode's `instructions` when the provider sends them. */
-export type DeviceFlow = LoginFlow & { status: string; user_code?: string; code?: string; instructions?: string };
+// ended: the flow is over (expired, failed) and nothing is being waited for.
+export type DeviceFlow = LoginFlow & { status: string; user_code?: string; code?: string; instructions?: string; ended?: boolean };
 
 // CardSettings: the per-agent behavior-settings disclosure. Its body is the client launch
 // defaults (always usable) + any container-backed toggles the card passes.

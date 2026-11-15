@@ -97,3 +97,51 @@ func TestInstallLoginWithoutStagedRows(t *testing.T) {
 		t.Fatalf("live login touched: %v", got)
 	}
 }
+
+// A first sign-in copies the staged database through SQLite: a commit still in the -wal file
+// (kiro's connection open, no checkpoint) must arrive.
+func TestInstallLoginFirstSignInKeepsWALContent(t *testing.T) {
+	stage, home := t.TempDir(), t.TempDir()
+	p := dataDB(stage)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	w, err := sql.Open("sqlite", "file:"+p+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	w.SetMaxOpenConns(1)
+	for _, q := range []string{
+		`PRAGMA wal_autocheckpoint=0`,
+		`CREATE TABLE auth_kv (key TEXT PRIMARY KEY, value TEXT)`,
+		`INSERT INTO auth_kv VALUES('kirocli:odic:token', 'in-wal')`,
+	} {
+		if _, err := w.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fi, err := os.Stat(p + "-wal"); err != nil || fi.Size() == 0 {
+		t.Fatalf("the fixture has no WAL content: %v %v", fi, err)
+	}
+	if err := installLogin(stage, home); err != nil {
+		t.Fatal(err)
+	}
+	if got := authOf(t, home); got["kirocli:odic:token"] != "in-wal" {
+		t.Fatalf("auth_kv = %v", got)
+	}
+	if fi, _ := os.Stat(dataDB(home)); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v", fi.Mode())
+	}
+}
+
+func TestInstallLoginFirstSignInWithoutRows(t *testing.T) {
+	stage, home := t.TempDir(), t.TempDir()
+	makeDB(t, stage, nil, 0)
+	if err := installLogin(stage, home); err == nil {
+		t.Fatal("installed a first sign-in with no auth rows")
+	}
+	if _, err := os.Stat(dataDB(home)); !os.IsNotExist(err) {
+		t.Fatalf("a database was installed: %v", err)
+	}
+}

@@ -241,6 +241,34 @@ describe.each(["cursor", "kiro", "muse"])("%s device flow polling", (kind) => {
       });
       expect(polls()).toBe(1);
       expect(host?.textContent).toContain("code expired");
+      expect(host?.querySelector(".p-waiting .codicon")).toBeNull(); // no spinner on an ended flow
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The Agent answers 500 when it took the flow but could not install it; the flow is gone, so
+  // polling on would only spin to the deadline.
+  it("stops on an error answer and says so", async () => {
+    vi.useFakeTimers();
+    try {
+      apiJSON.mockImplementation((path: string, method: string) => {
+        calls.push(`${method} ${path}`);
+        return Promise.resolve(
+          path.endsWith("/start")
+            ? { url: "https://login.example.test/auth?c=ZZZ-999", user_code: "ZZZ-999", flow_id: "f1" }
+            : { error: { code: "install_failed", message: "disk full" } },
+        );
+      });
+      await c.mount(connected);
+      await act(async () => {
+        reauthButton()!.click();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30000);
+      });
+      expect(polls()).toBe(1);
+      expect(host?.querySelector(".p-waiting .codicon")).toBeNull();
     } finally {
       vi.useRealTimers();
     }

@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite")
 )
 
@@ -28,11 +26,11 @@ var signedInAt = func(home string) bool { return whoamiOK(home) }
 // installLogin replaces home's auth_kv rows with the staged ones in one transaction, so kiro
 // reads the old login or the new one, never a mix. With no database in home yet (a first
 // sign-in) there is nothing to keep, and the staged database is installed whole.
+//
+// Both paths go through SQLite, never a file copy: kiro may leave its last commit in a -wal file
+// beside the database, and copying the main file alone would drop it.
 func installLogin(stage, home string) error {
 	src, dst := dataDB(stage), dataDB(home)
-	if _, err := os.Stat(dst); errors.Is(err, fs.ErrNotExist) {
-		return agents.InstallFile(src, dst, 0o600)
-	}
 	rows, err := readAuthRows(src)
 	if err != nil {
 		return err
@@ -40,7 +38,12 @@ func installLogin(stage, home string) error {
 	if len(rows) == 0 {
 		return errors.New("the sign-in completed but kiro stored no auth_kv rows")
 	}
-	db, err := sql.Open("sqlite", "file:"+dst+"?_pragma=busy_timeout(5000)")
+	if _, err := os.Stat(dst); errors.Is(err, fs.ErrNotExist) {
+		return copyDatabase(src, dst)
+	}
+	// IMMEDIATE takes the write lock up front, so a running kiro holding the database is
+	// waited for (busy_timeout) rather than met mid-transaction.
+	db, err := sql.Open("sqlite", "file:"+dst+"?_pragma=busy_timeout(5000)&_txlock=immediate")
 	if err != nil {
 		return err
 	}
@@ -62,6 +65,30 @@ func installLogin(stage, home string) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// copyDatabase writes a consistent copy of src (its -wal content included) to dst with VACUUM
+// INTO, through a temporary file renamed into place.
+func copyDatabase(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return err
+	}
+	tmp := dst + ".af-install"
+	_ = os.Remove(tmp)
+	defer os.Remove(tmp) // no-op once renamed
+	db, err := sql.Open("sqlite", "file:"+src+"?_pragma=busy_timeout(3000)")
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`VACUUM INTO ?`, tmp)
+	db.Close()
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dst)
 }
 
 type authRow struct{ key, value string }

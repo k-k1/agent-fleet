@@ -190,7 +190,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "provider.reauth_confirm_title": "Re-authenticate?",
   "provider.reauth_confirm_body":
     "This opens the sign-in page. The current login stays in use until the new sign-in completes, and stays if you back out. Running sessions are not stopped.",
-  "provider.login_ended": "The sign-in ended. Start again: {msg}",
+  "provider.login_ended": "The sign-in ended. Start again.",
+  "provider.login_ended_detail": "The sign-in ended. Start again: {msg}",
   "provider.step_copy_code": "Copy the code",
   "provider.step_open_link": "Open the link and paste",
   "provider.step_open_link_only": "Open the link",
@@ -415,7 +416,6 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.idle_compaction": "Idle compaction",
   "agents.note_claude_idle_compaction":
     "Claude Code compacts a long conversation (200k tokens or more) on its own while the session is idle, about 54 minutes after the last activity, just before the 1-hour prompt cache expires. That makes the next turn cheaper, since the whole conversation no longer has to be written to the cache again, but you come back to a summarized conversation. Default ON (Claude Code's default). Writes idleCompaction in the workspace's user-level Claude settings.json; a project or local Claude settings file can still override it. Sessions started or resumed afterwards are certain to follow it.",
-  "agents.codex_device_failed": "The Codex sign-in ended. Start again: {msg}",
   "agents.codex_auth_failed": "Failed to start Codex auth: {msg}",
   "agents.codex_device_disabled": "device-code login may be disabled",
   "agents.codex_apikey_label": "API key",

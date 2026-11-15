@@ -212,11 +212,13 @@ export function DeviceSteps({
   url,
   status,
   confirm,
+  ended,
 }: {
   code?: string;
   url: string;
   status: string;
   confirm?: boolean;
+  ended?: boolean; // the flow is over: no spinner, nothing is being waited for
 }) {
   const tr = useT();
   let n = 0;
@@ -254,7 +256,7 @@ export function DeviceSteps({
         <div className="p-step-c">
           <div className="p-step-lbl">{tr("provider.step_wait_approval")}</div>
           <span className="p-waiting">
-            <Icon name="loading" spin /> {status}
+            {!ended && <Icon name="loading" spin />} {status}
           </span>
         </div>
       </div>

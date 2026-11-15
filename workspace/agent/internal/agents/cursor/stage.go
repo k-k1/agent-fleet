@@ -37,11 +37,13 @@ func installLogin(stage, home string) error {
 	return nil
 }
 
-// replaceAccountKeys sets accountKeys in dst to their values in src (dropping a key src lacks),
-// leaving every other key as it is.
+// replaceAccountKeys sets accountKeys in dst to their values in src (dropping a key src lacks,
+// or all of them when src does not exist), leaving every other key as it is.
 func replaceAccountKeys(src, dst string) error {
 	staged, err := readJSONObject(src)
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
+		staged = map[string]json.RawMessage{} // no account cache staged: drop the old one
+	} else if err != nil {
 		return err
 	}
 	live, err := readJSONObject(dst)

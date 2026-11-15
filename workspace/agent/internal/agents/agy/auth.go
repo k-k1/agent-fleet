@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/hostcaps"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
@@ -220,7 +221,7 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer loginOp.Finish()
-	if err := agents.InstallFile(staged, tokenPath(), 0o600); err != nil {
+	if err := installLogin(f.Dir, paths.HomeDir()); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "install_failed", "the sign-in completed, but its login could not be installed: "+err.Error())
 		return
 	}
