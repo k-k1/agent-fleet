@@ -104,8 +104,8 @@ func TestOpencodeOneShotResolvesTheModelItRuns(t *testing.T) {
 	}
 	t.Cleanup(func() { chatLaunches[session.KindOpencode] = old })
 	var call usagex.Call
-	m := opencodeOneShotModel(&call, "", false, session.KindOpencode, OneShotShort)
-	if m == "" || call.ModelReq != m || call.Route != "resolved-on:"+m {
+	m, err := opencodeOneShotModel(&call, "", false, session.KindOpencode, OneShotShort)
+	if err != nil || m == "" || call.ModelReq != m || call.Route != "resolved-on:"+m {
 		t.Fatalf("model %q, call = %+v; want the route resolved on the model passed", m, call)
 	}
 	if len(asked) != 1 || asked[0] != m {

@@ -25,7 +25,17 @@ func routeAvoid(kind, model string) bool {
 // chatKindUsable is the send-time test for one backend of c: logged in, and not parked for the
 // model this conversation would run on it.
 func chatKindUsable(c *ChatConversation, kind string) bool {
-	return headlessAgentAvailable(kind) && !routeAvoid(kind, chatRouteModel(c, kind))
+	m := chatRouteModel(c, kind)
+	return headlessAgentAvailable(kind) && !routeAvoid(kind, m) && chatKindAllowed(kind, m)
+}
+
+// chatKindAllowed reports whether a call on kind's backend with model would pass the credential
+// policy (chatLaunchChecked), so a selection or fallback moves only to an allowed backend (ADR
+// 0138 D12, Re-check). When none is left the call still reaches a backend, which refuses it with
+// the reason: that is the error the member sees.
+func chatKindAllowed(kind, model string) bool {
+	_, _, err := chatLaunchChecked(kind, model)
+	return err == nil
 }
 
 // chatRouteModel is the model a turn of c on kind is parked and looked up under: chatModelFor,

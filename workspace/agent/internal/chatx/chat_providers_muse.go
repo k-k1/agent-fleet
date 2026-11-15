@@ -55,7 +55,10 @@ func (museChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 		return "", err
 	}
 	call := usagex.Call{Kind: session.KindMuse, ModelReq: model}
-	call.Route, call.Connection = chatLaunch(session.KindMuse, model)
+	var policyErr error
+	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindMuse, model); policyErr != nil {
+		return "", policyErr
+	}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 
 	// Clamps must be written before every exec, same as the managed driver's Resume, so a
