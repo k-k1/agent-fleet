@@ -134,6 +134,10 @@ export const common = {
   // 通知も出ないので、行が「入力待ち」のままだと次の一歩が誰にも見えない。handoff_short は
   // 幅の狭いレール行に出す短縮形で、上の全文はツールチップとペイン見出しに出る。
   "state.idle_handoff": "入力待ち・引継あり",
+  // 入力が CLI に届かないまま idle になった（inputNotDelivered）。ターン終了ではないので
+  // 「入力待ち」とは別に出す。全文はツールチップとペイン見出し、short は狭いレール行用。
+  "state.input_not_delivered": "入力が届いていません・再送するかターミナルで確認",
+  "state.input_not_delivered_short": "未配信",
   "state.stopped_auto_resume": "停止中・自動再開 {at}",
   "state.stopped_handoff": "停止中・引継あり",
   "state.handoff_short": "引継あり",

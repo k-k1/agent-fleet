@@ -134,6 +134,11 @@ export const common: Record<keyof typeof jaCommon, string> = {
   // hides the next step entirely. handoff_short is what the narrow rail row shows; the full
   // wording above goes to the tooltip and the pane head.
   "state.idle_handoff": "Ready · handoff to launch",
+  // Idle only because the input never reached the CLI (inputNotDelivered). Not a turn end, so
+  // it must not read as "Ready". The full wording goes to the tooltip and the pane head;
+  // input_not_delivered_short is for the narrow rail row.
+  "state.input_not_delivered": "Input not delivered · resend or check the terminal",
+  "state.input_not_delivered_short": "Not delivered",
   "state.stopped_auto_resume": "Stopped · auto-resume {at}",
   "state.stopped_handoff": "Stopped · handoff to launch",
   "state.handoff_short": "Handoff",

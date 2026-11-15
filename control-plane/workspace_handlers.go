@@ -1038,6 +1038,11 @@ type sessionWire struct {
 	// Dropped here, a create whose answer was lost is closed as unknown although its session
 	// exists. No DB-mirror column: that lookup only happens with the Agent answering.
 	QueueDelivery string `json:"queueDelivery,omitempty"`
+	// InputNotDelivered: the Agent settled a hook-less kind to idle because the input of its
+	// last turn never reached the CLI (status.PersistInputNotDelivered). Dropped here, the row
+	// reads as an ordinary idle with an unsent prompt in the composer. No DB-mirror column: the
+	// flag is only true for a live session, and the Agent clears it on resend or the next turn.
+	InputNotDelivered bool `json:"inputNotDelivered,omitempty"`
 }
 
 // sessionRows turns the Agent's session list into DB mirror rows. Every writer of the

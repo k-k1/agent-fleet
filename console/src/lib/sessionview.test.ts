@@ -161,6 +161,34 @@ describe("stateInfo (carried-over state while stopped)", () => {
   });
 });
 
+// An input that never reached the CLI of a hook-less kind: the Agent settles the session to idle
+// with inputNotDelivered. Without its own chip the row reads "Ready" with an unsent prompt.
+describe("stateInfo (input not delivered)", () => {
+  const flagged = { kind: "copilot", alive: true, state: "idle", inputNotDelivered: true };
+
+  it("replaces the idle chip, with the rail's short form", () => {
+    const st = stateInfo(flagged);
+    expect(st.text).toBe(t("state.input_not_delivered"));
+    expect(st.short).toBe(t("state.input_not_delivered_short"));
+    expect(st.cls).toContain("undelivered");
+  });
+
+  it("goes back to idle once the Agent clears the flag", () => {
+    expect(stateInfo({ ...flagged, inputNotDelivered: false }).text).toBe(t("state.idle"));
+    expect(stateInfo({ ...flagged, inputNotDelivered: undefined }).text).toBe(t("state.idle"));
+  });
+
+  it("yields to running background work and to a working turn", () => {
+    expect(stateInfo({ ...flagged, backgroundBusy: true }).text).toBe(t("state.idle_bg"));
+    expect(stateInfo({ ...flagged, state: "working" }).text).toBe(t("state.working"));
+  });
+
+  it("outranks a pending handoff and watches", () => {
+    expect(stateInfo({ ...flagged, handoffPending: true }).text).toBe(t("state.input_not_delivered"));
+    expect(stateInfo({ ...flagged, watchCount: 2 }).text).toBe(t("state.input_not_delivered"));
+  });
+});
+
 // An unlaunched handoff proposal. A session that hands its next step on goes idle, so its row is
 // the row of a session with nothing left to do — and the proposal itself is a card inside the
 // mirror that raises no notification. Without this chip the work simply stops there.

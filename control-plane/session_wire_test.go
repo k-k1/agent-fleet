@@ -50,7 +50,7 @@ const agentSessionsPayload = `{"sessions":[{
 	"pr":{"number":1062,"state":"open","draft":true,"url":"https://github.com/o/r/pull/1062","checks":"failure"},"ports":[5173,8080],
 	"generatedImages":3,"generatedImagesPath":".cache/agent-fleet/generated/2f1c0a7e-0000-5000-8000-000000000001",
 	"studio":"0b9d1f2e-7c4a-4e1b-9a3d-5f6e7a8b9c0d","initialPromptState":"pending",
-	"moving":"s2","movedTo":"s3","queueDelivery":"d-77"
+	"moving":"s2","movedTo":"s3","queueDelivery":"d-77","inputNotDelivered":true
 }]}`
 
 // TestAgentSessionsRelayKeepsFields pins that the CP's decode→re-emit round trip drops none
@@ -160,6 +160,9 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 		// cannot find the session of a create whose answer was lost, and closes the delivery as
 		// unknown while its session runs.
 		"queueDelivery": "d-77",
+		// An idle that is not a turn end: the input never reached the CLI. Dropped here, the
+		// Console shows an ordinary idle with an unsent prompt and no hint that it was lost.
+		"inputNotDelivered": true,
 		// The session's generated images: how many, and the folder the gallery opens
 		// (ADR 0080 decision 8). Dropped here, the "Generated images (N)" entry never appears
 		// on any session — not a degraded display but a missing feature, and silent, since the
