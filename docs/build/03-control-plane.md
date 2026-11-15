@@ -352,7 +352,14 @@ disables.
   per root at a time, so the call can wait). It never wakes a stopped workspace, and a repeat does no harm.
   A session that works again is retired like any other (a watch that fired again after a
   failed retire looks the same), and no time bound ends the retire. A person who resumes the
-  session between our read and the Agent's start of the retire is not protected: #4218. An `aborted` close retires nothing.
+  session between our read and the Agent's start of the retire is protected by the Agent: the
+  envelope's `actMark` is kept with the report (`memo_delivery.act_mark`, written by
+  `ObserveDelivery` with the rest of it) and every retire is sent with `{"ifNoActSince": mark}` of
+  the report it was decided on: the kept report at a clean close (a running workspace's read, and
+  the kept report of a stopped one) and the read an overdue retire is decided on. A session a
+  person started or typed into after that read comes back `released` (root) or `done` (below the
+  root), which end the pending retire as before. An Agent that sends no `actMark` gets no body.
+  An `aborted` close retires nothing.
 
   **Overdue.** A delivery open longer than its queue's `maxTaskHours` (1–72, default 12)
   is marked `overdue_at` and the member gets one notification (kind

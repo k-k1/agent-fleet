@@ -321,6 +321,10 @@ type agentSessionsEnvelope struct {
 	// older Agent carry no wakers either, and an Agent omits them when there are none, so only
 	// this number tells "nothing would start it" from "this Agent does not say".
 	QueueReport int `json:"queueReport,omitempty"`
+	// ActMark orders this answer against the acts of a person that follow it (the Agent's
+	// session act mark): a retire sent with it as ifNoActSince leaves a session a person started or
+	// typed into after this read. 0 when the Agent sends none, and no condition is sent then.
+	ActMark int64 `json:"actMark,omitempty"`
 }
 
 // queueReportVersion is the one version of the report this Control Plane understands. Any other

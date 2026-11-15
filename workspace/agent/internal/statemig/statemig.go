@@ -63,6 +63,9 @@ var Entries = []string{
 	"session-first-turn",
 	// A retire in progress, for the start-up recovery (sessionx session_retire.go).
 	"session-retire-intent",
+	// The Agent-wide act mark's reserved ceiling (sessionx session_actmark.go). Introduced
+	// directly under AgentStateDir.
+	"act-mark",
 	"session-injections",
 	"session-auth-resume",
 	"session-abort-resume",

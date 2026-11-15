@@ -99,6 +99,33 @@ source_of_truth: "コード（本書は地図と設計意図）"
     印に出会うことはない（Control Plane が retire するのは配達自身のセッションで、それは常に root）。
     1 つの root の retire は、意図から終わりまで同時に 1 つだけ走り、起動時の回復も同じ root ごとの
     ロックを取る。2 つ目の要求は、1 つ目が終わるまで待ってから走る。待っている間（またはロックが空いた瞬間）に期限が切れた要求は `503 retire_wait_cancelled` を返し、何もしない。意図の無い印は終わった retire で、回復は触らない。
+  - **act mark と条件付き retire**（issue #4218）。Control Plane は少し前に読んだ一覧から retire する。
+    その間に人が起動した・入力したセッションを止めてはならない。両者の順序は Agent 全体で 1 つの数が決める。
+    `GET /sessions` は、何かを読む*前*に新しい数を取り、`queueReport` の隣に `"actMark": n` として返す
+    （上限をディスクに書けなかったときは付けない）。数は再利用されず、再起動後も下がらない。ディスクに上限
+    （`act-mark/mark.json`。ひとかたまり先まで上げる）を持ち、配った数は常にそれ未満で、再起動はその上限と
+    時計の高いほうから始める。act は、一覧が新しい数を取るのと同じロックの下で*現在の*数を読み、セッションの
+    retire gate の**読み取り側**の下で meta の `personActMark` に書く（数とセッションごとに高々 1 回。
+    数が変わっていないキー入力は map の参照だけでディスクに書かない）。だから「その一覧のあとの act」は
+    ちょうど `personActMark >= n` になる。順序はこの数だけで決め、時計も、セッションの状態からの推測も使わない。
+    `POST /sessions/{name}/retire` は任意の body `{"ifNoActSince": n}` を取る。各メンバーの gate の中で、
+    何かを印す前に、印が付いておらず `personActMark >= n` のメンバーを、この retire から release する。
+    retire が始まったあとの人の start と同じ書込み（`retireClearedID` = この retire の id）なので、
+    `releasedFrom` / `releasedAncestor` と、その下を除く辿り方は 1 本の経路。答えは実際の状態つきの
+    `released: true`、released の root は retire を終わらせ、`complete` は false。この retire がすでに印した
+    メンバーは見直さない（印のあとの act は、retire 済みのセッションに届いたことになる）。だから retire と
+    競った act は、released か、retire 済みのセッションに act が届くか、の 2 つのどちらかで終わる。
+    条件は retire の意図（`ifNoActSince`）に残るので、起動時の回復も同じ条件を適用する。body なし、または 0 は
+    従来どおりの retire。
+    act に数えるもの（迷ったら act）: 自動の印の無い `POST /start`、出どころ（`source`・`peer_from`・`report_to`・
+    schedule 系・`/mcp` の印）を一切持たない `/input`（prompt・keys・seq とも）、`/turn` の start と steer、
+    `/respond`・`/answer`・許可とプランの判断（自動プランレビューは `expect_plan` を付けるので含まない）、
+    carried の回答、driver の切替と route の切替、チャットブリッジの返信とボタン（member の origin で
+    `injectSessionPrompt`）、ターミナルペインのキー入力（`/ws/pty`。ライフサイクル gate を取る前に記録し、
+    retire の gate は上限つきで待つ。超えたらキーは記録されずに通る。これが「retire 済みのセッションに act が届く」状態）。
+    数えないもの: watch の起動、プランレビュー役の start、出どころを持つ入力（peer・schedule・`/mcp`・notice・
+    auto-resume・キュー配信の prompt）、プログラムが route 越しに行う start（#4249 までは人の start と区別が付かず、
+    act に数える）。
   - meta の `retiredAt` が、終わらせたものを終わったままにする。付けた瞬間から、
     watch の sink は起動も注入もせず、Managed への入力は（出どころを問わず）`409 session_retired`
     で断り、自動の `/start` も断り、子の枠も取らせず、エンジンは新しい購読と組み込みを断り、予約された

@@ -130,6 +130,8 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The relaunch below starts the session again on the other driver: a person's start.
+	notePersonAct(name)
 	// The relaunch below starts the CLI: refuse it with the reason, before the old runtime is
 	// stopped, its held input dropped or its status cleared, when that CLI failed to install.
 	if ref := startRefusalOf(m); ref != nil {

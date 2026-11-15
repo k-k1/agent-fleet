@@ -56,7 +56,10 @@ type MemoDelivery struct {
 	HeldBy, HeldSession, HeldSeenAt, ProgressSeenAt string
 	// ReadGen is the last read reserved for the delivery, HeldGen the one behind the kept report.
 	ReadGen, HeldGen int64
-	Reported         bool
+	// ActMark is the Agent's actMark of the kept report (0: it carried none). A retire sends it
+	// as ifNoActSince.
+	ActMark  int64
+	Reported bool
 	// OverdueAt is when the delivery passed its queue's max_task_hours. RetirePending is set by
 	// a clean close until the Agent confirms the retire, RetiredAt is when it last did.
 	OverdueAt, RetiredAt string
@@ -101,6 +104,8 @@ type DeliveryObservation struct {
 	ProgressAt               string
 	TurnOutcome, TurnEndedAt string
 	TurnMs                   int64
+	// ActMark is the actMark the read's envelope carried, 0 when it carried none.
+	ActMark int64
 }
 
 // DeliveryTS formats a delivery timestamp. Fixed width, so that the text order of two stamps
@@ -202,7 +207,7 @@ type MemoDeliveryTxOps interface {
 const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, session, message_ids, idle_ticks,
 	created_at, sent_at, opened_at, closed_at, updated_at,
 	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at, retire_result,
-	turn_outcome, turn_ms, turn_ended_at, auto, limit_kinds, drain FROM memo_delivery`
+	turn_outcome, turn_ms, turn_ended_at, auto, limit_kinds, drain, act_mark FROM memo_delivery`
 
 func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	var d MemoDelivery
@@ -211,7 +216,7 @@ func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	err := row.Scan(&d.ID, &d.MembershipID, &d.QueueID, &d.State, &d.Outcome, &d.Session, &ids, &d.IdleTicks,
 		&d.CreatedAt, &d.SentAt, &d.OpenedAt, &d.ClosedAt, &d.UpdatedAt,
 		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt, &d.RetireResult,
-		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto, &d.LimitKinds, &drain)
+		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto, &d.LimitKinds, &drain, &d.ActMark)
 	d.Reported, d.RetirePending, d.Auto, d.Drain = reported != 0, retire != 0, auto != 0, drain != 0
 	d.MessageIDs = []string{}
 	if err == nil && ids != "" {
@@ -354,7 +359,7 @@ func (t memoTx) ObserveDelivery(id string, o DeliveryObservation) (int, bool, er
 	if o.Progress {
 		progress = 1
 	}
-	kept, err := affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET held_by=?, held_session=?, held_seen_at=?, held_gen=?, limit_kinds=?,
+	kept, err := affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET held_by=?, held_session=?, held_seen_at=?, held_gen=?, limit_kinds=?, act_mark=?,
 		  reported=1, updated_at=?,
 		  idle_ticks=CASE WHEN ?=1 THEN 0 WHEN reported=1 AND held_by='' AND idle_ticks>=1 THEN 2 ELSE 1 END,
 		  progress_seen_at=CASE WHEN ?=1 THEN ? ELSE progress_seen_at END,
@@ -363,7 +368,7 @@ func (t memoTx) ObserveDelivery(id string, o DeliveryObservation) (int, bool, er
 		  turn_ms=CASE WHEN turn_ended_at='' AND ?<>'' THEN ? ELSE turn_ms END,
 		  turn_ended_at=CASE WHEN turn_ended_at='' THEN ? ELSE turn_ended_at END
 		WHERE id=? AND membership_id=? AND state=? AND held_gen<=?`,
-		o.HeldBy, o.HeldSession, o.At, o.Gen, o.LimitKinds, DeliveryTS(time.Now()),
+		o.HeldBy, o.HeldSession, o.At, o.Gen, o.LimitKinds, o.ActMark, DeliveryTS(time.Now()),
 		held, progress, o.ProgressAt, progress,
 		o.TurnEndedAt, o.TurnOutcome, o.TurnEndedAt, o.TurnMs, o.TurnEndedAt,
 		id, t.mid, DeliveryOpen, o.Gen))

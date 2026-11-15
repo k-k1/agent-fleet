@@ -114,6 +114,41 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     own session, which is always a root). At most one retire of a root runs at a time, from its
     intent to its end, and the start-up recovery takes the same per-root lock: a second request
     waits for the first and then runs; a request whose deadline passed while it waited (or as the lock came free) answers 503 `retire_wait_cancelled` and does nothing. A marked session with no intent is a finished retire and is left alone by the recovery.
+  - **The act mark, and the conditional retire** (issue #4218). The Control Plane retires from a
+    list it read a moment before; a person who starts the session or types into it in between must
+    not be stopped. One number for the whole Agent orders the two. Every `GET /sessions` takes a new
+    one *before* it reads anything and carries it as `"actMark": n` beside `queueReport` (omitted
+    when its ceiling could not be written). It is never reused and never lower after a restart:
+    the disk holds a ceiling (`act-mark/mark.json`, raised a block ahead) that every number handed
+    out stays below, and a restart begins at the higher of that ceiling and the clock.
+    An act reads the *current* number under the same lock the list takes a new one under, and
+    writes it to the session's meta as `personActMark` (at most once per number and session, so a
+    key press at an unchanged number costs a map lookup and no disk write), under the **read** side
+    of that session's retire gate. So "the act came after that list" is exactly
+    `personActMark >= n`. Order is decided by this number alone: no clocks are compared and nothing
+    is inferred from the session's state.
+    `POST /sessions/{name}/retire` takes an optional body `{"ifNoActSince": n}`. Under each
+    member's gate, before anything is marked, a member that carries no mark and whose
+    `personActMark >= n` is released from this retire: the same write a person's start after the
+    retire began makes (`retireClearedID` = this retire's id), so `releasedFrom` /
+    `releasedAncestor` and the walk's exclusion of everything under it are the one path; the answer
+    says `released: true` with the real state, a released root ends the retire, `complete` is false.
+    A member this retire has already marked is not looked at again: an act that came after the
+    mark found a retired session. So an act that races a retire ends in one of two states, released
+    or retired with the act arriving at a retired session. The condition is kept in the retire's
+    intent (`ifNoActSince`), so the start-up recovery applies the same one. No body, or 0, is the
+    retire as before.
+    What counts as an act (when in doubt it is one): `POST /start` without the in-process
+    automatic mark; `/input` that carries no origin (no `source`, `peer_from`, `report_to`, schedule
+    fields, nor the `/mcp` stamp), prompt, keys and seq alike; `/turn` start and steer; `/respond`,
+    `/answer`, the permission and plan decisions (the automatic plan review sets `expect_plan` and
+    is not one), a carried answer; a driver switch and a route switch; the chat bridge's replies and
+    button clicks (`injectSessionPrompt` with a member origin); keystrokes in the terminal pane
+    (`/ws/pty`, recorded before the lifecycle gate is taken, with a bounded wait for a retire's
+    gate: past it the key goes on unrecorded, which is the "act arrives at a retired session"
+    state). Not acts: the watch wake, the plan-review reviewer's start, input with an origin
+    (peer, schedule, `/mcp`, notice, auto-resume, a queue delivery's prompt), a start through the
+    route by a program (indistinguishable from a person's until #4249, so it counts as one).
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
     written, the watch sink never starts or injects into the session, a Managed input (any
     origin) is refused with `409 session_retired`, an automatic `/start` is refused, the session

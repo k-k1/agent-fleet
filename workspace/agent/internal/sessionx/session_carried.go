@@ -226,6 +226,7 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	notePersonAct(name) // a person's answer, which relaunches the session when it is stopped
 	sid := session.UUID(m.Dir, name)
 	c, ok := status.ReadCarried(sid)
 	if !ok {

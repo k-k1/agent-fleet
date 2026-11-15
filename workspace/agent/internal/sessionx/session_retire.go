@@ -21,8 +21,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -85,6 +87,20 @@ func clearRetired(name string) error {
 	return err
 }
 
+// releaseByAct writes what a person's start after the retire began writes (clearRetired): this
+// retire's id as the one the session was released from. The session carries no mark here, so
+// RetiredAt stays empty.
+func releaseByAct(name, id string) error {
+	_, _, err := updateSessionMetaChecked(name, func(m *session.Meta) bool {
+		if m.RetireClearedID == id && m.RetiredAt == "" {
+			return false
+		}
+		m.RetiredAt, m.RetireID, m.RetireClearedID = "", "", id
+		return true
+	})
+	return err
+}
+
 type autoStartKey struct{}
 
 // asAutomaticStart marks a request to HandleStartSession as one the Agent makes on its own.
@@ -140,6 +156,14 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 			name+" was started by session "+retireRootOf(m)+"; retire that session instead")
 		return
 	}
+	// The body is optional: none, or 0, is the unconditional retire.
+	var cond retireReq
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&cond); err != nil && !errors.Is(err, io.EOF) {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "the body, when there is one, is {\"ifNoActSince\": n}")
+			return
+		}
+	}
 	// One retire of a root at a time, from the intent to the end, recovery included: a second
 	// request waits for the first, so an older run never goes on with a tree a newer one has
 	// already been through and a person has resumed since.
@@ -155,7 +179,7 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 			"this request's deadline passed before the retire started; nothing was done")
 		return
 	}
-	in, err := beginRetire(name)
+	in, err := beginRetire(name, cond.IfNoActSince)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "retire_intent_unwritable",
 			"the retire could not be recorded, so nothing was ended: "+err.Error())
@@ -243,6 +267,19 @@ func retireOne(ctx context.Context, rep *retireReport, in *retireIntent) {
 	g.Lock()
 	defer g.Unlock()
 	cur, ok := session.ReadMeta(rep.Name)
+	if ok && in.IfNoActSince > 0 && !isRetired(cur) && cur.PersonActMark >= in.IfNoActSince &&
+		!releasedFrom(cur, in.ID) && !releasedAncestor(cur, in.ID) {
+		// A person started it or typed into it after the list this retire was decided on: the
+		// same release as a start after the retire began, written here under the member's gate and
+		// before anything is marked, so the check below and the walk's exclusion of everything
+		// under it are one path. A session this retire has marked is not looked at: an act that
+		// reached it after the mark found a retired session.
+		if err := releaseByAct(rep.Name, in.ID); err != nil {
+			rep.Unended = appendNew(rep.Unended, "a person acted on this session, but its release could not be written: "+err.Error())
+			return
+		}
+		cur, ok = session.ReadMeta(rep.Name)
+	}
 	if ok && (releasedFrom(cur, in.ID) || releasedAncestor(cur, in.ID)) {
 		// A person started it, or a session above it, since this retire began: it and everything
 		// below it are theirs. Nothing is marked, stopped or ended, and the answer says so.
@@ -262,6 +299,17 @@ func retireOne(ctx context.Context, rep *retireReport, in *retireIntent) {
 type retireIntent struct {
 	Root string `json:"root"`
 	ID   string `json:"id"`
+	// IfNoActSince is the condition the request carried: a member whose PersonActMark is at or
+	// above it is released from this retire. 0 is none. It lives with the intent so that the
+	// recovery after a restart applies the same one.
+	IfNoActSince int64 `json:"ifNoActSince,omitempty"`
+}
+
+// retireReq is the optional body of POST /sessions/{name}/retire.
+type retireReq struct {
+	// IfNoActSince is the actMark of the session list the retire was decided on. A session a
+	// person started or typed into after that list (PersonActMark >= it) is not retired.
+	IfNoActSince int64 `json:"ifNoActSince"`
 }
 
 var retireIntents = fstore.JSON[retireIntent](paths.AgentStateDir, "session-retire-intent", ".json")
@@ -270,10 +318,10 @@ var retireIntentMu sync.Mutex
 // beginRetire records a new retire before anything is marked. Without a durable intent nothing
 // may be marked: the write is read back, because a directory that accepted it and keeps nothing
 // would leave a crash with no tree to recover.
-func beginRetire(root string) (*retireIntent, error) {
+func beginRetire(root string, ifNoActSince int64) (*retireIntent, error) {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
-	in := retireIntent{Root: root, ID: hex.EncodeToString(b)}
+	in := retireIntent{Root: root, ID: hex.EncodeToString(b), IfNoActSince: max(ifNoActSince, 0)}
 	retireIntentMu.Lock()
 	defer retireIntentMu.Unlock()
 	if err := retireIntents.Write(root, in); err != nil {

@@ -112,6 +112,11 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// A start or a steer is the member's own input (its origin is member on both drivers). The
+	// other ops deliver nothing, and stopping work is not an act that keeps a session alive.
+	if req.Op == "start" || req.Op == "steer" {
+		notePersonAct(name)
+	}
 	// The queue ops belong to the Managed drivers (ADR 0105 decision 6): on Terminal the queue
 	// lives inside the CLI and Agent Fleet can neither empty it nor list it. Refused before
 	// any tmux probe, so it reads the same whether or not the pane is up.
@@ -369,6 +374,7 @@ func HandleSessionRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	notePersonAct(name) // a person's click on a pending interaction
 	var respond func(agents.InteractionReply) error
 	if meta.DriverKind() != session.DriverManaged {
 		// A Terminal slot whose runtime has an API for the pending Interaction (opencode 2 on

@@ -306,6 +306,7 @@ func HandleSessionRouteSwitch(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 && !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	notePersonAct(name) // a person's relaunch on another route
 	res, err := runRouteSwitch(r.Context(), name, strings.TrimSpace(req.Route))
 	if err != nil {
 		var se *routeSwitchError

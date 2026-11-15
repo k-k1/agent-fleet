@@ -117,6 +117,9 @@ func removeManagedLedger(m session.Meta) {
 // into one -F line: a tab/control-char delimiter is mangled by some tmux
 // builds (e.g. Debian bookworm 3.3a), so a single delimited format is fragile.
 func HandleListSessions(w http.ResponseWriter, r *http.Request) {
+	// Taken before anything is read: an act after this point carries a mark at or above it, so
+	// "the act came after this list" is never missed (session_actmark.go).
+	actMark, hasActMark := takeActMark()
 	metas := map[string]session.Meta{}
 	for _, m := range session.ListMetas() {
 		metas[m.Name] = m
@@ -282,6 +285,12 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		// wakers is omitted when zero, so without the marker the Control Plane cannot tell
 		// "nothing would start this session" from "this Agent does not say".
 		"queueReport": queueReportVersion,
+	}
+	// actMark orders this answer against the acts of a person that follow it: a retire sent with
+	// ifNoActSince = this value leaves a session such an act touched. Omitted when it could not be
+	// made durable, which reads as an Agent that sends none.
+	if hasActMark {
+		body["actMark"] = actMark
 	}
 	// The limit snapshot (ADR 0111 decision 6) rides the same response for the reaper, which
 	// asks for it. Other callers (the Console's list, through the CP) do not, and pay nothing.
