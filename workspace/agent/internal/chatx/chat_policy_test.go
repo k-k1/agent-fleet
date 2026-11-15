@@ -11,6 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // useUtilityPolicy makes the utilities judge by a store holding p, confirmed now.
@@ -87,6 +88,7 @@ func TestChatLaunchChecked(t *testing.T) {
 
 // Every chat backend refuses a turn on a forbidden route before anything runs.
 func TestEveryChatBackendRefusesAForbiddenRoute(t *testing.T) {
+	t.Setenv("AF_USAGE_DIR", t.TempDir())
 	launchesOn(t, map[string]string{})
 	useUtilityPolicy(t, apiOnly)
 	for kind, prov := range chatBackends {
@@ -100,6 +102,9 @@ func TestEveryChatBackendRefusesAForbiddenRoute(t *testing.T) {
 		if !errors.Is(err, ErrRoutePolicy) {
 			t.Errorf("%s: %v, want a policy refusal before the CLI runs", kind, err)
 		}
+	}
+	if rows := usagex.ReadRows(); len(rows) != 0 {
+		t.Errorf("refused turns left ledger rows: %+v", rows)
 	}
 }
 
@@ -127,6 +132,7 @@ func TestSelectionMovesOnlyToAllowedBackends(t *testing.T) {
 // the policy would refuse: with claude (the only deny-all backend) on a forbidden route, none is
 // left.
 func TestOneShotsAreJudgedBeforeTheyRun(t *testing.T) {
+	t.Setenv("AF_USAGE_DIR", t.TempDir())
 	allAvailable(t)
 	launchesOn(t, map[string]string{session.KindClaude: routes.RouteAnthropicSubscription})
 	useUtilityPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
@@ -143,5 +149,8 @@ func TestOneShotsAreJudgedBeforeTheyRun(t *testing.T) {
 	// opencode resolves its model, and with it its route, inside its runner: judged there.
 	if _, _, _, err := oneShotRunOn(context.Background(), session.KindOpencode, "title", OneShotShort, "", "hi", ""); !errors.Is(err, ErrRoutePolicy) {
 		t.Errorf("an opencode one-shot whose route cannot be told ran: %v", err)
+	}
+	if rows := usagex.ReadRows(); len(rows) != 0 {
+		t.Errorf("refused one-shots left ledger rows: %+v", rows)
 	}
 }

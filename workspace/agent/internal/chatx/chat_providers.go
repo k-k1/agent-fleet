@@ -2338,7 +2338,13 @@ func oneShotRunOn(ctx context.Context, kind, feature string, tier OneShotTier, p
 	// widening the return value keeps the four call sites untouched, since the recording point
 	// is in here anyway.
 	call := usagex.Call{}
-	defer usagex.RecordCall(ctx, &call, time.Now())
+	// A call the credential policy refused ran nothing and costs nothing: it leaves no row.
+	started := time.Now()
+	defer func() {
+		if !errors.Is(err, ErrRoutePolicy) {
+			usagex.RecordCall(ctx, &call, started)
+		}
+	}()
 	defer func() { ranKind, model = call.Kind, call.ModelReq }()
 	selected, configured := resolveOneShotModel(feature, tier, kind)
 	selected = strings.TrimSpace(selected)
