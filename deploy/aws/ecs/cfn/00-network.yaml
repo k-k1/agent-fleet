@@ -624,7 +624,7 @@ Resources:
               MAC=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI" \
                 --query 'NetworkInterfaces[0].MacAddress' --output text)
               # udev renames the interface: settle first (PARAMETERS.md, "Egress gateway").
-              settle_dev() { udevadm settle --timeout=60 || true; DEV=$(ip -o link | awk -v m="$MAC" 'index($0, m) { sub(":", "", $2); print $2 }'); [ -n "$DEV" ]; }
+              settle_dev() { udevadm settle --timeout=60 && DEV=$(ip -o link | awk -v m="$MAC" 'index($0, m) { sub(":", "", $2); print $2 }') && [ -n "$DEV" ]; }
               for _ in $(seq 1 90); do
                 settle_dev && break
                 sleep 2

@@ -330,23 +330,29 @@ def check_dev_rename(ud):
 
 def _run_dev_rename(seg):
     f = []
-    # The rename lands on the Nth `udevadm settle` (settle waits for it) or, failing that, on the
-    # 4th `ip` call (time passing): 1 = the first lookup already sees it, 2 and 3 = only a later
+    # block mode: the rename lands on the Nth `udevadm settle` (settle waits for it) or, failing
+    # that, on the 4th `ip` call: 1 = the first lookup already sees it, 2 and 3 = only a later
     # lookup does (the drop-in is then placed under the old name and redone).
-    for n in (1, 2, 3):
+    # time mode: settle times out (exit 1) until the rename, which lands on the Kth call of any stub
+    # (6-8 = after the last lookup, before or at networkctl reconfigure): a name read while settle
+    # said "not empty" must not be trusted.
+    for mode, n in (("block", 1), ("block", 2), ("block", 3), ("time", 6), ("time", 7), ("time", 8)):
         with tempfile.TemporaryDirectory() as t:
             bin_ = os.path.join(t, "bin")
             os.mkdir(bin_)
+            tick = 'a=$(cat "$T/all" 2>/dev/null || echo 0); a=$((a+1)); echo $a > "$T/all"; ' \
+                   '[ "$MODE" = time ] && [ $a -ge "$RENAME_AT" ] && touch "$T/renamed"; '
             stubs = {
                 "sleep": "exit 0",
-                "udevadm": 'c=$(cat "$T/n" 2>/dev/null || echo 0); echo $((c+1)) > "$T/n"; '
-                           '[ $((c+1)) -ge "$RENAME_AT" ] && touch "$T/renamed"; exit 0',
-                "ip": 'c=$(cat "$T/ipn" 2>/dev/null || echo 0); echo $((c+1)) > "$T/ipn"; '
-                      '[ $((c+1)) -ge 4 ] && touch "$T/renamed"; '
+                "udevadm": tick + 'c=$(cat "$T/n" 2>/dev/null || echo 0); echo $((c+1)) > "$T/n"; '
+                           '[ "$MODE" = block ] && [ $((c+1)) -ge "$RENAME_AT" ] && touch "$T/renamed"; '
+                           '[ "$MODE" = block ] || [ -e "$T/renamed" ]',
+                "ip": tick + 'c=$(cat "$T/ipn" 2>/dev/null || echo 0); echo $((c+1)) > "$T/ipn"; '
+                      '[ "$MODE" = block ] && [ $((c+1)) -ge 4 ] && touch "$T/renamed"; '
                       'if [ -e "$T/renamed" ]; then dev=ens6; else dev=eth0; fi; '
                       'echo "1: lo: <LOOPBACK> link/loopback 00:00:00:00:00:00"; '
                       'echo "3: $dev: <BROADCAST> link/ether $MAC brd ff:ff:ff:ff:ff:ff"',
-                "networkctl": 'if [ "$1" = reconfigure ]; then cur=eth0; [ -e "$T/renamed" ] && cur=ens6; '
+                "networkctl": tick + 'if [ "$1" = reconfigure ]; then cur=eth0; [ -e "$T/renamed" ] && cur=ens6; '
                               '[ "$2" = "$cur" ] || { echo "networkctl reconfigure $2: No such device" >&2; exit 1; }; '
                               'echo "$2" > "$T/reconfigured"; fi; exit 0',
             }
@@ -356,12 +362,12 @@ def _run_dev_rename(seg):
                     fh.write("#!/bin/bash\n" + body + "\n")
                 os.chmod(path, 0o755)
             script = "set -euxo pipefail\nmkdir -p \"$T/etc\"\n" + seg
-            env = dict(os.environ, T=t, MAC="02:aa:bb:cc:dd:ee", RENAME_AT=str(n),
+            env = dict(os.environ, T=t, MAC="02:aa:bb:cc:dd:ee", RENAME_AT=str(n), MODE=mode,
                        PATH=bin_ + ":" + os.environ["PATH"])
             try:
                 r = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=60)
             except subprocess.TimeoutExpired:
-                f.append("interface steps hang (rename at settle %d)" % n)
+                f.append("interface steps hang (%s rename at %d)" % (mode, n))
                 continue
             def read(rel):
                 try:
@@ -370,10 +376,10 @@ def _run_dev_rename(seg):
                 except OSError:
                     return None
             if r.returncode != 0:
-                f.append("interface steps fail when udev renames at settle %d: %s" % (n, r.stderr.strip().splitlines()[-1:]))
+                f.append("interface steps fail when udev renames (%s, %d): %s" % (mode, n, r.stderr.strip().splitlines()[-1:]))
             elif read("etc/af-egress/dev") != "ens6" or read("reconfigured") != "ens6" \
                     or not os.path.exists(os.path.join(t, "etc/systemd/network/70-ens6.network.d/zz-af-egress.conf")):
-                f.append("interface steps end on the wrong name when udev renames at settle %d" % n)
+                f.append("interface steps end on the wrong name when udev renames (%s, %d)" % (mode, n))
     return f
 
 
@@ -796,7 +802,9 @@ def main():
         ("install succeeds without a policy", m(lambda t: set_ud(t, lambda s: s.replace("sleep 2; done\nexit 1\nEOF", "sleep 2; done\nEOF")))),
         ("bootstrap file taken for a policy", m(lambda t: set_ud(t, lambda s: s.replace("grep -q '^# mode: '", "grep -q '^# '")))),
         ("release timer gone", m(lambda t: set_ud(t, lambda s: s.replace("OnUnitInactiveSec=10min", "OnUnitInactiveSec=30s")))),
-        ("no udev settle before the lookup", m(lambda t: set_ud(t, lambda s: s.replace("udevadm settle --timeout=60 || true;", "true;")))),
+        ("settle timeout ignored", m(lambda t: set_ud(t, lambda s: s.replace(
+            "udevadm settle --timeout=60 &&", "udevadm settle --timeout=60 || true;")))),
+        ("no udev settle before the lookup", m(lambda t: set_ud(t, lambda s: s.replace("udevadm settle --timeout=60 &&", "true &&")))),
         ("name not re-resolved after the drop-in", m(lambda t: set_ud(t, lambda s: s.replace(
             'if [ "$DEV" != "$OLD" ]; then place_dropin; fi\n', "")))),
         ("route check only on first boot", m(lambda t: set_ud(t, lambda s: s.replace(
