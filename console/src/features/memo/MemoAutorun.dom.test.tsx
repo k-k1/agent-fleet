@@ -815,6 +815,29 @@ describe("a note that changed while its card was on screen (#4209)", () => {
     expect(memoRelease).not.toHaveBeenCalled();
   });
 
+  it("keeps a tenant's record across a switch to another tenant and back (A -> B -> A)", async () => {
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    const switchTo = async (tenant: string) => {
+      await act(async () => useTenantStore.setState({ tenant }));
+      await settle();
+    };
+    await switchTo("a");
+    servedMemos = [held("m1", "h1")];
+    await render();
+    servedMemos = [held("m1", "h2")];
+    await bump();
+    expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(1);
+    servedMemos = [held("x1", "b1")]; // tenant b's own notes
+    await switchTo("b");
+    expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(0);
+    servedMemos = [held("m1", "h2")];
+    await switchTo("a");
+    expect(card().querySelectorAll(".memo-release-changed")).toHaveLength(1);
+    await press(); // confirms; does not approve
+    expect(memoRelease).not.toHaveBeenCalled();
+    await switchTo("");
+  });
+
   it("starts afresh after a page reload and once the note was approved", async () => {
     servedMemos = [held("m1", "h1")];
     await render();

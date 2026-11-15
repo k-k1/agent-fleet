@@ -148,8 +148,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const tr = useT();
 
   const [memos, setMemos] = useState<Memo[]>([]);
-  // False until the first read lands: the empty list before it is not "every note is gone".
-  const [memosLoaded, setMemosLoaded] = useState(false);
+  // The tenant the list in `memos` was read for (null before the first read). The change tracking
+  // folds the list in only while it belongs to the tenant on screen: the empty list before the first
+  // read, and the old tenant's list right after a switch, are not "every note is gone".
+  const [memosTenant, setMemosTenant] = useState<string | null>(null);
   const [cats, setCats] = useState<MemoCategory[]>([]);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -226,7 +228,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           // one; it never takes the memo list down with it.
           const qw = readMemoQueues(qRaw) ?? lastQueues.current;
           lastQueues.current = qw;
-          setMemosLoaded(true);
+          setMemosTenant(tenant ?? "");
           const ser = JSON.stringify([marr, carr, qw]);
           if (ser !== serRef.current) {
             serRef.current = ser;
@@ -259,9 +261,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // What a card showed first, against what the poll serves now (shownNotes.ts). Idempotent for one
   // list, so a double render marks nothing new.
   const { edited, awaiting } = useMemo(
-    () => (memosLoaded ? trackNotes(tenant ?? "", memos) : { edited: new Set<string>(), awaiting: new Set<string>() }),
+    () => (memosTenant === (tenant ?? "") ? trackNotes(tenant ?? "", memos) : { edited: new Set<string>(), awaiting: new Set<string>() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [memos, memosLoaded, tenant, shownTick],
+    [memos, memosTenant, tenant, shownTick],
   );
   // The composer only follows a target that is still on screen: a category deleted (or
   // renamed) while it was open would otherwise leave an open composer nowhere to render.
