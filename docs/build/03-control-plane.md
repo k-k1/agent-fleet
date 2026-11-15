@@ -411,6 +411,17 @@ disables.
   a resume cannot land after it. `draining` ends in the transaction that leaves nothing pending
   (every `MemoTx` checks before it commits), so a message added after an empty moment starts a
   new batch; a pause keeps it while messages are left, and the drain goes on with the resume.
+  **Bounds on the wakes**: at most two settle wakes are started per tick (the tick waits for
+  them), and one workspace is woken at most once in ten minutes whatever queue asks (counted per
+  member, inside the membership lock). A batch that ended a drain by claiming the last pending
+  message and then returned as not sent puts the queue back to draining (`memo_delivery.drain`),
+  so it does not wait for a threshold it had passed. The first turn of a session that showed
+  after its delivery closed (archived or stopped first) is copied onto the closed delivery for a
+  day after the close, so the breaker counts it; a session deleted before its turn was seen
+  leaves nothing to read, and that delivery is never counted. **Idle count and `gone`**: a second
+  clear read counts only when the stored row was itself clear (`held_by` empty), so an older
+  Control Plane's idle count never closes on one clear read; and a pending retire ends as `gone`
+  only on a read made after the close (a fresh read when the tick's cached list lacks the root).
   **Deletion guard**: an enabled queue blocks deleting its repository like an enabled
   schedule (`schedule_in_use`). **Mixed versions**: an older Control Plane never fires by
   itself, its settings PUT lists none of the new columns and so keeps every setting and

@@ -462,6 +462,7 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 		}
 	}
 	r.retirePending(ctx, views, now)
+	r.collectClosedTurns(ctx, views, now)
 	return sends
 }
 
@@ -1107,15 +1108,62 @@ func (r *memoQueueRunner) retirePending(ctx context.Context, views map[string]*m
 		if v == nil || !v.liveOK || !v.report {
 			continue
 		}
-		// A root missing from a successful report is a deleted session: a delivery is closed
-		// clean only after reads that listed its root (an absent root closes it aborted), so the
-		// session existed when it closed, whatever tick of this one the cached read was taken in.
-		if len(deliveryTree(v.live, d.Session)) == 0 {
-			r.finishRetire(ctx, d, "gone")
-			continue
+		tree := deliveryTree(v.live, d.Session)
+		if len(tree) == 0 {
+			// A root missing from a report is a deleted session only when the report began after
+			// the delivery closed: the tick's cached list may be older than the close (another
+			// Control Plane created the session, read it clear twice and closed it after this
+			// list was taken). The delivery was read as closed before this read begins, so a
+			// fresh read is later than the close. Anything but a successful reporting answer
+			// decides nothing.
+			cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
+			env, err := r.mgr.agentSessionsEnv(cctx, v.res.rt)
+			cancel()
+			if err != nil || !env.reportsQueue() {
+				continue
+			}
+			if len(deliveryTree(env.Sessions, d.Session)) == 0 {
+				r.finishRetire(ctx, d, "gone")
+				continue
+			}
 		}
 		if res := r.retire(ctx, v.res, d.Session); res != retireRepeat {
 			r.finishRetire(ctx, d, string(res))
+		}
+	}
+}
+
+// collectClosedTurns copies the first turn of a session onto a delivery that closed before the
+// turn showed: a session archived or stopped before the Agent recorded the end, and one whose
+// turn ended after the close. The circuit breaker counts a delivery only once its first turn is
+// recorded. A running workspace whose Agent reports is read (the cached list of the tick), for a
+// day after the close; a session deleted before its turn was seen leaves nothing to read, and
+// that delivery is never counted.
+func (r *memoQueueRunner) collectClosedTurns(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
+	if ctx.Err() != nil {
+		return
+	}
+	ds, err := r.mgr.store.ListClosedWithoutTurn(ctx, store.DeliveryTS(now.Add(-memoClosedTurnWindow)), memoClosedTurnsPerTick)
+	if err != nil {
+		log.Printf("memo queue: list closed deliveries without a turn: %v", err)
+		return
+	}
+	for _, d := range ds {
+		if ctx.Err() != nil {
+			return
+		}
+		v := r.view(ctx, views, d.MembershipID)
+		if v == nil || !v.liveOK || !v.report {
+			continue
+		}
+		for i := range v.live {
+			t := v.live[i].QueueTurn
+			if v.live[i].Name != d.Session || t == nil || t.EndedAt == "" {
+				continue
+			}
+			if _, err := r.mgr.store.RecordDeliveryFirstTurn(ctx, d.ID, t.Outcome, t.Ms, t.EndedAt); err != nil {
+				log.Printf("memo queue: delivery %s: record the first turn: %v", d.ID, err)
+			}
 		}
 	}
 }

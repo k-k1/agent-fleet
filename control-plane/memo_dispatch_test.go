@@ -997,3 +997,105 @@ func TestMemoDispatchDrainingEndsWhenNothingIsPending(t *testing.T) {
 		}
 	})
 }
+
+// The batch that ended a drain by claiming the last pending message and came back as not sent puts
+// the queue back to draining: the returned message does not wait for a threshold it passed.
+func TestMemoDispatchDrainSurvivesAReturnedLastBatch(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", map[string]any{"openAfter": 2, "maxActive": 1}, 2)
+		now := time.Now().Add(2 * time.Minute)
+		e.autoTick(now) // opens, fires one, one pending left, draining
+		live := e.liveDeliveries(q)
+		agent.setRow(live[0].Session, map[string]any{"state": "idle"})
+		e.settleNow(now)
+		e.settleNow(now) // closed clean: the slot is free
+		agent.mu.Lock()
+		agent.createMode = "refuse"
+		agent.mu.Unlock()
+		e.autoTick(now) // claims the last pending, the Agent refuses, the message returns
+		if p := e.pendingCount(q); p != 1 {
+			t.Fatalf("%d pending, want the returned one", p)
+		}
+		if !e.queueRow(q).Draining {
+			t.Fatal("the drain was not restored with the returned batch")
+		}
+		agent.mu.Lock()
+		agent.createMode = ""
+		agent.mu.Unlock()
+		before := agent.createCount()
+		e.autoTick(now.Add(6 * time.Minute)) // after the back-off: one pending, below K, still draining
+		if agent.createCount() != before+1 {
+			t.Fatal("the returned batch of a drain stayed below its threshold for good")
+		}
+	})
+}
+
+func (e *deliveryEnv) pendingCount(queueID string) int {
+	st, err := e.st.ListQueuePendingStats(context.Background())
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return st[queueID].Count
+}
+
+// Settle wakes are bounded per tick, and one workspace is woken once in the guard time whatever
+// queue asks: two queues of a member (two Control Planes included) record one wake row.
+func TestMemoDispatchWakesAreBoundedAndOnePerMember(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q1 := e.autoQueue("app", "one", map[string]any{"maxActive": 1}, 2)
+		_, q2 := e.autoQueue("app", "two", map[string]any{"maxActive": 1}, 2)
+		e.setRuntime(agent, "stopped")
+		ts := store.DeliveryTS(time.Now())
+		for _, q := range []string{q1, q2} {
+			if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+				return tx.InsertDelivery(store.MemoDelivery{ID: store.NewID(), QueueID: q, State: store.DeliverySending,
+					MessageIDs: []string{}, CreatedAt: ts, UpdatedAt: ts, SentAt: ts})
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Two Control Planes reach the two queues at once, each through its own snapshot.
+		now := time.Now()
+		r1, r2 := e.runner(), e.runner()
+		live1 := []store.MemoDelivery{{QueueID: q1, State: store.DeliverySending}}
+		live2 := []store.MemoDelivery{{QueueID: q2, State: store.DeliverySending}}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); r1.settleWake(context.Background(), e.staleWork(q1), live1, now) }()
+		go func() { defer wg.Done(); r2.settleWake(context.Background(), e.staleWork(q2), live2, now) }()
+		wg.Wait()
+		rows := 0
+		_ = e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) (err error) {
+			rows, err = tx.CountMemberWakesSince(store.DeliveryTS(now.Add(-time.Hour)))
+			return err
+		})
+		if rows != 1 || len(r1.wakeJobs)+len(r2.wakeJobs) != 1 {
+			t.Fatalf("%d wake rows, %d jobs, want one workspace woken once", rows, len(r1.wakeJobs)+len(r2.wakeJobs))
+		}
+	})
+}
+
+// The first turn of a session that ended or was archived after its delivery closed is copied onto
+// the closed delivery, so the breaker counts it.
+func TestMemoOccupancyFirstTurnAfterTheClose(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.setRow(d.Session, map[string]any{"archived": true})
+		e.settleNow(time.Now()) // closed aborted before any turn showed
+		got := e.delivery(d.ID)
+		if got.State != store.DeliveryClosed || got.TurnEndedAt != "" {
+			t.Fatalf("%+v", got)
+		}
+		agent.setRow(d.Session, map[string]any{"queueTurn": map[string]any{"outcome": "turn-failed", "ms": 5000, "endedAt": "2026-11-15T01:00:00Z"}})
+		e.settleNow(time.Now())
+		got = e.delivery(d.ID)
+		if got.TurnOutcome != "turn-failed" || got.TurnMs != 5000 || got.TurnEndedAt == "" {
+			t.Fatalf("the turn of a closed delivery was not collected: %+v", got)
+		}
+		agent.setRow(d.Session, map[string]any{"queueTurn": map[string]any{"outcome": "clean", "ms": 9, "endedAt": "2026-11-15T09:00:00Z"}})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.TurnOutcome != "turn-failed" {
+			t.Fatalf("the first turn was rewritten: %+v", got)
+		}
+	})
+}

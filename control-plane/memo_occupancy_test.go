@@ -809,3 +809,74 @@ func TestMemoOccupancyOlderControlPlaneCannotCloseAHeldDelivery(t *testing.T) {
 		}
 	})
 }
+
+// A count written by the rule for an Agent that does not report (MarkMemoDeliveryIdle, all an
+// older Control Plane has) is no clear read of the report: with the kept report holding the
+// delivery, the next clear read counts one, not two, and does not close.
+func TestMemoOccupancyLegacyIdleCountIsNotAClearRead(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.setRow(d.Session, map[string]any{"wakers": map[string]any{"watches": 1, "timers": 0}})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.HeldBy != store.HeldWakers || got.IdleTicks != 0 {
+			t.Fatalf("%+v", got)
+		}
+		// An older Control Plane sees the session idle and writes its count.
+		if ok, err := e.other.MarkMemoDeliveryIdle(context.Background(), d.ID, 1); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+		agent.setRow(d.Session, map[string]any{"wakers": nil})
+		e.settleNow(time.Now())
+		got := e.delivery(d.ID)
+		if got.State != store.DeliveryOpen || got.IdleTicks != 1 {
+			t.Fatalf("one clear read closed on the legacy count: %+v", got)
+		}
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed {
+			t.Fatalf("two clear reads must close: %+v", got)
+		}
+	})
+}
+
+// `gone` is decided from a read that began after the delivery closed, not from the tick's cached
+// list: a cached list that predates the session does not end a pending retire.
+func TestMemoOccupancyGoneNeedsAReadAfterTheClose(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.mu.Lock()
+		agent.retireStatus = http.StatusBadGateway
+		agent.mu.Unlock()
+		e.settleNow(time.Now())
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || !got.RetirePending {
+			t.Fatalf("%+v", got)
+		}
+		agent.mu.Lock()
+		agent.retireStatus = 0
+		agent.mu.Unlock()
+		// The cached list of this tick was taken before the session existed.
+		r := e.runner()
+		views := map[string]*memoMemberView{}
+		v := r.view(context.Background(), views, e.members["a"])
+		v.live = nil
+		r.retirePending(context.Background(), views, time.Now())
+		got := e.delivery(d.ID)
+		if got.RetireResult != "confirmed" || agent.retireCalls() < 2 {
+			t.Fatalf("a stale cache decided gone: calls %d, %+v", agent.retireCalls(), got)
+		}
+	})
+	// A session that is gone from a read made after the close is gone.
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.mu.Lock()
+		agent.retireStatus = http.StatusBadGateway
+		agent.mu.Unlock()
+		e.settleNow(time.Now())
+		e.settleNow(time.Now())
+		agent.dropRow(d.Session)
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.RetireResult != "gone" || got.RetirePending {
+			t.Fatalf("%+v", got)
+		}
+	})
+}

@@ -38,6 +38,13 @@ const (
 	// the workspace needs its time to start, and every wake counts against the day.
 	memoSettleWakeEvery = 10 * time.Minute
 	memoFiresWindow     = 24 * time.Hour
+	// memoWakesPerTick bounds the wakes made only to settle that one tick starts: the tick waits
+	// for every one of them, and a cold start takes minutes.
+	memoWakesPerTick = 2
+	// memoClosedTurnWindow is how long after its close a delivery is still read for the first turn
+	// of its session, and memoClosedTurnsPerTick how many are read in a tick.
+	memoClosedTurnWindow   = 24 * time.Hour
+	memoClosedTurnsPerTick = 50
 )
 
 // Notification kinds of the dispatcher. Their wording is the Console slice's (#4217).
@@ -166,7 +173,7 @@ func (r *memoQueueRunner) dispatch(ctx context.Context, now time.Time, room int)
 	woke := map[string]bool{}
 	for _, m := range ready {
 		for _, w := range m.queues {
-			if woke[m.membershipID] || ctx.Err() != nil {
+			if woke[m.membershipID] || ctx.Err() != nil || len(r.wakeJobs) >= memoWakesPerTick {
 				break
 			}
 			if w.pending.Count == 0 {
@@ -555,6 +562,12 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 				return err
 			}
 		}
+		if start || cur.Draining {
+			// If this batch returns as not sent, the drain it belonged to goes on.
+			if err := tx.MarkDeliveryDrain(d.ID); err != nil {
+				return err
+			}
+		}
 		d.MembershipID = q.MembershipID // the claim does not carry it, and the send looks the delivery up by it
 		out, claimed = d, true
 		return nil
@@ -702,7 +715,9 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 				return nil
 			}
 		}
-		recent, err := tx.CountWakesSince(q.CategoryID, store.DeliveryTS(now.Add(-memoSettleWakeEvery)))
+		// One wake per workspace in the guard time, whatever queue made it: the queues of a member
+		// share one workspace, and two Control Planes may reach different queues at once.
+		recent, err := tx.CountMemberWakesSince(store.DeliveryTS(now.Add(-memoSettleWakeEvery)))
 		if err != nil || recent > 0 {
 			return err
 		}
