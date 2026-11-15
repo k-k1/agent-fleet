@@ -195,40 +195,39 @@ func TestPaneTypingWritesTheMetaOncePerMark(t *testing.T) {
 	}
 }
 
-// A keystroke into a session a retire has marked is not held back: it arrives at a retired session.
-func TestPaneTypingPassesOnARetiredSessionWhileItIsBeingStopped(t *testing.T) {
+// A keystroke waits while a retire holds the write side, and records on the marked session when
+// the retire is done: it is never sent on the strength of a failed try.
+func TestPaneTypingWaitsForTheRetireAndRecordsOnTheMarkedSession(t *testing.T) {
 	newActEnv(t)
-	prev := paneActWait
-	paneActWait = 100 * time.Millisecond
-	t.Cleanup(func() { paneActWait = prev })
 	writeMeta(t, session.Meta{Name: "a", RetiredAt: time.Now().UTC().Format(time.RFC3339), RetireID: "r"})
 	g := retireGate("a")
 	g.Lock() // the retire is still stopping it
-	defer g.Unlock()
 	done := make(chan bool, 1)
 	go func() { done <- NotePersonActPane("a") }()
 	select {
-	case ok := <-done:
-		if !ok {
-			t.Fatal("a key for a retired session was dropped")
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("the pane's writer is stuck behind the retire gate")
+	case <-done:
+		t.Fatal("the key went on before the retire was done")
+	case <-time.After(300 * time.Millisecond):
+	}
+	g.Unlock()
+	if ok := <-done; !ok {
+		t.Fatal("the key was dropped")
+	}
+	if m, _ := session.ReadMeta("a"); m.PersonActMark == 0 {
+		t.Fatal("the key was not recorded")
 	}
 }
 
-// Failing to take the read side is not evidence that the session is marked: a pending retire
-// stops new readers while a long /start holds one. The key is held, not sent unrecorded, and is
-// recorded once the retire has marked the session.
-func TestPaneTypingWaitsForAPendingRetireBehindALongStart(t *testing.T) {
+// Failing to take the read side is not evidence that the session is marked, and an older retire's
+// mark in the meta is not evidence that the retire that is waiting has marked it: with a long
+// /start holding the read side, a pending retire and an old mark, the key is held until the
+// writer has run.
+func TestPaneTypingIsNotSentOnAFailedTryOrAnOldMark(t *testing.T) {
 	newActEnv(t)
-	prev := paneActWait
-	paneActWait = 100 * time.Millisecond
-	t.Cleanup(func() { paneActWait = prev })
-	writeMeta(t, session.Meta{Name: "a"})
+	writeMeta(t, session.Meta{Name: "a", RetiredAt: time.Now().UTC().Format(time.RFC3339), RetireID: "old"})
 	listed := listActMark(t)
 	g := retireGate("a")
-	g.RLock() // /start, mid-launch
+	g.RLock() // a person's /start, mid-launch, under the old mark
 	retired := make(chan retireResp, 1)
 	go func() { _, out := postRetireIf(t, "a", listed); retired <- out }()
 	for i := 0; i < 200; i++ { // the retire is queued on the write side
@@ -243,17 +242,13 @@ func TestPaneTypingWaitsForAPendingRetireBehindALongStart(t *testing.T) {
 	go func() { done <- NotePersonActPane("a") }()
 	select {
 	case <-done:
-		t.Fatal("the key went through unrecorded while the session was not marked")
+		t.Fatal("the key went through unrecorded behind a pending retire and an old mark")
 	case <-time.After(500 * time.Millisecond):
 	}
-	g.RUnlock() // the start ends; the retire marks and stops, then the key is recorded on a retired session
+	g.RUnlock()
+	<-retired
 	if ok := <-done; !ok {
 		t.Fatal("the key was dropped")
-	}
-	out := <-retired
-	m, _ := session.ReadMeta("a")
-	if rep := reportOf(out, "a"); rep.Released || m.RetiredAt == "" {
-		t.Fatalf("%+v retiredAt=%q", rep, m.RetiredAt)
 	}
 }
 

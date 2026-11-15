@@ -125,14 +125,16 @@ source_of_truth: "コード（本書は地図と設計意図）"
     carried の回答（再起動を伴うもの）、driver の切替と route の切替（この 3 つは `/start` を通らないので、
     起動の間 retire gate の読み取り側を持ち、retire が印したセッションには `409 session_retired` を返す。先に再開する）、
     チャットブリッジの返信とボタン（member の origin で `injectSessionPrompt`）、ターミナルペインのキー入力
-    （`/ws/pty`。ライフサイクル gate を取る前に記録する）。gate の読み取り側が取れないことは印の証拠ではない
-    （待っている retire は、長い `/start` が読み取り側を持つ間も新しい reader を止める）ので、短い待ちのあと、meta が
-    すでに retired のときだけキーは記録されずに通り（「retire 済みのセッションに act が届く」状態）、そうでなければ
-    保留し、30 秒で捨てる。
+    （`/ws/pty`。ライフサイクル gate を取る前に記録する）。gate の読み取り側が取れないことは印の証拠ではなく
+    （待っている retire は、長い `/start` が読み取り側を持つ間も新しい reader を止める）、meta の retired は
+    以前の retire のものかもしれない。だからキーは読み取り側で記録できるまで保留し（その時点で retire が印した
+    セッションに届く。「retire 済みのセッションに act が届く」状態）、30 秒で捨てる。
     数えないもの: watch の起動、プランレビュー役の start、出どころを持つ入力（peer・schedule・`/mcp`・notice・
     auto-resume・キュー配信の prompt）。Agent 自身のカウンタより大きい `ifNoActSince`（古い状態ファイルの復元）は
     ここで順序を証明できないので act と読み、木は release する（retire しない）。単調性の保証は状態ファイルが
-    残っている間のもの。
+    残っている間のもの。**既知の穴:** すでに配った番号を再利用する古い `act-mark/mark.json` の復元は、生きた
+    カウンタと区別できない（巻き戻りうる 1 つのカウンタでは証明できない）。その窓では、カウンタ以下の番号の
+    retire は通常どおり判定され、人が act したセッションを止めうる。Agent 状態の復元は保証の外。
   - meta の `retiredAt` が、終わらせたものを終わったままにする。付けた瞬間から、
     watch の sink は起動も注入もせず、Managed への入力は（出どころを問わず）`409 session_retired`
     で断り、自動の `/start` も断り、子の枠も取らせず、エンジンは新しい購読と組み込みを断り、予約された

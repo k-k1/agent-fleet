@@ -150,13 +150,17 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     first); the chat bridge's replies and button clicks (`injectSessionPrompt` with a member origin);
     keystrokes in the terminal pane (`/ws/pty`, recorded before the lifecycle gate is taken). Failing
     to get the gate's read side is not evidence that the session is marked (a pending retire also
-    stops new readers while a long `/start` holds one): past a short wait the key passes unrecorded
-    only when the meta already says retired (the "act arrives at a retired session" state), else it
-    is held, and dropped after 30 s. Not acts: the watch wake, the plan-review reviewer's start,
+    stops new readers while a long `/start` holds one), and a retired mark in the meta may be an
+    older retire's: the key is held until it can record under the read side (on a session the retire
+    has by then marked, the "act arrives at a retired session" state), and dropped after 30 s. Not acts: the watch wake, the plan-review reviewer's start,
     input with an origin (peer, schedule, `/mcp`, notice, auto-resume, a queue delivery's prompt).
     A retire whose `ifNoActSince` is above the Agent's own counter (a restored older state file)
     cannot be ordered here, so it reads as an act: the tree is released, never retired. The
-    monotonic guarantee holds while the state file survives.
+    monotonic guarantee holds while the state file survives. **Known gap:** a restored older copy of
+    `act-mark/mark.json` that reuses numbers already handed out cannot be told from a live counter
+    (one rollback-able counter cannot prove it); a retire whose number is then at or below the
+    counter is judged as usual and can stop a session a person acted on in that window. Restoring
+    Agent state is outside the guarantee.
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
     written, the watch sink never starts or injects into the session, a Managed input (any
     origin) is refused with `409 session_retired`, an automatic `/start` is refused, the session

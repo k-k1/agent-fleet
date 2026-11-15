@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"testing"
@@ -175,6 +176,74 @@ func TestMemoActMarkOverdueRetryKeepsTheFirstCondition(t *testing.T) {
 		}
 		if got := e.delivery(d.ID); got.RetiredAt == "" {
 			t.Fatalf("the retry was not recorded: %+v", got)
+		}
+	})
+}
+
+// observe keeps a report of the delivery through the given store handle.
+func (e *deliveryEnv) observe(st store.MemoStore, id string, gen, mark int64, progress bool) {
+	e.t.Helper()
+	err := st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+		_, _, err := tx.ObserveDelivery(id, store.DeliveryObservation{Gen: gen, At: store.DeliveryTS(time.Now()),
+			Progress: progress, ProgressAt: store.DeliveryTS(time.Now()), ActMark: mark})
+		return err
+	})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// The condition of an overdue retire is fixed in one conditional write on the report it was decided
+// on: a newer report kept between the decision and the freeze stops it, a frozen condition is never
+// replaced by a later report (a frozen "no mark" included), and progress clears it together with
+// the record of a retire that was made under it.
+func TestMemoActMarkFreezeIsOneConditionalWrite(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		ctx := context.Background()
+		_, d := e.openReported(nil)
+
+		// A newer report kept between the decision (gen 100, mark 10) and the freeze.
+		e.observe(e.st, d.ID, 100, 10, false)
+		e.observe(e.other, d.ID, 200, 20, false)
+		if _, _, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 100, 10); err != nil || ok {
+			t.Fatalf("a freeze on an overtaken report went through: ok=%v err=%v", ok, err)
+		}
+		if got := e.delivery(d.ID); got.RetireGen != 0 || got.RetireActMark != 0 {
+			t.Fatalf("%+v", got)
+		}
+
+		// Frozen on the current report; a later report does not replace it.
+		if m, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 200, 20); err != nil || !ok || m != 20 || g != 200 {
+			t.Fatalf("freeze: %d %d %v %v", m, g, ok, err)
+		}
+		e.observe(e.other, d.ID, 300, 30, false)
+		if m, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 300, 30); err != nil || !ok || m != 20 || g != 200 {
+			t.Fatalf("a later report replaced the frozen condition: %d %d %v %v", m, g, ok, err)
+		}
+
+		// Progress clears it; the completion of the old attempt is then not recorded.
+		e.observe(e.other, d.ID, 400, 40, true)
+		if won, err := e.st.MarkMemoDeliveryRetired(ctx, d.ID, store.DeliveryTS(time.Now()), 200); err != nil || won {
+			t.Fatalf("the completion of a stale attempt was recorded: %v %v", won, err)
+		}
+		if m, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 400, 40); err != nil || !ok || m != 40 || g != 400 {
+			t.Fatalf("after progress: %d %d %v %v", m, g, ok, err)
+		}
+		if won, err := e.st.MarkMemoDeliveryRetired(ctx, d.ID, store.DeliveryTS(time.Now()), 400); err != nil || !won {
+			t.Fatalf("the current attempt's completion: %v %v", won, err)
+		}
+	})
+	// A frozen "no mark" stays "no mark": 0 is a value, not "unfrozen".
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		ctx := context.Background()
+		_, d := e.openReported(nil)
+		e.observe(e.st, d.ID, 100, 0, false)
+		if m, _, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 100, 0); err != nil || !ok || m != 0 {
+			t.Fatalf("%d %v %v", m, ok, err)
+		}
+		e.observe(e.other, d.ID, 200, 50, false)
+		if m, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 200, 50); err != nil || !ok || m != 0 || g != 100 {
+			t.Fatalf("a mark appeared in a frozen retire without one: %d %d %v %v", m, g, ok, err)
 		}
 	})
 }

@@ -175,21 +175,19 @@ func holdPersonRelaunch(name string) (release func(), err error) {
 	return g.RUnlock, nil
 }
 
-// paneActWait is how long a keystroke waits for the read side before it checks whether the session
-// is already retired. A var for the tests.
-var paneActWait = 2 * time.Second
-
-// paneActHold bounds the whole wait: a key that still cannot be recorded by then is dropped.
-const paneActHold = 30 * time.Second
+// paneActHold bounds how long a key waits for the read side: one that still cannot be recorded by
+// then is dropped. A var for the tests.
+var paneActHold = 30 * time.Second
 
 // NotePersonActPane is notePersonAct for the terminal pane's writer, and reports whether the bytes
 // may go on to the PTY. It takes no lock and writes nothing while the meta holds the current mark.
-// Otherwise it takes the read side without queueing behind the retire's write side beyond what the
-// session's state allows: failing to get the read side proves nothing (a pending writer also stops
-// new readers while a long /start holds one), so past paneActWait the bytes pass unrecorded only
-// when the meta already says the session is retired, which is the "act arrives at a retired
-// session" state. Otherwise they keep waiting, and are dropped (false) after paneActHold. Nothing
-// is held while it waits.
+// Otherwise it waits for the read side, without holding anything meanwhile, and records under it.
+// Failing to take the read side proves nothing about the session (a pending retire also stops new
+// readers while a long /start holds one) and a retired mark in the meta may be an older retire's, so
+// no key goes on unrecorded because of either: once the retire that holds the write side is done
+// the key records itself, on a session that is by then marked, which is the "act arrives at a
+// retired session" state. The retire stops the session, which ends the pane, within seconds; a key
+// that waits longer than paneActHold is dropped.
 func NotePersonActPane(name string) (deliver bool) {
 	if _, done := actMarks.current(name); done {
 		return true
@@ -197,13 +195,8 @@ func NotePersonActPane(name string) (deliver bool) {
 	g := retireGate(name)
 	start := time.Now()
 	for !g.TryRLock() {
-		if time.Since(start) > paneActWait {
-			if cur, ok := session.ReadMeta(name); ok && isRetired(cur) {
-				return true
-			}
-			if time.Since(start) > paneActHold {
-				return false
-			}
+		if time.Since(start) > paneActHold {
+			return false
 		}
 		time.Sleep(5 * time.Millisecond)
 	}

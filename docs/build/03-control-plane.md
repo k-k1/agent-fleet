@@ -358,8 +358,12 @@ disables.
   the report it was decided on: the kept report at a clean close (a running workspace's read, and
   the kept report of a stopped one) and the kept report at the first attempt of an overdue retire.
   That mark is frozen in `memo_delivery.retire_act_mark` (set by the close, or by the first overdue
-  attempt; cleared when progress is seen) and every unconfirmed retry sends the same one, because
-  an overdue delivery stays open and keeps overwriting `act_mark` with newer reads. A session a
+  attempt) and every unconfirmed retry sends the same one, because an overdue delivery stays open and
+  keeps overwriting `act_mark` with newer reads. The overdue freeze is one conditional write on the
+  generation of the report the decision was made on (`retire_gen`; 0 means not frozen, and a frozen
+  mark of 0 is a frozen "no mark"): if a newer report was kept first nothing is sent and the next
+  tick decides again. Progress clears it, and the record of an attempt's completion is conditional on
+  the same generation. A session a
   person started or typed into after that read comes back `released` (root) or `done` (below the
   root), which end the pending retire as before. An Agent that sends no `actMark` gets no body.
   An `aborted` close retires nothing.

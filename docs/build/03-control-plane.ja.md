@@ -284,7 +284,9 @@ Workspace を起こさない。
   クリーンな close の保存済み報告（動いている Workspace の読み取りも、止まっている Workspace の保存済み報告も）と、
   overdue の retire の最初の試行時の保存済み報告である。この mark は `memo_delivery.retire_act_mark` に固定され
   （close か overdue の最初の試行が設定し、progress を見たら消す）、確認できない再試行は毎回同じ値を送る。
-  overdue の配信は open のまま `act_mark` を新しい読み取りで上書きし続けるため。その読み取りのあとに人が起動・入力したセッションは
+  overdue の配信は open のまま `act_mark` を新しい読み取りで上書きし続けるため。overdue の固定は、判断した
+  報告の世代（`retire_gen`。0 は未固定、固定された mark の 0 は「mark なし」の固定）に対する 1 回の条件付き書込みで、
+  先に新しい報告が保存されたら何も送らず次の tick でやり直す。progress は固定を消し、試行の完了記録も同じ世代で条件付ける。その読み取りのあとに人が起動・入力したセッションは
   `released`（root）か `done`（root の下）で返り、どちらも従来どおり保留中の retire を終わらせる。
   `actMark` を送らない Agent には body を付けない。
   `aborted` の close は何も retire しない。

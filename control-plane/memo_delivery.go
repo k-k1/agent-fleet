@@ -998,17 +998,23 @@ func (r *memoQueueRunner) retireOverdue(ctx context.Context, v *memoMemberView, 
 	// are recorded, and progress seen later clears the record.
 	// The mark is fixed with the first attempt: a retry whose answer was lost must carry the
 	// condition of the first, not of the newer read this row has since kept.
+	// One conditional write: it takes the mark of the report this decision was made on, and only while
+	// that report is still the kept one; a newer report (or progress) kept first means nothing is
+	// sent and the next tick decides again.
 	fctx, fcancel := memoProgressCtx(ctx)
-	mark, ferr := r.mgr.store.FreezeDeliveryRetireMark(fctx, d.ID)
+	mark, gen, ok, ferr := r.mgr.store.FreezeDeliveryRetireMark(fctx, d.ID, d.HeldGen, d.ActMark)
 	fcancel()
 	if ferr != nil {
 		log.Printf("memo queue: delivery %s: freeze the retire mark: %v", d.ID, ferr)
 		return
 	}
+	if !ok {
+		return
+	}
 	if res := r.retire(ctx, v.res, d.Session, mark); res != retireRepeat {
 		wctx, cancel := memoProgressCtx(ctx)
 		defer cancel()
-		if _, err := r.mgr.store.MarkMemoDeliveryRetired(wctx, d.ID, store.DeliveryTS(time.Now())); err != nil {
+		if _, err := r.mgr.store.MarkMemoDeliveryRetired(wctx, d.ID, store.DeliveryTS(time.Now()), gen); err != nil {
 			log.Printf("memo queue: delivery %s: mark retired: %v", d.ID, err)
 		}
 	}
