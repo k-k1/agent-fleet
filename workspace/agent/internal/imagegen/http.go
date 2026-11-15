@@ -17,6 +17,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -624,6 +625,11 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 // prompt was refused" call for opposite responses.
 func writeGenerateErr(w http.ResponseWriter, err error) {
 	switch {
+	case policyOnly(err) && (errors.Is(err, routepolicy.ErrUnconfirmed) || errors.Is(err, routepolicy.ErrUnrecorded)):
+		httpx.WriteErr(w, http.StatusServiceUnavailable, routes.CodePolicyUnconfirmed, err.Error())
+	case policyOnly(err):
+		// Every candidate was refused or stopped by the credential policy (ADR 0138 D12).
+		httpx.WriteErr(w, http.StatusForbidden, routes.CodePolicyForbidden, err.Error())
 	case errors.Is(err, ErrNoProvider):
 		httpx.WriteErr(w, http.StatusServiceUnavailable, "imagegen_no_provider", err.Error())
 	case errors.Is(err, ErrUnknownProvider):

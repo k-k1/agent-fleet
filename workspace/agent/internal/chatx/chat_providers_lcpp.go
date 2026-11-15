@@ -54,11 +54,18 @@ func lcppEngineAvailable() bool {
 // lcppChat drives the fleet's own engine for one turn.
 type lcppChat struct{}
 
-func (lcppChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
+func (lcppChat) Send(ctx context.Context, c *ChatConversation, prompt string) (_ string, err error) {
 	c.StartTurn()
 	model := strings.TrimSpace(chatModelFor(c, lcppKind))
 	call := usagex.Call{Kind: lcppKind, ModelReq: model} // usage ledger (ADR 0029 §3)
-	defer usagex.RecordCall(ctx, &call, time.Now())
+	// Until the call is tracked, every path but a policy refusal leaves its row here; once it is,
+	// the tracking's done records it.
+	started, tracked := time.Now(), false
+	defer func() {
+		if !tracked && !errors.Is(err, ErrRoutePolicy) {
+			usagex.RecordCall(ctx, &call, started)
+		}
+	}()
 
 	if model == "" {
 		// Unlike claude/codex/opencode, lcpp has no deployment-wide default to fall back to
@@ -74,8 +81,15 @@ func (lcppChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 	if !ok {
 		return "", errors.New("lcpp: no self-hosted chat engine is reachable")
 	}
-	// What served the call, as the engine seam resolved it (ADR 0138 D2, D5b).
+	// What served the call, as the engine seam resolved it (ADR 0138 D2, D5b), judged by the
+	// credential policy before it runs and tracked while it does (D12).
 	call.Route, call.Connection = conn.Route, conn.Binding
+	if err := routeChecked(lcppKind, conn.Route); err != nil {
+		return "", err
+	}
+	ctx, done := trackCall(ctx, &call, started)
+	tracked = true
+	defer done(&err)
 
 	turn, err := harness.NewClient(conn, model).Send(ctx, lcppMessages(c, prompt), nil)
 	if err != nil {

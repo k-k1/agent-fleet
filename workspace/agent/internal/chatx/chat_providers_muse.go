@@ -48,7 +48,7 @@ func museAvailable() bool {
 	return muse.Installed() && muse.HasCredential()
 }
 
-func (museChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
+func (museChat) Send(ctx context.Context, c *ChatConversation, prompt string) (_ string, err error) {
 	c.StartTurn()
 	model, err := museChatModel(c)
 	if err != nil {
@@ -59,7 +59,8 @@ func (museChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindMuse, model); policyErr != nil {
 		return "", policyErr
 	}
-	defer usagex.RecordCall(ctx, &call, time.Now())
+	ctx, done := trackCall(ctx, &call, time.Now())
+	defer done(&err)
 
 	// Clamps must be written before every exec, same as the managed driver's Resume, so a
 	// member who edits the file between turns does not run an unclamped assistant.

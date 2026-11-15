@@ -307,7 +307,7 @@ func HandleChatCompact(w http.ResponseWriter, r *http.Request) {
 		// Persist the resume handles the summary turn mutated (same as the send failure path).
 		c.UpdatedAt = NowMs()
 		_ = SaveConv(c)
-		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
+		writeChatErr(w, err)
 		return
 	}
 	c.UpdatedAt = NowMs()

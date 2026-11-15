@@ -33,6 +33,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routehealth"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -355,7 +356,7 @@ type claudeResult struct {
 	TotalCostUSD float64 `json:"total_cost_usd"`
 }
 
-func (ClaudeChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
+func (ClaudeChat) Send(ctx context.Context, c *ChatConversation, prompt string) (_ string, err error) {
 	c.StartTurn()
 	// Usage ledger (ADR 0029 §3): the record is deferred at the start of the call, so
 	// exactly one row is left whichever path is taken — success, an error result, a failed
@@ -365,7 +366,8 @@ func (ClaudeChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindClaude, ""); policyErr != nil {
 		return "", policyErr
 	}
-	defer usagex.RecordCall(ctx, &call, time.Now())
+	ctx, done := trackCall(ctx, &call, time.Now())
+	defer done(&err)
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", c.personaOf()}
 	args = append(args, "--model", chatModelFor(c, session.KindClaude))
@@ -464,7 +466,7 @@ type streamLine struct {
 	} `json:"event"`
 }
 
-func (ClaudeChat) SendStream(ctx context.Context, c *ChatConversation, prompt string, emit func(ChatStreamEvent)) (string, []chatStep, error) {
+func (ClaudeChat) SendStream(ctx context.Context, c *ChatConversation, prompt string, emit func(ChatStreamEvent)) (_ string, _ []chatStep, err error) {
 	c.StartTurn()
 	// Usage ledger (ADR 0029 §3) — as in Send, exactly one record on every path.
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
@@ -472,7 +474,8 @@ func (ClaudeChat) SendStream(ctx context.Context, c *ChatConversation, prompt st
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindClaude, ""); policyErr != nil {
 		return "", nil, policyErr
 	}
-	defer usagex.RecordCall(ctx, &call, time.Now())
+	ctx, done := trackCall(ctx, &call, time.Now())
+	defer done(&err)
 	// stream-json requires --verbose with -p; --include-partial-messages adds the
 	// per-token text_delta events we forward for live display.
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -611,7 +614,7 @@ func stderrOr(err error, stderr *bytes.Buffer) string {
 //	{"type":"turn.completed","usage":{…}} / {"type":"turn.failed","error":{…}}
 type codexChat struct{}
 
-func (codexChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
+func (codexChat) Send(ctx context.Context, c *ChatConversation, prompt string) (_ string, err error) {
 	c.StartTurn()
 	// Usage ledger (ADR 0029 §3). Measured: codex puts the model on no event at all, so it is
 	// requested only when -m was passed and degrades to default_unknown otherwise.
@@ -621,7 +624,8 @@ func (codexChat) Send(ctx context.Context, c *ChatConversation, prompt string) (
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindCodex, model); policyErr != nil {
 		return "", policyErr
 	}
-	defer usagex.RecordCall(ctx, &call, time.Now())
+	ctx, done := trackCall(ctx, &call, time.Now())
+	defer done(&err)
 	// The default read-only sandbox is exactly the chat contract (no file writes, no
 	// state mutation) — the claude side enforces the same via --disallowedTools. Global
 	// exec flags must precede the resume subcommand (verified live: resume rejects
@@ -811,7 +815,7 @@ func tomlString(s string) string {
 //	(step_start / step_finish / tool events interleave; every event carries sessionID)
 type opencodeChat struct{}
 
-func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
+func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string) (_ string, err error) {
 	c.StartTurn()
 	pinned := chatModelFor(c, session.KindOpencode)                   // a pin on another kind resolves via this CLI's config
 	call := usagex.Call{Kind: session.KindOpencode, ModelReq: pinned} // usage ledger (ADR 0029 §3)
@@ -827,7 +831,8 @@ func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrRoutePolicy, err)
 	}
-	defer usagex.RecordCall(ctx, &call, time.Now())
+	ctx, done := trackCall(ctx, &call, time.Now())
+	defer done(&err)
 	args := opencodeRunArgs()
 	if c.OpencodeSessionID != "" {
 		args = append(args, "--session", c.OpencodeSessionID)
@@ -1259,7 +1264,7 @@ func opencodeErrText(name, msg, ref string) string {
 // No usage events, so the context gauge stays empty (Context = nil).
 type agyChat struct{}
 
-func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
+func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (_ string, err error) {
 	c.StartTurn()
 	// Usage ledger (ADR 0029 §3): agy returns plain text only, so measured=none — the tokens
 	// are "not measured" rather than 0, and only the call count is recorded.
@@ -1268,7 +1273,8 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (st
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindAgy, ""); policyErr != nil {
 		return "", policyErr
 	}
-	defer usagex.RecordCall(ctx, &call, time.Now())
+	ctx, done := trackCall(ctx, &call, time.Now())
+	defer done(&err)
 	home, wd, err := chatAgyHome(c)
 	if err != nil {
 		// Never fall back to the real HOME: the MCP/permission config is global
@@ -1633,7 +1639,7 @@ type cursorResult struct {
 	} `json:"usage"`
 }
 
-func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
+func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) (_ string, err error) {
 	c.StartTurn()
 	// Usage ledger (ADR 0029 §3). Measured: cursor puts no model on its result, so this stops
 	// at requested. "auto" passes no --model, so the resolved model is unknown = default_unknown.
@@ -1646,7 +1652,8 @@ func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 	if pinned != "" && pinned != "auto" {
 		call.ModelReq = pinned
 	}
-	defer usagex.RecordCall(ctx, &call, time.Now())
+	ctx, done := trackCall(ctx, &call, time.Now())
+	defer done(&err)
 	args := cursorChatBaseArgs()
 	if m := pinned; m != "" && m != "auto" { // "auto" = cursor's default = no --model
 		args = append(args, "--model", m)
@@ -2374,6 +2381,10 @@ func oneShotRunOn(ctx context.Context, kind, feature string, tier OneShotTier, p
 			return "", "", "", policyErr
 		}
 	}
+	// A kind judged in its runner names its route there (routepolicy.CallFrom): until then the
+	// call counts as on a route a restriction does not allow.
+	ctx, done := trackRoute(ctx, call.Route, nil, time.Time{}) // the row is recorded above
+	defer done(&err)
 	out, e := r.runOneShot(ctx, &call, run)
 	return out, "", "", e
 }
@@ -2448,6 +2459,9 @@ func oneShotOnOpencode(ctx context.Context, call *usagex.Call, run oneShotRun) (
 	m, err := opencodeOneShotModel(call, selected, configured, kind, tier)
 	if err != nil {
 		return "", err
+	}
+	if t := routepolicy.CallFrom(ctx); t != nil {
+		t.SetRoute(call.Route)
 	}
 	if m != "" {
 		args = append(args, "--model", m)

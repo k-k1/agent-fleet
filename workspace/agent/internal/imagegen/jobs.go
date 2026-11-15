@@ -34,6 +34,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 )
 
 // The queue's own limits. 200 and 500 are ADR 0081's stated guesses (unresolved 6): the shared
@@ -548,7 +550,21 @@ func (q *jobQueue) run(j *jobRec) {
 		return
 	}
 	started := jobsNow()
-	res, err := prov.Generate(q.stop, req)
+	// Tracked while it runs (ADR 0138 D12): a tighter policy that forbids its route stops it, the
+	// engine is asked to drop the request as for a cancel, and nothing is recorded or stored.
+	gctx, tracked := routepolicy.Track(q.stop, launch.Route)
+	res, err := prov.Generate(gctx, req)
+	tracked.Done()
+	if routepolicy.Cancelled(gctx) {
+		q.mu.Lock()
+		upstream := j.upstream
+		q.mu.Unlock()
+		if upstream != "" {
+			_ = q.askProviderCancel(j.provider, upstream)
+		}
+		q.finish(j, nil, res.Warnings, policyCancelErr())
+		return
+	}
 	ok := err == nil && len(res.Images) > 0
 	// The ledger row is written on every path, including the failed one: an attempt that spent
 	// GPU time and produced nothing still consumed what the deployment pays for (ADR 0029 §3).

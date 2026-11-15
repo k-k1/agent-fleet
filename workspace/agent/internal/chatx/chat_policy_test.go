@@ -21,9 +21,15 @@ func useUtilityPolicy(t *testing.T, p routepolicy.Policy) *routepolicy.Store {
 	if _, err := s.Accept(p); err != nil {
 		t.Fatal(err)
 	}
+	// The listeners Accept started (the in-flight cancel among them) finish before the test goes
+	// on, so they act on what was running before, never on the call the test starts next.
+	routepolicy.WaitListeners()
 	old := routepolicy.Active
 	routepolicy.Active = func() *routepolicy.Store { return s }
-	t.Cleanup(func() { routepolicy.Active = old })
+	t.Cleanup(func() {
+		routepolicy.WaitListeners()
+		routepolicy.Active = old
+	})
 	return s
 }
 
