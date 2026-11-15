@@ -57,6 +57,9 @@ type MemoDelivery struct {
 	// a clean close until the Agent confirms the retire, RetiredAt is when it last did.
 	OverdueAt, RetiredAt string
 	RetirePending        bool
+	// RetireResult is how a pending retire ended: confirmed, released (a person started the
+	// session after the retire began), done, gone or fault.
+	RetireResult string
 	// TurnEndedAt is "" until the first turn of the delivery's session was seen to end. It and
 	// the two fields beside it are written once.
 	TurnOutcome, TurnEndedAt string
@@ -111,9 +114,9 @@ type MemoDeliveryStore interface {
 	// ListRetirePendingDeliveries returns the closed deliveries whose session still has to be
 	// retired, oldest first.
 	ListRetirePendingDeliveries(ctx context.Context) ([]MemoDelivery, error)
-	// FinishDeliveryRetire clears the pending retire of a closed delivery. confirmed says the
-	// Agent confirmed it (retired_at is set) rather than the retire being given up.
-	FinishDeliveryRetire(ctx context.Context, id, at string, confirmed bool) (bool, error)
+	// FinishDeliveryRetire clears the pending retire of a closed delivery and keeps result
+	// (confirmed, released, done, gone, fault). retired_at is set only for a confirmed one.
+	FinishDeliveryRetire(ctx context.Context, id, at, result string) (bool, error)
 }
 
 // MemoDeliveryTxOps are the delivery reads and writes a MemoTx may make, scoped to its
@@ -164,7 +167,7 @@ type MemoDeliveryTxOps interface {
 
 const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, session, message_ids, idle_ticks,
 	created_at, sent_at, opened_at, closed_at, updated_at,
-	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at,
+	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at, retire_result,
 	turn_outcome, turn_ms, turn_ended_at FROM memo_delivery`
 
 func scanMemoDelivery(row scanner) (MemoDelivery, error) {
@@ -173,7 +176,7 @@ func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	var reported, retire int
 	err := row.Scan(&d.ID, &d.MembershipID, &d.QueueID, &d.State, &d.Outcome, &d.Session, &ids, &d.IdleTicks,
 		&d.CreatedAt, &d.SentAt, &d.OpenedAt, &d.ClosedAt, &d.UpdatedAt,
-		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt,
+		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt, &d.RetireResult,
 		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt)
 	d.Reported, d.RetirePending = reported != 0, retire != 0
 	d.MessageIDs = []string{}
@@ -302,13 +305,13 @@ func (s *SQL) ListRetirePendingDeliveries(ctx context.Context) ([]MemoDelivery, 
 		ORDER BY closed_at, id`, DeliveryClosed))
 }
 
-func (s *SQL) FinishDeliveryRetire(ctx context.Context, id, at string, confirmed bool) (bool, error) {
+func (s *SQL) FinishDeliveryRetire(ctx context.Context, id, at, result string) (bool, error) {
 	retired := ""
-	if confirmed {
+	if result == "confirmed" {
 		retired = at
 	}
-	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET retire_pending=0, retired_at=?, updated_at=?
-		WHERE id=? AND retire_pending=1`, retired, at, id))
+	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET retire_pending=0, retired_at=?, retire_result=?, updated_at=?
+		WHERE id=? AND retire_pending=1`, retired, result, at, id))
 }
 
 func (t memoTx) SetDeliveryRetirePending(id string) error {

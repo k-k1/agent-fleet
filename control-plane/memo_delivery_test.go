@@ -97,6 +97,9 @@ type fakeQueueAgent struct {
 	retireStatus int
 	// retireCode is the error code of retireStatus's answer, "boom" when empty.
 	retireCode string
+	// retireRelease names a session a person started after the retire began: it and everything
+	// under it are left alone and answered released.
+	retireRelease string
 }
 
 func newFakeQueueAgent(t *testing.T) *fakeQueueAgent {
@@ -259,21 +262,49 @@ func (a *fakeQueueAgent) serveRetire(w http.ResponseWriter, name string) {
 		agentErr(w, http.StatusNotFound, "not_found")
 		return
 	}
+	if root := tree[0]; root["origin"] == "session" && root["originSession"] != nil && root["originSession"] != "" {
+		agentErr(w, http.StatusConflict, "retire_not_root")
+		return
+	}
 	fail := a.retireFail > 0
 	if fail {
 		a.retireFail--
 	}
+	released := map[string]bool{}
+	if a.retireRelease != "" {
+		var mark func(n string)
+		mark = func(n string) {
+			released[n] = true
+			for _, c := range a.rows {
+				if c["origin"] == "session" && c["originSession"] == n {
+					mark(c["name"].(string))
+				}
+			}
+		}
+		mark(a.retireRelease)
+	}
 	type rep struct {
-		Name    string   `json:"name"`
-		Stopped bool     `json:"stopped"`
-		Unended []string `json:"unended"`
+		Name            string   `json:"name"`
+		Ended           struct{} `json:"ended"`
+		ResumeCancelled bool     `json:"resumeCancelled"`
+		Stopped         bool     `json:"stopped"`
+		Released        bool     `json:"released"`
+		Running         bool     `json:"running"`
+		Unended         []string `json:"unended"`
 	}
 	out := []rep{}
+	complete := true
 	for _, r := range tree {
-		x := rep{Name: r["name"].(string), Stopped: true, Unended: []string{}}
-		if fail {
+		n := r["name"].(string)
+		x := rep{Name: n, Stopped: true, Unended: []string{}}
+		switch {
+		case released[n]:
+			x.Stopped, x.Released, x.Running = false, true, true
+			complete = false
+		case fail:
 			x.Stopped, x.Unended = false, []string{"stop: boom"}
-		} else {
+			complete = false
+		default:
 			r["alive"], r["state"] = false, ""
 			delete(r, "wakers")
 			delete(r, "wakersUnknown")
@@ -281,7 +312,7 @@ func (a *fakeQueueAgent) serveRetire(w http.ResponseWriter, name string) {
 		}
 		out = append(out, x)
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"sessions": out})
+	_ = json.NewEncoder(w).Encode(map[string]any{"sessions": out, "complete": complete})
 }
 
 func (a *fakeQueueAgent) retireCalls() int {

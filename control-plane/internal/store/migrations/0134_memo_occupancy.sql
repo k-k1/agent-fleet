@@ -11,6 +11,7 @@
 -- overdue_at is when the delivery passed its queue's max_task_hours and the member was told.
 -- retire_pending is 1 from a clean close until the Agent confirms that the session was retired,
 -- retired_at is when an Agent last confirmed a retire (cleared when progress is seen again).
+-- retire_result is how a pending retire ended (confirmed, released, done, gone, fault).
 -- turn_* copy how the first turn of the delivery's session ended, written once when it appears.
 -- memo_queue.max_task_hours is the queue's bound for overdue, 1 to 72, default 12.
 -- Forward compatible: columns are only added, with defaults that mean today's behaviour (nothing
@@ -27,6 +28,7 @@ ALTER TABLE memo_delivery ADD COLUMN reported INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE memo_delivery ADD COLUMN overdue_at TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_delivery ADD COLUMN retire_pending INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE memo_delivery ADD COLUMN retired_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE memo_delivery ADD COLUMN retire_result TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_delivery ADD COLUMN turn_outcome TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo_delivery ADD COLUMN turn_ms INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE memo_delivery ADD COLUMN turn_ended_at TEXT NOT NULL DEFAULT '';

@@ -524,24 +524,18 @@ func TestMemoOccupancyRetireNeverWakesAndAbortRetiresNothing(t *testing.T) {
 		if !e.delivery(d.ID).RetirePending || agent.retireCalls() == 0 {
 			t.Fatal("an error answer is not a confirmation")
 		}
-		// A session that came back to work (a watch fired again after the failed retire) is not
-		// given up on: it is skipped while it works and retired when it is idle again.
-		agent.setRow(d.Session, map[string]any{"alive": true, "state": "working", "progressAgeSec": 1})
-		before := agent.retireCalls()
-		e.settleNow(time.Now())
-		if got := e.delivery(d.ID); !got.RetirePending || agent.retireCalls() != before {
-			t.Fatalf("gave up or retired a working session: %+v", got)
-		}
+		// A session that came back to work (a watch fired again after the failed retire) is
+		// retired like any other: the Agent's word decides whether a person took it over.
 		agent.mu.Lock()
 		agent.retireStatus = 0
 		agent.mu.Unlock()
-		agent.setRow(d.Session, map[string]any{"state": "idle", "progressAgeSec": 0})
+		agent.setRow(d.Session, map[string]any{"alive": true, "state": "working", "progressAgeSec": 1})
 		e.settleNow(time.Now())
-		if got := e.delivery(d.ID); got.RetirePending || got.RetiredAt == "" {
-			t.Fatalf("not retired once idle: %+v", got)
+		if got := e.delivery(d.ID); got.RetirePending || got.RetiredAt == "" || got.RetireResult != "confirmed" {
+			t.Fatalf("a session that worked again was not retired: %+v", got)
 		}
 	})
-	// Past memoRetireGiveUp a pending retire is dropped.
+	// No time bound: days later the retire is still pending, and made when the Agent answers.
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		agent, d := e.openReported(nil)
 		agent.mu.Lock()
@@ -549,10 +543,48 @@ func TestMemoOccupancyRetireNeverWakesAndAbortRetiresNothing(t *testing.T) {
 		agent.mu.Unlock()
 		e.settleNow(time.Now())
 		e.settleNow(time.Now())
-		before := agent.retireCalls()
-		e.settleNow(time.Now().Add(memoRetireGiveUp + time.Hour))
-		if got := e.delivery(d.ID); got.RetirePending || got.RetiredAt != "" || agent.retireCalls() != before {
+		later := time.Now().Add(10 * 24 * time.Hour)
+		e.settleNow(later)
+		if got := e.delivery(d.ID); !got.RetirePending {
+			t.Fatalf("a pending retire was dropped by time: %+v", got)
+		}
+		agent.mu.Lock()
+		agent.retireStatus = 0
+		agent.mu.Unlock()
+		e.settleNow(later)
+		if got := e.delivery(d.ID); got.RetirePending || got.RetiredAt == "" {
 			t.Fatalf("%+v", got)
+		}
+	})
+}
+
+// An overdue retire decides on the row as it is when the report is kept, not on the copy the
+// tick began with: progress another Control Plane kept meanwhile, or a report overtaken by a
+// newer one, sends no retire.
+func TestMemoOccupancyOverdueRetireUsesTheFreshRow(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(map[string]any{"maxTaskHours": 1})
+		agent.setRow(d.Session, map[string]any{"wakers": map[string]any{"watches": 1, "timers": 0}})
+		later := time.Now().Add(3 * time.Hour)
+		stale := e.delivery(d.ID)
+		stale.OverdueAt = store.DeliveryTS(later)
+		views := map[string]*memoMemberView{}
+		r := e.runner()
+		v := r.view(context.Background(), views, e.members["a"])
+		// Another process, whose read was numbered before ours, kept fresh progress of a child.
+		g0 := v.gens[d.ID] - 1
+		observe(t, e.other, e, d.ID, store.DeliveryObservation{Gen: g0, HeldBy: store.HeldMachine, HeldSession: "c1",
+			Progress: true, ProgressAt: store.DeliveryTS(later)})
+		r.closeIfDoneReported(context.Background(), v, stale, later)
+		if agent.retireCalls() != 0 {
+			t.Fatal("retired on a stale ProgressSeenAt")
+		}
+		// A report overtaken by a newer one sends nothing either.
+		v2 := r.view(context.Background(), map[string]*memoMemberView{}, e.members["a"])
+		observe(t, e.other, e, d.ID, store.DeliveryObservation{Gen: v2.gens[d.ID] + 1, HeldBy: store.HeldWakers, HeldSession: d.Session})
+		r.closeIfDoneReported(context.Background(), v2, stale, later.Add(5*time.Hour))
+		if agent.retireCalls() != 0 {
+			t.Fatal("retired on a report a newer one overtook")
 		}
 	})
 }
@@ -678,6 +710,61 @@ func TestMemoOccupancyMaxTaskHoursSetting(t *testing.T) {
 		list = decode[memoQueuesWire](t, e.do("a", "GET", "/api/memo-queues", nil))
 		if list.Queues[0].MaxTaskHours != 48 {
 			t.Fatalf("%+v", list.Queues)
+		}
+	})
+}
+
+// The Agent's word decides what a retire came to. A root released to a person drops the pending
+// retire and says why. A released member below the root ends the repeats once everything else is
+// stopped. A 409 retire_not_root is a fault, logged and not repeated. A cancelled wait (503) and
+// an incomplete answer without a release are repeated.
+func TestMemoOccupancyRetireAnswers(t *testing.T) {
+	type tc struct {
+		setup  func(a *fakeQueueAgent, root string)
+		result string
+		calls  int // retire calls over six more ticks
+	}
+	cases := map[string]tc{
+		"root released": {func(a *fakeQueueAgent, root string) { a.retireRelease = root }, "released", 1},
+		"child released": {func(a *fakeQueueAgent, root string) {
+			a.rows = append(a.rows, map[string]any{"name": "c1", "kind": "claude", "alive": true, "state": "idle",
+				"origin": "session", "originSession": root})
+			a.retireRelease = "c1"
+		}, "done", 1},
+		"not a root": {func(a *fakeQueueAgent, root string) {
+			a.rows[0]["origin"], a.rows[0]["originSession"] = "session", "someone"
+		}, "fault", 1},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+				agent, d := e.openReported(nil)
+				agent.mu.Lock()
+				c.setup(agent, d.Session)
+				agent.mu.Unlock()
+				for i := 0; i < 7; i++ {
+					e.settleNow(time.Now())
+				}
+				got := e.delivery(d.ID)
+				if got.RetirePending || got.RetireResult != c.result || got.RetiredAt != "" || agent.retireCalls() != c.calls {
+					t.Fatalf("%s: calls %d, %+v", name, agent.retireCalls(), got)
+				}
+				if dto := memoDeliveryToDTO(got); dto.Retire != c.result {
+					t.Fatalf("dto retire %q", dto.Retire)
+				}
+			})
+		})
+	}
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.mu.Lock()
+		agent.retireStatus, agent.retireCode = http.StatusServiceUnavailable, "retire_wait_cancelled"
+		agent.mu.Unlock()
+		for i := 0; i < 4; i++ {
+			e.settleNow(time.Now())
+		}
+		if got := e.delivery(d.ID); !got.RetirePending || agent.retireCalls() < 2 {
+			t.Fatalf("a cancelled wait must repeat: calls %d, %+v", agent.retireCalls(), got)
 		}
 	})
 }

@@ -343,12 +343,11 @@ disables.
   **Closing stops.** The clean close sets `retire_pending` in the same transaction. Each
   tick then calls `POST /sessions/{name}/retire` for the closed deliveries that have it,
   while their workspace is running and answers with `queueReport`, and clears it when the
-  Agent confirms (every session of the answer stopped, `unended` empty; a 404 `not_found`
-  counts: nothing is left). It never wakes a stopped workspace, and a repeat does no harm.
+  Agent confirms (every session of the answer stopped, `unended` empty; a 404 is never one). It never wakes a stopped workspace, and a repeat does no harm.
   While a machine works in the tree again or a person is asked something the retire waits
   for a later tick, and is not given up: a watch that fired again after a failed retire
   looks the same. It ends on the Agent's confirmation, when a successful report no longer
-  lists the session (a 404 from the route is not a confirmation), or after 24 hours. An `aborted` close retires nothing.
+  lists the session (a 404 from the route is not a confirmation). No time bound ends it. An `aborted` close retires nothing.
 
   **Overdue.** A delivery open longer than its queue's `maxTaskHours` (1–72, default 12)
   is marked `overdue_at` and the member gets one notification (kind
