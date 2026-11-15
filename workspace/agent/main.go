@@ -92,6 +92,9 @@ func serve() {
 		log.Printf("aws: workload credentials withheld from sessions (%s unset, IMDS disabled; %s=1 keeps them)",
 			strings.Join(removed, ", "), awsx.WorkloadOptIn)
 	}
+	// The credential policy's bridge token leaves the environment here too, for the same reason,
+	// and the start environment's policy is held before any create can ask (ADR 0138 D12).
+	routepolicy.Shared()
 
 	// Take the listening socket BEFORE any of the boot work below, and die if it is busy.
 	// Every step from here to Serve mutates container-wide state — the credential store, the

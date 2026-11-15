@@ -3,6 +3,7 @@ package routepolicysrv
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -520,4 +521,31 @@ func slicesContains(l []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// layersFailStore fails the policy read, as a database outage would.
+type layersFailStore struct{ store.Store }
+
+func (layersFailStore) GetRoutePolicyLayers(context.Context, string) (store.RoutePolicyLayers, error) {
+	return store.RoutePolicyLayers{}, errors.New("database unavailable")
+}
+
+// When the policy cannot be computed at a start, a restricting ceiling still reaches the Agent as
+// the unknown marker (it then allows nothing until it pulls), and with no ceiling nothing is sent.
+func TestPolicyEnvWhenThePolicyCannotBeRead(t *testing.T) {
+	st, _, tn := routePolicyFixture(t, "classes=provided")
+	if env := PolicyEnv(context.Background(), layersFailStore{st}, tn.ID); len(env) != 1 || env[0] != EnvPolicy+`={"unknown":true}` {
+		t.Errorf("restricting ceiling, unreadable policy: %v", env)
+	}
+	st2, _, tn2 := routePolicyFixture(t, "")
+	if env := PolicyEnv(context.Background(), layersFailStore{st2}, tn2.ID); len(env) != 0 {
+		t.Errorf("no ceiling, unreadable policy: %v, want nothing", env)
+	}
+	old := nowUnix
+	t.Cleanup(func() { nowUnix = old })
+	nowUnix = func() int64 { return 1_800_000_000 }
+	env := PolicyEnv(context.Background(), st2, tn2.ID)
+	if len(env) != 1 || !strings.Contains(env[0], `"issuedAt":1800000000`) {
+		t.Errorf("a computed start policy carries when it was issued: %v", env)
+	}
 }

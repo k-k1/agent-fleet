@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
@@ -30,11 +32,27 @@ const bridgePath = "/internal/route-policy"
 // the policy): there is then no policy to hold, which is a normal state.
 var ErrBridgeOff = errors.New("the credential policy is not distributed in this deployment")
 
-// Fetch asks the CP once. An answer that is not a policy (an error page, a body without the
-// allowed list) is an error, never an empty policy.
+var (
+	tokenOnce sync.Once
+	token     string
+)
+
+// captureToken takes the bridge token out of the environment, once: it is the Agent's own
+// credential and no CLI it starts has a use for it, so it leaves os.Environ before any child can
+// inherit it (Managed runtimes and Terminal panes alike start from that environment).
+func captureToken() string {
+	tokenOnce.Do(func() {
+		token = os.Getenv(EnvToken)
+		_ = os.Unsetenv(EnvToken)
+	})
+	return token
+}
+
+// Fetch asks the CP once. An answer that is not a complete policy is an error, never an empty
+// policy.
 func Fetch(ctx context.Context) (Policy, error) {
-	base, token := cpurl.Request(), os.Getenv(EnvToken)
-	if base == "" || token == "" {
+	base, tok := cpurl.Request(), captureToken()
+	if base == "" || tok == "" {
 		return Policy{}, ErrBridgeOff
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -43,7 +61,7 @@ func Fetch(ctx context.Context) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+tok)
 	resp, err := redirectpolicy.Client(0).Do(req)
 	if err != nil {
 		return Policy{}, err
@@ -56,37 +74,84 @@ func Fetch(ctx context.Context) (Policy, error) {
 	return parse(body)
 }
 
+// parse reads a policy. Every field is required, the two flags included: a missing or null
+// "restricted" read as false would let a partial answer replace a restricting policy.
 func parse(b []byte) (Policy, error) {
 	var wire struct {
 		Revision          *int64    `json:"revision"`
-		Restricted        bool      `json:"restricted"`
-		CeilingRestricted bool      `json:"ceilingRestricted"`
+		Restricted        *bool     `json:"restricted"`
+		CeilingRestricted *bool     `json:"ceilingRestricted"`
 		Allowed           *[]string `json:"allowed"`
 	}
 	if err := json.Unmarshal(b, &wire); err != nil {
 		return Policy{}, fmt.Errorf("CP route policy does not parse: %w", err)
 	}
-	if wire.Revision == nil || wire.Allowed == nil || *wire.Revision < 0 {
-		return Policy{}, errors.New("CP route policy has no revision or no allowed list")
+	if wire.Revision == nil || wire.Restricted == nil || wire.CeilingRestricted == nil || wire.Allowed == nil || *wire.Revision < 0 {
+		return Policy{}, errors.New("CP route policy is incomplete (revision, restricted, ceilingRestricted and allowed are all required)")
 	}
-	return Policy{Revision: *wire.Revision, Restricted: wire.Restricted, CeilingRestricted: wire.CeilingRestricted, Allowed: *wire.Allowed}, nil
+	return Policy{Revision: *wire.Revision, Restricted: *wire.Restricted, CeilingRestricted: *wire.CeilingRestricted, Allowed: *wire.Allowed}, nil
 }
 
-// FromEnv is the policy the CP put in the start environment, ok=false when there is none.
-func FromEnv() (Policy, bool) {
+// startEnv is the start environment's envelope: the policy, when the CP issued it, or that it
+// could not compute it under a restricting ceiling.
+type startEnv struct {
+	policy   Policy
+	issuedAt int64
+	unknown  bool
+}
+
+func readStartEnv() (startEnv, bool) {
 	v := strings.TrimSpace(os.Getenv(EnvPolicy))
 	if v == "" {
-		return Policy{}, false
+		return startEnv{}, false
+	}
+	var meta struct {
+		IssuedAt *int64 `json:"issuedAt"`
+		Unknown  bool   `json:"unknown"`
+	}
+	if err := json.Unmarshal([]byte(v), &meta); err != nil {
+		log.Printf("route policy: %s does not parse: %v", EnvPolicy, err)
+		return startEnv{}, false
+	}
+	if meta.Unknown {
+		return startEnv{unknown: true}, true
 	}
 	p, err := parse([]byte(v))
-	if err != nil {
-		log.Printf("route policy: %s: %v", EnvPolicy, err)
-		return Policy{}, false
+	if err != nil || meta.IssuedAt == nil {
+		log.Printf("route policy: %s is incomplete: %v", EnvPolicy, errOr(err, "no issuedAt"))
+		return startEnv{}, false
 	}
-	return p, true
+	return startEnv{policy: p, issuedAt: *meta.IssuedAt}, true
 }
 
-// Sync takes one answer into the store, logging what changed. It is the puller's step.
+func errOr(err error, alt string) string {
+	if err != nil {
+		return err.Error()
+	}
+	return alt
+}
+
+// seedFromEnv takes the start environment into s: the policy, confirmed only up to when the CP
+// issued it, or a placeholder when the CP could not compute it under a restricting ceiling.
+func (s *Store) seedFromEnv() {
+	e, ok := readStartEnv()
+	switch {
+	case !ok:
+	case e.unknown:
+		s.SeedUnknown()
+		log.Printf("route policy (start): the Control Plane could not compute it under a restricting ceiling; %s", s.State().Describe())
+	default:
+		changed, err := s.Seed(e.policy, e.issuedAt)
+		if err != nil {
+			log.Printf("route policy (start): %v", err)
+		}
+		if changed {
+			log.Printf("route policy (start): %s", s.State().Describe())
+		}
+	}
+}
+
+// Sync takes one live answer into the store, logging what changed. It is the puller's step.
 func (s *Store) Sync(ctx context.Context, why string) error {
 	p, err := Fetch(ctx)
 	if err != nil {
@@ -99,38 +164,66 @@ func (s *Store) Sync(ctx context.Context, why string) error {
 	return err
 }
 
-// Run takes the start environment's policy, then pulls now and every PullInterval until ctx ends.
-// The first pull is not waited for by the caller: boot must not wait on the CP.
-func (s *Store) Run(ctx context.Context) {
-	if p, ok := FromEnv(); ok {
-		if changed, err := s.Accept(p); err != nil {
-			log.Printf("route policy: keeping the start policy: %v", err)
-		} else if changed {
-			log.Printf("route policy (start): %s", s.State().Describe())
-		}
+// Pull scheduling. A healthy Agent pulls every 20 to 30 s (jittered, so a fleet restarted
+// together does not stay in step), which keeps D12's "at least every 30 seconds". After a
+// failure it backs off, doubling from 5 s to at most 2 minutes, jittered too, so an outage or a
+// recovery is not met by every Agent at once.
+const (
+	healthyMin = 20 * time.Second
+	healthyMax = 30 * time.Second
+	backoffMin = 5 * time.Second
+	backoffMax = 2 * time.Minute
+	firstMax   = 5 * time.Second
+)
+
+// nextDelay is the wait before the next pull after failures consecutive failures; rnd is in [0,1).
+func nextDelay(failures int, rnd float64) time.Duration {
+	if failures == 0 {
+		return healthyMin + time.Duration(rnd*float64(healthyMax-healthyMin))
 	}
-	t := time.NewTicker(PullInterval)
-	defer t.Stop()
-	failing := false
+	d := backoffMin
+	for i := 1; i < failures && d < backoffMax; i++ {
+		d *= 2
+	}
+	d = min(d, backoffMax)
+	// Equal jitter: between half and all of the backoff.
+	return d/2 + time.Duration(rnd*float64(d/2))
+}
+
+// Run pulls after a short jittered wait, then on the schedule above, until ctx ends. Boot does not
+// wait on it: the start environment was taken when the store was opened (Shared).
+func (s *Store) Run(ctx context.Context) {
+	s.run(ctx, rand.Float64, func(d time.Duration) <-chan time.Time { return time.After(d) })
+}
+
+func (s *Store) run(ctx context.Context, rnd func() float64, after func(time.Duration) <-chan time.Time) {
+	wait := time.Duration(rnd() * float64(firstMax))
+	failures := 0
 	for {
-		// Logged on the transitions only: a pull every 30 s through a long outage is one line
-		// when it starts and one when it ends.
-		switch err := s.Sync(ctx, "pull"); {
-		case errors.Is(err, ErrBridgeOff):
-			return
-		case err != nil && ctx.Err() == nil:
-			if !failing {
-				log.Printf("route policy pull: %v (keeping %s)", err, s.State().Describe())
-			}
-			failing = true
-		case err == nil && failing:
-			log.Printf("route policy pull: the Control Plane answers again (%s)", s.State().Describe())
-			failing = false
-		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-after(wait):
 		}
+		// Logged on the transitions only: a long outage is one line when it starts and one when
+		// it ends.
+		switch err := s.Sync(ctx, "pull"); {
+		case errors.Is(err, ErrBridgeOff):
+			return
+		case err != nil:
+			if ctx.Err() != nil {
+				return
+			}
+			if failures == 0 {
+				log.Printf("route policy pull: %v (keeping %s)", err, s.State().Describe())
+			}
+			failures++
+		default:
+			if failures > 0 {
+				log.Printf("route policy pull: the Control Plane answers again (%s)", s.State().Describe())
+			}
+			failures = 0
+		}
+		wait = nextDelay(failures, rnd())
 	}
 }

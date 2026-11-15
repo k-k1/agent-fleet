@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -40,6 +41,17 @@ type MemberPolicy struct {
 	Restricted        bool     `json:"restricted"`
 	CeilingRestricted bool     `json:"ceilingRestricted"`
 	Allowed           []string `json:"allowed"`
+	// IssuedAt is when the CP computed the answer (Unix seconds). The Agent counts a start
+	// environment as confirmation only up to it, so an old environment re-read by a restarted
+	// Agent confirms nothing.
+	IssuedAt int64 `json:"issuedAt"`
+}
+
+// unknownPolicy is the start environment when the policy cannot be computed now while this CP's
+// ceiling restricts: the Agent then holds a placeholder that allows nothing until it pulls an
+// answer, rather than starting with no policy at all.
+type unknownPolicy struct {
+	Unknown bool `json:"unknown"`
 }
 
 // MemberPolicyOf is the effective policy of a member of tenantID.
@@ -48,7 +60,8 @@ func MemberPolicyOf(ctx context.Context, st store.Store, tenantID string) (Membe
 	if err != nil {
 		return MemberPolicy{}, err
 	}
-	out := MemberPolicy{Revision: v.Revision, Restricted: v.Restricted, CeilingRestricted: v.Ceiling.Rule.Restricted(), Allowed: []string{}}
+	out := MemberPolicy{Revision: v.Revision, Restricted: v.Restricted, CeilingRestricted: v.Ceiling.Rule.Restricted(), Allowed: []string{},
+		IssuedAt: nowUnix()}
 	for _, r := range v.Routes {
 		if r.Allowed {
 			out.Allowed = append(out.Allowed, r.ID)
@@ -57,14 +70,25 @@ func MemberPolicyOf(ctx context.Context, st store.Store, tenantID string) (Membe
 	return out, nil
 }
 
-// PolicyEnv is the AF_ROUTE_POLICY entry for a Workspace start, or nothing when it cannot be
-// computed now: the Agent then pulls it, and until it holds one it judges by what it held before.
+// nowUnix is the clock IssuedAt reads. A var for tests.
+var nowUnix = func() int64 { return time.Now().Unix() }
+
+// PolicyEnv is the AF_ROUTE_POLICY entry for a Workspace start. When the policy cannot be computed
+// now, it is the unknown marker if this CP's ceiling restricts (the Agent then allows nothing until
+// it pulls an answer), and nothing otherwise: the Agent then pulls, and until it holds an answer
+// it judges by what it held before, which for a member nobody is known to restrict is nothing.
 func PolicyEnv(ctx context.Context, st store.Store, tenantID string) []string {
+	var v any
 	p, err := MemberPolicyOf(ctx, st, tenantID)
-	if err != nil {
+	switch {
+	case err == nil:
+		v = p
+	case currentCeiling().rule.Restricted():
+		v = unknownPolicy{Unknown: true}
+	default:
 		return nil
 	}
-	b, err := json.Marshal(p)
+	b, err := json.Marshal(v)
 	if err != nil {
 		return nil
 	}
