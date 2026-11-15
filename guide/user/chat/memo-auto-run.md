@@ -113,6 +113,8 @@ Memos waiting for approval gather in a card for each session (or `/mcp` connecti
 
 ![The "Run history" screen: "2 waiting to run", "Refresh" and "Run now" on top, with the runs below. A running row shows "Started by itself" and "Not finished: working", and a finished row shows "First turn: finished"](../../assets/chatpages-autorun-history-en-light.webp)
 
+When memos are waiting to run and nothing starts, the top may show a line that says why, or a notice. They are the same as under the category's header ([Nothing starts by itself](#nothing-starts-by-itself)).
+
 | Shown | Meaning |
 |---|---|
 | State | The state of the run (next table) |
@@ -123,7 +125,7 @@ Memos waiting for approval gather in a card for each session (or `/mcp` connecti
 | Started by itself, Started with Run now | How the run began |
 | Not finished | Why the run is still open (the table below) |
 | First turn | How the session's first turn ended: finished, failed, stopped or ended |
-| You took over this session | You started the session again after the run ended, so it is not stopped automatically |
+| You took over this session | You acted on the session after the run was seen to have ended, so it was not stopped and keeps running ([When a run ends, its session is stopped](#when-a-run-ends-its-session-is-stopped)) |
 
 The states of a run:
 
@@ -170,7 +172,10 @@ A run stays open until its session has nothing left to wait for. While any of th
 The session of a run that is "Done" is stopped. So are the sessions it started, and any watch or timer that would have started it again.
 
 - Input sent to a stopped session is refused with "This session was stopped after its auto-run finished. Start the session first, then send again." To carry on, press "**Resume and continue**" ([Stop and resume a session](../sessions/stop-resume.md))
-- If you start the session again before it is stopped, it is left alone, and the run history says "You took over this session"
+- The session is not stopped when you act on it after the run was seen to have ended and before it is stopped. It keeps running, and the run's row in the run history says "You took over this session"
+  - An act is starting the session, typing into its terminal, sending it a message, or answering its question, permission or plan
+  - An act while the run is still working does not count: the session is stopped when the run ends
+  - After you take it over, auto-run does nothing more with it. Stop it yourself when you no longer need it ([Stop and resume a session](../sessions/stop-resume.md))
 - An "Overdue" run whose sessions have shown no sign of work for an hour is stopped, including a session that was waiting for you. The run then becomes "Done"
 - Archiving or deleting the session ends the run too, as "Stopped"
 
@@ -195,7 +200,10 @@ The session's first prompt is put together in this order.
 When the first turns of the last two runs both fail, the category **pauses** auto-run.
 
 - A failure is a first turn that failed or was stopped, or one that ended within a minute without finishing cleanly
-- The category's header shows "**Paused**", and the top of the run history says "Auto-run is paused: the first turns of the last two runs failed, so no run starts by itself. “Run now” still works."
+- The category's header shows "**Paused**", and under it and at the top of the run history it says "Auto-run is paused: the first turns of the last two runs failed, so no run starts by itself. “Run now” still works."
+
+![A paused category: "Auto-run" and "Paused" side by side on its header, with the pause notice and the "Resume" button below](../../assets/chatpages-autorun-paused-en-light.webp)
+
 - Only runs that start by themselves stop. "Run now" still works
 - Fix the cause and press "**Resume**". Counting failures starts again from then
 
@@ -227,22 +235,49 @@ They arrive in the notification center. In **⚙ Settings → "Notifications"**,
 
 ### Nothing starts by itself
 
-Check these from the top.
+When memos are waiting to run and nothing starts, a line or a notice under the category's header may say why (the notice is for the pause or a workspace to restart). The same can show at the top of the run history. Read them first.
 
-| Where you look | Cause and what to do |
+![The line under a category's header: "It is outside the time set for auto-run. The next run can start at 11/16, 22:00."](../../assets/chatpages-autorun-waiting-en-light.webp)
+
+- The line shows only while at least one memo is waiting to run. Memos that wait for approval do not count
+- When several reasons hold, one line shows. When it is gone, the line may change to the next reason
+- The time in "at …" is when it can start by itself. Some lines have no time
+
+| The line on screen | What it means and what to do |
 |---|---|
-| The settings say "This organization has not allowed new auto-run settings yet. …" | A tenant administrator has not allowed it. Nothing starts until they do, and "Run now" does not work either ([Allow memo auto-run](../../admin/defaults/memo-auto-run.md)) |
-| The category's header shows "Auto-run off" | "Run by itself" is off. Turn it on and save |
-| The top of the run history says "This workspace has to be restarted to update it before runs can start by themselves. …" | The workspace is still on the version from before the update. Restart it, and runs can start by themselves. Until then only "Run now" works |
-| Fewer memos are waiting to run than the number that starts a run | "Notes waiting to run" has not been reached, or a minute has not passed since the last new memo. Check "N waiting to run" |
-| It is outside the time window | With "In a time window", runs start only for the length of the window from its start. Check the cron expression and the time zone |
-| Some memos are still "Waits for approval" | They are not counted as waiting to run. Approve them on the card |
+| Auto-run is turned off for your organization, so nothing starts by itself. | A tenant administrator has not allowed it. "Run now" does not work either. Ask them to allow it ([Allow memo auto-run](../../admin/defaults/memo-auto-run.md)) |
+| Auto-run is off for this category. The memos wait until you press “Run now”. | "Run by itself" is off. To start by itself, turn it on in the settings and save |
+| It is outside the time set for auto-run, so nothing starts by itself.<br>It is outside the time set for auto-run. The next run can start at *time*. | Wait for the time window to begin. It is set by the start (cron expression), the length and the time zone in the settings. To go sooner, press "Run now" |
+| Waiting for more memos: *n* of *m* so far. Runs start once *m* are waiting. | The number of memos waiting to run has not reached "Notes waiting to run". Add memos, or press "Run now" |
+| A memo was just added. Runs start once nothing new has come in for a minute.<br>A memo was just added. Runs start once nothing new has come in for a minute, at *time*. | Wait. While memos keep coming, the minute starts again |
+| The number of runs allowed per day has been reached, so nothing starts by itself.<br>The number of runs allowed per day has been reached. The next run can start at *time*. | The runs of the last 24 hours have reached "Runs per day". Wait for the time, or raise the number. "Run now" still works |
+| The last run could not be sent, so auto-run is waiting a while before it tries again.<br>The last run could not be sent, so auto-run is waiting until *time* before it tries again. | Wait, and it tries again by itself. The wait begins at 5 minutes, doubles with each failure in a row, and is at most 4 hours. If it goes on, check the run history for the run that ended as "Not sent" |
+| A session is waiting for the *agent* usage limit to lift, so no new run starts. | One of your runs, in any category, waits for a usage limit of the same agent. It starts when the limit lifts |
+| This category is already running as many memos at once as it may. The next one starts when a run finishes. | Open runs have reached "Sessions at the same time". Wait for one to end, or raise the number (at most 6) |
+| You already have the most runs going at once across your categories. The next one starts when a run finishes. | You have 4 open runs across all categories. Wait for one to end |
+
+*agent* is the name of the agent.
+
+#### When another notice shows
+
+The pause and the restart each have a notice of their own. A line for another reason can show beside it.
+
+| The notice on screen | What it means and what to do |
+|---|---|
+| Auto-run is paused: the first turns of the last two runs failed, so no run starts by itself. “Run now” still works. | The last two runs failed. Fix the cause and press "Resume" ([Pause and resume](#pause-and-resume)) |
+| This workspace has to be restarted to update it before runs can start by themselves. “Run now” still works. | The workspace is still on the version from before the update. Restart it, and runs can start by themselves. Until then only "Run now" works. It shows only while "Run by itself" is on |
+
+![The notice for a workspace that has to be restarted: under the header, it says the workspace has to be restarted to update it, and that "Run now" still works](../../assets/chatpages-autorun-norestart-en-light.webp)
+
+#### When there is no line
+
+In these cases the cause has no line of its own. When another reason from the table also holds, that line shows; when none does, no line shows.
+
+| Situation | What to do |
+|---|---|
+| Only "Waits for approval" memos are there | They do not count as waiting to run. Approve them on the card |
 | A memo cannot be sent as it is | The next memo to run has text over 64 KB, more than 20 images, or an attachment path that cannot be used. A run by itself does not start while it is next. Press "Run now" and it says so ("A memo in this category cannot be sent to a session as it is (too long, too many attachments, or an unusable attachment path). Edit the memo and try again."). Edit that memo |
-| The day's runs are used up | The runs of the last 24 hours have reached "Runs per day". They start again as the old ones pass 24 hours. Raise the number, or use "Run now" |
-| The header shows "Paused" | The last two runs failed. Fix the cause and press "Resume" |
-| The latest run ended as "Not sent" | The workspace could not be started or the agent did not accept it. The memos are back to waiting to run, and the category waits before it tries again. The wait begins at 5 minutes, doubles with each failure in a row, and is at most 4 hours |
-| A run of the same agent waits for a usage limit | While any of your runs, in any category, waits for a usage limit of the same agent, nothing starts by itself. It starts when the limit lifts |
-| The number of open runs is reached | Open runs have reached "Sessions at the same time", or 4 across all categories. Wait for one to end, or raise the number |
+| You are at your session limit | A run starts as one session, so at the limit it is not sent and the memos keep waiting to run. Stop or clear the sessions you do not use |
 
 ### A run stays open
 

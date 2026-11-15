@@ -225,7 +225,7 @@ const exact = {
   "/api/memos": () =>
     process.env.SHOT_AUTORUN_GUIDE ? fx.autorunMemos(LOCALE) : process.env.SHOT_CHATPAGES_GUIDE ? fx.chatPagesMemos(LOCALE) : fx.memos(LOCALE),
   "/api/memo-categories": () => (process.env.SHOT_AUTORUN_GUIDE ? fx.autorunCategories(LOCALE) : fx.memoCategories(LOCALE)),
-  "/api/memo-queues": () => (process.env.SHOT_AUTORUN_GUIDE ? fx.autorunQueues(LOCALE) : { tenantEnabled: false, queues: [] }),
+  "/api/memo-queues": () => (process.env.SHOT_AUTORUN_GUIDE ? fx.autorunQueues(LOCALE, ["waiting", "paused", "norep"].includes(process.env.SHOT_AUTORUN_GUIDE) ? process.env.SHOT_AUTORUN_GUIDE : "") : { tenantEnabled: false, queues: [] }),
   "/api/schedules": () =>
     process.env.SHOT_FLEET_GUIDE ? fx.fleetGuideSchedules(LOCALE) : fx.schedules(LOCALE),
   // agentMemory on: the memory scene's status header reads it, and nothing else on screen changes
@@ -321,6 +321,7 @@ const exact = {
         "/api/admin/mcp-servers": () => ({ servers: [] }),
         "/api/admin/tenants/demo/external-memory": () => ({ enabled: true }),
         "/api/admin/tenants/demo/watch-sources": () => ({ enabled: false }),
+        "/api/admin/tenants/demo/memo-queues": () => ({ enabled: false }),
       }
     : {}),
   // Admin › Inference engines for the operate engine pages (SHOT_OPERATE_ENGINES): a deployment

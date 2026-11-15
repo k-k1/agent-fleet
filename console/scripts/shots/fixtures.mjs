@@ -2926,8 +2926,30 @@ export function autorunCategories(locale) {
     { id: "k2", repo: "payments-api", name: ja ? "返金" : "Refunds", position: 2, createdAt: ago(9000) },
   ];
 }
-export function autorunQueues(locale) {
+// variant: "" the plain category; "waiting" outside its time window with the next start; "paused" after
+// two failed runs; "norep" with a workspace whose Agent is too old to report.
+export function autorunQueues(locale, variant = "") {
   const ja = locale === "ja";
+  const q = autorunQueuesBase(ja);
+  const row = q.queues[0];
+  if (variant === "waiting") {
+    // The next 22:00 in Asia/Tokyo (13:00 UTC) after now, the way the Control Plane's `until` is.
+    const next = new Date(NOW);
+    next.setUTCHours(13, 0, 0, 0);
+    if (next <= NOW) next.setUTCDate(next.getUTCDate() + 1);
+    row.waiting = { reason: "window_closed", until: next.toISOString() };
+  } else if (variant === "paused") {
+    row.paused = true;
+    row.pausedAt = ago(50);
+    row.pausedReason = "the first turns of the last two runs failed";
+    row.waiting = { reason: "paused" };
+  } else if (variant === "norep") {
+    row.noReportAt = ago(90);
+    row.waiting = { reason: "no_report" };
+  }
+  return q;
+}
+function autorunQueuesBase(ja) {
   return {
     tenantEnabled: true,
     queues: [

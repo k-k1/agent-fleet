@@ -163,8 +163,11 @@ The pill and its detail lines can also show:
 | Paused | Schedule row | A paused schedule ([Run at a set time](../user/fleet/schedules.md)) |
 | Auto-run · Auto-run off | Memo queue, category header | The category has auto-run settings. "Auto-run off" means "Run by itself" is off ([Run memos automatically](../user/chat/memo-auto-run.md)) |
 | Paused | Memo queue, category header | Auto-run stopped starting runs by itself after two failed runs. "Resume" lifts it ([Run memos automatically](../user/chat/memo-auto-run.md#pause-and-resume)) |
+| "It is outside the time set for auto-run. …", "Waiting for more memos: …" and the other lines that say why nothing starts | Memo queue, under the category header and at the top of the run history | Why memos waiting to run do not start by themselves, and what to do ([Run memos automatically](../user/chat/memo-auto-run.md#nothing-starts-by-itself)) |
+| This workspace has to be restarted to update it before runs can start by themselves. … | Memo queue, under the category header and at the top of the run history | The workspace is still on the version from before the update. Restarting it lets runs start by themselves. "Run now" works ([Run memos automatically](../user/chat/memo-auto-run.md#when-another-notice-shows)) |
 | Waits for approval · Waiting to run · Starting · Sent · Needs a look | Memo row in an auto-run category | The state of the memo ([Run memos automatically](../user/chat/memo-auto-run.md#read-the-run-history)) |
 | Starting · Running · Done · Stopped · Needs a look · Not sent · Overdue | Run history of a category | The state of a run, and whether it is overdue ([Run memos automatically](../user/chat/memo-auto-run.md#read-the-run-history)) |
+| You took over this session | Row in a category's run history | You acted on the session after the run was seen to have ended, so it was not stopped and keeps running ([Run memos automatically](../user/chat/memo-auto-run.md#when-a-run-ends-its-session-is-stopped)) |
 | Safe · Review · Keep | Cleanup screen | Whether it is safe to clear away ([Clear away finished sessions](../user/sessions/cleanup.md#tidy-up-in-bulk-cleanup)) |
 
 ### Where a prompt came from

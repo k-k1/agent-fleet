@@ -36,6 +36,8 @@ Workspaces need the updated Agent as well. A workspace picks it up when it is re
 1. Open **Operations** → "**Memo auto-run**" in Tenant settings
 2. Press "**Allow**" or "**Block**". It is saved when you press it
 
+![The "Memo auto-run" screen: under the explanation, the "Allow" and "Block" switch with the initial "Block" selected, and the note for the blocked state below it](../../assets/admin-autorun-switch-en-light.webp)
+
 Each switch is recorded in the audit log as `tenant.memo_queues`, with `enabled=true` or `enabled=false` ([Read the audit log](../audit.md)).
 Only tenant administrators and the deployment administrator can switch it.
 
