@@ -112,12 +112,16 @@ func Fetch(ctx context.Context) (Policy, error) {
 
 // parse reads a policy. Every field is required, the two flags included: a missing or null
 // "restricted" read as false would let a partial answer replace a restricting policy.
+// The approved self-hosted endpoints and the routes allowed on them are optional: the CP sends them
+// only under a restriction with an approved host (ADR 0138 §2), and their absence approves none.
 func parse(b []byte) (Policy, error) {
 	var wire struct {
 		Revision          *int64    `json:"revision"`
 		Restricted        *bool     `json:"restricted"`
 		CeilingRestricted *bool     `json:"ceilingRestricted"`
 		Allowed           *[]string `json:"allowed"`
+		Endpoints         []string  `json:"endpoints"`
+		EndpointRoutes    []string  `json:"endpointRoutes"`
 	}
 	if err := json.Unmarshal(b, &wire); err != nil {
 		return Policy{}, fmt.Errorf("CP route policy does not parse: %w", err)
@@ -125,7 +129,8 @@ func parse(b []byte) (Policy, error) {
 	if wire.Revision == nil || wire.Restricted == nil || wire.CeilingRestricted == nil || wire.Allowed == nil || *wire.Revision < 0 {
 		return Policy{}, errors.New("CP route policy is incomplete (revision, restricted, ceilingRestricted and allowed are all required)")
 	}
-	return Policy{Revision: *wire.Revision, Restricted: *wire.Restricted, CeilingRestricted: *wire.CeilingRestricted, Allowed: *wire.Allowed}, nil
+	return Policy{Revision: *wire.Revision, Restricted: *wire.Restricted, CeilingRestricted: *wire.CeilingRestricted, Allowed: *wire.Allowed,
+		Endpoints: wire.Endpoints, EndpointRoutes: wire.EndpointRoutes}, nil
 }
 
 // startEnv is the start environment's envelope: the policy, when the CP issued it, or that it
