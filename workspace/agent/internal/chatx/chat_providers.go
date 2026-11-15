@@ -366,9 +366,8 @@ func (ClaudeChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindClaude, ""); policyErr != nil {
 		return "", policyErr
 	}
-	ctx, done := trackCall(ctx, call.Route)
+	ctx, done := trackCall(ctx, &call, time.Now())
 	defer done(&err)
-	defer recordCall(ctx, &call, time.Now())
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", c.personaOf()}
 	args = append(args, "--model", chatModelFor(c, session.KindClaude))
@@ -475,9 +474,8 @@ func (ClaudeChat) SendStream(ctx context.Context, c *ChatConversation, prompt st
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindClaude, ""); policyErr != nil {
 		return "", nil, policyErr
 	}
-	ctx, done := trackCall(ctx, call.Route)
+	ctx, done := trackCall(ctx, &call, time.Now())
 	defer done(&err)
-	defer recordCall(ctx, &call, time.Now())
 	// stream-json requires --verbose with -p; --include-partial-messages adds the
 	// per-token text_delta events we forward for live display.
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -626,9 +624,8 @@ func (codexChat) Send(ctx context.Context, c *ChatConversation, prompt string) (
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindCodex, model); policyErr != nil {
 		return "", policyErr
 	}
-	ctx, done := trackCall(ctx, call.Route)
+	ctx, done := trackCall(ctx, &call, time.Now())
 	defer done(&err)
-	defer recordCall(ctx, &call, time.Now())
 	// The default read-only sandbox is exactly the chat contract (no file writes, no
 	// state mutation) — the claude side enforces the same via --disallowedTools. Global
 	// exec flags must precede the resume subcommand (verified live: resume rejects
@@ -834,9 +831,8 @@ func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrRoutePolicy, err)
 	}
-	ctx, done := trackCall(ctx, call.Route)
+	ctx, done := trackCall(ctx, &call, time.Now())
 	defer done(&err)
-	defer recordCall(ctx, &call, time.Now())
 	args := opencodeRunArgs()
 	if c.OpencodeSessionID != "" {
 		args = append(args, "--session", c.OpencodeSessionID)
@@ -1277,9 +1273,8 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (_ 
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindAgy, ""); policyErr != nil {
 		return "", policyErr
 	}
-	ctx, done := trackCall(ctx, call.Route)
+	ctx, done := trackCall(ctx, &call, time.Now())
 	defer done(&err)
-	defer recordCall(ctx, &call, time.Now())
 	home, wd, err := chatAgyHome(c)
 	if err != nil {
 		// Never fall back to the real HOME: the MCP/permission config is global
@@ -1657,9 +1652,8 @@ func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 	if pinned != "" && pinned != "auto" {
 		call.ModelReq = pinned
 	}
-	ctx, done := trackCall(ctx, call.Route)
+	ctx, done := trackCall(ctx, &call, time.Now())
 	defer done(&err)
-	defer recordCall(ctx, &call, time.Now())
 	args := cursorChatBaseArgs()
 	if m := pinned; m != "" && m != "auto" { // "auto" = cursor's default = no --model
 		args = append(args, "--model", m)
@@ -2389,7 +2383,7 @@ func oneShotRunOn(ctx context.Context, kind, feature string, tier OneShotTier, p
 	}
 	// A kind judged in its runner names its route there (routepolicy.CallFrom): until then the
 	// call counts as on a route a restriction does not allow.
-	ctx, done := trackCall(ctx, call.Route)
+	ctx, done := trackRoute(ctx, call.Route, nil, time.Time{}) // the row is recorded above
 	defer done(&err)
 	out, e := r.runOneShot(ctx, &call, run)
 	return out, "", "", e

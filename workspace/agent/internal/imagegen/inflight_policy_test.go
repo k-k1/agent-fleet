@@ -101,6 +101,9 @@ func TestAGenerationInFlightIsStoppedWhenThePolicyForbidsItsRoute(t *testing.T) 
 	if !errors.Is(err, ErrRoutePolicy) || !errors.Is(err, routepolicy.ErrCancelled) {
 		t.Fatalf("the stopped generation answered %v", err)
 	}
+	if got := p.cancels(); !slices.Equal(got, []string{"engine-prompt-1"}) {
+		t.Errorf("the engine was asked to cancel %v; its request kept running", got)
+	}
 	rec := httptest.NewRecorder()
 	writeGenerateErr(rec, err)
 	if rec.Code != http.StatusForbidden {
@@ -117,5 +120,31 @@ func TestPolicyOnlyNeedsEveryReasonToBeThePolicys(t *testing.T) {
 	other := attemptFailure{id: "b", err: errors.New("out of quota")}
 	if !policyOnly(errors.Join(pol, pol)) || policyOnly(errors.Join(pol, other)) || policyOnly(other) || !policyOnly(pol) {
 		t.Error("policyOnly")
+	}
+}
+
+// A tighter policy taken between a generation's start check and its tracking stops it as soon as it
+// registers; whatever the engine accepted is asked back, and nothing is recorded.
+func TestATighteningBeforeTheTrackingStopsAGeneration(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+	p := newGateProvider(t)
+	withStubProvider(t, p)
+	onEngineImage(t)
+	s := useImagePolicy(t, engineImageOnly)
+	t.Cleanup(routepolicy.SetBeforeTrackForTest(func() {
+		if _, err := s.Accept(routepolicy.Policy{Revision: 3, Restricted: true, Allowed: []string{routes.RouteOpenAIAPI}}); err != nil {
+			t.Error(err)
+		}
+		routepolicy.WaitListeners()
+	}))
+	go func() { <-p.begun }() // the stub announces each request; nobody else reads it here
+	_, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1", Pref: p.ID(), Request: Request{Op: OpGenerate, Prompt: "a cat"}})
+	if !errors.Is(err, ErrRoutePolicy) || !errors.Is(err, routepolicy.ErrCancelled) {
+		t.Fatalf("a generation forbidden before it registered: %v", err)
+	}
+	if rows := usagex.ReadRows(); len(rows) != 0 {
+		t.Errorf("it left ledger rows: %+v", rows)
 	}
 }

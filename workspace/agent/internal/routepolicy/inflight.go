@@ -31,14 +31,56 @@ var (
 
 // Track registers a call on route for as long as it runs: the returned context is cancelled with
 // ErrCancelled when a restricting policy that does not allow route is taken. A route not known yet
-// ("") counts as not allowed: SetRoute names it once it is. Done ends the tracking.
+// ("") counts as not allowed by a policy taken meanwhile: SetRoute names it once it is. Done ends
+// the tracking.
+//
+// The caller checked the policy before; a tighter one taken between that check and this
+// registration would be missed by the listener, whose pass may already be over. So the call is
+// judged once more against the policy held now, after it is registered: a store holds its new
+// policy before it notifies, so either the listener's pass sees the call or this check sees the
+// policy (TestTrackAfterATighteningIsCancelled).
 func Track(ctx context.Context, route string) (context.Context, *Call) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	c := &Call{route: route, cancel: cancel}
+	if beforeTrack != nil {
+		beforeTrack()
+	}
 	inflightMu.Lock()
 	inflight[c] = struct{}{}
 	inflightMu.Unlock()
+	if route != "" {
+		c.judgeHeld()
+	}
 	return context.WithValue(ctx, callKey{}, c), c
+}
+
+// beforeTrack runs at the start of Track, between a caller's own check and the registration. A
+// seam for tests (SetBeforeTrackForTest).
+var beforeTrack func()
+
+// SetBeforeTrackForTest makes Track call f before it registers a call, to take a policy in the
+// window a caller's check leaves; it returns the restore.
+func SetBeforeTrackForTest(f func()) (restore func()) {
+	old := beforeTrack
+	beforeTrack = f
+	return func() { beforeTrack = old }
+}
+
+// judgeHeld cancels c when the policy held now restricts and does not allow its route.
+func (c *Call) judgeHeld() {
+	if p, restricted := Hiding(); restricted {
+		c.judge(p)
+	}
+}
+
+// judge cancels c when p does not allow its route; an unnamed route is not allowed.
+func (c *Call) judge(p Policy) {
+	c.mu.Lock()
+	route := c.route
+	c.mu.Unlock()
+	if route == "" || !p.Allows(route) {
+		c.cancel(ErrCancelled)
+	}
 }
 
 type callKey struct{}
@@ -50,11 +92,13 @@ func CallFrom(ctx context.Context) *Call {
 	return c
 }
 
-// SetRoute names the route a call resolved after it was tracked.
+// SetRoute names the route a call resolved after it was tracked, and judges it against the policy
+// held now, for the same window as Track's.
 func (c *Call) SetRoute(route string) {
 	c.mu.Lock()
 	c.route = route
 	c.mu.Unlock()
+	c.judgeHeld()
 }
 
 // Done ends the tracking. The context is released too; a call cancelled by the policy keeps
@@ -69,7 +113,8 @@ func (c *Call) Done() {
 // Cancelled reports whether ctx was cancelled by the credential policy.
 func Cancelled(ctx context.Context) bool { return errors.Is(context.Cause(ctx), ErrCancelled) }
 
-// cancelForbidden is the tracked calls' policy listener.
+// cancelForbidden is the tracked calls' policy listener. p is the policy the store holds when the
+// listener runs (notify), so a tightening delivered after a later loosening acts on the loosening.
 func cancelForbidden(p Policy) {
 	if !p.Restricted {
 		return
@@ -81,12 +126,7 @@ func cancelForbidden(p Policy) {
 	}
 	inflightMu.Unlock()
 	for _, c := range calls {
-		c.mu.Lock()
-		route := c.route
-		c.mu.Unlock()
-		if route == "" || !p.Allows(route) {
-			c.cancel(ErrCancelled)
-		}
+		c.judge(p)
 	}
 }
 

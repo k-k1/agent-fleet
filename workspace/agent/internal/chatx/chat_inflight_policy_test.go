@@ -249,3 +249,49 @@ func TestStreamErrEventCarriesThePolicyCode(t *testing.T) {
 		t.Errorf("another failure: %v", ev)
 	}
 }
+
+// A tighter policy taken between a call's start check and its tracking does not let the call run:
+// Track judges it against the policy held by then. The engine sees no request, and no row is left.
+func TestATighteningBetweenTheCheckAndTheTrackingStopsTheCall(t *testing.T) {
+	t.Setenv("AF_USAGE_DIR", t.TempDir())
+	_, release, hits := blockingEngine(t)
+	release()
+	s := useUtilityPolicy(t, engineOnly)
+	t.Cleanup(routepolicy.SetBeforeTrackForTest(func() {
+		if _, err := s.Accept(routepolicy.Policy{Revision: 3, Restricted: true, Allowed: []string{routes.RouteAnthropicAPI}}); err != nil {
+			t.Error(err)
+		}
+		routepolicy.WaitListeners() // the listener's pass is over before the call registers
+	}))
+	_, err := lcppChat{}.Send(context.Background(), &ChatConversation{ID: "l9", Model: "qwen"}, "hi")
+	if !errors.Is(err, ErrRoutePolicy) || !errors.Is(err, routepolicy.ErrCancelled) || hits.Load() != 0 {
+		t.Errorf("a call whose route was forbidden before it registered: %v, %d requests", err, hits.Load())
+	}
+	if rows := usagex.ReadRows(); len(rows) != 0 {
+		t.Errorf("it left ledger rows: %+v", rows)
+	}
+}
+
+// done settles a tracked call before it records it: a call cancelled by the policy reports the
+// refusal and leaves no row, whatever its own error; any other outcome leaves its row.
+func TestDoneDecidesBeforeItRecords(t *testing.T) {
+	t.Setenv("AF_USAGE_DIR", t.TempDir())
+	useUtilityPolicy(t, engineOnly)
+	call := usagex.Call{Kind: lcppKind, Route: routes.RouteAFEngineLLM}
+	_, done := trackCall(context.Background(), &call, time.Now())
+	var err error = errors.New("the call's own failure")
+	done(&err)
+	if errors.Is(err, ErrRoutePolicy) || len(usagex.ReadRows()) != 1 {
+		t.Fatalf("an uncancelled call: %v, %d rows", err, len(usagex.ReadRows()))
+	}
+	call2 := usagex.Call{Kind: lcppKind, Route: routes.RouteAnthropicSubscription}
+	ctx, done2 := trackCall(context.Background(), &call2, time.Now())
+	if !routepolicy.Cancelled(ctx) {
+		t.Fatal("the premise: a call on a forbidden route is cancelled when it registers")
+	}
+	err = errors.New("signal: killed")
+	done2(&err)
+	if !errors.Is(err, ErrRoutePolicy) || len(usagex.ReadRows()) != 1 {
+		t.Errorf("a cancelled call: %v, %d rows", err, len(usagex.ReadRows()))
+	}
+}

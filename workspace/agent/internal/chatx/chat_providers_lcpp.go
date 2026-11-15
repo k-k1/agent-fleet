@@ -58,11 +58,12 @@ func (lcppChat) Send(ctx context.Context, c *ChatConversation, prompt string) (_
 	c.StartTurn()
 	model := strings.TrimSpace(chatModelFor(c, lcppKind))
 	call := usagex.Call{Kind: lcppKind, ModelReq: model} // usage ledger (ADR 0029 §3)
-	// A call the credential policy refused or stopped leaves no row; every other path does.
-	started := time.Now()
+	// Until the call is tracked, every path but a policy refusal leaves its row here; once it is,
+	// the tracking's done records it.
+	started, tracked := time.Now(), false
 	defer func() {
-		if !errors.Is(err, ErrRoutePolicy) {
-			recordCall(ctx, &call, started)
+		if !tracked && !errors.Is(err, ErrRoutePolicy) {
+			usagex.RecordCall(ctx, &call, started)
 		}
 	}()
 
@@ -86,7 +87,8 @@ func (lcppChat) Send(ctx context.Context, c *ChatConversation, prompt string) (_
 	if err := routeChecked(lcppKind, conn.Route); err != nil {
 		return "", err
 	}
-	ctx, done := trackCall(ctx, conn.Route)
+	ctx, done := trackCall(ctx, &call, started)
+	tracked = true
 	defer done(&err)
 
 	turn, err := harness.NewClient(conn, model).Send(ctx, lcppMessages(c, prompt), nil)

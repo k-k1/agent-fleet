@@ -59,9 +59,8 @@ func (museChat) Send(ctx context.Context, c *ChatConversation, prompt string) (_
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindMuse, model); policyErr != nil {
 		return "", policyErr
 	}
-	ctx, done := trackCall(ctx, call.Route)
+	ctx, done := trackCall(ctx, &call, time.Now())
 	defer done(&err)
-	defer recordCall(ctx, &call, time.Now())
 
 	// Clamps must be written before every exec, same as the managed driver's Resume, so a
 	// member who edits the file between turns does not run an unclamped assistant.

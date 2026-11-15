@@ -203,9 +203,8 @@ func runClaudeDenyAll(ctx context.Context, persona, prompt, selected string) (_ 
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindClaude, selected); policyErr != nil {
 		return "", policyErr
 	}
-	ctx, done := trackCall(ctx, call.Route)
+	ctx, done := trackCall(ctx, &call, time.Now())
 	defer done(&err)
-	defer recordCall(ctx, &call, time.Now())
 	started := routeNow()
 	cmd := claudeOneShotCmd(ctx, claudeOneShotArgsFormat(persona, selected, true))
 	cmd.Stdin = strings.NewReader(prompt)

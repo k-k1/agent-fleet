@@ -20,9 +20,11 @@ func OnChange(f func(Policy)) {
 	listeners = append(listeners, f)
 }
 
-// notify tells the listeners the policy s now holds. Called after s's lock is released.
+// notify tells the listeners the policy s holds. Called after s's lock is released. Each listener
+// reads the policy when it runs, not when notify was called: listeners run on their own goroutines,
+// so the call for one change can run after a later one, and must then act on the later policy (a
+// tightening's pass after a loosening must not cancel what the loosening allows).
 func (s *Store) notify() {
-	p := s.State().Policy
 	listenersMu.Lock()
 	fs := append([]func(Policy){}, listeners...)
 	listenersMu.Unlock()
@@ -30,10 +32,17 @@ func (s *Store) notify() {
 		running.Add(1)
 		go func() {
 			defer running.Done()
-			f(p)
+			if beforeListener != nil {
+				beforeListener()
+			}
+			f(s.State().Policy)
 		}()
 	}
 }
+
+// beforeListener runs on a listener's goroutine before it reads the policy: a seam for tests that
+// deliver a change late. Set it only while no listener runs (after WaitListeners).
+var beforeListener func()
 
 // WaitListeners waits for the listener calls in flight to return. A test that swaps a package var
 // a listener reads (Active among them) calls it first: the listeners a store's Accept started run

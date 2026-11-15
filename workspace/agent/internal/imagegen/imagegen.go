@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
@@ -998,10 +999,29 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 		started := time.Now()
 		// Tracked while it runs: a tighter policy that forbids its route stops it (D12), and the
 		// order moves on as for a provider it refused; such a stopped call leaves no row.
+		// The engine's id for the request is kept (Request.OnUpstream): a stopped call's context
+		// only ends the wait here, and the engine keeps running what it accepted until it is
+		// asked to drop that one request (Canceller), as a queued job's cancel does.
+		var upMu sync.Mutex
+		upstream, attemptReq, prevUp := "", req, req.OnUpstream
+		attemptReq.OnUpstream = func(id string) {
+			upMu.Lock()
+			upstream = id
+			upMu.Unlock()
+			if prevUp != nil {
+				prevUp(id)
+			}
+		}
 		gctx, tracked := routepolicy.Track(ctx, launch.Route)
-		res, err := p.Generate(gctx, req)
+		res, err := p.Generate(gctx, attemptReq)
 		tracked.Done()
 		if routepolicy.Cancelled(gctx) {
+			upMu.Lock()
+			up := upstream
+			upMu.Unlock()
+			if c, ok := p.(Canceller); ok && up != "" {
+				_ = c.Cancel(context.Background(), up)
+			}
 			attempts = append(attempts, attemptFailure{id: name, err: policyCancelErr()})
 			continue
 		}

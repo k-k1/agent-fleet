@@ -77,28 +77,33 @@ func routeChecked(kind, route string) error {
 	return nil
 }
 
-// trackCall keeps a running call on route cancellable by the credential policy
-// (routepolicy.Track): when a tighter policy forbids its route, its context is cancelled, which
-// stops its CLI or request. done ends the tracking and turns such a cancel into the ErrRoutePolicy
-// refusal its caller reports, whatever error the stopped call returned; call it deferred with the
-// call's error.
-func trackCall(ctx context.Context, route string) (context.Context, func(err *error)) {
+// trackCall keeps a running call cancellable by the credential policy (routepolicy.Track): when a
+// tighter policy forbids call's route, its context is cancelled, which stops its CLI or request.
+// done, deferred with the call's error, finishes it in an order no cancel can slip into: the
+// tracking ends first, so the outcome is settled; a cancel then becomes the ErrRoutePolicy refusal
+// its caller reports, whatever the stopped call returned, and leaves no ledger row, like a call
+// refused before it ran; any other outcome is recorded (started is its start). A nil call records
+// nothing, for a caller that records its own.
+func trackCall(ctx context.Context, call *usagex.Call, started time.Time) (context.Context, func(err *error)) {
+	route := ""
+	if call != nil {
+		route = call.Route
+	}
+	return trackRoute(ctx, route, call, started)
+}
+
+func trackRoute(ctx context.Context, route string, call *usagex.Call, started time.Time) (context.Context, func(err *error)) {
 	ctx, c := routepolicy.Track(ctx, route)
 	return ctx, func(err *error) {
 		c.Done()
 		if routepolicy.Cancelled(ctx) {
 			*err = fmt.Errorf("%w: %w", ErrRoutePolicy, routepolicy.ErrCancelled)
+			return
+		}
+		if call != nil {
+			usagex.RecordCall(ctx, call, started)
 		}
 	}
-}
-
-// recordCall is usagex.RecordCall, except for a call the credential policy cancelled: like one it
-// refused before it ran, it leaves no ledger row.
-func recordCall(ctx context.Context, c *usagex.Call, started time.Time) {
-	if routepolicy.Cancelled(ctx) {
-		return
-	}
-	usagex.RecordCall(ctx, c, started)
 }
 
 // writeChatErr answers a failed chat call: the credential policy's refusal or cancel with its
