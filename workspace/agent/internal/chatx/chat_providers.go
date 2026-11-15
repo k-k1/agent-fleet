@@ -819,8 +819,15 @@ func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string
 	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindOpencode, pinned); policyErr != nil {
 		return "", policyErr
 	}
-	defer usagex.RecordCall(ctx, &call, time.Now())
 	dir := opencodeChatDir(c)
+	spec := opencode.CurrentLaunch()
+	// Under a restriction the run is isolated like the shared serve (opencode.RunPolicyEnv); a
+	// run it refuses is a policy refusal, before any ledger row.
+	env, err := opencode.RunPolicyEnv(envWith(append(spec.Env(), opencodeConfigEnv(opencodeChatConfig(c))...)...), dir)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrRoutePolicy, err)
+	}
+	defer usagex.RecordCall(ctx, &call, time.Now())
 	args := opencodeRunArgs()
 	if c.OpencodeSessionID != "" {
 		args = append(args, "--session", c.OpencodeSessionID)
@@ -829,15 +836,12 @@ func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string
 		args = append(args, "--model", pinned)
 	}
 	args = append(args, headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
-	spec := opencode.CurrentLaunch()
 	if err := opencode.PrepareStart(spec); err != nil {
 		return "", err
 	}
 	cmd := exec.CommandContext(ctx, spec.Bin, args...)
 	cmd.Dir = dir
-	env := spec.Env()
-	env = append(env, opencodeConfigEnv(opencodeChatConfig(c))...)
-	cmd.Env = envWith(env...)
+	cmd.Env = env
 	out, err := cmd.Output()
 	// Parse BEFORE the error branch: a failed run still prints its events, and both the
 	// reason (turnErr) and whatever tokens it burned are in there.
@@ -2454,7 +2458,9 @@ func oneShotOnOpencode(ctx context.Context, call *usagex.Call, run oneShotRun) (
 	}
 	cmd := exec.CommandContext(ctx, spec.Bin, args...)
 	cmd.Dir = chatWorkdir()
-	cmd.Env = envWith(env...)
+	if cmd.Env, err = opencode.RunPolicyEnv(envWith(env...), cmd.Dir); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrRoutePolicy, err)
+	}
 	out, err := cmd.Output()
 	reply, sesID, reportedModel, turnErr, usage := parseOpencodeRunEvents(out)
 	if err != nil {
@@ -2471,11 +2477,14 @@ func oneShotOnOpencode(ctx context.Context, call *usagex.Call, run oneShotRun) (
 	// don't pile "New session…" rows into the shared store. Best-effort, detached
 	// from ctx (the reply is already in hand; cleanup shouldn't be cancelled).
 	if sesID != "" {
+		// The environment is read here, not in the goroutine that outlives the call: it reads
+		// the credential policy (keyEnv), which a caller's state may no longer match later.
+		delEnv := envWith(spec.Env()...)
 		go func() {
 			// --standalone: not the background service.
 			cl := exec.Command(spec.Bin, "session", "delete", "--standalone", sesID)
 			cl.Dir = chatWorkdir()
-			cl.Env = envWith(spec.Env()...)
+			cl.Env = delEnv
 			_ = cl.Run()
 		}()
 	}

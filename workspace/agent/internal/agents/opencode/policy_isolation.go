@@ -9,6 +9,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Isolation of opencode under the credential policy (ADR 0138 D12, "Isolate shared daemons"):
@@ -121,6 +122,38 @@ func servePolicyEnv(base []string) (env []string, ok bool) {
 	env = withoutEnv(base, append(forbiddenInheritedKeys(p), routeUnset...)...)
 	env = withoutEnv(env, routeConfigKey)
 	return append(env, routeConfigKey+"="+string(cfg)), true
+}
+
+// RunPolicyEnv isolates a headless `opencode run` (the assistant chat, the title, reply and other
+// one-shots) under a restriction the way servePolicyEnv isolates the shared serve: the inherited
+// provider variables the policy forbids and the config sources that could replace the pin
+// removed, and enabled_providers merged into the run's own inline configuration, so opencode's
+// own calls (its small model, its titles) stay on the allowed providers too. A config file the
+// run reads, the global ones or those of dir and above, that would widen the pin refuses the run
+// (ErrPolicyConfig), as for a session. env is the run's whole environment, the stored keys already
+// filtered (keyEnv); while nothing is restricted it is returned unchanged.
+func RunPolicyEnv(env []string, dir string) ([]string, error) {
+	p, restricted := policyRestriction()
+	if !restricted {
+		return env, nil
+	}
+	if err := policyConfigErr(append(globalConfigFiles(), projectConfigFiles(session.Meta{Dir: dir})...)); err != nil {
+		return nil, err
+	}
+	cfg := map[string]any{}
+	if v := envValue(env, routeConfigKey); strings.TrimSpace(v) != "" {
+		if json.Unmarshal([]byte(v), &cfg) != nil || cfg == nil {
+			return nil, fmt.Errorf("%w: its inline configuration cannot be read, so its providers cannot be pinned", ErrPolicyConfig)
+		}
+	}
+	keys, pref, acct := credentialView()
+	cfg["enabled_providers"] = nonNil(allowedServeProviders(p, keys, pref, acct, engineProviderIDs()))
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	out := withoutEnv(env, append(forbiddenInheritedKeys(p), append(routeUnset, routeConfigKey)...)...)
+	return append(out, routeConfigKey+"="+string(b)), nil
 }
 
 func nonNil(s []string) []string {
