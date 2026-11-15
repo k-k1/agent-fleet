@@ -254,7 +254,10 @@ var (
 
 var (
 	// A model id is a short token (claude-opus-4-7, gpt-5.2, bedrock-style ids with : and /).
-	launchModelRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@#\[\]-]{0,99}$`)
+	// Spaces and parentheses are for agy's older CLI, whose id is its display name
+	// ("Gemini 3.5 Flash (Medium)", workspace/agent/internal/agents/agy/models.go); it may not
+	// end in a space. console/src/features/repos/tenantLaunchDefaults.ts holds the same pattern.
+	launchModelRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._:/@#\[\]() -]{0,98}[A-Za-z0-9._:/@#\[\]()-])?$`)
 	// "owner/name", optionally with subgroups (GitLab): the path half of a remote, no host.
 	teamRepoRe = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+){1,3}$`)
 	awsAcctRe  = regexp.MustCompile(`^[0-9]{12}$`)

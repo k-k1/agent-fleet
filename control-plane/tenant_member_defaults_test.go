@@ -164,7 +164,9 @@ func TestTenantMemberDefaultsP3Groups(t *testing.T) {
 	addBranchRulesMember(t, st, sub.ID, "user@sub.co.jp", "member")
 
 	for _, bad := range []string{
-		`{"launch":{"model":"has space"}}`,
+		`{"launch":{"model":"trailing "}}`,
+		`{"launch":{"model":"semi;colon"}}`,
+		`{"launch":{"model":"` + strings.Repeat("x", 101) + `"}}`,
 		`{"launch":{"driver":"tui"}}`,
 		`{"launch":{"permission_mode":"yolo"}}`,
 		`{"launch":{"budget_usd":-1}}`,
@@ -200,9 +202,12 @@ func TestTenantMemberDefaultsP3Groups(t *testing.T) {
 	if w := memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", repoList(maxTeamRepos)); w.Code != http.StatusOK {
 		t.Errorf("refused %d repos: %d %s", maxTeamRepos, w.Code, w.Body.String())
 	}
-	// Ordinary model ids, including opencode's provider/model#variant, and a normal URL pass.
+	// Ordinary model ids, including opencode's provider/model#variant and agy's older
+	// display-name id, and a normal URL pass.
 	for _, ok := range []string{
 		`{"launch":{"model":"stub/stub-2#high"}}`,
+		`{"agent":"agy","launch":{"model":"Gemini 3.5 Flash (Medium)"}}`,
+		`{"launch":{"model":"` + strings.Repeat("x", 100) + `"}}`,
 		`{"ops":{"grafana_url":"https://grafana.acme.example:3000/d/home"}}`,
 	} {
 		if w := memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", ok); w.Code != http.StatusOK {
