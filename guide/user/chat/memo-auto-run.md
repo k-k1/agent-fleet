@@ -113,7 +113,7 @@ Memos waiting for approval gather in a card for each session (or `/mcp` connecti
 
 ![The "Run history" screen: "2 waiting to run", "Refresh" and "Run now" on top, with the runs below. A running row shows "Started by itself" and "Not finished: working", and a finished row shows "First turn: finished"](../../assets/chatpages-autorun-history-en-light.webp)
 
-When memos are waiting to run and nothing starts, the top shows the line that says why. It is the same line as under the category's header ([Nothing starts by itself](#nothing-starts-by-itself)).
+When memos are waiting to run and nothing starts, the top may show a line that says why, or a notice. They are the same as under the category's header ([Nothing starts by itself](#nothing-starts-by-itself)).
 
 | Shown | Meaning |
 |---|---|
@@ -235,7 +235,7 @@ They arrive in the notification center. In **⚙ Settings → "Notifications"**,
 
 ### Nothing starts by itself
 
-When memos are waiting to run and nothing starts, a line under the category's header says why, or a notice does (the pause, a workspace to restart). The same are at the top of the run history. Read them first.
+When memos are waiting to run and nothing starts, a line or a notice under the category's header may say why (the notice is for the pause or a workspace to restart). The same can show at the top of the run history. Read them first.
 
 ![The line under a category's header: "It is outside the time set for auto-run. The next run can start at 11/16, 22:00."](../../assets/chatpages-autorun-waiting-en-light.webp)
 
