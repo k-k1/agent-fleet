@@ -354,6 +354,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
     "This opencode serve was started by another process, so the Agent cannot replace it. Restart the workspace to apply the settings.",
   "err.serve_not_ready": "The agent's service did not respond.",
   "err.agy_unsupported": "agy was not found (the image may be out of date).",
+  "err.stage_failed": "Could not prepare a temporary folder for the sign-in.",
+  "err.install_failed": "The sign-in succeeded, but its credentials could not be installed. The current login is unchanged.",
   "err.no_flow": "That sign-in attempt is unknown or has expired. Start again.",
   "err.bad_code": "Enter the code.",
   "err.bad_key": "Enter the key.",
