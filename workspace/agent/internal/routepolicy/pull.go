@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,17 +40,28 @@ func (e statusError) Error() string {
 	return fmt.Sprintf("CP route policy answered %d: %s", e.code, e.body)
 }
 
-// unreachable reports a pull failure that shows the CP cannot answer: no HTTP answer at all, a
-// 5xx (the CP or the ingress in front of it down), or no bridge in this deployment (no policy
-// will ever come). A 4xx is a CP that answers and refuses, and a malformed 200 is an answer that
-// cannot be read; neither shows an outage, so neither lets a start without a floor go on.
+// unreachable reports a pull failure that shows the CP cannot answer: a network failure (no
+// connection, a name that does not resolve, a dropped connection, a timeout), a 5xx (the CP or
+// the ingress in front of it down), or no bridge in this deployment (no policy will ever come).
+// Anything the CP or the client decided is not an outage and lets no start without a floor go
+// on: a 4xx, a malformed 200, a redirect the policy refuses (net/http wraps that in *url.Error
+// too, so the wrapper alone proves nothing), a TLS certificate the client rejects.
 func unreachable(err error) bool {
 	var se statusError
-	if errors.As(err, &se) {
+	switch {
+	case errors.As(err, &se):
 		return se.code >= 500
+	case errors.Is(err, ErrBridgeOff):
+		return true
+	case redirectpolicy.IsRefused(err):
+		return false
 	}
 	var ue *url.Error
-	return errors.Is(err, ErrBridgeOff) || errors.As(err, &ue)
+	if !errors.As(err, &ue) {
+		return false
+	}
+	var ne net.Error
+	return ue.Timeout() || errors.As(ue.Err, &ne) || errors.Is(ue.Err, io.EOF) || errors.Is(ue.Err, io.ErrUnexpectedEOF)
 }
 
 // ErrBridgeOff reports a deployment that injects no bridge (no PUBLIC_BASE_URL, a CP older than

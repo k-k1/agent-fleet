@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 )
 
 // failIn makes every rename into dir fail until the test ends or the returned func is called.
@@ -406,6 +408,162 @@ func TestHoldEndsOnlyOnACurrentAnswerOrAnOutage(t *testing.T) {
 		}
 		if r.State().Holding {
 			t.Fatal("a deployment that distributes no policy kept the hold")
+		}
+	})
+}
+
+// A restricting floor stands either for a policy with an allowed list or for a placeholder that
+// allows nothing. When a start marker's placeholder landed in a floor but not in the copy (the
+// config directory failed and the mirror took it, or only the copy failed), the restart must not
+// take the older restricted copy for it, nor hand that copy the marker's receipt.
+func TestPlaceholderFloorDoesNotBlessARestrictedCopy(t *testing.T) {
+	restricted := Policy{Revision: 5, Restricted: true, Allowed: []string{"anthropic-api"}}
+	for name, fails := range map[string]func(s *Store, b string) bool{
+		"config directory unwritable": func(s *Store, b string) bool { return filepath.Dir(b) == filepath.Dir(s.path) },
+		"only the copy fails":         func(s *Store, b string) bool { return b == s.path },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := testStore(t)
+			if _, err := s.Accept(restricted); err != nil {
+				t.Fatal(err)
+			}
+			old := rename
+			t.Cleanup(func() { rename = old })
+			rename = func(a, b string) error {
+				if fails(s, b) {
+					return errors.New("injected")
+				}
+				return old(a, b)
+			}
+			if _, err := s.SeedUnknown("new-ceiling"); err == nil {
+				t.Fatal("control: no write failed")
+			}
+			rename = old
+			r := reopen(s)
+			if changed, err := r.SeedUnknown("new-ceiling"); err != nil || changed {
+				t.Fatalf("the marker was taken again: %v %v", changed, err)
+			}
+			if st := r.State(); r.Allows("anthropic-api") || r.Gate() == nil || !st.Placeholder {
+				t.Fatalf("the restricted copy stood in for the marker's placeholder: %+v", st)
+			}
+		})
+	}
+}
+
+// A restricting floor from before Placeholder was recorded cannot say which it stood for, so it
+// vouches for no restricting copy at its revision; an unrestricted one still vouches for its copy.
+func TestLegacyRestrictingFloorVouchesForNoRestrictingCopy(t *testing.T) {
+	s, _ := testStore(t)
+	if _, err := s.Accept(strict2); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(floorPath(s.path), []byte(`{"revision":2,"restricting":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(s.mirror)
+	if r := reopen(s); !r.State().Placeholder || r.Allows("anthropic-api") {
+		t.Fatalf("a legacy restricting floor blessed a restricted copy: %+v", r.State())
+	}
+	s2, _ := testStore(t)
+	if _, err := s2.Accept(open1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(floorPath(s2.path), []byte(`{"revision":1,"restricting":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(s2.mirror)
+	if r := reopen(s2); r.State().Placeholder || !r.Allows("openai-api") {
+		t.Fatalf("a legacy unrestricted floor stopped vouching for its copy: %+v", r.State())
+	}
+	// A floor that claims a placeholder without restricting is malformed.
+	if err := os.WriteFile(floorPath(s2.path), []byte(`{"revision":1,"restricting":false,"placeholder":true,"seq":3}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := reopen(s2); !r.State().Placeholder {
+		t.Fatalf("a malformed floor was trusted: %+v", r.State())
+	}
+}
+
+// A placeholder only a live answer may replace keeps that rule through a lost copy: the floor
+// records it, so a start environment still cannot replace it after the restart.
+func TestNeedsLiveSurvivesALostCopy(t *testing.T) {
+	s, _ := testStore(t)
+	if _, err := s.Accept(strict2); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(floorPath(s.path), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(s.mirror)
+	r := reopen(s) // nothing vouches for the copy: a placeholder only a live answer replaces
+	if _, err := r.SeedUnknown("m1"); err != nil {
+		t.Fatal(err) // records the placeholder, NeedsLive included
+	}
+	_ = os.Remove(s.path)
+	r2 := reopen(s)
+	if changed, _ := r2.Seed(Policy{Revision: 9, Allowed: []string{}}, 1); changed || !r2.State().Placeholder {
+		t.Fatalf("a start environment replaced a placeholder that needs a live answer: %+v", r2.State())
+	}
+	if changed, _ := r2.Accept(Policy{Revision: 9, Allowed: []string{}}); !changed {
+		t.Fatal("control: a live answer must replace it")
+	}
+}
+
+// A redirect the client refuses is the CP answering, not an outage: it keeps the hold. A
+// connection the CP drops without an answer is an outage and releases it.
+func TestHoldBoundaryOfClientDecisions(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the refused redirect's target was reached")
+	}))
+	t.Cleanup(target.Close)
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+bridgePath, http.StatusFound)
+	}))
+	t.Cleanup(redirecting.Close)
+	dropping := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			conn.Close()
+		}
+	}))
+	t.Cleanup(dropping.Close)
+	t.Setenv("AF_CP_INTERNAL_URL", "")
+	tokenOnce, token = sync.Once{}, "afc_tok"
+	tokenOnce.Do(func() {})
+	t.Cleanup(func() { tokenOnce, token = sync.Once{}, "" })
+	oldF := syncFile
+	t.Cleanup(func() { syncFile = oldF })
+	holding := func(t *testing.T) *Store {
+		syncFile = oldF
+		s, _ := testStore(t)
+		if _, err := s.Accept(open1); err != nil {
+			t.Fatal(err)
+		}
+		syncFile = func(*os.File) error { return errors.New("injected: both disks unwritable") }
+		r := reopen(s)
+		if !errors.Is(r.Gate(), ErrUnrecorded) {
+			t.Fatal("control: the start does not hold")
+		}
+		return r
+	}
+	t.Run("refused redirect", func(t *testing.T) {
+		r := holding(t)
+		t.Setenv("AF_CP_BASE_URL", redirecting.URL)
+		if err := r.Sync(context.Background(), "test"); !redirectpolicy.IsRefused(err) {
+			t.Fatalf("control: %v", err)
+		}
+		if !errors.Is(r.Gate(), ErrUnrecorded) {
+			t.Fatalf("a refused redirect released the hold: %+v", r.State())
+		}
+	})
+	t.Run("dropped connection", func(t *testing.T) {
+		r := holding(t)
+		t.Setenv("AF_CP_BASE_URL", dropping.URL)
+		if err := r.Sync(context.Background(), "test"); err == nil {
+			t.Fatal("control: the pull got an answer")
+		}
+		if r.State().Holding {
+			t.Fatal("a dropped connection did not release the hold")
 		}
 	})
 }

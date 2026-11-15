@@ -103,6 +103,11 @@ type floor struct {
 	// copy: without it, an unrestricted tenant whose copy was lost would be re-blocked by a
 	// marker it had already taken.
 	SeenStart string `json:"seenStart,omitempty"`
+	// Placeholder and NeedsLive mirror held's: a restricting floor may stand for a real policy
+	// with an allowed list or for a placeholder that allows nothing, and only a copy in the same
+	// state is the one the floor vouches for.
+	Placeholder bool `json:"placeholder,omitempty"`
+	NeedsLive   bool `json:"needsLive,omitempty"`
 	// Seq numbers the floor writes of this store, both files alike, so Open can tell which of two
 	// floors at one revision is the newer: within a revision the state moves both ways (a start
 	// marker restricts, a live answer clears it). 0 on a floor written before it existed.
@@ -120,7 +125,22 @@ const (
 
 // floorOf is the floor that records h, without its sequence number.
 func floorOf(h held) floor {
-	return floor{Revision: h.Policy.Revision, Restricting: h.Policy.restricting(), SeenStart: h.SeenStart}
+	return floor{Revision: h.Policy.Revision, Restricting: h.Policy.restricting(), SeenStart: h.SeenStart,
+		Placeholder: h.Placeholder, NeedsLive: h.NeedsLive}
+}
+
+// vouchesFor reports whether the floor, at the copy's own revision, records the copy's state.
+// A restricting floor from before Placeholder was recorded (no sequence number) cannot say
+// whether it stood for a placeholder, so it vouches for no restricting copy: blessing a
+// restricted copy's allowed list in place of a placeholder would widen what is allowed.
+func (f floor) vouchesFor(c held) bool {
+	if f.Revision != c.Policy.Revision || f.Restricting != c.Policy.restricting() {
+		return false
+	}
+	if f.Restricting && f.Seq == 0 {
+		return false
+	}
+	return f.Placeholder == c.Placeholder && f.NeedsLive == c.NeedsLive
 }
 
 // newer reports whether floor a was written after b: a higher revision, or the same one written
@@ -152,12 +172,18 @@ func readFloor(file string) (floor, floorState) {
 		Revision    *int64 `json:"revision"`
 		Restricting *bool  `json:"restricting"`
 		SeenStart   string `json:"seenStart"`
+		Placeholder bool   `json:"placeholder"`
+		NeedsLive   bool   `json:"needsLive"`
 		Seq         int64  `json:"seq"`
 	}
 	if json.Unmarshal(b, &wire) != nil || wire.Revision == nil || wire.Restricting == nil || *wire.Revision < 0 || wire.Seq < 0 {
 		return floor{}, floorUntrusted
 	}
-	return floor{Revision: *wire.Revision, Restricting: *wire.Restricting, SeenStart: wire.SeenStart, Seq: wire.Seq}, floorOK
+	if (wire.Placeholder || wire.NeedsLive) && !*wire.Restricting {
+		return floor{}, floorUntrusted // a placeholder always restricts
+	}
+	return floor{Revision: *wire.Revision, Restricting: *wire.Restricting, SeenStart: wire.SeenStart, Placeholder: wire.Placeholder,
+		NeedsLive: wire.NeedsLive, Seq: wire.Seq}, floorOK
 }
 
 // placeholder allows nothing and restricts, unconfirmed.
@@ -256,25 +282,26 @@ func Open(path, mirror string) *Store {
 	s.seq = max(f.Seq, m.Seq)
 	switch {
 	case fs == floorMissing && copyMissing:
-	case fs == floorOK && copyErr == nil && (c.Policy.Revision > f.Revision || c.Policy.Revision == f.Revision && f.Restricting == c.Policy.restricting()):
-		// At a tie the two must agree: the floor is written first, so a floor that disagrees
-		// with a copy at its own revision is the newer of the two (a copy that failed to land).
+	case fs == floorOK && copyErr == nil && (c.Policy.Revision > f.Revision || f.vouchesFor(c)):
+		// At a tie the two must agree, placeholder or not: the floor is written first, so a floor
+		// that disagrees with a copy at its own revision is the newer of the two (a copy that
+		// failed to land), and the copy's permissions are not the ones in force.
 		s.h = c
 		if f.Revision == c.Policy.Revision {
 			// The floor is written first: where the two disagree on the receipt, the floor's
 			// is the newer one (a copy that failed to land after recording a marker).
 			s.h.SeenStart = f.SeenStart
 		}
-		s.floorOK = f.Revision == c.Policy.Revision
+		s.floorOK = f.same(floorOf(s.h))
 	case fs == floorOK && !f.Restricting:
 		s.h = held{Policy: Policy{Revision: f.Revision, Allowed: []string{}}, Held: true, SeenStart: f.SeenStart}
-		s.floorOK = true
+		s.floorOK = f.same(floorOf(s.h))
 	case fs == floorOK:
 		log.Printf("route policy: the copy at %s cannot be trusted (%v) behind a restricting floor at revision %d; allowing nothing until the Control Plane answers",
 			path, copyErrOr(copyErr, "older than the floor"), f.Revision)
-		s.h = placeholder(f.Revision, false)
+		s.h = placeholder(f.Revision, f.NeedsLive)
 		s.h.SeenStart = f.SeenStart
-		s.floorOK = true
+		s.floorOK = f.same(floorOf(s.h))
 	default:
 		rev := int64(0)
 		if copyErr == nil {
