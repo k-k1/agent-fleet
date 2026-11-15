@@ -541,14 +541,14 @@ func TestPullRequestRunDataLineNamesItsSourceBranch(t *testing.T) {
 	}
 }
 
-// Only a null ref_name falls back to the source branch: a present one, even empty, is shown as
-// before, and with neither the label is empty as it was.
+// Only an explicit null ref_name falls back to the source branch: an absent or empty one keeps its
+// empty label, a name is shown as before, and with neither the label is empty as it was.
 func TestBranchLabelFallsBackOnlyForANullRefName(t *testing.T) {
 	for _, c := range []struct {
 		name, target, want string
 	}{
 		{"null ref_name", `{"ref_name":null,"source":"feature/login"}`, "feature/login"},
-		{"absent ref_name", `{"source":"feature/login"}`, "feature/login"},
+		{"absent ref_name", `{"source":"feature/login"}`, ""},
 		{"empty ref_name, source set", `{"ref_name":"","source":"feature/login"}`, ""},
 		{"ref_name and source", `{"ref_name":"main","source":"feature/login"}`, "main"},
 		{"null ref_name, empty source", `{"ref_name":null,"source":""}`, ""},
