@@ -107,8 +107,12 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     written, the watch sink never starts or injects into the session, a Managed input (any
     origin) is refused with `409 session_retired`, an automatic `/start` is refused, the session
     reserves no child slot, the engine refuses new subscriptions and built-ins for it, and a
-    scheduled usage-limit resume is refused. A retire's intent is kept on disk and the Agent
-    finishes an interrupted one (tree included) at its next start. Lock order: lifecycle gate,
+    scheduled usage-limit resume is refused. A retire's intent (root and a retire id) is kept on disk and the Agent
+    finishes an interrupted one (tree included) at its next start, reading each member under its
+    gate: the mark of that retire is finished, the tombstone a person's start leaves in the same
+    meta write (`retireClearedID`) is left alone, and a session with neither was never reached and
+    is marked for the first time. The usage-limit booking path refuses a marked session, so the
+    retire cancels whatever the episode holds. Lock order: lifecycle gate,
     then the retire gate.
     `POST /sessions/{name}/start` clears it, so a person resuming the session from the Console
     makes it an ordinary session again.
@@ -117,7 +121,9 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
   `turn-aborted`, the values a scheduled run records, and empty for a kind that records no
   reason. It lives in its own ledger (`status.FirstTurn`), armed before the prompt is delivered
   and settled by the first end that follows exactly one turn start (a driver's own turn start
-  counts as one whatever the record said; the first prompt id is kept and a different one voids), so a stop does not delete
+  counts as one whatever the record said; the create's optimistic working write is confirmed only by
+  the start of the delivery's own input, by its ClientMessageID, and any other start, a start with no
+  id, or an Agent restart that finds it unconfirmed voids the ledger; the first prompt id is kept too), so a stop does not delete
   it and a later turn never changes it. When that cannot be shown (a start or an end was
   missed, the status deleted by a stop in between) the field stays absent for good.
 - **Every path that folds a session away promotes its carried work first**

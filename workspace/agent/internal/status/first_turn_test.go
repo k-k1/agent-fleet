@@ -9,7 +9,7 @@ func armed(t *testing.T, sid string, noReason bool) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	ArmFirstTurn(sid, noReason)
-	MarkFirstTurnDelivering(sid)
+	MarkFirstTurnDelivering(sid, "task")
 }
 
 func TestFirstTurnSettlesOnceWhateverFollows(t *testing.T) {
@@ -166,7 +166,7 @@ func TestFirstTurnBeforeDeliveryIsNotThePromptsTurn(t *testing.T) {
 	ArmFirstTurn(sid, false)
 	Persist(sid, "working") // a person's input, the prompt not yet sent
 	PersistTurnEnd(sid, "idle")
-	MarkFirstTurnDelivering(sid)
+	MarkFirstTurnDelivering(sid, "task")
 	Persist(sid, "working")
 	PersistTurnEnd(sid, "idle")
 	if got, ok := ReadFirstTurn(sid); ok {
@@ -175,7 +175,7 @@ func TestFirstTurnBeforeDeliveryIsNotThePromptsTurn(t *testing.T) {
 	// And a start seen before the mark voids it even when nothing follows.
 	ArmFirstTurn("ft-early2", false)
 	Persist("ft-early2", "working")
-	MarkFirstTurnDelivering("ft-early2")
+	MarkFirstTurnDelivering("ft-early2", "task")
 	Persist("ft-early2", "idle")
 	Persist("ft-early2", "working")
 	PersistTurnEnd("ft-early2", "idle")

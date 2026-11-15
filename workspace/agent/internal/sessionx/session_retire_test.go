@@ -444,7 +444,7 @@ func TestRowQueueTurnHoldsTheFirstTurnAcrossAStopAndALaterTurn(t *testing.T) {
 		t.Fatalf("a turn that has not ended is reported: %+v", s.QueueTurn)
 	}
 	status.ArmFirstTurn(sid, false)
-	status.MarkFirstTurnDelivering(sid)
+	status.MarkFirstTurnDelivering(sid, "task")
 	status.Persist(sid, "working")
 	time.Sleep(10 * time.Millisecond)
 	status.PersistTurnEndReason(sid, "idle", status.TurnEndReasonAborted)
@@ -474,7 +474,7 @@ func TestRowQueueTurnOfAKindWithoutHooksHasNoOutcomeButTimes(t *testing.T) {
 	newRetireEnv(t)
 	m, sid := queueRow(t, "q2", session.KindClaude)
 	status.ArmFirstTurn(sid, true)
-	status.MarkFirstTurnDelivering(sid)
+	status.MarkFirstTurnDelivering(sid, "task")
 	status.Persist(sid, "working")
 	status.PersistTurnEnd(sid, "idle")
 	got := wireSession(m, false).QueueTurn
@@ -491,7 +491,7 @@ func TestRowQueueTurnIsAbsentWhenTheEndSeenMayBeALaterTurns(t *testing.T) {
 	newRetireEnv(t)
 	m, sid := queueRow(t, "q3", session.KindClaude)
 	status.ArmFirstTurn(sid, false)
-	status.MarkFirstTurnDelivering(sid)
+	status.MarkFirstTurnDelivering(sid, "task")
 	status.Persist(sid, "working")
 	status.Remove(sid) // stopped before the end was seen
 	status.Persist(sid, "working")
@@ -505,7 +505,7 @@ func TestRowQueueTurnIsAbsentWhenThePromptWasNeverDelivered(t *testing.T) {
 	newRetireEnv(t)
 	m, sid := queueRow(t, "q4", session.KindClaude)
 	status.ArmFirstTurn(sid, false)
-	status.MarkFirstTurnDelivering(sid)
+	status.MarkFirstTurnDelivering(sid, "task")
 	status.Persist(sid, "working")
 	status.PersistTurnEnd(sid, "idle")
 	m.InitialPromptState = session.InitialPromptFailed
@@ -880,77 +880,68 @@ func TestRetireWritesItsIntentBeforeMarkingAndSaysSoWhenItCannot(t *testing.T) {
 	if w, _, _ := r.e.Wakers("a"); w != 1 {
 		t.Fatalf("subscriptions were ended without a recorded intent: %d", w)
 	}
-
-	// The root's intent exists, a member's cannot be written: that member is not marked and the
-	// report says so.
-	_ = os.Chmod(retireIntents.Dir(), 0o700)
-	in := mustBeginRetire(t, "a")
-	if err := os.Chmod(retireIntents.Dir(), 0o500); err != nil {
-		t.Fatal(err)
-	}
-	rep := &retireReport{Name: "k", Unended: []string{}}
-	retireOne(context.Background(), rep, in, false)
-	if m, _ := session.ReadMeta("k"); m.RetiredAt != "" || len(rep.Unended) == 0 {
-		t.Fatalf("member marked without its intent: retiredAt=%q unended=%v", m.RetiredAt, rep.Unended)
-	}
 }
 
-// A person's start after the retire found the episode may book a resume of its own; the retire
-// cancels only what it found under its gate.
-func TestRetireDoesNotCancelAResumeABookedAfterItsGate(t *testing.T) {
-	newRetireEnv(t)
-	writeMeta(t, session.Meta{Name: "a"})
-	var dropped []string
-	var mu sync.Mutex
-	prev := dropRateLimitSchedule
-	dropRateLimitSchedule = func(id string) error { mu.Lock(); dropped = append(dropped, id); mu.Unlock(); return nil }
-	t.Cleanup(func() { dropRateLimitSchedule = prev })
-	at := time.Now().Add(time.Hour).Format(time.RFC3339)
-	if err := RateLimitStates.Write("a", rateLimitState{At: at, ResumeAt: at, ScheduleID: "sch_old"}); err != nil {
-		t.Fatal(err)
+// Recovery of a retire reads each member inside the gate: a mark of this retire is finished, a
+// tombstone of this retire (a person's start cleared it) is left alone, and a session with neither
+// was never reached and is marked for the first time. The crash is after the root's mark.
+func TestReconcileRetiredFinishesUnreachedSkipsReleasedAndEndsMarked(t *testing.T) {
+	r := newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	for _, n := range []string{"marked", "released", "unreached"} {
+		writeMeta(t, session.Meta{Name: n, Origin: session.OriginSession, OriginSession: "p"})
+		r.hold(t, n)
 	}
-	beforeResumeCancel = func(name string) { // after the retire left the gate
-		clearRetired(name) // the person's start
-		if err := RateLimitStates.Write(name, rateLimitState{At: at, ResumeAt: at, ScheduleID: "sch_new"}); err != nil {
-			t.Error(err)
+	in := mustBeginRetire(t, "p")
+	for _, n := range []string{"p", "marked", "released"} { // the crash comes before "unreached"
+		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in, false)
+	}
+	clearRetired("released") // a person's start, which leaves the tombstone in the same write
+	r.hold(t, "released")
+	if m, _ := session.ReadMeta("released"); m.RetireClearedID != in.ID || m.RetiredAt != "" {
+		t.Fatalf("the clearing did not leave the retire's id: %+v", m)
+	}
+	if n := ReconcileRetired(context.Background()); n != 1 {
+		t.Fatalf("reconciled %d", n)
+	}
+	for n, want := range map[string]bool{"marked": true, "unreached": true, "released": false} {
+		m, _ := session.ReadMeta(n)
+		if (m.RetiredAt != "") != want {
+			t.Errorf("%s: retired=%v, want %v", n, m.RetiredAt != "", want)
+		}
+		w, _, _ := r.e.Wakers(n)
+		if (w == 0) != want {
+			t.Errorf("%s: holds %d watches, retired=%v", n, w, want)
 		}
 	}
-	t.Cleanup(func() { beforeResumeCancel = nil })
-	postRetire(t, "a")
-	st, has := RateLimitStates.Read("a")
-	if !has || st.ScheduleID != "sch_new" {
-		t.Fatalf("the person's new episode was removed: %+v %v", st, has)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if strings.Join(dropped, ",") != "sch_old" {
-		t.Fatalf("cancelled %v, want only sch_old", dropped)
-	}
 }
 
-// The Agent died after a member's mark was written and before its confirmation; a person started
-// the session before the recovery ran. It is theirs: the recovery must not mark and stop it.
-func TestReconcileRetiredRespectsAPersonsStartAfterAMarkCrash(t *testing.T) {
+// The same, with the clearing waiting behind a start that holds the gate: the recovery reads the
+// member only after it has the gate.
+func TestReconcileRetiredReadsAMemberUnderTheGate(t *testing.T) {
 	newRetireEnv(t)
 	writeMeta(t, session.Meta{Name: "p"})
 	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
 	in := mustBeginRetire(t, "p")
-	retireOne(context.Background(), &retireReport{Name: "p", Unended: []string{}}, in, false)
-	if err := in.pending("c"); err != nil { // the crash: pending written, then marked, never confirmed
-		t.Fatal(err)
+	for _, n := range []string{"p", "c"} {
+		retireOne(context.Background(), &retireReport{Name: n, Unended: []string{}}, in, false)
 	}
-	time.Sleep(5 * time.Millisecond)
-	UpdateSessionMeta("c", func(m *session.Meta) bool { m.RetiredAt = "2026-11-15T10:00:00Z"; return true })
-	clearRetired("c") // the person's start before the recovery
-	ReconcileRetired(context.Background())
+	g := retireGate("c")
+	g.RLock() // a person's /start in progress
+	done := make(chan struct{})
+	go func() { ReconcileRetired(context.Background()); close(done) }()
+	time.Sleep(300 * time.Millisecond)
+	clearRetired("c")
+	g.RUnlock()
+	<-done
 	if m, _ := session.ReadMeta("c"); m.RetiredAt != "" {
-		t.Fatal("the recovery retired a session a person had started")
+		t.Fatal("the recovery stopped a session whose start it had been waiting for")
 	}
 }
 
-// A sweep that began before the retire and is still booking holds the episode lock; the retire's
-// snapshot waits for it, so that booking is cancelled too.
-func TestRetireCancelsABookingThatFinishesAfterItBegan(t *testing.T) {
+// The booking path is guarded by the mark alone: a retired session books nothing, and a booking made
+// before the mark is cancelled by the retire, also when the sweep was still booking as it began.
+func TestRetireCancelsWhatWasBookedBeforeTheMarkAndNothingAfter(t *testing.T) {
 	newRetireEnv(t)
 	writeMeta(t, session.Meta{Name: "a"})
 	var dropped []string
@@ -958,23 +949,54 @@ func TestRetireCancelsABookingThatFinishesAfterItBegan(t *testing.T) {
 	prev := dropRateLimitSchedule
 	dropRateLimitSchedule = func(id string) error { mu.Lock(); dropped = append(dropped, id); mu.Unlock(); return nil }
 	t.Cleanup(func() { dropRateLimitSchedule = prev })
+	at := time.Now().Add(time.Hour).Format(time.RFC3339)
 	ep := rateLimitEpisodeLock("a")
-	ep.Lock() // the sweep, waiting for the Control Plane to answer
+	ep.Lock() // a sweep that began before the retire
 	done := make(chan struct{})
 	go func() { postRetire(t, "a"); close(done) }()
 	time.Sleep(300 * time.Millisecond)
-	at := time.Now().Add(time.Hour).Format(time.RFC3339)
-	if err := RateLimitStates.Write("a", rateLimitState{At: at, ResumeAt: at, ScheduleID: "sch_auto"}); err != nil {
+	if err := RateLimitStates.Write("a", rateLimitState{At: at, ResumeAt: at, ScheduleID: "sch_before"}); err != nil {
 		t.Fatal(err)
 	}
 	ep.Unlock()
 	<-done
+	// A sweep after the mark books nothing.
+	var booked int
+	pp := putRateLimitSchedule
+	putRateLimitSchedule = func(session.Meta, time.Time) (string, error) { booked++; return "sch_after", nil }
+	t.Cleanup(func() { putRateLimitSchedule = pp })
+	m, _ := session.ReadMeta("a")
+	rateLimitTickSession(m, time.Now())
 	mu.Lock()
 	defer mu.Unlock()
-	if strings.Join(dropped, ",") != "sch_auto" {
-		t.Fatalf("cancelled %v, want sch_auto", dropped)
+	if strings.Join(dropped, ",") != "sch_before" || booked != 0 {
+		t.Fatalf("cancelled %v, booked after the mark %d", dropped, booked)
 	}
 	if _, has := RateLimitStates.Read("a"); has {
-		t.Fatal("the late booking's episode remains")
+		t.Fatal("an episode remains")
+	}
+}
+
+// The sweep leaves a retired session's episode alone: it neither books nor counts an attempt.
+func TestSweepLeavesARetiredSessionsEpisodeAlone(t *testing.T) {
+	newRetireEnv(t)
+	writeMeta(t, session.Meta{Name: "a", RetiredAt: "2026-11-15T10:00:00Z"})
+	now := time.Now()
+	st := rateLimitState{At: now.Format(time.RFC3339)}
+	if err := RateLimitStates.Write("a", st); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := session.ReadMeta("a")
+	rateLimitTickSession(m, now)
+	if got, _ := RateLimitStates.Read("a"); got != st {
+		t.Fatalf("the sweep touched a retired session's episode: %+v", got)
+	}
+	// The control: the same episode on a session that is not retired is worked on.
+	writeMeta(t, session.Meta{Name: "b"})
+	RateLimitStates.Write("b", st)
+	mb, _ := session.ReadMeta("b")
+	rateLimitTickSession(mb, now)
+	if got, _ := RateLimitStates.Read("b"); got == st {
+		t.Skip("the sweep does nothing to this episode here, so the guard cannot be told from it")
 	}
 }

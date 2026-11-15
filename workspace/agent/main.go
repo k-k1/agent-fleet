@@ -272,6 +272,9 @@ func serve() {
 	imagegen.ClearInputSets()
 	// A session whose initial prompt was still being typed when the previous process ended
 	// would read "sending" forever (ADR 0100 decision 2); settle those as unknown.
+	// A first-turn ledger still waiting for its input's start may belong to an input this process
+	// lost; its turn is not to be reported (status.FirstTurn).
+	status.VoidUnconfirmedFirstTurns()
 	if n := sessionx.RecoverPendingInitialPrompts(); n > 0 {
 		log.Printf("initial-prompt: %d pending delivery(ies) from the previous process marked unknown", n)
 	}

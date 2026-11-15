@@ -1121,7 +1121,7 @@ func typeInitialPrompt(name, prompt string) string {
 	// Only now, after every boot wait and immediately before the keys go in: a queue delivery's
 	// first-turn ledger counts the turn this prompt starts, and a turn a person started during the
 	// waits above is somebody else's and voids it.
-	status.MarkFirstTurnDelivering(session.UUID(authMeta.Dir, name))
+	status.MarkFirstTurnDelivering(session.UUID(authMeta.Dir, name), "")
 	if typeLineAndSubmit(name, pane, prompt) != nil {
 		return session.InitialPromptFailed
 	}

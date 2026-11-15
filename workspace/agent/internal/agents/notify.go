@@ -109,11 +109,7 @@ func MarkTurnStart(sid string) {
 // end is then attributed to that input's run by identity rather than by timing.
 func MarkTurnStartRun(sid string, in TurnInput) {
 	turnRuns.Store(sid, TurnRun{Known: true, Instr: in.Instr})
-	key := in.ClientMessageID
-	if key == "" {
-		key = "p:" + in.Prompt
-	}
-	status.PersistTurnStart(sid, key)
+	status.PersistTurnStart(sid, in.ClientMessageID)
 }
 
 // runOf is the input the turn of sid that is ending was started with.

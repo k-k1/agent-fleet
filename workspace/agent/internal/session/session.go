@@ -842,6 +842,12 @@ type Meta struct {
 	// no watch notice, built-in subscription, timer or booked usage-limit resume may start it;
 	// a person starting it clears the mark, and it is an ordinary session again.
 	RetiredAt string `json:"retiredAt,omitempty"`
+	// RetireID names the retire that wrote RetiredAt; RetireClearedID is the one whose mark a
+	// person's start cleared. Both are written by the same meta update as the mark and its
+	// clearing, so a recovery can tell a session a retire never reached (neither) from one a
+	// person resumed (RetireClearedID).
+	RetireID        string `json:"retireID,omitempty"`
+	RetireClearedID string `json:"retireClearedID,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so
 	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached

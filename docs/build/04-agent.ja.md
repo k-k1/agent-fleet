@@ -97,15 +97,18 @@ source_of_truth: "コード（本書は地図と設計意図）"
   - meta の `retiredAt` が、終わらせたものを終わったままにする。付けた瞬間から、
     watch の sink は起動も注入もせず、Managed への入力は（出どころを問わず）`409 session_retired`
     で断り、自動の `/start` も断り、子の枠も取らせず、エンジンは新しい購読と組み込みを断り、予約された
-    利用上限の再開も断る。retire の意図はディスクに残り、途中で終わった retire は（子孫ごと）次の起動で
-    Agent が完了させる。ロックの順は、ライフサイクル gate → retire gate。`POST /sessions/{name}/start` が外すので、利用者が Console から再開すれば
+    利用上限の再開も断る。retire の意図（root と retire id）はディスクに残り、途中で終わった retire は（子孫ごと）次の起動で
+    Agent が完了させる。各メンバーは gate の中で読む。その retire の印があれば続きをやり、人の start が
+    同じ meta 書込みで残す墓標（`retireClearedID`）があれば触らず、どちらも無ければ未到達として初めて印を付ける。
+    利用上限の予約経路は印の付いたセッションを断るので、retire は episode にあるものを取り消す。ロックの順は、ライフサイクル gate → retire gate。`POST /sessions/{name}/start` が外すので、利用者が Console から再開すれば
     普通のセッションに戻る。
 - **キュー配信の最初のターンの終わり方**（ADR 0137 §7）: `queueDelivery` を持つセッションの行に
   `queueTurn: {outcome, ms, endedAt}`。`outcome` は `clean`・`turn-failed`・`turn-aborted`
   （スケジュール実行が記録する値）で、理由を記録しない kind では空。専用の台帳（`status.FirstTurn`）に
   持つ。プロンプトを配る前に用意し、ターンの開始がちょうど 1 回あった後の最初の終了で確定する
-  （driver が自分で始めたターンは、記録の状態によらず開始 1 回と数える。最初の prompt id を保持し、
-  違うものが来たら void）。
+  （driver が自分で始めたターンは、記録の状態によらず開始 1 回と数える。create の楽観的な working 書込みを
+  確認できるのは、配達入力自身（ClientMessageID）の開始だけで、それ以外の開始・id の無い開始・未確認の
+  まま Agent が再起動した場合は ledger を void にする。最初の prompt id も保持する）。
   だから停止で消えず、後のターンが書き換えることもない。それを示せないとき（開始か終了を見逃した、
   間の停止で status が消えた）は、項目を出さないままにする。
 

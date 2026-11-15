@@ -15,6 +15,8 @@ package status
 // not running) voids the ledger for good, and so does an end with no start behind it.
 
 import (
+	"os"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
@@ -38,6 +40,9 @@ type FirstTurn struct {
 	Delivering bool `json:"delivering,omitempty"`
 	// FirstPrompt is the prompt id of the first turn when the kind has one (claude, codex hooks).
 	FirstPrompt string `json:"firstPrompt,omitempty"`
+	// DeliveryID is the ClientMessageID of the delivery's own input: only the driver's start of
+	// that input confirms the create's optimistic working write.
+	DeliveryID string `json:"deliveryID,omitempty"`
 	// LastKey identifies the input the last explicit (driver) start was for; Optimistic says the
 	// start counted so far came from the create's optimistic working write, which the driver's own
 	// start then confirms instead of counting again.
@@ -68,7 +73,7 @@ func ArmFirstTurn(sid string, noReason bool) {
 
 // MarkFirstTurnDelivering records that the delivery's prompt is about to be sent. A turn already
 // seen is not the prompt's, so it voids the ledger instead.
-func MarkFirstTurnDelivering(sid string) {
+func MarkFirstTurnDelivering(sid, deliveryID string) {
 	unlock, _ := lockSid(sid)
 	defer unlock()
 	t, ok := firstTurns.Read(sid)
@@ -79,6 +84,7 @@ func MarkFirstTurnDelivering(sid string) {
 		t.Void = true
 	} else {
 		t.Delivering = true
+		t.DeliveryID = deliveryID
 	}
 	_ = firstTurns.Write(sid, t)
 }
@@ -128,7 +134,7 @@ func noteFirstTurnWrite(sid string, s SessionStatus) {
 			if s.startKey != "" && s.startKey == t.LastKey {
 				return // the same input started twice (a driver marks it at send and again on the native start)
 			}
-			if t.Starts == 1 && t.Optimistic && t.LastKey == "" {
+			if t.Starts == 1 && t.Optimistic && t.DeliveryID != "" && s.startKey == t.DeliveryID {
 				// The create's optimistic working write came first; this is the driver's own
 				// start of the same turn.
 				t.Optimistic, t.LastKey = false, s.startKey
@@ -219,4 +225,29 @@ func noteObservedFirstTurnEnd(sid, at string) {
 func PersistTurnStart(sid, key string) {
 	persist(sid, SessionStatus{State: "working", turnStart: true, startKey: key})
 	RemoveCompletionKey(sid)
+}
+
+// VoidUnconfirmedFirstTurns is called at Agent start: a ledger whose only start is the create's
+// optimistic working write, never confirmed by the driver's start of the delivery's input, may
+// belong to an input the previous process lost, and whatever turn comes next is not the delivery's.
+func VoidUnconfirmedFirstTurns() int {
+	entries, err := os.ReadDir(firstTurns.Dir())
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		sid := strings.TrimSuffix(e.Name(), ".json")
+		unlock, _ := lockSid(sid)
+		if t, ok := firstTurns.Read(sid); ok && !t.Done && !t.Void && t.Starts == 1 && t.Optimistic {
+			t.Void = true
+			_ = firstTurns.Write(sid, t)
+			n++
+		}
+		unlock()
+	}
+	return n
 }
