@@ -22,7 +22,7 @@ func Shared() *Store {
 		// A tmux server started before the token left this environment (a pane's environment
 		// comes from the server) keeps it in its global environment; every launch unsets it.
 		tmuxx.AddLaunchEnv([]string{EnvToken}, nil)
-		shared = Open(Path())
+		shared = Open(Path(), MirrorPath())
 		shared.seedFromEnv()
 	})
 	return shared
@@ -39,6 +39,7 @@ type stateWire struct {
 	Allowed           []string `json:"allowed"`
 	LastOK            string   `json:"lastOk,omitempty"`
 	Confirmed         bool     `json:"confirmed"`
+	Holding           bool     `json:"holding,omitempty"`
 }
 
 // HandleState serves GET /route-policy from the shared store.
@@ -46,7 +47,7 @@ func HandleState(w http.ResponseWriter, _ *http.Request) {
 	s := Shared()
 	st := s.State()
 	out := stateWire{Held: st.Held, Placeholder: st.Placeholder, Revision: st.Policy.Revision, Restricted: st.Policy.Restricted,
-		CeilingRestricted: st.Policy.CeilingRestricted, Allowed: st.Policy.Allowed, Confirmed: st.Confirmed(s.now())}
+		CeilingRestricted: st.Policy.CeilingRestricted, Allowed: st.Policy.Allowed, Confirmed: st.Confirmed(s.now()), Holding: st.Holding}
 	if out.Allowed == nil {
 		out.Allowed = []string{}
 	}
