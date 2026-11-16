@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -17,6 +18,13 @@ import (
 // so no walker of the sessions directory takes it (they all match *.json).
 const brokenMetaSuffix = ".broken-"
 
+// RuntimeProbe says whether an adoptable Managed runtime may be up. Only a definite "not running"
+// may answer false.
+type RuntimeProbe struct {
+	Name         string
+	MayBeRunning func() bool
+}
+
 // SetAsideBrokenMetas runs once at Agent start, before anything is started or any request is
 // accepted. A meta file that exists but cannot be read keeps every retire from answering complete
 // (it may be a child of the tree), and nothing else removes it. With no write in flight and no
@@ -25,15 +33,36 @@ const brokenMetaSuffix = ".broken-"
 // sees the session as absent. It is never deleted, so a person can repair it and rename it back.
 // A file whose tmux session exists stays where it is: something runs that the Agent cannot
 // describe, so it stays in doubt. Returns the new names.
-func SetAsideBrokenMetas() []string {
+//
+// "Nothing has been started" does not mean "nothing runs": a Managed runtime the previous Agent
+// started can outlive an Agent restart and be adopted again, with a turn still going and no tmux
+// session. Its meta is unreadable here, so its kind is unknown. The rule: runtimes lists a probe
+// for EVERY runtime the Agent adopts or reattaches to after a restart (today opencode serve and
+// the codex app-server; the other Managed kinds are the Agent's own stdio children or have no
+// process), and the whole set-aside is skipped when any may be up. A new adoptable runtime gets a
+// probe here, or this rename can hide a running session from a retire.
+func SetAsideBrokenMetas(runtimes ...RuntimeProbe) []string {
 	_, unreadable, err := session.ListMetasChecked()
 	if err != nil {
 		log.Printf("meta: the sessions directory could not be listed, no broken meta set aside: %v", err)
 		return nil
 	}
+	if len(unreadable) == 0 {
+		return nil
+	}
+	for _, rt := range runtimes {
+		if rt.MayBeRunning() {
+			log.Printf("meta: %d unreadable meta file(s) left in doubt: the %s runtime may be running from the previous Agent and one of them may be its session", len(unreadable), rt.Name)
+			return nil
+		}
+	}
 	var moved []string
 	for _, name := range unreadable {
-		if tmuxx.HasSession(session.TmuxName(name)) {
+		switch alive, err := tmuxSessionAlive(name); {
+		case err != nil:
+			log.Printf("meta: %s.json cannot be read and tmux could not say whether its session runs; left in place: %v", name, err)
+			continue
+		case alive:
 			log.Printf("meta: %s.json cannot be read but its tmux session is running; left in place, the session stays in doubt", name)
 			continue
 		}
@@ -52,6 +81,20 @@ func SetAsideBrokenMetas() []string {
 		moved = append(moved, to)
 	}
 	return moved
+}
+
+// tmuxSessionAlive tells a session that is not there (tmux exits 1) from a probe that failed
+// (a timeout, tmux missing, any other exit): only the first lets the caller act on "absent".
+func tmuxSessionAlive(name string) (bool, error) {
+	err := tmuxx.Run("has-session", "-t", session.ExactTarget(session.TmuxName(name)))
+	var ee *exec.ExitError
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.As(err, &ee) && ee.ExitCode() == 1:
+		return false, nil
+	}
+	return false, err
 }
 
 // brokenMetaName is a free path for the set-aside file; "" when none could be found.

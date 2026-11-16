@@ -204,7 +204,13 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     absent, so it no longer keeps a retire from answering `complete`. To repair it, fix the file and
     rename it back to `<name>.json`: it is a session again, and it carries no retired mark it was
     never given. A file whose tmux session exists is left in place and logged: something runs that
-    the Agent cannot describe, so it stays in doubt. The runtime checks above are not relaxed.
+    the Agent cannot describe, so it stays in doubt (a tmux probe that fails, times out or exits other
+    than 1 counts as "may be running" too). The whole set-aside is also skipped, with one log line
+    giving the number of files left in doubt, while any Managed runtime the Agent adopts after a
+    restart may be up: the opencode `serve` daemon and the codex app-server (`MayBeRunning`: only a
+    refused connection or a missing unix socket says "not running"). The other Managed kinds are the
+    Agent's own stdio children or have no process, so they cannot be adopted. A new adoptable runtime
+    needs a probe in `SetAsideBrokenMetas`'s call in `serve()`. The runtime checks above are not relaxed.
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
     written, the watch sink never starts or injects into the session, a Managed input of an
     automatic origin is refused with `409 session_retired` (one of a deliberate origin starts the

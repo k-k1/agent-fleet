@@ -91,3 +91,53 @@ func TestSetAsideBrokenMetas(t *testing.T) {
 		})
 	}
 }
+
+// A tmux that fails for any reason other than "no such session" proves nothing: the file stays.
+func TestSetAsideBrokenMetasKeepsWhatTmuxCouldNotAnswer(t *testing.T) {
+	newRetireEnv(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nexit 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	writeCutMeta(t, "x", "")
+	if moved := SetAsideBrokenMetas(); len(moved) != 0 {
+		t.Fatalf("set aside %v although tmux failed", moved)
+	}
+	if _, st := session.ReadMetaState("x"); st != session.MetaUnreadable {
+		t.Fatalf("state %v, want unreadable", st)
+	}
+}
+
+// A Managed runtime adopted from the previous Agent may be running a session whose meta is
+// unreadable: nothing is set aside while any may be up, and only a definite "not running" counts.
+func TestSetAsideBrokenMetasWaitsForAdoptableRuntimes(t *testing.T) {
+	up := RuntimeProbe{Name: "stub daemon", MayBeRunning: func() bool { return true }}
+	down := RuntimeProbe{Name: "stub gone", MayBeRunning: func() bool { return false }}
+	cases := []struct {
+		name   string
+		probes []RuntimeProbe
+		moved  int
+	}{
+		{"a daemon answers", []RuntimeProbe{down, up}, 0},
+		{"the probe could not tell (reported as maybe running)", []RuntimeProbe{up}, 0},
+		{"no daemon", []RuntimeProbe{down, down}, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			newRetireEnv(t)
+			tmuxWhereOnlyAlive(t)
+			writeCutMeta(t, "x", "")
+			if got := SetAsideBrokenMetas(c.probes...); len(got) != c.moved {
+				t.Fatalf("set aside %v, want %d", got, c.moved)
+			}
+			want := session.MetaUnreadable
+			if c.moved > 0 {
+				want = session.MetaAbsent
+			}
+			if _, st := session.ReadMetaState("x"); st != want {
+				t.Fatalf("state %v, want %v", st, want)
+			}
+		})
+	}
+}

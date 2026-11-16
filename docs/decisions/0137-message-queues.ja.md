@@ -563,3 +563,4 @@ meta の書き込み自体も一時ファイルと rename になったので、�
 ずっと読めない meta は retire の `complete` を妨げ続けるので、Agent は起動時に、同名の tmux セッションが無いものを
 `<name>.json.broken-<unix 秒>` に rename して脇へ退ける（削除はしない）。セッションがあるものはそのまま残して疑いのままにする。
 直したあと元の名前に戻せば、retire の印の無い通常のセッションに戻る。
+前の Agent から引き継げる Managed ランタイム（opencode serve、codex app-server）が動いているかもしれないあいだは退避しない（そこで動くターンには tmux セッションが無いため）。

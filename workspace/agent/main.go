@@ -167,7 +167,10 @@ func serve() {
 	seedGitOAuthBridge()
 	// A meta that cannot be read would keep every retire from completing: set it aside while no
 	// write is in flight and nothing has been started or accepted (sessionx.SetAsideBrokenMetas).
-	sessionx.SetAsideBrokenMetas()
+	sessionx.SetAsideBrokenMetas(
+		sessionx.RuntimeProbe{Name: "opencode serve", MayBeRunning: opencode.Serve().MayBeRunning},
+		sessionx.RuntimeProbe{Name: "codex app-server", MayBeRunning: codex.Serve().MayBeRunning},
+	)
 	// Make claude emit working/idle/question via hooks into the status files.
 	claude.EnsureStatusHooks()
 	// Drop expired carried interactions (docs/log/75). This is the only place they are

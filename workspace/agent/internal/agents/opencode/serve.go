@@ -245,6 +245,10 @@ func (s *Supervisor) Running() bool {
 // Serve returns the package-wide supervisor instance.
 func Serve() *Supervisor { return supervisor }
 
+// MayBeRunning reports whether a daemon this package adopts at start (Ensure / AdoptIfRunning)
+// may be up, started by the previous Agent: only a refused connection says it is not.
+func (s *Supervisor) MayBeRunning() bool { return agents.ListenerMayBeUp(serveAddr()) }
+
 func serveAddr() string {
 	if v := os.Getenv(serveAddrEnv); v != "" {
 		return v

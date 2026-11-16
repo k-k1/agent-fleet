@@ -602,3 +602,4 @@ The meta write itself is now a temporary file and a rename, so a reader no longe
 A meta that stays unreadable would keep every retire from completing, so the Agent sets such a file aside at start
 (renamed `<name>.json.broken-<unix seconds>`, never deleted) when no tmux session of that name exists; one whose session
 exists stays in place and in doubt. Renaming it back after a repair makes it a session again, with no retired mark.
+The set-aside is skipped while an adoptable Managed runtime (opencode serve, the codex app-server) may be up from the previous Agent, since a running turn there has no tmux session.
