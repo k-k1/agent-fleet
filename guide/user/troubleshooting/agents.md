@@ -83,6 +83,7 @@ codex, opencode, copilot, cursor, kiro, agy, lcpp and muse fetch their model lis
 The model picked at launch is not in your Copilot plan. Your GitHub connection is working: copilot signs in with it, and the plan decides which models it may use.
 A Copilot Free plan offers only Auto, which copilot now calls **Copilot Fusion**. Its `/model` list still shows the other models, but every one of them fails like this.
 Start the session again with **"Default"** as the model. To pick a specific model, the GitHub account needs a paid Copilot plan.
+When the launch itself fails with this message, the error adds the same advice: the plan may not include the model, and the session should be started again with "Default".
 
 A provider error like this one now appears as error text in the conversation, and `get_session_output` returns the same text. The turn ends as a failed turn, so a parent session's `fleet.session.idle` watch and the status reason see it as turn-failed.
 

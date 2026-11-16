@@ -83,7 +83,8 @@ It stops or deletes everything billed by the hour, in the one order that strands
 | 7 | The NAT gateway (`--keep-nat` leaves it) | First back, because the Control Plane's own image pull and logs go through it |
 
 - Once the Control Plane is gone nothing else ever ends an engine instance, and a g6.xlarge left up is about $28 a day, so the sweep ends them
-- `--status` shows the current state
+- Once the Control Plane has stopped, `pause.sh` reads the workspace services and the slots again. A Control Plane that was baking a golden image while it stopped can have started a workspace again; any workspace found back up is scaled to 0 and any running slot is stopped directly, and the output says which. A read that fails here fails the run, so run `pause.sh` again
+- `--status` shows the current state. Its `golden bake` line lists a golden image bake still holding a seed or probe workspace (a service with a running task, or a task still alive without its service); `(none)` when there is none, and `(cannot tell: …)` when it could not be read
 - How the egress gateway is stopped and waited for is in [Control outbound traffic with a gateway](egress-gateway.md#pause-it). Its interface and Elastic IP are never touched
 
 ### The NAT gateway is deleted and recreated

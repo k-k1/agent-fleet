@@ -77,6 +77,15 @@ Treat it like a shell session: it can do anything in this workspace.
 Check whether the card says "**META_API_KEY is set in this workspace's environment.**"
 That variable takes priority over the sign-in, so you are billed per use whatever the card shows. Remove it from the workspace environment variables to use your plan.
 
+### A turn ends with an error
+
+When muse ends a turn with an error, the error appears in the conversation at the end of that turn: the kind of error and muse's own message. The turn counts as failed, so a parent session's `fleet.session.idle` watch and the session's state reason see it as turn-failed.
+
+- An error that says you are not signed in offers **"Re-authenticate"**, which opens muse's card ([The agent stopped, saying its login has expired](../troubleshooting/agents.md#the-agent-stopped-saying-its-login-has-expired))
+- **The conversation no longer fits the model's context window**: compact the conversation or start a new session, then send again
+- **The model provider refused to replay the earlier reasoning**: start a new session or switch model, then send again
+- A turn stopped by a usage limit shows its error too, and still resumes by itself once the limit lifts
+
 ### "Install failed" appears
 
 Check your connection and press "**Install Muse Code**" again.

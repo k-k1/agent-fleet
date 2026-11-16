@@ -89,6 +89,7 @@ The registrations live inside your workspace, so start the workspace first if it
 
 The row reads "**Connected**" when it is done, with when the access token expires (it renews itself), the scopes you
 granted and how the client was identified.
+A list of more than 12 scopes, here or in a connection test, is folded into "**Scopes (N)**"; press it to see them all.
 
 | Row state | Meaning |
 |---|---|
