@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -22,6 +23,25 @@ import (
 // kindCatalogWire is the response envelope.
 type kindCatalogWire struct {
 	Kinds []kindEntryWire `json:"kinds"`
+	// Access is what the member's launch screens may say about what is hidden (ADR 0138 D10a).
+	// Live only.
+	Access *memberAccessWire `json:"access,omitempty"`
+}
+
+// memberAccessWire is the member-facing summary behind the launch dialog's one line and the
+// "hidden by your own settings" line. It is booleans only on purpose: a member's screens never
+// name a layer or list a hidden item (D10a), so nothing here could.
+type memberAccessWire struct {
+	// NoRouteAvailable: no harness has a route the policy allows. The member is sent to an
+	// administrator.
+	NoRouteAvailable bool `json:"noRouteAvailable"`
+	// AllOffByOwnSettings: the policy allows some harness, and the member's own switches have
+	// turned every such harness off. The member is offered the reset, not sent to an
+	// administrator.
+	AllOffByOwnSettings bool `json:"allOffByOwnSettings"`
+	// SomeOffByOwnSettings: the member's own switches hide at least one harness the policy
+	// allows. A harness the policy forbids anyway never counts, so this cannot reveal one.
+	SomeOffByOwnSettings bool `json:"someOffByOwnSettings"`
 }
 
 // kindEntryWire is one kind. The tri-state fields carry "yes" / "no" / "unverified"
@@ -52,6 +72,9 @@ type kindEntryWire struct {
 	// (agents.CredentialResolver), sorted. Live only. Absent when the kind has no resolver or did
 	// not answer within usableRoutesBudget (unknown, not "none"); an empty list is "none".
 	UsableRoutes *[]string `json:"usableRoutes,omitempty"`
+	// Chat says whether the kind's assistant chat backend is offered: true when it has one and the
+	// policy allows one of the backend's routes. Absent for a kind with no chat backend. Live only.
+	Chat *bool `json:"chat,omitempty"`
 	// InstructionsReason is instrUnsupportedOf's reason when Instructions is "no".
 	InstructionsReason string `json:"instructionsReason,omitempty"`
 }
@@ -76,9 +99,15 @@ func buildKindCatalog(live bool) kindCatalogWire {
 	}
 	// The live catalog hides what the credential policy forbids (ADR 0138 D10a): a kind none of
 	// whose routes is allowed is absent, and one with some allowed lists only those.
+	// The member's own switches hide a kind the same way (the member layer, D7 layer 4).
 	hide, hiding := routepolicy.Hiding()
+	chatRoutes := chatx.ChatBackendRoutes()
+	if live {
+		a := memberAccessOf(kinds, hide, hiding, sessionx.KindSwitchedOff)
+		out.Access = &a
+	}
 	for _, k := range kinds {
-		if live && hiding && hide.HidesKind(kindRoutesOf(k)) {
+		if live && (hiding && hide.HidesKind(kindRoutesOf(k)) || sessionx.KindSwitchedOff(k)) {
 			continue
 		}
 		c := sessionx.AgentOf(k).Caps()
@@ -120,10 +149,35 @@ func buildKindCatalog(live bool) kindCatalogWire {
 			if hiding {
 				e.Routes, e.FixedRoutes = hide.Filter(e.Routes), hide.Filter(e.FixedRoutes)
 			}
+			if rs, ok := chatRoutes[k]; ok {
+				offered := !hiding || !hide.HidesKind(rs)
+				e.Chat = &offered
+			}
 		}
 		out.Kinds = append(out.Kinds, e)
 	}
 	return out
+}
+
+// memberAccessOf folds the policy and the member's switches into memberAccessWire, over the kinds
+// that run on a model (a kind with no route, shell or ssm, is not a harness here).
+func memberAccessOf(kinds []string, hide routepolicy.Policy, hiding bool, switchedOff func(string) bool) memberAccessWire {
+	allowed, on := 0, 0
+	for _, k := range kinds {
+		rs := kindRoutesOf(k)
+		if len(rs) == 0 || hiding && hide.HidesKind(rs) {
+			continue
+		}
+		allowed++
+		if !switchedOff(k) {
+			on++
+		}
+	}
+	return memberAccessWire{
+		NoRouteAvailable:     allowed == 0,
+		AllOffByOwnSettings:  allowed > 0 && on == 0,
+		SomeOffByOwnSettings: on < allowed,
+	}
 }
 
 // kindRoutesOf is every route kind may run on: the selectable routes it offers or declares and the

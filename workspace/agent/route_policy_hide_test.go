@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // useHidingPolicy makes the listing endpoints hide by a store that holds p.
@@ -226,5 +228,114 @@ func TestEveryLoginFlowIsGuarded(t *testing.T) {
 		if !slices.Contains(got, r) {
 			t.Errorf("no login flow store guards %s (guarded: %v)", r, got)
 		}
+	}
+}
+
+// memberHome gives the test a HOME of its own for the member's ui-prefs. Not t.TempDir: the live
+// catalog asks the kinds' credential probes in goroutines it stops waiting for after
+// usableRoutesBudget, and a slow probe can still write under HOME after the test ends, which
+// would fail t.TempDir's cleanup.
+func memberHome(t *testing.T) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "member-home-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("HOME", dir)
+}
+
+// writeMemberPrefs replaces the member's ui-prefs with prefs.
+func writeMemberPrefs(t *testing.T, prefs map[string]any) {
+	t.Helper()
+	b, err := json.Marshal(prefs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uiprefs.WriteAtomic(b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func liveAccess(t *testing.T) memberAccessWire {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	handleAgentKinds(rec, httptest.NewRequest(http.MethodGet, "/agents/kinds", nil))
+	var got kindCatalogWire
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Access == nil {
+		t.Fatal("the live catalog carries no access summary")
+	}
+	return *got.Access
+}
+
+// The member's own switches hide a harness from the live catalog like the policy does, and the
+// access summary tells the three cases apart without naming a layer or a kind: nothing allowed
+// (ask an administrator), everything allowed switched off by the member (offer the reset), and
+// some allowed harness switched off. A harness the policy forbids anyway never counts as hidden
+// by the member, so the summary cannot reveal it.
+func TestKindCatalogMemberSwitchesAndAccess(t *testing.T) {
+	memberHome(t)
+	useHidingPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
+	if a := liveAccess(t); a != (memberAccessWire{}) {
+		t.Errorf("no restriction, no switch: %+v", a)
+	}
+
+	writeMemberPrefs(t, map[string]any{"agentEnabled": map[string]any{"codex": false, "shell": false}})
+	by := liveKinds(t)
+	if _, ok := by[session.KindCodex]; ok {
+		t.Error("codex, switched off by the member, is listed")
+	}
+	if _, ok := by[session.KindShell]; !ok {
+		t.Error("shell runs no model and cannot be switched off, yet it was hidden")
+	}
+	if a := liveAccess(t); a != (memberAccessWire{SomeOffByOwnSettings: true}) {
+		t.Errorf("one harness switched off: %+v", a)
+	}
+
+	// Under apiKeysOnly only claude and codex (and opencode, on its provider keys) have an
+	// allowed route. Switching off agy, which the policy forbids anyway, is not reported.
+	useHidingPolicy(t, apiKeysOnly)
+	writeMemberPrefs(t, map[string]any{"agentEnabled": map[string]any{"agy": false}})
+	if a := liveAccess(t); a != (memberAccessWire{}) {
+		t.Errorf("only a forbidden harness switched off: %+v", a)
+	}
+	off := map[string]any{}
+	for k := range liveKinds(t) {
+		off[k] = false
+	}
+	writeMemberPrefs(t, map[string]any{"agentEnabled": off})
+	if a := liveAccess(t); a != (memberAccessWire{AllOffByOwnSettings: true, SomeOffByOwnSettings: true}) {
+		t.Errorf("every allowed harness switched off: %+v", a)
+	}
+
+	useHidingPolicy(t, routepolicy.Policy{Revision: 3, Restricted: true, Allowed: []string{"no-such-route"}})
+	if a := liveAccess(t); a != (memberAccessWire{NoRouteAvailable: true}) {
+		t.Errorf("nothing allowed: %+v", a)
+	}
+}
+
+// The chat flag follows the chat backend's own routes, not the kind's: a kind whose backend has no
+// allowed route says false, one with no chat backend carries no flag.
+func TestKindCatalogChatFlag(t *testing.T) {
+	useHidingPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
+	by := liveKinds(t)
+	if c := by[session.KindClaude].Chat; c == nil || !*c {
+		t.Errorf("claude chat with no restriction: %v", c)
+	}
+	if c := by[session.KindShell].Chat; c != nil {
+		t.Errorf("shell has no chat backend, yet carries %v", *c)
+	}
+	// claude's chat backend runs on the subscription only: with just the API routes allowed claude
+	// stays launchable but its chat is not offered, while codex's chat runs on its API key.
+	useHidingPolicy(t, apiKeysOnly)
+	by = liveKinds(t)
+	if c := by[session.KindClaude].Chat; c == nil || *c {
+		t.Errorf("claude chat with the subscription forbidden: %v, want false", c)
+	}
+	if c := by[session.KindCodex].Chat; c == nil || !*c {
+		t.Errorf("codex chat on an allowed API key: %v, want true", c)
 	}
 }

@@ -101,6 +101,11 @@ func (c *createRun) validateRoute() bool {
 // kind's catalogue and before any side effect.
 func (c *createRun) checkRoute() bool {
 	if ref := checkRouteLive(c.r.Context(), c.req.Kind, c.req.Route, c.req.Model, c.driver); ref != nil {
+		// A default route whose connection is gone or unavailable is the member's setting failing,
+		// not a request to fix: route_required, never a fallback (applyDefaultRoute).
+		if c.fromDefault {
+			ref = defaultRouteRefusal(c.req.Kind, c.req.Route, ref.Message)
+		}
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 		return false
 	}
@@ -117,6 +122,9 @@ func (c *createRun) checkRoute() bool {
 		if a, _ := RegisteredAgent(NormalizeKind(c.req.Kind)); a != nil {
 			if b, ok := a.(agents.RouteBinder); ok {
 				bound, ref := b.BindRoute(*c.req.Route.Normalize())
+				if ref != nil && c.fromDefault {
+					ref = defaultRouteRefusal(c.req.Kind, c.req.Route, ref.Message)
+				}
 				if ref != nil {
 					httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 					return false

@@ -48,6 +48,9 @@ type createRun struct {
 	// judgedLaunch is the launch the credential policy resolved and judged (checkRoute), nil when
 	// it resolved none; armMeta records it rather than resolving again.
 	judgedLaunch *routes.Launch
+	// fromDefault: req.Route is the member's default route (applyDefaultRoute), not one the
+	// request named, so a refusal of it is route_required.
+	fromDefault bool
 	// subdir is the cleaned subdir, checked to exist beneath the resolved working copy.
 	subdir string
 
@@ -271,13 +274,18 @@ func createTraitsOf(kind string) (agents.CreateTraits, bool) {
 
 // createRefusal is the kind's agents.CreatePolicy gate: status 0 passes, otherwise the refusal
 // to write. The member's setting is checked before the model, as it always was.
+// The member's agentEnabled switch (member_layer.go) comes after the kind's own switch, so lcpp
+// switched off by its older setting keeps its own refusal.
 func createRefusal(kind, model string) (status int, code, msg string) {
 	t, ok := createTraitsOf(kind)
+	if ok && t.EnabledPref != "" && !prefOn(t.EnabledPref) {
+		return http.StatusForbidden, t.DisabledCode, t.DisabledMessage
+	}
+	if switchableKind(kind) && !uiprefs.AgentEnabled(kind) {
+		return switchedOffRefusal(kind)
+	}
 	if !ok {
 		return 0, "", ""
-	}
-	if t.EnabledPref != "" && !prefOn(t.EnabledPref) {
-		return http.StatusForbidden, t.DisabledCode, t.DisabledMessage
 	}
 	if t.RequiresModel && strings.TrimSpace(model) == "" {
 		return http.StatusBadRequest, "bad_model", t.ModelRequiredMessage
@@ -358,6 +366,11 @@ func (c *createRun) checkModel() bool {
 	// all meet the same gate; the order (disabled, then model) is the old one.
 	if status, code, msg := createRefusal(NormalizeKind(c.req.Kind), c.req.Model); status != 0 {
 		httpx.WriteErr(c.w, status, code, msg)
+		return false
+	}
+	// The member's default route (D11b) is applied before the model checks, so a model is judged
+	// against the route the create will run on, as it is for a route the request names.
+	if !c.applyDefaultRoute() {
 		return false
 	}
 	// Models the user disabled (ui-prefs hiddenModels — model_deny.go) are refused for every

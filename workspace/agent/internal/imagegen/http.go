@@ -263,18 +263,26 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 	for _, p := range Providers() {
 		byID[p.ID()] = p
 	}
+	// A provider whose call would run on a route the credential policy forbids, or on one that
+	// cannot be told, is not listed (ADR 0138 D10a): neither among the providers nor in the order,
+	// which the Console shows as the member's provider list. The stored preference
+	// (imageProviderOrder) is not rewritten here.
 	hide, hiding := routepolicy.Hiding()
+	if hiding {
+		shown := make([]string, 0, len(out.Order))
+		for _, id := range out.Order {
+			if p, ok := byID[id]; ok {
+				if l := providerLaunch(p); l.Route != "" && hide.Allows(l.Route) {
+					shown = append(shown, id)
+				}
+			}
+		}
+		out.Order = shown
+	}
 	for _, id := range out.Order {
 		p, ok := byID[id]
 		if !ok || !p.Ready(r.Context()) {
 			continue
-		}
-		// A provider whose call would run on a route the credential policy forbids, or on one
-		// that cannot be told, is not listed (ADR 0138 D10a).
-		if hiding {
-			if l := providerLaunch(p); l.Route == "" || !hide.Allows(l.Route) {
-				continue
-			}
 		}
 		caps := p.Caps("")
 		st := providerStatus{
