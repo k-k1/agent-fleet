@@ -53,15 +53,16 @@ func memoTools() []toolSpec {
 			operator: func() map[string]any {
 				return map[string]any{
 					"name":        "add_memo",
-					"description": "メモキューに1件追加する。kind=text は body（メモ本文）、kind=file は refPath（~/repos/... パス）が必須で body は任意コメント。repo（''=共通/未分類）と category（サブプロジェクトの自由ラベル）で仕分ける。チャット中に出た TODO・依頼・後で渡したい対象を溜めておく時に呼ぶ。キュー（queue=true）のカテゴリに入れたメモはセッションへの仕事になり、利用者が解放するまで待つ。",
+					"description": "メモキューに1件追加する。kind=text は body（メモ本文）、kind=file は refPath（~/repos/... パス）が必須で body は任意コメント。repo（''=共通/未分類）と category（サブプロジェクトの自由ラベル）で仕分ける。チャット中に出た TODO・依頼・後で渡したい対象を溜めておく時に呼ぶ。キュー（queue=true）のカテゴリに入れたメモはセッションへの仕事になり、利用者が解放するまで待つ。作業項目（GitHub / Jira / Bitbucket）を指すだけなら reference を渡す（その場合 body は空でもよい。項目の中身は写されず、受け取るセッションが自分で読む）。自動実行カテゴリに同じ項目の待機中メモが既にあれば、追加せずそのメモを返す（existing）。",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"kind":     map[string]any{"type": "string", "description": "text | file"},
-							"body":     map[string]any{"type": "string", "description": "メモ本文（kind=text）またはコメント（kind=file）"},
-							"refPath":  map[string]any{"type": "string", "description": "~/repos/... のパス（kind=file）"},
-							"repo":     map[string]any{"type": "string", "description": "レポのバケツ。''=共通/未分類（任意）。worktree のフォルダ（repo@slug）を渡しても元のレポ（repo）に入る"},
-							"category": map[string]any{"type": "string", "description": "サブプロジェクトのラベル（任意）"},
+							"kind":      map[string]any{"type": "string", "description": "text | file"},
+							"body":      map[string]any{"type": "string", "description": "メモ本文（kind=text）またはコメント（kind=file）"},
+							"refPath":   map[string]any{"type": "string", "description": "~/repos/... のパス（kind=file）"},
+							"repo":      map[string]any{"type": "string", "description": "レポのバケツ。''=共通/未分類（任意）。worktree のフォルダ（repo@slug）を渡しても元のレポ（repo）に入る"},
+							"category":  map[string]any{"type": "string", "description": "サブプロジェクトのラベル（任意）"},
+							"reference": memoRefSchemaJA(false),
 						},
 						"required": []string{"kind"},
 					},
@@ -82,17 +83,22 @@ func memoTools() []toolSpec {
 						"Say what you found and where (repo, file:line); the queue is read away from this conversation, " +
 						"so nothing here is context the reader already has. " +
 						"Do not log progress, completion or thanks - your report and the Console already carry those. " +
-						"kind=text needs body; kind=file needs refPath (a ~/repos/... path) and takes body as a comment. " +
+						"kind=text needs body or reference; kind=file needs refPath (a ~/repos/... path) and takes body as a comment. " +
+						"To point at a work item (GitHub, Jira, Bitbucket) pass reference: the item itself is not copied " +
+						"(the session that gets the note reads it with gh, jira or bkt), and the note may be only that " +
+						"reference. If the category is an auto-run queue that already holds a waiting note for the same " +
+						"item, nothing is added and the answer is the note already there (existing: true). " +
 						"In a category that is a queue (queue=true) the note is work for a session instead, and waits " +
 						"until your user releases it; you cannot release, send or delete it.",
 					"inputSchema": map[string]any{
 						"type": "object", "additionalProperties": false,
 						"properties": map[string]any{
-							"kind":     map[string]any{"type": "string", "enum": []string{"text", "file"}, "description": "text | file"},
-							"body":     map[string]any{"type": "string", "description": "The note (kind=text), or a comment on the file (kind=file)"},
-							"refPath":  map[string]any{"type": "string", "description": "A ~/repos/... path (kind=file)"},
-							"repo":     map[string]any{"type": "string", "description": "Which repo bucket it belongs to (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
-							"category": map[string]any{"type": "string", "description": "Free-form sub-project label (optional; reuse one from list_memos)"},
+							"kind":      map[string]any{"type": "string", "enum": []string{"text", "file"}, "description": "text | file"},
+							"body":      map[string]any{"type": "string", "description": "The note (kind=text), or a comment on the file (kind=file)"},
+							"refPath":   map[string]any{"type": "string", "description": "A ~/repos/... path (kind=file)"},
+							"repo":      map[string]any{"type": "string", "description": "Which repo bucket it belongs to (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
+							"category":  map[string]any{"type": "string", "description": "Free-form sub-project label (optional; reuse one from list_memos)"},
+							"reference": memoRefSchema(false),
 						},
 						"required": []string{"kind"},
 					},
@@ -125,7 +131,7 @@ func memoTools() []toolSpec {
 				if err != nil {
 					return mcpToolErr(req.ID, memoRelayErr(err))
 				}
-				return mcpTextResult(req.ID, out)
+				return memoWriteResult(req.ID, p.Args, out)
 			}),
 		},
 		{
@@ -133,16 +139,17 @@ func memoTools() []toolSpec {
 			operator: func() map[string]any {
 				return map[string]any{
 					"name":        "update_memo",
-					"description": "既存メモ（id 指定）を編集する。渡したフィールドだけ変わり、省略した項目はそのまま。文言の整形・カテゴリ変更・並び替え(position)に使う。id は list_memos で得る。解放済みのキューのメッセージを編集すると解放待ちに戻る。",
+					"description": "既存メモ（id 指定）を編集する。渡したフィールドだけ変わり、省略した項目はそのまま。文言の整形・カテゴリ変更・並び替え(position)に使う。id は list_memos で得る。解放済みのキューのメッセージを編集すると解放待ちに戻る。reference は省略で据え置き、{} で外し、3 項目そろえた object で付け替える。",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"id":       map[string]any{"type": "string", "description": "メモ id（list_memos で取得）"},
-							"body":     map[string]any{"type": "string", "description": "新しい本文（任意）"},
-							"repo":     map[string]any{"type": "string", "description": "新しいレポバケツ（任意）。worktree のフォルダ（repo@slug）は元のレポに入る"},
-							"category": map[string]any{"type": "string", "description": "新しいカテゴリ（任意）"},
-							"refPath":  map[string]any{"type": "string", "description": "新しい参照パス（任意）"},
-							"position": map[string]any{"type": "integer", "description": "グループ内の新しい並び順（任意）"},
+							"id":        map[string]any{"type": "string", "description": "メモ id（list_memos で取得）"},
+							"body":      map[string]any{"type": "string", "description": "新しい本文（任意）"},
+							"repo":      map[string]any{"type": "string", "description": "新しいレポバケツ（任意）。worktree のフォルダ（repo@slug）は元のレポに入る"},
+							"category":  map[string]any{"type": "string", "description": "新しいカテゴリ（任意）"},
+							"refPath":   map[string]any{"type": "string", "description": "新しい参照パス（任意）"},
+							"position":  map[string]any{"type": "integer", "description": "グループ内の新しい並び順（任意）"},
+							"reference": memoRefSchemaJA(true),
 						},
 						"required": []string{"id"},
 					},
@@ -160,15 +167,18 @@ func memoTools() []toolSpec {
 						"The queue is your user's, and it holds notes from them and from other sessions too: correct " +
 						"your own, and leave someone else's alone unless you are fixing the thing it is about. " +
 						"Editing a released queue message sends it back to wait for release. " +
+						"reference: leave it out to keep the note's reference, pass {} to remove it, or pass all three " +
+						"fields to replace it; changing it onto an item another waiting note already holds is refused. " +
 						"You cannot delete, release or send a memo; that stays with the user in the Console.",
 					"inputSchema": map[string]any{
 						"type": "object", "additionalProperties": false,
 						"properties": map[string]any{
-							"id":       map[string]any{"type": "string", "minLength": 1, "description": "Memo id from list_memos"},
-							"body":     map[string]any{"type": "string", "description": "Replacement note text (optional)"},
-							"refPath":  map[string]any{"type": "string", "description": "Replacement ~/repos/... path (optional)"},
-							"repo":     map[string]any{"type": "string", "description": "Move it to another repo bucket (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
-							"category": map[string]any{"type": "string", "description": "Change the sub-project label (optional)"},
+							"id":        map[string]any{"type": "string", "minLength": 1, "description": "Memo id from list_memos"},
+							"body":      map[string]any{"type": "string", "description": "Replacement note text (optional)"},
+							"refPath":   map[string]any{"type": "string", "description": "Replacement ~/repos/... path (optional)"},
+							"repo":      map[string]any{"type": "string", "description": "Move it to another repo bucket (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
+							"category":  map[string]any{"type": "string", "description": "Change the sub-project label (optional)"},
+							"reference": memoRefSchema(true),
 						},
 						"required": []string{"id"},
 					},
@@ -189,7 +199,7 @@ func memoTools() []toolSpec {
 				if err != nil {
 					return mcpToolErr(req.ID, memoRelayErr(err))
 				}
-				return mcpTextResult(req.ID, out)
+				return memoWriteResult(req.ID, p.Args, out)
 			}),
 		},
 		{
@@ -262,6 +272,81 @@ func memoTools() []toolSpec {
 // two Control Plane calls of GET /memos together, so its partial answer (memos without
 // categories) arrives instead of a timeout here.
 const memoAgentTimeout = 2*memorelay.CPTimeoutDefault + 5*time.Second
+
+// memoRefSchema is the reference argument of the session's add_memo and update_memo. The shape
+// and the three-way meaning on an update are the Control Plane's (docs/build/03-control-plane.md
+// 3.6); the relay forwards them as they are.
+func memoRefSchema(update bool) map[string]any {
+	desc := "A pointer to the work item this note is about; the item is not copied (the session that gets the note reads it itself). All three fields are needed."
+	if update {
+		desc += " Omit to keep the current reference; {} removes it."
+	}
+	return map[string]any{
+		"type": "object", "additionalProperties": false, "description": desc,
+		"properties": map[string]any{
+			"provider": map[string]any{"type": "string", "description": "github | jira | bitbucket"},
+			"key":      map[string]any{"type": "string", "description": "owner/repo#12 for GitHub and Bitbucket, PROJ-12 for Jira"},
+			"url":      map[string]any{"type": "string", "description": "The item's http(s) address"},
+		},
+	}
+}
+
+// memoRefSchemaJA is memoRefSchema for the operator assistant's Japanese tool texts.
+func memoRefSchemaJA(update bool) map[string]any {
+	desc := "メモが指す作業項目（写さずに指すだけ。受け取るセッションが自分で読む）。3 項目すべて必要。"
+	if update {
+		desc += "省略で据え置き、{} で外す。"
+	}
+	return map[string]any{
+		"type": "object", "description": desc,
+		"properties": map[string]any{
+			"provider": map[string]any{"type": "string", "description": "github | jira | bitbucket"},
+			"key":      map[string]any{"type": "string", "description": "GitHub / Bitbucket は owner/repo#12、Jira は PROJ-12"},
+			"url":      map[string]any{"type": "string", "description": "項目の http(s) アドレス"},
+		},
+	}
+}
+
+// memoWriteResult is the tool result of an add_memo or update_memo that the Control Plane
+// accepted. The answer goes back as it came, so the session sees `existing` and the state. A
+// reference that was sent but is missing from the answer means the Control Plane ignored it (an
+// older one does): the note is there without it, and success would be a false report.
+func memoWriteResult(id json.RawMessage, args json.RawMessage, answer string) []byte {
+	if memoRefSent(args) && !memoRefAnswered(answer) {
+		return mcpToolErr(id, "The note was saved, but its reference was NOT kept: this Control Plane does not support "+
+			"references yet. Do not report the reference as stored; tell your user, or put the item's key and URL "+
+			"in the note's body instead. The Control Plane answered: "+answer)
+	}
+	return mcpTextResult(id, answer)
+}
+
+// memoRefSent reports whether the call's reference is one to be kept: any non-empty field counts,
+// so a partial one (which the Control Plane refuses) is still "sent". {}, three empty strings and an
+// absent one are what the relay forwards as clear or nothing, and ask for nothing to be kept.
+func memoRefSent(args json.RawMessage) bool {
+	var in struct {
+		Reference *struct {
+			Provider string `json:"provider"`
+			Key      string `json:"key"`
+			URL      string `json:"url"`
+		} `json:"reference"`
+	}
+	if json.Unmarshal(args, &in) != nil || in.Reference == nil {
+		return false
+	}
+	r := in.Reference
+	return r.Provider != "" || r.Key != "" || r.URL != ""
+}
+
+// memoRefAnswered reports whether the Control Plane's answer carries a reference.
+func memoRefAnswered(answer string) bool {
+	var out struct {
+		Reference *struct {
+			Key string `json:"key"`
+		} `json:"reference"`
+	}
+	return json.Unmarshal([]byte(answer), &out) == nil && out.Reference != nil && out.Reference.Key != ""
+}
 
 // memoArgsObject is a call's arguments as a JSON object body: an absent argument list is {}.
 func memoArgsObject(args json.RawMessage) []byte {

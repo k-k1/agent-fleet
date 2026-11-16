@@ -118,7 +118,9 @@ func assertQueueItemsAreData(t *testing.T, prompt string) {
 	if strings.Contains(prompt[:label], "real work") {
 		t.Errorf("item text appears before the data label")
 	}
-	for _, l := range strings.Split(prompt[label+len(queueDataLabel):], "\n") {
+	// The reference note is Agent Fleet's own sentence on the label line.
+	rest := strings.Replace(prompt[label+len(queueDataLabel):], " "+queueRefNote, "", 1)
+	for _, l := range strings.Split(rest, "\n") {
 		if l == "" || strings.HasPrefix(l, "> ") || l == ">" {
 			continue
 		}
@@ -148,7 +150,7 @@ func TestQueueCreateWritesLargeOrAttachedItemsToAFile(t *testing.T) {
 			}
 			m := p.createdMeta()
 			path := filepath.Join(paths.SessionWorkDir(m.Name), queueItemsFile)
-			if !strings.HasSuffix(prompt, "\n"+queueFileLine(1, path)) {
+			if !strings.HasSuffix(prompt, "\n"+queueFileLine([]QueueDeliveryItem{{}}, path)) {
 				t.Errorf("prompt does not name the items file %s:\n%s", path, prompt)
 			}
 			if strings.Contains(prompt, "> ") || strings.Contains(prompt, "see image") {

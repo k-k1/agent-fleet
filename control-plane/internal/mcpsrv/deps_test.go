@@ -142,12 +142,12 @@ func (c testCP) MemoList(context.Context, string) (any, error) {
 	return nil, nil
 }
 
-func (c testCP) MemoCreate(context.Context, store.MembershipView, string, string, string, string, string, string) (any, error) {
+func (c testCP) MemoCreate(context.Context, store.MembershipView, string, string, string, string, string, string, *MemoRef) (any, error) {
 	unwired("MemoCreate")
 	return nil, nil
 }
 
-func (c testCP) MemoUpdate(context.Context, string, string, *string, *string, *string, *string, *int) (any, error) {
+func (c testCP) MemoUpdate(context.Context, string, string, *string, *string, *string, *string, *int, *MemoRef) (any, error) {
 	unwired("MemoUpdate")
 	return nil, nil
 }

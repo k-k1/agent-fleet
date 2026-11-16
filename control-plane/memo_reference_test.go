@@ -723,3 +723,67 @@ func TestMemoReferenceMarkerVersionAndStaleClear(t *testing.T) {
 		}
 	})
 }
+
+// The /mcp memo tools take the same reference as the other faces, through the same validation:
+// set, change, clear, refuse, and the duplicate. Whatever they write enters held with provenance
+// mcp, a reference-only message included.
+func TestMemoReferenceMCPTools(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		f := memoFaceClient{"mcp", e}
+
+		code, m := f.create(refMemo("r", "q", "", ghRef("1")))
+		if code != http.StatusCreated || m.Reference == nil || m.Reference.Key != "acme/app#1" || m.Body != "" || m.Existing {
+			t.Fatalf("create: %d %+v", code, m)
+		}
+		if row := e.memoRow(m.ID); row.State != store.MemoStateHeld || row.Provenance != store.MemoProvenanceMCP || row.RefProvider != "github" {
+			t.Fatalf("a reference from /mcp entered %+v", row)
+		}
+
+		// The same item again in an auto-run category answers the one already there.
+		code, again := f.create(refMemo("r", "q", "other words", refOf("GitHub", "ACME/app#1", refURL)))
+		if code != http.StatusOK || again.ID != m.ID || !again.Existing {
+			t.Fatalf("duplicate: %d %+v", code, again)
+		}
+		if n := e.memoCount("r", "q"); n != 1 {
+			t.Fatalf("%d messages, want 1", n)
+		}
+
+		// Invalid: the Control Plane's own validation, as on the other faces.
+		for _, bad := range []map[string]any{
+			refOf("gitlab", "acme/app#2", refURL),
+			refOf("github", "#2", refURL),
+			refOf("github", "acme/app#2", ""),
+			refOf("github", "acme/app#2", "javascript:alert(1)"),
+		} {
+			if code, _ := f.create(refMemo("r", "q", "x", bad)); code == http.StatusCreated {
+				t.Fatalf("an invalid reference %v was stored", bad)
+			}
+		}
+		if n := e.memoCount("r", "q"); n != 1 {
+			t.Fatalf("an invalid reference left %d messages", n)
+		}
+
+		// Update: absent leaves it, a full object sets it, {} clears it.
+		if code, up := f.update(m.ID, map[string]any{"body": "note"}); code != http.StatusOK || up.Reference == nil || up.Reference.Key != "acme/app#1" {
+			t.Fatalf("absent: %d %+v", code, up)
+		}
+		if code, up := f.update(m.ID, map[string]any{"reference": ghRef("3")}); code != http.StatusOK || up.Reference == nil || up.Reference.Key != "acme/app#3" {
+			t.Fatalf("set: %d %+v", code, up)
+		}
+		if code, _ := f.update(m.ID, map[string]any{"reference": refOf("github", "acme/app#3", "")}); code == http.StatusOK {
+			t.Fatal("a partial reference was accepted")
+		}
+		// Another message holding the reference makes a set a duplicate.
+		_, other := f.create(refMemo("r", "q", "y", ghRef("4")))
+		if code, _ := f.update(other.ID, map[string]any{"reference": ghRef("3")}); code != http.StatusConflict {
+			t.Fatalf("update onto an open reference: %d", code)
+		}
+		if code, up := f.update(m.ID, map[string]any{"reference": map[string]any{}}); code != http.StatusOK || up.Reference != nil || up.Body != "note" {
+			t.Fatalf("clear: %d %+v", code, up)
+		}
+		if row := e.memoRow(m.ID); row.RefKey != "" || row.State != store.MemoStateHeld {
+			t.Fatalf("after clear: %+v", row)
+		}
+	})
+}

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -241,5 +242,70 @@ func TestListAnswersMemosWhenCategoriesHang(t *testing.T) {
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("list took %v with a 200ms CP bound", d)
+	}
+}
+
+// A reference on a create reaches the Control Plane as the object the model wrote, and a create
+// without one sends no reference key at all.
+func TestCreateForwardsTheReference(t *testing.T) {
+	cp := newFakeCP(t)
+	cp.answer("POST /internal/memos", http.StatusCreated, `{"id":"m1"}`)
+	ref := `{"provider":"github","key":"acme/app#12","url":"https://github.com/acme/app/issues/12"}`
+	rec := serve(HandleCreate, http.MethodPost, "/memos",
+		`{"from":"kid01","memo":{"kind":"text","body":"","category":"impl","reference":`+ref+`,"extra":"dropped"}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create answered %d", rec.Code)
+	}
+	got := decode(t, cp.bodies[0])
+	if want := decode(t, ref); !reflect.DeepEqual(got["reference"], map[string]any(want)) {
+		t.Errorf("CP got reference %v, want %v (body %s)", got["reference"], want, cp.bodies[0])
+	}
+	if _, ok := got["extra"]; ok {
+		t.Errorf("an unknown field was forwarded: %s", cp.bodies[0])
+	}
+
+	serve(HandleCreate, http.MethodPost, "/memos", `{"from":"kid01","memo":{"kind":"text","body":"x"}}`)
+	if strings.Contains(cp.bodies[1], "reference") {
+		t.Errorf("a create without a reference sent one: %s", cp.bodies[1])
+	}
+	// A JSON null is no reference either.
+	serve(HandleCreate, http.MethodPost, "/memos", `{"from":"kid01","memo":{"kind":"text","body":"x","reference":null}}`)
+	if strings.Contains(cp.bodies[2], "reference") {
+		t.Errorf("a null reference was forwarded: %s", cp.bodies[2])
+	}
+}
+
+// An update's reference keeps the Control Plane's three meanings on the wire: absent leaves it,
+// {} clears it, a full object sets it.
+func TestUpdateReferenceThreeWays(t *testing.T) {
+	cp := newFakeCP(t)
+	for _, c := range []struct{ name, in, want string }{
+		{"absent", `{"body":"b"}`, `{"body":"b"}`},
+		{"null is absent", `{"body":"b","reference":null}`, `{"body":"b"}`},
+		{"empty object clears", `{"reference":{}}`, `{"reference":{}}`},
+		{"full object sets", `{"reference":{"provider":"jira","key":"PROJ-7","url":"https://j.example/browse/PROJ-7"}}`,
+			`{"reference":{"provider":"jira","key":"PROJ-7","url":"https://j.example/browse/PROJ-7"}}`},
+		{"partial object is the Control Plane's to refuse", `{"reference":{"provider":"jira"}}`, `{"reference":{"provider":"jira"}}`},
+	} {
+		cp.bodies = nil
+		rec := serve(HandleUpdate, http.MethodPatch, "/memos/m1", c.in)
+		if rec.Code != http.StatusOK || len(cp.bodies) != 1 {
+			t.Fatalf("%s: answered %d, %d CP calls", c.name, rec.Code, len(cp.bodies))
+		}
+		if cp.bodies[0] != c.want {
+			t.Errorf("%s: CP got %s, want %s", c.name, cp.bodies[0], c.want)
+		}
+	}
+}
+
+// The Control Plane's answer, with existing and the state, goes back to the caller untouched.
+func TestCreateAnswersExistingAsItCame(t *testing.T) {
+	cp := newFakeCP(t)
+	ans := `{"id":"m1","state":"held","existing":true,"reference":{"provider":"github","key":"acme/app#12","url":"https://github.com/acme/app/issues/12"}}`
+	cp.answer("POST /internal/memos", http.StatusOK, ans)
+	rec := serve(HandleCreate, http.MethodPost, "/memos",
+		`{"from":"kid01","memo":{"kind":"text","reference":{"provider":"github","key":"acme/app#12","url":"https://github.com/acme/app/issues/12"}}}`)
+	if rec.Code != http.StatusOK || rec.Body.String() != ans {
+		t.Fatalf("answered %d %q, want the Control Plane's answer as it came", rec.Code, rec.Body.String())
 	}
 }

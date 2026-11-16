@@ -31,6 +31,10 @@ import (
 
 // CP is everything mcpsrv needs from the control plane. The implementation is
 // control-plane/mcp_wiring.go's adapter over *manager.
+// MemoRef is a memo's typed reference as a tool call carries it: the fields before validation,
+// which the memo core does the same for every face.
+type MemoRef struct{ Provider, Key, URL string }
+
 type CP interface {
 	// --- Data ------------------------------------------------------------------
 	// Store is the CP metadata store. mcpsrv reads PATs, identities, memberships,
@@ -115,8 +119,10 @@ type CP interface {
 	HiddenKinds(ctx context.Context, tenantID string) (map[string]bool, error)
 	MemoList(ctx context.Context, membershipID string) (any, error)
 	// MemoCreate's connection is the authenticated connection id, recorded as the producer.
-	MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string) (any, error)
-	MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int) (any, error)
+	// ref is the typed reference of a create (nil for none). An update's ref is three-way: nil
+	// leaves the reference, an empty MemoRef clears it, a full one sets it.
+	MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *MemoRef) (any, error)
+	MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int, ref *MemoRef) (any, error)
 	MemoFlush(ctx context.Context, rt runtime.Runtime, membershipID, sessionName string, ids []string) (map[string]any, error)
 	// MemoDelete is delete_memo through the shared core, which refuses a message in a queue.
 	MemoDelete(ctx context.Context, membershipID, id string) error

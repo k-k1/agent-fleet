@@ -657,3 +657,15 @@ reference, the session's `work_item`. A delivery that holds a reference is not s
 new `queueRefs` marker (the queue's `noRefsAt` and the waiting reason `no_references` say so). Open question 2 is
 untouched: a reference-only message from a session is `held` like any other. The §4 sentence on the branch name is not met by this slice: the queue's create sends no branch, so the session keeps the Agent's `temp/` branch and only the link follows the work-item rules. Naming the branch from the item is for slice B. Left for the Agent (the marker, the prompt
 and the tool argument) and the Console ("add to auto-run"); the wire is in docs/build/03-control-plane.md §3.6.
+
+Added 2026-11-17 (#4150, slice B of step 3, the Agent and the hosted tools): `add_memo` and `update_memo` take an optional
+`reference` `{provider, key, url}`, on the Agent's session tools, through the relay (absent keeps it, `{}` clears it, a full
+object sets it) and on the Control Plane's hosted `/mcp` tools, which enter `held` as every `/mcp` write does. A call that
+sent a reference and got an answer without one says the reference was not kept (an older Control Plane ignores the field).
+A delivery's prompt shows an item's reference as quoted data beside the member's note, never renders a reference-only
+item empty, and says once in Agent Fleet's own words that nothing fetched the item and the session reads it itself. The
+Agent sends `queueRefs: 1` with that. The §4 sentence on the branch is now met: a queue create with a work item, a
+worktree and no branch takes the branch the member's naming rules give for the item (the default is `feature/<number>`
+for GitHub and Bitbucket and `feature/PROJ-7` for Jira, with the rules' base). An existing branch is checked out, as the
+Console's "work on the existing branch" does, and a branch another working copy holds, a name git refuses or no name from
+the rules leaves the throwaway `temp/` branch: a name never fails a delivery. Wire and behaviour: docs/build/04-agent.md.

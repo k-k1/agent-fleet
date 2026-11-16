@@ -51,6 +51,10 @@ type createRun struct {
 	// fromDefault: req.Route is the member's default route (applyDefaultRoute), not one the
 	// request named, so a refusal of it is route_required.
 	fromDefault bool
+	// queueNamed: the branch in req.NewBranch was named from a queue delivery's work item, not
+	// by the sender. A clash it meets later falls back to the throwaway branch instead of
+	// failing the delivery.
+	queueNamed bool
 	// defaultFixed is the member's default route when it is one the kind resolves by itself (a
 	// fixed route): the create stays empty and checkRoute requires the judged launch to be on it,
 	// and on its saved connection when it names one.
@@ -440,6 +444,7 @@ func (c *createRun) resolveWorkingCopy() bool {
 		var dir string
 		var err error
 		folderSeg := strings.TrimSpace(c.req.Folder) // "" => folder derives from the branch
+		c.nameQueueBranch(parent)
 		if c.req.UseExisting {
 			// "Work on the existing branch": check out req.Branch (local or DWIM-tracked
 			// remote) into the worktree. Reached from the launch dialog's existing-branch mode
@@ -448,14 +453,27 @@ func (c *createRun) resolveWorkingCopy() bool {
 			// git holds a branch in one worktree at a time. Refuse BEFORE any directory or
 			// fetch side effect, naming the copy that has it — worktree add would fail
 			// halfway through otherwise, with a message that doesn't say what to do next.
-			if occ := gitx.WorktreeBranches(parent)[base]; occ != "" {
+			occ := gitx.WorktreeBranches(parent)[base]
+			if occ != "" && !c.queueNamed {
 				gitx.WriteBranchInUse(c.w, base, occ)
 				return false
 			}
-			gitx.EnsureBranchRef(parent, base) // branch pushed since our last fetch => fetch once
-			dir, err = gitx.EnsureWorktree(parent, base, "", "")
-			if err == nil {
-				gitx.FastForwardWorktree(dir) // start at the branch's current tip, not a stale one
+			if occ != "" {
+				// A queue's derived name was taken by another copy since it was chosen (two
+				// deliveries for one item): a name never fails a delivery.
+				slug := randSlug()
+				dir, err = gitx.EnsureWorktree(parent, "", "temp/"+slug, "wip-"+slug)
+			} else {
+				gitx.EnsureBranchRef(parent, base) // branch pushed since our last fetch => fetch once
+				dir, err = gitx.EnsureWorktree(parent, base, "", "")
+			}
+			if occ == "" {
+				if err == nil {
+					gitx.FastForwardWorktree(dir) // start at the branch's current tip, not a stale one
+				} else if c.queueNamed {
+					slug := randSlug()
+					dir, err = gitx.EnsureWorktree(parent, "", "temp/"+slug, "wip-"+slug)
+				}
 			}
 		} else {
 			// Branch naming is deferred: unless the client sends an explicit name we
@@ -467,7 +485,12 @@ func (c *createRun) resolveWorkingCopy() bool {
 				slug := randSlug() // random → skip the collision check
 				nb = "temp/" + slug
 				folderSeg = "wip-" + slug
-			} else if local, remote := gitx.BranchNameStatus(parent, nb); local {
+			} else if local, remote := gitx.BranchNameStatus(parent, nb); (local || remote) && c.queueNamed {
+				// The derived name appeared since nameQueueBranch looked (a delivery for the
+				// same item ran meanwhile): a name never fails a delivery.
+				slug := randSlug()
+				nb, folderSeg = "temp/"+slug, "wip-"+slug
+			} else if local {
 				// A same-named local branch: -b would fail anyway, but stop with a clear
 				// message rather than git's raw error, and let the user pick another name.
 				httpx.WriteErr(c.w, http.StatusConflict, "branch_exists",
@@ -487,13 +510,23 @@ func (c *createRun) resolveWorkingCopy() bool {
 				// The fetch above may have just brought in a same-named remote branch the
 				// check before it could not see; ask again (local refs only, no network).
 				if _, remote := gitx.BranchNameStatus(parent, nb); remote {
-					httpx.WriteErr(c.w, http.StatusConflict, "branch_exists_remote",
-						fmt.Sprintf("a remote branch %q already exists; rename it or work on the existing branch", nb))
-					return false
+					if !c.queueNamed {
+						httpx.WriteErr(c.w, http.StatusConflict, "branch_exists_remote",
+							fmt.Sprintf("a remote branch %q already exists; rename it or work on the existing branch", nb))
+						return false
+					}
+					slug := randSlug()
+					nb, folderSeg = "temp/"+slug, "wip-"+slug
 				}
 			}
 			if err == nil {
 				dir, err = gitx.EnsureWorktree(parent, start, nb, folderSeg)
+				if err != nil && c.queueNamed {
+					// git refused the derived name (an existing branch "feature" blocks
+					// "feature/x"): a name never fails a delivery.
+					slug := randSlug()
+					dir, err = gitx.EnsureWorktree(parent, start, "temp/"+slug, "wip-"+slug)
+				}
 			}
 			if err == nil {
 				// Start at origin's tip, the same intent as fastForwardWorktree on the

@@ -936,6 +936,8 @@ func memoTripwireCP(t *testing.T) string {
 type memoFake struct {
 	mu    sync.Mutex
 	calls []string
+	// answer is what /memos* answers; "" is {}.
+	answer string
 }
 
 func (f *memoFake) memoCalls() []string {
@@ -959,7 +961,13 @@ func memoFakeAgent(t *testing.T) *memoFake {
 			f.calls = append(f.calls, line)
 			f.mu.Unlock()
 		}
-		_, _ = w.Write([]byte(`{}`))
+		f.mu.Lock()
+		ans := f.answer
+		f.mu.Unlock()
+		if ans == "" {
+			ans = `{}`
+		}
+		_, _ = w.Write([]byte(ans))
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("AGENT_ADDR", strings.TrimPrefix(srv.URL, "http://"))

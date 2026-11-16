@@ -23,8 +23,8 @@ list_peer_sessions	peer	List the other sessions in the same workspace	同じワ�
 send_to_peer_session	peer	Send a short message to another session; a stopped one is resumed to receive it	ほかのセッションに短いメッセージを送ります。停止中なら再開してから届きます
 peek_session_output	peer	Read another session's recent output, read-only	ほかのセッションの最近の出力を読み取り専用で見ます
 list_memos	memo	List your memo queue	利用者のメモキューを一覧します
-add_memo	memo	Add one memo to your memo queue; in an auto-run category it waits for your approval	利用者のメモキューにメモを 1 件追加します。自動実行のカテゴリでは、利用者の承認を待ちます
-update_memo	memo	Edit a memo; only the fields passed change. Editing an approved auto-run memo sends it back for approval	既存のメモを編集します。渡した項目だけが変わります。承認ずみの自動実行のメモを編集すると、承認待ちに戻ります
+add_memo	memo	Add one memo to your memo queue; in an auto-run category it waits for your approval; an optional `reference` points at a work item without copying it	利用者のメモキューにメモを 1 件追加します。自動実行のカテゴリでは、利用者の承認を待ちます。任意の `reference` は作業項目を写さずに指します
+update_memo	memo	Edit a memo; only the fields passed change (`reference`: leave out to keep it, `{}` to remove it). Editing an approved auto-run memo sends it back for approval	既存のメモを編集します。渡した項目だけが変わります（`reference` は省略で据え置き、`{}` で外す）。承認ずみの自動実行のメモを編集すると、承認待ちに戻ります
 delete_memo	memo	Delete a memo by its id; refused in an auto-run category	メモを id で削除します。自動実行のカテゴリでは断られます
 flush_memos	memo	Send the chosen memos to a session as one message; refused in an auto-run category	選んだメモを 1 通にまとめてセッションへ送ります。自動実行のカテゴリでは断られます
 list_schedules	schedule	List the schedules	定時実行のスケジュールを一覧します

@@ -285,6 +285,10 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		// wakers is omitted when zero, so without the marker the Control Plane cannot tell
 		// "nothing would start this session" from "this Agent does not say".
 		"queueReport": queueReportVersion,
+		// queueRefs says this Agent composes a delivery's prompt for items that carry a reference
+		// and names the session's branch from the single referenced item (ADR 0137 §4). The
+		// Control Plane sends a delivery that holds a reference only to an Agent that says so.
+		"queueRefs": queueRefsVersion,
 	}
 	// actMark orders this answer against the acts of a person that follow it: a retire sent with
 	// ifNoActSince = this value leaves a session such an act touched. Omitted when it could not be
@@ -305,6 +309,9 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 
 // queueReportVersion is the value of the list envelope's queueReport marker.
 const queueReportVersion = 1
+
+// queueRefsVersion is the value of the list envelope's queueRefs marker.
+const queueRefsVersion = 1
 
 // HandleSessionCatalog is the sharing inventory. Unlike the ordinary list it
 // includes archived rows, but only kinds with a structured transcript. With ?since= it

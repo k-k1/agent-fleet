@@ -44,6 +44,18 @@ type Fields struct {
 	RefPath  string `json:"refPath"`
 	Repo     string `json:"repo"`
 	Category string `json:"category"`
+	// Reference points at a work item, never at a copy of it. Nil is none; the Control Plane
+	// validates a given one.
+	Reference *Reference `json:"reference,omitempty"`
+}
+
+// Reference is the typed pointer {provider, key, url} a queue message may carry. The fields are
+// omitted when empty so that {} survives as {}: on an update that is "clear", and it must not
+// turn into three empty strings that a reader could take for a half-filled object.
+type Reference struct {
+	Provider string `json:"provider,omitempty"`
+	Key      string `json:"key,omitempty"`
+	URL      string `json:"url,omitempty"`
 }
 
 // CreateRequest is POST /memos. From is the calling session's name, filled by the MCP process
@@ -68,6 +80,9 @@ type Patch struct {
 	Repo     *string `json:"repo,omitempty"`
 	Category *string `json:"category,omitempty"`
 	Position *int    `json:"position,omitempty"`
+	// Reference has the Control Plane's three meanings: nil (absent, and a JSON null) leaves the
+	// reference as it is, an empty object clears it, a full one sets it.
+	Reference *Reference `json:"reference,omitempty"`
 }
 
 // ListResponse is GET /memos: the memos (each with its state) and the categories (each with

@@ -232,11 +232,11 @@ Workspace を起こさない。
   `queueDelivery` を、メモは自分を確保した配信（`deliveryId`）を運ぶ。
 
 - **型付きの参照**（[decisions/0137](../decisions/0137-message-queues.ja.md) §4、step 3 の Control Plane 側）。
-  メッセージは作業項目への指し先を持てる。本文は写さない。Agent（step 3b）と Console（step 3c）はこの契約の上に作る。
+  メッセージは作業項目への指し先を持てる。本文は写さない。Agent（step 3b、実装済み）と Console（step 3c）はこの契約の上に作る。
   - *wire。* `reference` は `{"provider": "github", "key": "acme/app#12", "url": "https://github.com/acme/app/issues/12"}`
     の object で、無ければ出ない。`POST /api/memos`・`POST /internal/memos`（作成）と、両方の `PATCH`（無ければそのまま、
     完全な object で設定、`{}` か 3 項目とも空で外す、`null` は無いのと同じ）が読み、`GET /api/memos`・`GET /internal/memos` の
-    各 memo に載る。`/mcp` の memo ツールはこの step では受け取らない。参照を持つメッセージは `text` で、`body` が空でよいのは
+    各 memo に載る。ホストされた `/mcp` の memo ツール（`add_memo`・`update_memo`）も同じ `reference` を同じ意味と同じ検証で受け取り、`held` で入る。参照を持つメッセージは `text` で、`body` が空でよいのは
     参照があるときだけ（画像だけは従来どおり）。保存は `memo.ref_provider`・`ref_key`・`ref_url` の 3 列で、無ければ `''`
     （移行 0138、Postgres は 0123）。
   - *検証*（`400 memo_ref_invalid`）。3 つそろうか、3 つとも無いか。`provider` は小文字にし、作業項目が知るもの
@@ -265,10 +265,10 @@ Workspace を起こさない。
   - *発火。* Agent の `POST /sessions` が受ける `queue_delivery.items[]` の item に `"reference": {"provider","key","url"}` が
     加わる（無ければ出ない。`body` は `""` でありうる）。配信の item が持つ参照がちょうど 1 つのとき、create に
     `"work_item": {"provider": "github", "key": "acme/app#12"}` も載せる。Agent の `session_create` が作業項目からの起動で
-    既に受け取る object で（title・type・labels は参照が保たないので送らない）、セッションの作業項目のリンクは作業項目の規則に従う。ブランチは従わない: キューの create はブランチを送らないので、Agent は従来どおり `temp/<slug>` を作る。項目からの命名（`feature/{key}`、`#` と `/` の扱い、worktree の衝突）は step 3b で設計する。
-    0 個か 2 個以上なら `work_item` は無い。
+    既に受け取る object で（title・type・labels は参照が保たないので送らない）、セッションの作業項目のリンクは作業項目の規則に従う。ブランチは Agent の側にある: キューの create はブランチを送らず、Agent が `work_item` からメンバーの命名規則で名前を付ける（[04](04-agent.ja.md) のキューの create）。
+    0 個か 2 個以上なら `work_item` は無く、セッションは Agent の `temp/<slug>` ブランチのままになる。
   - *マーカー。* Agent が参照を持つ item の prompt を組めるとき、`GET /sessions` が `"queueRefs": 1` を返す（`queueReport` とは
-    別の数で、そちらは 1 のまま）。参照を含む配信は、これの無い Agent には送らない。step 3b までは全ての Agent に無い。
+    別の数で、そちらは 1 のまま）。参照を含む配信は、これの無い Agent には送らない。step 3b より前の Agent には無い。
     送信は wake のあと、key を予約する前に Agent に尋ねる。無ければ配信は `not_sent` で閉じ、メッセージは元の `pending` に戻り、
     キューの `noRefsAt` が立つ。立っている間、自動の発火は参照を持つメッセージをそのままにして残りを発火し、「今すぐ送る」は
     もう一度試し、参照だけが待っているときキューの `waiting` は `{"reason": "no_references"}` になる。動いている Workspace の

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -88,6 +89,17 @@ func (c memoFaceClient) mv() store.MembershipView {
 	return store.MembershipView{MembershipID: c.e.members["a"]}
 }
 
+// mcpRefOf is a reference as the /mcp tools hand it to the memo core: nil for none, an empty one
+// for the object {} (a patch clears with it).
+func mcpRefOf(v any) *mcpsrv.MemoRef {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	s := func(k string) string { x, _ := m[k].(string); return x }
+	return &mcpsrv.MemoRef{Provider: s("provider"), Key: s("key"), URL: s("url")}
+}
+
 // mcpStatus maps a /mcp tool error onto the status the HTTP faces answer, by message.
 func mcpStatus(err error) int {
 	if err == nil {
@@ -100,9 +112,12 @@ func (c memoFaceClient) create(body map[string]any) (int, memoDTO) {
 	c.e.t.Helper()
 	if c.name == "mcp" {
 		s := func(k string) string { v, _ := body[k].(string); return v }
-		out, err := cpDeps{c.e.mgr}.MemoCreate(context.Background(), c.mv(), "conn-1", s("repo"), s("category"), s("kind"), s("body"), s("refPath"))
+		out, err := cpDeps{c.e.mgr}.MemoCreate(context.Background(), c.mv(), "conn-1", s("repo"), s("category"), s("kind"), s("body"), s("refPath"), mcpRefOf(body["reference"]))
 		if err != nil {
 			return mcpStatus(err), memoDTO{}
+		}
+		if d := out.(memoDTO); d.Existing {
+			return http.StatusOK, d
 		}
 		return http.StatusCreated, out.(memoDTO)
 	}
@@ -125,7 +140,7 @@ func (c memoFaceClient) update(id string, patch map[string]any) (int, memoDTO) {
 		if v, ok := patch["position"].(int); ok {
 			pos = &v
 		}
-		out, err := cpDeps{c.e.mgr}.MemoUpdate(context.Background(), c.e.members["a"], id, sp("repo"), sp("category"), sp("body"), sp("refPath"), pos)
+		out, err := cpDeps{c.e.mgr}.MemoUpdate(context.Background(), c.e.members["a"], id, sp("repo"), sp("category"), sp("body"), sp("refPath"), pos, mcpRefOf(patch["reference"]))
 		if err != nil {
 			return mcpStatus(err), memoDTO{}
 		}
