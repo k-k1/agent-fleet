@@ -203,6 +203,10 @@ export function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = 
     const base = DEFAULT_AGENT_LAUNCH[kind];
     const row = src[kind] || {};
     out[kind] = {
+      // Fields this Console does not read (the default route the Agent applies, ADR 0138 D11b,
+      // and whatever a newer Console adds) ride along: the row is saved whole, so a field
+      // dropped here is a field every save deletes.
+      ...unknownFields(row),
       model: typeof row.model === "string" ? row.model : kind === "claude" ? legacyClaudeModel : base.model,
       effort: typeof row.effort === "string" ? row.effort : base.effort,
       startMode: row.startMode === "plan" ? "plan" : "normal",
@@ -212,7 +216,29 @@ export function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = 
       skipPermissions: row.skipPermissions !== false,
     };
   }
+  // A row for a kind this Console does not know is kept as it is, for the same reason.
+  for (const [kind, row] of Object.entries(src)) {
+    if (!(kind in out) && row && typeof row === "object" && !Array.isArray(row)) out[kind] = row as AgentLaunchDefault;
+  }
   return out;
+}
+
+const LAUNCH_DEFAULT_FIELDS = new Set(["model", "effort", "startMode", "skipPermissions"]);
+
+/** knownLaunchDefaults is rows with only what this Console reads: its kinds' rows, each with its
+ *  four fields. What it drops is the server copy's to carry (a default route names a connection
+ *  of one account), so it is what an owner switch must not keep. */
+export function knownLaunchDefaults(rows: AgentLaunchDefaults): AgentLaunchDefaults {
+  const out: AgentLaunchDefaults = {};
+  for (const kind of Object.keys(DEFAULT_AGENT_LAUNCH)) {
+    const r = rows[kind];
+    if (r) out[kind] = { model: r.model, effort: r.effort, startMode: r.startMode, skipPermissions: r.skipPermissions };
+  }
+  return out;
+}
+
+function unknownFields(row: object): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(row).filter(([k]) => !LAUNCH_DEFAULT_FIELDS.has(k)));
 }
 
 export function agentLaunchDefault(s: Settings, kind: string): AgentLaunchDefault {
