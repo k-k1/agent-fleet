@@ -490,5 +490,7 @@ export const errors = {
   "err.memo_queue_member_limit": "自動実行のセッションが、すべてのカテゴリの合計で上限（4 つ）まで動いています。どれかが終わってからもう一度試してください。",
   "err.memo_queue_bad_repo": "このカテゴリのリポジトリが 1 つのフォルダ名ではないため、セッションを起動できません。",
   "err.memo_queue_item_invalid": "このカテゴリのメモに、そのままセッションへ送れないものがあります（本文が長すぎる、添付が多すぎる、添付のパスが使えない）。メモを直してからもう一度お試しください。",
+  "err.memo_ref_invalid": "項目のリンクが正しくありません。provider（github・jira・bitbucket）、key（owner/repo#12 または PROJ-12）、url（http(s)）を3つそろえてください。",
+  "err.memo_ref_duplicate": "この項目は、この自動実行のカテゴリにすでに入っています。",
   "err.session_retired": "このセッションは自動実行によって停止されています。先にセッションを開始してから、もう一度送ってください。",
 };

@@ -520,6 +520,7 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 			return store.MemoDelivery{}, false
 		}
 		r.setNoReport(ctx, q, "")
+		r.setNoRefs(ctx, q, !v.refs)
 	case "stopped":
 		// A stopped workspace is not asked. One found without the report stays skipped until a
 		// running workspace shows it (the send checks again after its wake).
@@ -602,6 +603,9 @@ func pendingOf(rows []store.Memo) store.QueuePending {
 			continue
 		}
 		p.Count++
+		if m.RefKey != "" {
+			p.Refs++
+		}
 		if p.Oldest == "" || m.CreatedAt < p.Oldest {
 			p.Oldest = m.CreatedAt
 		}
@@ -620,6 +624,23 @@ func (r *memoQueueRunner) setNoReport(ctx context.Context, q store.MemoQueue, at
 	}
 	if err := r.mgr.store.SetMemoQueueNoReport(ctx, q.CategoryID, at); err != nil {
 		log.Printf("memo queue: queue %s: note the Agent's report: %v", q.CategoryID, err)
+	}
+}
+
+// setNoRefs keeps the queue's mark of an Agent that cannot show a reference in line with the
+// Agent a running workspace answered with.
+func (r *memoQueueRunner) setNoRefs(ctx context.Context, q store.MemoQueue, none bool) {
+	at := ""
+	if none {
+		if q.NoRefsAt != "" {
+			return
+		}
+		at = store.DeliveryTS(time.Now())
+	}
+	// A clear is written whatever q says: q may be older than the row, and the write changes
+	// nothing when the mark is already empty.
+	if err := r.mgr.store.SetMemoQueueNoRefs(ctx, q.CategoryID, at); err != nil {
+		log.Printf("memo queue: queue %s: note the Agent's references: %v", q.CategoryID, err)
 	}
 }
 
@@ -812,6 +833,8 @@ const (
 	waitBackoff        = "backoff"
 	waitUsageLimit     = "usage_limit"
 	waitNoPlace        = "no_place"
+	// waitNoRefs: every message waiting carries a reference and the Agent cannot show one.
+	waitNoRefs = "no_references"
 )
 
 // memoWaiting is "waiting" on the wire: why a queue with notes waiting starts nothing now.
@@ -943,6 +966,9 @@ func memoQueueWaiting(tx store.MemoWaitOps, q store.MemoQueue, tenantOn bool, pe
 		pending: func() (store.QueuePending, error) { return pending, nil }})
 	if err != nil || w != nil {
 		return w, err
+	}
+	if q.NoRefsAt != "" && pending.Refs == pending.Count {
+		return &memoWaiting{Reason: waitNoRefs}, nil
 	}
 	inQueue, inMember, err := tx.CountLiveDeliveries(q.CategoryID)
 	if err != nil {

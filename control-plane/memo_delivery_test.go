@@ -90,6 +90,9 @@ type fakeQueueAgent struct {
 	report bool
 	// reportVersion, when not 0, is the version sent instead of 1.
 	reportVersion int
+	// refs makes GET /sessions send the envelope's queueRefs marker (an Agent that can show an
+	// item that carries a reference).
+	refs bool
 	// retires is every retire call, in order. retireFail answers that many of them with a
 	// session it could not end, retireStatus (when set) answers every call with that status.
 	retires      []string
@@ -110,6 +113,13 @@ type fakeQueueAgent struct {
 	// retireDrop makes that many retire calls lose their answer: the call is recorded and the
 	// connection is closed without a reply.
 	retireDrop int
+}
+
+// setRefs makes the list answers carry the queueRefs marker, or not.
+func (a *fakeQueueAgent) setRefs(on bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.refs = on
 }
 
 // setActIncarnation sets the identity the next list answers carry.
@@ -169,6 +179,9 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 			if a.reportVersion != 0 {
 				env["queueReport"] = a.reportVersion
 			}
+		}
+		if a.refs {
+			env["queueRefs"] = 1
 		}
 		if a.actMark != 0 {
 			env["actMark"] = a.actMark

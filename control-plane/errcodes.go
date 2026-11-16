@@ -247,4 +247,6 @@ const (
 	errCodeMemoQueueMemberLimit    = "memo_queue_member_limit"
 	errCodeMemoQueueBadRepo        = "memo_queue_bad_repo"
 	errCodeMemoQueueItemInvalid    = "memo_queue_item_invalid"
+	errCodeMemoRefInvalid          = "memo_ref_invalid"
+	errCodeMemoRefDuplicate        = "memo_ref_duplicate"
 )

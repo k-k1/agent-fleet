@@ -21,6 +21,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
+	"github.com/k-k1/agent-fleet/control-plane/internal/memoref"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -86,10 +87,10 @@ func (v memoVia) provenance() string {
 func (v memoVia) fromWorkspace() bool { return v.face != memoFaceConsole }
 
 // memoContentHash is what a release is bound to: the body, the kind, the ref path, the
-// attachments, the repo and the category. The category is its name, so a rename changes the
+// attachments, the reference, the repo and the category. The category is its name, so a rename changes the
 // hash and a pending message's release is re-recorded in the same transaction.
 func memoContentHash(m store.Memo) string {
-	b, _ := json.Marshal([]string{"memo-content/v1", m.Kind, m.Body, m.RefPath, m.Attachments, m.Repo, m.Category})
+	b, _ := json.Marshal(append([]string{"memo-content/v1", m.Kind, m.Body, m.RefPath, m.Attachments, m.Repo, m.Category}, memoRefHashParts(m)...))
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
@@ -208,12 +209,28 @@ func memoMoveBucket(tx store.MemoTxOps, repo, from, to string, inPrev, inNext bo
 	if err != nil {
 		return err
 	}
+	// dest is what the destination holds: for a merge the survivor's own rows, for a bucket that
+	// becomes a queue (from == to) it starts empty and fills with the rows as they enter.
+	var dest []store.Memo
+	if inNext && to != from {
+		if dest, err = tx.ListMemosIn(repo, to); err != nil {
+			return err
+		}
+	}
 	for _, prev := range rows {
 		next := prev
 		next.Category = to
 		next, aerr := memoQueueMove(prev, next, inPrev, inNext, via)
 		if aerr != nil {
 			return memoTxFail(aerr)
+		}
+		// The rows that stay or become open in a queue hold each reference once. A bucket that
+		// cannot be made so is refused whole: which of two notes to drop is the member's choice.
+		if inNext && memoOpenState(next.State) {
+			if dup, ok := memoOpenRefIn(dest, next); ok {
+				return memoTxFail(memoRefDuplicate(dup))
+			}
+			dest = append(dest, next)
 		}
 		if next != prev {
 			if err := tx.WriteMemo(next); err != nil {
@@ -297,10 +314,13 @@ type memoQueueDTO struct {
 	PausedReason string `json:"pausedReason"`
 	Draining     bool   `json:"draining"`
 	NoReportAt   string `json:"noReportAt"`
-	Enabled      bool   `json:"enabled"`
-	Generation   int    `json:"generation"`
-	CreatedAt    string `json:"createdAt"`
-	UpdatedAt    string `json:"updatedAt"`
+	// NoRefsAt is set while the Agent cannot show a reference: the messages that carry one stay
+	// where they are, and the rest of the queue fires as usual.
+	NoRefsAt   string `json:"noRefsAt"`
+	Enabled    bool   `json:"enabled"`
+	Generation int    `json:"generation"`
+	CreatedAt  string `json:"createdAt"`
+	UpdatedAt  string `json:"updatedAt"`
 	// Waiting is set by the list only: why a queue with notes waiting starts nothing now (see
 	// memoQueueWaiting). Absent when nothing waits or a run can start.
 	Waiting *memoWaiting `json:"waiting,omitempty"`
@@ -311,7 +331,7 @@ func memoQueueToDTO(q store.MemoQueue, c store.MemoCategory) memoQueueDTO {
 		AgentKind: q.AgentKind, Model: q.Model, Effort: q.Effort, Route: q.Route, SpendCapUSD: q.SpendCapUSD,
 		Worktree: q.Worktree, MaxActive: q.MaxActive, Batch: q.Batch, MaxTaskHours: memoQueueTaskHours(q),
 		OpenCron: q.OpenCron, OpenMinutes: q.OpenMinutes, TZ: q.TZ, OpenAfter: q.OpenAfter, MaxFiresPerDay: memoQueueFiresPerDay(q),
-		Paused: q.Paused, PausedAt: q.PausedAt, PausedReason: q.PausedReason, Draining: q.Draining, NoReportAt: q.NoReportAt,
+		Paused: q.Paused, PausedAt: q.PausedAt, PausedReason: q.PausedReason, Draining: q.Draining, NoReportAt: q.NoReportAt, NoRefsAt: q.NoRefsAt,
 		Enabled: q.Enabled, Generation: q.Generation, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}
 }
 
@@ -720,4 +740,98 @@ type memoReleaseConflictErr struct {
 	Code    string   `json:"code"`
 	Message string   `json:"message"`
 	Stale   []string `json:"stale"`
+}
+
+// --- Typed references (ADR 0137 section 4) ----------------------------------------------------
+// A message may carry a pointer {provider, key, url} to a work item, with the member's own note
+// beside it. The item's body is never copied: the session reads it with gh or jira.
+
+// memoRefWire is a reference on the wire. In a patch an object with all three empty clears it.
+type memoRefWire struct {
+	Provider string `json:"provider"`
+	Key      string `json:"key"`
+	URL      string `json:"url"`
+}
+
+func (r memoRefWire) empty() bool { return r.Provider == "" && r.Key == "" && r.URL == "" }
+
+func memoRefToWire(m store.Memo) *memoRefWire {
+	if m.RefKey == "" {
+		return nil
+	}
+	return &memoRefWire{Provider: m.RefProvider, Key: m.RefKey, URL: m.RefURL}
+}
+
+func memoRefInvalid(format string, a ...any) *apiError {
+	return &apiError{http.StatusBadRequest, errCodeMemoRefInvalid, fmt.Sprintf(format, a...)}
+}
+
+// memoRefNormalize is memoref.Normalize against the providers the work items know.
+func memoRefNormalize(in memoRefWire) (memoRefWire, *apiError) {
+	r, err := memoref.Normalize(memoref.Ref{Provider: in.Provider, Key: in.Key, URL: in.URL}, func(p string) bool { return workItemProviders[p] })
+	if err != nil {
+		return memoRefWire{}, memoRefInvalid("%s", err.Error())
+	}
+	return memoRefWire{Provider: r.Provider, Key: r.Key, URL: r.URL}, nil
+}
+func memoSetRef(m store.Memo, r memoRefWire) store.Memo {
+	m.RefProvider, m.RefKey, m.RefURL = r.Provider, r.Key, r.URL
+	return m
+}
+
+// memoOpenState is a state a message can still be fired from or is being fired in: held and
+// pending wait to be fired, claimed is taken by a fire. unconfirmed (no session could be found
+// and nothing fires it by itself), delivered and superseded are closed, so the same item can
+// be added again.
+func memoOpenState(s string) bool {
+	switch s {
+	case store.MemoStateHeld, store.MemoStatePending, store.MemoStateClaimed:
+		return true
+	}
+	return false
+}
+
+// memoOpenRefIn finds the open message of rows that carries the same reference as m, other than
+// m itself.
+func memoOpenRefIn(rows []store.Memo, m store.Memo) (store.Memo, bool) {
+	id := memoRefIdent(m)
+	if id == "" {
+		return store.Memo{}, false
+	}
+	for _, r := range rows {
+		if r.ID != m.ID && memoOpenState(r.State) && memoRefIdent(r) == id {
+			return r, true
+		}
+	}
+	return store.Memo{}, false
+}
+
+// memoRefIdent is what two messages of one queue are compared by (memoref.Ident).
+func memoRefIdent(m store.Memo) string { return memoref.Ident(m.RefProvider, m.RefKey) }
+
+func memoRefDuplicate(existing store.Memo) *apiError {
+	return &apiError{http.StatusConflict, errCodeMemoRefDuplicate,
+		fmt.Sprintf("%s is already waiting in this queue as message %s", existing.RefKey, existing.ID)}
+}
+
+// memoRefHashParts is appended to the content hash of a message that carries a reference. A
+// message without one hashes as it did before references existed, so no release already
+// recorded changes.
+func memoRefHashParts(m store.Memo) []string {
+	if m.RefKey == "" {
+		return nil
+	}
+	return []string{"ref", m.RefProvider, m.RefKey, m.RefURL}
+}
+
+func derefRef(r *memoRefWire) memoRefWire {
+	if r == nil {
+		return memoRefWire{}
+	}
+	return *r
+}
+
+// memoRefLine is a reference as a line of a hand-sent message.
+func memoRefLine(m store.Memo) string {
+	return "作業項目: " + m.RefKey + " (" + m.RefURL + ")"
 }

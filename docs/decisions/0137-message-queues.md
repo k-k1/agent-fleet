@@ -645,3 +645,15 @@ named: the memo is never refused for the mapping. The Console files what it deri
 group keep that group's repo, a `repo@slug` one included. Memos and categories already under a `repo@slug` bucket stay where
 they are: no migration and no rewrite on read, and a member can drag them. The launch dialog's stashed draft keeps its key
 and its memo's repo: it is saved per working copy on purpose. The normalised `host/owner/repo` of §2 stays unbuilt.
+
+Added 2026-11-17 (#4150, slice A of step 3, the Control Plane): a message may carry a reference `{provider, key, url}`
+(`memo.ref_*`, migrations 0138 and 0123), on `/api/memos` and `/internal/memos`. The release hash covers it, so a change
+of it from the token face or `/mcp` puts a released message back to `held`. A queue holds one open message per
+(provider, key): open is `held`, `pending` and `claimed`, closed is `unconfirmed`, `delivered` and `superseded`.
+Adding one that is open answers the existing message (`existing: true`); an update, a move into the queue, a category
+that becomes a queue and a merge that would make two refused whole (`memo_ref_duplicate`). The check is in the
+member's lock, with a partial unique index behind it. A fire passes the reference with the item and, for exactly one
+reference, the session's `work_item`. A delivery that holds a reference is not sent to an Agent that does not send the
+new `queueRefs` marker (the queue's `noRefsAt` and the waiting reason `no_references` say so). Open question 2 is
+untouched: a reference-only message from a session is `held` like any other. The §4 sentence on the branch name is not met by this slice: the queue's create sends no branch, so the session keeps the Agent's `temp/` branch and only the link follows the work-item rules. Naming the branch from the item is for slice B. Left for the Agent (the marker, the prompt
+and the tool argument) and the Console ("add to auto-run"); the wire is in docs/build/03-control-plane.md §3.6.

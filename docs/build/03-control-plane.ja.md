@@ -231,6 +231,52 @@ Workspace を起こさない。
   `GET /api/memo-queues/{categoryId}/deliveries` は新しい順に 50 件。セッションの行は
   `queueDelivery` を、メモは自分を確保した配信（`deliveryId`）を運ぶ。
 
+- **型付きの参照**（[decisions/0137](../decisions/0137-message-queues.ja.md) §4、step 3 の Control Plane 側）。
+  メッセージは作業項目への指し先を持てる。本文は写さない。Agent（step 3b）と Console（step 3c）はこの契約の上に作る。
+  - *wire。* `reference` は `{"provider": "github", "key": "acme/app#12", "url": "https://github.com/acme/app/issues/12"}`
+    の object で、無ければ出ない。`POST /api/memos`・`POST /internal/memos`（作成）と、両方の `PATCH`（無ければそのまま、
+    完全な object で設定、`{}` か 3 項目とも空で外す、`null` は無いのと同じ）が読み、`GET /api/memos`・`GET /internal/memos` の
+    各 memo に載る。`/mcp` の memo ツールはこの step では受け取らない。参照を持つメッセージは `text` で、`body` が空でよいのは
+    参照があるときだけ（画像だけは従来どおり）。保存は `memo.ref_provider`・`ref_key`・`ref_url` の 3 列で、無ければ `''`
+    （移行 0138、Postgres は 0123）。
+  - *検証*（`400 memo_ref_invalid`）。3 つそろうか、3 つとも無いか。`provider` は小文字にし、作業項目が知るもの
+    （`github`・`jira`・`bitbucket`）だけ。`key` は `github`・`bitbucket` が `owner/repo#N`（小文字にする。`#N` だけは不可）、`jira` が
+    `PROJ-12`（大文字にする）で、200 バイトまで。`url` は host のある http / https で、空白なし、2048 バイトまで。
+    保存されるのは正規化した形。
+  - *状態と由来は経路のもの*（§3）。Console は `pending`、token 面と `/mcp` は `held` で release の 1 回の押下を待つ。
+    セッションからの参照だけのメッセージも免除しない（ADR の未決 2 は未決のまま）。release の hash（`memoContentHash`）は
+    参照を含め、参照の無いメッセージの hash は従来と同じ。token 面や `/mcp` からの参照の設定・変更・解除は、本文の変更と
+    同じく release 済みを `held` に戻す。Console からの同じ変更は `pending` のまま hash を取り直す。pending の行は
+    `release_ref_*` に写しを持ち、他の内容と同じく CHECK で守られる。
+  - *キューごと・(provider, key) ごとに開いているメッセージは 1 つ。* 開いている = `held`・`pending`・`claimed`（発火できる、
+    または発火中）。`unconfirmed`・`delivered`・`superseded` は閉じている（`unconfirmed` は自動では発火されず、人が見る）ので、
+    同じ項目をまた追加できる。`github`・`bitbucket` の key は大文字小文字を区別せず比べる。強制は、メンバーの lock の中の
+    トランザクションで行う（メンバーの memo 書き込みは既に直列化されるので、SQLite でも Postgres でも複数の Control Plane
+    プロセスをまたいで効く）。検査を飛ばす書き手のために、開いている行への部分 UNIQUE index `idx_memo_open_ref`
+    （membership・repo・category・provider・key）が二重目の守り。
+    - *作成* で、そのキューに既に開いている参照を足しても、エラーにしない。既存のメッセージを `201` でなく `200` と
+      `"existing": true` で返す。何も足さず、token 面の回数制限にも数えない。繰り返しても安全。
+    - *更新* で参照を設定・変更した結果、または別のキューのカテゴリへ移した結果が、開いているものと重なれば
+      `409 memo_ref_duplicate`（どのメッセージが持つかをメッセージに書く）。
+    - *カテゴリがキューになる* とき、同じ参照で両方が開くことになる 2 つのメモがあれば、また *rename で統合* するとき、移す行が
+      残る側の行（または移す行どうし）と重なれば、同じ `409 memo_ref_duplicate` で全体を断り、何も動かさない。どちらを捨てるかは
+      メンバーが決める。送信済みのメモは `delivered` になり数えない。メッセージを `pending` に戻す場合（送られなかった配信が
+      claimed を返す）は、`claimed` も開いているので重ならない。
+  - *発火。* Agent の `POST /sessions` が受ける `queue_delivery.items[]` の item に `"reference": {"provider","key","url"}` が
+    加わる（無ければ出ない。`body` は `""` でありうる）。配信の item が持つ参照がちょうど 1 つのとき、create に
+    `"work_item": {"provider": "github", "key": "acme/app#12"}` も載せる。Agent の `session_create` が作業項目からの起動で
+    既に受け取る object で（title・type・labels は参照が保たないので送らない）、セッションの作業項目のリンクは作業項目の規則に従う。ブランチは従わない: キューの create はブランチを送らないので、Agent は従来どおり `temp/<slug>` を作る。項目からの命名（`feature/{key}`、`#` と `/` の扱い、worktree の衝突）は step 3b で設計する。
+    0 個か 2 個以上なら `work_item` は無い。
+  - *マーカー。* Agent が参照を持つ item の prompt を組めるとき、`GET /sessions` が `"queueRefs": 1` を返す（`queueReport` とは
+    別の数で、そちらは 1 のまま）。参照を含む配信は、これの無い Agent には送らない。step 3b までは全ての Agent に無い。
+    送信は wake のあと、key を予約する前に Agent に尋ねる。無ければ配信は `not_sent` で閉じ、メッセージは元の `pending` に戻り、
+    キューの `noRefsAt` が立つ。立っている間、自動の発火は参照を持つメッセージをそのままにして残りを発火し、「今すぐ送る」は
+    もう一度試し、参照だけが待っているときキューの `waiting` は `{"reason": "no_references"}` になる。動いている Workspace の
+    Agent がマーカーを送ると dispatcher が `noRefsAt` を外す。`noRefsAt` はキューの JSON に `noReportAt` と並ぶ。断られた送信は
+    他の not sent と同じくキューを back-off させる。
+  - *手動送信の文面。* 手動で送るメッセージの参照は `buildFlushMessage` が `作業項目: <key> (<url>)` の行にする。Console 自身の
+    組み立て（`composeMemoMessage`）をそろえるのは step 3c。
+
 ## 3.7 バックグラウンドジョブ
 
 いずれも CP 内の goroutine。間隔は env で、`0` は無効化。

@@ -321,6 +321,12 @@ type agentSessionsEnvelope struct {
 	// older Agent carry no wakers either, and an Agent omits them when there are none, so only
 	// this number tells "nothing would start it" from "this Agent does not say".
 	QueueReport int `json:"queueReport,omitempty"`
+	// QueueRefs is the marker of an Agent that composes a queue delivery's items that carry a
+	// reference (ADR 0137 section 4), and the version of that item. It is a number apart from
+	// QueueReport, which is compared for equality and is not bumped for it. An older Agent sends
+	// none, and would write a prompt with an empty item, so a delivery that holds a reference is
+	// never sent to one.
+	QueueRefs int `json:"queueRefs,omitempty"`
 	// ActMark orders this answer against the acts of a person that follow it (the Agent's
 	// session act mark): a retire sent with it as ifNoActSince leaves a session a person started or
 	// typed into after this read. 0 when the Agent sends none, and no condition is sent then.
@@ -338,6 +344,14 @@ const queueReportVersion = 1
 
 // reportsQueue says the Agent that sent this envelope reports what would start a session.
 func (e agentSessionsEnvelope) reportsQueue() bool { return e.QueueReport == queueReportVersion }
+
+// queueRefsVersion is the version of the reference item this Control Plane sends. An Agent that
+// reports a later one still understands it.
+const queueRefsVersion = 1
+
+// showsReferences says the Agent that sent this envelope can show a queue item that carries a
+// reference.
+func (e agentSessionsEnvelope) showsReferences() bool { return e.QueueRefs >= queueRefsVersion }
 
 // jobsRunning reports whether session-less work is in flight in the workspace.
 func (e agentSessionsEnvelope) jobsRunning() bool { return e.RepoJobs > 0 || e.ImageJobs > 0 }

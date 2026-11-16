@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 551
+# count: 557
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -225,6 +225,7 @@ memoDTO.category string
 memoDTO.contentHash string
 memoDTO.createdAt string
 memoDTO.deliveryId string,omitempty
+memoDTO.existing bool,omitempty
 memoDTO.id string
 memoDTO.kind string
 memoDTO.origin.itemId string
@@ -234,6 +235,9 @@ memoDTO.producer string,omitempty
 memoDTO.producerOrigin string,omitempty
 memoDTO.provenance string
 memoDTO.refPath string
+memoDTO.reference.key string
+memoDTO.reference.provider string
+memoDTO.reference.url string
 memoDTO.releasedAt string,omitempty
 memoDTO.repo string
 memoDTO.sentAt string
@@ -270,6 +274,7 @@ memoQueueDTO.maxActive number
 memoQueueDTO.maxFiresPerDay number
 memoQueueDTO.maxTaskHours number
 memoQueueDTO.model string
+memoQueueDTO.noRefsAt string
 memoQueueDTO.noReportAt string
 memoQueueDTO.openAfter number
 memoQueueDTO.openCron string
@@ -303,6 +308,7 @@ memoQueuesWire.queues[].maxActive number
 memoQueuesWire.queues[].maxFiresPerDay number
 memoQueuesWire.queues[].maxTaskHours number
 memoQueuesWire.queues[].model string
+memoQueuesWire.queues[].noRefsAt string
 memoQueuesWire.queues[].noReportAt string
 memoQueuesWire.queues[].openAfter number
 memoQueuesWire.queues[].openCron string

@@ -603,3 +603,14 @@ retire が保留のまま 2 回再起動し、かつカウンタが巻き戻っ�
 グループ内の入力欄と、グループへのドラッグは、`repo@slug` のグループでもそのグループの repo を保つ。すでに `repo@slug`
 のバケツにあるメモとカテゴリはそのまま残す。移行も、読み出し時の書き換えもしない。利用者はドラッグで動かせる。起動ダイアログの
 下書きの退避は、作業コピーごとに保存するのが意図なので、キーもメモの repo も変えない。§2 の正規化した `host/owner/repo` は未実装のまま。
+
+2026-11-17 追記（#4150、step 3 の slice A、Control Plane）: メッセージは参照 `{provider, key, url}` を持てる
+（`memo.ref_*`、移行 0138 と 0123）。`/api/memos` と `/internal/memos` で扱う。release の hash は参照を含むので、token 面や
+`/mcp` から変えれば release 済みは `held` に戻る。キューは (provider, key) ごとに開いているメッセージを 1 つだけ持つ。
+開いている = `held`・`pending`・`claimed`、閉じている = `unconfirmed`・`delivered`・`superseded`。開いているものを足すと
+既存のメッセージを返す（`existing: true`）。更新、キューへの移動、キューになるカテゴリ、2 つが重なる統合は
+全体を断る（`memo_ref_duplicate`）。検査はメンバーの lock の中で行い、後ろに部分 UNIQUE index がある。発火は参照を item に載せ、
+参照がちょうど 1 つならセッションの `work_item` にする。参照を含む配信は、新しいマーカー `queueRefs` を送らない Agent には
+送らない（キューの `noRefsAt` と待ち理由 `no_references` が示す）。未決 2 には触れない: セッションからの参照だけの
+メッセージも他と同じく `held`。§4 のブランチ名の文はこの slice では満たされない: キューの create はブランチを送らないので、セッションは Agent の `temp/` ブランチのままで、作業項目の規則に従うのはリンクだけ。項目からの命名は slice B。Agent（マーカー・prompt・ツール引数）と Console（「auto-run に追加」）に残す。wire は
+docs/build/03-control-plane.md §3.6。
