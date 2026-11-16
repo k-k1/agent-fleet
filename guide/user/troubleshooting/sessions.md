@@ -120,6 +120,7 @@ Check its row under **"Schedules"** in the left pane.
 |---|---|
 | A **"Paused"** tag | It is paused. **"Resume"** in the row menu brings it back |
 | **"Skipped"** in the **"Run history"** | It was passed over: the previous run was still going, the target conversation was busy or gone, the tenant had reached the number it may run at once, and so on. Hover over the row to see the reason |
+| **"Failed"** in the **"Run history"**, and the reason starts with `resume 409 session_retired` | The session the schedule keeps using was stopped by auto-run. Start the session, then use **"Run now"** ([Run at a set time](../fleet/schedules.md)) |
 | The time or the prompt is wrong | Fix it under **"Details / edit"** in the row menu |
 | There is no "Schedules" section | Scheduled runs are disabled on this deployment |
 
