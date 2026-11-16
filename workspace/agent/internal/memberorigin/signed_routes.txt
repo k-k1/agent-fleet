@@ -31,6 +31,7 @@ POST /agents/memory/entries/revert relay
 POST /agents/memory/import relay
 POST /agents/memory/import/apply relay
 POST /agents/memory/snapshots relay
+POST /connections/unusable/remove relay
 POST /sessions/{name}/handoff-push direct sessionHandoffAPI.pushThenRecheck
 POST /work-items/comment direct workItemsAPI.comment
 POST /work-items/merge direct workItemsAPI.merge

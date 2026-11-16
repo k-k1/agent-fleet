@@ -456,34 +456,54 @@ func HandleOAuthCancel(w http.ResponseWriter, r *http.Request) {
 // list` reports zero entries while connections still holds a credential). Calling
 // /auth/opencode indeed left the connection visible to a fresh process.
 func HandleOAuthDisconnect(w http.ResponseWriter, r *http.Request) {
+	switch err := oauthDisconnect(); {
+	case errors.Is(err, errServeUnavailable):
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable",
+			"cannot disconnect because opencode serve would not start: "+errors.Unwrap(err).Error())
+	case err != nil:
+		httpx.WriteErr(w, http.StatusBadGateway, "oauth_disconnect_failed", err.Error())
+	default:
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "opencode"})
+	}
+}
+
+// errServeUnavailable marks an account disconnect that could not start opencode serve.
+var errServeUnavailable = errors.New("opencode serve unavailable")
+
+// oauthDisconnect removes the Console credential, for the handler and for RemoveCredential. An
+// error marked errServeUnavailable (wrapping the start's error) means serve would not start; any
+// other is the daemon's refusal.
+func oauthDisconnect() error {
 	// Fetch with a start rather than a probe: serve auto-stops at zero demand, so otherwise
 	// "a user not running managed sessions cannot disconnect" would be the normal case.
 	addr, err := oauthDaemon()
 	if err != nil {
-		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable",
-			"cannot disconnect because opencode serve would not start: "+err.Error())
-		return
+		return serveUnavailable{err}
 	}
 	id, err := credentialID(addr)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "oauth_disconnect_failed", err.Error())
-		return
+		return err
 	}
 	if id == "" {
 		// Already disconnected: treat it as an idempotent success, so a double click
 		// caused by a stale display does no harm.
 		invalidateOAuthStatus()
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "opencode"})
-		return
+		return nil
 	}
 	if err := daemonJSON[struct{}]("DELETE", addr, "/api/credential/"+url.PathEscape(id), nil, nil); err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "oauth_disconnect_failed", err.Error())
-		return
+		return err
 	}
 	invalidateOAuthStatus()
 	InvalidateModels()
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "opencode"})
+	return nil
 }
+
+// serveUnavailable is errServeUnavailable carrying the start's error, which Unwrap returns.
+type serveUnavailable struct{ err error }
+
+func (e serveUnavailable) Error() string        { return errServeUnavailable.Error() + ": " + e.err.Error() }
+func (e serveUnavailable) Unwrap() error        { return e.err }
+func (e serveUnavailable) Is(target error) bool { return target == errServeUnavailable }
 
 // credentialID returns the id of the Console-account credential, or "" when there is
 // none. env connections (OPENCODE_API_KEY) are a separate route and are left alone.

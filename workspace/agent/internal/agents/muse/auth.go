@@ -34,6 +34,8 @@ package muse
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"net/http"
 	"os"
 	"os/exec"
@@ -276,12 +278,32 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "muse_unsupported", "Muse Code is not installed")
 		return
 	}
-	// logout reaches the network, so without a timeout this handler blocks indefinitely.
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	var failed logoutFailed
+	switch err := logout(r.Context()); {
+	case errors.As(err, &failed):
+		httpx.WriteErr(w, http.StatusBadGateway, "logout_failed", failed.detail)
+	case err != nil:
+		agents.WriteLoginChangeUnrecorded(w, err)
+	default:
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "muse"})
+	}
+}
+
+// logoutFailed is a logout that left the credential in place; detail is the CLI's output.
+type logoutFailed struct{ detail string }
+
+func (e logoutFailed) Error() string { return "muse logout failed: " + e.detail }
+
+// logout is the disconnect itself (the CLI must be installed), for the handler and for
+// RemoveCredential: a logoutFailed, with the CLI's output, when the credential
+// is still there afterwards; any other error a login change that could not be recorded.
+func logout(ctx context.Context) error {
+	// logout reaches the network, so without a timeout the caller blocks indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteMuseLogin)
-	if !began {
-		return
+	loginOp, err := credbind.Begin(routes.RouteMuseLogin)
+	if err != nil {
+		return err
 	}
 	defer loginOp.Finish()
 	out, err := exec.CommandContext(ctx, Bin(), "logout").CombinedOutput()
@@ -292,10 +314,9 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 		if detail == "" && err != nil {
 			detail = err.Error()
 		}
-		httpx.WriteErr(w, http.StatusBadGateway, "logout_failed", detail)
-		return
+		return logoutFailed{detail}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "muse"})
+	return nil
 }
 
 type keyReq struct {

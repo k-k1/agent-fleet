@@ -88,7 +88,7 @@ internal/agents/opencode/auth.go HandleDeleteConn x1 {disconnected}
 internal/agents/opencode/auth.go HandlePutConn x1 {connected,env}
 internal/agents/opencode/auth.go HandleServeRestart x1 {restarted}
 internal/agents/opencode/oauth.go HandleOAuthCancel x1 {cancelled}
-internal/agents/opencode/oauth.go HandleOAuthDisconnect x2 {disconnected}
+internal/agents/opencode/oauth.go HandleOAuthDisconnect x1 {disconnected}
 internal/agents/opencode/oauth.go HandleOAuthPoll x1 {connected,message,status,stored} cond{message}
 internal/agents/opencode/oauth.go HandleOAuthStart x1 {expires,flow_id,instructions,mode,url,user_code}
 internal/agents/opencode/workspaceid.go HandlePutWorkspace x1 {workspace_id,workspace_url}

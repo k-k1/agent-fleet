@@ -32,6 +32,10 @@ var connectionRelays = []agentRelay{
 	{route: "GET /api/mcp-servers/{id}/oauth"},
 	{route: "PUT /api/mcp-servers/{id}/oauth/client", audit: auditMCPServer("oauth_client")},
 	{route: "GET /api/connections"},
+	// Stored credentials the credential policy forbids (ADR 0138 D14a): a count and a token, and
+	// the member's confirmed removal, which the Agent admits only with the member-origin mark.
+	{route: "GET /api/connections/unusable"},
+	{route: "POST /api/connections/unusable/remove", audit: auditConnection("unusable", "remove", nil), sign: signBody},
 	{route: "GET /api/connections/git/{host}/repos"},
 	{route: "GET /api/connections/git/{host}/branches"},
 	{route: "PUT /api/connections/git/{host}/identity"},

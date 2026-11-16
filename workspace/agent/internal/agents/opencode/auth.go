@@ -315,16 +315,22 @@ func HandleDeleteConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_env", "invalid env name")
 		return
 	}
-	s, err := secrets.Load()
-	if err != nil {
+	if err := deleteKey(env); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	delete(s.Opencode, env)
-	if err := s.Save(); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-		return
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": env})
+}
+
+// deleteKey removes the provider key stored under env, for the handler and for
+// RemoveCredential.
+func deleteKey(env string) error {
+	if err := secrets.Update(func(s *secrets.Data) error {
+		delete(s.Opencode, env)
+		return nil
+	}); err != nil {
+		return err
 	}
 	applyKeyChange("provider key removed: " + env)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": env})
+	return nil
 }

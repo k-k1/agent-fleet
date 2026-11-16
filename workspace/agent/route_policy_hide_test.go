@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin/memberorigintest"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
@@ -377,5 +381,178 @@ func TestConnectionsHideSwitchedOffHarnesses(t *testing.T) {
 		if _, ok := after[k]; !ok && before[k] != nil {
 			t.Errorf("%s's entry was hidden", k)
 		}
+	}
+}
+
+// fakeCredStore is an agents.CredentialStore over a list the test edits.
+type fakeCredStore struct {
+	creds   *[]agents.StoredCredential
+	removed *[]string
+}
+
+func (f fakeCredStore) StoredCredentials(context.Context) []agents.StoredCredential {
+	return slices.Clone(*f.creds)
+}
+
+func (f fakeCredStore) RemoveCredential(_ context.Context, id string) error {
+	*f.removed = append(*f.removed, id)
+	*f.creds = slices.DeleteFunc(*f.creds, func(c agents.StoredCredential) bool { return c.ID == id })
+	return nil
+}
+
+func useCredSources(t *testing.T, srcs ...credentialSource) {
+	t.Helper()
+	old := credentialSources
+	credentialSources = func() []credentialSource { return srcs }
+	t.Cleanup(func() { credentialSources = old })
+}
+
+func getUnusable(t *testing.T) (unusableWire, string) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	handleUnusableGet(w, httptest.NewRequest(http.MethodGet, "/connections/unusable", nil))
+	var got unusableWire
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("%v: %s", err, w.Body.String())
+	}
+	return got, w.Body.String()
+}
+
+// D14a's line: a count and a token for the stored credentials the policy forbids on every route,
+// never naming one; nothing with no restriction; a credential with an allowed route, or whose
+// binding cannot be told, is not counted.
+func TestUnusableCredentialsCount(t *testing.T) {
+	var removed []string
+	codexCreds := []agents.StoredCredential{{ID: "login", Routes: []string{routes.RouteChatGPTSubscription}, Binding: "chatgpt-subscription@a1"}}
+	ocCreds := []agents.StoredCredential{
+		{ID: "key:OPENAI_API_KEY", Routes: []string{routes.RouteOpenAIAPI}, Binding: "OPENAI_API_KEY@k1"},
+		{ID: "key:OPENCODE_API_KEY", Routes: []string{routes.RouteOpencodeZen, routes.RouteOpencodeGo}, Binding: "OPENCODE_API_KEY@z1"},
+		{ID: "account", Routes: []string{routes.RouteOpencodeAccount}, Binding: ""},
+	}
+	useCredSources(t, credentialSource{"codex", fakeCredStore{&codexCreds, &removed}}, credentialSource{"opencode", fakeCredStore{&ocCreds, &removed}})
+
+	useHidingPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
+	if got, _ := getUnusable(t); got != (unusableWire{}) {
+		t.Errorf("an unrestricted member is offered %+v", got)
+	}
+	useHidingPolicy(t, apiKeysOnly)
+	got, body := getUnusable(t)
+	if got.Count != 2 || got.Token == "" {
+		t.Fatalf("under apiKeysOnly: %+v, want the codex login and the Zen key counted", got)
+	}
+	for _, leak := range []string{"chatgpt", "OPENCODE", "codex", "opencode", "login", "binding"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("the answer names %q: %s", leak, body)
+		}
+	}
+	if len(removed) != 0 {
+		t.Errorf("counting removed %v", removed)
+	}
+}
+
+// The removal takes exactly what was counted, re-checked: a credential replaced, removed or made
+// usable since is skipped, nothing outside the count is touched, a token works once, and an
+// unmarked request is refused before anything happens.
+func TestUnusableCredentialsRemove(t *testing.T) {
+	s := memberorigintest.Install(t)
+	mux := buildMux()
+	var removed []string
+	codexCreds := []agents.StoredCredential{{ID: "login", Routes: []string{routes.RouteChatGPTSubscription}, Binding: "chatgpt-subscription@a1"}}
+	ocCreds := []agents.StoredCredential{
+		{ID: "key:OPENAI_API_KEY", Routes: []string{routes.RouteOpenAIAPI}, Binding: "OPENAI_API_KEY@k1"},
+		{ID: "key:OPENCODE_API_KEY", Routes: []string{routes.RouteOpencodeZen}, Binding: "OPENCODE_API_KEY@z1"},
+		{ID: "key:OPENROUTER_API_KEY", Routes: []string{routes.RouteOpenRouterAPI}, Binding: "OPENROUTER_API_KEY@r1"},
+	}
+	useCredSources(t, credentialSource{"codex", fakeCredStore{&codexCreds, &removed}}, credentialSource{"opencode", fakeCredStore{&ocCreds, &removed}})
+	useHidingPolicy(t, apiKeysOnly)
+
+	post := func(token string, sign bool) *httptest.ResponseRecorder {
+		body := []byte(`{"token":"` + token + `"}`)
+		r := httptest.NewRequest(http.MethodPost, "/connections/unusable/remove", strings.NewReader(string(body)))
+		r.Header.Set("Authorization", "Bearer agent-token")
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-AF-Relay", "cp")
+		if sign {
+			r.Header.Set(memberorigin.Header, s.Mark(memberorigintest.Claims(r, body)))
+		}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w
+	}
+
+	got, _ := getUnusable(t)
+	if got.Count != 3 {
+		t.Fatalf("counted %d, want 3", got.Count)
+	}
+	if w := post(got.Token, false); w.Code != http.StatusForbidden || len(removed) != 0 {
+		t.Fatalf("unmarked: %d %s, removed %v", w.Code, w.Body, removed)
+	}
+	// Between the count and the confirmation the OpenRouter key is replaced (another binding) and
+	// the Zen key is removed by hand: both are skipped, only the codex login goes.
+	ocCreds[2].Binding = "OPENROUTER_API_KEY@r2"
+	ocCreds = slices.Delete(ocCreds, 1, 2)
+	w := post(got.Token, true)
+	var out unusableRemoveWire
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("marked: %d %s", w.Code, w.Body)
+	}
+	if !slices.Equal(removed, []string{"login"}) || out.Removed != 1 || out.Skipped != 2 || out.Failed != 0 {
+		t.Errorf("removed %v, answer %+v, want only the codex login", removed, out)
+	}
+	if out.Count != 1 || out.Token == "" {
+		t.Errorf("recomputed line %+v, want the replacement OpenRouter key counted anew", out.unusableWire)
+	}
+	if len(ocCreds) != 2 || ocCreds[0].ID != "key:OPENAI_API_KEY" {
+		t.Errorf("an allowed or replaced key was touched: %+v", ocCreds)
+	}
+	if w := post(got.Token, true); w.Code != http.StatusConflict {
+		t.Errorf("a used token: %d %s", w.Code, w.Body)
+	}
+
+	// Loosened between the count and the confirmation: nothing is removed.
+	removed = nil
+	next := out.Token
+	useHidingPolicy(t, routepolicy.Policy{Revision: 9, Restricted: true, Allowed: []string{routes.RouteOpenAIAPI, routes.RouteOpenRouterAPI}})
+	if w := post(next, true); w.Code != http.StatusOK || len(removed) != 0 {
+		t.Errorf("after loosening: %d %s, removed %v", w.Code, w.Body, removed)
+	}
+}
+
+// The sources are the kinds' own stores and the llama.cpp endpoint: never the GitHub connection
+// copilot rides on, nor a source the Control Plane or an administrator owns.
+func TestCredentialSourcesLeaveOutOtherUses(t *testing.T) {
+	for _, s := range credentialSources() {
+		if s.owner == session.KindCopilot || s.owner == "github" {
+			t.Errorf("%s is a credential source", s.owner)
+		}
+	}
+	if _, ok := sessionx.AgentOf(session.KindCopilot).(agents.CredentialStore); ok {
+		t.Error("copilot lists credentials of its own; its only one is the GitHub connection")
+	}
+}
+
+// The llama.cpp endpoint is listed with its endpoint binding and removed like DELETE
+// /connections/lcpp.
+func TestLcppEndpointStore(t *testing.T) {
+	memberHome(t)
+	t.Setenv("AF_SECRET_KEY", "")
+	if got := (lcppEndpointStore{}).StoredCredentials(context.Background()); len(got) != 0 {
+		t.Fatalf("no endpoint: %+v", got)
+	}
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: "http://llm.lab.invalid:8080", APIKey: "k"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := (lcppEndpointStore{}).StoredCredentials(context.Background())
+	if len(got) != 1 || got[0].Binding == "" || !slices.Equal(got[0].Routes, []string{routes.RouteMemberLlamacpp}) {
+		t.Fatalf("an endpoint: %+v", got)
+	}
+	if err := (lcppEndpointStore{}).RemoveCredential(context.Background(), "endpoint"); err != nil {
+		t.Fatal(err)
+	}
+	if got := (lcppEndpointStore{}).StoredCredentials(context.Background()); len(got) != 0 {
+		t.Errorf("after removal: %+v", got)
 	}
 }

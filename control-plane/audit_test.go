@@ -64,6 +64,8 @@ func TestAuditActionTarget(t *testing.T) {
 		{"POST", "/api/aws-confirm/0123456789abcdef01234567/deny?profile=prod-admin&session=s1", "", "aws.use.deny",
 			"0123456789abcdef01234567 (profile hint: prod-admin, session hint: s1)", true},
 		{"GET", "/api/aws-confirm", "", "", "", false},
+		{"POST", "/api/connections/unusable/remove", "", "connection.unusable.remove", "", true},
+		{"GET", "/api/connections/unusable", "", "", "", false},
 		{"GET", "/api/aws-login", "", "", "", false},
 		// ADR 0107 decision 3: the presses, the cancel and the code; the code route names the
 		// attempt by its reference only. Polls and lists are reads.

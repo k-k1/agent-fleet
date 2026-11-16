@@ -3,6 +3,7 @@ package codex
 import (
 	"encoding/base64"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"net/http"
 	"os"
 	"os/exec"
@@ -255,13 +256,23 @@ var devicePoll = &agents.StagedPoll{
 // HandleDisconnect logs codex out (clears auth.json) via the CLI.
 // DELETE /connections/codex.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteChatGPTSubscription)
-	if !began {
+	if err := logout(); err != nil {
+		agents.WriteLoginChangeUnrecorded(w, err)
 		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "codex"})
+}
+
+// logout is the disconnect itself, for the handler and for RemoveCredential. Its only error is
+// a login change that could not be recorded, in which case nothing was changed.
+func logout() error {
+	loginOp, err := credbind.Begin(routes.RouteChatGPTSubscription)
+	if err != nil {
+		return err
 	}
 	defer loginOp.Finish()
 	_ = exec.Command("codex", "logout").Run()
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "codex"})
+	return nil
 }
 
 // ensureFolderTrusted pre-accepts codex's per-directory trust gate ("Do you trust

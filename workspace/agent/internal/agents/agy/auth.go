@@ -3,6 +3,8 @@ package agy
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"io"
 	"net/http"
 	"os"
@@ -289,17 +291,33 @@ func driveOnboarding(f *agents.Flow, timeout time.Duration, signedIn func() bool
 // only), and in a keyring-less container /logout amounts to deleting the token
 // file — so that's what we do. DELETE /connections/agy.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteAgyLogin)
-	if !began {
-		return
+	switch err := logout(); {
+	case errors.Is(err, errLogoutFailed):
+		httpx.WriteErr(w, http.StatusInternalServerError, "logout_failed", err.Error())
+	case err != nil:
+		agents.WriteLoginChangeUnrecorded(w, err)
+	default:
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "agy"})
+	}
+}
+
+// errLogoutFailed wraps a token file that could not be removed.
+var errLogoutFailed = errors.New("agy logout failed")
+
+// logout is the disconnect itself, for the handler and for RemoveCredential: an error wrapping
+// errLogoutFailed when the token file could not be removed, any other error a login change that
+// could not be recorded (nothing changed).
+func logout() error {
+	loginOp, err := credbind.Begin(routes.RouteAgyLogin)
+	if err != nil {
+		return err
 	}
 	defer loginOp.Finish()
 	if err := os.Remove(tokenPath()); err != nil && !os.IsNotExist(err) {
-		httpx.WriteErr(w, http.StatusInternalServerError, "logout_failed", err.Error())
-		return
+		return fmt.Errorf("%w: %w", errLogoutFailed, err)
 	}
 	removeAccount()
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "agy"})
+	return nil
 }
 
 // Status reports the agy connection state for GET /connections, plus the host

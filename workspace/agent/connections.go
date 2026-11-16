@@ -2,13 +2,19 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"log"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -1200,4 +1206,225 @@ func gitConfigGlobal(key, val string) error {
 		return fmt.Errorf("git config %s: %v: %s", key, err, out)
 	}
 	return nil
+}
+
+// Stored credentials the policy forbids (ADR 0138 D14a). A credential whose every route the held
+// policy forbids is kept, unusable and hidden; the member's screens show one line, "Some stored
+// credentials cannot be used under your organisation's policy", with one action that removes
+// them after a confirmation. The line names none of them (D10a): GET answers only a count and an
+// opaque token, and the token stands for the exact credentials counted, by their bindings, so the
+// removal re-checks each one and removes only what is still present, unchanged and forbidden.
+
+// unusableOfferTTL bounds how long a counted set can be confirmed: past it the Console asks again.
+const unusableOfferTTL = 10 * time.Minute
+
+// unusableListBudget bounds how long one kind's StoredCredentials is waited for: some ask a CLI
+// (cursor, kiro) or opencode serve. A kind past it is left out of the count, never guessed.
+var unusableListBudget = 10 * time.Second
+
+// credentialSource is one owner of stored model credentials: a kind's agents.CredentialStore, or
+// the member's llama.cpp endpoint, which package main stores.
+type credentialSource struct {
+	owner string
+	store agents.CredentialStore
+}
+
+// unusableCred is one counted credential: who owns it, its id there, and the binding it had.
+type unusableCred struct{ owner, id, binding string }
+
+type unusableOffer struct {
+	creds   []unusableCred
+	expires time.Time
+}
+
+var (
+	unusableMu     sync.Mutex
+	unusableOffers = map[string]unusableOffer{}
+)
+
+// credentialSources is every source of member-owned, model-only credentials. Its seam lets tests
+// stand in stores without touching real CLIs.
+var credentialSources = func() []credentialSource {
+	var out []credentialSource
+	for _, k := range kinds.All() {
+		a, ok := agentreg.Lookup(k)
+		if !ok {
+			continue
+		}
+		if cs, ok := a.(agents.CredentialStore); ok {
+			out = append(out, credentialSource{owner: k, store: cs})
+		}
+	}
+	return append(out, credentialSource{owner: "lcpp", store: lcppEndpointStore{}})
+}
+
+// lcppEndpointStore is the member's llama.cpp endpoint as an agents.CredentialStore.
+type lcppEndpointStore struct{}
+
+func (lcppEndpointStore) StoredCredentials(context.Context) []agents.StoredCredential {
+	s, err := secrets.Load()
+	if err != nil || s.Lcpp == nil || strings.TrimSpace(s.Lcpp.URL) == "" {
+		return nil
+	}
+	return []agents.StoredCredential{{ID: "endpoint", Routes: []string{routes.RouteMemberLlamacpp},
+		Binding: credbind.Endpoint(routes.RouteMemberLlamacpp, s.Lcpp.URL, s.Lcpp.APIKey)}}
+}
+
+func (lcppEndpointStore) RemoveCredential(_ context.Context, id string) error {
+	if id != "endpoint" {
+		return agents.ErrUnknownCredential
+	}
+	if err := secrets.Update(func(s *secrets.Data) error { s.Lcpp = nil; return nil }); err != nil {
+		return err
+	}
+	lcppMemberCacheReset()
+	return nil
+}
+
+// unusableCredentials is every stored credential the held policy forbids on all its routes, in a
+// stable order. ok is false when nothing is restricted or the policy cannot be confirmed: then
+// nothing is unusable by this rule. A credential whose binding cannot be told is left out, since
+// a confirmation could never be checked against it.
+func unusableCredentials(ctx context.Context) ([]unusableCred, bool) {
+	if routepolicy.Active().Gate() != nil {
+		return nil, false
+	}
+	p, hiding := routepolicy.Hiding()
+	if !hiding {
+		return nil, false
+	}
+	srcs := credentialSources()
+	lists := make([][]agents.StoredCredential, len(srcs))
+	var wg sync.WaitGroup
+	for i, src := range srcs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ch := make(chan []agents.StoredCredential, 1)
+			go func() { ch <- src.store.StoredCredentials(ctx) }()
+			select {
+			case lists[i] = <-ch:
+			case <-time.After(unusableListBudget):
+				log.Printf("unusable credentials: %s did not list its credentials within %v", src.owner, unusableListBudget)
+			case <-ctx.Done():
+			}
+		}()
+	}
+	wg.Wait()
+	var out []unusableCred
+	for i, src := range srcs {
+		for _, c := range lists[i] {
+			if c.Binding == "" || len(c.Routes) == 0 || slices.ContainsFunc(c.Routes, p.Allows) {
+				continue
+			}
+			out = append(out, unusableCred{owner: src.owner, id: c.ID, binding: c.Binding})
+		}
+	}
+	return out, true
+}
+
+// offerUnusable records creds under a fresh token and returns it; "" for none.
+func offerUnusable(creds []unusableCred) string {
+	if len(creds) == 0 {
+		return ""
+	}
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	tok := hex.EncodeToString(b[:])
+	now := time.Now()
+	unusableMu.Lock()
+	defer unusableMu.Unlock()
+	for k, o := range unusableOffers {
+		if now.After(o.expires) {
+			delete(unusableOffers, k)
+		}
+	}
+	unusableOffers[tok] = unusableOffer{creds: creds, expires: now.Add(unusableOfferTTL)}
+	return tok
+}
+
+// takeUnusableOffer returns and forgets the offer behind tok; a token is confirmed once.
+func takeUnusableOffer(tok string) ([]unusableCred, bool) {
+	unusableMu.Lock()
+	defer unusableMu.Unlock()
+	o, ok := unusableOffers[tok]
+	delete(unusableOffers, tok)
+	if !ok || time.Now().After(o.expires) {
+		return nil, false
+	}
+	return o.creds, true
+}
+
+// unusableWire is GET /connections/unusable: how many stored credentials the policy leaves
+// unusable, and the token that confirms removing exactly those. Nothing else, on purpose.
+type unusableWire struct {
+	Count int    `json:"count"`
+	Token string `json:"token,omitempty"`
+}
+
+func handleUnusableGet(w http.ResponseWriter, r *http.Request) {
+	creds, _ := unusableCredentials(r.Context())
+	httpx.WriteJSON(w, http.StatusOK, unusableWire{Count: len(creds), Token: offerUnusable(creds)})
+}
+
+// unusableRemoveMaxRequest bounds POST /connections/unusable/remove's body: a token.
+const unusableRemoveMaxRequest = 1024
+
+// unusableRemoveWire answers a removal: what was removed, skipped because it changed (replaced,
+// gone, or no longer forbidden) and failed, then the line recomputed.
+type unusableRemoveWire struct {
+	Removed int `json:"removed"`
+	Skipped int `json:"skipped"`
+	Failed  int `json:"failed"`
+	unusableWire
+}
+
+// handleUnusableRemove is POST /connections/unusable/remove {token}: the member's own act, so it
+// needs the member-origin mark (a session's shell holds the Agent's token too). Each counted
+// credential is removed only if it is still listed by its owner with the same binding and still
+// forbidden on every route; anything else is skipped. Nothing outside the counted set is touched.
+func handleUnusableRemove(w http.ResponseWriter, r *http.Request) {
+	if _, ok := memberorigin.FromContext(r.Context()); !ok {
+		httpx.WriteErr(w, http.StatusForbidden, "member_origin_required", "removing credentials needs the member's own request")
+		return
+	}
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "a token is required")
+		return
+	}
+	offered, ok := takeUnusableOffer(req.Token)
+	if !ok {
+		httpx.WriteErr(w, http.StatusConflict, "unusable_offer_expired", "the confirmation has expired; ask again")
+		return
+	}
+	if err := routepolicy.Active().Gate(); err != nil {
+		httpx.WriteErr(w, http.StatusServiceUnavailable, routes.CodePolicyUnconfirmed, err.Error())
+		return
+	}
+	current, _ := unusableCredentials(r.Context())
+	stores := map[string]agents.CredentialStore{}
+	for _, s := range credentialSources() {
+		stores[s.owner] = s.store
+	}
+	var out unusableRemoveWire
+	for _, c := range offered {
+		if !slices.Contains(current, c) || stores[c.owner] == nil {
+			out.Skipped++
+			continue
+		}
+		if err := stores[c.owner].RemoveCredential(r.Context(), c.id); err != nil {
+			log.Printf("unusable credentials: removing %s/%s failed: %v", c.owner, c.id, err)
+			out.Failed++
+			continue
+		}
+		out.Removed++
+	}
+	left, _ := unusableCredentials(r.Context())
+	out.Count, out.Token = len(left), offerUnusable(left)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }

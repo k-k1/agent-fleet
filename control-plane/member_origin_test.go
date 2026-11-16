@@ -59,6 +59,7 @@ func TestMemberOriginRoutesAreTheMemberWrites(t *testing.T) {
 		"POST /api/agents/memory/import",
 		"POST /api/agents/memory/import/apply",
 		"POST /api/agents/memory/snapshots",
+		"POST /api/connections/unusable/remove",
 		"PUT /api/env/ui-prefs",
 	}
 	var got []string
