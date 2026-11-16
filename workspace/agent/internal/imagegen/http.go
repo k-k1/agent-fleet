@@ -53,6 +53,10 @@ type statusResponse struct {
 	// readable without guessing at a preference file, and a settings UI has something to
 	// render when there is more than one provider to rank.
 	Order []string `json:"order,omitempty"`
+	// OrderFiltered is always true from an Agent that leaves out of Order (and Providers) what
+	// the credential policy forbids or cannot confirm (ADR 0138 D10a). An older Agent sends the
+	// same shape unfiltered, so the Console lists Order only when this is set.
+	OrderFiltered bool `json:"orderFiltered"`
 	// Providers is EVERY ready provider, in the effective order, each with its own capability
 	// list. The flat fields above describe only the first one — which was enough while the
 	// caller could not choose, and stopped being enough the moment `generate_image` grew a
@@ -251,7 +255,7 @@ type loraStatus struct {
 
 // HandleStatus answers GET /imagegen/status?session=<name>.
 func HandleStatus(w http.ResponseWriter, r *http.Request) {
-	out := statusResponse{Enabled: enabled(), Order: effectiveOrder()}
+	out := statusResponse{Enabled: enabled(), Order: effectiveOrder(), OrderFiltered: true}
 	if name := r.URL.Query().Get("session"); session.ValidName(name) {
 		if m, ok := session.ReadMeta(name); ok {
 			out.Kind = m.Kind

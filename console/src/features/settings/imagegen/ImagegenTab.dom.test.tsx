@@ -21,7 +21,7 @@ vi.mock("../../../core/store/workspace.ts", () => ({
   wsStartBusy: () => false,
 }));
 
-const { ImagegenTab } = await import("./ImagegenTab.tsx");
+const { ImagegenTab, STATUS_REFRESH_MS } = await import("./ImagegenTab.tsx");
 const { setSettings, settingsDefaults, getSettings } = await import("../../../lib/settings.ts");
 const { t } = await import("../../../lib/i18n/index.ts");
 
@@ -37,7 +37,13 @@ const CODEX = { id: "codex", kind: "codex" };
 function respond(order: string[] | undefined, providers: Array<Record<string, unknown>>) {
   api.mockImplementation((path: string) => {
     if (path === "api/imagegen/status") {
-      return Promise.resolve({ enabled: true, ready: providers.length > 0, ...(order ? { order } : {}), providers });
+      return Promise.resolve({
+        enabled: true,
+        ready: providers.length > 0,
+        orderFiltered: true,
+        ...(order ? { order } : {}),
+        providers,
+      });
     }
     return Promise.resolve({});
   });
@@ -124,6 +130,22 @@ describe("image provider order follows the policy-filtered answer (ADR 0138 D10a
     expect(text()).toContain(t("set.imagegen_order_unavailable"));
   });
 
+  // An Agent from after ADR 0082 but before ADR 0138 M1 sends the same shape, unfiltered; only
+  // orderFiltered tells the two apart.
+  it("shows no provider for an Agent that does not mark its order as filtered", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "api/imagegen/status"
+          ? { enabled: true, ready: true, order: ["image", "agy", "codex"], providers: [IMAGE, AGY, CODEX] }
+          : {},
+      ),
+    );
+    await mount();
+    expect(orderRows()).toEqual([]);
+    expect(text()).not.toContain("Antigravity");
+    expect(text()).toContain(t("set.imagegen_order_unavailable"));
+  });
+
   // An Agent build old enough to predate `kind` (ADR 0082 P0/P1) cannot be trusted with the
   // fleet's row names either; it reads as no answer.
   it("shows no provider for an Agent that predates ADR 0082", async () => {
@@ -155,14 +177,52 @@ describe("Settings > Image generation writes the prefs the Agents page wrote", (
     expect(orderRows()).toEqual([]);
   });
 
-  it("stores the reordered visible list, keeping what the policy hides after it", async () => {
+  it("stores the reordered visible list, keeping what the policy hides in its slot", async () => {
     setSettings({ ...settingsDefaults(), imageGeneration: true, imageProviderOrder: ["agy", "image", "codex"] });
     respond(["image", "codex"], [IMAGE, CODEX]);
     await mount();
     const down = host!.querySelector<HTMLButtonElement>(".ds-orderlist-row button:not([disabled])");
     if (!down) throw new Error("no order control");
     await act(async () => down.click());
-    expect(getSettings().imageProviderOrder).toEqual(["codex", "image", "agy"]);
+    // agy keeps its slot, so it ranks first again once the policy allows it.
+    expect(getSettings().imageProviderOrder).toEqual(["agy", "codex", "image"]);
     expect(orderRows()).toEqual(["Codex", "image (ComfyUI)"]);
+  });
+});
+
+// A policy changed while the page stays open reaches it on the next refresh (ADR 0138 D10a).
+describe("a policy change while the page is open", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const tick = async () => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_REFRESH_MS);
+    });
+  };
+
+  it("drops a provider the policy starts to hide", async () => {
+    respond(["image", "agy", "codex"], [IMAGE, AGY, CODEX]);
+    await mount();
+    expect(orderRows()).toContain("Antigravity");
+    respond(["image", "codex"], [IMAGE, CODEX]);
+    await tick();
+    expect(orderRows()).toEqual(["image (ComfyUI)", "Codex"]);
+  });
+
+  it("brings back a provider the policy allows again", async () => {
+    respond(["image", "codex"], [IMAGE, CODEX]);
+    await mount();
+    expect(orderRows()).not.toContain("Antigravity");
+    respond(["image", "agy", "codex"], [IMAGE, AGY, CODEX]);
+    await tick();
+    expect(orderRows()).toEqual(["image (ComfyUI)", "Antigravity", "Codex"]);
+  });
+
+  it("fails closed when a refresh cannot be read", async () => {
+    respond(["image", "agy", "codex"], [IMAGE, AGY, CODEX]);
+    await mount();
+    api.mockImplementation(() => Promise.reject(new Error("boom")));
+    await tick();
+    expect(orderRows()).toEqual([]);
   });
 });

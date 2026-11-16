@@ -6,23 +6,30 @@ import { agentOf } from "../../../agents/registry.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { imagegenStatus } from "../../imagegen/api.ts";
+import { mergeVisibleOrder } from "./visibleOrder.ts";
 import { isPreAdr0082Status, type ImagegenProvider } from "../../imagegen/wire.ts";
 
 // ImagegenTab is Settings > Image generation (ADR 0138 D16): the generate_image tool af's own MCP
 // server gives every kind, and the order its providers are tried in. A feature that uses
 // credentials, so it is neither a credential nor a harness, and has its own page.
+// STATUS_REFRESH_MS bounds how long a policy change takes to reach an open page: the Agent pulls
+// the policy at least every 30 s (ADR 0138 D12), and this adds at most one more such period.
+export const STATUS_REFRESH_MS = 30_000;
+
 export function ImagegenTab() {
   const tr = useT();
   const s = useSettings();
   const running = useWorkspaceStore((st) => st.state) === "running";
   // The Agent's answer, or null while there is none to trust: not running, still loading, a
-  // transient failure, or an Agent build old enough to predate `kind` (isPreAdr0082Status). The
-  // list is drawn only from a live answer, because only the Agent knows what the credential
-  // policy allows (ADR 0138 D10a): a static list would name providers the policy hides.
+  // failed read, or an Agent that does not mark its order as policy-filtered (orderFiltered;
+  // older Agents send the same shape unfiltered). The list is drawn only from a trusted answer,
+  // because only the Agent knows what the credential policy allows (ADR 0138 D10a): a static or
+  // unfiltered list would name providers the policy hides.
   const [status, setStatus] = useState<{ order: string[]; providers: ImagegenProvider[] } | null>(null);
 
-  // (Re)load when the workspace is running, including a stopped→running transition while the
-  // dialog is open.
+  // Load while the workspace is running, and again every STATUS_REFRESH_MS: a policy changed by
+  // an administrator while this page stays open reaches it within the same bound the Agent's own
+  // policy refresh has, rather than leaving a now-forbidden provider listed.
   useEffect(() => {
     if (!running) {
       // The Agent that answered is gone with it: fail closed rather than keep rows that may no
@@ -31,19 +38,23 @@ export function ImagegenTab() {
       return;
     }
     let live = true;
-    imagegenStatus()
-      .then((st) => {
-        if (!live) return;
-        if (!st || isTransientErr(st) || st.error) return setStatus(null);
-        const providers = Array.isArray(st.providers) ? st.providers : [];
-        if (isPreAdr0082Status(providers)) return setStatus(null);
-        // `order` is already policy-filtered, ready or not, so an allowed provider that is not
-        // connected yet keeps its rank; absent means the policy leaves none.
-        setStatus({ order: Array.isArray(st.order) ? st.order : [], providers });
-      })
-      .catch(() => live && setStatus(null));
+    const load = () =>
+      imagegenStatus()
+        .then((st) => {
+          if (!live) return;
+          if (!st || isTransientErr(st) || st.error || st.orderFiltered !== true) return setStatus(null);
+          const providers = Array.isArray(st.providers) ? st.providers : [];
+          if (isPreAdr0082Status(providers)) return setStatus(null);
+          // `order` is policy-filtered, ready or not, so an allowed provider that is not
+          // connected yet keeps its rank; absent means the policy leaves none.
+          setStatus({ order: Array.isArray(st.order) ? st.order : [], providers });
+        })
+        .catch(() => live && setStatus(null));
+    void load();
+    const timer = setInterval(() => void load(), STATUS_REFRESH_MS);
     return () => {
       live = false;
+      clearInterval(timer);
     };
   }, [running]);
 
@@ -61,12 +72,11 @@ export function ImagegenTab() {
       return [id, kindLabel ? `${id} (${kindLabel})` : id];
     }),
   );
-  // The member reorders only what they can see. What the policy hides keeps its stored relative
-  // order after the visible ones, so it is neither shown nor lost.
+  // The member reorders only what they can see; what the policy hides keeps its stored slot
+  // (mergeVisibleOrder), so it is neither shown nor moved.
   const saveOrder = (visible: string[]) => {
-    const shown = new Set(imageOrder);
     const stored = Array.isArray(s.imageProviderOrder) ? s.imageProviderOrder : [];
-    setSetting("imageProviderOrder", [...visible, ...stored.filter((id) => !shown.has(id))]);
+    setSetting("imageProviderOrder", mergeVisibleOrder(stored, imageOrder, visible));
     // The list is the Agent's answer, which reflects the new pref only on the next fetch.
     if (status) setStatus({ ...status, order: visible });
   };

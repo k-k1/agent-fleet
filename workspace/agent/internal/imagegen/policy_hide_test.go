@@ -75,6 +75,10 @@ func TestStatusHidesProvidersThePolicyForbids(t *testing.T) {
 	if !reflect.DeepEqual(got.Order, []string{"codex"}) {
 		t.Errorf("under the policy the order is %v, want only codex", got.Order)
 	}
+	// The Console trusts Order as filtered only on this marker; an Agent without it is older.
+	if !got.OrderFiltered {
+		t.Error("orderFiltered is not set on a filtered order")
+	}
 }
 
 // A generation is judged at the point each provider would run (ADR 0138 D12): a provider on a

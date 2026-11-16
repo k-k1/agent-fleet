@@ -207,6 +207,9 @@ export interface ImagegenStatus {
    * always has agy and codex in it otherwise.
    */
   order?: string[];
+  /** True from an Agent whose `order` and `providers` are policy-filtered (ADR 0138 D10a). An
+   *  older Agent sends the same shape unfiltered and omits it. */
+  orderFiltered?: boolean;
   error?: ApiError;
 }
 
