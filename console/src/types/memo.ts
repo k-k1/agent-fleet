@@ -13,6 +13,15 @@ export interface MemoAttachment {
   name: string;
 }
 
+/** A pointer to a work item (an issue, a ticket, a pull request). Never a copy of it: the item's
+ *  text stays with the tracker and the session reads it there. The Control Plane stores the key
+ *  normalised (lower case for github and bitbucket, upper case for jira). */
+export interface MemoReference {
+  provider: string;
+  key: string;
+  url: string;
+}
+
 export interface Memo {
   id: string;
   repo: string; // "repos/<repo>"-derived name; "" = common bucket
@@ -21,6 +30,9 @@ export interface Memo {
   body: string; // free text, or a comment when kind=file
   refPath: string; // kind=file: "~/repos/<repo>/..."
   attachments?: MemoAttachment[]; // image attachments (any kind); omitted = none
+  /** The work item this note points at; absent on a note that has none. A note with one may have
+   *  an empty body. */
+  reference?: MemoReference;
   position: number; // order within its group
   createdAt: string; // RFC3339
   sentAt: string; // "" = unsent; RFC3339 stamp = flushed, kept until retention sweep
@@ -53,8 +65,14 @@ export interface MemoInput {
   body?: string;
   refPath?: string;
   attachments?: MemoAttachment[];
+  /** A work item to point at. At most one open note per item in an auto-run category: adding
+   *  one that is already there answers the existing note (`existing: true`). */
+  reference?: MemoReference;
   position?: number;
 }
+
+/** What POST /api/memos answers: the saved note, or the one already holding the same item. */
+export type MemoCreated = Memo & { existing?: boolean; error?: { code?: string; message?: string } };
 
 // Partial edit sent to PATCH /api/memos/{id}; omitted fields are left unchanged.
 export interface MemoPatch {
@@ -63,6 +81,9 @@ export interface MemoPatch {
   body?: string;
   refPath?: string;
   attachments?: MemoAttachment[];
+  /** Three meanings, told apart by the key alone: absent leaves the reference as it is, `{}`
+   *  clears it, a full object sets it. Never send `null`: the Control Plane reads it as absent. */
+  reference?: MemoReference | Record<string, never>;
   position?: number;
 }
 
@@ -109,6 +130,9 @@ export interface MemoQueue {
   draining: boolean;
   /** Set while its runs by itself are held back because the workspace's Agent is too old to report. */
   noReportAt: string;
+  /** Set while the notes that point at an item are held back because the workspace's Agent
+   *  cannot take them yet; notes without one still run. */
+  noRefsAt: string;
   enabled: boolean;
   generation: number;
   createdAt: string;
@@ -123,6 +147,7 @@ export type MemoWaitingReason =
   | "tenant_off"
   | "disabled"
   | "no_report"
+  | "no_references"
   | "paused"
   | "window_closed"
   | "below_threshold"

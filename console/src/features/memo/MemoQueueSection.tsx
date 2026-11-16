@@ -48,6 +48,8 @@ import { errText } from "../../core/api/client.ts";
 import { MemoQueueSettingsModal } from "./MemoQueueSettingsModal.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
 import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
+import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
+import { memoReference } from "./reference.ts";
 import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import { isStaleRelease, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, staleIdsOf } from "./queues.ts";
@@ -467,10 +469,11 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   }, []);
 
   // ---- memo edit / delete ------------------------------------------------------
-  const saveEdit = async (m: Memo, body: string, category: string) => {
+  const saveEdit = async (m: Memo, body: string, category: string, clearRef: boolean) => {
     setEditing(null);
     try {
-      const res = await memoUpdate(m.id, { body: body.trim(), category: category.trim() });
+      // The reference is left out unless the member removed it: absent keeps it, `{}` clears it.
+      const res = await memoUpdate(m.id, { body: body.trim(), category: category.trim(), ...(clearRef ? { reference: {} } : {}) });
       // apiJSON resolves a server error as {error} rather than throwing, so check it or a
       // false success toast is shown.
       if ((res as { error?: unknown }).error) {
@@ -578,11 +581,25 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       const grp = list.filter((m) => m.repo === repo && m.category === category);
       grp.forEach((m, i) => patches.push(memoUpdate(m.id, { position: i, category, repo })));
     }
+    let refused: unknown = null;
     try {
-      await Promise.all(patches);
+      // apiJSON resolves a refusal as {error} rather than throwing.
+      for (const res of await Promise.all(patches)) {
+        const err = (res as { error?: { code?: string } } | null)?.error;
+        if (err && !refused) refused = err;
+      }
     } finally {
+      // The refetch puts a refused note back where the server still has it. The poll skips an
+      // answer equal to the last one it applied, and a refused move changed nothing there, so the
+      // optimistic order would stay on screen: forget the last answer to make it apply.
+      if (refused) serRef.current = "";
       bumpMemos();
     }
+    if (refused) {
+      const err = refused as { code?: string };
+      toast(err.code?.startsWith("memo_") ? errText(err) : t("common.send_failed"));
+    }
+    return !refused;
   };
 
   // Reorder a memo before another memo (adopting the target's repo/category if different).
@@ -619,8 +636,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     const placed = { ...moved, repo, category };
     arr.push(placed);
     setMemos(arr);
-    if (category) toast(t("memo.moved", { cat: category }));
-    void persistGroups(arr, dedupeGroups([from, { repo, category }]));
+    void persistGroups(arr, dedupeGroups([from, { repo, category }])).then((ok) => {
+      if (ok && category) toast(t("memo.moved", { cat: category }));
+    });
   };
 
   // Reorder categories within a repo by rewriting positions.
@@ -1071,7 +1089,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                               onCollapse={() => setExpanded((s) => ({ ...s, [m.id]: false }))}
                               onEdit={() => setEditing(m.id)}
                               onCancelEdit={() => setEditing(null)}
-                              onSave={(body, category) => void saveEdit(m, body, category)}
+                              onSave={(body, category, clearRef) => void saveEdit(m, body, category, clearRef)}
                               onOpenMenu={(e) => openMemoMenu(e, m)}
                               onOpenKebab={(e) => openMemoMenuBtn(e, m)}
                               onDragStart={(e) => {
@@ -1258,7 +1276,7 @@ interface MemoRowProps {
   onCollapse: () => void;
   onEdit: () => void;
   onCancelEdit: () => void;
-  onSave: (body: string, category: string) => void;
+  onSave: (body: string, category: string, clearRef: boolean) => void;
   onOpenMenu: (e: RMouseEvent) => void;
   onOpenKebab: (e: RMouseEvent) => void;
   onDragStart: (e: RDragEvent) => void;
@@ -1273,6 +1291,9 @@ function MemoRow(props: MemoRowProps) {
   const [dragOver, setDragOver] = useState(false);
   const [body, setBody] = useState(m.body);
   const [cat, setCat] = useState(currentCat);
+  // The member asked to drop the note's reference; it is sent with the save, not before.
+  const [clearRef, setClearRef] = useState(false);
+  const ref = memoReference(m);
   const taRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextarea(taRef, body);
 
@@ -1280,6 +1301,7 @@ function MemoRow(props: MemoRowProps) {
     if (editing) {
       setBody(m.body);
       setCat(currentCat);
+      setClearRef(false);
       requestAnimationFrame(() => {
         const ta = taRef.current;
         if (ta) {
@@ -1294,6 +1316,25 @@ function MemoRow(props: MemoRowProps) {
     return (
       <div className="memo-row editing">
         <div className="memo-edit">
+          {ref && (
+            <div className="memo-edit-ref">
+              {clearRef ? (
+                <div className="memo-ref-removing">
+                  <span>{tr("memo.ref_remove_pending", { key: ref.key })}</span>
+                  <Button small variant="ghost" onClick={() => setClearRef(false)}>
+                    {tr("memo.ref_keep")}
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <MemoReferenceLink reference={ref} />
+                  <Button small variant="ghost" onClick={() => setClearRef(true)}>
+                    {tr("memo.ref_remove")}
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
           <textarea
             ref={taRef}
             className="memo-edit-text"
@@ -1310,7 +1351,7 @@ function MemoRow(props: MemoRowProps) {
               const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
               if (submitWithKey) {
                 e.preventDefault();
-                props.onSave(body, cat);
+                props.onSave(body, cat, clearRef);
               }
             }}
           />
@@ -1322,7 +1363,7 @@ function MemoRow(props: MemoRowProps) {
               placeholder={tr("memo.category_ph")}
               onChange={(e) => setCat(e.target.value)}
             />
-            <Button small variant="primary" onClick={() => props.onSave(body, cat)}>
+            <Button small variant="primary" onClick={() => props.onSave(body, cat, clearRef)}>
               {tr("memo.save")}
             </Button>
             <Button small variant="ghost" onClick={props.onCancelEdit}>
@@ -1383,6 +1424,7 @@ function MemoRow(props: MemoRowProps) {
             <Icon name="inbox" /> {tr("inbox.memo_origin", { who: m.origin.sender })}
           </span>
         )}
+        {ref && m.kind !== "file" && <MemoReferenceLink reference={ref} />}
         {m.kind === "file" ? (
           <>
             <code className="memo-ref">{m.refPath}</code>

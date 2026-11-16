@@ -1030,3 +1030,52 @@
 .memo-d-turn.bad {
   color: var(--warn, var(--accent));
 }
+
+/* The work item a note points at: mark, key as a link, and the cached title when there is one. */
+.memo-reflink {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+  min-width: 0;
+}
+.memo-reflink-mark {
+  color: var(--muted);
+}
+.memo-reflink-key {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+.memo-reflink-title {
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.memo-ref-removing {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+.memo-edit-ref {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* The picker of "Add to auto-run": its rows stacked with room between them. */
+.memo-addrun {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.memo-addrun textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
