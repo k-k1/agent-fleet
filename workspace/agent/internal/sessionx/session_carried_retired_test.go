@@ -204,6 +204,15 @@ func TestCarriedAnswerReportsAMarkItCouldNotClear(t *testing.T) {
 	if cur, _ := session.ReadMeta("s"); cur.RetiredAt == "" || !SessionAlive(cur) {
 		t.Fatalf("expected a running, marked session: retiredAt=%q", cur.RetiredAt)
 	}
+	// A modal that came up meanwhile still blocks the prose, marked or not.
+	status.Persist(session.UUID(m.Dir, "s"), "question")
+	if rec := c.answer(t); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "question_pending") {
+		t.Fatalf("answer over a modal = %d %s", rec.Code, rec.Body)
+	}
+	if cur, _ := session.ReadMeta("s"); cur.RetiredAt == "" {
+		t.Fatal("a refused answer took the mark off")
+	}
+	status.Persist(session.UUID(m.Dir, "s"), "idle")
 	if rec := c.answer(t); rec.Code != http.StatusAccepted {
 		t.Fatalf("second answer = %d %s", rec.Code, rec.Body)
 	}
