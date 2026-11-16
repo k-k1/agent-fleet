@@ -8,9 +8,28 @@ interface SchedulesStore {
   /** Reveal request: schedule id + a counter so repeats re-trigger. */
   reveal: { id: string | null; n: number };
   revealSchedule(id: string): void;
+  /** failedScheduleKeys of the rows the section lists (the loaded list, narrowed by the active
+   * working set). The list itself lives in the section; this is the one fact about it the
+   * activity bar needs while the section is hidden. */
+  failed: string[];
+  /** The same for the whole loaded list. Acknowledged keys are pruned against this one, so a
+   * working set that hides a schedule does not make its acknowledged failure unread again.
+   * null until this tenant's list has loaded: "not known yet" must never be read as "no
+   * failures exist", or a reload would prune every acknowledged key before the list arrives. */
+  failedAll: string[] | null;
+  setFailed(keys: string[], all: string[]): void;
+  /** The list is not known (not loaded yet, another tenant's, the section gone). */
+  clearFailed(): void;
 }
+
+const sameKeys = (a: string[], b: string[]) => a.length === b.length && a.every((k, i) => k === b[i]);
 
 export const useSchedulesStore = create<SchedulesStore>((set) => ({
   reveal: { id: null, n: 0 },
   revealSchedule: (id) => set((s) => ({ reveal: { id, n: s.reveal.n + 1 } })),
+  failed: [],
+  failedAll: null,
+  setFailed: (keys, all) =>
+    set((s) => (s.failedAll && sameKeys(s.failed, keys) && sameKeys(s.failedAll, all) ? s : { failed: keys, failedAll: all })),
+  clearFailed: () => set((s) => (s.failedAll === null && s.failed.length === 0 ? s : { failed: [], failedAll: null })),
 }));

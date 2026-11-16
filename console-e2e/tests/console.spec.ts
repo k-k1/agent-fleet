@@ -55,8 +55,8 @@ test("edit text -> save by keyboard and by button -> CAS conflict shown while ke
 
   // Open the text file created above from the recursive search over the home scope.
   const files = page.locator(".ui-section", { has: page.locator(".ui-section-title", { hasText: /ファイル|Files/ }) });
-  const toggle = files.locator(".ui-section-toggle");
-  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  // The left pane shows one view at a time; Files is not the one a fresh browser starts on.
+  await page.locator('.actbar-btn[data-rail-view="files"]').click();
   await files.getByRole("button", { name: /home から検索|Search from home/ }).click();
   await files.locator(".proj-filter input").fill(marker);
   const row = files.locator(`.fsrow[data-path="${marker}"]`);

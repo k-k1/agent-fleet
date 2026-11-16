@@ -15,18 +15,12 @@ export function MobileMore({
   phoneFold,
   splitDownBtn,
   closeAllBtn,
-  homeBtn,
-  overviewBtn,
-  imagegenBtn,
   statsBlock,
   previewPop,
 }: OpenState & {
   phoneFold: number;
   splitDownBtn: ReactNode;
   closeAllBtn: ReactNode;
-  homeBtn: ReactNode;
-  overviewBtn: ReactNode;
-  imagegenBtn: ReactNode;
   statsBlock: ReactNode;
   previewPop: ReactNode;
 }) {
@@ -55,11 +49,8 @@ export function MobileMore({
                 setOpen(false);
               }}
             >
-              {phoneFold > 1 && splitDownBtn}
-              {phoneFold > 1 && closeAllBtn}
-              {homeBtn}
-              {overviewBtn}
-              {imagegenBtn}
+              {splitDownBtn}
+              {closeAllBtn}
             </div>
           )}
           {/* statsBlock is always a truthy Fragment (each chip hides itself by returning

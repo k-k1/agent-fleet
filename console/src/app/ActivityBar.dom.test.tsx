@@ -1,0 +1,229 @@
+// The activity bar (ADR 0140): which icon is pressed, what a click does on a desktop and on a
+// phone, and each badge rule against the stores it reads.
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+
+const { api } = vi.hoisted(() => ({ api: vi.fn((..._args: unknown[]) => Promise.resolve({})) }));
+vi.mock("../core/api/client.ts", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  api: (...args: unknown[]) => api(...args),
+}));
+
+import { ActivityBar } from "./ActivityBar.tsx";
+import { useRailAck } from "./activity/badges.ts";
+import { useLeftRail } from "../core/store/leftRail.ts";
+import type { RailView } from "../core/store/leftRail.ts";
+import { useSessionsStore } from "../features/sessions/store.ts";
+import { useNotificationStore } from "../features/notifications/store.ts";
+import type { FleetNotification } from "../features/notifications/store.ts";
+import { useWorkItemStore } from "../features/workitems/store.ts";
+import { useSeenStore } from "../features/workitems/seen.ts";
+import { useSchedulesStore } from "../features/schedules/store.ts";
+import { useLayoutStore } from "../layout/store.ts";
+import { selectedView } from "../layout/ops.ts";
+import type { Session } from "../types/session.ts";
+
+const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+g.IS_REACT_ACT_ENVIRONMENT = true;
+let root: Root | null = null;
+let host: HTMLDivElement | null = null;
+
+const sess = (name: string, state: string) => ({ name, state, alive: true, kind: "claude" }) as unknown as Session;
+const note = (over: Partial<FleetNotification>): FleetNotification => ({
+  seq: 1,
+  id: "n1",
+  kind: "answer-ready",
+  target: { type: "session", id: "s1" },
+  displayName: "",
+  payload: {},
+  createdAt: "",
+  seen: false,
+  ...over,
+});
+const workItems = (updatedAt: string) => ({
+  payload: {
+    items: [{ id: "1", queryId: "q", provider: "github", kind: "issue", key: "o/r#1", title: "t", state: "open", url: "", assignee: "", labels: [], labelColors: {}, updatedAt, commentCount: 0 }],
+    queries: [],
+    sessions: [],
+    fetchedAt: "",
+    running: true,
+  },
+});
+
+beforeEach(() => {
+  localStorage.clear();
+  useLeftRail.setState({ open: true, view: "sessions", swipeOverlay: false });
+  useSessionsStore.setState({ sessions: [] });
+  useNotificationStore.setState({ items: [] });
+  useWorkItemStore.setState({ payload: null });
+  useSeenStore.setState({ map: {} });
+  useSchedulesStore.setState({ failed: [], failedAll: null });
+  useRailAck.setState({ acked: {} });
+});
+afterEach(async () => {
+  if (root) await act(async () => root!.unmount());
+  host?.remove();
+  root = host = null;
+});
+
+async function mount(props: Partial<Parameters<typeof ActivityBar>[0]> = {}) {
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  await render(props);
+}
+async function render(props: Partial<Parameters<typeof ActivityBar>[0]> = {}) {
+  // The shell passes the store's view down; mirror that so a click re-renders like the app.
+  const Shell = () => {
+    const view = useLeftRail((s) => s.view);
+    const open = useLeftRail((s) => s.open);
+    return <ActivityBar view={view} shown={open} foldable schedulerEnabled {...props} />;
+  };
+  await act(async () => root!.render(<Shell />));
+}
+const btn = (view: RailView) => host!.querySelector<HTMLButtonElement>(`.actbar-btn[data-rail-view="${view}"]`)!;
+const badge = (view: RailView) => btn(view).querySelector<HTMLElement>(".actbar-badge");
+
+describe("ActivityBar views", () => {
+  it("presses the icon of the view on screen and no other", async () => {
+    await mount();
+    expect(btn("sessions").getAttribute("aria-pressed")).toBe("true");
+    expect(btn("files").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("switches view on a click, and folds the pane on a click of the view on screen", async () => {
+    await mount();
+    await act(async () => btn("files").click());
+    expect(useLeftRail.getState()).toMatchObject({ open: true, view: "files" });
+    expect(btn("files").getAttribute("aria-pressed")).toBe("true");
+    await act(async () => btn("files").click());
+    expect(useLeftRail.getState().open).toBe(false);
+    // Folded: nothing is on screen, so nothing is pressed.
+    expect(btn("files").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("only ever selects on a phone, where the drawer has no folded pane", async () => {
+    await mount({ foldable: false });
+    await act(async () => btn("sessions").click());
+    expect(useLeftRail.getState()).toMatchObject({ open: true, view: "sessions" });
+  });
+
+  it("drops the schedules icon where there is no scheduler", async () => {
+    await mount({ schedulerEnabled: false });
+    expect(host!.querySelector('.actbar-btn[data-rail-view="schedules"]')).toBeNull();
+    expect(btn("memo")).not.toBeNull();
+  });
+
+  it("opens Home in a pane without touching the left pane", async () => {
+    await mount();
+    await act(async () => host!.querySelector<HTMLButtonElement>('.actbar-btn[data-launch="home"]')!.click());
+    expect(useLeftRail.getState()).toMatchObject({ open: true, view: "sessions" });
+    const layout = useLayoutStore.getState().layout;
+    const cell = layout.cols.flatMap((c) => c.cells).find((c) => c.id === layout.activeCellId)!;
+    expect(selectedView(cell)?.content.kind).toBe("home");
+  });
+});
+
+describe("ActivityBar badges", () => {
+  it("counts sessions waiting for an answer, even while their view is on screen", async () => {
+    useSessionsStore.setState({ sessions: [sess("a", "question"), sess("b", "plan"), sess("c", "working")] });
+    await mount();
+    expect(badge("sessions")?.dataset.badge).toBe("waiting");
+    expect(badge("sessions")?.textContent).toBe("2");
+  });
+
+  it("falls back to an unread dot when a session has news but nobody is waiting", async () => {
+    useNotificationStore.setState({ items: [note({})] });
+    await mount();
+    expect(badge("sessions")?.dataset.badge).toBe("unread");
+    expect(badge("sessions")?.textContent).toBe("");
+  });
+
+  it("marks the assistant for an unseen notice that opens a conversation", async () => {
+    useNotificationStore.setState({ items: [note({ kind: "session-report", payload: { conversation_id: "c1" } })] });
+    await mount();
+    expect(badge("assistant")?.dataset.badge).toBe("unread");
+  });
+
+  it("counts work items that moved, and acknowledges them once their view is opened", async () => {
+    useSeenStore.setState({ map: { "github:o/r#1": { u: "2026-01-01T00:00:00Z", c: 0 } } });
+    useWorkItemStore.setState(workItems("2026-01-02T00:00:00Z") as never);
+    await mount();
+    expect(badge("workitems")?.textContent).toBe("1");
+    await act(async () => btn("workitems").click());
+    expect(badge("workitems")).toBeNull();
+    // Back on another view: what was on screen stays acknowledged…
+    await act(async () => btn("sessions").click());
+    expect(badge("workitems")).toBeNull();
+    // …until the row moves again.
+    await act(async () => useWorkItemStore.setState(workItems("2026-01-03T00:00:00Z") as never));
+    expect(badge("workitems")?.textContent).toBe("1");
+  });
+
+  it("does not acknowledge news while the pane is folded away", async () => {
+    useLeftRail.setState({ open: false, view: "workitems" });
+    useSeenStore.setState({ map: { "github:o/r#1": { u: "2026-01-01T00:00:00Z", c: 0 } } });
+    useWorkItemStore.setState(workItems("2026-01-02T00:00:00Z") as never);
+    await mount();
+    expect(badge("workitems")?.textContent).toBe("1");
+  });
+
+  it("marks schedules whose latest run failed until their view is opened", async () => {
+    useSchedulesStore.setState({ failed: ["s1@2026-01-01T00:00:00Z"], failedAll: ["s1@2026-01-01T00:00:00Z"] });
+    await mount();
+    expect(badge("schedules")?.dataset.badge).toBe("failed");
+    await act(async () => btn("schedules").click());
+    await act(async () => btn("sessions").click());
+    expect(badge("schedules")).toBeNull();
+  });
+
+  it("keeps a failure acknowledged while a working set hides it", async () => {
+    const a = "a@2026-01-01T00:00:00Z";
+    const b = "b@2026-01-01T00:00:00Z";
+    // All: both failures listed and seen.
+    useSchedulesStore.setState({ failed: [a, b], failedAll: [a, b] });
+    await mount();
+    await act(async () => btn("schedules").click());
+    // A working set that lists only A, with the view still open.
+    await act(async () => useSchedulesStore.setState({ failed: [a], failedAll: [a, b] }));
+    // Another view, then back to All: B has not run again, so there is nothing new to tell.
+    await act(async () => btn("sessions").click());
+    await act(async () => useSchedulesStore.setState({ failed: [a, b], failedAll: [a, b] }));
+    expect(badge("schedules")).toBeNull();
+    // A new failure of B is news.
+    const b2 = "b@2026-01-02T00:00:00Z";
+    await act(async () => useSchedulesStore.setState({ failed: [a, b2], failedAll: [a, b2] }));
+    expect(badge("schedules")?.dataset.badge).toBe("failed");
+  });
+
+  it("does not forget acknowledged failures on a reload, before the list has loaded", async () => {
+    const a = "a@2026-01-01T00:00:00Z";
+    const b = "b@2026-01-01T00:00:00Z";
+    // A reload with the schedules view selected, both failures acknowledged earlier, and the
+    // list not loaded yet.
+    useLeftRail.setState({ open: true, view: "schedules" });
+    useRailAck.setState({ acked: { schedules: [a, b] } });
+    await mount();
+    expect(useRailAck.getState().acked.schedules).toEqual([a, b]);
+    // The list arrives under a working set that lists only A.
+    await act(async () => useSchedulesStore.setState({ failed: [a], failedAll: [a, b] }));
+    await act(async () => btn("sessions").click());
+    await act(async () => useSchedulesStore.setState({ failed: [a, b], failedAll: [a, b] }));
+    expect(badge("schedules")).toBeNull();
+  });
+
+  it("does not forget acknowledged work items before their list has loaded", async () => {
+    useLeftRail.setState({ open: true, view: "workitems" });
+    useRailAck.setState({ acked: { workitems: ["k"] } });
+    await mount();
+    expect(useRailAck.getState().acked.workitems).toEqual(["k"]);
+  });
+
+  it("never badges the memo queue or the files view", async () => {
+    useSessionsStore.setState({ sessions: [sess("a", "question")] });
+    await mount();
+    expect(badge("memo")).toBeNull();
+    expect(badge("files")).toBeNull();
+  });
+});

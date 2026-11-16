@@ -214,11 +214,7 @@ export const common = {
   "common.send_failed": "送信に失敗しました",
   "common.copy_failed": "コピーに失敗しました",
 
-  // === P2 LayoutMap（features/panes/LayoutMap.tsx）===
-  "pane.map_aria": "ペイン配置",
-  "pane.layout": "レイアウト",
-  "pane.open_sessions": "セッション一覧を開く",
-  "pane.open_imagegen": "画像生成を開く",
+  // === Panes ===
   "pane.open_generated": "生成した画像を開く",
   "pane.pane_n": "ペイン{ord}",
   "pane.no_session": "セッション未接続",
@@ -368,6 +364,14 @@ export const common = {
   "ui.repositories": "リポジトリ",
   "ui.files": "ファイル",
   "ui.starts_when_workspace_running": "ワークスペースを起動すると表示されます。",
+  "rail.bar_aria": "左ペインのビューとペインを開くボタン",
+  "rail.view.sessions": "セッション",
+  "rail.badge.waiting_one": "返事待ちのセッション {count} 件",
+  "rail.badge.waiting_other": "返事待ちのセッション {count} 件",
+  "rail.badge.news_one": "新着 {count} 件",
+  "rail.badge.news_other": "新着 {count} 件",
+  "rail.badge.unread": "未読あり",
+  "rail.badge.failed": "直近の実行が失敗",
   "ui.filter_models": "モデルを絞り込み…",
   "ui.kind_model": "{kind} のモデル",
   "ui.claude_registered_model": "登録したモデルから選択",

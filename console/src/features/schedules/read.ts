@@ -154,6 +154,12 @@ export function statusTone(status?: string): StatusTone {
   return "muted";
 }
 
+/** One key per schedule whose latest run failed, carrying that run, so the next failure of the
+ * same schedule is a new key. The activity bar's failed mark is built from these. */
+export function failedScheduleKeys(items: ScheduleDTO[]): string[] {
+  return items.filter((s) => statusTone(s.last_status) === "danger").map((s) => `${s.id}@${s.last_run || ""}`);
+}
+
 // The codicon for a status tone (matches the tone semantics used across the console).
 export function statusIcon(status?: string): string {
   switch (statusTone(status)) {

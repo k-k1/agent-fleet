@@ -29,16 +29,18 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 14px;
+  /* No left padding: the power slot is the first item and is exactly the activity bar's
+     width, which is what lines the two up. */
+  padding: 6px 14px 6px 0;
   background: var(--panel2);
   border-bottom: 1px solid var(--border);
   font-size: 13px;
 }
-.ws-label {
-  color: var(--muted);
-  text-transform: uppercase;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+.ws-power-slot {
+  flex: none;
+  width: var(--actbar-w);
+  display: flex;
+  justify-content: center;
 }
 .ws-dot {
   font-size: 10px;
@@ -112,22 +114,16 @@
    zoomed), which takes the edge swipe that pulls out the left pane with it. Measured at
    390px: the bar wanted 489px before the "restart required" pill even appears, 531px with
    it — i.e. it was already over, and the pill was what made it obvious.
-   So on a phone: shrink the decorative caption to "WS", let the state chip size to its
-   own text, and tighten the gap/paddings. WsBar also stops rendering "split right" here
-   (it is permanently disabled on a phone). Measured after: 332px with the pill. */
-.ws-label .lbl-short {
-  display: none;
-}
+   So on a phone: let the state chip size to its own text, and tighten the gap/paddings.
+   WsBar also stops rendering "split right" here (it is permanently disabled on a phone). */
 @media (max-width: 760px) {
   .wsbar {
     gap: 6px;
     padding: 6px 8px;
   }
-  .ws-label .lbl {
-    display: none;
-  }
-  .ws-label .lbl-short {
-    display: inline;
+  /* No icon column to line up with: the activity bar is inside the drawer here. */
+  .ws-power-slot {
+    width: auto;
   }
   .ws-state {
     /* The only shrinkable item on the row, deliberately: whatever is added to the bar
@@ -151,8 +147,7 @@
 /* Phone fold steps (useWsBarPhoneFold): the pane buttons the bar has no room for move into
    the ⋯ popover. `>` keeps the popover's own copies visible. */
 @media (max-width: 760px) {
-  .wsbar[data-fold-phone] > :is(.ws-home, .ws-overview, .ws-imagegen),
-  .wsbar[data-fold-phone="2"] > :is(.ws-closeall, .ws-split:not(.ws-newsession)) {
+  .wsbar[data-fold-phone] > .ws-panes {
     display: none;
   }
 }
@@ -545,15 +540,32 @@ button.wu-manage {
 
 /* port preview popover: one button on the bar, a small panel on click — so it
    never wraps to a second line on a phone. */
-/* Close-all: icon + label so the affordance reads; label hides on a phone to keep
-   the tight left cluster compact (the title still names it). */
+/* The pane buttons in the bar are one icon-only group; their labels show only in the phone's
+   ⋯ popover, where the same elements are a list (.ws-more-actions above). */
+.ws-panes {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ws-panes .lbl {
+  display: none;
+}
+.wsbar .ws-panes > button {
+  border: none;
+  border-radius: 0;
+  padding: 4px 9px;
+}
+.ws-panes > button + button {
+  border-left: 1px solid var(--border);
+}
 .ws-closeall {
   display: inline-flex;
   align-items: center;
   gap: 5px;
 }
-/* Split buttons moved here from the pane header — icon + label, label folds away on a
-   narrow bar (like "close all"). Disabled (not hidden) when the split isn't possible. */
+/* "Start" and the split buttons. A split that is not possible is disabled, not hidden. */
 .ws-split {
   display: inline-flex;
   align-items: center;
@@ -567,11 +579,6 @@ button.wu-manage {
 }
 @media (max-width: 760px) {
   .ws-split .lbl {
-    display: none;
-  }
-}
-@media (max-width: 760px) {
-  .ws-closeall .lbl {
     display: none;
   }
 }
@@ -809,21 +816,14 @@ button.wu-manage {
   .wsbar > * {
     flex-shrink: 0;
   }
-  .wsbar[data-fold-labels] > :is(.ws-split:not(.ws-newsession), .ws-closeall) .lbl {
-    display: none;
-  }
   .wsbar[data-fold-more] > :is(.ws-aws, .ws-res, .ws-preview) {
     display: none;
   }
   .wsbar[data-fold-more] > .ws-more-desk {
     display: block;
   }
-  .wsbar[data-fold-tight] > :is(.ws-newsession, .ws-stale) .lbl,
-  .wsbar[data-fold-tight] > .ws-label .lbl {
+  .wsbar[data-fold-tight] > :is(.ws-newsession, .ws-stale) .lbl {
     display: none;
-  }
-  .wsbar[data-fold-tight] > .ws-label .lbl-short {
-    display: inline;
   }
   /* Last resort: whatever still does not fit squeezes the state text, never the controls. */
   .wsbar[data-fold-tight] > .ws-state {

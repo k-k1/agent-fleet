@@ -62,17 +62,18 @@ async function mount() {
 describe("WsBar phone fold", () => {
   it("moves the pane buttons into the ⋯ popover when the bar is too narrow", async () => {
     await mount();
-    expect(host!.querySelector(".wsbar")!.getAttribute("data-fold-phone")).toBe("2");
+    expect(host!.querySelector(".wsbar")!.getAttribute("data-fold-phone")).toBe("1");
     await act(async () => host!.querySelector<HTMLButtonElement>(".ws-more-btn")!.click());
     const labels = [...host!.querySelectorAll(".ws-more-actions button")].map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual([t("wsbar.split_down"), t("wsbar.close_all"), t("wsbar.home"), t("wsbar.overview")]);
+    // Home and the overview are on the activity bar, not here.
+    expect(labels).toEqual([t("wsbar.split_down"), t("wsbar.close_all")]);
   });
 
   it("hands focus back to the ⋯ trigger when a folded action closes the popover", async () => {
     await mount();
     const trigger = host!.querySelector<HTMLButtonElement>(".ws-more-btn")!;
     await act(async () => trigger.click());
-    const action = host!.querySelector<HTMLButtonElement>(".ws-more-actions .ws-overview")!;
+    const action = host!.querySelector<HTMLButtonElement>(".ws-more-actions .ws-split")!;
     action.focus();
     expect(document.activeElement).toBe(action);
     await act(async () => action.click());

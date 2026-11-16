@@ -214,11 +214,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "common.send_failed": "Failed to send",
   "common.copy_failed": "Failed to copy",
 
-  // === P2 LayoutMap (features/panes/LayoutMap.tsx) ===
-  "pane.map_aria": "Pane layout",
-  "pane.layout": "Layout",
-  "pane.open_sessions": "Open the sessions overview",
-  "pane.open_imagegen": "Open image generation",
+  // === Panes ===
   "pane.open_generated": "Open generated images",
   "pane.pane_n": "Pane {ord}",
   "pane.no_session": "No session",
@@ -366,6 +362,14 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "ui.repositories": "Repositories",
   "ui.files": "Files",
   "ui.starts_when_workspace_running": "Appears once the workspace is running.",
+  "rail.bar_aria": "Left pane views and pane shortcuts",
+  "rail.view.sessions": "Sessions",
+  "rail.badge.waiting_one": "{count} session waiting for your answer",
+  "rail.badge.waiting_other": "{count} sessions waiting for your answer",
+  "rail.badge.news_one": "{count} new update",
+  "rail.badge.news_other": "{count} new updates",
+  "rail.badge.unread": "unread",
+  "rail.badge.failed": "the latest run failed",
   "ui.filter_models": "Filter models…",
   "ui.kind_model": "{kind} model",
   "ui.claude_registered_model": "Select a registered model",

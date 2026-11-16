@@ -160,7 +160,7 @@ export function WsBar() {
   const powerStops = wsPowerStops(wsState);
 
   const { startQueued, onStart, onToggle, onRestart } = useWsPower(running, busy, powerStops);
-  const { splitRightBtn, splitDownBtn, closeAllBtn, homeBtn, overviewBtn, imagegenBtn } = useLayoutButtons(isMobile);
+  const { splitRightBtn, splitDownBtn, closeAllBtn } = useLayoutButtons(isMobile);
 
   // Backend drift (CP-detected): the running container predates the deployed build,
   // so a stop→start would pick up the new backend. Shown only while genuinely
@@ -322,16 +322,16 @@ export function WsBar() {
 
   return (
     <div className="wsbar" ref={barRef}>
-      <span className="ws-label">
-        <span className="lbl">Workspace</span>
-        <span className="lbl-short">WS</span>
-      </span>
       {/* Power toggle: a single icon-only ⏻ to the LEFT of the state chip — the chip
           says running/stopped, this starts or stops accordingly (no separate labeled
           button). The bar auto-syncs wsState from the 4s workspace poll, so an
           externally-changed workspace (admin stop / OOM) reflects without a manual
           refresh. Disabled mid-transition (starting…/stopping…), where it shows a
           spinner instead of the glyph. */}
+      {/* The slot is as wide as the activity bar below it, so menu, power and the view icons
+          form one column down the left edge (ADR 0140). The bar carries no "Workspace"
+          caption: the state text beside the button says what it powers. */}
+      <span className="ws-power-slot">
       <Button
         className={"ws-power " + (running ? "on" : powerStops ? "starting" : "off") + (staleShown ? " stale" : "")}
         onClick={onToggle}
@@ -368,6 +368,7 @@ export function WsBar() {
           </svg>
         )}
       </Button>
+      </span>
       <span className={"ws-dot " + (running ? "on" : "off")}>●</span>
       <span
         className={"ws-state" + (wsState === "stopped" && wsStats?.oom_killed ? " warn" : "")}
@@ -411,21 +412,14 @@ export function WsBar() {
         <Icon name={startQueued ? "loading" : "add"} spin={startQueued} />
         <span className="lbl">{tr("wsbar.start_here")}</span>
       </Button>
-      {splitRightBtn}
-      {splitDownBtn}
-      {closeAllBtn}
-      {/* The sessions overview (ADR 0078). It sits with the pane buttons because it IS a
-          pane; the rail's layout map has the same button, but that map hides itself while
-          there is a single pane — which is exactly when someone reaches for the overview.
-          Home (#2028) goes first: it is the way back to "what is next" from anywhere. */}
-      {homeBtn}
-      {overviewBtn}
-      {/* The image-generation studio (ADR 0081), beside the overview for the same reason:
-          it is a pane, and the layout map's copy of this button hides itself while there is
-          only one pane. Shown only while the fleet has an image engine to offer (decision 1):
-          a button that opens onto "the engine cannot be used" is a promise the bar cannot
-          keep, and most fleets have no engine at all. */}
-      {imagegenBtn}
+      {/* The pane buttons, as one icon-only group: "Start" is the bar's only labelled action.
+          What opens a pane (Home, the sessions overview, the image studio) is on the activity
+          bar, which is there whatever the bar's width. */}
+      <span className="ws-panes" role="group" aria-label={tr("wsbar.panes_aria")}>
+        {splitRightBtn}
+        {splitDownBtn}
+        {closeAllBtn}
+      </span>
 
       <span className="ws-spacer" />
 
@@ -436,9 +430,6 @@ export function WsBar() {
           phoneFold={phoneFold}
           splitDownBtn={splitDownBtn}
           closeAllBtn={closeAllBtn}
-          homeBtn={homeBtn}
-          overviewBtn={overviewBtn}
-          imagegenBtn={imagegenBtn}
           statsBlock={statsBlock}
           previewPop={previewPop}
         />

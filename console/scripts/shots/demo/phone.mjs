@@ -206,9 +206,9 @@ export async function script(c) {
   await c.caption(3, T[2]);
   await c.waitFor(`!document.querySelector(".mirror-typing, .mt-typing") && /${L(c.locale, "全部緑", "all green")}/.test(document.body.innerText)`);
   await c.sleep(1600);
-  // At phone width the WS bar folds its pane buttons into the ⋯ menu (measured by width).
-  await c.click(find(".ws-more-btn"), 500);
-  await c.click(find(".ws-more-actions .ws-overview"), 700);
+  // The sessions overview is on the activity bar, which a phone keeps inside the drawer.
+  await c.click(find(".nav-toggle"), 500);
+  await c.click(find('.actbar-btn[data-launch="overview"]'), 700);
   await c.waitFor(`!/question|working/.test((${find(".ovw-card", "#321")})?.className || "working")`, 12000);
   await c.sleep(2600);
 }

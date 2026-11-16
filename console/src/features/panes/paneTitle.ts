@@ -1,6 +1,5 @@
-// paneTitle — one human-readable label for what a pane is showing, shared by
-// the LayoutMap cells and the pop-out tab's title bar / document.title.
-// KIND_JA/jaKind moved here from LayoutMap.tsx so both consumers use one map.
+// paneTitle — one human-readable label for what a pane is showing: the pop-out tab's
+// title bar and document.title.
 import type { Pane, PaneKind } from "../../layout/types.ts";
 import type { Session } from "../../types/session.ts";
 import { displayName, stripLabelTag } from "../../lib/sessionview.ts";

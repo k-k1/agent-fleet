@@ -118,7 +118,7 @@
     "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace;
   /* Per-agent kind hues — single source of truth for the color every agent reads
      wherever it appears (kind-tag pane headers, session badges, launch seg icons,
-     LayoutMap, settings badges). Tints are derived via color-mix at the use sites.
+     settings badges). Tints are derived via color-mix at the use sites.
      The values are rows of agents/kindTable.ts; the build expands the marker below into one
      --kind-<slug> per kind (the rationale for each hue is in that file). */
   /* @af-kind-tokens dark */

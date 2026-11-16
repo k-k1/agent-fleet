@@ -371,10 +371,13 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     if (collapsedCats[key]) toggleCollapse(key);
   };
   // Focus on open AND whenever the composer moves to another category: it is one node
-  // re-parented into the target group, so it remounts and loses focus.
+  // re-parented into the target group, so it remounts and loses focus. Also on every compose
+  // request: the composer may already be open with a draft from an earlier visit, and then
+  // neither of the other two changes, while the keystrokes that follow the shortcut would go
+  // wherever focus was left.
   useEffect(() => {
     if (composerOpen) requestAnimationFrame(() => composerTextRef.current?.focus());
-  }, [composerOpen, targetKey]);
+  }, [composerOpen, targetKey, composeReq]);
 
   // Upload image files (paste / drop / picker) into the container's memo-images dir and
   // append them to the composer's attachments. Non-image files are ignored — memo
@@ -827,7 +830,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       <Section
         id="memos"
         title={tr("memo.title")}
-        icon="checklist"
+        icon="note"
         count={unsent.length}
         actions={actions}
         open={open}

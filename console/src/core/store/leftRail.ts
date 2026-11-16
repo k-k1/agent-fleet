@@ -3,7 +3,23 @@
 // drive it from outside React. Persists to localStorage exactly as the old App state
 // did (keys af-left-open / af-left-mode). The mobile off-canvas drawer (navOpen) stays
 // local to App — it is entangled with the drawer↔history popstate logic.
+//
+// The pane shows one view at a time (ADR 0140); `view` is which one. Every view stays
+// mounted and only the chosen one is displayed, so switching never drops a draft, a scroll
+// position or a poller that lives in a section.
 import { create } from "zustand";
+
+export const RAIL_VIEWS = ["sessions", "assistant", "workitems", "memo", "schedules", "files"] as const;
+export type RailView = (typeof RAIL_VIEWS)[number];
+
+const readView = (): RailView => {
+  try {
+    const v = localStorage.getItem("af-left-view");
+    return (RAIL_VIEWS as readonly string[]).includes(v || "") ? (v as RailView) : "sessions";
+  } catch {
+    return "sessions";
+  }
+};
 
 const readOpen = (): boolean => {
   try {
@@ -28,6 +44,7 @@ const save = (k: string, v: string): void => {
 interface LeftRailStore {
   open: boolean;
   mode: "push" | "overlay";
+  view: RailView;
   /** Transient: a tablet edge-swipe floated the rail as an overlay for that reveal,
    * regardless of `mode` (adds the .left-overlay class + dismiss backdrop). Cleared on
    * any close / manual toggle so the user's chosen mode takes back over. */
@@ -39,11 +56,18 @@ interface LeftRailStore {
   toggleMode(): void;
   /** Tablet swipe-to-reveal (>760px, touch): open the rail floated as an overlay. */
   openOverlay(): void;
+  /** Bring a view on screen: select it and dock the rail open. For anything that reveals a
+   * row in the rail — it must never close a rail that is already showing the view. */
+  showView(view: RailView): void;
+  /** The activity bar's click: the icon of the view on screen folds the rail away, any other
+   * icon (or any icon while the rail is folded) shows that view. */
+  pickView(view: RailView): void;
 }
 
 export const useLeftRail = create<LeftRailStore>((set) => ({
   open: readOpen(),
   mode: readMode(),
+  view: readView(),
   swipeOverlay: false,
   toggle: () =>
     set((s) => {
@@ -71,4 +95,19 @@ export const useLeftRail = create<LeftRailStore>((set) => ({
     save("af-left-open", "1");
     set({ open: true, swipeOverlay: true });
   },
+  showView: (view) => {
+    save("af-left-open", "1");
+    save("af-left-view", view);
+    set({ open: true, view });
+  },
+  pickView: (view) =>
+    set((s) => {
+      if (s.open && s.view === view) {
+        save("af-left-open", "0");
+        return { open: false, swipeOverlay: false };
+      }
+      save("af-left-open", "1");
+      save("af-left-view", view);
+      return { open: true, view };
+    }),
 }));

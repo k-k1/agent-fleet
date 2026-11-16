@@ -128,6 +128,7 @@ export const sessions = {
   "wsbar.start_here.running": "はじめる（チャット / リポジトリ / クローン / shell）",
   "wsbar.start_here.queued": "起動中 — 準備ができたら開きます",
   "wsbar.start_here.stopped": "はじめる（ワークスペースを起動して開始）",
+  "wsbar.panes_aria": "ペイン操作",
   "wsbar.split_right": "右に分割",
   "wsbar.split_down": "下に分割",
   "wsbar.split_down_title": "上下に分割（アクティブなペイン）",

@@ -152,7 +152,7 @@ describe("display names", () => {
   });
 
   it("keeps a proper-cased compact label for chips and headers", () => {
-    // The tight spots (LayoutMap, pane headers) show the compact label, not the full name.
+    // The tight spots (pane headers) show the compact label, not the full name.
     expect(kindLabel("claude")).toBe("Claude");
     expect(kindLabel("copilot")).toBe("Copilot");
     expect(kindLabel("codex")).toBe("Codex");

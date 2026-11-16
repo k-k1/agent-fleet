@@ -335,7 +335,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     <Section
       id="workitems"
       title={tr("wi.title")}
-      icon="tasklist"
+      icon="issues"
       count={count}
       actions={
         <>

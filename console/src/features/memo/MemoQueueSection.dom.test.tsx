@@ -252,6 +252,32 @@ describe("category + button", () => {
   });
 });
 
+// The compose shortcut can arrive while the composer is already open with a draft: the left
+// pane keeps the memo view mounted while another view is on screen. Nothing about the composer
+// changes then, and the shortcut still has to take focus, or what is typed next goes wherever
+// focus was left (a terminal).
+describe("compose request", () => {
+  const raf = () => act(async () => void (await new Promise((r) => requestAnimationFrame(() => r(null)))));
+
+  it("takes focus again when the composer is already open", async () => {
+    await render();
+    await act(async () => useMemoStore.getState().requestCompose());
+    await raf();
+    const text = must(composer()?.querySelector<HTMLTextAreaElement>(".memo-add-text"), "composer textarea");
+    expect(document.activeElement).toBe(text);
+
+    const elsewhere = document.createElement("input");
+    document.body.appendChild(elsewhere);
+    elsewhere.focus();
+    expect(document.activeElement).toBe(elsewhere);
+
+    await act(async () => useMemoStore.getState().requestCompose());
+    await raf();
+    expect(document.activeElement).toBe(text);
+    elsewhere.remove();
+  });
+});
+
 // "Start with this" (#3289) is how a draft set aside from the Start working dialog comes back,
 // so it lives on the row menu of the member's own text memos and seeds the launch.
 describe("starting a session from a memo", () => {

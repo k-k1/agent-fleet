@@ -6,6 +6,7 @@
 // the per-tenant sync effect loads that tenant's layout. History (back/forward)
 // traverses layout states.
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useRetryLoad } from "../lib/retryLoad.ts";
 import { reloadCloudProfiles } from "./cloudProfilesReload.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
@@ -17,6 +18,7 @@ import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspac
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireKeys } from "../features/keys/dispatcher.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
+import type { RailView as RailViewId } from "../core/store/leftRail.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { wireAttentionBeacon } from "../lib/attention.ts";
 import { disposeAllBrowsers, resetBrowserRuntime, wireBrowserReconcile } from "../features/browser/service.ts";
@@ -50,10 +52,11 @@ import { publishBrowserTimeZone } from "../lib/browserTimeZone.ts";
 import { startAppearanceShuffle } from "../lib/appearanceShuffle.ts";
 import { applyTenantAppearance, watchOtherTabs, getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, useSettings } from "../lib/settings.ts";
 import { getTenant, getUser } from "../core/api/client.ts";
-import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
+import { MOBILE_QUERY, coarsePointer, useIsMobile } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
-import { LayoutMap } from "../features/panes/LayoutMap.tsx";
 import { WorkingSetBar } from "./WorkingSetBar.tsx";
+import { ActivityBar } from "./ActivityBar.tsx";
+import { wireRailReveals } from "./activity/reveals.ts";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
 import { WorkItemsSection } from "../features/workitems/WorkItemsSection.tsx";
@@ -64,7 +67,7 @@ import { OtherSessionsSection } from "../features/project/OtherSessionsSection.t
 import { StoppedSessionsSection } from "../features/project/StoppedSessionsSection.tsx";
 import { SharedSessionsSection } from "../features/sharing/SharedSessionsSection.tsx";
 import { FilesSection } from "../features/project/FilesSection.tsx";
-import { Section } from "../ui/Section.tsx";
+import { Section, SoloSection } from "../ui/Section.tsx";
 import { WsBar } from "./WsBar.tsx";
 import { TopBar } from "./TopBar.tsx";
 import { useSettingsUI } from "../features/settings/store.ts";
@@ -199,6 +202,8 @@ export function App() {
   // too, so open/close from any path (swipe / hamburger / Ctrl+B) stays consistent.
   const leftOpen = useLeftRail((s) => s.open);
   const leftMode = useLeftRail((s) => s.mode);
+  const storedRailView = useLeftRail((s) => s.view);
+  const isMobile = useIsMobile();
   const swipeOverlay = useLeftRail((s) => s.swipeOverlay);
   const toggleLeft = useLeftRail((s) => s.toggle);
   const closeLeft = useLeftRail((s) => s.close);
@@ -312,6 +317,7 @@ export function App() {
     window.addEventListener("focus", refreshPrefs);
     const unHistory = wireLayoutHistory();
     const unKeys = wireKeys();
+    const unRailReveals = wireRailReveals();
     const unReconcile = wireTerminalReconcile();
     // Attention beacon (docs/log/75 P3): report real interaction while visible, at most
     // once every 60s, so someone who is only reading does not look absent and get their
@@ -368,6 +374,7 @@ export function App() {
       window.removeEventListener("focus", refreshPrefs);
       unHistory();
       unKeys();
+      unRailReveals();
       unReconcile();
       unBrowserReconcile();
       unBrowserAttachmentReconcile();
@@ -534,6 +541,10 @@ export function App() {
   // install, so this is the first step, not an edge case; opening the Console would just
   // 403 every request and emit one toast per failure. Placed before the popout branch:
   // with no membership there is no pane to open either.
+  // A stored choice of the schedules view outlives the scheduler being switched off; show the
+  // default view rather than an empty pane.
+  const railView = storedRailView === "schedules" && !schedulerEnabled ? "sessions" : storedRailView;
+
   if (notProvisioned) return <NotProvisioned />;
 
   // Minimal pop-out chrome: title bar + the (1-pane) PaneHost, plus the overlay
@@ -582,52 +593,73 @@ export function App() {
       <TopBar toggleNav={toggleNav} toggleLeft={toggleLeft} toggleLeftMode={toggleLeftMode} />
       <WsBar />
       <div className="app-body">
-        {/* Desktop mouse-only: hovering the left edge while the rail is
-            collapsed peeks it open, mirroring the tablet edge-swipe below.
-            Hidden via CSS (hover:hover + pointer:fine) on touch/mobile, so
-            this never fires from a tap there. */}
-        <div
-          className="app-edge-hotzone"
-          onMouseEnter={() => {
-            if (!useLeftRail.getState().open) useLeftRail.getState().openOverlay();
-          }}
-        />
-        <nav className="app-rail">
-          <LayoutMap />
-          {/* Working sets (docs/log/52): pinned OUTSIDE the scroll area so the active
-              scope stays visible however far the rail scrolls — rendered for the
-              stopped rail too (the switcher works without the agent). */}
-          <WorkingSetBar />
-          {/* Project-first IA: Assistant + Memo pinned on top (global tools), then
-              the repo tree (each base node nests its sessions + worktrees), then
-              the repo-less session catch-all, and the global file browser at the
-              foot (default collapsed; a reveal opens it). */}
-          <div className="app-rail-scroll">
-            {workspaceRunning ? (
-              <>
-                <AssistantSection />
-                {schedulerEnabled && <SchedulesSection />}
+        {/* The icon column and the pane it steers. The column stays when the pane is folded
+            away, so every view is one click from anywhere; on a phone the two slide out
+            together as the drawer. */}
+        <nav className="app-side">
+          <ActivityBar view={railView} shown={isMobile ? navOpen : leftOpen} foldable={!isMobile} schedulerEnabled={schedulerEnabled} />
+          {/* One view at a time (ADR 0140). All of them stay mounted — a section's poller,
+              its draft and its scroll position live in the section — and only the chosen
+              one is displayed. */}
+          <div className="app-rail">
+            {/* Working sets (docs/log/52): pinned OUTSIDE the scroll area so the active scope
+                stays visible however far the view scrolls. On every view the set narrows —
+                a view that lost rows to a scope with no switcher in sight cannot be widened
+                from where the member is looking — and rendered for a stopped workspace too
+                (the switcher works without the agent). */}
+            <RailView id="sessions" active={railView} scoped>
+              {workspaceRunning ? (
+                <>
+                  <SoloSection>
+                    <ProjectTree />
+                  </SoloSection>
+                  <OtherSessionsSection />
+                  <SharedSessionsSection />
+                </>
+              ) : (
+                <>
+                  <SoloSection>
+                    <StoppedRailSection id="repos" title={tr("ui.repositories")} icon="repo" />
+                  </SoloSection>
+                  <StoppedSessionsSection />
+                  <SharedSessionsSection />
+                </>
+              )}
+            </RailView>
+            <RailView id="assistant" active={railView} scoped>
+              <SoloSection>
+                {workspaceRunning ? (
+                  <AssistantSection />
+                ) : (
+                  <StoppedRailSection id="assistant" title={tr("ui.assistant")} icon="comment-discussion" />
+                )}
+              </SoloSection>
+            </RailView>
+            {/* Shown for a stopped workspace too, and that is the point (docs/log/80): it
+                reads the CP's cache, which is what makes waking a stopped Workspace from a
+                ticket work. */}
+            <RailView id="workitems" active={railView}>
+              <SoloSection>
                 <WorkItemsSection />
+              </SoloSection>
+            </RailView>
+            <RailView id="memo" active={railView}>
+              <SoloSection>
                 <MemoQueueSection />
-                <ProjectTree />
-                <OtherSessionsSection />
-                <SharedSessionsSection />
-                <FilesSection />
-              </>
-            ) : (
-              <>
-                <StoppedRailSection id="assistant" title={tr("ui.assistant")} icon="comment-discussion" />
-                {schedulerEnabled && <SchedulesSection />}
-                {/* The stopped state is the point (docs/log/80): this reads the CP's cache,
-                    which is what makes waking a stopped Workspace from a ticket work. */}
-                <WorkItemsSection />
-                <MemoQueueSection />
-                <StoppedRailSection id="repos" title={tr("ui.repositories")} icon="repo" />
-                <StoppedSessionsSection />
-                <SharedSessionsSection />
-                <StoppedRailSection id="files" title={tr("ui.files")} icon="files" defaultOpen={false} />
-              </>
+              </SoloSection>
+            </RailView>
+            {schedulerEnabled && (
+              <RailView id="schedules" active={railView} scoped>
+                <SoloSection>
+                  <SchedulesSection />
+                </SoloSection>
+              </RailView>
             )}
+            <RailView id="files" active={railView} scoped>
+              <SoloSection>
+                {workspaceRunning ? <FilesSection /> : <StoppedRailSection id="files" title={tr("ui.files")} icon="files" />}
+              </SoloSection>
+            </RailView>
           </div>
         </nav>
         {/* Dims the main area and dismisses the pane: the mobile drawer, and the
@@ -662,6 +694,16 @@ export function App() {
       <WhichKey />
       <CommandPalette />
       <CheatSheet />
+    </div>
+  );
+}
+
+// One view of the left pane. Hidden rather than unmounted while another view is on screen.
+function RailView({ id, active, scoped, children }: { id: RailViewId; active: RailViewId; scoped?: boolean; children: ReactNode }) {
+  return (
+    <div className="rail-view" data-rail-view={id} hidden={id !== active}>
+      {scoped && <WorkingSetBar />}
+      <div className="app-rail-scroll">{children}</div>
     </div>
   );
 }

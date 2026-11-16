@@ -165,7 +165,7 @@ function PopulatedPane({
 }: PaneProps & { pane: PaneT }) {
   // `pane` is required here, not narrowed by an early return: Pane() already routes a cell
   // without one to EmptyPane, and a `return null` above the hooks would make every hook
-  // below it conditional (rules-of-hooks, the mistake LayoutMap made in #631).
+  // below it conditional (rules-of-hooks).
   const tr = useT();
   const paneRef = useRef<HTMLDivElement>(null);
   const isTerm = pane.content.kind === "terminal";

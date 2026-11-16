@@ -16,6 +16,7 @@ thing.
 |---|---|---|
 | Workspace | container / task | One person's private environment: their repositories, work in progress and sessions. Runs as a dedicated container, or as sandboxed host processes on the Docker-less target. The Japanese UI always writes it in katakana (ワークスペース), never Latin "Workspace" |
 | Workspace action bar | — | The strip that starts and stops the workspace and holds Start, Preview and pane splitting |
+| Activity bar | — | The column of icons at the left edge. The upper icons choose the view the left pane shows; the others open a pane |
 | Session | session | One task's conversation, working location and execution state. **It does not imply a terminal** |
 | Execution method | driver | How Agent Fleet runs an agent and delivers instructions to it |
 | Managed | paneless / managed driver | Runs on a shared runtime, operated from the chat view. No terminal |

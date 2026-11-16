@@ -104,7 +104,7 @@ const canCycleTabs = () => notMinimalPopout() && cycleTab(getLayout(), 1) != nul
 /** Focus the rail's filter field, opening a collapsed rail first and aiming on the frame
  * after it renders. */
 function openRailFilter(): void {
-  useLeftRail.getState().ensureOpen();
+  useLeftRail.getState().showView("sessions");
   requestAnimationFrame(focusRailFilter);
 }
 // ProjectTree, and with it the filter field, only renders while the workspace is running,
@@ -350,7 +350,7 @@ export const ALL_COMMANDS: Command[] = [
     seq: "m",
     when: notMinimalPopout,
     run: () => {
-      if (!useLeftRail.getState().open) useLeftRail.getState().toggle();
+      useLeftRail.getState().showView("memo");
       useMemoStore.getState().requestCompose();
     },
   },

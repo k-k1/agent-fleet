@@ -22,12 +22,11 @@ A session waiting for your answer stands out even from across the room.
 
 Use any of these:
 
-- **Sessions** on the action bar (next to Split right, Split down and Close all)
-- The same button in the layout diagram at the top of the left pane
+- **Sessions overview** at the foot of the activity bar (the column of icons at the left edge)
 - The leader keys `g s` or `s l`
 
 The overview is an ordinary pane: split it, put it in a tab, detach it to another browser tab, and it survives a reload.
-On a phone, **Sessions** may sit inside the **⋯** on the action bar.
+On a phone, open the left pane with **≡** to reach the activity bar.
 
 ![The sessions overview pane: cards with state chips under the payments-api, picture-book, platform-infra and webshop headings, the card with a question tinted](../../assets/fleet-overview-en-light.webp)
 

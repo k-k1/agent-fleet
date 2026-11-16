@@ -51,7 +51,8 @@ In a Terminal (CLI) session or a shell, a row of keys sits under the terminal.
 
 ## The bar and notifications
 
-- On a narrow screen, buttons that do not fit on the workspace action bar move into its **⋯** menu: Home, Sessions and Images first, then Split down and Close all
+- On a narrow screen, Split down and Close all move from the workspace action bar into its **⋯** menu
+- Home, Sessions overview and Images are on the activity bar, the column of icons that comes out with the left pane
 - Notifications appear just below the top bar and do not cover the input box. Tap outside to dismiss them. A notification with a button, such as Update, closes only with ×
 - "At a glance" on Home starts folded
 
