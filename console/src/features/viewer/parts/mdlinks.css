@@ -50,11 +50,14 @@
 }
 /* Auto-linked references in prose: a bare commit hash (→ commit pane), a session
    slug (→ that session's mirror) and an assistant-conversation slug (→ that chat pane).
-   Non-navigating anchors (no href) wired by MarkdownView, and the session a fleet watch waits
-   on in the watches panel (WatchesPanel.tsx); a dotted underline
-   distinguishes them from real Markdown links. */
+   Non-navigating anchors (no href) wired by MarkdownView; a dotted underline
+   distinguishes them from real Markdown links. .md-ref-host carries the same look to a link
+   mounted outside a Markdown body (a fleet watch's session in WatchesPanel.tsx). */
+.md-ref-host {
+  display: contents;
+}
 .markdown a.md-ref-link,
-.mirror-watches a.md-ref-link {
+.md-ref-host a.md-ref-link {
   cursor: pointer;
   text-decoration: underline;
   text-decoration-style: dotted;
@@ -62,11 +65,11 @@
   border-radius: 3px;
 }
 .markdown a.md-ref-link:hover,
-.mirror-watches a.md-ref-link:hover {
+.md-ref-host a.md-ref-link:hover {
   background: color-mix(in srgb, currentColor 14%, transparent);
 }
 .markdown a.md-ref-link:focus-visible,
-.mirror-watches a.md-ref-link:focus-visible {
+.md-ref-host a.md-ref-link:focus-visible {
   outline: 2px solid currentColor;
   outline-offset: 2px;
 }
@@ -82,15 +85,15 @@
   color: #92580a;
 }
 .markdown a.md-session-link,
-.mirror-watches a.md-session-link {
+.md-ref-host a.md-session-link {
   color: #7fb0d6;
 }
 .markdown a.md-session-link:hover,
-.mirror-watches a.md-session-link:hover {
+.md-ref-host a.md-session-link:hover {
   color: #a6cee8;
 }
 :root[data-theme="light"] .markdown a.md-session-link,
-:root[data-theme="light"] .mirror-watches a.md-session-link {
+:root[data-theme="light"] .md-ref-host a.md-session-link {
   color: #0e4a75;
 }
 /* A session link that opens a context menu on a long press. On a touch screen the browser's own
@@ -98,7 +101,7 @@
    desktop a selection may still start on the slug. */
 @media (hover: none) and (pointer: coarse) {
   .markdown a.md-session-link.md-has-menu,
-  .mirror-watches a.md-session-link.md-has-menu {
+  .md-ref-host a.md-session-link.md-has-menu {
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;

@@ -285,5 +285,5 @@ function SessionRef({ name }: { name: string }) {
     );
   }
   // display: contents keeps the anchor itself the row's flex item, laid out like any other ref.
-  return <span key="link" ref={host} className="mw-ref-host" />;
+  return <span key="link" ref={host} className="md-ref-host" />;
 }
