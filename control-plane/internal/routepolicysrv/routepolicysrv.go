@@ -140,7 +140,9 @@ type tenantPolicyWire struct {
 	// per-connection routes every layer allows on an approved one.
 	Endpoints      []endpointDecisionWire `json:"endpoints"`
 	EndpointRoutes []string               `json:"endpointRoutes"`
-	layers         routepolicy.Layers
+	// Hidden is what the policy hides from the tenant's members, and which layers hide it (D10a).
+	Hidden hiddenWire `json:"hidden"`
+	layers routepolicy.Layers
 }
 
 func layerOf(row store.RoutePolicyRow) (policyLayerWire, error) {
@@ -209,6 +211,13 @@ func TenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantP
 		out.Routes = append(out.Routes, routeDecisionWire{ID: rt.ID, Class: rt.Class, Destination: rt.Destination,
 			Allowed: len(by) == 0, ForbiddenBy: by})
 	}
+	approved := 0
+	for _, e := range out.Endpoints {
+		if e.Approved {
+			approved++
+		}
+	}
+	out.Hidden = hiddenOf(layers, out.EndpointRoutes, approved)
 	return out, nil
 }
 

@@ -29,6 +29,8 @@ type testCP struct {
 	custodian KeyCustodian
 	// admin, when set, is the tenant every TenantAdminFor call resolves to (an admin of it).
 	admin *store.Tenant
+	// hidden is what HiddenKinds answers for every tenant.
+	hidden map[string]bool
 }
 
 var _ CP = testCP{}
@@ -45,7 +47,8 @@ func (c testCP) ProvidedRouteErr(context.Context, string, string) error { return
 func (c testCP) RoutePolicyErr(context.Context, store.MembershipView, runtime.Runtime, string, string) error {
 	return nil
 }
-func (c testCP) TenantSel(*http.Request) string { unwired("TenantSel"); return "" }
+func (c testCP) HiddenKinds(context.Context, string) map[string]bool { return c.hidden }
+func (c testCP) TenantSel(*http.Request) string                      { unwired("TenantSel"); return "" }
 
 // ScopeRank is wired for real even in the fake: New uses it to catch a stale copy, and
 // panicking here would put that check out of reach of the mcpsrv unit tests. The values

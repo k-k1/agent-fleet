@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicysrv"
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
@@ -149,6 +150,14 @@ func (d cpDeps) RoutePolicyErr(ctx context.Context, mv store.MembershipView, rt 
 		return errors.New(aerr.message)
 	}
 	return nil
+}
+
+func (d cpDeps) HiddenKinds(ctx context.Context, tenantID string) map[string]bool {
+	v, err := routepolicysrv.TenantPolicy(ctx, d.m.store, tenantID)
+	if err != nil {
+		return nil
+	}
+	return v.HiddenKinds()
 }
 
 func (d cpDeps) ScheduleGuardErr(ctx context.Context, membershipID, repoName, sessionName string) error {

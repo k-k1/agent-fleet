@@ -1,6 +1,7 @@
 package mcpsrv
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -25,12 +26,29 @@ func toolKinds() []agentkinds.Entry {
 	return out
 }
 
-// kindNames is the toolKinds names that keep says yes to.
-func kindNames(keep func(agentkinds.Entry) bool) []string {
+// hiddenKinds are the harnesses the caller's tenant policy forbids altogether (ADR 0138 D10a,
+// #4241): the tool texts a member reads leave them out, as every other screen does. nil hides
+// nothing. Using one is refused anyway (the CP and the Agent judge every create), so this is about
+// what is shown, not what is enforced.
+type hiddenKinds map[string]bool
+
+// kindNames is the toolKinds names that keep says yes to and hidden does not hide.
+func kindNames(hidden hiddenKinds, keep func(agentkinds.Entry) bool) []string {
 	var out []string
 	for _, e := range toolKinds() {
-		if keep(e) {
+		if keep(e) && !hidden[e.Kind] {
 			out = append(out, e.Kind)
+		}
+	}
+	return out
+}
+
+// shownOf is kinds without the hidden ones, in their order.
+func shownOf(hidden hiddenKinds, kinds ...string) []string {
+	var out []string
+	for _, k := range kinds {
+		if !hidden[k] {
+			out = append(out, k)
 		}
 	}
 	return out
@@ -41,14 +59,14 @@ func kindNames(keep func(agentkinds.Entry) bool) []string {
 func isTerminalKind(kind string) bool { return kind == "shell" || kind == "ssm" }
 
 // modelKinds is every kind list_models answers for: each one that runs an agent.
-func modelKinds() []string {
-	return kindNames(func(e agentkinds.Entry) bool { return !isTerminalKind(e.Kind) })
+func modelKinds(hidden hiddenKinds) []string {
+	return kindNames(hidden, func(e agentkinds.Entry) bool { return !isTerminalKind(e.Kind) })
 }
 
 // createKinds is every kind create_session offers: all of them but ssm, which needs an
 // ssm_target the tool has no parameter for.
-func createKinds() []string {
-	return kindNames(func(e agentkinds.Entry) bool { return e.Kind != "ssm" })
+func createKinds(hidden hiddenKinds) []string {
+	return kindNames(hidden, func(e agentkinds.Entry) bool { return e.Kind != "ssm" })
 }
 
 // joinKinds joins kinds with sep, marking claude with defaultMark ("" for none).
@@ -73,11 +91,85 @@ func listKinds(kinds []string, last string) string {
 
 // managedKindsSentence tells the caller which kinds create_session starts on the managed
 // driver: the managed-default kinds that also have a Terminal route, then the managed-only ones.
-func managedKindsSentence() string {
-	byDefault := kindNames(func(e agentkinds.Entry) bool { return e.ManagedDefault && !e.ManagedOnly })
-	only := kindNames(func(e agentkinds.Entry) bool { return e.ManagedOnly })
-	return listKinds(byDefault, "and") + " sessions default to the managed driver, not TUI; " +
-		listKinds(only, "and") + " are always managed."
+// Either half is left out when every kind it would name is hidden; "" when both are.
+func managedKindsSentence(hidden hiddenKinds) string {
+	byDefault := kindNames(hidden, func(e agentkinds.Entry) bool { return e.ManagedDefault && !e.ManagedOnly })
+	only := kindNames(hidden, func(e agentkinds.Entry) bool { return e.ManagedOnly })
+	var parts []string
+	if len(byDefault) > 0 {
+		parts = append(parts, listKinds(byDefault, "and")+" sessions default to the managed driver, not TUI")
+	}
+	switch len(only) {
+	case 0:
+	case 1:
+		parts = append(parts, only[0]+" is always managed")
+	default:
+		parts = append(parts, listKinds(only, "and")+" are always managed")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "; ") + "."
+}
+
+// listModelsKindClauses are list_models' per-kind notes, in the order its description gives them.
+// liveCatalogKinds share one clause.
+var (
+	liveCatalogKinds      = []string{"codex", "opencode", "agy", "copilot", "cursor", "kiro"}
+	listModelsKindClauses = []struct{ kind, text string }{
+		{"copilot", "copilot's reflects the account's Copilot plan (empty on Free = Auto only; omit model for auto routing)"},
+		{"cursor", "cursor's is an account-linked catalog with effort folded into the model id (omit model for Auto, which a Free plan allows)"},
+		{"kiro", "kiro's is account-linked and allows named models even on Free (default auto)"},
+		{"lcpp", "lcpp needs no sign-in and returns the models in the deployment's own engine catalog (empty on a deployment with no engine)"},
+		{"muse", "muse returns its signed-in account catalog"},
+	}
+)
+
+// listModelsKindNotes is the part of list_models' description that speaks of each kind, without
+// the hidden ones: "" when none is left.
+func listModelsKindNotes(hidden hiddenKinds) string {
+	var parts []string
+	if !hidden["claude"] {
+		parts = append(parts, "claude returns its fixed tier aliases")
+	}
+	switch live := shownOf(hidden, liveCatalogKinds...); len(live) {
+	case 0:
+	case 1:
+		parts = append(parts, live[0]+" returns the live catalog reflecting the user's connected providers")
+	default:
+		parts = append(parts, listKinds(live, "and")+" return the live catalog reflecting the user's connected providers")
+	}
+	for _, c := range listModelsKindClauses {
+		if !hidden[c.kind] {
+			parts = append(parts, c.text)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "; ") + ". "
+}
+
+// createKindSentences are create_session's per-kind notes on its kind argument, in order.
+var createKindSentences = []struct{ kind, text string }{
+	{"agy", "agy is the Antigravity CLI (launchable only when connected)."},
+	{"copilot", "copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription)."},
+	{"cursor", "cursor is the Cursor CLI (launchable only when connected)."},
+	{"kiro", "kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver)."},
+	{"lcpp", "lcpp is the built-in llama.cpp harness (no sign-in; always managed, no TUI route); pick its model from list_models(kind=\"lcpp\")."},
+	{"muse", "muse is Meta's Muse Code (launchable only once installed on demand and signed in; always managed, no TUI route)."},
+	{"shell", "shell is a raw shell with no agent guardrails — a shell session takes no initial_prompt over MCP (it would run as a command), and send_to_session does not reach it either."},
+}
+
+// createKindDesc is create_session's kind argument description, without the hidden kinds.
+func createKindDesc(hidden hiddenKinds) string {
+	out := "agent kind: " + joinKinds(createKinds(hidden), " | ", " (default)") + "."
+	for _, s := range createKindSentences {
+		if !hidden[s.kind] {
+			out += " " + s.text
+		}
+	}
+	return out
 }
 
 // createRouteArg reads create_session's route / route_connection arguments into the selection
@@ -118,4 +210,27 @@ func createRouteArgs(kind string, args map[string]any) (map[string]any, error) {
 		vals[i] = s
 	}
 	return createRouteArg(kind, vals[0], vals[1])
+}
+
+// spaced is s followed by a space, or "" for an empty s: a sentence that may drop out of a text.
+func spaced(s string) string {
+	if s == "" {
+		return ""
+	}
+	return s + " "
+}
+
+// hiddenKinds is what the caller's tenant policy hides altogether. An answer that cannot be had
+// hides nothing: the texts then name a kind that is refused when used, which is safe.
+func (a API) hiddenKinds(ctx context.Context, prin *mcpPrincipal) hiddenKinds {
+	ms, err := a.cp.Store().ListMemberships(ctx, prin.identityID)
+	if err != nil {
+		return nil
+	}
+	for _, m := range ms {
+		if m.MembershipID == prin.membershipID {
+			return a.cp.HiddenKinds(ctx, m.TenantID)
+		}
+	}
+	return nil
 }

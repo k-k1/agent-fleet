@@ -478,7 +478,10 @@ type mcpTool struct {
 
 // memberTools are the Phase-1 member/drive tools (E). Each runs against the
 // caller's own Workspace, resolved from the PAT's membership.
-func memberTools() []mcpTool {
+func memberTools() []mcpTool { return memberToolsHiding(nil) }
+
+// memberToolsHiding is memberTools whose texts leave out the kinds hidden names (#4241).
+func memberToolsHiding(hidden hiddenKinds) []mcpTool {
 	nameArg := map[string]any{
 		"type":       "object",
 		"properties": map[string]any{"name": map[string]any{"type": "string", "description": "session name"}},
@@ -718,27 +721,27 @@ func memberTools() []mcpTool {
 		{
 			name: "list_models", minScope: scopeRead,
 			// model-id-lint:allow an example id in the tool description; it names no default.
-			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases; codex, opencode, agy, copilot, cursor and kiro return the live catalog reflecting the user's connected providers; copilot's reflects the account's Copilot plan (empty on Free = Auto only; omit model for auto routing); cursor's is an account-linked catalog with effort folded into the model id (omit model for Auto, which a Free plan allows); kiro's is account-linked and allows named models even on Free (default auto); lcpp needs no sign-in and returns the models in the deployment's own engine catalog (empty on a deployment with no engine); muse returns its signed-in account catalog. Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`). The list already excludes models the user turned off in settings — never pass a model name from memory or an earlier conversation; a create_session naming an excluded model is rejected.",
+			desc: "List the launch-time models for `kind`. " + listModelsKindNotes(hidden) + "Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`). The list already excludes models the user turned off in settings — never pass a model name from memory or an earlier conversation; a create_session naming an excluded model is rejected.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
-				"kind": map[string]any{"type": "string", "description": joinKinds(modelKinds(), " | ", "")},
+				"kind": map[string]any{"type": "string", "description": joinKinds(modelKinds(hidden), " | ", "")},
 			}, "required": []string{"kind"}},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
 				kind := argStr(args, "kind")
-				if !slices.Contains(modelKinds(), kind) {
-					return "", fmt.Errorf("kind must be %s", listKinds(modelKinds(), "or"))
+				if !slices.Contains(modelKinds(hidden), kind) {
+					return "", fmt.Errorf("kind must be %s", listKinds(modelKinds(hidden), "or"))
 				}
 				return a.cp.AgentText(ctx, res.RT, "GET", "/agents/"+url.PathEscape(kind)+"/models", nil)
 			},
 		},
 		{
 			name: "create_session", minScope: scopeWrite,
-			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). Set `worktree=true` to create an isolated git worktree from that repo before launch; `branch` optionally selects its base and `new_branch` optionally names the new branch (omitted = server-generated temporary branch). Before a model override (any kind), call list_models and use a returned model id; " + managedKindsSentence() + " If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed); like send_to_session it arrives with a header naming this connection, so the session knows it came through MCP and not from the member typing, and a prompt that itself starts with \"[agent-fleet:\" is refused — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
+			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). Set `worktree=true` to create an isolated git worktree from that repo before launch; `branch` optionally selects its base and `new_branch` optionally names the new branch (omitted = server-generated temporary branch). Before a model override (any kind), call list_models and use a returned model id; " + spaced(managedKindsSentence(hidden)) + "If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed); like send_to_session it arrives with a header naming this connection, so the session knows it came through MCP and not from the member typing, and a prompt that itself starts with \"[agent-fleet:\" is refused — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"dir":              map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
 					"title":            map[string]any{"type": "string", "description": "display name (optional)"},
-					"kind":             map[string]any{"type": "string", "description": "agent kind: " + joinKinds(createKinds(), " | ", " (default)") + ". agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver). lcpp is the built-in llama.cpp harness (no sign-in; always managed, no TUI route); pick its model from list_models(kind=\"lcpp\"). muse is Meta's Muse Code (launchable only once installed on demand and signed in; always managed, no TUI route). shell is a raw shell with no agent guardrails — a shell session takes no initial_prompt over MCP (it would run as a command), and send_to_session does not reach it either."},
+					"kind":             map[string]any{"type": "string", "description": createKindDesc(hidden)},
 					"model":            map[string]any{"type": "string", "description": "model override (optional). claude on route=bedrock requires one: a Bedrock model id or system inference profile id as Bedrock writes it (anthropic.… or <scope>.anthropic.…, scope us, eu, apac, jp, au, us-gov or global). Aliases such as opus, claude-… ids and ARNs are refused; the session then runs on that one model for every call, subagents included, with no fallback to another"},
 					"initial_prompt":   map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
 					"worktree":         map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
@@ -911,7 +914,8 @@ func memberTools() []mcpTool {
 func (a API) toolsFor(ctx context.Context, prin *mcpPrincipal) []mcpTool {
 	var out []mcpTool
 	if !a.memoryOnly {
-		for _, t := range memberTools() {
+		hidden := a.hiddenKinds(ctx, prin)
+		for _, t := range memberToolsHiding(hidden) {
 			if a.cp.ScopeRank(prin.scope) >= a.cp.ScopeRank(t.minScope) {
 				out = append(out, t)
 			}
