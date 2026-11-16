@@ -50,6 +50,14 @@ func Models() []agents.ModelChoice {
 	return modelsList
 }
 
+// ResetModelsCacheForTest empties the cache Models fills, so a test that stands in a fake
+// `codex` on PATH is not answered from an earlier read of the real one. Test-only.
+func ResetModelsCacheForTest() {
+	modelsMu.Lock()
+	defer modelsMu.Unlock()
+	modelsAt, modelsList, modelsRetiring = time.Time{}, nil, nil
+}
+
 // Retiring reports whether the catalog carries an `upgrade` for id — codex's own notice that
 // the model is being retired ("GPT-5.5 retires on October 14, 2026. Switch to GPT-5.6 Sol").
 // It stays in the picker (a member may still choose it until then), but is never what AF

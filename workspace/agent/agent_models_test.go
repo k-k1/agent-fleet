@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 )
@@ -131,8 +132,9 @@ func TestAgentModelsSaysNothingWhenTheMenuWorks(t *testing.T) {
 // recommendation is the pinned modelfallback.ChatCodex, and the answer has to say so:
 // list_models is what an assistant reads before naming a model, and an id the account never
 // confirmed should not look like one it did. The fake codex fails like a signed-out one; the
-// package caches only successful reads, and nothing else in this package reads codex's
-// catalog, so the cache is still empty here.
+// package caches successful reads for a minute, so the test empties that cache before and
+// after: a read of a real codex by another test or an earlier -count round would otherwise
+// answer instead of the fake.
 func TestAgentModelsSaysWhenTheRecommendationIsAFallback(t *testing.T) {
 	writeUIPrefs(t, `{"hiddenModels":{}}`)
 	bin := t.TempDir()
@@ -140,6 +142,8 @@ func TestAgentModelsSaysWhenTheRecommendationIsAFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	codex.ResetModelsCacheForTest()
+	t.Cleanup(codex.ResetModelsCacheForTest)
 
 	req := httptest.NewRequest(http.MethodGet, "/agents/codex/models", nil)
 	req.SetPathValue("kind", "codex")
