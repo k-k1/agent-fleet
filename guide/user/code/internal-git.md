@@ -35,7 +35,7 @@ the tenant clone and push them between themselves. It suits prototypes, and code
 
 Click a row's clone URL to copy it. There are two ways to clone.
 
-- In "**Add**" of the left pane's **Repositories**, pick it from the "**Internal**" tab of "**Pick from connections**"
+- In "**Add**" of **Repositories** in the Sessions view, pick it from the "**Internal**" tab of "**Pick from connections**"
 - Paste the copied URL into "**Enter URL**"
 
 Either way, the steps are those of [Clone a repository](clone.md).

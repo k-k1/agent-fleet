@@ -21,7 +21,7 @@ around the screen (title suggestions, reply suggestions and the like).
 
 ## Translate or summarize a file
 
-1. Right-click the file in the file list of the left pane
+1. Right-click the file in the **Files** view of the left pane
 2. Pick "**Translate with assistant**" or "**Summarize with assistant**"
 3. A new chat opens with the request and the file's path in the input box. Check it and send
 
@@ -36,7 +36,7 @@ around the screen (title suggestions, reply suggestions and the like).
 
 ## Make your own assistant
 
-1. Press **+** in the **Assistants** section of the left pane and pick "**Create assistant**" at the bottom of the list
+1. Press **+** in the **Assistants** view and pick "**Create assistant**" at the bottom of the list
 2. Fill in the fields below and press "**Create**"
 3. From then on, start a chat with it from the same **+** list. The pencil button edits it and the trash button deletes it. Deleting it keeps the conversations you had
 

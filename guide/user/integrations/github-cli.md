@@ -95,5 +95,5 @@ There is no connection, or it can no longer be used. Check that the GitHub card 
 
 - [Use the Bitbucket CLI](bitbucket-cli.md): the same for Bitbucket Cloud
 - [Connect a Git service](../code/connect-git.md): connecting GitHub, cloning and pushing
-- [Connect an issue tracker](issue-tracker.md): list pull requests and issues in the left rail
+- [Connect an issue tracker](issue-tracker.md): list pull requests and issues in the Issue tracker view
 - [Commands](../../ref/cli/README.md#clis-that-are-already-signed-in): the CLIs that use a connection

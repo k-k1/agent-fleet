@@ -148,5 +148,5 @@ your own, or `JIRA_API_TOKEN`. `jira` then runs as you configured it, without th
 
 ## Related
 
-- [Connect an issue tracker](issue-tracker.md): the Jira connection and the left rail's list
+- [Connect an issue tracker](issue-tracker.md): the Jira connection and the Issue tracker view's list
 - [Use Confluence](confluence.md): Confluence pages over the same connection

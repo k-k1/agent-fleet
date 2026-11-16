@@ -22,7 +22,7 @@ the clone Agent Fleet made usually has no settings at all.
 
 ## Initialize
 
-1. In the left pane's **Repositories**, right-click the repository's row
+1. In **Repositories** in the Sessions view, right-click the repository's row
 2. Choose "**Initialize Git Flow**"
 3. Check the fields and press "**Initialize**"
 

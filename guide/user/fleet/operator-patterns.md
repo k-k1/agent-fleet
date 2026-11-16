@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants patterns for what to ask the Fleet Operator"
-source_of_truth: "The Fleet Operator under Assistants in the Console's left pane"
+source_of_truth: "The Fleet Operator in the Assistants view of the Console's left pane"
 ---
 
 # Ways to use the Fleet Operator

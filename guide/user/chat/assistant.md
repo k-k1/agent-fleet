@@ -1,13 +1,13 @@
 ---
 audience: "People who want to ask an AI a question without a repository"
-source_of_truth: "The Console's Assistants section in the left pane, and the Settings > Assistant screen"
+source_of_truth: "The Console's Assistants view of the left pane, and the Settings > Assistant screen"
 ---
 
 # Ask an assistant
 
 English | [日本語](assistant.ja.md)
 
-The **Assistants** section of the left pane lets you talk to an AI without a repository. It suits quick questions,
+The **Assistants** view of the left pane lets you talk to an AI without a repository. It suits quick questions,
 translating or summarizing text, and checking how Agent Fleet works.
 
 ## How it works
@@ -31,10 +31,10 @@ new file, ask a session instead ([Start a session](../sessions/start.md)).
 
 ## Start a chat
 
-1. Press **+** ("**New chat**") in the header of the **Assistants** section in the left pane
+1. Press **+** ("**New chat**") in the header of the **Assistants** view
 2. Pick the assistant you want to talk to. Nothing is saved until you send the first message
 
-![The "New chat" list opened from "+" in the Assistants section: Agent Fleet Assistant, Fleet Operator and SRE Assistant marked "Built-in", the member's own Release-notes translator, and "Create assistant" at the bottom](../../assets/chatpages-picker-en-light.webp)
+![The "New chat" list opened from "+" in the Assistants view: Agent Fleet Assistant, Fleet Operator and SRE Assistant marked "Built-in", the member's own Release-notes translator, and "Create assistant" at the bottom](../../assets/chatpages-picker-en-light.webp)
 
 Three assistants come ready to use (marked "**Built-in**" in the list).
 

@@ -114,7 +114,7 @@ If a send could not be confirmed, it is not sent again automatically, so it cann
 
 ## A scheduled run does not fire
 
-Check its row under **"Schedules"** in the left pane.
+Check its row in the **"Schedules"** view.
 
 | You see | What it means and what to do |
 |---|---|

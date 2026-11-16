@@ -1,6 +1,6 @@
 ---
 audience: "People who want the memos they collect run as sessions by an agent, automatically"
-source_of_truth: "A category's \"Auto-run settings\" and \"Run history\" in the Console's Memo queue in the left pane, and the approval card"
+source_of_truth: "A category's \"Auto-run settings\" and \"Run history\" in the Console's Memo queue view of the left pane, and the approval card"
 ---
 
 # Run memos automatically
@@ -23,7 +23,7 @@ Auto-run is not a [schedule](../fleet/schedules.md). A schedule runs a fixed pro
 
 ## Set it up
 
-1. In the "**Memo queue**" of the left pane, press the gear ("**Auto-run settings**") in the header of the category
+1. In the "**Memo queue**" view, press the gear ("**Auto-run settings**") in the header of the category
 2. Write the "**Instruction**" and decide the other fields
 3. Press "**Save**"
 4. To have it start by itself, turn on "**Run by itself**" and save again

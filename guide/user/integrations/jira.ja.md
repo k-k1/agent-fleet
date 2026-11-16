@@ -145,5 +145,5 @@ OAuth の接続に Jira Software のスコープがありません。[上の注�
 
 ## 関連
 
-- [課題管理サービスを接続する](issue-tracker.ja.md)：Jira の接続と、左ペインの一覧
+- [課題管理サービスを接続する](issue-tracker.ja.md)：Jira の接続と、「課題管理」ビューの一覧
 - [Confluence を使う](confluence.ja.md)：同じ接続で Confluence のページを扱う

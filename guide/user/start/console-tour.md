@@ -20,7 +20,7 @@ on the other pages easy to find.
 | Left pane | One view at a time: sessions, Assistants, the issue tracker, the memo queue, schedules or files |
 | Main area | What you opened: sessions, files, the commit graph and more. It can be split into panes |
 
-![The Console. The top bar and the workspace action bar across the top, the left pane on the left (Assistants, Schedules, Issue tracker), and in the main area a session's conversation and the commit graph in two panes](../../assets/start-tour-en-light.webp)
+![The Console. The top bar and the workspace action bar across the top, the activity bar and the left pane (the Sessions view) on the left, and in the main area a session's conversation and the commit graph in two panes](../../assets/start-tour-en-light.webp)
 
 ## Top bar
 

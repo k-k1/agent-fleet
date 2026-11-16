@@ -1,6 +1,6 @@
 ---
 audience: "People who show a session's conversation to members of the same tenant, or read one shown to them"
-source_of_truth: "The Console's session ⋯ menu \"Share…\" and the left pane's \"Shared sessions\""
+source_of_truth: "The Console's session ⋯ menu \"Share…\" and the Sessions view's \"Shared sessions\""
 ---
 
 # Share a conversation
@@ -25,7 +25,7 @@ The row of a shared session carries the "**Shared**" badge, so you can always te
 1. Open the "**Share**" dialog from one of these
    - "**Share…**" in a session row's ⋯ menu (the menu is pictured in [Stop and resume a session](../sessions/stop-resume.md))
    - "**Share…**" in a repository row's ⋯ menu
-   - ⚙ ("**Shares**") on the left pane's "**Shared sessions**" → "**New share…**"
+   - ⚙ ("**Shares**") in "**Shared sessions**" in the Sessions view → "**New share…**"
 2. Choose the "**Share target**"
 3. Search for the "**Recipient**" by e-mail address and pick them
 4. Choose the "**Permission**" and press "**Share**"
@@ -52,7 +52,7 @@ Highlights drawn on the conversation are shared too. A "Can propose" recipient c
 
 ## Read a conversation shared with you
 
-The left pane's "**Shared sessions**" lists them by owner and by project. Click one to open the conversation read-only.
+"**Shared sessions**" in the Sessions view lists them by owner and by project. Click one to open the conversation read-only.
 It opens independently of your own workspace, so you can read it without having the repository.
 
 - The scroll position works as in a session's mirror. The first time it opens at the latest message (the bottom); after you read part of it and leave, it reopens where you were. Reloading the browser goes back to the latest

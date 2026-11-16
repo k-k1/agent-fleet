@@ -37,6 +37,7 @@ Deployment (one installation of Agent Fleet)
 | Tenant | One team or department. Members of different tenants cannot see each other |
 | Workspace | Your own working environment. Repositories, uncommitted work and sessions live in it. What is inside stays when you stop it |
 | Workspace action bar | The strip with workspace start and stop, Start, pane splitting and more |
+| Activity bar | The column of icons at the left edge. It chooses what the left pane shows and opens Home and other panes |
 | Session | One piece of work handed to an agent: its conversation, its working place and its running state |
 | Agent | The coding AI that runs in a session (Claude Code, Codex, OpenCode and others) |
 | Execution method | How a session runs: Managed, operated from a chat, or Terminal (CLI), where you operate the agent's own screen in a terminal |

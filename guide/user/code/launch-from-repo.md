@@ -7,7 +7,7 @@ source_of_truth: "the rows of the Console's left-pane Repositories section, and 
 
 English | [日本語](launch-from-repo.ja.md)
 
-Launch a session that works in a repository straight from its row under **Repositories** in the left pane.
+Launch a session that works in a repository straight from its row under **Repositories** in the Sessions view.
 The row's badges also tell you about unpushed changes and changes you have not brought in.
 
 ## How it works

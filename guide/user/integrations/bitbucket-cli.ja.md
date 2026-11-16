@@ -110,5 +110,5 @@ Bitbucket をつなぎ直してください。Bitbucket の課題（issue）は�
 
 - [GitHub の CLI を使う](github-cli.ja.md)：GitHub で同じことをする
 - [Git のサービスを接続する](../code/connect-git.ja.md)：Bitbucket の接続と、clone・push
-- [課題管理サービスを接続する](issue-tracker.ja.md)：プルリクエストを左ペインに並べる
+- [課題管理サービスを接続する](issue-tracker.ja.md)：プルリクエストを「課題管理」ビューに並べる
 - [コマンド](../../ref/cli/README.ja.md#サインイン済みの-cli)：接続を使う CLI の一覧

@@ -1,6 +1,6 @@
 ---
 audience: "anyone looking up what a mark or a menu item on the screen means"
-source_of_truth: "the session and repository rows of the Console's left pane, the bars at the top of the screen, and each pane's right-click menus"
+source_of_truth: "the session and repository rows of the Console's left pane, the bars at the top of the screen, the activity bar, and each pane's right-click menus"
 ---
 
 # Icons, badges and menus

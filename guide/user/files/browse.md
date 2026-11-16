@@ -1,13 +1,13 @@
 ---
 audience: "anyone who wants to find files in the workspace from the Console, or bring them to their own machine"
-source_of_truth: "the Console's Files section in the left pane and its right-click menu"
+source_of_truth: "the Console's Files view in the left pane and its right-click menu"
 ---
 
 # See and download files
 
 English | [日本語](browse.ja.md)
 
-**Files** in the left pane lets you walk through the workspace and open files. Files and folders download from the
+The **Files** view of the left pane lets you walk through the workspace and open files. Files and folders download from the
 right-click menu, and a folder can come down as one zip.
 
 ## How it works
@@ -20,7 +20,7 @@ right-click menu, and a folder can come down as one zip.
 
 ## Walk the files
 
-**Files** in the left pane shows the workspace as a tree.
+The **Files** view of the left pane shows the workspace as a tree.
 
 - Repository rows fold with their triangle. When you want to concentrate on one working copy, fold the others
 - A level whose only content is one subfolder is shown on one line, like `a/b/c`

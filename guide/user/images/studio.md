@@ -36,7 +36,7 @@ Start from either of these:
 | Where | What to press |
 |---|---|
 | The image generation pane | "**Attach an agent**" |
-| A working copy's row in the left rail (its ▼ menu or right-click) | "**Start an image studio**". Starts a new studio in that working copy |
+| A working copy's row in the Sessions view (its ▼ menu or right-click) | "**Start an image studio**". Starts a new studio in that working copy |
 
 The dialog asks what starting a session asks.
 

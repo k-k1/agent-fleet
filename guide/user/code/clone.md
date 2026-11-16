@@ -27,7 +27,7 @@ Submodules and Git LFS content are fetched automatically on clone.
 
 ## Clone from a connection
 
-1. Press "**Add**" in the **Repositories** section of the left pane. "**Add a repository**" opens
+1. Press "**Add**" in **Repositories** in the Sessions view. "**Add a repository**" opens
 2. Pick "**Git**" under "**Kind**" and "**Pick from connections**" under "**Source**"
 3. On the "**Bitbucket**", "**GitHub**" or "**Internal**" tab, pick the repository and branch
 4. Press "**Clone**"
