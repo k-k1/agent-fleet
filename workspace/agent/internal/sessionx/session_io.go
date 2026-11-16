@@ -341,11 +341,30 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 				"when_ready は report_to / peer_from / confirm とは併用できません")
 			return
 		}
-		// Reject an unknown session name instead of waiting: deliverInitialPrompt waits
-		// silently for tmux to appear, so a typo would just vanish after 30s.
-		if _, ok := session.ReadMeta(name); !ok {
+		// Read before tmux (see launchInFlight).
+		starting := launchInFlight(name)
+		meta, metaOK := session.ReadMeta(name)
+		if !metaOK && !starting {
+			// An unknown name is refused rather than waited for: a typo would just vanish after
+			// 30s. A create in flight has no meta until its launch is done, and is waited for.
 			httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session")
 			return
+		}
+		// A session that is stopped with no launch in flight will not come up by itself, so the
+		// wait below could only end in a dropped prompt. Refuse it up front; holding the prompt
+		// for a later start is not offered.
+		if !starting && !tmuxx.HasSession(session.TmuxName(name)) {
+			writeStoppedInput(w, meta, metaOK)
+			return
+		}
+		// The delivery settles this state when it ends, so a give-up is on the meta and not
+		// only in the log (settleInitialPrompt acts on a pending state alone).
+		if strings.TrimSpace(body.Prompt) != "" {
+			UpdateSessionMeta(name, func(m *session.Meta) bool {
+				m.InitialPromptState = session.InitialPromptPending
+				m.InitialPromptReason = ""
+				return true
+			})
 		}
 		deliverInitialPromptAsync(name, body.Prompt)
 		httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"queued": name})
@@ -353,7 +372,8 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	}
 	tn := session.TmuxName(name)
 	if !tmuxx.HasSession(tn) {
-		httpx.WriteErr(w, http.StatusConflict, "not_running", "session is not running; start it first")
+		m, ok := session.ReadMeta(name)
+		writeStoppedInput(w, m, ok)
 		return
 	}
 	// Resolve the active pane id. send-keys takes a target-PANE, where tmux's "="
@@ -680,6 +700,17 @@ func deliverInitialPromptAsync(name, prompt string) {
 		defer initialDeliveries.Done()
 		run()
 	}()
+}
+
+// writeStoppedInput answers an input to a Terminal session with no tmux session: not_running, or
+// session_retired when the Control Plane's auto-run stopped it, so the Console can say "start the
+// session first" instead of a bare not-running.
+func writeStoppedInput(w http.ResponseWriter, m session.Meta, ok bool) {
+	if ok && m.DriverKind() != session.DriverManaged && isRetired(m) {
+		httpx.WriteErr(w, http.StatusConflict, "session_retired", errSessionRetired.Error())
+		return
+	}
+	httpx.WriteErr(w, http.StatusConflict, "not_running", "session is not running; start it first")
 }
 
 // writePeerErr maps a peer rejection (session_peer.go) onto its HTTP status. 4xx across
@@ -1029,9 +1060,13 @@ func typePromptText(name, pane, text string) error {
 // create_session MCP tool) can spawn a session AND hand it the first task in a single
 // call, without a live Console mirror to auto-send.
 //
-// Best-effort and silent: if the session never becomes typable within the window we
-// give up (the session still exists; the user can paste the task manually) — a failed
-// hand-off must never wedge the created session.
+// Best-effort: if the session never becomes typable within the window we give up (the
+// session still exists; the user can paste the task manually) — a failed hand-off must never
+// wedge the created session. The give-up is logged and settles InitialPromptState failed.
+// initialPaneTries is how many half-second polls typeInitialPrompt gives the pane to appear. A
+// var for the tests.
+var initialPaneTries = 60
+
 func deliverInitialPrompt(name, prompt string) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -1072,7 +1107,7 @@ func typeInitialPrompt(name, prompt string) string {
 	// Wait for tmux + a resolvable pane id (the agent process is up). Cap ~30s to match
 	// the Console's give-up budget, polling on the same cadence.
 	var pane string
-	for i := 0; i < 60; i++ {
+	for i := 0; i < initialPaneTries; i++ {
 		if tmuxx.HasSession(tn) {
 			if pane = tmuxx.SessionPaneID(tn); pane != "" {
 				break
@@ -1081,6 +1116,7 @@ func typeInitialPrompt(name, prompt string) string {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if pane == "" {
+		log.Printf("initial prompt NOT typed for %s: no tmux pane appeared in 30s", name)
 		return session.InitialPromptFailed
 	}
 	// Alive ≠ ready to type: text sent into the boot screen is simply eaten (verified

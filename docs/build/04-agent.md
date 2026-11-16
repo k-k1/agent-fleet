@@ -197,6 +197,14 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     takes the lifecycle gate, then the session's retire gate.
     `POST /sessions/{name}/start` clears it, so a person resuming the session from the Console
     makes it an ordinary session again.
+  - **Input to a stopped Terminal session.** `POST /sessions/{name}/input` to a session with no
+    tmux session answers `409 not_running`, or `409 session_retired` when auto-run stopped it
+    (the retired mark). That includes `{"prompt", "when_ready": true}`, which used to answer
+    `202` and drop the prompt after a silent wait. `when_ready` is refused only when no launch is
+    in flight (`launching`, marked by `startSessionTmux` and by the route and driver switch
+    handlers); during a create, a start or a switch it is accepted and waits for the pane. A
+    `202` marks `initialPromptState` pending, and a give-up settles it `failed`. A prompt is not
+    held for a later start.
   - **What starts a retired session again** (#4249; ADR 0137 §6, note of 2026-11-16). A deliberate
     act does, and clears the mark: the member's (Start, a carried answer, a message typed to a
     Managed session) or one of the member's own sessions' or connections' (a peer or operator

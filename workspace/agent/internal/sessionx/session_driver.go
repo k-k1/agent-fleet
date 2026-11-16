@@ -46,6 +46,8 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
+	// A switch of driver stops the old runtime and relaunches: no pane in between.
+	defer markLaunching(name)()
 	lease, ok := enterSessionGate(w, r, name)
 	if !ok {
 		return

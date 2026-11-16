@@ -159,6 +159,13 @@ source_of_truth: "コード（本書は地図と設計意図）"
     同じ meta 書込みで残す墓標（`retireClearedID`）があれば触らず、どちらも無ければ未到達として初めて印を付ける。
     利用上限の予約経路は印の付いたセッションを断るので、retire は episode にあるものを取り消す。ロックの順は、ライフサイクル gate → retire gate。`POST /sessions/{name}/start` が外すので、利用者が Console から再開すれば
     普通のセッションに戻る。
+  - **停止中の Terminal セッションへの入力。** tmux セッションが無いセッションへの
+    `POST /sessions/{name}/input` は `409 not_running` を返す。自動実行が停止した（引退の印がある）ときは
+    `409 session_retired`。`{"prompt", "when_ready": true}` も同じで、以前は `202` を返し、黙って待ったあとで
+    プロンプトを捨てていた。`when_ready` を断るのは、進行中の起動が無いときだけ（`launching`。
+    `startSessionTmux` と、経路・実行方式の切り替えハンドラが印を付ける）。作成・開始・切り替えの最中は受け付け、
+    ペインを待つ。`202` で `initialPromptState` が pending になり、あきらめると `failed` に落ち着く。
+    後の開始までプロンプトを保持することはしない。
   - **引退したセッションを再び起動するもの**（#4249。ADR 0137 §6、2026-11-16 の追記）。意図した操作は起動して印を
     外す。利用者本人の操作（開始、運ばれた答え、Managed セッションに打ったメッセージ）と、利用者自身のセッションや
     接続の操作（peer・オペレーターのメッセージ、`resume_session`）である。自動で起きるもの（スケジュール、watch や
