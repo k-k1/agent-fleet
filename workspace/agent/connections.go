@@ -1272,15 +1272,16 @@ func (lcppEndpointStore) StoredCredentials(context.Context) []agents.StoredCrede
 
 // RemoveCredential deletes the endpoint only if, inside the store's lock that its writer
 // (handlePutLcppConn) takes too, it is still the confirmed endpoint and still forbidden. The
-// policy reads the endpoint's host from the store, so it is judged here on the stored value.
-func (lcppEndpointStore) RemoveCredential(_ context.Context, id, binding string, forbidden func([]string) bool) error {
+// policy is judged on the host of the endpoint this transaction holds: the endpoint callback the
+// policy registers for member-llamacpp would load the store again and wait on this very lock.
+func (lcppEndpointStore) RemoveCredential(_ context.Context, id, binding string, forbidden agents.Forbidden) error {
 	if id != "endpoint" {
 		return agents.ErrUnknownCredential
 	}
 	if err := secrets.Update(func(s *secrets.Data) error {
 		if s.Lcpp == nil || strings.TrimSpace(s.Lcpp.URL) == "" ||
 			credbind.Endpoint(routes.RouteMemberLlamacpp, s.Lcpp.URL, s.Lcpp.APIKey) != binding ||
-			!forbidden([]string{routes.RouteMemberLlamacpp}) {
+			!forbidden([]string{routes.RouteMemberLlamacpp}, routepolicy.HostOf(s.Lcpp.URL)) {
 			return agents.ErrCredentialChanged
 		}
 		s.Lcpp = nil
@@ -1334,14 +1335,16 @@ func unusableCredentials(ctx context.Context) ([]unusableCred, bool) {
 	return out, true
 }
 
-// stillForbidden is the policy's answer at the moment of a removal: true only while a confirmed,
-// restricting policy allows none of routes.
-func stillForbidden(routes []string) bool {
+// stillForbidden is the policy's answer at the moment of a removal (agents.Forbidden): true only
+// while a confirmed, restricting policy allows none of routes on host. It uses AllowsAt, never
+// Allows, whose per-connection routes read their connection through a registered callback that
+// a store holding its own lock must not reach.
+func stillForbidden(routes []string, host string) bool {
 	if routepolicy.Active().Gate() != nil {
 		return false
 	}
 	p, hiding := routepolicy.Hiding()
-	return hiding && len(routes) > 0 && !slices.ContainsFunc(routes, p.Allows)
+	return hiding && len(routes) > 0 && !slices.ContainsFunc(routes, func(r string) bool { return p.AllowsAt(r, host) })
 }
 
 // beforeUnusableRemoval runs between the snapshot's check of a credential and its store's

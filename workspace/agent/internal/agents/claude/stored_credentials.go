@@ -20,17 +20,17 @@ func (agentImpl) StoredCredentials(context.Context) []agents.StoredCredential {
 	return []agents.StoredCredential{{ID: "login", Routes: []string{RouteSubscription}, Binding: subscriptionBinding(accountID)}}
 }
 
-func (agentImpl) RemoveCredential(ctx context.Context, id, binding string, forbidden func([]string) bool) error {
+func (agentImpl) RemoveCredential(ctx context.Context, id, binding string, forbidden agents.Forbidden) error {
 	if id != "login" {
 		return agents.ErrUnknownCredential
 	}
 	return agents.RemoveLogin(ctx, agents.LoginRemoval{
 		Login: RouteSubscription,
-		Current: func(context.Context) ([]string, string, bool) {
-			if _, err := os.Stat(credsPath()); err != nil {
-				return nil, "", false
+		Current: func(context.Context) ([]string, string, agents.LoginState) {
+			if st := agents.FileLoginState(credsPath()); st != agents.LoginPresent {
+				return nil, "", st
 			}
-			return []string{RouteSubscription}, subscriptionBinding(accountID), true
+			return []string{RouteSubscription}, subscriptionBinding(accountID), agents.LoginPresent
 		},
 		Remove: clearLogin,
 	}, binding, forbidden)

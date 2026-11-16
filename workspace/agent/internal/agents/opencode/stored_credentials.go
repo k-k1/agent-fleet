@@ -40,7 +40,7 @@ func accountBinding(credentialID string) string {
 	return credbind.Account(routes.RouteOpencodeAccount, credentialID)
 }
 
-func (agentImpl) RemoveCredential(_ context.Context, id, binding string, forbidden func([]string) bool) error {
+func (agentImpl) RemoveCredential(_ context.Context, id, binding string, forbidden agents.Forbidden) error {
 	if id == "account" {
 		return removeAccount(binding, forbidden)
 	}
@@ -53,11 +53,11 @@ func (agentImpl) RemoveCredential(_ context.Context, id, binding string, forbidd
 
 // removeKey deletes the key stored under env only if, inside the store's lock that every write of
 // the slot takes, it is still the confirmed key and still forbidden.
-func removeKey(env, binding string, forbidden func([]string) bool) error {
+func removeKey(env, binding string, forbidden agents.Forbidden) error {
 	removed := false
 	if err := secrets.Update(func(s *secrets.Data) error {
 		v := strings.TrimSpace(s.Opencode[env])
-		if v == "" || credbind.Key(env, s.Opencode[env]) != binding || !forbidden(keyEnvRoutes(env)) {
+		if v == "" || credbind.Key(env, s.Opencode[env]) != binding || !forbidden(keyEnvRoutes(env), "") {
 			return agents.ErrCredentialChanged
 		}
 		delete(s.Opencode, env)
@@ -77,7 +77,7 @@ func removeKey(env, binding string, forbidden func([]string) bool) error {
 // a sign-in that replaces it in between leaves a credential under another id, which is not
 // touched. The account's sign-in is serve's own, outside the Agent's locks; deleting by id is
 // what keeps it conditional.
-func removeAccount(binding string, forbidden func([]string) bool) error {
+func removeAccount(binding string, forbidden agents.Forbidden) error {
 	addr, err := oauthDaemon()
 	if err != nil {
 		return serveUnavailable{err}
@@ -86,7 +86,7 @@ func removeAccount(binding string, forbidden func([]string) bool) error {
 	if err != nil {
 		return err
 	}
-	if id == "" || accountBinding(id) != binding || !forbidden([]string{routes.RouteOpencodeAccount}) {
+	if id == "" || accountBinding(id) != binding || !forbidden([]string{routes.RouteOpencodeAccount}, "") {
 		return agents.ErrCredentialChanged
 	}
 	if err := deleteCredential(addr, id); err != nil {

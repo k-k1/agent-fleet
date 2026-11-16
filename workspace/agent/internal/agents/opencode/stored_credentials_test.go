@@ -10,8 +10,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-func always([]string) bool { return true }
-func never([]string) bool  { return false }
+func always([]string, string) bool { return true }
+func never([]string, string) bool  { return false }
 
 func storeKey(t *testing.T, env, v string) {
 	t.Helper()

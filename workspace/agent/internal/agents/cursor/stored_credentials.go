@@ -20,20 +20,27 @@ func (agentImpl) StoredCredentials(context.Context) []agents.StoredCredential {
 	return []agents.StoredCredential{{ID: "login", Routes: []string{l.Route}, Binding: l.Binding}}
 }
 
-func (agentImpl) RemoveCredential(ctx context.Context, id, binding string, forbidden func([]string) bool) error {
+func (agentImpl) RemoveCredential(ctx context.Context, id, binding string, forbidden agents.Forbidden) error {
 	if id != "login" {
 		return agents.ErrUnknownCredential
 	}
 	return agents.RemoveLogin(ctx, agents.LoginRemoval{
 		Login: routes.RouteCursorLogin,
 		// The status probe's own run, not its cache: the login must be read as it is now.
-		Current: func(context.Context) ([]string, string, bool) {
-			st, ok := statusProbe.Probe()
-			if !ok || !st.IsAuthenticated {
-				return nil, "", false
+		// A probe that fails says nothing either way: unknown, never signed out.
+		Current: func(context.Context) ([]string, string, agents.LoginState) {
+			st, ok := freshStatus()
+			switch {
+			case !ok:
+				return nil, "", agents.LoginUnknown
+			case !st.IsAuthenticated:
+				return nil, "", agents.LoginAbsent
 			}
-			return []string{routes.RouteCursorLogin}, credbind.AccountOrGeneration(routes.RouteCursorLogin, st.UserInfo.Email), true
+			return []string{routes.RouteCursorLogin}, credbind.AccountOrGeneration(routes.RouteCursorLogin, st.UserInfo.Email), agents.LoginPresent
 		},
 		Remove: clearLogin,
 	}, binding, forbidden)
 }
+
+// freshStatus is the status probe's own run, never its cache. A var for tests.
+var freshStatus = func() (statusOut, bool) { return statusProbe.Probe() }

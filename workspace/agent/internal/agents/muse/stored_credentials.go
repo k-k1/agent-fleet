@@ -27,7 +27,7 @@ func (agentImpl) StoredCredentials(context.Context) []agents.StoredCredential {
 	return []agents.StoredCredential{{ID: "login", Routes: []string{l.Route}, Binding: l.Binding}}
 }
 
-func (agentImpl) RemoveCredential(ctx context.Context, id, binding string, forbidden func([]string) bool) error {
+func (agentImpl) RemoveCredential(ctx context.Context, id, binding string, forbidden agents.Forbidden) error {
 	if id != "login" {
 		return agents.ErrUnknownCredential
 	}
@@ -35,18 +35,10 @@ func (agentImpl) RemoveCredential(ctx context.Context, id, binding string, forbi
 		return errors.New("Muse Code is not installed, so its login cannot be removed")
 	}
 	return agents.RemoveLogin(ctx, agents.LoginRemoval{
-		Login:   routes.RouteMuseLogin,
-		Current: func(context.Context) ([]string, string, bool) { return storedLogin() },
-		Remove:  clearLogin,
+		Login: routes.RouteMuseLogin,
+		Current: func(context.Context) ([]string, string, agents.LoginState) {
+			return agents.JSONLoginState(authPath(), loginOf)
+		},
+		Remove: clearLogin,
 	}, binding, forbidden)
-}
-
-// storedLogin is auth.json's credential read afresh: its route, binding, and whether there is one.
-func storedLogin() ([]string, string, bool) {
-	b, err := os.ReadFile(authPath())
-	if err != nil {
-		return nil, "", false
-	}
-	l := loginOf(b)
-	return []string{l.Route}, l.Binding, l.Route != ""
 }

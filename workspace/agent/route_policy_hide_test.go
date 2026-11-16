@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -396,9 +397,9 @@ func (f fakeCredStore) StoredCredentials(context.Context) []agents.StoredCredent
 }
 
 // RemoveCredential keeps the contract: only the confirmed binding, only while forbidden.
-func (f fakeCredStore) RemoveCredential(_ context.Context, id, binding string, forbidden func([]string) bool) error {
+func (f fakeCredStore) RemoveCredential(_ context.Context, id, binding string, forbidden agents.Forbidden) error {
 	i := slices.IndexFunc(*f.creds, func(c agents.StoredCredential) bool { return c.ID == id })
-	if i < 0 || (*f.creds)[i].Binding != binding || !forbidden((*f.creds)[i].Routes) {
+	if i < 0 || (*f.creds)[i].Binding != binding || !forbidden((*f.creds)[i].Routes, "") {
 		return agents.ErrCredentialChanged
 	}
 	*f.removed = append(*f.removed, id)
@@ -555,11 +556,11 @@ func TestLcppEndpointStore(t *testing.T) {
 	if len(got) != 1 || got[0].Binding == "" || !slices.Equal(got[0].Routes, []string{routes.RouteMemberLlamacpp}) {
 		t.Fatalf("an endpoint: %+v", got)
 	}
-	always := func([]string) bool { return true }
+	always := func([]string, string) bool { return true }
 	if err := (lcppEndpointStore{}).RemoveCredential(context.Background(), "endpoint", "member-llamacpp@other", always); !errors.Is(err, agents.ErrCredentialChanged) {
 		t.Fatalf("another binding: %v", err)
 	}
-	if err := (lcppEndpointStore{}).RemoveCredential(context.Background(), "endpoint", got[0].Binding, func([]string) bool { return false }); !errors.Is(err, agents.ErrCredentialChanged) {
+	if err := (lcppEndpointStore{}).RemoveCredential(context.Background(), "endpoint", got[0].Binding, func([]string, string) bool { return false }); !errors.Is(err, agents.ErrCredentialChanged) {
 		t.Fatalf("no longer forbidden: %v", err)
 	}
 	if err := (lcppEndpointStore{}).RemoveCredential(context.Background(), "endpoint", got[0].Binding, always); err != nil {
@@ -637,5 +638,42 @@ func TestUnusableRemovalRechecksAtTheStore(t *testing.T) {
 	hook(func() {})
 	if out := remove(); out.Removed != 1 || endpoint() != "" {
 		t.Errorf("control, nothing changed: %+v, endpoint %q", out, endpoint())
+	}
+}
+
+// Removing an endpoint on a host the policy does not approve, under a policy that approves another
+// host for member-llamacpp, must not wait on itself: the policy is judged on the host the store's
+// transaction holds, never through the endpoint callback, which loads the same store.
+func TestLcppRemovalUnderApprovedEndpointsDoesNotDeadlock(t *testing.T) {
+	memberHome(t)
+	t.Setenv("AF_SECRET_KEY", "")
+	useHidingPolicy(t, routepolicy.Policy{Revision: 5, Restricted: true, Allowed: []string{routes.RouteOpenAIAPI},
+		Endpoints: []string{"approved.lab.invalid"}, EndpointRoutes: []string{routes.RouteMemberLlamacpp}})
+	run := func(url string) error {
+		t.Helper()
+		if err := secrets.Update(func(d *secrets.Data) error { d.Lcpp = &secrets.LcppConn{URL: url}; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		listed := (lcppEndpointStore{}).StoredCredentials(context.Background())
+		if len(listed) != 1 {
+			t.Fatalf("listed %+v", listed)
+		}
+		done := make(chan error, 1)
+		go func() {
+			done <- (lcppEndpointStore{}).RemoveCredential(context.Background(), "endpoint", listed[0].Binding, stillForbidden)
+		}()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(10 * time.Second):
+			t.Fatal("the removal deadlocked")
+			return nil
+		}
+	}
+	if err := run("http://other.lab.invalid:8080"); err != nil {
+		t.Errorf("an endpoint on an unapproved host: %v, want removed", err)
+	}
+	if err := run("http://approved.lab.invalid:8080"); !errors.Is(err, agents.ErrCredentialChanged) {
+		t.Errorf("an endpoint on the approved host: %v, want kept (allowed there)", err)
 	}
 }
