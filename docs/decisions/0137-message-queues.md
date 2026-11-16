@@ -681,3 +681,11 @@ made pending carries `memo.released_by = 'setting'` (`releasedBy` on the wire), 
 the setting"; a press or a Console write clears it. The bounds on a create from a session (rate, size, identical
 message, the envelope prefix) and a queue's daily cap and breaker are unchanged. The Agent already relays the session's
 origin (`session.OriginOf`); nothing in the workspace changed.
+
+A change of the switch does not touch the rows already there: turning it off leaves an accepted message `pending` and
+marked (a release is one-way, as a press is), and turning it on releases no `held` one. A plain note outside the queue
+that a session of origin `user` moves into a queue with the switch on is treated as entering and becomes `pending`; a
+`held` message that moves keeps its state. A press on a message that is already `pending` changes nothing, so it keeps
+the mark. During a rolling update an older Control Plane that presses such a message leaves `released_by = 'setting'`
+on it until the newer one writes the row again: a display slip only, the state and the release copies are the press's.
+The origin is compared after the relay's value is trimmed, so `" user "` is `user`.

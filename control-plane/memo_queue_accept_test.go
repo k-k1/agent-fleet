@@ -88,7 +88,7 @@ func TestMemoQueueAcceptOwnSessionsMatrix(t *testing.T) {
 	eachDialect(t, func(t *testing.T, e *inboxEnv) {
 		on, off := e.acceptQueue("on", true), e.acceptQueue("off", false)
 		_, _ = on, off
-		origins := []string{"user", "queue", "schedule", "session", "operator", "handoff", "unknown", "", "User"}
+		origins := []string{"user", "queue", "schedule", "session", "operator", "handoff", "unknown", "", "User", " user "}
 		n := 0
 		for _, c := range []struct {
 			cat string
@@ -102,7 +102,8 @@ func TestMemoQueueAcceptOwnSessionsMatrix(t *testing.T) {
 				}
 				row := e.memoRow(d.ID)
 				want := store.MemoStateHeld
-				if c.sw && origin == "user" {
+				// The Control Plane trims what the relay sends, so " user " is the origin user.
+				if c.sw && (origin == "user" || origin == " user ") {
 					want = store.MemoStatePending
 				}
 				if row.State != want || row.Provenance != store.MemoProvenanceWorkspace {
@@ -315,5 +316,32 @@ func TestMemoQueueAcceptOwnSessionsBurstIsBounded(t *testing.T) {
 		if code, _ := e.fromSession("on", "[agent-fleet:x] hi", "user", nil); code != http.StatusBadRequest {
 			t.Fatalf("envelope: %d", code)
 		}
+	})
+}
+
+// Turning the switch on or off later does not touch the rows already there: a message the
+// switch accepted stays pending when it goes off, and a held one stays held when it goes on.
+func TestMemoQueueAcceptOwnSessionsToggleKeepsRows(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		cat := e.acceptQueue("q", true)
+		put := func(on bool) {
+			if r := e.do("a", "PUT", "/api/memo-queues/"+cat, map[string]any{"instruction": "do it", "acceptOwnSessions": on}); r.Code != 200 {
+				t.Fatal(r.Body.String())
+			}
+		}
+		_, acc := e.fromSession("q", "accepted", "user", nil)
+		put(false)
+		if row := e.memoRow(acc.ID); row.State != store.MemoStatePending || row.ReleasedBy != store.MemoReleasedBySetting {
+			t.Fatalf("switch off recalled an accepted message: %+v", row)
+		}
+		_, held := e.fromSession("q", "held while off", "user", nil)
+		if row := e.memoRow(held.ID); row.State != store.MemoStateHeld {
+			t.Fatalf("entered %q with the switch off", row.State)
+		}
+		put(true)
+		if row := e.memoRow(held.ID); row.State != store.MemoStateHeld {
+			t.Fatalf("switch on released a held message: %q", row.State)
+		}
+		e.assertPendingReleaseMatches()
 	})
 }

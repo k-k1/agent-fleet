@@ -181,7 +181,7 @@ describe("the mark of a note the setting approved", () => {
       aMemo({ id: "m3", state: "held", provenance: "workspace", producer: "s3", releasedBy: "setting" }),
     ];
     await render();
-    const accepted = marks().filter((t) => t === "設定により承認済み" || t === "Approved by the setting");
+    const accepted = marks().filter((t) => t === "承認なしで受け付け" || t === "Accepted without approval");
     expect(accepted).toHaveLength(1);
   });
 });

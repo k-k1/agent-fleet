@@ -232,7 +232,9 @@ func memoQueueSwitch(tx store.MemoTxOps, repo, category string) (inQ, accept boo
 
 // memoMoveBucket moves every row of (repo, from) to category to, applying the queue rules to
 // each. inPrev and inNext are the queue membership of the bucket before and after. It is the
-// rename, the merge, the category delete and the settings create or delete.
+// rename, the merge, the category delete and the settings create or delete. Those run through the
+// Console or touch no queue from the token face, so accept is always false here: moving a bucket
+// never makes a message pending by the switch.
 func memoMoveBucket(tx store.MemoTxOps, repo, from, to string, inPrev, inNext bool, via memoVia) error {
 	rows, err := tx.ListMemosIn(repo, from)
 	if err != nil {

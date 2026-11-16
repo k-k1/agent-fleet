@@ -114,7 +114,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.origin_mcp": "/mcp connection {name}",
   "memo.origin_mcp_unknown": "An /mcp connection",
   "memo.origin_curator": "Tidying",
-  "memo.accepted_by_setting": "Approved by the setting",
+  "memo.accepted_by_setting": "Accepted without approval",
   "memo.accepted_by_setting_title": "This category accepts notes from sessions you started without approval, so this one is waiting to run without being approved.",
   "memo.changed_tag": "Changed",
   "memo.release_title_session": "Added by session {name}",

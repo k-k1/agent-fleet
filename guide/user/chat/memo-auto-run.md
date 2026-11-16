@@ -130,12 +130,13 @@ By default every memo a session adds waits for your approval. Turn on "**Accept 
 
 | Who started the session that adds the memo | State of the memo |
 |---|---|
-| You, yourself (a session you launched in the Console) | "Waiting to run", marked "**Approved by the setting**" on its row |
+| You, yourself (a session you launched in the Console) | "Waiting to run", marked "**Accepted without approval**" on its row |
 | Auto-run, a schedule, another session or the operator assistant | "Waits for approval", as without the setting |
 | An `/mcp` connection | "Waits for approval", as without the setting |
 
 - When such a session changes a memo it added, the memo stays "Waiting to run" and the approval is recorded again for the new text. A memo that was already approved by you, or one from another kind of session, goes back to "Waits for approval" as usual
 - Moving a memo into a category without the setting puts it back to "Waits for approval"
+- Turning the setting off later does not call back what it already accepted: those memos stay "Waiting to run" and still run. Turning it on does not approve memos already waiting for approval. Only memos added after the change follow the new setting
 - **This is a guard rail, not a lock.** The workspace tells the Control Plane which kind of session is adding a memo, and a program running in the workspace can pass itself off as a session you started. With the setting on, such a program can add memos that run without your approval. Turn it on only for a category where that is acceptable
 - The limits on what a session can add (size, speed, identical memos, the `[agent-fleet:` prefix), "Runs per day" and the automatic pause after failed runs apply as before
 - Only you can change the setting, in the Console
@@ -188,7 +189,7 @@ The states of a memo show on its row in the category:
 | State | Meaning |
 |---|---|
 | Waits for approval | A memo a session or similar added. It does not run until you approve it |
-| Waiting to run | Approved, and waiting for the next run. "Approved by the setting" beside it means no approval was asked, because of "Accept notes from sessions I started without approval" |
+| Waiting to run | Approved, and waiting for the next run. "Accepted without approval" beside it means no approval was asked, because of "Accept notes from sessions I started without approval" |
 | Starting | A session is being started to run it |
 | Sent | Sent to a session |
 | Needs a look | Whether the session started could not be confirmed. Check the run history. It is not run again by itself |
