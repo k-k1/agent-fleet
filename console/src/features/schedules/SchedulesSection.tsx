@@ -390,7 +390,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const activeCount = useMemo(() => scoped.filter((s) => s.enabled).length, [scoped]);
   // From the rows the active working set lists, not from everything loaded: opening the view
   // acknowledges what it publishes, and a failure the view does not show must stay unread.
-  useEffect(() => setFailed(failedScheduleKeys(scoped)), [scoped, setFailed]);
+  useEffect(() => setFailed(failedScheduleKeys(scoped), failedScheduleKeys(sorted)), [scoped, sorted, setFailed]);
 
   const setRowBusy = (id: string, v: boolean) => setBusy((b) => ({ ...b, [id]: v }));
 

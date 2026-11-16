@@ -58,7 +58,7 @@ beforeEach(() => {
   useNotificationStore.setState({ items: [] });
   useWorkItemStore.setState({ payload: null });
   useSeenStore.setState({ map: {} });
-  useSchedulesStore.setState({ failed: [] });
+  useSchedulesStore.setState({ failed: [], failedAll: [] });
   useRailAck.setState({ acked: {} });
 });
 afterEach(async () => {
@@ -170,12 +170,31 @@ describe("ActivityBar badges", () => {
   });
 
   it("marks schedules whose latest run failed until their view is opened", async () => {
-    useSchedulesStore.setState({ failed: ["s1@2026-01-01T00:00:00Z"] });
+    useSchedulesStore.setState({ failed: ["s1@2026-01-01T00:00:00Z"], failedAll: ["s1@2026-01-01T00:00:00Z"] });
     await mount();
     expect(badge("schedules")?.dataset.badge).toBe("failed");
     await act(async () => btn("schedules").click());
     await act(async () => btn("sessions").click());
     expect(badge("schedules")).toBeNull();
+  });
+
+  it("keeps a failure acknowledged while a working set hides it", async () => {
+    const a = "a@2026-01-01T00:00:00Z";
+    const b = "b@2026-01-01T00:00:00Z";
+    // All: both failures listed and seen.
+    useSchedulesStore.setState({ failed: [a, b], failedAll: [a, b] });
+    await mount();
+    await act(async () => btn("schedules").click());
+    // A working set that lists only A, with the view still open.
+    await act(async () => useSchedulesStore.setState({ failed: [a], failedAll: [a, b] }));
+    // Another view, then back to All: B has not run again, so there is nothing new to tell.
+    await act(async () => btn("sessions").click());
+    await act(async () => useSchedulesStore.setState({ failed: [a, b], failedAll: [a, b] }));
+    expect(badge("schedules")).toBeNull();
+    // A new failure of B is news.
+    const b2 = "b@2026-01-02T00:00:00Z";
+    await act(async () => useSchedulesStore.setState({ failed: [a, b2], failedAll: [a, b2] }));
+    expect(badge("schedules")?.dataset.badge).toBe("failed");
   });
 
   it("never badges the memo queue or the files view", async () => {

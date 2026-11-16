@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasUnreadConversation, hasUnreadSession, pendingNews, waitingSessions, workItemNewsKeys } from "./badges.ts";
+import { hasUnreadConversation, hasUnreadSession, mergeAcked, pendingNews, waitingSessions, workItemNewsKeys } from "./badges.ts";
 import type { FleetNotification } from "../../features/notifications/store.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 import { failedScheduleKeys } from "../../features/schedules/read.ts";
@@ -83,6 +83,16 @@ describe("failedScheduleKeys", () => {
     const first = failedScheduleKeys([sched("a", "error: boom", "2026-01-01T00:00:00Z")]);
     const next = failedScheduleKeys([sched("a", "error: boom", "2026-01-02T00:00:00Z")]);
     expect(pendingNews(next, first)).toEqual(next);
+  });
+});
+
+describe("mergeAcked", () => {
+  it("adds what is shown to what was acknowledged before", () => {
+    expect(mergeAcked(["a"], ["b"], ["a", "b"])).toEqual(["a", "b"]);
+  });
+
+  it("keeps a key that is hidden but still exists, and drops one that no longer exists", () => {
+    expect(mergeAcked(["a", "b", "old"], ["a"], ["a", "b"])).toEqual(["a", "b"]);
   });
 });
 

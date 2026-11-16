@@ -64,6 +64,15 @@ export const pendingNews = (keys: string[], acked: readonly string[] | undefined
   return keys.filter((k) => !known.has(k));
 };
 
+/** What stays acknowledged: the earlier keys that still exist, plus the ones shown now. */
+export function mergeAcked(prev: readonly string[], shown: readonly string[], live: readonly string[]): string[] {
+  const alive = new Set(live);
+  const out = prev.filter((k) => alive.has(k));
+  const have = new Set(out);
+  for (const k of shown) if (!have.has(k)) out.push(k);
+  return out;
+}
+
 const ACK_KEY = "af-rail-acked";
 type Acked = Partial<Record<RailView, string[]>>;
 
@@ -83,15 +92,18 @@ function readAcked(): Acked {
 
 interface RailAckStore {
   acked: Acked;
-  /** The view was on screen with exactly these rows unread. Replaces the previous list, so
-   * what is kept never outgrows what is unread right now. */
-  ack(view: RailView, keys: string[]): void;
+  /** The view was on screen listing `shown`. They join what was acknowledged before, and
+   * whatever is no longer in `live` is dropped: `live` is every key the view could list with
+   * nothing narrowing it, so the kept list never outgrows what exists, while narrowing the
+   * view (a working set) does not forget what was acknowledged outside it. */
+  ack(view: RailView, shown: string[], live?: string[]): void;
 }
 
 export const useRailAck = create<RailAckStore>((set, get) => ({
   acked: readAcked(),
-  ack: (view, keys) => {
+  ack: (view, shown, live = shown) => {
     const cur = get().acked[view] || [];
+    const keys = mergeAcked(cur, shown, live);
     if (cur.length === keys.length && cur.every((k, i) => k === keys[i])) return;
     const acked = { ...get().acked, [view]: keys };
     try {

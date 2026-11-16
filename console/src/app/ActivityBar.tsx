@@ -166,6 +166,7 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   const payload = useWorkItemStore((s) => s.payload);
   const seen = useSeenStore((s) => s.map);
   const failedRuns = useSchedulesStore((s) => s.failed);
+  const allFailedRuns = useSchedulesStore((s) => s.failedAll);
   const acked = useRailAck((s) => s.acked);
   const ack = useRailAck((s) => s.ack);
 
@@ -176,8 +177,8 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   );
   useEffect(() => {
     if (onScreen === "workitems") ack("workitems", workItemKeys);
-    if (onScreen === "schedules") ack("schedules", failedRuns);
-  }, [onScreen, workItemKeys, failedRuns, ack]);
+    if (onScreen === "schedules") ack("schedules", failedRuns, allFailedRuns);
+  }, [onScreen, workItemKeys, failedRuns, allFailedRuns, ack]);
 
   const out: Partial<Record<RailView, RailBadge>> = {};
   if (waiting > 0) out.sessions = { tone: "waiting", count: waiting };

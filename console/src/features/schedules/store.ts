@@ -12,13 +12,19 @@ interface SchedulesStore {
    * working set). The list itself lives in the section; this is the one fact about it the
    * activity bar needs while the section is hidden. */
   failed: string[];
-  setFailed(keys: string[]): void;
+  /** The same for the whole loaded list. Acknowledged keys are pruned against this one, so a
+   * working set that hides a schedule does not make its acknowledged failure unread again. */
+  failedAll: string[];
+  setFailed(keys: string[], all: string[]): void;
 }
+
+const sameKeys = (a: string[], b: string[]) => a.length === b.length && a.every((k, i) => k === b[i]);
 
 export const useSchedulesStore = create<SchedulesStore>((set) => ({
   reveal: { id: null, n: 0 },
   revealSchedule: (id) => set((s) => ({ reveal: { id, n: s.reveal.n + 1 } })),
   failed: [],
-  setFailed: (keys) =>
-    set((s) => (s.failed.length === keys.length && s.failed.every((k, i) => k === keys[i]) ? s : { failed: keys })),
+  failedAll: [],
+  setFailed: (keys, all) =>
+    set((s) => (sameKeys(s.failed, keys) && sameKeys(s.failedAll, all) ? s : { failed: keys, failedAll: all })),
 }));
