@@ -38,9 +38,9 @@ const col = (id, panes, rowRatio = 0.5) => ({ id, rowRatio, panes });
 const mirrorOf = (s) => pane("p0", s, { kind: "terminal", chat: true });
 
 // Rail sections to force open/closed per scene (localStorage af-section-<id>, see
-// console/src/ui/Section.tsx). Keeps the shot focused: the hero shows the repo tree,
-// the rail scene shows the global tools.
+// console/src/ui/Section.tsx). Keeps the shot focused: the hero shows the repo tree.
 const FOCUS_TREE = { assistant: 1, workitems: 0, memos: 0, schedules: 0, repos: 1, files: 0 };
+// Every tool section open; with one view at a time the left pane still shows only Sessions.
 const SHOW_TOOLS = { assistant: 1, workitems: 1, memos: 1, schedules: 1, repos: 1, files: 0 };
 
 // The left pane shows one view at a time (localStorage af-left-view, core/store/leftRail.ts).
@@ -221,11 +221,18 @@ const SCENES = [
       await new Promise((r) => setTimeout(r, 500));
       const items = [...document.querySelectorAll(".acct-item")];
       items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
-      // Open the pinned project memory so the detail pane shows a body and its author.
-      await new Promise((r) => setTimeout(r, 1500));
+      // The list lives in the Memory pane, which Settings › Agent memory opens from its
+      // "Open memory view" link. Open the pinned project memory so the detail pane shows a body
+      // and its author.
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 50 && !document.querySelector(".mem-open-view button"); i++) await wait(200);
+      document.querySelector(".mem-open-view button")?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".mem-md-pick"); i++) await wait(200);
       document.querySelector(".mem-md-pick")?.click();
     })()`,
     settle: 2000,
+    // A click on an element that is not there does nothing and still yields a plausible picture.
+    verify: `!!document.querySelector(".mem-md-pick.active")`,
   },
   {
     // The member inbox (ADR 0111), for the features page: a request waiting to be taken, one this
@@ -3293,7 +3300,10 @@ const SCENES = [
     guide: true,
     // Wait for the workspace to read as running and both panes to finish loading.
     ready: `!!document.querySelector(".ws-power.on") && !/読み込み中|Loading/.test(document.body.innerText)`,
-    sections: SHOW_TOOLS,
+    // The tour names the activity bar and "one view at a time": show the Sessions view with its
+    // repositories, not the stack of tool sections the old left pane could open together.
+    view: "sessions",
+    sections: FOCUS_TREE,
     width: 1440,
     height: 860,
     layout: {
