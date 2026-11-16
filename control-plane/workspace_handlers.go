@@ -944,6 +944,10 @@ type sessionWire struct {
 	// this Agent-supplied value, while stopped from the column baked in by ReplaceSessions.
 	// With only one of the two, the badge lies by vanishing the moment the Workspace stops.
 	Carried string `json:"carried,omitempty"`
+	// CarriedLive is the kind of a carried interaction still there on a LIVE row: the session
+	// was started again without answering it. It is only read (a message queue's run stays
+	// open on it, ADR 0137 section 6), never mirrored: Carried above is the stopped-only badge.
+	CarriedLive string `json:"carriedLive,omitempty"`
 	// HandoffPending: the last successor's first prompt the session proposed has not been
 	// launched. Missing here it is silently dropped, and the row goes back to the plain
 	// "waiting for input" chip — which is the whole problem the flag exists for, since the

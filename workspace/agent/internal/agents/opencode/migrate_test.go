@@ -50,18 +50,42 @@ type fakeMigration struct {
 	started atomic.Int32
 	stopped atomic.Int32
 	done    atomic.Bool
+	// onBusy, when set, is called each time the completion write finds the database locked.
+	onBusy func()
 }
 
+// recordImportWait bounds how long the completion write is retried against a lock.
+const recordImportWait = 60 * time.Second
+
+// recordImport writes the completion record. SQLite's own busy timeout is off (0): it is a
+// wall-clock wait that a loaded host can exhaust while the lock holder is merely descheduled, and
+// it gives a test no moment at which the writer is known to be blocked. The retry here is bounded
+// by a deadline far above any scheduling stall and calls onBusy on every refusal, which is how a
+// test releases a reader only after the write was seen blocked.
 func (f *fakeMigration) recordImport(dbp string) error {
-	db, err := sql.Open("sqlite", "file:"+dbp+"?_pragma=busy_timeout(10000)")
+	db, err := sql.Open("sqlite", "file:"+dbp+"?_pragma=busy_timeout(0)")
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	deadline := time.Now().Add(recordImportWait)
+	for {
+		err = f.writeCompletion(db)
+		if err == nil || !strings.Contains(err.Error(), "SQLITE_BUSY") || time.Now().After(deadline) {
+			return err
+		}
+		if f.onBusy != nil {
+			f.onBusy()
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func (f *fakeMigration) writeCompletion(db *sql.DB) error {
 	if _, err := db.Exec(`create table if not exists kv (key text primary key, value text, a int, b int)`); err != nil {
 		return err
 	}
-	_, err = db.Exec(`insert or replace into kv values ('migration.v1-v2','{"phase":"completed"}',1,1)`)
+	_, err := db.Exec(`insert or replace into kv values ('migration.v1-v2','{"phase":"completed"}',1,1)`)
 	return err
 }
 
@@ -302,11 +326,20 @@ func TestEnsureMigratedRecordsCompletionDespiteAReader(t *testing.T) {
 	if err := tx.QueryRow(`select count(*) from session`).Scan(&n); err != nil { // takes the shared lock
 		t.Fatal(err)
 	}
-	go func() { time.Sleep(700 * time.Millisecond); _ = tx.Rollback() }()
-	f := &fakeMigration{}
+	// The reader is released by the writer's first refusal, not by a timer: the write is proven
+	// blocked by the reader, and completes once it lets go.
+	var release sync.Once
+	var blocked atomic.Int32
+	f := &fakeMigration{onBusy: func() {
+		blocked.Add(1)
+		release.Do(func() { _ = tx.Rollback() })
+	}}
 	useFakeMigration(t, db, f)
 	if err := EnsureMigrated(spec2); err != nil {
 		t.Fatal(err)
+	}
+	if blocked.Load() == 0 {
+		t.Fatal("the completion write never met the reader's lock; the test proved nothing")
 	}
 	if err := EnsureMigrated(spec2); err != nil || f.started.Load() != 1 {
 		t.Fatalf("second call: err %v started %d; the completion must have been recorded", err, f.started.Load())

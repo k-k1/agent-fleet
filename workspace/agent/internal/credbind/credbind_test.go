@@ -4,6 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"slices"
@@ -67,11 +70,11 @@ func TestGeneration(t *testing.T) {
 	if g == "" || g != Generation("muse-login") || g != AccountOrGeneration("muse-login", "") {
 		t.Fatalf("Generation: %q", g)
 	}
-	Bump("codex-login-other")
+	bump("codex-login-other")
 	if Generation("muse-login") != g {
 		t.Error("bumping another login moved this one")
 	}
-	Bump("muse-login")
+	bump("muse-login")
 	if n := Generation("muse-login"); n == g || n == "" {
 		t.Errorf("a bump kept the binding: %q", n)
 	}
@@ -108,13 +111,13 @@ func TestKeyFile(t *testing.T) {
 }
 
 // A generation state that cannot be trusted serves no binding rather than generation zero, and a
-// Bump rebuilds it under a new epoch, so no login is handed a value an earlier state used.
+// bump rebuilds it under a new epoch, so no login is handed a value an earlier state used.
 func TestGenerationFailurePaths(t *testing.T) {
 	freshHome(t)
 	p := filepath.Join(paths.AgentConfigDir(), genFile)
 	g0 := Generation("muse-login")
 	other0 := Generation("agy-login")
-	Bump("muse-login")
+	bump("muse-login")
 	g1 := Generation("muse-login")
 	if g1 == "" || g1 == g0 || Generation("agy-login") != other0 {
 		t.Fatalf("bump: %q -> %q, agy %q", g0, g1, Generation("agy-login"))
@@ -127,14 +130,14 @@ func TestGenerationFailurePaths(t *testing.T) {
 			t.Errorf("%s state: Generation = %q, want unproven", name, g)
 		}
 	}
-	// Recovery: a Bump rebuilds the state; neither login gets back any earlier binding.
-	Bump("muse-login")
+	// Recovery: a bump rebuilds the state; neither login gets back any earlier binding.
+	bump("muse-login")
 	for _, g := range []string{Generation("muse-login"), Generation("agy-login")} {
 		if g == "" || g == g0 || g == g1 || g == other0 {
 			t.Errorf("after a rebuild: %q reuses an earlier binding (%q %q %q)", g, g0, g1, other0)
 		}
 	}
-	// A Bump that cannot persist leaves the login unproven, never on its replaced binding, and
+	// A bump that cannot persist leaves the login unproven, never on its replaced binding, and
 	// removes the state so a restart (the in-memory mark gone) starts a fresh epoch.
 	beforeFail := Generation("cursor-login")
 	if err := os.Remove(p); err != nil {
@@ -143,7 +146,7 @@ func TestGenerationFailurePaths(t *testing.T) {
 	if err := os.Mkdir(p, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	Bump("cursor-login")
+	bump("cursor-login")
 	if g := Generation("cursor-login"); g != "" {
 		t.Errorf("after a failed bump: %q, want unproven", g)
 	}
@@ -153,7 +156,7 @@ func TestGenerationFailurePaths(t *testing.T) {
 	if g := Generation("cursor-login"); g == "" || g == beforeFail {
 		t.Errorf("after a failed bump and a restart: %q, want a fresh binding (old %q)", g, beforeFail)
 	}
-	Bump("cursor-login")
+	bump("cursor-login")
 	if g := Generation("cursor-login"); g == "" {
 		t.Error("a successful bump did not clear the failure")
 	}
@@ -166,7 +169,7 @@ func TestGenerationAfterTheStateIsLost(t *testing.T) {
 	freshHome(t)
 	p := filepath.Join(paths.AgentConfigDir(), genFile)
 	g0 := Generation("muse-login")
-	Bump("muse-login")
+	bump("muse-login")
 	g1 := Generation("muse-login")
 	if g1 == "" || g1 == g0 {
 		t.Fatalf("bump: %q -> %q", g0, g1)
@@ -418,5 +421,109 @@ func TestBeginDuringFinishCleanup(t *testing.T) {
 	b.Finish()
 	if g := Generation("beta"); g == "" || !markerAbsent("beta") {
 		t.Errorf("beta after its own change finished: %q, marker absent %v", g, markerAbsent("beta"))
+	}
+}
+
+// leaksBump lists what in one non-test source file reaches the bump functions beyond the two
+// allowed callers, bump (which calls bumpLocked) and Op.Finish: any func or method whose body
+// mentions bump or bumpLocked, an exported func named like bump, and an exported var or const
+// named like it or whose value mentions it.
+func leaksBump(t *testing.T, name, src string) []string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mentions := func(n ast.Node) bool {
+		found := false
+		ast.Inspect(n, func(x ast.Node) bool {
+			if id, ok := x.(*ast.Ident); ok && (id.Name == "bump" || id.Name == "bumpLocked") {
+				found = true
+			}
+			return !found
+		})
+		return found
+	}
+	allowed := map[string]bool{"bump": true, "*Op.Finish": true}
+	var out []string
+	for _, d := range f.Decls {
+		switch d := d.(type) {
+		case *ast.FuncDecl:
+			key := d.Name.Name
+			if d.Recv != nil && len(d.Recv.List) == 1 {
+				t := d.Recv.List[0].Type
+				ptr := ""
+				if st, ok := t.(*ast.StarExpr); ok {
+					t, ptr = st.X, "*"
+				}
+				if id, ok := t.(*ast.Ident); ok {
+					key = ptr + id.Name + "." + key
+				}
+			}
+			named := d.Recv == nil && d.Name.IsExported() && strings.Contains(strings.ToLower(d.Name.Name), "bump")
+			if named || (d.Body != nil && mentions(d.Body) && !allowed[key]) {
+				out = append(out, key)
+			}
+		case *ast.GenDecl:
+			for _, sp := range d.Specs {
+				if vs, ok := sp.(*ast.ValueSpec); ok {
+					for _, n := range vs.Names {
+						if n.IsExported() && (strings.Contains(strings.ToLower(n.Name), "bump") || mentions(vs)) {
+							out = append(out, n.Name)
+						}
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// No exported name moves a generation outside an Op: a caller without Begin would have only
+// process memory to remember a failed persist, which a restart forgets (issue 4189). The fixtures
+// are the positive control: each way of re-exporting it must be refused by the same check.
+func TestNoBumpOutsideAnOp(t *testing.T) {
+	for name, src := range map[string]string{
+		"func":      "package p\nfunc Bump(l ...string) bool { return bump(l...) }",
+		"var alias": "package p\nvar Bump = bump",
+		"const-ish": "package p\nvar (\n\tRebuild = bumpLocked\n)",
+		"wrapper":   "package p\nfunc Rebuild() { bump() }",
+	} {
+		if len(leaksBump(t, name, src)) == 0 {
+			t.Errorf("positive control %q: not refused", name)
+		}
+	}
+	for name, src := range map[string]string{
+		"method":       "package p\nfunc (*Op) Rebuild(l ...string) bool { return bump(l...) }",
+		"value method": "package p\nfunc (Op) Finish() { bump() }",
+		"internal":     "package p\nfunc helper() { bumpLocked(nil) }",
+	} {
+		if len(leaksBump(t, name, src)) == 0 {
+			t.Errorf("positive control %q: not refused", name)
+		}
+	}
+	if got := leaksBump(t, "ok", "package p\nfunc (o *Op) Finish() { bump() }\nfunc bump() { bumpLocked(nil) }"); len(got) != 0 {
+		t.Errorf("the allowed callers were refused: %v", got)
+	}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen++
+		if got := leaksBump(t, f, string(b)); len(got) != 0 {
+			t.Errorf("%s exports %v: a generation must move only through Begin/Finish", f, got)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("scanned no source file")
 	}
 }

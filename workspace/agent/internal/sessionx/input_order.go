@@ -57,8 +57,8 @@ func live(x *orderTail) *orderTail {
 // at once and gives the tail back to the live slot it waited behind, so an input enqueued after
 // the timeout is skipped as well and no follower waits on a hung head.
 //
-// Known limit: tmux commands carry no deadline and nothing clears the chain when a session is
-// deleted, so a head that never returns keeps its goroutine and one tails entry until it does.
+// A head that never returns is bounded by the deadline on every tmux call a delivery makes
+// (tmuxx.OneShotTimeout); forget drops the chain's entry when the session is deleted.
 func (o *inputOrder) enqueue(name string, fn, skip func()) (run func()) {
 	o.mu.Lock()
 	prev := o.tails[name]
@@ -98,4 +98,23 @@ func (o *inputOrder) enqueue(name string, fn, skip func()) (run func()) {
 		}()
 		fn()
 	}
+}
+
+// forget drops name's chain entry when nothing live is in it. A slot still running or waiting
+// keeps its entry: removing it would let an input enqueued for the same name (a restore, a late
+// request) start a second chain and type ahead of the delivery still waiting for the pane.
+// That slot removes the entry itself when it returns, which the tmux deadline now bounds, so
+// forget only collects an entry whose last slot ended without removing it.
+func (o *inputOrder) forget(name string) {
+	o.mu.Lock()
+	if live(o.tails[name]) == nil {
+		delete(o.tails, name)
+	}
+	o.mu.Unlock()
+}
+
+// forgetInputState is forget for the session being deleted. The terminal lock needs no call: it
+// is reference-counted and leaves its table with its last user.
+func forgetInputState(name string) {
+	initialInputOrder.forget(name)
 }

@@ -162,6 +162,12 @@ func TestMemoOccupancyTreeAndOtherHolds(t *testing.T) {
 		"stopped with the interaction carried": {func(a *fakeQueueAgent, root string) {
 			a.setRow(root, map[string]any{"alive": false, "state": "", "carried": "question"})
 		}, store.HeldPerson},
+		"started again with the interaction carried": {func(a *fakeQueueAgent, root string) {
+			a.setRow(root, map[string]any{"carriedLive": "plan"})
+		}, store.HeldPerson},
+		"a machine at work outranks a carried interaction": {func(a *fakeQueueAgent, root string) {
+			a.setRow(root, map[string]any{"carriedLive": "plan", "state": "working", "progressAgeSec": 5})
+		}, store.HeldMachine},
 		"a child not started by a session is not in the tree": {func(a *fakeQueueAgent, root string) {
 			a.child("c1", root, map[string]any{"state": "working", "origin": "", "progressAgeSec": 5})
 		}, ""},
@@ -935,6 +941,57 @@ func TestMemoOccupancyClosedTurnsProgressSurvivesTheDeadline(t *testing.T) {
 		cancel()
 		if got := e.delivery(real); got.TurnOutcome != "turn-failed" {
 			t.Fatalf("progress was lost with the deadline: the slow head is tried first again: %+v", got)
+		}
+	})
+}
+
+// A session started again without answering the card it was stopped with is still waiting for a
+// person (ADR 0137 section 6): the run stays open on two reads, shows the person's hold, and
+// closes on two reads once the Agent no longer reports the interaction (answered, discarded or
+// expired).
+func TestMemoOccupancyLiveCarriedHoldsUntilGone(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.setRow(d.Session, map[string]any{"carriedLive": "question"})
+		for i := 0; i < 4; i++ {
+			e.settleNow(time.Now())
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.HeldBy != store.HeldPerson {
+			t.Fatalf("carried and live: %+v", got)
+		}
+		agent.setRow(d.Session, map[string]any{"carriedLive": nil})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+			t.Fatalf("first read without it: %+v", got)
+		}
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryClean {
+			t.Fatalf("second read without it: %+v", got)
+		}
+	})
+}
+
+// The rule for an Agent that does not report does not count an idle row with the interaction
+// carried as idle.
+func TestMemoOccupancyUnreportedAgentLiveCarriedIsNotIdle(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.mu.Lock()
+		agent.report = false
+		agent.reportVersion = 0
+		agent.mu.Unlock()
+		agent.setRow(d.Session, map[string]any{"carriedLive": "permission"})
+		for i := 0; i < 4; i++ {
+			e.settleNow(time.Now())
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+			t.Fatalf("unreported, carried and live: %+v", got)
+		}
+		agent.setRow(d.Session, map[string]any{"carriedLive": nil})
+		e.settleNow(time.Now())
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryClean {
+			t.Fatalf("unreported, carried gone: %+v", got)
 		}
 	})
 }
