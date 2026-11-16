@@ -106,4 +106,11 @@ export const schedules = {
   "sched.gate_v_error": "確認に失敗: {detail}",
   "sched.gate_query_pick": "ゲートに使う保存済みクエリを選んでください。",
   "sched.gate_unfit": "ゲートは繰り返し実行の新規セッションにだけ付けられます。この変更を保存するにはゲートを外してください。",
+
+  // === Route picker (ADR 0138 D11b; the user's decision 6a on #4169) ===
+  "sched.f_route": "モデルの経路",
+  "sched.route_default_saved": "あなたの既定の経路（{route}）",
+  "sched.route_none": "未設定",
+  "sched.route_unavailable": "保存済みの経路（いまは使えません）",
+  "sched.route_hint": "このスケジュールが起動するセッションの行き先と、課金されるアカウントです。未設定ならそのエージェントの既定の経路を使います。経路の指定が必要で使える経路がないときは、別の経路に移さずに実行を断ります。",
 };

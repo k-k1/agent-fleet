@@ -19,6 +19,9 @@ export interface ScheduleDTO {
   reuse_target?: string;
   agent_kind?: string;
   model?: string;
+  /** The explicit model route the fire's sessions run on (ADR 0128), and its connection. */
+  route?: string;
+  route_connection?: string;
   repo?: string;
   worktree?: string;
   new_branch?: boolean;
@@ -82,6 +85,8 @@ export interface ScheduleEditable {
   wake_policy?: string;
   agent_kind?: string;
   model?: string;
+  route?: string;
+  route_connection?: string;
   report?: boolean;
   stop_after_run?: boolean;
   deliver_to?: string[];

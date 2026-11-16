@@ -3499,3 +3499,26 @@ export function operateEnginesLan() {
     },
   };
 }
+
+// GET /api/agents/kinds, live form: the checked-in snapshot plus each kind's routes, what is usable
+// on this fictional workspace (matching /api/connections), and the member access summary.
+const LIVE_ROUTES = {
+  claude: { routes: ["anthropic-api", "anthropic-subscription", "bedrock"], usableRoutes: ["anthropic-subscription"], chat: true },
+  codex: { fixedRoutes: ["chatgpt-subscription", "openai-api"], usableRoutes: ["chatgpt-subscription"], chat: true },
+  cursor: { fixedRoutes: ["cursor-login"], usableRoutes: ["cursor-login"], chat: true },
+  copilot: { fixedRoutes: ["copilot-login"], usableRoutes: [], chat: true },
+  kiro: { fixedRoutes: ["kiro-login"], usableRoutes: [] },
+  agy: { fixedRoutes: ["agy-login"], usableRoutes: [] },
+  opencode: { routes: ["bedrock"], usableRoutes: ["opencode-zen"], chat: true },
+};
+export function liveKinds(snapshot, policy) {
+  const access = { noRouteAvailable: false, allOffByOwnSettings: false, someOffByOwnSettings: false, policyConfirmed: true };
+  if (policy === "none") return { kinds: snapshot.filter((k) => !LIVE_ROUTES[k.kind] && k.kind !== "lcpp" && k.kind !== "muse"), access: { ...access, noRouteAvailable: true } };
+  if (policy === "alloff") return { kinds: snapshot.filter((k) => !LIVE_ROUTES[k.kind] && k.kind !== "lcpp" && k.kind !== "muse"), access: { ...access, allOffByOwnSettings: true, someOffByOwnSettings: true } };
+  const kinds = snapshot.map((k) => ({ ...k, ...(LIVE_ROUTES[k.kind] ?? {}) }));
+  if (policy === "keyonly") {
+    const c = kinds.find((k) => k.kind === "claude");
+    Object.assign(c, { routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api"] });
+  }
+  return { kinds, access };
+}

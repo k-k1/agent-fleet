@@ -36,6 +36,9 @@ const { normalizeHistory, pushPromptHistory } = await import("../../lib/promptHi
 const { readTemplates } = await import("../../lib/launchTemplates.ts");
 const hist = () => normalizeHistory(getSettings().launchHistory);
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
+import { openAccess } from "../../test/launchAccess.ts";
+
+const ACCESS = openAccess();
 
 type Launch = (o: LaunchOpts) => Promise<LaunchResult>;
 
@@ -67,7 +70,7 @@ async function settle(): Promise<void> {
 
 async function render(repo = "app"): Promise<void> {
   await act(async () => {
-    root!.render(<LaunchModal repo={repo} branch="main" kinds={["claude", "codex"]} onClose={onClose} onLaunch={onLaunch} />);
+    root!.render(<LaunchModal access={ACCESS} repo={repo} branch="main" kinds={["claude", "codex"]} onClose={onClose} onLaunch={onLaunch} />);
   });
   await settle();
 }

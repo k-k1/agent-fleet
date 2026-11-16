@@ -30,6 +30,9 @@ import { StopSessionsModal } from "./StopSessionsModal.tsx";
 import { liveSessionCount } from "./stopTree.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import type { RepoRailContext } from "./useRepoRail.ts";
+import { quickLaunchRoute } from "../../agents/launchAccess.ts";
+import { routeSelectionBody } from "./bedrockProfiles.ts";
+import { policyRefusalKey, policyRefusalOf } from "./launchPolicy.ts";
 
 interface RepoRowConnectedProps {
   r: Repo;
@@ -62,7 +65,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, a
   const setActive = useLayoutStore((s) => s.setActive);
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
-  const startWork = useStartWork();
+  const startWork = useStartWork({ policyInline: true });
   // SVN re-authentication (docs/log/41 amendment). Owned here rather than in RepoRow
   // because both routes into it are here: the menu item, and an update that came back
   // svn_auth_required — the failure IS the moment to ask, and answering it retries.
@@ -102,6 +105,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, a
     <RepoRow
       r={r}
       kinds={ctx.launchKinds}
+      access={ctx.access}
       claudeExpired={ctx.claudeExpired}
       running={ctx.running}
       active={ctx.scmRepo === r.name}
@@ -194,7 +198,13 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, a
           agentOf(kind).caps.planMode || agentOf(kind).caps.tuiStartMode
             ? resolveStartMode(kind, r.name, defaults.startMode)
             : "normal";
+        // The route follows the member's saved default, the same rules as the dialog's preselect
+        // (ADR 0138 D11b). A default that cannot be used, or a kind that cannot launch without a
+        // route choice, opens the dialog instead of running on a route the member did not choose.
+        const plan = quickLaunchRoute(kind, ctx.access.kinds, settings.agentLaunchDefaults[kind]?.route);
+        if (plan === "dialog") return "dialog";
         const body: Record<string, unknown> = { dir: r.path, kind };
+        if (plan.route) body.route = routeSelectionBody(plan.route.route, plan.route.connection);
         // A quick launch defaults to managed like any new session (docs/log/27 §9.2 —
         // opencode). The CLI is reachable through the driver choice in the start-work modal.
         if (agentOf(kind).managedDriver) body.driver = "managed";
@@ -210,6 +220,14 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, a
           res = await apiJSON("api/sessions", "POST", body);
         }
         if (res && res.error) {
+          // A refusal of the credential policy is said in the Console's own words, and what the
+          // menu offers is asked again.
+          const policy = policyRefusalOf(res.error);
+          if (policy) {
+            toast(tr(policyRefusalKey(policy)));
+            void ctx.access.refresh();
+            return;
+          }
           // errDetail: a generic code (runtime_failed and friends) carries the why in message only.
           toast(tr("rp.launch_failed", { err: errDetail(res.error) }));
           return;

@@ -51,6 +51,9 @@ const { launchBranchTiming } = await import("./useLaunchBranchName.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
+import { openAccess } from "../../test/launchAccess.ts";
+
+const ACCESS = openAccess();
 
 type Launch = (o: LaunchOpts) => Promise<LaunchResult>;
 
@@ -115,6 +118,7 @@ async function render(withItem = true, repo = "web", it: typeof item = item, pro
       // The app wraps every dialog in it; the Git Flow dialog toasts on save.
       <ToastProvider>
         <LaunchModal
+          access={ACCESS}
           repo={repo}
           branch="main"
           kinds={["claude"]}
@@ -489,7 +493,7 @@ describe("work-item launch through the branch-name resolver", () => {
     const renderPR = (existing: string) =>
       act(async () => {
         root!.render(
-          <LaunchModal repo="web" branch="main" kinds={["claude"]} initialExistingBranch={existing} onClose={() => {}} onLaunch={onLaunch} />,
+          <LaunchModal access={ACCESS} repo="web" branch="main" kinds={["claude"]} initialExistingBranch={existing} onClose={() => {}} onLaunch={onLaunch} />,
         );
       });
     await renderPR("pr-a");

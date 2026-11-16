@@ -42,6 +42,9 @@ const { LaunchModal } = await import("./LaunchModal.tsx");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import type { MemoAttachment } from "../../types/memo.ts";
+import { openAccess } from "../../test/launchAccess.ts";
+
+const ACCESS = openAccess();
 
 type Launch = (o: LaunchOpts) => Promise<LaunchResult>;
 
@@ -68,7 +71,7 @@ async function settle(): Promise<void> {
 async function render(extra: { initialPrompt?: string; initialAttachments?: MemoAttachment[] } = {}): Promise<void> {
   await act(async () => {
     root!.render(
-      <LaunchModal repo="app" branch="main" kinds={["claude"]} onClose={() => {}} onLaunch={onLaunch} {...extra} />,
+      <LaunchModal access={ACCESS} repo="app" branch="main" kinds={["claude"]} onClose={() => {}} onLaunch={onLaunch} {...extra} />,
     );
   });
   await settle();

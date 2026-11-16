@@ -29,6 +29,13 @@ import {
   scheduleTitle,
 } from "./read.ts";
 import { scheduledKinds } from "../../agents/registry.ts";
+import { defaultRouteUsable, kindOfferedForRuns } from "../../agents/launchAccess.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
+import { useSettings } from "../../lib/settings.ts";
+import { useMemberCatalog } from "../settings/credentials/memberCatalog.ts";
+import { choiceKey, routeChoices } from "../settings/agents/routeChoices.ts";
+import { useModelRouteProfiles } from "../repos/bedrockProfiles.ts";
 import { workItemList } from "../workitems/api.ts";
 import { readWorkItems, type WorkItemQuery } from "../workitems/read.ts";
 
@@ -36,6 +43,8 @@ import { readWorkItems, type WorkItemQuery } from "../workitems/read.ts";
 // never from a list kept here: the hand-kept copy this replaced had already lost agy, whose
 // scheduled runs shipped without the Console ever offering them. The schedule's current kind
 // is still always included, so an unfamiliar value is never silently dropped from the select.
+// Of these, only the kinds the credential policy allows and the member has not switched off are
+// offered (ADR 0138 D10a), from the live catalogue; with no fresh answer, none is.
 const AGENT_KINDS: string[] = scheduledKinds;
 const SPEC_KINDS = ["cron", "interval", "once"];
 const WAKE_POLICIES = ["wake", "skip", "catch_up"];
@@ -67,6 +76,8 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
   const [wake, setWake] = useState(s.wake_policy || "wake");
   const [agent, setAgent] = useState(s.agent_kind || "claude");
   const [model, setModel] = useState(s.model || "");
+  // The route as stored: choiceKey of {route, connection}; "" = none named.
+  const [routeKey, setRouteKey] = useState(() => (s.route ? choiceKey({ route: s.route, connection: s.route_connection || undefined }) : ""));
   const [report, setReport] = useState(!!s.report);
   const [stopAfterRun, setStopAfterRun] = useState(!!s.stop_after_run);
   const [targets, setTargets] = useState<string[]>(() => canonicalTargets(scheduleTargets(s)));
@@ -98,10 +109,42 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
   const toggleTarget = (target: string, on: boolean) =>
     setTargets((cur) => canonicalTargets(on ? [...cur, target] : cur.filter((x) => x !== target)));
 
+  const running = useWorkspaceStore((st) => st.state) === "running";
+  const catalog = useMemberCatalog(running);
+  const allowedKinds = useMemo(() => AGENT_KINDS.filter((k) => kindOfferedForRuns(k, catalog.kinds)), [catalog.kinds]);
   const kinds = useMemo(
-    () => (AGENT_KINDS.includes(agent) ? AGENT_KINDS : [agent, ...AGENT_KINDS]),
-    [agent],
+    () => (allowedKinds.includes(agent) ? allowedKinds : [agent, ...allowedKinds]),
+    [agent, allowedKinds],
   );
+
+  // The route picker (the user's decision 6a on #4169): the routes the policy lets this kind
+  // select, each with the connection it needs, plus "unset", which runs on the member's default
+  // route. Under a restriction a run with neither is refused at fire time (route_required), so
+  // the choice is offered here rather than left to fail later.
+  const settings = useSettings();
+  const identity = useTenantStore((st) => `${st.tenant}|${st.identityRev}`);
+  const live = catalog.kinds?.get(agent);
+  const selectable = live?.routes ?? [];
+  const profiles = useModelRouteProfiles(running && selectable.includes("bedrock"), identity);
+  const routeLabel = (r: string) => tr(("cred.route." + r) as MsgKey);
+  // Only selectable routes are offered. member-llamacpp needs the endpoint binding, but it is only
+  // ever a fixed route (lcpp's, and lcpp takes no scheduled runs), so no binding is passed here.
+  const choices = routeChoices(live, routeLabel, profiles, undefined).filter((c) => selectable.includes(c.route));
+  const savedDefault = settings.agentLaunchDefaults[agent]?.route;
+  const defaultLabel =
+    savedDefault && live && defaultRouteUsable(live, savedDefault)
+      ? (choices.find((c) => choiceKey(c) === choiceKey(savedDefault))?.label ?? routeLabel(savedDefault.route))
+      : "";
+  // A stored route this picker cannot offer (forbidden now, or its connection gone) stays the
+  // value without being named: a member's screens never name what the policy hides.
+  const storedKey = s.route ? choiceKey({ route: s.route, connection: s.route_connection || undefined }) : "";
+  const storedHidden = !!storedKey && agent === (s.agent_kind || "claude") && !choices.some((c) => choiceKey(c) === storedKey);
+  const routePatch = (key: string): { route: string; route_connection: string } => {
+    if (key === "") return { route: "", route_connection: "" };
+    const c = choices.find((x) => choiceKey(x) === key);
+    if (c) return { route: c.route, route_connection: c.connection ?? "" };
+    return { route: s.route || "", route_connection: s.route_connection || "" };
+  };
 
   // Build the patch of only-changed fields (undefined = unchanged → omitted from the body).
   const patch = useMemo<ScheduleEditable>(() => {
@@ -114,6 +157,11 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
     if (wake !== (s.wake_policy || "wake")) p.wake_policy = wake;
     if (agent !== (s.agent_kind || "claude")) p.agent_kind = agent;
     if (model !== (s.model || "")) p.model = model;
+    if (routeKey !== storedKey) {
+      const r = routePatch(routeKey);
+      p.route = r.route;
+      p.route_connection = r.route_connection;
+    }
     if (report !== !!s.report) p.report = report;
     if (stopAfterRun !== !!s.stop_after_run) p.stop_after_run = stopAfterRun;
     if (targets.join(",") !== canonicalTargets(scheduleTargets(s)).join(",")) p.deliver_to = targets;
@@ -125,7 +173,8 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
       if (g) p.gate = g;
     }
     return p;
-  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, report, stopAfterRun, targets, silent, gateKnown, gateFits, gateForm]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- routePatch reads choices, keyed by routeKey and agent
+  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, routeKey, storedKey, report, stopAfterRun, targets, silent, gateKnown, gateFits, gateForm]);
 
   const dirty = Object.keys(patch).length > 0;
   // Reporting on with no target would deliver nowhere while looking switched on.
@@ -234,7 +283,15 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
             <label className="ui-field-label" htmlFor="sched-agent">
               {tr("sched.f_agent")}
             </label>
-            <select id="sched-agent" value={agent} onChange={(e) => setAgent(e.target.value)}>
+            <select
+              id="sched-agent"
+              value={agent}
+              onChange={(e) => {
+                setAgent(e.target.value);
+                // A route belongs to one kind; the CP refuses a kind change that keeps another's.
+                setRouteKey("");
+              }}
+            >
               {kinds.map((k) => (
                 <option key={k} value={k}>
                   {k}
@@ -249,6 +306,24 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
             <input id="sched-model" type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder={tr("sched.f_model_ph")} spellCheck={false} />
           </div>
         </div>
+
+        {s.session_mode !== "assistant" && (choices.length > 0 || storedHidden) && (
+          <div className="ui-field">
+            <label className="ui-field-label" htmlFor="sched-route">
+              {tr("sched.f_route")}
+            </label>
+            <select id="sched-route" value={routeKey} onChange={(e) => setRouteKey(e.target.value)}>
+              <option value="">{defaultLabel ? tr("sched.route_default_saved", { route: defaultLabel }) : tr("sched.route_none")}</option>
+              {storedHidden && <option value={storedKey}>{tr("sched.route_unavailable")}</option>}
+              {choices.map((c) => (
+                <option key={choiceKey(c)} value={choiceKey(c)}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <span className="ui-field-hint">{tr("sched.route_hint")}</span>
+          </div>
+        )}
 
         {/* Completion-report opt-in (default off). Hidden for session_mode=assistant —
             there the fire itself lands in the conversation, so a report is meaningless. */}

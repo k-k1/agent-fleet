@@ -11,6 +11,8 @@ vi.mock("./api.ts", () => ({ scheduleUpdate: vi.fn() }));
 vi.mock("../workitems/api.ts", () => ({ workItemList: vi.fn() }));
 
 const { ScheduleDetailModal } = await import("./ScheduleDetailModal.tsx");
+// The words come from the catalogue in force: the modal reads the member's settings, which pick it.
+const { t } = await import("../../lib/i18n/index.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { scheduleUpdate } = await import("./api.ts");
 const { workItemList } = await import("../workitems/api.ts");
@@ -141,11 +143,11 @@ describe("ScheduleDetailModal gate", () => {
 
   it("shows the last check, and an unknown verdict as the CP sent it", async () => {
     await render({ gate: { ...gate, last_eval_at: new Date().toISOString(), last_verdict: "clear" } });
-    expect(el(".sched-gate-last").textContent).toContain("該当なし");
+    expect(el(".sched-gate-last").textContent).toContain(t("sched.gate_v_clear"));
     await render({ gate: { ...gate, last_eval_at: new Date().toISOString(), last_verdict: "something_new" } });
     expect(el(".sched-gate-last").textContent).toContain("something_new");
     await render({ gate });
-    expect(el(".sched-gate-last").textContent).toContain("まだ確認されていません");
+    expect(el(".sched-gate-last").textContent).toContain(t("sched.gate_last_never"));
   });
 
   it("never rewrites a gate of a kind it does not know", async () => {

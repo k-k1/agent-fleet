@@ -561,9 +561,6 @@ export const sessions = {
   "launch.field.route": "モデルのルート",
   "launch.route_default": "既定（これまでどおり）",
   "launch.route_hint": "このセッションのモデル呼び出しの行き先と、課金されるアカウントです。既定ならエージェント自身のこれまでの挙動のままです。",
-  "launch.route.anthropic-subscription": "Claude サブスクリプション（このワークスペースのログイン）",
-  "launch.route.anthropic-api": "Anthropic API キー（従量課金）",
-  "launch.route.bedrock": "Amazon Bedrock（あなたの AWS プロファイル、従量課金）",
   "launch.field.bedrock_profile": "Bedrock に使う AWS プロファイル",
   "launch.field.bedrock_region": "リージョン",
   "launch.bedrock_region_placeholder": "プロファイルのリージョン",
@@ -1029,4 +1026,16 @@ export const sessions = {
   "awsconfirm.open_failed": "このセッションは開けませんでした",
   "awsconfirm.deny": "拒否",
   "awsconfirm.answer_failed": "依頼に答えられませんでした（{code}）",
+
+  // === Launch dialog under the credential policy (ADR 0138 D10a, D11b) ===
+  "launch.no_route_line": "使えるモデルの経路がありません。管理者に問い合わせてください。",
+  "launch.all_off_line": "すべてのエージェントをあなた自身がオフにしています。",
+  "launch.route_choose": "経路を選んでください",
+  "launch.route_no_key": "認証情報がまだありません",
+  "launch.route_no_key_hint": "「認証情報がまだありません」の経路は、キーかログインを追加すると選べます:",
+  "launch.route_default_unusable": "既定の経路はいま使えません。この起動の経路を選んでください。",
+  "launch.route_required_hint": "この起動の経路を選んでください。このエージェントは経路なしでは起動しません。",
+  "launch.policy.route_forbidden": "そのモデルの経路は使えません。別の経路を選んでください。",
+  "launch.policy.route_required": "このエージェントのモデルの経路を選ぶか、設定 › エージェント で既定の経路を決めてください。",
+  "launch.policy.policy_unconfirmed": "使ってよいモデルの経路をワークスペースが確認できませんでした。少し待ってからもう一度試してください。",
 };

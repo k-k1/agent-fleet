@@ -12,7 +12,7 @@ vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTer
 let claudeExpired = false;
 let launchKinds = ["claude"];
 vi.mock("./useRepoRail.ts", () => ({
-  useRepoRailContext: () => ({ launchKinds, connsSettling: false, claudeExpired }),
+  useRepoRailContext: () => ({ access: { kinds: { get: (k: string) => ({ kind: k }), has: () => true }, noRoute: false, allOff: false, refresh: () => {} }, launchKinds, connsSettling: false, claudeExpired }),
 }));
 vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: vi.fn() }));
 vi.mock("../chat/api.ts", () => ({ assistantList: vi.fn(async () => ({ assistants: [] })) }));

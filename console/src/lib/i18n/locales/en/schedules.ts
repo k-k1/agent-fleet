@@ -108,4 +108,11 @@ export const schedules: Record<keyof typeof jaSchedules, string> = {
   "sched.gate_v_error": "check failed: {detail}",
   "sched.gate_query_pick": "Choose a saved query for the gate.",
   "sched.gate_unfit": "A gate fits recurring new-session schedules only. Turn it off to save this change.",
+
+  // === Route picker (ADR 0138 D11b; the user's decision 6a on #4169) ===
+  "sched.f_route": "Model route",
+  "sched.route_default_saved": "Your default route ({route})",
+  "sched.route_none": "Not set",
+  "sched.route_unavailable": "The saved route (not available now)",
+  "sched.route_hint": "Where the sessions this schedule starts run, and who pays. Unset uses your default route for the agent; where a route has to be named and none can be used, the run is refused rather than moved to another route.",
 };

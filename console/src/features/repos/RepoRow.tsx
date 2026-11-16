@@ -30,7 +30,7 @@ import { useMySharesStore } from "../sharing/store.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
 import { AheadBehind } from "./AheadBehind.tsx";
-import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
+import type { LaunchAccess, LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import { canFastForwardFromParent, parentFFMenuLabel, parentSyncLabel, parentSyncTitle } from "./parentSync.ts";
 import type { Repo } from "./store.ts";
 import { useImagegenAvailable } from "../imagegen/available.ts";
@@ -55,6 +55,9 @@ const providerLabel = (p: string) => PROVIDER_LABEL[p] || p;
 export interface RepoRowProps {
   r: Repo;
   kinds?: string[];
+  /** The credential policy as the member sees it, for the launch dialog (RepoRailContext.access).
+   *  Absent: nothing is known, so the dialog launches nothing. */
+  access?: LaunchAccess;
   /** The workspace's Claude login has expired; forwarded to the launch dialog's notice. */
   claudeExpired?: boolean;
   running?: boolean;
@@ -110,7 +113,9 @@ export interface RepoRowProps {
   onReauth?: () => void;
   /** Git parent clones only: open Initialize Git Flow (ADR 0103 decision 9). */
   onGitflowInit?: () => void;
-  onLaunch: (kind: string, split: boolean) => void;
+  /** A quick launch. "dialog": it needs a choice only the launch dialog offers (a route), so the
+   *  row opens the dialog on that kind instead. */
+  onLaunch: (kind: string, split: boolean) => void | "dialog" | Promise<void | "dialog">;
   onStartWork: (opts: LaunchOpts) => Promise<LaunchResult>;
   onBranchChanged?: () => void;
   opens?: { ordinal: number; id: string }[];
@@ -134,13 +139,23 @@ function RepoPeek({ s }: { s: Session }) {
   );
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, claudeExpired = false, running = true, active, selected, sess, unread, peek, alsoRunning, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onGitflowInit, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
+const NO_ACCESS: LaunchAccess = { kinds: null, noRoute: false, allOff: false };
+
+export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claudeExpired = false, running = true, active, selected, sess, unread, peek, alsoRunning, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onGitflowInit, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
   // SVN working copies (docs/log/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
   const isSvn = r.vcs === "svn";
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchModal, setLaunchModal] = useState(false);
+  // The kind a quick launch handed over to the dialog ("" = the dialog's own pick).
+  const [launchKind, setLaunchKind] = useState("");
+  const quick = (k: string, split: boolean) =>
+    void Promise.resolve(onLaunch(k, split)).then((res) => {
+      if (res !== "dialog") return;
+      setLaunchKind(k);
+      setLaunchModal(true);
+    });
   const [studioModal, setStudioModal] = useState(false);
   const imagegenAvailable = useImagegenAvailable({ passive: true });
   // Coding agents only (runsInDir) — shell/ssm have no model/prompt, so the
@@ -375,7 +390,10 @@ export function RepoRow({ r, kinds = repoLaunchKinds, claudeExpired = false, run
                     : tr("mirror.ws_stopped")
                 }
                 disabled={!running || !agentKinds.length}
-                onClick={() => setLaunchModal(true)}
+                onClick={() => {
+                  setLaunchKind("");
+                  setLaunchModal(true);
+                }}
               >
                 <Icon name="play" /> {tr("launch.launch")}
               </button>
@@ -400,14 +418,14 @@ export function RepoRow({ r, kinds = repoLaunchKinds, claudeExpired = false, run
                       title={tr("repo.launch_new_pane")}
                       onClick={(e) => {
                         setShowLaunch(false);
-                        onLaunch(k, e.ctrlKey || e.metaKey);
+                        quick(k, e.ctrlKey || e.metaKey);
                       }}
                       onMouseDown={(e) => e.button === 1 && e.preventDefault()}
                       onAuxClick={(e) => {
                         if (e.button === 1) {
                           e.preventDefault();
                           setShowLaunch(false);
-                          onLaunch(k, true);
+                          quick(k, true);
                         }
                       }}
                     >
@@ -694,6 +712,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, claudeExpired = false, run
           branch={r.branch}
           path={r.path}
           kinds={agentKinds}
+          access={access}
+          initialKind={launchKind || undefined}
           claudeExpired={claudeExpired}
           // From a worktree, only in-place launch is offered — spawning a worktree
           // OFF a worktree yields a confusing double-@ name off the wrong base. New

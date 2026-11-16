@@ -21,8 +21,13 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { MEMBER_DEFAULT_AGENTS, agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
-import { kindRoutes, useKindCatalogVersion } from "../../agents/kindCatalog.ts";
+import { useKindCatalogVersion } from "../../agents/kindCatalog.ts";
+import { defaultRouteUsable, emptyRouteOk, routeUsable, type LiveKinds } from "../../agents/launchAccess.ts";
 import { bedrockConnection, bedrockModelOk, regionOk, rememberBedrockModel, rememberedBedrockModel, routeModelFilter, useModelRouteProfiles } from "./bedrockProfiles.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
+import { useSettingsUI } from "../settings/store.ts";
+import { OwnSettingsLine } from "../settings/credentials/MemberLines.tsx";
+import { policyRefusalKey, type PolicyRefusal } from "./launchPolicy.ts";
 import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
@@ -104,6 +109,9 @@ export interface LaunchOpts {
 // another working copy — so it carries that copy's folder instead of a fix button.
 export interface LaunchResult {
   ok: boolean;
+  /** The credential policy refused the launch (ADR 0138 D11, D12): the dialog stays open and
+   *  says what to do, in its own words rather than the Agent's message. */
+  policy?: PolicyRefusal;
   conflict?: "local" | "remote" | "in_use";
   worktree?: string;
   /** Name of the session that was created (only when ok). Accepting a handoff (docs/log/77)
@@ -114,11 +122,28 @@ export interface LaunchResult {
   unknown?: boolean;
 }
 
+/** What the launch dialog knows of the credential policy: the member catalogue (memberCatalog.ts). */
+export interface LaunchAccess {
+  /** The live, policy-filtered kinds; null while there is no fresh, confirmed answer. */
+  kinds: LiveKinds | null;
+  /** No harness has a route the policy allows. */
+  noRoute: boolean;
+  /** The member's own switches turned off every harness the policy allows. */
+  allOff: boolean;
+  /** Asks the Agent again (after the reset, or a launch the policy refused). */
+  refresh?: () => void | Promise<void>;
+}
+
 interface LaunchModalProps {
   repo: string;
   branch?: string;
   path?: string;
   kinds: string[]; // available agent kinds (shell/ssm already excluded)
+  /** The credential policy as the member sees it: which routes each kind may take, and the one
+   *  line to show when nothing can be launched. Fails closed: with no catalogue, nothing launches. */
+  access: LaunchAccess;
+  /** Open on this kind when it is offered (a quick launch that needs a route choice). */
+  initialKind?: string;
   /** The workspace's Claude login has expired (RepoRailContext.claudeExpired): a notice under
    * the agent picker while claude is the picked kind, not a gate. */
   claudeExpired?: boolean;
@@ -225,8 +250,10 @@ export function LaunchModal(props: LaunchModalProps) {
   );
 }
 
-function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
+function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
   const settings = useSettings();
+  // Without a confirmed catalogue nothing is offered, whatever the caller listed.
+  const kinds = useMemo(() => (access.kinds ? offeredKinds : []), [access.kinds, offeredKinds]);
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
   // Tenant launch defaults (ADR 0114 P3) only prefill: the last-known CP answer, from the Console's
@@ -237,7 +264,12 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // The member's own override (a CP-held key; never the Agent's ui-prefs). Saved from this dialog.
   const patchOwn = useUIStateStore((st) => st.patch);
   const ownDefault = !!uiState.launch && Object.values(uiState.launch).some((v) => v !== "" && v !== null);
-  const pickKind = () => (last.kind && kinds.includes(last.kind) ? last.kind : defaultKind(eff, kinds) || kinds[0] || "claude");
+  const pickKind = () =>
+    wantKind && kinds.includes(wantKind)
+      ? wantKind
+      : last.kind && kinds.includes(last.kind)
+        ? last.kind
+        : defaultKind(eff, kinds) || kinds[0] || "claude";
   const initialKind = pickKind();
   const initialDefault = agentLaunchDefault(settings, initialKind);
   // undefined from the tenant layer = no opinion, so the member's Settings value stays; "" from the
@@ -442,26 +474,74 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // Only for kinds whose pending approvals can be answered from the Console (the counterpart
   // of Caps.PermissionChoice on the Go side).
   const hasPermChoice = agentOf(kind).caps.permissionChoice;
-  // Routes the kind declares, under either execution method: a Managed opencode session on a
-  // route runs on a server of its own (#4004), and claude, which has no Managed, never gets here
-  // with one.
+  // The routes the policy allows the kind to select (the live catalogue, ADR 0138 D10a), under
+  // either execution method: a Managed opencode session on a route runs on a server of its own
+  // (#4004), and claude, which has no Managed, never gets here with one. A forbidden route is not
+  // listed at all; an allowed one whose credential is not held is listed but cannot be chosen.
   // bedrock is offered only when the member has a profile marked as a model route: without one
   // the Agent would refuse the launch, and an option that can only fail is not offered.
-  const declaredRoutes = kindRoutes(kind);
-  const modelRouteProfiles = useModelRouteProfiles(declaredRoutes.includes("bedrock"));
-  const routeOptions = declaredRoutes.filter((r) => r !== "bedrock" || (modelRouteProfiles?.length ?? 0) > 0);
+  const identity = useTenantStore((st) => `${st.tenant}|${st.identityRev}`);
+  const live = access.kinds?.get(kind);
+  const allowedRoutes = live?.routes ?? [];
+  const modelRouteProfiles = useModelRouteProfiles(allowedRoutes.includes("bedrock"), identity);
+  const routeOptions = allowedRoutes.filter((r) => r !== "bedrock" || (modelRouteProfiles?.length ?? 0) > 0);
+  // Whether the kind may launch with no route chosen ("Default"): not claude when its
+  // subscription login is not allowed or not signed in. The member then picks one; nothing is
+  // picked for them (D11b).
+  const emptyOk = emptyRouteOk(kind, live);
+  // The member's saved default route (Settings › Agents) is preselected when it can be used now.
+  // One that cannot is never swapped for another route: the dialog says so and waits for a choice.
+  const savedRoute = settings.agentLaunchDefaults[kind]?.route;
+  // A Bedrock default names `<profile id>@<region>`: usable while that profile is still marked.
+  const bedrockParts = (conn = "") => {
+    const at = conn.lastIndexOf("@");
+    return at < 0 ? { id: conn, region: "" } : { id: conn.slice(0, at), region: conn.slice(at + 1) };
+  };
+  const savedProfileGone =
+    savedRoute?.route === "bedrock" && modelRouteProfiles !== null && !modelRouteProfiles.some((p) => p.id === bedrockParts(savedRoute.connection).id);
+  const savedUnusable = !!savedRoute && !!live && (!defaultRouteUsable(live, savedRoute) || savedProfileGone);
+  const seedRoute = (k: string) => {
+    const sv = settings.agentLaunchDefaults[k]?.route;
+    const lk = access.kinds?.get(k);
+    if (!sv || !(lk?.routes ?? []).includes(sv.route) || !defaultRouteUsable(lk, sv)) {
+      setRoute("");
+      return;
+    }
+    if (sv.route === "bedrock") {
+      const { id, region } = bedrockParts(sv.connection);
+      if (!modelRouteProfiles?.some((x) => x.id === id)) {
+        // Profiles not read yet (this runs again when they are), or the profile is gone.
+        setRoute("");
+        return;
+      }
+      // The saved reference is sent as it was saved, region included.
+      setBedrockProfile(id);
+      setBedrockRegion(region);
+    }
+    setRoute(sv.route);
+  };
+  const profileIds = modelRouteProfiles ? modelRouteProfiles.map((p) => p.id) : null;
+  const routeSeedKey = JSON.stringify([kind, savedRoute ?? null, live?.routes ?? null, live?.usableRoutes ?? null, profileIds]);
+  useEffect(() => {
+    if (!dirty.current.has("route")) seedRoute(kind);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-seeded when what it reads changes
+  }, [routeSeedKey]);
   const bedrockPick = modelRouteProfiles?.find((p) => p.id === bedrockProfile) ?? modelRouteProfiles?.[0];
+  // The route the launch sends: one the dialog offers and whose credential is held, else none.
+  const chosenRoute = routeOptions.includes(route) && routeUsable(live, route) ? route : "";
+  // A kind that cannot launch without a route has none chosen yet.
+  const routeMissing = !emptyOk && !chosenRoute;
+  const someNoKey = routeOptions.some((r) => !routeUsable(live, r));
   // A kind without route models of its own (claude) runs on bedrock on the one Bedrock id typed
   // beside the region (#3587); one with them (opencode: amazon-bedrock/…) picks one in the model
   // picker instead.
-  const onBedrock = route === "bedrock" && routeOptions.includes("bedrock") && !!bedrockPick && !agentOf(kind).routeModelPrefix?.bedrock;
+  const onBedrock = chosenRoute === "bedrock" && !!bedrockPick && !agentOf(kind).routeModelPrefix?.bedrock;
   const bedrockModel = bedrockPick ? (bedrockModels[bedrockPick.id] ?? rememberedBedrockModel(bedrockPick.id)) : "";
   const bedrockModelBad = onBedrock && !bedrockModelOk(bedrockModel.trim());
-  const bedrockBlocked = (route === "bedrock" && routeOptions.includes("bedrock") && !regionOk(bedrockRegion)) || bedrockModelBad;
+  const bedrockBlocked = (chosenRoute === "bedrock" && !regionOk(bedrockRegion)) || bedrockModelBad;
   // The models the chosen route can run (opencode on bedrock: its amazon-bedrock models only). A
   // model the route cannot run is dropped when the route changes, and such a route does not
   // launch until one of its own is picked: the Agent would refuse the kind's default.
-  const chosenRoute = routeOptions.includes(route) ? route : "";
   const modelFilter = useMemo(() => routeModelFilter(kind, chosenRoute), [kind, chosenRoute]);
   const routeModelBlocked = !!modelFilter && !!chosenRoute && !modelFilter(model);
   useEffect(() => {
@@ -730,6 +810,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
     if (busy || seedLoading) return;
     setBusy(true);
     setConflict(null);
+    setPolicyErr(null);
     const useExisting = existingMode || resolveCollision;
     const wtBase = existingMode ? existingBranch : resolveCollision ? newBranch : base.trim();
     const r = await onLaunch({
@@ -739,9 +820,8 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
       // Code would map an alias to an id of its own choosing and walk a fallback ladder on a denial.
       model: onBedrock ? bedrockModel.trim() : hasModel ? model : "",
       effort: hasEffort ? effort : "",
-      route: routeOptions.includes(route) ? route : undefined,
-      routeConnection:
-        route === "bedrock" && routeOptions.includes(route) && bedrockPick ? bedrockConnection(bedrockPick.id, bedrockRegion) : undefined,
+      route: chosenRoute || undefined,
+      routeConnection: chosenRoute === "bedrock" && bedrockPick ? bedrockConnection(bedrockPick.id, bedrockRegion) : undefined,
       startMode: hasStartMode ? startMode : "normal",
       skipPermissions: hasPermChoice ? skipPerm : undefined,
       prompt: prompt.trim(),
@@ -765,6 +845,11 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
       return;
     }
     setBusy(false);
+    // The policy refused it: what the dialog offers may be out of date, so ask the Agent again.
+    if (r?.policy) {
+      setPolicyErr(r.policy);
+      void access.refresh?.();
+    }
     setConflict(r?.conflict ?? null);
     setConflictWt(r?.worktree || "");
     // The conflict panel and its fix button live inside the location section — a collapsed one
@@ -775,11 +860,12 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
     if (r?.conflict === "in_use") setBranches(null);
   };
   const submit = () => void start(false);
+  const [policyErr, setPolicyErr] = useState<PolicyRefusal | null>(null);
   // Existing-branch mode is only launchable once a branch is picked.
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked;
+  const canLaunch = !!kinds.length && !!access.kinds && !routeMissing && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked;
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.
@@ -799,14 +885,26 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
       <div className="ui-modal-body">
         <div className="ui-field">
           <span className="ui-field-label">{tr("launch.field.agent")}</span>
-          {!kinds.length && (
-            // Empty means one of two very different things: still checking, or the
-            // connection check failed / nothing is authenticated. Say which — a bare
-            // empty picker reads as a broken modal.
-            <div className="muted launch-noagents">
-              {tr(settling ? "launch.agents_checking" : "launch.agents_none")}
-            </div>
-          )}
+          {/* Empty means one of several very different things: still checking; nothing the
+              policy allows (sent to an administrator, naming nothing hidden, ADR 0138 D10a);
+              everything switched off by the member (offered the reset instead); or nothing
+              signed in. Say which — a bare empty picker reads as a broken modal. */}
+          {!kinds.length &&
+            (!settling && access.kinds && access.allOff ? (
+              <OwnSettingsLine hidden line="launch.all_off_line" onReset={() => access.refresh?.()} />
+            ) : (
+              <div className="muted launch-noagents" data-testid="launch-noagents">
+                {tr(
+                  settling
+                    ? "launch.agents_checking"
+                    : !access.kinds
+                      ? "launch.policy.policy_unconfirmed"
+                      : access.noRoute
+                        ? "launch.no_route_line"
+                        : "launch.agents_none",
+                )}
+              </div>
+            ))}
           {/* Wrapping grid (ui.css .ui-seg.big): with horizontal scrolling the fourth card
               onward was cut off, hiding the fact that there are 7 kinds. The sub-label was a
               restatement of the card name ("launch <kind>") and carried nothing, so it moved
@@ -830,10 +928,107 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
           </div>
         </div>
 
-        {/* An API-key launch does not run on the OAuth login, so its expiry is not this launch's problem. */}
-        <ClaudeExpiredHint kind={kind} expired={claudeExpired && route !== "anthropic-api" && route !== "bedrock"} />
+        {/* Harness → route → model (ADR 0138 D16): the route decides who pays, so it is chosen
+            before the model, in the always-visible tier. */}
+        {(routeOptions.length > 0 || routeMissing) && !!kinds.length && (
+          <div className="ui-field">
+            <span className="ui-field-label">{tr("launch.field.route")}</span>
+            <select
+              value={chosenRoute}
+              aria-invalid={routeMissing || undefined}
+              onChange={(e) => {
+                mark("route");
+                setRoute(e.target.value);
+                setPolicyErr(null);
+              }}
+            >
+              {emptyOk ? (
+                <option value="">{tr("launch.route_default")}</option>
+              ) : (
+                <option value="" disabled>
+                  {tr("launch.route_choose")}
+                </option>
+              )}
+              {routeOptions.map((r) => {
+                const held = routeUsable(live, r);
+                return (
+                  <option key={r} value={r} disabled={!held}>
+                    {tr(("cred.route." + r) as never)}
+                    {held ? "" : ` — ${tr("launch.route_no_key")}`}
+                  </option>
+                );
+              })}
+            </select>
+            <span className={"ui-field-hint" + (savedUnusable || routeMissing ? " warn" : "")}>
+              {tr(savedUnusable ? "launch.route_default_unusable" : routeMissing ? "launch.route_required_hint" : "launch.route_hint")}
+            </span>
+            {someNoKey && (
+              <span className="ui-field-hint launch-route-nokey">
+                {tr("launch.route_no_key_hint")}{" "}
+                <button type="button" className="linklike" onClick={() => useSettingsUI.getState().openSettings("credentials")}>
+                  {tr("agents.runs_on_link")}
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+        {policyErr && (
+          <div className="ui-field-hint warn launch-policy-err" role="alert">
+            {tr(policyRefusalKey(policyErr))}
+          </div>
+        )}
 
-        {hasModel && !onBedrock && (
+        {chosenRoute === "bedrock" && bedrockPick && (
+          <div className="ui-field">
+            <span className="ui-field-label">{tr("launch.field.bedrock_profile")}</span>
+            <select value={bedrockPick.id} onChange={(e) => setBedrockProfile(e.target.value)}>
+              {modelRouteProfiles!.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.region ? `${p.label} (${p.region})` : p.label}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              value={bedrockRegion}
+              placeholder={bedrockPick.region || tr("launch.bedrock_region_placeholder")}
+              aria-label={tr("launch.field.bedrock_region")}
+              aria-invalid={!regionOk(bedrockRegion) || undefined}
+              onChange={(e) => setBedrockRegion(e.target.value)}
+            />
+            <span className="ui-field-hint">
+              {!regionOk(bedrockRegion) ? tr("launch.bedrock_region_invalid") : tr("launch.bedrock_hint")}
+            </span>
+          </div>
+        )}
+
+        {onBedrock && (
+          <div className="ui-field">
+            <span className="ui-field-label">{tr("launch.field.bedrock_model")}</span>
+            <input
+              type="text"
+              value={bedrockModel}
+              placeholder="us.anthropic.claude-opus-4-6-v1" // model-id-lint:allow an example of the id form; it chooses no model
+              aria-label={tr("launch.field.bedrock_model")}
+              aria-invalid={(bedrockModelBad && bedrockModel.trim() !== "") || undefined}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoComplete="off"
+              onChange={(e) => {
+                const v = e.target.value;
+                setBedrockModels((m) => ({ ...m, [bedrockPick!.id]: v }));
+              }}
+            />
+            <span className="ui-field-hint">
+              {bedrockModelBad && bedrockModel.trim() !== "" ? tr("launch.bedrock_model_invalid") : tr("launch.bedrock_model_hint")}
+            </span>
+          </div>
+        )}
+
+        {/* An API-key launch does not run on the OAuth login, so its expiry is not this launch's problem. */}
+        <ClaudeExpiredHint kind={kind} expired={claudeExpired && chosenRoute !== "anthropic-api" && chosenRoute !== "bedrock"} />
+
+        {hasModel && !onBedrock && kinds.length > 0 && (
           <div className="ui-field">
             <span className="ui-field-label">{tr("launch.field.model")}</span>
             <ModelPicker
@@ -1230,71 +1425,6 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
                   </span>
                 </button>
               </div>
-            </div>
-          )}
-
-          {routeOptions.length > 0 && (
-            <div className="ui-field">
-              <span className="ui-field-label">{tr("launch.field.route")}</span>
-              <select value={routeOptions.includes(route) ? route : ""} onChange={(e) => {
-                  mark("route");
-                  setRoute(e.target.value);
-                }}>
-                <option value="">{tr("launch.route_default")}</option>
-                {routeOptions.map((r) => (
-                  <option key={r} value={r}>
-                    {tr(("launch.route." + r) as never)}
-                  </option>
-                ))}
-              </select>
-              <span className="ui-field-hint">{tr("launch.route_hint")}</span>
-            </div>
-          )}
-
-          {route === "bedrock" && routeOptions.includes("bedrock") && bedrockPick && (
-            <div className="ui-field">
-              <span className="ui-field-label">{tr("launch.field.bedrock_profile")}</span>
-              <select value={bedrockPick.id} onChange={(e) => setBedrockProfile(e.target.value)}>
-                {modelRouteProfiles!.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.region ? `${p.label} (${p.region})` : p.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="text"
-                value={bedrockRegion}
-                placeholder={bedrockPick.region || tr("launch.bedrock_region_placeholder")}
-                aria-label={tr("launch.field.bedrock_region")}
-                aria-invalid={!regionOk(bedrockRegion) || undefined}
-                onChange={(e) => setBedrockRegion(e.target.value)}
-              />
-              <span className="ui-field-hint">
-                {!regionOk(bedrockRegion) ? tr("launch.bedrock_region_invalid") : tr("launch.bedrock_hint")}
-              </span>
-            </div>
-          )}
-
-          {onBedrock && (
-            <div className="ui-field">
-              <span className="ui-field-label">{tr("launch.field.bedrock_model")}</span>
-              <input
-                type="text"
-                value={bedrockModel}
-                placeholder="us.anthropic.claude-opus-4-6-v1" // model-id-lint:allow an example of the id form; it chooses no model
-                aria-label={tr("launch.field.bedrock_model")}
-                aria-invalid={(bedrockModelBad && bedrockModel.trim() !== "") || undefined}
-                spellCheck={false}
-                autoCapitalize="off"
-                autoComplete="off"
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setBedrockModels((m) => ({ ...m, [bedrockPick!.id]: v }));
-                }}
-              />
-              <span className="ui-field-hint">
-                {bedrockModelBad && bedrockModel.trim() !== "" ? tr("launch.bedrock_model_invalid") : tr("launch.bedrock_model_hint")}
-              </span>
             </div>
           )}
 

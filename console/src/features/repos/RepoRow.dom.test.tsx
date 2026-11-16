@@ -195,3 +195,39 @@ describe("RepoRow origin ahead/behind chip", () => {
     expect(parts()).toEqual(["↑3"]);
   });
 });
+
+// ADR 0138 D11b: a quick launch that needs a route choice (no usable default, no subscription to
+// run on) hands over to the launch dialog, opened on that agent, instead of launching.
+describe("RepoRow quick launch that needs a route", () => {
+  const PARENT: Repo = { name: "app", path: "/home/dev/repos/app", branch: "main" };
+  it("opens the launch dialog on the kind the quick launch handed back", async () => {
+    useWorkspaceStore.setState({ state: "running" } as never);
+    const onLaunch = vi.fn(async () => "dialog" as const);
+    const access = {
+      kinds: new Map([
+        ["claude", { kind: "claude" }],
+        ["codex", { kind: "codex" }],
+      ]),
+      noRoute: false,
+      allOff: false,
+    };
+    await act(async () => {
+      root!.render(
+        <RepoRow r={PARENT} kinds={["claude", "codex"]} access={access} onOpen={() => {}} onLaunch={onLaunch} onStartWork={async () => ({ ok: true }) as never} />,
+      );
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('button[title="種別を選んで即起動（プロンプトなし）"]')!.click();
+    });
+    const codex = [...document.querySelectorAll<HTMLButtonElement>(".launch-menu .ui-menu-item")].find((b) => b.textContent?.includes("Codex"))!;
+    await act(async () => {
+      codex.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onLaunch).toHaveBeenCalledWith("codex", false);
+    const active = document.querySelector(".ui-seg.big .seg-btn.active");
+    expect(active?.textContent).toContain("Codex");
+  });
+});

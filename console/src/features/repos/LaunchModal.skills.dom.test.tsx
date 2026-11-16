@@ -44,6 +44,9 @@ const { LaunchModal } = await import("./LaunchModal.tsx");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 const { setSettings } = await import("../../lib/settings.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
+import { openAccess } from "../../test/launchAccess.ts";
+
+const ACCESS = openAccess();
 
 type Launch = (o: LaunchOpts) => Promise<LaunchResult>;
 
@@ -70,7 +73,7 @@ async function settle(): Promise<void> {
 
 async function render(kinds: string[]): Promise<void> {
   await act(async () => {
-    root!.render(<LaunchModal repo="app" branch="main" kinds={kinds} onClose={onClose} onLaunch={onLaunch} />);
+    root!.render(<LaunchModal access={ACCESS} repo="app" branch="main" kinds={kinds} onClose={onClose} onLaunch={onLaunch} />);
   });
   await settle();
 }
