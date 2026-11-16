@@ -69,7 +69,9 @@ func (c *carriedEnv) wantRefusedKeepsMark(t *testing.T, k carriedKind, rec *http
 
 func (c *carriedEnv) refused(t *testing.T, k carriedKind, rec *httptest.ResponseRecorder, what string, noAct bool) {
 	t.Helper()
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "session_retired") {
+	// A Terminal (CLI) session is never started by /input: not_running is its refusal.
+	if rec.Code != http.StatusConflict || !(strings.Contains(rec.Body.String(), "session_retired") ||
+		(k.driver == "" && strings.Contains(rec.Body.String(), "not_running"))) {
 		t.Fatalf("%s = %d %s, want 409 session_retired", what, rec.Code, rec.Body)
 	}
 	cur, _ := session.ReadMeta("s")
@@ -433,4 +435,79 @@ type gatedDriver struct {
 func (d *gatedDriver) Resume(session.Meta) (agents.ThreadHandle, error) {
 	d.onResume()
 	return d.h, nil
+}
+
+// plannerWithAutoReviewer is a retired, stopped session "s" whose plan review runs a reviewer
+// "rev" on its own.
+func (c *carriedEnv) plannerWithAutoReviewer(t *testing.T, k carriedKind, enabled bool) {
+	t.Helper()
+	session.WriteMeta(session.Meta{Name: "rev", Kind: session.KindClaude, Dir: t.TempDir()})
+	session.WriteMeta(session.Meta{Name: "s", Kind: k.kind, Driver: k.driver, Dir: t.TempDir(),
+		PlanReviewers: []session.PlanReviewer{{Reviewer: "rev", Auto: &session.PlanAuto{Enabled: enabled}}}})
+	if code, out := postRetireIf(t, "s", -1); code != http.StatusOK || !reportOf(out, "s").Stopped {
+		t.Fatalf("retire = %d %+v", code, out)
+	}
+}
+
+// A peer message to a stopped session starts it first, and says who sends it. The start for an auto
+// plan reviewer's reply is refused on a retired planner, so the later /input never gets to be
+// judged on a session already started; another sender's start is deliberate.
+func TestStartBeforeAPeerMessageKnowsTheSender(t *testing.T) {
+	for _, k := range carriedKinds {
+		t.Run(k.label, func(t *testing.T) {
+			c := newCarriedEnv(t, "")
+			c.plannerWithAutoReviewer(t, k, true)
+			c.wantRefused(t, k, c.start(t, "?peer_from=rev"), "the reviewer's start")
+			session.WriteMeta(session.Meta{Name: "other", Kind: session.KindClaude, Dir: t.TempDir()})
+			if rec := c.start(t, "?peer_from=other"); rec.Code != http.StatusOK {
+				t.Fatalf("another peer's start = %d %s", rec.Code, rec.Body)
+			}
+			c.wantStarted(t, k, "another peer's start")
+		})
+	}
+}
+
+// What makes a reply the automatic reviewer's does not change when the loop ends or the reply is
+// sent again: a refused verdict sent a second time, and one sent after the loop is over, are
+// refused the same way.
+func TestAutoReviewerReplyStaysAutomaticAfterTheLoopEnds(t *testing.T) {
+	for _, k := range carriedKinds {
+		t.Run(k.label, func(t *testing.T) {
+			c := newCarriedEnv(t, "")
+			c.plannerWithAutoReviewer(t, k, true)
+			verdict := `{"prompt":"## Verdict\napprove","peer_from":"rev","peer_intent":"answer"}`
+			for i := 0; i < 2; i++ {
+				c.wantRefusedKeepsMark(t, k, postTo(t, HandleSessionInput, "s", "input", verdict), "verdict")
+			}
+			if cur, _ := session.ReadMeta("s"); cur.RetiredAt == "" {
+				t.Fatal("a resent verdict took the mark off")
+			}
+			c = newCarriedEnv(t, "")
+			prevRate := peerRate
+			peerRate = &peerLimiter{sends: map[string][]time.Time{}, recent: map[string]time.Time{}}
+			t.Cleanup(func() { peerRate = prevRate })
+			c.plannerWithAutoReviewer(t, k, false) // the loop is already over
+			c.wantRefusedKeepsMark(t, k, postTo(t, HandleSessionInput, "s", "input", verdict), "a late verdict")
+		})
+	}
+}
+
+// The plan review's own follow-up to its reviewer is automatic whatever its body says: a reviewer
+// retired between the readiness check and the send is not started by it.
+func TestPlanFollowUpDoesNotStartARetiredReviewer(t *testing.T) {
+	for _, k := range carriedKinds {
+		t.Run(k.label, func(t *testing.T) {
+			c := newCarriedEnv(t, "")
+			session.WriteMeta(session.Meta{Name: "planner", Kind: session.KindClaude, Dir: t.TempDir()})
+			c.retiredStopped(t, k) // "s" is the reviewer
+			err := sendPlanFollowUp("planner", "s", "please look again")
+			if err == nil || !(strings.Contains(err.Error(), "session_retired") || strings.Contains(err.Error(), "not_running")) {
+				t.Fatalf("follow-up err = %v, want session_retired", err)
+			}
+			cur, _ := session.ReadMeta("s")
+			if cur.RetiredAt == "" || cur.PersonActMark != 0 {
+				t.Fatalf("retiredAt=%q actMark=%d", cur.RetiredAt, cur.PersonActMark)
+			}
+		})
+	}
 }

@@ -215,7 +215,11 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
       `schedule_delivery` or any other `source` (`schedule`, `schedule-manual`, `notice`,
       `auto-resume`, `queue`, `spawn`, one nobody knows): in doubt it is not deliberate
       (`deliberateInput`, `deliberateOrigin`). A peer message from a reviewer the Agent runs for the
-      session's own plan review (auto on) is automatic (`planReviewerAutoReply`).
+      session's own plan review is automatic (`planReviewerAutoReply`): the evidence is that the reviewer
+      entry has an auto loop at all, not that it is enabled now, so a refused, spooled or late resend
+      keeps its origin. The start that precedes a peer message to a stopped session says who sends it
+      (`?peer_from=`, `StartPeerFromQuery`) and is refused the same way; the plan review's own
+      follow-up to its reviewer is automatic whatever its body says (`autoInputKey`).
     - A deliberate Managed input follows `/start`'s order under the read side of the session's
       retire gate, taken inside `resumeManagedAs` and held from the check to the end of the launch:
       record the act, launch, then take the mark off. A launch that fails leaves the mark; a meta

@@ -320,7 +320,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
 			handleManagedInputPrompt(lease, w, meta, body.Prompt, body.ReportTo, body.Source, body.PeerFrom,
 				scheduleRefOf(body.Source, body.ScheduleID, body.ScheduleSlot), delivery,
-				!autoPeer && deliberateInput(body.Source, body.PeerFrom, body.ScheduleID, body.ScheduleSlot, body.ScheduleDelivery != nil))
+				!autoPeer && r.Context().Value(autoInputKey{}) == nil && deliberateInput(body.Source, body.PeerFrom, body.ScheduleID, body.ScheduleSlot, body.ScheduleDelivery != nil))
 			return
 		}
 	}

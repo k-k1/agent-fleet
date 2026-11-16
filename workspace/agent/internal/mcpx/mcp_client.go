@@ -394,7 +394,16 @@ func AgentSendToSession(name string, body []byte) (out string, resumed bool, err
 }
 
 func agentResumeAndSend(name, inputPath string, body []byte) (out string, resumed bool, err error) {
-	if _, err = AgentPOST("/sessions/"+url.PathEscape(name)+"/start", nil); err != nil {
+	startPath := "/sessions/" + url.PathEscape(name) + "/start"
+	// A peer message says who sends it, so the Agent can refuse a start that only an automatic
+	// sender (a plan review's reviewer) asks for on a retired session. Anything else is deliberate.
+	var peer struct {
+		PeerFrom string `json:"peer_from"`
+	}
+	if json.Unmarshal(body, &peer) == nil && peer.PeerFrom != "" {
+		startPath += "?peer_from=" + url.QueryEscape(peer.PeerFrom)
+	}
+	if _, err = AgentPOST(startPath, nil); err != nil {
 		return "", false, fmt.Errorf("停止中セッションの再開に失敗しました: %w", err)
 	}
 	if err = agentWaitSessionReady(name, 30*time.Second, 500*time.Millisecond); err != nil {

@@ -464,6 +464,7 @@ func sendPlanFollowUp(planner, reviewer, message string) error {
 	body, _ := json.Marshal(map[string]string{"prompt": message, "peer_from": planner, "peer_intent": "question"})
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/sessions/"+reviewer+"/input", bytes.NewReader(body))
 	req.SetPathValue("name", reviewer)
+	req = req.WithContext(context.WithValue(req.Context(), autoInputKey{}, true)) // the member did not send this
 	rec := &captureWriter{header: http.Header{}}
 	HandleSessionInput(rec, req)
 	if rec.status >= 200 && rec.status < 300 {

@@ -174,7 +174,10 @@ source_of_truth: "コード（本書は地図と設計意図）"
       自動なのは、`schedule_id`・`schedule_slot`・`schedule_delivery`、またはそれ以外の `source`（`schedule`・
       `schedule-manual`・`notice`・`auto-resume`・`queue`・`spawn`・知らない値）を持つとき。迷ったら意図した操作に
       しない（`deliberateInput`・`deliberateOrigin`）。セッション自身のプランレビュー（auto 有効）のために Agent が
-      動かすレビュアーの peer メッセージは自動（`planReviewerAutoReply`）。
+      動かすレビュアーの peer メッセージは自動（`planReviewerAutoReply`）。根拠は、レビュアーの項目に auto のループがあること
+      （今有効かどうかではない）なので、断られた・保留された・遅れた再送も出どころは変わらない。停止中のセッションへの peer
+      メッセージの前に行う start は送り手を伝え（`?peer_from=`、`StartPeerFromQuery`）、同じように断られる。プランレビュー
+      自身がレビュアーへ送るフォローアップは、本文に関わらず自動（`autoInputKey`）。
     - 意図した Managed 入力は `/start` の順序に従い、`resumeManagedAs` の中で取るセッションの retire gate の読み取り側を、
       確認から起動の終わりまで持つ。操作を記録し、起動し、そのあとで印を外す。起動に失敗すれば印は残る。読めない meta は
       疑わしい扱い（断る。起動しない）。印を外せなければ `/start` と同じく `retire_clear_failed`。ロックの順はライフサイクル

@@ -1293,7 +1293,11 @@ func TestSendToPeerSessionStartsAStoppedSessionAsDeliberate(t *testing.T) {
 	if resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}); strings.Contains(string(resp), `"isError":true`) {
 		t.Fatalf("resp = %s", resp)
 	}
-	if len(starts) != 1 || starts[0] != "" {
+	if len(starts) != 1 || strings.Contains(starts[0], "origin") {
 		t.Fatalf("starts = %q, want one start with no origin parameter", starts)
+	}
+	// The start says who sends the message, so the Agent can refuse an automatic sender's.
+	if !strings.HasPrefix(starts[0], "peer_from=") {
+		t.Fatalf("start query = %q, want peer_from=<sender>", starts[0])
 	}
 }

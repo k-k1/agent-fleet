@@ -19,6 +19,9 @@ import (
 // counts as deliberate: an older Control Plane relaying the Console's Start must keep working. An
 // older Agent ignores the parameter it does not know.
 const (
+	// StartPeerFromQuery names the sending session on a start that precedes a peer message.
+	StartPeerFromQuery = "peer_from"
+
 	StartOriginQuery     = "origin"
 	StartOriginAutomatic = "automatic"
 )
@@ -29,8 +32,27 @@ func startIsAutomatic(r *http.Request) bool {
 	if r.Context().Value(autoStartKey{}) != nil {
 		return true
 	}
-	return r.URL != nil && r.URL.Query().Get(StartOriginQuery) == StartOriginAutomatic
+	if r.URL == nil {
+		return false
+	}
+	q := r.URL.Query()
+	if q.Get(StartOriginQuery) == StartOriginAutomatic {
+		return true
+	}
+	// A peer message to a stopped session starts it first (mcpx.agentResumeAndSend) and says who
+	// sends it: the start of a session for its own auto plan reviewer's reply is automatic. The
+	// claim can only make a start stricter.
+	if from := q.Get(StartPeerFromQuery); from != "" {
+		if dst, ok := session.ReadMeta(r.PathValue("name")); ok && planReviewerAutoReply(dst, from) {
+			return true
+		}
+	}
+	return false
 }
+
+// autoInputKey marks a request to HandleSessionInput as one the Agent makes on its own (the plan
+// review's follow-up to its reviewer): never deliberate, whatever fields its body carries.
+type autoInputKey struct{}
 
 // deliberateInput decides, from the fields of a /input body, whether the input is of a deliberate
 // origin. Peer: peer_from. Operator: source "operator" (or none, with report_to), and "mcp", which
@@ -63,11 +85,14 @@ func deliberateOrigin(o agents.Origin) bool {
 }
 
 // planReviewerAutoReply reports whether a peer message to dst is the reply of a reviewer the
-// Agent runs for it on its own (a plan review with auto on). That reviewer was started by the
-// Agent, not by the member, so its reply does not start a retired planner.
+// Agent runs for it on its own (a plan review with auto). That reviewer was started by the
+// Agent, not by the member, so its reply does not start a retired planner. The evidence is that
+// the reviewer entry has an auto loop at all, not that it is enabled now: a verdict ends the loop
+// (Enabled=false) before a refused or spooled reply is sent or delivered again, and the origin of
+// that message must not change with it. When in doubt it is not deliberate.
 func planReviewerAutoReply(dst session.Meta, from string) bool {
 	for _, e := range dst.PlanReviewers {
-		if e.Reviewer == from && e.Auto != nil && e.Auto.Enabled {
+		if e.Reviewer == from && e.Auto != nil {
 			return true
 		}
 	}
