@@ -131,6 +131,15 @@ A schedule that would otherwise wake an agent just to find nothing (for example 
 - If the run history says "**Skipped**", the wake policy is `skip` and the workspace was stopped
 - When starting the workspace or the run fails, the notification center says so
 
+### A run is "Failed" and its reason starts with `resume 409 session_retired`
+
+The schedule keeps using one session, and auto-run stopped that session when its run ended. A schedule does not start a stopped session.
+
+- Hover over the row in the run history to read the reason. The notification center shows "A schedule did not run" without it
+- Start the session, then run the schedule again with **Run now**
+
+More on what starts a stopped session: [Run memos automatically](../chat/memo-auto-run.md).
+
 ## Related
 
 - [Hand work to the Fleet Operator](operator.md)

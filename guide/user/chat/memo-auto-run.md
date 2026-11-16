@@ -171,7 +171,12 @@ A run stays open until its session has nothing left to wait for. While any of th
 
 The session of a run that is "Done" is stopped. So are the sessions it started, and any watch or timer that would have started it again.
 
-- What starts the session again is you. Pressing "**Resume and continue**" or "Start", answering its question from its card, or typing a message to a Managed session starts it, and so does a message from one of your own sessions or connections. A schedule, a watch or timer notice, a booked usage-limit resume and pull request feedback do not: they are refused with "Auto-run stopped this session. Start the session first, then send again." (a schedule's run records that as its failure). A Terminal (CLI) session takes no typed message while it is stopped: start it first ([Stop and resume a session](../sessions/stop-resume.md))
+- What starts the session again is you. Pressing "**Resume and continue**" or "Start", answering its question from its card, or a message from one of your own sessions or connections starts it. Nothing that fires by itself does: a schedule, a watch or timer notice, a booked usage-limit resume and pull request feedback leave the session stopped ([Stop and resume a session](../sessions/stop-resume.md))
+  - A stopped session has no message box. The chat shows "**Resume and continue**" and "Viewing history (resume to type)" instead. Start the session first, then type
+  - A control sent to the stopped session, such as a switch of its execution method, is refused until the session is started
+  - A schedule that keeps using the session shows the miss as a failed run. Its row in the schedule's run history says "**Failed**" ("Manual" for "Run now", "Scheduled" for a timed run). Hover over the row to read the reason, which starts with `resume 409 session_retired`. The notification center gets one "A schedule did not run" entry per failed run, without the reason. The session stays stopped
+  - To carry on, start the session, then run the schedule again ([Run at a set time](../fleet/schedules.md))
+  - A watch or timer notice, a booked usage-limit resume and pull request feedback show nothing at all. The session just stays stopped
 - The session is not stopped when you act on it after the run was seen to have ended and before it is stopped. It keeps running, and the run's row in the run history says "You took over this session"
   - An act is starting the session, typing into its terminal, sending it a message, or answering its question, permission or plan
   - An act while the run is still working does not count: the session is stopped when the run ends
