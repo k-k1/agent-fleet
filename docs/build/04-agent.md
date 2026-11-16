@@ -254,7 +254,8 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
   ledger it armed. A ledger that is still left (a meta that could not be written after the start,
   or an Agent that died in between) is removed at Agent start by `sessionx.SweepFirstTurnOrphans`:
   only when no session meta has its sid and it was armed more than a day ago, and never in a round
-  where a meta file cannot be read or parsed.
+  where the meta directory or a meta file cannot be read or parsed (a missing meta directory counts: it may be
+  a store that is not mounted, so a fresh Agent with no session yet keeps its old ledgers until the first meta exists).
 - **Every path that folds a session away promotes its carried work first**
   (`PromoteCarriedFor`, before any kill or handle drop). A new path of that kind must do
   the same.

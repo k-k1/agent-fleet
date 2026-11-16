@@ -33,6 +33,8 @@ const firstTurnOrphanAge = 24 * time.Hour
 func SweepFirstTurnOrphans() int {
 	ents, err := os.ReadDir(session.MetaDir())
 	if err != nil {
+		// A missing directory is not read as "no sessions": it may be a store that is not
+		// mounted, and then every ledger would look orphaned.
 		return 0
 	}
 	live := map[string]bool{}
