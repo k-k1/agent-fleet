@@ -263,7 +263,10 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	// Do not send while a live session has a new modal up: the carried prose turns into a
 	// selection in that modal (the misdelivery class in docs/build/92).
-	if SessionAlive(m) {
+	// A session that is running yet still marked is one whose mark a carried answer could not
+	// clear after its launch (retire_clear_failed): it goes through the start again, which clears
+	// it, instead of delivering over a mark.
+	if SessionAlive(m) && !isRetired(m) {
 		if blocked := promptBlocker(name); blocked != "" {
 			writeBlockedErr(w, blocked, m.Kind)
 			return

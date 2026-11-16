@@ -574,4 +574,5 @@ Added 2026-11-16 (#4286, seen on a deployment): an answer to a carried question 
 start of a retired session. It records the act, launches, takes the retired mark off after its own launch and then
 delivers the answer, as `/start` does; the two switches still refuse a marked session.
 Added 2026-11-16: an overdue run whose stopped session carries a question, a plan or a permission stays open, as the
-second row of the §6 table says; the answer from the stopped session's card ends it without a Start first.
+second row of the §6 table says; the answer from the stopped session's card clears the wait without a Start first, and the run ends once the work the
+answer resumed is done.

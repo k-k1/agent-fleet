@@ -196,6 +196,24 @@ func TestCarriedAnswerReportsAMarkItCouldNotClear(t *testing.T) {
 		t.Fatalf("delivered %q although the start was not claimed", p)
 	default:
 	}
+	// The session is running and still marked. Once the directory is writable again, pressing
+	// the card again clears the mark and delivers, instead of delivering over it.
+	if err := os.Chmod(session.MetaDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if cur, _ := session.ReadMeta("s"); cur.RetiredAt == "" || !SessionAlive(cur) {
+		t.Fatalf("expected a running, marked session: retiredAt=%q", cur.RetiredAt)
+	}
+	if rec := c.answer(t); rec.Code != http.StatusAccepted {
+		t.Fatalf("second answer = %d %s", rec.Code, rec.Body)
+	}
+	c.awaitDelivery(t, carriedKinds[0])
+	if cur, _ := session.ReadMeta("s"); cur.RetiredAt != "" || cur.RetireClearedID == "" {
+		t.Fatalf("mark left after the retry: %q", cur.RetiredAt)
+	}
+	if _, ok := status.ReadCarried(session.UUID(m.Dir, "s")); ok {
+		t.Fatal("the carried entry was kept after delivery")
+	}
 }
 
 // A meta that cannot be read is in doubt: refused, and nothing is launched.

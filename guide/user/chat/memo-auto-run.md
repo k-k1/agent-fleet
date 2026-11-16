@@ -177,7 +177,7 @@ The session of a run that is "Done" is stopped. So are the sessions it started, 
   - An act while the run is still working does not count: the session is stopped when the run ends
   - After you take it over, auto-run does nothing more with it. Stop it yourself when you no longer need it ([Stop and resume a session](../sessions/stop-resume.md))
 - An "Overdue" run whose sessions have shown no sign of work for an hour is stopped, including a session that was waiting for you. The run then becomes "Done", except while one of those sessions still carries a question, a plan or a permission
-  - Then the run stays "waiting for you" and keeps using one of the "Sessions at the same time". It ends when you answer from the stopped session's card ("**Answer and resume**", no need to start the session first), or archive or delete the session
+  - Then the run stays "waiting for you" and keeps using one of the "Sessions at the same time". Answering from the stopped session's card ("**Answer and resume**", no need to start the session first) ends the waiting and carries the session on; the run ends once the work is done. Archiving or deleting the session ends the run too
 - Archiving or deleting the session ends the run too, as "Stopped"
 
 In the conversation, the turn auto-run handed over carries an "**Auto-run**" mark, so it is not mixed up with what you typed.
