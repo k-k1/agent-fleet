@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,11 +29,19 @@ type silentFx struct {
 	keys []string
 }
 
-// deadEndpoint is a URL nothing listens on; liveEndpoint answers every request.
+// deadSeq numbers the addresses deadEndpoint hands out.
+var deadSeq atomic.Uint32
+
+// deadEndpoint is a URL nothing listens on and nothing can come to: every call returns an
+// address no other call returned in any realistic test run (the sequence wraps after 2^23
+// calls), on a port (9, discard) no listener of this process ever gets. A
+// listened-on-then-closed port does not do: the kernel hands it to the next listener, which
+// makes two "dead" workspaces share one tracker key, or lets a dead one answer.
 func deadEndpoint() string {
-	s := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	s.Close()
-	return s.URL
+	n := deadSeq.Add(1)
+	// The first octet pair starts at 127.1 so the range never overlaps 127.0.0.1, where
+	// httptest servers listen.
+	return fmt.Sprintf("http://127.%d.%d.%d:9", 1+((n>>16)&0x7f), (n>>8)&0xff, n&0xff)
 }
 
 func liveEndpoint(t *testing.T) string {
@@ -106,6 +116,23 @@ func (f *silentFx) notifications(t *testing.T, i int, kind string) []store.Notif
 		}
 	}
 	return out
+}
+
+func TestDeadEndpointIsUniqueAndRefuses(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 2000; i++ {
+		k := endpointKey(deadEndpoint())
+		if seen[k] {
+			t.Fatalf("deadEndpoint repeated %q: two workspaces would share one tracker entry", k)
+		}
+		seen[k] = true
+	}
+	c := http.Client{Timeout: 2 * time.Second}
+	resp, err := c.Get(deadEndpoint())
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("deadEndpoint answered")
+	}
 }
 
 func TestSilentStopStopsAWorkspaceSilentPastTheCeiling(t *testing.T) {
