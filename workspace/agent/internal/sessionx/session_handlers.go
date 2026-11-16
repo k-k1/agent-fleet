@@ -1259,6 +1259,7 @@ func ForgetRuntime(m session.Meta) {
 	status.RemoveCarried(sid)
 	status.RemoveRestoreNotes(sid)
 	forgetSessionCaches(m.Name)
+	forgetInputState(m.Name)
 }
 
 // forgetSessionCaches drops the per-name read caches (folded file list, priced spend) of a

@@ -429,8 +429,27 @@ const (
 	stopLockWait = 10 * time.Second
 )
 
-// terminalLocks holds one mutex per session name (lockTerminal).
-var terminalLocks sync.Map
+// terminalLocks holds one reference-counted mutex per session name (lockTerminal). An entry is
+// created by the first caller and removed when the last one is done with it, so the table does
+// not grow with deleted sessions and a name never has two live mutexes: nobody can take a fresh
+// lock while an older holder or waiter still has the old one.
+var terminalLocks = struct {
+	mu sync.Mutex
+	m  map[string]*terminalLock
+}{m: map[string]*terminalLock{}}
+
+type terminalLock struct {
+	mu   sync.Mutex
+	refs int // holders and waiters; guarded by terminalLocks.mu
+}
+
+func releaseTerminalRef(name string, l *terminalLock) {
+	terminalLocks.mu.Lock()
+	if l.refs--; l.refs == 0 {
+		delete(terminalLocks.m, name)
+	}
+	terminalLocks.mu.Unlock()
+}
 
 // lockTerminal serialises what types into a Terminal pane's input box: a send's guards and
 // typing, and a stop's keys and reclaim. Interleaved, a send typed between the stop and the
@@ -438,13 +457,20 @@ var terminalLocks sync.Map
 // It returns the unlock, or ok=false when the other party held the pane past wait; the caller
 // then must not type or send keys.
 func lockTerminal(name string, wait time.Duration) (unlock func(), ok bool) {
-	v, _ := terminalLocks.LoadOrStore(name, &sync.Mutex{})
-	mu := v.(*sync.Mutex)
+	terminalLocks.mu.Lock()
+	l := terminalLocks.m[name]
+	if l == nil {
+		l = &terminalLock{}
+		terminalLocks.m[name] = l
+	}
+	l.refs++
+	terminalLocks.mu.Unlock()
 	for waited := time.Duration(0); ; waited += reclaimPoll {
-		if mu.TryLock() {
-			return mu.Unlock, true
+		if l.mu.TryLock() {
+			return func() { l.mu.Unlock(); releaseTerminalRef(name, l) }, true
 		}
 		if waited >= wait {
+			releaseTerminalRef(name, l)
 			return nil, false
 		}
 		reclaimSleep(reclaimPoll)

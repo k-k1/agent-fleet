@@ -652,3 +652,114 @@ func TestWorkflowWatchTellsEachRunInTheGraceWindowOnce(t *testing.T) {
 		t.Fatalf("told %v", sink.told)
 	}
 }
+
+func TestPollRunReadsAFreshlyFinishedRunShortly(t *testing.T) {
+	f := newFakeGitHub()
+	const subj = SubjectID("github:o/r/actions/runs/58")
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	a := newTestActions(t, f)
+	a.GH.now = func() time.Time { return now }
+	for _, c := range []struct {
+		name    string
+		ago     time.Duration
+		updated string
+		want    time.Duration
+	}{
+		{"just finished", 30 * time.Second, "", actionsFreshAfter},
+		{"inside the window", actionsFreshWindow - time.Second, "", actionsFreshAfter},
+		{"at the window", actionsFreshWindow, "", ghSettledAfter},
+		{"long finished", 3 * time.Hour, "", ghSettledAfter},
+		{"clock a little ahead", -30 * time.Second, "", actionsFreshAfter},
+		{"clock ahead past the tolerance", -2 * time.Minute, "", ghSettledAfter},
+		{"clock far ahead", -9 * time.Minute, "", ghSettledAfter},
+		{"no updated_at", 0, "none", ghSettledAfter},
+	} {
+		body := run(58, "completed", "success", "2026-11-16T11:00:00Z", 1)
+		body["updated_at"] = now.Add(-c.ago).Format(time.RFC3339)
+		if c.updated == "none" {
+			delete(body, "updated_at")
+		}
+		f.bodies["/repos/o/r/actions/runs/58"] = body
+		_, _, hint, err := a.Poll(context.Background(), subj, nil, nil)
+		if err != nil || hint.After != c.want || !hint.Settled {
+			t.Errorf("%s: hint %+v err %v, want After %v", c.name, hint, err, c.want)
+		}
+	}
+}
+
+// Polls a finished run through the real source with a fake clock and the cursor carried over:
+// unchanged reads are 304s and free, so one window is one counted read; and when every read is a
+// counted 200 (the run changes each time, a failed run also reads its jobs) the shared guard stops
+// the source at its share instead of the interval spending without bound.
+func TestFreshFinishedRunPollsStayInsideTheBudgetShare(t *testing.T) {
+	const subj = SubjectID("github:o/r/actions/runs/59")
+	const path = "/repos/o/r/actions/runs/59"
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	setup := func(limit string) (*fakeGitHub, *GitHubActions) {
+		f := newFakeGitHub()
+		f.headers.Set("X-RateLimit-Limit", limit)
+		a := newTestActions(t, f)
+		a.GH.now = func() time.Time { return now }
+		return f, a
+	}
+	body := func(conclusion string, updated time.Time) map[string]any {
+		b := run(59, "completed", conclusion, "2026-11-16T11:00:00Z", 1)
+		b["updated_at"] = updated.Format(time.RFC3339)
+		return b
+	}
+
+	// Unchanged: one counted 200, the rest of the window is 304s, then the slow interval.
+	f, a := setup("5000")
+	f.bodies[path] = body("success", now.Add(-time.Minute))
+	var cur []byte
+	polls := 0
+	for {
+		_, c, hint, err := a.Poll(context.Background(), subj, cur, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cur = c
+		polls++
+		if hint.After != actionsFreshAfter {
+			if hint.After != ghSettledAfter {
+				t.Fatalf("hint %+v", hint)
+			}
+			break
+		}
+		now = now.Add(actionsFreshAfter)
+		if polls > 100 {
+			t.Fatal("never left the short interval")
+		}
+	}
+	if want := int(actionsFreshWindow / actionsFreshAfter); polls < want-1 || polls > want+1 {
+		t.Fatalf("polls in one window = %d, want about %d", polls, want)
+	}
+	if a.GH.spent != 1 || f.n304 != polls-1 {
+		t.Fatalf("spent=%d 304s=%d over %d polls, want 1 counted and the rest 304", a.GH.spent, f.n304, polls)
+	}
+
+	// Worst case: each read is a counted 200 (a re-run moves updated_at). A limit of 40 is a share
+	// of 4 counted requests; the guard answers ErrRateLimited until the hour is over.
+	f, a = setup("40")
+	cur = nil
+	var rl *ErrRateLimited
+	limited := false
+	for i := 0; i < 20 && !limited; i++ {
+		f.bodies[path] = body("failure", now.Add(-time.Minute))
+		f.bodies[path].(map[string]any)["run_attempt"] = i + 1
+		f.bodies["/repos/o/r/actions/runs/59/attempts/"+strconv.Itoa(i+1)+"/jobs?per_page=100"] = map[string]any{"jobs": []any{}}
+		_, c, _, err := a.Poll(context.Background(), subj, cur, nil)
+		switch {
+		case errors.As(err, &rl):
+			limited = true
+		case err != nil:
+			t.Fatal(err)
+		default:
+			cur = c
+		}
+		now = now.Add(actionsFreshAfter)
+	}
+	if !limited || a.GH.spent > 4 {
+		t.Fatalf("limited=%v spent=%d, want the guard to stop at the share of 4", limited, a.GH.spent)
+	}
+}

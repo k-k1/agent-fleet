@@ -948,11 +948,11 @@ func typeLineAndSubmit(name, pane, text string) error {
 			mine = &sp
 		}
 	}
-	if out, err := tmuxx.Cmd("send-keys", "-t", pane, "Enter").CombinedOutput(); err != nil {
+	if out, err := tmuxx.CombinedOutput("send-keys", "-t", pane, "Enter"); err != nil {
 		if mine != nil {
 			forgetSubmitted(name, *mine)
 		}
-		return fmt.Errorf("%v: %s", err, out)
+		return fmt.Errorf("%w: %s", err, out)
 	}
 	return nil
 }
@@ -996,8 +996,8 @@ func typePromptText(name, pane, text string) error {
 	t := terminalTraits(kind)
 	text = shapedPrompt(name, text)
 	if !pasteNeeded(kind, text) {
-		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", "--", text).CombinedOutput(); err != nil {
-			return fmt.Errorf("%v: %s", err, out)
+		if out, err := tmuxx.CombinedOutput("send-keys", "-t", pane, "-l", "--", text); err != nil {
+			return fmt.Errorf("%w: %s", err, out)
 		}
 		return nil
 	}
@@ -1008,16 +1008,16 @@ func typePromptText(name, pane, text string) error {
 		text = strings.ReplaceAll(text, "\r\n", "\n")
 	}
 	buffer := fmt.Sprintf("af-prompt-%s-%d", name, time.Now().UnixNano())
-	load := tmuxx.Cmd("load-buffer", "-b", buffer, "-")
-	load.Stdin = strings.NewReader(text)
-	if out, err := load.CombinedOutput(); err != nil {
-		return fmt.Errorf("%v: %s", err, out)
+	if out, err := tmuxx.CombinedOutputStdin(text, "load-buffer", "-b", buffer, "-"); err != nil {
+		// A load that timed out may still have created the buffer.
+		_ = tmuxx.Run("delete-buffer", "-b", buffer)
+		return fmt.Errorf("%w: %s", err, out)
 	}
 	// -p enables bracketed paste when the target TUI requested it; -d removes the
 	// one-shot buffer even after a successful paste.
-	if out, err := tmuxx.Cmd("paste-buffer", "-p", "-d", "-b", buffer, "-t", pane).CombinedOutput(); err != nil {
-		_ = tmuxx.Cmd("delete-buffer", "-b", buffer).Run()
-		return fmt.Errorf("%v: %s", err, out)
+	if out, err := tmuxx.CombinedOutput("paste-buffer", "-p", "-d", "-b", buffer, "-t", pane); err != nil {
+		_ = tmuxx.Run("delete-buffer", "-b", buffer)
+		return fmt.Errorf("%w: %s", err, out)
 	}
 	return nil
 }
@@ -1138,7 +1138,7 @@ func typeInitialPrompt(name, prompt string) string {
 	// inside the paste window (the Console's seedSubmit nudges for the same reason).
 	// A second Enter after the window closes is a no-op if the first already submitted.
 	time.Sleep(900 * time.Millisecond)
-	_ = tmuxx.Cmd("send-keys", "-t", pane, "Enter").Run()
+	_ = tmuxx.Run("send-keys", "-t", pane, "Enter")
 	// A real task starts a turn — mark working so the chip reacts before the agent's hook.
 	markSessionWorkingFrom(name, pre)
 	// Delivery confirmation (docs/log/38): after typing and the nudge, check for evidence
@@ -1191,9 +1191,9 @@ func disconnectRemoteControl(name string, m session.Meta) {
 		return
 	}
 	time.Sleep(300 * time.Millisecond) // let the menu render
-	_ = tmuxx.Cmd("send-keys", "-t", pane, "Down").Run()
+	_ = tmuxx.Run("send-keys", "-t", pane, "Down")
 	time.Sleep(90 * time.Millisecond)
-	_ = tmuxx.Cmd("send-keys", "-t", pane, "Enter").Run()
+	_ = tmuxx.Run("send-keys", "-t", pane, "Enter")
 	time.Sleep(300 * time.Millisecond) // let the disconnect actually land before the pane is killed
 }
 
@@ -1226,8 +1226,8 @@ func sendNamedKeys(pane string, keys []string) error {
 // sendNamedKeysGap is sendNamedKeys with an explicit pause between keys.
 func sendNamedKeysGap(pane string, keys []string, gap time.Duration) error {
 	for i, k := range keys {
-		if out, err := tmuxx.Cmd("send-keys", "-t", pane, k).CombinedOutput(); err != nil {
-			return fmt.Errorf("%v: %s", err, out)
+		if out, err := tmuxx.CombinedOutput("send-keys", "-t", pane, k); err != nil {
+			return fmt.Errorf("%w: %s", err, out)
 		}
 		if i < len(keys)-1 {
 			time.Sleep(gap)
@@ -1502,7 +1502,7 @@ func sessionInputReady(meta session.Meta, alive bool) bool {
 		if pane == "" {
 			return false
 		}
-		out, err := tmuxx.Cmd("capture-pane", "-p", "-S", "-", "-t", pane).Output()
+		out, err := tmuxx.Output("capture-pane", "-p", "-S", "-", "-t", pane)
 		return err == nil && strings.Contains(string(out), "Starting session with SessionId:")
 	}
 	if terminalScreen(meta.Kind, meta.Name) != "" {

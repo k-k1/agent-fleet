@@ -5,6 +5,8 @@
 package tmuxx
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
@@ -72,6 +74,77 @@ func Cmd(args ...string) *exec.Cmd {
 		return exec.Command("tmux", append([]string{"-L", s}, args...)...)
 	}
 	return exec.Command("tmux", args...)
+}
+
+// OneShotTimeout bounds one request/response tmux call (OneShotCmd and the Output / Run /
+// CombinedOutput wrappers). Such a call takes milliseconds when tmux answers, so 30 s is
+// three orders of magnitude of slack: a slow, loaded host still finishes, while a tmux
+// process that stopped answering ends in an error instead of holding its caller (and, for a
+// when_ready delivery, every later input of the session) forever. A var so a test can
+// shorten it.
+var OneShotTimeout = 30 * time.Second
+
+// killGrace is how long Wait lets a killed tmux client's pipes drain before giving up on them.
+const killGrace = 2 * time.Second
+
+// OneShotCmd is Cmd with a deadline of OneShotTimeout; the caller must call cancel. On expiry
+// only the tmux client is killed: the tmux server is a separate process and is left as it
+// was, but the request may already have reached it, so a timed-out call is "outcome unknown",
+// not "not applied". Never use it for attach or control-mode streams, which are meant to
+// outlive any deadline.
+func OneShotCmd(args ...string) (*exec.Cmd, context.CancelFunc) {
+	c, _, cancel := oneShot(args)
+	return c, cancel
+}
+
+func oneShot(args []string) (*exec.Cmd, context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), OneShotTimeout)
+	c := Cmd(args...)
+	// Rebuild on the same binary and arguments so exec owns the deadline.
+	cc := exec.CommandContext(ctx, c.Path, c.Args[1:]...)
+	cc.Env, cc.WaitDelay = c.Env, killGrace
+	return cc, ctx, cancel
+}
+
+// timedOut turns the "signal: killed" a deadline leaves behind into an error that satisfies
+// errors.Is(err, context.DeadlineExceeded), so a caller can tell a hung tmux from a refusal.
+func timedOut(ctx context.Context, args []string, err error) error {
+	if err != nil && ctx.Err() != nil {
+		return fmt.Errorf("tmux %s timed out after %v (outcome unknown): %w (%v)", args[0], OneShotTimeout, ctx.Err(), err)
+	}
+	return err
+}
+
+// Output runs a one-shot tmux call under OneShotTimeout and returns its stdout.
+func Output(args ...string) ([]byte, error) {
+	c, ctx, cancel := oneShot(args)
+	defer cancel()
+	out, err := c.Output()
+	return out, timedOut(ctx, args, err)
+}
+
+// CombinedOutput is Output with stderr folded into the result.
+func CombinedOutput(args ...string) ([]byte, error) {
+	c, ctx, cancel := oneShot(args)
+	defer cancel()
+	out, err := c.CombinedOutput()
+	return out, timedOut(ctx, args, err)
+}
+
+// CombinedOutputStdin is CombinedOutput with stdin supplied (load-buffer -).
+func CombinedOutputStdin(stdin string, args ...string) ([]byte, error) {
+	c, ctx, cancel := oneShot(args)
+	defer cancel()
+	c.Stdin = strings.NewReader(stdin)
+	out, err := c.CombinedOutput()
+	return out, timedOut(ctx, args, err)
+}
+
+// Run runs a one-shot tmux call under OneShotTimeout, discarding its output.
+func Run(args ...string) error {
+	c, ctx, cancel := oneShot(args)
+	defer cancel()
+	return timedOut(ctx, args, c.Run())
 }
 
 // spinnerRe matches claude's live working-spinner header — the "<glyph> <Gerund>…
@@ -216,7 +289,7 @@ func atPromptFooter(s string) bool {
 }
 
 func HasSession(tn string) bool {
-	return Cmd("has-session", "-t", session.ExactTarget(tn)).Run() == nil
+	return Run("has-session", "-t", session.ExactTarget(tn)) == nil
 }
 
 // CLIRecordsSince is the instant that separates what the CLI now running in tmux session tn
@@ -257,7 +330,7 @@ func CLIStartedAfter(tn string) (time.Time, bool) {
 // it. Compare launches by id, never by at: where /proc has the start, at is recomputed against
 // the clock on every read and moves by milliseconds between two reads of one launch.
 func PaneLaunch(tn string) (id string, at time.Time, ok bool) {
-	out, err := Cmd("list-panes", "-t", session.ExactTarget(tn), "-F", "#{session_created} #{pane_pid} #{pane_id}").Output()
+	out, err := Output("list-panes", "-t", session.ExactTarget(tn), "-F", "#{session_created} #{pane_pid} #{pane_id}")
 	if err != nil {
 		return "", time.Time{}, false
 	}
@@ -284,7 +357,7 @@ func PaneLaunch(tn string) (id string, at time.Time, ok bool) {
 // paneStart reads tmux session tn's creation stamp (whole seconds) and, where /proc has it,
 // the start of the pane's process (exact). ok is false when there is no such session.
 func paneStart(tn string) (sec int64, start time.Time, exact, ok bool) {
-	out, err := Cmd("list-panes", "-t", session.ExactTarget(tn), "-F", "#{session_created} #{pane_pid}").Output()
+	out, err := Output("list-panes", "-t", session.ExactTarget(tn), "-F", "#{session_created} #{pane_pid}")
 	if err != nil {
 		return 0, time.Time{}, false, false
 	}
@@ -349,7 +422,7 @@ func ProcessStart(pid int) (time.Time, bool) {
 // window, or "" if none. Uses the "=" exact target for list-panes (a target-
 // SESSION context, where "=" is honored), then returns the active pane.
 func SessionPaneID(tn string) string {
-	out, err := Cmd("list-panes", "-t", session.ExactTarget(tn), "-F", "#{pane_active} #{pane_id}").Output()
+	out, err := Output("list-panes", "-t", session.ExactTarget(tn), "-F", "#{pane_active} #{pane_id}")
 	if err != nil {
 		return ""
 	}
@@ -378,7 +451,7 @@ func CapturePane(tn string) string {
 	if pane == "" {
 		return ""
 	}
-	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	out, err := Output("capture-pane", "-p", "-t", pane)
 	if err != nil {
 		return ""
 	}
@@ -391,7 +464,7 @@ func CapturePane(tn string) string {
 // agree on what "running" means.
 func LiveSessionNames() map[string]bool {
 	live := map[string]bool{}
-	out, err := Cmd("list-sessions", "-F", "#{session_name}").Output()
+	out, err := Output("list-sessions", "-F", "#{session_name}")
 	if err != nil {
 		return live
 	}
@@ -412,7 +485,7 @@ func LiveSessionNames() map[string]bool {
 // words) would misclassify. Kept because an orphan has no other signal, and the only
 // cost is a wrong badge on a session that already lost its meta. Defaults to shell.
 func PaneKind(name string) string {
-	out, err := Cmd("list-panes", "-t", session.ExactTarget(session.TmuxName(name)), "-F", "#{pane_start_command}").Output()
+	out, err := Output("list-panes", "-t", session.ExactTarget(session.TmuxName(name)), "-F", "#{pane_start_command}")
 	if err != nil {
 		return session.KindShell
 	}
@@ -442,7 +515,7 @@ func AtIdlePrompt(name string) bool {
 	if pane == "" {
 		return false
 	}
-	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	out, err := Output("capture-pane", "-p", "-t", pane)
 	if err != nil {
 		return false
 	}
@@ -468,7 +541,7 @@ func AgentsViewActive(name string) bool {
 	if pane == "" {
 		return false
 	}
-	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	out, err := Output("capture-pane", "-p", "-t", pane)
 	if err != nil {
 		return false
 	}
@@ -550,7 +623,7 @@ func LeaveAgentsView(name string) bool {
 		return false
 	}
 	for _, k := range keys {
-		if err := Cmd("send-keys", "-t", pane, k).Run(); err != nil {
+		if err := Run("send-keys", "-t", pane, k); err != nil {
 			return false
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -601,7 +674,7 @@ func ModalActive(name string) bool {
 	if pane == "" {
 		return false
 	}
-	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	out, err := Output("capture-pane", "-p", "-t", pane)
 	if err != nil {
 		return false
 	}
@@ -670,7 +743,7 @@ func AtRateLimitModal(name string) bool {
 	if pane == "" {
 		return false
 	}
-	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	out, err := Output("capture-pane", "-p", "-t", pane)
 	if err != nil {
 		return false
 	}
@@ -718,7 +791,7 @@ func DismissRateLimitModal(name string) bool {
 	if !rateLimitDefaultRe.MatchString(frame) {
 		return false // the selection has moved off 1 — a human is mid-choice, so leave it alone
 	}
-	if err := Cmd("send-keys", "-t", pane, "Enter").Run(); err != nil {
+	if err := Run("send-keys", "-t", pane, "Enter"); err != nil {
 		return false
 	}
 	time.Sleep(400 * time.Millisecond) // wait for the repaint (same interval as LeaveAgentsView)
@@ -755,7 +828,7 @@ func ReadPane(name string) PaneRead {
 		ForgetPane(name)
 		return PaneRead{}
 	}
-	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	out, err := Output("capture-pane", "-p", "-t", pane)
 	if err != nil {
 		return PaneRead{}
 	}
@@ -786,7 +859,7 @@ func IsBusy(name string) bool {
 	if pane == "" {
 		return false
 	}
-	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	out, err := Output("capture-pane", "-p", "-t", pane)
 	if err != nil {
 		return false
 	}
