@@ -1,4 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const opened = vi.hoisted(() => ({
+  calls: [] as Array<[string, boolean]>,
+  menu: null as null | ((name: string, x: number, y: number) => void),
+}));
+vi.mock("../../sessions/SessionLinkMenu.tsx", () => ({ useSessionLinkMenu: () => opened.menu }));
+vi.mock("../../sessions/open.ts", async (orig) => ({
+  ...(await orig<typeof import("../../sessions/open.ts")>()),
+  openSessionChat: (n: string) => opened.calls.push([n, false]),
+  openSessionChatSplit: (n: string) => opened.calls.push([n, true]),
+}));
+
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
@@ -9,6 +21,7 @@ import { useWorkItemStore } from "../../workitems/store.ts";
 import type { WorkItem } from "../../workitems/read.ts";
 import { useWorkItemModal } from "../../workitems/modal.ts";
 import type { SessionWatch } from "../../../core/api/client.ts";
+import { useSessionsStore } from "../../sessions/store.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -16,6 +29,9 @@ let host: HTMLDivElement | null = null;
 afterEach(() => {
   useWorkItemModal.getState().close();
   useWorkItemStore.setState({ payload: null });
+  useSessionsStore.setState({ sessions: [] });
+  opened.calls = [];
+  opened.menu = null;
   act(() => root?.unmount());
   vi.useRealTimers();
   host?.remove();
@@ -189,6 +205,53 @@ describe("WatchesPanel", () => {
       expect(link(0).target).toBe("_blank");
       expect(click(link(0)).defaultPrevented).toBe(false);
       expect(useWorkItemModal.getState().detail).toBeNull();
+    });
+  });
+
+  describe("a fleet watch's session", () => {
+    const fleet: SessionWatch = { id: "w7", source: "fleet", ref: "s4uyskj", types: ["fleet.session.idle"] };
+
+    it("links the slug like a Markdown reply does and opens that session's chat", () => {
+      useSessionsStore.setState({ sessions: [{ name: "s4uyskj" } as never] });
+      mount([fleet], vi.fn());
+      const a = rows()[0].querySelector<HTMLAnchorElement>("a.md-session-link")!;
+      expect(a.textContent).toBe("s4uyskj");
+      expect(a.classList.contains("mw-ref")).toBe(true);
+      act(() => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
+      act(() => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true })));
+      expect(opened.calls).toEqual([
+        ["s4uyskj", false],
+        ["s4uyskj", true],
+      ]);
+    });
+
+    it("leaves a session that does not exist as plain text", () => {
+      mount([fleet], vi.fn());
+      expect(rows()[0].querySelector("a")).toBeNull();
+      expect(rows()[0].querySelector(".mw-ref")?.textContent).toBe("s4uyskj");
+    });
+
+    it("follows the session appearing and disappearing while the row stays", () => {
+      mount([fleet], vi.fn());
+      act(() => useSessionsStore.setState({ sessions: [{ name: "s4uyskj" } as never] }));
+      expect(rows()[0].querySelectorAll("a.md-session-link")).toHaveLength(1);
+      act(() => useSessionsStore.setState({ sessions: [] }));
+      expect(rows()[0].querySelector("a")).toBeNull();
+      expect(rows()[0].querySelector(".mw-ref")?.textContent).toBe("s4uyskj");
+      act(() => useSessionsStore.setState({ sessions: [{ name: "s4uyskj" } as never] }));
+      const links = rows()[0].querySelectorAll("a.md-session-link");
+      expect(links).toHaveLength(1);
+      expect(links[0].textContent).toBe("s4uyskj");
+    });
+
+    it("opens the session menu on a right click under a host", () => {
+      useSessionsStore.setState({ sessions: [{ name: "s4uyskj" } as never] });
+      const menu = vi.fn();
+      opened.menu = menu;
+      mount([fleet]);
+      const a = rows()[0].querySelector<HTMLAnchorElement>("a.md-session-link")!;
+      act(() => a.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 6 })));
+      expect(menu).toHaveBeenCalledWith("s4uyskj", 5, 6);
     });
   });
 });
