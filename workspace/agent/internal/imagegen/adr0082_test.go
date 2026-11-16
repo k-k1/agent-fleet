@@ -273,6 +273,11 @@ func TestStatusReportsFleetOnADeclaredRowKeyedNotByKind(t *testing.T) {
 	if row.Kind != ProviderComfy {
 		t.Errorf("kind = %q for row %q, want %q", row.Kind, row.ID, ProviderComfy)
 	}
+	// orderKinds carries the same kind for every fleet row in the order, ready or not, and names
+	// no vendor route.
+	if got.OrderKinds["image"] != ProviderComfy || len(got.OrderKinds) != 1 {
+		t.Errorf("orderKinds = %v, want only image → %s", got.OrderKinds, ProviderComfy)
+	}
 	// The vendor routes must not be mislabelled as fleet just because the field now exists.
 	for _, p := range got.Providers {
 		if (p.ID == ProviderCodex || p.ID == ProviderAgy) && p.Fleet {

@@ -210,6 +210,9 @@ export interface ImagegenStatus {
   /** True from an Agent whose `order` and `providers` are policy-filtered (ADR 0138 D10a). An
    *  older Agent sends the same shape unfiltered and omits it. */
   orderFiltered?: boolean;
+  /** The client kind (comfy, openai-compat) of each declared images row in `order`, ready or
+   *  not: what a legacy alias in the stored preference expands to. */
+  orderKinds?: Record<string, string>;
   error?: ApiError;
 }
 

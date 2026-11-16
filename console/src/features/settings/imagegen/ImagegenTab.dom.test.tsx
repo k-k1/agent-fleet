@@ -34,13 +34,18 @@ const CODEX = { id: "codex", kind: "codex" };
 
 /** A live answer: `order` as the Agent sends it (absent when the policy leaves nothing), and the
  *  ready providers. */
-function respond(order: string[] | undefined, providers: Array<Record<string, unknown>>) {
+function respond(
+  order: string[] | undefined,
+  providers: Array<Record<string, unknown>>,
+  orderKinds: Record<string, string> = { image: "comfy" },
+) {
   api.mockImplementation((path: string) => {
     if (path === "api/imagegen/status") {
       return Promise.resolve({
         enabled: true,
         ready: providers.length > 0,
         orderFiltered: true,
+        orderKinds,
         ...(order ? { order } : {}),
         providers,
       });
@@ -187,6 +192,32 @@ describe("Settings > Image generation writes the prefs the Agents page wrote", (
     // agy keeps its slot, so it ranks first again once the policy allows it.
     expect(getSettings().imageProviderOrder).toEqual(["agy", "codex", "image"]);
     expect(orderRows()).toEqual(["Codex", "image (ComfyUI)"]);
+  });
+});
+
+// A preference saved before ADR 0082 names the engine by its kind ("comfy"); the Agent shows the
+// row under its key. Moving that row has to land where the member put it once the Agent reads the
+// saved order again.
+describe("a legacy alias in the stored order", () => {
+  it("saves a reorder of the aliased row so that the Agent runs it where it was put", async () => {
+    setSettings({ ...settingsDefaults(), imageGeneration: true, imageProviderOrder: ["comfy", "agy", "codex"] });
+    respond(["image", "agy", "codex"], [IMAGE, AGY, CODEX]);
+    await mount();
+    const downOf = (label: string) =>
+      Array.from(host!.querySelectorAll<HTMLElement>(".ds-orderlist-row"))
+        .find((r) => r.querySelector(".ds-orderlist-label")?.textContent === label)!
+        .querySelectorAll<HTMLButtonElement>("button")[1];
+    await act(async () => downOf("image (ComfyUI)").click());
+    await act(async () => downOf("image (ComfyUI)").click());
+    expect(orderRows()).toEqual(["Antigravity", "Codex", "image (ComfyUI)"]);
+    // The alias now stands after image: it no longer pulls image back to the front.
+    expect(getSettings().imageProviderOrder).toEqual(["agy", "codex", "image", "comfy"]);
+  });
+
+  it("does not list a kind name the deployment declares no row of", async () => {
+    respond(["image", "openai-compat", "agy", "codex"], [IMAGE, AGY, CODEX]);
+    await mount();
+    expect(orderRows()).toEqual(["image (ComfyUI)", "Antigravity", "Codex"]);
   });
 });
 

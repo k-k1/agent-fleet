@@ -6,7 +6,7 @@ import { agentOf } from "../../../agents/registry.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { imagegenStatus } from "../../imagegen/api.ts";
-import { mergeVisibleOrder } from "./visibleOrder.ts";
+import { LEGACY_ALIASES, mergeVisibleOrder } from "./visibleOrder.ts";
 import { isPreAdr0082Status, type ImagegenProvider } from "../../imagegen/wire.ts";
 
 // ImagegenTab is Settings > Image generation (ADR 0138 D16): the generate_image tool af's own MCP
@@ -25,7 +25,11 @@ export function ImagegenTab() {
   // older Agents send the same shape unfiltered). The list is drawn only from a trusted answer,
   // because only the Agent knows what the credential policy allows (ADR 0138 D10a): a static or
   // unfiltered list would name providers the policy hides.
-  const [status, setStatus] = useState<{ order: string[]; providers: ImagegenProvider[] } | null>(null);
+  const [status, setStatus] = useState<{
+    order: string[];
+    kinds: Record<string, string>;
+    providers: ImagegenProvider[];
+  } | null>(null);
 
   // Load while the workspace is running, and again every STATUS_REFRESH_MS: a policy changed by
   // an administrator while this page stays open reaches it within the same bound the Agent's own
@@ -47,7 +51,14 @@ export function ImagegenTab() {
           if (isPreAdr0082Status(providers)) return setStatus(null);
           // `order` is policy-filtered, ready or not, so an allowed provider that is not
           // connected yet keeps its rank; absent means the policy leaves none.
-          setStatus({ order: Array.isArray(st.order) ? st.order : [], providers });
+          // A kind name with no declared row (the base order's placeholder for a kind this
+          // deployment does not run) is no provider: it is left out of the list, and so keeps its
+          // stored slot like a hidden entry.
+          const kinds = st.orderKinds && typeof st.orderKinds === "object" ? st.orderKinds : {};
+          const order = (Array.isArray(st.order) ? st.order : []).filter(
+            (id) => id in kinds || !LEGACY_ALIASES.includes(id),
+          );
+          setStatus({ order, kinds, providers });
         })
         .catch(() => live && setStatus(null));
     void load();
@@ -76,7 +87,7 @@ export function ImagegenTab() {
   // (mergeVisibleOrder), so it is neither shown nor moved.
   const saveOrder = (visible: string[]) => {
     const stored = Array.isArray(s.imageProviderOrder) ? s.imageProviderOrder : [];
-    setSetting("imageProviderOrder", mergeVisibleOrder(stored, imageOrder, visible));
+    setSetting("imageProviderOrder", mergeVisibleOrder(stored, imageOrder, visible, status?.kinds));
     // The list is the Agent's answer, which reflects the new pref only on the next fetch.
     if (status) setStatus({ ...status, order: visible });
   };

@@ -57,6 +57,10 @@ type statusResponse struct {
 	// the credential policy forbids or cannot confirm (ADR 0138 D10a). An older Agent sends the
 	// same shape unfiltered, so the Console lists Order only when this is set.
 	OrderFiltered bool `json:"orderFiltered"`
+	// OrderKinds names the client kind (comfy, openai-compat) of each declared images row in
+	// Order, ready or not, so the Console can expand a legacy kind alias in the stored preference to the rows
+	// it can see, the way normalizeStoredProviderOrder does, before writing a reorder back.
+	OrderKinds map[string]string `json:"orderKinds,omitempty"`
 	// Providers is EVERY ready provider, in the effective order, each with its own capability
 	// list. The flat fields above describe only the first one — which was enough while the
 	// caller could not choose, and stopped being enough the moment `generate_image` grew a
@@ -255,7 +259,7 @@ type loraStatus struct {
 
 // HandleStatus answers GET /imagegen/status?session=<name>.
 func HandleStatus(w http.ResponseWriter, r *http.Request) {
-	out := statusResponse{Enabled: enabled(), Order: effectiveOrder(), OrderFiltered: true}
+	out := statusResponse{Enabled: enabled(), Order: effectiveOrder()}
 	if name := r.URL.Query().Get("session"); session.ValidName(name) {
 		if m, ok := session.ReadMeta(name); ok {
 			out.Kind = m.Kind
@@ -271,6 +275,14 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 	// cannot be told, is not listed (ADR 0138 D10a): neither among the providers nor in the order,
 	// which the Console shows as the member's provider list. The stored preference
 	// (imageProviderOrder) is not rewritten here.
+	// A policy that cannot be confirmed or recorded (ADR 0138 D12) cannot tell what is allowed:
+	// nothing is listed, and orderFiltered stays false so the Console lists nothing either.
+	if routepolicy.Active().Gate() != nil {
+		out.Order = nil
+		httpx.WriteJSON(w, http.StatusOK, out)
+		return
+	}
+	out.OrderFiltered = true
 	hide, hiding := routepolicy.Hiding()
 	if hiding {
 		shown := make([]string, 0, len(out.Order))
@@ -282,6 +294,16 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out.Order = shown
+	}
+	for _, id := range out.Order {
+		for _, row := range imageProviderRowsSafe() {
+			if row.Key == id {
+				if out.OrderKinds == nil {
+					out.OrderKinds = map[string]string{}
+				}
+				out.OrderKinds[id] = row.Provider
+			}
+		}
 	}
 	for _, id := range out.Order {
 		p, ok := byID[id]
