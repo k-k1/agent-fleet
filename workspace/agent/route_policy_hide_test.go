@@ -33,6 +33,7 @@ func useHidingPolicy(t *testing.T, p routepolicy.Policy) {
 	if _, err := s.Accept(p); err != nil {
 		t.Fatal(err)
 	}
+	settleKindProbes(t)
 	old := routepolicy.Active
 	routepolicy.Active = func() *routepolicy.Store { return s }
 	t.Cleanup(func() { routepolicy.Active = old })
@@ -43,6 +44,7 @@ var apiKeysOnly = routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []s
 
 func liveKinds(t *testing.T) map[string]kindEntryWire {
 	t.Helper()
+	settleKindProbes(t)
 	rec := httptest.NewRecorder()
 	handleAgentKinds(rec, httptest.NewRequest(http.MethodGet, "/agents/kinds", nil))
 	var got kindCatalogWire
@@ -238,18 +240,20 @@ func TestEveryLoginFlowIsGuarded(t *testing.T) {
 	}
 }
 
-// memberHome gives the test a HOME of its own for the member's ui-prefs. Not t.TempDir: the live
-// catalog asks the kinds' credential probes in goroutines it stops waiting for after
-// usableRoutesBudget, and a slow probe can still write under HOME after the test ends, which
-// would fail t.TempDir's cleanup.
+// settleKindProbes makes the test wait, when it ends, for the credential probes the live catalog
+// started. The catalog stops waiting for them after usableRoutesBudget, and a slow one can still
+// write under HOME, which fails t.TempDir's cleanup ("directory not empty"). Call it AFTER the
+// temporary directories are made: cleanups run last-in first-out, so this one runs before theirs.
+func settleKindProbes(t *testing.T) {
+	t.Helper()
+	t.Cleanup(awaitKindProbes)
+}
+
+// memberHome gives the test a HOME of its own for the member's ui-prefs.
 func memberHome(t *testing.T) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "member-home-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	t.Setenv("HOME", dir)
+	t.Setenv("HOME", t.TempDir())
+	settleKindProbes(t)
 }
 
 // writeMemberPrefs replaces the member's ui-prefs with prefs.
@@ -269,6 +273,7 @@ func writeMemberPrefs(t *testing.T, prefs map[string]any) {
 
 func liveAccess(t *testing.T) memberAccessWire {
 	t.Helper()
+	settleKindProbes(t)
 	rec := httptest.NewRecorder()
 	handleAgentKinds(rec, httptest.NewRequest(http.MethodGet, "/agents/kinds", nil))
 	var got kindCatalogWire

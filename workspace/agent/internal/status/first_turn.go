@@ -309,8 +309,7 @@ func noteObservedFirstTurnEnd(sid, at string) {
 // the record may still say working from a turn whose end nobody saw (the Agent was not running),
 // so the state alone cannot tell this start from a heartbeat.
 func PersistTurnStart(sid, key string) {
-	persist(sid, SessionStatus{State: "working", turnStart: true, startKey: key})
-	RemoveCompletionKey(sid)
+	persistDroppingKey(sid, SessionStatus{State: "working", turnStart: true, startKey: key})
 }
 
 // VoidUnconfirmedFirstTurns is called at Agent start: a ledger whose only start is the create's

@@ -60,7 +60,7 @@ type SessionStatus struct {
 	// the turn has not ended yet. Empty means a clean end, and also an old record written
 	// before this field existed — both must read as "no reason", not a crash or a false alarm.
 	TurnEndReason string `json:"turnEndReason,omitempty"`
-	// Rev names THIS write of the record. Every write gets a fresh random one (persist), so
+	// Rev names THIS write of the record. Every write gets a fresh random one (persistLocked), so
 	// it is the identity a poll's observation can be pinned to: an observation of the end of
 	// the turn this record describes stops counting the moment anything writes a new record
 	// (the next turn's working, a settle, a heal) — see ObservedTurnEnd.
@@ -212,9 +212,19 @@ func Persist(sid, state string) { PersistRev(sid, state) }
 // PersistRev is Persist that returns the Rev of the record it wrote, so a caller can later
 // take back exactly that write (PersistIf) and never one a hook made since.
 func PersistRev(sid, state string) string {
-	rev := persist(sid, SessionStatus{State: state})
-	if state == "working" {
-		RemoveCompletionKey(sid) // new turn started; the next end will mint a fresh key
+	return persistDroppingKey(sid, SessionStatus{State: state})
+}
+
+// persistDroppingKey writes the record and, for a "working" one, drops the previous turn's
+// completion key (a new turn started; the next end mints a fresh one), both under the
+// per-session lock like PersistTurnEndFor's key and record: a removal after the unlock could
+// delete the key a turn end written in between and leave that end without one.
+func persistDroppingKey(sid string, s SessionStatus) string {
+	unlock, _ := lockSid(sid) // a lock timeout still writes: the hook's record is authoritative, only the heal (PersistIf) gives way
+	defer unlock()
+	rev := persistLocked(sid, s)
+	if s.State == "working" {
+		RemoveCompletionKey(sid)
 	}
 	return rev
 }
@@ -222,10 +232,7 @@ func PersistRev(sid, state string) string {
 // PersistOpen is Persist for a write made by a hook of turn promptID (UserPromptSubmit,
 // PostToolUse, …): it opens that turn in the ledger (SessionStatus.PromptID).
 func PersistOpen(sid, state, promptID string) {
-	persist(sid, SessionStatus{State: state, PromptID: promptID})
-	if state == "working" {
-		RemoveCompletionKey(sid)
-	}
+	persistDroppingKey(sid, SessionStatus{State: state, PromptID: promptID})
 }
 
 // TurnEndReasonFailed / TurnEndReasonAborted are the qualifiers PersistTurnEndReason
@@ -263,8 +270,16 @@ func PersistTurnEndFor(sid, state, reason, promptID string) {
 	if at == "" {
 		at = time.Now().Format(time.RFC3339)
 	}
-	persist(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
+	// The key goes first, and in the same critical section: the record is what a reconciler sweep
+	// settles a scheduled run on, and it stores what the late hook for this end must raise under
+	// this key. A key written after the record leaves a window where the sweep finds none, stores
+	// nothing, and the hook then broadcasts a result the schedule routed (measured by delaying the
+	// second write). Outside the lock, a heal's "working" write would remove the key in between
+	// and the closed turn would be left without one.
+	unlock, _ := lockSid(sid) // a lock timeout still writes: the hook's record is authoritative, only the heal (PersistIf) gives way
+	defer unlock()
 	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
+	persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
 }
 
 // WriteCompletionKey sets the answer-ready dedup key for the current turn-end.
@@ -379,14 +394,6 @@ func TurnMarkOf(sid string) (string, bool) {
 		return "", false
 	}
 	return rec.Mark, true
-}
-
-func persist(sid string, s SessionStatus) string {
-	// A timeout still writes: the hook's record is authoritative, and only the conditional
-	// heal (PersistIf) is allowed to give way.
-	unlock, _ := lockSid(sid)
-	defer unlock()
-	return persistLocked(sid, s)
 }
 
 func persistLocked(sid string, s SessionStatus) string {

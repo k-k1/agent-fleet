@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -233,6 +234,19 @@ func kindRoutesOf(kind string) []string {
 // than holding the answer up.
 var usableRoutesBudget = 2 * time.Second
 
+// kindProbes counts the UsableRoutes goroutines still running. The catalog stops waiting for them
+// after usableRoutesBudget but cannot stop them, and a slow probe can write under HOME later
+// (measured: under load it removed a test's temporary HOME from beneath it). Production never
+// waits on it; tests drain it with awaitKindProbes before their temporary directories go.
+var kindProbes sync.WaitGroup
+
+// awaitKindProbes blocks until every probe the catalog started has returned, including the CLI
+// status probes (agents.SWRProbe) that a kind's UsableRoutes starts and does not wait for.
+func awaitKindProbes() {
+	kindProbes.Wait()
+	agents.AwaitProbes()
+}
+
 // usableRoutesOf asks every kind with an agents.CredentialResolver for its usable routes, in
 // parallel, and returns the answers that arrived within usableRoutesBudget.
 func usableRoutesOf(kinds []string) map[string][]string {
@@ -252,7 +266,11 @@ func usableRoutesOf(kinds []string) map[string][]string {
 			continue
 		}
 		n++
-		go func() { ch <- answer{k, cr.UsableRoutes()} }()
+		kindProbes.Add(1)
+		go func() {
+			defer kindProbes.Done()
+			ch <- answer{k, cr.UsableRoutes()}
+		}()
 	}
 	out := map[string][]string{}
 	timeout := time.After(usableRoutesBudget)

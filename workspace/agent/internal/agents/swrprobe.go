@@ -93,6 +93,45 @@ func (s *SWRProbe[T]) Invalidate() {
 	s.mu.Unlock()
 }
 
+// probesOut counts the probes of every SWRProbe still running. A probe outlives the Get that
+// started it (its CLI keeps running after the cold budget or while a stale answer is served), and
+// the CLI writes its own state under HOME: a test that ends first loses its temporary directory
+// to it. Production never waits; AwaitProbes is for tests.
+var probesOut struct {
+	mu   sync.Mutex
+	n    int
+	idle *sync.Cond
+}
+
+func probeStarted() {
+	probesOut.mu.Lock()
+	probesOut.n++
+	probesOut.mu.Unlock()
+}
+
+func probeEnded() {
+	probesOut.mu.Lock()
+	probesOut.n--
+	if probesOut.n == 0 && probesOut.idle != nil {
+		probesOut.idle.Broadcast()
+	}
+	probesOut.mu.Unlock()
+}
+
+// AwaitProbes blocks until no SWRProbe has a probe running. It has no bound on purpose: giving up
+// would bring back the write into a removed directory it exists to prevent. So every Probe
+// function must terminate, and one that runs a CLI needs a context timeout.
+func AwaitProbes() {
+	probesOut.mu.Lock()
+	defer probesOut.mu.Unlock()
+	if probesOut.idle == nil {
+		probesOut.idle = sync.NewCond(&probesOut.mu)
+	}
+	for probesOut.n > 0 {
+		probesOut.idle.Wait()
+	}
+}
+
 // startLocked launches the probe unless one is already out, returning the channel that
 // closes when the current one finishes. s.mu must be held.
 func (s *SWRProbe[T]) startLocked() chan struct{} {
@@ -103,7 +142,9 @@ func (s *SWRProbe[T]) startLocked() chan struct{} {
 	done := make(chan struct{})
 	s.done = done
 	gen := s.gen
+	probeStarted()
 	go func() {
+		defer probeEnded()
 		v, ok := s.Probe()
 		s.mu.Lock()
 		if gen == s.gen {
