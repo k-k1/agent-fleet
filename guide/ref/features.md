@@ -117,7 +117,8 @@ Every row is under **Settings**; the tab is the "Where".
 
 | Feature | Who | Where |
 |---|---|---|
-| Agent connections | member | Agents |
+| Agent connections (sign-ins, API keys, endpoints) | member | Model credentials |
+| Agent behaviour (launch defaults, models you don't use, per-agent options) | member | Agents |
 | Instructions to agents | member | Agent instructions |
 | Agent Fleet shared memory management | member | Agent memory ([Read and correct agent memory](../user/memory/overview.md)) |
 | Version history of agents' own memory | member | Memory snapshots ([Restore memory from a snapshot](../user/memory/snapshots.md)) |

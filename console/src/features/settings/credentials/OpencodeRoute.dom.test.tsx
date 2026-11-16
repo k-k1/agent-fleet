@@ -21,6 +21,12 @@ vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 const { OpencodeCard } = await import("./OpencodeCard.tsx");
 const { setSettings, settingsDefaults, getSettings } = await import("../../../lib/settings.ts");
 
+// An unrestricted policy: every route opencode can run on is allowed.
+const ALL_ROUTES = new Set([
+  "anthropic-api", "openai-api", "openrouter-api", "gemini-api", "sakana-api", "custom-api",
+  "opencode-account", "opencode-go", "opencode-zen", "af-engine-llm",
+]);
+
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
@@ -41,7 +47,7 @@ async function mount(st: Record<string, unknown> = {}) {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<OpencodeCard running st={st} reload={() => {}} agents={{}} updateAgents={() => {}} />);
+    root!.render(<OpencodeCard running st={st} reload={() => {}} allowed={ALL_ROUTES} />);
   });
   // The model fetch and the state update it queues.
   await act(async () => {

@@ -77,7 +77,7 @@ A worktree is created by default ([Work in parallel with worktrees](../sessions/
 
 ## opencode does not appear among the kinds of new session
 
-On the opencode card in ⚙ Settings → Agents, both of these must hold:
+On the opencode card in ⚙ Settings → Model credentials, both of these must hold:
 
 - **"Use opencode"** is on. While it is off, opencode does not appear even with keys registered
 - What you chose under **"opencode.ai billing"** has what it needs

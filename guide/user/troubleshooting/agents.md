@@ -1,6 +1,6 @@
 ---
 audience: "anyone whose agent login expired, whose model is not offered, or whose assistant stopped"
-source_of_truth: "the Console's Settings > Agents and Assistant, and the model choices in the launch dialog"
+source_of_truth: "the Console's Settings > Model credentials, Agents and Assistant, and the model choices in the launch dialog"
 ---
 
 # Fix an agent's login or a missing model
@@ -17,11 +17,11 @@ The connection is usually still fine. This is not a login problem: claude's inte
 - **Resuming** the session, or **"Recreate (current conversation goes to the archive)"** from the ⋯ menu, almost always clears it
 - Running `/login` in the terminal works too
 
-The connection state is on the Claude card in ⚙ Settings → Agents ([Connect Claude](../agents/claude.md#connect)).
+The connection state is on the Claude card in ⚙ Settings → Model credentials ([Connect Claude](../agents/claude.md#connect)).
 
 ## The agent stopped, saying its login has expired
 
-The error in the conversation offers **"Re-authenticate"**. It opens ⚙ Settings → Agents, scrolled to that agent's card.
+The error in the conversation offers **"Re-authenticate"**. It opens ⚙ Settings → Model credentials, scrolled to that agent's card.
 Sign in again there, and the session can carry on from where it stopped.
 
 - Once you have signed in again, the same error changes to **"Re-authenticated. …"** and the button goes away
@@ -34,7 +34,7 @@ Sign in again there, and the session can carry on from where it stopped.
 The workspace's Claude login has expired. The credentials are still on disk, so the terminal looks like an ordinary prompt, but nothing you send starts a turn.
 That is why the Console shows **"Login expired — sign in again"** instead of ready, and refuses the send.
 
-1. Press **"Re-authenticate"** on the Claude card in ⚙ Settings → Agents
+1. Press **"Re-authenticate"** on the Claude card in ⚙ Settings → Model credentials
 2. Once you are signed in again, the session carries on without being stopped
 
 How to sign in is in [Connect Claude](../agents/claude.md#connect), and for Codex in [Connect Codex](../agents/codex.md#connect).

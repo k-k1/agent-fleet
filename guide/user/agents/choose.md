@@ -1,6 +1,6 @@
 ---
 audience: "anyone choosing and connecting the agent their sessions run"
-source_of_truth: "the Console's Settings > Agents"
+source_of_truth: "the Console's Settings > Model credentials and Settings > Agents"
 ---
 
 # Choose an agent
@@ -14,8 +14,8 @@ Connect one or more to match the services you already pay for, and they appear a
 
 | What you do | What happens |
 |---|---|
-| Connect an agent in ⚙Settings → Agents | That agent appears among the kinds of a new session |
-| Pick a default model and the like under the card's Behavior | Sessions started afterwards use it |
+| Connect an agent in ⚙Settings → Model credentials | That agent appears among the kinds of a new session |
+| Pick a default model and the like under the card's Behavior in ⚙Settings → Agents | Sessions started afterwards use it |
 | Exclude the models you do not want | They can no longer be picked, and a launch that names one is refused |
 
 Connections and settings go through the agent CLIs inside the workspace. If the workspace is stopped, start it first.
@@ -49,11 +49,15 @@ Both are terminal only, with no conversation, states or notifications.
 
 ## Connect
 
-Open **⚙Settings → Agents** and connect on the card of the agent you want. The steps differ per card, so follow each page in the table above.
+Open **⚙Settings → Model credentials** and connect on the card of the agent you want. The steps differ per card, so follow each page in the table above.
+The cards are grouped by where the sign-in or key goes: Anthropic, OpenAI, opencode.ai, Google, Meta, "GitHub, Cursor, Kiro" and Self-hosted.
+A card appears only while the workspace is running and your organisation's policy allows that agent.
 
 - A connected card reads "**Connected**". claude and codex also show the account's email and plan
 - A change to a connection takes effect at once
 - A sign-in with an expiry shows "**Expires in N day(s)**" once fewer than three days are left
+- "**Some stored credentials cannot be used under your organisation's policy.**" means a sign-in or key is saved for an agent your organisation does not allow. "**Remove them**" deletes just those, after a confirmation
+- "**Some agents or credentials are hidden by your own settings.**" means you hid them yourself. "**Reset my settings**" shows them again
 
 ### Sign in again
 
@@ -67,7 +71,7 @@ Running sessions are not stopped. The current sign-in stays in use until the new
 
 ## Choose the behavior
 
-Each card's "**Behavior**" sets the initial values for new sessions. If a repository has settings you last used, those win.
+In **⚙Settings → Agents**, each card's "**Behavior**" sets the initial values for new sessions. If a repository has settings you last used, those win.
 
 ![The Behavior block of the GitHub Copilot card, open: Default model, Default effort, Models to exclude (+ Add a model), Start mode, Tool permissions and RTK (token savings)](../../assets/agents-behavior-en-light.webp)
 
@@ -127,7 +131,7 @@ Check that it is not under that card's "**Models to exclude**". Other causes are
 
 ### The agent stopped because its sign-in expired
 
-Press "**Re-authenticate**" on the error and that agent's card opens. Sign in again and the session can carry on where it stopped.
+Press "**Re-authenticate**" on the error and that agent's card opens in **⚙Settings → Model credentials**. Sign in again and the session can carry on where it stopped.
 The details are in [Fix an agent's login or a missing model](../troubleshooting/agents.md#the-agent-stopped-saying-its-login-has-expired).
 
 ## Related

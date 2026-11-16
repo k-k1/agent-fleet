@@ -83,8 +83,17 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 	// to the reset line (#4169, P5/P6).
 	hide, hiding := routepolicy.Hiding()
 	for k, st := range agentConnectionStatuses(agents.StatusInputs{Secrets: s, GithubConnected: ghConnected}) {
-		if hiding && hide.HidesKind(kindRoutesOf(k)) || len(kindRoutesOf(k)) > 0 && !uiprefs.AgentEnabled(k) {
+		// A harness whose per-connection route the policy allows on an approved host keeps its entry,
+		// so the member can add a connection there (AddableOnEndpoint names no host).
+		if hiding && hide.HidesKind(kindRoutesOf(k)) && !slices.ContainsFunc(kindRoutesOf(k), hide.AddableOnEndpoint) ||
+			len(kindRoutesOf(k)) > 0 && !uiprefs.AgentEnabled(k) {
 			continue
+		}
+		// The member's endpoint on a host the policy does not approve is kept but not shown
+		// (D14a): its entry says only that nothing usable is connected, never the URL or the model
+		// it found, so the page can offer the entry on an approved host.
+		if hiding && slices.Contains(kindRoutesOf(k), routes.RouteMemberLlamacpp) && !hide.Allows(routes.RouteMemberLlamacpp) {
+			st = map[string]any{"enabled": uiprefs.LcppEnabled(), "connected": false}
 		}
 		out[k] = st
 	}

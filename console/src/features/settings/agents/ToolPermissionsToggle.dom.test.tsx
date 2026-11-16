@@ -15,7 +15,7 @@ vi.mock("../../../ui/ConfirmProvider.tsx", () => ({
   useConfirm: () => () => Promise.resolve(true),
 }));
 
-const { ClaudeCard } = await import("./ClaudeCard.tsx");
+const { ClaudeBehavior } = await import("./AgentBehaviors.tsx");
 const { t: tr } = await import("../../../lib/i18n/index.ts");
 const { getSettings, setSettings } = await import("../../../lib/settings.ts");
 
@@ -30,7 +30,7 @@ async function mount(skipPermissions: boolean) {
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      <ClaudeCard running st={{ connected: true }} reload={() => {}} claude={{ rtk_available: true }} updateClaude={() => {}} />,
+      <ClaudeBehavior claude={{ rtk_available: true }} updateClaude={() => {}} />,
     );
   });
   await act(async () => {

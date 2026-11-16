@@ -6,7 +6,7 @@ import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
 import { useActiveFlow } from "../parts/useActiveFlow.ts";
 import { usePolling } from "../parts/usePolling.ts";
-import { CardSettings, ConnPaused, LaunchDefaults, type DeviceFlow } from "./AgentCardParts.tsx";
+import { ConnPaused, type DeviceFlow } from "../agents/AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
 
 // Cursor: dedicated login flow (docs/log/40). `NO_OPEN_BROWSER=1 cursor-agent login`
@@ -15,7 +15,7 @@ import type { ProviderConn } from "../../../types/session.ts";
 // api/connections/cursor/poll (no pasted code, unlike Claude/Codex). v1 is
 // login-only; a manual CURSOR_API_KEY registration path is deferred to Track D
 // (cursor has no key-persistence command and injecting it into the TUI pane would
-// leak it into `ps`). No RTK toggle yet — cursor's rtk hook seam is Track D.
+// leak it into `ps`).
 export function CursorCard({ running, st, reload }: { running: boolean; st: ProviderConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
@@ -140,9 +140,6 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: Prov
           </div>
         </>
       )}
-      <CardSettings>
-        <LaunchDefaults kind="cursor" />
-      </CardSettings>
     </ProviderCard>
   );
 }

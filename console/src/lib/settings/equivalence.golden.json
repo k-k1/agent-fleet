@@ -567,6 +567,7 @@
     "ヒソヒソ"
    ]
   ],
+  "waitPrefsSaved": "function/0",
   "watchOtherTabs": "function/0"
  },
  "keyOrder": [
@@ -626,6 +627,7 @@
   "imageProviderOrder",
   "opencodeCatalog",
   "lcppEnabled",
+  "agentEnabled",
   "expandThinking",
   "streamReplies",
   "assistantTitleSuggest",
@@ -828,6 +830,7 @@
   ],
   "opencodeCatalog": "off",
   "lcppEnabled": true,
+  "agentEnabled": {},
   "expandThinking": {},
   "streamReplies": {},
   "assistantTitleSuggest": true,
@@ -1065,6 +1068,7 @@
   ],
   "opencodeCatalog": "off",
   "lcppEnabled": true,
+  "agentEnabled": {},
   "expandThinking": {},
   "streamReplies": {},
   "assistantTitleSuggest": true,
@@ -1442,6 +1446,10 @@
    "accumulated": false
   },
   "lcppEnabled": {
+   "deviceLocal": false,
+   "accumulated": false
+  },
+  "agentEnabled": {
    "deviceLocal": false,
    "accumulated": false
   },
@@ -3462,6 +3470,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -3782,6 +3791,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -4102,6 +4112,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -4892,6 +4903,9 @@
     ],
     "opencodeCatalog": "go",
     "lcppEnabled": false,
+    "agentEnabled": {
+     "x": "y"
+    },
     "expandThinking": {
      "claude": true
     },
@@ -5115,6 +5129,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -5614,6 +5629,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -6186,6 +6202,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -6800,6 +6817,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -7299,6 +7317,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -7984,6 +8003,9 @@
     ],
     "opencodeCatalog": "go",
     "lcppEnabled": false,
+    "agentEnabled": {
+     "x": "y"
+    },
     "expandThinking": {
      "claude": true
     },
@@ -8207,6 +8229,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -8706,6 +8729,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -9040,6 +9064,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -9181,6 +9206,9 @@
       ],
       "opencodeCatalog": "go",
       "lcppEnabled": false,
+      "agentEnabled": {
+       "x": "y"
+      },
       "expandThinking": {
        "claude": true
       },
@@ -9446,6 +9474,9 @@
     ],
     "opencodeCatalog": "go",
     "lcppEnabled": false,
+    "agentEnabled": {
+     "x": "y"
+    },
     "expandThinking": {
      "claude": true
     },
@@ -9674,6 +9705,7 @@
   "imageProviderOrder": 1,
   "opencodeCatalog": 1,
   "lcppEnabled": 1,
+  "agentEnabled": 1,
   "expandThinking": 1,
   "streamReplies": 1,
   "assistantTitleSuggest": 1,
@@ -9810,6 +9842,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -10016,6 +10049,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -10206,6 +10240,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -10355,6 +10390,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -10532,6 +10568,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -10798,6 +10835,7 @@
     "imageProviderOrder",
     "opencodeCatalog",
     "lcppEnabled",
+    "agentEnabled",
     "expandThinking",
     "streamReplies",
     "assistantTitleSuggest",
@@ -11047,6 +11085,7 @@
       "imageProviderOrder",
       "opencodeCatalog",
       "lcppEnabled",
+      "agentEnabled",
       "expandThinking",
       "streamReplies",
       "assistantTitleSuggest",
@@ -11313,6 +11352,7 @@
     "imageProviderOrder",
     "opencodeCatalog",
     "lcppEnabled",
+    "agentEnabled",
     "expandThinking",
     "streamReplies",
     "assistantTitleSuggest",
@@ -11650,6 +11690,7 @@
      "imageProviderOrder",
      "opencodeCatalog",
      "lcppEnabled",
+     "agentEnabled",
      "expandThinking",
      "streamReplies",
      "assistantTitleSuggest",
@@ -11922,6 +11963,7 @@
      "sessionSpendCapUsd",
      "imageProviderOrder",
      "lcppEnabled",
+     "agentEnabled",
      "expandThinking",
      "streamReplies",
      "assistantTitleSuggest",
@@ -12054,6 +12096,7 @@
        "imageProviderOrder",
        "opencodeCatalog",
        "lcppEnabled",
+       "agentEnabled",
        "expandThinking",
        "streamReplies",
        "assistantTitleSuggest",
@@ -12485,6 +12528,7 @@
     "imageProviderOrder",
     "opencodeCatalog",
     "lcppEnabled",
+    "agentEnabled",
     "expandThinking",
     "streamReplies",
     "assistantTitleSuggest",
@@ -12645,6 +12689,7 @@
        "imageProviderOrder",
        "opencodeCatalog",
        "lcppEnabled",
+       "agentEnabled",
        "expandThinking",
        "streamReplies",
        "assistantTitleSuggest",

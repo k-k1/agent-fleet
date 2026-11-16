@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console and CP read. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 220
+# count: 222
 Repo.ahead number
 Repo.behind number
 Repo.branch string
@@ -34,8 +34,10 @@ RepoStatus.staged number
 RepoStatus.unborn bool,omitempty
 RepoStatus.unstaged number
 RepoStatus.untracked number
+kindCatalog.access.addableRoutes [string],omitempty
 kindCatalog.access.allOffByOwnSettings bool
 kindCatalog.access.noRouteAvailable bool
+kindCatalog.access.policyConfirmed bool
 kindCatalog.access.someOffByOwnSettings bool
 kindCatalog.kinds[].caps.canFork bool
 kindCatalog.kinds[].caps.canForkAt bool

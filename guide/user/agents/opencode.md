@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants to run OpenCode in sessions"
-source_of_truth: "the OpenCode card in the Console's Settings > Agents"
+source_of_truth: "the OpenCode card in the Console's Settings > Model credentials, and its behaviour in Settings > Agents"
 ---
 
 # Connect OpenCode
@@ -21,7 +21,7 @@ Register your own API keys or an opencode.ai subscription and sessions can run i
 
 ## Decide whether to use it
 
-The **OpenCode** card in **⚙Settings → Agents** has two choices with different jobs.
+The **OpenCode** card in **⚙Settings → Model credentials** has two choices with different jobs.
 
 | Item | What it decides |
 |---|---|
@@ -90,7 +90,7 @@ A restart waits a while for answering opencode sessions to finish and cuts off t
 
 ## Behavior
 
-The items under the card's "**Behavior**" are [the ones every agent shares](choose.md#choose-the-behavior).
+The items under "**Behavior**" on the **OpenCode** card in **⚙Settings → Agents** are [the ones every agent shares](choose.md#choose-the-behavior).
 RTK rewrites commands every time ([Check prices and usage](usage.md#save-tokens-with-rtk)).
 
 ## Good to know

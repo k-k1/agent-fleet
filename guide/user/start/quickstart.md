@@ -79,7 +79,7 @@ Each item on the card has a place on the regular screen.
 | Card item | Where it is on the regular screen |
 |---|---|
 | Start workspace | The power button on the workspace action bar |
-| Connect an agent | ⚙ Settings → Agents |
+| Connect an agent | ⚙ Settings → Model credentials |
 | Start chatting | **+** under **Assistants** in the left pane |
 | Connect a git provider | ⚙ Settings → Git hosting |
 | Clone a repository and start a session | **Start** on the workspace action bar |

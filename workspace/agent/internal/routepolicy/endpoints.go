@@ -47,6 +47,13 @@ func (p Policy) onApprovedEndpoint(route string) bool {
 	return f != nil && p.approvedAt(route, f())
 }
 
+// AddableOnEndpoint reports whether a connection for route could be added on some host the policy
+// approves: the route is one the layers allow on an approved endpoint, and there is one. It names
+// no host, so a member's screen can offer the entry without learning which hosts are approved.
+func (p Policy) AddableOnEndpoint(route string) bool {
+	return len(p.Endpoints) > 0 && slices.Contains(p.EndpointRoutes, route)
+}
+
 func (p Policy) approvedAt(route, host string) bool {
 	h := CanonicalHost(host)
 	return h != "" && slices.Contains(p.EndpointRoutes, route) && slices.Contains(p.Endpoints, h)

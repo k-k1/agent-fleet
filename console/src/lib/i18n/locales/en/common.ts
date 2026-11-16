@@ -382,7 +382,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   // The two the Agent can name. Both are this workspace's own settings, so sending the user
   // to check the connection or the plan would point at something that was never wrong.
   "ui.model_none_hidden": "Every model is excluded in settings (Settings → Agents → models you don't use).",
-  "ui.model_none_route": "The current billing choice leaves no model to pick (Settings → Agents → opencode).",
+  "ui.model_none_route": "The current billing choice leaves no model to pick (Settings → Model credentials → opencode).",
   // The request itself never landed. Right after a workspace starts the Agent is not
   // listening yet and the CP answers 502 — NOT a connection or plan problem, so this must not
   // send anyone to look at either. Shown only once the retries are used up.

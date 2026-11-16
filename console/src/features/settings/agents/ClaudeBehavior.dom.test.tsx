@@ -16,7 +16,7 @@ vi.mock("../../../ui/ConfirmProvider.tsx", () => ({
   useConfirm: () => () => Promise.resolve(true),
 }));
 
-const { ClaudeCard } = await import("./ClaudeCard.tsx");
+const { ClaudeBehavior } = await import("./AgentBehaviors.tsx");
 const { t: tr } = await import("../../../lib/i18n/index.ts");
 
 let root: Root | null = null;
@@ -28,7 +28,7 @@ async function mount(claude: Record<string, unknown>, updateClaude: (patch: unkn
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      <ClaudeCard running st={{ connected: true }} reload={() => {}} claude={claude} updateClaude={updateClaude} />,
+      <ClaudeBehavior claude={claude} updateClaude={updateClaude} />,
     );
   });
   await act(async () => {
@@ -56,7 +56,7 @@ afterEach(() => {
 
 const base = { remoteControlAtStartup: false, agentPushNotifEnabled: false, rtk_enabled: false, rtk_available: true };
 
-describe("ClaudeCard idle compaction", () => {
+describe("ClaudeBehavior idle compaction", () => {
   it("shows the current state and sends the toggle", async () => {
     const update = vi.fn();
     await mount({ ...base, idleCompaction: true }, update);

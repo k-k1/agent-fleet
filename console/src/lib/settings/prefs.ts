@@ -95,6 +95,16 @@ function accumulated<T>(d: T, opts: PrefOpts<T> = {}): Pref<T> {
 
 const isTrue = (v: unknown): boolean => v === true;
 
+// normalizeAgentEnabled keeps only boolean entries, the shape the Agent reads (uiprefs.AgentEnabled
+// takes anything else as on).
+const normalizeAgentEnabled = (v: unknown): Record<string, boolean> => {
+  const out: Record<string, boolean> = {};
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    for (const [k, b] of Object.entries(v)) if (typeof b === "boolean") out[k] = b;
+  }
+  return out;
+};
+
 
 const normalizeAppearanceShuffle = (v: unknown): AppearanceShuffleMode =>
   APPEARANCE_SHUFFLE_MODES.find((m) => m.id === v)?.id ?? "off";
@@ -334,6 +344,11 @@ const PREFS = {
   // upgrading to this setting must not silently stop them. The Agent reads the same key
   // (ui-prefs lcppEnabled) as the actual, server-side gate — this switch is not decorative.
   lcppEnabled: synced(true), // opt-out (docs/log/105 §106.2) — an existing deployment launches lcpp today
+  // The member's own on/off per harness (ADR 0138 D16, the member layer): ui-prefs
+  // agentEnabled[<kind>], false meaning switched off. The Agent enforces it on every create and
+  // hides the kind; an absent kind is on. It has to be a known key here, because the ui-prefs save
+  // is a whole-object PUT of the known keys: unknown to the Console, any save would clear it.
+  agentEnabled: agentDefaulted<Record<string, boolean>>({}, { normalize: normalizeAgentEnabled }),
   // Show the mirror's thinking block expanded from the start (kind-scoped; Settings > Agents >
   // each card > behaviour settings). Default off for every kind, i.e. collapsed as before and
   // opened by a click. How much thinking a backend emits varies enormously by kind and model, so

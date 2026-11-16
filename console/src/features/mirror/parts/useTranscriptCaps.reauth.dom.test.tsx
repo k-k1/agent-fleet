@@ -41,7 +41,7 @@ describe("useTranscriptCaps onReauth", () => {
     out.caps!.onReauth!();
     const s = useSettingsUI.getState();
     expect(s.settingsOpen).toBe(true);
-    expect(s.settingsSection).toBe("agents");
+    expect(s.settingsSection).toBe("credentials");
     expect(s.settingsTarget).toBe(kind);
     act(() => root.unmount());
   });

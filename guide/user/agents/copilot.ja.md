@@ -1,6 +1,6 @@
 ---
 audience: "GitHub Copilot CLI をセッションで使いたい人"
-source_of_truth: "Console の設定 >「エージェント」の GitHub Copilot カード"
+source_of_truth: "Console の設定 >「モデルの認証情報」の GitHub Copilot カードと、設定 >「エージェント」の動作設定"
 ---
 
 # GitHub Copilot を接続する
@@ -23,7 +23,7 @@ Copilot のためのログインはありません。
 ![GitHub を連携したあとの GitHub Copilot カード。「接続済み」と出ていて、ログインのボタンはない](../../assets/agents-copilot-ja-light.webp)
 
 1. **⚙設定 →「Git ホスティング」** で GitHub を接続します（[GitHub の CLI を使う](../integrations/github-cli.ja.md)）
-2. **⚙設定 →「エージェント」** の **GitHub Copilot** カードが「**接続済み**」になっていることを確かめます
+2. **⚙設定 →「モデルの認証情報」** の **GitHub Copilot** カードが「**接続済み**」になっていることを確かめます
 
 GitHub をまだ接続していないときは、カードに「**先に GitHub を連携してください。**」と「**Git ホスティングを開く**」が出ます。
 
@@ -31,7 +31,7 @@ GitHub をまだ接続していないときは、カードに「**先に GitHub 
 
 ## 動作設定
 
-カードの「**動作設定**」の項目は、[ほかのエージェントと共通](choose.ja.md#動作設定を選ぶ)です。
+**⚙設定 →「エージェント」** の **GitHub Copilot** カードの「**動作設定**」の項目は、[ほかのエージェントと共通](choose.ja.md#動作設定を選ぶ)です。
 
 - **RTK** は、シェルのコマンドを毎回 rtk 経由に書き換えます。変更後に始めたセッションから効きます（[料金と使用量を確かめる](usage.ja.md#rtk-でトークンを節約する)）
 

@@ -1,6 +1,7 @@
-// openSettings("agents", { target }) — the Re-authenticate deep-link: Settings > Agents scrolls the
-// named agent's card into view and flashes it, waits for cards that mount after the connection
-// snapshot loads, and falls back to the top of the section (no error) when the card is absent.
+// Settings > Agents draws a harness card only for a kind the live catalogue (GET /agents/kinds)
+// lists: one the policy forbids, or the member switched off, has none (ADR 0138 D10a), and with no
+// answer no card is drawn. The member's own switches come back through the reset line. A deep
+// link to a harness lands once the cards are drawn; one with no card falls back quietly.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -12,7 +13,12 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: vi.fn(),
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
-let wsState = "stopped";
+vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(true) }));
+vi.mock("../../../lib/settings.ts", async (importActual) => ({
+  ...(await importActual<typeof import("../../../lib/settings.ts")>()),
+  waitPrefsSaved: () => Promise.resolve(true),
+}));
+let wsState = "running";
 vi.mock("../../../core/store/workspace.ts", () => ({
   useWorkspaceStore: (sel: (s: { state: string; start: () => void }) => unknown) => sel({ state: wsState, start: () => {} }),
   wsStartBusy: () => false,
@@ -20,7 +26,11 @@ vi.mock("../../../core/store/workspace.ts", () => ({
 
 const { AgentsTab } = await import("./AgentsTab.tsx");
 const { useSettingsUI } = await import("../store.ts");
-const { resetConnectionsCache } = await import("../parts/useConnections.ts");
+const { getSettings, setSettings, settingsDefaults } = await import("../../../lib/settings.ts");
+const { t } = await import("../../../lib/i18n/index.ts");
+
+const ALL = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse"];
+let kinds: unknown = { kinds: ALL.map((kind) => ({ kind })), access: { policyConfirmed: true } };
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -33,14 +43,18 @@ async function mount() {
   await act(async () => {
     root!.render(<AgentsTab />);
   });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
 }
 const card = (id: string) => host!.querySelector<HTMLElement>(`[data-settings-target="${id}"]`);
-const flushed = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+const cards = () => Array.from(host!.querySelectorAll<HTMLElement>(".p-card")).map((c) => c.dataset.settingsTarget);
 
 beforeEach(() => {
-  wsState = "stopped";
+  wsState = "running";
+  kinds = { kinds: ALL.map((kind) => ({ kind })), access: { policyConfirmed: true } };
   scrolled.length = 0;
-  api.mockImplementation(() => Promise.resolve({}));
+  api.mockImplementation((path: string) => Promise.resolve(path === "api/agents/kinds" ? kinds : {}));
   Element.prototype.scrollIntoView = function (this: HTMLElement, opts?: unknown) {
     scrolled.push({ id: this.dataset.settingsTarget, opts });
   };
@@ -54,88 +68,70 @@ afterEach(() => {
   host = null;
   api.mockReset();
   useSettingsUI.setState({ settingsTarget: null });
-  resetConnectionsCache();
+  setSettings(settingsDefaults());
+});
+
+describe("Settings > Agents", () => {
+  it("unrestricted: draws every harness, with no sign-in control", async () => {
+    await mount();
+    expect(cards()).toEqual(ALL);
+    expect(host!.querySelector("input.cinput")).toBeNull();
+    expect(host!.textContent).not.toContain(t("cred.own_settings_line"));
+  });
+
+  it("restricted: draws no card for a harness the catalogue leaves out", async () => {
+    kinds = { kinds: [{ kind: "codex" }, { kind: "opencode" }], access: { policyConfirmed: true } };
+    await mount();
+    expect(cards()).toEqual(["codex", "opencode"]);
+    expect(host!.textContent).not.toContain(t("cred.own_settings_line"));
+  });
+
+  it("switched off: hides the harness and offers the reset, which brings it back once saved", async () => {
+    setSettings({ agentEnabled: { codex: false } });
+    kinds = { kinds: [{ kind: "claude" }], access: { policyConfirmed: true, someOffByOwnSettings: true } };
+    await mount();
+    expect(cards()).toEqual(["claude"]);
+    expect(host!.textContent).toContain(t("cred.own_settings_line"));
+    kinds = { kinds: [{ kind: "claude" }, { kind: "codex" }], access: { policyConfirmed: true } };
+    const reset = Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent === t("cred.own_settings_reset"),
+    )!;
+    await act(async () => reset.click());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(getSettings().agentEnabled).toEqual({});
+    expect(cards()).toEqual(["claude", "codex"]);
+  });
+
+  it("draws no card from an Agent that does not prove its catalogue filtered", async () => {
+    kinds = { kinds: ALL.map((kind) => ({ kind })) }; // no access summary: an older Agent
+    await mount();
+    expect(cards()).toEqual([]);
+  });
+
+  it("draws no card while the catalogue cannot be read", async () => {
+    api.mockImplementation(() => Promise.resolve({ error: { code: "http_502" } }));
+    await mount();
+    expect(cards()).toEqual([]);
+  });
+
+  it("draws no card while the workspace is stopped", async () => {
+    wsState = "stopped";
+    await mount();
+    expect(cards()).toEqual([]);
+    expect(api).not.toHaveBeenCalled();
+  });
 });
 
 describe("Settings > Agents target", () => {
-  it("scrolls the requested agent's card into view, flashes it and consumes the request", async () => {
+  it("scrolls the requested harness's card into view, flashes it and consumes the request", async () => {
     useSettingsUI.getState().openSettings("agents", { target: "codex" });
     await mount();
     expect(scrolled).toEqual([{ id: "codex", opts: { block: "start", behavior: "smooth" } }]);
     expect(card("codex")!.classList.contains("p-card-flash")).toBe(true);
     expect(card("claude")!.classList.contains("p-card-flash")).toBe(false);
     expect(useSettingsUI.getState().settingsTarget).toBeNull();
-  });
-
-  it("jumps instead of animating when the user prefers reduced motion", async () => {
-    window.matchMedia = ((q: string) => ({ matches: true, media: q, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
-    useSettingsUI.getState().openSettings("agents", { target: "claude" });
-    await mount();
-    expect(scrolled[0].opts).toEqual({ block: "start", behavior: "auto" });
-  });
-
-  it("draws every card with a checking chip while the snapshot is out, and holds the deep-link until the snapshot lands", async () => {
-    wsState = "running";
-    let release: (v: unknown) => void = () => {};
-    api.mockImplementation((path: string) =>
-      path === "api/connections" ? new Promise((r) => (release = r)) : Promise.resolve({}),
-    );
-    useSettingsUI.getState().openSettings("agents", { target: "claude" });
-    await mount();
-    await flushed();
-    expect(card("claude")).not.toBeNull();
-    expect(host!.textContent).not.toContain("Loading");
-    // Every card says "checking", none claims "not connected" while the probe is out.
-    expect(host!.querySelectorAll(".p-card").length).toBeGreaterThanOrEqual(9);
-    expect(host!.querySelectorAll(".p-status").length).toBe(host!.querySelectorAll(".p-card").length);
-    expect(Array.from(host!.querySelectorAll(".p-status")).every((e) => e.textContent === "Checking…")).toBe(true);
-    expect(host!.textContent).not.toContain("Not connected");
-    // The deep link waits: the snapshot adds login fields that change card heights.
-    expect(scrolled).toEqual([]);
-    expect(useSettingsUI.getState().settingsTarget).toBe("claude");
-    await act(async () => release({}));
-    await flushed();
-    expect(scrolled.map((s) => s.id)).toEqual(["claude"]);
-    expect(useSettingsUI.getState().settingsTarget).toBeNull();
-    expect(host!.textContent).not.toContain("Checking");
-    expect(host!.textContent).toContain("Not connected");
-  });
-
-  it("a first fetch that fails every retry shows a retryable error, never 'not connected'", async () => {
-    vi.useFakeTimers();
-    try {
-      wsState = "running";
-      api.mockImplementation((path: string) =>
-        path === "api/connections" ? Promise.resolve({ error: { code: "http_502" } }) : Promise.resolve({}),
-      );
-      await mount();
-      for (let i = 0; i < 4; i++) await act(async () => { await vi.advanceTimersByTimeAsync(1300); });
-      expect(host!.textContent).not.toContain("Not connected");
-      expect(host!.textContent).toContain("Status unknown");
-      expect(host!.textContent).toContain("Retry");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("draws the cards at once from the last snapshot while the refetch is still out", async () => {
-    wsState = "running";
-    const releases: Array<(v: unknown) => void> = [];
-    api.mockImplementation((path: string) =>
-      path === "api/connections" ? new Promise((r) => releases.push(r)) : Promise.resolve({}),
-    );
-    await mount();
-    await act(async () => releases.shift()!({}));
-    await flushed();
-    expect(card("claude")).not.toBeNull();
-    // Reopen: the second mount must not wait for its own GET /connections.
-    act(() => root?.unmount());
-    host?.remove();
-    await mount();
-    await flushed();
-    expect(releases.length).toBe(1); // the refetch is out and unanswered
-    expect(card("claude")).not.toBeNull();
-    expect(host!.textContent).not.toContain("Loading");
   });
 
   it("falls back quietly to the top of the section when no such card exists", async () => {

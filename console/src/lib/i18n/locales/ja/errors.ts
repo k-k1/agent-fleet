@@ -80,9 +80,9 @@ export const errors = {
   "err.interaction_pending":
     "エージェントが対話中のプロンプトを表示しています。カード（ないときは端末）から回答してから送信してください。",
   "err.auth_expired":
-    "このワークスペースの Claude のログインが期限切れです。再認証（アカウントメニュー > 設定 > 接続 > エージェント）してから送信してください（この状態で送るとターミナルは文字を受け取りますが、ターンは一つも始まりません）。",
+    "このワークスペースの Claude のログインが期限切れです。再認証（アカウントメニュー > 設定 > 接続 > モデルの認証情報）してから送信してください（この状態で送るとターミナルは文字を受け取りますが、ターンは一つも始まりません）。",
   "err.auth_expired_kind":
-    "このワークスペースの {agent} のログインが期限切れです。再認証（アカウントメニュー > 設定 > 接続 > エージェント）してから送信してください。",
+    "このワークスペースの {agent} のログインが期限切れです。再認証（アカウントメニュー > 設定 > 接続 > モデルの認証情報）してから送信してください。",
   "err.codex_releasing":
     "codex がまだこの会話を手放していません（停止から通常 1 分ほど）。少し待ってからもう一度お試しください。",
   "err.driver_switching": "実行方式を切り替えています。切り替えが終わってからもう一度お試しください。",
@@ -118,7 +118,7 @@ export const errors = {
   // runtime_err.go と対）。何のログインが要るかは kind ごとに違うので、詳細は
   // errDetail() がサーバの message を併記して伝える。
   "err.agent_not_connected":
-    "このエージェントにログインしていないため起動できませんでした。設定 > エージェント から接続してください。",
+    "このエージェントにログインしていないため起動できませんでした。設定 > モデルの認証情報 から接続してください。",
   // An unsupported opencode (1.x) was found. Waiting never fixes it (paired with runtime_err.go
   // on the Agent). errDetail() does not append the server's bilingual message for this code.
   "err.agent_unsupported_version":

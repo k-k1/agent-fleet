@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants to run Kiro in sessions"
-source_of_truth: "the Kiro card in the Console's Settings > Agents"
+source_of_truth: "the Kiro card in the Console's Settings > Model credentials, and its behaviour in Settings > Agents"
 ---
 
 # Connect Kiro
@@ -24,7 +24,7 @@ The Kiro CLI is large (about 855 MB), so most deployments do not bake it into th
 
 ![The Kiro card before its install: the "Install Kiro" button, which says it downloads about 855 MB into your home](../../assets/agents-kiro-en-light.webp)
 
-1. Press "**Install Kiro**" on the **Kiro** card in **⚙Settings → Agents**
+1. Press "**Install Kiro**" on the **Kiro** card in **⚙Settings → Model credentials**
 2. It downloads into your home. This takes a few minutes
 3. When it is done, the card switches to the sign-in screen by itself
 
@@ -47,7 +47,7 @@ When a newer pinned version exists, the card shows "**A newer version is availab
 
 ## Behavior
 
-The items under the card's "**Behavior**" are [the ones every agent shares](choose.md#choose-the-behavior). It has no RTK setting.
+The items under "**Behavior**" on the **Kiro** card in **⚙Settings → Agents** are [the ones every agent shares](choose.md#choose-the-behavior). It has no RTK setting.
 
 ## Good to know
 

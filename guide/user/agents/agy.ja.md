@@ -1,6 +1,6 @@
 ---
 audience: "Antigravity CLI をセッションで使いたい人"
-source_of_truth: "Console の設定 >「エージェント」の Antigravity カード"
+source_of_truth: "Console の設定 >「モデルの認証情報」の Antigravity カードと、設定 >「エージェント」の動作設定"
 ---
 
 # Antigravity を接続する
@@ -20,7 +20,7 @@ Google アカウントでログインすると、Antigravity CLI（agy）をセ�
 
 ## 接続する
 
-**⚙設定 →「エージェント」** の **Antigravity** カードで操作します。
+**⚙設定 →「モデルの認証情報」** の **Antigravity** カードで操作します。
 
 ![接続前の Antigravity カード。認証方式の「Google OAuth」、「OAuth 接続」のボタンがある](../../assets/agents-agy-ja-light.webp)
 
@@ -32,7 +32,7 @@ Google アカウントでログインすると、Antigravity CLI（agy）をセ�
 
 ## 動作設定
 
-カードの「**動作設定**」の項目は、[ほかのエージェントと共通](choose.ja.md#動作設定を選ぶ)です。
+**⚙設定 →「エージェント」** の **Antigravity** カードの「**動作設定**」の項目は、[ほかのエージェントと共通](choose.ja.md#動作設定を選ぶ)です。
 
 - **RTK** は、`AGENTS.md` で rtk を使うよう促すだけのベストエフォートです（[料金と使用量を確かめる](usage.ja.md#rtk-でトークンを節約する)）
 

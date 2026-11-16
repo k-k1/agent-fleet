@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants to run the GitHub Copilot CLI in sessions"
-source_of_truth: "the GitHub Copilot card in the Console's Settings > Agents"
+source_of_truth: "the GitHub Copilot card in the Console's Settings > Model credentials, and its behaviour in Settings > Agents"
 ---
 
 # Connect GitHub Copilot
@@ -23,7 +23,7 @@ There is no sign-in of Copilot's own.
 ![The GitHub Copilot card once GitHub is connected: it reads "Connected" and has no sign-in button of its own](../../assets/agents-copilot-en-light.webp)
 
 1. Connect GitHub in **⚙Settings → Git hosting** ([Use the GitHub CLI](../integrations/github-cli.md))
-2. Check that the **GitHub Copilot** card in **⚙Settings → Agents** reads "**Connected**"
+2. Check that the **GitHub Copilot** card in **⚙Settings → Model credentials** reads "**Connected**"
 
 Until GitHub is connected, the card shows "**Connect GitHub first.**" and "**Open Git hosting**".
 
@@ -31,7 +31,7 @@ The GitHub account needs a **Copilot subscription** (the Free plan included). Wi
 
 ## Behavior
 
-The items under the card's "**Behavior**" are [the ones every agent shares](choose.md#choose-the-behavior).
+The items under "**Behavior**" on the **GitHub Copilot** card in **⚙Settings → Agents** are [the ones every agent shares](choose.md#choose-the-behavior).
 
 - **RTK** rewrites shell commands to go through rtk every time, from sessions started after the change ([Check prices and usage](usage.md#save-tokens-with-rtk))
 

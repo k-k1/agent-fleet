@@ -84,6 +84,30 @@ export function usePrefsSyncState(): PrefsSyncState {
   );
 }
 
+/** waitPrefsSaved resolves true once every change made so far has reached the Agent's ui-prefs,
+ *  false when the save fails or ms pass first. For an action whose effect the Agent decides (the
+ *  member layer's reset): the page refreshes what the Agent shows only after the Agent can see the
+ *  change, and says so when it cannot. */
+export function waitPrefsSaved(ms = 15_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let unsub = (): void => {};
+    const timer = setTimeout(() => done(false), ms);
+    function done(ok: boolean): void {
+      clearTimeout(timer);
+      unsub();
+      resolve(ok);
+    }
+    const check = (): void => {
+      // "synced" is set only once the last save carrying every unsaved change has landed (the
+      // PUT's own .then), so it needs no wait for the flight's .finally, which notifies nobody.
+      if (syncState === "synced" && unsaved.size === 0 && !saveTimer) done(true);
+      else if (syncState === "failed") done(false);
+    };
+    unsub = subscribePrefsSync(check);
+    check();
+  });
+}
+
 /** Try again now: read the server copy (the unsaved keys stay local over it), then send. */
 export function retryPrefsSync(): void {
   if (saveTimer || saveInFlight) return; // already on its way

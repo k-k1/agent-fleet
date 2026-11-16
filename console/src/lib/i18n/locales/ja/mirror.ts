@@ -255,7 +255,7 @@ export const mirror = {
   "mirror.thinking_label": "思考",
   "mirror.error_label": "エラーで終了",
   // ErrorBlock の回復導線（cause="auth"）。原文は CLI 向けの "Please run /login" なので、
-  // Console の利用者に効く操作＝設定 > エージェント での再認証を案内する。
+  // Console の利用者に効く操作＝設定 > モデルの認証情報 での再認証を案内する。
   "mirror.error_auth_hint":
     "{agent} のログインが切れています。再認証すると、このセッションはそのまま続きから再開できます。",
   "mirror.error_auth_action": "再認証",

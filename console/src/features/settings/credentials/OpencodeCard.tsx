@@ -9,9 +9,8 @@ import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { Choice } from "../parts/controls.tsx";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, IssueLink } from "../parts/providerCard.tsx";
 import { usePolling } from "../parts/usePolling.ts";
-import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkRow, type DeviceFlow } from "./AgentCardParts.tsx";
+import { SettingRow, ConnPaused, type DeviceFlow } from "../agents/AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
-import { type AgentRtkPatch, type AgentRtkSettings } from "../api.ts";
 
 // opencode: two independent auth paths that coexist (docs/log/54) —
 //   1. opencode account: OAuth device flow through `opencode serve`'s integration
@@ -19,7 +18,7 @@ import { type AgentRtkPatch, type AgentRtkSettings } from "../api.ts";
 //      token itself), so like Cursor there is no code to paste; we show the URL and
 //      poll api/connections/opencode/oauth/poll.
 //   2. provider API keys: stored and injected as env at launch (unchanged).
-// "Connected" = either path is set up. Plus the RTK and Web UI toggles.
+// "Connected" = either path is set up. The RTK toggle is on the Agents page.
 // [presetId, label, envVar, issueUrl]. issueUrl is the provider's fixed API-key page
 // (empty = none / handled elsewhere — "go" keeps its own opencode.ai/auth hint below).
 // The first entry's label is resolved via i18n (agents.oc_preset_opencode) at render: ONE
@@ -58,7 +57,36 @@ const OC_PRESETS = [
 // only — you had to click a route to find out what it meant.
 const OC_ROUTES = ["own", "free", "go", "zen"] as const;
 
-function OpencodeUsageRows() {
+// The model routes (ADR 0138) each control here runs on, so the card offers only what the policy
+// allows (D10a): a forbidden route's choice, key preset or sign-in is not named at all. The Agent
+// refuses to store a credential for a forbidden route anyway (CredentialEntryRefusal).
+const DIRECT_KEY_ROUTES = ["anthropic-api", "openai-api", "openrouter-api", "gemini-api", "sakana-api", "custom-api"];
+// Zen is the one choice the opencode.ai account sign-in pays for by itself (its note: "an account
+// sign-in or an API key"), so under an account-only policy it is the choice offered. Go is tied
+// to the Go key, and free runs with no credential on Zen's endpoint.
+const USAGE_ROUTES: Record<(typeof OC_ROUTES)[number], string[]> = {
+  own: DIRECT_KEY_ROUTES,
+  free: ["opencode-zen"],
+  go: ["opencode-go"],
+  zen: ["opencode-zen", "opencode-account"],
+};
+// OPENCODE_API_KEY opens both opencode.ai billing routes (the Agent's keyEnvRoutes).
+const PRESET_ROUTES: Record<string, string[]> = {
+  go: ["opencode-go", "opencode-zen"],
+  anthropic: ["anthropic-api"],
+  openai: ["openai-api"],
+  openrouter: ["openrouter-api"],
+  google: ["gemini-api"],
+  sakana: ["sakana-api"],
+  custom: ["custom-api"],
+};
+const ACCOUNT_ROUTE = "opencode-account";
+const anyAllowed = (allowed: Set<string>, rs: string[]) => rs.some((r) => allowed.has(r));
+// The routes a stored key opens, by its env name.
+const keyEnvRoutes = (env: string): string[] =>
+  PRESET_ROUTES[String(OC_PRESETS.find((p) => p[2] === env)?.[0] ?? "custom")] ?? ["custom-api"];
+
+function OpencodeUsageRows({ allowed }: { allowed: Set<string> }) {
   const s = useSettings();
   const tr = useT();
   const selected = s.opencodeCatalog;
@@ -67,7 +95,10 @@ function OpencodeUsageRows() {
   // persisted: turning opencode off is not a reason to forget the route, and "own" is the
   // right landing place for a workspace switching it on for the first time — it is the only
   // value that reaches no opencode.ai service until the user asks for one.
+  const choices = OC_ROUTES.filter((v) => anyAllowed(allowed, USAGE_ROUTES[v]));
   const [lastRoute, setLastRoute] = useState<Exclude<typeof selected, "off">>(off ? "own" : selected);
+  // Switching on lands on the last route when it is still offered, else on the first one that is.
+  const onRoute = choices.includes(lastRoute) ? lastRoute : (choices[0] ?? lastRoute);
 
   return (
     <>
@@ -78,7 +109,7 @@ function OpencodeUsageRows() {
             ["off", tr("agents.oc_enabled_off")],
             ["on", tr("agents.oc_enabled_on")],
           ]}
-          onChange={(v) => setSettings({ opencodeCatalog: v === "off" ? "off" : lastRoute })}
+          onChange={(v) => setSettings({ opencodeCatalog: v === "off" ? "off" : onRoute })}
         />
       </SettingRow>
       <p className="ps-note">{tr(off ? "agents.oc_enabled_note_off" : "agents.oc_enabled_note_on")}</p>
@@ -86,7 +117,7 @@ function OpencodeUsageRows() {
         <>
           <p className="ps-title">{tr("agents.oc_usage")}</p>
           <div className="p-opts p-opts-col" role="radiogroup" aria-label={tr("agents.oc_usage")}>
-            {OC_ROUTES.map((v) => (
+            {choices.map((v) => (
               <button
                 key={v}
                 type="button"
@@ -100,7 +131,9 @@ function OpencodeUsageRows() {
                 }}
               >
                 <span className="p-opt-t">{tr(`agents.oc_usage_${v}`)}</span>
-                <span className="p-opt-s">{tr(`agents.oc_usage_note_${v}`)}</span>
+                <span className="p-opt-s">
+                  {tr(v === "zen" && !allowed.has("opencode-zen") ? "cred.oc_usage_note_zen_account" : `agents.oc_usage_note_${v}`)}
+                </span>
               </button>
             ))}
           </div>
@@ -262,14 +295,13 @@ export function OpencodeCard({
   running,
   st,
   reload,
-  agents,
-  updateAgents,
+  allowed,
 }: {
   running: boolean;
   st: ProviderConn | undefined;
   reload: () => void;
-  agents: Partial<AgentRtkSettings> | false | null;
-  updateAgents: (patch: AgentRtkPatch) => void;
+  /** The routes the policy allows opencode (the live kind catalogue's routes and fixedRoutes). */
+  allowed: Set<string>;
 }) {
   const tr = useT();
   const toast = useToast();
@@ -281,7 +313,8 @@ export function OpencodeCard({
   const [busy, setBusy] = useState(false);
   const [flow, setFlow] = useState<DeviceFlow | null>(null);
   const [oauthBusy, setOauthBusy] = useState(false);
-  const envs = st?.envs || [];
+  // A stored key whose route the policy forbids is kept but not listed (D14a).
+  const envs = (st?.envs || []).filter((e: string) => anyAllowed(allowed, keyEnvRoutes(e)));
   const account = !!st?.oauth;
   const accountOff = !!st?.oauth_disabled;
   const usage = s.opencodeCatalog; // off | own | free | go | zen — see OpencodeUsageRows
@@ -290,8 +323,11 @@ export function OpencodeCard({
   // On "own" the opencode.ai key is not injected at all (auth.go's env()), so offering to
   // store one here would be a form whose result does nothing. The preset falls back to the
   // first remaining entry rather than sticking on a hidden one.
-  const presets = usesOpencodeAI ? OC_PRESETS : OC_PRESETS.filter((p) => p[0] !== "go");
-  const active = presets.some((p) => p[0] === preset) ? preset : String(presets[0][0]);
+  const presets = (usesOpencodeAI ? OC_PRESETS : OC_PRESETS.filter((p) => p[0] !== "go")).filter((p) =>
+    anyAllowed(allowed, PRESET_ROUTES[String(p[0])] ?? []),
+  );
+  const active = presets.some((p) => p[0] === preset) ? preset : String(presets[0]?.[0] ?? "");
+  const accountAllowed = allowed.has(ACCOUNT_ROUTE);
   const envName =
     active === "custom" ? customEnv.trim().toUpperCase() : presets.find((p) => p[0] === active)?.[2] || "";
   const issueUrl = presets.find((p) => p[0] === active)?.[3] || "";
@@ -404,7 +440,7 @@ export function OpencodeCard({
         <>
           <OpencodeRestartRow st={st} reload={reload} />
           <div className="p-body">
-            <OpencodeUsageRows />
+            <OpencodeUsageRows allowed={allowed} />
             <OpencodeRouteFallback />
           </div>
           {/* Off hides the credentials entirely rather than greying them: everything below
@@ -415,11 +451,15 @@ export function OpencodeCard({
           <>
           {/* Only the sign-in needs an introduction of its own. own / free used to carry one
               too, which repeated what the route they had just selected already said. */}
-          {usesOpencodeAI && <div className="p-desc">{tr("agents.oc_account_desc")}</div>}
+          {usesOpencodeAI && accountAllowed && (
+            <div className="p-desc">
+              {tr(presets.length > 0 ? "agents.oc_account_desc" : "cred.oc_account_desc_only")}
+            </div>
+          )}
           {/* The account sign-in is opencode.ai's, so it is not offered on the route that
               declines opencode.ai — showing a connect button whose result would be ignored is
               how the old card made the route look like it governed less than it does. */}
-          {usesOpencodeAI && (
+          {usesOpencodeAI && accountAllowed && (
           <div className="p-body">
             {accountOff ? (
               <div className="p-desc">{tr("agents.oc_account_disabled")}</div>
@@ -488,6 +528,7 @@ export function OpencodeCard({
                 ))}
               </ul>
             )}
+            {presets.length > 0 && (
             <div className="flow">
               <select className="cinput" value={active} onChange={(e) => setPreset(e.target.value)}>
                 {presets.map(([v, label]) => (
@@ -515,22 +556,12 @@ export function OpencodeCard({
                 {tr("conn.connect")}
               </button>
             </div>
+            )}
           </div>
           </>
           )}
         </>
       )}
-      <CardSettings>
-        <LaunchDefaults kind="opencode" />
-        <ThinkingRow kind="opencode" />
-        {agents && (
-          <RtkRow
-            available={agents.rtk_available}
-            value={agents.opencode_rtk}
-            onChange={(v) => updateAgents({ opencode_rtk: v })}
-          />
-        )}
-      </CardSettings>
     </ProviderCard>
   );
 }

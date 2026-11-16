@@ -42,6 +42,16 @@ type memberAccessWire struct {
 	// SomeOffByOwnSettings: the member's own switches hide at least one harness the policy
 	// allows. A harness the policy forbids anyway never counts, so this cannot reveal one.
 	SomeOffByOwnSettings bool `json:"someOffByOwnSettings"`
+	// PolicyConfirmed: the held policy is confirmed and recorded (routepolicy Gate), so the kinds
+	// and routes beside it are filtered by the policy in force. False while it cannot be: the
+	// catalogue may then be unfiltered (no policy held yet) or filtered by a stale one, and a
+	// member's settings pages list nothing from it (D10a, D12).
+	PolicyConfirmed bool `json:"policyConfirmed"`
+	// AddableRoutes are the per-connection routes the policy does not allow on the connection
+	// stored now (or with none stored) but would allow on a host it approves, for a harness the
+	// member has not switched off, sorted. A member's credentials page offers their entry from it;
+	// it names no host. Empty with no restriction.
+	AddableRoutes []string `json:"addableRoutes,omitempty"`
 }
 
 // kindEntryWire is one kind. The tri-state fields carry "yes" / "no" / "unverified"
@@ -104,6 +114,10 @@ func buildKindCatalog(live bool) kindCatalogWire {
 	chatRoutes := chatx.ChatBackendRoutes()
 	if live {
 		a := memberAccessOf(kinds, hide, hiding, sessionx.KindSwitchedOff)
+		a.PolicyConfirmed = routepolicy.Active().Gate() == nil
+		if hiding {
+			a.AddableRoutes = addableRoutesOf(kinds, hide, sessionx.KindSwitchedOff)
+		}
 		out.Access = &a
 	}
 	for _, k := range kinds {
@@ -178,6 +192,23 @@ func memberAccessOf(kinds []string, hide routepolicy.Policy, hiding bool, switch
 		AllOffByOwnSettings:  allowed > 0 && on == 0,
 		SomeOffByOwnSettings: on < allowed,
 	}
+}
+
+// addableRoutesOf is memberAccessWire.AddableRoutes over kinds.
+func addableRoutesOf(kinds []string, hide routepolicy.Policy, switchedOff func(string) bool) []string {
+	var out []string
+	for _, k := range kinds {
+		if switchedOff(k) {
+			continue
+		}
+		for _, r := range kindRoutesOf(k) {
+			if !hide.Allows(r) && hide.AddableOnEndpoint(r) && !slices.Contains(out, r) {
+				out = append(out, r)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // kindRoutesOf is every route kind may run on: the selectable routes it offers or declares and the

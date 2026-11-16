@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 describe("toastSendFailure", () => {
-  it("renders a sticky Re-authenticate action for auth_expired that opens Settings > Agents", async () => {
+  it("renders a sticky Re-authenticate action for auth_expired that opens Settings > Model credentials", async () => {
     const sink = vi.fn();
     toastSendFailure(sink, { code: "auth_expired", message: "ignored" }, "fallback");
     expect(sink).toHaveBeenCalledTimes(1);
@@ -39,7 +39,7 @@ describe("toastSendFailure", () => {
 
     const s = useSettingsUI.getState();
     expect(s.settingsOpen).toBe(true);
-    expect(s.settingsSection).toBe("agents");
+    expect(s.settingsSection).toBe("credentials");
     expect(s.settingsTarget).toBe("claude");
   });
 

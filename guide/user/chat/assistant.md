@@ -140,7 +140,7 @@ the next available CLI in **Agent priority** answers that turn once, and a notic
 
 ### The CLI to switch to cannot be picked
 
-That CLI is not connected yet. Log in under ⚙ Settings → "**Agents**" and it becomes available ([Choose an agent](../agents/choose.md)).
+That CLI is not connected yet. Log in under ⚙ Settings → "**Model credentials**" and it becomes available ([Choose an agent](../agents/choose.md)).
 
 ## Related
 

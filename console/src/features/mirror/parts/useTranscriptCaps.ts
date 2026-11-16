@@ -78,7 +78,7 @@ export function useTranscriptCaps({
     sendPlanComments: (plan: string) => void sendPlanComments(plan),
     forkAt: openForkAt,
     // The card of the agent whose login failed: the session's own kind, not Claude by default.
-    onReauth: () => useSettingsUI.getState().openSettings("agents", { target: sessionMeta?.kind || undefined }),
+    onReauth: () => useSettingsUI.getState().openSettings("credentials", { target: sessionMeta?.kind || undefined }),
     isRejectedPlan: (p: string) => rejectedPlansRef.current.has(p.trim()),
     queue: { restore: (id) => void takeQueued(id, true), remove: (id) => void takeQueued(id, false) },
   };

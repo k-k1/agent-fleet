@@ -6,7 +6,7 @@ import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
 import { useActiveFlow } from "../parts/useActiveFlow.ts";
 import { usePolling } from "../parts/usePolling.ts";
-import { CardSettings, ConnPaused, LaunchDefaults, type DeviceFlow } from "./AgentCardParts.tsx";
+import { ConnPaused, type DeviceFlow } from "../agents/AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
 import { getKiroInstall, isOk, type CliInstallStatus } from "../api.ts";
 
@@ -19,7 +19,6 @@ import { getKiroInstall, isOk, type CliInstallStatus } from "../api.ts";
 // the user approves in a browser — so the UI shows both and polls
 // api/connections/kiro/poll (no pasted code, like Codex/Cursor). v1 is login-only
 // (Builder ID / free); the API-key path (KIRO_API_KEY, Pro+) is deferred to Track D.
-// No RTK toggle yet — kiro's rtk hook seam is Track D.
 export function KiroCard({ running, st, reload }: { running: boolean; st: ProviderConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
@@ -250,9 +249,6 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: Provid
           )}
         </div>
       )}
-      <CardSettings>
-        <LaunchDefaults kind="kiro" />
-      </CardSettings>
     </ProviderCard>
   );
 }

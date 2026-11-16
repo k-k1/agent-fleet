@@ -48,7 +48,7 @@ function mounter(render: (st: Record<string, unknown>, reload: () => void) => Re
 }
 const cards: Record<string, { mount: Mounter; start: string; shows: string }> = {
   agy: {
-    mount: mounter((st, reload) => <AgyCard running st={st} reload={reload} agents={false} updateAgents={() => {}} />),
+    mount: mounter((st, reload) => <AgyCard running st={st} reload={reload} />),
     start: "POST api/connections/agy/start",
     shows: 'input[name="agy-oauth-code"]',
   },
@@ -63,7 +63,7 @@ const cards: Record<string, { mount: Mounter; start: string; shows: string }> = 
     shows: "a, .flow-link, code",
   },
   muse: {
-    mount: mounter((st, reload) => <MuseCard running st={st} reload={reload} />),
+    mount: mounter((st, reload) => <MuseCard running st={st} reload={reload} allowed={new Set(["muse-login", "meta-api"])} />),
     start: "POST api/connections/muse/start",
     shows: "a, .flow-link, code",
   },

@@ -82,9 +82,9 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.interaction_pending":
     "The agent is showing an interactive prompt. Answer it from its card (or in the terminal when there is none) before sending.",
   "err.auth_expired":
-    "This workspace's Claude login has expired. Re-authenticate it (account menu > Settings > Connections > Agents) before sending, because the terminal would take the text but no turn would ever start.",
+    "This workspace's Claude login has expired. Re-authenticate it (account menu > Settings > Connections > Model credentials) before sending, because the terminal would take the text but no turn would ever start.",
   "err.auth_expired_kind":
-    "This workspace's {agent} login has expired. Re-authenticate it (account menu > Settings > Connections > Agents) before sending.",
+    "This workspace's {agent} login has expired. Re-authenticate it (account menu > Settings > Connections > Model credentials) before sending.",
   "err.codex_releasing":
     "codex has not let go of this conversation yet (usually about a minute after the stop). Try again shortly.",
   "err.driver_switching": "This session is switching its execution method. Try again once the switch is done.",
@@ -120,7 +120,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   // Agent). Which login is missing differs per kind — errDetail() appends the server's
   // message for that.
   "err.agent_not_connected":
-    "Couldn't start: you aren't signed in to this agent. Connect it from Settings > Agents.",
+    "Couldn't start: you aren't signed in to this agent. Connect it from Settings > Model credentials.",
   // An unsupported opencode (1.x) was found. Waiting never fixes it (paired with runtime_err.go
   // on the Agent). errDetail() does not append the server's bilingual message for this code.
   "err.agent_unsupported_version":

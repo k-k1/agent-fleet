@@ -159,7 +159,7 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
       // Connecting runs through the in-container Agent, so it needs the workspace up.
       cta: g.agentOk
         ? null
-        : { text: tr("onb.connect"), icon: "plug", disabled: !g.running, title: wsFirst, on: after(() => g.openSettings("agents")) },
+        : { text: tr("onb.connect"), icon: "plug", disabled: !g.running, title: wsFirst, on: after(() => g.openSettings("credentials")) },
     },
   ];
   const dev: Step[] = [

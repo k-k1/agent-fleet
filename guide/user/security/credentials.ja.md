@@ -25,7 +25,7 @@ audience: "ワークスペースで、トークンやログインを安全に扱
 | 認証情報 | 置き場所 | 詳しく |
 |---|---|---|
 | GitHub・Bitbucket のトークン | ⚙設定 →「Git ホスティング」 | [Git のサービスを接続する](../code/connect-git.ja.md) |
-| エージェントのログイン・API キー | ⚙設定 →「エージェント」 | [エージェントを選ぶ](../agents/choose.ja.md) |
+| エージェントのログイン・API キー・接続先 | ⚙設定 →「モデルの認証情報」 | [エージェントを選ぶ](../agents/choose.ja.md) |
 | Jira・Confluence | ⚙設定 →「課題管理」 | [Jira を使う](../integrations/jira.ja.md) |
 | AWS | ⚙設定 →「AWS プロファイル/SSM」の SSO プロファイル | [AWS SSO を使う](../integrations/aws-sso.ja.md) |
 | Google Cloud | ⚙設定 →「Google Cloud」 | [Google Cloud を使う](../integrations/gcloud.ja.md) |
