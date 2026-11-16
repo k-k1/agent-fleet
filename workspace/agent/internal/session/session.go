@@ -398,6 +398,11 @@ type Session struct {
 	// invisible in the list cannot be told apart from one silently lost. The card is there
 	// if you open the mirror, but nobody opens it without a reason to.
 	Carried string `json:"carried,omitempty"`
+	// CarriedLive is the kind of a carried interaction that is still there on a LIVE row
+	// (a session started again without answering the card). Carried stays stopped-only so the
+	// session list does not change; this field is what lets the Control Plane keep an
+	// auto-run open until the card is answered, discarded or expired. Never set on a stopped row.
+	CarriedLive string `json:"carriedLive,omitempty"`
 	// HandoffPending: the LAST successor's first prompt this session proposed
 	// (propose_session_handoff) has not been launched. It clears the moment that proposal is
 	// launched or discarded — or a newer one is launched in its place, since proposals are
