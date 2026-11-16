@@ -677,8 +677,8 @@ and `/mcp` stay `held`. A change that arrives by the token face to such a messag
 release again: the update carries no caller identity, so the Control Plane can only read the origin recorded at the
 create, and the switch already accepts that a session of that origin could have added the changed text as a new
 message. A move into a category without the switch, and a change by `/mcp`, put it back to `held`. A message the switch
-made pending carries `memo.released_by = 'setting'` (`releasedBy` on the wire), which the Console draws as "Approved by
-the setting"; a press or a Console write clears it. The bounds on a create from a session (rate, size, identical
+made pending carries `memo.released_by = 'setting'` (`releasedBy` on the wire), which the Console draws as
+"Accepted without approval"; a press or a Console write clears it. The bounds on a create from a session (rate, size, identical
 message, the envelope prefix) and a queue's daily cap and breaker are unchanged. The Agent already relays the session's
 origin (`session.OriginOf`); nothing in the workspace changed.
 

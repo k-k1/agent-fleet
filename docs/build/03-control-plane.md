@@ -279,7 +279,7 @@ Memos you accumulate and send to a session in one go (the tables are
   and origin `user`, into a queue with the switch on, keeps `pending` and re-records the release;
   the update carries no caller identity, so the recorded origin is all the rule can read. The
   bounds below hold with the switch on. Changing the switch leaves existing rows alone, a plain note
-  moved in by an `user` session enters like a create, a held message keeps its state when moved,
+  moved in by a `user` session enters like a create, a held message keeps its state when moved,
   and a press on an already pending message changes nothing. `POST /api/memos/release` moves held messages to
   `pending`, all or none, each with a conditional write on its own row that also requires
   the content hash the card showed. Settings and release are Console only; on the token
