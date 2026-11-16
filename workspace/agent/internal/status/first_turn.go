@@ -151,6 +151,47 @@ func ReadFirstTurn(sid string) (FirstTurn, bool) {
 // RemoveFirstTurn forgets sid's ledger; only deleting the session does.
 func RemoveFirstTurn(sid string) { firstTurns.Remove(sid) }
 
+// SweepOrphanFirstTurns removes the ledgers of creates that left no session: a ledger whose sid
+// is not in live (the sids of every session meta on disk) and that was armed more than minAge
+// before now. It returns how many it removed.
+//
+// The age is what keeps a create in flight safe: a ledger is armed before its meta is
+// published, so "no meta" alone cannot tell an orphan from a create that has not got that far.
+// minAge must be far above the longest create. A ledger whose ArmedAt does not parse is kept;
+// a wrongly removed ledger costs the Control Plane's circuit breaker a delivery it can never
+// count again, a kept one costs a few hundred bytes.
+func SweepOrphanFirstTurns(live map[string]bool, minAge time.Duration, now time.Time) int {
+	entries, err := os.ReadDir(firstTurns.Dir())
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		sid := strings.TrimSuffix(e.Name(), ".json")
+		if live[sid] {
+			continue
+		}
+		unlock, locked := lockSid(sid)
+		if !locked {
+			// Not serialised with an arm or a status write: keep it, the next start retries.
+			continue
+		}
+		// Read again under the lock: a create that re-armed this sid since the listing has a
+		// fresh ArmedAt.
+		if t, ok := firstTurns.Read(sid); ok {
+			if at, err := time.Parse(time.RFC3339Nano, t.ArmedAt); err == nil && now.Sub(at) > minAge {
+				firstTurns.Remove(sid)
+				n++
+			}
+		}
+		unlock()
+	}
+	return n
+}
+
 // noteFirstTurnWrite is called by persistLocked, with the per-sid lock held and before the new
 // record replaces the old one, so it can tell a start (a working write after an idle or no
 // record) from a heartbeat or the return from a question.

@@ -609,3 +609,8 @@ a tick's budget between them, and a member whose retire calls each wait 30 secon
 forgotten and comes back first in line, so no bound is promised for a changing set. The order is remembered in the
 process only: each Control Plane is fair by itself, and nothing depends on two of them agreeing. A member the settle
 pass did not reach has no view in the tick, and the dispatcher reads it itself, once.
+
+Added 2026-11-16 (#4210): a create that fails to start its session now removes the first-turn record it armed, and
+the Agent removes at start the records no session meta claims (armed more than a day ago; the round is skipped when
+a meta cannot be read). Nothing about what the record holds or when it settles changed. The retire's walk reporting
+a child create still in flight in `unended` is covered by the Control Plane repeating a retire that is not complete.

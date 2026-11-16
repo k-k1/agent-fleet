@@ -724,10 +724,17 @@ func (c *createRun) launch(meta session.Meta) {
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 		return
 	}
+	// dropLedger forgets the ledger armed below when the start itself failed, so no session
+	// came of the create. It is not called when publish answers false: by then the session
+	// has started, and the ledger may still belong to it (see the sweep,
+	// status.SweepOrphanFirstTurns, for the case where it does not).
+	dropLedger := func() {}
 	if req.QueueDelivery != nil {
 		// Before anything can start a turn: the ledger counts the starts that follow
 		// (status.FirstTurn). A kind that records no end reason keeps the outcome empty.
-		status.ArmFirstTurn(session.UUID(meta.Dir, name), liveStateTraits(meta.Kind).PolledTurnEnd)
+		sid := session.UUID(meta.Dir, name)
+		status.ArmFirstTurn(sid, liveStateTraits(meta.Kind).PolledTurnEnd)
+		dropLedger = func() { status.RemoveFirstTurn(sid) }
 	}
 	if meta.DriverKind() == session.DriverManaged {
 		// managed (docs/log/27 P2): no tmux pane — the driver opens a thread on the shared
@@ -736,6 +743,7 @@ func (c *createRun) launch(meta session.Meta) {
 		d, _ := driverOf(meta)
 		h, err := mcpx.StartManagedSession(d, meta)
 		if err != nil {
+			dropLedger()
 			unbindStudioAfterFailedLaunch(c.studio, name)
 			writeRuntimeErr(c.w, err)
 			return
@@ -770,6 +778,7 @@ func (c *createRun) launch(meta session.Meta) {
 		return
 	}
 	if err := launchTmuxFn(meta, req.SSMForceLogin); err != nil {
+		dropLedger()
 		unbindStudioAfterFailedLaunch(c.studio, name)
 		writeTmuxLaunchErr(c.w, err)
 		return
