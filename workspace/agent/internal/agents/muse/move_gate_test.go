@@ -22,6 +22,9 @@ func TestPumpStartsBeforeAMoveOrLeavesTheEntryQueued(t *testing.T) {
 	h := &threadHandle{name: "muse-move-1"}
 	host := newTestHandle(t, h)
 	t.Cleanup(func() { lifegate.Reopen(h.name) }) // the gate's memory is process-wide
+	// The ClientMessageID ledger lives under HOME and outlives the test: a later round would
+	// find this session's inputs already recorded and drop them as resends, so no turn/start.
+	t.Cleanup(func() { ledger.Remove(h.name) })
 	handlesMu.Lock()
 	handles[h.name] = h // where ManagedInFlight looks
 	handlesMu.Unlock()

@@ -9,6 +9,10 @@ import (
 // muse takes its servers on the wire, not from a config file: an OAuth definition must not be
 // on that list either until the relay exists.
 func TestSessionMCPServersLeavesOutOAuthDefinitions(t *testing.T) {
+	// The registry is a file under HOME; a private one keeps a second round from finding the
+	// first round's names already registered.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
 	for name, auth := range map[string]string{"plainremote": "", "oauthremote": mcpreg.AuthOAuth} {
 		if _, err := mcpreg.Create(mcpreg.ServerDef{Name: name, Transport: mcpreg.TransportHTTP, URL: "https://m.example.com/" + name,
 			Auth: auth, Enabled: true, Targets: mcpreg.Targets{Session: true}}); err != nil {
