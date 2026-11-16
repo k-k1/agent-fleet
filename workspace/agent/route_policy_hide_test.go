@@ -252,6 +252,9 @@ func writeMemberPrefs(t *testing.T, prefs map[string]any) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Dir(uiprefs.Path()), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := uiprefs.WriteAtomic(b); err != nil {
 		t.Fatal(err)
 	}
@@ -337,5 +340,42 @@ func TestKindCatalogChatFlag(t *testing.T) {
 	}
 	if c := by[session.KindCodex].Chat; c == nil || !*c {
 		t.Errorf("codex chat on an allowed API key: %v, want true", c)
+	}
+}
+
+// A kind the member switched off with agentEnabled has no GET /connections entry, like a kind the
+// policy forbids; GitHub's entry, which is git and not a model, stays even with copilot off; a kind
+// that is on keeps its entry.
+func TestConnectionsHideSwitchedOffHarnesses(t *testing.T) {
+	memberHome(t)
+	t.Setenv("AF_SECRET_KEY", "")
+	useHidingPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
+	get := func() map[string]json.RawMessage {
+		w := httptest.NewRecorder()
+		handleConnectionsGet(w, httptest.NewRequest(http.MethodGet, "/connections", nil))
+		var out map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatalf("%v: %s", err, w.Body.String())
+		}
+		return out
+	}
+	writeMemberPrefs(t, map[string]any{"agentEnabled": map[string]any{"agy": true}})
+	before := get()
+	for _, k := range []string{session.KindAgy, session.KindCopilot, "github"} {
+		if _, ok := before[k]; !ok {
+			t.Fatalf("control: %s has no entry with every switch on", k)
+		}
+	}
+	writeMemberPrefs(t, map[string]any{"agentEnabled": map[string]any{"agy": false, "copilot": false}})
+	after := get()
+	for _, k := range []string{session.KindAgy, session.KindCopilot} {
+		if _, ok := after[k]; ok {
+			t.Errorf("%s, switched off by the member, still has an entry", k)
+		}
+	}
+	for _, k := range []string{"github", session.KindClaude, session.KindCodex} {
+		if _, ok := after[k]; !ok && before[k] != nil {
+			t.Errorf("%s's entry was hidden", k)
+		}
 	}
 }

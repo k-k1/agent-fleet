@@ -51,6 +51,9 @@ type createRun struct {
 	// fromDefault: req.Route is the member's default route (applyDefaultRoute), not one the
 	// request named, so a refusal of it is route_required.
 	fromDefault bool
+	// defaultFixed is the member's default route when it is one the kind resolves by itself (a
+	// fixed route): the create stays empty and checkRoute requires the judged launch to be on it.
+	defaultFixed string
 	// subdir is the cleaned subdir, checked to exist beneath the resolved working copy.
 	subdir string
 
@@ -274,16 +277,11 @@ func createTraitsOf(kind string) (agents.CreateTraits, bool) {
 
 // createRefusal is the kind's agents.CreatePolicy gate: status 0 passes, otherwise the refusal
 // to write. The member's setting is checked before the model, as it always was.
-// The member's agentEnabled switch (member_layer.go) comes after the kind's own switch, so lcpp
-// switched off by its older setting keeps its own refusal.
 func createRefusal(kind, model string) (status int, code, msg string) {
+	if status, code, msg := switchRefusal(kind); status != 0 {
+		return status, code, msg
+	}
 	t, ok := createTraitsOf(kind)
-	if ok && t.EnabledPref != "" && !prefOn(t.EnabledPref) {
-		return http.StatusForbidden, t.DisabledCode, t.DisabledMessage
-	}
-	if switchableKind(kind) && !uiprefs.AgentEnabled(kind) {
-		return switchedOffRefusal(kind)
-	}
 	if !ok {
 		return 0, "", ""
 	}

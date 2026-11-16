@@ -71,9 +71,13 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 	// A kind the credential policy forbids altogether has no entry (ADR 0138 D10a): its card, its
 	// login and its install controls are not offered. The GitHub entry above is never hidden: git
 	// is not a model route, and only copilot's own entry speaks for copilot-login.
+	// A kind the member switched off with agentEnabled is left out the same way (the member layer);
+	// the Console's reset line is what turns it back on. lcpp's older lcppEnabled is not applied here
+	// yet: its entry carries the switch the lcpp card turns it back on with, until that switch moves
+	// to the reset line (#4169, P5/P6).
 	hide, hiding := routepolicy.Hiding()
 	for k, st := range agentConnectionStatuses(agents.StatusInputs{Secrets: s, GithubConnected: ghConnected}) {
-		if hiding && hide.HidesKind(kindRoutesOf(k)) {
+		if hiding && hide.HidesKind(kindRoutesOf(k)) || len(kindRoutesOf(k)) > 0 && !uiprefs.AgentEnabled(k) {
 			continue
 		}
 		out[k] = st

@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -34,10 +35,19 @@ func KindSwitchedOff(kind string) bool {
 	return switchableKind(kind) && !uiprefs.AgentEnabled(kind)
 }
 
-// switchedOffRefusal is the create refusal for a kind the member switched off with agentEnabled.
-func switchedOffRefusal(kind string) (int, string, string) {
-	return http.StatusForbidden, "agent_disabled",
-		kind + " は設定でオフになっています。設定 > エージェントでオンにするか、「自分の設定をリセット」で戻してください。"
+// switchRefusal is the refusal of a new launch of kind the member has switched off, status 0 when
+// it is on. Every path that starts a new session asks it before any side effect: a create, a fork,
+// a recreate and a move's target. The kind's own switch comes first, so lcpp switched off by its
+// older setting keeps its own refusal.
+func switchRefusal(kind string) (status int, code, msg string) {
+	if t, ok := createTraitsOf(kind); ok && t.EnabledPref != "" && !prefOn(t.EnabledPref) {
+		return http.StatusForbidden, t.DisabledCode, t.DisabledMessage
+	}
+	if switchableKind(kind) && !uiprefs.AgentEnabled(kind) {
+		return http.StatusForbidden, "agent_disabled",
+			kind + " は設定でオフになっています。設定 > エージェントでオンにするか、「自分の設定をリセット」で戻してください。"
+	}
+	return 0, "", ""
 }
 
 // defaultRouteOf is the member's default route for kind (ADR 0138 D16, D11b): ui-prefs
@@ -76,28 +86,54 @@ func (c *createRun) applyDefaultRoute() bool {
 	if def == nil {
 		return true
 	}
-	if ref := checkRouteStatic(kind, def); ref != nil {
-		return c.refuseDefault(def, ref.Message)
-	}
 	if !p.Allows(def.Route) {
-		return c.refuseDefault(def, "the credential policy does not allow it")
+		return c.refuseDefault()
 	}
-	c.req.Route = def
-	c.fromDefault = true
-	return true
+	if slices.Contains(routesOf(kind), def.Route) {
+		if checkRouteStatic(kind, def) != nil {
+			return c.refuseDefault()
+		}
+		c.req.Route = def
+		c.fromDefault = true
+		return true
+	}
+	// A route the kind resolves by itself (codex's API-key login, a CLI-locked login) cannot be
+	// selected: the create stays empty, and checkRoute holds it to the default, so a login that
+	// resolves to another route is refused rather than run on a payer the member did not choose.
+	a, _ := RegisteredAgent(kind)
+	if slices.Contains(agents.FixedRoutesOf(a), def.Route) {
+		c.defaultFixed = def.Route
+		return true
+	}
+	return c.refuseDefault()
+}
+
+// checkDefaultFixed is checkRoute's hold on a fixed-route default (applyDefaultRoute): the launch
+// the policy judged must be on the default route. Any other answer, a refusal included, becomes the
+// default's route_required, so a message naming the current login's route never reaches the
+// member; only a policy that cannot be confirmed keeps its own refusal.
+func (c *createRun) checkDefaultFixed(ref *agents.RouteRefusal, judged *routes.Launch) *agents.RouteRefusal {
+	if c.defaultFixed == "" || ref != nil && ref.Code == routes.CodePolicyUnconfirmed {
+		return ref
+	}
+	if ref != nil || judged == nil || judged.Route != c.defaultFixed {
+		return defaultRouteRefusal(c.req.Kind)
+	}
+	return nil
 }
 
 // refuseDefault writes route_required for a default route that cannot be used.
-func (c *createRun) refuseDefault(def *routes.Selection, why string) bool {
-	ref := defaultRouteRefusal(c.req.Kind, def, why)
+func (c *createRun) refuseDefault() bool {
+	ref := defaultRouteRefusal(c.req.Kind)
 	httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 	return false
 }
 
-// defaultRouteRefusal is route_required naming the member's own default route and why it cannot
-// be used. The route is the member's setting, so naming it reveals nothing; which layer forbids
-// it is not said (D10a).
-func defaultRouteRefusal(kind string, def *routes.Selection, why string) *agents.RouteRefusal {
+// defaultRouteRefusal is route_required for a default route that cannot be used. It names neither
+// the default nor why it fails: the saved default may be a route the policy now hides, and a live
+// check's message may name one too, while a member's screens never name a hidden item (D10a).
+// requiredRefusal lists only the routes the policy allows.
+func defaultRouteRefusal(kind string) *agents.RouteRefusal {
 	p, _ := restrictingPolicy()
-	return requiredRefusal(kind, p, "your default route "+def.Route+" cannot be used: "+why)
+	return requiredRefusal(kind, p, "your default route for "+kind+" cannot be used now")
 }

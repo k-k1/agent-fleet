@@ -104,7 +104,7 @@ func (c *createRun) checkRoute() bool {
 		// A default route whose connection is gone or unavailable is the member's setting failing,
 		// not a request to fix: route_required, never a fallback (applyDefaultRoute).
 		if c.fromDefault {
-			ref = defaultRouteRefusal(c.req.Kind, c.req.Route, ref.Message)
+			ref = defaultRouteRefusal(c.req.Kind)
 		}
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 		return false
@@ -112,6 +112,7 @@ func (c *createRun) checkRoute() bool {
 	// The credential policy, once the selection is known valid (ADR 0138 D11, D12). The launch it
 	// judged is the one recorded (armMeta).
 	ref, judged := newLaunchPolicyRefusal(c.req.Kind, c.req.Route, session.Meta{Kind: c.kind, Model: c.req.Model, Driver: c.driver})
+	ref = c.checkDefaultFixed(ref, judged)
 	if ref != nil {
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 		return false
@@ -123,7 +124,7 @@ func (c *createRun) checkRoute() bool {
 			if b, ok := a.(agents.RouteBinder); ok {
 				bound, ref := b.BindRoute(*c.req.Route.Normalize())
 				if ref != nil && c.fromDefault {
-					ref = defaultRouteRefusal(c.req.Kind, c.req.Route, ref.Message)
+					ref = defaultRouteRefusal(c.req.Kind)
 				}
 				if ref != nil {
 					httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)

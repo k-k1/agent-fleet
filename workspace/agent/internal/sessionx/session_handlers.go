@@ -1057,6 +1057,11 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
+	// A fork is a new session of the kind: refused while the member has switched the kind off.
+	if status, code, msg := switchRefusal(NormalizeKind(src.Kind)); status != 0 {
+		httpx.WriteErr(w, status, code, msg)
+		return
+	}
 	// A fork inherits the selection (ADR 0128 decision 13) and is checked again like a create:
 	// the connection may have expired or been revoked since the source was made.
 	if ref := checkRouteLive(r.Context(), src.Kind, src.Route, src.Model, src.DriverKind()); ref != nil {
@@ -1568,6 +1573,12 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// fail after destroying the running session.
 	if ref := startRefusal(m.Kind); ref != nil {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
+	// The new slot is a new session of the kind: refused while the member has switched the kind
+	// off, before the old identity is archived.
+	if status, code, msg := switchRefusal(NormalizeKind(m.Kind)); status != 0 {
+		httpx.WriteErr(w, status, code, msg)
 		return
 	}
 	// The slot keeps its explicit selection, and a selection that no longer holds is found here,

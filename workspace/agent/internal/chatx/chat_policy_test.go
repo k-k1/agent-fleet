@@ -160,3 +160,47 @@ func TestOneShotsAreJudgedBeforeTheyRun(t *testing.T) {
 		t.Errorf("refused one-shots left ledger rows: %+v", rows)
 	}
 }
+
+// A kind the member switched off (ui-prefs agentEnabled) is refused at every call with
+// agent_disabled, whatever the policy: a conversation pinned to it moves to another backend, the
+// preferred one-shot skips it, a feature pin and an explicit one-shot on it are refused before
+// they run, and with the switch on the same calls go through.
+func TestSwitchedOffKindIsNeverCalled(t *testing.T) {
+	t.Setenv("AF_USAGE_DIR", t.TempDir())
+	allAvailable(t)
+	launchesOn(t, map[string]string{session.KindClaude: routes.RouteAnthropicSubscription, session.KindCodex: routes.RouteOpenAIAPI})
+	useUtilityPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
+
+	writePrefs(t, `{"agentEnabled":{"claude":true}}`)
+	if _, kind := chatRoute(&ChatConversation{Agent: session.KindClaude}); kind != session.KindClaude {
+		t.Fatalf("control: switch on, the pinned claude turn went to %s", kind)
+	}
+	if _, _, err := chatLaunchChecked(session.KindClaude, ""); err != nil {
+		t.Fatalf("control: switch on, refused: %v", err)
+	}
+
+	writePrefs(t, `{"agentEnabled":{"claude":false},"aiFeatureAgents":{"title":"claude"}}`)
+	_, _, err := chatLaunchChecked(session.KindClaude, "")
+	if !errors.Is(err, ErrSwitchedOff) || !errors.Is(err, ErrRoutePolicy) {
+		t.Fatalf("a call on a switched-off kind: %v", err)
+	}
+	if status, code := policyErrCode(err); status != 403 || code != "agent_disabled" {
+		t.Errorf("its answer is %d %q, want 403 agent_disabled", status, code)
+	}
+	if _, kind := chatRoute(&ChatConversation{Agent: session.KindClaude}); kind == session.KindClaude {
+		t.Error("a stored conversation pinned to the switched-off claude was routed to it")
+	}
+	if k := preferredFrom([]string{session.KindClaude, session.KindCodex}); k != session.KindCodex {
+		t.Errorf("preferred = %s, want codex past the switched-off claude", k)
+	}
+	if _, _, _, err := oneShotRunOn(context.Background(), session.KindClaude, "title", OneShotShort, "", "hi", ""); !errors.Is(err, ErrSwitchedOff) {
+		t.Errorf("a one-shot on the switched-off claude ran: %v", err)
+	}
+	prov := chatBackends[session.KindClaude]
+	if _, err := prov.Send(context.Background(), &ChatConversation{Agent: session.KindClaude}, "hi"); !errors.Is(err, ErrSwitchedOff) {
+		t.Errorf("a send straight to the switched-off backend: %v", err)
+	}
+	if rows := usagex.ReadRows(); len(rows) != 0 {
+		t.Errorf("refused calls left ledger rows: %+v", rows)
+	}
+}
