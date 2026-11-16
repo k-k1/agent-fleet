@@ -652,3 +652,46 @@ func TestWorkflowWatchTellsEachRunInTheGraceWindowOnce(t *testing.T) {
 		t.Fatalf("told %v", sink.told)
 	}
 }
+
+func TestPollRunReadsAFreshlyFinishedRunShortly(t *testing.T) {
+	f := newFakeGitHub()
+	const subj = SubjectID("github:o/r/actions/runs/58")
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	a := newTestActions(t, f)
+	a.GH.now = func() time.Time { return now }
+	for _, c := range []struct {
+		name    string
+		ago     time.Duration
+		updated string
+		want    time.Duration
+	}{
+		{"just finished", 30 * time.Second, "", actionsFreshAfter},
+		{"inside the window", actionsFreshWindow - time.Second, "", actionsFreshAfter},
+		{"at the window", actionsFreshWindow, "", ghSettledAfter},
+		{"long finished", 3 * time.Hour, "", ghSettledAfter},
+		{"clock skew ahead", -time.Minute, "", actionsFreshAfter},
+		{"absurdly ahead", -time.Hour, "", ghSettledAfter},
+		{"no updated_at", 0, "none", ghSettledAfter},
+	} {
+		body := run(58, "completed", "success", "2026-11-16T11:00:00Z", 1)
+		body["updated_at"] = now.Add(-c.ago).Format(time.RFC3339)
+		if c.updated == "none" {
+			delete(body, "updated_at")
+		}
+		f.bodies["/repos/o/r/actions/runs/58"] = body
+		_, _, hint, err := a.Poll(context.Background(), subj, nil, nil)
+		if err != nil || hint.After != c.want || !hint.Settled {
+			t.Errorf("%s: hint %+v err %v, want After %v", c.name, hint, err, c.want)
+		}
+	}
+}
+
+// The short interval is bounded by the window, so one finished run costs at most
+// window/interval counted reads, and 20 watches (the per-session limit) at all-200 still fit
+// the source's share of the smallest hourly limit worth supporting (5000).
+func TestFreshFinishedRunPollsStayInsideTheBudgetShare(t *testing.T) {
+	reads := int(actionsFreshWindow / actionsFreshAfter)
+	if worst := MaxPerOwner * reads; worst > 5000*ghBudgetShare/100 {
+		t.Fatalf("%d watches x %d reads = %d counted requests, over the %d%% share", MaxPerOwner, reads, worst, ghBudgetShare)
+	}
+}
