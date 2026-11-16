@@ -74,6 +74,40 @@ func TestMCPSendToSessionResumesStoppedSessionAndConfirmsSend(t *testing.T) {
 	}
 }
 
+// The session is alive when the status is read and auto-run retires it before the input lands:
+// the input answers session_retired, and the sender's own message resumes it like not_running.
+func TestMCPSendToSessionResumesAfterRetiredAnswer(t *testing.T) {
+	var paths []string
+	inputs := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/status"):
+			_, _ = w.Write([]byte(`{"alive":true,"ready":true}`))
+		case strings.HasSuffix(r.URL.Path, "/input"):
+			if inputs++; inputs == 1 {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"error":{"code":"session_retired","message":"retired"}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"sent":"slot01"}`))
+		default:
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	out, resumed, err := AgentSendToSession("slot01", []byte(`{"prompt":"x"}`))
+	if err != nil || !resumed || !strings.Contains(out, "sent") {
+		t.Fatalf("out=%q resumed=%v err=%v, want a resumed send", out, resumed, err)
+	}
+	if got := strings.Join(paths, ","); !strings.Contains(got, "POST /sessions/slot01/start") {
+		t.Fatalf("calls = %s, want a start between the two inputs", got)
+	}
+}
+
 func TestMCPSendToSessionDoesNotMaskConflictAsSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)

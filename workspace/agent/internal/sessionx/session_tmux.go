@@ -27,6 +27,7 @@ import (
 // the resume/new program (the claude-specific buildProgram picks --resume from whether a
 // jsonl exists); for shell it runs a login bash.
 func startSessionTmux(m session.Meta, ssmForce bool) error {
+	defer markLaunching(m.Name)()
 	// Write the MCP registry into this kind's own config before the CLI reads it
 	// (docs/log/48 §8.3). Doing it here rather than in BuildLaunch keeps it out of the
 	// per-kind agents, and covers every tui launch — create, start, recreate, handoff.

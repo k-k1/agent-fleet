@@ -302,6 +302,8 @@ func HandleSessionRouteSwitch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
+	// The switch stops the pane and relaunches it: between the two there is no tmux session.
+	defer markLaunching(name)()
 	var req routeSwitchRequest
 	if r.ContentLength != 0 && !httpx.DecodeJSON(w, r, &req) {
 		return
