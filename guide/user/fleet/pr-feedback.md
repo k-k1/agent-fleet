@@ -83,7 +83,7 @@ GitHub Actions:
 - A workflow that starts many runs between two checks (up to 100) is read in full, so a run that finished behind newer ones still counts; beyond that the oldest of the burst waits for the next check
 - What counts as "after" is decided from GitHub's own run numbers and timestamps, not this workspace's clock
 - The notice says the run number, the attempt and the result. The workflow's name and the names and links of failed jobs are quoted data, as for check names
-- Reads are conditional (an unchanged run costs no request quota), quick while the run is queued or running, and count in the same limits as pull request watches
+- Reads are conditional (an unchanged run costs no request quota), quick while the run is queued or running, and count in the same limits as pull request watches. A run that has finished is read every minute for its first 10 minutes, so a re-run started right away is noticed within about a minute; after that it is read every 30 minutes
 
 Bitbucket Pipelines works the same way, with `source` set to `bitbucket` (a `bitbucket.org` run URL needs no source). The `ref` shapes follow the Actions ones:
 
@@ -151,7 +151,7 @@ An agent can wait for another session of the workspace instead of setting a time
 
 ### Seeing and ending a session's watches
 
-A session waiting on a watch looks idle, so the session's chat view lists its live watches in a panel just above the message box, next to the one for background commands. Each row shows what it watches (a pull request, a timer, a CI run, or an extension's own source) with the events in words ("CI finished", "merged"). A timer shows the time left. A warning mark with the error means the source is not answering right now; the watch stays and is read again. A row links out only when its address is on github.com or bitbucket.org; everything else is plain text.
+A session waiting on a watch looks idle, so the session's chat view lists its live watches in a panel just above the message box, next to the one for background commands. Each row shows what it watches (a pull request, a timer, a CI run, or an extension's own source) with the events in words ("CI finished", "merged"). A timer shows the time left. A warning mark with the error means the source is not answering right now; the watch stays and is read again. A row links out only when its address is on github.com or bitbucket.org; everything else is plain text. A watch on another session (`fleet`) shows that session's name as a link instead: click it to open the session, Ctrl-click (⌘-click) or middle-click to open it in a new pane, and hover over it for the session's display name. A session that no longer exists stays plain text.
 
 - **End watch** asks first, then ends that watch, the same as the agent's `unwatch`. If the watch had already ended, the row simply goes. Someone who can only view the session sees the rows without the button
 - A watch a child asked to send to its parent (`notify: parent`) shows on the parent's chat view, marked with the child's name

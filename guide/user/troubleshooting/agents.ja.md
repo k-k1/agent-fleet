@@ -83,6 +83,7 @@ codex・opencode・copilot・cursor・kiro・agy・lcpp・muse は、ダイア�
 起動時に選んだモデルが、Copilot のプランに含まれていません。GitHub の接続は正常です。copilot はその接続でサインインしていて、使えるモデルはプランで決まります。
 Copilot Free プランで使えるのは Auto（copilot では **Copilot Fusion** と表示）だけです。copilot の `/model` 一覧には他のモデルも並びますが、どれを選んでもこの表示で終わります。
 モデルを **「既定」** にして起動し直してください。モデルを指定して使うには、GitHub アカウントに有料の Copilot プランが要ります。
+起動そのものがこのメッセージで失敗したときは、エラーに同じ案内（プランにそのモデルが含まれていない可能性があること、モデルを「既定」にして起動し直すこと）が付きます。
 
 プロバイダのエラー（この「Model … is not available」など）は、会話にエラーの文面として出ます。`get_session_output` でも同じ文面が読めます。そのターンは失敗として終わるので、親セッションの `fleet.session.idle` ウォッチと状態の理由にも失敗（turn-failed）として伝わります。
 
