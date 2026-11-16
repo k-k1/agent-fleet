@@ -515,6 +515,11 @@ func TestECSEC2QuarantineUnmountsBeforeDetach(t *testing.T) {
 	if umount < 0 || detach < 0 || umount > detach {
 		t.Fatalf("want umount before detach, got umount=%d detach=%d in %q", umount, detach, h.ec2.calls)
 	}
+	// The member's EFS access points go with the home: the box is kept, stopped, for an
+	// operator to look at.
+	if efs := callIndex(h, "SSM EFSDIR=/af-efs/M-1 "); efs < umount || efs > detach {
+		t.Fatalf("want the access points unmounted after the home and before the detach, got %d in %q", efs, h.ec2.calls)
+	}
 }
 
 // deleteTagsHook runs before before every DeleteTags reaches the fake.

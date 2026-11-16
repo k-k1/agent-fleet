@@ -242,6 +242,11 @@ func TestECSEC2ReleaseSeesAStartOnAnotherReplica(t *testing.T) {
 	if firstCall(calls, "SSM af-mount") < 0 {
 		t.Errorf("A did not re-mount the home for the Start: %q", calls)
 	}
+	// The re-mount is of the home alone, so the access points B's task binds must still
+	// be mounted: an unmount here would start that task on empty directories.
+	if firstCall(calls, "SSM EFSDIR=") >= 0 {
+		t.Errorf("A unmounted the EFS access points of a workspace B had started: %q", calls)
+	}
 }
 
 // A lease a dead CP left behind holds the home until it expires, and no longer.

@@ -54,7 +54,7 @@ const (
 func efsActions(calls []string) []string {
 	var out []string
 	for _, c := range calls {
-		if strings.HasPrefix(c, "mkdir ") || strings.HasPrefix(c, "timeout 90 mount ") {
+		if strings.HasPrefix(c, "mkdir ") || strings.HasPrefix(c, "timeout ") {
 			continue
 		}
 		out = append(out, c)
@@ -150,6 +150,10 @@ func TestEFSCommandsRefuseValuesTheyCannotCarry(t *testing.T) {
 		},
 		"outside":     func() (string, error) { return efsUmountCommand("/af-home/M-1", slotMountInfo) },
 		"base itself": func() (string, error) { return efsUmountCommand("/af-efs/", slotMountInfo) },
+		"mountinfo":   func() (string, error) { return efsUmountCommand("/af-efs/M-1", "/proc/x'; reboot; '") },
+		"mountinfo on a mount": func() (string, error) {
+			return efsMountCommand("fs-1", []string{"fsap-1"}, "/af-efs/M-1", "/proc/x'; reboot; '")
+		},
 	} {
 		if cmd, err := f(); err == nil {
 			t.Errorf("%s: got a script, want a refusal: %q", name, cmd)

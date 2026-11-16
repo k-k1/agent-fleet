@@ -31,6 +31,10 @@ const ec2EFSMountBase = "/af-efs"
 // (the security group rule is missing) otherwise hangs in the NFS client for minutes.
 const efsMountTimeoutSec = 90
 
+// efsHelperInstallTimeoutSec bounds the install of the EFS mount helper on a slot whose
+// image does not carry it.
+const efsHelperInstallTimeoutSec = 120
+
 // efsUmountBudget bounds the best-effort unmount on a release or a quarantine.
 const efsUmountBudget = 45 * time.Second
 
@@ -70,10 +74,15 @@ func efsMountCommand(fsID string, apIDs []string, dir, mountinfo string) (string
 	if !safeEFSMountDir.MatchString(dir) {
 		return "", fmt.Errorf("mount directory %q is not one this script can carry", dir)
 	}
+	if strings.Contains(mountinfo, "'") {
+		return "", fmt.Errorf("mountinfo path %q is not one this script can carry", mountinfo)
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "set -eu\nFS=%s MOUNTINFO=%s\n", fsID, mountinfo)
-	b.WriteString(`{ command -v mount.efs || [ -x /sbin/mount.efs ]; } >/dev/null 2>&1 || dnf install -y -q amazon-efs-utils
-mnt() {
+	fmt.Fprintf(&b, "set -eu\nFS=%s MOUNTINFO='%s'\n", fsID, mountinfo)
+	// The install is bounded like the mounts: this runs under the home's mount lock, and a
+	// slot without a route to the package repository would otherwise hold it.
+	fmt.Fprintf(&b, "{ command -v mount.efs || [ -x /sbin/mount.efs ]; } >/dev/null 2>&1 || timeout %d dnf install -y -q amazon-efs-utils\n", efsHelperInstallTimeoutSec)
+	b.WriteString(`mnt() {
   mkdir -p "$2"
   if awk -v m="$2" '$5 == m { found = 1 } END { exit !found }' "$MOUNTINFO"; then return 0; fi
 `)
@@ -98,7 +107,10 @@ func efsUmountCommand(dir, mountinfo string) (string, error) {
 	if !safeEFSMountDir.MatchString(dir) {
 		return "", fmt.Errorf("mount directory %q is not one this script can carry", dir)
 	}
-	return fmt.Sprintf("EFSDIR=%s MOUNTINFO=%s\n", dir, mountinfo) + `rc=0
+	if strings.Contains(mountinfo, "'") {
+		return "", fmt.Errorf("mountinfo path %q is not one this script can carry", mountinfo)
+	}
+	return fmt.Sprintf("EFSDIR=%s MOUNTINFO='%s'\n", dir, mountinfo) + `rc=0
 for m in $(awk -v p="$EFSDIR/" 'index($5, p) == 1 { print $5 }' "$MOUNTINFO"); do
   umount "$m" 2>/dev/null || umount -l "$m" || { echo "could not unmount $m" >&2; rc=1; }
 done

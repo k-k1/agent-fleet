@@ -195,8 +195,9 @@ declare.
     client. Set `EfsWorkspaceIngress=deny` on `10-data` once every workspace has restarted
     on such a release: the mount targets then admit only the slots and the home task, and
     no process in a workspace can open an NFS connection, whatever access point ID it
-    knows. Until it is set, the workspace security group still reaches NFS. The access
-    points carry no `PosixUser` on this target.
+    knows. Until it is set, the workspace security group still reaches NFS, and a
+    connection a task opened before it was set stays usable until that task stops. The
+    access points carry no `PosixUser` on this target.
   - On `ecs` (Fargate) this limit stays: volumes mount through the task's own network
     interface, without IAM authorization, so a workspace task that learns another member's
     access point ID can mount it, and ECS exposes no mount options (`nosuid`) for EFS
