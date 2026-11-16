@@ -679,6 +679,7 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 	wakeRow := store.MemoDelivery{ID: store.NewID(), QueueID: q.CategoryID, State: store.DeliveryClosed, Outcome: store.DeliveryWake,
 		MessageIDs: []string{}, CreatedAt: store.DeliveryTS(now), UpdatedAt: store.DeliveryTS(now), ClosedAt: store.DeliveryTS(now), Auto: true}
 	record := false
+	var held []store.MemoDelivery // the deliveries behind the wake, as read under the lock
 	err := r.mgr.store.MemoTx(ctx, q.MembershipID, func(tx store.MemoTxOps) error {
 		// The same conditions as the snapshot above, read again behind the lock: a switch turned
 		// off, a queue disabled or paused, a cap lowered, or a slot freed since this tick read
@@ -725,6 +726,7 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 			return err
 		}
 		record = true
+		held = liveNow
 		return tx.InsertDelivery(wakeRow)
 	})
 	if err != nil {
@@ -734,6 +736,8 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 	if !record {
 		return true
 	}
+	r.auditSettleWake(ctx, res, q.CategoryID, held)
+	log.Printf("memo queue: queue %s: waking workspace %s to settle", q.CategoryID, res.ws.ContainerName)
 	// The wake itself runs in one of the tick's fire slots, not here: a cold start takes minutes
 	// and the rest of the pass must not wait for it.
 	r.wakeJobs = append(r.wakeJobs, func(ctx context.Context) {
@@ -742,6 +746,27 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 		}
 	})
 	return true
+}
+
+// auditSettleWake writes the system's entry for a wake that was recorded. It hangs on the
+// recorded outcome, never on the attempt, so two Control Planes reaching the same queue write one
+// entry. Best effort: a failed insert is logged and the wake still runs. The detail names the
+// runs and why each one needed the wake, and carries no memo or instruction text.
+func (r *memoQueueRunner) auditSettleWake(ctx context.Context, res *resolved, queueID string, held []store.MemoDelivery) {
+	runs := make([]string, 0, len(held))
+	for _, d := range held {
+		why := "overdue and not yet retired"
+		if d.State == store.DeliverySending {
+			why = "sending"
+		}
+		runs = append(runs, d.ID+" ("+why+")")
+	}
+	a := store.AuditLog{ID: store.NewID(), TenantID: res.mv.TenantID, ActorKind: "system", ActorID: "memo-queue",
+		Action: "workspace.queue_settle_wake", Target: res.ws.ID,
+		Detail: "queue " + queueID + "; runs: " + strings.Join(runs, ", "), At: store.NowTS()}
+	if err := r.mgr.store.InsertAudit(context.WithoutCancel(ctx), a); err != nil {
+		log.Printf("memo queue: queue %s: audit the wake to settle: %v", queueID, err)
+	}
 }
 
 // wakeOnly brings a workspace up and waits for its Agent, for the settle pass of the next tick:
