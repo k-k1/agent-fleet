@@ -41,21 +41,28 @@ export function regionOk(region: string): boolean {
   return r === "" || (REGION_RE.test(r) && !r.startsWith("cn-"));
 }
 
-/** The member's marked profiles, loaded once while enabled. null until the answer arrives, []
- *  when it failed or none is marked: the bedrock route is then not offered at all. */
-export function useModelRouteProfiles(enabled: boolean): ModelRouteProfile[] | null {
-  const [profiles, setProfiles] = useState<ModelRouteProfile[] | null>(null);
+/** The member's marked profiles, loaded while enabled and again whenever identity changes. null
+ *  until this principal's answer arrives, [] when it failed or none is marked: the bedrock route
+ *  is then not offered at all. */
+export function useModelRouteProfiles(enabled: boolean, identity = ""): ModelRouteProfile[] | null {
+  // The answer is kept with the principal it was asked for (identity, the caller's tenant and
+  // member), and returned only to that principal: on the render where it has just changed, the
+  // previous one's profiles are never handed out, even before the effect below has run. Taken as
+  // an argument so this module stays free of the tenant store, which many screens' tests import
+  // it without.
+  const [answer, setAnswer] = useState<{ owner: string; profiles: ModelRouteProfile[] } | null>(null);
   useEffect(() => {
     if (!enabled) return;
     let live = true;
+    const owner = identity;
     api("api/ssm/profiles")
-      .then((d) => live && setProfiles(markedProfiles(d)))
-      .catch(() => live && setProfiles([]));
+      .then((d) => live && setAnswer({ owner, profiles: markedProfiles(d) }))
+      .catch(() => live && setAnswer({ owner, profiles: [] }));
     return () => {
       live = false;
     };
-  }, [enabled]);
-  return enabled ? profiles : null;
+  }, [enabled, identity]);
+  return enabled && answer?.owner === identity ? answer.profiles : null;
 }
 
 /** The create body's `route` object: the id, and the connection only when the route takes one. */

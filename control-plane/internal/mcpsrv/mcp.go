@@ -751,7 +751,7 @@ func memberToolsHiding(hidden hiddenKinds) []mcpTool {
 					"new_branch":       map[string]any{"type": "string", "description": "branch to create in the new worktree (optional; omitted = temporary branch)"},
 					"subdir":           map[string]any{"type": "string", "description": "relative path INSIDE the working copy to start the agent in, e.g. \"console\" or \"apps/web\" (optional; default = the working copy root). With worktree=true it is resolved inside the newly created worktree. A path that does not exist is rejected."},
 					"route":            map[string]any{"type": "string", "description": createRouteDesc(hidden)},
-					"route_connection": map[string]any{"type": "string", "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset); bedrock takes <profile id>@<region> for one of your Settings AWS profiles marked as a model route (the region may be empty for the profile's own); bedrock-deployment takes none"},
+					"route_connection": map[string]any{"type": "string", "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Model credentials > Anthropic API key; bedrock takes <profile id>@<region> for one of your Settings AWS profiles marked as a model route (the region may be empty for the profile's own); bedrock-deployment takes none"},
 				},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {

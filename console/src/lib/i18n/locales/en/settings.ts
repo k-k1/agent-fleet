@@ -483,7 +483,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.oc_usage_go": "Go (subscription)",
   "agents.oc_usage_zen": "Zen (metered)",
   "agents.oc_usage_note_own":
-    "opencode.ai is not reached at all. The list holds the directly connected providers you add below and the fleet's own engines. OPENCODE_API_KEY is not injected, even when one is stored.",
+    "opencode.ai is not reached at all. The list holds the directly connected providers whose keys you add on this page, and the fleet's own engines. OPENCODE_API_KEY is not injected, even when one is stored.",
   "agents.oc_usage_note_free":
     "On the opencode.ai side, only the models that work with no credentials (OPENCODE_API_KEY isn't injected). opencode can be launched without any connection, but the free tier is subject to congestion and usage caps.",
   "agents.oc_usage_note_go":
@@ -875,4 +875,24 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "cred.muse_desc_key_only": "Connect Muse Code with a Meta API key.",
   "cred.oc_usage_note_zen_account": "On the opencode.ai side, the pay-per-request ids (opencode/…), plus the Go ids when the account has both. Runs on your opencode.ai account sign-in.",
   "cred.oc_account_desc_only": "Sign in with your opencode.ai account. Approval finishes in the browser, so there is nothing to type back into the Console.",
+  // ADR 0138 M2 P5b: destination cards and "Usable by".
+  "cred.oc_key_desc": "The opencode.ai key (OPENCODE_API_KEY), which Go and Zen share. API keys for other providers are on their providers' cards on this page.",
+  "cred.key_restart_pending": "OpenCode uses a changed key after it restarts: restart it on the opencode.ai card.",
+  "cred.group_other": "Other providers",
+  "cred.group_bedrock": "Amazon Bedrock",
+  "cred.card_anthropic_key": "Anthropic API key",
+  "cred.card_openai_key": "OpenAI API key",
+  "cred.card_gemini_key": "Gemini API key",
+  "cred.card_other_keys": "Other provider keys",
+  "cred.usable_by": "Usable by: {names}",
+  "cred.only_cli": "Only {name} can use this login: the {name} CLI keeps it.",
+  "cred.only_copy": "Only {name} can use this login or key: {name} keeps its own copy.",
+  "cred.bedrock_profile": "AWS profile",
+  "cred.bedrock_region_own": "the profile's own region",
+  "cred.bedrock_none": "No AWS profile is marked as a model route.",
+  "cred.bedrock_edit": "Mark profiles in AWS profiles",
+  "cred.engine_name": "This deployment's engine",
+  "cred.engine_none": "This deployment runs no chat engine.",
+  "cred.engine_state": "{key}: {state}",
+  "cred.readonly": "Read-only",
 };

@@ -74,7 +74,8 @@ describe("brand icons", () => {
     // The service icons are named after the settings card's provider id, so a card added
     // without an icon is only visible as "that one still shows two letters". The exceptions
     // are listed, which is what makes leaving one out a decision rather than an oversight.
-    const MONOGRAM_ONLY = ["svn", "internal"];
+    // af-engine is the deployment's own engine on Model credentials: not a brand either.
+    const MONOGRAM_ONLY = ["svn", "internal", "af-engine"];
     const cards = new Set<string>();
     const dir = path.join(SRC, "features/settings");
     const walk = (d: string) => {

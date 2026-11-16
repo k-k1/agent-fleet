@@ -522,7 +522,7 @@ func TestApprovalsAreSerialised(t *testing.T) {
 // The refusal names the place the key is really entered.
 func TestNoAPIKeyRefusalNamesTheRealSettingsPath(t *testing.T) {
 	msg := noAPIKey().Message
-	if !strings.Contains(msg, "Settings > Connections > Agents > the OpenCode card > API keys") || strings.Contains(msg, "provider keys") {
+	if !strings.Contains(msg, "Settings > Connections > Model credentials > Anthropic API key") || strings.Contains(msg, "provider keys") {
 		t.Errorf("refusal = %q", msg)
 	}
 }

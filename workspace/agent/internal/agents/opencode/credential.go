@@ -34,6 +34,14 @@ var providerKeys = map[string]struct{ route, key string }{
 
 // keyEnvRoutes are the routes a key stored under env opens (usableOf's mapping): Zen and Go for
 // the opencode.ai key, the provider's route for a provider key, custom-api for any other name.
+// KeyEnvRoutes is keyEnvRoutes for the member's provider-key cards (ADR 0138 D16), which list the
+// keys of this store by the routes they open.
+func KeyEnvRoutes(env string) []string { return keyEnvRoutes(env) }
+
+// KeyEnvOpencode is the opencode.ai Zen/Go key's name: it belongs to opencode.ai's own card, not
+// to a provider's.
+const KeyEnvOpencode = opencodeKeyEnv
+
 func keyEnvRoutes(env string) []string {
 	if env == opencodeKeyEnv {
 		return []string{routes.RouteOpencodeZen, routes.RouteOpencodeGo}

@@ -227,7 +227,7 @@ cursor と copilot の Ctrl+C はターンが実行中のときだけ送り、�
 ## claude: 「API キー」経路
 
 claude のセッションは、経路を明示して開始できます（ターミナル（CLI）のみ）。**anthropic-api** は、
-設定 > 接続 > モデルの認証情報 > OpenCode カード > API キー（Anthropic プリセット）に保存した Anthropic
+設定 > 接続 > モデルの認証情報 > Anthropic API キー に保存した Anthropic
 API キーで従量課金として動きます。**anthropic-subscription** はこのワークスペースの claude.ai ログインで動きます。
 経路を指定しないセッションは従来どおりです。
 

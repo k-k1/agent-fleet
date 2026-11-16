@@ -27,6 +27,9 @@ export const BADGE_SHORT: Record<string, string> = {
   aws: "aw",
   svn: "sv",
   internal: "ig",
+  // Model credentials cards with no brand of their own (ADR 0138 D16).
+  "provider-keys": "ky",
+  "af-engine": "en",
 };
 
 // …except where the provider has a mark of its own, which is most of them (lib/brandicons).
@@ -135,6 +138,10 @@ export function ReauthButton({ onClick, disabled }: { onClick: () => void; disab
 export type ConnPhase = "ok" | "checking" | "failed";
 export const ConnChecking = createContext<ConnPhase>("ok");
 
+// CardNote is a line Model credentials adds under a card's head: its "Usable by" (ADR 0138 D6).
+// A context rather than a prop, so every card gets it without each one passing it along.
+export const CardNote = createContext<ReactNode>(null);
+
 export function ProviderCard({
   id,
   name,
@@ -148,6 +155,7 @@ export function ProviderCard({
 }) {
   const brand = badgeBrand(id);
   const phase = useContext(ConnChecking);
+  const note = useContext(CardNote);
   const tr = useT();
   return (
     <div className="p-card" data-settings-target={id}>
@@ -158,6 +166,7 @@ export function ProviderCard({
         <span className="p-name">{name}</span>
         {phase === "ok" ? status : <StatusPill>{tr(phase === "failed" ? "conn.check_failed" : "conn.checking")}</StatusPill>}
       </div>
+      {note && <p className="ps-note p-card-note cred-usable">{note}</p>}
       {children}
     </div>
   );

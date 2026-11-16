@@ -110,9 +110,30 @@ describe("opencode の「使う」と「opencode.ai への課金」", () => {
     await mount({ envs: ["ANTHROPIC_API_KEY"] });
 
     expect(presetValues()).not.toContain("go"); // the OPENCODE_API_KEY preset
-    expect(presetValues()).toContain("anthropic");
+    // Provider keys are on their providers' cards (ADR 0138 D16): nothing to add here on own.
+    expect(host!.querySelector('input[type="password"]')).toBeNull();
+    expect(host!.textContent).not.toContain("ANTHROPIC_API_KEY");
     // The account sign-in block is opencode.ai's: its connect button must not be offered.
     expect(host!.querySelector(".p-opts:not(.p-opts-col)")).toBeNull();
+  });
+
+  // Free runs with no credential (auth.go drops the key there too), so it says the same; Go and Zen
+  // pass the key and say nothing.
+  it("free でも保存済みの OPENCODE_API_KEY に「注入しません」と添え、go / zen では添えない", async () => {
+    setSettings({ opencodeCatalog: "free" });
+    catalog(["opencode/free-model"], "free");
+    await mount({ envs: ["OPENCODE_API_KEY"] });
+    expect(host!.querySelector(".oc-key-idle")).toBeTruthy();
+    act(() => root?.unmount());
+    host?.remove();
+    for (const usage of ["go", "zen"] as const) {
+      setSettings({ opencodeCatalog: usage });
+      catalog(["opencode-go/glm-5.2"], usage);
+      await mount({ envs: ["OPENCODE_API_KEY"] });
+      expect(host!.querySelector(".oc-key-idle")).toBeNull();
+      act(() => root?.unmount());
+      host?.remove();
+    }
   });
 
   it("own で保存済みの OPENCODE_API_KEY は「注入しません」と添える（消さずに、使っていないと言う）", async () => {

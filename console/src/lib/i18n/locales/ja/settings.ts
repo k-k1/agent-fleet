@@ -484,7 +484,7 @@ export const settings = {
   "agents.oc_usage_go": "Go（定額）",
   "agents.oc_usage_zen": "Zen（従量）",
   "agents.oc_usage_note_own":
-    "opencode.ai には一切つなぎません。一覧に出るのは、下で登録した直結プロバイダのモデルと、フリートの自前エンジンだけです。OPENCODE_API_KEY は保存されていても注入しません。",
+    "opencode.ai には一切つなぎません。一覧に出るのは、このページでキーを登録した直結プロバイダのモデルと、フリートの自前エンジンだけです。OPENCODE_API_KEY は保存されていても注入しません。",
   "agents.oc_usage_note_free":
     "opencode.ai 側は、認証なしで使える無料モデルだけにします（OPENCODE_API_KEY は注入しません）。接続がなくても opencode を起動できますが、混雑や無料枠の上限に左右されます。",
   "agents.oc_usage_note_go":
@@ -870,4 +870,24 @@ export const settings = {
   "cred.muse_desc_key_only": "Meta の API キーで Muse Code を接続します。",
   "cred.oc_usage_note_zen_account": "opencode.ai 側は従量課金の ID（opencode/…）と、アカウントが両方を持つときは Go の ID です。opencode.ai アカウントのログインで動きます。",
   "cred.oc_account_desc_only": "opencode.ai アカウントでログインします。承認はブラウザで終わるので、Console に入力し直すものはありません。",
+  // ADR 0138 M2 P5b: destination cards and "Usable by".
+  "cred.oc_key_desc": "Go と Zen で共通の opencode.ai キー（OPENCODE_API_KEY）です。ほかのプロバイダの API キーは、このページのそれぞれのカードにあります。",
+  "cred.key_restart_pending": "変更したキーを OpenCode が使うのは再起動のあとです。opencode.ai のカードで再起動してください。",
+  "cred.group_other": "その他のプロバイダ",
+  "cred.group_bedrock": "Amazon Bedrock",
+  "cred.card_anthropic_key": "Anthropic API キー",
+  "cred.card_openai_key": "OpenAI API キー",
+  "cred.card_gemini_key": "Gemini API キー",
+  "cred.card_other_keys": "その他のプロバイダのキー",
+  "cred.usable_by": "使えるエージェント: {names}",
+  "cred.only_cli": "このログインを使えるのは {name} だけです（{name} の CLI が保持します）。",
+  "cred.only_copy": "このログインやキーを使えるのは {name} だけです（{name} が自分で保持します）。",
+  "cred.bedrock_profile": "AWS プロファイル",
+  "cred.bedrock_region_own": "プロファイル自身のリージョン",
+  "cred.bedrock_none": "モデルの経路として印を付けた AWS プロファイルはありません。",
+  "cred.bedrock_edit": "AWS プロファイルで印を付ける",
+  "cred.engine_name": "この配備のエンジン",
+  "cred.engine_none": "この配備はチャット用のエンジンを動かしていません。",
+  "cred.engine_state": "{key}: {state}",
+  "cred.readonly": "読み取り専用",
 };
