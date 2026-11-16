@@ -497,7 +497,7 @@ func TestRecoveryAppliesTheStoredCondition(t *testing.T) {
 	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
 	listed := listActMark(t)
 	notePersonAct("c")
-	in, err := beginRetire("p", listed) // the process died after the intent, before any mark
+	in, err := beginRetire("p", listed, "") // the process died after the intent, before any mark
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,7 +597,7 @@ func TestReleaseByAnActReachesWhatIsUnderItWithinOneRound(t *testing.T) {
 	writeMeta(t, session.Meta{Name: "g", Origin: session.OriginSession, OriginSession: "c"})
 	listed := listActMark(t)
 	notePersonAct("c")
-	in, _ := beginRetire("p", listed)
+	in, _ := beginRetire("p", listed, "")
 	reps := retireTree(context.Background(), "p", in)
 	byName := map[string]retireReport{}
 	for _, r := range reps {
@@ -634,7 +634,7 @@ func TestRetireDoesNotReadAHalfWrittenMetaAsNoAct(t *testing.T) {
 	listed := listActMark(t)
 	notePersonAct("p")
 	notePersonAct("c")
-	in, err := beginRetire("p", listed)
+	in, err := beginRetire("p", listed, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,7 +688,7 @@ func TestRetireLeavesAnUnreadableMetaInDoubt(t *testing.T) {
 			if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			in, _ := beginRetire("p", listed)
+			in, _ := beginRetire("p", listed, "")
 			rep := &retireReport{Name: "c", Unended: []string{}}
 			retireOne(context.Background(), rep, in)
 			if rep.Stopped || rep.Released || len(rep.Unended) == 0 {
@@ -788,7 +788,7 @@ func TestRetireEndsAndStopsOnlyAfterTheMarkIsDurable(t *testing.T) {
 			if c.cond {
 				notePersonAct("s")
 			}
-			in, _ := beginRetire("s", listed)
+			in, _ := beginRetire("s", listed, "")
 			c.break_(t)
 			rep := &retireReport{Name: "s", Unended: []string{}}
 			retireOne(context.Background(), rep, in)
@@ -807,7 +807,7 @@ func TestRetireEndsAndStopsOnlyAfterTheMarkIsDurable(t *testing.T) {
 func TestMarkOrReleaseSaysDoubtOnAnUnreadableMeta(t *testing.T) {
 	newActEnv(t)
 	writeMeta(t, session.Meta{Name: "s"})
-	in, _ := beginRetire("s", 0)
+	in, _ := beginRetire("s", 0, "")
 	if err := os.WriteFile(session.MetaPath("s"), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -826,7 +826,7 @@ func TestMarkOrReleaseSaysDoubtOnAnUnreadableMeta(t *testing.T) {
 func TestMarkOrReleaseSaysDoubtOnATypeInvalidMeta(t *testing.T) {
 	newActEnv(t)
 	writeMeta(t, session.Meta{Name: "s"})
-	in, _ := beginRetire("s", 0)
+	in, _ := beginRetire("s", 0, "")
 	bad := `{"name":"s","personActMark":"bad"}`
 	if err := os.WriteFile(session.MetaPath("s"), []byte(bad), 0o600); err != nil {
 		t.Fatal(err)
@@ -871,8 +871,8 @@ func postRetireWith(t *testing.T, name string, req retireReq) (int, string) {
 
 // The case the identity exists for: the state file is restored from an older copy, the counter
 // passes again through numbers it handed out, a person acts under a reused number below the old
-// retire's, and the retire decided on the old list arrives. Without the identity it stops the
-// session the person acted on.
+// retire's, and the retire decided on the old list arrives. The act was recorded in this run, the
+// list was taken in an earlier one: the session is released.
 func TestRetireFromBeforeAStateRestoreStopsNothing(t *testing.T) {
 	setup := func(t *testing.T) (oldMark int64, oldInc string) {
 		newActEnv(t)
@@ -897,14 +897,13 @@ func TestRetireFromBeforeAStateRestoreStopsNothing(t *testing.T) {
 		}
 		return oldMark, oldInc
 	}
-	t.Run("with the identity of the old run it is refused", func(t *testing.T) {
+	t.Run("with the identity of the old run the session is released", func(t *testing.T) {
 		mark, inc := setup(t)
-		code, body := postRetireWith(t, "a", retireReq{IfNoActSince: mark, ActIncarnation: inc})
-		if code != http.StatusConflict || !strings.Contains(body, errActIncarnationChanged) {
-			t.Fatalf("retire = %d %s, want 409 %s", code, body, errActIncarnationChanged)
+		if code, body := postRetireWith(t, "a", retireReq{IfNoActSince: mark, ActIncarnation: inc}); code != http.StatusOK {
+			t.Fatalf("retire = %d %s", code, body)
 		}
 		if m, _ := session.ReadMeta("a"); m.RetiredAt != "" || m.RetireID != "" {
-			t.Fatalf("a refused retire marked the session: %+v", m)
+			t.Fatalf("a session a person acted on was retired: %+v", m)
 		}
 	})
 	t.Run("a Control Plane that sends no identity is read as before", func(t *testing.T) {
@@ -918,7 +917,143 @@ func TestRetireFromBeforeAStateRestoreStopsNothing(t *testing.T) {
 	})
 }
 
-// A retire that carries this run's identity behaves exactly as before.
+// The rules a to d, one at a time. Each case has a list of run A (mark M, identity A), a restart
+// to run B, and a session whose last act is as described; the retire carries (M, I).
+func TestRetireJudgesEachSessionByTheIncarnationOfItsAct(t *testing.T) {
+	cases := []struct {
+		name     string
+		prepare  func(t *testing.T, name string, mark int64, runA, runB string)
+		retireI  func(runA string) string
+		released bool
+	}{
+		{"a: no identity sent, an act of this run is compared by number (above the mark)",
+			func(t *testing.T, name string, mark int64, _, _ string) { notePersonAct(name) },
+			func(string) string { return "" }, true},
+		{"a: no identity sent, an act recorded before the list is compared by number (below the mark)",
+			func(t *testing.T, name string, mark int64, _, _ string) {
+				m, _ := session.ReadMeta(name)
+				m.PersonActMark, m.PersonActIncarnation = mark-1, ""
+				session.WriteMeta(m)
+			},
+			func(string) string { return "" }, false},
+		{"b: the list is of an earlier run and the act is of this one: released whatever the numbers say",
+			func(t *testing.T, name string, mark int64, _, _ string) {
+				notePersonAct(name)
+				m, _ := session.ReadMeta(name)
+				m.PersonActMark = 1 // far below the retire's number
+				session.WriteMeta(m)
+			},
+			func(runA string) string { return runA }, true},
+		{"c: the act carries the list's incarnation and a number above it: released",
+			func(t *testing.T, name string, mark int64, runA, _ string) {
+				m, _ := session.ReadMeta(name)
+				m.PersonActMark, m.PersonActIncarnation = mark+5, runA
+				session.WriteMeta(m)
+			},
+			func(runA string) string { return runA }, true},
+		{"c: the act carries the list's incarnation and a number below it: stopped",
+			func(t *testing.T, name string, mark int64, runA, _ string) {
+				m, _ := session.ReadMeta(name)
+				m.PersonActMark, m.PersonActIncarnation = mark-5, runA
+				session.WriteMeta(m)
+			},
+			func(runA string) string { return runA }, false},
+		{"d: the act carries a third incarnation and a number below the mark: stopped, as today",
+			func(t *testing.T, name string, mark int64, _, _ string) {
+				m, _ := session.ReadMeta(name)
+				m.PersonActMark, m.PersonActIncarnation = mark-5, "third-run"
+				session.WriteMeta(m)
+			},
+			func(runA string) string { return runA }, false},
+		{"d: the act carries a third incarnation and a number above the mark: released, as today",
+			func(t *testing.T, name string, mark int64, _, _ string) {
+				m, _ := session.ReadMeta(name)
+				m.PersonActMark, m.PersonActIncarnation = mark+5, "third-run"
+				session.WriteMeta(m)
+			},
+			func(runA string) string { return runA }, true},
+		{"a meta written before the upgrade (an act without an incarnation) is compared by number",
+			func(t *testing.T, name string, mark int64, _, _ string) {
+				m, _ := session.ReadMeta(name)
+				m.PersonActMark, m.PersonActIncarnation = mark+5, ""
+				session.WriteMeta(m)
+			},
+			func(runA string) string { return runA }, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			newActEnv(t)
+			writeMeta(t, session.Meta{Name: "a"})
+			mark, runA := listActEnvelope(t)
+			resetActMarks() // run B
+			_, runB := listActEnvelope(t)
+			c.prepare(t, "a", mark, runA, runB)
+			code, body := postRetireWith(t, "a", retireReq{IfNoActSince: mark, ActIncarnation: c.retireI(runA)})
+			if code != http.StatusOK {
+				t.Fatalf("retire = %d %s", code, body)
+			}
+			m, _ := session.ReadMeta("a")
+			if released := m.RetiredAt == ""; released != c.released {
+				t.Fatalf("released = %v, want %v (%+v)", released, c.released, m)
+			}
+		})
+	}
+}
+
+// The recovery after a restart judges each session by the same rule, with the incarnation of the
+// intent: the retire began in run A, the process restarted, a person acted in run B.
+func TestRecoveryUsesTheIncarnationOfTheIntent(t *testing.T) {
+	newActEnv(t)
+	writeMeta(t, session.Meta{Name: "p"})
+	writeMeta(t, session.Meta{Name: "c", Origin: session.OriginSession, OriginSession: "p"})
+	mark, runA := listActEnvelope(t)
+	in, err := beginRetire("p", mark, runA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := retireIntents.Read("p"); got.ActIncarnation != runA || got.ID != in.ID {
+		t.Fatalf("intent %+v", got)
+	}
+	resetActMarks() // the restart: run B
+	notePersonAct("c")
+	m, _ := session.ReadMeta("c")
+	m.PersonActMark = 1 // a number far below the intent's
+	session.WriteMeta(m)
+	ReconcileRetired(context.Background())
+	if m, _ := session.ReadMeta("c"); m.RetiredAt != "" || m.RetireClearedID != in.ID {
+		t.Fatalf("the recovery retired a session a person acted on in this run: %+v", m)
+	}
+	if m, _ := session.ReadMeta("p"); m.RetiredAt == "" {
+		t.Fatal("the recovery left the rest of the tree")
+	}
+}
+
+// An older Agent's intent has no identity, and an act records its incarnation beside its mark.
+func TestActRecordsItsIncarnationAndRewritesAnActOfAnotherRun(t *testing.T) {
+	newActEnv(t)
+	writeMeta(t, session.Meta{Name: "a"})
+	_, runA := listActEnvelope(t)
+	notePersonAct("a")
+	if m, _ := session.ReadMeta("a"); m.PersonActIncarnation != runA {
+		t.Fatalf("act incarnation %q, want %q", m.PersonActIncarnation, runA)
+	}
+	// Run B restarts BELOW the number the meta holds (a restored counter): the act is still recorded.
+	m, _ := session.ReadMeta("a")
+	if err := actMarkStore.Write(actMarkKey, actMarkState{Reserved: 1}); err != nil {
+		t.Fatal(err)
+	}
+	m.PersonActMark = 1 << 62
+	session.WriteMeta(m)
+	resetActMarks()
+	runB := actMarks.incarnationID()
+	notePersonAct("a")
+	got, _ := session.ReadMeta("a")
+	if got.PersonActIncarnation != runB || got.PersonActMark >= 1<<62 {
+		t.Fatalf("an act of another run was not rewritten: %+v", got)
+	}
+}
+
+// A retire with this run's identity behaves exactly as before.
 func TestRetireWithThisRunsIdentityBehavesAsBefore(t *testing.T) {
 	newActEnv(t)
 	writeMeta(t, session.Meta{Name: "a"})
@@ -952,8 +1087,23 @@ func TestActIncarnationChangesWithEachLoadOfTheCounter(t *testing.T) {
 	if a == "" || a != again || a == b {
 		t.Fatalf("identities %q, %q, then after a restart %q", a, again, b)
 	}
-	// A retire with no condition ignores the identity.
-	if code, _ := postRetireWith(t, "ghost", retireReq{ActIncarnation: a}); code == http.StatusConflict {
-		t.Fatal("an unconditional retire was refused for its identity")
+}
+
+// The ordinary case after an Agent restart with a retire pending: the list (mark M, run A) was
+// read before the restart, a person starts the session in run B, the retire decided on that list
+// arrives. The act is after the list, so the session is released, not stopped.
+func TestRetireFromAnEarlierRunReleasesWhatAPersonActedOnInThisRun(t *testing.T) {
+	newActEnv(t)
+	writeMeta(t, session.Meta{Name: "a"})
+	mark, inc := listActEnvelope(t)
+	resetActMarks() // run B
+	notePersonAct("a")
+	listActMark(t)
+	code, body := postRetireWith(t, "a", retireReq{IfNoActSince: mark, ActIncarnation: inc})
+	if code != http.StatusOK {
+		t.Fatalf("retire = %d %s", code, body)
+	}
+	if m, _ := session.ReadMeta("a"); m.RetiredAt != "" {
+		t.Fatalf("a session a person started in this run was retired: %+v", m)
 	}
 }

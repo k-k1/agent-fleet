@@ -158,15 +158,6 @@ type MemoDeliveryStore interface {
 	// newer report was kept before the freeze: nothing is sent and the next tick decides again.
 	// The mark's incarnation is frozen with it and returned the same way.
 	FreezeDeliveryRetireMark(ctx context.Context, id string, gen, mark int64, incarnation string) (frozenMark int64, frozenIncarnation string, frozenGen int64, ok bool, err error)
-	// DropDeliveryRetireMark unfreezes an open delivery's retire condition the Agent refused
-	// (its mark came from another run of the Agent's counter), only while the frozen generation
-	// is gen and the frozen incarnation is incarnation. The next read keeps a fresh mark and the
-	// next tick decides again.
-	DropDeliveryRetireMark(ctx context.Context, id string, gen int64, incarnation string) (bool, error)
-	// RefreshDeliveryRetireMark replaces the condition of a closed delivery's pending retire that
-	// the Agent refused with the mark and incarnation of a fresh read, only while the stored
-	// incarnation is still the refused one.
-	RefreshDeliveryRetireMark(ctx context.Context, id, refused string, mark int64, incarnation string) (bool, error)
 	// ListRetirePendingDeliveries returns the closed deliveries whose session still has to be
 	// retired, oldest first: the ones marked pending, and every clean close of a reported
 	// delivery without a result (an older binary's close sets no mark).
@@ -462,16 +453,6 @@ func (s *SQL) FreezeDeliveryRetireMark(ctx context.Context, id string, gen, mark
 		return 0, "", 0, false, err
 	}
 	return m, inc, g, g != 0, nil
-}
-
-func (s *SQL) DropDeliveryRetireMark(ctx context.Context, id string, gen int64, incarnation string) (bool, error) {
-	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET retire_act_mark=0, retire_act_incarnation='', retire_gen=0
-		WHERE id=? AND state=? AND retire_gen=? AND retire_gen<>0 AND retire_act_incarnation=?`, id, DeliveryOpen, gen, incarnation))
-}
-
-func (s *SQL) RefreshDeliveryRetireMark(ctx context.Context, id, refused string, mark int64, incarnation string) (bool, error) {
-	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET retire_act_mark=?, retire_act_incarnation=?
-		WHERE id=? AND state=? AND retire_result='' AND retire_act_incarnation=?`, mark, incarnation, id, DeliveryClosed, refused))
 }
 
 func (s *SQL) MarkMemoDeliveryRetired(ctx context.Context, id, at string, gen int64) (bool, error) {

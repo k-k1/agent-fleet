@@ -21,12 +21,17 @@ package sessionx
 // behind it (the clock stepped back, or the counter had run ahead of it) or the restore falls
 // inside the block reserved ahead of the clock. A retire carrying a number above the counter is
 // never read as "no act since" (retireOne releases the tree instead), but a number at or below it
-// cannot be told from a reused one. That case is closed by an incarnation identity: a random value
-// made each time the counter is loaded (every Agent start), sent beside the mark, echoed by the
-// Control Plane with the retire, and refused when it is not this run's. The identity is NOT kept in
-// the state file: an older copy of the file would carry the same identity and the restore would go
-// unseen, while a value that lives only in this process cannot be restored. The price is one
-// refused retire after each restart, which the Control Plane answers with a fresh read.
+// cannot be told from a reused one. That case is closed by an incarnation: a random value made each
+// time the counter is loaded (every Agent start) and kept only in memory. It is NOT made when the
+// state file is created: an older copy of the file would carry the same identity and the restore
+// would go unseen, while a value that lives only in the process cannot be restored.
+//
+// The list carries it (actIncarnation), the Control Plane echoes it with the retire, and an act
+// records it beside its mark (Meta.PersonActIncarnation). A list of an earlier run was taken before
+// this process started, so an act recorded in THIS run is after it whatever the numbers say
+// (actAfterList). Nothing is refused on a mismatch: each session is judged with what its meta knows.
+// The one gap left: an act recorded under a third incarnation (or none) is compared by number, so
+// it needs two restarts with the retire still pending and a rolled-back counter.
 
 import (
 	"crypto/rand"
@@ -153,10 +158,14 @@ func recordPersonAct(name string) error {
 		return nil
 	}
 	_, wrote, err := updateSessionMetaChecked(name, func(m *session.Meta) bool {
-		if m.PersonActMark >= mark {
+		inc := actMarks.incarnationID()
+		// An act of another run is rewritten even when its number is higher: numbers of different
+		// runs are not ordered (the counter may have been restored), the incarnation is what says
+		// the act is this run's.
+		if m.PersonActMark >= mark && m.PersonActIncarnation == inc {
 			return false
 		}
-		m.PersonActMark = mark
+		m.PersonActMark, m.PersonActIncarnation = mark, inc
 		return true
 	})
 	if err != nil {
@@ -273,4 +282,26 @@ func focusReportsOnly(b []byte) bool {
 		}
 	}
 	return true
+}
+
+// actAfterList reports whether a person's act on m came after the session list a retire was decided
+// on, as far as this Agent can tell. in carries the list's mark and incarnation.
+//   - A mark above this run's counter was not handed out by it: read as an act (a restored older
+//     state file).
+//   - The list is of an earlier run and the act was recorded in this one: the list was taken before
+//     this process started, so the act is after it.
+//   - Otherwise the numbers decide: the same run (no incarnation sent, or the act carries the list's),
+//     or an act of a third run or recorded before incarnations existed (the remaining gap).
+func actAfterList(m session.Meta, in *retireIntent) bool {
+	if in.IfNoActSince <= 0 {
+		return false
+	}
+	if in.IfNoActSince > actMarks.now() {
+		return true
+	}
+	cur := actMarks.incarnationID()
+	if in.ActIncarnation != "" && in.ActIncarnation != cur && m.PersonActIncarnation == cur {
+		return true
+	}
+	return m.PersonActMark >= in.IfNoActSince
 }

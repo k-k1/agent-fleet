@@ -819,7 +819,7 @@ func TestInitialPromptDeliveryDoesNotTakeATurnStartedDuringTheBootWait(t *testin
 
 func mustBeginRetire(t *testing.T, root string) *retireIntent {
 	t.Helper()
-	in, err := beginRetire(root, 0)
+	in, err := beginRetire(root, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

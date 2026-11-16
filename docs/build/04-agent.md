@@ -181,18 +181,25 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     higher of the restored ceiling and the clock, but a number handed out before the restore can be
     reused when it is above both (the clock is behind it, or the restore falls inside the block
     reserved ahead of the clock), and a retire carrying such a number cannot be told from one that
-    was reused. That case is closed by an **incarnation identity** (#4265): a random value made
-    each time the counter is loaded (every Agent start), carried as `"actIncarnation"` beside
-    `actMark` (only when the mark is sent), echoed by the Control Plane as `actIncarnation` in the
-    retire body, and **refused with `409 act_incarnation_changed`** when it is not this run's:
-    nothing is stopped, marked or recorded, and the Control Plane decides again on a fresh read.
-    The identity is deliberately **not** kept in the state file: an older copy of the file would
-    carry the same identity and the restore would go unseen, whereas a value that lives only in the
-    process cannot be restored. The price is that a mark read before an Agent restart is refused
-    after it (once per delivery), and a retire frozen before the restart takes the post-restart
-    read's mark. A retire with no `actIncarnation` (an older Control Plane) or with no mark is
-    read as before. The recovery of a retire after a restart replays the mark of its intent as
-    before, which is not checked against the identity.
+    was reused. That case is closed by an **incarnation** (#4265): a random value made each time the counter
+    is loaded (every Agent start), kept only in memory. It is deliberately **not** made when the
+    state file is created: an older copy of the file would carry the same identity and the restore
+    would go unseen, whereas a value that lives only in the process cannot be restored. The list
+    carries it as `"actIncarnation"` beside `actMark` (only when the mark is sent), the Control Plane
+    echoes it as `actIncarnation` in the retire body, and an act records it beside its mark
+    (`personActIncarnation` on the meta; an act of another run is rewritten even when its number is
+    higher). Nothing is refused on a mismatch: each session of the tree is judged with what its own
+    meta knows (`actAfterList`). **(a)** No identity sent, or this run's: the numbers are compared as
+    before. **(b)** The list is of another run and the act was recorded in this one: a list of an
+    earlier run was taken before this process started, so the act is after it, and the session is
+    released whatever the numbers say (this is the restore case: the reused numbers are handed out in
+    the run after the restore, and it is also the ordinary case of a person who starts a session
+    after a restart while its retire is pending). **(c)** The list is of another run and the act
+    carries that run's identity: the same run, the numbers are compared. **(d)** The act carries a
+    third identity, or none (recorded before the upgrade): the numbers are compared as before. (d) is
+    the remaining gap: it needs two restarts with the retire still pending and a rolled-back counter.
+    A retire with no identity (an older Control Plane) is (a). The retire intent keeps the identity,
+    so the recovery after a restart judges each session by the same rule.
   - **A meta that cannot be read is in doubt.** The retire decides, and writes the mark or the
     release, in one checked meta update on the meta that update reads under the meta lock, and ends
     subscriptions and stops only after the mark is written durably (a mark or release that could not

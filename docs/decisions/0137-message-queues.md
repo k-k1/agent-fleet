@@ -624,10 +624,11 @@ A meta that stays unreadable would keep every retire from completing, so the Age
 exists stays in place and in doubt. Renaming it back after a repair makes it a session again, with no retired mark.
 The set-aside is skipped while an adoptable Managed runtime (opencode serve, the codex app-server) may be up from the previous Agent, since a running turn there has no tmux session.
 
-Added 2026-11-16 (#4265): the act mark comes with an identity of the Agent's counter run (`actIncarnation`, made at each
+Added 2026-11-16 (#4265): the act mark comes with an incarnation of the Agent's counter (`actIncarnation`, made at each
 load of the counter and not kept in the state file, so a restored older copy cannot carry it). The Control Plane keeps it
-with the mark (`memo_delivery.act_incarnation`, `retire_act_incarnation`; migration 0137, Postgres 0122) and sends both with
-the retire; the Agent answers a mark of another run `409 act_incarnation_changed`, stops and marks nothing, and the Control
-Plane drops the frozen condition (open delivery) or takes the next read's mark (closed delivery) and decides again. This
-closes the restored-state-file case of the note of 2026-11-15; the cost is one refused retire per delivery after an Agent
-restart. An older Agent sends no identity and an older Control Plane sends none: both behave as before.
+with the mark (`memo_delivery.act_incarnation`, `retire_act_incarnation`; migration 0137, Postgres 0122) and sends both
+with the retire, and an act records it beside its mark (`personActIncarnation`). Nothing is refused: the Agent judges each
+session. An act recorded in the current run is after any list of an earlier run (released whatever the numbers say), which
+closes the restored-state-file case of the note of 2026-11-15 and also keeps a session a person started after a restart
+while its retire was pending. The remaining gap needs two restarts with the retire pending and a rolled-back counter. An
+older Agent sends no identity and an older Control Plane sends none: both behave as before.

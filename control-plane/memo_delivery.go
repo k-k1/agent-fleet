@@ -1061,16 +1061,6 @@ func (r *memoQueueRunner) retireOverdue(ctx context.Context, v *memoMemberView, 
 		return
 	}
 	res := r.retire(ctx, v.res, d.Session, mark, inc)
-	if res == retireStale {
-		// The mark came from another run of the Agent's counter: nothing was done. Drop the frozen
-		// condition, so the next read keeps a fresh mark and the next tick decides again.
-		dctx, cancel := memoProgressCtx(ctx)
-		defer cancel()
-		if _, err := r.mgr.store.DropDeliveryRetireMark(dctx, d.ID, gen, inc); err != nil {
-			log.Printf("memo queue: delivery %s: drop the refused retire mark: %v", d.ID, err)
-		}
-		return
-	}
 	if res != retireRepeat {
 		wctx, cancel := memoProgressCtx(ctx)
 		defer cancel()
@@ -1116,10 +1106,6 @@ const (
 	// retireFault: the Agent refused it as not a root (409 retire_not_root). A delivery's session
 	// is always a root, so this is a fault, logged and not repeated.
 	retireFault retireResult = "fault"
-	// retireStale: the Agent refused the mark as one from another run of its act counter (409
-	// act_incarnation_changed). Nothing was stopped or marked. Not a result: the caller drops the
-	// condition and decides again on a fresh read.
-	retireStale retireResult = "stale"
 )
 
 // retire asks the Agent to end everything that would start the session or the sessions it started
@@ -1138,8 +1124,8 @@ func (r *memoQueueRunner) retire(ctx context.Context, res *resolved, session str
 	// before, which an Agent without the condition would ignore anyway.
 	var body io.Reader
 	if actMark > 0 {
-		// The incarnation rides with the mark: an Agent run other than the one that handed the mark
-		// out refuses it. None stored (an older Agent) sends none.
+		// The incarnation rides with the mark: the Agent judges each session's act against it. None
+		// stored (an older Agent, a row from before the upgrade) sends none, and the mark is compared as before.
 		b, _ := json.Marshal(struct {
 			IfNoActSince   int64  `json:"ifNoActSince"`
 			ActIncarnation string `json:"actIncarnation,omitempty"`
@@ -1167,10 +1153,6 @@ func (r *memoQueueRunner) retire(ctx context.Context, res *resolved, session str
 	if resp.StatusCode == http.StatusConflict && agentErrCode(b) == "retire_not_root" {
 		log.Printf("memo queue: retire %s: the Agent says it is not a root, which a delivery's session always is", session)
 		return retireFault
-	}
-	if resp.StatusCode == http.StatusConflict && agentErrCode(b) == "act_incarnation_changed" {
-		log.Printf("memo queue: retire %s: the Agent's act counter is another run than the mark's, the mark is read again", session)
-		return retireStale
 	}
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("memo queue: retire %s: the Agent answered %s (%s)", session, resp.Status, agentErrCode(b))
@@ -1265,16 +1247,6 @@ func (r *memoQueueRunner) retireOne(ctx context.Context, views map[string]*memoM
 		}
 	}
 	res := r.retire(ctx, v.res, d.Session, d.RetireActMark, d.RetireActIncarnation)
-	if res == retireStale {
-		// Decide again on this tick's read: its mark and identity replace the refused ones, unless the
-		// read carries none or the same identity (then nothing changes and the next tick tries).
-		if v.actMark > 0 && v.actIncarnation != "" && v.actIncarnation != d.RetireActIncarnation {
-			if _, err := r.mgr.store.RefreshDeliveryRetireMark(ctx, d.ID, d.RetireActIncarnation, v.actMark, v.actIncarnation); err != nil {
-				log.Printf("memo queue: delivery %s: renew the refused retire mark: %v", d.ID, err)
-			}
-		}
-		return
-	}
 	if res != retireRepeat {
 		r.finishRetire(ctx, d, string(res))
 	}

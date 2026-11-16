@@ -75,117 +75,89 @@ func TestMemoActIncarnationAFrozenRowWithoutOneIsSentAsBefore(t *testing.T) {
 	})
 }
 
-// A closed delivery's pending retire whose mark the Agent refuses (it was restarted) is decided
-// again on the next read: that read's mark and identity replace the refused ones, the retire is not
-// repeated in the same tick, and it then goes through.
-func TestMemoActIncarnationRefusedPendingRetireTakesTheFreshRead(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
-		agent, d := e.openReported(nil)
-		agent.setActMark(100)
-		agent.setActIncarnation("run-a")
-		e.settleNow(time.Now())
-		agent.mu.Lock()
-		agent.retireStatus = 502 // the close is made, its retire cannot be confirmed
-		agent.mu.Unlock()
-		e.settleNow(time.Now())
-		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.RetireActIncarnation != "run-a" || got.RetireActMark != 100 {
-			t.Fatalf("closed with the condition frozen: %+v", got)
-		}
-		// The Agent restarted: another run, other numbers.
-		agent.setActMark(900)
-		agent.setActIncarnation("run-b")
-		agent.mu.Lock()
-		agent.retireStatus = 0
-		before := len(agent.retires)
-		agent.mu.Unlock()
-		e.settleNow(time.Now())
-		agent.mu.Lock()
-		callsInTick := len(agent.retires) - before
-		agent.mu.Unlock()
-		if callsInTick != 1 || agent.retireBody(agent.retireCalls()-1) != wantBodyInc(100, "run-a") {
-			t.Fatalf("the refused call: %d calls this tick, last body %q", callsInTick, agent.retireBody(agent.retireCalls()-1))
-		}
-		got := e.delivery(d.ID)
-		if !got.RetirePending || got.RetireActMark != 900 || got.RetireActIncarnation != "run-b" {
-			t.Fatalf("the condition was not renewed from the fresh read: %+v", got)
-		}
-		e.settleNow(time.Now())
-		if last := agent.retireBody(agent.retireCalls() - 1); last != wantBodyInc(900, "run-b") {
-			t.Fatalf("the second attempt carried %q", last)
-		}
-		if got := e.delivery(d.ID); got.RetirePending || got.RetireResult != "confirmed" {
-			t.Fatalf("not retired: %+v", got)
-		}
+// The mark and its identity stay frozen together: an Agent restart between the decision and the
+// retry changes nothing the Control Plane sends. The Agent judges each session against the pair.
+func TestMemoActIncarnationThePairStaysFrozenAcrossAnAgentRestart(t *testing.T) {
+	t.Run("closed delivery", func(t *testing.T) {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			agent, d := e.openReported(nil)
+			agent.setActMark(100)
+			agent.setActIncarnation("run-a")
+			e.settleNow(time.Now())
+			agent.mu.Lock()
+			agent.retireStatus = 502 // the close is made, its retire cannot be confirmed
+			agent.mu.Unlock()
+			e.settleNow(time.Now())
+			agent.setActMark(900) // the Agent restarted: another run, other numbers
+			agent.setActIncarnation("run-b")
+			agent.mu.Lock()
+			agent.retireStatus = 0
+			agent.mu.Unlock()
+			e.settleNow(time.Now())
+			for i := 0; i < agent.retireCalls(); i++ {
+				if b := agent.retireBody(i); b != wantBodyInc(100, "run-a") {
+					t.Fatalf("retire call %d carried %q, want the pair of the decision %q", i, b, wantBodyInc(100, "run-a"))
+				}
+			}
+			if got := e.delivery(d.ID); got.RetirePending || got.RetireResult != "confirmed" || got.RetireActMark != 100 || got.RetireActIncarnation != "run-a" {
+				t.Fatalf("%+v", got)
+			}
+		})
+	})
+	t.Run("overdue retry", func(t *testing.T) {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			agent, d := e.openReported(map[string]any{"maxTaskHours": 1})
+			agent.setRow(d.Session, map[string]any{"wakers": map[string]any{"watches": 1, "timers": 0}})
+			agent.setActMark(300)
+			agent.setActIncarnation("run-a")
+			e.settleNow(time.Now())
+			agent.mu.Lock()
+			agent.retireStatus = 502
+			agent.mu.Unlock()
+			later := time.Now().Add(3 * time.Hour)
+			e.settleNow(later) // marks it overdue
+			e.settleNow(later) // the first attempt freezes (300, run-a)
+			agent.setActMark(5000)
+			agent.setActIncarnation("run-b")
+			agent.mu.Lock()
+			agent.retireStatus = 0
+			agent.mu.Unlock()
+			e.settleNow(later)
+			for i := 0; i < agent.retireCalls(); i++ {
+				if b := agent.retireBody(i); b != wantBodyInc(300, "run-a") {
+					t.Fatalf("retire call %d carried %q", i, b)
+				}
+			}
+			if got := e.delivery(d.ID); got.RetiredAt == "" {
+				t.Fatalf("not retired: %+v", got)
+			}
+		})
 	})
 }
 
-// An overdue retire whose frozen mark the Agent refuses drops the frozen condition: the next read
-// is kept with the fresh mark, and the retire decided on it goes through. The refused attempt is not
-// recorded as a retire.
-func TestMemoActIncarnationRefusedOverdueRetireDropsTheFrozenMark(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
-		agent, d := e.openReported(map[string]any{"maxTaskHours": 1})
-		agent.setRow(d.Session, map[string]any{"wakers": map[string]any{"watches": 1, "timers": 0}})
-		agent.setActMark(300)
-		agent.setActIncarnation("run-a")
-		e.settleNow(time.Now())
-		agent.mu.Lock()
-		agent.retireStatus = 502 // the attempts freeze (300, run-a) and cannot be confirmed
-		agent.mu.Unlock()
-		later := time.Now().Add(3 * time.Hour)
-		e.settleNow(later) // marks it overdue
-		e.settleNow(later) // the first attempt
-		if got := e.delivery(d.ID); got.RetireActIncarnation != "run-a" || got.RetireGen == 0 {
-			t.Fatalf("frozen: %+v", got)
-		}
-		agent.setActMark(5000)
-		agent.setActIncarnation("run-b") // the Agent restarted
-		agent.mu.Lock()
-		agent.retireStatus = 0
-		agent.mu.Unlock()
-		e.settleNow(later) // the retry carries the frozen mark and is refused
-		got := e.delivery(d.ID)
-		if got.RetiredAt != "" || got.RetireGen != 0 || got.RetireActMark != 0 || got.RetireActIncarnation != "" {
-			t.Fatalf("the refused condition was not dropped: %+v", got)
-		}
-		e.settleNow(later) // the fresh read is kept and frozen, and the retire goes through
-		e.settleNow(later)
-		if last := agent.retireBody(agent.retireCalls() - 1); last != wantBodyInc(5000, "run-b") {
-			t.Fatalf("the decision on the fresh read carried %q", last)
-		}
-		if got := e.delivery(d.ID); got.RetiredAt == "" {
-			t.Fatalf("not retired: %+v", got)
-		}
-	})
-}
-
-// Dropping and renewing are conditional writes.
-func TestMemoActIncarnationDropAndRefreshAreConditional(t *testing.T) {
+// The freeze keeps the identity with the mark.
+func TestMemoActIncarnationFreezeKeepsThePair(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		ctx := context.Background()
 		_, d := e.openReported(nil)
 		e.observeInc(e.st, d.ID, 100, 10, "run-a")
-		if _, _, _, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 100, 10, "run-a"); err != nil || !ok {
-			t.Fatalf("freeze: %v %v", ok, err)
+		if m, inc, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 100, 10, "run-a"); err != nil || !ok || m != 10 || inc != "run-a" || g != 100 {
+			t.Fatalf("freeze: %d %q %d %v %v", m, inc, g, ok, err)
 		}
-		if won, err := e.st.DropDeliveryRetireMark(ctx, d.ID, 100, "run-x"); err != nil || won {
-			t.Fatalf("a drop of another identity went through: %v %v", won, err)
+		e.observeInc(e.other, d.ID, 200, 20, "run-b")
+		if m, inc, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 200, 20, "run-b"); err != nil || !ok || m != 10 || inc != "run-a" || g != 100 {
+			t.Fatalf("a later report replaced the frozen pair: %d %q %d %v %v", m, inc, g, ok, err)
 		}
-		if won, err := e.st.DropDeliveryRetireMark(ctx, d.ID, 99, "run-a"); err != nil || won {
-			t.Fatalf("a drop of another generation went through: %v %v", won, err)
-		}
-		if won, err := e.st.DropDeliveryRetireMark(ctx, d.ID, 100, "run-a"); err != nil || !won {
-			t.Fatalf("the drop: %v %v", won, err)
-		}
-		if got := e.delivery(d.ID); got.RetireGen != 0 || got.RetireActMark != 0 || got.RetireActIncarnation != "" || got.ActIncarnation != "run-a" {
+		if got := e.delivery(d.ID); got.ActMark != 20 || got.ActIncarnation != "run-b" || got.RetireActMark != 10 || got.RetireActIncarnation != "run-a" {
 			t.Fatalf("%+v", got)
 		}
-		if won, err := e.st.DropDeliveryRetireMark(ctx, d.ID, 100, "run-a"); err != nil || won {
-			t.Fatalf("nothing frozen, yet a drop won: %v %v", won, err)
+		e.observeInc(e.other, d.ID, 300, 30, "run-b") // no progress: nothing cleared
+		if got := e.delivery(d.ID); got.RetireActIncarnation != "run-a" {
+			t.Fatalf("%+v", got)
 		}
-		// An open delivery is not renewed (the refresh is for a closed one's pending retire).
-		if won, err := e.st.RefreshDeliveryRetireMark(ctx, d.ID, "", 7, "run-z"); err != nil || won {
-			t.Fatalf("an open delivery was renewed: %v %v", won, err)
+		e.observe(e.other, d.ID, 400, 40, true) // progress clears the frozen pair together
+		if got := e.delivery(d.ID); got.RetireActIncarnation != "" || got.RetireActMark != 0 || got.RetireGen != 0 {
+			t.Fatalf("progress left the frozen identity: %+v", got)
 		}
 	})
 }
