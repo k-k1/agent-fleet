@@ -131,7 +131,7 @@ export interface AgentDescriptor {
   // Full product name for the roomy launch pickers ("start work" / "start") only.
   // Optional: falls back to `label` (kindDisplayName), so only kinds whose full name
   // differs from the compact label set it — claude "Claude Code", copilot "GitHub
-  // Copilot". The tight chips (LayoutMap, kt-full) always show `label`.
+  // Copilot". The tight chips (kt-full) always show `label`.
   displayName?: string;
   // Model routes (ADR 0128) whose models are this kind's ids under one prefix: on that route the
   // launch dialog offers only those ids, and without it it hides them. opencode: its

@@ -827,7 +827,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       <Section
         id="memos"
         title={tr("memo.title")}
-        icon="checklist"
+        icon="note"
         count={unsent.length}
         actions={actions}
         open={open}

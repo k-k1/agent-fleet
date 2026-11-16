@@ -60,6 +60,7 @@ import {
   isManualRun,
   nextRunText,
   sortSchedules,
+  failedScheduleKeys,
 } from "./read.ts";
 
 const POLL_MS = 15000;
@@ -324,6 +325,8 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const [sectionStored, setSectionOpen] = useFold(SECTION_KEY);
   const sectionOpen = sectionStored !== false;
   const reveal = useSchedulesStore((s) => s.reveal);
+  const setFailed = useSchedulesStore((s) => s.setFailed);
+  useEffect(() => setFailed(failedScheduleKeys(items)), [items, setFailed]);
   const serRef = useRef("");
   // Working sets (docs/log/52): a CP-persisted schedule DERIVES its membership — from repo /
   // owner_conv (the conversation it was created in) / reuse_target (conversation slug or
@@ -503,7 +506,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
   return (
     <Section
       title={tr("sched.title")}
-      icon="watch"
+      icon="calendar"
       count={activeCount}
       open={sectionOpen}
       onToggle={() => setSectionOpen(!sectionOpen)}

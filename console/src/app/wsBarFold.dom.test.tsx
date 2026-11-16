@@ -13,13 +13,12 @@ let avail = 0;
 let roCallbacks: (() => void)[] = [];
 const OrigRO = globalThis.ResizeObserver;
 
-// Content widths: labels save 200, ⋯ saves 300, folded usage chips save `usage` (250 unless a
-// test pins a chip back onto the bar). `base` is the unfolded content.
+// Content widths: ⋯ saves 300, folded usage chips save `usage` (250 unless a test pins a chip
+// back onto the bar). `base` is the unfolded content.
 let usage = 250;
-let base = 1200;
+let base = 1000;
 function measure(bar: HTMLElement) {
   let w = base;
-  if (bar.hasAttribute("data-fold-labels")) w -= 200;
   if (bar.hasAttribute("data-fold-more")) w -= 300;
   if (bar.dataset.usage === "folded") w -= usage;
   return w;
@@ -47,13 +46,13 @@ async function resize(width: number) {
   await act(async () => roCallbacks.forEach((cb) => cb()));
 }
 const attrs = () =>
-  ["data-fold-labels", "data-fold-more", "data-fold-tight"].filter((a) => bar().hasAttribute(a)).join(" ");
+  ["data-fold-more", "data-fold-tight"].filter((a) => bar().hasAttribute(a)).join(" ");
 
 const folds = () => ({ foldUsage: seen!.foldUsage, foldMore: seen!.foldMore });
 
 beforeEach(() => {
   usage = 250;
-  base = 1200;
+  base = 1000;
   Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => avail });
   roCallbacks = [];
   globalThis.ResizeObserver = class {
@@ -83,11 +82,11 @@ describe("useWsBarFold", () => {
     expect(folds()).toEqual({ foldUsage: false, foldMore: false });
   });
 
-  it("steps through labels and ⋯ before touching the usage chips", async () => {
+  it("folds behind ⋯ before touching the usage chips", async () => {
     await mount(1000);
-    expect(attrs()).toBe("data-fold-labels");
+    expect(attrs()).toBe("");
     await resize(700);
-    expect(attrs()).toBe("data-fold-labels data-fold-more");
+    expect(attrs()).toBe("data-fold-more");
     expect(folds()).toEqual({ foldUsage: false, foldMore: true });
   });
 
@@ -95,7 +94,7 @@ describe("useWsBarFold", () => {
     await mount(600); // 700 at MORE does not fit; folded it is 450
     expect(folds()).toEqual({ foldUsage: true, foldMore: true });
     expect(bar().dataset.usage).toBe("folded");
-    expect(attrs()).toBe("data-fold-labels data-fold-more");
+    expect(attrs()).toBe("data-fold-more");
     // 450 + 250 saving = 700 needed unfolded; slack keeps it folded at exactly 700…
     await resize(700);
     expect(seen!.foldUsage).toBe(true);
@@ -120,10 +119,10 @@ describe("useWsBarFold", () => {
   });
 
   it("re-settles when content changes inside the bar, without any resize", async () => {
-    await mount(1000);
-    expect(attrs()).toBe("data-fold-labels");
+    await mount(900);
+    expect(attrs()).toBe("data-fold-more");
     // A profile label shrinks inside a chip — nothing changes size from the bar's side.
-    base = 900;
+    base = 800;
     await act(async () => {
       bar().querySelector(".chip")!.textContent = "short";
       await Promise.resolve();
@@ -135,7 +134,7 @@ describe("useWsBarFold", () => {
   it("goes TIGHT only when the usage fold is not enough", async () => {
     await mount(300);
     expect(seen!.foldUsage).toBe(true);
-    expect(attrs()).toBe("data-fold-labels data-fold-more data-fold-tight");
+    expect(attrs()).toBe("data-fold-more data-fold-tight");
   });
 
   it("clears every fold when the bar leaves desktop mode", async () => {
@@ -153,7 +152,7 @@ describe("useWsBarFold", () => {
 let phoneSeen: PhoneFoldStep = 0;
 function phoneMeasure(bar: HTMLElement) {
   const s = Number(bar.getAttribute("data-fold-phone") || 0);
-  return 500 - s * 80; // 500 / 420 / 340
+  return 500 - s * 80; // 500 / 420
 }
 function PhoneBar({ enabled = true }: { enabled?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -172,21 +171,18 @@ describe("useWsBarPhoneFold", () => {
     expect(bar().hasAttribute("data-fold-phone")).toBe(false);
   });
 
-  it("steps up as the bar narrows and back down as it widens", async () => {
+  it("folds as the bar narrows and unfolds as it widens", async () => {
     await mountPhone(430);
     expect(phoneSeen).toBe(1);
     expect(bar().getAttribute("data-fold-phone")).toBe("1");
-    await resize(390);
-    expect(phoneSeen).toBe(2);
-    expect(bar().getAttribute("data-fold-phone")).toBe("2");
     await resize(520);
     expect(phoneSeen).toBe(0);
     expect(bar().hasAttribute("data-fold-phone")).toBe(false);
   });
 
-  it("stops at the last step when even that does not fit", async () => {
+  it("stays folded when even that does not fit", async () => {
     await mountPhone(200);
-    expect(phoneSeen).toBe(2);
+    expect(phoneSeen).toBe(1);
   });
 
   it("leaves the bar alone outside the phone layout", async () => {

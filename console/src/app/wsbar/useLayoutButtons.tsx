@@ -1,9 +1,5 @@
 import { useLayoutStore } from "../../layout/store.ts";
 import { isBlankPane, MAX_TAB_COLS } from "../../layout/ops.ts";
-import { openSessionsOverview } from "../../features/overview/open.ts";
-import { openHome } from "../../features/home/open.ts";
-import { openImagegen } from "../../features/imagegen/open.ts";
-import { useImagegenAvailable } from "../../features/imagegen/available.ts";
 import { hintSuffix } from "../../features/keys/keyHint.ts";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -13,7 +9,6 @@ import { useT } from "../../lib/i18n/index.ts";
 // useWsBarPhoneFold) are rendered from these elements in both places, so the bar's copy and the
 // popover's copy cannot drift.
 export function useLayoutButtons(isMobile: boolean) {
-  const imagegenAvailable = useImagegenAvailable();
   const layout = useLayoutStore((s) => s.layout);
   const splitRight = useLayoutStore((s) => s.splitRight);
   const splitDown = useLayoutStore((s) => s.splitDown);
@@ -77,42 +72,5 @@ export function useLayoutButtons(isMobile: boolean) {
       <span className="lbl">{tr("wsbar.close_all")}</span>
     </Button>
   );
-  const homeBtn = (
-    <Button
-      variant="ghost"
-      className="ws-split ws-home"
-      title={tr("wsbar.home_title") + hintSuffix("open.home")}
-      aria-label={tr("wsbar.home")}
-      onClick={() => openHome()}
-    >
-      <Icon name="home" />
-      <span className="lbl">{tr("wsbar.home")}</span>
-    </Button>
-  );
-  const overviewBtn = (
-    <Button
-      variant="ghost"
-      className="ws-split ws-overview"
-      title={tr("wsbar.overview_title") + hintSuffix("open.sessions")}
-      aria-label={tr("wsbar.overview")}
-      onClick={() => openSessionsOverview()}
-    >
-      <Icon name="dashboard" />
-      <span className="lbl">{tr("wsbar.overview")}</span>
-    </Button>
-  );
-  const imagegenBtn = imagegenAvailable && (
-    <Button
-      variant="ghost"
-      className="ws-split ws-imagegen"
-      title={tr("wsbar.imagegen_title") + hintSuffix("open.imagegen")}
-      aria-label={tr("wsbar.imagegen")}
-      onClick={() => void openImagegen()}
-    >
-      <Icon name="wand" />
-      <span className="lbl">{tr("wsbar.imagegen")}</span>
-    </Button>
-  );
-
-  return { splitRightBtn, splitDownBtn, closeAllBtn, homeBtn, overviewBtn, imagegenBtn };
+  return { splitRightBtn, splitDownBtn, closeAllBtn };
 }

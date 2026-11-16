@@ -87,8 +87,8 @@ test("file search: recursive search in home scope lists rows and does not blank 
 
   const files = page.locator(".ui-section", { has: page.locator(".ui-section-title", { hasText: /ファイル|Files/ }) });
   await expect(files).toHaveCount(1);
-  const toggle = files.locator(".ui-section-toggle");
-  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  // The left pane shows one view at a time; Files is not the one a fresh browser starts on.
+  await page.locator('.actbar-btn[data-rail-view="files"]').click();
 
   // Switch the scope to home (repos is the default). Select by the accessible name from
   // aria-label rather than a positional nth(), so it keeps matching by meaning as buttons come

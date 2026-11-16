@@ -557,7 +557,7 @@ body.row-resizing {
 .popout-spacer {
   flex: 1;
 }
-/* Session state dot — same palette as the LayoutMap cells (.lm-dot, app.css). */
+/* Session state dot. */
 .popout-dot {
   flex: none;
   width: 8px;

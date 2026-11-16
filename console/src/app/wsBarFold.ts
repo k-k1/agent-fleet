@@ -8,10 +8,11 @@
 // the bar grew three rows tall. Every item now keeps its natural width, and the bar steps
 // through these folds, cheapest first, until its content fits:
 //
-//   LABELS  pane buttons go icon-only ("Start" keeps its label: it is the primary action)
 //   MORE    resources, preview, AWS and Google Cloud move behind one ⋯
 //   (usage) the usage chips fold into their +N group, keeping only pinned and near-cap ones
-//   TIGHT   "Start" goes icon-only too, the caption shrinks to "WS", the state ellipsizes
+//   TIGHT   "Start" goes icon-only too and the state ellipsizes
+//
+// The pane buttons are icon-only at every width, so there is no step for their labels.
 //
 // The CSS steps are attributes on the bar, set here directly rather than through React
 // state: each candidate is applied and measured inside one layout pass, so the bar settles
@@ -24,10 +25,9 @@
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 export const STEP_NONE = 0;
-export const STEP_LABELS = 1;
-export const STEP_MORE = 2;
-export const STEP_TIGHT = 3;
-export type FoldStep = typeof STEP_NONE | typeof STEP_LABELS | typeof STEP_MORE | typeof STEP_TIGHT;
+export const STEP_MORE = 1;
+export const STEP_TIGHT = 2;
+export type FoldStep = typeof STEP_NONE | typeof STEP_MORE | typeof STEP_TIGHT;
 
 // Slack required before the usage chips come back out. Their saving is a remembered number,
 // not a measurement of the current content, so unfolding at the exact boundary would refold
@@ -49,7 +49,7 @@ export function planFold(
   avail: number,
   usage: { folded: boolean; saving: number },
 ): FoldPlan {
-  const css: FoldStep[] = [STEP_NONE, STEP_LABELS, STEP_MORE];
+  const css: FoldStep[] = [STEP_NONE, STEP_MORE];
   if (usage.folded) {
     // The usage fold comes after MORE, so chips that would fit back at any earlier step win.
     for (const s of css) if (measure(s) + usage.saving + UNFOLD_SLACK <= avail) return { step: s, foldUsage: false };
@@ -63,13 +63,11 @@ export function planFold(
 }
 
 export function applyFoldStep(bar: HTMLElement, step: FoldStep) {
-  bar.toggleAttribute("data-fold-labels", step >= STEP_LABELS);
   bar.toggleAttribute("data-fold-more", step >= STEP_MORE);
   bar.toggleAttribute("data-fold-tight", step >= STEP_TIGHT);
 }
 
 function clearFold(bar: HTMLElement) {
-  bar.removeAttribute("data-fold-labels");
   bar.removeAttribute("data-fold-more");
   bar.removeAttribute("data-fold-tight");
 }
@@ -223,21 +221,16 @@ export function useWsBarFold(
 // the pane buttons and ⋯ already come to ~330px, and the bar must never be wider than the
 // screen — an overflowing bar widens the document, which makes the page zoomable and takes the
 // edge swipe that opens the left pane with it (wsbar.css). The right-hand chips already live in
-// ⋯, so what is left to fold is the pane buttons, least-used first, into the same popover:
-//
-//   1  Home, overview and image generation
-//   2  also split down and close all
-//
-// Step 2 is the end: what remains (power, state at its min-width, the pills, Start, ⋯) fits
-// 320px with both pills. Every folded action stays reachable from the ⋯ popover.
+// ⋯, so what is left to fold is the pane buttons (split down, close all), into the same
+// popover. That one step is the end: what remains (power, state at its min-width, the pills,
+// Start, ⋯) fits 320px with both pills. A folded action stays reachable from the ⋯ popover.
 
-export const PHONE_STEP_MAX = 2;
-export type PhoneFoldStep = 0 | 1 | 2;
+export const PHONE_STEP_MAX = 1;
+export type PhoneFoldStep = 0 | 1;
 
-/** planPhoneFold picks the first step whose content (`measure(step)`) fits `avail`. */
+/** planPhoneFold folds only when the unfolded content (`measure(0)`) does not fit `avail`. */
 export function planPhoneFold(measure: (step: PhoneFoldStep) => number, avail: number): PhoneFoldStep {
-  for (const s of [0, 1] as const) if (measure(s) <= avail) return s;
-  return PHONE_STEP_MAX;
+  return measure(0) <= avail ? 0 : PHONE_STEP_MAX;
 }
 
 function applyPhoneStep(bar: HTMLElement, step: PhoneFoldStep) {

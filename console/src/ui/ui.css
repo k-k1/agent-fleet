@@ -411,6 +411,10 @@
   cursor: pointer;
   text-align: left;
 }
+/* The header of a section that is a whole view (ui/Section SoloSection): a title, not a fold. */
+.ui-section-toggle.solo {
+  cursor: default;
+}
 .ui-section-toggle .codicon {
   font-size: 13px;
   color: currentColor;

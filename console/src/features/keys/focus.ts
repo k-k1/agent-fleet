@@ -36,7 +36,8 @@ export function focusRegion(region: Region): void {
     (active?.querySelector<HTMLElement>(CONTENT_SELECTOR) ?? active)?.focus?.();
     return;
   }
-  const root = document.querySelector<HTMLElement>(region === "rail" ? ".app-rail" : ".wsbar");
+  // The rail keeps every view mounted and shows one; focus has to land in that one.
+  const root = document.querySelector<HTMLElement>(region === "rail" ? ".app-rail .rail-view:not([hidden])" : ".wsbar");
   root?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)?.focus();
 }
 

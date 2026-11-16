@@ -43,6 +43,16 @@ const mirrorOf = (s) => pane("p0", s, { kind: "terminal", chat: true });
 const FOCUS_TREE = { assistant: 1, workitems: 0, memos: 0, schedules: 0, repos: 1, files: 0 };
 const SHOW_TOOLS = { assistant: 1, workitems: 1, memos: 1, schedules: 1, repos: 1, files: 0 };
 
+// The left pane shows one view at a time (localStorage af-left-view, core/store/leftRail.ts).
+// A scene names its view with `view`; without it, a scene whose `sections` open exactly one
+// of the tool sections gets that view, and everything else gets the session tree.
+const TOOL_VIEWS = { workitems: "workitems", memos: "memo", schedules: "schedules", files: "files" };
+function railViewOf(scene) {
+  if (scene.view) return scene.view;
+  const open = Object.keys(TOOL_VIEWS).filter((id) => Number((scene.sections || {})[id]) === 1);
+  return open.length === 1 ? TOOL_VIEWS[open[0]] : "sessions";
+}
+
 // Open the Start hub. Right after boot the bar can still read the workspace as not running and
 // ask to start it; cancel that and click again once the state has loaded.
 const OPEN_START_HUB = `
@@ -3570,6 +3580,7 @@ try {
     // Console reads `….tabs`, ignores the scene and shows an unconnected pane.
     const sections = Object.entries(scene.sections || {})
       .map(([id, v]) => `localStorage.setItem("af-section-${id}", "${v}");`)
+      .concat(`localStorage.setItem("af-left-view", "${railViewOf(scene)}");`)
       .join("\n        ");
     // Per-scene UI state that is remembered in localStorage rather than in the layout —
     // e.g. a disclosure the user has opened before (the mirror's changed-files strip).
