@@ -171,12 +171,13 @@ A run stays open until its session has nothing left to wait for. While any of th
 
 The session of a run that is "Done" is stopped. So are the sessions it started, and any watch or timer that would have started it again.
 
-- Input sent to a stopped session is refused with "This session was stopped after its auto-run finished. Start the session first, then send again." To carry on, press "**Resume and continue**" ([Stop and resume a session](../sessions/stop-resume.md))
+- Input sent to a stopped session is refused with "Auto-run stopped this session. Start the session first, then send again." To carry on, press "**Resume and continue**" ([Stop and resume a session](../sessions/stop-resume.md))
 - The session is not stopped when you act on it after the run was seen to have ended and before it is stopped. It keeps running, and the run's row in the run history says "You took over this session"
   - An act is starting the session, typing into its terminal, sending it a message, or answering its question, permission or plan
   - An act while the run is still working does not count: the session is stopped when the run ends
   - After you take it over, auto-run does nothing more with it. Stop it yourself when you no longer need it ([Stop and resume a session](../sessions/stop-resume.md))
-- An "Overdue" run whose sessions have shown no sign of work for an hour is stopped, including a session that was waiting for you. The run then becomes "Done"
+- An "Overdue" run whose sessions have shown no sign of work for an hour is stopped, including a session that was waiting for you. The run then becomes "Done", except while one of those sessions still carries a question, a plan or a permission
+  - Then the run stays "waiting for you" and keeps using one of the "Sessions at the same time". Answering from the stopped session's card ("**Answer and resume**", no need to start the session first) ends the waiting and carries the session on; the run ends once the work is done. Archiving or deleting the session ends the run too
 - Archiving or deleting the session ends the run too, as "Stopped"
 
 In the conversation, the turn auto-run handed over carries an "**Auto-run**" mark, so it is not mixed up with what you typed.
@@ -213,7 +214,7 @@ They arrive in the notification center. In **⚙ Settings → "Notifications"**,
 
 | Notification | When | What you do |
 |---|---|---|
-| A run is overdue | A run is still not finished after the time you set | Read the history for the reason. Answer the waiting session, or stop it |
+| A run is overdue | A run is still not finished after the time you set | Read the history for the reason. Answer the waiting session, or archive it when you no longer need it. Stopping it does not end a run that is waiting for you |
 | Auto-run paused | The first turns of the last two runs failed | Fix the cause and press "Resume" |
 | Auto-run is waiting for you | Every one of the runs the category may have open is a session waiting for you | Answer the questions and permissions of those sessions. No new run starts until you do |
 | A run could not be confirmed | Whether the session started could not be confirmed | Check in the run history whether the session exists. Its memos are not run again by themselves |
@@ -283,7 +284,7 @@ In these cases the cause has no line of its own. When another reason from the ta
 
 Read "Not finished" in the run history.
 
-- "waiting for you": open the session and answer the question, permission or plan. Its place is not freed until you do
+- "waiting for you": open the session and answer the question, permission or plan. Its place is not freed until you do. This holds after the session was stopped too: the question stays on the stopped session's card, and you answer it there with "**Answer and resume**" without starting the session first
 - "waiting on a watch or a timer": while a later restart is set, the run does not end. Stop the watch or the timer in the session if you do not need it
 - "waiting for a usage limit": it waits for the limit to lift, and carries on by itself afterwards
 - "working": the session or one of its children is running. When the "A run is overdue" notification comes, the run has passed the time you set. After an hour without a sign of work, it is stopped by itself

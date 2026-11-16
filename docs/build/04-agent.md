@@ -144,10 +144,12 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     `peer_from`, `peer_intent`, `report_to`, `schedule_id`, `schedule_slot`, `schedule_delivery`, nor
     the `/mcp` stamp; `inputCarriesOrigin`, not the mirror's `typedByMember`), prompt, keys and seq alike; `/turn` start and steer; `/respond`,
     `/answer`, the permission and plan decisions (the automatic plan review sets `expect_plan` and
-    is not one), a carried answer; a driver switch, a route switch and a carried answer that
-    relaunches: these three go round `/start`, so each holds the retire gate's read side across the
-    launch and is refused with `409 session_retired` on a session a retire has marked (resume it
-    first); the chat bridge's replies and button clicks (`injectSessionPrompt` with a member origin);
+    is not one), a carried answer (to a stopped session it is a person's start, in `/start`'s order under the retire
+    gate's read side: record the act, launch, then take the retired mark off after its own launch; a
+    failed launch leaves the mark, and a mark that cannot be cleared answers `retire_clear_failed`);
+    a driver switch and a route switch: these two go round `/start`, so each holds the retire gate's
+    read side across the launch and is refused with `409 session_retired` on a session a retire has
+    marked (resume it first); the chat bridge's replies and button clicks (`injectSessionPrompt` with a member origin);
     keystrokes in the terminal pane (`/ws/pty`, recorded before the lifecycle gate is taken), except
     a write made only of focus reports (`ESC [ I`, `ESC [ O`, one or several): a member who
     switches the browser tab sends one, and it must not release a session nobody touched. It is the

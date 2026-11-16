@@ -569,3 +569,10 @@ made the text above concrete or departed from it. Where a point only confirms §
 Left out of step 2 and tracked: a retire conditional on what the Control Plane read (#4218); first-turn records left
 by a create that failed (#4210); the order of the settle and retire passes when workspaces are slow (#4245). Open
 questions 1, 4 and 5 stay with #4149: the defaults have not been measured on a deployment.
+
+Added 2026-11-16 (#4286, seen on a deployment): an answer to a carried question from the Console counts as a person's
+start of a retired session. It records the act, launches, takes the retired mark off after its own launch and then
+delivers the answer, as `/start` does; the two switches still refuse a marked session.
+Added 2026-11-16: an overdue run whose stopped session carries a question, a plan or a permission stays open, as the
+second row of the §6 table says; the answer from the stopped session's card clears the wait without a Start first, and the run ends once the work the
+answer resumed is done.
