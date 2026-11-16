@@ -386,6 +386,11 @@ type agentMemImportSrc struct {
 	// ForgottenHashes (muse): source hashes of memories that no longer exist, so the same bytes
 	// under a new file name are still the forgotten memory.
 	ForgottenHashes map[string]bool
+	// Name (muse) overrides the memory name derived from the file name, and Transform replaces
+	// the file's bytes before they are hashed, scanned and parsed: muse's MEMORY.md becomes one
+	// note made of the facts in it.
+	Name      string
+	Transform func([]byte) []byte
 }
 
 // agentMemImportEvaluate reads one claude file and decides its status. withheld=true: the file
@@ -398,6 +403,9 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 func agentMemImportEvaluateSrc(mem *os.File, file string, src agentMemImportSrc, rel string, history map[string]bool) (it agentMemImportItem, withheld bool) {
 	// A nested muse note "a/b.md" is the AF memory "a--b": names are one path segment.
 	stem := strings.ReplaceAll(strings.TrimSuffix(file, ".md"), "/", "--")
+	if src.Name != "" {
+		stem = src.Name
+	}
 	if !agentMemImportShowable(stem) || !agentMemImportShowable(strings.TrimSuffix(file, ".md")) {
 		return it, true
 	}
@@ -432,6 +440,11 @@ func agentMemImportEvaluateSrc(mem *os.File, file string, src agentMemImportSrc,
 		return invalid("too_large")
 	case err != nil:
 		return invalid("symlink")
+	}
+	if src.Transform != nil {
+		if raw = src.Transform(raw); raw == nil {
+			return invalid("no_body")
+		}
 	}
 	sum := sha256.Sum256(raw)
 	it.SourceHash = hex.EncodeToString(sum[:])

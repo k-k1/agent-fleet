@@ -93,8 +93,8 @@ func TestMuseImportSourcesAndPreview(t *testing.T) {
 	plain := filepath.Join(e.home, "repos", "plain")
 	memoryMkdirAll(t, plain)
 	e.raw(plain, "x.md", "---\ndescription: d\n---\nb\n")
-	// A working copy with only the index lists nothing.
-	e.raw(e.wt, "MEMORY.md", "- idx\n")
+	// A working copy with only index links lists nothing.
+	e.raw(e.wt, "MEMORY.md", "# Memory\n\n- [Idx](idx.md) - an index line\n")
 
 	by := map[string]agentMemMuseSource{}
 	for _, s := range agentMemMuseList().Sources {
@@ -506,5 +506,74 @@ func TestMuseImportForgottenRenameIntoLiveMemory(t *testing.T) {
 	}
 	if got, _ := agentMemRead(agentMemCallerT(t, "claude-main"), "", "live"); got.Body != "other text" {
 		t.Errorf("the forgotten text replaced the live memory: %+v", got)
+	}
+}
+
+// muse stores short facts in MEMORY.md itself (measured on muse 1.4.20); the lines that are not
+// index links are one note per store.
+func TestMuseImportMemoryMdFacts(t *testing.T) {
+	e := newMuseImportEnv(t)
+	e.note("pref", "a preference", "feedback", "use tabs")
+	e.raw(e.clone, "MEMORY.md", "# Memory\n\n- [Pref](pref.md) - a preference\n- the deploy window is Friday\n")
+	e.raw(e.clone, "sub/MEMORY.md", "- a nested fact\n")
+
+	pv := e.preview()
+	if len(pv.Items) != 2 {
+		t.Fatalf("items = %+v", pv.Items)
+	}
+	it := e.item(pv, museIndexNoteName)
+	if it.Status != claudeImportNew || it.Path != "MEMORY.md" || it.Description != "- the deploy window is Friday" {
+		t.Fatalf("MEMORY.md note = %+v", it)
+	}
+	if strings.Contains(it.entry.Body, "pref.md") || strings.Contains(it.entry.Body, "#") {
+		t.Errorf("index link or heading leaked into the body: %q", it.entry.Body)
+	}
+	if s := agentMemMuseList(); s.Sources[0].Count != 2 {
+		t.Errorf("sources = %+v", s.Sources)
+	}
+
+	now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	if out := e.apply(now, museIndexNoteName); out.Results[0].Result != "imported" {
+		t.Fatalf("apply = %+v", out)
+	}
+	got, err := agentMemRead(agentMemCallerT(t, "claude-main"), "", museIndexNoteName)
+	if err != nil || got.Source != "muse:project/.agents/memory/MEMORY.md" || !strings.Contains(got.Body, "Friday") {
+		t.Fatalf("entry = %+v, %v", got, err)
+	}
+	// An index edit that leaves the facts alone is not a change; re-runs are idempotent.
+	e.raw(e.clone, "MEMORY.md", "# Memory\n- [Pref](pref.md) - reworded\n- the deploy window is Friday\n")
+	if pv := e.preview(); pv.byName[museIndexNoteName].Status != claudeImportUnchanged {
+		t.Errorf("not idempotent: %v", pv.Counts)
+	}
+	// Forgotten stays forgotten, and an AF-side memory of that name is never replaced.
+	if _, err := agentMemForget(agentMemCallerT(t, "claude-main"), agentMemForgetReq{Name: museIndexNoteName, Revision: 1}, now); err != nil {
+		t.Fatal(err)
+	}
+	if pv := e.preview(); pv.byName[museIndexNoteName].Status != claudeImportForgotten {
+		t.Errorf("forgotten MEMORY.md note came back: %v", pv.Counts)
+	}
+}
+
+func TestMuseImportMemoryMdIndexOnlyAndSecret(t *testing.T) {
+	e := newMuseImportEnv(t)
+	e.raw(e.clone, "MEMORY.md", "# Memory\n\n- [A](a.md) - a\n* [B](b/c.md) - b\n")
+	if len(agentMemMuseList().Sources) != 0 {
+		t.Fatalf("index-only MEMORY.md listed: %+v", agentMemMuseList().Sources)
+	}
+	e.raw(e.clone, "MEMORY.md", "- token ghp_"+strings.Repeat("a1", 18)+"\n")
+	if it := e.item(e.preview(), museIndexNoteName); it.Status != claudeImportSecret {
+		t.Errorf("secret = %+v", it)
+	}
+}
+
+// A topic file named like the MEMORY.md note must not be overwritten by it.
+func TestMuseImportMemoryMdNameCollision(t *testing.T) {
+	e := newMuseImportEnv(t)
+	e.raw(e.clone, "MEMORY.md", "- a fact\n")
+	e.raw(e.clone, museIndexNoteName+".md", "topic")
+	for _, it := range e.preview().Items {
+		if it.Status != claudeImportInvalid || it.Reason != "name_collision" {
+			t.Errorf("%s = %+v", it.Path, it)
+		}
 	}
 }

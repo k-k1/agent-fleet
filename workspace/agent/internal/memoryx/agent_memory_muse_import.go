@@ -22,8 +22,10 @@ package memoryx
 // (it is relative to the scope root). A note without frontmatter takes its name from the file
 // name, its description from the first non-empty line and no type; a nested note "a/b.md" is the
 // AF memory "a--b" (two files that map to one name are both refused). Directories are walked
-// through pinned handles and never through a symlink. MEMORY.md, .muse-memory.lock and anything
-// that is not .md are not memories.
+// through pinned handles and never through a symlink. .muse-memory.lock and anything that is not
+// .md are not memories. MEMORY.md at a scope root is muse's index, but muse also stores short facts
+// in it (measured on muse 1.4.20: add_memory with path MEMORY.md), so its lines that are not index
+// links are one note per store, named museIndexNoteName; an index of links only is no memory.
 
 import (
 	"fmt"
@@ -64,13 +66,48 @@ const (
 	museImportChooseUser = "choose_user_scope"
 	// museMaxDepth bounds the directories walked below a scope root.
 	museMaxDepth = 6
+	// museIndexNoteName is the AF memory made of the facts in a scope root's MEMORY.md. It is a
+	// fixed name so a re-run finds the same memory; the "muse-" prefix keeps it clear of the
+	// topic files muse names after their subject.
+	museIndexNoteName = "muse-memory-md"
 )
 
 var (
 	museDirRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@+=-]{0,254}$`)
 	// museHashSuffixRe splits "<slug>-<16 hex>".
 	museHashSuffixRe = regexp.MustCompile(`^(.*)-([0-9a-f]{16})$`)
+	// museIndexLinkRe matches an index line "- [Title](file.md) ...".
+	museIndexLinkRe = regexp.MustCompile(`^\s*[-*+]\s*\[[^\]]*\]\([^)]*\)`)
 )
+
+// museIndexFacts is MEMORY.md reduced to the facts muse stored in it: index links, blank lines and
+// headings are dropped. "" means the file is an index only.
+func museIndexFacts(raw []byte) []byte {
+	var keep []string
+	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") || museIndexLinkRe.MatchString(line) {
+			continue
+		}
+		keep = append(keep, strings.TrimRight(line, " \t"))
+	}
+	if len(keep) == 0 {
+		return nil
+	}
+	return []byte(strings.Join(keep, "\n") + "\n")
+}
+
+// museIndexHasFacts reads a scope root's MEMORY.md. A file that cannot be opened (a symlink) is not
+// listed; one that opens but cannot be read is, so the preview shows it as invalid.
+func museIndexHasFacts(root *os.File) bool {
+	f, err := agentMemImportOpen(root, agentMemImportIndex)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	raw, err := agentMemReadHandle(f)
+	return err != nil || museIndexFacts(raw) != nil
+}
 
 // agentMemMuseSource is one muse directory that has notes.
 type agentMemMuseSource struct {
@@ -194,8 +231,9 @@ func agentMemMuseOpen(dir string) (mem, wc *os.File, ok bool) {
 
 // agentMemMuseFiles lists the notes of a scope root and below, as paths relative to it with "/".
 // Every directory is opened through its parent's handle with O_NOFOLLOW, so a symlinked directory
-// is not entered; hidden directories are skipped, and so are MEMORY.md and everything that is not
+// is not entered; hidden directories are skipped, and so is everything that is not
 // a .md file (.muse-memory.lock included). A symlink named *.md is listed and refused on open.
+// MEMORY.md is listed at the scope root only, and only when it holds more than index links.
 func agentMemMuseFiles(root *os.File) (files []string, truncated bool) {
 	var walk func(dir *os.File, prefix string, depth int)
 	walk = func(dir *os.File, prefix string, depth int) {
@@ -225,7 +263,10 @@ func agentMemMuseFiles(root *os.File) (files []string, truncated bool) {
 				sub := os.NewFile(uintptr(fd), "muse-memory-sub")
 				walk(sub, prefix+n+"/", depth+1)
 				sub.Close()
-			case strings.HasSuffix(n, ".md") && n != agentMemImportIndex:
+			case strings.HasSuffix(n, ".md"):
+				if n == agentMemImportIndex && (depth > 0 || !museIndexHasFacts(dir)) {
+					continue
+				}
 				if len(files) >= agentMemImportMaxFiles {
 					truncated = true
 					return
@@ -427,8 +468,12 @@ func agentMemMuseList() agentMemMuseSources {
 				continue
 			}
 			s := agentMemMuseSource{Scope: museScopeProject, Dir: d.Name(), Count: len(files)}
+			listed := map[string]bool{}
+			for _, f := range files {
+				listed[f] = true
+			}
 			for f := range agentMemMuseTracked(wc, files) {
-				if strings.HasSuffix(f, ".md") && f != agentMemImportIndex {
+				if listed[f] {
 					s.Shared++
 				}
 			}
@@ -577,6 +622,9 @@ func agentMemMuseBuild(scope, dir, into string) (*agentMemMusePreview, error) {
 			it = agentMemImportItem{Name: museName(f), Path: f, Status: claudeImportInvalid, Reason: "name_collision"}
 		} else {
 			s := src(f)
+			if f == agentMemImportIndex {
+				s.Name, s.Transform = museIndexNoteName, museIndexFacts
+			}
 			s.ForgottenHashes = gone
 			it, withheld = agentMemImportEvaluateSrc(mem, f, s, rel, history)
 		}
@@ -605,6 +653,9 @@ func agentMemMuseBuild(scope, dir, into string) (*agentMemMusePreview, error) {
 
 // museName is the AF memory name a note's path maps to.
 func museName(file string) string {
+	if file == agentMemImportIndex {
+		return museIndexNoteName
+	}
 	return strings.ReplaceAll(strings.TrimSuffix(file, ".md"), "/", "--")
 }
 

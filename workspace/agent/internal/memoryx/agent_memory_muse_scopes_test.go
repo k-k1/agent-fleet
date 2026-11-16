@@ -421,3 +421,32 @@ func TestMuseImportFrontmatterLookalikes(t *testing.T) {
 		t.Errorf("crlf-open = %+v", it)
 	}
 }
+
+// A personal store whose only file is MEMORY.md still lists, and lands in the user scope only on
+// the explicit choice.
+func TestMusePersonalMemoryMdOnly(t *testing.T) {
+	e := newMuseImportEnv(t)
+	memoryWrite(t, e.store("personal", "MEMORY.md"), "- I prefer short answers\n")
+	listed := false
+	for _, s := range agentMemMuseList().Sources {
+		listed = listed || s.Scope == museScopePersonal && s.Count == 1
+	}
+	if !listed {
+		t.Fatalf("personal MEMORY.md-only store not listed: %+v", agentMemMuseList().Sources)
+	}
+	if pv := e.previewOf(museScopePersonal, "", ""); pv.Reason != museImportChooseUser || len(pv.Items) != 0 {
+		t.Fatalf("preview without into = %+v", pv)
+	}
+	it := e.item(e.previewOf(museScopePersonal, "", museIntoUser), museIndexNoteName)
+	if it.Status != claudeImportNew || it.Path != "MEMORY.md" {
+		t.Fatalf("item = %+v", it)
+	}
+	req := agentMemMuseReq{Scope: museScopePersonal, Into: museIntoUser, Items: []agentMemImportReqItem{{Name: museIndexNoteName, SourceHash: it.SourceHash}}}
+	if out, err := agentMemMuseApply(req, time.Now()); err != nil || out.Results[0].Result != "imported" {
+		t.Fatalf("apply = %+v, %v", out, err)
+	}
+	got, err := agentMemRead(agentMemCallerT(t, "claude-main"), agentMemScopeUser, museIndexNoteName)
+	if err != nil || got.Source != "muse:personal/MEMORY.md" {
+		t.Errorf("entry = %+v, %v", got, err)
+	}
+}

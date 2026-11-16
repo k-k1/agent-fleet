@@ -98,7 +98,7 @@ muse has three stores, and each is listed.
 | Possible secrets (skipped) | Skipped and listed |
 | Cannot import | A name that cannot be used, two files that map to one name, and so on |
 
-`MEMORY.md`, files that are not `.md` and symlinks are not notes. Agent Fleet does not write back into muse.
+Files that are not `.md` and symlinks are not notes. The `MEMORY.md` at the top of a muse store is its index, but muse also saves short facts in it: the lines that are not index links (`- [Title](file.md) …`), headings and blank lines aside, are imported as one note named `muse-memory-md` per store, and a `MEMORY.md` that holds only index links yields nothing. Agent Fleet does not write back into muse.
 
 ## Import the Agent Fleet memory in a bundle
 
