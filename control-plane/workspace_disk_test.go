@@ -229,17 +229,16 @@ func TestSampleCutsOffASlowDuAndFinishesTheSweep(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, _, mem, ws := usageHourFixture(t)
 	mgr.dataRoot = t.TempDir()
-	diskUsages.m = map[string]diskSample{}
 	old := store.WorkspaceDisk{WorkspaceID: ws.ID, Used: 5, Total: 10, ObservedAt: "2026-10-01T00:00:00Z"}
 	if err := st.PutWorkspaceDisk(ctx, old); err != nil {
 		t.Fatal(err)
 	}
-	prevDU, prevTO := runDU, usageDiskTimeout
-	t.Cleanup(func() { runDU, usageDiskTimeout = prevDU, prevTO })
-	runDU = func(ctx context.Context, _ string) ([]byte, error) {
+	prevTO := usageDiskTimeout
+	t.Cleanup(func() { usageDiskTimeout = prevTO })
+	setRunDU(t, func(ctx context.Context, _ string) ([]byte, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
-	}
+	})
 	usageDiskTimeout = 50 * time.Millisecond
 	srv := diskAgent(t, `{}`)
 	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: srv.URL}}, runtime.DiskMeaningQuota}
@@ -434,18 +433,15 @@ func TestSlowDiskReadDoesNotDelayUsageAccounting(t *testing.T) {
 		t.Fatal(err)
 	}
 	mgr.dataRoot = t.TempDir()
-	diskUsages.m = map[string]diskSample{}
-	prevDU := runDU
-	t.Cleanup(func() { runDU = prevDU })
 	var rowsAtFirstDU = -1
-	runDU = func(c context.Context, _ string) ([]byte, error) {
+	setRunDU(t, func(c context.Context, _ string) ([]byte, error) {
 		if rowsAtFirstDU < 0 {
 			rows, _ := st.ListUsageHourly(ctx, "", "2000-01-01T00", "2999-01-01T00")
 			rowsAtFirstDU = len(rows) // two members + the heartbeat when nothing waited on du
 		}
 		<-c.Done()
 		return nil, c.Err()
-	}
+	})
 	srv := diskAgent(t, `{}`)
 	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: srv.URL}}, runtime.DiskMeaningQuota}
 

@@ -73,6 +73,8 @@ func TestTighterPolicyClosesForbiddenLogins(t *testing.T) {
 	if forbidden.Get(idForbidden) != nil {
 		t.Fatal("the forbidden route's login flow is still running")
 	}
+	// The store drops the flow before Close reaps it; reap's Once orders this read after the Wait.
+	_ = fForbidden.reap()
 	if fForbidden.Cmd.ProcessState == nil {
 		t.Error("the forbidden login's process was not reaped")
 	}

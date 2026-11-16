@@ -144,15 +144,12 @@ func TestParseErrorEndsTheAttempt(t *testing.T) {
 // An attempt whose output the parser never turns into a URL fails with a reason at the
 // deadline instead of waiting out the process timeout.
 func TestAttemptStuckInStartingFailsAtTheDeadline(t *testing.T) {
-	old := urlDeadline
-	urlDeadline = 300 * time.Millisecond
-	defer func() { urlDeadline = old }()
 	s := newStore(t)
 	a, err := s.Start("k", "", "prod", Process{
 		Name: "test login", Path: "/bin/sh", Args: []string{"-c", "echo something unexpected; sleep 30"},
-		Timeout: 60 * time.Second,
-		Parse:   func(string) (string, string, error) { return "", "", nil },
-		Exited:  func(error) (bool, string) { return false, "exited" },
+		Timeout: 60 * time.Second, URLDeadline: 300 * time.Millisecond,
+		Parse:  func(string) (string, string, error) { return "", "", nil },
+		Exited: func(error) (bool, string) { return false, "exited" },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -211,15 +208,12 @@ func TestEndIfStartingLeavesAnAuthorizingAttempt(t *testing.T) {
 
 // A login that already showed its URL is left alone by the deadline.
 func TestAttemptThatShowedItsURLSurvivesTheDeadline(t *testing.T) {
-	old := urlDeadline
-	urlDeadline = 200 * time.Millisecond
-	defer func() { urlDeadline = old }()
 	s := newStore(t)
 	a, err := s.Start("k", "", "prod", Process{
 		Name: "test login", Path: "/bin/sh", Args: []string{"-c", "echo url; sleep 30"},
-		Timeout: 60 * time.Second,
-		Parse:   func(string) (string, string, error) { return "https://x.invalid/", "ABCD-EFGH", nil },
-		Exited:  func(error) (bool, string) { return false, "exited" },
+		Timeout: 60 * time.Second, URLDeadline: 200 * time.Millisecond,
+		Parse:  func(string) (string, string, error) { return "https://x.invalid/", "ABCD-EFGH", nil },
+		Exited: func(error) (bool, string) { return false, "exited" },
 	})
 	if err != nil {
 		t.Fatal(err)
