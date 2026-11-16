@@ -33,13 +33,15 @@ type silentFx struct {
 var deadSeq atomic.Uint32
 
 // deadEndpoint is a URL nothing listens on and nothing can come to: every call returns an
-// address no other call returned, on a port (9, discard) no listener of this process ever
-// gets. A listened-on-then-closed port does not do: the kernel hands it to the next
-// listener, which makes two "dead" workspaces share one tracker key, or lets a dead one
-// answer.
+// address no other call returned in any realistic test run (the sequence wraps after 2^23
+// calls), on a port (9, discard) no listener of this process ever gets. A
+// listened-on-then-closed port does not do: the kernel hands it to the next listener, which
+// makes two "dead" workspaces share one tracker key, or lets a dead one answer.
 func deadEndpoint() string {
 	n := deadSeq.Add(1)
-	return fmt.Sprintf("http://127.%d.%d.%d:9", 1+n>>16&0x7f, n>>8&0xff, n&0xff)
+	// The first octet pair starts at 127.1 so the range never overlaps 127.0.0.1, where
+	// httptest servers listen.
+	return fmt.Sprintf("http://127.%d.%d.%d:9", 1+((n>>16)&0x7f), (n>>8)&0xff, n&0xff)
 }
 
 func liveEndpoint(t *testing.T) string {
