@@ -228,6 +228,10 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		if c, ok := status.ReadCarried(session.UUID(m.Dir, m.Name)); ok {
 			s.Carried = c.Kind
 		}
+	} else if c, ok := status.ReadCarried(session.UUID(m.Dir, m.Name)); ok {
+		// Not shown as Carried (see above), but a person still has to answer it: a message
+		// queue's run reads this to stay open on a session that was started again unanswered.
+		s.CarriedLive = c.Kind
 	}
 	return s
 }

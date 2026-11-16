@@ -576,3 +576,7 @@ delivers the answer, as `/start` does; the two switches still refuse a marked se
 Added 2026-11-16: an overdue run whose stopped session carries a question, a plan or a permission stays open, as the
 second row of the §6 table says; the answer from the stopped session's card clears the wait without a Start first, and the run ends once the work the
 answer resumed is done.
+Added 2026-11-16 (#4291): the same holds once such a session is started again without the answer. A live row of the Agent's
+list carries the kind of the carried interaction under its own field, `carriedLive` (`carried` stays on stopped rows only),
+and the Control Plane counts it as a person's hold, below a machine at work, until the interaction is answered, discarded or
+expired.
