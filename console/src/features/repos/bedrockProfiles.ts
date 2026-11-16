@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
-import { useTenantStore } from "../../core/store/tenant.ts";
 import { agentOf } from "../../agents/registry.ts";
 
 /** A Settings AWS profile the member marked as a model route (ADR 0128 decision 11, option C2):
@@ -42,14 +41,15 @@ export function regionOk(region: string): boolean {
   return r === "" || (REGION_RE.test(r) && !r.startsWith("cn-"));
 }
 
-/** The member's marked profiles, loaded while enabled and again on a tenant or member switch. null
+/** The member's marked profiles, loaded while enabled and again whenever identity changes. null
  *  until this principal's answer arrives, [] when it failed or none is marked: the bedrock route
  *  is then not offered at all. */
-export function useModelRouteProfiles(enabled: boolean): ModelRouteProfile[] | null {
-  // The answer is kept with the principal it was asked for, and returned only to that principal:
-  // on the render where the tenant or member has just changed, the previous one's profiles are
-  // never handed out, even before the effect below has run.
-  const identity = useTenantStore((s) => `${s.tenant}|${s.identityRev}`);
+export function useModelRouteProfiles(enabled: boolean, identity = ""): ModelRouteProfile[] | null {
+  // The answer is kept with the principal it was asked for (identity, the caller's tenant and
+  // member), and returned only to that principal: on the render where it has just changed, the
+  // previous one's profiles are never handed out, even before the effect below has run. Taken as
+  // an argument so this module stays free of the tenant store, which many screens' tests import
+  // it without.
   const [answer, setAnswer] = useState<{ owner: string; profiles: ModelRouteProfile[] } | null>(null);
   useEffect(() => {
     if (!enabled) return;

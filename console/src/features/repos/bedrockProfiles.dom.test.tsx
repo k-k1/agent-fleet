@@ -23,7 +23,8 @@ describe("useModelRouteProfiles across a member switch", () => {
   it("returns nothing for the new member on the very render of the switch", async () => {
     const seen: (string[] | null)[] = [];
     function Probe() {
-      const p = useModelRouteProfiles(true);
+      const identity = useTenantStore((s) => `${s.tenant}|${s.identityRev}`);
+      const p = useModelRouteProfiles(true, identity);
       seen.push(p ? p.map((x) => x.label) : null);
       return null;
     }

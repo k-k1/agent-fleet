@@ -163,7 +163,7 @@ export function CredentialsTab() {
   const conn = conns as Record<string, { envs?: string[] } | undefined> | null;
   const storedKeys = (conn?.provider_keys?.envs ?? (conn?.opencode?.envs ?? []).filter((e) => e !== "OPENCODE_API_KEY"));
   const bedrockShown = usableBy(CREDENTIAL_USE["amazon-bedrock"], kinds).length > 0;
-  const profiles = useModelRouteProfiles(known && bedrockShown);
+  const profiles = useModelRouteProfiles(known && bedrockShown, identity);
 
   /** The card for id, or null when it is not to be drawn (D10a). */
   const card = (id: string): ReactNode => {
