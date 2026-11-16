@@ -1,9 +1,5 @@
-// ADR 0082 P1: the image provider order list stops being drawn from the two static kind-name
-// placeholders once the Agent has answered, and draws one row per DECLARED images row instead
-// (decision 3 / decision 8). This is the regression class P0 itself shipped once already
-// (fleetProvider() matching the id's spelling): every fixture below is deliberately keyed the
-// way a real deployment's default row is ("image", not "comfy") — a fixture spelled "comfy"
-// cannot catch a reader that still expects one of the two retired kind names.
+// The Agents page holds harnesses only (ADR 0138 D16): the session block and image generation
+// have their own pages (SessionsTab, ImagegenTab) and must not be drawn here as well.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -23,48 +19,13 @@ vi.mock("../../../core/store/workspace.ts", () => ({
 }));
 
 const { AgentsTab } = await import("./AgentsTab.tsx");
-const { setSettings, settingsDefaults, getSettings, IMAGE_PROVIDERS, STOPPED_ARCHIVE_NEVER } = await import(
+const { setSettings, settingsDefaults, IMAGE_PROVIDERS } = await import(
   "../../../lib/settings.ts"
 );
 const { t } = await import("../../../lib/i18n/index.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
-
-/** A LIVE answer naming these fleet rows (possibly zero — a real "this deployment declares
- *  nothing" answer, distinct from noLiveAnswer() below). */
-function respond(imagegenProviders: Array<Record<string, unknown>> = []) {
-  api.mockImplementation((path: string) => {
-    if (path === "api/imagegen/status") {
-      return Promise.resolve({ enabled: true, ready: imagegenProviders.length > 0, providers: imagegenProviders });
-    }
-    return Promise.resolve({});
-  });
-}
-
-/** No live answer at all — an Agent old enough to omit `providers`, or one this build cannot
- *  reach. This is what the fallback path is FOR, and it is a different fixture from
- *  respond([]) (a live answer that happens to be empty) on purpose (see settings.ts's
- *  normalizeImageProviderOrder `rows === undefined` vs `[]` distinction). */
-function noLiveAnswer() {
-  api.mockImplementation((path: string) => {
-    if (path === "api/imagegen/status") return Promise.resolve({ enabled: false, ready: false });
-    return Promise.resolve({});
-  });
-}
-
-/** An Agent build old enough to predate `kind` (ADR 0082 P0/P1) — `providers` is present, and
- *  every entry has `fleet` (a pre-P1 Agent) or neither field at all (pre-P0), but NONE carry
- *  `kind`. This must read the same as noLiveAnswer(), not as "the fleet row is real but has no
- *  kind" — see isPreAdr0082Status. */
-function oldAgentAnswer() {
-  api.mockImplementation((path: string) => {
-    if (path === "api/imagegen/status") {
-      return Promise.resolve({ enabled: true, ready: true, providers: [{ id: "codex" }, { id: "image", fleet: true }] });
-    }
-    return Promise.resolve({});
-  });
-}
 
 async function mount() {
   host = document.createElement("div");
@@ -79,9 +40,6 @@ async function mount() {
     await Promise.resolve();
   });
 }
-
-const orderRows = (): string[] =>
-  Array.from(host!.querySelectorAll(".ds-orderlist-row .ds-orderlist-label")).map((n) => n.textContent || "");
 
 beforeEach(() => {
   wsState = "running";
@@ -98,125 +56,25 @@ afterEach(() => {
   setSettings(settingsDefaults());
 });
 
-describe("画像生成の優先順位（ADR 0082 P1）", () => {
-  it("Agent が答える前は静的な既定（畳み込み表示）", async () => {
-    noLiveAnswer();
+describe("Agents page (harness only)", () => {
+  it("draws neither the session rows nor image generation", async () => {
+    api.mockResolvedValue({});
     await mount();
-    // The fallback fold: both static ids collapse into one "Agent Fleet (self-hosted)" row.
-    expect(orderRows().filter((l) => l === "Agent Fleet (self-hosted)").length).toBe(1);
-  });
-
-  // Regression pinned after review of PR #658: an Agent build old enough to predate `kind`
-  // still sends `providers` (with `fleet` on the pre-P1 shape, or neither field at all on
-  // pre-P0), so a check that only looked at "did providers arrive at all" wrongly treated this
-  // as a LIVE answer of zero fleet rows and dropped the fleet's own engine from the ordering
-  // list silently — the same class of bug P0 itself shipped once already, just one layer later.
-  it("kind の無い providers（ADR 0082 より前の Agent）は静的な既定に落ちる。fleet 行が消えない", async () => {
-    oldAgentAnswer();
-    await mount();
-    expect(orderRows()).toContain("Agent Fleet (self-hosted)");
-    expect(orderRows().some((l) => l.startsWith("image"))).toBe(false);
-  });
-
-  it("Agent が images 行を 1 本だけ答えたら、その行のキーで 1 行だけ出る（畳み込みではない）", async () => {
-    respond([{ id: "image", fleet: true, kind: "comfy", service: "ComfyUI" }]);
-    await mount();
-    const rows = orderRows();
-    expect(rows.some((l) => l.startsWith("image"))).toBe(true);
-    expect(rows).not.toContain("Agent Fleet (self-hosted)");
-  });
-
-  it("images 行が 2 本なら、両方が別々の行として、キーで出る", async () => {
-    respond([
-      { id: "image", fleet: true, kind: "comfy", service: "ComfyUI" },
-      { id: "comfy-lan", fleet: true, kind: "comfy", service: "ComfyUI" },
-    ]);
-    await mount();
-    const rows = orderRows();
-    expect(rows.some((l) => l.startsWith("image"))).toBe(true);
-    expect(rows.some((l) => l.startsWith("comfy-lan"))).toBe(true);
-    expect(rows.length).toBe(4); // the two fleet rows + agy + codex
-  });
-
-  it("Agent が「行は 0 本」と答えたら、フォールバックの畳み込み行は出さない（あるのはベンダー2行だけ）", async () => {
-    // A REAL live answer that happens to be empty — a deployment with no image engine at all —
-    // is a different fact from "no answer yet", and must NOT fall back to the two static
-    // placeholders: that would offer a rank nothing can ever route to (see settings.ts).
-    respond([]);
-    await mount();
-    expect(orderRows()).not.toContain("Agent Fleet (self-hosted)");
-    expect(orderRows().length).toBe(2); // agy + codex, no fleet row of any kind
-  });
-
-  it("ワークスペース停止中は静的な既定に戻る（残っていた行は見せない）", async () => {
-    respond([{ id: "image", fleet: true, kind: "comfy", service: "ComfyUI" }]);
-    await mount();
-    expect(orderRows().some((l) => l.startsWith("image"))).toBe(true);
-
-    wsState = "stopped";
-    await act(async () => {
-      root!.render(<AgentsTab />);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(orderRows()).toContain("Agent Fleet (self-hosted)");
-  });
-});
-
-describe("停止中セッションのアーカイブ期間（#982）", () => {
-  const archiveRow = (): HTMLElement => {
-    const row = Array.from(host!.querySelectorAll<HTMLElement>(".ds-row")).find(
-      (r) => r.querySelector(".ds-label")?.textContent === t("agents.stopped_archive"),
-    );
-    if (!row) throw new Error("no stopped-archive row");
-    return row;
-  };
-  const buttons = () => Array.from(archiveRow().querySelectorAll<HTMLButtonElement>(".seg-btn"));
-
-  // "Default" stores 0, not 7: the Agent then defers to the deployment's AF_SESSION_STOPPED_TTL,
-  // which a stored 7 would silently override for every user who never touched the row.
-  it("未設定なら「既定」が選ばれ、保存値は 0", async () => {
-    respond();
-    await mount();
-    const active = buttons().filter((b) => b.classList.contains("active"));
-    expect(active.map((b) => b.textContent)).toEqual([t("agents.stopped_archive_default")]);
-    expect(getSettings().sessionStoppedArchiveDays).toBe(0);
-  });
-
-  // The Agent applies a value no button produces as Default, so the row has to show Default
-  // rather than light nothing.
-  it("選択肢に無い保存値は「既定」として表示する", async () => {
-    setSettings({ sessionStoppedArchiveDays: 2 });
-    respond();
-    await mount();
-    const active = buttons().filter((b) => b.classList.contains("active"));
-    expect(active.map((b) => b.textContent)).toEqual([t("agents.stopped_archive_default")]);
-  });
-
-  it("「しない」は -1、日数はその数を保存する", async () => {
-    respond();
-    await mount();
-    const off = buttons().find((b) => b.textContent === t("agents.stopped_archive_never"))!;
-    await act(async () => off.click());
-    expect(getSettings().sessionStoppedArchiveDays).toBe(STOPPED_ARCHIVE_NEVER);
-
-    const days = buttons().find((b) => b.textContent?.startsWith("14"))!;
-    await act(async () => days.click());
-    expect(getSettings().sessionStoppedArchiveDays).toBe(14);
-  });
-});
-
-// ADR 0108: the Agent Fleet memory switch lives on the Agent memory page (#1735); this tab only
-// says where it is, beside the other af tool switches.
-describe("Agent Fleet memory switch", () => {
-  it("is not a toggle here, only a pointer to the Agent memory page", async () => {
-    setSettings(settingsDefaults());
-    respond();
-    await mount();
-    expect(host!.textContent).toContain(t("agents.note_agent_memory_moved"));
     const labels = Array.from(host!.querySelectorAll(".ds-label")).map((l) => l.textContent);
-    expect(labels).not.toContain(t("mem.af_switch"));
+    for (const k of [
+      "agents.stopped_archive",
+      "agents.spend_cap_default",
+      "agents.peer_messaging",
+      "agents.fleet_spawn",
+      "agents.pr_feedback",
+      "agents.session_search",
+      "agents.image_generation",
+      "agents.image_provider_order",
+    ] as const) {
+      expect(labels).not.toContain(t(k));
+    }
+    expect(host!.querySelector(".ds-orderlist")).toBeNull();
+    // Nothing here reads the image providers any more.
+    expect(api.mock.calls.map(([p]) => p)).not.toContain("api/imagegen/status");
   });
 });
-

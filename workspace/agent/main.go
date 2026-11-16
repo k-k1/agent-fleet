@@ -287,6 +287,10 @@ func serve() {
 	// A first-turn ledger still waiting for its input's start may belong to an input this process
 	// lost; its turn is not to be reported (status.FirstTurn).
 	status.VoidUnconfirmedFirstTurns()
+	// A create that failed after arming its ledger left it behind; no session reads it.
+	if n := sessionx.SweepFirstTurnOrphans(); n > 0 {
+		log.Printf("first-turn: removed %d ledger(s) of creates that left no session", n)
+	}
 	if n := sessionx.RecoverPendingInitialPrompts(); n > 0 {
 		log.Printf("initial-prompt: %d pending delivery(ies) from the previous process marked unknown", n)
 	}

@@ -131,7 +131,7 @@ AF_ENGINES_JSON='{"engines":[
 | OpenAI 互換の画像サーバーを使う | `external` の行に `provider: "openai-compat"` を書く。モデルの重みはサーバー側にあり、宣言するファイルはありません |
 | 行ごとの Bearer キーを渡す | `AF_ENGINE_API_KEY_<KEY>` に書く。`<KEY>` は行のキーを大文字にし、英数字以外を `_` にしたもの（キーが `oai-image` なら `AF_ENGINE_API_KEY_OAI_IMAGE`） |
 
-- どのエンジンを先に使うかはメンバーが決めます。設定 → エージェントの「**画像生成の優先順位**」に、エンジンがそれぞれの名前で並びます。失敗すると次のエンジンへ移ります（[セッションに画像を作らせる](../../user/images/from-session.ja.md)）
+- どのエンジンを先に使うかはメンバーが決めます。設定 → 画像生成の「**画像生成の優先順位**」に、エンジンがそれぞれの名前で並びます。失敗すると次のエンジンへ移ります（[セッションに画像を作らせる](../../user/images/from-session.ja.md)）
 - `generate_image` の `provider` に行のキーを渡すと、そのエンジンだけを使います。失敗しても次へは移りません
 - Control Plane が使える provider は `comfy` と `openai-compat` です。それ以外の provider の行には、推論エンジンの画面で印が付き、名乗っている provider 名が出ます。行を向け直してください
 

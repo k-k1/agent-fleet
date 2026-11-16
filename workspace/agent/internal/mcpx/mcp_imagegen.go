@@ -886,7 +886,7 @@ func imageGenTools(offer imageGenOffer) []toolSpec {
 		session: func() map[string]any { return imageGenSchema(offer) },
 		refuse: func() string {
 			if !mcpImageGenEnabled {
-				return "このセッションは画像生成を許可されていません（設定 > エージェント）"
+				return "このセッションは画像生成を許可されていません（設定 > 画像生成）"
 			}
 			return ""
 		},

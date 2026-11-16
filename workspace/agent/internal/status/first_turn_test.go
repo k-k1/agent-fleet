@@ -197,3 +197,27 @@ func TestArmReplacesALedgerOfAReusedName(t *testing.T) {
 	}
 	RemoveFirstTurn("ft-reuse")
 }
+
+func TestSweepOrphanFirstTurnsKeepsALedgerItCannotLock(t *testing.T) {
+	const sid = "ft-sweep-locked"
+	t.Setenv("HOME", t.TempDir())
+	ArmFirstTurn(sid, false)
+	prev := lockWait
+	lockWait = 30 * time.Millisecond
+	t.Cleanup(func() { lockWait = prev })
+	unlock, ok := lockSid(sid)
+	if !ok {
+		t.Fatal("could not take the lock")
+	}
+	n := SweepOrphanFirstTurns(map[string]bool{}, time.Minute, time.Now().Add(time.Hour))
+	unlock()
+	if n != 0 {
+		t.Errorf("removed %d while the lock was held", n)
+	}
+	if _, ok := firstTurns.Read(sid); !ok {
+		t.Error("the ledger was removed without the lock")
+	}
+	if n := SweepOrphanFirstTurns(map[string]bool{}, time.Minute, time.Now().Add(time.Hour)); n != 1 {
+		t.Errorf("unlocked sweep removed %d, want 1", n)
+	}
+}

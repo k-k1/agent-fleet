@@ -140,7 +140,7 @@ Turning kinds of notification on and off is in [Read a session's state](../sessi
 
 Claude Code's own messaging between sessions is turned off in Agent Fleet, because turning it on also brings back Claude's usage telemetry.
 
-Use Agent Fleet's instead: turn on **"Messages between sessions"** in ⚙ Settings → Agents (off by default).
+Use Agent Fleet's instead: turn on **"Messages between sessions"** in ⚙ Settings → Sessions (off by default).
 It reaches other kinds of agent, and stopped sessions too.
 
 If it still does not work, check whether the session was already running before you turned it on.

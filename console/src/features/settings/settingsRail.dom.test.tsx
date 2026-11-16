@@ -54,6 +54,19 @@ describe("settings rail", () => {
     expect(t("set.tab_mcp")).toContain("used by sessions");
   });
 
+  // ADR 0138 D16: Sessions and Image generation left the Agents page for pages of their own in the
+  // personal group; "agents" keeps its key, so the Re-authenticate deep links still land there.
+  it("gives Sessions and Image generation their own personal pages", () => {
+    expect(groupOf("sessions")).toBe("personal");
+    expect(groupOf("imagegen")).toBe("personal");
+    expect(groupOf("agents")).toBe("connections");
+    const personal = GROUPS.find((g) => g.key === "personal")!.items.map(([k]) => k);
+    expect(personal.indexOf("sessions")).toBe(personal.indexOf("assistant") - 1);
+    expect(personal.indexOf("imagegen")).toBe(personal.indexOf("aiassist") + 1);
+    expect(t("set.tab_sessions")).toBe("Sessions");
+    expect(t("set.tab_imagegen")).toBe("Image generation");
+  });
+
   it("has a renderer for every item in the rail", () => {
     const missing = GROUPS.flatMap((g) => g.items.map(([k]) => k)).filter(
       (k) => !source.includes(`section === "${k}"`),

@@ -85,7 +85,7 @@ Each line says how it will stop.
 A session left stopped for 7 days moves to the archive on its own. **It is moved, not deleted.**
 The conversation stays and you can restore it from the archive at any time.
 
-- Change the period in **⚙ Settings → "Agents"** under **"Archive stopped sessions after"** (you can also choose "Off")
+- Change the period in **⚙ Settings → "Sessions"** under **"Archive stopped sessions after"** (you can also choose "Off")
 - Shortening it moves the sessions already past the new period to the archive on the next list refresh
 - A session [locked against deletion](cleanup.md#lock-something-against-deletion) stays in the list
 
