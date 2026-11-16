@@ -736,8 +736,9 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 	if !record {
 		return true
 	}
-	r.auditSettleWake(ctx, res, q.CategoryID, held)
-	log.Printf("memo queue: queue %s: waking workspace %s to settle", q.CategoryID, res.ws.ContainerName)
+	detail := settleWakeDetail(q.CategoryID, held)
+	r.auditSettleWake(ctx, res, q.CategoryID, detail)
+	log.Printf("memo queue: waking workspace %s to settle: %s", res.ws.ContainerName, detail)
 	// The wake itself runs in one of the tick's fire slots, not here: a cold start takes minutes
 	// and the rest of the pass must not wait for it.
 	r.wakeJobs = append(r.wakeJobs, func(ctx context.Context) {
@@ -748,11 +749,22 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 	return true
 }
 
-// auditSettleWake writes the system's entry for a wake that was recorded. It hangs on the
+// auditSettleWake writes the system's entry for a wake that was recorded (a request to start
+// the workspace: the start itself runs later and may fail). It hangs on the
 // recorded outcome, never on the attempt, so two Control Planes reaching the same queue write one
 // entry. Best effort: a failed insert is logged and the wake still runs. The detail names the
 // runs and why each one needed the wake, and carries no memo or instruction text.
-func (r *memoQueueRunner) auditSettleWake(ctx context.Context, res *resolved, queueID string, held []store.MemoDelivery) {
+func (r *memoQueueRunner) auditSettleWake(ctx context.Context, res *resolved, queueID, detail string) {
+	a := store.AuditLog{ID: store.NewID(), TenantID: res.mv.TenantID, ActorKind: "system", ActorID: "memo-queue",
+		Action: "workspace.queue_settle_wake", Target: res.ws.ID, Detail: detail, At: store.NowTS()}
+	if err := r.mgr.store.InsertAudit(context.WithoutCancel(ctx), a); err != nil {
+		log.Printf("memo queue: queue %s: audit the wake to settle: %v", queueID, err)
+	}
+}
+
+// settleWakeDetail names the queue and the runs that made a wake necessary, with the reason for
+// each; it is shared by the audit entry and the log line.
+func settleWakeDetail(queueID string, held []store.MemoDelivery) string {
 	runs := make([]string, 0, len(held))
 	for _, d := range held {
 		why := "overdue and not yet retired"
@@ -761,12 +773,7 @@ func (r *memoQueueRunner) auditSettleWake(ctx context.Context, res *resolved, qu
 		}
 		runs = append(runs, d.ID+" ("+why+")")
 	}
-	a := store.AuditLog{ID: store.NewID(), TenantID: res.mv.TenantID, ActorKind: "system", ActorID: "memo-queue",
-		Action: "workspace.queue_settle_wake", Target: res.ws.ID,
-		Detail: "queue " + queueID + "; runs: " + strings.Join(runs, ", "), At: store.NowTS()}
-	if err := r.mgr.store.InsertAudit(context.WithoutCancel(ctx), a); err != nil {
-		log.Printf("memo queue: queue %s: audit the wake to settle: %v", queueID, err)
-	}
+	return "queue " + queueID + "; runs: " + strings.Join(runs, ", ")
 }
 
 // wakeOnly brings a workspace up and waits for its Agent, for the settle pass of the next tick:

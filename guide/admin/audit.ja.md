@@ -56,7 +56,7 @@ source_of_truth: "Console のテナント設定 →「運用」→「監査」�
 | `membership.*`・`member.*` | メンバーの追加・外す・ロール・上限の変更 |
 | `tenant.*`・`limit_board.set` | テナント設定の変更（`tenant.external_memory`、`tenant.watch_sources` など） |
 | `pat.*` | このテナントで発行したトークンの作成と失効 |
-| `workspace.*` | ワークスペースの停止・掃除・破棄、Agent が応答しなくなった・戻った・自動停止で止められた、自動実行が実行を片付けるためだけに停止中のワークスペースを起動した（`workspace.queue_settle_wake`、actor は `system`、詳細はカテゴリと必要とした実行） |
+| `workspace.*` | ワークスペースの停止・掃除・破棄、Agent が応答しなくなった・戻った・自動停止で止められた、自動実行が実行を片付けるためだけに停止中のワークスペースの起動を要求した（記録するのは要求で、起動そのものは失敗することもある）（`workspace.queue_settle_wake`、actor は `system`、詳細はカテゴリと必要とした実行） |
 
 - **シークレットの値は書きません。** 認証情報の行の対象は、Git のホスト・変数名・MCP サーバー ID だけです
 - ワークスペースがエラーを返した書き込みは、行を残しません

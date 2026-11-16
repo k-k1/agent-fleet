@@ -167,7 +167,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.rung_releasing": "releasing the home",
   "pool.rung_release_blocked": "release blocked",
   "pool.rung_released": "home released",
-  "audit.action.workspace.queue_settle_wake": "Auto-run started a member's stopped workspace so that a run holding a category's place could be settled",
+  "audit.action.workspace.queue_settle_wake": "Auto-run asked for a member's stopped workspace to be started so that a run counted in a category's \u201cSessions at the same time\u201d could be settled",
   "audit.action.pool.slot_wedged_released": "A wedged slot's home was released: unmounted and detached, the slot stays in the pool",
   "audit.action.pool.slot_wedged_blocked": "The release of a wedged slot is blocked (for example SSM is offline, or the unmount did not finish) and waits for an operator",
   "audit.action.pool.slot_wedged_detected": "A slot holding a home stayed wedged (agents answer, but a task is stuck stopping or the Agent drops its probe) for the detection time",

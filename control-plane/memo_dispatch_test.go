@@ -935,6 +935,9 @@ func TestMemoDispatchWakeIsAudited(t *testing.T) {
 		ws, _, _ := e.st.GetWorkspaceByMembership(context.Background(), e.members["a"])
 		mv, _, _ := e.st.GetMembershipByID(context.Background(), e.members["a"])
 		a := got[0]
+		if a.ActorID != "memo-queue" {
+			t.Fatalf("actor id %q", a.ActorID)
+		}
 		if a.ActorKind != "system" || a.TenantID != mv.TenantID || a.Target != ws.ID {
 			t.Fatalf("entry %+v: want system actor, tenant %s, target %s", a, mv.TenantID, ws.ID)
 		}
@@ -1153,6 +1156,19 @@ func TestMemoDispatchWakesAreBoundedAndOnePerMember(t *testing.T) {
 		})
 		if rows != 1 || len(r1.wakeJobs)+len(r2.wakeJobs) != 1 {
 			t.Fatalf("%d wake rows, %d jobs, want one workspace woken once", rows, len(r1.wakeJobs)+len(r2.wakeJobs))
+		}
+		if got := e.wakeAudits(); len(got) != 1 {
+			t.Fatalf("%d audit entries for two runners, want 1", len(got))
+		}
+		// Inside the ten-minute guard no second entry; after it, a new wake and a new entry.
+		r3 := e.runner()
+		r3.settleWake(context.Background(), e.staleWork(q1), live1, now.Add(memoSettleWakeEvery-time.Minute))
+		if got := e.wakeAudits(); len(got) != 1 || len(r3.wakeJobs) != 0 {
+			t.Fatalf("inside the guard: %d entries, %d jobs", len(got), len(r3.wakeJobs))
+		}
+		r3.settleWake(context.Background(), e.staleWork(q1), live1, now.Add(memoSettleWakeEvery+time.Minute))
+		if got := e.wakeAudits(); len(got) != 2 || len(r3.wakeJobs) != 1 {
+			t.Fatalf("after the guard: %d entries, %d jobs", len(got), len(r3.wakeJobs))
 		}
 	})
 }
