@@ -99,10 +99,10 @@ func stoppedChildSlotNote() string {
 	d, ok := session.StoppedTTL()
 	if !ok {
 		return "利用者の設定で自動アーカイブが止まっているため、停止したままの子も上限の数に数えられ続けます。" +
-			"この設定は Console の 設定 > エージェント > セッション にあります"
+			"この設定は Console の 設定 > セッション にあります"
 	}
 	return "停止したままの子は停止から " + stoppedTTLPhrase(d) + "で自動的にアーカイブされ、上限の数から外れます。" +
-		"この期間は利用者が Console の 設定 > エージェント > セッション で変えられます"
+		"この期間は利用者が Console の 設定 > セッション で変えられます"
 }
 
 // stoppedTTLPhrase renders an archive period: whole days as "N 日", anything else (only the env

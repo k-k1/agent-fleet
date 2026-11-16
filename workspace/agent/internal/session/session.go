@@ -1031,7 +1031,7 @@ func NormalizeStoppedArchiveDays(n int) int {
 // auto-archived (ADR 0097 — archived, never deleted, so the conversation is still restorable
 // from the shelf afterwards). ok=false means the user turned auto-archive off.
 //
-// Precedence: the user's setting (Settings > Agents > Session), then AF_SESSION_STOPPED_TTL, then
+// Precedence: the user's setting (Settings > Sessions), then AF_SESSION_STOPPED_TTL, then
 // StoppedArchiveDefault. Call it when the period is needed, never once into a variable: the list
 // handler applies a changed setting on its next poll with no Agent restart, and a refusal that
 // quotes the period has to quote the one in force.

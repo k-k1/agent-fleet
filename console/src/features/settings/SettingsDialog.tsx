@@ -36,6 +36,8 @@ import { MachineTab } from "./workspace/MachineTab.tsx";
 // picker. Only shown in the rail on deployments that issue them (usePreviewAvailable).
 import { PreviewTab, usePreviewAvailable } from "./workspace/PreviewTab.tsx";
 import { AgentsTab } from "./agents/AgentsTab.tsx";
+import { SessionsTab } from "./sessions/SessionsTab.tsx";
+import { ImagegenTab } from "./imagegen/ImagegenTab.tsx";
 import { AssistantTab } from "./personal/AssistantTab.tsx";
 import { AiAssistTab } from "./personal/AiAssistTab.tsx";
 import { InstructionsTab } from "./personal/InstructionsTab.tsx";
@@ -82,11 +84,17 @@ export const GROUPS: { key: string; label: string; items: [string, string][] }[]
       // The limit board (ADR 0111 decision 6): what the member publishes is a personal choice,
       // made per tenant, so it sits with the personal settings rather than under the workspace.
       ["limits", "limits.tab"],
+      // What applies to every session whatever its agent (ADR 0138 D16). Its own page so the
+      // Agents page holds harnesses only.
+      ["sessions", "set.tab_sessions"],
       ["assistant", "set.tab_assistant"],
       // AI assist (docs/log/84). Next to the assistant because both are "settings that call an
       // LLM", but a different thing: one-shot generation in the session, mirror and File panes
       // rather than a chat.
       ["aiassist", "set.tab_aiassist"],
+      // Image generation (ADR 0138 D16): a feature that uses credentials, neither a credential
+      // nor a harness, beside the other features that call a model.
+      ["imagegen", "set.tab_imagegen"],
       ["instructions", "set.tab_instructions"],
       // Personal skills (#2792): the other half of "what the member set up for every session",
       // next to the instructions.
@@ -273,6 +281,8 @@ export function SettingsDialog() {
             </div>
             <PrefsSyncBanner />
             {section === "agents" && <AgentsTab />}
+            {section === "sessions" && <SessionsTab />}
+            {section === "imagegen" && <ImagegenTab />}
             {section === "assistant" && <AssistantTab />}
             {section === "aiassist" && <AiAssistTab />}
             {section === "instructions" && <InstructionsTab />}

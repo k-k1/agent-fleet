@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants an agent to make pictures during a conversation"
-source_of_truth: "the Console's Settings > \"Agents\" > \"Session\" > \"Image generation\", and the session's generate_image tool"
+source_of_truth: "the Console's Settings > \"Image generation\", and the session's generate_image tool"
 ---
 
 # Have a session make images
@@ -26,9 +26,9 @@ Use it for what text cannot carry: a rough sketch for a diagram, a stand-in pict
 
 ## Turn it on
 
-Turn on "**Image generation**" under **⚙ Settings → "Agents" → "Session"**. It is off by default.
+Turn on "**Image generation**" under **⚙ Settings → "Image generation"**. It is off by default.
 
-![The Settings "Agents" tab. "Image generation" is on, and under it "Image provider order" lists 1 comfy (ComfyUI), 2 Antigravity, 3 Codex, each with up and down arrows](../../assets/images-settings-en-light.webp)
+![The Settings "Image generation" page. "Image generation" is on, and under it "Image provider order" lists 1 comfy (ComfyUI), 2 Antigravity, 3 Codex, each with up and down arrows](../../assets/images-settings-en-light.webp)
 
 - It applies to **sessions started from then on**. A running session stays as it is until restarted
 - When an administrator enables or disables a model or a LoRA, running sessions learn of it within about a minute; no restart is needed

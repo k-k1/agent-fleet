@@ -843,4 +843,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "skills.argument_hint": "Arguments:",
   "skills.files": "Files in the folder:",
   "skills.other_kinds": "Cursor, Antigravity, Kiro and Copilot have no personal skills folder (a session's skill list offers the other agents' skills to them to read).",
+  // ADR 0138 D16: Sessions and Image generation, out of the Agents page.
+  "set.tab_sessions": "Sessions",
+  "set.tab_imagegen": "Image generation",
 };

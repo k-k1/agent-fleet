@@ -838,4 +838,7 @@ export const settings = {
   "skills.argument_hint": "引数:",
   "skills.files": "フォルダ内のファイル:",
   "skills.other_kinds": "Cursor・Antigravity・Kiro・Copilot には個人スキルのフォルダがありません（セッションのスキル一覧には、他のエージェントのスキルが読み込み用として出ます）。",
+  // ADR 0138 D16: Sessions and Image generation, out of the Agents page.
+  "set.tab_sessions": "セッション",
+  "set.tab_imagegen": "画像生成",
 };

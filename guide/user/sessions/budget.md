@@ -1,6 +1,6 @@
 ---
 audience: "People who want a session stopped before it spends too much"
-source_of_truth: "The Console's start dialog (\"Budget (USD)\"), the session ⋯ menu's \"Spend budget…\", and Settings > \"Agents\""
+source_of_truth: "The Console's start dialog (\"Budget (USD)\"), the session ⋯ menu's \"Spend budget…\", and Settings > \"Sessions\""
 ---
 
 # Stop a session that spends too much with a budget
@@ -27,7 +27,7 @@ Both stops are **the resumable stop**, which keeps the conversation.
 |---|---|
 | When you start it | **"More"** → **"Budget (USD)"** in the start dialog |
 | After it has started | **"Spend budget…"** in the session's ⋯ menu, or press the spend shown in the chat |
-| For every new session | **"Budget for new sessions"** in **⚙ Settings → "Agents"** |
+| For every new session | **"Budget for new sessions"** in **⚙ Settings → "Sessions"** |
 
 - "Budget for new sessions" applies to every session started without a budget of its own, including sessions started by `create_session` and by schedules
 - 0 or empty means no budget
