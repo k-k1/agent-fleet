@@ -452,6 +452,12 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.carried_plan": "Plan awaiting approval at stop",
   "mirror.carried_permission": "Permission requested at stop",
   "mirror.carried_note": "The session was stopped, so this answer never reached it. Answering here resumes the session and delivers it.",
+  // The same card on a session that is running again: it says nothing of stopped or resuming.
+  "mirror.carried_live_note_question": "This question was left unanswered when the session stopped. Answering here delivers it to the session.",
+  "mirror.carried_live_note_plan": "This plan was left unapproved when the session stopped. Your approval or rejection here is delivered to the session.",
+  "mirror.carried_live_note_permission": "This permission request was left unanswered when the session stopped. Your answer here is delivered to the session.",
+  "mirror.carried_continue_live": "Continue",
+  "mirror.carried_plan_approve_confirm_body_live": "Approving delivers your approval to the session, which runs this plan straight away. This cannot be undone.",
   "mirror.transcript_restored_note": "This conversation was recovered from the Agent's backup because its log was deleted. If the backup was older than the lost log, the latest part may be missing.",
   "mirror.carried_send": "Answer and resume",
   "mirror.carried_discard": "Discard",

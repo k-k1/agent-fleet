@@ -44,7 +44,7 @@ export function MirrorPendingCards({
 }) {
   const {
     turnBusy, queuedCount, pending, liveMode, liveText, pendingPlan, pendingPerm, pendingPermChoices, pendingPermId, pendingApproval,
-    carried, setCarried, markRejected, sending,
+    carried, setCarried, markRejected, sending, alive,
   } = st;
   const pendingText = questionInline ? "" : st.pendingText;
   const { sendKeys, sendSeq, sendInterrupt, cancelQuestion, sendApproval, sendPermission, sendRespond } = actions;
@@ -73,6 +73,7 @@ export function MirrorPendingCards({
           onError={(m, code) => toastSendFailure(toast, { message: m, code }, m, sessionMeta?.kind)}
           onDone={() => setCarried(null)}
           translate={translate}
+          sessionAlive={alive}
         />
       )}
       {pendingPlan && (

@@ -10,7 +10,8 @@
 //
 // The card is kept separate so that invariant is enforced structurally: the key-firing code
 // (questionKeys) is not imported here, so no carried-interaction button can reach a live
-// pane with Down/Enter.
+// pane with Down/Enter. The same holds when the session is running again: the answer still goes
+// through sessionCarriedAnswer, and only the words change (no "stopped", no "resume").
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
@@ -38,6 +39,7 @@ export function CarriedBlock({
   reviewAgainName,
   busy,
   translate,
+  sessionAlive = false,
 }: {
   carried: CarriedInteraction;
   session: string;
@@ -60,6 +62,9 @@ export function CarriedBlock({
   /** A review-again is in flight: every button of the card waits for it. */
   busy?: boolean;
   translate?: TranscriptTranslateWiring;
+  /** The session is running again (started without answering this card). The default, false,
+   *  keeps the words written for a stopped session. */
+  sessionAlive?: boolean;
 }) {
   const [sending, setSending] = useState(false);
   const tx = useQuestionTranslate(
@@ -105,6 +110,10 @@ export function CarriedBlock({
         ? tr("mirror.carried_plan")
         : tr("mirror.carried_permission");
 
+  const note = sessionAlive
+    ? tr(`mirror.carried_live_note_${carried.kind}` as "mirror.carried_live_note_question")
+    : tr("mirror.carried_note");
+
   return (
     <div className="mirror-turn assistant mt-carried" data-testid="carried-card">
       <div className="mirror-turn-head">
@@ -114,9 +123,9 @@ export function CarriedBlock({
       <div className="mirror-turn-body">
         {/* Say up front why this card is here: it can look like a question the user already
             answered has come back, so state that the answer never arrived and that
-            answering now resumes the session. */}
+            answering now resumes the session (or, on a running session, only delivers it). */}
         <div className="mt-carried-note muted">
-          <Icon name="info" /> {tr("mirror.carried_note")}
+          <Icon name="info" /> {note}
         </div>
         {/* The lead is the assistant's own Markdown, rendered as on the live question card. */}
         {carried.text && (
@@ -135,7 +144,7 @@ export function CarriedBlock({
             onSubmitAnswers={(answers: CarriedAnswerInput[]) => send({ decision: "answer", answers })}
             onCancel={() => void send({ decision: "discard" })}
             cancelLabel={tr("mirror.carried_discard")}
-            submitLabel={tr("mirror.carried_send")}
+            submitLabel={sessionAlive ? tr("mirror.submit_answer") : tr("mirror.carried_send")}
             translate={tx}
           />
         )}
@@ -199,7 +208,7 @@ export function CarriedBlock({
                     const asked = { session, plan: carried.plan };
                     const ok = await askConfirm({
                       title: tr("mirror.carried_plan_approve_confirm_title"),
-                      body: tr("mirror.carried_plan_approve_confirm_body"),
+                      body: tr(sessionAlive ? "mirror.carried_plan_approve_confirm_body_live" : "mirror.carried_plan_approve_confirm_body"),
                       confirmLabel: tr("mirror.carried_plan_approve"),
                       danger: false,
                     });
@@ -225,7 +234,7 @@ export function CarriedBlock({
                 <Icon name="close" /> {tr("mirror.carried_discard")}
               </button>
               <button type="button" className="btn primary" disabled={sending || !!busy} onClick={() => void send({ decision: "continue" })}>
-                {tr("mirror.carried_continue")}
+                {sessionAlive ? tr("mirror.carried_continue_live") : tr("mirror.carried_continue")}
               </button>
             </div>
           </>

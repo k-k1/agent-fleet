@@ -15,6 +15,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../ui/ToastProvider.tsx";
 import { answerConfirm, confirmDialog } from "../../test/confirmDialog.ts";
+import { DEFAULT_LOCALE, setLocale } from "../../lib/i18n/index.ts";
 
 const sessionCarriedAnswer = vi.fn(async () => ({ ok: true }));
 const apiJSON = vi.fn(async () => ({}));
@@ -246,5 +247,98 @@ describe("CarriedBlock", () => {
     expect(errors).toEqual(["workspace is stopping"]);
     expect(done).toBe(0);
     expect(document.querySelector(".mt-carried")).toBeTruthy();
+  });
+});
+
+// The card's words follow whether the session is running. Stopped keeps the original wording; a
+// running session must not be told it was stopped or will be resumed, and the answer still goes
+// through sessionCarriedAnswer.
+describe("CarriedBlock words by session state", () => {
+  afterEach(() => setLocale(DEFAULT_LOCALE));
+
+  const kinds: Array<[string, Parameters<typeof CarriedBlock>[0]["carried"]]> = [
+    ["question", { kind: "question", questions: [{ question: "どっち？", options: [{ label: "A" }] }] }],
+    ["plan", { kind: "plan", plan: "# 計画" }],
+    ["permission", { kind: "permission", permission: "rm を実行してよいですか" }],
+  ];
+  const words = {
+    en: {
+      stopped: { note: "The session was stopped, so this answer never reached it. Answering here resumes the session and delivers it.", send: { question: "Answer and resume", permission: "Resume and continue" } },
+      running: {
+        note: {
+          question: "This question was left unanswered when the session stopped. Answering here delivers it to the session.",
+          plan: "This plan was left unapproved when the session stopped. Your approval or rejection here is delivered to the session.",
+          permission: "This permission request was left unanswered when the session stopped. Your answer here is delivered to the session.",
+        },
+        send: { question: "Submit answer", permission: "Continue" },
+        confirm: "Approving delivers your approval to the session, which runs this plan straight away. This cannot be undone.",
+      },
+      forbidden: /resume|was stopped/i,
+    },
+    ja: {
+      stopped: { note: "セッションが停止したため、この回答は届いていません。ここで答えるとセッションを再開して届けます。", send: { question: "回答して再開", permission: "続けて再開" } },
+      running: {
+        note: {
+          question: "この質問は、セッションが停止したとき未回答のままでした。ここで答えるとセッションに届けます。",
+          plan: "この計画は、セッションが停止したとき未承認のままでした。ここで承認するか承認しないかを選ぶと、その判断がセッションに届きます。",
+          permission: "この許可の確認は、セッションが停止したとき未回答のままでした。ここで答えると、その回答がセッションに届きます。",
+        },
+        send: { question: "回答を送信", permission: "続ける" },
+        confirm: "承認すると、その承認をセッションに届け、そのまま計画を実行します。取り消せません。",
+      },
+      forbidden: /再開|停止した(?!とき)/,
+    },
+  } as const;
+
+  for (const lang of ["en", "ja"] as const) {
+    for (const [kind, carried] of kinds) {
+      it(`${lang} ${kind}: a stopped session keeps the original words`, () => {
+        setLocale(lang);
+        mount(carried);
+        const w = words[lang].stopped;
+        expect(document.querySelector(".mt-carried-note")!.textContent).toContain(w.note);
+        if (kind !== "plan") expect(buttons().map((b) => b.textContent)).toContain(` ${w.send[kind as "question" | "permission"]}`.trim());
+      });
+
+      it(`${lang} ${kind}: a running session says neither stopped nor resume`, async () => {
+        setLocale(lang);
+        mount(carried, undefined, { sessionAlive: true });
+        const w = words[lang].running;
+        const card = document.querySelector<HTMLElement>("[data-testid=carried-card]")!;
+        expect(card.querySelector(".mt-carried-note")!.textContent).toContain(w.note[kind as keyof typeof w.note]);
+        if (kind !== "plan") expect(buttons().map((b) => (b.textContent || "").trim())).toContain(w.send[kind as "question" | "permission"]);
+        if (kind === "plan") {
+          // The confirm dialog is part of the card's wording; it is checked too.
+          click(byText(/承認して実行|Approve and run/));
+          await act(async () => {});
+          expect(confirmDialog()!.textContent).toContain(w.confirm);
+          expect(confirmDialog()!.textContent).not.toMatch(words[lang].forbidden);
+          await answerConfirm(false);
+        }
+        // Titles say "at stop" / 停止時に, which is the fact, not the state: the forbidden words
+        // are the ones that claim the session is stopped or will be resumed.
+        expect(card.textContent).not.toMatch(words[lang].forbidden);
+      });
+    }
+  }
+
+  it("the words follow the session when it starts or stops while the card stays", () => {
+    setLocale("en");
+    const card = (alive: boolean) =>
+      providers(<CarriedBlock carried={{ kind: "permission", permission: "x" }} session="s1" agentName="claude" sessionAlive={alive} onDone={() => done++} onError={(m) => errors.push(m)} />);
+    mount({ kind: "permission", permission: "x" });
+    expect(document.querySelector(".mt-carried-note")!.textContent).toContain("was stopped");
+    act(() => root!.render(card(true)));
+    expect(document.querySelector(".mt-carried-note")!.textContent).not.toMatch(/resume|was stopped/i);
+    act(() => root!.render(card(false)));
+    expect(document.querySelector(".mt-carried-note")!.textContent).toContain("was stopped");
+  });
+
+  it("a running session's answer still goes through sessionCarriedAnswer, never a key path", async () => {
+    mount({ kind: "permission", permission: "x" }, undefined, { sessionAlive: true });
+    click(byText(/続ける/));
+    await act(async () => {});
+    expect(sessionCarriedAnswer).toHaveBeenCalledTimes(1);
+    expect(apiJSON).not.toHaveBeenCalled();
   });
 });
