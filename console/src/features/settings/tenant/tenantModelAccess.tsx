@@ -52,12 +52,14 @@ export function useTenantRoutePolicy(slug: string) {
   return { view, failed, load, peek, path };
 }
 
-/** The two sentences D12 and D13 require the policy page to state. */
+/** The sentences D12 (the delay, and the window while the CP is unreachable) and D13 require
+ *  the policy page to state. */
 export function PolicyLimits() {
   const tr = useT();
   return (
     <>
       <p className="admin-hint">{tr("admin.mpol_delay")}</p>
+      <p className="admin-hint">{tr("admin.mpol_outage")}</p>
       <p className="admin-hint">{tr("admin.mpol_hand_login")}</p>
     </>
   );

@@ -86,33 +86,32 @@ export function RuleSummary({ rule, ceiling = false }: { rule: RouteRule; ceilin
       : ceiling && rule.destinations !== undefined
         ? tr("admin.mpol_ceiling_endpoints_none")
         : tr("admin.mpol_endpoints_all");
+  // The heading stays outside the list: a dt inside it needs a dd, and that dd would take the
+  // next row's label cell and pair every label below with the wrong value.
   return (
-    <dl className="mpol-summary">
-      {!restricts(rule) && (
-        <>
-          <dt className="mpol-summary-head">{tr("admin.mpol_unrestricted")}</dt>
-          <dd />
-        </>
-      )}
-      <dt>{tr("admin.mpol_classes")}</dt>
-      <dd>{list(rule.classes, (c) => classLabel(tr, c))}</dd>
-      <dt>{tr("admin.mpol_destinations")}</dt>
-      <dd>{list(rule.destinations, (d) => destLabel(tr, d))}</dd>
-      {(rule.except?.length ?? 0) > 0 && (
-        <>
-          <dt>{tr("admin.mpol_except_short")}</dt>
-          <dd>{rule.except!.join(", ")}</dd>
-        </>
-      )}
-      {(rule.deny?.length ?? 0) > 0 && (
-        <>
-          <dt>{tr("admin.mpol_deny_short")}</dt>
-          <dd>{rule.deny!.join(", ")}</dd>
-        </>
-      )}
-      <dt>{tr("admin.mpol_endpoints_short")}</dt>
-      <dd>{endpoints}</dd>
-    </dl>
+    <>
+      {!restricts(rule) && <p className="mpol-summary-head">{tr("admin.mpol_unrestricted")}</p>}
+      <dl className="mpol-summary">
+        <dt>{tr("admin.mpol_classes")}</dt>
+        <dd>{list(rule.classes, (c) => classLabel(tr, c))}</dd>
+        <dt>{tr("admin.mpol_destinations")}</dt>
+        <dd>{list(rule.destinations, (d) => destLabel(tr, d))}</dd>
+        {(rule.except?.length ?? 0) > 0 && (
+          <>
+            <dt>{tr("admin.mpol_except_short")}</dt>
+            <dd>{rule.except!.join(", ")}</dd>
+          </>
+        )}
+        {(rule.deny?.length ?? 0) > 0 && (
+          <>
+            <dt>{tr("admin.mpol_deny_short")}</dt>
+            <dd>{rule.deny!.join(", ")}</dd>
+          </>
+        )}
+        <dt>{tr("admin.mpol_endpoints_short")}</dt>
+        <dd>{endpoints}</dd>
+      </dl>
+    </>
   );
 }
 

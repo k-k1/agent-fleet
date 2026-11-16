@@ -1080,6 +1080,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.model_access_tenant_rule": "That tenant's own rule (set by its administrators)",
   "admin.model_access_no_tenants": "No tenant yet.",
   "admin.mpol_delay": "A change reaches members' new launches within 30 seconds, and their running sessions within 30 seconds plus one reconciler tick.",
+  "admin.mpol_outage": "While a workspace cannot reach the Control Plane, a change waits for its next successful pull, so the delay is as long as the outage. Where the member was already restricted or the deployment has a ceiling, new launches are refused after 15 minutes without a successful pull; running sessions are left alone.",
   "admin.mpol_hand_login": "A member who signs in to a model by hand from a workspace terminal cannot be stopped. This rule binds Agent Fleet's own launches, not what a member runs by hand.",
   "admin.mpol_revision": "Revision {n}",
   "admin.mpol_classes": "Classes of credential",

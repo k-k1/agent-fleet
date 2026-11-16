@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { apiJSON } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+import { fmtDateTime } from "../../../lib/intl.ts";
 import {
   modelsOf,
   parseProvidedTenant,
@@ -52,13 +53,16 @@ function SourceEditor({
   const [active, setActive] = useState(source?.active ?? true);
   const { busy, refusal, setRefusal, submit } = useGuardedSave(onSaved);
   const body: SourceInput = { name: name.trim(), role_arn: role.trim(), region: region.trim(), models: modelsOf(models), active };
-  const dirty =
-    !source ||
-    body.name !== source.name ||
-    body.role_arn !== source.role_arn ||
-    body.region !== source.region ||
-    body.active !== source.active ||
-    !sameModels(body.models, source.models);
+  // A first registration has nothing to differ from: it is ready once it has what the CP
+  // requires (the role, the one Region and at least one model; only the name is defaulted), so
+  // an empty or partial form never offers a Save the CP would refuse.
+  const dirty = !source
+    ? body.role_arn !== "" && body.region !== "" && body.models.length > 0
+    : body.name !== source.name ||
+      body.role_arn !== source.role_arn ||
+      body.region !== source.region ||
+      body.active !== source.active ||
+      !sameModels(body.models, source.models);
   const field = (label: string, value: string, set: (v: string) => void) => (
     <label className="admin-fld">
       <span className="af-cap">{label}</span>
@@ -155,7 +159,7 @@ export function AdminProvidedSourceView() {
           <dt>{tr("admin.prov_source_state")}</dt>
           <dd>{tr(src.active ? "admin.prov_source_on" : "admin.prov_source_off")}</dd>
           <dt>{tr("admin.prov_source_updated")}</dt>
-          <dd>{src.updated_at}</dd>
+          <dd>{fmtDateTime(src.updated_at)}</dd>
         </dl>
       ) : (
         <p className="muted">{tr("admin.prov_source_none")}</p>

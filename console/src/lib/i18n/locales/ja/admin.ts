@@ -1076,6 +1076,7 @@ export const admin = {
   "admin.model_access_tenant_rule": "そのテナント自身の規則（テナントの管理者が設定）",
   "admin.model_access_no_tenants": "テナントはまだありません。",
   "admin.mpol_delay": "変更は、メンバーの新しい起動には 30 秒以内に、実行中のセッションには 30 秒と調停の 1 周期のうちに反映されます。",
+  "admin.mpol_outage": "ワークスペースが Control Plane に届かない間、変更は次に届いたときに反映されるので、遅れは届かない時間そのものです。メンバーにすでに制限があるか配備の上限がある場合は、15 分届かないと新しい起動を断ります。実行中のセッションはそのままです。",
   "admin.mpol_hand_login": "メンバーがワークスペースの端末から手作業でモデルにサインインすることは止められません。この規則が縛るのは Agent Fleet 自身の起動で、メンバーが手で実行するものではありません。",
   "admin.mpol_revision": "リビジョン {n}",
   "admin.mpol_classes": "認証情報の種類",
