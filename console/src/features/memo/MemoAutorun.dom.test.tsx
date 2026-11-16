@@ -448,6 +448,13 @@ describe("a session that auto-run retired", () => {
     const error = { code: "session_retired", message: "session_retired: this session was retired; resume it from the Console first" };
     expect(errDetail(error)).toBe(t("err.session_retired"));
     expect(t("err.session_retired")).toMatch(/Start|開始/);
+    // The same line is shown for a session an overdue run stopped while its run is still open, so
+    // it must not say the run finished.
+    expect(t("err.session_retired")).not.toMatch(/finished|完了/);
+    const en = (await import("../../lib/i18n/locales/en/errors.ts")).errors as Record<string, string>;
+    const ja = (await import("../../lib/i18n/locales/ja/errors.ts")).errors as Record<string, string>;
+    expect(en["err.session_retired"]).toBe("Auto-run stopped this session. Start the session first, then send again.");
+    expect(ja["err.session_retired"]).toBe("このセッションは自動実行によって停止されています。先にセッションを開始してから、もう一度送ってください。");
   });
 });
 

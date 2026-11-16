@@ -122,7 +122,9 @@ source_of_truth: "コード（本書は地図と設計意図）"
     `schedule_id`・`schedule_slot`・`schedule_delivery`・`/mcp` の印）を一切持たない `/input`
     （`inputCarriesOrigin`。mirror の `typedByMember` ではない。prompt・keys・seq とも）、`/turn` の start と steer、
     `/respond`・`/answer`・許可とプランの判断（自動プランレビューは `expect_plan` を付けるので含まない）、
-    carried の回答（再起動を伴うもの）、driver の切替と route の切替（この 3 つは `/start` を通らないので、
+    carried の回答（停止したセッションへのものは人の開始で、retire gate の読み取り側の下で `/start` と同じ順:
+    操作の記録、起動、自分の起動のあとで引退の印を外す。起動が失敗すれば印はそのまま、印を外せなければ
+    `retire_clear_failed`）、driver の切替と route の切替（この 2 つは `/start` を通らないので、
     起動の間 retire gate の読み取り側を持ち、retire が印したセッションには `409 session_retired` を返す。先に再開する）、
     チャットブリッジの返信とボタン（member の origin で `injectSessionPrompt`）、ターミナルペインのキー入力
     （`/ws/pty`。ライフサイクル gate を取る前に記録する）。ただし focus 報告（`ESC [ I`・`ESC [ O` を 1 つ以上）だけの

@@ -20,6 +20,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -268,24 +269,7 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// The relaunch is held under the retire gate and refused on a marked session, like /start.
-		releaseRelaunch, rerr := holdPersonRelaunch(name)
-		if rerr != nil {
-			httpx.WriteErr(w, http.StatusConflict, "session_retired", rerr.Error())
-			return
-		}
-		err := ensureSessionTmux(lease, name, false)
-		releaseRelaunch()
-		if err != nil {
-			if writeStartRefusal(w, err) {
-				return
-			}
-			if writeLaunchRefusal(w, err) {
-				return
-			}
-			if !writeCodexReleasingErr(w, err) {
-				httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
-			}
+		if !startForCarriedAnswer(w, lease, name) {
 			return
 		}
 	}
@@ -309,8 +293,51 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"delivering": true, "prompt": prompt, "kind": c.Kind})
 		return
 	}
-	go deliverInitialPrompt(name, prompt)
+	go deliverInitialPromptFn(name, prompt)
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"delivering": true, "prompt": prompt, "kind": c.Kind})
+}
+
+// startForCarriedAnswer launches a stopped session for a carried answer and reports whether the
+// answer may go on to be delivered; when it did not, the response is already written.
+//
+// A carried answer is a person's start (ADR 0137 §6), so it follows /start's order under the read
+// side of the session's retire gate, held from the check to the end: record the act, launch, take
+// the retired mark off, and only after its own launch. A launch that fails leaves the mark as it
+// was, so nothing is left marked and running. The gate is released before the caller delivers a
+// Managed answer, because resumeManaged takes the read side itself and a second read on one path
+// can deadlock behind a waiting retire.
+func startForCarriedAnswer(w http.ResponseWriter, lease *lifegate.Lease, name string) bool {
+	g := retireGate(name)
+	g.RLock()
+	defer g.RUnlock()
+	cur, ok := readMetaStable(name)
+	if !ok && metaFileExists(name) { // unreadable is in doubt: not launched
+		httpx.WriteErr(w, http.StatusConflict, "session_retired", errSessionRetired.Error())
+		return false
+	}
+	// Before the launch, and refused when it cannot be written: an answer that goes unrecorded
+	// is one a retire decided on an older list would stop.
+	if err := recordPersonAct(name); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "act_not_recorded",
+			"the answer was not sent, because it could not be recorded as a person's: "+err.Error())
+		return false
+	}
+	if err := ensureSessionTmux(lease, name, false); err != nil {
+		if writeStartRefusal(w, err) || writeLaunchRefusal(w, err) || writeCodexReleasingErr(w, err) {
+			return false
+		}
+		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
+		return false
+	}
+	if ok && isRetired(cur) {
+		if err := clearRetired(name); err != nil {
+			// Started, but still marked: the carried entry stays so the member can press again.
+			httpx.WriteErr(w, http.StatusInternalServerError, "retire_clear_failed",
+				"the session started, but its retired mark could not be cleared: "+err.Error())
+			return false
+		}
+	}
+	return true
 }
 
 // promoteCarriedOther copies a NON-claude session's live pending modal into the

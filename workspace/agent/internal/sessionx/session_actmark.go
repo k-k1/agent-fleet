@@ -162,7 +162,7 @@ func notePersonAct(name string) {
 }
 
 // holdPersonRelaunch is for a person's relaunch of an existing session that does not go through
-// /start or a Managed resume (a driver switch, a route switch, a carried answer): it takes the
+// /start or a Managed resume (a driver switch, a route switch): it takes the
 // read side of the retire gate, refuses a session a retire has marked (errSessionRetired: resume it
 // first, which clears the mark), records the act and returns the release. Held across the launch,
 // so a retire cannot mark the session between the check and the launch and leave it marked and
