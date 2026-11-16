@@ -19,6 +19,8 @@ Two keys are enough to remember: the command palette (**Ctrl+P**) and the leader
 | Press **Alt** and one key | Runs a frequent action in one press |
 | Press **?** | Shows the shortcut list |
 
+These two keys never open the browser's own print dialog (Ctrl+P) or search box (Ctrl+K), even where the Console does nothing with them: while a dialog is open, or while the terminal or a draw.io diagram has focus. If you assign the palette to another key, Ctrl+P prints again. On macOS only ⌘ counts, so Ctrl+P and Ctrl+K keep their usual meaning in text fields.
+
 ## Find and open with the command palette
 
 **Ctrl+P** (**⌘P** on macOS) opens the command palette. It starts on the **Sessions** list.

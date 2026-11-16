@@ -26,6 +26,7 @@ The basics of reading it are in [Read a session's state](../user/sessions/status
 | Ready · subagent running | It accepts input, but a subagent is running |
 | Ready · background command running | It accepts input, but a background command is running |
 | Ready · handoff to launch | Nobody has launched the last handoff the session proposed. The row shows the short "Handoff" |
+| Input not delivered · resend or check the terminal | Your last input never reached the agent's CLI, so the session went back to waiting without starting a turn. The row shows the short "Not delivered". Send the input again, or open the terminal to see what the CLI is showing. The chip goes away on a resend or the next turn. Seen on GitHub Copilot, Cursor and Antigravity sessions. Background work takes precedence; it takes precedence over a pending handoff and the watch count |
 | Ready · 3 watches | It accepts input and waits for a watch notice. The number is the size of the watch list in the chat view, timers included. The agent's own PR-feedback subscriptions and notices being delivered are not counted. It also shows on session list rows and Home cards. Background work or a pending handoff takes precedence. An older Agent that does not report the count shows plain "Ready" ([Seeing and ending a session's watches](../user/fleet/pr-feedback.md#seeing-and-ending-a-sessions-watches)) |
 | Question | It waits for an answer to a question |
 | Plan ready | It waits for you to approve or reject a plan |

@@ -173,7 +173,7 @@ The session of a run that is "Done" is stopped. So are the sessions it started, 
 
 - What starts the session again is you. Pressing "**Resume and continue**" or "Start", answering its question from its card, or a message from one of your own sessions or connections starts it. Nothing that fires by itself does: a schedule, a watch or timer notice, a booked usage-limit resume and pull request feedback leave the session stopped ([Stop and resume a session](../sessions/stop-resume.md))
   - A stopped session has no message box. The chat shows "**Resume and continue**" and "Viewing history (resume to type)" instead. Start the session first, then type
-  - A switch of its execution method is refused until the session is started
+  - A switch of its execution method is refused until the session is started. The toast says "**Auto-run stopped this session. Start the session first, then switch again.**"
   - A schedule that keeps using the session has the run recorded as a failed one. Its row in the schedule's run history says "**Failed**" ("Manual" for "Run now", "Scheduled" for a timed run). Hover over the word "**Failed**" to read the reason, which starts with `resume 409 session_retired`. The notification center gets one "A schedule did not run" entry per failed run, without the reason. The session stays stopped
   - To carry on, start the session, then run the schedule again ([Run at a set time](../fleet/schedules.md))
   - A watch or timer notice, a booked usage-limit resume and pull request feedback show nothing at all. The session just stays stopped
