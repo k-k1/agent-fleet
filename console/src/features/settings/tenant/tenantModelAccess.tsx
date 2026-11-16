@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+import { HiddenList } from "./routePolicyHidden.tsx";
 import { RouteName, RuleEditor, RuleSummary, layersLabel } from "./routePolicyRuleEditor.tsx";
 import { parseTenantPolicy, routeIds, routesAllowedAbove, type TenantPolicyView } from "./routePolicyRule.ts";
 
@@ -154,8 +155,7 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
           </ul>
         )}
       </section>
-      {/* ADR 0138 M2 P9 goes here: what the effective policy hides from this tenant's members
-          (view.hidden: harnesses, chat backends, image providers) and the layer each comes from. */}
+      <HiddenList view={view} />
     </>
   );
 }

@@ -56,9 +56,9 @@ const LAYER_KEY = {
 } as const;
 
 // A value the Console has no label for (a newer CP's) is shown as its id rather than dropped.
-export const classLabel = (tr: Tr, c: string) => (c in CLASS_KEY ? tr(CLASS_KEY[c as keyof typeof CLASS_KEY]) : c);
-export const destLabel = (tr: Tr, d: string) => (d in DEST_KEY ? tr(DEST_KEY[d as keyof typeof DEST_KEY]) : d);
-export const layerLabel = (tr: Tr, l: string) => (l in LAYER_KEY ? tr(LAYER_KEY[l as keyof typeof LAYER_KEY]) : l);
+export const classLabel = (tr: Tr, c: string) => (Object.hasOwn(CLASS_KEY, c) ? tr(CLASS_KEY[c as keyof typeof CLASS_KEY]) : c);
+export const destLabel = (tr: Tr, d: string) => (Object.hasOwn(DEST_KEY, d) ? tr(DEST_KEY[d as keyof typeof DEST_KEY]) : d);
+export const layerLabel = (tr: Tr, l: string) => (Object.hasOwn(LAYER_KEY, l) ? tr(LAYER_KEY[l as keyof typeof LAYER_KEY]) : l);
 export const layersLabel = (tr: Tr, ls: string[] | undefined) => (ls ?? []).map((l) => layerLabel(tr, l)).join(", ");
 
 /** RouteName: the member-facing route name with the id the policy and the CP's refusals use. */

@@ -188,3 +188,69 @@ describe("tenant model access", () => {
     expect(host!.querySelectorAll("input, textarea, button").length).toBe(0);
   });
 });
+
+// ADR 0138 M2 P9: what the policy hides, and from which layer. Fail closed: only a present,
+// well-formed and empty `hidden` reads as "nothing is hidden".
+describe("what the policy hides", () => {
+  const section = () => host!.querySelector(".model-access-hidden")!;
+  const withHidden = (hidden: unknown, routes = VIEW().routes) =>
+    api.mockImplementation(() => Promise.resolve({ ...VIEW(), hidden, routes }));
+
+  it("lists each hidden item with its routes and every layer that hides it", async () => {
+    withHidden(
+      {
+        kinds: [{ id: "agy", routes: ["agy-login"], forbiddenBy: ["ceiling", "tenant"] }],
+        imagegen: [{ id: "comfy", routes: ["af-engine-image"], forbiddenBy: ["deployment"] }],
+        chat: [{ id: "codex", routes: ["chatgpt-subscription", "openai-api"], forbiddenBy: ["ceiling", "tenant_cap"] }],
+      },
+      [
+        ...VIEW().routes,
+        { id: "agy-login", class: "subscription", destination: "google", allowed: false, forbiddenBy: ["ceiling", "tenant"] },
+        { id: "chatgpt-subscription", class: "subscription", destination: "openai", allowed: false, forbiddenBy: ["ceiling"] },
+        { id: "openai-api", class: "member-key", destination: "openai", allowed: false, forbiddenBy: ["tenant_cap"] },
+      ],
+    );
+    await mount();
+    const agy = section().querySelector('[data-hidden="agy"]')!;
+    // Hidden by two layers: both are named.
+    expect(agy.textContent).toContain("配備の上限（運用者）, テナントの規則");
+    expect(section().querySelector('[data-hidden="comfy"]')!.textContent).toContain("この配備のエンジン（ComfyUI）");
+    expect(section().querySelector('[data-hidden="comfy"]')!.textContent).toContain("配備の規則");
+    // Each route carries its own layers, not only the item's union.
+    const codex = section().querySelector('[data-hidden="codex"]')!;
+    expect(codex.querySelector('[data-route="chatgpt-subscription"]')!.textContent).toContain("配備の上限（運用者）");
+    expect(codex.querySelector('[data-route="chatgpt-subscription"]')!.textContent).not.toContain("テナントの上限");
+    expect(codex.querySelector('[data-route="openai-api"]')!.textContent).toContain("テナントの上限");
+    expect(section().querySelector('[data-testid="hidden-none"]')).toBeNull();
+    // codex is hidden as a chat backend here, so its row sits in the chat list.
+    expect(section().querySelector('[data-group="chat"] [data-hidden="codex"]')).not.toBeNull();
+    // Decision 9: the members' own switches are not covered, and the page says so.
+    expect(section().textContent).toContain("メンバー自身の切り替え");
+  });
+
+  it("shows an id outside the registry as itself, inherited object keys included", async () => {
+    withHidden({ kinds: [{ id: "toString", routes: ["agy-login"], forbiddenBy: ["ceiling"] }], chat: [], imagegen: [] });
+    await mount();
+    expect(section().querySelector('[data-hidden="toString"] strong')!.textContent).toBe("toString");
+  });
+
+  it("says nothing is hidden only when the list is present and empty", async () => {
+    await mount();
+    expect(section().querySelector('[data-testid="hidden-none"]')).not.toBeNull();
+    expect(section().querySelector("[role=alert]")).toBeNull();
+  });
+
+  it("shows no list when hidden is missing or partial", async () => {
+    for (const hidden of [undefined, { kinds: [] }, { kinds: [{ id: "agy" }], chat: [], imagegen: [] }]) {
+      withHidden(hidden);
+      await mount();
+      expect(section().querySelector('[data-testid="hidden-none"]')).toBeNull();
+      expect(section().querySelector("[data-hidden]")).toBeNull();
+      expect(section().querySelector("[role=alert]")?.textContent).toContain("読めませんでした");
+      act(() => root?.unmount());
+      host?.remove();
+      root = null;
+      host = null;
+    }
+  });
+});

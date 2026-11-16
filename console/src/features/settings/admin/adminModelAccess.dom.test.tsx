@@ -194,3 +194,36 @@ describe("admin model access", () => {
     expect(host!.querySelectorAll("input, textarea, button, select").length).toBe(0);
   });
 });
+
+// ADR 0138 M2 P9: the hidden list follows the tenant picked for the cap.
+describe("what the policy hides, per tenant", () => {
+  it("shows the picked tenant's hidden list", async () => {
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/route-policy") return Promise.resolve(DEPLOYMENT);
+      const slug = /tenants\/([^/]+)\//.exec(path)?.[1] ?? "";
+      const hidden =
+        slug === "beta"
+          ? { kinds: [{ id: "cursor", routes: ["cursor-login"], forbiddenBy: ["tenant_cap"] }], chat: [], imagegen: [] }
+          : { kinds: [], chat: [], imagegen: [] };
+      return Promise.resolve({ ...tenantView(slug), hidden });
+    });
+    await mount();
+    expect(within('.mpol-cap[data-tenant="acme"] [data-testid="hidden-none"]')).not.toBeNull();
+    const sel = within(".model-access-caps select") as HTMLSelectElement;
+    await act(async () => {
+      sel.value = "beta";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    await flush();
+    const item = within('.mpol-cap[data-tenant="beta"] [data-hidden="cursor"]');
+    expect(item.textContent).toContain("テナントの上限");
+  });
+
+  it("shows no list when the tenant view carries none", async () => {
+    await mount();
+    // tenantView() has no `hidden`: not "nothing is hidden".
+    expect(host!.querySelector('[data-testid="hidden-none"]')).toBeNull();
+    expect(within(".model-access-hidden [role=alert]")).not.toBeNull();
+  });
+});

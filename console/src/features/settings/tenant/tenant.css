@@ -1179,3 +1179,14 @@
 .mpol-no {
   color: var(--warn);
 }
+
+/* What the policy hides (ADR 0138 M2 P9): one row per hidden item, its routes beneath. */
+.mpol-hidden {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+}
+
+.mpol-hidden > li + li {
+  margin-top: 6px;
+}

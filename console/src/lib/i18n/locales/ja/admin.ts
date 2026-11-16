@@ -1129,4 +1129,15 @@ export const admin = {
   "admin.mpol_layer_vendor": "ベンダーのホスト",
   "admin.mpol_stale": "読み込んだ後に、ほかの人がこの規則を更新しています。保存していません。編集した内容は残っています。最新の規則を見るには、ページを開き直してください。",
   "admin.model_access_ceiling_source_other": "上限の出どころ: {source}。ここからは変更できません。",
+  // ADR 0138 M2 P9: what the policy hides, and from which layer, on both Model access pages.
+  "admin.mpol_hidden_title": "規則で隠れているもの",
+  "admin.mpol_hidden_note": "使える経路が 1 つも残らず、このテナントのメンバーから隠れているエージェント・画像生成・アシスタントのチャットと、それを禁じている層です。メンバー自身の切り替えはワークスペースの中にあって Control Plane からは見えないため、ここには含まれません。",
+  "admin.mpol_hidden_none": "これらの層で隠れているものはありません。",
+  "admin.mpol_hidden_unavailable": "隠れているものの一覧を、この Control Plane から読めませんでした。",
+  "admin.mpol_hidden_kinds": "エージェント",
+  "admin.mpol_hidden_imagegen": "画像生成",
+  "admin.mpol_hidden_chat": "アシスタントのチャット",
+  "admin.mpol_hidden_by": "隠している層: {layers}",
+  "admin.mpol_hidden_provider_comfy": "この配備のエンジン（ComfyUI）",
+  "admin.mpol_hidden_provider_openai_compat": "この配備のエンジン（OpenAI 互換）",
 };

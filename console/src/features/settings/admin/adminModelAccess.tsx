@@ -11,6 +11,7 @@ import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import type { Tenant } from "../parts/adminShared.ts";
 import { RuleEditor, RuleSummary } from "../tenant/routePolicyRuleEditor.tsx";
+import { HiddenList } from "../tenant/routePolicyHidden.tsx";
 import { parseDeploymentPolicy, routeIds, type DeploymentPolicyView } from "../tenant/routePolicyRule.ts";
 import { PolicyLimits, useTenantRoutePolicy } from "../tenant/tenantModelAccess.tsx";
 
@@ -77,6 +78,8 @@ function TenantCap({ slug }: { slug: string }) {
       />
       <h5 className="admin-subhead">{tr("admin.model_access_tenant_rule")}</h5>
       <RuleSummary rule={view.tenant.rule} />
+      {/* Per selected tenant: the effective policy, and so what it hides, is per tenant. */}
+      <HiddenList view={view} />
     </div>
   );
 }
@@ -162,8 +165,7 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
           </>
         )}
       </section>
-      {/* ADR 0138 M2 P9 goes here: what the policy hides, per tenant and layer. P10 (provided
-          routes, ADR 0129 Q2) follows it. */}
+      {/* ADR 0138 M2 P10 (provided routes, ADR 0129 Q2) goes here. */}
     </>
   );
 }

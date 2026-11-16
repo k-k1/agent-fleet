@@ -63,6 +63,20 @@ A host is approved only while every layer above lets it through, and a vendor's 
 **Approved self-hosted endpoints, in effect** lists each host you entered and, for one that is not approved, which layer keeps it out.
 Allowing the class and the destination **Self-hosted** is what lets members use an approved endpoint.
 
+## Find out why members cannot see something
+
+**What the policy hides**, at the bottom of the page, lists the agents, image providers and assistant chat backends your members no longer see because none of their routes is allowed.
+Each one names the layers that hide it, and each of its routes names its own: an agent can be hidden by two layers at once, one forbidding each of its routes.
+
+| What the list shows | Means |
+|---|---|
+| Items with their layers | Those are hidden from every member of the tenant. To bring one back, every layer named for at least one of its routes has to allow it |
+| **These layers hide nothing.** | No agent, image provider or chat backend is hidden by the layers above |
+| A line saying the list could not be read | The Control Plane did not answer it. This is not the same as "nothing is hidden" |
+
+An agent that keeps at least one allowed route is not listed: members see it with only the routes left.
+Members' own switches (an agent a member turned off for themselves) are not in this list, because they live in the member's workspace and the Control Plane cannot see them.
+
 ## When a change applies
 
 - A change reaches members' new launches within 30 seconds
@@ -80,7 +94,7 @@ The admin modal's **Deployment → Model access** has the layers above the tenan
 
 - The **Deployment ceiling (operator)**, read-only, with the value the deployment was started with
 - The **Deployment rule**, for every tenant
-- The **Tenant cap** of each tenant: choose the tenant, then edit its cap. That tenant's own rule is shown below it, read-only
+- The **Tenant cap** of each tenant: choose the tenant, then edit its cap. That tenant's own rule is shown below it, read-only, followed by what the policy hides from that tenant
 
 Both editors refuse a rule that would allow something the ceiling forbids.
 Their endpoint list names the host patterns a tenant may approve: an exact host or `*.example.com`. **Not narrowed** leaves the layer above in charge; **Only these** with no pattern lets no host be approved.
