@@ -267,8 +267,8 @@ describe("CarriedBlock words by session state", () => {
       running: {
         note: {
           question: "This question was left unanswered when the session stopped. Answering here delivers it to the session.",
-          plan: "This plan was left unapproved when the session stopped. Answering here delivers it to the session.",
-          permission: "This permission request was left unanswered when the session stopped. Answering here delivers it to the session.",
+          plan: "This plan was left unapproved when the session stopped. Your approval or rejection here is delivered to the session.",
+          permission: "This permission request was left unanswered when the session stopped. Your answer here is delivered to the session.",
         },
         send: { question: "Submit answer", permission: "Continue" },
         confirm: "Approving delivers your approval to the session, which runs this plan straight away. This cannot be undone.",
@@ -280,8 +280,8 @@ describe("CarriedBlock words by session state", () => {
       running: {
         note: {
           question: "この質問は、セッションが停止したとき未回答のままでした。ここで答えるとセッションに届けます。",
-          plan: "この計画は、セッションが停止したとき未承認のままでした。ここで答えるとセッションに届けます。",
-          permission: "この許可の確認は、セッションが停止したとき未回答のままでした。ここで答えるとセッションに届けます。",
+          plan: "この計画は、セッションが停止したとき未承認のままでした。ここで承認するか承認しないかを選ぶと、その判断がセッションに届きます。",
+          permission: "この許可の確認は、セッションが停止したとき未回答のままでした。ここで答えると、その回答がセッションに届きます。",
         },
         send: { question: "回答を送信", permission: "続ける" },
         confirm: "承認すると、その承認をセッションに届け、そのまま計画を実行します。取り消せません。",
@@ -321,6 +321,18 @@ describe("CarriedBlock words by session state", () => {
       });
     }
   }
+
+  it("the words follow the session when it starts or stops while the card stays", () => {
+    setLocale("en");
+    const card = (alive: boolean) =>
+      providers(<CarriedBlock carried={{ kind: "permission", permission: "x" }} session="s1" agentName="claude" sessionAlive={alive} onDone={() => done++} onError={(m) => errors.push(m)} />);
+    mount({ kind: "permission", permission: "x" });
+    expect(document.querySelector(".mt-carried-note")!.textContent).toContain("was stopped");
+    act(() => root!.render(card(true)));
+    expect(document.querySelector(".mt-carried-note")!.textContent).not.toMatch(/resume|was stopped/i);
+    act(() => root!.render(card(false)));
+    expect(document.querySelector(".mt-carried-note")!.textContent).toContain("was stopped");
+  });
 
   it("a running session's answer still goes through sessionCarriedAnswer, never a key path", async () => {
     mount({ kind: "permission", permission: "x" }, undefined, { sessionAlive: true });
