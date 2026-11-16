@@ -2,7 +2,8 @@
 //   1. Nothing is drawn where the CP does not serve provided routes; another failure draws no editor.
 //   2. The source's PUT always carries `active` as loaded or edited: an inactive source re-saved
 //      stays off (the CP reads an absent `active` as true).
-//   3. The grant's PUT is exactly {granted, ceiling_micro}; refusals and stale values as on the
+//   3. A first registration offers Save only once the role and the Region are filled.
+//   4. The grant's PUT is exactly {granted, ceiling_micro}; refusals and stale values as on the
 //      tenant page.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
@@ -134,6 +135,30 @@ describe("admin provided-route source", () => {
       models: ["anthropic.claude-haiku"],
       active: false,
     });
+  });
+
+  it("shows when the source was updated as a local date, not the raw timestamp", async () => {
+    await mount(<AdminProvidedSourceView />);
+    const dd = Array.from(host!.querySelectorAll('[data-testid="prov-source"] dd')).at(-1)!;
+    expect(dd.textContent).not.toBe("");
+    expect(dd.textContent).not.toContain("2026-11-16T");
+    expect(dd.textContent).toMatch(/11.*16/);
+  });
+
+  it("offers no save for a first source until the role and the Region are filled", async () => {
+    api.mockResolvedValue({ source: null });
+    await mount(<AdminProvidedSourceView />);
+    expect(save().disabled).toBe(true);
+    const [name, role, region] = inputs();
+    await type(name, "bedrock");
+    expect(save().disabled).toBe(true);
+    await type(role, "arn:aws:iam::000000000000:role/route");
+    expect(save().disabled).toBe(true);
+    await type(region, "us-east-1");
+    expect(save().disabled).toBe(false);
+    await type(role, "  ");
+    expect(save().disabled).toBe(true);
+    expect(apiJSON).not.toHaveBeenCalled();
   });
 
   it("registers a first source as active", async () => {

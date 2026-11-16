@@ -106,9 +106,29 @@ describe("tenant model access", () => {
     // The ceiling's and the cap's routes are gone; the one only the tenant forbids stays.
     expect(left).toEqual(["anthropic-api", "gemini-api"]);
     expect(host!.querySelector('[data-host="llm.corp.example"]')?.textContent).toContain("配備の上限（運用者）");
-    // The two sentences the policy page states (D12, D13).
+    // The sentences the policy page states: D12's delay and its window while the CP is
+    // unreachable, and D13's.
     expect(host!.textContent).toContain("30 秒");
+    expect(host!.textContent).toContain("Control Plane に届かない間");
     expect(host!.textContent).toContain("手作業でモデルにサインイン");
+  });
+
+  it("pairs every label in a layer summary with its value, unrestricted layers included", async () => {
+    await mount();
+    // The grid lays the list out two cells per row, so one unpaired dt or dd shifts every row
+    // below it onto the wrong value.
+    const lists = Array.from(host!.querySelectorAll(".model-access-above dl"));
+    expect(lists.length).toBe(3);
+    for (const dl of lists) {
+      const tags = Array.from(dl.children).map((c) => c.tagName);
+      expect(tags.length % 2).toBe(0);
+      tags.forEach((t, i) => expect(t).toBe(i % 2 === 0 ? "DT" : "DD"));
+      expect(Array.from(dl.querySelectorAll("dd")).every((dd) => dd.textContent !== "")).toBe(true);
+    }
+    // The deployment rule restricts nothing: it says so above its list, not as a row of it.
+    const deployment = host!.querySelector('[data-layer="deployment"]')!;
+    expect(deployment.querySelector(".mpol-summary-head")?.textContent).toBe("制限なし");
+    expect(deployment.querySelector(".mpol-summary-head")?.closest("dl")).toBeNull();
   });
 
   it("saves the loaded rule with only the edited field replaced", async () => {

@@ -94,6 +94,7 @@ A budget so small that no single call fits is refused, with the reason beside th
 
 - A change reaches members' new launches within 30 seconds
 - A running session on a route that became forbidden is stopped within 30 seconds plus one reconciler tick
+- While a workspace cannot reach the Control Plane, a change waits for its next successful pull, so the delay is as long as the outage. Where the member was already restricted or the deployment has a ceiling, new launches are refused after 15 minutes without a successful pull; running sessions are left alone
 - A stored credential whose every route is forbidden is kept, not deleted, and is hidden from the member. Loosening the rule makes it usable again without signing in again
 
 ## What this cannot stop
