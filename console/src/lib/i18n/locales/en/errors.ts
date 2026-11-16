@@ -495,4 +495,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memo_queue_bad_repo": "This category's repository is not a single folder name, so no session can be started in it.",
   "err.memo_queue_item_invalid": "A memo in this category cannot be sent to a session as it is (too long, too many attachments, or an unusable attachment path). Edit the memo and try again.",
   "err.session_retired": "Auto-run stopped this session. Start the session first, then send again.",
+  // ADR 0138 M2 P8: the credential policy's refusals on the Model access pages.
+  "err.invalid_route_policy": "The rule has a value the Control Plane does not accept.",
+  "err.route_policy_exceeds_ceiling": "The rule would allow something the deployment's ceiling forbids. A layer below the ceiling can only narrow it.",
+  "err.route_policy_endpoint_not_approvable": "That host cannot be approved as a self-hosted endpoint: a layer above does not let it through, or it is a vendor's host.",
 };

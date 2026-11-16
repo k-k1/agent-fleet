@@ -17,6 +17,7 @@ import { BrandAdminView } from "./adminBrand.tsx";
 import { EgressView } from "./adminEgress.tsx";
 import { McpTrustedHostsView } from "./adminMcpTrusted.tsx";
 import { DevIdpAdminView } from "./adminDevIdp.tsx";
+import { AdminModelAccessView } from "./adminModelAccess.tsx";
 import { TtsAdminView } from "./adminTts.tsx";
 import { EnginesAdminView } from "./adminEngines.tsx";
 import { EngineTokensAdminView } from "./adminEngineTokens.tsx";
@@ -43,7 +44,7 @@ interface RailGroup {
   items: [string, string][];
 }
 
-function rootGroups(opts: { pool: boolean; cost: boolean; engines: boolean }): RailGroup[] {
+function rootGroups(opts: { pool: boolean; cost: boolean; engines: boolean; isSuper: boolean }): RailGroup[] {
   return [
     {
       key: "tenants",
@@ -70,6 +71,10 @@ function rootGroups(opts: { pool: boolean; cost: boolean; engines: boolean }): R
         // Whether members can use the development OIDC IdP (ADR 0116): deployment-wide, on by
         // default, so it is listed unconditionally like the appearance item.
         ["dev-idp", "admin.mode_dev_idp"],
+        // The deployment's credential policy (ADR 0138 D16): the ceiling, the deployment rule and
+        // the tenant caps. Every write there is super_admin-only on the CP, so the item exists
+        // for a super_admin alone.
+        ...(opts.isSuper ? ([["model-access", "admin.mode_model_access"]] as [string, string][]) : []),
         // Self-hosted inference (ADR 0071) is opt-in, and this item used to be hidden unless
         // the deployment actually ran an engine — an empty one would have read as "my engines
         // disappeared". 🔴 Since ADR 0072 decision 11 the panel has something to say with zero
@@ -197,7 +202,7 @@ export function AdminTab() {
   if (tenants === null) return <p className="muted pad">{tr("common.loading")}</p>;
 
   const cost = !!costProfile?.available;
-  const groups = scope ? tenantScopeGroups({ cost }) : rootGroups({ pool: hasPool, cost, engines: hasEngines });
+  const groups = scope ? tenantScopeGroups({ cost }) : rootGroups({ pool: hasPool, cost, engines: hasEngines, isSuper });
   // A remembered item this rail does not offer (a conditional item whose probe says no, or a key
   // from an older build) shows the level's entrance instead. The stored value is left alone, so
   // an item whose probe is still in flight comes back once it answers.
@@ -254,6 +259,7 @@ export function AdminTab() {
     if (shownRootSection === "tts") return <TtsAdminView />;
     if (shownRootSection === "brand") return <BrandAdminView />;
     if (shownRootSection === "dev-idp") return <DevIdpAdminView />;
+    if (shownRootSection === "model-access" && isSuper) return <AdminModelAccessView tenants={tenants} />;
     if (shownRootSection === "engines" && hasEngines) return <EnginesAdminView />;
     if (shownRootSection === "engine-tokens" && hasEngines) return <EngineTokensAdminView />;
     if (shownRootSection === "pool" && hasPool) return <PoolView />;

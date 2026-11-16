@@ -1117,3 +1117,65 @@
   align-items: center;
   gap: 2px 8px;
 }
+
+/* Model access (ADR 0138 D16): the rule editor's tick lists and the read-only layer summaries. */
+.mpol-field {
+  border: 0;
+  padding: 0;
+  margin: 12px 0 0;
+}
+
+.mpol-field .seg {
+  display: inline-flex;
+}
+
+.mpol-ticks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px 12px;
+  margin-top: 6px;
+}
+
+.mpol-endpoints {
+  width: 100%;
+  margin-top: 6px;
+  font-family: var(--mono);
+}
+
+.mpol-layers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.mpol-summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 10px;
+  margin: 4px 0 0;
+  font-size: 12.5px;
+}
+
+.mpol-summary dt {
+  color: var(--muted);
+}
+
+.mpol-summary dd {
+  margin: 0;
+}
+
+.mpol-summary .mpol-summary-head {
+  grid-column: 1 / -1;
+  color: inherit;
+  font-weight: 600;
+}
+
+.mpol-routes {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+}
+
+.mpol-no {
+  color: var(--warn);
+}

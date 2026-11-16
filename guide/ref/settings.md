@@ -133,6 +133,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 |---|---|
 | Members | the roster; per-member resources, sessions and operations |
 | Engine access | per role (chat `llm`, image generation `image`) of the deployment's self-hosted engines: every member, or only the members you tick, within what the deployment administrator allows the tenant |
+| Model access | which model routes members may use, by credential class and destination with per-route exceptions and denials, under what the deployment allows; and the self-hosted endpoints the tenant approves ([Choose which models members may use](../admin/access/model-access.md)) |
 | Sessions | everything running in the tenant right now |
 | Limits & idle | the limits in force (read-only; a deployment administrator sets them) |
 | Limit board | whether the tenant's members can publish their usage-limit state at all (on by default; each member is still hidden until they opt in) |
@@ -167,6 +168,7 @@ wherever the Control Plane serves the engine panel, **Cloud cost** on AWS.
 | Read aloud | the speech engine's mode, and the shared pronunciation dictionary | [Run the read-aloud engine](../operate/engines/read-aloud.md) |
 | Appearance | the deployment's colour and label, to tell one deployment from the next | [Tell deployments apart](../operate/run/deployment-label.md) |
 | Dev sign-in | the development OIDC IdP switch, for apps on preview subdomains | [Use development sign-in](../operate/secure/dev-signin.md#turn-the-development-oidc-idp-on-or-off) |
+| Model access | the deployment ceiling (read-only), the deployment-wide rule and each tenant's cap on which model routes may be used | [Choose which models members may use](../admin/access/model-access.md#for-the-deployment-administrator) |
 | Inference engines | the self-hosted engines: mode, GPU class, model catalogue, state and history | [Run inference engines on your own GPUs](../operate/engines/gpu.md) |
 | API tokens | the Hugging Face and Civitai tokens, and the Civitai Red switch, for taking models in | [Take models into the inference engines](../operate/engines/models.md#register-the-tokens) |
 | Slots | the `ecs-ec2` slot pool: replacing slots, force-stopping a wedged one | [Replace and stop slots](../operate/aws-ecs/slot-maintenance.md) |

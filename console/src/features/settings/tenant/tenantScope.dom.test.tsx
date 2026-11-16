@@ -141,3 +141,39 @@ describe("branch rules section", () => {
     expect(document.querySelector("textarea")).not.toBeNull();
   });
 });
+
+// Tenant settings > Model access (ADR 0138 M2 P8): next to engine access in the manage group,
+// and the section loads this tenant's policy. The rail exists only in the two modals a
+// tenant_admin or super_admin reaches; the CP refuses the read to anyone else, which the page
+// itself pins (tenantModelAccess.dom.test.tsx).
+describe("model access section", () => {
+  it("follows engine access in the rail and loads this tenant's policy", async () => {
+    const manage = tenantScopeGroups({ cost: false }).find((g) => g.key === "manage")!;
+    const keys = manage.items.map(([k]) => k);
+    expect(keys.indexOf("model-access")).toBe(keys.indexOf("engine-access") + 1);
+
+    api.mockResolvedValue({ error: { code: "forbidden", message: "nope" } });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <TenantScopeBody
+          slug="sales"
+          tenant={TENANT}
+          section="model-access"
+          isSuper={false}
+          member={null}
+          onOpenMember={() => {}}
+          onCloseMember={() => {}}
+          onChanged={() => {}}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/sales/route-policy");
+    expect(document.querySelector(".model-access [role=alert]")?.textContent).toBe("nope");
+  });
+});
