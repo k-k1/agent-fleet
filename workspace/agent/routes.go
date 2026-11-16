@@ -724,6 +724,10 @@ func buildMux() *http.ServeMux {
 
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)
+	// Stored credentials the credential policy forbids (ADR 0138 D14a): a count and a token, and
+	// the member's confirmed removal of exactly those.
+	mux.HandleFunc("GET /connections/unusable", handleUnusableGet)
+	mux.Handle("POST /connections/unusable/remove", memberorigin.Require(unusableRemoveMaxRequest, http.HandlerFunc(handleUnusableRemove)))
 	mux.HandleFunc("GET /connections/git/{host}/repos", gitx.HandleListRemoteRepos)
 	mux.HandleFunc("GET /connections/git/{host}/branches", gitx.HandleListRemoteBranches)
 	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)

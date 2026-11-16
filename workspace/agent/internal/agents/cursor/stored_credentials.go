@@ -1,0 +1,46 @@
+package cursor
+
+import (
+	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+)
+
+var _ agents.CredentialStore = agentImpl{}
+
+// StoredCredentials and RemoveCredential implement agents.CredentialStore (ADR 0138 D14a).
+// cursor owns one login. LoggedIn warms the status probe Login's binding is read from.
+func (agentImpl) StoredCredentials(context.Context) []agents.StoredCredential {
+	if !LoggedIn() {
+		return nil
+	}
+	l := Login()
+	return []agents.StoredCredential{{ID: "login", Routes: []string{l.Route}, Binding: l.Binding}}
+}
+
+func (agentImpl) RemoveCredential(ctx context.Context, id, binding string, forbidden agents.Forbidden) error {
+	if id != "login" {
+		return agents.ErrUnknownCredential
+	}
+	return agents.RemoveLogin(ctx, agents.LoginRemoval{
+		Login: routes.RouteCursorLogin,
+		// The status probe's own run, not its cache: the login must be read as it is now.
+		// A probe that fails says nothing either way: unknown, never signed out.
+		Current: func(context.Context) ([]string, string, agents.LoginState) {
+			st, ok := freshStatus()
+			switch {
+			case !ok:
+				return nil, "", agents.LoginUnknown
+			case !st.IsAuthenticated:
+				return nil, "", agents.LoginAbsent
+			}
+			return []string{routes.RouteCursorLogin}, credbind.AccountOrGeneration(routes.RouteCursorLogin, st.UserInfo.Email), agents.LoginPresent
+		},
+		Remove: clearLogin,
+	}, binding, forbidden)
+}
+
+// freshStatus is the status probe's own run, never its cache. A var for tests.
+var freshStatus = func() (statusOut, bool) { return statusProbe.Probe() }

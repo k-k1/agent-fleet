@@ -10,6 +10,7 @@ package cursor
 import (
 	"context"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"net/http"
 	"os"
 	"os/exec"
@@ -196,17 +197,33 @@ var loginPoll = &agents.StagedPoll{
 // HandleDisconnect signs cursor out (clears ~/.config/cursor/auth.json) via the
 // CLI. DELETE /connections/cursor.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
-	// logout can hit the network — without a timeout the handler blocks indefinitely.
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteCursorLogin)
-	if !began {
+	if err := logout(r.Context()); err != nil {
+		agents.WriteLoginChangeUnrecorded(w, err)
 		return
 	}
-	defer loginOp.Finish()
-	_ = probeCmd(ctx, disableAutoUpdateFlag, "logout").Run()
-	invalidateStatus()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "cursor"})
+}
+
+// logout is the disconnect itself, for the handler and for RemoveCredential. Its only error is
+// a login change that could not be recorded, in which case nothing was changed.
+func logout(ctx context.Context) error {
+	loginOp, err := credbind.Begin(routes.RouteCursorLogin)
+	if err != nil {
+		return err
+	}
+	defer loginOp.Finish()
+	_ = clearLogin(ctx)
+	return nil
+}
+
+// clearLogin is the logout itself, with no login change recorded. Its error is the CLI's.
+func clearLogin(ctx context.Context) error {
+	// logout can hit the network — without a timeout the caller blocks indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	err := probeCmd(ctx, disableAutoUpdateFlag, "logout").Run()
+	invalidateStatus()
+	return err
 }
 
 // loggedInFresh runs an UNCACHED `cursor-agent status --format json` for the login

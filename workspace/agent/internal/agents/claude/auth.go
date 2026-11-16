@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"net/http"
 	"os"
 	"os/exec"
@@ -135,20 +136,37 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 
 // HandleDisconnect logs claude out via the CLI. DELETE /connections/claude.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
-	// claude owns its credentials; log out via the CLI so it clears them properly.
-	loginOp, began := agents.BeginLoginChange(w, routes.RouteAnthropicSubscription)
-	if !began {
+	if err := logout(); err != nil {
+		agents.WriteLoginChangeUnrecorded(w, err)
 		return
 	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "claude"})
+}
+
+// logout is the disconnect itself, for the handler and for RemoveCredential. Its only error is
+// a login change that could not be recorded, in which case nothing was changed.
+func logout() error {
+	loginOp, err := credbind.Begin(routes.RouteAnthropicSubscription)
+	if err != nil {
+		return err
+	}
 	defer loginOp.Finish()
-	_ = exec.Command("claude", "auth", "logout").Run()
+	_ = clearLogin(context.Background())
+	return nil
+}
+
+// clearLogin is the logout itself, with no login change recorded: logout's and RemoveCredential's.
+// Its error is the CLI's.
+func clearLogin(ctx context.Context) error {
+	// claude owns its credentials; log out via the CLI so it clears them properly.
+	err := exec.CommandContext(ctx, "claude", "auth", "logout").Run()
 	resetCredCache()
 	// Best-effort: drop any legacy stored token from the encrypted store too.
-	if s, err := secrets.Load(); err == nil && s.Claude != "" {
+	if s, lerr := secrets.Load(); lerr == nil && s.Claude != "" {
 		s.Claude = ""
 		_ = s.Save()
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "claude"})
+	return err
 }
 
 // awaitLogin waits for the login process to report a finished sign-in, or surfaces an OAuth

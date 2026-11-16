@@ -225,6 +225,9 @@ var frozenMemberOriginRoutes = map[string]bool{
 	"POST /api/agents/memory/import/apply": true,
 	// A multipart upload: signed by body hash (memberOriginHashedRoutes), not buffered.
 	"POST /api/agents/memory/import": true,
+	// The member's removal of stored credentials the policy forbids (ADR 0138 D14a), added after
+	// the freeze.
+	"POST /api/connections/unusable/remove": true,
 }
 
 var frozenMemberOriginHashedRoutes = map[string]bool{
@@ -395,6 +398,8 @@ var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/agents/memory-consolidation/proposals/reject":  true,
 	"POST /api/agents/memory-consolidation/proposals/retry":   true,
 	"POST /api/agents/memory-consolidation/run":               true, // #3702
+	// ADR 0138 D14a: the member's removal of stored credentials the policy forbids.
+	"POST /api/connections/unusable/remove": true,
 }
 
 // auditAddedSinceTheFreeze are routes that existed at the freeze and that the frozen switch

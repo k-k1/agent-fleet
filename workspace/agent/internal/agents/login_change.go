@@ -19,9 +19,15 @@ import (
 func BeginLoginChange(w http.ResponseWriter, logins ...string) (*credbind.Op, bool) {
 	op, err := credbind.Begin(logins...)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "login_change_unrecorded",
-			"the Agent could not record this login change in its config directory ("+err.Error()+"), so it did not make it")
+		WriteLoginChangeUnrecorded(w, err)
 		return nil, false
 	}
 	return op, true
+}
+
+// WriteLoginChangeUnrecorded is BeginLoginChange's answer when credbind.Begin failed, for a
+// handler that began the change itself.
+func WriteLoginChangeUnrecorded(w http.ResponseWriter, err error) {
+	httpx.WriteErr(w, http.StatusInternalServerError, "login_change_unrecorded",
+		"the Agent could not record this login change in its config directory ("+err.Error()+"), so it did not make it")
 }

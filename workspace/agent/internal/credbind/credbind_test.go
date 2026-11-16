@@ -527,3 +527,58 @@ func TestNoBumpOutsideAnOp(t *testing.T) {
 		t.Fatal("scanned no source file")
 	}
 }
+
+// A login held by LockLogin admits no change until it is released: a Begin that arrives meanwhile
+// waits, and LockLogin refuses while a change is already in flight, in this process or pending
+// from an earlier one.
+func TestLockLogin(t *testing.T) {
+	freshHome(t)
+	const login = "agy-login"
+	op, err := Begin(login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LockLogin(login); !errors.Is(err, ErrChanging) {
+		t.Fatalf("with a change in flight: %v", err)
+	}
+	op.Finish()
+
+	lk, err := LockLogin(login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	began := make(chan *Op)
+	go func() {
+		o, err := Begin(login, "cursor-login")
+		if err != nil {
+			t.Error(err)
+		}
+		began <- o
+	}()
+	select {
+	case <-began:
+		t.Fatal("a Begin went through while the login was held")
+	case <-time.After(100 * time.Millisecond):
+	}
+	own, err := lk.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	own.Finish()
+	lk.Unlock()
+	lk.Unlock() // safe twice
+	o := <-began
+	o.Finish()
+
+	// Another login is not held.
+	lk2, err := LockLogin("kiro-login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lk2.Unlock()
+	if o, err := Begin(login); err != nil {
+		t.Fatal(err)
+	} else {
+		o.Finish()
+	}
+}
