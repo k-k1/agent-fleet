@@ -31,6 +31,11 @@ import {
 } from "./AgentBehaviors.tsx";
 import { OwnSettingsLine } from "../credentials/MemberLines.tsx";
 import { useMemberCatalog } from "../credentials/memberCatalog.ts";
+import { HarnessHead } from "./HarnessHead.tsx";
+import { useConnections } from "../parts/useConnections.ts";
+import { useTenantStore } from "../../../core/store/tenant.ts";
+import { useModelRouteProfiles } from "../../repos/bedrockProfiles.ts";
+import { waitPrefsSaved } from "../../../lib/settings.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 
@@ -96,16 +101,38 @@ export function AgentsTab() {
   // has no card here. The catalogue is asked afresh; with no answer (stopped, out, failed) no
   // card is drawn, rather than every card.
   const catalog = useMemberCatalog(running);
+  // What every harness card opens with: its on/off, default route and "Runs on" (HarnessHead).
+  // The default route's connections are the member's: marked AWS profiles, and the llama.cpp
+  // endpoint's binding (GET /connections), the reference the Agent holds a launch to.
+  const identity = useTenantStore((st) => `${st.tenant}|${st.identityRev}`);
+  const { conns, reload: reloadConns } = useConnections();
+  useEffect(() => {
+    if (running) reloadConns();
+  }, [running, reloadConns, identity]);
+  const anyBedrock = [...(catalog.kinds?.values() ?? [])].some((k) => [...(k.routes ?? []), ...(k.fixedRoutes ?? [])].includes("bedrock"));
+  const profiles = useModelRouteProfiles(running && anyBedrock, identity);
+  const lcppBinding = (conns?.lcpp as { binding?: string } | undefined)?.binding;
+  const head = (kind: string, ownSwitch = false) => (
+    <HarnessHead
+      kind={kind}
+      live={catalog.kinds?.get(kind)}
+      profiles={profiles}
+      lcppBinding={lcppBinding}
+      ownSwitch={ownSwitch}
+      onSwitched={() => void waitPrefsSaved().then(() => catalog.refresh())}
+    />
+  );
   const behaviors: [string, ReactNode][] = [
-    ["claude", <ClaudeBehavior key="claude" claude={claude} updateClaude={updateClaude} />],
-    ["codex", <CodexBehavior key="codex" codex={codex} updateCodex={updateCodex} agents={agents} updateAgents={updateAgents} />],
-    ["cursor", <CursorBehavior key="cursor" />],
-    ["copilot", <CopilotBehavior key="copilot" agents={agents} updateAgents={updateAgents} />],
-    ["kiro", <KiroBehavior key="kiro" />],
-    ["agy", <AgyBehavior key="agy" agents={agents} updateAgents={updateAgents} />],
-    ["opencode", <OpencodeBehavior key="opencode" agents={agents} updateAgents={updateAgents} />],
-    ["lcpp", <LcppBehavior key="lcpp" />],
-    ["muse", <MuseBehavior key="muse" />],
+    ["claude", <ClaudeBehavior key="claude" head={head("claude")} claude={claude} updateClaude={updateClaude} />],
+    ["codex", <CodexBehavior key="codex" head={head("codex")} codex={codex} updateCodex={updateCodex} agents={agents} updateAgents={updateAgents} />],
+    ["cursor", <CursorBehavior key="cursor" head={head("cursor")} />],
+    ["copilot", <CopilotBehavior key="copilot" head={head("copilot")} agents={agents} updateAgents={updateAgents} />],
+    ["kiro", <KiroBehavior key="kiro" head={head("kiro")} />],
+    ["agy", <AgyBehavior key="agy" head={head("agy")} agents={agents} updateAgents={updateAgents} />],
+    ["opencode", <OpencodeBehavior key="opencode" head={head("opencode")} agents={agents} updateAgents={updateAgents} />],
+    // llama.cpp keeps its own on/off (lcppEnabled), drawn by its card.
+    ["lcpp", <LcppBehavior key="lcpp" head={head("lcpp", true)} />],
+    ["muse", <MuseBehavior key="muse" head={head("muse")} />],
   ];
 
   // A deep link naming a harness lands on its card once the catalogue has drawn the cards.

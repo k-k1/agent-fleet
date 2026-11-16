@@ -73,6 +73,12 @@ Running sessions are not stopped. The current sign-in stays in use until the new
 
 In **⚙Settings → Agents**, each card's "**Behavior**" sets the initial values for new sessions. If a repository has settings you last used, those win.
 
+Each card in **⚙Settings → Agents** also opens with three rows:
+
+- "**Use this agent**": off hides the agent from every launch and refuses a launch that names it. "**Reset my settings**" at the top of the page brings it back (llama.cpp has its own "**Use llama.cpp**" instead)
+- "**Default route**": where a session started without a route of its own runs while your organisation restricts routes. Only the routes you may use are offered; a Bedrock default is saved with the marked AWS profile, a llama.cpp one with your endpoint. If the default cannot be used when you launch, the launch is refused rather than moved to another route
+- "**Runs on**": the routes the agent can use now, with a link to Model credentials
+
 ![The Behavior block of the GitHub Copilot card, open: Default model, Default effort, Models to exclude (+ Add a model), Start mode, Tool permissions and RTK (token savings)](../../assets/agents-behavior-en-light.webp)
 
 | Item | What it decides |
