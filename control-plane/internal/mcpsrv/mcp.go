@@ -675,7 +675,7 @@ func memberToolsHiding(hidden hiddenKinds) []mcpTool {
 		},
 		{
 			name: "get_session_usage", minScope: scopeRead,
-			desc: "Per-session context fill and cumulative token consumption for transcript-capable sessions (claude/codex/opencode/agy/copilot/cursor; shell/ssm excluded). Optional `name` narrows to one session; omitted returns all. `context` is the current context size (tokens with read/create/fresh breakdown, pct of window; absent until the first assistant reply, reset by auto-compaction). `cumulative` sums consumption (logical turns, inTok/outTok/cacheRead/cacheCreate, spend = inTok+cacheCreate+outTok). NOTE: agy and cursor are listed but their transcripts record no token counts, so their `context` is absent and `cumulative` is all zeros — not a sign of no usage (check get_agent_usage for agy's quota instead). kiro also lacks per-turn tokens, but while a managed (ACP) session is running it returns live `context` (pct + estimated tokens against the real window) and `cumulative.credits` (metered credit spend) from its _kiro.dev/metadata; a stopped or TUI kiro session has no `context`. copilot records outTok only (inTok/cache stay 0, `context` absent). Use when asked which session is near its context limit or how much a session has consumed. When the all-sessions answer carries `pending` > 0 the list is partial (sessions whose transcripts are still being parsed are left out): call again shortly before totalling it. Subscription quota is get_agent_usage (separate tool).",
+			desc: sessionUsageDesc(hidden),
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"name": map[string]any{"type": "string", "description": "session name (optional; omitted = all sessions)"},
 			}},
@@ -689,7 +689,7 @@ func memberToolsHiding(hidden hiddenKinds) []mcpTool {
 		},
 		{
 			name: "get_agent_usage", minScope: scopeRead,
-			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude, codex, agy and muse; opencode, copilot, cursor and kiro have no usage source). claude and codex report fiveHour / sevenDay windows with pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts); codex may add planType and resetCredits. agy has a different shape: account / plan plus groups (each quota pool's label, remainingPct and resetsAt — e.g. the Starter pool). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds. Use when asked how much quota remains or when a limit resets.",
+			desc:   agentUsageDesc(hidden),
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a API, res *Resolved, _ map[string]any) (string, error) {
 				cl, err := a.cp.AgentText(ctx, res.RT, "GET", "/claude/usage", nil)
@@ -742,13 +742,13 @@ func memberToolsHiding(hidden hiddenKinds) []mcpTool {
 					"dir":              map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
 					"title":            map[string]any{"type": "string", "description": "display name (optional)"},
 					"kind":             map[string]any{"type": "string", "description": createKindDesc(hidden)},
-					"model":            map[string]any{"type": "string", "description": "model override (optional). claude on route=bedrock requires one: a Bedrock model id or system inference profile id as Bedrock writes it (anthropic.… or <scope>.anthropic.…, scope us, eu, apac, jp, au, us-gov or global). Aliases such as opus, claude-… ids and ARNs are refused; the session then runs on that one model for every call, subagents included, with no fallback to another"},
+					"model":            map[string]any{"type": "string", "description": createModelDesc(hidden)},
 					"initial_prompt":   map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
 					"worktree":         map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
 					"branch":           map[string]any{"type": "string", "description": "base branch for the new worktree (optional; default current HEAD)"},
 					"new_branch":       map[string]any{"type": "string", "description": "branch to create in the new worktree (optional; omitted = temporary branch)"},
 					"subdir":           map[string]any{"type": "string", "description": "relative path INSIDE the working copy to start the agent in, e.g. \"console\" or \"apps/web\" (optional; default = the working copy root). With worktree=true it is resolved inside the newly created worktree. A path that does not exist is rejected."},
-					"route":            map[string]any{"type": "string", "description": "explicit model route id (optional; omit to keep the kind's own default resolution). claude accepts anthropic-subscription, anthropic-api, bedrock or bedrock-deployment (Bedrock the deployment pays for, within the budget your tenant administrator sets), opencode accepts bedrock (with an amazon-bedrock/<id> model); all Terminal sessions only, and bedrock / bedrock-deployment only on a workspace where their acceptance switch is set. Any other kind, or a route the kind does not declare, is refused with the reason, never run on the default route instead."},
+					"route":            map[string]any{"type": "string", "description": createRouteDesc(hidden)},
 					"route_connection": map[string]any{"type": "string", "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset); bedrock takes <profile id>@<region> for one of your Settings AWS profiles marked as a model route (the region may be empty for the profile's own); bedrock-deployment takes none"},
 				},
 			},
@@ -757,6 +757,11 @@ func memberToolsHiding(hidden hiddenKinds) []mcpTool {
 				// Refused here, with the Workspace untouched, rather than left to the Agent.
 				if err := agentkinds.CheckCreateKind(kind); err != nil {
 					return "", err
+				}
+				// A kind the tenant's policy hides, or every model kind while the policy cannot be
+				// read, is refused naming only what is shown (D10a). "" is claude.
+				if k := kind; hidden[k] || k == "" && hidden["claude"] {
+					return "", fmt.Errorf("kind must be one of %s", listKinds(createKinds(hidden), "or"))
 				}
 				route, aerr := createRouteArgs(kind, args)
 				if aerr != nil {

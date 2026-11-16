@@ -220,17 +220,130 @@ func spaced(s string) string {
 	return s + " "
 }
 
-// hiddenKinds is what the caller's tenant policy hides altogether. An answer that cannot be had
-// hides nothing: the texts then name a kind that is refused when used, which is safe.
+// hiddenKinds is what the caller's tenant policy hides altogether. It fails closed: when the
+// membership or the policy cannot be read, every kind that runs a model is hidden, so the texts
+// name none and list_models and create_session refuse every model kind until it can be read
+// (D10a: a hidden item stays absent even while the policy is unknown).
 func (a API) hiddenKinds(ctx context.Context, prin *mcpPrincipal) hiddenKinds {
 	ms, err := a.cp.Store().ListMemberships(ctx, prin.identityID)
 	if err != nil {
-		return nil
+		return allModelKinds()
 	}
 	for _, m := range ms {
 		if m.MembershipID == prin.membershipID {
-			return a.cp.HiddenKinds(ctx, m.TenantID)
+			h, err := a.cp.HiddenKinds(ctx, m.TenantID)
+			if err != nil {
+				return allModelKinds()
+			}
+			return h
 		}
 	}
-	return nil
+	return allModelKinds()
+}
+
+// allModelKinds hides every kind that runs on a model credential: the fail-closed answer.
+func allModelKinds() hiddenKinds {
+	out := hiddenKinds{}
+	for _, k := range agentroutes.ModelKinds() {
+		out[k] = true
+	}
+	return out
+}
+
+// verb picks the singular or plural form for a list of n kinds.
+func verb(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// sessionUsageDesc is get_session_usage's description without the hidden kinds.
+func sessionUsageDesc(hidden hiddenKinds) string {
+	capable := shownOf(hidden, "claude", "codex", "opencode", "agy", "copilot", "cursor")
+	scope := "shell/ssm excluded"
+	if len(capable) > 0 {
+		scope = strings.Join(capable, "/") + "; " + scope
+	}
+	out := "Per-session context fill and cumulative token consumption for transcript-capable sessions (" + scope + "). " +
+		"Optional `name` narrows to one session; omitted returns all. `context` is the current context size (tokens with read/create/fresh breakdown, pct of window; absent until the first assistant reply, reset by auto-compaction). " +
+		"`cumulative` sums consumption (logical turns, inTok/outTok/cacheRead/cacheCreate, spend = inTok+cacheCreate+outTok). "
+	noTokens := shownOf(hidden, "agy", "cursor")
+	if n := len(noTokens); n > 0 {
+		out += "NOTE: " + listKinds(noTokens, "and") + " " + verb(n, "is", "are") + " listed but " + verb(n, "its", "their") +
+			" transcripts record no token counts, so " + verb(n, "its", "their") + " `context` is absent and `cumulative` is all zeros — not a sign of no usage"
+		if !hidden["agy"] {
+			out += " (check get_agent_usage for agy's quota instead)"
+		}
+		out += ". "
+	}
+	if !hidden["kiro"] {
+		also := " "
+		if len(noTokens) > 0 {
+			also = " also "
+		}
+		out += "kiro" + also + "lacks per-turn tokens, but while a managed (ACP) session is running it returns live `context` (pct + estimated tokens against the real window) and `cumulative.credits` (metered credit spend) from its _kiro.dev/metadata; a stopped or TUI kiro session has no `context`. "
+	}
+	if !hidden["copilot"] {
+		out += "copilot records outTok only (inTok/cache stay 0, `context` absent). "
+	}
+	return out + "Use when asked which session is near its context limit or how much a session has consumed. When the all-sessions answer carries `pending` > 0 the list is partial (sessions whose transcripts are still being parsed are left out): call again shortly before totalling it. Subscription quota is get_agent_usage (separate tool)."
+}
+
+// agentUsageDesc is get_agent_usage's description without the hidden kinds.
+func agentUsageDesc(hidden hiddenKinds) string {
+	with := shownOf(hidden, "claude", "codex", "agy", "muse")
+	without := shownOf(hidden, "opencode", "copilot", "cursor", "kiro")
+	var scope []string
+	if len(with) > 0 {
+		scope = append(scope, listKinds(with, "and"))
+	}
+	if len(without) > 0 {
+		scope = append(scope, listKinds(without, "and")+" "+verb(len(without), "has", "have")+" no usage source")
+	}
+	out := "Subscription usage and rate limits for the agent CLIs in your Workspace"
+	if len(scope) > 0 {
+		out += " (" + strings.Join(scope, "; ") + ")"
+	}
+	out += ". "
+	if windows := shownOf(hidden, "claude", "codex"); len(windows) > 0 {
+		out += listKinds(windows, "and") + " " + verb(len(windows), "reports", "report") + " fiveHour / sevenDay windows with pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts)"
+		if !hidden["codex"] {
+			out += "; codex may add planType and resetCredits"
+		}
+		out += ". "
+	}
+	if !hidden["agy"] {
+		out += "agy has a different shape: account / plan plus groups (each quota pool's label, remainingPct and resetsAt — e.g. the Starter pool). "
+	}
+	return out + "authed=false means that CLI has no subscription login; ageSec is the capture age in seconds. Use when asked how much quota remains or when a limit resets."
+}
+
+// createModelDesc is create_session's model argument description: claude's Bedrock clause only
+// while claude is shown.
+func createModelDesc(hidden hiddenKinds) string {
+	out := "model override (optional)"
+	if !hidden["claude"] {
+		out += ". claude on route=bedrock requires one: a Bedrock model id or system inference profile id as Bedrock writes it (anthropic.… or <scope>.anthropic.…, scope us, eu, apac, jp, au, us-gov or global). Aliases such as opus, claude-… ids and ARNs are refused; the session then runs on that one model for every call, subagents included, with no fallback to another"
+	}
+	return out
+}
+
+// createRouteDesc is create_session's route argument description: each kind's routes only while
+// the kind is shown. Which routes the policy forbids is #4323.
+func createRouteDesc(hidden hiddenKinds) string {
+	var accepts []string
+	if !hidden["claude"] {
+		accepts = append(accepts, "claude accepts anthropic-subscription, anthropic-api, bedrock or bedrock-deployment (Bedrock the deployment pays for, within the budget your tenant administrator sets)")
+	}
+	if !hidden["opencode"] {
+		accepts = append(accepts, "opencode accepts bedrock (with an amazon-bedrock/<id> model)")
+	}
+	out := "explicit model route id (optional; omit to keep the kind's own default resolution). "
+	if len(accepts) > 0 {
+		out += strings.Join(accepts, ", ") + "; all Terminal sessions only, and bedrock / bedrock-deployment only on a workspace where their acceptance switch is set. Any other kind, or a route the kind does not declare, is refused"
+	} else {
+		out += "A route the kind does not declare is refused"
+	}
+	return out + " with the reason, never run on the default route instead."
 }

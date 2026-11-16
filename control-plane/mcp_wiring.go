@@ -152,12 +152,12 @@ func (d cpDeps) RoutePolicyErr(ctx context.Context, mv store.MembershipView, rt 
 	return nil
 }
 
-func (d cpDeps) HiddenKinds(ctx context.Context, tenantID string) map[string]bool {
+func (d cpDeps) HiddenKinds(ctx context.Context, tenantID string) (map[string]bool, error) {
 	v, err := routepolicysrv.TenantPolicy(ctx, d.m.store, tenantID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return v.HiddenKinds()
+	return v.HiddenKinds(), nil
 }
 
 func (d cpDeps) ScheduleGuardErr(ctx context.Context, membershipID, repoName, sessionName string) error {
