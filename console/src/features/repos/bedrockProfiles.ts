@@ -46,22 +46,23 @@ export function regionOk(region: string): boolean {
  *  until this principal's answer arrives, [] when it failed or none is marked: the bedrock route
  *  is then not offered at all. */
 export function useModelRouteProfiles(enabled: boolean): ModelRouteProfile[] | null {
-  const [profiles, setProfiles] = useState<ModelRouteProfile[] | null>(null);
-  // The profiles are one member's: a tenant or member switch drops them and asks again, and
-  // nothing from before the switch (or from before a disable) is shown while the answer is out.
+  // The answer is kept with the principal it was asked for, and returned only to that principal:
+  // on the render where the tenant or member has just changed, the previous one's profiles are
+  // never handed out, even before the effect below has run.
   const identity = useTenantStore((s) => `${s.tenant}|${s.identityRev}`);
+  const [answer, setAnswer] = useState<{ owner: string; profiles: ModelRouteProfile[] } | null>(null);
   useEffect(() => {
-    setProfiles(null);
     if (!enabled) return;
     let live = true;
+    const owner = identity;
     api("api/ssm/profiles")
-      .then((d) => live && setProfiles(markedProfiles(d)))
-      .catch(() => live && setProfiles([]));
+      .then((d) => live && setAnswer({ owner, profiles: markedProfiles(d) }))
+      .catch(() => live && setAnswer({ owner, profiles: [] }));
     return () => {
       live = false;
     };
   }, [enabled, identity]);
-  return enabled ? profiles : null;
+  return enabled && answer?.owner === identity ? answer.profiles : null;
 }
 
 /** The create body's `route` object: the id, and the connection only when the route takes one. */

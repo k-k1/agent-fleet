@@ -117,6 +117,25 @@ describe("opencode の「使う」と「opencode.ai への課金」", () => {
     expect(host!.querySelector(".p-opts:not(.p-opts-col)")).toBeNull();
   });
 
+  // Free runs with no credential (auth.go drops the key there too), so it says the same; Go and Zen
+  // pass the key and say nothing.
+  it("free でも保存済みの OPENCODE_API_KEY に「注入しません」と添え、go / zen では添えない", async () => {
+    setSettings({ opencodeCatalog: "free" });
+    catalog(["opencode/free-model"], "free");
+    await mount({ envs: ["OPENCODE_API_KEY"] });
+    expect(host!.querySelector(".oc-key-idle")).toBeTruthy();
+    act(() => root?.unmount());
+    host?.remove();
+    for (const usage of ["go", "zen"] as const) {
+      setSettings({ opencodeCatalog: usage });
+      catalog(["opencode-go/glm-5.2"], usage);
+      await mount({ envs: ["OPENCODE_API_KEY"] });
+      expect(host!.querySelector(".oc-key-idle")).toBeNull();
+      act(() => root?.unmount());
+      host?.remove();
+    }
+  });
+
   it("own で保存済みの OPENCODE_API_KEY は「注入しません」と添える（消さずに、使っていないと言う）", async () => {
     setSettings({ opencodeCatalog: "own" });
     catalog(["anthropic/claude-opus-5"], "own");

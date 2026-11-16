@@ -522,7 +522,7 @@ export function OpencodeCard({
                     {/* Stored but not injected on free / own (auth.go's env()). Saying so
                         here is the difference between "my key is set up" and "my key is set
                         up and being used", which the list could not tell apart. */}
-                    {!usesOpencodeAI && e === "OPENCODE_API_KEY" && (
+                    {(usage === "own" || usage === "free") && e === "OPENCODE_API_KEY" && (
                       <span className="oc-key-idle">{tr("agents.oc_key_not_injected")}</span>
                     )}
                     <button className="icon danger" title={tr("common.delete")} onClick={() => remove(e)}>
