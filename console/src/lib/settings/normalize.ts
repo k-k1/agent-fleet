@@ -225,6 +225,18 @@ export function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = 
 
 const LAUNCH_DEFAULT_FIELDS = new Set(["model", "effort", "startMode", "skipPermissions"]);
 
+/** knownLaunchDefaults is rows with only what this Console reads: its kinds' rows, each with its
+ *  four fields. What it drops is the server copy's to carry (a default route names a connection
+ *  of one account), so it is what an owner switch must not keep. */
+export function knownLaunchDefaults(rows: AgentLaunchDefaults): AgentLaunchDefaults {
+  const out: AgentLaunchDefaults = {};
+  for (const kind of Object.keys(DEFAULT_AGENT_LAUNCH)) {
+    const r = rows[kind];
+    if (r) out[kind] = { model: r.model, effort: r.effort, startMode: r.startMode, skipPermissions: r.skipPermissions };
+  }
+  return out;
+}
+
 function unknownFields(row: object): Record<string, unknown> {
   return Object.fromEntries(Object.entries(row).filter(([k]) => !LAUNCH_DEFAULT_FIELDS.has(k)));
 }

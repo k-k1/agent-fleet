@@ -95,7 +95,60 @@ describe("ui-prefs: a save keeps what this Console does not know", () => {
   });
 });
 
+describe("ui-prefs: the same owner follows a deletion on another device", () => {
+  it("drops an unknown key the server no longer holds, and does not send it back", async () => {
+    apiMock.mockResolvedValueOnce(serverCopy());
+    const s = await freshSettings({});
+    s.setPrefsOwnerSource(() => "t1|alice");
+    await s.hydrateUIPrefs();
+    // Another device deleted the key; this one hydrates again as the same recorded owner.
+    apiMock.mockResolvedValueOnce({ chatSize: 15, agentLaunchDefaults: serverCopy().agentLaunchDefaults });
+    await s.hydrateUIPrefs();
+    expect("futureKey" in (s.getSettings() as unknown as Record<string, unknown>)).toBe(false);
+    s.setSetting("iconSet", "seti");
+    const body = await savedBody();
+    expect("futureKey" in body).toBe(false);
+    expect(body.agentLaunchDefaults.claude.route).toEqual(ROUTE);
+  });
+});
+
 describe("ui-prefs: an owner switch never carries unknown keys across", () => {
+  it("sends none of the previous owner's route or rows after a switch to an empty server copy", async () => {
+    let owner = "t1|alice";
+    apiMock.mockResolvedValueOnce(serverCopy());
+    const s = await freshSettings({});
+    s.setPrefsOwnerSource(() => owner);
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().agentLaunchDefaults.claude).toMatchObject({ route: ROUTE });
+    owner = "t1|bob";
+    apiMock.mockResolvedValueOnce({}); // bob's server copy holds nothing yet
+    await s.resyncAccumulatedForIdentitySwitch();
+    s.setSetting("iconSet", "seti");
+    const body = await savedBody();
+    expect("futureKey" in body).toBe(false);
+    expect(body.agentLaunchDefaults.claude.route).toBeUndefined();
+    expect(body.agentLaunchDefaults.futurekind).toBeUndefined();
+  });
+
+  it("sends none of them at a start-up under another owner than the one recorded", async () => {
+    apiMock.mockResolvedValueOnce(serverCopy());
+    let s = await freshSettings({});
+    s.setPrefsOwnerSource(() => "t1|alice");
+    await s.hydrateUIPrefs();
+    const local = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+    // A reload signed in as bob: the local copy and its owner record are still alice's.
+    apiMock.mockResolvedValueOnce({});
+    s = await freshSettings(local);
+    s.setPrefsOwnerSource(() => "t1|bob");
+    await s.hydrateUIPrefs();
+    s.setSetting("iconSet", "seti");
+    const body = await savedBody();
+    expect("futureKey" in body).toBe(false);
+    expect(body.agentLaunchDefaults.claude.route).toBeUndefined();
+    expect(body.agentLaunchDefaults.futurekind).toBeUndefined();
+  });
+
+
   it("does not send the previous owner's unknown keys under the new owner", async () => {
     apiMock.mockResolvedValueOnce(serverCopy());
     const s = await freshSettings({});

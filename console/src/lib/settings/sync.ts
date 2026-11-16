@@ -19,7 +19,13 @@ import {
   settingMerge,
   type Settings,
 } from "./prefs.ts";
-import { fillRecommendedModelMaps, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeAssistantOrder } from "./normalize.ts";
+import {
+  fillRecommendedModelMaps,
+  knownLaunchDefaults,
+  migrateAiAssistPrefs,
+  normalizeAgentLaunchDefaults,
+  normalizeAssistantOrder,
+} from "./normalize.ts";
 import { applyToPage, getSettings, notify, persist, setState, writeRecord } from "./store.ts";
 
 // The notification table pins its device-local cells off a synced key on every hydrate
@@ -473,24 +479,26 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // Keys this Console does not know (one a newer Console or the Agent's own writers added, such
   // as a member-layer switch) belong to the server copy: the save is a whole-object PUT of the
   // state, so a key missing from the state is a key the next save deletes. They are taken from
-  // the server as they are. A local one the server does not hold is kept only for the recorded
-  // owner (another Console version in this browser may have written it); for anyone else it is
-  // dropped, so this browser never sends another account's unknown keys.
-  if (adoptServerExtras(merged, srv, sameOwner)) changed = true;
+  // the server as they are, and a local one the server does not hold is dropped: this Console
+  // never edits an unknown key, so a local one is either deleted on the server since (another
+  // device) or another account's.
+  if (adoptServerExtras(merged, srv)) changed = true;
   const serverRows = srv.agentLaunchDefaults;
   const legacyClaudeModel = typeof srv.defaultModel === "string" ? srv.defaultModel : merged.defaultModel;
   // A server written by an older Console has only defaultModel. Do not let the
   // already-normalized local map mask that server-side value during migration.
   // Once the new map exists on the server it is authoritative for every agent.
   // An unsaved local edit stands over the server's map, as the loop above does for other keys.
+  // With no map on the server, the local one stands in; the fields this Console does not read
+  // (the default route and its connection) are the server copy's to carry, so local ones are kept
+  // only for the recorded owner and a server copy with no map never takes another account's
+  // default route from this browser.
+  const localRows = sameOwner ? merged.agentLaunchDefaults : knownLaunchDefaults(merged.agentLaunchDefaults);
   const rows = unsaved.has("agentLaunchDefaults")
     ? merged.agentLaunchDefaults
     : serverRows && typeof serverRows === "object"
     ? serverRows
-    : {
-        ...merged.agentLaunchDefaults,
-        claude: { ...merged.agentLaunchDefaults.claude, model: legacyClaudeModel },
-      };
+    : { ...localRows, claude: { ...localRows.claude, model: legacyClaudeModel } };
   const normalized = normalizeAgentLaunchDefaults(rows, legacyClaudeModel);
   if (JSON.stringify(normalized) !== JSON.stringify(merged.agentLaunchDefaults)) {
     merged.agentLaunchDefaults = normalized;
@@ -536,13 +544,13 @@ export async function hydrateUIPrefs(): Promise<boolean> {
 // key a save may delete on purpose: kept, they would outlive the migration that retired them.
 const RETIRED_SERVER_KEYS = new Set(["ttsQuietWhenHidden", "assistantAgent", "assistantUtilityModels", "autoTitleSuggest"]);
 
-// adoptServerExtras takes the server copy's unknown keys (not in DEFAULTS) into `merged`, and
-// drops the local ones the server lacks unless keepLocal. Reports whether anything changed.
-function adoptServerExtras(merged: Settings, srv: Record<string, unknown>, keepLocal: boolean): boolean {
+// adoptServerExtras makes `merged`'s unknown keys (not in DEFAULTS) the server copy's, retired
+// legacy keys aside. Reports whether anything changed.
+function adoptServerExtras(merged: Settings, srv: Record<string, unknown>): boolean {
   const m = merged as unknown as Record<string, unknown>;
   let changed = false;
   for (const k of Object.keys(m)) {
-    if (!keepLocal && !(k in DEFAULTS) && !(k in srv)) {
+    if (!(k in DEFAULTS) && !(k in srv)) {
       delete m[k];
       changed = true;
     }
@@ -601,8 +609,10 @@ export function resyncAccumulatedForIdentitySwitch(): Promise<boolean> {
   for (const k of Object.keys(DEFAULTS) as (keyof Settings)[]) {
     if (isAccumulatedSetting(k)) (cleared as any)[k] = DEFAULTS[k];
   }
-  // The previous owner's unknown keys go too: the new owner's hydrate brings theirs.
-  setState(withoutExtras({ ...getSettings(), ...cleared }));
+  // The previous owner's unknown keys go too, top-level and inside the launch defaults (a default
+  // route names their connection): the new owner's hydrate brings theirs.
+  const cur = getSettings();
+  setState(withoutExtras({ ...cur, ...cleared, agentLaunchDefaults: knownLaunchDefaults(cur.agentLaunchDefaults) }));
   persist();
   notify();
   // Local is already empty, so the restore guard above does not fire and the new owner's server
