@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import type { SessionWatch } from "../../../core/api/client.ts";
 import { openWorkItemUrl } from "../../workitems/openUrl.ts";
 import { elapsedShort } from "./BackgroundShellsPanel.tsx";
+import { makeSessionLink } from "../../viewer/parts/mdRefLinks.ts";
+import { useSessionLinkMenu } from "../../sessions/SessionLinkMenu.tsx";
+import { useSessionsStore } from "../../sessions/store.ts";
+import { openSessionChat, openSessionChatSplit } from "../../sessions/open.ts";
 
 /** parseWatches keeps the well-formed entries of a messages payload's `watches`. */
 export function parseWatches(v: unknown): SessionWatch[] {
@@ -181,7 +185,9 @@ export function WatchesPanel({
           return (
             <li className={"mw-item" + (w.error ? " failing" : "")} key={w.id}>
               <Icon name={sourceIcon(w.source)} title={sourceLabel(w.source)} />
-              {href ? (
+              {w.source === "fleet" && w.ref ? (
+                <SessionRef name={w.ref} />
+              ) : href ? (
                 <a
                   className="mw-ref"
                   href={href}
@@ -244,4 +250,38 @@ export function WatchesPanel({
       </ul>
     </div>
   );
+}
+
+/** SessionRef shows a fleet watch's ref, the name of the session it waits on, as the same link a
+ *  Markdown reply gives a session slug: built by makeSessionLink, so a click, a modified click,
+ *  the context menu and the tooltip cannot drift from the transcript's. A session that no longer
+ *  exists stays plain text, as it does in the transcript. */
+function SessionRef({ name }: { name: string }) {
+  const exists = useSessionsStore((st) => st.sessions.some((s) => s.name === name));
+  const openMenu = useSessionLinkMenu();
+  const menuRef = useRef(openMenu);
+  menuRef.current = openMenu;
+  const hasMenu = openMenu !== null;
+  const host = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const el = host.current;
+    if (!el || !exists) return;
+    const a = makeSessionLink(
+      name,
+      (n, openInNew) => (openInNew ? openSessionChatSplit(n) : openSessionChat(n)),
+      hasMenu ? (n, x, y) => menuRef.current?.(n, x, y) : undefined,
+    );
+    a.classList.add("mw-ref");
+    el.replaceChildren(a);
+    return () => el.replaceChildren();
+  }, [name, exists, hasMenu]);
+  if (!exists) {
+    return (
+      <span className="mw-ref" title={name}>
+        {name}
+      </span>
+    );
+  }
+  // display: contents keeps the anchor itself the row's flex item, laid out like any other ref.
+  return <span ref={host} className="mw-ref-host" />;
 }

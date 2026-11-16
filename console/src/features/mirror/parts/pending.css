@@ -480,6 +480,9 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.mirror-watches .mw-ref-host {
+  display: contents;
+}
 .mirror-watches .mw-meta {
   flex: none;
   display: flex;

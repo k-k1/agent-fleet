@@ -433,7 +433,7 @@ function wireTooltip(a: HTMLAnchorElement, compute: () => string) {
 // Modifier keys follow the same convention as file links (wireLinks): a plain click / Enter
 // is the default open, while Ctrl/Cmd-click and a middle click force a new pane (openInNew).
 // With openMenu, a right click, a long press and the Menu key open the session's context menu.
-function makeSessionLink(
+export function makeSessionLink(
   name: string,
   openSession: (name: string, openInNew: boolean) => void,
   openMenu?: (name: string, x: number, y: number) => void,
