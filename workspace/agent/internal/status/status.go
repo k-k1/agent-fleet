@@ -212,9 +212,19 @@ func Persist(sid, state string) { PersistRev(sid, state) }
 // PersistRev is Persist that returns the Rev of the record it wrote, so a caller can later
 // take back exactly that write (PersistIf) and never one a hook made since.
 func PersistRev(sid, state string) string {
-	rev := persist(sid, SessionStatus{State: state})
-	if state == "working" {
-		RemoveCompletionKey(sid) // new turn started; the next end will mint a fresh key
+	return persistDroppingKey(sid, SessionStatus{State: state})
+}
+
+// persistDroppingKey is persist that, for a "working" record, also drops the previous turn's
+// completion key (a new turn started; the next end mints a fresh one). Both happen under the
+// per-session lock, like PersistTurnEndFor's key and record: a removal after the unlock could
+// delete the key a turn end written in between and leave that end without one.
+func persistDroppingKey(sid string, s SessionStatus) string {
+	unlock, _ := lockSid(sid) // a timeout still writes, as in persist
+	defer unlock()
+	rev := persistLocked(sid, s)
+	if s.State == "working" {
+		RemoveCompletionKey(sid)
 	}
 	return rev
 }
@@ -222,10 +232,7 @@ func PersistRev(sid, state string) string {
 // PersistOpen is Persist for a write made by a hook of turn promptID (UserPromptSubmit,
 // PostToolUse, …): it opens that turn in the ledger (SessionStatus.PromptID).
 func PersistOpen(sid, state, promptID string) {
-	persist(sid, SessionStatus{State: state, PromptID: promptID})
-	if state == "working" {
-		RemoveCompletionKey(sid)
-	}
+	persistDroppingKey(sid, SessionStatus{State: state, PromptID: promptID})
 }
 
 // TurnEndReasonFailed / TurnEndReasonAborted are the qualifiers PersistTurnEndReason

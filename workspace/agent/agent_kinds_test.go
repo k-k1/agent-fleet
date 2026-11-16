@@ -55,6 +55,7 @@ func TestKindCatalogSnapshot(t *testing.T) {
 }
 
 func TestKindCatalogCoversRegistry(t *testing.T) {
+	settleKindProbes(t)
 	cat := buildKindCatalog(true)
 	var kinds []string
 	for _, e := range cat.Kinds {
@@ -91,6 +92,7 @@ func TestKindCatalogCoversRegistry(t *testing.T) {
 }
 
 func TestHandleAgentKinds(t *testing.T) {
+	settleKindProbes(t)
 	rec := httptest.NewRecorder()
 	handleAgentKinds(rec, httptest.NewRequest(http.MethodGet, "/agents/kinds", nil))
 	if rec.Code != http.StatusOK {
@@ -159,6 +161,7 @@ func TestCPManagedDefaultSnapshotMatchesRegistry(t *testing.T) {
 // The live catalog (and only it) names the routes a harness accepts, so the Console offers a
 // route picker for claude and for no other kind; the checked-in snapshot stays free of them.
 func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
+	settleKindProbes(t)
 	// The route gates are this Agent's environment; a workspace running with them on must not
 	// change what this test sees.
 	for _, k := range testguard.RouteGateEnvs {
@@ -181,6 +184,7 @@ func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
 // only with AF_OPENCODE_BEDROCK_ROUTE=1, and neither claude's gate nor an open opencode gate
 // changes the other kind.
 func TestKindCatalogOpencodeRoutesFollowItsGate(t *testing.T) {
+	settleKindProbes(t)
 	routesOf := func(kind string) []string {
 		for _, e := range buildKindCatalog(true).Kinds {
 			if e.Kind == kind {
@@ -210,6 +214,7 @@ func TestKindCatalogOpencodeRoutesFollowItsGate(t *testing.T) {
 // A route declared but not yet offered (claude's bedrock, before decision 14's acceptance run) is
 // left out of the live catalog, so the launch dialog does not offer it; opening its gate adds it.
 func TestKindCatalogOffersOnlyReleasedRoutes(t *testing.T) {
+	settleKindProbes(t)
 	claudeRoutes := func() []string {
 		for _, e := range buildKindCatalog(true).Kinds {
 			if e.Kind == "claude" {

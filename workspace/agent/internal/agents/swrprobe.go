@@ -118,7 +118,9 @@ func probeEnded() {
 	probesOut.mu.Unlock()
 }
 
-// AwaitProbes blocks until no SWRProbe has a probe running.
+// AwaitProbes blocks until no SWRProbe has a probe running. It has no bound on purpose: giving up
+// would bring back the write into a removed directory it exists to prevent. So every Probe
+// function must terminate, and one that runs a CLI needs a context timeout.
 func AwaitProbes() {
 	probesOut.mu.Lock()
 	defer probesOut.mu.Unlock()
