@@ -383,8 +383,10 @@ disables.
 
   **Fairness of the passes.** `settle` closes stale claims and collects the sends first (no
   workspace read), then reads members least recently tried first (`memoFairOrder`, in memory,
-  per process); the retire pass has its own 60 second budget (`memoRetireBudget`) and its own
-  order. A member that never answers uses one budget and goes last on the next tick.
+  per process); the retire pass has its own order and the last third of the same 60 second
+  budget (`memoRetireReserve`), so the passes together do not delay the tick's fires. A member
+  that never answers goes last on the next tick; the tick count to reach everyone depends on
+  how slow the workspaces are (ADR 0137, note of #4245).
 
   **The dispatcher** ([decisions/0137](../decisions/0137-message-queues.md) §6 and §7; it
   runs after the settle pass, in the room the settle's sends left of the tick's two queue

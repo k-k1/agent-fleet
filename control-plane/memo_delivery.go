@@ -49,11 +49,13 @@ const (
 	// memoAgentCallWait each Agent call in it. Both run before the tick's fires start.
 	// memoClosedTurnBudget bounds the pass that reads the first turns of closed deliveries, apart
 	// from memoSettleBudget.
-	// memoRetireBudget bounds the pass that retires the sessions of closed deliveries, apart from
-	// memoSettleBudget: one retire call alone may take memoRetireCallWait.
+	// memoRetireReserve is the part of memoSettleBudget kept for the retire pass: the read pass
+	// stops that much before the budget ends, so a slow workspace in it cannot keep the retire pass
+	// from running, and the two together never take longer than memoSettleBudget before the tick's
+	// fires start. Time the read pass leaves over goes to the retire pass.
 	memoClosedTurnBudget = 20 * time.Second
 	memoSettleBudget     = 60 * time.Second
-	memoRetireBudget     = 60 * time.Second
+	memoRetireReserve    = memoSettleBudget / 3
 	memoAgentCallWait    = 15 * time.Second
 	// memoRetireCallWait bounds one retire call: it stops every session of a tree.
 	memoRetireCallWait = 30 * time.Second
@@ -392,10 +394,10 @@ type memoQueueRunner struct {
 	// budget is a fire's own time budget: a claimed or sending delivery older than it is
 	// reconciled. It is above everything a live send waits for.
 	budget time.Duration
-	// settleBudget bounds one tick's settle pass (memoSettleBudget), retireBudget the retire pass
-	// (memoRetireBudget).
-	settleBudget time.Duration
-	retireBudget time.Duration
+	// settleBudget bounds one tick's settle and retire passes together (memoSettleBudget), and
+	// retireReserve is the end of it kept for the retire pass (memoRetireReserve).
+	settleBudget  time.Duration
+	retireReserve time.Duration
 	// settleOrder and retireOrder keep which member each pass tried last, so that a pass that runs
 	// out of budget inside one workspace starts with the members behind it on the next tick. They
 	// live in this process only: fairness never needs them to agree between Control Planes, and
@@ -414,7 +416,7 @@ func newMemoQueueRunner(mgr *manager, f *wakeFirer) *memoQueueRunner {
 	if ready <= 0 {
 		ready = 5 * time.Minute
 	}
-	return &memoQueueRunner{mgr: mgr, f: f, budget: ready + memoDeliverySendMargin, settleBudget: memoSettleBudget, retireBudget: memoRetireBudget}
+	return &memoQueueRunner{mgr: mgr, f: f, budget: ready + memoDeliverySendMargin, settleBudget: memoSettleBudget, retireReserve: memoRetireReserve}
 }
 
 // memoMemberView is what settle knows of one member's workspace in this tick.
@@ -442,7 +444,10 @@ type memoMemberView struct {
 
 func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.MemoDelivery {
 	tick := ctx
-	ctx, cancel := context.WithTimeout(ctx, r.settleBudget)
+	// One budget for both passes: the read pass ends retireReserve early, the retire pass at the end.
+	rctx, rcancel := context.WithTimeout(tick, r.settleBudget)
+	defer rcancel()
+	ctx, cancel := context.WithTimeout(tick, r.settleBudget-min(r.retireReserve, r.settleBudget/3))
 	defer cancel()
 	ds, err := r.mgr.store.ListLiveMemoDeliveries(ctx)
 	if err != nil {
@@ -506,10 +511,8 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 			}
 		}
 	}
-	// The retire pass has a budget of its own, for the same reason as the first-turn pass below.
-	rctx, rcancel := context.WithTimeout(tick, r.retireBudget)
+	// The retire pass has the reserved end of the budget (and what the read pass left of the rest).
 	r.retirePending(rctx, views, now)
-	rcancel()
 	// The first-turn pass has a budget of its own: the reads above may have used all of the pass's,
 	// and a pass that never runs would leave the breaker blind.
 	tctx, tcancel := context.WithTimeout(tick, memoClosedTurnBudget)

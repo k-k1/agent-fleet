@@ -64,6 +64,7 @@ func TestMemoFairSettleSilentMemberFirst(t *testing.T) {
 		e.insertFairDelivery(e.members["c"], store.MemoDelivery{QueueID: "qc", State: store.DeliveryOpen, Session: "slow-session"}, 3*time.Hour)
 		r := e.runner()
 		r.settleBudget = 300 * time.Millisecond
+		r.retireReserve = 100 * time.Millisecond
 		for i := 1; i <= 3; i++ {
 			r.settle(context.Background(), time.Now())
 			if got := e.delivery(d.ID); i < 3 && got.State == store.DeliveryClosed {
@@ -96,7 +97,8 @@ func TestMemoFairRetireSilentMemberFirst(t *testing.T) {
 		e.insertFairDelivery(e.members["c"], store.MemoDelivery{QueueID: "qc", State: store.DeliveryClosed, Outcome: store.DeliveryClean,
 			Session: "slow-session", Reported: true, RetirePending: true}, 3*time.Hour)
 		r := e.runner()
-		r.retireBudget = 300 * time.Millisecond
+		r.settleBudget = 300 * time.Millisecond
+		r.retireReserve = 100 * time.Millisecond
 		r.settle(context.Background(), time.Now())
 		if got := e.delivery(d.ID); got.RetireResult != "" {
 			t.Fatalf("tick 1 retired behind the silent member: %+v", got)
@@ -126,6 +128,7 @@ func TestMemoFairSettleKeepsSendsAndStaleClaims(t *testing.T) {
 		e.insertFairDelivery(e.members["c"], store.MemoDelivery{QueueID: "qc", State: store.DeliveryOpen, Session: "slow-session"}, 4*time.Hour)
 		r := e.runner()
 		r.settleBudget = 300 * time.Millisecond
+		r.retireReserve = 100 * time.Millisecond
 		sends := r.settle(context.Background(), time.Now())
 		if len(sends) != memoQueueSendsPerTick {
 			t.Fatalf("%d sends, want %d", len(sends), memoQueueSendsPerTick)

@@ -599,8 +599,13 @@ Added 2026-11-16 (#4245): the settle pass and the retire pass are fair across me
 read are settled first, whatever a workspace does: a stale claim is closed, and the sends are taken oldest first up to
 their per-tick cap, so the order of sends does not depend on which member is slow. The deliveries that need a read are
 then taken member by member, the member tried longest ago first, with each member's own deliveries oldest first, and the
-pass stamps a member before it tries it. The retire pass has a budget of its own (60 seconds) and the same order, kept
-apart from the settle pass's. A workspace that never answers therefore costs one budget in one tick and goes to the back,
-so every member with open work is reached within as many ticks as there are members, and in practice within two. The order
-is remembered in the process only: each Control Plane is fair by itself, and nothing depends on two of them agreeing.
-A member the settle pass did not reach has no view in the tick, and the dispatcher reads it itself, once.
+pass stamps a member before it tries it. The retire pass keeps its own order, apart from the settle pass's. The two share
+the one 60 second budget as before: the read pass stops 20 seconds early so the retire pass always has that much (and
+whatever the read pass left over), and the time before the tick's fires start does not grow. What this guarantees is an
+order, not a fixed latency: while the set of members with open work stays the same, and each tick can try at least one
+member, every member is tried within as many ticks as there are members. How many ticks that really is depends on the
+workspaces: one list read of a silent Agent costs up to 15 seconds, so several silent members ahead of a good one can use
+a tick's budget between them, and a member whose retire calls each wait 30 seconds can use a pass's budget alone (the tests use one silent member and a budget that one read exhausts, hence two ticks). A member that leaves the set is
+forgotten and comes back first in line, so no bound is promised for a changing set. The order is remembered in the
+process only: each Control Plane is fair by itself, and nothing depends on two of them agreeing. A member the settle
+pass did not reach has no view in the tick, and the dispatcher reads it itself, once.
