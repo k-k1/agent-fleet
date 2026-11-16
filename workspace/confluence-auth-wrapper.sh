@@ -35,7 +35,7 @@
 # - CONFLUENCE_CLI_ANALYTICS=false: the CLI otherwise writes a usage counter file into its config
 #   directory on every call, which would also create that directory.
 set +xa
-unset cred tok site domain apipath auth login why stale sub arg own v d prev f new k pre wdir unknown_write
+unset cred tok site domain apipath auth login why stale sub arg own v d f pre wdir unknown_write args fi_ seen i a errfd teepid
 
 real="${AF_CONFLUENCE_REAL:-/usr/local/libexec/confluence}"
 
@@ -116,36 +116,49 @@ fi
 # iconv reject what a UTF-8 -> UTF-8 pass lets through (code points above U+10FFFF, 5-byte forms).
 # A --file that is not a regular file (/dev/stdin, a pipe) is read once into a private copy that
 # is checked and handed to the CLI by path, since run_write gives the CLI no stdin.
+# The arguments are read the way the CLI's parser (commander) reads them: an option that takes a
+# value takes the next word whatever it looks like (`--content '--file=x'` is a body, not a file),
+# nothing after `--` is an option, and of several --file the last one is used. Only that one is
+# checked and, if it is not a regular file, copied.
 wdir=""
 if page_write_cmd; then
-  new=()
-  prev=""
-  k=0
-  for arg in "$@"; do
-    f=""
-    pre=""
-    case "$prev" in -f | --file) f="$arg" ;; esac
-    case "$arg" in --file=*) f="${arg#--file=}" pre="--file=" ;; -f?*) f="${arg#-f}" pre="-f" ;; esac
-    prev="$arg"
+  args=("$@")
+  fi_=-1     # index of the word that holds the --file value
+  pre=""     # what precedes the path inside that word (--file= or -f), empty when separate
+  seen=""
+  i=0
+  while [ "$i" -lt "${#args[@]}" ]; do
+    a="${args[$i]}"
+    if [ -z "$seen" ]; then
+      [ "$a" = "$sub" ] && seen=1
+    else
+      case "$a" in
+        --) break ;;
+        --file=*) fi_=$i pre="--file=" ;;
+        -f | --file) i=$((i + 1)) fi_=$i pre="" ;;
+        -f?*) fi_=$i pre="-f" ;;
+        -c | --content | -t | --title | --format | --type | --plantuml-format) i=$((i + 1)) ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  if [ "$fi_" -ge 0 ] && [ "$fi_" -lt "${#args[@]}" ]; then
+    f="${args[$fi_]#"$pre"}"
     if [ -n "$f" ] && [ ! -f "$f" ] && [ -r "$f" ]; then
-      if [ -z "$wdir" ]; then
-        wdir="$(mktemp -d 2>/dev/null)" || { echo "confluence: cannot create a temporary directory" >&2; exit 1; }
-        trap 'rm -rf "$wdir"' EXIT
-      fi
-      k=$((k + 1))
-      cat -- "$f" >"$wdir/body$k" || exit 1
-      f="$wdir/body$k"
-      arg="$pre$f"
+      wdir="$(mktemp -d 2>/dev/null)" || { echo "confluence: cannot create a temporary directory" >&2; exit 1; }
+      trap 'rm -rf "$wdir"' EXIT
+      cat -- "$f" >"$wdir/body" || exit 1
+      f="$wdir/body"
+      args[$fi_]="$pre$f"
     fi
     if [ -n "$f" ] && [ -f "$f" ] && command -v iconv >/dev/null 2>&1 &&
       ! iconv -f UTF-8 -t UTF-32LE "$f" >/dev/null 2>&1; then
       echo "confluence: the --file body is not valid UTF-8, so nothing was sent; convert it first (for example: iconv -f SHIFT_JIS -t UTF-8 page.txt > page.md)" >&2
       exit 1
     fi
-    new+=("$arg")
-  done
-  set -- "${new[@]}"
-  unset new prev k f pre
+  fi
+  set -- "${args[@]}"
+  unset args fi_ pre seen i a f
 fi
 
 # The commands confluence-cli moves to the v2 API once v1 answers 410 (its README's list), where a
@@ -287,9 +300,14 @@ run_write() {
     wdir="$(mktemp -d 2>/dev/null)" || { CONFLUENCE_API_TOKEN="$tok" exec "$real" "$@" </dev/null; }
     trap 'rm -rf "$wdir"' EXIT
   fi
-  CONFLUENCE_API_TOKEN="$tok" "$real" "$@" </dev/null 2> >(tee "$wdir/err" >&2)
+  # tee is started from this shell so its PID is known: the copy is read only after tee has
+  # written all of it, and before the EXIT trap removes the directory.
+  exec {errfd}> >(tee "$wdir/err" >&2)
+  teepid=$!
+  CONFLUENCE_API_TOKEN="$tok" "$real" "$@" </dev/null 2>&"$errfd"
   rc=$?
-  wait "$!" 2>/dev/null
+  exec {errfd}>&-
+  wait "$teepid" 2>/dev/null
   if [ "$rc" -ne 0 ] && transport_failure "$wdir/err"; then echo "$unknown_write" >&2; fi
   exit "$rc"
 }

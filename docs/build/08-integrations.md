@@ -484,6 +484,10 @@ them in for one `exec`:
   through) and refused if invalid: the CLI would decode it with replacement characters and write
   the mangled text with exit 0. A `--file` that is not a regular file (`/dev/stdin`, a pipe) is
   read once into a private copy that is checked and passed by path, because the CLI gets no stdin.
+  The arguments are read the way commander reads them (a value-taking option takes the next word,
+  nothing after `--` is an option, the last `--file` wins), so only the `--file` the CLI will use is
+  checked or copied, and a body that merely looks like `--file=…` is left alone. With a terminal,
+  tee is opened with `exec {fd}>` and waited for before its copy is read.
 - **The user's own setup wins, decided by what is there, never by reading a config**: any
   `CONFLUENCE_*` variable that selects a host, identity or credential, a `--profile` flag, or a
   `config.json` in `CONFLUENCE_CONFIG_DIR` (else `$XDG_CONFIG_HOME/confluence-cli` and

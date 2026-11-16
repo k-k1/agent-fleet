@@ -495,6 +495,45 @@ env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
 grep -q GOOD "$T/out" || fail "tty write success: output not shown"
 grep -q "may or may not" "$T/out" && fail "tty write success: may-or-may-not line printed"
 
+# 28. --file is found the way the CLI's parser finds it: an option value that looks like --file is
+# a value (left untouched), and of two --file only the last is read, checked and copied.
+pipe_run() { # pipe_run <stdin text> <args…>: the wrapper with that stdin, no terminal
+  local input="$1"
+  shift
+  rm -f "$T/cf.seen" "$T/cf.body"
+  printf '%s' "$input" | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
+    AF_CONFLUENCE_REAL="$T/bin/confluence-real" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err"
+  rc=$?
+}
+reset; oauth_answer
+pipe_run '' create Title SP --content '--file=/dev/stdin'
+grep -qxF 'ARG=--file=/dev/stdin' "$T/cf.seen" || fail "--content value rewritten: $(grep '^ARG=' "$T/cf.seen")"
+pipe_run '' update 1 -c '-f/dev/stdin'
+grep -qxF 'ARG=-f/dev/stdin' "$T/cf.seen" || fail "-c value rewritten: $(grep '^ARG=' "$T/cf.seen")"
+pipe_run '' update 1 --title --file
+grep -qxF 'ARG=--file' "$T/cf.seen" || fail "--title value taken as --file"
+pipe_run $'日本語の本文\n' update 1 --file /dev/stdin --file /dev/stdin
+[ "$rc" = 0 ] && [ "$(cat "$T/cf.body" 2>/dev/null)" = "日本語の本文" ] || fail "two --file /dev/stdin: rc=$rc, the CLI read '$(cat "$T/cf.body" 2>/dev/null)'"
+pipe_run '' update 1 --file "$T/sjis.md" --file "$T/ok.md"
+[ "$rc" = 0 ] && [ -f "$T/cf.seen" ] || fail "an overridden non-UTF-8 --file was checked: rc=$rc $(cat "$T/err")"
+pipe_run '' update 1 --file "$T/ok.md" --file "$T/sjis.md"
+[ "$rc" = 1 ] && [ ! -f "$T/cf.seen" ] || fail "the last --file (non-UTF-8) was not checked: rc=$rc"
+
+# 29. A slow tee (attached write) is waited for: the unknown-outcome line still appears and nothing
+# complains about a removed file.
+mkdir -p "$T/slowbin"
+cat >"$T/slowbin/tee" <<'STUB'
+#!/bin/sh
+sleep 0.4
+exec /usr/bin/tee "$@"
+STUB
+chmod +x "$T/slowbin/tee"
+reset; oauth_answer
+env -i PATH="$T/slowbin:$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" STUB_CF_FAILS=9 STUB_CF_ERR="Error: socket hang up" \
+  AF_CONFLUENCE_REAL="$T/bin/confluence-real" script -qec "bash '$WRAPPER' create T SP -c x" /dev/null >"$T/out" 2>&1
+grep -q "may or may not have been written" "$T/out" || fail "slow tee: no may-or-may-not line: $(cat "$T/out")"
+grep -q "No such file" "$T/out" && fail "slow tee: the copy was removed under tee"
+
 if [ "$fails" != 0 ]; then
   echo "confluence-auth-wrapper-test: $fails failure(s)" >&2
   exit 1
