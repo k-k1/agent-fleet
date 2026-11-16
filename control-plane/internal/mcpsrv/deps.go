@@ -110,6 +110,9 @@ type CP interface {
 	// that does not enforce the policy. kind is the create's kind; one that runs no model is not
 	// judged.
 	RoutePolicyErr(ctx context.Context, mv store.MembershipView, rt runtime.Runtime, kind, route string) error
+	// HiddenKinds is the set of harnesses the tenant's credential policy forbids altogether
+	// (ADR 0138 D10a), which the tool texts leave out (#4241). An error means it cannot be read.
+	HiddenKinds(ctx context.Context, tenantID string) (map[string]bool, error)
 	MemoList(ctx context.Context, membershipID string) (any, error)
 	// MemoCreate's connection is the authenticated connection id, recorded as the producer.
 	MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string) (any, error)

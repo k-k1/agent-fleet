@@ -29,6 +29,9 @@ type testCP struct {
 	custodian KeyCustodian
 	// admin, when set, is the tenant every TenantAdminFor call resolves to (an admin of it).
 	admin *store.Tenant
+	// hidden is what HiddenKinds answers for every tenant; hiddenErr fails it.
+	hidden    map[string]bool
+	hiddenErr error
 }
 
 var _ CP = testCP{}
@@ -44,6 +47,9 @@ func (c testCP) EvictMembershipCache(string)                            { unwire
 func (c testCP) ProvidedRouteErr(context.Context, string, string) error { return nil }
 func (c testCP) RoutePolicyErr(context.Context, store.MembershipView, runtime.Runtime, string, string) error {
 	return nil
+}
+func (c testCP) HiddenKinds(context.Context, string) (map[string]bool, error) {
+	return c.hidden, c.hiddenErr
 }
 func (c testCP) TenantSel(*http.Request) string { unwired("TenantSel"); return "" }
 
