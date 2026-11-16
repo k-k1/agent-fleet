@@ -299,13 +299,13 @@ Memos you accumulate and send to a session in one go (the tables are
   `queueDelivery`, and a memo the delivery that claimed it (`deliveryId`).
 
 - **Typed references** ([decisions/0137](../decisions/0137-message-queues.md) §4, step 3, Control Plane half). A message
-  may carry a pointer to a work item, never a copy of it. This is the contract the Agent (step 3b) and the Console
+  may carry a pointer to a work item, never a copy of it. This is the contract the Agent (step 3b, built) and the Console
   (step 3c) are built on.
   - *Wire.* `reference` is an object `{"provider": "github", "key": "acme/app#12", "url": "https://github.com/acme/app/issues/12"}`,
     absent when there is none. It is read on `POST /api/memos` and `POST /internal/memos` (create), on the `PATCH` of
     both (absent leaves it, a full object sets it, `{}` or all three fields empty clears it, `null` reads as absent),
-    and it is in every memo of `GET /api/memos` and `GET /internal/memos`. `/mcp`'s memo tools do not take one in this
-    step. A message that has a reference is a `text` message: its `body` may be empty only when a reference is set
+    and it is in every memo of `GET /api/memos` and `GET /internal/memos`. The hosted `/mcp` memo tools (`add_memo`, `update_memo`) take the same `reference` with the same meanings
+    and the same validation, and enter `held`. A message that has a reference is a `text` message: its `body` may be empty only when a reference is set
     (images alone are as before). Storage is three columns, `memo.ref_provider`, `ref_key` and `ref_url`, with `''`
     for none (migrations 0138 and Postgres 0123).
   - *Validation* (`400 memo_ref_invalid`). All three or none. `provider` is lower-cased and must be one the work items
@@ -341,10 +341,10 @@ Memos you accumulate and send to a session in one go (the tables are
     of the delivery carry exactly one reference between them, the create also carries
     `"work_item": {"provider": "github", "key": "acme/app#12"}`, the object the Agent's `session_create` already
     takes from a launch from a work item (the item's title, type and labels are not kept, so they are not sent), so
-    the session's work-item link follows the work-item rules. The branch does not: the queue's create sends no branch, so the Agent still makes its `temp/<slug>` one, and naming it from the item (`feature/{key}`, with `#` and `/` made safe, and the worktree clash) is for step 3b to design. With none, or two or more, there is no `work_item`.
+    the session's work-item link follows the work-item rules. The branch is the Agent's: a queue's create sends none, and the Agent names it from the `work_item` by the member's naming rules (§ the Agent's queue create, [04](04-agent.md)). With none, or two or more, there is no `work_item`, and the session keeps the Agent's `temp/<slug>` branch.
   - *The marker.* `GET /sessions` answers `"queueRefs": 1` when the Agent composes the prompt for items that carry a
     reference (a number apart from `queueReport`, which stays at 1). A delivery that holds a reference is never
-    sent to an Agent without it. Until step 3b every Agent lacks it. The send asks the Agent after the wake and
+    sent to an Agent without it. An Agent from before step 3b lacks it. The send asks the Agent after the wake and
     before the key is reserved: without the marker the delivery closes as `not_sent`, the messages go back to
     `pending` where they were, and the queue's `noRefsAt` is set. While `noRefsAt` is set a fire by itself leaves
     the messages that carry a reference where they are and fires the rest of the queue, a press of "fire now" tries

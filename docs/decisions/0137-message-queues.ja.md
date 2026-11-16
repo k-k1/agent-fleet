@@ -614,3 +614,15 @@ retire が保留のまま 2 回再起動し、かつカウンタが巻き戻っ�
 送らない（キューの `noRefsAt` と待ち理由 `no_references` が示す）。未決 2 には触れない: セッションからの参照だけの
 メッセージも他と同じく `held`。§4 のブランチ名の文はこの slice では満たされない: キューの create はブランチを送らないので、セッションは Agent の `temp/` ブランチのままで、作業項目の規則に従うのはリンクだけ。項目からの命名は slice B。Agent（マーカー・prompt・ツール引数）と Console（「auto-run に追加」）に残す。wire は
 docs/build/03-control-plane.md §3.6。
+
+2026-11-17 追記（#4150、step 3 の slice B、Agent とホストされたツール）: `add_memo` と `update_memo` が任意の
+`reference` `{provider, key, url}` を取る。Agent のセッションツール（relay を通る。無ければ据え置き、`{}` で外す、
+完全な object で設定）と、Control Plane のホストされた `/mcp` ツール（他の `/mcp` の書き込みと同じく `held` で入る）の両方。
+参照を送ったのに答えに参照が無い呼び出しは、参照が保たれなかったと伝える（古い Control Plane はこの項目を無視する）。
+配信の prompt は item の参照をメンバーのメモの隣に引用つきのデータとして示し、参照だけの item も空には出さず、
+項目は取得されていないのでセッションが自分で読む、と Agent Fleet 自身の言葉で 1 度だけ伝える。Agent はこれとともに
+`queueRefs: 1` を送る。§4 のブランチ名の文は満たされた: 作業項目と worktree を持ちブランチを指定しない queue の create は、
+メンバーの命名規則がその項目に与えるブランチ（既定は GitHub・Bitbucket が `feature/<番号>`、Jira が `feature/PROJ-7`。base は
+規則のもの）を使う。既にあるブランチは Console の「既存のブランチで作業」と同じくチェックアウトし、別の作業コピーが持つ
+ブランチ、git が断る名前、規則が名前を返さない場合は使い捨ての `temp/` のまま: 名前のために配信を失敗させない。
+wire と挙動は docs/build/04-agent.md。

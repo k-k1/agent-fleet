@@ -96,6 +96,23 @@ source_of_truth: "コード（本書は地図と設計意図）"
     返さない（`Engine.Wakers`、`internal/watch/owner.go`）。
   - `GET /sessions` は `sessions` の隣に `"queueReport": 1` を載せる。Control Plane が、何も持たないから
     `wakers` を省く Agent と、何も言わない古い Agent を見分けるため。
+    同じ応答は、配信の prompt を参照つき item に対して組み、下のとおりブランチを決める Agent では
+    `"queueRefs": 1` も載せる。Control Plane は参照を含む配信を、これを送る Agent にだけ送る（`queueRefsVersion`）。
+  - **参照つきのキューの create**（ADR 0137 §4、`session_queue.go`・`session_queue_branch.go`）。item は
+    `reference: {provider, key, url}` を持てる（3 項目そろえる。欠ければ `bad_queue_delivery` で断る）。prompt は
+    それをメンバーのメモの隣に引用つきのデータ行として示し、参照だけの item も空には出さない。データのラベルの後ろに
+    Agent Fleet 自身の 1 文を足し、項目は取得されていないこと、`gh`・`jira`・`bkt` で自分で読むことを伝える。
+    standing instruction はメンバーのもので、item はデータのまま。`work_item` を持ち、worktree を求め、
+    ブランチを指定しない create は、メンバーの命名規則がその項目に与えるブランチ名（`QueueBranchName`。`branch_name`
+    ツールの背後のリゾルバーに配線。既定は `feature/<番号>` か `feature/PROJ-7`）とその規則の base を使う。Console の
+    作業項目からの起動が送るのと同じ。項目の title は分からないので、slug が要る規則は名前を返さない。そのブランチが既に
+    ある（前回の実行）ときは、Console の「既存のブランチで作業」が同じ衝突に対してするのと同じくチェックアウトする。
+    別の作業コピーが持っている、git が名前を断る、リゾルバーが名前を返さない場合は、使い捨ての `temp/<slug>` で始める。
+    名前のために配信を失敗させない。`work_item` の無い create や、自分のブランチを持つ create は変わらない。
+  - **memo relay**（`internal/memorelay`）は create と update の `reference` を Control Plane の 3 通りの意味で
+    転送する: 無い（または `null`）は据え置き、`{}` は外す、完全な object は設定。ツール（`add_memo`・`update_memo`）は
+    Control Plane の答えをそのまま返すので、セッションは `existing` と state を見る。参照を送ったのに答えに参照が無い
+    呼び出しは、参照が保たれなかったと伝えるエラーを返す（古い Control Plane はこの項目を無視する）。
   - `POST /sessions/{name}/retire` は、そのセッションと、それが始めた全セッション（深さを問わない。
     `origin == "session"` と `originSession` の連鎖で、`spendDescendants` と同じ辿り方）について、
     上のものを全部終わらせ、予約済みの再開を取り消し、halt する。答えは、セッションの一覧、それぞれで

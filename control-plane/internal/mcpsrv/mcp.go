@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -836,22 +837,27 @@ func memberToolsHiding(hidden hiddenKinds) []mcpTool {
 		},
 		{
 			name: "add_memo", minScope: scopeWrite,
-			desc: "Add a note to your memo queue - what the user means by \"memo\" (メモ) here, not your own agent memory or notes file. kind=text needs `body`; kind=file needs `refPath` (a ~/repos/... path) with `body` as an optional comment. `repo` ('' = 共通/未分類) and `category` (free label) group it. Capture TODOs/ideas here to flush together later.",
+			desc: "Add a note to your memo queue - what the user means by \"memo\" (メモ) here, not your own agent memory or notes file. kind=text needs `body`; kind=file needs `refPath` (a ~/repos/... path) with `body` as an optional comment. `repo` ('' = 共通/未分類) and `category` (free label) group it. Capture TODOs/ideas here to flush together later. To point at a work item (GitHub, Jira, Bitbucket) instead of describing it, pass `reference`; `body` may then be empty.",
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"kind":     map[string]any{"type": "string", "description": "text | file"},
-					"body":     map[string]any{"type": "string", "description": "note text (kind=text) or comment (kind=file)"},
-					"refPath":  map[string]any{"type": "string", "description": "~/repos/... path (kind=file)"},
-					"repo":     map[string]any{"type": "string", "description": "repo bucket, '' = 共通/未分類 (optional)"},
-					"category": map[string]any{"type": "string", "description": "sub-project label (optional)"},
+					"kind":      map[string]any{"type": "string", "description": "text | file"},
+					"body":      map[string]any{"type": "string", "description": "note text (kind=text) or comment (kind=file)"},
+					"refPath":   map[string]any{"type": "string", "description": "~/repos/... path (kind=file)"},
+					"repo":      map[string]any{"type": "string", "description": "repo bucket, '' = 共通/未分類 (optional)"},
+					"category":  map[string]any{"type": "string", "description": "sub-project label (optional)"},
+					"reference": memoRefSchema(false),
 				},
 				"required": []string{"kind"},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
+				ref, err := argMemoRef(args)
+				if err != nil {
+					return "", err
+				}
 				dto, err := a.cp.MemoCreate(ctx, res.MV, mcpCallFrom(ctx).patID,
 					argStr(args, "repo"), argStr(args, "category"),
-					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"))
+					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"), ref)
 				if err != nil {
 					return "", err
 				}
@@ -864,20 +870,25 @@ func memberToolsHiding(hidden hiddenKinds) []mcpTool {
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"id":       map[string]any{"type": "string", "description": "memo id (from list_memos)"},
-					"body":     map[string]any{"type": "string", "description": "new body (optional)"},
-					"repo":     map[string]any{"type": "string", "description": "new repo bucket (optional)"},
-					"category": map[string]any{"type": "string", "description": "new category (optional)"},
-					"refPath":  map[string]any{"type": "string", "description": "new ref path (optional)"},
-					"position": map[string]any{"type": "integer", "description": "new position within its group (optional)"},
+					"id":        map[string]any{"type": "string", "description": "memo id (from list_memos)"},
+					"body":      map[string]any{"type": "string", "description": "new body (optional)"},
+					"repo":      map[string]any{"type": "string", "description": "new repo bucket (optional)"},
+					"category":  map[string]any{"type": "string", "description": "new category (optional)"},
+					"refPath":   map[string]any{"type": "string", "description": "new ref path (optional)"},
+					"position":  map[string]any{"type": "integer", "description": "new position within its group (optional)"},
+					"reference": memoRefSchema(true),
 				},
 				"required": []string{"id"},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
+				ref, err := argMemoRef(args)
+				if err != nil {
+					return "", err
+				}
 				dto, err := a.cp.MemoUpdate(ctx, res.MV.MembershipID, argStr(args, "id"),
 					argStrPtr(args, "repo"), argStrPtr(args, "category"),
 					argStrPtr(args, "body"), argStrPtr(args, "refPath"),
-					argIntPtr(args, "position"))
+					argIntPtr(args, "position"), ref)
 				if err != nil {
 					return "", err
 				}
@@ -1110,6 +1121,49 @@ func argStrings(a map[string]any, k string) []string {
 		}
 	}
 	return out
+}
+
+// memoRefSchema is the `reference` argument of add_memo and update_memo.
+func memoRefSchema(update bool) map[string]any {
+	desc := "Optional pointer to a work item, never a copy of it: {provider: github|jira|bitbucket, key: owner/repo#12 (GitHub, Bitbucket) or PROJ-12 (Jira), url}. All three are needed. " +
+		"The item's text is not stored; the session that gets the note reads the item itself. " +
+		"In a queue category, a second note for an item that already has one waiting answers that note (existing: true) instead of adding another. A note may be only a reference (no body)."
+	if update {
+		desc += " Omit to leave the reference as it is; {} clears it."
+	}
+	return map[string]any{
+		"type":        "object",
+		"description": desc,
+		"properties": map[string]any{
+			"provider": map[string]any{"type": "string", "description": "github | jira | bitbucket"},
+			"key":      map[string]any{"type": "string", "description": "owner/repo#12 or PROJ-12"},
+			"url":      map[string]any{"type": "string", "description": "http(s) address of the item"},
+		},
+	}
+}
+
+// argMemoRef reads the `reference` argument: absent or null is nil (leave it), an object is a
+// MemoRef (all three empty means clear), anything else is refused.
+func argMemoRef(a map[string]any) (*MemoRef, error) {
+	v, ok := a["reference"]
+	if !ok || v == nil {
+		return nil, nil
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, errors.New("reference must be an object {provider, key, url}")
+	}
+	out := &MemoRef{}
+	for k, dst := range map[string]*string{"provider": &out.Provider, "key": &out.Key, "url": &out.URL} {
+		if x, ok := m[k]; ok && x != nil {
+			s, ok := x.(string)
+			if !ok {
+				return nil, fmt.Errorf("reference.%s must be a string", k)
+			}
+			*dst = s
+		}
+	}
+	return out, nil
 }
 
 func jsonText(v any) (string, error) {

@@ -121,6 +121,15 @@
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   -> POST /memos {"from":"slot01","memo":{"refPath":[[{}]]}}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## add_memo badtype-reference {"reference":[[{}]]}
+[assistant-read assistant-read-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"reference":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"reference":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo badtype-repo {"repo":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -130,14 +139,14 @@
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   -> POST /memos {"from":"slot01","memo":{"repo":[[{}]]}}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
-## add_memo full {"body":"v","category":"v","kind":"v","refPath":"v","repo":"v"}
+## add_memo full {"body":"v","category":"v","kind":"v","refPath":"v","reference":{},"repo":"v"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
-  -> POST /memos {"from":"","memo":{"body":"v","category":"v","kind":"v","refPath":"v","repo":"v"}}
+  -> POST /memos {"from":"","memo":{"body":"v","category":"v","kind":"v","refPath":"v","reference":{},"repo":"v"}}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  -> POST /memos {"from":"slot01","memo":{"body":"v","category":"v","kind":"v","refPath":"v","repo":"v"}}
+  -> POST /memos {"from":"slot01","memo":{"body":"v","category":"v","kind":"v","refPath":"v","reference":{},"repo":"v"}}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo kind= {"kind":""}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
@@ -4175,16 +4184,21 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（メモ id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
+## update_memo badtype-reference {"reference":[[{}]]}
+[assistant-read assistant-read-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（メモ id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 ## update_memo badtype-repo {"repo":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（メモ id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
-## update_memo full {"body":"v","category":"v","id":"v","position":2,"refPath":"v","repo":"v"}
+## update_memo full {"body":"v","category":"v","id":"v","position":2,"refPath":"v","reference":{},"repo":"v"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
-  -> PATCH /memos/v {"body":"v","category":"v","id":"v","position":2,"refPath":"v","repo":"v"}
+  -> PATCH /memos/v {"body":"v","category":"v","id":"v","position":2,"refPath":"v","reference":{},"repo":"v"}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"position\" for update_memo","type":"text"}],"isError":true,"resultType":"complete"}}

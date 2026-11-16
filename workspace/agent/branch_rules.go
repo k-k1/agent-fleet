@@ -336,6 +336,21 @@ func handlePutUserBranchRules(w http.ResponseWriter, r *http.Request) {
 
 func init() {
 	sessionx.BranchKinds = resolvedKindNames
+	sessionx.QueueBranchName = queueBranchName
+}
+
+// queueBranchName is sessionx.QueueBranchName: the name and base the member's rules give for an
+// item, as a Console launch from that item gets them from POST /repos/{name}/branch-name. The
+// item's title is not known to a queue (a reference is a pointer, never a copy), so a template
+// that needs the title's slug gives no name and the delivery keeps its throwaway branch.
+func queueBranchName(ctx context.Context, dir, provider, key string) (name, base string) {
+	c := newBranchContext(ctx, dir, false)
+	res := branchrule.Name(c.layers, c.id, branchrule.Request{Item: &branchrule.Item{Provider: provider, Key: key}})
+	if res.NameEmpty {
+		return "", ""
+	}
+	_, baseBranch, _ := branchrule.ResolveBase(c.dir, res.Base)
+	return res.Name, baseBranch
 }
 
 // branchPreviewRequest is POST /branch-rules/preview: the template as typed, not yet saved,

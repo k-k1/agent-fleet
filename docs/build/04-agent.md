@@ -106,6 +106,29 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     `internal/watch/owner.go`).
   - `GET /sessions` carries `"queueReport": 1` beside `sessions`, so a Control Plane can tell an
     Agent that omits `wakers` because the session holds nothing from an older one that does not say.
+    It carries `"queueRefs": 1` beside it when the Agent composes a delivery's prompt for items
+    that hold a reference and names the branch as below; the Control Plane sends a delivery that
+    holds a reference only to an Agent that says so (`queueRefsVersion`).
+  - **A queue's create with a reference** (ADR 0137 §4, `session_queue.go`, `session_queue_branch.go`).
+    An item may carry `reference: {provider, key, url}` (all three, or the create is refused as
+    `bad_queue_delivery`). The prompt shows it as one quoted data line beside the member's note, and
+    an item that is only a reference is never rendered empty; after the data label one sentence of
+    Agent Fleet's own tells the session that nothing fetched the item and it should read it itself
+    with `gh`, `jira` or `bkt`. The standing instruction stays the member's, and the items stay data.
+    A create that carries `work_item`, asks for a worktree and names no branch takes the branch the
+    member's naming rules give for the item (`QueueBranchName`, wired to the resolver behind the
+    `branch_name` tool; the default rule gives `feature/<number>` or `feature/PROJ-7`) with the rules'
+    base, as a Console launch from the item sends them. The item's title is not known, so a rule that
+    needs its slug gives no name. When that branch already exists (an earlier run), it is checked out,
+    as the Console's "work on the existing branch" does for the same clash; when another working copy
+    holds it, or git refuses the name, or the resolver gives none, the session starts on the throwaway
+    `temp/<slug>` branch: a name never fails a delivery. A create without `work_item`, or with a branch
+    of its own, is unchanged.
+  - **The memo relay** (`internal/memorelay`) forwards `reference` on a create and an update with the
+    Control Plane's three meanings: absent (or `null`) leaves it, `{}` clears it, a full object sets
+    it. The tools (`add_memo`, `update_memo`) pass the Control Plane's answer back as it came, so the
+    session sees `existing` and the state; a call that sent a reference whose answer has none gets an
+    error result saying the reference was not kept (an older Control Plane ignores the field).
   - `POST /sessions/{name}/retire` ends all of that for the session and for every session it
     started at any depth (`origin == "session"` and the `originSession` chain, the walk
     `spendDescendants` makes), cancels their booked resumes, then halts them. The answer lists
