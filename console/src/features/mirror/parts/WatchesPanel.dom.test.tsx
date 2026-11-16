@@ -231,6 +231,19 @@ describe("WatchesPanel", () => {
       expect(rows()[0].querySelector(".mw-ref")?.textContent).toBe("s4uyskj");
     });
 
+    it("follows the session appearing and disappearing while the row stays", () => {
+      mount([fleet], vi.fn());
+      act(() => useSessionsStore.setState({ sessions: [{ name: "s4uyskj" } as never] }));
+      expect(rows()[0].querySelectorAll("a.md-session-link")).toHaveLength(1);
+      act(() => useSessionsStore.setState({ sessions: [] }));
+      expect(rows()[0].querySelector("a")).toBeNull();
+      expect(rows()[0].querySelector(".mw-ref")?.textContent).toBe("s4uyskj");
+      act(() => useSessionsStore.setState({ sessions: [{ name: "s4uyskj" } as never] }));
+      const links = rows()[0].querySelectorAll("a.md-session-link");
+      expect(links).toHaveLength(1);
+      expect(links[0].textContent).toBe("s4uyskj");
+    });
+
     it("opens the session menu on a right click under a host", () => {
       useSessionsStore.setState({ sessions: [{ name: "s4uyskj" } as never] });
       const menu = vi.fn();

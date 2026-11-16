@@ -272,16 +272,18 @@ function SessionRef({ name }: { name: string }) {
       hasMenu ? (n, x, y) => menuRef.current?.(n, x, y) : undefined,
     );
     a.classList.add("mw-ref");
-    el.replaceChildren(a);
-    return () => el.replaceChildren();
+    el.append(a);
+    // Only the anchor this effect added: React may already have reused the element for the
+    // plain-text fallback and put the name in it.
+    return () => a.remove();
   }, [name, exists, hasMenu]);
   if (!exists) {
     return (
-      <span className="mw-ref" title={name}>
+      <span key="text" className="mw-ref" title={name}>
         {name}
       </span>
     );
   }
   // display: contents keeps the anchor itself the row's flex item, laid out like any other ref.
-  return <span ref={host} className="mw-ref-host" />;
+  return <span key="link" ref={host} className="mw-ref-host" />;
 }
