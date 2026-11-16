@@ -184,6 +184,7 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 		}
 		meta[r.Item.ItemID] = m
 	}
+	order = placeTurnErrors(order, byID)
 	items := make([]msp.Item, 0, len(order))
 	for _, id := range order {
 		items = append(items, byID[id])
@@ -399,6 +400,10 @@ func turnsFromItems(items []msp.Item) []transcript.Turn {
 				Text:  text,
 			})
 			assistant = -1
+
+		case itemKindTurnError:
+			t := openAssistant(it)
+			t.Parts = append(t.Parts, turnErrorPart(it))
 
 		default:
 			// `hookRun` and any kind a later muse adds: the schema's rule is that an unknown
