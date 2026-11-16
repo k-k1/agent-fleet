@@ -284,7 +284,7 @@ In these cases the cause has no line of its own. When another reason from the ta
 
 Read "Not finished" in the run history.
 
-- "waiting for you": open the session and answer the question, permission or plan. Its place is not freed until you do. This holds after the session was stopped too: the question stays on the stopped session's card, and you answer it there with "**Answer and resume**" without starting the session first A session you started again without answering the kept question still counts as waiting for you, until you answer or discard the card
+- "waiting for you": open the session and answer the question, permission or plan. Its place is not freed until you do. This holds after the session was stopped too: the question stays on the stopped session's card, and you answer it there with "**Answer and resume**" without starting the session first. A session you started again without answering the kept question still counts as waiting for you, until you answer or discard the card
 - "waiting on a watch or a timer": while a later restart is set, the run does not end. Stop the watch or the timer in the session if you do not need it
 - "waiting for a usage limit": it waits for the limit to lift, and carries on by itself afterwards
 - "working": the session or one of its children is running. When the "A run is overdue" notification comes, the run has passed the time you set. After an hour without a sign of work, it is stopped by itself
