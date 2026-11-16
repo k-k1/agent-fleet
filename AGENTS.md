@@ -153,6 +153,8 @@ A module-wide or `-race -count=3` run on this shared host times out under load (
   - `workspace/agent/internal/statemig`: `TestEveryStateStoreIsInEntries`
   - both module roots: `TestWireMapGolden`, `TestMainFilesAllowlist`
   - `workspace/agent` root: `TestRouteCatalogSnapshot`
+  - both module roots, when routes change: `TestRouteTableGolden` (a `-run` on the root
+    package would otherwise skip it)
 
   Then `go vet`, the `gofmt -l` output check (see below) and `.githooks/pre-commit`.
 - Use `-race` only for new or changed tests that exercise goroutines, locks or shared state,
