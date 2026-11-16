@@ -17,6 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -38,6 +39,16 @@ var chatLaunches = map[string]func(model string) routes.Launch{
 // the route its backend would run on is forbidden, cannot be told under a restriction, or the
 // policy cannot be confirmed now. Nothing was sent to a model.
 var ErrRoutePolicy = errors.New("the credential policy does not allow this call")
+
+// ErrSwitchedOff is the refusal of a call on a kind the member has switched off (ui-prefs
+// agentEnabled, and lcppEnabled for lcpp). It is wrapped in ErrRoutePolicy, so every fallback that
+// moves past a policy refusal moves past it too.
+var ErrSwitchedOff = errors.New("the member has switched this agent off")
+
+// kindSwitchedOff reports the member's own off switch for kind.
+func kindSwitchedOff(kind string) bool {
+	return !uiprefs.AgentEnabled(kind) || kind == lcppKind && !uiprefs.LcppEnabled()
+}
 
 // chatLaunchLater are the kinds whose one-shot resolves its model after oneShotRunOn, and with it
 // its route (opencode's recommendation, opencodeOneShotModel): they are judged there.
@@ -63,6 +74,11 @@ func chatLaunchChecked(kind, model string) (route, binding string, err error) {
 // while nothing is restricted and the policy can be confirmed, or the route is allowed. A refusal
 // wraps ErrRoutePolicy, and the store's Gate error when that is the reason.
 func routeChecked(kind, route string) error {
+	// The member's own switch for the kind (ADR 0138 D7 layer 4) refuses every call on it, a stored
+	// conversation, a feature pin and a fallback alike; selection skips it through chatKindAllowed.
+	if kindSwitchedOff(kind) {
+		return fmt.Errorf("%w: %w: %s", ErrRoutePolicy, ErrSwitchedOff, kind)
+	}
 	if gerr := routepolicy.Active().Gate(); gerr != nil {
 		return fmt.Errorf("%w: %w", ErrRoutePolicy, gerr)
 	}
@@ -131,6 +147,8 @@ func streamErrEvent(err error) map[string]any {
 // error.
 func policyErrCode(err error) (int, string) {
 	switch {
+	case errors.Is(err, ErrSwitchedOff):
+		return http.StatusForbidden, "agent_disabled"
 	case errors.Is(err, routepolicy.ErrUnconfirmed), errors.Is(err, routepolicy.ErrUnrecorded):
 		return http.StatusServiceUnavailable, routes.CodePolicyUnconfirmed
 	case errors.Is(err, ErrRoutePolicy):

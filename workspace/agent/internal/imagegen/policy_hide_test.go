@@ -65,6 +65,16 @@ func TestStatusHidesProvidersThePolicyForbids(t *testing.T) {
 	if got := ids(); len(got) != 1 || got[0] != "codex" {
 		t.Errorf("under the policy the providers are %v, want only codex on its API key", got)
 	}
+	// The order the Console lists as the member's providers hides the same ones.
+	rec := httptest.NewRecorder()
+	HandleStatus(rec, httptest.NewRequest(http.MethodGet, "/imagegen/status?session=slot01", nil))
+	var got statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Order, []string{"codex"}) {
+		t.Errorf("under the policy the order is %v, want only codex", got.Order)
+	}
 }
 
 // A generation is judged at the point each provider would run (ADR 0138 D12): a provider on a

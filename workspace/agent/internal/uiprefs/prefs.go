@@ -209,6 +209,16 @@ func LcppEnabled() bool {
 	return !ok || v
 }
 
+// AgentEnabled is the member's own on/off switch for a harness (ADR 0138 D16, D10a: the member
+// layer), ui-prefs agentEnabled[<kind>]. Missing or not a boolean ⇒ on: absent means allowed, so
+// an upgrade switches nothing off. Only an explicit false switches the kind off. lcpp's older
+// switch (LcppEnabled) is read beside it, not folded into it.
+func AgentEnabled(kind string) bool {
+	m, _ := Read()["agentEnabled"].(map[string]any)
+	v, ok := m[kind].(bool)
+	return !ok || v
+}
+
 // PeerMessaging is the ON/OFF for session-to-session messaging (docs/log/58 / ADR 0041,
 // ui-prefs peerMessaging). Missing/invalid ⇒ **false**: this one is opt-in, unlike
 // AutoTitleSuggest. Letting sessions type into each other widens the injection surface
