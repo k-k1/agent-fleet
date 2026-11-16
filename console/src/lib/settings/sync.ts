@@ -470,6 +470,13 @@ export async function hydrateUIPrefs(): Promise<boolean> {
     (merged as any)[k] = srv[k];
     changed = true;
   }
+  // Keys this Console does not know (one a newer Console or the Agent's own writers added, such
+  // as a member-layer switch) belong to the server copy: the save is a whole-object PUT of the
+  // state, so a key missing from the state is a key the next save deletes. They are taken from
+  // the server as they are. A local one the server does not hold is kept only for the recorded
+  // owner (another Console version in this browser may have written it); for anyone else it is
+  // dropped, so this browser never sends another account's unknown keys.
+  if (adoptServerExtras(merged, srv, sameOwner)) changed = true;
   const serverRows = srv.agentLaunchDefaults;
   const legacyClaudeModel = typeof srv.defaultModel === "string" ? srv.defaultModel : merged.defaultModel;
   // A server written by an older Console has only defaultModel. Do not let the
@@ -525,6 +532,37 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   return true;
 }
 
+// Legacy keys a migration above has carried into today's keys. They are the one kind of unknown
+// key a save may delete on purpose: kept, they would outlive the migration that retired them.
+const RETIRED_SERVER_KEYS = new Set(["ttsQuietWhenHidden", "assistantAgent", "assistantUtilityModels", "autoTitleSuggest"]);
+
+// adoptServerExtras takes the server copy's unknown keys (not in DEFAULTS) into `merged`, and
+// drops the local ones the server lacks unless keepLocal. Reports whether anything changed.
+function adoptServerExtras(merged: Settings, srv: Record<string, unknown>, keepLocal: boolean): boolean {
+  const m = merged as unknown as Record<string, unknown>;
+  let changed = false;
+  for (const k of Object.keys(m)) {
+    if (!keepLocal && !(k in DEFAULTS) && !(k in srv)) {
+      delete m[k];
+      changed = true;
+    }
+  }
+  for (const k of Object.keys(srv)) {
+    if (!(k in DEFAULTS) && !RETIRED_SERVER_KEYS.has(k) && !sameValue(srv[k], m[k])) {
+      m[k] = srv[k];
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+// withoutExtras is s with only the keys this Console knows.
+function withoutExtras(s: Settings): Settings {
+  const out = { ...s } as unknown as Record<string, unknown>;
+  for (const k of Object.keys(out)) if (!(k in DEFAULTS)) delete out[k];
+  return out as unknown as Settings;
+}
+
 // `merged` with the keys the state has changed since `builtFrom` (another tab's change caught up
 // with by a write hook) taken from the state.
 function withCaughtUp(merged: Settings, builtFrom: Settings): Settings {
@@ -563,7 +601,8 @@ export function resyncAccumulatedForIdentitySwitch(): Promise<boolean> {
   for (const k of Object.keys(DEFAULTS) as (keyof Settings)[]) {
     if (isAccumulatedSetting(k)) (cleared as any)[k] = DEFAULTS[k];
   }
-  setState({ ...getSettings(), ...cleared });
+  // The previous owner's unknown keys go too: the new owner's hydrate brings theirs.
+  setState(withoutExtras({ ...getSettings(), ...cleared }));
   persist();
   notify();
   // Local is already empty, so the restore guard above does not fire and the new owner's server
