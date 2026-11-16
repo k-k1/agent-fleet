@@ -141,6 +141,12 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"models": []agents.ModelChoice{}, "reason": "route_policy"})
 		return
 	}
+	// One the member switched off is hidden the same way (the member layer, ADR 0138 D16), so a
+	// switched-off kind's models are not offered anywhere a picker asks.
+	if sessionx.KindSwitchedOff(r.PathValue("kind")) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"models": []agents.ModelChoice{}, "reason": "switched_off"})
+		return
+	}
 	ml := lister.ListModels(agents.ModelQuery{Ctx: r.Context(), CustomModels: claudeCustom, CatalogPref: catalogPref})
 	// enumerated is what the CLI/daemon answered before the kind's own shaping (opencode's
 	// billing route), -1 for a kind that does none; route is the route the menu was actually

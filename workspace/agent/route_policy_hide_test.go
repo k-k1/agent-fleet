@@ -880,3 +880,20 @@ func TestProviderKeysEntry(t *testing.T) {
 		t.Errorf("with opencode switched off: %v", got)
 	}
 }
+
+// A harness the member switched off offers no models either (the member layer): the picker gets
+// nothing, with a reason that names the member's own switch, not the policy. Switched on again it
+// offers its menu.
+func TestModelMenusHideASwitchedOffHarness(t *testing.T) {
+	t.Cleanup(agentreg.SwapForTest(session.KindOpencode, perCallLister{Agent: sessionx.AgentOf(session.KindOpencode),
+		routeOf: map[string]string{"anthropic/x": routes.RouteAnthropicAPI, "opencode/free": routes.RouteOpencodeZen}}))
+	writeUIPrefs(t, `{"hiddenModels":{},"agentEnabled":{"opencode":false}}`)
+	ids, reason := agentModels(t, session.KindOpencode)
+	if len(ids) != 0 || reason != "switched_off" {
+		t.Errorf("switched-off opencode offers %v (reason %q), want nothing, said", ids, reason)
+	}
+	writeUIPrefs(t, `{"hiddenModels":{},"agentEnabled":{"opencode":true}}`)
+	if ids, _ := agentModels(t, session.KindOpencode); len(ids) == 0 {
+		t.Error("control: switched back on, opencode offers nothing")
+	}
+}

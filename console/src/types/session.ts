@@ -278,6 +278,9 @@ export interface ProviderConn {
   // drawn differently from `false` ("observed, and it did not answer") — collapsing the two
   // would read as unreachable for every member the moment their workspace starts.
   reachable?: boolean;
+  // lcpp (ADR 0138 D5b): the endpoint's non-secret binding, the connection a default route on
+  // member-llamacpp is saved with. Absent with no endpoint, or one the policy does not allow.
+  binding?: string;
   // lcpp (docs/log/107, 2026-09-21 addendum): the model id from the last successful
   // /v1/models read against the member's own connection, and how many that read returned.
   // Exists because a member can swap the LAN box under the SAME saved URL — a live run

@@ -9,6 +9,8 @@ export interface LiveKind {
   routes?: string[];
   /** Routes the kind runs on with no selection, narrowed to the allowed ones. */
   fixedRoutes?: string[];
+  /** Allowed routes whose credential the Workspace holds now; absent when the kind cannot tell. */
+  usableRoutes?: string[];
 }
 
 /** What the member's settings pages may show (ADR 0138 D10a): the kinds the policy allows and the

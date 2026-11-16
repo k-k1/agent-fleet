@@ -14,6 +14,13 @@ export interface TtsCharConf {
 }
 
 export interface AgentLaunchDefault {
+  /**
+   * The member's default route (ADR 0138 D11b), {route, connection}: what a launch that names no
+   * route runs on while the organisation restricts routes. Written by the Agents page; the Agent
+   * reads it. Like every field normalizeAgentLaunchDefaults does not read, it is the server copy's
+   * to carry (knownLaunchDefaults leaves it out on an owner switch).
+   */
+  route?: { route: string; connection?: string };
   model: string;
   effort: string;
   startMode: "normal" | "plan";

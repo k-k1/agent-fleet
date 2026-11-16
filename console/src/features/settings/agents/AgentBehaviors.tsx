@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
@@ -19,16 +20,19 @@ import type {
 // container-backed toggles wait for their settings endpoint to answer.
 
 export function ClaudeBehavior({
+  head,
   claude,
   updateClaude,
 }: {
   claude: Partial<ClaudeSettings> | null;
   updateClaude: (patch: ClaudeSettingsPatch) => void;
+  head?: ReactNode;
 }) {
   const tr = useT();
   const s = useSettings();
   return (
     <ProviderCard id="claude" name={kindDisplayName("claude")} status={undefined}>
+      {head}
       <CardSettings>
         <LaunchDefaults kind="claude" />
         <ThinkingRow kind="claude" />
@@ -87,6 +91,7 @@ export function ClaudeBehavior({
 }
 
 export function CodexBehavior({
+  head,
   codex,
   updateCodex,
   agents,
@@ -96,11 +101,13 @@ export function CodexBehavior({
   updateCodex: (patch: CodexSettingsPatch) => void;
   agents: Partial<AgentRtkSettings> | false | null;
   updateAgents: (patch: AgentRtkPatch) => void;
+  head?: ReactNode;
 }) {
   const tr = useT();
   const s = useSettings();
   return (
     <ProviderCard id="codex" name={kindDisplayName("codex")} status={undefined}>
+      {head}
       {/* RTK is a workspace-level flag (independent of Codex auth) — pre-settable. */}
       <CardSettings>
         <LaunchDefaults kind="codex" />
@@ -140,9 +147,10 @@ export function CodexBehavior({
   );
 }
 
-export function CursorBehavior() {
+export function CursorBehavior({ head }: { head?: ReactNode }) {
   return (
     <ProviderCard id="cursor" name={kindDisplayName("cursor")} status={undefined}>
+      {head}
       <CardSettings>
         <LaunchDefaults kind="cursor" />
       </CardSettings>
@@ -150,13 +158,19 @@ export function CursorBehavior() {
   );
 }
 
-export function CopilotBehavior({ agents, updateAgents }: {
+export function CopilotBehavior({
+  head,
+  agents,
+  updateAgents,
+}: {
   agents: Partial<AgentRtkSettings> | false | null;
   updateAgents: (patch: AgentRtkPatch) => void;
+  head?: ReactNode;
 }) {
   const tr = useT();
   return (
     <ProviderCard id="copilot" name={kindDisplayName("copilot")} status={undefined}>
+      {head}
       <CardSettings>
         <LaunchDefaults kind="copilot" />
         {agents && (
@@ -174,9 +188,10 @@ export function CopilotBehavior({ agents, updateAgents }: {
   );
 }
 
-export function KiroBehavior() {
+export function KiroBehavior({ head }: { head?: ReactNode }) {
   return (
     <ProviderCard id="kiro" name={kindDisplayName("kiro")} status={undefined}>
+      {head}
       <CardSettings>
         <LaunchDefaults kind="kiro" />
       </CardSettings>
@@ -184,13 +199,19 @@ export function KiroBehavior() {
   );
 }
 
-export function AgyBehavior({ agents, updateAgents }: {
+export function AgyBehavior({
+  head,
+  agents,
+  updateAgents,
+}: {
   agents: Partial<AgentRtkSettings> | false | null;
   updateAgents: (patch: AgentRtkPatch) => void;
+  head?: ReactNode;
 }) {
   const tr = useT();
   return (
     <ProviderCard id="agy" name={kindDisplayName("agy")} status={undefined}>
+      {head}
       {/* RTK is a workspace-level flag (independent of agy auth) — pre-settable,
           same block shape as the Codex / opencode cards. */}
       <CardSettings>
@@ -210,12 +231,18 @@ export function AgyBehavior({ agents, updateAgents }: {
   );
 }
 
-export function OpencodeBehavior({ agents, updateAgents }: {
+export function OpencodeBehavior({
+  head,
+  agents,
+  updateAgents,
+}: {
   agents: Partial<AgentRtkSettings> | false | null;
   updateAgents: (patch: AgentRtkPatch) => void;
+  head?: ReactNode;
 }) {
   return (
     <ProviderCard id="opencode" name={kindDisplayName("opencode")} status={undefined}>
+      {head}
       <CardSettings>
         <LaunchDefaults kind="opencode" />
         <ThinkingRow kind="opencode" />
@@ -231,11 +258,12 @@ export function OpencodeBehavior({ agents, updateAgents }: {
   );
 }
 
-export function LcppBehavior() {
+export function LcppBehavior({ head }: { head?: ReactNode }) {
   const tr = useT();
   const s = useSettings();
   return (
     <ProviderCard id="lcpp" name={kindDisplayName("lcpp")} status={undefined}>
+      {head}
       {/* Whether llama.cpp may be launched at all: a harness switch, so it stays here while the
           member's endpoint is on Model credentials. The Agent enforces the same ui-prefs key. */}
       <div className="p-body">
@@ -258,9 +286,10 @@ export function LcppBehavior() {
   );
 }
 
-export function MuseBehavior() {
+export function MuseBehavior({ head }: { head?: ReactNode }) {
   return (
     <ProviderCard id="muse" name={kindDisplayName("muse")} status={undefined}>
+      {head}
       {/* The launch defaults stay reachable in every state, the same as every other card: they
           are client-side settings, so they work while the workspace is stopped and before the
           binary is installed. The model picker is empty until both are true, which is the
