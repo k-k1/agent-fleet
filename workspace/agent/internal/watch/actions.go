@@ -429,7 +429,9 @@ func (a *GitHubActions) finishedAfter(run ghRun) time.Duration {
 		return ghSettledAfter
 	}
 	age := a.GH.clock().Sub(t)
-	if age > -actionsFreshWindow && age < actionsFreshWindow {
+	// Tolerate a clock a minute ahead; a larger skew would keep the short interval for far longer
+	// than the window.
+	if age > -actionsFreshAfter && age < actionsFreshWindow {
 		return actionsFreshAfter
 	}
 	return ghSettledAfter
