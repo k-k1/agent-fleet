@@ -16,7 +16,7 @@ Each page covers one thing you want to do.
 | [What you can do with Agent Fleet](start/overview.md) | Learn what it does and which page to read first |
 | [Start your first session](start/quickstart.md) | Go from signing in to the first reply |
 | [Terms and the big picture](start/concepts.md) | See how tenants, workspaces, sessions and agents relate |
-| [Find your way around the screen](start/console-tour.md) | Know what sits where on the top bar, the workspace action bar, the left pane and the main area |
+| [Find your way around the screen](start/console-tour.md) | Know what sits where on the top bar, the workspace action bar, the activity bar, the left pane and the main area |
 | [Use the keyboard and the command palette](start/shortcuts.md) | Drive the Console without the mouse, with shortcuts and the command palette |
 | [Split the screen into panes](start/panes.md) | Lay out sessions and files in panes, and choose the layout |
 | [Use it on a phone](start/phone.md) | Check progress and reply from a phone |
@@ -117,7 +117,7 @@ Each page covers one thing you want to do.
 | [Log in to EC2 with SSM](integrations/aws-ssm.md) | Log in to an EC2 host from a terminal in your browser |
 | [Use Google Cloud](integrations/gcloud.md) | Have agents run Google Cloud commands with your permissions |
 | [Add an MCP server to your sessions](integrations/mcp-servers.md) | Let agents use an in-house tool or an outside service as an MCP server |
-| [Connect an issue tracker](integrations/issue-tracker.md) | List your Jira issues and GitHub issues in the left rail and start sessions from them |
+| [Connect an issue tracker](integrations/issue-tracker.md) | List your Jira issues and GitHub issues in the Issue tracker view and start sessions from them |
 | [Use Jira](integrations/jira.md) | Have agents read, file and update Jira issues |
 | [Use Confluence](integrations/confluence.md) | Have agents find and write Confluence pages |
 | [Use the GitHub CLI](integrations/github-cli.md) | Have agents create and read GitHub pull requests with `gh` |

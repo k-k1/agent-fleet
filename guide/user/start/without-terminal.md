@@ -14,18 +14,18 @@ Asking the AI questions, translating, reading documents and following developmen
 
 | What you do | Where |
 |---|---|
-| Ask the AI a question, have it translate or tidy up text | **Assistants** in the left pane |
-| Jot down requests and hand them to development | **Memo queue** in the left pane |
-| Read documents and slides | **Files** in the left pane |
-| See how far development has got | The sessions list in the left pane |
-| Read a conversation a developer shared with you | **Shared sessions** in the left pane |
+| Ask the AI a question, have it translate or tidy up text | The **Assistants** view |
+| Jot down requests and hand them to development | The **Memo queue** view |
+| Read documents and slides | The **Files** view |
+| See how far development has got | The **Sessions** view |
+| Read a conversation a developer shared with you | **Shared sessions** in the Sessions view |
 
 ## Read these first
 
 | Order | Page | What it covers |
 |---|---|---|
 | 1 | [Start your first session](quickstart.md) | Sign in, start the workspace and connect an agent. Under "Where do you want to start?", choose **Start chatting** |
-| 2 | [Find your way around the screen](console-tour.md) | What sits where in the left pane |
+| 2 | [Find your way around the screen](console-tour.md) | What sits where on the screen |
 | 3 | [Ask an assistant](../chat/assistant.md#start-a-chat) | How to ask for answers, translations and summaries, and how a chat differs from a session |
 | 4 | [Use translation and purpose-built assistants](../chat/purpose-assistants.md) | Translate files and use assistants made for one job |
 | 5 | [View documents and diagrams](../files/view.md) | Read documents in the browser |

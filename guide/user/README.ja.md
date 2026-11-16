@@ -16,7 +16,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [Agent Fleet でできること](start/overview.ja.md) | 何ができて、どのページから読めばいいかを知る |
 | [最初のセッションを始める](start/quickstart.ja.md) | サインインしてから、最初の返事を受け取るまでを進める |
 | [用語と全体像](start/concepts.ja.md) | テナント・ワークスペース・セッション・エージェントの関係を知る |
-| [画面の見かた](start/console-tour.ja.md) | 上部バー・ワークスペース操作バー・左ペイン・メイン領域のどこに何があるかを知る |
+| [画面の見かた](start/console-tour.ja.md) | 上部バー・ワークスペース操作バー・アクティビティバー・左ペイン・メイン領域のどこに何があるかを知る |
 | [キーボードとコマンドパレットで操作する](start/shortcuts.ja.md) | ショートカットとコマンドパレットで、マウスを使わずに動かす |
 | [画面を分けて並べる](start/panes.ja.md) | セッションやファイルをペインに並べ、配置を選ぶ |
 | [スマートフォンで使う](start/phone.ja.md) | スマートフォンから進み具合を見て、返事をする |
@@ -117,7 +117,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [SSM で EC2 にログインする](integrations/aws-ssm.ja.md) | EC2 に、ブラウザのターミナルからログインする |
 | [Google Cloud を使う](integrations/gcloud.ja.md) | エージェントに、あなたの権限で Google Cloud のコマンドを実行してもらう |
 | [セッションに MCP サーバーを追加する](integrations/mcp-servers.ja.md) | 社内のツールや外部のサービスを、MCP サーバーとしてエージェントに使わせる |
-| [課題管理サービスを接続する](integrations/issue-tracker.ja.md) | Jira の課題や GitHub の Issue を左ペインに並べ、そこからセッションを始める |
+| [課題管理サービスを接続する](integrations/issue-tracker.ja.md) | Jira の課題や GitHub の Issue を「課題管理」ビューに並べ、そこからセッションを始める |
 | [Jira を使う](integrations/jira.ja.md) | エージェントに、Jira の課題を読んだり起票したりしてもらう |
 | [Confluence を使う](integrations/confluence.ja.md) | エージェントに、Confluence のページを探したり書いたりしてもらう |
 | [GitHub の CLI を使う](integrations/github-cli.ja.md) | エージェントに、`gh` で GitHub のプルリクエストを作ったり読んだりしてもらう |

@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants an agent to work at set times or intervals"
-source_of_truth: "Schedules in the Console's left pane, and a schedule's Details / edit"
+source_of_truth: "the Schedules view of the Console's left pane, and a schedule's Details / edit"
 ---
 
 # Run at a set time
@@ -15,7 +15,7 @@ It wakes the workspace if it is stopped, runs, and reports the result.
 | What you do | What the agent does |
 |---|---|
 | Tell the operator when and what | Registers it as a schedule and confirms how it read the time and when it runs next |
-| See the list and run history under Schedules in the left pane | At the set time, wakes a stopped workspace too and runs the prompt |
+| See the list and run history in the Schedules view | At the set time, wakes a stopped workspace too and runs the prompt |
 | Choose where reports go and what happens afterwards | Sends the result where you chose. A failure goes to the notification center |
 
 ## Register a schedule
@@ -32,7 +32,7 @@ Ask in a [Fleet Operator](operator.md) conversation.
 
 ## See the list and run history
 
-**Schedules** in the left pane lists your schedules. Open a row for its run history.
+The **Schedules** view of the left pane lists your schedules. Open a row for its run history.
 
 | In the run history | What it shows |
 |---|---|
@@ -114,7 +114,7 @@ A schedule that would otherwise wake an agent just to find nothing (for example 
 - **Fires per day (max)** and **Gap between fires (min, seconds)** hold back a result that keeps changing. Blank means the defaults (2 per day, 6 hours)
 - A stopped workspace is not woken to check, and a check that fails does not start a session. **Run now** ignores the gate
 - The line under the gate shows when it was last checked and what it decided. A failed check shows **Gate check failed** in the run history and is notified once
-- A gate needs a recurring schedule (cron or interval) that starts a new session each time. The query has to be one of your own **Saved queries** under the left rail's **Issue tracker** ([Connect an issue tracker](../integrations/issue-tracker.md))
+- A gate needs a recurring schedule (cron or interval) that starts a new session each time. The query has to be one of your own **Saved queries** in the **Issue tracker** view ([Connect an issue tracker](../integrations/issue-tracker.md))
 
 ## A schedule or auto-run?
 

@@ -30,8 +30,8 @@ If a feature ships and does not appear here, it is not done
 | Terminal round-trip time (keystroke lag) | member | terminal pane header | [Use the terminal](../user/files/terminal.md) |
 | Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [Use the terminal](../user/files/terminal.md#copy-and-paste) |
 | Resume a stopped session | member | left pane → the session | [Stop and resume a session](../user/sessions/stop-resume.md) |
-| Home — what waits for you, where you left off, at a glance, and the first-run setup | member | the empty main area, action bar → Home, or leader `g h` | [Find your way around the screen](../user/start/console-tour.md#home) |
-| Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [See every running session](../user/fleet/overview.md) |
+| Home — what waits for you, where you left off, at a glance, and the first-run setup | member | the empty main area, activity bar → Home, or leader `g h` | [Find your way around the screen](../user/start/console-tour.md#home) |
+| Sessions overview — every running session as a card | member | activity bar → Sessions overview, or leader `g s` | [See every running session](../user/fleet/overview.md) |
 | Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [See how sessions relate over time](../user/fleet/graph.md) |
 | Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [Stop and resume a session](../user/sessions/stop-resume.md#stop-every-session-in-one-working-copy) |
 | Hand a conversation to a new session | member | session ⋯ menu | [Hand off to another session or agent](../user/sessions/handoff.md#choose-a-way) |
@@ -70,7 +70,7 @@ If a feature ships and does not appear here, it is not done
 | Markdown and code editing | member | Files → a file | [Edit a file](../user/files/edit.md) |
 | `.drawio` diagrams | member | Files → a `.drawio` file | [View documents and diagrams](../user/files/view.md) |
 | PDF and Office document preview | member | Files → that document | [View documents and diagrams](../user/files/view.md) |
-| Image generation — make pictures in bulk without an agent | member | action bar → Images, or leader `g i` | [Generate images](../user/images/generate.md) |
+| Image generation — make pictures in bulk without an agent | member | activity bar → Images, or leader `g i` | [Generate images](../user/images/generate.md) |
 | Edit and inpaint — reference pictures, a mask file, instruction-edit models | member | image generation → Advanced → Operation | [Generate images](../user/images/generate.md#edit-a-picture-you-have) |
 | LoRAs with their trigger words, shown before you pick one | member | image generation → LoRAs | [Generate images](../user/images/generate.md#write-the-prompt) |
 | Image studio — refine the draft by talking to an agent, a person presses generate (edit history, versions, picture history) | member | image generation → Attach an agent | [Finish an image in the studio](../user/images/studio.md) |
@@ -86,7 +86,7 @@ If a feature ships and does not appear here, it is not done
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Working sets | member | top of the left pane | [Narrow the view with working sets](../user/fleet/working-sets.md) |
+| Working sets | member | top of the Sessions, Assistants, Schedules and Files views | [Narrow the view with working sets](../user/fleet/working-sets.md) |
 | Memo queue | member | Memo queue | [Collect memos and hand them over](../user/chat/memos.md) |
 | Memo auto-run — run a category's memos as sessions with your instruction, by "Run now" or by themselves | member | Memo queue → a category → Auto-run settings | [Run memos automatically](../user/chat/memo-auto-run.md) |
 | Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [Start from an issue or a ticket](../user/sessions/from-issues.md); [repos.md](repos.md) for what each provider contributes |

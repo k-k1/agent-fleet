@@ -1,6 +1,6 @@
 ---
 audience: "People who want to collect instructions as they occur to them and hand them to an agent later"
-source_of_truth: "The Console's Memo queue in the left pane and the Send memos screen"
+source_of_truth: "The Console's Memo queue view of the left pane and the Send memos screen"
 ---
 
 # Collect memos and hand them over
@@ -22,7 +22,7 @@ Memos are stored on the server, so the same queue shows on another PC or your ph
 
 ## Write a memo
 
-1. Press **+** ("**Add memo**") in the header of the **Memo queue** section in the left pane. From the keyboard, **Alt+A**, or the leader key (Ctrl/⌘+K) followed by **M**, opens it too
+1. Press **+** ("**Add memo**") in the header of the **Memo queue** view. From the keyboard, **Alt+A**, or the leader key (Ctrl/⌘+K) followed by **M**, opens it too
 2. Write in "**Add a quick memo… (send them together later)**". Put a group name in "**Category (optional)**" if you like
 3. Add it with "**Add**" (or Ctrl+Enter). Esc closes the box
 

@@ -1,13 +1,13 @@
 ---
 audience: "anyone who wants to start work from a Jira issue or a GitHub issue"
-source_of_truth: "the Console's Settings > \"Issue tracker\" and the left rail's Issue tracker \"Saved queries\""
+source_of_truth: "the Console's Settings > \"Issue tracker\" and the Issue tracker view's \"Saved queries\""
 ---
 
 # Connect an issue tracker
 
 English | [日本語](issue-tracker.ja.md)
 
-Connect Jira and save a query, and the left rail's **Issue tracker** lists your issues and pull requests, ready to start
+Connect Jira and save a query, and the **Issue tracker** view of the left pane lists your issues and pull requests, ready to start
 a session from a row. The same connection lets agents use the `jira` and `confluence` CLIs.
 
 ## How it works
@@ -59,7 +59,7 @@ The tenant administrator's steps are in [Choose the OAuth apps for integrations]
 
 ## Choose what the list shows
 
-Press "**Saved queries**" in the header of the left rail's **Issue tracker**, then "**Add a query**", and fill in the
+Press "**Saved queries**" in the header of the **Issue tracker** view, then "**Add a query**", and fill in the
 source, a display name and the search query.
 
 - **Nothing is fetched until you save a query.** The list shows only what the query matches; nothing is synced in bulk

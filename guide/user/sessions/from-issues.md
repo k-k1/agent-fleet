@@ -1,13 +1,13 @@
 ---
 audience: "anyone starting work from a Jira issue, a GitHub issue or a pull request"
-source_of_truth: "The Issue tracker section of the Console's left pane, and an item's detail"
+source_of_truth: "The Issue tracker view of the Console's left pane, and an item's detail"
 ---
 
 # Start from an issue or a ticket
 
 English | [日本語](from-issues.ja.md)
 
-Start a session from an issue or a pull request listed under **Issue tracker** in the left pane, with the ticket's details
+Start a session from an issue or a pull request listed in the **Issue tracker** view of the left pane, with the ticket's details
 already filled in. The list and the detail also show who has already picked up which ticket.
 
 ## How it works
@@ -23,7 +23,7 @@ The list can be read while the workspace is stopped.
 
 ## Read the list
 
-![The Issue tracker section of the left pane. The heading shows 45, with the last fetch time, "2 updated" and a "Find in this list" box under it; GitHub, Bitbucket and Jira rows carry unread dots, CI marks, a conflict mark, comment counts and 🔗, and "Show more (35 left)" is at the bottom](../../assets/sessions-issue-list-en-light.webp)
+![The Issue tracker view of the left pane. The heading shows 45, with the last fetch time, "2 updated" and a "Find in this list" box under it; GitHub, Bitbucket and Jira rows carry unread dots, CI marks, a conflict mark, comment counts and 🔗, and "Show more (35 left)" is at the bottom](../../assets/sessions-issue-list-en-light.webp)
 
 | What you see | Meaning |
 |---|---|

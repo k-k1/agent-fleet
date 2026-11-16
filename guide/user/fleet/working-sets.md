@@ -1,6 +1,6 @@
 ---
 audience: "anyone juggling several pieces of work at once"
-source_of_truth: "The Console's working-set bar at the top of the left pane, and the row menus"
+source_of_truth: "The Console's working-set bar at the top of the Sessions, Assistants, Schedules and Files views, and the row menus"
 ---
 
 # Narrow the view with working sets
@@ -20,7 +20,7 @@ Nothing is moved or copied. Only what you see changes.
 
 ## Create a working set
 
-1. Press the bar at the top of the left pane (it reads **All** at first)
+1. Press the bar at the top of the left pane (it reads **All** at first). It is on the Sessions, Assistants, Schedules and Files views
 2. Choose **Manage groups…**
 3. Type a name in "New group name" and press **Create**
 

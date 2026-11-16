@@ -94,5 +94,5 @@ gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -f title="新しいタイトル"
 
 - [Bitbucket の CLI を使う](bitbucket-cli.ja.md)：Bitbucket Cloud で同じことをする
 - [Git のサービスを接続する](../code/connect-git.ja.md)：GitHub の接続と、clone・push
-- [課題管理サービスを接続する](issue-tracker.ja.md)：プルリクエストや Issue を左ペインに並べる
+- [課題管理サービスを接続する](issue-tracker.ja.md)：プルリクエストや Issue を「課題管理」ビューに並べる
 - [コマンド](../../ref/cli/README.ja.md#サインイン済みの-cli)：接続を使う CLI の一覧

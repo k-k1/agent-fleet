@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants to direct many sessions from one chat"
-source_of_truth: "The Fleet Operator under Assistants in the Console's left pane, and Settings > Assistant"
+source_of_truth: "The Fleet Operator in the Assistants view of the Console's left pane, and Settings > Assistant"
 ---
 
 # Hand work to the Fleet Operator
@@ -23,11 +23,11 @@ In short: a site foreman for your sessions, hired into a chat.
 
 ## Get started
 
-1. Press **+** (New chat) on **Assistants** in the left pane
+1. Press **+** (New chat) in the **Assistants** view
 2. Choose **Fleet Operator**
 3. Say what you want in plain words
 
-![The + on Assistants in the left pane, pressed: Fleet Operator and Assistant listed under New chat](../../assets/fleet-operator-en-light.webp)
+![The + in the Assistants view of the left pane, pressed: Fleet Operator and Assistant listed under New chat](../../assets/fleet-operator-en-light.webp)
 
 > Start a worktree session on the console repository and have it fix the ◯◯ bug
 

@@ -62,7 +62,7 @@ do not need to remember the sequences.
 |---|---|---|
 | p | Panes / layout | `p r` split right, `p d` split down, `p w` close |
 | s | Session | `s n` new session, `s l` sessions overview |
-| w | Workspace | `w s` start / stop, `w b` toggle left rail, `w t` toggle theme |
+| w | Workspace | `w s` start / stop, `w b` toggle left pane, `w t` toggle theme |
 | g | Open panel | `g h` Home, `g s` sessions overview, `g n` notification center |
 | n | Notifications | `n m` toggle voice read-aloud |
 | v | View | `v p` Markdown display mode, `v r` read-aloud view |

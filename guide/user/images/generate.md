@@ -26,15 +26,14 @@ It suits jobs such as 40 pictures from one prompt with cfg varied across them.
 ## Before you start
 
 - An administrator has set up an image engine for this deployment and enabled models on it
-- While no engine can be used, the "**Images**" button does not appear in the workspace action bar
+- While no engine can be used, the "**Images**" icon does not appear on the activity bar
 
 ## Open the pane
 
 Open it with any of these:
 
-- "**Images**" in the workspace action bar
+- "**Images**" on the activity bar
 - the leader key `g i` ("**Open image generation**" in the command palette)
-- "**Open image generation**" in the minimap
 
 - Opening it again takes you to the pane already open
 - The pane always has a **studio** open: the one this browser opened last, otherwise the one changed most recently. Only when there is no studio at all does it create a new, empty one

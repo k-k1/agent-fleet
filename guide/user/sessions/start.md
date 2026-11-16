@@ -18,7 +18,7 @@ A session is one piece of work handed to an agent: its conversation, its working
 | Pick the agent, the model and a first prompt, then launch | Takes the first prompt and starts working |
 | Answer when a reply is needed | Stops at a question, a permission request or a plan, and waits for you |
 
-Sessions are listed in the left pane under **Repositories**, below their working copy; the ones that belong to no repository
+Sessions are listed in the Sessions view of the left pane under **Repositories**, below their working copy; the ones that belong to no repository
 are under **Other sessions**. You can have as many as you like at once, each with its own conversation and working folder.
 
 ## Pick a place in Start
@@ -37,7 +37,7 @@ Press **＋ Start** on the workspace action bar to open the **Start** screen.
 | Clone a new repository… | Clone from a connection or a URL; when it finishes you go straight on to Start working |
 | Start in a new folder… | For when there is nothing to clone from yet: creates a folder under `~/repos`, runs `git init` and starts there |
 
-- **Launch** on a repository row in the left pane opens the same Start working dialog
+- **Launch** on a repository row in the Sessions view opens the same Start working dialog
 - **Back to Start** at the bottom left of Start working (or the browser's back) takes you one step back
 
 > [!TIP]

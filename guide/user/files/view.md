@@ -22,7 +22,7 @@ Documents and diagrams are drawn inside your browser only. No file is sent to an
 
 ## Open a file
 
-Click a file in **Files** in the left pane and it opens in the viewer in the main area ([See and download files](browse.md)).
+Click a file in the **Files** view of the left pane and it opens in the viewer in the main area ([See and download files](browse.md)).
 The top shows the file name, the format, the size and the number of lines.
 
 - Code is highlighted for its detected language

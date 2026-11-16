@@ -1,13 +1,13 @@
 ---
 audience: "anyone following running sessions"
-source_of_truth: "The session rows in the Console's left pane, and its notifications"
+source_of_truth: "The session rows in the Sessions view of the Console's left pane, and its notifications"
 ---
 
 # Read a session's state
 
 English | [日本語](status.ja.md)
 
-The session rows in the left pane and the notifications tell you which sessions are working and which are waiting for your reply.
+The session rows in the Sessions view of the left pane and the notifications tell you which sessions are working and which are waiting for your reply.
 
 ## How it works
 
@@ -21,7 +21,7 @@ The session rows in the left pane and the notifications tell you which sessions 
 The colored icon at the start of a row is the agent's type; the mark at the end is the current state. Hover over the mark
 to see the state's name. States that need you show text as well as the mark.
 
-![Session rows under the repositories in the left pane: one with the text "Question", and rows with the stopped, working, ready and running marks](../../assets/sessions-status-en-light.webp)
+![Session rows under the repositories in the Sessions view: one with the text "Question", and rows with the stopped, working, ready and running marks](../../assets/sessions-status-en-light.webp)
 
 | What you see | Meaning | What you do |
 |---|---|---|

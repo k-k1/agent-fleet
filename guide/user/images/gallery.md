@@ -88,8 +88,8 @@ Pictures a session makes with the image tool go into a folder per session. The f
 
 "Open generated images" is in four places:
 
-- the minimap's buttons
-- the heading of the left rail's "Files"
+- the foot of the activity bar
+- the heading of the **Files** view
 - the header of the image generation pane
 - the leader key `g g` (also in the command palette)
 

@@ -115,5 +115,5 @@ The connection is not yet known to have the pull request write permission. Add t
 
 - [Use the GitHub CLI](github-cli.md): the same for GitHub
 - [Connect a Git service](../code/connect-git.md): connecting Bitbucket, cloning and pushing
-- [Connect an issue tracker](issue-tracker.md): list pull requests in the left rail
+- [Connect an issue tracker](issue-tracker.md): list pull requests in the Issue tracker view
 - [Commands](../../ref/cli/README.md#clis-that-are-already-signed-in): the CLIs that use a connection

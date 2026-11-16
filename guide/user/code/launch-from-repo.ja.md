@@ -1,13 +1,13 @@
 ---
 audience: "クローンしたリポジトリでエージェントに作業してもらいたい人"
-source_of_truth: "Console の左ペイン「リポジトリ」の行と、「作業を始める」の画面"
+source_of_truth: "Console のセッションビュー「リポジトリ」の行と、「作業を始める」の画面"
 ---
 
 # リポジトリからセッションを起動する
 
 [English](launch-from-repo.md) | 日本語
 
-左ペイン **リポジトリ** の行から、そのリポジトリで作業するセッションを起動できます。
+セッションビューの **リポジトリ** の行から、そのリポジトリで作業するセッションを起動できます。
 行のバッジを読めば、push していない変更や、取り込んでいない変更にも気づけます。
 
 ## 全体像
@@ -52,7 +52,7 @@ source_of_truth: "Console の左ペイン「リポジトリ」の行と、「作
 
 ## 行のバッジを読む
 
-![左ペインのリポジトリ。webshop に「未コミット」と「↑2」、platform-infra に「↓1 FF可」、worktree の feat/checkout-validation に「未コミット」と「分岐 3↕2・FF 不可」、各行に稼働中のセッション数「●1」「●2」](../../assets/code-repo-rows-ja-light.webp)
+![セッションビューのリポジトリ。webshop に「未コミット」と「↑2」、platform-infra に「↓1 FF可」、worktree の feat/checkout-validation に「未コミット」と「分岐 3↕2・FF 不可」、各行に稼働中のセッション数「●1」「●2」](../../assets/code-repo-rows-ja-light.webp)
 
 | バッジ | 意味 |
 |---|---|

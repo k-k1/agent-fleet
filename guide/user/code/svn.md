@@ -23,7 +23,7 @@ Save the credentials and `svn update` and `svn commit` in a session stop asking 
 
 ## Check out
 
-1. Press "**Add**" in the left pane's **Repositories**
+1. Press "**Add**" in **Repositories** in the Sessions view
 2. Pick "**Subversion**" under "**Kind**"
 3. Fill in the fields and press "**Check out**"
 
