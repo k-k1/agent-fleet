@@ -107,7 +107,11 @@ const isHiddenItem = (v: unknown): v is HiddenItem =>
   Array.isArray(v.routes) &&
   isStrList(v.routes) &&
   Array.isArray(v.forbiddenBy) &&
-  isStrList(v.forbiddenBy);
+  isStrList(v.forbiddenBy) &&
+  // hiddenOf never lists an item with no route or no forbidding layer; one that arrives would
+  // draw "Hidden by:" with nothing after it, so it fails the whole list closed instead.
+  v.routes.length > 0 &&
+  v.forbiddenBy.length > 0;
 
 // parseHidden is null unless all three lists are present and well formed: a missing or partial
 // answer must never read as "nothing is hidden".

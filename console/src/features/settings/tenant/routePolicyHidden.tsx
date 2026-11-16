@@ -24,15 +24,18 @@ const PROVIDER_KEY = {
 // kindDisplayName falls back to Claude for a kind it does not know, so an id outside the
 // registry is shown as itself rather than under another harness's name.
 function ownerName(tr: Tr, id: string): string {
-  if (id in PROVIDER_KEY) return tr(PROVIDER_KEY[id as keyof typeof PROVIDER_KEY]);
+  if (Object.hasOwn(PROVIDER_KEY, id)) return tr(PROVIDER_KEY[id as keyof typeof PROVIDER_KEY]);
   return (SESSION_KINDS as readonly string[]).includes(id) ? kindDisplayName(id) : id;
 }
 
 function Group({
+  name,
   title,
   items,
   layersOf,
 }: {
+  /** Which list: one owner (agy, codex) can be hidden in more than one. */
+  name: string;
   title: string;
   items: HiddenItem[];
   layersOf: (route: string) => string[] | undefined;
@@ -42,7 +45,7 @@ function Group({
   return (
     <>
       <h5 className="admin-subhead">{title}</h5>
-      <ul className="mpol-hidden">
+      <ul className="mpol-hidden" data-group={name}>
         {items.map((it) => (
           <li key={it.id} data-hidden={it.id}>
             <strong>{ownerName(tr, it.id)}</strong>{" "}
@@ -83,9 +86,9 @@ export function HiddenList({ view }: { view: TenantPolicyView }) {
         </p>
       ) : (
         <>
-          <Group title={tr("admin.mpol_hidden_kinds")} items={hidden.kinds} layersOf={layersOf} />
-          <Group title={tr("admin.mpol_hidden_imagegen")} items={hidden.imagegen} layersOf={layersOf} />
-          <Group title={tr("admin.mpol_hidden_chat")} items={hidden.chat} layersOf={layersOf} />
+          <Group name="kinds" title={tr("admin.mpol_hidden_kinds")} items={hidden.kinds} layersOf={layersOf} />
+          <Group name="imagegen" title={tr("admin.mpol_hidden_imagegen")} items={hidden.imagegen} layersOf={layersOf} />
+          <Group name="chat" title={tr("admin.mpol_hidden_chat")} items={hidden.chat} layersOf={layersOf} />
         </>
       )}
     </section>

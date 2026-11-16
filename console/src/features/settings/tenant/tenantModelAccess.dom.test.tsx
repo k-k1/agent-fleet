@@ -222,8 +222,16 @@ describe("what the policy hides", () => {
     expect(codex.querySelector('[data-route="chatgpt-subscription"]')!.textContent).not.toContain("テナントの上限");
     expect(codex.querySelector('[data-route="openai-api"]')!.textContent).toContain("テナントの上限");
     expect(section().querySelector('[data-testid="hidden-none"]')).toBeNull();
+    // codex is hidden as a chat backend here, so its row sits in the chat list.
+    expect(section().querySelector('[data-group="chat"] [data-hidden="codex"]')).not.toBeNull();
     // Decision 9: the members' own switches are not covered, and the page says so.
     expect(section().textContent).toContain("メンバー自身の切り替え");
+  });
+
+  it("shows an id outside the registry as itself, inherited object keys included", async () => {
+    withHidden({ kinds: [{ id: "toString", routes: ["agy-login"], forbiddenBy: ["ceiling"] }], chat: [], imagegen: [] });
+    await mount();
+    expect(section().querySelector('[data-hidden="toString"] strong')!.textContent).toBe("toString");
   });
 
   it("says nothing is hidden only when the list is present and empty", async () => {

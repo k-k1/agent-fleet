@@ -107,5 +107,7 @@ describe("parseHidden", () => {
     expect(parseHidden(undefined)).toBeNull();
     expect(parseHidden({ kinds: [], chat: [] })).toBeNull();
     expect(parseHidden({ kinds: [{ id: "agy", routes: ["agy-login"] }], chat: [], imagegen: [] })).toBeNull();
+    expect(parseHidden({ kinds: [{ id: "agy", routes: ["agy-login"], forbiddenBy: [] }], chat: [], imagegen: [] })).toBeNull();
+    expect(parseHidden({ kinds: [{ id: "agy", routes: [], forbiddenBy: ["ceiling"] }], chat: [], imagegen: [] })).toBeNull();
   });
 });
