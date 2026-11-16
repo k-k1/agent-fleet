@@ -58,7 +58,7 @@ beforeEach(() => {
   useNotificationStore.setState({ items: [] });
   useWorkItemStore.setState({ payload: null });
   useSeenStore.setState({ map: {} });
-  useSchedulesStore.setState({ failed: [], failedAll: [] });
+  useSchedulesStore.setState({ failed: [], failedAll: null });
   useRailAck.setState({ acked: {} });
 });
 afterEach(async () => {
@@ -195,6 +195,29 @@ describe("ActivityBar badges", () => {
     const b2 = "b@2026-01-02T00:00:00Z";
     await act(async () => useSchedulesStore.setState({ failed: [a, b2], failedAll: [a, b2] }));
     expect(badge("schedules")?.dataset.badge).toBe("failed");
+  });
+
+  it("does not forget acknowledged failures on a reload, before the list has loaded", async () => {
+    const a = "a@2026-01-01T00:00:00Z";
+    const b = "b@2026-01-01T00:00:00Z";
+    // A reload with the schedules view selected, both failures acknowledged earlier, and the
+    // list not loaded yet.
+    useLeftRail.setState({ open: true, view: "schedules" });
+    useRailAck.setState({ acked: { schedules: [a, b] } });
+    await mount();
+    expect(useRailAck.getState().acked.schedules).toEqual([a, b]);
+    // The list arrives under a working set that lists only A.
+    await act(async () => useSchedulesStore.setState({ failed: [a], failedAll: [a, b] }));
+    await act(async () => btn("sessions").click());
+    await act(async () => useSchedulesStore.setState({ failed: [a, b], failedAll: [a, b] }));
+    expect(badge("schedules")).toBeNull();
+  });
+
+  it("does not forget acknowledged work items before their list has loaded", async () => {
+    useLeftRail.setState({ open: true, view: "workitems" });
+    useRailAck.setState({ acked: { workitems: ["k"] } });
+    await mount();
+    expect(useRailAck.getState().acked.workitems).toEqual(["k"]);
   });
 
   it("never badges the memo queue or the files view", async () => {

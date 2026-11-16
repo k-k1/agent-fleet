@@ -310,6 +310,9 @@ export const SchedulesSection = memo(function SchedulesSection() {
 
   const [items, setItems] = useState<ScheduleDTO[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // Whose list `items` is. `loaded` stays true across a tenant switch while the rows on screen
+  // are still the previous tenant's, and those must not be published as this tenant's failures.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   // Why the fetch failed ("" = it succeeded). Kept so an empty list and a failure do not
   // look the same.
   const [loadErr, setLoadErr] = useState("");
@@ -326,6 +329,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const sectionOpen = sectionStored !== false;
   const reveal = useSchedulesStore((s) => s.reveal);
   const setFailed = useSchedulesStore((s) => s.setFailed);
+  const clearFailed = useSchedulesStore((s) => s.clearFailed);
   const serRef = useRef("");
   // Working sets (docs/log/52): a CP-persisted schedule DERIVES its membership — from repo /
   // owner_conv (the conversation it was created in) / reuse_target (conversation slug or
@@ -372,6 +376,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
             setItems(arr);
           }
           setLoaded(true);
+          setLoadedFor(tenant);
         })
         .catch(() => {
           // Thrown = the network dropped (api() resolves CP errors instead).
@@ -390,7 +395,13 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const activeCount = useMemo(() => scoped.filter((s) => s.enabled).length, [scoped]);
   // From the rows the active working set lists, not from everything loaded: opening the view
   // acknowledges what it publishes, and a failure the view does not show must stay unread.
-  useEffect(() => setFailed(failedScheduleKeys(scoped), failedScheduleKeys(sorted)), [scoped, sorted, setFailed]);
+  // Nothing is published until this tenant's list has arrived: an empty list that merely has
+  // not loaded would prune every acknowledged failure.
+  useEffect(() => {
+    if (loadedFor !== tenant) clearFailed();
+    else setFailed(failedScheduleKeys(scoped), failedScheduleKeys(sorted));
+  }, [scoped, sorted, loadedFor, tenant, setFailed, clearFailed]);
+  useEffect(() => clearFailed, [clearFailed]);
 
   const setRowBusy = (id: string, v: boolean) => setBusy((b) => ({ ...b, [id]: v }));
 

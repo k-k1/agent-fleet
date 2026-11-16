@@ -175,10 +175,13 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
     () => workItemNewsKeys(dedupeWorkItems(sortWorkItems(payload?.items || [])), seen),
     [payload, seen],
   );
+  // Only against a list that has loaded. Before that the keys are empty because nothing is
+  // known, and acknowledging "nothing" would prune what was acknowledged before the reload.
+  const workItemsLoaded = payload !== null;
   useEffect(() => {
-    if (onScreen === "workitems") ack("workitems", workItemKeys);
-    if (onScreen === "schedules") ack("schedules", failedRuns, allFailedRuns);
-  }, [onScreen, workItemKeys, failedRuns, allFailedRuns, ack]);
+    if (onScreen === "workitems" && workItemsLoaded) ack("workitems", workItemKeys);
+    if (onScreen === "schedules" && allFailedRuns !== null) ack("schedules", failedRuns, allFailedRuns);
+  }, [onScreen, workItemKeys, workItemsLoaded, failedRuns, allFailedRuns, ack]);
 
   const out: Partial<Record<RailView, RailBadge>> = {};
   if (waiting > 0) out.sessions = { tone: "waiting", count: waiting };
