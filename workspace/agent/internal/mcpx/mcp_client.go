@@ -385,11 +385,13 @@ func AgentSendToSession(name string, body []byte) (out string, resumed bool, err
 		return out, false, nil
 	}
 	var httpErr *agentHTTPError
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict || !httpErr.hasCode("not_running") {
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict ||
+		!(httpErr.hasCode("not_running") || httpErr.hasCode("session_retired")) {
 		return "", false, err
 	}
-	// The session stopped between the status read and input POST. Apply the same
-	// resume path as an initially stopped session.
+	// The session stopped between the status read and input POST (session_retired: auto-run
+	// stopped it). Apply the same resume path as an initially stopped session, whose /start
+	// decides from the sender's origin whether a retired session may be started.
 	return agentResumeAndSend(name, inputPath, body)
 }
 

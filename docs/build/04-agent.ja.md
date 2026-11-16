@@ -163,9 +163,11 @@ source_of_truth: "コード（本書は地図と設計意図）"
     `POST /sessions/{name}/input` は `409 not_running` を返す。自動実行が停止した（引退の印がある）ときは
     `409 session_retired`。`{"prompt", "when_ready": true}` も同じで、以前は `202` を返し、黙って待ったあとで
     プロンプトを捨てていた。`when_ready` を断るのは、進行中の起動が無いときだけ（`launching`。
-    `startSessionTmux` と、経路・実行方式の切り替えハンドラが印を付ける）。作成・開始・切り替えの最中は受け付け、
-    ペインを待つ。`202` で `initialPromptState` が pending になり、あきらめると `failed` に落ち着く。
-    後の開始までプロンプトを保持することはしない。
+    `startSessionTmux` と、経路・実行方式の切り替えハンドラが印を付ける）。起動そのもの（`startSessionTmux`）以降と、経路・実行方式の
+    切り替えの全期間は受け付けてペインを待つ。作成の起動前と、開始がライフサイクルゲートを待つ間は印が付かない。
+    `202` で `initialPromptState` は（すでに delivered か pending でなければ）pending になり、あきらめると
+    `failed` に落ち着く。meta がまだ無い場合と delivered 済みの場合、あきらめはログにだけ残る。後の開始まで
+    プロンプトを保持することはしない。MCP の `send_to_session` は `session_retired` でも `not_running` と同様に再開する。
   - **引退したセッションを再び起動するもの**（#4249。ADR 0137 §6、2026-11-16 の追記）。意図した操作は起動して印を
     外す。利用者本人の操作（開始、運ばれた答え、Managed セッションに打ったメッセージ）と、利用者自身のセッションや
     接続の操作（peer・オペレーターのメッセージ、`resume_session`）である。自動で起きるもの（スケジュール、watch や

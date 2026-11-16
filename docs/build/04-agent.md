@@ -202,9 +202,12 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     (the retired mark). That includes `{"prompt", "when_ready": true}`, which used to answer
     `202` and drop the prompt after a silent wait. `when_ready` is refused only when no launch is
     in flight (`launching`, marked by `startSessionTmux` and by the route and driver switch
-    handlers); during a create, a start or a switch it is accepted and waits for the pane. A
-    `202` marks `initialPromptState` pending, and a give-up settles it `failed`. A prompt is not
-    held for a later start.
+    handlers); from the launch itself (`startSessionTmux`) onward, and for the whole route and driver switch,
+    it is accepted and waits for the pane; the gap before a create's launch and a start's wait on
+    the lifecycle gate is not marked. A `202` marks `initialPromptState` pending unless it is
+    already delivered or pending, and a give-up settles it `failed`; a session with no meta yet,
+    or one already delivered, has the give-up in the log only. A prompt is not held for a later
+    start. The MCP `send_to_session` resumes on `session_retired` as on `not_running`.
   - **What starts a retired session again** (#4249; ADR 0137 §6, note of 2026-11-16). A deliberate
     act does, and clears the mark: the member's (Start, a carried answer, a message typed to a
     Managed session) or one of the member's own sessions' or connections' (a peer or operator

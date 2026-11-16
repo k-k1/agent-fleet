@@ -358,9 +358,17 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// The delivery settles this state when it ends, so a give-up is on the meta and not
-		// only in the log (settleInitialPrompt acts on a pending state alone).
+		// only in the log (settleInitialPrompt acts on a pending state alone). A delivered
+		// state is the session's first instruction and stays: a follow-up when_ready (a
+		// route switch's carry-on) must not turn it back into a failure, and a give-up of
+		// that one is then only in the log. A state already pending is shared with the
+		// delivery in flight. A create still in flight has no meta yet, so it has no state
+		// either; its give-up is only in the log too.
 		if strings.TrimSpace(body.Prompt) != "" {
 			UpdateSessionMeta(name, func(m *session.Meta) bool {
+				if m.InitialPromptState == session.InitialPromptDelivered || m.InitialPromptState == session.InitialPromptPending {
+					return false
+				}
 				m.InitialPromptState = session.InitialPromptPending
 				m.InitialPromptReason = ""
 				return true
@@ -1053,6 +1061,10 @@ func typePromptText(name, pane, text string) error {
 	return nil
 }
 
+// initialPaneTries is how many half-second polls typeInitialPrompt gives the pane to appear. A
+// var for the tests.
+var initialPaneTries = 60
+
 // deliverInitialPrompt types a launch task into a freshly created session once its
 // agent CLI has booted, then submits it. It is the SERVER-SIDE counterpart of the
 // Console's sendPromptWhenAlive (open.ts): HandleCreateSession fires it in a goroutine
@@ -1063,10 +1075,6 @@ func typePromptText(name, pane, text string) error {
 // Best-effort: if the session never becomes typable within the window we give up (the
 // session still exists; the user can paste the task manually) — a failed hand-off must never
 // wedge the created session. The give-up is logged and settles InitialPromptState failed.
-// initialPaneTries is how many half-second polls typeInitialPrompt gives the pane to appear. A
-// var for the tests.
-var initialPaneTries = 60
-
 func deliverInitialPrompt(name, prompt string) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {

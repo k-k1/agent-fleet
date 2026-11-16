@@ -1,15 +1,20 @@
 package sessionx
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -98,11 +103,26 @@ func TestInputToStoppedRetiredSessionIsSessionRetired(t *testing.T) {
 }
 
 // startInFlight runs startSessionTmux for m on a goroutine and returns once the fake tmux is in
-// new-session, i.e. the launch is in flight and the pane does not exist yet.
-func startInFlight(t *testing.T, logPath string, m session.Meta) (done chan error) {
+// new-session, i.e. the launch is in flight and the pane does not exist yet. It returns the wait
+// for the launch's result. A cleanup releases the fake tmux and joins the launch, so a test that
+// fails halfway leaves neither behind.
+func startInFlight(t *testing.T, logPath, release string, m session.Meta) (wait func() error) {
 	t.Helper()
-	done = make(chan error, 1)
+	done := make(chan error, 1)
 	go func() { done <- startSessionTmux(m, false) }()
+	var once sync.Once
+	var res error
+	wait = func() error {
+		once.Do(func() {
+			select {
+			case res = <-done:
+			case <-time.After(15 * time.Second):
+				res = errors.New("the launch never returned; tmux log = " + tmuxLog(logPath))
+			}
+		})
+		return res
+	}
+	t.Cleanup(func() { releaseFifo(t, release); _ = wait() })
 	for start := time.Now(); !strings.Contains(tmuxLog(logPath), "new-session"); time.Sleep(10 * time.Millisecond) {
 		if time.Since(start) > 10*time.Second {
 			t.Fatal("the launch never reached tmux new-session")
@@ -112,7 +132,7 @@ func startInFlight(t *testing.T, logPath string, m session.Meta) (done chan erro
 		p, _ := exec.LookPath("tmux")
 		t.Fatalf("launch not marked in flight; tmux = %s, socket = %q, log = %s", p, os.Getenv("AF_TMUX_SOCKET"), tmuxLog(logPath))
 	}
-	return done
+	return wait
 }
 
 func waitDelivered(t *testing.T, logPath string) {
@@ -130,19 +150,14 @@ func TestWhenReadyDuringStartInFlightIsAcceptedAndDelivered(t *testing.T) {
 	const name = "starting_when_ready"
 	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, RetiredAt: time.Now().Format(time.RFC3339)}
 	session.WriteMeta(m)
-	done := startInFlight(t, logPath, m)
+	wait := startInFlight(t, logPath, release, m)
 	rec := postInput(t, name, `{"prompt":"first","when_ready":true}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body = %s, want 202", rec.Code, rec.Body.String())
 	}
 	releaseFifo(t, release)
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(15 * time.Second):
-		t.Fatalf("the launch never returned; tmux log = %s", tmuxLog(logPath))
+	if err := wait(); err != nil {
+		t.Fatal(err)
 	}
 	waitDelivered(t, logPath)
 }
@@ -153,47 +168,101 @@ func TestWhenReadyDuringCreateInFlightIsAcceptedAndDelivered(t *testing.T) {
 	logPath, _, release := stoppedTmux(t)
 	const name = "creating_when_ready"
 	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex}
-	done := startInFlight(t, logPath, m)
+	wait := startInFlight(t, logPath, release, m)
 	rec := postInput(t, name, `{"prompt":"first","when_ready":true}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body = %s, want 202", rec.Code, rec.Body.String())
 	}
 	session.WriteMeta(m) // what the create publishes after the launch
 	releaseFifo(t, release)
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(15 * time.Second):
-		t.Fatalf("the launch never returned; tmux log = %s", tmuxLog(logPath))
-	}
-	waitDelivered(t, logPath)
-}
-
-// A route switch stops the pane before it relaunches: the handler's own window has no tmux.
-func TestWhenReadyDuringRouteSwitchWindowIsAccepted(t *testing.T) {
-	logPath, up, _ := stoppedTmux(t)
-	const name = "switching_when_ready"
-	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex})
-	end := markLaunching(name) // what HandleSessionRouteSwitch and HandleSessionDriver hold
-	defer end()
-	rec := postInput(t, name, `{"prompt":"first","when_ready":true}`)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, body = %s, want 202", rec.Code, rec.Body.String())
-	}
-	if err := os.WriteFile(up, nil, 0o644); err != nil { // the relaunch's pane appears
+	if err := wait(); err != nil {
 		t.Fatal(err)
 	}
 	waitDelivered(t, logPath)
+	// A create in flight has no meta when the input is accepted, so no state was marked pending
+	// and none is settled: the guarantee for this path is the delivery and the log, not the meta.
+	WaitInitialDeliveries()
+	if m, _ := session.ReadMeta(name); m.InitialPromptState != "" {
+		t.Fatalf("state = %q, want none on the no-meta path", m.InitialPromptState)
+	}
+}
+
+// holdHandlerAtGate runs h for name while a test-held exclusive lifecycle gate stops it, and
+// reports whether a launch of name was marked in flight meanwhile. After the caller goes away the
+// handler returns and the mark has to be gone.
+func holdHandlerAtGate(t *testing.T, name string, h http.HandlerFunc, target, body string) (marked bool) {
+	t.Helper()
+	x, err := lifegate.Lock(context.Background(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer x.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(body)).WithContext(ctx)
+	req.SetPathValue("name", name)
+	finished := make(chan struct{})
+	go func() { defer close(finished); h(httptest.NewRecorder(), req) }()
+	for start := time.Now(); !launchInFlight(name) && time.Since(start) < 5*time.Second; time.Sleep(5 * time.Millisecond) {
+	}
+	marked = launchInFlight(name)
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the handler did not return after its caller went away")
+	}
+	if launchInFlight(name) {
+		t.Fatal("the mark outlived the handler")
+	}
+	return marked
+}
+
+// A route switch and a driver switch stop the pane before they relaunch it, so the mark is held
+// from the handler's start, not only inside the launch.
+func TestSwitchHandlersMarkALaunchInFlight(t *testing.T) {
+	stoppedTmux(t)
+	for _, c := range []struct {
+		what, target, body string
+		h                  http.HandlerFunc
+	}{
+		{"route switch", "/sessions/sw_route/route-switch", `{}`, HandleSessionRouteSwitch},
+		{"driver switch", "/sessions/sw_driver/driver", `{"driver":"managed"}`, HandleSessionDriver},
+	} {
+		name := strings.Split(c.target, "/")[2]
+		session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex})
+		if !holdHandlerAtGate(t, name, c.h, c.target, c.body) {
+			t.Fatalf("%s: no launch was marked while the handler ran", c.what)
+		}
+	}
+}
+
+// A follow-up when_ready (the route switch's carry-on) must not turn the session's delivered
+// first instruction back into a failure.
+func TestWhenReadyKeepsDeliveredFirstInstruction(t *testing.T) {
+	old := initialPaneTries
+	initialPaneTries = 1
+	t.Cleanup(func() { initialPaneTries = old })
+	stoppedTmux(t)
+	const name = "keeps_delivered"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, InitialPromptState: session.InitialPromptDelivered})
+	defer markLaunching(name)()
+	if rec := postInput(t, name, `{"prompt":"carry on","when_ready":true}`); rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	WaitInitialDeliveries() // gives up: no pane
+	if m, _ := session.ReadMeta(name); m.InitialPromptState != session.InitialPromptDelivered {
+		t.Fatalf("state = %q, want delivered kept", m.InitialPromptState)
+	}
 }
 
 // 202 is never followed by a silent drop: a delivery that finds no pane settles the meta failed.
 func TestWhenReadyGiveUpLeavesTrace(t *testing.T) {
-	stoppedTmux(t)
+	// Before stoppedTmux, so the value is restored after its WaitInitialDeliveries cleanup.
 	old := initialPaneTries
 	initialPaneTries = 1
 	t.Cleanup(func() { initialPaneTries = old })
+	stoppedTmux(t)
 	const name = "gives_up"
 	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex})
 	end := markLaunching(name) // a launch that never produces a pane
