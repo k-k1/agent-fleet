@@ -54,6 +54,8 @@ const (
 	queuePathMax = 4096
 	// queueRefProviderMax, queueRefKeyMax and queueRefURLMax bound a reference's parts: the
 	// Control Plane's memoref bounds, so a message it accepted is never refused here.
+	// Only sizes are checked here: the shape (provider list, key pattern, url scheme) is the Control
+	// Plane's to validate, and a stricter check here would refuse what it accepted.
 	queueRefProviderMax = 32
 	queueRefKeyMax      = 200
 	queueRefURLMax      = 2048

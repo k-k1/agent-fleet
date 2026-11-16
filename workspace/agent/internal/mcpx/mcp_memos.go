@@ -320,8 +320,9 @@ func memoWriteResult(id json.RawMessage, args json.RawMessage, answer string) []
 	return mcpTextResult(id, answer)
 }
 
-// memoRefSent reports whether the call's reference is a full one: {} and an absent one ask for
-// nothing to be kept.
+// memoRefSent reports whether the call's reference is one to be kept: any non-empty field counts,
+// so a partial one (which the Control Plane refuses) is still "sent". {}, three empty strings and an
+// absent one are what the relay forwards as clear or nothing, and ask for nothing to be kept.
 func memoRefSent(args json.RawMessage) bool {
 	var in struct {
 		Reference *struct {

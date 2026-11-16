@@ -23,6 +23,11 @@ var QueueBranchName func(ctx context.Context, dir, provider, key string) (name, 
 // network, and a delivery must not wait on that for long.
 const queueBranchTimeout = 10 * time.Second
 
+// afterQueueBranchNamed runs once nameQueueBranch has decided a name and before the worktree is
+// made: the window in which a second delivery for the same item can take it. Tests plant that
+// rival here; nothing else sets it.
+var afterQueueBranchNamed = func() {}
+
 // nameQueueBranch gives a queue delivery's worktree create the branch the member's naming rules
 // give for its work item, when the create names none. Anything it cannot decide leaves the
 // request as it is, which starts on the throwaway temp/<slug> branch: a delivery is never failed
@@ -55,6 +60,7 @@ func (c *createRun) nameQueueBranch(parent string) {
 		}
 		req.UseExisting, req.Branch = true, name
 		c.queueNamed = true
+		afterQueueBranchNamed()
 		return
 	}
 	req.NewBranch = name
@@ -62,4 +68,5 @@ func (c *createRun) nameQueueBranch(parent string) {
 	if strings.TrimSpace(req.Branch) == "" {
 		req.Branch = strings.TrimSpace(base)
 	}
+	afterQueueBranchNamed()
 }

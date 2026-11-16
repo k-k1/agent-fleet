@@ -184,3 +184,45 @@ func TestQueueCreateFallsBackWhenGitRefusesTheName(t *testing.T) {
 		t.Errorf("the session's branch is %q, want temp/<slug>", got)
 	}
 }
+
+// Two deliveries for one item: the first one's branch appears after the second has chosen the same
+// name and before it makes its worktree. Each way the name can then clash (a local branch, a
+// remote one, another copy holding it) ends on the throwaway branch, not a refusal.
+func TestQueueCreateFallsBackWhenARivalTakesTheNameFirst(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(p *createProbe) // before the resolver names it
+		rival func(p *createProbe) // after it did
+	}{
+		{"local branch", nil, func(p *createProbe) { runIntegrationGit(p.t, p.repo, "branch", "item/issue-12") }},
+		{"remote branch", plantRemoteBranch, func(p *createProbe) {
+			runIntegrationGit(p.t, p.repo, "push", "-q", "origin", "main:item/issue-12")
+			runIntegrationGit(p.t, p.repo, "fetch", "-q", "origin")
+		}},
+		{"existing branch, then held", func(p *createProbe) { runIntegrationGit(p.t, p.repo, "branch", "item/issue-12") },
+			func(p *createProbe) {
+				runIntegrationGit(p.t, p.repo, "worktree", "add", filepath.Join(p.home, "repos", "app@rival"), "item/issue-12")
+			}},
+		{"held by another copy", nil, func(p *createProbe) {
+			runIntegrationGit(p.t, p.repo, "worktree", "add", "-b", "item/issue-12", filepath.Join(p.home, "repos", "app@rival"))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newCreateProbe(t)
+			if tc.setup != nil {
+				tc.setup(p)
+			}
+			stubQueueBranch(t, "item/issue-12", "main")
+			old := afterQueueBranchNamed
+			t.Cleanup(func() { afterQueueBranchNamed = old })
+			afterQueueBranchNamed = func() { tc.rival(p) }
+			rec, _ := queueCreate(t, p, queueWorktreeBody(p, true))
+			if rec.Code >= 300 {
+				t.Fatalf("create = %d %s", rec.Code, rec.Body)
+			}
+			if got := branchOf(t, p.createdMeta().Dir); !strings.HasPrefix(got, "temp/") {
+				t.Errorf("the session's branch is %q, want temp/<slug>", got)
+			}
+		})
+	}
+}
