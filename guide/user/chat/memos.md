@@ -28,7 +28,7 @@ Memos are stored on the server, so the same queue shows on another PC or your ph
 
 - Attach images by pasting or dropping them into the box, or with the attach button
 - Memos are grouped by repository, and by category within it
-- A memo added from a worktree session, or from a file in a worktree, goes under the **base repository**, not under a group of its own for that worktree. Memos already under a worktree's group stay there; drag them to move them
+- A memo added from a worktree session, or from a file in a worktree, goes under the **parent repository**, not under a group of its own for that worktree. Memos already under a worktree's group stay there; drag them to move them
 - Press **+** on a category header to write straight into that category. "**Add category**" creates one ahead of time
 - The send button of an open file can also "**Add to queue**" a memo about that file ([Hand a file to a session](../files/send.md#send-it-later-in-a-batch))
 - "**Save to memo**" on the "Start working" screen moves the prompt you are writing, attachments included, into the memo queue and clears the box. "**Start with this**" in the memo's **⋯** brings it back, and the memo goes away once the session starts

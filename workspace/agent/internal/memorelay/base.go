@@ -63,6 +63,7 @@ func worktreeBase(dir string) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	cmd := gitx.CmdContext(ctx, dir, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	cmd.Env = withoutGitLocation(cmd.Env)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", false
@@ -71,7 +72,11 @@ func worktreeBase(dir string) (string, bool) {
 	if len(lines) != 2 || lines[0] == lines[1] {
 		return "", false // not a linked worktree
 	}
-	main := filepath.Dir(lines[1]) // …/repos/app/.git -> …/repos/app
+	// …/repos/app/.git -> …/repos/app; a bare main working copy has no ".git" to strip.
+	main := lines[1]
+	if filepath.Base(main) == ".git" {
+		main = filepath.Dir(main)
+	}
 	root, err := filepath.EvalSymlinks(gitx.ReposRoot())
 	if err != nil {
 		return "", false
@@ -85,4 +90,18 @@ func worktreeBase(dir string) (string, bool) {
 		return "", false
 	}
 	return name, true
+}
+
+// withoutGitLocation drops the variables that point git somewhere other than the folder it is
+// asked about, so the answer is about that folder whatever the Agent was started with.
+func withoutGitLocation(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		switch name, _, _ := strings.Cut(e, "="); name {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR":
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }

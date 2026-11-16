@@ -41,6 +41,43 @@ func reposHome(t *testing.T) string {
 	return root
 }
 
+// A bare main working copy has no ".git" under it; its worktrees still belong to it.
+func TestCreateFilesAWorktreeOfABareMain(t *testing.T) {
+	root := reposHome(t)
+	bare := filepath.Join(root, "lib")
+	src := filepath.Join(root, "app")
+	if out, err := exec.Command("git", "clone", "-q", "--bare", src, bare).CombinedOutput(); err != nil {
+		t.Fatalf("clone --bare: %v %s", err, out)
+	}
+	git(t, bare, "worktree", "add", filepath.Join(root, "lib@one"), "main")
+	cp := newFakeCP(t)
+	if got := createdRepo(t, cp, "lib@one"); got != "lib" {
+		t.Errorf("a worktree of a bare main was relayed as %q, want lib", got)
+	}
+}
+
+// The Agent's own GIT_DIR must not change which repository the folder is judged in.
+func TestCreateIgnoresGitDirFromTheEnvironment(t *testing.T) {
+	root := reposHome(t)
+	t.Setenv("GIT_DIR", filepath.Join(root, "app", ".git"))
+	cp := newFakeCP(t)
+	if got := createdRepo(t, cp, "app@one"); got != "app" {
+		t.Errorf("with GIT_DIR set the worktree was relayed as %q, want app", got)
+	}
+}
+
+// An "@" folder that is no git repository at all is left alone too.
+func TestCreateLeavesAPlainFolderThatIsNotARepository(t *testing.T) {
+	root := reposHome(t)
+	if err := os.MkdirAll(filepath.Join(root, "notes@x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cp := newFakeCP(t)
+	if got := createdRepo(t, cp, "notes@x"); got != "notes@x" {
+		t.Errorf("a non-repository folder was relayed as %q", got)
+	}
+}
+
 func createdRepo(t *testing.T, cp *fakeCP, repo string) string {
 	t.Helper()
 	cp.bodies = nil
@@ -110,7 +147,7 @@ func TestCreateNeverTouchesTheFilesystemForAnUnsafeName(t *testing.T) {
 	}
 	git(t, outside, "init", "-b", "main")
 	cp := newFakeCP(t)
-	for _, in := range []string{"../outside", "app/../app@one", "a/b@c", "..", ".hidden@x", "app@one/", "/etc"} {
+	for _, in := range []string{"../outside", "app/../app@one", "a/b@c", "..", ".hidden@x", "app@one/", "/etc", "-x@y"} {
 		if got := createdRepo(t, cp, in); got != in {
 			t.Errorf("unsafe repo %q was relayed as %q, want it unchanged", in, got)
 		}
