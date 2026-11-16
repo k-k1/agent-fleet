@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -159,10 +161,31 @@ func TestDefaultRouteOfReadsOnlyItsShape(t *testing.T) {
 	}
 }
 
+// fixedAgent stands in for a kind that resolves to one route per login or connection and reports
+// which of its routes are usable now.
+type fixedAgent struct {
+	agents.Agent
+	launch *routes.Launch
+	fixed  []string
+	usable *[]string
+}
+
+func (a fixedAgent) ResolveLaunch(session.Meta) routes.Launch { return *a.launch }
+func (a fixedAgent) UsableRoutes() []string                   { return *a.usable }
+func (fixedAgent) ResolvesOneRoute()                          {}
+func (a fixedAgent) FixedRoutes() []string                    { return a.fixed }
+
+func swapFixed(t *testing.T, kind string, fixed []string, l routes.Launch, usable []string) (*routes.Launch, *[]string) {
+	t.Helper()
+	cur, u := &l, &usable
+	t.Cleanup(agentreg.SwapForTest(kind, fixedAgent{Agent: AgentOf(kind), launch: cur, fixed: fixed, usable: u}))
+	return cur, u
+}
+
 // A default on a route the kind resolves by itself (codex's API-key login) is not a selection:
-// the create stays empty and runs only while the current login resolves to that route. Another
-// login, or one that cannot be told, is refused with the default's route_required, which names
-// neither route.
+// the create stays empty and runs only while the current login resolves to that route and the
+// route is usable. Another login, or one that cannot be told, is refused with the default's
+// route_required, which names neither route.
 func TestFixedRouteDefault(t *testing.T) {
 	p := newCreateProbe(t)
 	var launched []session.Meta
@@ -171,7 +194,8 @@ func TestFixedRouteDefault(t *testing.T) {
 	writeCreatePrefs(t, map[string]any{"agentLaunchDefaults": map[string]any{"codex": map[string]any{"route": map[string]any{"route": "openai-api"}}}})
 	empty := map[string]any{"kind": "codex", "dir": p.repo}
 
-	launch := swapOneRoute(t, routes.Launch{Route: routes.RouteOpenAIAPI, Binding: "OPENAI_API_KEY@k1"})
+	launch, usable := swapFixed(t, session.KindCodex, []string{routes.RouteChatGPTSubscription, routes.RouteOpenAIAPI},
+		routes.Launch{Route: routes.RouteOpenAIAPI, Binding: "OPENAI_API_KEY@k1"}, []string{routes.RouteOpenAIAPI})
 	if rec := p.post(empty, ""); rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
 		t.Fatalf("held: %d %s", rec.Code, rec.Body.String())
 	}
@@ -192,12 +216,18 @@ func TestFixedRouteDefault(t *testing.T) {
 			t.Errorf("%s: the refusal names the hidden login's route: %s", name, body)
 		}
 	}
+	// Resolving to the route is not enough: it must be usable now.
+	*launch = routes.Launch{Route: routes.RouteOpenAIAPI, Binding: "OPENAI_API_KEY@k1"}
+	*usable = nil
+	if rec := p.post(empty, ""); rec.Code != http.StatusConflict || routeCode(t, rec.Body.String()) != routes.CodePolicyRequired {
+		t.Errorf("a default route not usable now: %d %s", rec.Code, rec.Body.String())
+	}
 	if len(launched) != 1 {
 		t.Errorf("a refused create launched: %d", len(launched))
 	}
 
 	// Without the default the same API-key login launches as before (D11b's one-route step).
-	*launch = routes.Launch{Route: routes.RouteOpenAIAPI, Binding: "OPENAI_API_KEY@k1"}
+	*usable = []string{routes.RouteOpenAIAPI}
 	writeCreatePrefs(t, map[string]any{})
 	if rec := p.post(empty, ""); rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
 		t.Errorf("control, no default: %d %s", rec.Code, rec.Body.String())
@@ -206,6 +236,72 @@ func TestFixedRouteDefault(t *testing.T) {
 	writeCreatePrefs(t, map[string]any{"agentLaunchDefaults": map[string]any{"codex": map[string]any{"route": map[string]any{"route": "anthropic-api"}}}})
 	if rec := p.post(empty, ""); rec.Code != http.StatusConflict || routeCode(t, rec.Body.String()) != routes.CodePolicyRequired {
 		t.Errorf("a default codex cannot run on: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A per-connection default (the member's llama.cpp endpoint) is held to the connection it saved:
+// the same route on a replaced endpoint or key is refused, so is a default that saved no
+// reference, and the deployment's engine is refused while it is not reachable, although lcpp
+// resolves to it regardless.
+func TestPerConnectionDefaultIsHeldToItsConnection(t *testing.T) {
+	p := newCreateProbe(t)
+	var launched []session.Meta
+	launchTmuxFn = func(m session.Meta, _ bool) error { launched = append(launched, m); return nil }
+	usePolicy(t, routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []string{routes.RouteMemberLlamacpp, routes.RouteAFEngineLLM}})
+	setDefault := func(route map[string]any) {
+		writeCreatePrefs(t, map[string]any{"agentLaunchDefaults": map[string]any{"lcpp": map[string]any{"route": route}}})
+	}
+	body := map[string]any{"kind": "lcpp", "dir": p.repo, "model": "m"}
+	launch, usable := swapFixed(t, session.KindLcpp, []string{routes.RouteAFEngineLLM, routes.RouteMemberLlamacpp},
+		routes.Launch{Route: routes.RouteMemberLlamacpp, Binding: "member-llamacpp@ep1"}, []string{routes.RouteMemberLlamacpp})
+
+	setDefault(map[string]any{"route": "member-llamacpp", "connection": "member-llamacpp@ep1"})
+	if rec := p.post(body, ""); rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Fatalf("the saved endpoint: %d %s", rec.Code, rec.Body.String())
+	}
+	refused := func(name string) {
+		t.Helper()
+		n := len(launched)
+		rec := p.post(body, "")
+		if rec.Code != http.StatusConflict || routeCode(t, rec.Body.String()) != routes.CodePolicyRequired || len(launched) != n {
+			t.Errorf("%s: %d %s, want the default's route_required", name, rec.Code, rec.Body.String())
+		}
+	}
+	*launch = routes.Launch{Route: routes.RouteMemberLlamacpp, Binding: "member-llamacpp@ep2"}
+	refused("the same route on a replaced endpoint")
+	setDefault(map[string]any{"route": "member-llamacpp"})
+	refused("a per-connection default with no reference")
+
+	setDefault(map[string]any{"route": "af-engine-llm"})
+	*launch = routes.Launch{Route: routes.RouteAFEngineLLM, Binding: "af-engine-llm#llm"}
+	*usable = nil
+	refused("the engine while it is not reachable")
+	*usable = []string{routes.RouteAFEngineLLM}
+	if rec := p.post(body, ""); rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Errorf("control: the engine while it is reachable: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A policy tightened after the default route was accepted, before the create is judged, is refused
+// with the default's route_required, never a route_forbidden naming the now-hidden default.
+func TestDefaultRouteForbiddenMidCreate(t *testing.T) {
+	p := newCreateProbe(t)
+	launchTmuxFn = func(session.Meta, bool) error { return nil }
+	store := usePolicy(t, routepolicy.Policy{Revision: 3, Restricted: true, Allowed: []string{routes.RouteAnthropicAPI}})
+	swapClaude(t, func(base agents.Agent) agents.Agent {
+		return checkedRouteAgent{routeAgent: routeAgent{Agent: base, allowed: []string{routes.RouteAnthropicAPI}},
+			check: func(agents.RouteSelection, string) *agents.RouteRefusal {
+				if _, err := store.Accept(routepolicy.Policy{Revision: 4, Restricted: true, Allowed: []string{routes.RouteOpenAIAPI}}); err != nil {
+					t.Error(err)
+				}
+				return nil
+			}}
+	})
+	writeCreatePrefs(t, map[string]any{"agentLaunchDefaults": map[string]any{"claude": map[string]any{"route": map[string]any{"route": "anthropic-api"}}}})
+	rec := p.post(map[string]any{"kind": "claude", "dir": p.repo}, "")
+	b := rec.Body.String()
+	if rec.Code != http.StatusConflict || routeCode(t, b) != routes.CodePolicyRequired || strings.Contains(b, routes.RouteAnthropicAPI) {
+		t.Errorf("tightened mid-create: %d %s, want route_required not naming anthropic-api", rec.Code, b)
 	}
 }
 

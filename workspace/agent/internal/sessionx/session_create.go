@@ -52,8 +52,9 @@ type createRun struct {
 	// request named, so a refusal of it is route_required.
 	fromDefault bool
 	// defaultFixed is the member's default route when it is one the kind resolves by itself (a
-	// fixed route): the create stays empty and checkRoute requires the judged launch to be on it.
-	defaultFixed string
+	// fixed route): the create stays empty and checkRoute requires the judged launch to be on it,
+	// and on its saved connection when it names one.
+	defaultFixed *routes.Selection
 	// subdir is the cleaned subdir, checked to exist beneath the resolved working copy.
 	subdir string
 

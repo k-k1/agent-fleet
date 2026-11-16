@@ -101,11 +101,38 @@ func (c *createRun) applyDefaultRoute() bool {
 	// selected: the create stays empty, and checkRoute holds it to the default, so a login that
 	// resolves to another route is refused rather than run on a payer the member did not choose.
 	a, _ := RegisteredAgent(kind)
-	if slices.Contains(agents.FixedRoutesOf(a), def.Route) {
-		c.defaultFixed = def.Route
-		return true
+	if !slices.Contains(agents.FixedRoutesOf(a), def.Route) {
+		return c.refuseDefault()
 	}
-	return c.refuseDefault()
+	// A per-connection route (the member's llama.cpp endpoint) is the same route whatever the
+	// endpoint and key: only the saved reference says which one the member chose, so a default
+	// without one cannot be held to it.
+	if r, ok := routes.Lookup(def.Route); ok && r.PerConnection && def.Connection == "" {
+		return c.refuseDefault()
+	}
+	if !defaultUsable(a, def.Route) {
+		return c.refuseDefault()
+	}
+	c.defaultFixed = def
+	return true
+}
+
+// defaultUsable reports whether the kind's credential for route is held and reachable now
+// (agents.CredentialResolver's UsableRoutes, within the launch budget): resolving a launch alone
+// does not say so, as lcpp resolves to the deployment's engine whether or not one is up. A kind
+// that does not answer in time is not usable.
+func defaultUsable(a agents.Agent, route string) bool {
+	cr, ok := a.(agents.CredentialResolver)
+	if !ok {
+		return false
+	}
+	l, ok := withinBudget("default route usable", func() routes.Launch {
+		if slices.Contains(cr.UsableRoutes(), route) {
+			return routes.Launch{Route: route}
+		}
+		return routes.Launch{}
+	})
+	return ok && l.Route == route
 }
 
 // checkDefaultFixed is checkRoute's hold on a fixed-route default (applyDefaultRoute): the launch
@@ -113,13 +140,26 @@ func (c *createRun) applyDefaultRoute() bool {
 // default's route_required, so a message naming the current login's route never reaches the
 // member; only a policy that cannot be confirmed keeps its own refusal.
 func (c *createRun) checkDefaultFixed(ref *agents.RouteRefusal, judged *routes.Launch) *agents.RouteRefusal {
-	if c.defaultFixed == "" || ref != nil && ref.Code == routes.CodePolicyUnconfirmed {
+	def := c.defaultFixed
+	if def == nil || ref != nil && ref.Code == routes.CodePolicyUnconfirmed {
 		return ref
 	}
-	if ref != nil || judged == nil || judged.Route != c.defaultFixed {
+	// A saved reference must be the binding the launch resolved to: a replaced endpoint or key is
+	// the same route on another credential, refused rather than run on (D4).
+	if ref != nil || judged == nil || judged.Route != def.Route || def.Connection != "" && judged.Binding != def.Connection {
 		return defaultRouteRefusal(c.req.Kind)
 	}
 	return nil
+}
+
+// fromDefaultRefusal is the policy's refusal of a create running on an explicit default route
+// (applyDefaultRoute), made generic: a policy tightened since the default was accepted would
+// otherwise name the now-hidden default. A policy that cannot be confirmed keeps its own refusal.
+func (c *createRun) fromDefaultRefusal(ref *agents.RouteRefusal) *agents.RouteRefusal {
+	if !c.fromDefault || ref == nil || ref.Code == routes.CodePolicyUnconfirmed {
+		return ref
+	}
+	return defaultRouteRefusal(c.req.Kind)
 }
 
 // refuseDefault writes route_required for a default route that cannot be used.

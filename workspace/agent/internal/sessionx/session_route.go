@@ -112,7 +112,7 @@ func (c *createRun) checkRoute() bool {
 	// The credential policy, once the selection is known valid (ADR 0138 D11, D12). The launch it
 	// judged is the one recorded (armMeta).
 	ref, judged := newLaunchPolicyRefusal(c.req.Kind, c.req.Route, session.Meta{Kind: c.kind, Model: c.req.Model, Driver: c.driver})
-	ref = c.checkDefaultFixed(ref, judged)
+	ref = c.fromDefaultRefusal(c.checkDefaultFixed(ref, judged))
 	if ref != nil {
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 		return false
