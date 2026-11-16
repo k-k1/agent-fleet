@@ -9,7 +9,8 @@ English | [日本語](0139-light-slots-rightsizing-boost.ja.md)
   `t3` instance was read for this record**, and no AWS call was made: every such figure below is an
   estimate from list-price proportionality and is marked as one. No decision rests on an estimate alone;
   the ones that wait on a measurement say so. Reviewed 2026-11-16 by a separate session (codex
-  `gpt-6.1-sol`): round 1, 11 findings, each checked against the tree and folded into this text.
+  `gpt-6.1-sol`): rounds 1 and 2, 11 and 3 findings, each checked against the tree and folded into
+  this text.
 - Tracking: #4340.
 - Follow-ups: #4332, #4333, #4334, #4335
 - Related: [0045](0045-ec2-persistent-workspace.md) decision 8 (a slot is exclusive to one member;
@@ -32,7 +33,9 @@ member-pressed **boost**.
   `withResolvedSize` (`workspace_lifecycle.go`), which every start and resize path goes through, sets
   the memory requirement (`resolveWorkspaceSize`: the member's `mem_limit`, clamped by the tenant's and
   the deployment's maximum) and the class (`resolveSlotClass`: member → tenant default → deployment
-  default, each one both declared by the deployment and in the tenant's `AllowedSlotClasses`). The
+  default, each one both declared by the deployment and in the tenant's `AllowedSlotClasses`; when no
+  declared class is allowed at all, it returns the deployment default anyway, so a Start never fails for
+  want of a class). The
   runtime's `rungFor(classID, memBytes)` (`runtime_ecs_ec2_pool.go`) then only picks the smallest rung of
   that class whose declared memory is at least the requirement. **A requirement of 0 means the smallest
   rung of the class** (ADR 0045 decision 21).
@@ -166,6 +169,15 @@ can answer it after the fact.
   already writes one line per minute (`mempressure.Series`); it adds CPU from `usage_usec` deltas over
   the same minute, and exposes a summary of the minutes since a cursor the CP passes back. The CP pulls
   that on the usage sampler's tick and folds it into the day row. Raw minutes are not stored in the CP.
+- **Running time comes from the CP; measurements from the Agent.** The CP records every launch — start,
+  stop, the box and the override that chose it — and running and boosted minutes are read from those
+  records, never from Agent samples. Every Agent minute line carries the launch's id, handed to it at
+  Start, so a minute is attributed to the box it was measured on.
+- **The stop boundary.** A workspace that starts and stops between two sampler ticks is never polled
+  while running. So the CP makes one bounded, best-effort pull just before it stops a task, and pulls
+  whatever is still behind the cursor at the next Start: the series lives on home, which survives the
+  stop, and the launch id keeps those minutes on the old box rather than the new one. Minutes that fall
+  out of the series' ~4-day window before that happen are lost, and stay running-but-unmeasured.
 - **CPU is normalised only when the rung declares its vCPU** (the field is optional,
   `AF_ECS_EC2_SLOT_TYPES` `type:memMiB[:vcpu]`); otherwise the column is NULL. The burst baseline is not
   something the CP knows today: a burstable rung that wants the burst column declares its baseline in the
@@ -206,8 +218,10 @@ memory requirement).
   declares now, the tenant's `AllowedSlotClasses` now, the tenant's and the deployment's memory maximum
   (`resolveWorkspaceSize`'s clamps) and the architecture of the stored choice. An override that fails a
   check is not applied and is reported, the way `resolveSlotClass` reports a class it cannot honour; it
-  never falls through to the deployment default, which could be on another architecture. `rungFor` stays
-  a pure rung picker.
+  never falls through to the deployment default, which could be on another architecture. That strictness
+  is the override path's contract; the existing resolution of the stored choice, including its last-resort
+  fall back to the deployment default (Context), is not changed by this record. `rungFor` stays a pure
+  rung picker.
 - **The Console is told, not left to recompute.** The sizing API returns, per member, three things:
   the stored choice, the box the next Start will use (with the override that decides it and until when),
   and the box the running workspace is on. `slotFor` / `ladderFor` keep drawing the ladder, but they no
@@ -227,16 +241,19 @@ memory requirement).
   own lifetimes, resolved **boost > auto > stored choice > tenant default**. The recommender may rewrite
   `auto` while a boost is live; that changes what the member returns to, not the boost. When the boost
   expires, the next Start lands on whatever `auto` (or the stored choice) says at that moment.
-- **When it applies**: at the next Start. If the workspace is running, the screen offers "restart into
-  the bigger box now" and says that a restart ends the sessions running in it. It never restarts on its
-  own.
+- **When it applies**: at the next Start. If the workspace is running, the screen compares the boost's
+  target with **the box the workspace is running on**: only when the target is bigger does it offer
+  "restart into the bigger box now", saying that a restart ends the sessions running in it. When the
+  target is the same or smaller (a workspace still on an expired boost's box after `auto` moved down, for
+  instance), it says the boost applies from the next start and offers no restart. It never restarts on
+  its own.
 - **Ending**: at expiry the `boost` override is removed. A running workspace is never shrunk under the
-  member, so it can keep the bigger box after expiry until it stops. Boosting while boosted extends; it
-  does not climb further.
+  member, so it can keep the bigger box after expiry until it stops. Boosting while a boost is live
+  extends it and does not climb further; boosting after expiry, even while still on the old boost's box,
+  is a new boost, computed from the next-start box as above.
 - **What the monthly bound counts.** The tenant admin turns boost on and sets the highest rung and a
   monthly budget of **boosted running hours**: hours the member actually ran on a box a boost put them on,
-  read from decision 3's rows (which are keyed by the box and the override that chose it), **including
-  hours after expiry**. Granted hours that were never started do not count. When the budget is spent the
+  read from the CP's launch records (decision 3), **including hours after expiry**. Granted hours that were never started do not count. When the budget is spent the
   button is disabled; a workspace already running on a boosted box is still not stopped, and the overrun
   is shown to the tenant admin and on the cost line.
 - **Where it meets ADR 0120**: when the pressure responder warns or refuses a new session, its notice
@@ -248,7 +265,8 @@ memory requirement).
 - The history adds one Agent call per running workspace per usage-sampler tick and one row per member,
   per day, per box.
 - `withResolvedSize` gains the overrides in front of the stored choice; the Agent gains a per-minute
-  summary endpoint; the runtime records the box a Start actually used. The Console's size display and the
+  summary endpoint; the CP records every launch (box, override, start and stop) and pulls the Agent's
+  minutes at a Stop and at the next Start as well as on the tick. The Console's size display and the
   slots tab show where an override came from (`auto` or `boost`) and until when, or a member cannot tell
   why their box changed.
 
