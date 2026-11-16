@@ -65,3 +65,42 @@ func NewPublicOnlyClient(timeout time.Duration) *http.Client {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }
+
+// AttachedDialControl is ProxyDialControl that also refuses every address inside a network
+// the proxy host itself sits on. On the docker fence the proxy container is attached to
+// every per-user workspace network, so without this one workspace reaches another's
+// container through the proxy, which the per-user networks exist to prevent. prefixes is
+// read on every dial: networks are attached and detached while the proxy runs.
+func AttachedDialControl(prefixes func() []netip.Prefix) func(string, string, syscall.RawConn) error {
+	return func(_, address string, _ syscall.RawConn) error {
+		return dialControl(address, func(a netip.Addr) bool {
+			if ProxyAddrRefused(a) {
+				return true
+			}
+			a = a.Unmap().WithZone("")
+			for _, p := range prefixes() {
+				if p.Contains(a) {
+					return true
+				}
+			}
+			return false
+		})
+	}
+}
+
+// InterfacePrefixes is the networks this host has an address on. When the interfaces
+// cannot be read it answers every address, so AttachedDialControl refuses rather than
+// letting a workspace network through.
+func InterfacePrefixes() []netip.Prefix {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")}
+	}
+	var out []netip.Prefix
+	for _, a := range addrs {
+		if p, err := netip.ParsePrefix(a.String()); err == nil {
+			out = append(out, p.Masked())
+		}
+	}
+	return out
+}

@@ -43,6 +43,30 @@ services:
       - ${DATA_DIR}:${DATA_DIR}
     restart: unless-stopped
 
+  # The egress proxy for the docker fence (`--profile egress`; guide/operate/secure/
+  # egress.md). The CP attaches this container to every per-user workspace
+  # network, which is internal, so it is the only way out of a workspace. It takes the
+  # few variables it needs and not `.env`: it sits on workspace networks and has no
+  # use for the deployment's keys. It reports to the CP at the public URL, because the
+  # CP's loopback is not reachable from a bridge.
+  egress:
+    profiles: ["egress"]
+    image: ${REGISTRY:-agent-fleet}/control-plane:${VERSION:-dev}
+    container_name: ${AF_EGRESS_DOCKER_GATEWAY:-af-egress}
+    command: ["egress-proxy"]
+    user: "1000:1000"
+    environment:
+      AF_EGRESS_LISTEN: ":3128"
+      AF_EGRESS_TOKEN: ${AF_EGRESS_TOKEN:-}
+      AF_EGRESS_INGEST_URL: ${AF_EGRESS_INGEST_URL:-${PUBLIC_BASE_URL:-}/internal/egress}
+      AF_EGRESS_POLICY_URL: ${AF_EGRESS_POLICY_URL:-${PUBLIC_BASE_URL:-}/internal/egress/policy}
+      # Never the way from one workspace into another's network.
+      AF_EGRESS_REFUSE_ATTACHED: "1"
+    extra_hosts:
+      # For workspaces whose CP address is the workspace listener (AF_CP_INTERNAL_URL).
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
   # Caddy: automatic TLS for the public domain (ACME/Let's Encrypt) + reverse proxy
   # to the CP. Host-net so it shares the host loopback and reaches 127.0.0.1:8099
   # (the CP) (§20.4: both host-net). Runs as root to bind 80/443 (privileged ports).

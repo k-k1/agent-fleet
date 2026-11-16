@@ -207,14 +207,18 @@ type DocsMounter interface{ mountsStagedDocs() }
 func NewFactory(profile string, mcfg Config) (RuntimeFactory, error) {
 	switch profile {
 	case "", "local", "docker":
+		if err := validateDockerFence(mcfg); err != nil {
+			return nil, err
+		}
 		return &dockerFactory{
-			image:       mcfg.Image,
-			agentHost:   mcfg.AgentHost,
-			memory:      mcfg.Memory,
-			sessionCmd:  mcfg.SessionCmd,
-			extraEnv:    mcfg.ExtraEnv,
-			rootDataDir: mcfg.rootedDataDir,
-			onRelease:   mcfg.OnAddressesReleasing,
+			egressGateway: mcfg.DockerEgressGateway,
+			image:         mcfg.Image,
+			agentHost:     mcfg.AgentHost,
+			memory:        mcfg.Memory,
+			sessionCmd:    mcfg.SessionCmd,
+			extraEnv:      mcfg.ExtraEnv,
+			rootDataDir:   mcfg.rootedDataDir,
+			onRelease:     mcfg.OnAddressesReleasing,
 		}, nil
 	case "ecs", "aws":
 		return newECSFactory(mcfg)

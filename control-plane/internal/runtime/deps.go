@@ -63,6 +63,10 @@ type Config struct {
 	// deployment env: ExtraEnv also holds the operator's WS_ENV, which they deliberately do
 	// not pass on, and a WS_ENV entry named https_proxy must not slip through by its key.
 	EgressProxyEnv []string
+	// DockerEgressGateway is the container name of the egress proxy on a docker host
+	// (AF_EGRESS_DOCKER_GATEWAY). Set, every per-user network is internal and that
+	// container is attached to it; empty, workspaces keep an ordinary bridge.
+	DockerEgressGateway string
 	// AuthMode is "dev" | "proxy". The native adapter refuses anything but "dev".
 	AuthMode string
 	// RootDataDir re-bases a workspace's on-disk root onto the CURRENT data root.

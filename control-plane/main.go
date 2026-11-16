@@ -339,6 +339,7 @@ func main() {
 		log.Fatalf("runtime factory: %v", err)
 	}
 	mgr.rtFactory = rtFactory
+	startDockerEgressFence(ctx, rtProfile)
 	mgr.nativeRuntime = rtProfile == "native" || rtProfile == "wsl"
 	if mgr.authDevInsecure() {
 		log.Print(authDevLog)

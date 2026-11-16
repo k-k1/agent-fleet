@@ -108,11 +108,15 @@ informed choice — not undisclosed bugs.
   to exfiltrate that user's connected credentials. See
   [07 §7.2](docs/build/07-security.md#72-isolation-controls).
 
-- **Workspace egress is fenced only on AWS with the egress gateway.** On `docker`,
-  `native`, `kubernetes` and on AWS with the default `EgressRoute=nat-gateway`,
-  nothing forces a workspace's traffic through the egress proxy, so enforce does not
-  constrain it and a workload can send data anywhere its network reaches
-  ([#1181](https://github.com/k-k1/agent-fleet/issues/1181)). On AWS (`ecs` /
+- **Workspace egress is fenced only where an option turns the fence on.** On `docker`
+  by default, on `native`, `kubernetes` and on AWS with the default
+  `EgressRoute=nat-gateway`, nothing forces a workspace's traffic through the egress
+  proxy, so enforce does not constrain it and a workload can send data anywhere its
+  network reaches ([#1181](https://github.com/k-k1/agent-fleet/issues/1181)). On
+  `docker` with `AF_EGRESS_DOCKER_GATEWAY`, workspace networks have no route out and
+  the proxy is the only exit; this has not yet run on a real Docker host
+  ([#4373](https://github.com/k-k1/agent-fleet/issues/4373)), blocked direct
+  connections are not recorded, and nothing but HTTP(S) passes. On AWS (`ecs` /
   `ecs-ec2`) with `00-network`'s `EgressRoute=gateway`, the workspace route table's
   default route leads to the egress gateway: internet-bound HTTP (80) and HTTPS (443)
   leave through it, enforce applies there, and other internet-bound traffic, git

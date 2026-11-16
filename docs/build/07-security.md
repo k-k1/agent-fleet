@@ -760,7 +760,7 @@ Implemented:
   `169.254.169.254`) too, since the proxy refuses link-local destinations. A per-start
   variable of the same name wins over the deployment-wide one.
 
-**The fence exists on AWS only, behind an option.** With `00-network`'s
+**A fence exists on AWS and on docker, each behind an option.** With `00-network`'s
 `EgressRoute=gateway` ([ADR 0122](../decisions/0122-egress-gateway.md)), the workspace
 route table's default route leads to an egress gateway (Squid, with nftables for what
 Squid does not see): internet-bound TCP 80 and 443 go through Squid, so a workspace
@@ -772,6 +772,17 @@ traffic, git over SSH and direct DNS elsewhere included, is dropped; traffic ins
 the VPC (the CP, EFS on 2049) follows the security groups and never passes the
 gateway; and workspaces leave from the gateway's own address, not the NAT gateway's (the guide page
 [Control outbound traffic with a gateway](../../guide/operate/aws-ecs/egress-gateway.md)).
+
+On `docker`, `AF_EGRESS_DOCKER_GATEWAY` names the egress proxy's container (the compose
+`egress` profile). Each per-user network is then created `--internal`, the CP attaches that
+container to it, and the proxy is the workspace's only way out: a process that ignores the
+proxy variables reaches nothing, non-HTTP traffic included, and such an attempt is not
+recorded. The CP reaches the Agent by the container's address instead of a published port,
+the Agent reaches the CP through the proxy (the `NO_PROXY` entry for `AF_CP_INTERNAL_URL`
+is not added), and the proxy runs with `AF_EGRESS_REFUSE_ATTACHED=1`, refusing destinations
+on the networks it is attached to so that it never joins two workspaces. It is off by
+default and **has not run on a real Docker host** ([#4373](https://github.com/k-k1/agent-fleet/issues/4373);
+[ADR 0122](../decisions/0122-egress-gateway.md), addendum of 2026-11-17).
 
 Everywhere else the fence is missing: there is no internal-only network on `docker`,
 `native` shares the host's network, Kubernetes' NetworkPolicy admits the internet, and
@@ -794,8 +805,9 @@ from what you measured, and only then switch to enforce.
 4. **Supply chain** — provenance and regular updates for what is baked into the
    workspace image ([04](04-agent.md)).
 5. **Egress enforcement constrains workspaces only on AWS with `EgressRoute=gateway`**
-   (a preview) — elsewhere the proxy blocks, but no network fence routes a workspace
-   through it (§7.8, [#1181](https://github.com/k-k1/agent-fleet/issues/1181)).
+   (a preview) and on docker with `AF_EGRESS_DOCKER_GATEWAY` (not yet run on a real host,
+   [#4373](https://github.com/k-k1/agent-fleet/issues/4373)) — elsewhere the proxy blocks, but
+   no network fence routes a workspace through it (§7.8, [#1181](https://github.com/k-k1/agent-fleet/issues/1181)).
 6. The outward-facing threat model and the vulnerability reporting channel are
    [SECURITY.md](../../SECURITY.md).
 
