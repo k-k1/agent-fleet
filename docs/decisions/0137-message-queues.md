@@ -589,3 +589,8 @@ The Control Plane's scheduler says its start is automatic (`?origin=automatic`),
 schedule's run records the refusal as its failure; a caller that says nothing is deliberate, so an older Control Plane keeps
 working. The same rule holds in both execution methods: a deliberate message to a retired, stopped Managed session starts it in
 `/start`'s order (act, launch, mark off after its own launch), an automatic one is refused.
+
+Added 2026-11-16 (#4315): a wake made only to settle is also written to the audit log, once, when it is recorded: action
+`workspace.queue_settle_wake`, actor the system, the member's tenant, the workspace as target, and the category and the
+runs (`sending`, or overdue and not yet retired) that made it necessary. No run history line and no change to the
+deliveries list; no memo or instruction text is kept.

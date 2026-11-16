@@ -873,6 +873,9 @@ func TestMemoDispatchRechecksBehindTheLock(t *testing.T) {
 				if len(r.wakeJobs) != 0 {
 					t.Fatal("a wake was scheduled on a stale snapshot")
 				}
+				if got := e.wakeAudits(); len(got) != 0 {
+					t.Fatalf("a wake that was not started wrote %d audit entries", len(got))
+				}
 				_ = e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
 					n, _ := tx.CountWakesSince(q, store.DeliveryTS(time.Now().Add(-time.Hour)))
 					if n != 0 {
@@ -883,6 +886,65 @@ func TestMemoDispatchRechecksBehindTheLock(t *testing.T) {
 			})
 		})
 	}
+}
+
+// wakeAudits are the audit entries of wakes made only to settle.
+func (e *deliveryEnv) wakeAudits() []store.AuditLog {
+	e.t.Helper()
+	all, err := e.st.ListAuditByTenant(context.Background(), "", 100)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var out []store.AuditLog
+	for _, a := range all {
+		if a.Action == "workspace.queue_settle_wake" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// A wake made only to settle is written to the audit log once, with the system as actor, the
+// member's tenant, the workspace as target and the runs that made it necessary; a second tick
+// inside the guard time, and a second runner reaching the same queue, write nothing more.
+func TestMemoDispatchWakeIsAudited(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, q := e.autoQueue("app", "impl", map[string]any{"maxActive": 1}, 2)
+		e.setRuntime(agent, "stopped")
+		ts := store.DeliveryTS(time.Now())
+		live := store.MemoDelivery{ID: store.NewID(), MembershipID: e.members["a"], QueueID: q, State: store.DeliverySending,
+			MessageIDs: []string{}, CreatedAt: ts, UpdatedAt: ts, SentAt: ts}
+		if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error { return tx.InsertDelivery(live) }); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.wakeAudits(); len(got) != 0 {
+			t.Fatalf("%d entries before any wake", len(got))
+		}
+		now := time.Now()
+		r1, r2 := e.runner(), e.runner()
+		w := e.staleWork(q)
+		r1.settleWake(context.Background(), w, []store.MemoDelivery{live}, now)
+		r2.settleWake(context.Background(), w, []store.MemoDelivery{live}, now)
+		if len(r1.wakeJobs) != 1 || len(r2.wakeJobs) != 0 {
+			t.Fatalf("wake jobs %d and %d, want 1 and 0", len(r1.wakeJobs), len(r2.wakeJobs))
+		}
+		got := e.wakeAudits()
+		if len(got) != 1 {
+			t.Fatalf("%d audit entries for one wake, want 1", len(got))
+		}
+		ws, _, _ := e.st.GetWorkspaceByMembership(context.Background(), e.members["a"])
+		mv, _, _ := e.st.GetMembershipByID(context.Background(), e.members["a"])
+		a := got[0]
+		if a.ActorID != "memo-queue" {
+			t.Fatalf("actor id %q", a.ActorID)
+		}
+		if a.ActorKind != "system" || a.TenantID != mv.TenantID || a.Target != ws.ID {
+			t.Fatalf("entry %+v: want system actor, tenant %s, target %s", a, mv.TenantID, ws.ID)
+		}
+		if want := "queue " + q + "; runs: " + live.ID + " (sending)"; a.Detail != want {
+			t.Fatalf("detail %q, want %q", a.Detail, want)
+		}
+	})
 }
 
 func mustLive(tx store.MemoTxOps, q string) []store.MemoDelivery {
@@ -1094,6 +1156,19 @@ func TestMemoDispatchWakesAreBoundedAndOnePerMember(t *testing.T) {
 		})
 		if rows != 1 || len(r1.wakeJobs)+len(r2.wakeJobs) != 1 {
 			t.Fatalf("%d wake rows, %d jobs, want one workspace woken once", rows, len(r1.wakeJobs)+len(r2.wakeJobs))
+		}
+		if got := e.wakeAudits(); len(got) != 1 {
+			t.Fatalf("%d audit entries for two runners, want 1", len(got))
+		}
+		// Inside the ten-minute guard no second entry; after it, a new wake and a new entry.
+		r3 := e.runner()
+		r3.settleWake(context.Background(), e.staleWork(q1), live1, now.Add(memoSettleWakeEvery-time.Minute))
+		if got := e.wakeAudits(); len(got) != 1 || len(r3.wakeJobs) != 0 {
+			t.Fatalf("inside the guard: %d entries, %d jobs", len(got), len(r3.wakeJobs))
+		}
+		r3.settleWake(context.Background(), e.staleWork(q1), live1, now.Add(memoSettleWakeEvery+time.Minute))
+		if got := e.wakeAudits(); len(got) != 2 || len(r3.wakeJobs) != 1 {
+			t.Fatalf("after the guard: %d entries, %d jobs", len(got), len(r3.wakeJobs))
 		}
 	})
 }
