@@ -345,12 +345,13 @@ const queueReportVersion = 1
 // reportsQueue says the Agent that sent this envelope reports what would start a session.
 func (e agentSessionsEnvelope) reportsQueue() bool { return e.QueueReport == queueReportVersion }
 
-// queueRefsVersion is the one version of the reference item this Control Plane sends.
+// queueRefsVersion is the version of the reference item this Control Plane sends. An Agent that
+// reports a later one still understands it.
 const queueRefsVersion = 1
 
 // showsReferences says the Agent that sent this envelope can show a queue item that carries a
 // reference.
-func (e agentSessionsEnvelope) showsReferences() bool { return e.QueueRefs == queueRefsVersion }
+func (e agentSessionsEnvelope) showsReferences() bool { return e.QueueRefs >= queueRefsVersion }
 
 // jobsRunning reports whether session-less work is in flight in the workspace.
 func (e agentSessionsEnvelope) jobsRunning() bool { return e.RepoJobs > 0 || e.ImageJobs > 0 }

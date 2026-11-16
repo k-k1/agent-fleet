@@ -309,7 +309,7 @@ Memos you accumulate and send to a session in one go (the tables are
     (images alone are as before). Storage is three columns, `memo.ref_provider`, `ref_key` and `ref_url`, with `''`
     for none (migrations 0138 and Postgres 0123).
   - *Validation* (`400 memo_ref_invalid`). All three or none. `provider` is lower-cased and must be one the work items
-    know (`github`, `jira`, `bitbucket`). `key` is `owner/repo#N` for `github` and `bitbucket` (a bare `#N` is
+    know (`github`, `jira`, `bitbucket`). `key` is `owner/repo#N` for `github` and `bitbucket` (lower-cased, a bare `#N` is
     refused) and `PROJ-12` for `jira` (upper-cased), at most 200 bytes. `url` is http or https with a host, no
     whitespace, at most 2048 bytes. What is stored is the normalised form.
   - *State and provenance are the face's, as for any message* (§3): the Console enters `pending`, the token face
@@ -341,7 +341,7 @@ Memos you accumulate and send to a session in one go (the tables are
     of the delivery carry exactly one reference between them, the create also carries
     `"work_item": {"provider": "github", "key": "acme/app#12"}`, the object the Agent's `session_create` already
     takes from a launch from a work item (the item's title, type and labels are not kept, so they are not sent), so
-    the branch name and the link follow the work-item rules. With none, or two or more, there is no `work_item`.
+    the session's work-item link follows the work-item rules. The branch does not: the queue's create sends no branch, so the Agent still makes its `temp/<slug>` one, and naming it from the item (`feature/{key}`, with `#` and `/` made safe, and the worktree clash) is for step 3b to design. With none, or two or more, there is no `work_item`.
   - *The marker.* `GET /sessions` answers `"queueRefs": 1` when the Agent composes the prompt for items that carry a
     reference (a number apart from `queueReport`, which stays at 1). A delivery that holds a reference is never
     sent to an Agent without it. Until step 3b every Agent lacks it. The send asks the Agent after the wake and

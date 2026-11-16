@@ -463,6 +463,12 @@ func TestMemoReferenceConcurrentAddsLeaveOne(t *testing.T) {
 				t.Fatalf("the database took a second open (%s) message with the same reference", st)
 			}
 		}
+		// The index compares the key in lower case too, for a writer that skips the API.
+		if _, err := e.st.DB().ExecContext(context.Background(), `INSERT INTO memo(id, membership_id, repo, category, kind, body, created_at, state, provenance, ref_provider, ref_key, ref_url)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, store.NewID(), row.MembershipID, row.Repo, row.Category, "text", "x", store.NowTS(), store.MemoStateHeld, "workspace",
+			row.RefProvider, strings.ToUpper(row.RefKey), row.RefURL); err == nil {
+			t.Fatal("the database took the same key in another case")
+		}
 		for _, st := range []string{store.MemoStateDelivered, store.MemoStateUnconfirmed, store.MemoStateSuperseded, ""} {
 			if err := ins(store.NewID(), st); err != nil {
 				t.Fatalf("a %q row was refused: %v", st, err)
@@ -697,4 +703,23 @@ func TestMemoReferenceIsPartOfWhatWasSent(t *testing.T) {
 			t.Fatalf("a changed reference counts as what was sent: %+v", cur)
 		}
 	}
+}
+
+// A later version of the marker still means the Agent can show a reference, and a clear of the
+// queue's mark is written even when the queue row the tick read is older than the database.
+func TestMemoReferenceMarkerVersionAndStaleClear(t *testing.T) {
+	if (agentSessionsEnvelope{}).showsReferences() || !(agentSessionsEnvelope{QueueRefs: 1}).showsReferences() || !(agentSessionsEnvelope{QueueRefs: 2}).showsReferences() {
+		t.Fatal("showsReferences")
+	}
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"enabled": true})
+		if err := e.st.SetMemoQueueNoRefs(context.Background(), q, store.NowTS()); err != nil {
+			t.Fatal(err)
+		}
+		stale := store.MemoQueue{CategoryID: q} // read before the mark was set
+		e.runner().setNoRefs(context.Background(), stale, false)
+		if got := e.queueRow(q); got.NoRefsAt != "" {
+			t.Fatalf("the mark stayed: %+v", got)
+		}
+	})
 }

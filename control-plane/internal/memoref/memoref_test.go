@@ -17,6 +17,7 @@ func TestNormalize(t *testing.T) {
 	}{
 		{"none", Ref{}, Ref{}, true},
 		{"github", Ref{"github", "acme/app#12", u}, Ref{"github", "acme/app#12", u}, true},
+		{"github case", Ref{"github", "Acme/App#12", u}, Ref{"github", "acme/app#12", u}, true},
 		{"folded", Ref{" JIRA ", " proj-12 ", "http://j.example/b"}, Ref{"jira", "PROJ-12", "http://j.example/b"}, true},
 		{"bitbucket", Ref{"bitbucket", "a/b#3", u}, Ref{"bitbucket", "a/b#3", u}, true},
 		{"unknown provider", Ref{"gitlab", "a/b#3", u}, Ref{}, false},

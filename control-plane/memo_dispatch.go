@@ -636,9 +636,9 @@ func (r *memoQueueRunner) setNoRefs(ctx context.Context, q store.MemoQueue, none
 			return
 		}
 		at = store.DeliveryTS(time.Now())
-	} else if q.NoRefsAt == "" {
-		return
 	}
+	// A clear is written whatever q says: q may be older than the row, and the write changes
+	// nothing when the mark is already empty.
 	if err := r.mgr.store.SetMemoQueueNoRefs(ctx, q.CategoryID, at); err != nil {
 		log.Printf("memo queue: queue %s: note the Agent's references: %v", q.CategoryID, err)
 	}

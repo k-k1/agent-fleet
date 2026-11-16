@@ -240,7 +240,7 @@ Workspace を起こさない。
     参照があるときだけ（画像だけは従来どおり）。保存は `memo.ref_provider`・`ref_key`・`ref_url` の 3 列で、無ければ `''`
     （移行 0138、Postgres は 0123）。
   - *検証*（`400 memo_ref_invalid`）。3 つそろうか、3 つとも無いか。`provider` は小文字にし、作業項目が知るもの
-    （`github`・`jira`・`bitbucket`）だけ。`key` は `github`・`bitbucket` が `owner/repo#N`（`#N` だけは不可）、`jira` が
+    （`github`・`jira`・`bitbucket`）だけ。`key` は `github`・`bitbucket` が `owner/repo#N`（小文字にする。`#N` だけは不可）、`jira` が
     `PROJ-12`（大文字にする）で、200 バイトまで。`url` は host のある http / https で、空白なし、2048 バイトまで。
     保存されるのは正規化した形。
   - *状態と由来は経路のもの*（§3）。Console は `pending`、token 面と `/mcp` は `held` で release の 1 回の押下を待つ。
@@ -265,7 +265,7 @@ Workspace を起こさない。
   - *発火。* Agent の `POST /sessions` が受ける `queue_delivery.items[]` の item に `"reference": {"provider","key","url"}` が
     加わる（無ければ出ない。`body` は `""` でありうる）。配信の item が持つ参照がちょうど 1 つのとき、create に
     `"work_item": {"provider": "github", "key": "acme/app#12"}` も載せる。Agent の `session_create` が作業項目からの起動で
-    既に受け取る object で（title・type・labels は参照が保たないので送らない）、ブランチ名とリンクは作業項目の規則に従う。
+    既に受け取る object で（title・type・labels は参照が保たないので送らない）、セッションの作業項目のリンクは作業項目の規則に従う。ブランチは従わない: キューの create はブランチを送らないので、Agent は従来どおり `temp/<slug>` を作る。項目からの命名（`feature/{key}`、`#` と `/` の扱い、worktree の衝突）は step 3b で設計する。
     0 個か 2 個以上なら `work_item` は無い。
   - *マーカー。* Agent が参照を持つ item の prompt を組めるとき、`GET /sessions` が `"queueRefs": 1` を返す（`queueReport` とは
     別の数で、そちらは 1 のまま）。参照を含む配信は、これの無い Agent には送らない。step 3b までは全ての Agent に無い。

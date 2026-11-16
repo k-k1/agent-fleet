@@ -494,7 +494,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memo_queue_member_limit": "Auto-run sessions are already running up to the limit (4) across all categories. Try again when one has finished.",
   "err.memo_queue_bad_repo": "This category's repository is not a single folder name, so no session can be started in it.",
   "err.memo_queue_item_invalid": "A memo in this category cannot be sent to a session as it is (too long, too many attachments, or an unusable attachment path). Edit the memo and try again.",
-  "err.memo_ref_invalid": "The reference is not valid. Give provider, key and url together, with a key like owner/repo#12 or PROJ-12 and an http(s) url.",
-  "err.memo_ref_duplicate": "This item is already waiting in this queue.",
+  "err.memo_ref_invalid": "This item needs a valid link: provider (github, jira or bitbucket), key like owner/repo#12 or PROJ-12, and an http(s) url — all three together.",
+  "err.memo_ref_duplicate": "This item is already in this auto-run category.",
   "err.session_retired": "Auto-run stopped this session. Start the session first, then send again.",
 };

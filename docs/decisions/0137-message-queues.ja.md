@@ -612,5 +612,5 @@ retire が保留のまま 2 回再起動し、かつカウンタが巻き戻っ�
 全体を断る（`memo_ref_duplicate`）。検査はメンバーの lock の中で行い、後ろに部分 UNIQUE index がある。発火は参照を item に載せ、
 参照がちょうど 1 つならセッションの `work_item` にする。参照を含む配信は、新しいマーカー `queueRefs` を送らない Agent には
 送らない（キューの `noRefsAt` と待ち理由 `no_references` が示す）。未決 2 には触れない: セッションからの参照だけの
-メッセージも他と同じく `held`。Agent（マーカー・prompt・ツール引数）と Console（「auto-run に追加」）に残す。wire は
+メッセージも他と同じく `held`。§4 のブランチ名の文はこの slice では満たされない: キューの create はブランチを送らないので、セッションは Agent の `temp/` ブランチのままで、作業項目の規則に従うのはリンクだけ。項目からの命名は slice B。Agent（マーカー・prompt・ツール引数）と Console（「auto-run に追加」）に残す。wire は
 docs/build/03-control-plane.md §3.6。

@@ -43,7 +43,7 @@ func (e *Error) Error() string { return e.Msg }
 func refuse(format string, a ...any) error { return &Error{fmt.Sprintf(format, a...)} }
 
 // Normalize checks a reference and returns it in the form it is stored and compared in: the
-// provider in lower case and a Jira key in upper case, as the Agent keys a launch's work item.
+// provider and a GitHub or Bitbucket key in lower case and a Jira key in upper case, as the Agent keys a launch's work item.
 // All three parts are set or none is (the zero Ref is no reference). known says which providers
 // the work items know.
 func Normalize(in Ref, known func(string) bool) (Ref, error) {
@@ -67,8 +67,12 @@ func Normalize(in Ref, known func(string) bool) (Ref, error) {
 		if !jiraKey.MatchString(key) {
 			return Ref{}, refuse("a Jira key looks like PROJ-12")
 		}
-	} else if !slugKey.MatchString(key) {
-		return Ref{}, refuse("a %s key looks like owner/repo#12", provider)
+	} else {
+		if !slugKey.MatchString(key) {
+			return Ref{}, refuse("a %s key looks like owner/repo#12", provider)
+		}
+		// A repository name is not case-sensitive: one stored form keeps the same item one key.
+		key = strings.ToLower(key)
 	}
 	if len(u) > URLMax {
 		return Ref{}, refuse("the reference's url is over %d bytes", URLMax)

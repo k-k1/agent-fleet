@@ -655,5 +655,5 @@ that becomes a queue and a merge that would make two refused whole (`memo_ref_du
 member's lock, with a partial unique index behind it. A fire passes the reference with the item and, for exactly one
 reference, the session's `work_item`. A delivery that holds a reference is not sent to an Agent that does not send the
 new `queueRefs` marker (the queue's `noRefsAt` and the waiting reason `no_references` say so). Open question 2 is
-untouched: a reference-only message from a session is `held` like any other. Left for the Agent (the marker, the prompt
+untouched: a reference-only message from a session is `held` like any other. The §4 sentence on the branch name is not met by this slice: the queue's create sends no branch, so the session keeps the Agent's `temp/` branch and only the link follows the work-item rules. Naming the branch from the item is for slice B. Left for the Agent (the marker, the prompt
 and the tool argument) and the Console ("add to auto-run"); the wire is in docs/build/03-control-plane.md §3.6.

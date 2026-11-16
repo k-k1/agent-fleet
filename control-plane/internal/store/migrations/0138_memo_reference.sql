@@ -11,8 +11,8 @@
 -- API refuses a duplicate first, inside the member's lock, and answers the message already there.
 -- The index is what holds when a writer skips that check. Open is held, pending or claimed: a
 -- message that can still be fired, or is being fired. unconfirmed, delivered and superseded are
--- closed. The index key is the exact key: the API also folds case for the keys that tracker
--- treats as case-insensitive.
+-- closed. The key is compared in lower case, as the API does: a GitHub or Bitbucket repository
+-- name is not case-sensitive.
 -- memo_queue.no_refs_at is set by the dispatcher or a send that found an Agent that cannot show a
 -- reference. While it is set a fire leaves the messages that carry one where they are.
 -- Forward compatible: columns, one index and defaults that mean today's behaviour only.
@@ -24,6 +24,6 @@ ALTER TABLE memo ADD COLUMN release_ref_provider TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo ADD COLUMN release_ref_key TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo ADD COLUMN release_ref_url TEXT NOT NULL DEFAULT '' CHECK (state <> 'pending' OR (release_ref_provider = ref_provider
   AND release_ref_key = ref_key AND release_ref_url = ref_url));
-CREATE UNIQUE INDEX IF NOT EXISTS idx_memo_open_ref ON memo(membership_id, repo, category, ref_provider, ref_key)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memo_open_ref ON memo(membership_id, repo, category, ref_provider, lower(ref_key))
   WHERE ref_key <> '' AND state IN ('held', 'pending', 'claimed');
 ALTER TABLE memo_queue ADD COLUMN no_refs_at TEXT NOT NULL DEFAULT ''
