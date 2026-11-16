@@ -41,6 +41,13 @@ source_of_truth: "コード（本書は地図と設計意図）"
 - **メタデータは `~/.local/state/agent-fleet/sessions` に保存する**（`session.MetaDir`。
   `AF_SESSIONS_DIR` で上書き可）。home ボリューム上にあり、ファイルブラウザからは隠れている。
   だから **Stop → Start を跨いで一覧と再開が生きる**。
+  - **meta は原子的に書く。** `WriteMeta`（ベストエフォート、fsync なし）も `WriteMetaChecked`（fsync あり、
+    エラーを返す）も、同じディレクトリに `.meta-*.tmp`（mode 0600）を書いて、削除ガードの下で
+    `<name>.json` へ rename する。読み手は古い meta か新しい meta のどちらかを見て、空や途中で切れたファイルは見ない。
+    ディレクトリを歩く処理は `*.json` だけを拾うので、一時ファイルはセッションではなく、クラッシュで残ったものも無視される。
+  - **判断する読み手は「無い」と「読めない」を区別する。** `session.ReadMetaState` と `ListMetasChecked` は
+    無い / 読めない / 読めた を返す（表示用の `ReadMeta` と `ListMetas` はそのまま）。retire（木の一覧を含む）、
+    自動の `/start`、人の操作の記録は、存在するのに読めない meta を疑いとして扱う（下の retire を参照）。
 - **停止したセッションは TTL を過ぎると自動でアーカイブへ移る。消しはしない**
   （[decisions/0097](../decisions/0097-session-retention.ja.md)）。
   - TTL は利用者の設定（`sessionStoppedArchiveDays`。「しない」も選べる）、無ければ
@@ -150,7 +157,11 @@ source_of_truth: "コード（本書は地図と設計意図）"
     その更新が読んだ meta に対する 1 回の checked な更新で行い、購読を終わらせて停止するのは印を確実に書いたあとだけ
     （印や release が書けない、または更新の中で meta が読めない場合は、何も終わらせず止めず、`unended` に載せる）。meta が存在するのに読めないメンバー、または
     祖先の meta が読めないメンバーは、その回は印も停止もせず `unended` に載せる（`complete` は false になり、
-    Control Plane は繰り返す）。起動時の回復は、読めない root の意図を残す。
+    Control Plane は繰り返す）。起動時の回復は、読めない root の意図を残す。木を歩く一覧も同じで、
+    ディレクトリ内の読めないファイルは子かもしれないので、root の `unended` に名前を載せ、`complete` にはしない。
+    meta が読めない root の retire は 404 ではなく `503 meta_unreadable`。そのセッションの自動の `/start` は
+    `409 session_retired` で断り、購読も禁止する。人の操作の記録（`recordPersonAct`）は、読めないときに
+    「記録済み」とは読まずエラーを返す。
   - meta の `retiredAt` が、終わらせたものを終わったままにする。付けた瞬間から、
     watch の sink は起動も注入もせず、Managed への入力は、自動の出どころのものを `409 session_retired`
     で断り（意図した出どころのものはセッションを起動する。下記）、自動の `/start` も断り、子の枠も取らせず、エンジンは新しい購読と組み込みを断り、予約された

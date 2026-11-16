@@ -43,6 +43,15 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
 - **Metadata is persisted** in `~/.local/state/agent-fleet/sessions`
   (`session.MetaDir`, overridden by `AF_SESSIONS_DIR`). It is on the home volume and
   hidden from the file browser, so **the list and resumability survive stop and start**.
+  - **A meta is written atomically.** `WriteMeta` (best effort, no fsync) and
+    `WriteMetaChecked` (durable, fsync, returns the error) write a `.meta-*.tmp` file in the same
+    directory (mode 0600) and rename it over `<name>.json`, under the delete guard, so a reader sees
+    the old meta or the new one, never an empty or cut file. Walkers of the directory take only
+    `*.json`, so a temporary file is not a session; one left by a crash is ignored.
+  - **Readers that decide tell "absent" from "unreadable".** `session.ReadMetaState` and
+    `ListMetasChecked` answer absent / unreadable / ok; `ReadMeta` and `ListMetas` stay for display.
+    The retire (its tree list included), an automatic `/start` and the person-act record treat a
+    meta that exists but cannot be read as in doubt (see the retire below).
 - **A stopped session is auto-archived — never deleted — once its TTL is up**
   ([decisions/0097](../decisions/0097-session-retention.md)).
   - The TTL is the user's setting (`sessionStoppedArchiveDays`, which can be "never"),
@@ -182,7 +191,12 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     reported in `unended`). A member
     whose meta exists but cannot be read, or whose ancestor's cannot, is neither marked nor stopped
     in that pass and is reported in `unended` (so `complete` is false and the Control Plane repeats);
-    the start-up recovery keeps the intent of a root it cannot read.
+    the start-up recovery keeps the intent of a root it cannot read. The same holds for the walk's
+    list: a file in the sessions directory that cannot be read may be a child, so it is named in the
+    root's `unended` and the answer is never `complete`; a retire of a root whose meta cannot be read
+    is `503 meta_unreadable`, not 404. An automatic `/start` of such a session is refused with
+    `409 session_retired`, and a subscription is barred for it. The person-act record
+    (`recordPersonAct`) returns an error for it instead of reading as "already recorded".
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
     written, the watch sink never starts or injects into the session, a Managed input of an
     automatic origin is refused with `409 session_retired` (one of a deliberate origin starts the

@@ -40,6 +40,11 @@ type ssmLoginStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
+// afterStartGate is a test seam: it runs once HandleStartSession holds both gates, before it
+// reads the meta. The lifecycle gate has read the meta already, so only a hook can put a cut file
+// between that read and this handler's own.
+var afterStartGate func()
+
 // HandleStartSession (POST /sessions/{name}/start) relaunches a stopped session from
 // its recorded meta WITHOUT attaching a terminal — used by the SSM login modal so the
 // SSO handshake runs before the pane is shown (resume flow). ?force=1 forces re-login
@@ -62,13 +67,26 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	g := retireGate(name)
 	g.RLock()
 	defer g.RUnlock()
+	if afterStartGate != nil {
+		afterStartGate()
+	}
 	auto := startIsAutomatic(r)
-	if cur, ok := readMetaStable(name); ok && auto && isRetired(cur) {
+	// One read decides both questions. An automatic start never goes ahead on a meta it could not
+	// read: the retired mark may be on it.
+	cur, st := readMetaDecide(name)
+	switch {
+	case st == session.MetaUnreadable && auto:
 		httpx.WriteErr(w, http.StatusConflict, "session_retired", errSessionRetired.Error())
 		return
-	}
-	if _, ok := session.ReadMeta(name); !ok {
+	case st == session.MetaUnreadable:
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "meta_unreadable",
+			"the session's meta could not be read, so the start was not made; try again")
+		return
+	case st == session.MetaAbsent:
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	case auto && isRetired(cur):
+		httpx.WriteErr(w, http.StatusConflict, "session_retired", errSessionRetired.Error())
 		return
 	}
 	// The retire gate's read side is already held, so the act is recorded without taking it again.

@@ -176,12 +176,17 @@ func UpdateSessionMeta(name string, fn func(m *session.Meta) bool) (session.Meta
 
 // updateSessionMetaChecked is UpdateSessionMeta for a write that must be on disk before its
 // caller goes on (a move's transitions): the error of the write is returned, and the write is
-// atomic (session.WriteMetaChecked). wrote is false when fn declined or the meta is gone.
+// atomic (session.WriteMetaChecked). wrote is false when fn declined or the meta is gone. A meta
+// that exists but cannot be read is neither: it is errMetaUnreadable, so "nothing to write" is
+// never taken for "already in the state fn wants" (fn is not called).
 func updateSessionMetaChecked(name string, fn func(m *session.Meta) bool) (m session.Meta, wrote bool, err error) {
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
-	m, ok := session.ReadMeta(name)
-	if !ok || !fn(&m) {
+	m, st := session.ReadMetaState(name)
+	switch {
+	case st == session.MetaUnreadable:
+		return m, false, errMetaUnreadable
+	case st == session.MetaAbsent || !fn(&m):
 		return m, false, nil
 	}
 	if err := session.WriteMetaChecked(m); err != nil {

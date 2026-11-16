@@ -594,3 +594,8 @@ Added 2026-11-16 (#4315): a wake made only to settle is also written to the audi
 `workspace.queue_settle_wake`, actor the system, the member's tenant, the workspace as target, and the category and the
 runs (`sending`, or overdue and not yet retired) that made it necessary. No run history line and no change to the
 deliveries list; no memo or instruction text is kept.
+
+Added 2026-11-16 (#4269): the retire's reads of a session's meta no longer take a file that exists but cannot be read for
+"absent". Such a file in the walk's list is named in the root's `unended` (never `complete`), a retire of a root with one
+is `503 meta_unreadable`, an automatic start of it is refused with `409 session_retired`, and the act record is an error.
+The meta write itself is now a temporary file and a rename, so a reader no longer meets a cut file in normal operation.
