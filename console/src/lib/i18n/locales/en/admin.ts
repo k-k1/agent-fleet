@@ -1133,4 +1133,15 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mpol_layer_vendor": "A vendor's host",
   "admin.mpol_stale": "Someone else changed this rule after it was loaded, so nothing was saved. Your edits are still here; reopen the page to see the current rule.",
   "admin.model_access_ceiling_source_other": "Ceiling source: {source}. It cannot be changed here.",
+  // ADR 0138 M2 P9: what the policy hides, and from which layer, on both Model access pages.
+  "admin.mpol_hidden_title": "What the policy hides",
+  "admin.mpol_hidden_note": "The agents, image providers and assistant chat backends left with no usable route, so hidden from this tenant's members, and the layers that forbid them. Members' own switches live in their workspaces, where the Control Plane cannot see them, so they are not in this list.",
+  "admin.mpol_hidden_none": "These layers hide nothing.",
+  "admin.mpol_hidden_unavailable": "The list of what is hidden could not be read from this Control Plane.",
+  "admin.mpol_hidden_kinds": "Agents",
+  "admin.mpol_hidden_imagegen": "Image generation",
+  "admin.mpol_hidden_chat": "Assistant chat",
+  "admin.mpol_hidden_by": "Hidden by: {layers}",
+  "admin.mpol_hidden_provider_comfy": "This deployment's engine (ComfyUI)",
+  "admin.mpol_hidden_provider_openai_compat": "This deployment's engine (OpenAI-compatible)",
 };

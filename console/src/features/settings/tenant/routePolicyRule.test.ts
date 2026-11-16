@@ -99,3 +99,13 @@ describe("parseTenantPolicy", () => {
     expect(parseTenantPolicy({ error: { code: "forbidden" } })).toBeNull();
   });
 });
+
+describe("parseHidden", () => {
+  it("accepts only all three well-formed lists", async () => {
+    const { parseHidden } = await import("./routePolicyRule.ts");
+    expect(parseHidden({ kinds: [], chat: [], imagegen: [] })).not.toBeNull();
+    expect(parseHidden(undefined)).toBeNull();
+    expect(parseHidden({ kinds: [], chat: [] })).toBeNull();
+    expect(parseHidden({ kinds: [{ id: "agy", routes: ["agy-login"] }], chat: [], imagegen: [] })).toBeNull();
+  });
+});

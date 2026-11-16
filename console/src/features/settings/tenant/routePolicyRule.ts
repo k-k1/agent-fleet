@@ -59,8 +59,23 @@ export interface TenantPolicyView {
   routes: RouteDecision[];
   endpoints: EndpointDecision[];
   endpointRoutes: string[];
-  // `hidden` (P3) is read by the hidden-items section, which is not drawn yet.
+  /** What the layers hide from the tenant's members; read through parseHidden. */
   hidden?: unknown;
+}
+
+/** hiddenItemWire: a harness, chat backend or image provider none of whose routes the layers
+ *  allow, its routes, and every layer that forbids one of them. */
+export interface HiddenItem {
+  id: string;
+  routes: string[];
+  forbiddenBy: string[];
+}
+
+/** hiddenWire. */
+export interface HiddenView {
+  kinds: HiddenItem[];
+  chat: HiddenItem[];
+  imagegen: HiddenItem[];
 }
 
 /** GET /api/admin/route-policy. */
@@ -84,6 +99,25 @@ export function parseTenantPolicy(d: unknown): TenantPolicyView | null {
   if (!isObj(d) || !isCeiling(d.ceiling) || !isLayer(d.deployment) || !isLayer(d.cap) || !isLayer(d.tenant)) return null;
   if (!Array.isArray(d.routes) || !Array.isArray(d.endpoints)) return null;
   return d as unknown as TenantPolicyView;
+}
+
+const isHiddenItem = (v: unknown): v is HiddenItem =>
+  isObj(v) &&
+  typeof v.id === "string" &&
+  Array.isArray(v.routes) &&
+  isStrList(v.routes) &&
+  Array.isArray(v.forbiddenBy) &&
+  isStrList(v.forbiddenBy);
+
+// parseHidden is null unless all three lists are present and well formed: a missing or partial
+// answer must never read as "nothing is hidden".
+export function parseHidden(d: unknown): HiddenView | null {
+  if (!isObj(d)) return null;
+  for (const k of ["kinds", "chat", "imagegen"]) {
+    const l = d[k];
+    if (!Array.isArray(l) || !l.every(isHiddenItem)) return null;
+  }
+  return d as unknown as HiddenView;
 }
 
 export function parseDeploymentPolicy(d: unknown): DeploymentPolicyView | null {
