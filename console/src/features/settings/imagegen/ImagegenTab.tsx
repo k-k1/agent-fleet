@@ -98,7 +98,8 @@ export function ImagegenTab() {
   const imageLabels = Object.fromEntries(
     imageOrder.map((id) => {
       const row = status!.providers.find((p) => p.id === id);
-      if (id === "agy" || id === "codex") return [id, agentOf(id).assistantName];
+      // A vendor route (no declared images row) is named by its agent.
+      if (!(id in status!.kinds)) return [id, agentOf(id).assistantName];
       // Neither the key alone ("image") nor the kind alone ("ComfyUI") says enough: the key is
       // what the member can act on (`provider` in generate_image names it), the kind tells them
       // which machine it is (ADR 0082 P1 follow-up). A row that is not ready has no kind here.
