@@ -185,6 +185,36 @@ func TestSeveralAgentMessagesStayInOneTurn(t *testing.T) {
 	}
 }
 
+// The text the model writes before a tool call arrives as an agentMessage with
+// messagePhase "commentary" ahead of the call (measured on 1.4.20, #2168). It must render
+// before the tool part: a question that says "apply the proposal above?" points at it.
+func TestCommentaryBeforeAToolCallRendersAheadOfIt(t *testing.T) {
+	commentary := msp.MessagePhaseCommentary
+	final := msp.MessagePhaseFinalAnswer
+	pre := item(msp.ItemKindAgentMessage, "a-1", 2)
+	pre.Text = sp("Let me check the files now.")
+	pre.MessagePhase = &commentary
+	tool := item(msp.ItemKindToolCall, "t-1", 1)
+	tool.Tool = sp("shell")
+	tool.CommandText = sp("cat a.txt")
+	answer := item(msp.ItemKindAgentMessage, "a-2", 2)
+	answer.Text = sp("hello")
+	answer.MessagePhase = &final
+
+	turns := turnsFromItems([]msp.Item{pre, tool, answer})
+	if len(turns) != 1 {
+		t.Fatalf("%d turns, want 1: %+v", len(turns), turns)
+	}
+	p := turns[0].Parts
+	if len(p) != 3 || p[0].Kind != "text" || p[0].Text != "Let me check the files now." ||
+		p[1].Kind != "tool" || p[2].Kind != "text" || p[2].Text != "hello" {
+		t.Fatalf("parts = %+v, want commentary text, tool, answer text", p)
+	}
+	if turns[0].Text != "Let me check the files now.\nhello" {
+		t.Errorf("Text = %q", turns[0].Text)
+	}
+}
+
 // The member's own `!command` is their input, not the agent's work.
 func TestUserShellOpensAUserTurn(t *testing.T) {
 	sh := item(msp.ItemKindUserShell, "s-1", 1)
@@ -1074,5 +1104,65 @@ func TestNewKindsSummariseFromTypedMembersWithoutFallbackText(t *testing.T) {
 		if p.Tool != string(c.kind) || p.Info != c.want {
 			t.Errorf("%s: part = tool %q info %q, want info %q", c.name, p.Tool, p.Info, c.want)
 		}
+	}
+}
+
+func askItem(id, out string, rev int64) msp.Item {
+	args := `{"questions":[{"header":"Color","id":"color","options":[{"label":"Red"},{"label":"Blue"}],"question":"Which color?"},` +
+		`{"header":"Size","id":"size","options":[{"label":"Small"},{"label":"Large"}],"question":"Which size?","selection":{"mode":"multiple"}}]}`
+	it := msp.Item{ItemID: id, Kind: msp.ItemKindToolCall, CallID: strPtr("call-" + id), Tool: strPtr("request_user_input"),
+		Args: strPtr(args), Status: msp.ItemStatusCompleted, Revision: rev}
+	if out != "" {
+		it.VisibleOutput = strPtr(out)
+	}
+	return it
+}
+
+// A settled request_user_input stays in the history as a question block, as claude's and
+// codex's do; one still waiting adds nothing, because the pending card stands for it.
+func TestUserInputCallRendersAsAQuestionOnceSettled(t *testing.T) {
+	for _, c := range []struct {
+		name, out string
+		want      bool
+		answer    string
+		declined  bool
+	}{
+		{"waiting", "", false, "", false},
+		{"declined", `{"status":"cancelled","answers":[],"reason":"declined by the user"}`, true, "declined by the user", true},
+		{"aborted", `{"status":"aborted","answers":[],"reason":"run_aborted"}`, true, "run_aborted", true},
+		{"answered camel", `{"status":"answered","answers":[{"questionId":"size","selectedLabels":["Small","Large"]},{"questionId":"color","selectedLabel":"Red"}]}`,
+			true, `"Which color?"="Red", "Which size?"="Small, Large"`, false},
+		{"answered snake", `{"status":"answered","answers":[{"question_id":"color","selected_label":"Blue"},{"question_id":"size","free_text":"Medium"}]}`,
+			true, `"Which color?"="Blue", "Which size?"="Medium"`, false},
+		// The measured shape (1.4.2-R4684.1), here out of question order so only the id can
+		// place each answer.
+		{"answered measured", `{"status":"answered","answers":[{"id":"size","selected_label":"Large"},{"id":"color","selected_label":"Red"}]}`,
+			true, `"Which color?"="Red", "Which size?"="Large"`, false},
+		{"unreadable", `not json`, true, "not json", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			turns := turnsFromItems([]msp.Item{u1, askItem("ask1", c.out, 2)})
+			var parts []transcript.Part
+			if len(turns) > 1 {
+				parts = turns[1].Parts
+			}
+			if !c.want {
+				if len(parts) != 0 {
+					t.Fatalf("a waiting question rendered %+v", parts)
+				}
+				return
+			}
+			if len(parts) != 1 || parts[0].Kind != "question" {
+				t.Fatalf("parts = %+v, want one question", parts)
+			}
+			p := parts[0]
+			if p.Answer != c.answer || p.Declined != c.declined {
+				t.Errorf("answer %q declined %v, want %q %v", p.Answer, p.Declined, c.answer, c.declined)
+			}
+			if len(p.Questions) != 2 || p.Questions[0].ID != "" || p.Questions[1].ID != "" ||
+				p.Questions[0].MultiSelect || !p.Questions[1].MultiSelect || len(p.Questions[1].Options) != 2 {
+				t.Errorf("questions = %+v (want ids dropped, size multi-select)", p.Questions)
+			}
+		})
 	}
 }

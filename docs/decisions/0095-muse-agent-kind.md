@@ -3245,3 +3245,19 @@ Two things moved in 1.4.15, and the red step hid the second behind the first.
 
 The same cost applies again: the 1.4.15 bundle is red against a 1.4.14 binary until
 `MUSE_VERSION` moves; the pin bump is cli-pin-bump's.
+
+### Note 2026-11-16 — pre-tool-call commentary is on the wire; the session.jsonl reader is retired (#2168)
+
+Measured on 1.4.20-R8619.1 (the image pin) with one real Managed turn in a throwaway HOME: the
+sentence the model writes before a tool call arrives as an `agentMessage` with
+`messagePhase: "commentary"`, both on `item/*` (AF's store records its `inProgress` and
+`completed` revisions ahead of the `toolCall`) and in `session/read`'s `history.items`. The gap
+that made #1696 read muse's internal `session.jsonl` is closed, so `commentary.go` is removed and
+the transcript renders only wire items; the commentary is ordinary answer text in place.
+
+`messagePhase` is the model's declaration, not a position: a turn that announced its plan and
+then answered without calling a tool marked that message `finalAnswer`. Nothing keys on the
+phase, so this changes no rendering.
+
+Sessions recorded by a host that did not yet put commentary on the wire keep their wire items but
+lose the commentary the log reader used to splice in.
