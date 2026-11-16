@@ -12,6 +12,34 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.46.0](0.46.0.ja.md) — 2026-11-16
+
+**CLI ピン** — Claude Code 2.1.325 / Copilot 1.0.112 / Antigravity 1.5.9 / Kiro 3.3.0 / Muse 1.4.20-R8619.1
+
+**New / Improved**
+
+- **[メモ]** メモの自動実行: カテゴリの実行待ちのメモを「今すぐ実行」または自動（いつでも・時間帯・件数）でセッションとして実行。セッションが追加したメモは承認制、実行履歴・一時停止と再開・通知。テナントの管理者が許可するまでブロック ([#4148](https://github.com/k-k1/agent-fleet/issues/4148), [#4149](https://github.com/k-k1/agent-fleet/issues/4149))
+- **[ecs-ec2]** 隔離されたスロットをプールの画面から戻す ([#4019](https://github.com/k-k1/agent-fleet/issues/4019))
+- **[エージェント]** 入力が CLI に届かなかったセッションに「未配信」のチップ ([#4222](https://github.com/k-k1/agent-fleet/issues/4222))
+- **[エージェント]** 再認証は新しいサインインが終わるまで今のログインを保つ（Claude・Codex・Antigravity・Cursor・Kiro・Muse） ([#4231](https://github.com/k-k1/agent-fleet/issues/4231))
+- **[ウォッチ]** セッションの一覧とホームのカードに「入力待ち · ウォッチ N 件」、`fleet` のウォッチはセッションへリンク、終わった Actions の再実行に 1 分ほどで気づく、止まった Pipelines の実行は間隔を空け PR の実行にブランチ ([#4251](https://github.com/k-k1/agent-fleet/issues/4251), [#4310](https://github.com/k-k1/agent-fleet/issues/4310), [#4147](https://github.com/k-k1/agent-fleet/issues/4147), [#4221](https://github.com/k-k1/agent-fleet/issues/4221))
+- **[agy]** Antigravity の実験的な扱いを終了 ([#4238](https://github.com/k-k1/agent-fleet/issues/4238))
+- **[copilot]** 失敗したターンはエラーを表示して失敗で終わる。Free プランを見分け、「Model is not available」でプランを案内 ([#4083](https://github.com/k-k1/agent-fleet/issues/4083), [#4082](https://github.com/k-k1/agent-fleet/issues/4082), [#4128](https://github.com/k-k1/agent-fleet/issues/4128))
+- **[muse]** 失敗したターンはエラーを表示（コンテキストあふれにはヒント）。メモリの取り込みが `MEMORY.md` の事実も読む ([#4102](https://github.com/k-k1/agent-fleet/issues/4102), [#4301](https://github.com/k-k1/agent-fleet/issues/4301))
+- **[Console]** 会話の検索でアーカイブをヒットしたセッションに絞り、スラッグとブランチを表示 ([#4158](https://github.com/k-k1/agent-fleet/issues/4158))
+- **[mcp]** 長い OAuth のスコープの一覧を件数の後ろに畳む ([#4259](https://github.com/k-k1/agent-fleet/issues/4259))
+- **[confluence]** 日本語や韓国語の隣の Markdown の太字を正しく変換 ([#4206](https://github.com/k-k1/agent-fleet/issues/4206))
+
+**Fixed**
+
+- **[Console]** ダイアログを開いているとき Ctrl/Cmd+P で印刷ダイアログが開いていた ([#4165](https://github.com/k-k1/agent-fleet/issues/4165))
+- **[ミラー]** 停止したセッションに残った質問が切り替え後の別セッションに出て、再び動いても「停止中」のまま。ウォッチの PR リンクの横の空白で PR が開いていた ([#4307](https://github.com/k-k1/agent-fleet/issues/4307), [#4313](https://github.com/k-k1/agent-fleet/issues/4313), [#4131](https://github.com/k-k1/agent-fleet/issues/4131))
+- **[ターミナル]** 順番待ちの入力が逆順で届くことがあり、権限の確認への答えが見た目の同じ新しいコマンドに当たることがあった ([#4178](https://github.com/k-k1/agent-fleet/issues/4178), [#4190](https://github.com/k-k1/agent-fleet/issues/4190), [#3521](https://github.com/k-k1/agent-fleet/issues/3521))
+- **[kiro]** ターンが終わってもチップが「作業中」のままになることがあった ([#4047](https://github.com/k-k1/agent-fleet/issues/4047))
+- **[ecs-ec2]** ゴールデンのベイクのスロットが dark・固着と報告され、プールの画面の隔離の表示が食い違い、`pause.sh` がベイクを残したり見落としたりしていた ([#4100](https://github.com/k-k1/agent-fleet/issues/4100), [#4088](https://github.com/k-k1/agent-fleet/issues/4088), [#4108](https://github.com/k-k1/agent-fleet/issues/4108), [#4180](https://github.com/k-k1/agent-fleet/issues/4180))
+- **[ecs]** egress ゲートウェイが起動に失敗することがあった（`00-network` の更新が必要） ([#4211](https://github.com/k-k1/agent-fleet/issues/4211))
+- **[ecs]** 内部の Git リポジトリが Control Plane のタスクの入れ替えのたびに失われていた。専用のファイルシステムへ（先に `10-data` を更新） ([#4089](https://github.com/k-k1/agent-fleet/issues/4089))
+
 ## [0.45.0](0.45.0.ja.md) — 2026-11-13
 
 **CLI ピン** — Claude Code 2.1.323 / Codex 0.169.0 / Copilot 1.0.111 / OpenCode 2.3.0 / Antigravity 1.5.8

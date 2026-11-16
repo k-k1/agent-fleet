@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.46.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.46.0) — 2026-11-16
+
+テナントの管理者が許可すると、メモのカテゴリにたまった実行待ちのメモを、ボタン一つで、または決めた
+上限の中で自動で、セッションとして実行できるようになりました。エージェントの再認証は新しいサインインが
+終わるまで今のログインを保ち、ECS の EC2 プールで隔離されたスロットを Console から戻せます。ECS では
+`update.sh` の前に `10-data` の更新が要るので、アップグレードの注意を先に読んでください。
+
 ## [0.45.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.45.0) — 2026-11-13
 
 `watch` で GitHub のリリースとタグ、PR で最初に失敗したチェック、別のセッションの入力待ちや停止を
