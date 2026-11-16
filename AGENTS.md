@@ -141,6 +141,27 @@ Postgres-backed tests skip themselves unless `AF_TEST_DATABASE_URL` is set; in a
 `af-db url` provides one — see `docs/build/10-development.md` §10.4. No Docker in the workspace.
 The full build/reflect matrix is `docs/build/10-development.md`.
 
+### Before a push
+
+The whole-module commands above are what CI runs; locally, scope the run to what you changed.
+A module-wide or `-race -count=3` run on this shared host times out under load (measured:
+10-minute timeouts at a load average of about 22), and CI is the full-suite gate anyway.
+
+- Run the packages you touched with plain `go test -count=1`; narrow a large package with `-run`.
+- Also run the structural tests, because the goldens and contract tests live there, and a change
+  far from them can still break them:
+  - `workspace/agent/internal/statemig`: `TestEveryStateStoreIsInEntries`
+  - both module roots: `TestWireMapGolden`, `TestMainFilesAllowlist`
+  - `workspace/agent` root: `TestRouteCatalogSnapshot`
+
+  Then `go vet`, the `gofmt -l` output check (see below) and `.githooks/pre-commit`.
+- Use `-race` only for new or changed tests that exercise goroutines, locks or shared state,
+  scoped with `-run` and `-count=1`. Use `-count=3` only when chasing a flake. Never run the
+  `control-plane` root package under `-race` locally: `ci.yml` measures it at over 45 minutes.
+- CI covers the rest: the `go-race` job in `ci.yml` runs `-race` on the goroutine-heavy packages
+  in its matrix, `go-race-nightly.yml` runs both whole modules under `-race`, and the regular
+  jobs run the full suites.
+
 ## Verifying your own work
 
 - **Take exit codes without a pipe** (`cmd > out; echo $?`). `| tail` returns tail's `0` — a red
