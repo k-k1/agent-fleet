@@ -53,10 +53,11 @@ function SourceEditor({
   const [active, setActive] = useState(source?.active ?? true);
   const { busy, refusal, setRefusal, submit } = useGuardedSave(onSaved);
   const body: SourceInput = { name: name.trim(), role_arn: role.trim(), region: region.trim(), models: modelsOf(models), active };
-  // A first registration has nothing to differ from: it is ready once it names what the CP
-  // cannot default (the role and the one Region), so an empty form never offers Save.
+  // A first registration has nothing to differ from: it is ready once it has what the CP
+  // requires (the role, the one Region and at least one model; only the name is defaulted), so
+  // an empty or partial form never offers a Save the CP would refuse.
   const dirty = !source
-    ? body.role_arn !== "" && body.region !== ""
+    ? body.role_arn !== "" && body.region !== "" && body.models.length > 0
     : body.name !== source.name ||
       body.role_arn !== source.role_arn ||
       body.region !== source.region ||

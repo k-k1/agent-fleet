@@ -2,7 +2,7 @@
 //   1. Nothing is drawn where the CP does not serve provided routes; another failure draws no editor.
 //   2. The source's PUT always carries `active` as loaded or edited: an inactive source re-saved
 //      stays off (the CP reads an absent `active` as true).
-//   3. A first registration offers Save only once the role and the Region are filled.
+//   3. A first registration offers Save only once the role, the Region and a model are filled.
 //   4. The grant's PUT is exactly {granted, ceiling_micro}; refusals and stale values as on the
 //      tenant page.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
@@ -18,6 +18,7 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 }));
 
 import { AdminProvidedGrantView, AdminProvidedSourceView } from "./adminProvidedRoutes.tsx";
+import { fmtDateTime } from "../../../lib/intl.ts";
 
 const SOURCE_PATH = "api/admin/provided-routes/deployment";
 const GRANT_PATH = "api/admin/tenants/acme/provided-routes/deployment";
@@ -73,6 +74,13 @@ const type = async (el: HTMLInputElement, value: string) => {
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
     el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+};
+const typeModels = async (value: string) => {
+  const ta = host!.querySelector("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, value);
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
   });
 };
 const save = () => Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === "保存")!;
@@ -142,10 +150,11 @@ describe("admin provided-route source", () => {
     const dd = Array.from(host!.querySelectorAll('[data-testid="prov-source"] dd')).at(-1)!;
     expect(dd.textContent).not.toBe("");
     expect(dd.textContent).not.toContain("2026-11-16T");
-    expect(dd.textContent).toMatch(/11.*16/);
+    // Built with the same formatter, so the host's time zone and locale order do not matter.
+    expect(dd.textContent).toBe(fmtDateTime("2026-11-16T10:00:00Z"));
   });
 
-  it("offers no save for a first source until the role and the Region are filled", async () => {
+  it("offers no save for a first source until the role, the Region and a model are filled", async () => {
     api.mockResolvedValue({ source: null });
     await mount(<AdminProvidedSourceView />);
     expect(save().disabled).toBe(true);
@@ -155,6 +164,9 @@ describe("admin provided-route source", () => {
     await type(role, "arn:aws:iam::000000000000:role/route");
     expect(save().disabled).toBe(true);
     await type(region, "us-east-1");
+    // The CP refuses an empty model allow-list.
+    expect(save().disabled).toBe(true);
+    await typeModels("anthropic.claude-haiku");
     expect(save().disabled).toBe(false);
     await type(role, "  ");
     expect(save().disabled).toBe(true);
@@ -167,12 +179,13 @@ describe("admin provided-route source", () => {
     const [, role, region] = inputs();
     await type(role, "arn:aws:iam::000000000000:role/route");
     await type(region, "us-east-1");
+    await typeModels("anthropic.claude-haiku");
     await click(save());
     expect(apiJSON).toHaveBeenCalledWith(SOURCE_PATH, "PUT", {
       name: "",
       role_arn: "arn:aws:iam::000000000000:role/route",
       region: "us-east-1",
-      models: [],
+      models: ["anthropic.claude-haiku"],
       active: true,
     });
   });
