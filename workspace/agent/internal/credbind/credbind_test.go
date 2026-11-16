@@ -7,7 +7,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -112,7 +111,7 @@ func TestKeyFile(t *testing.T) {
 }
 
 // A generation state that cannot be trusted serves no binding rather than generation zero, and a
-// Bump rebuilds it under a new epoch, so no login is handed a value an earlier state used.
+// bump rebuilds it under a new epoch, so no login is handed a value an earlier state used.
 func TestGenerationFailurePaths(t *testing.T) {
 	freshHome(t)
 	p := filepath.Join(paths.AgentConfigDir(), genFile)
@@ -131,14 +130,14 @@ func TestGenerationFailurePaths(t *testing.T) {
 			t.Errorf("%s state: Generation = %q, want unproven", name, g)
 		}
 	}
-	// Recovery: a Bump rebuilds the state; neither login gets back any earlier binding.
+	// Recovery: a bump rebuilds the state; neither login gets back any earlier binding.
 	bump("muse-login")
 	for _, g := range []string{Generation("muse-login"), Generation("agy-login")} {
 		if g == "" || g == g0 || g == g1 || g == other0 {
 			t.Errorf("after a rebuild: %q reuses an earlier binding (%q %q %q)", g, g0, g1, other0)
 		}
 	}
-	// A Bump that cannot persist leaves the login unproven, never on its replaced binding, and
+	// A bump that cannot persist leaves the login unproven, never on its replaced binding, and
 	// removes the state so a restart (the in-memory mark gone) starts a fresh epoch.
 	beforeFail := Generation("cursor-login")
 	if err := os.Remove(p); err != nil {
@@ -425,28 +424,83 @@ func TestBeginDuringFinishCleanup(t *testing.T) {
 	}
 }
 
-// No exported function moves a generation outside an Op: a caller without Begin would have only
-// process memory to remember a failed persist, which a restart forgets (issue 4189).
-func TestNoBumpOutsideAnOp(t *testing.T) {
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+// leaksBump lists the package-level exported names in one non-test source file that reach the
+// bump functions: a func or a var/const named like one, or an exported func, var or const whose
+// body or value mentions bump or bumpLocked. Methods are the allowed way in (Op.Finish).
+func leaksBump(t *testing.T, name, src string) []string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	seen := 0
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Files {
-			for _, d := range f.Decls {
-				if fd, ok := d.(*ast.FuncDecl); ok {
-					seen++
-					if fd.Recv == nil && strings.EqualFold(fd.Name.Name, "bump") && fd.Name.IsExported() {
-						t.Errorf("exported %s: a generation must move only through Begin/Finish", fd.Name.Name)
+	mentions := func(n ast.Node) bool {
+		found := false
+		ast.Inspect(n, func(x ast.Node) bool {
+			if id, ok := x.(*ast.Ident); ok && (id.Name == "bump" || id.Name == "bumpLocked") {
+				found = true
+			}
+			return !found
+		})
+		return found
+	}
+	var out []string
+	for _, d := range f.Decls {
+		switch d := d.(type) {
+		case *ast.FuncDecl:
+			if d.Recv == nil && d.Name.IsExported() && (strings.Contains(strings.ToLower(d.Name.Name), "bump") || mentions(d)) {
+				out = append(out, d.Name.Name)
+			}
+		case *ast.GenDecl:
+			for _, sp := range d.Specs {
+				if vs, ok := sp.(*ast.ValueSpec); ok {
+					for _, n := range vs.Names {
+						if n.IsExported() && (strings.Contains(strings.ToLower(n.Name), "bump") || mentions(vs)) {
+							out = append(out, n.Name)
+						}
 					}
 				}
 			}
 		}
 	}
-	if seen < 10 {
-		t.Fatalf("positive control: parsed only %d functions", seen)
+	return out
+}
+
+// No exported name moves a generation outside an Op: a caller without Begin would have only
+// process memory to remember a failed persist, which a restart forgets (issue 4189). The fixtures
+// are the positive control: each way of re-exporting it must be refused by the same check.
+func TestNoBumpOutsideAnOp(t *testing.T) {
+	for name, src := range map[string]string{
+		"func":      "package p\nfunc Bump(l ...string) bool { return bump(l...) }",
+		"var alias": "package p\nvar Bump = bump",
+		"const-ish": "package p\nvar (\n\tRebuild = bumpLocked\n)",
+		"wrapper":   "package p\nfunc Rebuild() { bump() }",
+	} {
+		if len(leaksBump(t, name, src)) == 0 {
+			t.Errorf("positive control %q: not refused", name)
+		}
+	}
+	if got := leaksBump(t, "ok", "package p\nfunc (o *Op) Finish() { bump() }\nfunc bump() {}"); len(got) != 0 {
+		t.Errorf("a method calling bump was refused: %v", got)
+	}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen++
+		if got := leaksBump(t, f, string(b)); len(got) != 0 {
+			t.Errorf("%s exports %v: a generation must move only through Begin/Finish", f, got)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("scanned no source file")
 	}
 }

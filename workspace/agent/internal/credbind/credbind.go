@@ -198,7 +198,7 @@ func AccountOrGeneration(login, accountID string) string {
 
 var (
 	genMu sync.Mutex
-	// genPoisoned holds the logins whose Bump failed to persist: their generation on disk is the
+	// genPoisoned holds the logins whose bump failed to persist: their generation on disk is the
 	// replaced login's, so it is not served until a bump succeeds. The durable half is the pending
 	// marker Begin wrote before the change, which a failed Finish leaves in place.
 	genPoisoned = map[string]bool{}
@@ -214,7 +214,7 @@ type genState struct {
 }
 
 // readGenerations reads the state: ok=false when it exists but cannot be read or parsed, or
-// carries no epoch. A missing file is the empty state with no epoch, which Generation and Bump
+// carries no epoch. A missing file is the empty state with no epoch, which Generation and bump
 // replace with a fresh one before using it.
 func readGenerations() (genState, bool) {
 	st := genState{Logins: map[string]string{}}
