@@ -198,27 +198,24 @@ directory belongs to someone else.
   `jira issue edit KEY --no-input -b "…"`.
 - **Confluence: the `confluence` CLI** (pchuri/confluence-cli) rides the same Atlassian connection and is
   pre-authenticated and token-renewing like `jira`: `confluence search "…"`, `confluence read PAGE_ID`,
-  `confluence create "Title" SPACE --content "…"`, `confluence update PAGE_ID …`. Page
-  `read`/`info`/`create`/`create-child`/`update`/`edit` and `space-lookup` are answered by the Agent's
-  own Confluence v2 shim (`workspace-agent confluence-page`, same command line), whose Markdown
-  conversion handles Japanese where the CLI's does not. `--format markdown`
-  (read and write) is UTF-8-safe for Japanese, emoji and `code`/**bold** next to Japanese; a file
-  that is not UTF-8 is refused. Writes are sent once and never retried: after a "may or may not
-  have been applied" message, search or `read` before repeating. An update that hits a version
-  conflict (409) overwrote nothing: `read` again and redo it.
+  `confluence create "Title" SPACE --content "…"`, `confluence update PAGE_ID …`. It switches to
+  Confluence Cloud's v2 API by itself where the old one is gone. `--format markdown` (read and write)
+  handles Japanese and Korean, emoji and `code`/**bold** next to them; files are read as UTF-8.
+  Writes are sent once and never retried: after a "may or may not have been applied" message,
+  search or `read` before repeating. An update that hits a version conflict (409) overwrote
+  nothing: `read` again and redo it.
   Read-only commands (`search`, `read`, `info`, `spaces`, `space-lookup`, `find`, `children`,
   `comments`, `attachments` without `-d`, `versions`, `property-list/get`) are re-run on a connection
-  reset or timeout (CLI: up to twice, only the last attempt shown, the way the jira wrapper does; Agent shim: its GETs, within about 20 s;
+  reset or timeout (up to twice, only the last attempt shown, the way the jira wrapper does;
   `AF_CONFLUENCE_TIMEOUT` seconds bounds one attempt, default 60, 0 = none); writes (`create`, `update`,
   `delete`, `comment`, uploads, anything unknown) are never re-run, so after a failed or timed-out
-  write check Confluence before repeating it. `spaces`, plain `children` and `move` switch to
-  the v2 API by themselves; `delete`, `copy-tree`, `export`, `children --recursive --json` /
-  `--format tree` / `--type folders|all`, comment replies, inline comments given only
-  `--inline-selection` and `comment-resolve` need scopes the connection does not request
-  (401/403), and listing comments, other comment adds, attachments, versions and properties are
-  still v1 in the CLI and may answer 410. A grant from before the v2 page scopes gets one line naming the fix
-  (administrator adds `read:page` / `write:page` / `read:space` to the Atlassian app, member
-  reconnects Jira); report it. Never run
+  write check Confluence before repeating it. Pages cannot be deleted (`delete` answers 401/403: the
+  connection does not ask for it), nor can comment replies, inline comments given only
+  `--inline-selection` or `comment-resolve`; listing comments, other comment adds, attachments,
+  versions and properties are still on the old API in the CLI and may answer 410 (`export
+  --skip-attachments`). A grant from before the current scopes gets one line naming the fix
+  before page commands (administrator adds the scopes to the Atlassian app, member reconnects
+  Jira); report it when a command then fails with 401. Never run
   `confluence init`, never set `CONFLUENCE_*` variables or `--profile` (a config of the user's own is
   theirs and turns the injection off). Its "authorization has no Confluence scopes" / "cannot be
   used" line is the answer: report it (reconnect Jira; the tenant administrator enables the scopes

@@ -517,17 +517,24 @@ func TestJiraScopesForGroups(t *testing.T) {
 	}
 }
 
-// The page shim in the workspace (jirax.RunConfluencePage) calls /wiki/api/v2, which answers 401
-// "scope does not match" without these three granular scopes; classic ones do not stand in.
+// confluence-cli's v2 commands answer 401 "scope does not match" without these granular scopes;
+// classic ones do not stand in. No delete scope is requested: agents must not delete pages.
 func TestJiraConfluenceGroupRequestsTheV2PageScopes(t *testing.T) {
 	have := map[string]bool{}
 	for _, sc := range strings.Fields(jiraScopesFor([]string{scopeGroupConfluence})) {
 		have[sc] = true
 	}
 	for _, want := range []string{"read:page:confluence", "write:page:confluence", "read:space:confluence",
+		"read:content.metadata:confluence", "read:blogpost:confluence", "read:folder:confluence",
+		"write:folder:confluence", "read:hierarchical-content:confluence",
 		"search:confluence", "write:confluence-content"} {
 		if !have[want] {
 			t.Errorf("confluence group lacks %s", want)
+		}
+	}
+	for sc := range have {
+		if strings.HasPrefix(sc, "delete:") {
+			t.Errorf("confluence group requests %s", sc)
 		}
 	}
 	if jiraScopesFor(nil) != jiraScopes {

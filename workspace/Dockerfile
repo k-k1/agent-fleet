@@ -334,7 +334,7 @@ RUN /usr/local/libexec/jira version
 # ships an npm-shrinkwrap.json that pins its dependency tree. /usr/local/libexec/confluence links
 # to its bin and /usr/local/bin/confluence is the transparent-auth wrapper
 # (confluence-auth-wrapper.sh). Bump CONFLUENCE_CLI_VERSION to upgrade (docs/build/08 §8.4.3).
-ARG CONFLUENCE_CLI_VERSION=2.31.1
+ARG CONFLUENCE_CLI_VERSION=2.31.2
 RUN set -eux; \
     npm install -g --prefix /usr/local/lib/confluence-cli "confluence-cli@${CONFLUENCE_CLI_VERSION}"; \
     install -d /usr/local/libexec; \

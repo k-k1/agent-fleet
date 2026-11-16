@@ -375,6 +375,18 @@ jobs:
         run: |
           bash -n workspace/confluence-auth-wrapper.sh
           ./workspace/confluence-auth-wrapper-test.sh
+      # The pinned confluence-cli converts Markdown for every page an agent writes, with nothing of
+      # ours in between: a bump that leaves `**` literal next to Japanese or Korean fails here.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: confluence-cli Markdown goldens (pinned CLI from the Dockerfile)
+        working-directory: .
+        run: |
+          v="$(sed -n 's/^ARG CONFLUENCE_CLI_VERSION=//p' workspace/Dockerfile)"
+          [ -n "$v" ] || { echo "no CONFLUENCE_CLI_VERSION in workspace/Dockerfile"; exit 1; }
+          npm install -g --prefix "$RUNNER_TEMP/confluence-cli" "confluence-cli@$v"
+          AF_CONFLUENCE_REAL="$RUNNER_TEMP/confluence-cli/bin/confluence" ./workspace/confluence-convert-golden-test.sh
 
   # The deployment scripts (deploy/aws/ecs) only run in full against real AWS, but if that
   # is taken as a reason to check nothing, a break is discovered on the day the stack

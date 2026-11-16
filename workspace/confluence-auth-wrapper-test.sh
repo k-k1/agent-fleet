@@ -19,18 +19,13 @@ cat >"$T/bin/workspace-agent" <<'STUB'
 #!/bin/sh
 set +x
 echo "$*" >>"$STUB_DIR/agent.calls"
-if [ "$1" = confluence-page ]; then
-  [ -z "${CONFLUENCE_API_TOKEN-}" ] || echo leaked >"$STUB_DIR/agent.leak"
-  shift
-  for a in "$@"; do echo "PAGEARG=$a"; done >"$STUB_DIR/page.seen"
-  exit "${STUB_PAGE_EXIT:-0}"
-fi
 [ "$1" = confluence-cred ] || exit 2
 # A helper must never see the token in its environment (it is exported only for the final exec).
 [ -z "${CONFLUENCE_API_TOKEN-}" ] || echo leaked >"$STUB_DIR/agent.leak"
 [ ! -f "$STUB_DIR/agent.why" ] || { cat "$STUB_DIR/agent.why" >&2; exit 0; }
 [ -f "$STUB_DIR/agent.out" ] || exit 1
 cat "$STUB_DIR/agent.out"
+[ ! -f "$STUB_DIR/agent.stale" ] || cat "$STUB_DIR/agent.stale" >&2
 STUB
 # The "real" CLI: one line per interesting env var plus its argv, one element per line.
 cat >"$T/bin/confluence-real" <<'STUB'
@@ -83,7 +78,7 @@ no_leak() { # no_leak <label> <secret>: not in argv, not in the wrapper's own ou
   if grep -q "$2" "$T/out" "$T/err" 2>/dev/null; then fail "$1: secret in wrapper output"; fi
   if grep -rq "$2" "$T/home" 2>/dev/null; then fail "$1: secret written under HOME"; fi
 }
-reset() { rm -f "$T/agent.out" "$T/agent.why"; rm -rf "$T/home/.config" "$T/home/.confluence-cli" "$T/cfg"; }
+reset() { rm -f "$T/agent.out" "$T/agent.why" "$T/agent.stale"; rm -rf "$T/home/.config" "$T/home/.confluence-cli" "$T/cfg"; }
 oauth_answer() {
   printf 'site=https://acme.atlassian.net\ndomain=api.atlassian.com\napipath=/ex/confluence/cid-1/wiki/rest/api\nauth=bearer\ntoken=fake-oauth-tok\n' >"$T/agent.out"
 }
@@ -265,37 +260,39 @@ run CONFLUENCE_API_TOKEN=mine -- api content --jq .
 run -- search 1 --jq .
 [ -f "$T/cf.seen" ] || fail "jq on another subcommand: the CLI did not run"
 
-# 15. The page core (read, info, create, create-child, update, edit, space-lookup) goes to the
-# Agent's v2 shim with the argv untouched; the credential helper and the real CLI are not
-# involved, so no token exists in this shell for those. Search and the rest stay with the CLI.
-for sub in read info create create-child update edit space-lookup; do
-  reset; oauth_answer; rm -f "$T/page.seen"
-  run STUB_PAGE_EXIT=0 -- "$sub" 12345 -c "日本語 **太字**" --format markdown
+# 15. The page commands go to the real CLI with the injected connection, argv untouched: the CLI
+# itself switches to the v2 API where v1 answers 410.
+for sub in read info create create-child update edit move space-lookup children; do
+  reset; oauth_answer
+  run -- "$sub" 12345 -c "日本語 **太字**" --format markdown
   [ "$rc" = 0 ] || fail "page $sub: exit status $rc, want 0"
-  [ ! -f "$T/cf.seen" ] || fail "page $sub: the real CLI ran"
-  grep -q '^confluence-cred' "$T/agent.calls" 2>/dev/null && fail "page $sub: the credential helper was asked"
-  [ "$(sed -n 1p "$T/page.seen")" = "PAGEARG=$sub" ] || fail "page $sub: argv not passed on: $(cat "$T/page.seen")"
-  grep -qxF 'PAGEARG=日本語 **太字**' "$T/page.seen" || fail "page $sub: argument altered"
+  expect "page $sub" API_TOKEN fake-oauth-tok
+  [ "$(sed -n 's/^ARG=//p' "$T/cf.seen" | head -1)" = "$sub" ] || fail "page $sub: argv not passed on"
+  grep -qxF 'ARG=日本語 **太字**' "$T/cf.seen" || fail "page $sub: argument altered"
+  [ ! -s "$T/err" ] || fail "page $sub: unexpected stderr: $(cat "$T/err")"
 done
+
+# 16. An outdated grant: one hint line before a v2 page command, none before search; the CLI runs
+# either way, with the token, and the hint never carries it.
 reset; oauth_answer
-run STUB_PAGE_EXIT=1 -- read 1
-[ "$rc" = 1 ] || fail "page failure: exit status $rc, want 1"
-[ ! -f "$T/cf.seen" ] || fail "page failure: fell through to the real CLI"
+echo "outdated=this Atlassian authorization predates the scopes; reconnect Jira" >"$T/agent.stale"
+run -- info 1
+[ -f "$T/cf.seen" ] || fail "outdated info: the CLI did not run"
+expect "outdated info" API_TOKEN fake-oauth-tok
+[ "$(grep -c 'reconnect Jira' "$T/err")" = 1 ] || fail "outdated info: want one hint line, got: $(cat "$T/err")"
+grep -q '^confluence: this Atlassian authorization' "$T/err" || fail "outdated info: hint not prefixed"
+no_leak "outdated info" fake-oauth-tok
 run -- search x
-[ -f "$T/cf.seen" ] && expect search-control API_TOKEN fake-oauth-tok
-[ ! -f "$T/page.seen" ] || [ "$(cat "$T/page.seen")" != "PAGEARG=search" ] || fail "search went to the shim"
+[ -f "$T/cf.seen" ] || fail "outdated search: the CLI did not run"
+grep -q 'reconnect Jira' "$T/err" && fail "outdated search: hint printed for a v1 command"
 
-# 16. Exit 64 from the shim ("no Atlassian connection") falls through to the usual hint and the CLI.
-reset
-run STUB_PAGE_EXIT=64 -- read 1
-[ -f "$T/cf.seen" ] || fail "no connection: the CLI did not run"
-grep -q "no Atlassian connection" "$T/err" || fail "no connection: no hint"
-
-# 17. A user's own setup never goes through the shim.
-reset; oauth_answer; rm -f "$T/page.seen"
+# 17. A user's own setup is never given the hint (the helper is not asked at all).
+reset; oauth_answer
+echo "outdated=reconnect Jira" >"$T/agent.stale"
 run CONFLUENCE_API_TOKEN=mine -- read 1
-[ ! -f "$T/page.seen" ] || fail "own setup: the shim was used"
 [ -f "$T/cf.seen" ] || fail "own setup: the CLI did not run"
+grep -q 'reconnect Jira' "$T/err" && fail "own setup: hint printed"
+expect "own setup" API_TOKEN mine
 
 # 18. Read-only commands are re-run after a transport failure (up to twice); only the last attempt
 # is shown. Writes, answered errors and unknown words run once.

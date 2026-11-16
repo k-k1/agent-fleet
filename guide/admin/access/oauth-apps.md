@@ -116,17 +116,18 @@ For `jira` in members' sessions to handle boards, sprints and epics, the Jira So
 
 `confluence` in members' sessions uses the same Atlassian authorization as Jira. The order is the same as for Jira Software.
 
-1. In the Developer Console, open the app's **Permissions → Confluence API → Configure → Edit Scopes** and select the ten below
+1. In the Developer Console, open the app's **Permissions → Confluence API → Configure → Edit Scopes** and select the fifteen below
 2. Then tick "The app also grants the Confluence scopes (for the confluence CLI)" on the Jira card and press **Save**
 3. Have members who are already connected reconnect Jira
 
 | Kind | Scopes |
 |---|---|
 | Classic | `read:confluence-content.all`, `read:confluence-content.summary`, `read:confluence-space.summary`, `search:confluence`, `write:confluence-content`, `readonly:content.attachment:confluence`, `write:confluence-file` |
-| Granular | `read:page:confluence`, `write:page:confluence`, `read:space:confluence` |
+| Granular | `read:page:confluence`, `write:page:confluence`, `read:space:confluence`, `read:content.metadata:confluence`, `read:blogpost:confluence`, `read:folder:confluence`, `write:folder:confluence`, `read:hierarchical-content:confluence` |
 
-- The three granular scopes are needed to read, create and update pages. Without them the answer is 401 "scope does not match"
-- An app set up with the seven classic scopes only needs the three granular ones added. Until members reconnect, their card says "Confluence: search and comments work, but …" and page commands print a one-line pointer
+- The granular scopes are what page commands need on Confluence Cloud's current API. Without them the answer is 401 "scope does not match". No delete scope is requested, so agents cannot delete pages
+- **An app already set up for Confluence needs the new granular scopes before Agent Fleet is upgraded to a version that requests them.** Otherwise every member who connects or reconnects Jira is refused at Atlassian's consent page. Connections made earlier keep working
+- Until members reconnect, their card says "Confluence: search works, but …" and page commands print a one-line pointer
 - A tenant that never ticks the box works as before; its members just cannot use `confluence`
 - A member whose Jira card says "Confluence: not available" is connected without these scopes
 

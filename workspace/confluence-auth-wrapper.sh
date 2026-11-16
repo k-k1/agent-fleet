@@ -16,8 +16,9 @@
 #   any directory the CLI may use is the user's own, and the CLI runs unchanged. A misdetection
 #   can only make a setup look like someone else's, which runs the CLI without the token: that
 #   is the direction to fail in.
-# - The page core (read, info, create, create-child, update, edit, space-lookup) is not the CLI's:
-#   its v1 endpoints are gone, so `workspace-agent confluence-page` answers it over the v2 API.
+# - An OAuth grant that predates the scopes the CLI's v2 page commands need is still served
+#   (search works on it), but confluence-cred adds an `outdated=` hint, printed once before a
+#   command that would otherwise end in a bare 401.
 # - `init`, `profile` and `stats` manage or read the user's configuration and never need the
 #   token; `--version` / `--help` do not either. Skipping the Agent for them keeps the Toolchains
 #   probe (which runs this wrapper) from taking the store lock or renewing a token over the network.
@@ -34,7 +35,7 @@
 # - CONFLUENCE_CLI_ANALYTICS=false: the CLI otherwise writes a usage counter file into its config
 #   directory on every call, which would also create that directory.
 set +xa
-unset cred tok site domain apipath auth login why sub arg own v d
+unset cred tok site domain apipath auth login why stale sub arg own v d
 
 real="${AF_CONFLUENCE_REAL:-/usr/local/libexec/confluence}"
 
@@ -69,24 +70,6 @@ else
   done
 fi
 
-# The page core goes to the Agent's v2 shim, not to the CLI: Atlassian has removed the v1 /content
-# and /space endpoints (410), and while confluence-cli 2.31.1 falls back to v2 itself, its Markdown
-# conversion leaves `**` around CJK punctuation unconverted (#3274).
-# The shim takes the connection from the store itself, so no token passes through this shell, and
-# it keeps the CLI's command line and output. Exit 64 means "no Atlassian connection": fall
-# through to the usual hint and the real CLI. Anything else is the shim's own answer. A stuck
-# shim is bounded like the credential helper (the same 30 s only when nobody can interrupt it).
-case "$sub" in
-  read | info | create | create-child | update | edit | space-lookup)
-    if [ ! -t 0 ] && [ ! -t 1 ] && [ ! -t 2 ] && command -v timeout >/dev/null 2>&1; then
-      timeout -k 5 120 workspace-agent confluence-page "$@"
-    else
-      workspace-agent confluence-page "$@"
-    fi
-    rc=$?
-    [ "$rc" -eq 64 ] || exit "$rc" ;;
-esac
-
 # First value of a `key=value` line in the helper's answer on stdin.
 field() { sed -n "s/^$1=//;T;p;q"; }
 
@@ -104,6 +87,7 @@ bounded() {
 # and fields are picked by their key, so noise on it cannot become a credential.
 cred="$(bounded workspace-agent confluence-cred 2>&1)" || cred=""
 why="$(printf '%s\n' "$cred" | field unusable | tr -cd '[:print:]' | cut -c1-200)"
+stale="$(printf '%s\n' "$cred" | field outdated | tr -cd '[:print:]' | cut -c1-300)"
 tok="$(printf '%s\n' "$cred" | field token)"
 domain="$(printf '%s\n' "$cred" | field domain)"
 apipath="$(printf '%s\n' "$cred" | field apipath)"
@@ -118,6 +102,16 @@ if [ -z "$tok" ] || [ -z "$domain" ] || [ -z "$apipath" ] || [ -z "$auth" ]; the
   fi
   echo "confluence: no Atlassian connection in this workspace. Connect Jira in Settings (it serves Confluence too), or set up your own with 'confluence init'." >&2
   exec "$real" "$@"
+fi
+
+# The commands confluence-cli moves to the v2 API once v1 answers 410 (its README's list), where a
+# grant without the newer granular scopes gets a bare 401.
+if [ -n "$stale" ]; then
+  case "$sub" in
+    read | info | create | create-child | update | edit | move | delete | children | copy-tree | \
+      export | spaces | space-lookup)
+      echo "confluence: $stale" >&2 ;;
+  esac
 fi
 
 # `confluence api --jq EXPR` spawns jq, which would inherit the token with the rest of the CLI's
@@ -145,9 +139,7 @@ unset CONFLUENCE_ALLOW_INSECURE_HTTP CONFLUENCE_SITE_URL CONFLUENCE_EMAIL
 # Read-only commands are re-run after a transport failure, as the jira wrapper does (up to twice,
 # only the last attempt is shown). A word this does not know is a write: the direction to fail in
 # is "run once", because a lost answer to a create/update/delete/comment/upload may have been
-# applied. The page core (read, info, edit, space-lookup) is answered by the Agent, whose HTTP
-# client re-sends its GETs and never its POST/PUT, so those words only reach here when there was
-# no connection.
+# applied.
 readonly_cmd() {
   case "$sub" in
     search | read | info | spaces | space-lookup | find | children | comments | comment-lookup | \

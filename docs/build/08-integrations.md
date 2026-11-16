@@ -451,41 +451,30 @@ them in for one `exec`:
   member to reconnect Jira instead of running into a bare 401. Unknown scopes (an older store,
   a failed lookup) are never a refusal. The verdict is the union over every accessible-resources row with the site's id (Jira and Confluence rows share it). Settings shows the same verdict
   (`confluenceScopes: "missing"` in the connection status).
-- **Page core over v2 (2026-11-03, #3266).** confluence-cli 2.31.0 read, created and updated pages
-  through the v1 `/content` and `/space` endpoints, which current Cloud sites answer with 410.
-  `workspace-agent confluence-page` (`internal/jirax/confluence_page.go`) takes `read`, `info`,
-  `create`, `create-child`, `update`, `edit` and `space-lookup` from the wrapper and calls
-  `/wiki/api/v2` instead, with the CLI's command line and output. The converter is goldmark
-  (CJK-friendly emphasis, already used for Jira's ADF) for Markdown→storage and `encoding/xml` for
-  storage→Markdown/text, rather than piping through confluence-cli's private `lib/` modules over
-  node: no dependency on the pinned CLI's internals, and the golden round-trip tests cover Japanese,
-  emoji, `code`/**bold** beside Japanese, lists, tables. The group gained the granular
-  `read:page`, `write:page`, `read:space` scopes; `confluenceScopes` reads `"outdated"` for a grant
-  with Confluence scopes but not those (Settings shows a reconnect hint; `confluence-cred` still
-  serves it, and search works). Writes are sent once; update sends `version+1` so a
-  concurrent edit is a 409. Folders: the shim refuses `create --type folder`.
-- **The CLI's own v2 fallback (2.31.1, #3274).** From 2.31.1 confluence-cli switches a command to
+- **v2 through the CLI itself (2.31.2, #3274).** Atlassian has removed the v1 `/content` and
+  `/space` endpoints on current Cloud sites (410). From 2.31.1 confluence-cli switches a command to
   `/wiki/api/v2` once a v1 endpoint answers 410 (only on a host it takes for Cloud; the
-  `api.atlassian.com` gateway always is). With the scopes the group requests, `spaces`, plain
-  `children` and `move` work over v2 (`spaces` and `children` checked live, 2026-11-15).
-  `delete`, `copy-tree`, `export`, `children --recursive --json` and `children --format tree` also
-  read ancestors and need `read:content.metadata:confluence` (plus `delete:*` for delete);
-  `children --type folders|all` needs `read:hierarchical-content:confluence`. Neither is requested,
-  so those answer 401 or 403. Listing comments, adding a footer comment or an inline comment with
-  `--inline-properties` / `--inline-original-selection` / `--inline-marker-ref`, attachments,
-  versions and properties are still v1 in the CLI and answer 410 on a site where Atlassian removed
-  them (comments and attachments did, live); comment replies (`--parent`), inline comments given
-  only `--inline-selection`, and `comment-resolve` go to v2 and need `read:comment:confluence` /
-  `write:comment:confluence`, also not requested. The shim stays for the page core
-  because the CLI's Markdown→storage is markdown-it without CJK-friendly emphasis:
-  `**「括弧」**の` keeps its asterisks. Removing it, and the scopes that removal needs, is #3274.
+  `api.atlassian.com` gateway always is), and 2.31.2 converts Markdown with CJK-friendly emphasis
+  (pchuri/confluence-cli#300), so every subcommand goes to the CLI. From 2026-11-03 to that release
+  an Agent-side v2 shim answered the page core (#3266); it was removed once the CLI covered both.
+  The group's granular scopes follow the CLI's README table for pages, spaces, ancestors
+  (`read:content.metadata`: `info`, `create-child`, `copy-tree`, `export`), blog posts and folders
+  (incl. `read:hierarchical-content` for folder children). Not requested, on purpose: `delete:*`
+  (agents do not delete pages) and the v2 comment scopes (replies, inline comments given only
+  `--inline-selection`, `comment-resolve`), which answer 401/403. Listing comments, other comment
+  adds, attachments, versions and properties are still v1 in the CLI and answer 410 where Atlassian
+  removed them. `confluenceScopes` reads `"outdated"` for a grant that lacks any of the granular
+  scopes (`jirax.confluenceRequiredScopes`): Settings shows a reconnect hint, and `confluence-cred`
+  still serves the connection (search works) with an `outdated=` line the wrapper prints once
+  before a command that moves to v2. `workspace/confluence-convert-golden-test.sh` (CI installs the
+  pinned CLI) pins Markdown↔storage for Japanese and Korean goldens, so a bump that regresses CJK
+  emphasis fails before it ships.
 - **Read-only retry**: `readonly_cmd` in the wrapper re-runs the subcommands it lists
   (`attachments` only without `-d`/`--download`/`--dest`) up to twice after a transport error read
   from the CLI's own error line (ECONNRESET, ETIMEDOUT, …; never an HTTP status), replaying only the
   last attempt, and only when stdout and stderr are not terminals. `AF_CONFLUENCE_TIMEOUT` (default
   60 s, 0 = none) bounds one attempt with a shell watchdog rather than `timeout(1)`, so no helper
-  process inherits the token. Unknown words count as writes and run once. The v2 shim re-sends its
-  GETs, never its POST/PUT.
+  process inherits the token. Unknown words count as writes and run once.
 - **The user's own setup wins, decided by what is there, never by reading a config**: any
   `CONFLUENCE_*` variable that selects a host, identity or credential, a `--profile` flag, or a
   `config.json` in `CONFLUENCE_CONFIG_DIR` (else `$XDG_CONFIG_HOME/confluence-cli` and
@@ -500,10 +489,9 @@ them in for one `exec`:
 - **Pin**: `CONFLUENCE_CLI_VERSION` in the Dockerfile. The package ships an
   `npm-shrinkwrap.json`, so its dependency tree is pinned with it. The Dockerfile checks that
   `--version` prints the pin.
-- **Not verified end to end**: the image build and a live Atlassian authorization have not been
-  run (neither is reachable from a development workspace). The scope list follows the CLI's
-  README for the commands it documents; granular scopes such as folder listing
-  (`read:hierarchical-content:confluence`) are not requested.
+- **Not verified end to end**: the image build and a live authorization holding the full scope
+  list have not been run (neither is reachable from a development workspace). The scope list
+  follows the CLI's README for the commands it documents.
 
 ## 8.5 Claude authentication and onboarding
 

@@ -56,19 +56,20 @@ const (
 	// both products). Two families, both needed:
 	//   - classic scopes for what confluence-cli still reaches on v1: search, comments,
 	//     attachments (read and search pages, list spaces, write pages, upload/download files);
-	//   - granular v2 scopes for the page core (read, info, create, update, space lookup), which
-	//     the workspace agent's own shim sends to /wiki/api/v2 because Atlassian has removed
-	//     the v1 /content and /space endpoints those commands used. Per operation in Atlassian's
-	//     openapi-v2.v3.json: GET /pages/{id} read:page, POST /pages and PUT /pages/{id}
-	//     write:page, GET /spaces and /spaces/{id} read:space.
-	// Not requested: space administration, and read:hierarchical-content:confluence (folder
-	// listing) which is granular and has to be added by hand if wanted. The workspace agent
-	// reads the three v2 names back (jirax.confluencePageScopeList); keep the two in step.
+	//   - granular scopes for the v2 API, which confluence-cli switches to once a removed v1
+	//     /content or /space endpoint answers 410. Per command in its README's v2 scope table:
+	//     pages, spaces and ancestors (info, create-child, copy-tree, export, children
+	//     --recursive) plus blog posts and folders, including folder children listings.
+	// Not requested, on purpose: any delete:* scope (agents do not delete pages), the v2
+	// comment scopes, and space administration. The workspace agent reads the granular names
+	// back (jirax.confluenceRequiredScopes) to tell an outdated grant; keep the two in step.
 	confluenceClassicScopes = "read:confluence-content.all read:confluence-content.summary " +
 		"read:confluence-space.summary search:confluence write:confluence-content " +
 		"readonly:content.attachment:confluence write:confluence-file"
-	confluenceGranularScopes = "read:page:confluence write:page:confluence read:space:confluence"
-	confluenceScopes         = confluenceClassicScopes + " " + confluenceGranularScopes
+	confluenceGranularScopes = "read:page:confluence write:page:confluence read:space:confluence " +
+		"read:content.metadata:confluence read:blogpost:confluence read:folder:confluence " +
+		"write:folder:confluence read:hierarchical-content:confluence"
+	confluenceScopes = confluenceClassicScopes + " " + confluenceGranularScopes
 )
 
 // jiraScopesFor is the scope parameter of the authorize URL for an app granting groups.

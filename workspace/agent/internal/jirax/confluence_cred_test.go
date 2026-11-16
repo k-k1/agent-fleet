@@ -38,7 +38,7 @@ func TestConfluenceCredServesAnOAuthTokenAsBearerOnTheCloudRoute(t *testing.T) {
 			Login: "me@example.com", AccessToken: "fake-at", RefreshToken: "fake-rt",
 			Expiry: time.Now().Add(time.Hour).Unix(),
 			Sites: []secrets.JiraSite{{CloudID: "cid-1", URL: "https://acme.atlassian.net",
-				Scopes: []string{"read:jira-work", "read:confluence-content.all"}}}}
+				Scopes: append([]string{"read:jira-work", "read:confluence-content.all"}, confluenceRequiredScopes...)}}}
 	})
 	want := "site=https://acme.atlassian.net\ndomain=api.atlassian.com\n" +
 		"apipath=/ex/confluence/cid-1/wiki/rest/api\nauth=bearer\ntoken=fake-at\n"
@@ -149,7 +149,7 @@ func TestConfluenceAndJiraCredShareOneRefreshExchange(t *testing.T) {
 // for both the Confluence and the Jira Software check.
 func TestScopeVerdictsUnionRowsOfTheSameSite(t *testing.T) {
 	jiraRow := secrets.JiraSite{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{"read:jira-work"}}
-	confRow := secrets.JiraSite{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: append([]string{"read:confluence-content.all"}, confluencePageScopeList...)}
+	confRow := secrets.JiraSite{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: append([]string{"read:confluence-content.all"}, confluenceRequiredScopes...)}
 	boardRow := secrets.JiraSite{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{jiraBoardScope}}
 	mk := func(rows ...secrets.JiraSite) *secrets.JiraCreds {
 		return &secrets.JiraCreds{AuthKind: "oauth", CloudID: "c1", Sites: rows}
@@ -184,8 +184,26 @@ func TestConfluenceCredServesWhenAnotherRowOfTheSiteHoldsTheScope(t *testing.T) 
 				{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{"read:jira-work"}}}}
 	})
 	got, why := confluenceCredBoth()
-	if !strings.HasSuffix(got, "token=fake-at\n") || why != "" {
+	if !strings.HasSuffix(got, "token=fake-at\n") || strings.Contains(why, "unusable=") {
 		t.Fatalf("answered %q (stderr %q)", got, why)
+	}
+}
+
+// A grant holding only the three page scopes of the earlier group is outdated: the credential is
+// still served (search works), with one outdated= line naming the fix for the wrapper to print.
+func TestConfluenceCredFlagsAnOutdatedGrantButServesIt(t *testing.T) {
+	seedJiraStore(t, func(s *secrets.Data) {
+		s.Jira = &secrets.JiraCreds{AuthKind: "oauth", Site: "https://a.atlassian.net", CloudID: "c1",
+			AccessToken: "fake-at", Expiry: time.Now().Add(time.Hour).Unix(),
+			Sites: []secrets.JiraSite{{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{
+				"read:jira-work", "search:confluence", "read:page:confluence", "write:page:confluence", "read:space:confluence"}}}}
+	})
+	got, why := confluenceCredBoth()
+	if !strings.HasSuffix(got, "token=fake-at\n") {
+		t.Fatalf("answered %q (stderr %q): an outdated grant must still be served", got, why)
+	}
+	if !strings.HasPrefix(why, "outdated=") || !strings.Contains(why, "reconnect Jira") || strings.Contains(why, "unusable=") {
+		t.Fatalf("stderr %q: want one outdated= hint", why)
 	}
 }
 
@@ -195,7 +213,7 @@ func TestBackfillKeepsTheUnionOfRowsWithOneID(t *testing.T) {
 		`{"id":"cid-1","url":"https://acme.atlassian.net","scopes":["read:jira-work"]}]`, 200)
 	seedLegacyOAuth(t)
 	got, why := confluenceCredBoth()
-	if !strings.HasSuffix(got, "token=fake-at\n") || why != "" {
+	if !strings.HasSuffix(got, "token=fake-at\n") || strings.Contains(why, "unusable=") {
 		t.Fatalf("answered %q (stderr %q): the second row's scopes were lost", got, why)
 	}
 }
