@@ -154,6 +154,32 @@ func FixedRoutesOf(kind string) []string {
 	return nil
 }
 
+// ModelKinds returns every kind in the snapshot that runs on a model credential (declares a
+// route, selectable or fixed), in the snapshot's order.
+func ModelKinds() []string {
+	var out []string
+	for _, k := range snapshot.Kinds {
+		if len(k.Routes) > 0 || len(k.Fixed) > 0 {
+			out = append(out, k.Kind)
+		}
+	}
+	return out
+}
+
+// ChatBackends returns the kinds with an assistant chat backend, in the snapshot's order.
+func ChatBackends() []string { return ownerIDs(snapshot.Chat) }
+
+// ImagegenProviders returns the image providers, in the snapshot's order.
+func ImagegenProviders() []string { return ownerIDs(snapshot.Imagegen) }
+
+func ownerIDs(owners []owner) []string {
+	out := make([]string, 0, len(owners))
+	for _, o := range owners {
+		out = append(out, o.ID)
+	}
+	return out
+}
+
 // ChatRoutesOf returns the routes the assistant chat's backend of the kind runs on; nil for a
 // kind with no chat backend.
 func ChatRoutesOf(kind string) []string { return ownerRoutes(snapshot.Chat, kind) }
