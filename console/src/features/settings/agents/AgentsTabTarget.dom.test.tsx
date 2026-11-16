@@ -30,7 +30,7 @@ const { getSettings, setSettings, settingsDefaults } = await import("../../../li
 const { t } = await import("../../../lib/i18n/index.ts");
 
 const ALL = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse"];
-let kinds: unknown = { kinds: ALL.map((kind) => ({ kind })), access: {} };
+let kinds: unknown = { kinds: ALL.map((kind) => ({ kind })), access: { policyConfirmed: true } };
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -52,7 +52,7 @@ const cards = () => Array.from(host!.querySelectorAll<HTMLElement>(".p-card")).m
 
 beforeEach(() => {
   wsState = "running";
-  kinds = { kinds: ALL.map((kind) => ({ kind })), access: {} };
+  kinds = { kinds: ALL.map((kind) => ({ kind })), access: { policyConfirmed: true } };
   scrolled.length = 0;
   api.mockImplementation((path: string) => Promise.resolve(path === "api/agents/kinds" ? kinds : {}));
   Element.prototype.scrollIntoView = function (this: HTMLElement, opts?: unknown) {
@@ -80,7 +80,7 @@ describe("Settings > Agents", () => {
   });
 
   it("restricted: draws no card for a harness the catalogue leaves out", async () => {
-    kinds = { kinds: [{ kind: "codex" }, { kind: "opencode" }], access: {} };
+    kinds = { kinds: [{ kind: "codex" }, { kind: "opencode" }], access: { policyConfirmed: true } };
     await mount();
     expect(cards()).toEqual(["codex", "opencode"]);
     expect(host!.textContent).not.toContain(t("cred.own_settings_line"));
@@ -88,11 +88,11 @@ describe("Settings > Agents", () => {
 
   it("switched off: hides the harness and offers the reset, which brings it back once saved", async () => {
     setSettings({ agentEnabled: { codex: false } });
-    kinds = { kinds: [{ kind: "claude" }], access: { someOffByOwnSettings: true } };
+    kinds = { kinds: [{ kind: "claude" }], access: { policyConfirmed: true, someOffByOwnSettings: true } };
     await mount();
     expect(cards()).toEqual(["claude"]);
     expect(host!.textContent).toContain(t("cred.own_settings_line"));
-    kinds = { kinds: [{ kind: "claude" }, { kind: "codex" }], access: {} };
+    kinds = { kinds: [{ kind: "claude" }, { kind: "codex" }], access: { policyConfirmed: true } };
     const reset = Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find(
       (b) => b.textContent === t("cred.own_settings_reset"),
     )!;

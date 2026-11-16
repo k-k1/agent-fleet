@@ -868,4 +868,6 @@ export const settings = {
   "cred.codex_desc_sub_only": "ChatGPT サブスクで接続します。",
   "cred.codex_desc_key_only": "OpenAI API キーで接続します。",
   "cred.muse_desc_key_only": "Meta の API キーで Muse Code を接続します。",
+  "cred.oc_usage_note_zen_account": "opencode.ai 側は従量課金の ID（opencode/…）と、アカウントが両方を持つときは Go の ID です。opencode.ai アカウントのログインで動きます。",
+  "cred.oc_account_desc_only": "opencode.ai アカウントでログインします。承認はブラウザで終わるので、Console に入力し直すものはありません。",
 };

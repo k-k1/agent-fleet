@@ -42,6 +42,11 @@ type memberAccessWire struct {
 	// SomeOffByOwnSettings: the member's own switches hide at least one harness the policy
 	// allows. A harness the policy forbids anyway never counts, so this cannot reveal one.
 	SomeOffByOwnSettings bool `json:"someOffByOwnSettings"`
+	// PolicyConfirmed: the held policy is confirmed and recorded (routepolicy Gate), so the kinds
+	// and routes beside it are filtered by the policy in force. False while it cannot be: the
+	// catalogue may then be unfiltered (no policy held yet) or filtered by a stale one, and a
+	// member's settings pages list nothing from it (D10a, D12).
+	PolicyConfirmed bool `json:"policyConfirmed"`
 }
 
 // kindEntryWire is one kind. The tri-state fields carry "yes" / "no" / "unverified"
@@ -104,6 +109,7 @@ func buildKindCatalog(live bool) kindCatalogWire {
 	chatRoutes := chatx.ChatBackendRoutes()
 	if live {
 		a := memberAccessOf(kinds, hide, hiding, sessionx.KindSwitchedOff)
+		a.PolicyConfirmed = routepolicy.Active().Gate() == nil
 		out.Access = &a
 	}
 	for _, k := range kinds {

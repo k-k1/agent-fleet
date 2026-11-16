@@ -35,7 +35,7 @@ const ALL_KINDS = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "openc
 const catalogOf = (kinds: (string | Record<string, unknown>)[], access: Record<string, boolean> = {}) => ({
   // A bare name is a kind with every route its card stores a credential for allowed.
   kinds: kinds.map((k) => (typeof k === "string" ? { kind: k, fixedRoutes: CARD_ROUTES[k] } : k)),
-  access,
+  access: { policyConfirmed: true, ...access },
 });
 let kindsAnswer: unknown = catalogOf(ALL_KINDS);
 function answer(conns: Record<string, unknown>, kinds: unknown = kindsAnswer) {
@@ -263,18 +263,29 @@ describe("credential cards under a mixed policy", () => {
 });
 
 describe("opencode under an account-only policy", () => {
-  it("lets a fresh member switch opencode on and offers the account sign-in", async () => {
+  it("switches on to Zen on the account, describes only the account, and starts its sign-in", async () => {
     const { getSettings, setSettings } = await import("../../../lib/settings.ts");
     setSettings({ opencodeCatalog: "off" });
     answer({ opencode: { envs: [] } }, catalogOf([{ kind: "opencode", fixedRoutes: ["opencode-account"] }]));
     await mount();
     const on = Array.from(host!.querySelectorAll<HTMLButtonElement>(".seg-btn")).find((b) => b.textContent === t("agents.oc_enabled_on"))!;
     await act(async () => on.click());
-    expect(getSettings().opencodeCatalog).not.toBe("own");
-    expect(getSettings().opencodeCatalog).not.toBe("off");
-    expect(host!.textContent).toContain(t("agents.oc_account_connect"));
+    expect(getSettings().opencodeCatalog).toBe("zen");
+    // Zen is the only choice: Go needs the Go key, and free runs on no credential at all.
+    const choices = Array.from(host!.querySelectorAll<HTMLElement>("[data-route]"));
+    expect(choices.map((b) => b.dataset.route)).toEqual(["zen"]);
+    expect(choices[0].textContent).toContain(t("cred.oc_usage_note_zen_account"));
+    expect(host!.textContent).toContain(t("cred.oc_account_desc_only"));
+    expect(host!.textContent).not.toContain(t("agents.oc_usage_note_go"));
     // No key preset is offered: none of their routes is allowed.
     expect(host!.querySelector(".p-card select")).toBeNull();
+    // The sign-in is the account flow itself.
+    api.mockClear();
+    const signIn = Array.from(host!.querySelectorAll<HTMLButtonElement>("button.p-opt")).find((b) =>
+      b.textContent?.includes(t("agents.oc_account_connect")),
+    )!;
+    await act(async () => signIn.click());
+    expect(api).toHaveBeenCalledWith("api/connections/opencode/oauth/start", { method: "POST" });
   });
 });
 
@@ -283,6 +294,18 @@ describe("the catalogue's freshness", () => {
     answer({ claude: {}, codex: {} }, { kinds: ALL_KINDS.map((kind) => ({ kind, fixedRoutes: CARD_ROUTES[kind] })) });
     await mount();
     expect(cards()).toEqual([]);
+  });
+
+  it("draws no card while the Agent cannot confirm the policy", async () => {
+    answer({ claude: {}, codex: {} }, { kinds: ALL_KINDS.map((kind) => ({ kind, fixedRoutes: CARD_ROUTES[kind] })), access: { policyConfirmed: false } });
+    await mount();
+    expect(cards()).toEqual([]);
+  });
+
+  it("draws the cards once the policy is confirmed, unrestricted", async () => {
+    answer({ claude: {}, codex: {} }, { kinds: ALL_KINDS.map((kind) => ({ kind, fixedRoutes: CARD_ROUTES[kind] })), access: { policyConfirmed: true } });
+    await mount();
+    expect(cards()).toEqual(["claude", "codex"]);
   });
 
   it("drops a card on the next refresh after the policy tightens, with the page left open", async () => {

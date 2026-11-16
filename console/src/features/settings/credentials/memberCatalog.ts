@@ -23,12 +23,15 @@ export interface MemberCatalog {
 const EMPTY: MemberCatalog = { kinds: null, hiddenByOwn: false };
 
 /** parseMemberCatalog reads a GET /agents/kinds answer; null when it is not one, or when it does
- *  not prove itself filtered: an Agent from before ADR 0138 M2 sends the same `kinds` unfiltered,
- *  and only the `access` summary, sent by every Agent that filters, tells the two apart. */
+ *  not prove itself filtered by the policy in force: an older Agent sends the same `kinds` with no
+ *  `access.policyConfirmed`, and a current one sends it false while the policy is unconfirmed. */
 export function parseMemberCatalog(raw: unknown): MemberCatalog | null {
   const r = raw as { kinds?: unknown; access?: { allOffByOwnSettings?: unknown; someOffByOwnSettings?: unknown } } | null;
   if (!r || typeof r !== "object" || !Array.isArray(r.kinds)) return null;
   if (!r.access || typeof r.access !== "object") return null;
+  // A catalogue the Agent cannot vouch for: no policy recorded yet, or one past its freshness
+  // limit (D12). Its kinds may be unfiltered or filtered by a stale policy.
+  if ((r.access as { policyConfirmed?: unknown }).policyConfirmed !== true) return null;
   const kinds = new Map<string, LiveKind>();
   for (const k of r.kinds as LiveKind[]) {
     if (k && typeof k.kind === "string") kinds.set(k.kind, k);

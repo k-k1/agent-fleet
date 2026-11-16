@@ -288,7 +288,7 @@ func liveAccess(t *testing.T) memberAccessWire {
 func TestKindCatalogMemberSwitchesAndAccess(t *testing.T) {
 	memberHome(t)
 	useHidingPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
-	if a := liveAccess(t); a != (memberAccessWire{}) {
+	if a := liveAccess(t); a != (memberAccessWire{PolicyConfirmed: true}) {
 		t.Errorf("no restriction, no switch: %+v", a)
 	}
 
@@ -300,7 +300,7 @@ func TestKindCatalogMemberSwitchesAndAccess(t *testing.T) {
 	if _, ok := by[session.KindShell]; !ok {
 		t.Error("shell runs no model and cannot be switched off, yet it was hidden")
 	}
-	if a := liveAccess(t); a != (memberAccessWire{SomeOffByOwnSettings: true}) {
+	if a := liveAccess(t); a != (memberAccessWire{SomeOffByOwnSettings: true, PolicyConfirmed: true}) {
 		t.Errorf("one harness switched off: %+v", a)
 	}
 
@@ -308,7 +308,7 @@ func TestKindCatalogMemberSwitchesAndAccess(t *testing.T) {
 	// allowed route. Switching off agy, which the policy forbids anyway, is not reported.
 	useHidingPolicy(t, apiKeysOnly)
 	writeMemberPrefs(t, map[string]any{"agentEnabled": map[string]any{"agy": false}})
-	if a := liveAccess(t); a != (memberAccessWire{}) {
+	if a := liveAccess(t); a != (memberAccessWire{PolicyConfirmed: true}) {
 		t.Errorf("only a forbidden harness switched off: %+v", a)
 	}
 	off := map[string]any{}
@@ -316,12 +316,12 @@ func TestKindCatalogMemberSwitchesAndAccess(t *testing.T) {
 		off[k] = false
 	}
 	writeMemberPrefs(t, map[string]any{"agentEnabled": off})
-	if a := liveAccess(t); a != (memberAccessWire{AllOffByOwnSettings: true, SomeOffByOwnSettings: true}) {
+	if a := liveAccess(t); a != (memberAccessWire{AllOffByOwnSettings: true, SomeOffByOwnSettings: true, PolicyConfirmed: true}) {
 		t.Errorf("every allowed harness switched off: %+v", a)
 	}
 
 	useHidingPolicy(t, routepolicy.Policy{Revision: 3, Restricted: true, Allowed: []string{"no-such-route"}})
-	if a := liveAccess(t); a != (memberAccessWire{NoRouteAvailable: true}) {
+	if a := liveAccess(t); a != (memberAccessWire{NoRouteAvailable: true, PolicyConfirmed: true}) {
 		t.Errorf("nothing allowed: %+v", a)
 	}
 }
@@ -675,5 +675,43 @@ func TestLcppRemovalUnderApprovedEndpointsDoesNotDeadlock(t *testing.T) {
 	}
 	if err := run("http://approved.lab.invalid:8080"); !errors.Is(err, agents.ErrCredentialChanged) {
 		t.Errorf("an endpoint on the approved host: %v, want kept (allowed there)", err)
+	}
+}
+
+// The catalogue says whether its kinds are filtered by a policy in force: a member's settings pages
+// list nothing from it otherwise (ADR 0138 D10a, D12).
+func TestKindCatalogSaysWhetherThePolicyIsConfirmed(t *testing.T) {
+	confirmed := func() bool {
+		rec := httptest.NewRecorder()
+		handleAgentKinds(rec, httptest.NewRequest(http.MethodGet, "/agents/kinds", nil))
+		var got kindCatalogWire
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Access == nil {
+			t.Fatal("the live catalogue has no access summary")
+		}
+		return got.Access.PolicyConfirmed
+	}
+	useHidingPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
+	if !confirmed() {
+		t.Error("a confirmed unrestricted policy reads unconfirmed")
+	}
+	useHidingPolicy(t, apiKeysOnly)
+	if !confirmed() {
+		t.Error("a confirmed restriction reads unconfirmed")
+	}
+	stale := routepolicy.Open(filepath.Join(t.TempDir(), "stale.json"), "")
+	if _, err := stale.Seed(apiKeysOnly, time.Now().Add(-time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if stale.Gate() == nil {
+		t.Fatal("fixture: the seeded policy is confirmed")
+	}
+	old := routepolicy.Active
+	routepolicy.Active = func() *routepolicy.Store { return stale }
+	t.Cleanup(func() { routepolicy.Active = old })
+	if confirmed() {
+		t.Error("a policy that cannot be confirmed reads confirmed")
 	}
 }

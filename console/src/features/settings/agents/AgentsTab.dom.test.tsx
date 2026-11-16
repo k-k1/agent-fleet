@@ -61,7 +61,7 @@ describe("Agents page (harness only)", () => {
   it("draws neither the session rows nor image generation", async () => {
     const all = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse"];
     api.mockImplementation((path: string) =>
-      Promise.resolve(path === "api/agents/kinds" ? { kinds: all.map((kind) => ({ kind })), access: {} } : {}),
+      Promise.resolve(path === "api/agents/kinds" ? { kinds: all.map((kind) => ({ kind })), access: { policyConfirmed: true } } : {}),
     );
     await mount();
     expect(host!.querySelectorAll(".p-card").length).toBe(all.length);

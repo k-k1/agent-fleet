@@ -61,13 +61,13 @@ const OC_ROUTES = ["own", "free", "go", "zen"] as const;
 // allows (D10a): a forbidden route's choice, key preset or sign-in is not named at all. The Agent
 // refuses to store a credential for a forbidden route anyway (CredentialEntryRefusal).
 const DIRECT_KEY_ROUTES = ["anthropic-api", "openai-api", "openrouter-api", "gemini-api", "sakana-api", "custom-api"];
-// The three opencode.ai choices are also reachable through the opencode.ai account sign-in, which
-// pays for them itself: under an account-only policy they are the choices to offer.
+// Zen is the one choice the opencode.ai account sign-in pays for by itself (its note: "an account
+// sign-in or an API key"), so under an account-only policy it is the choice offered. Go is tied
+// to the Go key, and free runs with no credential on Zen's endpoint.
 const USAGE_ROUTES: Record<(typeof OC_ROUTES)[number], string[]> = {
   own: DIRECT_KEY_ROUTES,
-  // The free models are Zen's, served through opencode.ai's Zen endpoint.
-  free: ["opencode-zen", "opencode-account"],
-  go: ["opencode-go", "opencode-account"],
+  free: ["opencode-zen"],
+  go: ["opencode-go"],
   zen: ["opencode-zen", "opencode-account"],
 };
 // OPENCODE_API_KEY opens both opencode.ai billing routes (the Agent's keyEnvRoutes).
@@ -131,7 +131,9 @@ function OpencodeUsageRows({ allowed }: { allowed: Set<string> }) {
                 }}
               >
                 <span className="p-opt-t">{tr(`agents.oc_usage_${v}`)}</span>
-                <span className="p-opt-s">{tr(`agents.oc_usage_note_${v}`)}</span>
+                <span className="p-opt-s">
+                  {tr(v === "zen" && !allowed.has("opencode-zen") ? "cred.oc_usage_note_zen_account" : `agents.oc_usage_note_${v}`)}
+                </span>
               </button>
             ))}
           </div>
@@ -449,7 +451,11 @@ export function OpencodeCard({
           <>
           {/* Only the sign-in needs an introduction of its own. own / free used to carry one
               too, which repeated what the route they had just selected already said. */}
-          {usesOpencodeAI && accountAllowed && <div className="p-desc">{tr("agents.oc_account_desc")}</div>}
+          {usesOpencodeAI && accountAllowed && (
+            <div className="p-desc">
+              {tr(presets.length > 0 ? "agents.oc_account_desc" : "cred.oc_account_desc_only")}
+            </div>
+          )}
           {/* The account sign-in is opencode.ai's, so it is not offered on the route that
               declines opencode.ai — showing a connect button whose result would be ignored is
               how the old card made the route look like it governed less than it does. */}

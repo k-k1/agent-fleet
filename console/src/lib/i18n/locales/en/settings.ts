@@ -873,4 +873,6 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "cred.codex_desc_sub_only": "Connect with a ChatGPT subscription.",
   "cred.codex_desc_key_only": "Connect with an OpenAI API key.",
   "cred.muse_desc_key_only": "Connect Muse Code with a Meta API key.",
+  "cred.oc_usage_note_zen_account": "On the opencode.ai side, the pay-per-request ids (opencode/…), plus the Go ids when the account has both. Runs on your opencode.ai account sign-in.",
+  "cred.oc_account_desc_only": "Sign in with your opencode.ai account. Approval finishes in the browser, so there is nothing to type back into the Console.",
 };
