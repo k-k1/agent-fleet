@@ -13,9 +13,9 @@ What you forbid disappears from your members' screens: the launch dialog, the ag
 ## How it works
 
 A **route** is where an agent's model calls go and with which credential: a Claude subscription, an Anthropic API key, Amazon Bedrock through the member's AWS profile, and so on.
-Every route has a **credential class** and a **destination**, and a rule is written with those two:
+Every route has a **class of credential** and a **destination**, and a rule is written with those two:
 
-| Credential class | Means |
+| Class of credential | Means |
 |---|---|
 | Subscriptions and logins | A plan or account login (a Claude or ChatGPT subscription, Copilot, Cursor, Kiro, an opencode.ai account) |
 | Members' API keys | A metered key the member stores (Anthropic, OpenAI, Gemini, OpenRouter and so on) |
@@ -42,7 +42,7 @@ A route is usable only when every layer allows it. Nothing you allow can reopen 
 1. Open **Tenant settings → Operations → Model access**
 2. Read **What the deployment allows**: the three layers above yours, and the routes they leave to your rule
 3. Under **This tenant's rule**, set:
-   - **Credential classes**: **All**, or **Only these** with the classes you allow
+   - **Classes of credential**: **All**, or **Only these** with the classes you allow
    - **Destinations**: **All**, or **Only these** with the destinations you allow
    - **Routes allowed as exceptions**: a route your classes or destinations would forbid, which you still allow. "No subscriptions except Copilot" is the class rule plus Copilot here
    - **Routes denied**: a route your classes and destinations would allow, which you still forbid. A route in both lists is denied

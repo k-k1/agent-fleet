@@ -1127,4 +1127,6 @@ export const admin = {
   "admin.mpol_layer_tenant_cap": "テナントの上限",
   "admin.mpol_layer_tenant": "テナントの規則",
   "admin.mpol_layer_vendor": "ベンダーのホスト",
+  "admin.mpol_stale": "読み込んだ後に、ほかの人がこの規則を更新しています。保存していません。編集した内容は残っています。最新の規則を見るには、ページを開き直してください。",
+  "admin.model_access_ceiling_source_other": "上限の出どころ: {source}。ここからは変更できません。",
 };

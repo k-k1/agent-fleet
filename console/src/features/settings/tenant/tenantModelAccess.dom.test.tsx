@@ -119,8 +119,8 @@ describe("tenant model access", () => {
       except: ["copilot-login"],
       future: "kept",
     });
-    // The saved state is read back rather than assumed.
-    expect(api).toHaveBeenCalledTimes(2);
+    // One read to check the revision before the PUT, and the saved state read back after it.
+    expect(api).toHaveBeenCalledTimes(3);
   });
 
   it("shows a refusal with its reason and keeps the edits", async () => {
@@ -143,8 +143,29 @@ describe("tenant model access", () => {
     expect(alert.textContent).toContain("セルフホストのエンドポイントとして承認できません");
     expect(alert.textContent).toContain("gpu.corp.example");
     expect(field("endpoints").querySelector("textarea")!.value).toBe("llm.corp.example\ngpu.corp.example");
-    // Not reloaded: a reload would replace the edits with the stored rule.
-    expect(api).toHaveBeenCalledTimes(1);
+    // Not reloaded after the refusal (the second read is the revision check before the PUT): a
+    // reload would replace the edits with the stored rule.
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not save over a revision someone else stored after the load", async () => {
+    await mount();
+    await click(tickIn("deny", "anthropic-api"));
+    // Another administrator saved in the meantime: the stored tenant rule is now at revision 6.
+    api.mockImplementation(() => Promise.resolve({ ...VIEW(), tenant: { rule: {}, revision: 6 } }));
+    await click(button("保存")!);
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(host!.querySelector(".model-access-rule [role=alert]")?.textContent).toContain("ほかの人がこの規則を更新");
+    expect(tickIn("deny", "anthropic-api").checked).toBe(true);
+  });
+
+  it("does not save when the revision cannot be re-read", async () => {
+    await mount();
+    await click(tickIn("deny", "anthropic-api"));
+    api.mockRejectedValue(new Error("offline"));
+    await click(button("保存")!);
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(host!.querySelector(".model-access-rule [role=alert]")?.textContent).toContain("読み込めませんでした");
   });
 
   it("draws no editor when the CP refuses the read", async () => {

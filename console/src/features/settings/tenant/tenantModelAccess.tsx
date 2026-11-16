@@ -38,7 +38,16 @@ export function useTenantRoutePolicy(slug: string) {
   useEffect(() => {
     load();
   }, [load]);
-  return { view, failed, load, path };
+  // The stored view as it is now, without touching the drawn one: what an editor checks its
+  // revision against right before it saves.
+  const peek = useCallback(async () => {
+    try {
+      return parseTenantPolicy(await api(path));
+    } catch {
+      return null;
+    }
+  }, [path]);
+  return { view, failed, load, peek, path };
 }
 
 /** The two sentences D12 and D13 require the policy page to state. */
@@ -54,7 +63,7 @@ export function PolicyLimits() {
 
 export function TenantModelAccessView({ slug, isSuper = false }: { slug: string; isSuper?: boolean }) {
   const tr = useT();
-  const { view, failed, load, path } = useTenantRoutePolicy(slug);
+  const { view, failed, load, peek, path } = useTenantRoutePolicy(slug);
 
   if (!view) {
     return (
@@ -117,6 +126,8 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
         <RuleEditor
           key={`${slug}:${view.tenant.revision}`}
           base={view.tenant.rule}
+          revision={view.tenant.revision}
+          currentRevision={async () => (await peek())?.tenant.revision ?? null}
           routeOptions={routeIds(view.routes.map((r) => r.id))}
           endpointsMode="hosts"
           save={(body) => apiJSON(path, "PUT", body)}

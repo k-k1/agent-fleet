@@ -232,12 +232,18 @@ function RouteTicks({
  *  replaces the draft. */
 export function RuleEditor({
   base,
+  revision,
+  currentRevision,
   routeOptions,
   endpointsMode,
   save,
   onSaved,
 }: {
   base: RouteRule;
+  /** The layer's revision base was loaded at. */
+  revision: number;
+  /** Reads the layer's stored revision now; null when it cannot be read. */
+  currentRevision: () => Promise<number | null>;
   routeOptions: string[];
   /** patterns: the deployment rule and a cap (absent = does not narrow); hosts: the tenant
    *  rule's approved exact hosts. */
@@ -260,6 +266,19 @@ export function RuleEditor({
     setBusy(true);
     setRefusal(null);
     try {
+      // The PUT replaces the whole layer and carries no revision, so a save made over another
+      // administrator's newer one would silently undo it. Re-read first and refuse on a moved
+      // (or unreadable) revision; the edits stay. A save in the gap between the two requests can
+      // still race, which only a conditional PUT on the CP would close.
+      const now = await currentRevision();
+      if (now === null) {
+        setRefusal(tr("admin.mpol_load_failed"));
+        return;
+      }
+      if (now !== revision) {
+        setRefusal(tr("admin.mpol_stale"));
+        return;
+      }
       const res = (await save(body)) as { error?: Parameters<typeof errDetail>[0] } | null | undefined;
       if (res?.error) {
         setRefusal(errDetail(res.error));

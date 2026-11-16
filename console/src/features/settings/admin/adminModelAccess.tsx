@@ -14,7 +14,8 @@ import { RuleEditor, RuleSummary } from "../tenant/routePolicyRuleEditor.tsx";
 import { parseDeploymentPolicy, routeIds, type DeploymentPolicyView } from "../tenant/routePolicyRule.ts";
 import { PolicyLimits, useTenantRoutePolicy } from "../tenant/tenantModelAccess.tsx";
 
-// The variable the ceiling is read from (routepolicy.EnvCeiling). Only named in the source line.
+// The variable the ceiling is read from (routepolicy.EnvCeiling), named when the wire's source is
+// "deployment", the only source the CP has; any other source is shown as the CP spells it.
 const CEILING_ENV = "AF_MODEL_ROUTE_CEILING";
 const PATH = "api/admin/route-policy";
 
@@ -44,9 +45,17 @@ function useDeploymentRoutePolicy() {
   return { view, failed, load };
 }
 
+async function currentDeploymentRevision(): Promise<number | null> {
+  try {
+    return parseDeploymentPolicy(await api(PATH))?.deployment.revision ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function TenantCap({ slug }: { slug: string }) {
   const tr = useT();
-  const { view, failed, load, path } = useTenantRoutePolicy(slug);
+  const { view, failed, load, peek, path } = useTenantRoutePolicy(slug);
   if (!view) {
     return (
       <p className={failed ? "admin-hint warn" : "muted"} role={failed ? "alert" : undefined}>
@@ -59,6 +68,8 @@ function TenantCap({ slug }: { slug: string }) {
       <RuleEditor
         key={`${slug}:${view.cap.revision}`}
         base={view.cap.rule}
+        revision={view.cap.revision}
+        currentRevision={async () => (await peek())?.cap.revision ?? null}
         routeOptions={routeIds(view.routes.map((r) => r.id))}
         endpointsMode="patterns"
         save={(body) => apiJSON(`${path}/cap`, "PUT", body)}
@@ -97,7 +108,11 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
 
       <section className="admin-panel model-access-ceiling">
         <h4>{tr("admin.mpol_layer_ceiling")}</h4>
-        <p className="admin-hint">{tr("admin.model_access_ceiling_source", { env: CEILING_ENV })}</p>
+        <p className="admin-hint">
+          {view.ceiling.source === "deployment"
+            ? tr("admin.model_access_ceiling_source", { env: CEILING_ENV })
+            : tr("admin.model_access_ceiling_source_other", { source: view.ceiling.source })}
+        </p>
         {view.ceiling.raw ? (
           <p>
             <code className="mpol-raw">{view.ceiling.raw}</code>
@@ -117,6 +132,8 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
         <RuleEditor
           key={view.deployment.revision}
           base={view.deployment.rule}
+          revision={view.deployment.revision}
+          currentRevision={currentDeploymentRevision}
           routeOptions={routeIds()}
           endpointsMode="patterns"
           save={(body) => apiJSON(PATH, "PUT", body)}

@@ -125,7 +125,45 @@ describe("admin model access", () => {
     expect(
       btnIn(within('.model-access-deployment [data-field="destinations"]'), "すべて").getAttribute("aria-checked"),
     ).toBe("true");
-    expect(api).toHaveBeenCalledTimes(2); // the deployment GET and the first tenant's, nothing reloaded
+    // The deployment GET, the first tenant's, and the revision check before the PUT; nothing
+    // reloaded after the refusal.
+    expect(api).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not save the deployment rule over a newer revision", async () => {
+    await mount();
+    const d = within(".model-access-deployment");
+    await click(tickIn(d, "deny", "anthropic-api"));
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path === "api/admin/route-policy" ? { ...DEPLOYMENT, deployment: { rule: {}, revision: 4 } } : tenantView("acme")),
+    );
+    await click(btnIn(d, "保存"));
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(d.querySelector("[role=alert]")?.textContent).toContain("ほかの人がこの規則を更新");
+  });
+
+  it("does not save a cap over a newer revision", async () => {
+    await mount();
+    const cap = within('.mpol-cap[data-tenant="acme"]');
+    await click(tickIn(cap, "deny", "anthropic-api"));
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path === "api/admin/route-policy" ? DEPLOYMENT : { ...tenantView("acme"), cap: { rule: {}, revision: 2 } }),
+    );
+    await click(btnIn(cap, "保存"));
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(cap.querySelector("[role=alert]")?.textContent).toContain("ほかの人がこの規則を更新");
+  });
+
+  it("shows the ceiling's source as the wire names it", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "api/admin/route-policy" ? { ...DEPLOYMENT, ceiling: { ...CEILING, source: "file" } } : tenantView("acme"),
+      ),
+    );
+    await mount();
+    const c = within(".model-access-ceiling");
+    expect(c.textContent).toContain("file");
+    expect(c.textContent).not.toContain("AF_MODEL_ROUTE_CEILING");
   });
 
   it("edits the picked tenant's cap and PUTs it to the cap path", async () => {

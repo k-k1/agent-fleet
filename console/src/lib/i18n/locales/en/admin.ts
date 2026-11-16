@@ -1082,7 +1082,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mpol_delay": "A change reaches members' new launches within 30 seconds, and their running sessions within 30 seconds plus one reconciler tick.",
   "admin.mpol_hand_login": "A member who signs in to a model by hand from a workspace terminal cannot be stopped. This rule binds Agent Fleet's own launches, not what a member runs by hand.",
   "admin.mpol_revision": "Revision {n}",
-  "admin.mpol_classes": "Credential classes",
+  "admin.mpol_classes": "Classes of credential",
   "admin.mpol_destinations": "Destinations",
   "admin.mpol_except": "Routes allowed as exceptions",
   "admin.mpol_except_hint": "Allows, at this layer only, a route its classes or destinations would forbid. It cannot reopen what a layer above forbids. Per-connection routes (your llama.cpp, custom keys) cannot be excepted.",
@@ -1131,4 +1131,6 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mpol_layer_tenant_cap": "Tenant cap",
   "admin.mpol_layer_tenant": "Tenant rule",
   "admin.mpol_layer_vendor": "A vendor's host",
+  "admin.mpol_stale": "Someone else changed this rule after it was loaded, so nothing was saved. Your edits are still here; reopen the page to see the current rule.",
+  "admin.model_access_ceiling_source_other": "Ceiling source: {source}. It cannot be changed here.",
 };
