@@ -1,6 +1,6 @@
 ---
 audience: "anyone who has sessions open pull requests"
-source_of_truth: "The Console's Settings > Agents > Tell sessions about their PR's feedback, and the af tool watch"
+source_of_truth: "The Console's Settings > Sessions > Tell sessions about their PR's feedback, and the af tool watch"
 ---
 
 # Tell a session about its pull request's review
@@ -20,7 +20,7 @@ The session no longer sits idle until you notice.
 
 ## Turn it on
 
-Under "Session" in **⚙ Settings → Agents**, turn on **Tell sessions about their PR's feedback**. The screen is shown in [Start child sessions from a session](child-sessions.md#turn-it-on).
+In **⚙ Settings → Sessions**, turn on **Tell sessions about their PR's feedback**. The screen is shown in [Start child sessions from a session](child-sessions.md#turn-it-on).
 
 It spends turns and starts stopped sessions without your asking, so it is off by default.
 

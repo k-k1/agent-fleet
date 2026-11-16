@@ -286,7 +286,7 @@ func TestSpawnRefusalNamesTheArchivePeriodInForce(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), tc.avoid) {
 				t.Fatalf("refusal %q: want %q and not %q", err, tc.want, tc.avoid)
 			}
-			if !strings.Contains(err.Error(), "設定 > エージェント > セッション") {
+			if !strings.Contains(err.Error(), "設定 > セッション") {
 				t.Fatalf("refusal %q does not say where the period is changed", err)
 			}
 		})

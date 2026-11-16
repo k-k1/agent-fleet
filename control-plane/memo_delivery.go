@@ -49,8 +49,13 @@ const (
 	// memoAgentCallWait each Agent call in it. Both run before the tick's fires start.
 	// memoClosedTurnBudget bounds the pass that reads the first turns of closed deliveries, apart
 	// from memoSettleBudget.
+	// memoRetireReserve is the part of memoSettleBudget kept for the retire pass: the read pass
+	// stops that much before the budget ends, so a slow workspace in it cannot keep the retire pass
+	// from running, and the two together never take longer than memoSettleBudget before the tick's
+	// fires start. Time the read pass leaves over goes to the retire pass.
 	memoClosedTurnBudget = 20 * time.Second
 	memoSettleBudget     = 60 * time.Second
+	memoRetireReserve    = memoSettleBudget / 3
 	memoAgentCallWait    = 15 * time.Second
 	// memoRetireCallWait bounds one retire call: it stops every session of a tree.
 	memoRetireCallWait = 30 * time.Second
@@ -389,8 +394,16 @@ type memoQueueRunner struct {
 	// budget is a fire's own time budget: a claimed or sending delivery older than it is
 	// reconciled. It is above everything a live send waits for.
 	budget time.Duration
-	// settleBudget bounds one tick's settle pass (memoSettleBudget).
-	settleBudget time.Duration
+	// settleBudget bounds one tick's settle and retire passes together (memoSettleBudget), and
+	// retireReserve is the end of it kept for the retire pass (memoRetireReserve).
+	settleBudget  time.Duration
+	retireReserve time.Duration
+	// settleOrder and retireOrder keep which member each pass tried last, so that a pass that runs
+	// out of budget inside one workspace starts with the members behind it on the next tick. They
+	// live in this process only: fairness never needs them to agree between Control Planes, and
+	// correctness never depends on them. Only the tick's goroutine touches them.
+	settleOrder memoFairOrder
+	retireOrder memoFairOrder
 	// tickViews is the settle pass's view of each member's workspace in this tick, which the
 	// dispatch pass that follows reuses. A tick is one goroutine, so no lock.
 	tickViews map[string]*memoMemberView
@@ -403,7 +416,7 @@ func newMemoQueueRunner(mgr *manager, f *wakeFirer) *memoQueueRunner {
 	if ready <= 0 {
 		ready = 5 * time.Minute
 	}
-	return &memoQueueRunner{mgr: mgr, f: f, budget: ready + memoDeliverySendMargin, settleBudget: memoSettleBudget}
+	return &memoQueueRunner{mgr: mgr, f: f, budget: ready + memoDeliverySendMargin, settleBudget: memoSettleBudget, retireReserve: memoRetireReserve}
 }
 
 // memoMemberView is what settle knows of one member's workspace in this tick.
@@ -431,7 +444,10 @@ type memoMemberView struct {
 
 func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.MemoDelivery {
 	tick := ctx
-	ctx, cancel := context.WithTimeout(ctx, r.settleBudget)
+	// One budget for both passes: the read pass ends retireReserve early, the retire pass at the end.
+	rctx, rcancel := context.WithTimeout(tick, r.settleBudget)
+	defer rcancel()
+	ctx, cancel := context.WithTimeout(tick, r.settleBudget-min(r.retireReserve, r.settleBudget/3))
 	defer cancel()
 	ds, err := r.mgr.store.ListLiveMemoDeliveries(ctx)
 	if err != nil {
@@ -442,39 +458,61 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 	views := map[string]*memoMemberView{}
 	r.tickViews = views // the dispatcher of this tick reads each workspace once, through the same views
 	hours := map[string]map[string]int{}
+	// Claimed deliveries need no workspace read, so they are settled first, in list order: the
+	// stale ones are closed and the rest are the sends, oldest first. Nothing behind a slow member
+	// can delay them or put a newer one of a queue ahead of an older one.
 	var sends []store.MemoDelivery
+	var reading []store.MemoDelivery
 	for _, d := range ds {
 		if ctx.Err() != nil {
 			break
 		}
-		switch d.State {
-		case store.DeliveryClaimed:
-			if d.CreatedAt < stale {
-				// The worker that claimed it is gone or past its budget. If it still moves the
-				// delivery to sending, it wins and this write loses: nothing is returned twice.
-				r.closeNotSent(ctx, d, store.DeliveryClaimed)
-				continue
+		if d.State != store.DeliveryClaimed {
+			reading = append(reading, d)
+			continue
+		}
+		if d.CreatedAt < stale {
+			// The worker that claimed it is gone or past its budget. If it still moves the
+			// delivery to sending, it wins and this write loses: nothing is returned twice.
+			r.closeNotSent(ctx, d, store.DeliveryClaimed)
+			continue
+		}
+		if len(sends) < memoQueueSendsPerTick {
+			sends = append(sends, d)
+		}
+	}
+	// The rest need the member's workspace, one read per member and tick. Members go least
+	// recently tried first, so a workspace that eats the budget is not first again next tick.
+	byMember := map[string][]store.MemoDelivery{}
+	for _, id := range r.settleOrder.arrange(memberOrder(reading, byMember)) {
+		if ctx.Err() != nil {
+			break
+		}
+		r.settleOrder.tried(id)
+		for _, d := range byMember[id] {
+			if ctx.Err() != nil {
+				break
 			}
-			if len(sends) < memoQueueSendsPerTick {
-				sends = append(sends, d)
-			}
-		case store.DeliverySending:
-			if d.SentAt >= stale {
-				continue
-			}
-			if v := r.view(ctx, views, d.MembershipID); v != nil && v.liveOK {
-				r.reconcileSending(ctx, v, d)
-			}
-			// While the workspace is stopped, or the Agent does not answer, the delivery keeps
-			// its slot: its session may exist.
-		case store.DeliveryOpen:
-			d = r.markOverdue(ctx, hours, d, now)
-			if v := r.view(ctx, views, d.MembershipID); v != nil {
-				r.closeIfDone(ctx, v, d, now)
+			switch d.State {
+			case store.DeliverySending:
+				if d.SentAt >= stale {
+					continue
+				}
+				if v := r.view(ctx, views, d.MembershipID); v != nil && v.liveOK {
+					r.reconcileSending(ctx, v, d)
+				}
+				// While the workspace is stopped, or the Agent does not answer, the delivery keeps
+				// its slot: its session may exist.
+			case store.DeliveryOpen:
+				d = r.markOverdue(ctx, hours, d, now)
+				if v := r.view(ctx, views, d.MembershipID); v != nil {
+					r.closeIfDone(ctx, v, d, now)
+				}
 			}
 		}
 	}
-	r.retirePending(ctx, views, now)
+	// The retire pass has the reserved end of the budget (and what the read pass left of the rest).
+	r.retirePending(rctx, views, now)
 	// The first-turn pass has a budget of its own: the reads above may have used all of the pass's,
 	// and a pass that never runs would leave the breaker blind.
 	tctx, tcancel := context.WithTimeout(tick, memoClosedTurnBudget)
@@ -1155,37 +1193,98 @@ func (r *memoQueueRunner) retirePending(ctx context.Context, views map[string]*m
 		log.Printf("memo queue: list pending retires: %v", err)
 		return
 	}
-	for _, d := range ds {
+	// Members go least recently tried first (see settle); a member's own deliveries stay oldest
+	// first.
+	byMember := map[string][]store.MemoDelivery{}
+	order := r.retireOrder.arrange(memberOrder(ds, byMember))
+	for _, id := range order {
 		if ctx.Err() != nil {
 			return
 		}
-		v := r.view(ctx, views, d.MembershipID)
-		if v == nil || !v.liveOK || !v.report {
-			continue
-		}
-		tree := deliveryTree(v.live, d.Session)
-		if len(tree) == 0 {
-			// A root missing from a report is a deleted session only when the report began after
-			// the delivery closed: the tick's cached list may be older than the close (another
-			// Control Plane created the session, read it clear twice and closed it after this
-			// list was taken). The delivery was read as closed before this read begins, so a
-			// fresh read is later than the close. Anything but a successful reporting answer
-			// decides nothing.
-			cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
-			env, err := r.mgr.agentSessionsEnv(cctx, v.res.rt)
-			cancel()
-			if err != nil || !env.reportsQueue() {
-				continue
+		r.retireOrder.tried(id)
+		for _, d := range byMember[id] {
+			if ctx.Err() != nil {
+				return
 			}
-			if len(deliveryTree(env.Sessions, d.Session)) == 0 {
-				r.finishRetire(ctx, d, "gone")
-				continue
-			}
-		}
-		if res := r.retire(ctx, v.res, d.Session, d.RetireActMark); res != retireRepeat {
-			r.finishRetire(ctx, d, string(res))
+			r.retireOne(ctx, views, d)
 		}
 	}
+}
+
+// retireOne retires the session of one pending delivery, from the member's view of this tick.
+func (r *memoQueueRunner) retireOne(ctx context.Context, views map[string]*memoMemberView, d store.MemoDelivery) {
+	v := r.view(ctx, views, d.MembershipID)
+	if v == nil || !v.liveOK || !v.report {
+		return
+	}
+	tree := deliveryTree(v.live, d.Session)
+	if len(tree) == 0 {
+		// A root missing from a report is a deleted session only when the report began after
+		// the delivery closed: the tick's cached list may be older than the close (another
+		// Control Plane created the session, read it clear twice and closed it after this
+		// list was taken). The delivery was read as closed before this read begins, so a
+		// fresh read is later than the close. Anything but a successful reporting answer
+		// decides nothing.
+		cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
+		env, err := r.mgr.agentSessionsEnv(cctx, v.res.rt)
+		cancel()
+		if err != nil || !env.reportsQueue() {
+			return
+		}
+		if len(deliveryTree(env.Sessions, d.Session)) == 0 {
+			r.finishRetire(ctx, d, "gone")
+			return
+		}
+	}
+	if res := r.retire(ctx, v.res, d.Session, d.RetireActMark); res != retireRepeat {
+		r.finishRetire(ctx, d, string(res))
+	}
+}
+
+// memberOrder groups ds by member into by, keeping each member's deliveries in list order, and
+// returns the members in the order they first appear.
+func memberOrder(ds []store.MemoDelivery, by map[string][]store.MemoDelivery) []string {
+	var ids []string
+	for _, d := range ds {
+		if _, ok := by[d.MembershipID]; !ok {
+			ids = append(ids, d.MembershipID)
+		}
+		by[d.MembershipID] = append(by[d.MembershipID], d)
+	}
+	return ids
+}
+
+// memoFairOrder remembers when a pass last tried each member, so that a pass which stops at its
+// budget in the middle of the list resumes with the members it did not reach. A member is stamped
+// before it is tried, the way a delivery is stamped before its first turn is read: a member that
+// consumes the whole budget has still been tried, and goes behind the others next tick. Every
+// tick tries at least the first member, so every member is tried within as many ticks as there
+// are members. The zero value is ready; it is not safe for concurrent use.
+type memoFairOrder struct {
+	seq  uint64
+	last map[string]uint64
+}
+
+// arrange returns ids, never tried first, then by how long ago they were tried, ties in the order
+// given (the oldest delivery first). Members no longer listed are forgotten.
+func (f *memoFairOrder) arrange(ids []string) []string {
+	kept := make(map[string]uint64, len(ids))
+	for _, id := range ids {
+		kept[id] = f.last[id]
+	}
+	f.last = kept
+	out := append([]string(nil), ids...)
+	sort.SliceStable(out, func(i, j int) bool { return f.last[out[i]] < f.last[out[j]] })
+	return out
+}
+
+// tried records that the pass is about to try id.
+func (f *memoFairOrder) tried(id string) {
+	f.seq++
+	if f.last == nil {
+		f.last = map[string]uint64{}
+	}
+	f.last[id] = f.seq
 }
 
 // collectClosedTurns copies the first turn of a session onto a delivery that closed before the

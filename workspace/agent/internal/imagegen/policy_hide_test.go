@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
@@ -75,6 +76,10 @@ func TestStatusHidesProvidersThePolicyForbids(t *testing.T) {
 	if !reflect.DeepEqual(got.Order, []string{"codex"}) {
 		t.Errorf("under the policy the order is %v, want only codex", got.Order)
 	}
+	// The Console trusts Order as filtered only on this marker; an Agent without it is older.
+	if !got.OrderFiltered {
+		t.Error("orderFiltered is not set on a filtered order")
+	}
 }
 
 // A generation is judged at the point each provider would run (ADR 0138 D12): a provider on a
@@ -121,5 +126,51 @@ func TestRunSkipsProvidersThePolicyForbids(t *testing.T) {
 	if _, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1", Pref: ProviderCodex,
 		Request: Request{Op: OpGenerate, Prompt: "a cat"}}); !errors.Is(err, ErrRoutePolicy) || len(calls) != 0 {
 		t.Errorf("an explicit forbidden provider: %v (calls %v)", err, calls)
+	}
+}
+
+// A policy that cannot be confirmed lists nothing and does not mark the answer as filtered, so the
+// Console lists nothing either (ADR 0138 D10a, D12); a confirmed unrestricted policy lists every
+// provider and marks it.
+func TestStatusFailsClosedOnAnUnconfirmedPolicy(t *testing.T) {
+	withImagegenSession(t, session.KindClaude,
+		stubProvider{id: "agy", caps: capsOf([]Op{OpGenerate})},
+		stubProvider{id: "codex", caps: capsOf([]Op{OpGenerate})},
+	)
+	status := func() statusResponse {
+		rec := httptest.NewRecorder()
+		HandleStatus(rec, httptest.NewRequest(http.MethodGet, "/imagegen/status?session=slot01", nil))
+		var got statusResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	use := func(s *routepolicy.Store) {
+		old := routepolicy.Active
+		routepolicy.Active = func() *routepolicy.Store { return s }
+		t.Cleanup(func() { routepolicy.Active = old })
+	}
+
+	open := routepolicy.Open(filepath.Join(t.TempDir(), "open.json"), "")
+	if _, err := open.Accept(routepolicy.Policy{Revision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	use(open)
+	if got := status(); !got.OrderFiltered || len(got.Order) != 2 || len(got.Providers) != 2 {
+		t.Errorf("control: a confirmed unrestricted policy answered %+v, want both providers, marked", got)
+	}
+
+	stale := routepolicy.Open(filepath.Join(t.TempDir(), "stale.json"), "")
+	if _, err := stale.Seed(routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []string{routes.RouteOpenAIAPI}},
+		time.Now().Add(-time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if stale.Gate() == nil {
+		t.Fatal("fixture: the seeded policy is confirmed")
+	}
+	use(stale)
+	if got := status(); got.OrderFiltered || len(got.Order) != 0 || len(got.Providers) != 0 || got.Ready {
+		t.Errorf("an unconfirmed policy answered %+v, want nothing listed and no marker", got)
 	}
 }

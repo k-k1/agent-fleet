@@ -1,7 +1,7 @@
 import { ConnChecking, type ConnPhase } from "../parts/providerCard.tsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { errDetail, isTransientErr } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
 import {
   getAgentRtk,
   getClaudeSettings,
@@ -16,28 +16,10 @@ import {
   type Reply,
 } from "../api.ts";
 import { Button } from "../../../ui/Button.tsx";
-import { Choice, OnOff, OrderList, Row } from "../parts/controls.tsx";
-import {
-  useSettings,
-  setSetting,
-  SPAWN_CHILD_LIMITS,
-  STOPPED_ARCHIVE_DAYS,
-  STOPPED_ARCHIVE_NEVER,
-  stoppedArchiveChoice,
-  normalizeImageProviderOrder,
-  collapseImageProviderOrder,
-  expandImageProviderOrder,
-  imageProviderLabel,
-  type ImageFleetRow,
-} from "../../../lib/settings.ts";
-import { agentOf } from "../../../agents/registry.ts";
-import { SPEND_CAP_DEFAULTS } from "../../sessions/spendBudget.ts";
 import { useConnections } from "../parts/useConnections.ts";
 import { useSettingsTarget } from "../parts/useSettingsTarget.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
-import { tCount, useT } from "../../../lib/i18n/index.ts";
-import { imagegenStatus } from "../../imagegen/api.ts";
-import { isPreAdr0082Status, type ImagegenProvider } from "../../imagegen/wire.ts";
+import { useT } from "../../../lib/i18n/index.ts";
 import { ClaudeCard } from "./ClaudeCard.tsx";
 import { CodexCard } from "./CodexCard.tsx";
 import { CursorCard } from "./CursorCard.tsx";
@@ -58,15 +40,12 @@ import { MuseCard } from "./MuseCard.tsx";
 //      nudge). Launch defaults are client-only, so the cards render even while stopped —
 //      you can set a default model before starting; only the connection + runtime toggles
 //      wait for the workspace. Git-hosting agents live in GitTab; the rtk-effect analytics
-//      that used to sit here lives in the usage tab (features/usage) — monitoring is not a
-//      setting.
+//      lives in the usage tab (features/usage) — monitoring is not a setting. What applies to
+//      every session whatever its agent has its own pages (ADR 0138 D16): Settings > Sessions
+//      (SessionsTab) and Settings > Image generation (ImagegenTab).
 export function AgentsTab() {
   const tr = useT();
   const toast = useToast();
-  // Client-side session pref (automatic title suggestions) — persisted in the local settings
-  // store, so it shows regardless of workspace state (unlike the container-backed
-  // toggles, which need the Agent/CLI). Default models live in each card's behavior settings.
-  const s = useSettings();
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
   // Connection auth AND the behavior toggles both go through the in-container Agent
@@ -83,14 +62,6 @@ export function AgentsTab() {
   const [claude, setClaude] = useState<ClaudeSettings | null>(null);
   const [codex, setCodex] = useState<CodexSettings | null>(null);
   const [agents, setAgents] = useState<AgentRtkSettings | false | null>(null);
-  // The images rows this deployment actually declares (ADR 0082 decision 3), or null while
-  // there is no live answer to trust — not running, still loading, a transient failure, or an
-  // Agent build old enough to predate `kind` (ADR 0082 P0/P1; see isPreAdr0082Status below).
-  // null is what tells imageOrder below to fall back to the static IMAGE_PROVIDERS_RANKED guess
-  // rather than mistake "nothing fetched yet" for "this deployment declares zero images rows"
-  // (a real, different answer — see normalizeImageProviderOrder's own `rows === undefined` vs
-  // `[]` distinction).
-  const [imagegenProviders, setImagegenProviders] = useState<ImagegenProvider[] | null>(null);
 
   const loadSettings = useCallback(() => {
     getClaudeSettings()
@@ -102,24 +73,12 @@ export function AgentsTab() {
     getAgentRtk()
       .then((a) => setAgents(isOk(a) ? a : false))
       .catch(() => setAgents(false));
-    imagegenStatus()
-      .then((st) => {
-        const providers = st && !isTransientErr(st) && Array.isArray(st.providers) ? st.providers : null;
-        setImagegenProviders(providers && !isPreAdr0082Status(providers) ? providers : null);
-      })
-      .catch(() => setImagegenProviders(null));
   }, []);
 
   // (Re)load when the workspace is running — including when it transitions
   // stopped→running while this dialog is open, so settings appear without a reopen.
   useEffect(() => {
-    if (!running) {
-      // The Agent that answered is gone with it (the same reasoning available.ts's
-      // resetImagegenAvailability follows): a stopped workspace must fall back to the static
-      // guess, not keep showing rows that may no longer be true.
-      setImagegenProviders(null);
-      return;
-    }
+    if (!running) return;
     reload();
     loadSettings();
   }, [running, reload, loadSettings]);
@@ -140,145 +99,6 @@ export function AgentsTab() {
   const updateCodex = mkUpdate(putCodexSettings, setCodex);
   const updateAgents = mkUpdate(putAgentRtk, setAgents);
 
-  // ADR 0082 decision 3: once the Agent has answered, the list is drawn one row per DECLARED
-  // images row instead of the two static kind-name guesses — and decision 8, the fold that used
-  // to stand in for "which of them, if either, does this deployment actually run" no longer
-  // applies, because now we know.
-  const liveImages = imagegenProviders !== null;
-  const fleetRows: ImageFleetRow[] = imagegenProviders
-    ? imagegenProviders.filter((p) => p.fleet).map((p) => ({ id: p.id, kind: p.kind || p.id }))
-    : [];
-  const imageOrder = liveImages
-    ? normalizeImageProviderOrder(s.imageProviderOrder, fleetRows)
-    : collapseImageProviderOrder(normalizeImageProviderOrder(s.imageProviderOrder));
-  const imageLabels = Object.fromEntries(
-    imageOrder.map((id) => {
-      if (!liveImages) return [id, imageProviderLabel(id) || agentOf(id).assistantName];
-      const row = imagegenProviders!.find((p) => p.id === id);
-      if (!row?.fleet) return [id, agentOf(id).assistantName];
-      // Neither the key alone ("image") nor the kind alone ("ComfyUI") says enough on its own —
-      // the key is what the member can act on (it is what `provider` in generate_image names),
-      // the kind is what tells them which machine it actually is (ADR 0082 P1 follow-up).
-      const kindLabel = row.kind === "comfy" ? tr("agents.image_kind_comfy")
-        : row.kind === "openai-compat" ? tr("agents.image_kind_openai_compat")
-        : "";
-      return [id, kindLabel ? `${id} (${kindLabel})` : id];
-    }),
-  );
-
-  // Session prefs render in every state (stopped / loading / running) since they're
-  // local, not container-backed.
-  const sessionSettings = (
-    <section className="ds-group">
-      <h4 className="ds-title">{tr("agents.session")}</h4>
-      {/* The stopped-session archive period (ADR 0097). First because it applies to every
-          session, spawned or not; the note carries the child-slot consequence rather than the
-          row sitting under the steering switch. "Default" is its own choice, not 7: it defers to
-          the deployment's AF_SESSION_STOPPED_TTL, which the Console cannot see. */}
-      <Row label={tr("agents.stopped_archive")}>
-        <Choice
-          value={stoppedArchiveChoice(s.sessionStoppedArchiveDays)}
-          options={[
-            [0, tr("agents.stopped_archive_default")],
-            ...STOPPED_ARCHIVE_DAYS.map((n): [number, string] => [n, tCount("agents.stopped_archive_days", n)]),
-            [STOPPED_ARCHIVE_NEVER, tr("agents.stopped_archive_never")],
-          ]}
-          onChange={(v) => setSetting("sessionStoppedArchiveDays", v)}
-        />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_stopped_archive")}</p>
-      {/* The default spend budget (#1054): every session, spawned or not, so it sits with the
-          archive period. Fixed choices for the same reason as the child limit below. */}
-      <Row label={tr("agents.spend_cap_default")}>
-        <Choice
-          value={SPEND_CAP_DEFAULTS.includes(s.sessionSpendCapUsd) ? s.sessionSpendCapUsd : 0}
-          options={SPEND_CAP_DEFAULTS.map((n): [number, string] => [n, n === 0 ? tr("agents.spend_cap_none") : "$" + n])}
-          onChange={(v) => setSetting("sessionSpendCapUsd", v)}
-        />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_spend_cap_default")}</p>
-      {/* Automatic title suggestions (autoTitleSuggest) moved to Settings > AI assist
-          (docs/log/84). Here it looked like a session setting, but the one key also disabled the
-          AI branch-name suggestion; each AI-generation on/off now has a single home. */}
-      {/* Cross-session messaging (docs/log/58 / ADR 0041) sits here rather than inside a card
-          because it applies to all 7 kinds that af's own MCP is distributed to; it is not any
-          one agent's setting (in the claude card it would look claude-only). */}
-      <Row label={tr("agents.peer_messaging")}>
-        <OnOff value={s.peerMessaging} onChange={(v) => setSetting("peerMessaging", v)} />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_peer_messaging")}</p>
-      {/* Session steering (ADR 0073) sits directly under peer messaging because the two answer
-          the same question — what may a session do about the rest of the fleet — and are most
-          often turned on together. Fleet observation used to sit between them and gate this row;
-          it is not a setting any more (docs/log/86), so there is nothing to gate on. */}
-      <Row label={tr("agents.fleet_spawn")}>
-        <OnOff value={s.sessionFleetSpawn} onChange={(v) => setSetting("sessionFleetSpawn", v)} />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_fleet_spawn")}</p>
-      {/* PR feedback (#3129) is the Agent typing into a session on the PR's behalf, the same
-          question as the two above — what reaches a session without the member — so it sits
-          with them rather than in any agent's card. */}
-      <Row label={tr("agents.pr_feedback")}>
-        <OnOff value={s.prFeedback} onChange={(v) => setSetting("prFeedback", v)} />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_pr_feedback")}</p>
-      {/* The budget (ADR 0073 decision 6). Only with the switch on, for the reason the image
-          provider order is: with steering off nothing ever consults it. A fixed set of choices
-          rather than a number field — the Agent answers anything outside its range with the
-          default, so a range the control cannot express would read as a silent downgrade. */}
-      {s.sessionFleetSpawn && (
-        <>
-          <Row label={tr("agents.spawn_child_limit")}>
-            <Choice
-              value={s.sessionSpawnChildLimit}
-              options={SPAWN_CHILD_LIMITS.map((n) => [n, String(n)])}
-              onChange={(v) => setSetting("sessionSpawnChildLimit", v)}
-            />
-          </Row>
-          <p className="muted ds-note">{tr("agents.note_spawn_child_limit")}</p>
-        </>
-      )}
-      {/* Past-session search (ADR 0110): the same kind of switch — one af MCP tool every kind
-          gets — so it sits with the others rather than in any agent's card. */}
-      <Row label={tr("agents.session_search")}>
-        <OnOff value={s.sessionSearch} onChange={(v) => setSetting("sessionSearch", v)} />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_session_search")}</p>
-      {/* AF memory (ADR 0108) is another af tool set every kind gets, but its switch lives on the
-          Agent memory page beside the change list and the import that needs it on; this line only
-          says where, so a member looking among the tool switches still finds it. */}
-      <p className="muted ds-note">{tr("agents.note_agent_memory_moved")}</p>
-      {/* Image generation (ADR 0069) sits next to it for the same reason: one tool distributed
-          to every kind through af's own MCP server, not any one agent's setting. */}
-      <Row label={tr("agents.image_generation")}>
-        <OnOff value={s.imageGeneration} onChange={(v) => setSetting("imageGeneration", v)} />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_image_generation")}</p>
-      {/* The order only appears with the switch on: it is meaningless otherwise, and it is the
-          one place the two providers' DIFFERENT accounts (ChatGPT plan vs Antigravity plan) are
-          visible as a choice rather than as something that just happened. */}
-      {s.imageGeneration && (
-        <>
-          <Row label={tr("agents.image_provider_order")}>
-            {/* Two shapes, chosen by whether the Agent has answered (ADR 0082 decision 3):
-                LIVE — one row per images row this deployment actually declares, each under its
-                own key, no folding (decision 8: "リストが行ごとになった時点でこの畳み込みは
-                消える"). FALLBACK — the two static kind-name placeholders folded into one row
-                (IMAGE_PROVIDER_FLEET_GROUP), because with no live answer there is no way to know
-                which of them, if either, is real. */}
-            <OrderList
-              value={imageOrder}
-              labels={imageLabels}
-              onChange={(v) => setSetting("imageProviderOrder", liveImages ? v : expandImageProviderOrder(v))}
-            />
-          </Row>
-          <p className="muted ds-note">{tr("agents.note_image_provider_order")}</p>
-          {!liveImages && <p className="muted ds-note">{tr("agents.image_provider_order_fallback")}</p>}
-        </>
-      )}
-    </section>
-  );
-
   // Running but the connection snapshot has not arrived: the cards draw at once with a
   // "checking…" chip (ConnChecking) rather than hiding the list or claiming "not connected".
   // They get running=false meanwhile, which is what keeps their login flows from flashing.
@@ -295,7 +115,6 @@ export function AgentsTab() {
 
   return (
     <div className="conns" ref={rootRef}>
-      {sessionSettings}
       {!running && (
         <div className="agents-ws-hint">
           <p className="muted ds-note">{tr("agents.ws_required_hint")}</p>

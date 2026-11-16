@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants sessions running side by side to keep in touch"
-source_of_truth: "The Console's Settings > Agents > Messages between sessions, and the af tool send_to_peer_session"
+source_of_truth: "The Console's Settings > Sessions > Messages between sessions, and the af tool send_to_peer_session"
 ---
 
 # Let sessions message each other
@@ -26,7 +26,7 @@ It helps in moments like these:
 
 ## Turn it on
 
-Under "Session" in **⚙ Settings → Agents**, turn on **Messages between sessions**. The screen is shown in [Start child sessions from a session](child-sessions.md#turn-it-on).
+In **⚙ Settings → Sessions**, turn on **Messages between sessions**. The screen is shown in [Start child sessions from a session](child-sessions.md#turn-it-on).
 
 - It is off by default
 - Once on, it applies **from the next session started**. Running sessions keep the old behaviour until they restart

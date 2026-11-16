@@ -21,7 +21,7 @@ Which of them a client sees depends on where it connects from.
 How to read a cell:
 
 - **Session**: ✓ alone means every session has it. A quoted name is the switch in
-  ⚙ Settings → Agents that has to be on; "Agent memory" is the one in ⚙ Settings → Agent memory → Settings.
+  ⚙ Settings → Sessions (⚙ Settings → Image generation for image generation) that has to be on; "Agent memory" is the one in ⚙ Settings → Agent memory → Settings.
   "image studio" means only a session working in the image studio.
 - **Assistant**: "AF read" means an assistant with either grant has it; "AF write" means only an assistant
   allowed to write.

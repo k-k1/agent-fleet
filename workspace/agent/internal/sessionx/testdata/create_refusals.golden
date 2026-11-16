@@ -79,7 +79,7 @@ body "{\"error\":{\"code\":\"spawn_kind_refused\",\"message\":\"セッション�
 == spawn_budget
 status 409
 header Content-Type: application/json
-body "{\"error\":{\"code\":\"spawn_budget\",\"message\":\"このセッションは既に子セッションを 3 本持っています（上限 3）。list_child_sessions で状態を確かめ、不要な子は利用者に Console での削除・アーカイブを頼んでください（停止したままの子は停止から 7 日で自動的にアーカイブされ、上限の数から外れます。この期間は利用者が Console の 設定 \\u003e エージェント \\u003e セッション で変えられます）\"}}\n"
+body "{\"error\":{\"code\":\"spawn_budget\",\"message\":\"このセッションは既に子セッションを 3 本持っています（上限 3）。list_child_sessions で状態を確かめ、不要な子は利用者に Console での削除・アーカイブを頼んでください（停止したままの子は停止から 7 日で自動的にアーカイブされ、上限の数から外れます。この期間は利用者が Console の 設定 \\u003e セッション で変えられます）\"}}\n"
 == bad_title
 status 400
 header Content-Type: application/json

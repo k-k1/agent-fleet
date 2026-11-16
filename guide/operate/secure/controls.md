@@ -65,7 +65,7 @@ The allowlist is written in email addresses, so why the address an IdP returns c
 
 Claude Code's own cross-session messaging (`/list-agents`, `SendMessage`) also brings back usage telemetry to Claude when enabled, so a self-hosted deployment leaves it off by default.
 
-- Agent Fleet's **Messages between sessions** (Settings > Agents, off by default) covers the same need. Delivery and attribution stay under Agent Fleet's control: messages reach only the same workspace, and the receiver is told the message is not the user's instruction
+- Agent Fleet's **Messages between sessions** (Settings > Sessions, off by default) covers the same need. Delivery and attribution stay under Agent Fleet's control: messages reach only the same workspace, and the receiver is told the message is not the user's instruction
 - When a member reports that "`/list-agents` doesn't work", it is this decision, not a fault
 
 ## Keep secrets out of logs
