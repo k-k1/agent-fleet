@@ -151,6 +151,8 @@ if page_write_cmd; then
       f="$wdir/body"
       args[$fi_]="$pre$f"
     fi
+    # A relative name starting with "-" would be read by iconv as an option.
+    case "$f" in -*) f="./$f" ;; esac
     if [ -n "$f" ] && [ -f "$f" ] && command -v iconv >/dev/null 2>&1 &&
       ! iconv -f UTF-8 -t UTF-32LE "$f" >/dev/null 2>&1; then
       echo "confluence: the --file body is not valid UTF-8, so nothing was sent; convert it first (for example: iconv -f SHIFT_JIS -t UTF-8 page.txt > page.md)" >&2

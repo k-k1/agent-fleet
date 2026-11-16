@@ -519,6 +519,23 @@ pipe_run '' update 1 --file "$T/sjis.md" --file "$T/ok.md"
 pipe_run '' update 1 --file "$T/ok.md" --file "$T/sjis.md"
 [ "$rc" = 1 ] && [ ! -f "$T/cf.seen" ] || fail "the last --file (non-UTF-8) was not checked: rc=$rc"
 
+# A body file whose name starts with "-" is still checked (iconv must not take it for an option).
+mkdir -p "$T/dashdir"
+printf '\202\240\n' >"$T/dashdir/-c"
+printf 'ok\n' >"$T/dashdir/-ok"
+for form in "--file=-c" "-f-c"; do
+  reset; oauth_answer; rm -f "$T/cf.seen"
+  (cd "$T/dashdir" && env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
+    AF_CONFLUENCE_REAL="$T/bin/confluence-real" bash "$WRAPPER" update 1 "$form" >"$T/out" 2>"$T/err" </dev/null)
+  rc=$?
+  [ "$rc" = 1 ] && [ ! -f "$T/cf.seen" ] || fail "dash-named non-UTF-8 file ($form): rc=$rc, CLI ran: $([ -f "$T/cf.seen" ] && echo yes || echo no)"
+done
+reset; oauth_answer; rm -f "$T/cf.seen"
+(cd "$T/dashdir" && env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
+  AF_CONFLUENCE_REAL="$T/bin/confluence-real" bash "$WRAPPER" update 1 --file -ok >"$T/out" 2>"$T/err" </dev/null)
+rc=$?
+[ "$rc" = 0 ] && grep -qxF 'ARG=-ok' "$T/cf.seen" || fail "dash-named UTF-8 file: rc=$rc, args: $(grep '^ARG=' "$T/cf.seen" 2>/dev/null)"
+
 # 29. A slow tee (attached write) is waited for: the unknown-outcome line still appears and nothing
 # complains about a removed file.
 mkdir -p "$T/slowbin"
