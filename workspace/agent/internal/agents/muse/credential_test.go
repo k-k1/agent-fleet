@@ -58,7 +58,11 @@ func TestLoginWithoutAccountIDUsesTheGeneration(t *testing.T) {
 	if r := loginOf(noEmail("t2")); r != a {
 		t.Errorf("a token refresh changed the launch: %+v", r)
 	}
-	credbind.Bump(routes.RouteMuseLogin)
+	if op, err := credbind.Begin(routes.RouteMuseLogin); err != nil {
+		t.Fatal(err)
+	} else {
+		op.Finish()
+	}
 	if r := loginOf(noEmail("t1")); r.Binding == a.Binding {
 		t.Error("a replaced login kept the binding")
 	}

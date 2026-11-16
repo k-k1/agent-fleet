@@ -66,7 +66,11 @@ func TestChatGPTLoginWithoutAccountIDUsesTheGeneration(t *testing.T) {
 	if r := loginOf(f("t2")); r != a {
 		t.Errorf("a token refresh changed the launch: %+v", r)
 	}
-	credbind.Bump(routes.RouteChatGPTSubscription)
+	op, err := credbind.Begin(routes.RouteChatGPTSubscription)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op.Finish()
 	if r := loginOf(f("t1")); r.Binding == a.Binding {
 		t.Error("a replaced login kept the binding")
 	}

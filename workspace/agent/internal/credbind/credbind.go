@@ -153,12 +153,12 @@ func Endpoint(route, url, key string) string {
 func Named(route, name string) string { return route + "@" + name }
 
 // Generation is the binding of a login whose credential carries no account id at all (D5b's
-// fallback): the login's generation, which the Agent moves (Bump) whenever one of its own flows
+// fallback): the login's generation, which the Agent moves (Op.Finish) whenever one of its own flows
 // replaces or removes the login. A token refresh writes no generation and keeps the binding. A
 // login made by hand outside the Agent's flows is not seen, and keeps the generation it found.
 //
 // "" (unproven) whenever the state cannot be trusted: unreadable or malformed, a login change
-// begun (Begin) and not yet finished, which survives a restart, or a Bump of this login that
+// begun (Begin) and not yet finished, which survives a restart, or a bump of this login that
 // failed to persist in this process. Reading such a state as generation zero, or as the generation
 // before the change, would hand a replaced login its predecessor's binding.
 func Generation(login string) string {
@@ -199,7 +199,7 @@ func AccountOrGeneration(login, accountID string) string {
 var (
 	genMu sync.Mutex
 	// genPoisoned holds the logins whose Bump failed to persist: their generation on disk is the
-	// replaced login's, so it is not served until a Bump succeeds. The durable half is the pending
+	// replaced login's, so it is not served until a bump succeeds. The durable half is the pending
 	// marker Begin wrote before the change, which a failed Finish leaves in place.
 	genPoisoned = map[string]bool{}
 )
@@ -378,7 +378,7 @@ func (o *Op) Finish() {
 		opMu.Lock()
 		defer opMu.Unlock()
 		defer delete(liveOps, o.id)
-		if !Bump(o.logins...) {
+		if !bump(o.logins...) {
 			return
 		}
 		dir := paths.AgentConfigDir()
@@ -405,11 +405,14 @@ func (o *Op) Finish() {
 	})
 }
 
-// Bump moves each login to a new generation and reports whether that is durable. The Agent's
-// login, key and disconnect handlers reach it through Op.Finish, never on a refresh. An unreadable state is
-// rebuilt under a new epoch (every login's generation moves); a state that cannot be written
-// leaves these logins unproven until a Bump succeeds.
-func Bump(logins ...string) bool {
+// bump moves each login to a new generation and reports whether that is durable. It is not
+// exported on purpose: the poison mark below lives in process memory, and the removal of the
+// state that follows a failed persist fails with the persist when the directory itself is the
+// problem, so a restart would serve the replaced login's old generation. Only the pending marker
+// Begin wrote before the change survives that, hence Op.Finish is the one way in. An unreadable
+// state is rebuilt under a new epoch (every login's generation moves); a state that cannot be
+// written leaves these logins unproven until a bump succeeds.
+func bump(logins ...string) bool {
 	genMu.Lock()
 	defer genMu.Unlock()
 	if err := bumpLocked(logins); err != nil {
@@ -417,9 +420,8 @@ func Bump(logins ...string) bool {
 		for _, l := range logins {
 			genPoisoned[l] = true
 		}
-		// The state on disk now holds the replaced logins' generations. The pending marker Begin
-		// wrote keeps them unproven across a restart; removing the state as well makes the next
-		// read start a fresh epoch for a caller that did not Begin.
+		// Best effort, for this process and for a restart that can write: the next read starts a
+		// fresh epoch. When this removal fails as well, only the pending marker protects a restart.
 		if rerr := os.Remove(filepath.Join(paths.AgentConfigDir(), genFile)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
 			log.Printf("credbind: removing the generation state after a failed bump: %v", rerr)
 		}

@@ -38,7 +38,11 @@ func TestResolveDefault(t *testing.T) {
 	if g.Binding == "" || g.Binding != credbind.Generation(RouteSubscription) {
 		t.Errorf("identityless login = %+v", g)
 	}
-	credbind.Bump(RouteSubscription)
+	if op, err := credbind.Begin(RouteSubscription); err != nil {
+		t.Fatal(err)
+	} else {
+		op.Finish()
+	}
 	if n := resolveDefault(env(), nil, acct("")); n.Binding == g.Binding {
 		t.Error("a bumped generation kept the binding")
 	}
