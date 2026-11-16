@@ -159,7 +159,7 @@ The pill and its detail lines can also show:
 | Untracked · Added · Modified · Renamed · Deleted | File changes | The kind of Git change |
 | LFS pointer | File | Only the Git LFS pointer is there, not the content |
 | Awaiting approval · Approved · Rejected · Decided | Plan card | The decision on a plan |
-| Question left unanswered at stop · Plan awaiting approval at stop · Permission requested at stop | Card in the conversation | What was on screen when the session stopped. Answering resumes the session and delivers it ([Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left)) |
+| Question left unanswered at stop · Plan awaiting approval at stop · Permission requested at stop | Card in the conversation | What was on screen when the session stopped. Answering resumes a stopped session and delivers it; on a session already running again it only delivers it ([Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left)) |
 | Paused | Schedule row | A paused schedule ([Run at a set time](../user/fleet/schedules.md)) |
 | Auto-run · Auto-run off | Memo queue, category header | The category has auto-run settings. "Auto-run off" means "Run by itself" is off ([Run memos automatically](../user/chat/memo-auto-run.md)) |
 | Paused | Memo queue, category header | Auto-run stopped starting runs by itself after two failed runs. "Resume" lifts it ([Run memos automatically](../user/chat/memo-auto-run.md#pause-and-resume)) |

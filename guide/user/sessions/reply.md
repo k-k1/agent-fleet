@@ -77,6 +77,7 @@ That holds whether you stopped it, it was folded away after waiting, or the work
 - The tool call a **permission** card asked about is gone. The agent is told what it had asked and tries again if it still needs to
 - **"Discard"** removes the card without resuming the session
 - A card nobody answers is dropped after 14 days
+- If you started the session again without answering, the card stays and says the question was left unanswered when the session stopped. The session is already running, so answering delivers the answer and starts nothing: the buttons read **"Submit answer"** (question), **"Continue"** (permission) and **"Approve and run"** (plan), none of them with "resume"
 
 ## Reuse something you sent earlier
 
