@@ -179,6 +179,7 @@ func HandleCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_from", msg)
 		return
 	}
+	in.Memo.Repo = baseRepo(in.Memo.Repo)
 	body, err := json.Marshal(cpCreate{Fields: in.Memo, Producer: producer, ProducerOrigin: origin})
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "encode_failed", err.Error())
@@ -217,6 +218,10 @@ func HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequest)
 	if !httpx.DecodeJSON(w, r, &p) {
 		return
+	}
+	if p.Repo != nil {
+		base := baseRepo(*p.Repo)
+		p.Repo = &base
 	}
 	body, err := json.Marshal(p)
 	if err != nil {
