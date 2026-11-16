@@ -77,6 +77,19 @@ Each one names the layers that hide it, and each of its routes names its own: an
 An agent that keeps at least one allowed route is not listed: members see it with only the routes left.
 Members' own switches (an agent a member turned off for themselves) are not in this list, because they live in the member's workspace and the Control Plane cannot see them.
 
+## Set members' budgets for provided routes
+
+Some deployments pay for Amazon Bedrock themselves and offer it to tenants as a **provided route**. Where the deployment does not, this section is not on the page.
+
+The deployment administrator grants it to your tenant with a monthly ceiling. Under that, you decide who may use it and how much:
+
+1. Under **Who may use them**, choose **Every member** or **Granted members only**
+2. Enter **Members' monthly budget (default, dollars)**, then press **Save**
+3. In **Each member's grant and budget**, tick a member to grant them, or enter a budget of their own (leave it empty for the default), then press **Save** on that row
+
+A member whose budget is zero cannot use the route. Amounts are estimates at Bedrock's list price and reset at the start of each month (UTC).
+A budget so small that no single call fits is refused, with the reason beside the button; one that fits only calls with a small output is saved with a warning.
+
 ## When a change applies
 
 - A change reaches members' new launches within 30 seconds
@@ -95,8 +108,10 @@ The admin modal's **Deployment → Model access** has the layers above the tenan
 - The **Deployment ceiling (operator)**, read-only, with the value the deployment was started with
 - The **Deployment rule**, for every tenant
 - The **Tenant cap** of each tenant: choose the tenant, then edit its cap. That tenant's own rule is shown below it, read-only, followed by what the policy hides from that tenant
+- The **Provided-route source**, where the deployment pays for Bedrock: the IAM role the stack created, its Region and models, and **Use this source**. Switching it off keeps its spend and sessions on record
+- Under each tenant, the **Provided-route grant**: **Grant to this tenant** with the **Tenant's monthly ceiling (dollars)**. A grant needs a ceiling above zero
 
-Both editors refuse a rule that would allow something the ceiling forbids.
+The deployment rule and tenant cap editors refuse a rule that would allow something the ceiling forbids.
 Their endpoint list names the host patterns a tenant may approve: an exact host or `*.example.com`. **Not narrowed** leaves the layer above in charge; **Only these** with no pattern lets no host be approved.
 
 ## Related

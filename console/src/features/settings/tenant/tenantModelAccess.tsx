@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { HiddenList } from "./routePolicyHidden.tsx";
+import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
 import { RouteName, RuleEditor, RuleSummary, layersLabel } from "./routePolicyRuleEditor.tsx";
 import { parseTenantPolicy, routeIds, routesAllowedAbove, type TenantPolicyView } from "./routePolicyRule.ts";
 
@@ -156,6 +157,8 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
         )}
       </section>
       <HiddenList view={view} />
+      {/* Provided routes (ADR 0129): absent where the CP does not serve them. */}
+      <TenantProvidedRoutesView key={`prov-${slug}`} slug={slug} />
     </>
   );
 }
