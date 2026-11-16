@@ -335,7 +335,9 @@ func startForCarriedAnswer(w http.ResponseWriter, lease *lifegate.Lease, name st
 	}
 	if ok && isRetired(cur) {
 		if err := clearRetired(name); err != nil {
-			// Started, but still marked: the carried entry stays so the member can press again.
+			// Started, but still marked: the same exception /start has. The mark only keeps the Agent's
+			// own starts away; pressing again clears it and then delivers, and the carried entry stays
+			// for that.
 			httpx.WriteErr(w, http.StatusInternalServerError, "retire_clear_failed",
 				"the session started, but its retired mark could not be cleared: "+err.Error())
 			return false
