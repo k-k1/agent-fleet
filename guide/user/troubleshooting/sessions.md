@@ -11,7 +11,7 @@ Find the cause and the fix when a session has vanished from the list, will not r
 
 ## Sessions or repositories have vanished from the left pane
 
-First check that the bar at the very top of the left pane says **"All"**.
+First check that the bar at the very top of the Sessions view says **"All"**.
 With a working set selected, repositories, conversations and sessions outside that set are not shown. Nothing was deleted: switch back to "All" and they return.
 
 If it is still missing, check these:
@@ -23,7 +23,7 @@ Both are explained in [Clear away finished sessions](../sessions/cleanup.md#arch
 
 ## "Couldn't refresh the list — showing the last known one"
 
-This appears under **"Repositories"** in the left pane. Nothing is gone: the repository list could not be read just now, so the last one is shown.
+This appears under **"Repositories"** in the Sessions view. Nothing is gone: the repository list could not be read just now, so the last one is shown.
 
 - If the workspace simply could not be reached, the Console keeps retrying and the list comes back by itself
 - If the workspace answered with an error, nothing retries. With no list to show, it says **"Couldn't load the repository list"**. Reload the page, or check your access to this workspace
@@ -122,7 +122,7 @@ Check its row in the **"Schedules"** view.
 | **"Skipped"** in the **"Run history"** | It was passed over: the previous run was still going, the target conversation was busy or gone, the tenant had reached the number it may run at once, and so on. Hover over the row to see the reason |
 | **"Failed"** in the **"Run history"**, and the reason starts with `resume 409 session_retired` | The session the schedule keeps using was stopped by auto-run. Start the session, then use **"Run now"** ([Run at a set time](../fleet/schedules.md)) |
 | The time or the prompt is wrong | Fix it under **"Details / edit"** in the row menu |
-| There is no "Schedules" section | Scheduled runs are disabled on this deployment |
+| There is no "Schedules" view | Scheduled runs are disabled on this deployment |
 
 **"Run now"** checks that it works the same way a timed run does. It can take about a minute to start.
 The details are in [Run at a set time](../fleet/schedules.md).

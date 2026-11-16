@@ -11,7 +11,7 @@ What to try first when something goes wrong, and short answers to the questions 
 
 ## What to try first
 
-1. **When items vanish from the left pane**, check that the bar at the very top of the left pane says **"All"**. With a working set selected, only that set is shown
+1. **When items vanish from the left pane**, check that the bar at the very top of the left pane (on the Sessions, Assistants, Schedules and Files views) says **"All"**. With a working set selected, only that set is shown
 2. **Reload** the page in the browser
 3. **Check that the workspace is running.** While it is stopped, most features do not work
 4. If that does not help, do not struggle on: **ask your administrator**. Logins, connections and permissions are theirs to look after

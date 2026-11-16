@@ -1,6 +1,6 @@
 ---
 audience: "anyone looking up what a mark or a menu item on the screen means"
-source_of_truth: "the session and repository rows of the Console's left pane, the bars at the top of the screen, the activity bar, and each pane's right-click menus"
+source_of_truth: "the session and repository rows of the Console's left pane, the bars at the top of the screen, and each pane's right-click menus"
 ---
 
 # Icons, badges and menus
@@ -149,7 +149,7 @@ The pill and its detail lines can also show:
 
 | Shown | Where | Meaning |
 |---|---|---|
-| AWS and Google Cloud marks | Workspace bar | The login state of your profiles ([AWS profiles reference](aws-profiles.md#aws-badge), [Use Google Cloud](../user/integrations/gcloud.md#the-google-cloud-badge-in-the-ws-bar)) |
+| AWS and Google Cloud marks | Workspace action bar | The login state of your profiles ([AWS profiles reference](aws-profiles.md#aws-badge), [Use Google Cloud](../user/integrations/gcloud.md#the-google-cloud-badge-in-the-ws-bar)) |
 | Restart needed | Beside the power button | The workspace still runs the version from before an update. Press it for "**Restart now**" ([Stop the workspace at the end of the day](../user/start/end-of-day.md#a-new-version-is-available-and-restart-needed)) |
 | Moves to a new slot | Beside the power button | An administrator marked this workspace's machine for replacement. The next start is a little slower; files and logins carry over |
 | Not responding | Beside the power button | The Agent has not answered for several minutes ([Fix a workspace that will not start or has stopped](../user/troubleshooting/workspace.md#not-responding-appears-beside-the-power-button)) |

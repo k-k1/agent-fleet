@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants an agent to work in a cloned repository"
-source_of_truth: "the rows of the Console's left-pane Repositories section, and the \"Start working\" screen"
+source_of_truth: "the rows of Repositories in the Sessions view of the Console's left pane, and the \"Start working\" screen"
 ---
 
 # Launch a session from a repository
@@ -52,7 +52,7 @@ A template has a name, a prompt and "**Show in**" ("Every repository" or only th
 
 ## Read the row's badges
 
-![The Repositories list in the left pane. webshop shows "Uncommitted" and "↑2", platform-infra "↓1 FF ok", the worktree feat/checkout-validation "Uncommitted" and "diverged 3↕2 · no FF", and the rows show running-session counts "●1" and "●2"](../../assets/code-repo-rows-en-light.webp)
+![The Repositories list in the Sessions view. webshop shows "Uncommitted" and "↑2", platform-infra "↓1 FF ok", the worktree feat/checkout-validation "Uncommitted" and "diverged 3↕2 · no FF", and the rows show running-session counts "●1" and "●2"](../../assets/code-repo-rows-en-light.webp)
 
 | Badge | Meaning |
 |---|---|

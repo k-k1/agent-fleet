@@ -14,7 +14,7 @@ of this investigation", "follow how we got here while you review". Only the conv
 
 | What you do | What your teammate and the agent do |
 |---|---|
-| Choose a recipient and a permission with "**Share…**" in the ⋯ menu | The conversation appears, read-only, under "**Shared sessions**" in their left pane |
+| Choose a recipient and a permission with "**Share…**" in the ⋯ menu | The conversation appears, read-only, under "**Shared sessions**" in the Sessions view of their left pane |
 | "**Approve and send**" a proposal from someone you shared with "**Can propose**" | Until you approve, their proposal does not reach the agent |
 | "**Unshare**" when it is no longer needed | It leaves their list. A copy they already saved cannot be recalled |
 
@@ -72,7 +72,7 @@ Only with "**Can propose**" can you "**Propose to owner**" from the input box. B
 
 ## Approve a proposal
 
-On the owner's side, "**N pending approval(s)**" appears in the "**Shared sessions**" section. Open it to see the session, the action,
+On the owner's side, "**N pending approval(s)**" appears in "**Shared sessions**" in the Sessions view. Open it to see the session, the action,
 the text and who proposed it, and choose "**Approve and send**" or "**Reject**".
 
 ## Unshare

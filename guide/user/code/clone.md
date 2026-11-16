@@ -1,6 +1,6 @@
 ---
 audience: "anyone bringing a repository into the workspace to start work"
-source_of_truth: "\"Add\" in the Console's left-pane Repositories section"
+source_of_truth: "\"Add\" in Repositories in the Sessions view of the Console's left pane"
 ---
 
 # Clone a repository
@@ -8,7 +8,7 @@ source_of_truth: "\"Add\" in the Console's left-pane Repositories section"
 English | [日本語](clone.ja.md)
 
 Pick a repository from GitHub, Bitbucket or the built-in Git and clone it into the workspace.
-A cloned repository is listed under **Repositories** in the left pane, and you launch sessions from there.
+A cloned repository is listed under **Repositories** in the Sessions view, and you launch sessions from there.
 
 ## How it works
 
