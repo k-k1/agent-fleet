@@ -277,6 +277,7 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 	}()
 	waited := make(chan struct{})
 	go failIfNoURL(a, waited, &seen, s.LogPrefix, p)
+	drainWait := outputDrainWait // read here: a test may shorten the var after an earlier Start
 	go func() {
 		defer close(done)
 		err := cmd.Wait()
@@ -285,7 +286,7 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 		// the process prints: Exited reads the output only once the reader has seen it all.
 		// A child the process left behind can hold the pipe open, so the wait is bounded and
 		// closing the pipe ends the reader.
-		t := time.NewTimer(outputDrainWait)
+		t := time.NewTimer(drainWait)
 		select {
 		case <-drained:
 		case <-t.C:
@@ -352,7 +353,8 @@ func failIfNoURL(a *Attempt, waited <-chan struct{}, seen *atomic.Int64, prefix 
 }
 
 // outputDrainWait bounds how long an exited process's output may take to reach the reader
-// before Exited runs without the rest. A var so a test can shorten it.
+// before Exited runs without the rest. A var so a test can shorten it; Start copies it before
+// starting the goroutine that waits, so an assignment never races a running attempt.
 var outputDrainWait = 2 * time.Second
 
 // watchOutput feeds the process's output to parse until it yields a URL. The output is
