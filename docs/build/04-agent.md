@@ -250,6 +250,11 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
   record in the transcript, only when that record is not older than the turn's start. Kinds whose
   Terminal turn has no such evidence leave the field absent, or with no outcome, and the
   one-minute rule of the breaker covers them.
+  A create that fails to start its session (the tmux launch or the Managed runtime) removes the
+  ledger it armed. A ledger that is still left (a meta that could not be written after the start,
+  or an Agent that died in between) is removed at Agent start by `sessionx.SweepFirstTurnOrphans`:
+  only when no session meta has its sid and it was armed more than a day ago, and never in a round
+  where a meta file cannot be read or parsed.
 - **Every path that folds a session away promotes its carried work first**
   (`PromoteCarriedFor`, before any kill or handle drop). A new path of that kind must do
   the same.

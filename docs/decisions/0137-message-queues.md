@@ -594,3 +594,8 @@ Added 2026-11-16 (#4315): a wake made only to settle is also written to the audi
 `workspace.queue_settle_wake`, actor the system, the member's tenant, the workspace as target, and the category and the
 runs (`sending`, or overdue and not yet retired) that made it necessary. No run history line and no change to the
 deliveries list; no memo or instruction text is kept.
+
+Added 2026-11-16 (#4210): a create that fails to start its session now removes the first-turn record it armed, and
+the Agent removes at start the records no session meta claims (armed more than a day ago; the round is skipped when
+a meta cannot be read). Nothing about what the record holds or when it settles changed. The retire's walk reporting
+a child create still in flight in `unended` is covered by the Control Plane repeating a retire that is not complete.
