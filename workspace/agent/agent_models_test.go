@@ -141,9 +141,21 @@ func TestAgentModelsSaysWhenTheRecommendationIsAFallback(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Prime the cache with a successful read first, as an earlier round or test would leave it;
+	// without the reset below the failing fake is never reached and the test fails.
+	good := t.TempDir()
+	catalog := `{"models":[{"slug":"gpt-primed","visibility":"list","priority":1}]}`
+	if err := os.WriteFile(filepath.Join(good, "codex"), []byte("#!/bin/sh\necho '"+catalog+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", good+string(os.PathListSeparator)+os.Getenv("PATH"))
+	codex.ResetModelsCacheForTest()
+	if len(codex.Models()) == 0 {
+		t.Fatal("priming read returned no models")
+	}
+	t.Cleanup(codex.ResetModelsCacheForTest)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	codex.ResetModelsCacheForTest()
-	t.Cleanup(codex.ResetModelsCacheForTest)
 
 	req := httptest.NewRequest(http.MethodGet, "/agents/codex/models", nil)
 	req.SetPathValue("kind", "codex")
