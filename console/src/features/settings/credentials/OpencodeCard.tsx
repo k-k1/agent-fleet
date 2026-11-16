@@ -9,9 +9,8 @@ import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { Choice } from "../parts/controls.tsx";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, IssueLink } from "../parts/providerCard.tsx";
 import { usePolling } from "../parts/usePolling.ts";
-import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkRow, type DeviceFlow } from "./AgentCardParts.tsx";
+import { SettingRow, ConnPaused, type DeviceFlow } from "../agents/AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
-import { type AgentRtkPatch, type AgentRtkSettings } from "../api.ts";
 
 // opencode: two independent auth paths that coexist (docs/log/54) —
 //   1. opencode account: OAuth device flow through `opencode serve`'s integration
@@ -19,7 +18,7 @@ import { type AgentRtkPatch, type AgentRtkSettings } from "../api.ts";
 //      token itself), so like Cursor there is no code to paste; we show the URL and
 //      poll api/connections/opencode/oauth/poll.
 //   2. provider API keys: stored and injected as env at launch (unchanged).
-// "Connected" = either path is set up. Plus the RTK and Web UI toggles.
+// "Connected" = either path is set up. The RTK toggle is on the Agents page.
 // [presetId, label, envVar, issueUrl]. issueUrl is the provider's fixed API-key page
 // (empty = none / handled elsewhere — "go" keeps its own opencode.ai/auth hint below).
 // The first entry's label is resolved via i18n (agents.oc_preset_opencode) at render: ONE
@@ -262,14 +261,10 @@ export function OpencodeCard({
   running,
   st,
   reload,
-  agents,
-  updateAgents,
 }: {
   running: boolean;
   st: ProviderConn | undefined;
   reload: () => void;
-  agents: Partial<AgentRtkSettings> | false | null;
-  updateAgents: (patch: AgentRtkPatch) => void;
 }) {
   const tr = useT();
   const toast = useToast();
@@ -520,17 +515,6 @@ export function OpencodeCard({
           )}
         </>
       )}
-      <CardSettings>
-        <LaunchDefaults kind="opencode" />
-        <ThinkingRow kind="opencode" />
-        {agents && (
-          <RtkRow
-            available={agents.rtk_available}
-            value={agents.opencode_rtk}
-            onChange={(v) => updateAgents({ opencode_rtk: v })}
-          />
-        )}
-      </CardSettings>
     </ProviderCard>
   );
 }

@@ -142,7 +142,7 @@ The pill and its detail lines can also show:
 | Last used 2 min ago | When it was last used, while nobody is using it |
 | Stops at 11-11 19:50 · in 12 min | A booked automatic stop. No line means none is booked |
 
-- When you set your own llama.cpp endpoint under ⚙Settings → "Agents", the "Chat" pill shows that endpoint's state ("**Connected**", "**Not reachable**", "**Checking**") instead ([Use lcpp](../user/agents/lcpp.md))
+- When you set your own llama.cpp endpoint under ⚙Settings → "Model credentials", the "Chat" pill shows that endpoint's state ("**Connected**", "**Not reachable**", "**Checking**") instead ([Use lcpp](../user/agents/lcpp.md))
 - The image generation pane's header words the engine's state differently from the pill ([Generate images](../user/images/generate.md))
 
 ## Other badges

@@ -48,7 +48,7 @@ function mounter(render: (st: Record<string, unknown>, reload: () => void) => Re
 }
 const cards: Record<string, { mount: Mounter; start: string; shows: string }> = {
   agy: {
-    mount: mounter((st, reload) => <AgyCard running st={st} reload={reload} agents={false} updateAgents={() => {}} />),
+    mount: mounter((st, reload) => <AgyCard running st={st} reload={reload} />),
     start: "POST api/connections/agy/start",
     shows: 'input[name="agy-oauth-code"]',
   },

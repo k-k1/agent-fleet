@@ -1176,7 +1176,7 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
         (isClaudeAuthExpired(error) ? (
           <ChatAuthError
             text={error}
-            onReauth={() => useSettingsUI.getState().openSettings("agents", { target: "claude" })}
+            onReauth={() => useSettingsUI.getState().openSettings("credentials", { target: "claude" })}
             onRetry={
               failedTurnRef.current && failedTurnRef.current.convId === paneKey
                 ? () => void send(undefined, undefined, failedTurnRef.current!)

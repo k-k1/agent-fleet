@@ -41,7 +41,7 @@ async function mount(st: Record<string, unknown> = {}) {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<OpencodeCard running st={st} reload={() => {}} agents={{}} updateAgents={() => {}} />);
+    root!.render(<OpencodeCard running st={st} reload={() => {}} />);
   });
   // The model fetch and the state update it queues.
   await act(async () => {

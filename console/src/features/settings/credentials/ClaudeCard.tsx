@@ -3,31 +3,23 @@ import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { DATETIME_LOCALE_DEFAULT, fmtDateTime } from "../../../lib/intl.ts";
 import { useT } from "../../../lib/i18n/index.ts";
-import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
-import { OnOff } from "../parts/controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
-import { SettingRow, CardSettings, ThinkingRow, StreamRepliesRow, ConnPaused, LaunchDefaults, RtkRow, type LoginFlow } from "./AgentCardParts.tsx";
+import { ConnPaused, type LoginFlow } from "../agents/AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
-import { type ClaudeSettings, type ClaudeSettingsPatch } from "../api.ts";
 
-// Claude: OAuth connect (start → approve in a new tab → paste code → complete), plus
-// its behavior settings (Remote Control / notifications / idle compaction / RTK) once connected.
+// Claude: OAuth connect (start → approve in a new tab → paste code → complete). Its behaviour
+// settings (Remote Control / notifications / idle compaction / RTK) are on the Agents page.
 export function ClaudeCard({
   running,
   st,
   reload,
-  claude,
-  updateClaude,
 }: {
   running: boolean;
   st: ProviderConn | undefined;
   reload: () => void;
-  claude: Partial<ClaudeSettings> | null;
-  updateClaude: (patch: ClaudeSettingsPatch) => void;
 }) {
   const tr = useT();
-  const s = useSettings();
   const toast = useToast();
   const [flow, setFlow] = useState<LoginFlow | null>(null);
   const [code, setCode] = useState("");
@@ -184,59 +176,6 @@ export function ClaudeCard({
           </div>
         </>
       )}
-      <CardSettings>
-        <LaunchDefaults kind="claude" />
-        <ThinkingRow kind="claude" />
-        <StreamRepliesRow kind="claude" />
-        <SettingRow label={tr("agents.claude_abort_resume")}>
-          <OnOff
-            value={s.claudeAbortAutoResume}
-            onChange={(v) => setSetting("claudeAbortAutoResume", v)}
-          />
-        </SettingRow>
-        <p className="ps-note">{tr("agents.note_claude_abort_resume")}</p>
-        <SettingRow label={tr("agents.rate_limit_resume")}>
-          <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
-        </SettingRow>
-        <p className="ps-note">{tr("agents.note_claude_rate_limit_resume")}</p>
-        {/* Remote Control / notifications / idle compaction / RTK are workspace-level files (independent of Claude
-            auth) — pre-settable, but need the api/claude/settings endpoint loaded. */}
-        {claude && (
-          <>
-            <SettingRow label={tr("agents.remote_control")}>
-              <OnOff
-                value={claude.remoteControlAtStartup}
-                onChange={(v) => updateClaude({ remoteControlAtStartup: v })}
-              />
-            </SettingRow>
-            <p className="ps-note">{tr("agents.note_claude_remote_control")}</p>
-            <SettingRow label={tr("agents.notifications")}>
-              <OnOff
-                value={claude.agentPushNotifEnabled}
-                onChange={(v) => updateClaude({ agentPushNotifEnabled: v })}
-              />
-            </SettingRow>
-            {/* An Agent that predates the field omits it; showing OnOff with undefined would
-                read as "off" while the CLI is in fact compacting. */}
-            {typeof claude.idleCompaction === "boolean" && (
-              <>
-                <SettingRow label={tr("agents.idle_compaction")}>
-                  <OnOff
-                    value={claude.idleCompaction}
-                    onChange={(v) => updateClaude({ idleCompaction: v })}
-                  />
-                </SettingRow>
-                <p className="ps-note">{tr("agents.note_claude_idle_compaction")}</p>
-              </>
-            )}
-            <RtkRow
-              available={claude.rtk_available}
-              value={claude.rtk_enabled}
-              onChange={(v) => updateClaude({ rtk: v })}
-            />
-          </>
-        )}
-      </CardSettings>
     </ProviderCard>
   );
 }

@@ -19,6 +19,8 @@ vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(true) }));
 
 const { MuseCard } = await import("./MuseCard.tsx");
+// The launch defaults moved to the Agents page with the rest of the behaviour (ADR 0138 D16).
+const { MuseBehavior } = await import("../agents/AgentBehaviors.tsx");
 const { getSettings, setSettings } = await import("../../../lib/settings.ts");
 
 let root: Root | null = null;
@@ -27,6 +29,15 @@ let host: HTMLDivElement | null = null;
 const text = () => host?.textContent || "";
 const buttons = () => [...(host?.querySelectorAll("button") ?? [])];
 const buttonWith = (s: string) => buttons().find((b) => (b.textContent || "").includes(s));
+
+async function mountBehavior() {
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => {
+    root!.render(<MuseBehavior />);
+  });
+}
 
 async function mount(st: Record<string, unknown> | undefined, reload = () => {}) {
   host = document.createElement("div");
@@ -166,7 +177,7 @@ describe("MuseCard", () => {
           : {},
       ),
     );
-    await mount({ supported: true, connected: true, email: "m@example.com" });
+    await mountBehavior();
     const disclosure = buttons().find((b) => b.getAttribute("aria-expanded") !== null);
     expect(disclosure).toBeTruthy();
     await act(async () => {
@@ -207,7 +218,7 @@ describe("MuseCard", () => {
   it("switches contributor mode with an on/off row that starts off", async () => {
     api.mockImplementation(() => Promise.resolve({}));
     setSettings({ museContributorMode: false });
-    await mount({ supported: true, connected: true, email: "m@example.com" });
+    await mountBehavior();
     const disclosure = buttons().find((b) => b.getAttribute("aria-expanded") !== null);
     await act(async () => {
       disclosure!.click();

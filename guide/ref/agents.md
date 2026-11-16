@@ -90,6 +90,8 @@ layer, and takes effect from the next turn, running sessions included.
 
 ## How to sign in
 
+Each sign-in below is done on the agent's card in ⚙Settings → "Model credentials".
+
 | Kind | Sign-in |
 |---|---|
 | claude | OAuth: approve in your browser, then paste the code back. Shows the account email and plan once connected. |
@@ -98,8 +100,8 @@ layer, and takes effect from the next turn, running sessions included.
 | copilot | None of its own — connecting GitHub as a git provider connects it, and disconnecting GitHub disconnects it. The account needs a Copilot subscription, including the Free plan. |
 | cursor | Open the authorize link and approve in your browser. There is no code to paste. A Cursor account is required; API keys are not accepted. |
 | kiro | Device flow: open the link with the confirmation code and approve (Builder ID, Google, GitHub…). API keys are not accepted. The CLI is large and is installed on demand the first time unless the deployment bakes it in. |
-| agy | Sign in from its card in the agent settings. |
-| lcpp | None — the deployment's engine needs no sign-in. Its card has **"Use llama.cpp"** (the switch; Off removes it from the launch menus and refuses a launch by any route) and **"Your own connection"** (URL, optional API key, **"Check connection"**), which points sessions at a llama-server on your own network instead of the deployment's engine. |
+| agy | Sign in from its card in Model credentials. |
+| lcpp | None — the deployment's engine needs no sign-in. Its card in ⚙Settings → "Agents" has **"Use llama.cpp"** (the switch; Off removes it from the launch menus and refuses a launch by any route), and its card in Model credentials has **"Your own connection"** (URL, optional API key, **"Check connection"**), which points sessions at a llama-server on your own network instead of the deployment's engine. |
 | muse | **"Install Muse Code"** once (about 299 MB into your home), then **"Sign in with your Meta account"** (approve in the browser — no code to paste; the subscription route) or **"Use an API key"** (per-use billing; saving a key removes a stored account sign-in). |
 | shell | Not applicable. |
 | ssm | Uses the workspace's AWS SSM connection. |
@@ -241,7 +243,7 @@ What the switch **"Let sessions use Agent Fleet memory"**
 ## claude: the "API key" route
 
 A claude session can be started on an explicit route (Terminal only). **anthropic-api** runs on the
-Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys
+Anthropic API key you saved under Settings > Connections > Model credentials > the OpenCode card > API keys
 (Anthropic preset), billed per use; **anthropic-subscription** runs on this workspace's claude.ai
 login. A session with no route behaves as before.
 

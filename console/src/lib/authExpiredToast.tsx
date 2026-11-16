@@ -27,7 +27,7 @@ const isClaude = (kind?: string) => agentOf(kind) === agentOf(undefined);
 /** openAgentsSettings opens Settings on the Agents section, scrolled to the card of `kind`
  *  (default claude), where that agent's login lives. */
 export function openAgentsSettings(kind?: string): void {
-  useSettingsUI.getState().openSettings("agents", { target: agentOf(kind).id });
+  useSettingsUI.getState().openSettings("credentials", { target: agentOf(kind).id });
 }
 
 /** authExpiredText is the refusal sentence for `kind`. Claude keeps its own catalogue entry; any

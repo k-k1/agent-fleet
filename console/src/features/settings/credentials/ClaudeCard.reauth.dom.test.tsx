@@ -53,7 +53,7 @@ async function mount() {
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      <ClaudeCard running st={{ connected: true, email: "c@example.com" }} reload={() => {}} claude={null} updateClaude={() => {}} />,
+      <ClaudeCard running st={{ connected: true, email: "c@example.com" }} reload={() => {}} />,
     );
   });
 }

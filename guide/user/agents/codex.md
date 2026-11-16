@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants to run Codex in sessions"
-source_of_truth: "the Codex card in the Console's Settings > Agents"
+source_of_truth: "the Codex card in the Console's Settings > Model credentials, and its behaviour in Settings > Agents"
 ---
 
 # Connect Codex
@@ -20,7 +20,7 @@ It runs in both Managed and Terminal (CLI).
 
 ## Connect
 
-Choose how to connect on the **Codex** card in **⚙Settings → Agents**.
+Choose how to connect on the **Codex** card in **⚙Settings → Model credentials**.
 
 ![The Codex card before connecting: "Connect with a ChatGPT subscription" (recommended) and "Connect with an API key", with the note about turning on device-code authentication](../../assets/agents-codex-en-light.webp)
 
@@ -44,7 +44,7 @@ Press "**Connect with an API key**", paste your OpenAI API key and connect.
 
 ## Behavior
 
-The card's "**Behavior**" has, besides [the items every agent shares](choose.md#choose-the-behavior), the following.
+"**Behavior**" on the **Codex** card in **⚙Settings → Agents** has, besides [the items every agent shares](choose.md#choose-the-behavior), the following.
 
 | Item | What it decides |
 |---|---|

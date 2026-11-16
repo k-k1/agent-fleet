@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants to run Claude Code in sessions"
-source_of_truth: "the Claude Code card in the Console's Settings > Agents"
+source_of_truth: "the Claude Code card in the Console's Settings > Model credentials, and its behaviour in Settings > Agents"
 ---
 
 # Connect Claude
@@ -20,9 +20,9 @@ It runs in Terminal (CLI), and the session view mirrors the conversation.
 
 ## Connect
 
-Work on the **Claude Code** card in **⚙Settings → Agents**.
+Work on the **Claude Code** card in **⚙Settings → Model credentials**.
 
-![The Claude Code card in Settings > Agents: connected, with the account's email, the plan, "Expires in 2 day(s)", and the Re-authenticate and Disconnect buttons](../../assets/agents-claude-en-light.webp)
+![The Claude Code card in Settings > Model credentials: connected, with the account's email, the plan, "Expires in 2 day(s)", and the Re-authenticate and Disconnect buttons](../../assets/agents-claude-en-light.webp)
 
 1. Press "**Connect via OAuth**". The sign-in page opens in a new tab; if it does not, open it from "**the sign-in link ↗**"
 2. Approve in your own browser
@@ -33,7 +33,7 @@ As the sign-in nears its expiry, the card shows "**Expires in N day(s)**". The C
 
 ## Behavior
 
-The card's "**Behavior**" has, besides [the items every agent shares](choose.md#choose-the-behavior), the following.
+"**Behavior**" on the **Claude Code** card in **⚙Settings → Agents** has, besides [the items every agent shares](choose.md#choose-the-behavior), the following.
 
 | Item | What it decides |
 |---|---|

@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants to run the Cursor CLI in sessions"
-source_of_truth: "the Cursor card in the Console's Settings > Agents"
+source_of_truth: "the Cursor card in the Console's Settings > Model credentials, and its behaviour in Settings > Agents"
 ---
 
 # Connect Cursor
@@ -22,14 +22,14 @@ You only approve in the browser; there is no code to paste.
 
 ![The Cursor card before signing in: the "Sign in to Cursor" button and the note that a Cursor account is needed](../../assets/agents-cursor-en-light.webp)
 
-1. Press "**Sign in to Cursor**" on the **Cursor** card in **⚙Settings → Agents**
+1. Press "**Sign in to Cursor**" on the **Cursor** card in **⚙Settings → Model credentials**
 2. An authorization link opens; approve in the browser
 
 Once you approve, the card turns "**Connected**" by itself. You need a Cursor account. An API key cannot connect it.
 
 ## Behavior
 
-The items under the card's "**Behavior**" are [the ones every agent shares](choose.md#choose-the-behavior). It has no RTK setting.
+The items under "**Behavior**" on the **Cursor** card in **⚙Settings → Agents** are [the ones every agent shares](choose.md#choose-the-behavior). It has no RTK setting.
 
 ## Good to know
 

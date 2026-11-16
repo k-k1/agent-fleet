@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants to run the Antigravity CLI in sessions"
-source_of_truth: "the Antigravity card in the Console's Settings > Agents"
+source_of_truth: "the Antigravity card in the Console's Settings > Model credentials, and its behaviour in Settings > Agents"
 ---
 
 # Connect Antigravity
@@ -20,7 +20,7 @@ Its quota is shared with the Antigravity IDE and Jules on the same Google accoun
 
 ## Connect
 
-Work on the **Antigravity** card in **⚙Settings → Agents**.
+Work on the **Antigravity** card in **⚙Settings → Model credentials**.
 
 ![The Antigravity card before connecting: the "Google OAuth" method and the "Connect via OAuth" button](../../assets/agents-agy-en-light.webp)
 
@@ -32,7 +32,7 @@ The card shows the account's email and plan. The "**GCP project (coming soon)**"
 
 ## Behavior
 
-The items under the card's "**Behavior**" are [the ones every agent shares](choose.md#choose-the-behavior).
+The items under "**Behavior**" on the **Antigravity** card in **⚙Settings → Agents** are [the ones every agent shares](choose.md#choose-the-behavior).
 
 - **RTK** only asks for rtk through `AGENTS.md`, best effort ([Check prices and usage](usage.md#save-tokens-with-rtk))
 

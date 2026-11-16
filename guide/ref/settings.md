@@ -27,7 +27,7 @@ Open it with **⚙ Settings** in the account menu of the top bar. The left rail 
 | Group | Tabs |
 |---|---|
 | Personal | Display, Account, Keyboard, Read aloud, Notifications, Limit board, Sessions, Assistant, AI assistance, Image generation, Agent instructions, Skills, Agent memory, Memory snapshots |
-| Connections | Agents, Git hosting, Ops & monitoring, Issue tracker, Chat, MCP servers (used by sessions), AWS profiles/SSM, Google Cloud |
+| Connections | Model credentials, Agents, Git hosting, Ops & monitoring, Issue tracker, Chat, MCP servers (used by sessions), AWS profiles/SSM, Google Cloud |
 | Outside access | MCP tokens & apps |
 | Workspace | Agent usage, Cloud cost, Running time, Machine, Toolchains, Databases, Preview subdomains, Internal repos, Export / import, Danger zone |
 
@@ -52,7 +52,8 @@ Open it with **⚙ Settings** in the account menu of the top bar. The left rail 
 | Skills | each agent's personal skills (Claude, Codex, OpenCode, Muse): the folders read, which copy wins, and each file's content; read-only | [Bring your Claude Code setup](../user/agents/bring-claude-setup.md#check-your-skills) |
 | Agent memory | Agent Fleet's own shared memory, in four views: Memories (browse, search, create, edit, pin, forget, unforget, purge), Changes (the change list, with revert and forget), Import & export (a hub of cards: import from Claude Code, muse or a memory bundle, write back to Claude Code, project move) and Settings (the sessions' switch with the sync status, outside access) | [Read and correct agent memory](../user/memory/overview.md) |
 | Memory snapshots | version management of each agent kind's own memory, in three views: History (with Restore this point; the Agent Fleet memory writes are hidden unless you ask), Targets (the roots, codex memories, automatic snapshots) and Export & import | [Restore memory from a snapshot](../user/memory/snapshots.md) |
-| Agents | connecting each agent, its default model, models to exclude, per-agent behaviour; llama.cpp on / off and your own llama-server connection; Muse Code install and sign-in | [Choose an agent](../user/agents/choose.md) |
+| Model credentials | every agent's sign-in, API keys, endpoint and install, grouped by destination (Anthropic, OpenAI, opencode.ai, Google, Meta, GitHub/Cursor/Kiro, Self-hosted): Claude, Codex, Cursor, GitHub Copilot, Kiro, Antigravity, OpenCode (account, keys, billing), your own llama-server connection, Muse Code; removing stored credentials your organisation's policy does not allow | [Choose an agent](../user/agents/choose.md#connect), [Handle credentials safely](../user/security/credentials.md) |
+| Agents | each agent's behaviour: launch defaults (model, effort, start mode, tool permissions), models to exclude, thinking and streaming display, auto-resume, Remote Control, notifications, idle compaction, RTK, Muse Code contributor mode, llama.cpp on / off | [Choose an agent](../user/agents/choose.md#choose-the-behavior) |
 | Git hosting | GitHub / Bitbucket connections | [Connect a Git service](../user/code/connect-git.md) |
 | Ops & monitoring | monitoring integrations | [Connect monitoring tools](../user/integrations/ops-monitoring.md) |
 | Issue tracker | Jira and the other work-item sources | [Connect an issue tracker](../user/integrations/issue-tracker.md) |
@@ -99,11 +100,11 @@ Getting this wrong is what makes a setting look like it "didn't work".
 | Stop AI from writing titles or reply suggestions | AI assistance (per-feature on/off) |
 | Run only the assistance on a cheap model | AI assistance (priority, models) |
 | I keep typing the same preamble | Agent instructions |
-| Sign in to Claude / Codex | Agents |
+| Sign in to Claude / Codex | Model credentials |
 | Stop a model that bills extra from being picked | Agents (models to exclude) |
-| Keep stopped sessions in the list longer, or out of it sooner | Agents (archive stopped sessions after) |
-| Let sessions talk to each other | Agents (session-to-session messaging) |
-| Stop sessions from searching past conversations | Agents (past-session search) |
+| Keep stopped sessions in the list longer, or out of it sooner | Sessions (archive stopped sessions after) |
+| Let sessions talk to each other | Sessions (session-to-session messaging) |
+| Stop sessions from searching past conversations | Sessions (past-session search) |
 | Let agents share what they learn across kinds | Agent memory (Settings) |
 | Let a session see what the other sessions are doing | Nothing to set: every session can ([Let a session see the fleet](../user/fleet/fleet-visibility.md)) |
 | Have a session leave you a note about what it noticed | Nothing to set: every session can ([Let a session see the fleet](../user/fleet/fleet-visibility.md)) |

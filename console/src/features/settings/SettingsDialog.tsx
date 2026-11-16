@@ -36,6 +36,7 @@ import { MachineTab } from "./workspace/MachineTab.tsx";
 // picker. Only shown in the rail on deployments that issue them (usePreviewAvailable).
 import { PreviewTab, usePreviewAvailable } from "./workspace/PreviewTab.tsx";
 import { AgentsTab } from "./agents/AgentsTab.tsx";
+import { CredentialsTab } from "./credentials/CredentialsTab.tsx";
 import { SessionsTab } from "./sessions/SessionsTab.tsx";
 import { ImagegenTab } from "./imagegen/ImagegenTab.tsx";
 import { AssistantTab } from "./personal/AssistantTab.tsx";
@@ -113,6 +114,9 @@ export const GROUPS: { key: string; label: string; items: [string, string][] }[]
     key: "connections",
     label: "set.group_connections",
     items: [
+      // Model credentials before the harnesses that use them (ADR 0138 D16): every sign-in, key and
+      // endpoint a model runs on, grouped by who is paid.
+      ["credentials", "set.tab_credentials"],
       ["agents", "set.tab_agents"],
       ["git", "set.tab_git"],
       ["ops", "set.tab_ops"],
@@ -280,6 +284,7 @@ export function SettingsDialog() {
               </span>
             </div>
             <PrefsSyncBanner />
+            {section === "credentials" && <CredentialsTab />}
             {section === "agents" && <AgentsTab />}
             {section === "sessions" && <SessionsTab />}
             {section === "imagegen" && <ImagegenTab />}

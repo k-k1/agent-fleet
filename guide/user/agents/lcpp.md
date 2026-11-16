@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants sessions to run on the deployment's llama.cpp engine or on their own llama-server"
-source_of_truth: "the llama.cpp card in the Console's Settings > Agents"
+source_of_truth: "the llama.cpp card in the Console's Settings > Model credentials, and its behaviour in Settings > Agents"
 ---
 
 # Use lcpp
@@ -27,7 +27,7 @@ It needs no vendor account, no sign-in and no install, and starts from the launc
 
 ## Connect to your own llama-server
 
-To use a llama-server on your own network, enter it under "**Your own connection**".
+To use a llama-server on your own network, enter it under "**Your own connection**" on the **llama.cpp** card in **⚙Settings → Model credentials** (under **Self-hosted**).
 
 ![The llama.cpp card: "Use llama.cpp" is on, and "Your own connection" holds http://192.168.0.10:8080, reported reachable with the model it found](../../assets/agents-lcpp-en-light.webp)
 
@@ -44,7 +44,7 @@ Clear the field to go back to the deployment's engine.
 
 ## Behavior
 
-The card's "**Behavior**" picks the default model, the models to exclude and so on ([the items every agent shares](choose.md#choose-the-behavior)). It has no RTK setting.
+"**Behavior**" on the **llama.cpp** card in **⚙Settings → Agents** picks the default model, the models to exclude and so on ([the items every agent shares](choose.md#choose-the-behavior)). It has no RTK setting.
 
 ## Before your first session
 

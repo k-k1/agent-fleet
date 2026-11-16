@@ -67,6 +67,14 @@ describe("settings rail", () => {
     expect(t("set.tab_imagegen")).toBe("Image generation");
   });
 
+  // ADR 0138 D16: Model credentials sits in Connections right before the harnesses that use them.
+  it("puts Model credentials in Connections, right before Agents", () => {
+    expect(groupOf("credentials")).toBe("connections");
+    const conns = GROUPS.find((g) => g.key === "connections")!.items.map(([k]) => k);
+    expect(conns.indexOf("credentials")).toBe(conns.indexOf("agents") - 1);
+    expect(t("set.tab_credentials")).toBe("Model credentials");
+  });
+
   it("has a renderer for every item in the rail", () => {
     const missing = GROUPS.flatMap((g) => g.items.map(([k]) => k)).filter(
       (k) => !source.includes(`section === "${k}"`),

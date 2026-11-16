@@ -41,10 +41,6 @@ async function mount(st: Record<string, unknown>, reload = () => {}) {
         running
         st={st}
         reload={reload}
-        codex={null}
-        updateCodex={() => {}}
-        agents={false}
-        updateAgents={() => {}}
       />,
     );
   });

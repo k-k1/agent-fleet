@@ -2,9 +2,7 @@ import { useRef, useState } from "react";
 import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
-import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
-import { OnOff } from "../parts/controls.tsx";
 import {
   ProviderCard,
   StatusPill,
@@ -15,32 +13,21 @@ import {
   IssueLink,
 } from "../parts/providerCard.tsx";
 import { usePolling } from "../parts/usePolling.ts";
-import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkRow, type DeviceFlow } from "./AgentCardParts.tsx";
+import { ConnPaused, type DeviceFlow } from "../agents/AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
-import { type AgentRtkPatch, type AgentRtkSettings, type CodexSettings, type CodexSettingsPatch } from "../api.ts";
 
-// Codex: ChatGPT subscription (device code) or API key, plus the RTK toggle
-// (workspace-level; shown whenever settings load). codex has no command-rewrite
-// hook so RTK there is instruction-based.
+// Codex: ChatGPT subscription (device code) or API key. Its RTK toggle and nudge are on the
+// Agents page (AgentBehaviors).
 export function CodexCard({
   running,
   st,
   reload,
-  codex,
-  updateCodex,
-  agents,
-  updateAgents,
 }: {
   running: boolean;
   st: ProviderConn | undefined;
   reload: () => void;
-  codex: Partial<CodexSettings> | null;
-  updateCodex: (patch: CodexSettingsPatch) => void;
-  agents: Partial<AgentRtkSettings> | false | null;
-  updateAgents: (patch: AgentRtkPatch) => void;
 }) {
   const tr = useT();
-  const s = useSettings();
   const toast = useToast();
   const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | device | key
@@ -232,41 +219,6 @@ export function CodexCard({
           </div>
         </>
       )}
-      {/* RTK is a workspace-level flag (independent of Codex auth) — pre-settable. */}
-      <CardSettings>
-        <LaunchDefaults kind="codex" />
-        <ThinkingRow kind="codex" />
-        {/* One switch shared with the Claude card (uiprefs.rateLimitAutoResume): what it
-            governs is one behaviour of the workspace, and it is shown here because a Codex
-            user has no reason to open the Claude card to find it (docs/log/47 §4-12). */}
-        <SettingRow label={tr("agents.rate_limit_resume")}>
-          <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
-        </SettingRow>
-        <p className="ps-note">{tr("agents.note_codex_rate_limit_resume")}</p>
-        {codex && (
-          <>
-            <SettingRow label={tr("agents.codex_nudge")}>
-              <OnOff
-                value={codex.rate_limit_model_nudge}
-                onChange={(v) => updateCodex({ rate_limit_model_nudge: v })}
-              />
-            </SettingRow>
-            <p className={`ps-note${codex.rate_limit_model_nudge ? " ps-note-warn" : ""}`}>
-              {codex.rate_limit_model_nudge ? tr("agents.codex_nudge_on") : tr("agents.codex_nudge_off")}
-            </p>
-          </>
-        )}
-        {agents && (
-          <>
-            <RtkRow
-              available={agents.rtk_available}
-              value={agents.codex_rtk}
-              onChange={(v) => updateAgents({ codex_rtk: v })}
-            />
-            <p className="ps-note">{tr("agents.codex_rtk_note")}</p>
-          </>
-        )}
-      </CardSettings>
     </ProviderCard>
   );
 }

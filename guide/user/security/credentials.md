@@ -25,7 +25,7 @@ Each kind of credential has its own Settings tab. Agents take it from there, so 
 | Credential | Where it lives | More |
 |---|---|---|
 | GitHub and Bitbucket tokens | ⚙Settings → "Git hosting" | [Connect a Git service](../code/connect-git.md) |
-| Agent sign-ins and API keys | ⚙Settings → "Agents" | [Choose an agent](../agents/choose.md) |
+| Agent sign-ins, API keys and endpoints | ⚙Settings → "Model credentials" | [Choose an agent](../agents/choose.md) |
 | Jira and Confluence | ⚙Settings → "Issue tracker" | [Use Jira](../integrations/jira.md) |
 | AWS | An SSO profile in ⚙Settings → "AWS profiles/SSM" | [Use AWS SSO](../integrations/aws-sso.md) |
 | Google Cloud | ⚙Settings → "Google Cloud" | [Use Google Cloud](../integrations/gcloud.md) |

@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants to run Muse Code in sessions"
-source_of_truth: "the Muse Code card in the Console's Settings > Agents"
+source_of_truth: "the Muse Code card in the Console's Settings > Model credentials, and its behaviour in Settings > Agents"
 ---
 
 # Connect Muse Code
@@ -24,7 +24,7 @@ Muse Code is not in the image, so you install it once before signing in.
 
 ![The Muse Code card before its install: the "Install Muse Code" button, which says it downloads about 299 MB into your home](../../assets/agents-muse-en-light.webp)
 
-1. Press "**Install Muse Code**" on the **Muse Code** card in **⚙Settings → Agents**
+1. Press "**Install Muse Code**" on the **Muse Code** card in **⚙Settings → Model credentials**
 2. About 299 MB downloads into your home. This takes a few minutes
 3. When it is done, the card switches to the sign-in screen by itself
 
@@ -49,7 +49,7 @@ When a newer pinned version exists, the card shows "**A newer version is availab
 
 ## Behavior
 
-Besides the model and the reasoning effort, the card's "**Behavior**" has the following.
+Besides the model and the reasoning effort, "**Behavior**" on the **Muse Code** card in **⚙Settings → Agents** has the following.
 
 | Item | What it decides |
 |---|---|

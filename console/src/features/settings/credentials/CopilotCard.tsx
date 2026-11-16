@@ -2,14 +2,12 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill } from "../parts/providerCard.tsx";
 import { useSettingsUI } from "../store.ts";
-import { CardSettings, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
+import { ConnPaused } from "../agents/AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
-import { type AgentRtkPatch, type AgentRtkSettings } from "../api.ts";
 
 // agy (Antigravity CLI, docs/log/32): claude-style OAuth connect (start → approve in a
 // new tab → paste code → complete) with an auth-method selector (M1 offers Google
-// OAuth only; the GCP-project method lands with M2), plus the shared RTK toggle so
-// the card reads like the other agents'. The "experimental tier" label is an adoption condition
+// OAuth only; the GCP-project method lands with M2). Its RTK toggle is on the Agents page. The "experimental tier" label is an adoption condition
 // (docs/log/32 Track C-3): the Starter pool is tiny and shared with the IDE/Jules wallet, so the
 // card must always say so. The quota gauge (remaining %) lives in the WS bar next to the
 // Claude / Codex usage chips. On unsupported hosts (no RDRAND) the card shows why
@@ -20,13 +18,9 @@ import { type AgentRtkPatch, type AgentRtkSettings } from "../api.ts";
 export function CopilotCard({
   running,
   st,
-  agents,
-  updateAgents,
 }: {
   running: boolean;
   st: ProviderConn | undefined;
-  agents: Partial<AgentRtkSettings> | false | null;
-  updateAgents: (patch: AgentRtkPatch) => void;
 }) {
   const tr = useT();
   const unsupported = st?.supported === false;
@@ -58,19 +52,6 @@ export function CopilotCard({
           )}
         </>
       )}
-      <CardSettings>
-        <LaunchDefaults kind="copilot" />
-        {agents && (
-          <>
-            <RtkRow
-              available={agents.rtk_available}
-              value={agents.copilot_rtk}
-              onChange={(v) => updateAgents({ copilot_rtk: v })}
-            />
-            <p className="ps-note">{tr("agents.copilot_rtk_note")}</p>
-          </>
-        )}
-      </CardSettings>
     </ProviderCard>
   );
 }

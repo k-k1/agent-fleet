@@ -6,7 +6,7 @@ import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
 import { useActiveFlow } from "../parts/useActiveFlow.ts";
 import { usePolling } from "../parts/usePolling.ts";
-import { CardSettings, ConnPaused, LaunchDefaults, type DeviceFlow } from "./AgentCardParts.tsx";
+import { ConnPaused, type DeviceFlow } from "../agents/AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
 import { getMuseInstall, isOk, type CliInstallStatus } from "../api.ts";
 
@@ -341,13 +341,6 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
           )}
         </div>
       )}
-      {/* The launch defaults stay reachable in every state, the same as every other card: they
-          are client-side settings, so they work while the workspace is stopped and before the
-          binary is installed. The model picker is empty until both are true, which is the
-          honest answer — the catalogue is the signed-in account's. */}
-      <CardSettings>
-        <LaunchDefaults kind="muse" />
-      </CardSettings>
     </ProviderCard>
   );
 }

@@ -32,7 +32,7 @@ async function mount(st: Record<string, unknown>, reload = () => {}) {
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      <OpencodeCard running st={st} reload={reload} agents={{}} updateAgents={() => {}} />,
+      <OpencodeCard running st={st} reload={reload} />,
     );
   });
 }

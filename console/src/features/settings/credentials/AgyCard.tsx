@@ -4,22 +4,17 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
-import { CardSettings, ConnPaused, LaunchDefaults, RtkRow, type LoginFlow } from "./AgentCardParts.tsx";
+import { ConnPaused, type LoginFlow } from "../agents/AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
-import { type AgentRtkPatch, type AgentRtkSettings } from "../api.ts";
 
 export function AgyCard({
   running,
   st,
   reload,
-  agents,
-  updateAgents,
 }: {
   running: boolean;
   st: ProviderConn | undefined;
   reload: () => void;
-  agents: Partial<AgentRtkSettings> | false | null;
-  updateAgents: (patch: AgentRtkPatch) => void;
 }) {
   const tr = useT();
   const toast = useToast();
@@ -160,21 +155,6 @@ export function AgyCard({
           </div>
         </>
       )}
-      {/* RTK is a workspace-level flag (independent of agy auth) — pre-settable,
-          same block shape as the Codex / opencode cards. */}
-      <CardSettings>
-        <LaunchDefaults kind="agy" />
-        {agents && (
-          <>
-            <RtkRow
-              available={agents.rtk_available}
-              value={agents.agy_rtk}
-              onChange={(v) => updateAgents({ agy_rtk: v })}
-            />
-            <p className="ps-note">{tr("agents.agy_rtk_note")}</p>
-          </>
-        )}
-      </CardSettings>
     </ProviderCard>
   );
 }

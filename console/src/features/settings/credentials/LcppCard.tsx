@@ -3,16 +3,13 @@ import { apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
-import { setSetting, useSettings } from "../../../lib/settings.ts";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "../parts/providerCard.tsx";
-import { Choice } from "../parts/controls.tsx";
-import { CardSettings, LaunchDefaults, SettingRow } from "./AgentCardParts.tsx";
+import { ConnPaused } from "../agents/AgentCardParts.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
 
-// LcppCard (docs/log/105 §106.2 / docs/log/107). llama.cpp has no sign-in of its own (ADR
-// 0093 決定 10), so the switch above CardSettings is still the workspace-policy on/off — same
-// reasoning as OpencodeUsageRows' "usage" switch. docs/log/107 adds a second, independent
-// thing to this card: the member's OWN connection to a LAN llama-server. Unlike every other
+// LcppCard (docs/log/105 §106.2 / docs/log/107): the member's OWN connection to a LAN
+// llama-server, on Model credentials under Self-hosted. Whether llama.cpp may be launched at all
+// is a harness switch and stays on the Agents page (LcppBehavior). Unlike every other
 // connection card, saving it does NOT authenticate against anything (connections.go's
 // handlePutLcppConn validates only the URL's shape) — whether it actually answers is the
 // separate "check connection" action below, which is why this card has three states instead
@@ -28,8 +25,6 @@ import type { ProviderConn } from "../../../types/session.ts";
 export function LcppCard({ running, st, reload }: { running: boolean; st: ProviderConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
-  const s = useSettings();
-  const enabled = s.lcppEnabled;
   const [url, setUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -96,25 +91,12 @@ export function LcppCard({ running, st, reload }: { running: boolean; st: Provid
       id="lcpp"
       name={kindDisplayName("lcpp")}
       status={
-        <StatusPill on={enabled}>
-          {enabled ? tr("agents.lcpp_enabled_on") : tr("agents.lcpp_enabled_off")}
-        </StatusPill>
+        running ? (
+          <StatusPill on={connected}>{connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>
+        ) : undefined
       }
     >
-      <div className="p-body">
-        <SettingRow label={tr("agents.lcpp_enabled")}>
-          <Choice
-            value={enabled ? "on" : "off"}
-            options={[
-              ["off", tr("agents.lcpp_enabled_off")],
-              ["on", tr("agents.lcpp_enabled_on")],
-            ]}
-            onChange={(v) => setSetting("lcppEnabled", v === "on")}
-          />
-        </SettingRow>
-        <p className="ps-note">{tr(enabled ? "agents.lcpp_enabled_note_on" : "agents.lcpp_enabled_note_off")}</p>
-      </div>
-
+      {!running && <ConnPaused />}
       {running && (
         <div className="p-body">
           <p className="ps-title">{tr("agents.lcpp_conn_title")}</p>
@@ -194,9 +176,6 @@ export function LcppCard({ running, st, reload }: { running: boolean; st: Provid
         </div>
       )}
 
-      <CardSettings>
-        <LaunchDefaults kind="lcpp" />
-      </CardSettings>
     </ProviderCard>
   );
 }
