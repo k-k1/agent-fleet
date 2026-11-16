@@ -51,6 +51,10 @@ const (
 	actionsBusyAfter   = 15 * time.Second // a run is in progress
 	actionsQueuedAfter = 30 * time.Second // queued, waiting for approval or a runner
 	actionsIdleAfter   = 2 * time.Minute  // a workflow with no run in flight; a 304 is free
+	// actionsFreshWindow is how long after a run completed it is still read at actionsFreshAfter:
+	// "I re-ran it right after it finished" is the common case, and a re-run moves updated_at.
+	actionsFreshWindow = 10 * time.Minute
+	actionsFreshAfter  = time.Minute
 	// actionsListSize is how many runs one page of a workflow's list holds: those created after
 	// the floor, newest first.
 	actionsListSize = 20
@@ -207,6 +211,7 @@ type ghRun struct {
 	Conclusion string `json:"conclusion"`
 	HTMLURL    string `json:"html_url"`
 	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 type ghRunList struct {
@@ -409,10 +414,27 @@ func (a *GitHubActions) pollRun(ctx context.Context, subject SubjectID, repo str
 	}
 	out, _ := json.Marshal(cur)
 	if run.Status == "completed" {
-		// A re-run of the run (a new attempt) can still follow, so keep reading, rarely.
-		return evs, out, Hint{After: ghSettledAfter, Settled: true}, nil
+		// A re-run of the run (a new attempt) can still follow: read soon after the finish, rarely later.
+		return evs, out, Hint{After: a.finishedAfter(run), Settled: true}, nil
 	}
 	return evs, out, Hint{After: runWait(run.Status)}, nil
+}
+
+// finishedAfter is the read interval for a completed run: actionsFreshAfter while it finished
+// less than actionsFreshWindow ago, ghSettledAfter otherwise. An unreadable updated_at answers the
+// slow interval, the cheap side. Reads of an unchanged run are 304s, which are not counted.
+func (a *GitHubActions) finishedAfter(run ghRun) time.Duration {
+	t, err := time.Parse(time.RFC3339, run.UpdatedAt)
+	if err != nil {
+		return ghSettledAfter
+	}
+	age := a.GH.clock().Sub(t)
+	// Tolerate a clock a minute ahead; a larger skew would keep the short interval for far longer
+	// than the window.
+	if age > -actionsFreshAfter && age < actionsFreshWindow {
+		return actionsFreshAfter
+	}
+	return ghSettledAfter
 }
 
 func (a *GitHubActions) pollWorkflow(ctx context.Context, subject SubjectID, repo, file, branch string, floorID, floorUnix int64, cur *actionsCursor, raw json.RawMessage) ([]Event, json.RawMessage, Hint, error) {
