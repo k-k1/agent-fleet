@@ -130,7 +130,10 @@ Docker Compose の配備で、プロキシをワークスペースの唯一の�
 | すること | 起きること |
 |---|---|
 | `.env` に変数を 4 つ書き、`docker compose --profile egress up -d` を実行する | `egress` サービス（プロキシ）が起動し、Control Plane が柵を有効にして起動します |
-| 各ワークスペースを停止して起動する | ネットワークが外への経路なしで作り直され、プロキシが接続されます |
+| Console で各ワークスペースを停止して起動する | ネットワークが外への経路なしで作り直され、プロキシが接続されます |
+
+柵は、ほかの出口を無くすだけです。プロキシが何を通すかは、これまでどおりモードが決めます。log-only ではすべて通して記録し、[enforce](#3-enforce-に切り替える) で許可リストに無い宛先を止めます。
+`docker restart` ではネットワークは作り直されません。Console の停止と起動を使います。
 
 ```bash
 # .env
@@ -143,14 +146,15 @@ COMPOSE_PROFILES=egress
 | 変数 | 入れる値 |
 |---|---|
 | `AF_EGRESS_DOCKER_GATEWAY` | プロキシのコンテナ名。設定すると柵が有効になります |
-| `AF_EGRESS_PROXY_ADDR` | 同じ名前とプロキシのポート。ワークスペースにプロキシ変数として渡ります |
+| `AF_EGRESS_PROXY_ADDR` | 同じ名前とプロキシのポート。ワークスペースにプロキシ変数として渡ります。名前が違うと Control Plane は起動を拒否します |
 | `AF_EGRESS_TOKEN` | Control Plane とプロキシが共有する秘密の値。プロキシの報告に使います |
 | `COMPOSE_PROFILES` | `egress`。`docker compose up -d` でプロキシも起動するようにします |
 
 柵の中のワークスペースで変わること：
 
-- プロキシ変数を無視するプログラムは、どこにも届きません。接続は失敗し、記録にも残りません
-- 通るのは HTTP と HTTPS だけです。SSH の Git、直接の DNS、データベースは通りません。リモートは HTTPS を使います
+- プロキシ変数を無視するプログラムは、どこにも接続できません。接続は失敗し、記録にも残りません
+- 通るのは HTTP と HTTPS だけです。SSH の Git、データベース、外の DNS サーバーへ直接送る問い合わせは通りません。リモートは HTTPS を使います
+- 通常の名前解決は、Docker のバージョンによっては Docker のリゾルバを通って外へ出ます。DNS の問い合わせに載せたデータの持ち出しを、柵で止められるとは考えないでください
 - プロキシはワークスペースのネットワーク宛てを拒むので、ワークスペース同士をつなぐことはありません
 - ホスト自身がネットワークのゲートウェイアドレスで待ち受けているものには、引き続き届きます
 
@@ -158,12 +162,14 @@ COMPOSE_PROFILES=egress
 
 | 項目 | すること |
 |---|---|
-| プロキシの報告 | プロキシは `PUBLIC_BASE_URL` へ報告します。コンテナから届かない場合は、`AF_EGRESS_INGEST_URL` と `AF_EGRESS_POLICY_URL` に届くアドレスを設定します |
+| プロキシの報告 | プロキシは `PUBLIC_BASE_URL` へ報告し、モードと許可リストもそこから読みます。`PUBLIC_BASE_URL` の設定が必要です。コンテナから届かない場合は、`AF_EGRESS_INGEST_URL` と `AF_EGRESS_POLICY_URL` に届くアドレスを設定します |
 | プロキシの更新 | `egress` コンテナを作り直すと、すべてのワークスペースのネットワークから外れます。Control Plane が 30 秒ほどで付け直します |
 | Control Plane のログ | `docker egress fence:` の行が、見つからない、または接続できないプロキシのコンテナを知らせます。プロキシが無い間、ワークスペースは起動しません |
 | オフに戻す | 4 行を消して `docker compose up -d` を実行し、各ワークスペースを停止して起動します |
 
-柵を有効にしていて、`AF_EGRESS_PROXY_ADDR` が無い場合、または Control Plane がホストネットワークに無い場合（Mac 用の overlay）、Control Plane は起動を拒否します。
+プロキシは、Control Plane に届かない間、最後に受け取ったモードで動きます。起動した直後のプロキシは、`.env` に `AF_EGRESS_ENFORCE=1` が無ければ log-only です。
+
+柵を有効にしていて、`AF_EGRESS_PROXY_ADDR` が無いか別のホストを指している場合、または Control Plane がホストネットワークに無い場合（Mac 用の overlay）、Control Plane は起動を拒否します。
 
 ## 記録を残す
 

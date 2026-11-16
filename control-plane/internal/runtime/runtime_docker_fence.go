@@ -9,10 +9,12 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,9 +44,9 @@ func execDocker(ctx context.Context, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 }
 
-// publishArgs publishes the Agent's port on the host's loopback. An internal network
-// publishes nothing, so a fenced container gets no mapping and the CP dials the address
-// recordAgentAddr stored.
+// publishArgs publishes the Agent's port on the host's loopback. A port published on an
+// internal network is not reachable, so a fenced container gets no mapping and the CP
+// dials the address recordAgentAddr stored.
 func (d *dockerRuntime) publishArgs() []string {
 	if d.fenced() {
 		return nil
@@ -86,6 +88,40 @@ func (d *dockerRuntime) recordAgentAddr(ctx context.Context) error {
 	if !d.fenced() {
 		return nil
 	}
+	return d.writeAgentAddr(ctx)
+}
+
+// healAgentAddr records the address of a running fenced container that has none on file.
+// A CP killed between `docker run` and recordAgentAddr leaves exactly that, and without
+// the file the workspace reads as running while every call to it goes to a port nothing
+// publishes. A container on a plain network, started before the fence was turned on, is
+// left on its published port.
+func (d *dockerRuntime) healAgentAddr(ctx context.Context) error {
+	if !d.fenced() || d.network == "" || d.fencedAgentAddr() != "" {
+		return nil
+	}
+	if d.inspectOne(ctx, "network", d.network, "{{.Internal}}") != "true" {
+		return nil
+	}
+	return d.writeAgentAddr(ctx)
+}
+
+// dropStaleAgentAddr removes an address on file once docker says the container is gone
+// (removed by hand, or the deployment was torn down around its data directory). The
+// address may belong to someone else's container by then, and the CP would send this
+// workspace's Agent token there. It asks docker a second time, and only when a file
+// exists: State's empty answer also means "docker did not answer", which must not strand
+// a running workspace.
+func (d *dockerRuntime) dropStaleAgentAddr(ctx context.Context) {
+	if d.fencedAgentAddr() == "" {
+		return
+	}
+	if _, err := d.inspectAddresses(ctx, "{{.Id}}"); errors.Is(err, errDockerNoSuchObject) {
+		d.clearAgentAddr()
+	}
+}
+
+func (d *dockerRuntime) writeAgentAddr(ctx context.Context) error {
 	p := d.agentAddrPath()
 	if p == "" {
 		return fmt.Errorf("docker egress fence: workspace %s has no data directory to record its address in", d.name)
@@ -257,6 +293,17 @@ func validateDockerFence(mcfg Config) error {
 	}
 	if len(mcfg.EgressProxyEnv) == 0 {
 		return fmt.Errorf("AF_EGRESS_DOCKER_GATEWAY is set without AF_EGRESS_PROXY_ADDR: fenced workspaces would have no way out, not even to the Control Plane")
+	}
+	// The gateway's container name is the only name a fenced workspace can resolve and
+	// reach. A proxy address naming anything else cuts every workspace off.
+	for _, kv := range mcfg.EgressProxyEnv {
+		k, v, _ := strings.Cut(kv, "=")
+		if !strings.HasSuffix(strings.ToLower(k), "_proxy") || strings.EqualFold(k, "no_proxy") {
+			continue
+		}
+		if u, err := url.Parse(v); err != nil || u.Hostname() != mcfg.DockerEgressGateway {
+			return fmt.Errorf("AF_EGRESS_PROXY_ADDR must name the AF_EGRESS_DOCKER_GATEWAY container (%s:<port>), not %q: a fenced workspace reaches nothing else", mcfg.DockerEgressGateway, v)
+		}
 	}
 	// The CP dials the container's address on an internal bridge, which only a process
 	// in the host's network namespace can reach. A CP that is itself a bridged container

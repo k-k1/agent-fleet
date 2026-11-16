@@ -88,9 +88,14 @@ func TestDockerFenceGatewayAttachFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "No such container") {
 		t.Errorf("a missing gateway did not fail the start: %v", err)
 	}
-	f = &fakeDocker{fail: map[string]string{"network connect": "Error response from daemon: endpoint with name af-egress already exists in network af-net-u1"}}
-	if err := fencedRuntime("af-egress", "true", f).ensureNetwork(context.Background()); err != nil {
-		t.Errorf("an attached gateway failed the start: %v", err)
+	for _, msg := range []string{
+		"Error response from daemon: endpoint with name af-egress already exists in network af-net-u1",
+		"Error response from daemon: Endpoint With Name af-egress Already Exists In Network af-net-u1",
+	} {
+		f = &fakeDocker{fail: map[string]string{"network connect": msg}}
+		if err := fencedRuntime("af-egress", "true", f).ensureNetwork(context.Background()); err != nil {
+			t.Errorf("an attached gateway failed the start (%q): %v", msg, err)
+		}
 	}
 	// A network that cannot be replaced is not reused in the wrong mode.
 	f = &fakeDocker{fail: map[string]string{"network rm": "network af-net-u1 has active endpoints"}}
@@ -228,6 +233,11 @@ func TestReattachDockerGateway(t *testing.T) {
 		t.Errorf("err %v, calls %q", err, f.calls)
 	}
 
+	f = &fakeDocker{fail: map[string]string{"network ls": "Cannot connect to the Docker daemon"}}
+	if err := reattachDockerGateway(context.Background(), f.run, "af-egress"); err == nil || len(f.calls) != 1 {
+		t.Errorf("a failed listing: err %v, calls %q", err, f.calls)
+	}
+
 	// A gateway that is gone is reported, and one failed attach does not stop the rest.
 	f = &fakeDocker{out: map[string]string{"network ls": "af-net-u1\n"}, fail: map[string]string{"inspect": "No such container"}}
 	if err := reattachDockerGateway(context.Background(), f.run, "af-egress"); err == nil {
@@ -256,6 +266,10 @@ func TestValidateDockerFence(t *testing.T) {
 		{"on", Config{DockerEgressGateway: "af-egress", EgressProxyEnv: proxy, AgentHost: "127.0.0.1"}, true},
 		{"on, localhost", Config{DockerEgressGateway: "af-egress", EgressProxyEnv: proxy, AgentHost: "localhost"}, true},
 		{"no proxy address", Config{DockerEgressGateway: "af-egress", AgentHost: "127.0.0.1"}, false},
+		{"proxy elsewhere", Config{DockerEgressGateway: "af-egress", AgentHost: "127.0.0.1",
+			EgressProxyEnv: []string{"http_proxy=http://af-egress:3128", "HTTPS_PROXY=http://proxy.example.com:3128"}}, false},
+		{"no_proxy is not a proxy address", Config{DockerEgressGateway: "af-egress", AgentHost: "127.0.0.1",
+			EgressProxyEnv: append([]string{"no_proxy=localhost", "NO_PROXY=localhost"}, proxy...)}, true},
 		{"bridged CP", Config{DockerEgressGateway: "af-egress", EgressProxyEnv: proxy, AgentHost: "host.docker.internal"}, false},
 	} {
 		if err := validateDockerFence(tc.cfg); (err == nil) != tc.ok {
@@ -264,5 +278,77 @@ func TestValidateDockerFence(t *testing.T) {
 	}
 	if _, err := NewFactory("local", Config{DockerEgressGateway: "af-egress", AgentHost: "127.0.0.1"}); err == nil {
 		t.Error("NewFactory accepted a fence with no proxy address")
+	}
+}
+
+// A CP killed between `docker run` and the address record leaves a running fenced
+// container with no file. The next Start records it instead of calling that running.
+func TestDockerFenceHealsMissingAddr(t *testing.T) {
+	internal := "true"
+	d := &dockerRuntime{
+		name: "af-ws-u1", network: "af-net-u1", dataDir: t.TempDir(), agentHost: "127.0.0.1", agentPort: "7712",
+		egressGateway: "af-egress",
+		inspect: func(_ context.Context, typ, _, _ string) string {
+			if typ == "network" {
+				return internal
+			}
+			return "172.20.0.2"
+		},
+	}
+	if err := d.healAgentAddr(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Endpoint(); got != "http://172.20.0.2:7700" {
+		t.Errorf("healed endpoint: %s", got)
+	}
+
+	// A container started before the fence was turned on keeps its published port.
+	d.clearAgentAddr()
+	internal = "false"
+	if err := d.healAgentAddr(context.Background()); err != nil || d.fencedAgentAddr() != "" {
+		t.Errorf("a plain-network container was given an address: err %v, addr %q", err, d.fencedAgentAddr())
+	}
+	internal = "true"
+	d.egressGateway = ""
+	if err := d.healAgentAddr(context.Background()); err != nil || d.fencedAgentAddr() != "" {
+		t.Errorf("the unfenced runtime recorded an address: err %v, addr %q", err, d.fencedAgentAddr())
+	}
+}
+
+// An address on file for a container docker no longer has may be someone else's by now.
+// State drops it; an inspect that merely failed does not.
+func TestDockerFenceStateDropsStaleAddr(t *testing.T) {
+	dir := t.TempDir()
+	write := func() {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, ".agent-addr"), []byte("172.20.0.2\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := &dockerRuntime{
+		name: "af-ws-u1", network: "af-net-u1", dataDir: dir, agentHost: "127.0.0.1", agentPort: "7712",
+		inspect: func(context.Context, string, string, string) string { return "" },
+	}
+	write()
+	if got := d.State(context.Background()); got != "none" {
+		t.Fatalf("State = %s", got)
+	}
+	if got := d.Endpoint(); got != "http://127.0.0.1:7712" {
+		t.Errorf("the stale address survived: %s", got)
+	}
+
+	// The status probe came back empty but the container is there: keep the address.
+	write()
+	d.inspect = func(_ context.Context, _, _, format string) string {
+		if format == "{{.Id}}" {
+			return "0123abcd"
+		}
+		return ""
+	}
+	if got := d.State(context.Background()); got != "none" {
+		t.Fatalf("State = %s", got)
+	}
+	if got := d.Endpoint(); got != "http://172.20.0.2:7700" {
+		t.Errorf("a failed probe dropped the address: %s", got)
 	}
 }

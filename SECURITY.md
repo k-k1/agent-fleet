@@ -116,7 +116,8 @@ informed choice — not undisclosed bugs.
   `docker` with `AF_EGRESS_DOCKER_GATEWAY`, workspace networks have no route out and
   the proxy is the only exit; this has not yet run on a real Docker host
   ([#4373](https://github.com/k-k1/agent-fleet/issues/4373)), blocked direct
-  connections are not recorded, and nothing but HTTP(S) passes. On AWS (`ecs` /
+  connections are not recorded, nothing but HTTP(S) passes, and name lookups may
+  still leave through Docker's resolver. On AWS (`ecs` /
   `ecs-ec2`) with `00-network`'s `EgressRoute=gateway`, the workspace route table's
   default route leads to the egress gateway: internet-bound HTTP (80) and HTTPS (443)
   leave through it, enforce applies there, and other internet-bound traffic, git

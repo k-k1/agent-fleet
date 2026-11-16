@@ -2,6 +2,7 @@ package egressallow
 
 import (
 	"errors"
+	"net"
 	"net/netip"
 	"reflect"
 	"testing"
@@ -104,4 +105,23 @@ func TestInterfacePrefixesCoverLoopback(t *testing.T) {
 		}
 	}
 	t.Errorf("InterfacePrefixes() = %v: the loopback network is missing", InterfacePrefixes())
+}
+
+// An interface address that cannot be read as a prefix must not open its network.
+func TestPrefixesOfFailsClosed(t *testing.T) {
+	_, ws, _ := net.ParseCIDR("172.20.0.2/16")
+	got := prefixesOf([]net.Addr{ws})
+	if len(got) != 1 || got[0] != netip.MustParsePrefix("172.20.0.0/16") {
+		t.Fatalf("prefixesOf = %v", got)
+	}
+	got = prefixesOf([]net.Addr{ws, &net.UnixAddr{Name: "/run/x", Net: "unix"}})
+	for _, a := range []string{"172.21.0.9", "93.184.216.34", "2001:db8::1"} {
+		in := false
+		for _, p := range got {
+			in = in || p.Contains(netip.MustParseAddr(a))
+		}
+		if !in {
+			t.Errorf("%s is not refused after an unreadable interface address (%v)", a, got)
+		}
+	}
 }

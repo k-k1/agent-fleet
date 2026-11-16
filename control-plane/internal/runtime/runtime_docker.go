@@ -136,6 +136,7 @@ func (d *dockerRuntime) Name() string  { return d.name }
 func (d *dockerRuntime) State(ctx context.Context) string {
 	switch d.inspectOne(ctx, "container", d.name, "{{.State.Status}}") {
 	case "":
+		d.dropStaleAgentAddr(ctx)
 		return "none" // docker inspect returned nothing = there is no such container
 	case "running":
 		if d.startingMarker().active(ctx, d.Endpoint()) {
@@ -289,7 +290,7 @@ func (d *dockerRuntime) mountsStagedDocs() {}
 func (d *dockerRuntime) Start(ctx context.Context) error {
 	switch d.State(ctx) {
 	case "running":
-		return nil
+		return d.healAgentAddr(ctx)
 	case "starting":
 		// A boot is already in flight (this adapter reports it while the Agent has not
 		// answered yet). Falling through would `docker rm -f` a container that is in the

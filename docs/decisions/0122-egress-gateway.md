@@ -855,15 +855,17 @@ the other road, and reverses one line of "Rejected" for docker.
 **Decided with the maintainer, 2026-11-17.**
 
 1. **The per-user network is `--internal`.** docker gives an internal network no route off the
-   host and its resolver forwards nothing outward, so a process that ignores the proxy variables
-   reaches nothing. That is the fence; no host firewall rule is added.
+   host, so a process that ignores the proxy variables connects to nothing. That is the fence; no
+   host firewall rule is added. Name resolution is a separate matter: whether docker's embedded
+   resolver still forwards outside names from an internal network depends on the engine version,
+   so DNS is not claimed closed (a lookup of an attacker's domain may still leave; #4373 checks).
 2. **The own forward proxy is the gateway.** The compose `egress` service runs
    `control-plane egress-proxy` in a container, and the CP attaches it to every per-user network
    at `Start` (and again every 30 s, because recreating the container drops its attachments).
    Workspaces keep the proxy variables, now naming that container. docker stays on the own proxy
    as "Rejected" already allowed; Squid's intercept mode is not brought to compose.
 3. **The CP reaches a fenced Agent by the container's address**, recorded at `Start` in the
-   workspace's data directory, because an internal network publishes no port. "Rejected" called
+   workspace's data directory, because a port published on an internal network is not reachable. "Rejected" called
    this a large change to how the CP connects; it is one function (`Endpoint`), and only fenced
    workspaces take it. It needs the CP in the host's network namespace, so the Mac overlay
    (a bridged CP) is refused at boot.
@@ -877,7 +879,8 @@ the other road, and reverses one line of "Rejected" for docker.
 6. **Off by default** (`AF_EGRESS_DOCKER_GATEWAY`), against decision 1's "always on", until it has
    run on a real host: turning it on stops every non-HTTP flow of an existing deployment.
 
-**What it does not do.** A blocked direct connection is not recorded (decision 1 wanted it
+**What it does not do.** The fence removes the other ways out; what the proxy lets through is
+still the mode, so in log-only everything that speaks the proxy passes. A blocked direct connection is not recorded (decision 1 wanted it
 recorded; that needs a logging rule on the host). Non-HTTP traffic does not pass, and there is no
 per-destination TCP passthrough as on AWS. Events are not attributed to a workspace: the own
 proxy reports a host and a count. A workspace still reaches whatever the host itself listens on

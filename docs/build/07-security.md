@@ -776,8 +776,9 @@ gateway; and workspaces leave from the gateway's own address, not the NAT gatewa
 On `docker`, `AF_EGRESS_DOCKER_GATEWAY` names the egress proxy's container (the compose
 `egress` profile). Each per-user network is then created `--internal`, the CP attaches that
 container to it, and the proxy is the workspace's only way out: a process that ignores the
-proxy variables reaches nothing, non-HTTP traffic included, and such an attempt is not
-recorded. The CP reaches the Agent by the container's address instead of a published port,
+proxy variables connects to nothing, non-HTTP traffic included, and such an attempt is not
+recorded. What the proxy lets through is still the mode, and DNS is not claimed closed:
+docker's embedded resolver may forward a lookup outward, depending on the engine version. The CP reaches the Agent by the container's address instead of a published port,
 the Agent reaches the CP through the proxy (the `NO_PROXY` entry for `AF_CP_INTERNAL_URL`
 is not added), and the proxy runs with `AF_EGRESS_REFUSE_ATTACHED=1`, refusing destinations
 on the networks it is attached to so that it never joins two workspaces. It is off by

@@ -89,18 +89,26 @@ func AttachedDialControl(prefixes func() []netip.Prefix) func(string, string, sy
 }
 
 // InterfacePrefixes is the networks this host has an address on. When the interfaces
-// cannot be read it answers every address, so AttachedDialControl refuses rather than
-// letting a workspace network through.
+// cannot be read, or one of them cannot be understood, it answers every address, so
+// AttachedDialControl refuses rather than letting a workspace network through.
 func InterfacePrefixes() []netip.Prefix {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		return []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")}
+		return everyPrefix
 	}
-	var out []netip.Prefix
+	return prefixesOf(addrs)
+}
+
+var everyPrefix = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")}
+
+func prefixesOf(addrs []net.Addr) []netip.Prefix {
+	out := make([]netip.Prefix, 0, len(addrs))
 	for _, a := range addrs {
-		if p, err := netip.ParsePrefix(a.String()); err == nil {
-			out = append(out, p.Masked())
+		p, err := netip.ParsePrefix(a.String())
+		if err != nil {
+			return everyPrefix
 		}
+		out = append(out, p.Masked())
 	}
 	return out
 }

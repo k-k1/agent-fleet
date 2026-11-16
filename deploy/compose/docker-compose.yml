@@ -58,6 +58,9 @@ services:
     environment:
       AF_EGRESS_LISTEN: ":3128"
       AF_EGRESS_TOKEN: ${AF_EGRESS_TOKEN:-}
+      # The mode normally arrives with the policy the proxy polls from the CP. This is
+      # what it runs on before the first answer, and when the CP cannot be reached.
+      AF_EGRESS_ENFORCE: ${AF_EGRESS_ENFORCE:-}
       AF_EGRESS_INGEST_URL: ${AF_EGRESS_INGEST_URL:-${PUBLIC_BASE_URL:-}/internal/egress}
       AF_EGRESS_POLICY_URL: ${AF_EGRESS_POLICY_URL:-${PUBLIC_BASE_URL:-}/internal/egress/policy}
       # Never the way from one workspace into another's network.
