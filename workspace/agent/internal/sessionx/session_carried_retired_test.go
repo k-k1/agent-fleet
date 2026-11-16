@@ -241,24 +241,6 @@ func TestCarriedAnswerIsRefusedWhenTheMetaCannotBeRead(t *testing.T) {
 	}
 }
 
-// Ordinary input to a retired, stopped Managed session is refused as before.
-func TestInputToARetiredStoppedManagedSessionIsStillRefused(t *testing.T) {
-	c := newCarriedEnv(t, "")
-	c.retiredWithCarried(t, carriedKinds[1])
-	rec := postTo(t, HandleSessionInput, "s", "input", `{"prompt":"go on"}`)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "session_retired") {
-		t.Fatalf("%d %s", rec.Code, rec.Body)
-	}
-	select {
-	case in := <-c.handle.got:
-		t.Fatalf("delivered %+v", in)
-	default:
-	}
-	if cur, _ := session.ReadMeta("s"); cur.RetiredAt == "" {
-		t.Fatal("the mark was taken off by an input")
-	}
-}
-
 // The execution-method switch and the route switch are not a carried answer: they keep refusing
 // a session a retire has marked.
 func TestSwitchesStillRefuseAMarkedSession(t *testing.T) {

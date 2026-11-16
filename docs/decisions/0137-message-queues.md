@@ -576,3 +576,12 @@ delivers the answer, as `/start` does; the two switches still refuse a marked se
 Added 2026-11-16: an overdue run whose stopped session carries a question, a plan or a permission stays open, as the
 second row of the §6 table says; the answer from the stopped session's card clears the wait without a Start first, and the run ends once the work the
 answer resumed is done.
+Added 2026-11-16 (#4249, decided by the owner): what starts a retired session again, and clears its mark, is a deliberate
+act: the member's own (Start, a carried answer, a message typed to a Managed session) or one of the member's own sessions'
+or connections' (a peer or operator message, `resume_session`). What fires by itself never does (a schedule, a watch or
+timer notice, a booked usage-limit resume, pull request feedback, a plan-review reviewer): it is refused with 409
+`session_retired` and the mark stays.
+The Control Plane's scheduler says its start is automatic (`?origin=automatic`), so the Agent records no act for it and the
+schedule's run records the refusal as its failure; a caller that says nothing is deliberate, so an older Control Plane keeps
+working. The same rule holds in both execution methods: a deliberate message to a retired, stopped Managed session starts it in
+`/start`'s order (act, launch, mark off after its own launch), an automatic one is refused.

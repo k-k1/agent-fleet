@@ -62,8 +62,8 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	g := retireGate(name)
 	g.RLock()
 	defer g.RUnlock()
-	auto := r.Context().Value(autoStartKey{}) != nil
-	if cur, ok := session.ReadMeta(name); ok && auto && isRetired(cur) {
+	auto := startIsAutomatic(r)
+	if cur, ok := readMetaStable(name); ok && auto && isRetired(cur) {
 		httpx.WriteErr(w, http.StatusConflict, "session_retired", errSessionRetired.Error())
 		return
 	}
@@ -100,8 +100,8 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// A person's start makes a retired session an ordinary one again (ADR 0137 §6). The
-	// callers that start sessions on their own refuse a retired one before they get here.
+	// A deliberate start makes a retired session an ordinary one again (ADR 0137 §6). An
+	// automatic one was refused above, so only a deliberate start reaches here with the mark.
 	if !auto {
 		if err := clearRetired(name); err != nil {
 			// Started, but still marked: the mark keeps the Agent's own starts away, and the

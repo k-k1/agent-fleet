@@ -13,7 +13,9 @@ package sessionx
 // orders the whole of it against the starts that check the mark and then launch.
 //
 // The mark means "retired": from the moment it is written no automatic start or input reaches the
-// session. A person's start (POST /start) clears it, and it is an ordinary session from then on.
+// session. A deliberate start clears it (POST /start that is not automatic, a carried answer, a
+// message of a deliberate origin to a Managed session: session_origin.go), and it is an ordinary
+// session from then on.
 // The intent (retireIntent) is on disk, so a process that died half-way finishes the tree at
 // its next start (ReconcileRetired).
 
@@ -70,7 +72,8 @@ func retireGate(name string) *sync.RWMutex {
 	return v.(*sync.RWMutex)
 }
 
-// errSessionRetired is what an automatic start or input is refused with.
+// errSessionRetired is what an automatic start or input is refused with, and what any start is
+// refused with when the meta cannot be read.
 var errSessionRetired = errors.New("session_retired: this session was retired; resume it from the Console first")
 
 // clearRetired takes the mark off a session a person started. Which retire's mark it was stays on
