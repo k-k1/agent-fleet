@@ -10,6 +10,9 @@ import { t } from "../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { normalizeHex } from "./labelColor.ts";
 
+/** How each provider is written for a person. */
+export const PROVIDER_NAMES: Record<string, string> = { github: "GitHub", bitbucket: "Bitbucket", jira: "Jira" };
+
 export interface WorkItem {
   id: string;
   queryId: string;

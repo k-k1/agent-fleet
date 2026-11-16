@@ -64,3 +64,27 @@ describe("splitForSend", () => {
     expect(composeMemoMessage(o)).not.toContain("taken");
   });
 });
+
+// A reference is written the way the Control Plane's buildFlushMessage writes it (memoRefLine), so
+// a note sent by hand and one flushed by the server read the same.
+describe("composeMemoMessage with a reference", () => {
+  const reference = { provider: "github", key: "acme/app#12", url: "https://github.com/acme/app/issues/12" };
+  const line = "作業項目: acme/app#12 (https://github.com/acme/app/issues/12)";
+
+  it("puts the item on a line after the text of a lone note", () => {
+    expect(composeMemoMessage([aMemo({ body: "look at the crash", reference })])).toBe("look at the crash\n" + line);
+  });
+
+  it("writes the item alone for a note that is only a reference, with the scaffolding of a list", () => {
+    const got = composeMemoMessage([
+      aMemo({ id: "a", category: "q", body: "", reference }),
+      aMemo({ id: "b", category: "q", body: "second", reference: { ...reference, key: "acme/app#13", url: "https://github.com/acme/app/issues/13" } }),
+    ]);
+    expect(got).toBe("## q\n1. " + line + "\n2. second\n   作業項目: acme/app#13 (https://github.com/acme/app/issues/13)");
+  });
+
+  it("keeps the attached images after the item, and an image-only note without one unchanged", () => {
+    expect(composeMemoMessage([aMemo({ body: "", reference, attachments: [{ path: "/i/a.png", name: "a.png" }] })])).toBe(line + "\n添付画像: a.png");
+    expect(composeMemoMessage([aMemo({ body: "", attachments: [{ path: "/i/a.png", name: "a.png" }] })])).toBe("（画像）\n添付画像: a.png");
+  });
+});

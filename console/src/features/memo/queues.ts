@@ -32,6 +32,7 @@ const WAITING_REASONS: readonly string[] = [
   "tenant_off",
   "disabled",
   "no_report",
+  "no_references",
   "paused",
   "window_closed",
   "below_threshold",
@@ -85,6 +86,7 @@ function readQueue(v: unknown): MemoQueue | null {
     pausedReason: str(v.pausedReason),
     draining: v.draining === true,
     noReportAt: str(v.noReportAt),
+    noRefsAt: str(v.noRefsAt),
     enabled: v.enabled === true,
     generation: num(v.generation, 0),
     createdAt: str(v.createdAt),
@@ -142,7 +144,7 @@ export function readDeliveries(raw: unknown): MemoDelivery[] | null {
 
 /** The line that says why a category with notes waiting starts nothing: a catalogue key and its
  *  parameters. Null when there is nothing to say: no `waiting` (a run can start, nothing waits, an
- *  older Control Plane), and for a pause and a workspace that has to be restarted, which have
+ *  older Control Plane), and for a pause and a workspace that has to be restarted (for runs, or for notes that point at an item), which have
  *  notices of their own that must not be said twice. `at` writes a time the way the screen does. */
 export function waitingWords(
   q: Pick<MemoQueue, "waiting">,
@@ -150,7 +152,7 @@ export function waitingWords(
   agentName: (kind: string) => string,
 ): { key: MsgKey; params?: Record<string, string | number> } | null {
   const w = q.waiting;
-  if (!w || w.reason === "paused" || w.reason === "no_report") return null;
+  if (!w || w.reason === "paused" || w.reason === "no_report" || w.reason === "no_references") return null;
   const when = w.until && !Number.isNaN(Date.parse(w.until)) ? { at: at(w.until) } : null;
   switch (w.reason) {
     case "tenant_off":

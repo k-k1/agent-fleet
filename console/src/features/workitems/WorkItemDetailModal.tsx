@@ -49,6 +49,7 @@ import { errText } from "../../core/api/client.ts";
 import type { Repo } from "../repos/store.ts";
 import { workItemDetail, workItemMerge } from "./api.ts";
 import { LabelBadge } from "./LabelBadge.tsx";
+import { AddToAutoRunDialog } from "../memo/AddToAutoRunDialog.tsx";
 import type { ResolvedSessionRef } from "./sessionRefs.ts";
 import { linkPRState } from "../sessions/sessionLinks.ts";
 import {
@@ -62,6 +63,7 @@ import {
   mergeGate,
   mergePending,
   MERGE_RECHECK_DELAYS_MS,
+  PROVIDER_NAMES,
   readMergeResult,
   readWorkItemDetail,
   relTime,
@@ -254,7 +256,6 @@ const MERGE_METHOD_LABEL = {
   rebase_merge: "wi.merge_method_rebase_merge",
 } as const;
 
-const PROVIDER_NAMES: Record<string, string> = { github: "GitHub", bitbucket: "Bitbucket", jira: "Jira" };
 
 interface Props {
   item: WorkItem;
@@ -371,6 +372,9 @@ export function WorkItemDetailModal({
 
   const gate = mergeGate(d);
   const [mergeDlg, setMergeDlg] = useState<MergeDialog | null>(null);
+  // "Add to auto-run" (ADR 0137 §4): a pointer to this item in a category of notes. The address
+  // is the live read's when it has answered, the row's otherwise.
+  const [addRun, setAddRun] = useState(false);
   // Removing a session's link (#3166). removed hides the row at once: the session list that
   // feeds `started` only drops it on its next poll.
   const [unlinkDlg, setUnlinkDlg] = useState<WorkItemSessionRef | null>(null);
@@ -920,6 +924,10 @@ export function WorkItemDetailModal({
             {mergeSlot.note.text}
           </span>
         )}
+        <Button variant="ghost" disabled={neutral} onClick={() => setAddRun(true)}>
+          <Icon name="add" />
+          {tr("memo.addrun_action")}
+        </Button>
         <Button variant="ghost" onClick={onClose}>
           {tr("common.cancel")}
         </Button>
@@ -958,6 +966,14 @@ export function WorkItemDetailModal({
           </Button>
         )}
       </footer>
+      {addRun && (
+        <AddToAutoRunDialog
+          reference={{ provider: item.provider, key: item.key, url: view.url || item.url }}
+          repos={repos}
+          defaultRepo={defaultRepo}
+          onClose={() => setAddRun(false)}
+        />
+      )}
       {mergeDlg && (
         <ConfirmDialog
           title={tr("wi.merge_title")}

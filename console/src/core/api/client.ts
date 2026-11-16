@@ -1420,6 +1420,7 @@ export const repoSkills = (repo: string, kind: string, subdir: string): Promise<
 import type {
   Memo,
   MemoInput,
+  MemoCreated,
   MemoPatch,
   MemoCategory,
   MemoCategoryInput,
@@ -1428,7 +1429,7 @@ import type {
 } from "../../types/memo.ts";
 
 export const memoList = (): Promise<Memo[]> => api("api/memos");
-export const memoCreate = (input: MemoInput): Promise<Memo> =>
+export const memoCreate = (input: MemoInput): Promise<MemoCreated> =>
   apiJSON("api/memos", "POST", input);
 export const memoUpdate = (id: string, patch: MemoPatch): Promise<Memo> =>
   apiJSON(`api/memos/${encodeURIComponent(id)}`, "PATCH", patch);

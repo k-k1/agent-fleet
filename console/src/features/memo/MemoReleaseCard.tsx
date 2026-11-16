@@ -12,13 +12,16 @@
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
+import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
+import { memoReference } from "./reference.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import type { Memo } from "../../types/memo.ts";
 import type { ReleaseCard } from "./queues.ts";
 
 /** What a row shows of a message: the whole body, never a cut. The release is bound to a hash of
  *  the full content, so anything shorter would let a change past the cut be approved unseen.
- *  The reference path is shown on its own line, since it is hashed too. */
+ *  The reference path and the work item a note points at are shown on lines of their own, since
+ *  both are hashed too: a card never hides a reference. */
 export function releaseRowText(m: Memo): string {
   return m.body || "";
 }
@@ -56,25 +59,31 @@ export function MemoReleaseCard({ card, busy, changedIds, edited, awaiting, onRe
         <span className="memo-release-title">{title}</span>
       </div>
       <ul className="memo-release-items">
-        {card.items.map((m) => (
-          <li key={m.id} className="memo-release-item">
-            <div className="memo-release-body">
-              {m.kind === "file" && m.refPath && <code className="memo-release-ref">{m.refPath}</code>}
-              <div className="memo-release-text">{releaseRowText(m) || (m.kind === "file" ? "" : "—")}</div>
-              {(m.attachments?.length ?? 0) > 0 && (
-                <div className="memo-release-atts">
-                  {m.attachments!.map((a) => (
-                    <span key={a.name} className="memo-release-att" title={a.name}>
-                      <MemoImageThumb name={a.name} />
-                      <span className="memo-release-att-name">{a.name}</span>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-            {marked(m.id) && <span className="memo-release-changed">{tr("memo.changed_tag")}</span>}
-          </li>
-        ))}
+        {card.items.map((m) => {
+          const ref = memoReference(m);
+          return (
+            <li key={m.id} className="memo-release-item">
+              <div className="memo-release-body">
+                {m.kind === "file" && m.refPath && <code className="memo-release-ref">{m.refPath}</code>}
+                {ref && <MemoReferenceLink reference={ref} />}
+                {(releaseRowText(m) || (m.kind !== "file" && !ref)) && (
+                  <div className="memo-release-text">{releaseRowText(m) || "—"}</div>
+                )}
+                {(m.attachments?.length ?? 0) > 0 && (
+                  <div className="memo-release-atts">
+                    {m.attachments!.map((a) => (
+                      <span key={a.name} className="memo-release-att" title={a.name}>
+                        <MemoImageThumb name={a.name} />
+                        <span className="memo-release-att-name">{a.name}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {marked(m.id) && <span className="memo-release-changed">{tr("memo.changed_tag")}</span>}
+            </li>
+          );
+        })}
       </ul>
       {card.items.some((m) => changedIds.has(m.id)) && (
         <div className="memo-release-note" role="alert">
@@ -87,7 +96,10 @@ export function MemoReleaseCard({ card, busy, changedIds, edited, awaiting, onRe
         </div>
       )}
       <div className="memo-release-foot">
-        <span className="memo-release-hint">{tr("memo.release_hint")}</span>
+        <span className="memo-release-hint">
+          {tr("memo.release_hint")}
+          {card.items.some((m) => memoReference(m)) && " " + tr("memo.ref_card_hint")}
+        </span>
         {mustConfirm ? (
           <Button small variant="primary" disabled={busy} onClick={() => onConfirm(card.items)}>
             {tr("memo.release_confirm")}
