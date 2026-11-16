@@ -80,6 +80,7 @@ Press "**Remove settings**" and the category is an ordinary memo category again.
 - In an auto-run category, a session can add and change memos. It cannot send or delete them, and cannot rename, merge or delete the category. You do those in the Console
 - When a session changes a memo you approved (waiting to run), it goes back to "Waits for approval". When you change it yourself, it stays waiting to run
 - Changing a memo that waits for approval yourself does not approve it
+- A memo added from a worktree session lands in the category of the **base repository**, so auto-run set on that repository's category sees it. This holds for every memo, whether or not the category has auto-run. Memos already under a worktree's own group stay there; drag them to move them
 - A memo a session adds is up to 16 KB. Its text cannot start with `[agent-fleet:`. Sessions can add 30 memos a minute in total, across all categories
 
 ### Approve

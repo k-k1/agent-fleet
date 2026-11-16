@@ -632,3 +632,16 @@ session. An act recorded in the current run is after any list of an earlier run 
 closes the restored-state-file case of the note of 2026-11-15 and also keeps a session a person started after a restart
 while its retire was pending. The remaining gap needs two restarts with the retire pending and a rolled-back counter. An
 older Agent sends no identity and an older Control Plane sends none: both behave as before.
+
+Added 2026-11-16 (#4175): §2's mapping is built, and "filing a note added from a worktree under its base repository" in the
+list of what step 1 left out is done. Decided by the owner: it applies to every note a session adds or moves, plain notes
+included, not only to categories with auto-run on; a worktree folder is always filed under its base repository. The Agent
+maps `repo` before it relays a create, and an update that sets `repo`: while the folder exists under `~/repos`, git decides
+(a linked worktree maps to the folder of its main working copy, a worktree of a worktree included, and a folder that is not
+a linked worktree is left alone even with an "@" in its name); once the folder is gone, the name rule of the Console applies
+(everything before the first "@"). A name that is not one folder name, or a git call that fails or times out, is relayed as
+named: the memo is never refused for the mapping. The Console files what it derives from a working copy under the base too
+(the send dialog of a file). What a member chooses by hand stays as chosen: the composer inside a group and a drag onto a
+group keep that group's repo, a `repo@slug` one included. Memos and categories already under a `repo@slug` bucket stay where
+they are: no migration and no rewrite on read, and a member can drag them. The launch dialog's stashed draft keeps its key
+and its memo's repo: it is saved per working copy on purpose. The normalised `host/owner/repo` of §2 stays unbuilt.

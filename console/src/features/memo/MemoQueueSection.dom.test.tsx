@@ -15,12 +15,13 @@ const memoCreate = vi.fn(async (input: MemoInput) => {
   return { id: "new", ...input } as unknown as Memo;
 });
 const memoCategoryCreate = vi.fn(async () => ({ id: "cnew" }) as unknown as MemoCategory);
+const memoUpdate = vi.fn(async (_id: string, _patch: unknown) => ({}));
 
 vi.mock("./api.ts", () => ({
   memoList: async () => servedMemos,
   memoCategoryList: async () => servedCats,
   memoCreate: (input: MemoInput) => memoCreate(input),
-  memoUpdate: async () => ({}),
+  memoUpdate: (id: string, patch: unknown) => memoUpdate(id, patch),
   memoDelete: async () => ({ ok: true }),
   memoCategoryCreate: () => memoCategoryCreate(),
   memoCategoryUpdate: async () => ({}),
@@ -124,6 +125,7 @@ beforeEach(() => {
   created.length = 0;
   memoCreate.mockClear();
   memoCategoryCreate.mockClear();
+  memoUpdate.mockClear();
   servedMemos = [];
   servedCats = [];
   host = document.createElement("div");
@@ -202,6 +204,37 @@ describe("category + button", () => {
     await type("crash on save");
     await click(submit());
     expect(created).toEqual([{ kind: "text", body: "crash on save", repo: "app", category: "Bugs" }]);
+  });
+
+  // A group a member already has under a worktree bucket keeps its repo: what is chosen by
+  // hand is not normalised, only what the Console derives.
+  it("keeps an existing worktree bucket's repo when adding into it", async () => {
+    servedCats = [aCat({ id: "c4", repo: "app@one", name: "Bugs" })];
+    await render();
+
+    await click(addBtn("Bugs"));
+    await type("crash on save");
+    await click(submit());
+    expect(created).toEqual([{ kind: "text", body: "crash on save", repo: "app@one", category: "Bugs" }]);
+  });
+
+  it("keeps an existing worktree bucket's repo when a memo is dragged onto it", async () => {
+    servedCats = [aCat({ id: "c4", repo: "app@one", name: "Bugs" })];
+    servedMemos = [aMemo({ id: "m9", repo: "", category: "" })];
+    await render();
+
+    const grip = must(document.querySelector<HTMLElement>(".memo-grip"), "memo grip");
+    const dt = { setData: () => {}, types: [], files: [], effectAllowed: "" };
+    const fire = async (el: Element, type: string) =>
+      act(async () => {
+        const ev = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, "dataTransfer", { value: dt });
+        el.dispatchEvent(ev);
+      });
+    await fire(grip, "dragstart");
+    await fire(groupFor("Bugs"), "drop");
+    await settle();
+    expect(memoUpdate).toHaveBeenCalledWith("m9", { position: 0, category: "Bugs", repo: "app@one" });
   });
 
   it("unfolds a collapsed category so the composer is visible", async () => {
