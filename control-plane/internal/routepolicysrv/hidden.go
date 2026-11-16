@@ -62,7 +62,7 @@ func foldOwners(layers routepolicy.Layers, endpointRoutes []string, approvedHost
 		os, hs := []ownerItemWire{}, []hiddenItemWire{}
 		for _, id := range ids {
 			rs := routesOf(id)
-			if len(rs) == 0 {
+			if len(rs) == 0 { // defensive: no catalog entry is routeless today
 				continue
 			}
 			ok := []string{}

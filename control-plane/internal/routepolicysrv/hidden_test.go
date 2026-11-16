@@ -172,12 +172,17 @@ func TestTenantViewCarriesOwners(t *testing.T) {
 	_, mux, tn := routePolicyFixture(t, "")
 	base := "/api/admin/tenants/" + tn.Slug + "/route-policy"
 	v := decodePolicy(t, routeAdminDo(mux, "GET", base, "boss-x", "").Body.String())
-	if len(v.Owners.Kinds) == 0 || v.Owners.Chat == nil || v.Owners.Imagegen == nil {
+	if v.Owners.Kinds == nil || v.Owners.Chat == nil || v.Owners.Imagegen == nil {
 		t.Fatalf("owners %+v", v.Owners)
 	}
-	for _, k := range v.Owners.Kinds {
-		if !slices.Equal(k.Routes, k.Allowed) {
-			t.Errorf("unrestricted %s: routes %v allowed %v", k.ID, k.Routes, k.Allowed)
+	for name, items := range map[string][]ownerItemWire{"kinds": v.Owners.Kinds, "chat": v.Owners.Chat, "imagegen": v.Owners.Imagegen} {
+		if len(items) == 0 {
+			t.Errorf("unrestricted %s: no owners", name)
+		}
+		for _, k := range items {
+			if !slices.Equal(k.Routes, k.Allowed) {
+				t.Errorf("unrestricted %s/%s: routes %v allowed %v", name, k.ID, k.Routes, k.Allowed)
+			}
 		}
 	}
 	noSubs := `{"classes":["member-key","member-cloud","provided","self-hosted"]}`
