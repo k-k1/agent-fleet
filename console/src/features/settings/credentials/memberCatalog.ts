@@ -18,9 +18,12 @@ export interface MemberCatalog {
   kinds: Map<string, LiveKind> | null;
   /** The member's own switches hide at least one kind the policy allows. */
   hiddenByOwn: boolean;
+  /** Per-connection routes the policy would allow on a host it approves, though not on the
+   *  connection stored now (access.addableRoutes): their entry is offered. Names no host. */
+  addable: Set<string>;
 }
 
-const EMPTY: MemberCatalog = { kinds: null, hiddenByOwn: false };
+const EMPTY: MemberCatalog = { kinds: null, hiddenByOwn: false, addable: new Set() };
 
 /** parseMemberCatalog reads a GET /agents/kinds answer; null when it is not one, or when it does
  *  not prove itself filtered by the policy in force: an older Agent sends the same `kinds` with no
@@ -36,8 +39,9 @@ export function parseMemberCatalog(raw: unknown): MemberCatalog | null {
   for (const k of r.kinds as LiveKind[]) {
     if (k && typeof k.kind === "string") kinds.set(k.kind, k);
   }
-  const a = r.access;
-  return { kinds, hiddenByOwn: !!a && (a.someOffByOwnSettings === true || a.allOffByOwnSettings === true) };
+  const a = r.access as { allOffByOwnSettings?: unknown; someOffByOwnSettings?: unknown; addableRoutes?: unknown };
+  const addable = new Set(Array.isArray(a.addableRoutes) ? a.addableRoutes.filter((x): x is string => typeof x === "string") : []);
+  return { kinds, hiddenByOwn: a.someOffByOwnSettings === true || a.allOffByOwnSettings === true, addable };
 }
 
 // CATALOG_REFRESH_MS bounds how long a policy change takes to reach an open page: the Agent pulls

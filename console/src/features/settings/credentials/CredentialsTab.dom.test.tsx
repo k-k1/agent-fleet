@@ -32,7 +32,7 @@ let host: HTMLDivElement | null = null;
 
 const ALL_KINDS = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse"];
 /** The live catalogue: the kinds the policy allows and the member has not switched off. */
-const catalogOf = (kinds: (string | Record<string, unknown>)[], access: Record<string, boolean> = {}) => ({
+const catalogOf = (kinds: (string | Record<string, unknown>)[], access: Record<string, unknown> = {}) => ({
   // A bare name is a kind with every route its card stores a credential for allowed.
   kinds: kinds.map((k) => (typeof k === "string" ? { kind: k, fixedRoutes: CARD_ROUTES[k] } : k)),
   access: { policyConfirmed: true, ...access },
@@ -341,5 +341,63 @@ describe("the catalogue's freshness", () => {
     await act(async () => release(catalogOf(["codex"])));
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     expect(cards()).toEqual(["codex"]);
+  });
+});
+
+// An approved self-hosted host makes the member's llama.cpp endpoint addable before one is stored
+// (ADR 0138 §2): the catalogue says so with addableRoutes, which names no host.
+describe("the member's llama.cpp endpoint under approved hosts", () => {
+  const lcppKind = { kind: "lcpp", fixedRoutes: ["member-llamacpp"] };
+
+  it("offers the entry with no endpoint stored, then shows it once stored on an approved host", async () => {
+    answer({ lcpp: { connected: false } }, catalogOf([], { addableRoutes: ["member-llamacpp"] }));
+    await mount();
+    expect(cards()).toEqual(["lcpp"]);
+    expect(host!.querySelector(".p-card input.cinput")).not.toBeNull();
+    // Stored on the approved host: lcpp is listed with the route, and its endpoint is shown.
+    answer({ lcpp: { connected: true, url: "http://llm.corp.example:8081", reachable: true } }, catalogOf([lcppKind]));
+    resetConnectionsCache();
+    act(() => root?.unmount());
+    host?.remove();
+    await mount();
+    expect(cards()).toEqual(["lcpp"]);
+    expect(host!.textContent).toContain("http://llm.corp.example:8081");
+  });
+
+  it("does not show an endpoint stored on a host the policy does not approve, and offers the entry", async () => {
+    answer(
+      { lcpp: { connected: true, url: "http://other.example:8081", reachable: true } },
+      catalogOf([], { addableRoutes: ["member-llamacpp"] }),
+    );
+    await mount();
+    expect(cards()).toEqual(["lcpp"]);
+    expect(host!.textContent).not.toContain("other.example");
+    expect(host!.querySelector(".p-card input.cinput")).not.toBeNull();
+  });
+
+  it("reports a refused entry on a host that is not approved", async () => {
+    const { apiJSON } = await import("../../../core/api/client.ts");
+    (apiJSON as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      error: { code: "route_forbidden", message: "the credential policy does not allow member-llamacpp, so this credential cannot be added" },
+    });
+    answer({ lcpp: { connected: false } }, catalogOf([], { addableRoutes: ["member-llamacpp"] }));
+    await mount();
+    const [url] = Array.from(host!.querySelectorAll<HTMLInputElement>(".p-card input.cinput"));
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      set.call(url, "http://other.example:8081");
+      url.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const connect = Array.from(host!.querySelectorAll<HTMLButtonElement>(".p-card button")).find((b) => b.textContent === t("conn.connect"))!;
+    await act(async () => connect.click());
+    expect(apiJSON).toHaveBeenCalledWith("api/connections/lcpp", "PUT", expect.objectContaining({ url: "http://other.example:8081" }));
+    // Still offered, and nothing reads as connected.
+    expect(host!.textContent).not.toContain(t("conn.connected"));
+  });
+
+  it("offers no entry without an approved host", async () => {
+    answer({ lcpp: { connected: false } }, catalogOf([]));
+    await mount();
+    expect(cards()).toEqual([]);
   });
 });

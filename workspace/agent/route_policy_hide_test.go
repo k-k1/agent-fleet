@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -288,7 +289,7 @@ func liveAccess(t *testing.T) memberAccessWire {
 func TestKindCatalogMemberSwitchesAndAccess(t *testing.T) {
 	memberHome(t)
 	useHidingPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
-	if a := liveAccess(t); a != (memberAccessWire{PolicyConfirmed: true}) {
+	if a := liveAccess(t); !reflect.DeepEqual(a, memberAccessWire{PolicyConfirmed: true}) {
 		t.Errorf("no restriction, no switch: %+v", a)
 	}
 
@@ -300,7 +301,7 @@ func TestKindCatalogMemberSwitchesAndAccess(t *testing.T) {
 	if _, ok := by[session.KindShell]; !ok {
 		t.Error("shell runs no model and cannot be switched off, yet it was hidden")
 	}
-	if a := liveAccess(t); a != (memberAccessWire{SomeOffByOwnSettings: true, PolicyConfirmed: true}) {
+	if a := liveAccess(t); !reflect.DeepEqual(a, memberAccessWire{SomeOffByOwnSettings: true, PolicyConfirmed: true}) {
 		t.Errorf("one harness switched off: %+v", a)
 	}
 
@@ -308,7 +309,7 @@ func TestKindCatalogMemberSwitchesAndAccess(t *testing.T) {
 	// allowed route. Switching off agy, which the policy forbids anyway, is not reported.
 	useHidingPolicy(t, apiKeysOnly)
 	writeMemberPrefs(t, map[string]any{"agentEnabled": map[string]any{"agy": false}})
-	if a := liveAccess(t); a != (memberAccessWire{PolicyConfirmed: true}) {
+	if a := liveAccess(t); !reflect.DeepEqual(a, memberAccessWire{PolicyConfirmed: true}) {
 		t.Errorf("only a forbidden harness switched off: %+v", a)
 	}
 	off := map[string]any{}
@@ -316,12 +317,12 @@ func TestKindCatalogMemberSwitchesAndAccess(t *testing.T) {
 		off[k] = false
 	}
 	writeMemberPrefs(t, map[string]any{"agentEnabled": off})
-	if a := liveAccess(t); a != (memberAccessWire{AllOffByOwnSettings: true, SomeOffByOwnSettings: true, PolicyConfirmed: true}) {
+	if a := liveAccess(t); !reflect.DeepEqual(a, memberAccessWire{AllOffByOwnSettings: true, SomeOffByOwnSettings: true, PolicyConfirmed: true}) {
 		t.Errorf("every allowed harness switched off: %+v", a)
 	}
 
 	useHidingPolicy(t, routepolicy.Policy{Revision: 3, Restricted: true, Allowed: []string{"no-such-route"}})
-	if a := liveAccess(t); a != (memberAccessWire{NoRouteAvailable: true, PolicyConfirmed: true}) {
+	if a := liveAccess(t); !reflect.DeepEqual(a, memberAccessWire{NoRouteAvailable: true, PolicyConfirmed: true}) {
 		t.Errorf("nothing allowed: %+v", a)
 	}
 }
@@ -714,4 +715,66 @@ func TestKindCatalogSaysWhetherThePolicyIsConfirmed(t *testing.T) {
 	if confirmed() {
 		t.Error("a policy that cannot be confirmed reads confirmed")
 	}
+}
+
+// An approved self-hosted host makes member-llamacpp addable before any endpoint is stored (ADR
+// 0138 §2): the catalogue says so without naming a host, and GET /connections keeps lcpp's entry,
+// so the member can enter the endpoint that makes lcpp usable. Once it is stored on the approved
+// host, lcpp is listed with the route, and nothing is left to add.
+func TestMemberEndpointIsAddableOnAnApprovedHost(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	access := func() memberAccessWire {
+		rec := httptest.NewRecorder()
+		handleAgentKinds(rec, httptest.NewRequest(http.MethodGet, "/agents/kinds", nil))
+		var got kindCatalogWire
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		return *got.Access
+	}
+	useHidingPolicy(t, apiKeysOnly)
+	if a := access(); len(a.AddableRoutes) != 0 {
+		t.Errorf("control, no approved host: addable %v", a.AddableRoutes)
+	}
+	p := apiKeysOnly
+	p.Endpoints, p.EndpointRoutes = []string{"llm.corp.example"}, []string{routes.RouteMemberLlamacpp}
+	useHidingPolicy(t, p)
+	if _, ok := liveKinds(t)[session.KindLcpp]; ok {
+		t.Error("lcpp is listed with no endpoint stored")
+	}
+	if a := access(); !slices.Equal(a.AddableRoutes, []string{routes.RouteMemberLlamacpp}) {
+		t.Errorf("addable %v, want member-llamacpp", a.AddableRoutes)
+	}
+	if body, _ := json.Marshal(access()); strings.Contains(string(body), "corp.example") {
+		t.Errorf("the access summary names an approved host: %s", body)
+	}
+	if _, ok := connectionsMap(t)[session.KindLcpp]; !ok {
+		t.Error("GET /connections has no lcpp entry to add the endpoint on")
+	}
+	if w := lcppPut("http://other.example:8081", ""); w.Code != http.StatusForbidden {
+		t.Errorf("an endpoint on a host that is not approved: %d %s", w.Code, w.Body.String())
+	}
+	if w := lcppPut("http://llm.corp.example:8081", ""); w.Code != http.StatusOK {
+		t.Fatalf("an endpoint on the approved host was refused: %d %s", w.Code, w.Body.String())
+	}
+	lcpp, ok := liveKinds(t)[session.KindLcpp]
+	if !ok || !slices.Contains(append(lcpp.Routes, lcpp.FixedRoutes...), routes.RouteMemberLlamacpp) {
+		t.Errorf("lcpp after the approved endpoint: %+v listed=%v", lcpp, ok)
+	}
+	if a := access(); len(a.AddableRoutes) != 0 {
+		t.Errorf("addable %v after the endpoint was stored on the approved host", a.AddableRoutes)
+	}
+}
+
+// connectionsMap is GET /connections' entries by name.
+func connectionsMap(t *testing.T) map[string]json.RawMessage {
+	t.Helper()
+	w := httptest.NewRecorder()
+	handleConnectionsGet(w, httptest.NewRequest(http.MethodGet, "/connections", nil))
+	var out map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("%v: %s", err, w.Body.String())
+	}
+	return out
 }

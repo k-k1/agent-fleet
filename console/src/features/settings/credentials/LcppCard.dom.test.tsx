@@ -41,7 +41,7 @@ async function mount(st: ProviderConn | undefined, reload = vi.fn()) {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<LcppCard running st={st} reload={reload} />);
+    root!.render(<LcppCard running st={st} reload={reload} endpointAllowed />);
   });
   // Let the auto-check effect's promise chain (if it fired) settle.
   await act(async () => {
@@ -87,14 +87,14 @@ describe("LcppCard — a connection saved but never observed", () => {
     const reload = vi.fn();
     const st: ProviderConn = { enabled: true, connected: true, url: "http://box:9931" };
     await act(async () => {
-      root!.render(<LcppCard running st={st} reload={reload} />);
+      root!.render(<LcppCard running st={st} reload={reload} endpointAllowed />);
     });
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
     });
     await act(async () => {
-      root!.render(<LcppCard running st={{ ...st }} reload={reload} />);
+      root!.render(<LcppCard running st={{ ...st }} reload={reload} endpointAllowed />);
     });
     await act(async () => {
       await Promise.resolve();

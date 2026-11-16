@@ -43,7 +43,7 @@ const CARDS: Record<string, (st: ProviderConn | undefined, reload: () => void, a
   kiro: (st, reload) => <KiroCard running st={st} reload={reload} />,
   agy: (st, reload) => <AgyCard running st={st} reload={reload} />,
   opencode: (st, reload, allowed) => <OpencodeCard running st={st} reload={reload} allowed={allowed} />,
-  lcpp: (st, reload) => <LcppCard running st={st} reload={reload} />,
+  lcpp: (st, reload, allowed) => <LcppCard running st={st} reload={reload} endpointAllowed={allowed.has("member-llamacpp")} />,
   muse: (st, reload, allowed) => <MuseCard running st={st} reload={reload} allowed={allowed} />,
 };
 
@@ -145,9 +145,11 @@ export function CredentialsTab() {
             <p className="muted ds-note">{tr("agents.note_apply")}</p>
             {CREDENTIAL_GROUPS.map((g) => {
               const present = g.kinds.filter((k) => {
-                if (!conns || !(k in conns) || !conns[k as keyof typeof conns] || !catalog.kinds!.has(k)) return false;
+                if (!conns || !(k in conns) || !conns[k as keyof typeof conns]) return false;
                 const allowed = allowedRoutesOf(catalog.kinds!.get(k));
-                return (CARD_ROUTES[k] ?? []).some((r) => allowed.has(r));
+                // A per-connection route the policy allows only on an approved host (the member's
+                // llama.cpp endpoint) is offered for entry before any connection is stored there.
+                return (CARD_ROUTES[k] ?? []).some((r) => (catalog.kinds!.has(k) && allowed.has(r)) || catalog.addable.has(r));
               });
               if (present.length === 0) return null;
               return (

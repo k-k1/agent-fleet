@@ -83,7 +83,10 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 	// to the reset line (#4169, P5/P6).
 	hide, hiding := routepolicy.Hiding()
 	for k, st := range agentConnectionStatuses(agents.StatusInputs{Secrets: s, GithubConnected: ghConnected}) {
-		if hiding && hide.HidesKind(kindRoutesOf(k)) || len(kindRoutesOf(k)) > 0 && !uiprefs.AgentEnabled(k) {
+		// A harness whose per-connection route the policy allows on an approved host keeps its entry,
+		// so the member can add a connection there (AddableOnEndpoint names no host).
+		if hiding && hide.HidesKind(kindRoutesOf(k)) && !slices.ContainsFunc(kindRoutesOf(k), hide.AddableOnEndpoint) ||
+			len(kindRoutesOf(k)) > 0 && !uiprefs.AgentEnabled(k) {
 			continue
 		}
 		out[k] = st

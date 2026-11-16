@@ -22,7 +22,19 @@ import type { ProviderConn } from "../../../types/session.ts";
 // /connections cannot tell us that itself), fire the same check exactly once. Once `st`
 // carries a real true/false, this effect does nothing — reopening the settings modal must not
 // re-dial a LAN box that already answered (or already didn't) a moment ago.
-export function LcppCard({ running, st, reload }: { running: boolean; st: ProviderConn | undefined; reload: () => void }) {
+export function LcppCard({
+  running,
+  st,
+  reload,
+  endpointAllowed,
+}: {
+  running: boolean;
+  st: ProviderConn | undefined;
+  reload: () => void;
+  /** Whether the policy allows the endpoint stored now (ADR 0138 §2). One it does not is kept but
+   *  not shown (D14a): the card offers the entry, which replaces it on an approved host. */
+  endpointAllowed: boolean;
+}) {
   const tr = useT();
   const toast = useToast();
   const [url, setUrl] = useState("");
@@ -31,8 +43,8 @@ export function LcppCard({ running, st, reload }: { running: boolean; st: Provid
   const [check, setCheck] = useState<
     null | { state: "checking" } | { state: "ok"; build: string; nctx: number; models: string[] } | { state: "error"; msg: string }
   >(null);
-  const connected = !!st?.connected;
-  const reachable = st?.reachable;
+  const connected = !!st?.connected && endpointAllowed;
+  const reachable = connected ? st?.reachable : undefined;
   const autoChecked = useRef(false);
 
   const save = async () => {
