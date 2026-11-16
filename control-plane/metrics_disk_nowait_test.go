@@ -14,9 +14,26 @@ func waitDiskIdle(t *testing.T) {
 	diskBG.wg.Wait()
 }
 
+// setRunDU swaps runDU for the test and starts it on an empty du cache. A du an earlier test kicked on the shared refresher
+// still reads runDU and diskRefreshTimeout, so both swaps wait for it first; assigning under
+// it is a data race that fails the -race run.
+func setRunDU(t *testing.T, du func(context.Context, string) ([]byte, error)) {
+	t.Helper()
+	diskBG.wg.Wait()
+	prev := runDU
+	runDU = du
+	diskUsages.m = map[string]diskSample{}
+	t.Cleanup(func() {
+		diskBG.wg.Wait()
+		runDU = prev
+		diskUsages.m = map[string]diskSample{}
+	})
+}
+
 // resetDiskBG gives a test its own refresher, du cache and runDU, restored afterwards.
 func resetDiskBG(t *testing.T, du func(context.Context, string) ([]byte, error)) {
 	t.Helper()
+	diskBG.wg.Wait() // see setRunDU
 	prevBG, prevDU, prevTO := diskBG, runDU, diskRefreshTimeout
 	diskBG = newDiskRefresher()
 	diskUsages.m = map[string]diskSample{}

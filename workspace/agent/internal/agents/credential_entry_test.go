@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,7 +17,9 @@ func useEntryPolicy(t *testing.T) *routepolicy.Store {
 	s := routepolicy.Open(filepath.Join(t.TempDir(), "rp.json"), "")
 	old := routepolicy.Active
 	routepolicy.Active = func() *routepolicy.Store { return s }
-	t.Cleanup(func() { routepolicy.Active = old })
+	// A policy change notifies its listeners asynchronously, and closeForbiddenLogins reaches
+	// every guarded store: let them finish before the next test registers its own flows.
+	t.Cleanup(func() { routepolicy.WaitListeners(); routepolicy.Active = old })
 	return s
 }
 
@@ -49,17 +52,23 @@ func TestCredentialEntryRefusal(t *testing.T) {
 // A tighter policy closes the running login flows of a route it forbids, killing their process,
 // and leaves the flows of an allowed route alone.
 func TestTighterPolicyClosesForbiddenLogins(t *testing.T) {
+	routepolicy.WaitListeners() // a listener an earlier test started must not reach these flows
 	forbidden := NewFlowStore(time.Hour).GuardLogins(routes.RouteAgyLogin)
 	allowed := NewFlowStore(time.Hour).GuardLogins(routes.RouteOpenAIAPI)
-	start := func(st *FlowStore) (*Flow, string) {
+	start := func(st *FlowStore, onClose func()) (*Flow, string) {
 		f, err := StartFlow(exec.Command("sleep", "60"))
 		if err != nil {
 			t.Fatal(err)
 		}
+		f.OnClose = onClose // before Put: once in the store, any listener may Close it
 		return f, st.Put(f)
 	}
-	fForbidden, idForbidden := start(forbidden)
-	fAllowed, idAllowed := start(allowed)
+	// Closed by Close itself, after its reap, so the ProcessState read below proves the policy
+	// change reaped the process. The Once covers the cleanup's second Close.
+	closed := make(chan struct{})
+	var closedOnce sync.Once
+	fForbidden, idForbidden := start(forbidden, func() { closedOnce.Do(func() { close(closed) }) })
+	fAllowed, idAllowed := start(allowed, nil)
 	t.Cleanup(func() { fAllowed.Close(); fForbidden.Close() })
 
 	s := useEntryPolicy(t)
@@ -72,6 +81,12 @@ func TestTighterPolicyClosesForbiddenLogins(t *testing.T) {
 	}
 	if forbidden.Get(idForbidden) != nil {
 		t.Fatal("the forbidden route's login flow is still running")
+	}
+	// The store drops the flow before Close reaps it: wait for Close to finish.
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the forbidden route's login flow was dropped but never closed")
 	}
 	if fForbidden.Cmd.ProcessState == nil {
 		t.Error("the forbidden login's process was not reaped")

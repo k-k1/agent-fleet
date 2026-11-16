@@ -277,6 +277,7 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 	}()
 	waited := make(chan struct{})
 	go failIfNoURL(a, waited, &seen, s.LogPrefix, p)
+	drainWait := outputDrainWait // read here: a test may shorten the var after an earlier Start
 	go func() {
 		defer close(done)
 		err := cmd.Wait()
@@ -285,7 +286,7 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 		// the process prints: Exited reads the output only once the reader has seen it all.
 		// A child the process left behind can hold the pipe open, so the wait is bounded and
 		// closing the pipe ends the reader.
-		t := time.NewTimer(outputDrainWait)
+		t := time.NewTimer(drainWait)
 		select {
 		case <-drained:
 		case <-t.C:
@@ -313,8 +314,10 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 
 // urlDeadline is how long an attempt may stay in "starting": a login CLI prints its URL
 // within seconds, so past this its output is not in a form the parser knows, and waiting
-// out the process timeout (fifteen minutes) would only hide that. A var so a test can shorten it.
-var urlDeadline = 60 * time.Second
+// out the process timeout (fifteen minutes) would only hide that. Tests shorten it through
+// Process.URLDeadline, never by assigning this: failIfNoURL goroutines left by earlier tests
+// still read it, and the race detector fails the run.
+const urlDeadline = 60 * time.Second
 
 // failIfNoURL ends an attempt still in "starting" once the deadline has passed, with a
 // reason the member sees. A process that already exited is left to Exited, whose message
@@ -350,7 +353,8 @@ func failIfNoURL(a *Attempt, waited <-chan struct{}, seen *atomic.Int64, prefix 
 }
 
 // outputDrainWait bounds how long an exited process's output may take to reach the reader
-// before Exited runs without the rest. A var so a test can shorten it.
+// before Exited runs without the rest. A var so a test can shorten it; Start copies it before
+// starting the goroutine that waits, so an assignment never races a running attempt.
 var outputDrainWait = 2 * time.Second
 
 // watchOutput feeds the process's output to parse until it yields a URL. The output is

@@ -222,14 +222,12 @@ func TestMemberStatsDiskOptOutSkipsDU(t *testing.T) {
 	srv := statsAgent(t, http.StatusOK, `{"mem_used":100,"mem_max":200,"cpu_pct":3}`)
 	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
 	mgr.dataRoot = t.TempDir()
-	diskUsages.m = map[string]diskSample{}
-	prevDU := runDU
-	t.Cleanup(func() { runDU = prevDU; diskUsages.m = map[string]diskSample{} })
 	calls := 0
-	runDU = func(context.Context, string) ([]byte, error) {
+	setRunDU(t, func(context.Context, string) ([]byte, error) {
 		calls++
 		return []byte("4096\tx"), nil
-	}
+	})
+	diskUsages.m = map[string]diskSample{}
 
 	out := memberStatsJSONAt(t, mgr, "?disk=0")
 	if calls != 0 {
