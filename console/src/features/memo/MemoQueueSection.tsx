@@ -1451,6 +1451,11 @@ function MemoRow(props: MemoRowProps) {
               </span>
             )}
             {originWords && <span className="memo-qorigin">{tr(originWords.key, { name: originWords.name ?? "" })}</span>}
+            {m.state === "pending" && m.releasedBy === "setting" && (
+              <span className="memo-qorigin" title={tr("memo.accepted_by_setting_title")}>
+                {tr("memo.accepted_by_setting")}
+              </span>
+            )}
           </div>
         )}
         {(m.sentAt || isLong) && (

@@ -280,6 +280,21 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
           <span>{tr("memo.q_worktree")}</span>
         </label>
 
+        <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={draft.acceptOwnSessions}
+            disabled={blocked}
+            onChange={(e) => set("acceptOwnSessions", e.target.checked)}
+          />
+          <span>
+            {tr("memo.q_accept_own")}
+            <span className="ui-field-hint" style={{ display: "block" }}>
+              {tr("memo.q_accept_own_hint")}
+            </span>
+          </span>
+        </label>
+
         <fieldset className="ui-field memo-q-when" disabled={blocked}>
           <legend className="ui-field-label">{tr("memo.q_when")}</legend>
           {RUN_MODES.map((m) => (

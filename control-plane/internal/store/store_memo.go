@@ -31,6 +31,10 @@ type Memo struct {
 	// queue) and cleared when a message goes back to held or leaves its queue.
 	State, Provenance, Producer, ProducerOrigin string
 	ReleaseHash, ReleasedAt                     string
+	// ReleasedBy is "" for a release the member pressed or wrote through the Console, and
+	// MemoReleasedBySetting for one the queue's accept-from-own-sessions switch made. It lives
+	// and dies with ReleaseHash.
+	ReleasedBy string
 	// SendToken is the attempt of a flush in flight on this row, SendStartedAt when it began
 	// ("" for none). See MemoSendStaleAfter.
 	SendToken, SendStartedAt string
@@ -87,7 +91,7 @@ type MemoStore interface {
 const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at,
 	origin_item_id, origin_sender_membership_id, origin_sender_key,
 	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at, delivery_id,
-	ref_provider, ref_key, ref_url FROM memo`
+	ref_provider, ref_key, ref_url, released_by FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
@@ -95,7 +99,7 @@ func scanMemo(row scanner) (Memo, error) {
 		&m.Body, &m.RefPath, &m.Attachments, &m.Position, &m.CreatedAt, &m.SentAt,
 		&m.OriginItemID, &m.OriginSenderMembershipID, &m.OriginSenderKey,
 		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt, &m.DeliveryID,
-		&m.RefProvider, &m.RefKey, &m.RefURL)
+		&m.RefProvider, &m.RefKey, &m.RefURL, &m.ReleasedBy)
 	return m, err
 }
 
@@ -142,12 +146,12 @@ func insertMemo(ctx context.Context, q memoQuerier, m Memo) error {
 		   state, provenance, producer, producer_origin, release_hash, released_at,
 		   ref_provider, ref_key, ref_url,
 		   release_repo, release_category, release_kind, release_body, release_ref_path, release_attachments,
-		   release_ref_provider, release_ref_key, release_ref_url)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   release_ref_provider, release_ref_key, release_ref_url, released_by)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.CreatedAt, m.SentAt,
 		m.State, m.Provenance, m.Producer, m.ProducerOrigin, m.ReleaseHash, m.ReleasedAt,
 		m.RefProvider, m.RefKey, m.RefURL,
-		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8])
+		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy)
 	return err
 }
 
@@ -175,12 +179,12 @@ func writeMemo(ctx context.Context, q memoQuerier, m Memo) error {
 		   state=?, release_hash=?, released_at=?, send_token=?, send_started_at=?,
 		   ref_provider=?, ref_key=?, ref_url=?,
 		   release_repo=?, release_category=?, release_kind=?, release_body=?, release_ref_path=?, release_attachments=?,
-		   release_ref_provider=?, release_ref_key=?, release_ref_url=?
+		   release_ref_provider=?, release_ref_key=?, release_ref_url=?, released_by=?
 		   WHERE id=? AND membership_id=?`,
 		m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.SentAt,
 		m.State, m.ReleaseHash, m.ReleasedAt, m.SendToken, m.SendStartedAt,
 		m.RefProvider, m.RefKey, m.RefURL,
-		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ID, m.MembershipID)
+		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy, m.ID, m.MembershipID)
 	return err
 }
 

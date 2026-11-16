@@ -206,8 +206,17 @@ Workspace を起こさない。
   テナントのスイッチ（`/api/admin/tenants/{slug}/memo-queues`、既定 off）が off の間は `PUT` を拒む。
   on にするのはすべての CP がこのバイナリになってから（[06](06-data.ja.md)）。
   その中のメモは状態を持つメッセージになる。要求が来た面 — Console・トークン面・`/mcp` — は
-  ルートの登録時に決まり、provenance と入るときの状態を決める（`pending` は Console からの
-  メンバー自身のメモだけ、ほかは `held`）。`POST /api/memos/release` は held を `pending` に
+  ルートの登録時に決まり、provenance と入るときの状態を決める（`pending` は、Console からの
+  メンバー自身のメモと、キューの `acceptOwnSessions` スイッチが on のときの、中継された
+  `producerOrigin` がちょうど `user` であるトークン面の作成。ほかは `held`で、`/mcp` と、空や未知の
+  origin もそう）。スイッチは `memo_queue.accept_own_sessions`（マイグレーション 0139 と 0124）で、
+  既定は off、書けるのは設定の PUT だけ（省略は off）。スイッチで `pending` になったメッセージは、
+  press と同じく release（ハッシュ・時刻・`release_*` の写し）を記録し、さらに
+  `memo.released_by = 'setting'` を持つ。一覧の答えでは `releasedBy`、release とともに消える。
+  記録された provenance が `workspace`・origin が `user` の pending メッセージへの、スイッチが on の
+  キューの中でのトークン面からの変更は `pending` のまま release を取り直す。更新は呼び出し元の
+  身元を運ばないので、規則が読めるのは記録された origin だけ。下の上限はスイッチが on でも効く。スイッチの変更は既存の行に触れず、`user` セッションが移した plain ノートは作成と同じく入り、held の移動は状態を変えず、すでに pending への press は何も変えない。
+  `POST /api/memos/release` は held を `pending` に
   全部か無しで移す。1 件ずつ、その行自身への条件付き書き込みで、カードに見せた内容ハッシュも
   条件にする。設定と解放は Console だけ。トークン面と `/mcp` からは、キューのメッセージを
   flush も削除もできず、解放済みを編集すると `held` に戻り、キューの改名・統合・削除はできず、

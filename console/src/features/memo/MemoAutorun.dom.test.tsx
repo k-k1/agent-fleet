@@ -328,7 +328,7 @@ describe("the settings dialog", () => {
     await render();
     await openSettings();
     await click(must(dialog().querySelector<HTMLInputElement>("#memo-q-instruction"), "x")); // focus only
-    const enable = [...dialog().querySelectorAll<HTMLInputElement>("input[type=checkbox]")][1];
+    const enable = [...dialog().querySelectorAll<HTMLInputElement>("input[type=checkbox]")][2];
     await click(enable);
     await click(must(dialog().querySelector("button[type=submit]"), "save"));
     expect(dialog().querySelector("[data-invalid]")?.textContent).toBe(t("memo.q_err_instruction"));
@@ -357,6 +357,7 @@ describe("the settings dialog", () => {
       route: "r-keep",
       spendCapUsd: 0,
       worktree: true,
+      acceptOwnSessions: false,
       maxActive: 2,
       batch: 3,
       maxTaskHours: 12,

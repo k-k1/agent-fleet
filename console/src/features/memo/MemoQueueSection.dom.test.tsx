@@ -172,6 +172,20 @@ describe("collapsing an expanded memo", () => {
   });
 });
 
+describe("the mark of a note the setting approved", () => {
+  const marks = () => [...document.querySelectorAll<HTMLElement>(".memo-row .memo-qorigin")].map((e) => e.textContent);
+  it("is drawn on a pending note that the switch released, and on no other", async () => {
+    servedMemos = [
+      aMemo({ id: "m1", state: "pending", provenance: "workspace", producer: "s1", releasedBy: "setting" }),
+      aMemo({ id: "m2", state: "pending", provenance: "workspace", producer: "s2" }),
+      aMemo({ id: "m3", state: "held", provenance: "workspace", producer: "s3", releasedBy: "setting" }),
+    ];
+    await render();
+    const accepted = marks().filter((t) => t === "承認なしで受け付け" || t === "Accepted without approval");
+    expect(accepted).toHaveLength(1);
+  });
+});
+
 describe("category + button", () => {
   it("moves the composer under the category and writes into it", async () => {
     servedCats = [aCat({ id: "c1", name: "P1" }), aCat({ id: "c2", name: "P2", position: 1 })];

@@ -50,6 +50,8 @@ export interface Memo {
   /** What a release names: the hash of the content the card showed. */
   contentHash?: string;
   releasedAt?: string;
+  /** "setting" when the category's accept-from-own-sessions switch made the message pending and no approval did. */
+  releasedBy?: string;
   /** The delivery (one fire) that took the message (#4163). */
   deliveryId?: string;
 }
@@ -112,6 +114,8 @@ export interface MemoQueue {
   route: string;
   spendCapUsd: number;
   worktree: boolean;
+  /** Notes from sessions the member started themselves start without an approval. */
+  acceptOwnSessions: boolean;
   maxActive: number;
   batch: number;
   /** Hours after which a run that is still open counts as overdue. */
@@ -174,6 +178,7 @@ export type MemoQueueInput = Pick<
   | "route"
   | "spendCapUsd"
   | "worktree"
+  | "acceptOwnSessions"
   | "maxActive"
   | "batch"
   | "maxTaskHours"

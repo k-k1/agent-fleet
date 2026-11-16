@@ -46,6 +46,7 @@ Auto-run is not a [schedule](../fleet/schedules.md). A schedule runs a fixed pro
 | Effort | Empty means the default. low, medium, high, xhigh and max are offered |
 | Spend limit (USD) | A limit for each run, from 0 to 10,000. 0 means no limit. It starts at 0 |
 | Run each time in a new worktree | When on, each run works in a new worktree of the category's repository. On to begin with. It has no effect on a category without a repository |
+| Accept notes from sessions I started without approval | When on, a memo added by a session you started yourself is "Waiting to run" at once, with no approval. Off to begin with. See [Skip the approval for your own sessions](#skip-the-approval-for-your-own-sessions) before turning it on |
 | Sessions at the same time | How many runs the category may have open at once. A whole number from 1 to 6. It starts at 2 |
 | Memos per session | How many memos go into one run. A whole number from 1 to 20. It starts at 1 |
 | When it runs | The condition for starting by itself (next table) |
@@ -78,7 +79,7 @@ Press "**Remove settings**" and the category is an ordinary memo category again.
 | A session (`add_memo`), or an `/mcp` connection such as an outside assistant | "Waits for approval". It does not run until you approve it |
 
 - In an auto-run category, a session can add and change memos. It cannot send or delete them, and cannot rename, merge or delete the category. You do those in the Console
-- When a session changes a memo you approved (waiting to run), it goes back to "Waits for approval". When you change it yourself, it stays waiting to run
+- When a session changes a memo you approved (waiting to run), it goes back to "Waits for approval". When you change it yourself, it stays waiting to run. The exception is a category with "Accept notes from sessions I started without approval" on ([below](#skip-the-approval-for-your-own-sessions))
 - Changing a memo that waits for approval yourself does not approve it
 - A memo added from a worktree session lands in the category of the **parent repository**, so auto-run set on that repository's category sees it. This holds for every memo, whether or not the category has auto-run. Memos already under a worktree's own group stay there; drag them to move them
 - A memo a session adds is up to 16 KB. Its text cannot start with `[agent-fleet:`. Sessions can add 30 memos a minute in total, across all categories
@@ -122,6 +123,23 @@ Memos waiting for approval gather in a card for each session (or `/mcp` connecti
 - **Only what the card shows is approved.** The approval covers the memo's text, its referenced file path, the work item it points at and its attachment information as shown. If one of these changes after the card was drawn, the memo is not approved. It does not pin the contents of a referenced file or of an image file
 - If a session changes a memo while the card is on screen, the memo is tagged "**Changed**", and the button becomes "**I have read the change**". Read the change and press it, and the card says "Approving runs the text shown now". Then press "Approve"
 - If the text changed after you pressed the button, nothing at all is approved, and the latest text is shown again. Check it and approve once more. A card is approved whole or not at all
+
+### Skip the approval for your own sessions
+
+By default every memo a session adds waits for your approval. Turn on "**Accept notes from sessions I started without approval**" in a category's auto-run settings, and that stops being so for that category, for sessions you started yourself.
+
+| Who started the session that adds the memo | State of the memo |
+|---|---|
+| You, yourself (a session you launched in the Console) | "Waiting to run", marked "**Accepted without approval**" on its row |
+| Auto-run, a schedule, another session or the operator assistant | "Waits for approval", as without the setting |
+| An `/mcp` connection | "Waits for approval", as without the setting |
+
+- When such a session changes a memo it added, the memo stays "Waiting to run" and the approval is recorded again for the new text. A memo that was already approved by you, or one from another kind of session, goes back to "Waits for approval" as usual
+- Moving a memo into a category without the setting puts it back to "Waits for approval"
+- Turning the setting off later does not call back what it already accepted: those memos stay "Waiting to run" and still run. Turning it on does not approve memos already waiting for approval. Only memos added after the change follow the new setting
+- **This is a guard rail, not a lock.** The workspace tells the Control Plane which kind of session is adding a memo, and a program running in the workspace can pass itself off as a session you started. With the setting on, such a program can add memos that run without your approval. Turn it on only for a category where that is acceptable
+- The limits on what a session can add (size, speed, identical memos, the `[agent-fleet:` prefix), "Runs per day" and the automatic pause after failed runs apply as before
+- Only you can change the setting, in the Console
 
 ### Run now
 
@@ -171,7 +189,7 @@ The states of a memo show on its row in the category:
 | State | Meaning |
 |---|---|
 | Waits for approval | A memo a session or similar added. It does not run until you approve it |
-| Waiting to run | Approved, and waiting for the next run |
+| Waiting to run | Approved, and waiting for the next run. "Accepted without approval" beside it means no approval was asked, because of "Accept notes from sessions I started without approval" |
 | Starting | A session is being started to run it |
 | Sent | Sent to a session |
 | Needs a look | Whether the session started could not be confirmed. Check the run history. It is not run again by itself |

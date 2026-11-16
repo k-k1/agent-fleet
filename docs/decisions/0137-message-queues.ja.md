@@ -626,3 +626,20 @@ docs/build/03-control-plane.md §3.6。
 規則のもの）を使う。既にあるブランチは Console の「既存のブランチで作業」と同じくチェックアウトし、別の作業コピーが持つ
 ブランチ、git が断る名前、規則が名前を返さない場合は使い捨ての `temp/` のまま: 名前のために配信を失敗させない。
 wire と挙動は docs/build/04-agent.md。
+
+追記 2026-11-17（#4151、段 4）: スイッチは `memo_queue.accept_own_sessions`（既定は off、書けるのは Console の設定の PUT
+だけ、省略は off）。on のとき、記録された producer の origin がちょうど `user` の `workspace` メッセージは `pending` で入り、
+release は press と同じく記録される。それ以外の origin、空、`/mcp` は `held` のまま。そのようなメッセージへのトークン面からの
+変更は `pending` のまま release を取り直す。更新は呼び出し元の身元を運ばないので、Control Plane が読めるのは作成時に記録された
+origin だけで、その origin のセッションなら変更後の本文を新しいメッセージとして追加できた、とスイッチがすでに受け入れて
+いるからである。スイッチのないカテゴリへの移動と `/mcp` からの変更は `held` に戻す。スイッチで `pending` になったメッセージは
+`memo.released_by = 'setting'`（ワイヤでは `releasedBy`）を持ち、Console は「承認なしで受け付け」と描く。press と Console の
+書き込みはこれを消す。セッションからの作成の上限（速さ・大きさ・同じメッセージ・envelope の接頭辞）と、キューの 1 日の上限・
+ブレーカーは変わらない。Agent はすでにセッションの origin（`session.OriginOf`）を中継しており、ワークスペース側の変更はない。
+
+スイッチの変更は、すでにある行に触れない: オフにしても、受け付け済みのメッセージは `pending` のままでマークも残る（release は
+press と同じく一方向）、オンにしても `held` は解放されない。キューの外の plain ノートを origin が `user` のセッションが
+スイッチが on のキューへ移すと、入るときと同じ扱いで `pending` になる。`held` のメッセージを移しても状態は変わらない。すでに
+`pending` のメッセージへの press は何も変えないので、マークも残る。ローリング更新中に古い Control Plane がそのようなメッセージを
+press すると、新しいほうがその行を書き直すまで `released_by = 'setting'` が残る: 表示のずれだけで、状態と release の写しは
+press のもの。origin は中継の値を trim したあとで比べるので、`" user "` は `user` になる。
