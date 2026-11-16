@@ -315,7 +315,9 @@ export function useSessionActions(): SessionActions {
       toast(
         code === "busy_switch"
           ? t("sess.switch_busy")
-          : (SWITCH_REFUSALS.has(code) && tMaybe("err." + code)) || j?.error?.message || t("sess.switch_failed"),
+          : code === "session_retired"
+            ? t("sess.switch_retired")
+            : (SWITCH_REFUSALS.has(code) && tMaybe("err." + code)) || j?.error?.message || t("sess.switch_failed"),
       );
       return;
     }
