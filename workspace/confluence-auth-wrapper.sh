@@ -35,7 +35,7 @@
 # - CONFLUENCE_CLI_ANALYTICS=false: the CLI otherwise writes a usage counter file into its config
 #   directory on every call, which would also create that directory.
 set +xa
-unset cred tok site domain apipath auth login why stale sub arg own v d prev f
+unset cred tok site domain apipath auth login why stale sub arg own v d prev f new k pre wdir unknown_write
 
 real="${AF_CONFLUENCE_REAL:-/usr/local/libexec/confluence}"
 
@@ -56,6 +56,13 @@ case "$sub" in
 esac
 [ -z "$own" ] || exec "$real" "$@"
 
+# Page writes. The CLI sets no request timeout and prints only the socket error when a write loses
+# its answer, so these go through run_write below: bounded when unattended, never re-sent, and
+# followed by a "may or may not have been written" line when the outcome is unknown.
+page_write_cmd() {
+  case "$sub" in create | create-child | update | move) true ;; *) false ;; esac
+}
+
 for v in CONFLUENCE_DOMAIN CONFLUENCE_HOST CONFLUENCE_API_TOKEN CONFLUENCE_PASSWORD \
   CONFLUENCE_EMAIL CONFLUENCE_USERNAME CONFLUENCE_AUTH_TYPE CONFLUENCE_API_PATH \
   CONFLUENCE_COOKIE CONFLUENCE_PROFILE CONFLUENCE_TLS_CLIENT_CERT CONFLUENCE_TLS_CLIENT_KEY; do
@@ -69,26 +76,6 @@ else
     [ ! -e "$d/config.json" ] || exec "$real" "$@"
   done
 fi
-
-# A page body read with --file must be UTF-8: the CLI decodes it with replacement characters and
-# would write the U+FFFD-mangled text (a Shift_JIS file becomes a page of question marks) and exit
-# 0. Checked before the credential is fetched; a user's own setup has already gone to the CLI.
-case "$sub" in
-  create | create-child | update)
-    prev=""
-    for arg in "$@"; do
-      f=""
-      case "$prev" in -f | --file) f="$arg" ;; esac
-      case "$arg" in --file=*) f="${arg#--file=}" ;; -f?*) f="${arg#-f}" ;; esac
-      prev="$arg"
-      if [ -n "$f" ] && [ -f "$f" ] && command -v iconv >/dev/null 2>&1 &&
-        ! iconv -f UTF-8 -t UTF-8 "$f" >/dev/null 2>&1; then
-        echo "confluence: $f is not valid UTF-8, so nothing was sent; convert it first (for example: iconv -f SHIFT_JIS -t UTF-8 '$f' > page.md)" >&2
-        exit 1
-      fi
-    done
-    unset prev f ;;
-esac
 
 # First value of a `key=value` line in the helper's answer on stdin.
 field() { sed -n "s/^$1=//;T;p;q"; }
@@ -122,6 +109,43 @@ if [ -z "$tok" ] || [ -z "$domain" ] || [ -z "$apipath" ] || [ -z "$auth" ]; the
   fi
   echo "confluence: no Atlassian connection in this workspace. Connect Jira in Settings (it serves Confluence too), or set up your own with 'confluence init'." >&2
   exec "$real" "$@"
+fi
+
+# A page write's --file body is checked before anything is sent: the CLI decodes it with
+# replacement characters and would write the mangled text with exit 0. UTF-32LE as the target makes
+# iconv reject what a UTF-8 -> UTF-8 pass lets through (code points above U+10FFFF, 5-byte forms).
+# A --file that is not a regular file (/dev/stdin, a pipe) is read once into a private copy that
+# is checked and handed to the CLI by path, since run_write gives the CLI no stdin.
+wdir=""
+if page_write_cmd; then
+  new=()
+  prev=""
+  k=0
+  for arg in "$@"; do
+    f=""
+    pre=""
+    case "$prev" in -f | --file) f="$arg" ;; esac
+    case "$arg" in --file=*) f="${arg#--file=}" pre="--file=" ;; -f?*) f="${arg#-f}" pre="-f" ;; esac
+    prev="$arg"
+    if [ -n "$f" ] && [ ! -f "$f" ] && [ -r "$f" ]; then
+      if [ -z "$wdir" ]; then
+        wdir="$(mktemp -d 2>/dev/null)" || { echo "confluence: cannot create a temporary directory" >&2; exit 1; }
+        trap 'rm -rf "$wdir"' EXIT
+      fi
+      k=$((k + 1))
+      cat -- "$f" >"$wdir/body$k" || exit 1
+      f="$wdir/body$k"
+      arg="$pre$f"
+    fi
+    if [ -n "$f" ] && [ -f "$f" ] && command -v iconv >/dev/null 2>&1 &&
+      ! iconv -f UTF-8 -t UTF-32LE "$f" >/dev/null 2>&1; then
+      echo "confluence: the --file body is not valid UTF-8, so nothing was sent; convert it first (for example: iconv -f SHIFT_JIS -t UTF-8 page.txt > page.md)" >&2
+      exit 1
+    fi
+    new+=("$arg")
+  done
+  set -- "${new[@]}"
+  unset new prev k f pre
 fi
 
 # The commands confluence-cli moves to the v2 API once v1 answers 410 (its README's list), where a
@@ -191,12 +215,6 @@ transport_failure() {
   case "$msg" in "" | *"Request failed with status code"*) return 1 ;; esac
   printf '%s\n' "$msg" | grep -Eiq 'ECONNRESET|ETIMEDOUT|ECONNABORTED|EPIPE|EAI_AGAIN|socket hang up|Client network socket disconnected|timeout of [0-9]+ms exceeded|stream has been aborted'
 }
-# Page writes run once under the same bound: the CLI sets no request timeout, so an unanswered
-# create or update would otherwise hang an unattended run. They are never re-sent, and a write
-# that timed out or lost its connection may still have been applied, so it says so.
-page_write_cmd() {
-  case "$sub" in create | create-child | update | move) true ;; *) false ;; esac
-}
 # Runs the CLI into a private directory, re-running a read-only command on a transport failure
 # (retries = 2; a page write gets 0), then replays the last attempt with the CLI's exit status.
 # AF_CONFLUENCE_TIMEOUT bounds one attempt (seconds, default 60, 0 = none) with a shell watchdog,
@@ -207,7 +225,7 @@ run_bounded() {
   shift
   d="$(mktemp -d 2>/dev/null)" || return 1
   case "$lim" in "" | *[!0-9]*) lim=60 ;; esac
-  trap 'rm -rf "$d"' EXIT
+  trap 'rm -rf "$d"; [ -z "$wdir" ] || rm -rf "$wdir"' EXIT
   trap 'sig=1; [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null' INT TERM HUP
   while :; do
     rm -f "$d/late"
@@ -241,7 +259,7 @@ run_bounded() {
     fi
     if [ "$rc" -eq 0 ] || { [ -z "$late" ] && ! transport_failure "$d/err"; }; then break; fi
     if [ "$retries" -eq 0 ]; then
-      echo "confluence: the request was sent but no answer came back, so the page may or may not have been written; search for the title or read the page before running it again" >>"$d/err"
+      echo "$unknown_write" >>"$d/err"
       break
     fi
     if [ "$n" -ge "$retries" ]; then
@@ -258,8 +276,25 @@ run_bounded() {
   cat "$d/err" >&2
   exit "$rc"
 }
-if [ ! -t 1 ] && [ ! -t 2 ]; then
-  if readonly_cmd "$@"; then run_bounded 2 "$@"; fi
-  if page_write_cmd; then run_bounded 0 "$@"; fi
+unknown_write="confluence: the request was sent but no answer came back, so the page may or may not have been written; search for the title or read the page before running it again"
+# A page write: unattended, it runs once under the watchdog; with a terminal attached it runs with
+# no limit (the person can interrupt it) and its stderr is shown as it comes and also kept, so a
+# transport failure still gets the unknown-outcome line. tee runs without the token.
+run_write() {
+  local rc
+  if [ ! -t 1 ] && [ ! -t 2 ]; then run_bounded 0 "$@"; fi
+  if [ -z "$wdir" ]; then
+    wdir="$(mktemp -d 2>/dev/null)" || { CONFLUENCE_API_TOKEN="$tok" exec "$real" "$@" </dev/null; }
+    trap 'rm -rf "$wdir"' EXIT
+  fi
+  CONFLUENCE_API_TOKEN="$tok" "$real" "$@" </dev/null 2> >(tee "$wdir/err" >&2)
+  rc=$?
+  wait "$!" 2>/dev/null
+  if [ "$rc" -ne 0 ] && transport_failure "$wdir/err"; then echo "$unknown_write" >&2; fi
+  exit "$rc"
+}
+if page_write_cmd; then run_write "$@"; fi
+if readonly_cmd "$@" && [ ! -t 1 ] && [ ! -t 2 ]; then
+  run_bounded 2 "$@"
 fi
 CONFLUENCE_API_TOKEN="$tok" exec "$real" "$@"

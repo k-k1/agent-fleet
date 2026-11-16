@@ -38,6 +38,13 @@ set +x
   done
   for a in "$@"; do echo "ARG=$a"; done
 } >"$STUB_DIR/cf.seen"
+# The body the CLI would read from --file, as the CLI reads it (by path).
+prev=""
+for a in "$@"; do
+  case "$prev" in -f | --file) cat -- "$a" >"$STUB_DIR/cf.body" 2>/dev/null ;; esac
+  case "$a" in --file=*) cat -- "${a#--file=}" >"$STUB_DIR/cf.body" 2>/dev/null ;; esac
+  prev="$a"
+done
 echo x >>"$STUB_DIR/cf.count"
 if [ -n "${STUB_CF_HANG-}" ]; then
   echo $$ >"$STUB_DIR/cf.pid"
@@ -62,7 +69,7 @@ run() {
   local envs=()
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
-  rm -f "$T/cf.seen" "$T/agent.calls" "$T/agent.leak" "$T/cf.count"
+  rm -f "$T/cf.seen" "$T/agent.calls" "$T/agent.leak" "$T/cf.count" "$T/cf.body"
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_CONFLUENCE_REAL="$T/bin/confluence-real" AF_CONFLUENCE_RETRY_WAIT=0 \
     "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err" </dev/null
   rc=$?
@@ -430,7 +437,6 @@ for form in "-f $T/sjis.md" "--file $T/sjis.md" "--file=$T/sjis.md" "-f$T/sjis.m
     run -- $subcmd $form
     [ "$rc" = 1 ] || fail "non-UTF-8 '$subcmd $form': exit status $rc, want 1"
     [ ! -f "$T/cf.seen" ] || fail "non-UTF-8 '$subcmd $form': the CLI ran"
-    [ ! -f "$T/agent.calls" ] || fail "non-UTF-8 '$subcmd $form': the credential was fetched"
     grep -q "not valid UTF-8" "$T/err" || fail "non-UTF-8 '$subcmd $form': no reason given"
   done
 done
@@ -440,6 +446,54 @@ run -- update 1 --file "$T/ok.md" --format markdown
 reset; oauth_answer
 run -- search -f "$T/sjis.md"
 [ -f "$T/cf.seen" ] || fail "non-UTF-8 check applied to search"
+# glibc's UTF-8 -> UTF-8 lets these through; Node would write U+FFFD for each.
+for bad in '\364\220\200\200' '\370\210\200\200\200' '\355\240\200' '\300\257'; do
+  printf "$bad\\n" >"$T/bad.md"
+  reset; oauth_answer
+  run -- update 1 --file "$T/bad.md"
+  [ "$rc" = 1 ] && [ ! -f "$T/cf.seen" ] || fail "invalid UTF-8 $bad: rc=$rc, CLI ran: $([ -f "$T/cf.seen" ] && echo yes || echo no)"
+done
+
+# 26. --file /dev/stdin (a pipe) reaches the CLI intact: the wrapper reads it once into a private
+# copy, checks it and passes the copy's path, which is removed afterwards. A non-UTF-8 pipe is
+# refused like a file.
+for mode in unattended attached; do
+  reset; oauth_answer
+  rm -f "$T/cf.seen" "$T/cf.body"; mkdir -p "$T/tmp3"; rm -rf "$T/tmp3/"*
+  if [ "$mode" = unattended ]; then
+    printf '日本語の本文\n' | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" TMPDIR="$T/tmp3" \
+      AF_CONFLUENCE_REAL="$T/bin/confluence-real" bash "$WRAPPER" update 1 --file /dev/stdin --format markdown >"$T/out" 2>"$T/err"
+    rc=$?
+  else
+    # Only stdout is a terminal here: still "attached", so no watchdog and stdin stays the pipe.
+    printf '日本語の本文\n' | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" TMPDIR="$T/tmp3" \
+      AF_CONFLUENCE_REAL="$T/bin/confluence-real" script -qec "bash '$WRAPPER' update 1 --file /dev/stdin --format markdown" /dev/null >"$T/out" 2>"$T/err"
+    rc=$?
+  fi
+  [ "$rc" = 0 ] || fail "stdin body ($mode): exit status $rc: $(cat "$T/err" "$T/out")"
+  [ "$(cat "$T/cf.body" 2>/dev/null)" = "日本語の本文" ] || fail "stdin body ($mode): the CLI read '$(cat "$T/cf.body" 2>/dev/null)'"
+  grep -q '^ARG=/dev/stdin$' "$T/cf.seen" && fail "stdin body ($mode): /dev/stdin passed on"
+  [ -z "$(ls -A "$T/tmp3")" ] || fail "stdin body ($mode): left files behind: $(ls -A "$T/tmp3")"
+done
+reset; oauth_answer; rm -f "$T/cf.seen"
+printf '\202\240\n' | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
+  AF_CONFLUENCE_REAL="$T/bin/confluence-real" bash "$WRAPPER" update 1 --file /dev/stdin >"$T/out" 2>"$T/err"
+rc=$?
+[ "$rc" = 1 ] && [ ! -f "$T/cf.seen" ] || fail "non-UTF-8 stdin: rc=$rc, CLI ran: $([ -f "$T/cf.seen" ] && echo yes || echo no)"
+
+# 27. With a terminal attached a write is not bounded, but a transport failure still gets the
+# unknown-outcome line (stderr is shown as it comes and kept); a success does not.
+reset; oauth_answer
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" STUB_CF_FAILS=9 STUB_CF_ERR="Error: socket hang up" \
+  AF_CONFLUENCE_REAL="$T/bin/confluence-real" script -qec "bash '$WRAPPER' create T SP -c x" /dev/null >"$T/out" 2>&1
+grep -q "socket hang up" "$T/out" || fail "tty write failure: CLI error not shown: $(cat "$T/out")"
+grep -q "may or may not have been written" "$T/out" || fail "tty write failure: no may-or-may-not line"
+grep -q "fake-oauth-tok" "$T/out" && fail "tty write failure: token in output"
+reset; oauth_answer; rm -f "$T/cf.count"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
+  AF_CONFLUENCE_REAL="$T/bin/confluence-real" script -qec "bash '$WRAPPER' create T SP -c x" /dev/null >"$T/out" 2>&1
+grep -q GOOD "$T/out" || fail "tty write success: output not shown"
+grep -q "may or may not" "$T/out" && fail "tty write success: may-or-may-not line printed"
 
 if [ "$fails" != 0 ]; then
   echo "confluence-auth-wrapper-test: $fails failure(s)" >&2
