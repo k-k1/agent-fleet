@@ -151,15 +151,22 @@ func logout() error {
 		return err
 	}
 	defer loginOp.Finish()
+	_ = clearLogin(context.Background())
+	return nil
+}
+
+// clearLogin is the logout itself, with no login change recorded: logout's and RemoveCredential's.
+// Its error is the CLI's.
+func clearLogin(ctx context.Context) error {
 	// claude owns its credentials; log out via the CLI so it clears them properly.
-	_ = exec.Command("claude", "auth", "logout").Run()
+	err := exec.CommandContext(ctx, "claude", "auth", "logout").Run()
 	resetCredCache()
 	// Best-effort: drop any legacy stored token from the encrypted store too.
-	if s, err := secrets.Load(); err == nil && s.Claude != "" {
+	if s, lerr := secrets.Load(); lerr == nil && s.Claude != "" {
 		s.Claude = ""
 		_ = s.Save()
 	}
-	return nil
+	return err
 }
 
 // awaitLogin waits for the login process to report a finished sign-in, or surfaces an OAuth

@@ -298,14 +298,20 @@ func (e logoutFailed) Error() string { return "muse logout failed: " + e.detail 
 // RemoveCredential: a logoutFailed, with the CLI's output, when the credential
 // is still there afterwards; any other error a login change that could not be recorded.
 func logout(ctx context.Context) error {
-	// logout reaches the network, so without a timeout the caller blocks indefinitely.
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
 	loginOp, err := credbind.Begin(routes.RouteMuseLogin)
 	if err != nil {
 		return err
 	}
 	defer loginOp.Finish()
+	return clearLogin(ctx)
+}
+
+// clearLogin is the logout itself, with no login change recorded: a logoutFailed when the
+// credential is still there afterwards.
+func clearLogin(ctx context.Context) error {
+	// logout reaches the network, so without a timeout the caller blocks indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	out, err := exec.CommandContext(ctx, Bin(), "logout").CombinedOutput()
 	// The credential is the outcome that matters: a non-zero exit with the entry gone is a
 	// disconnect, and a zero exit with it still there is not.

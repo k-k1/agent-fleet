@@ -258,16 +258,15 @@ func HandlePutConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
-	s, err := secrets.Load()
-	if err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-		return
-	}
-	if s.Opencode == nil {
-		s.Opencode = map[string]string{}
-	}
-	s.Opencode[env] = key
-	if err := s.Save(); err != nil {
+	// Under the store's lock, like every other write of the slot: a conditional removal
+	// (RemoveCredential) reads and deletes inside the same lock, so it can never take this key.
+	if err := secrets.Update(func(s *secrets.Data) error {
+		if s.Opencode == nil {
+			s.Opencode = map[string]string{}
+		}
+		s.Opencode[env] = key
+		return nil
+	}); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}

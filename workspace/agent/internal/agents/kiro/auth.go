@@ -206,17 +206,23 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 // logout is the disconnect itself, for the handler and for RemoveCredential. Its only error is
 // a login change that could not be recorded, in which case nothing was changed.
 func logout(ctx context.Context) error {
-	// logout can reach the network, so without a timeout the caller blocks indefinitely.
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
 	loginOp, err := credbind.Begin(routes.RouteKiroLogin)
 	if err != nil {
 		return err
 	}
 	defer loginOp.Finish()
-	_ = exec.CommandContext(ctx, bin(), "logout").Run()
-	invalidateStatus()
+	_ = clearLogin(ctx)
 	return nil
+}
+
+// clearLogin is the logout itself, with no login change recorded. Its error is the CLI's.
+func clearLogin(ctx context.Context) error {
+	// logout can reach the network, so without a timeout the caller blocks indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	err := exec.CommandContext(ctx, bin(), "logout").Run()
+	invalidateStatus()
+	return err
 }
 
 // loggedInFresh runs an UNCACHED `kiro-cli whoami -f json` for the login poll

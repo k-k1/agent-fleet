@@ -1270,11 +1270,22 @@ func (lcppEndpointStore) StoredCredentials(context.Context) []agents.StoredCrede
 		Binding: credbind.Endpoint(routes.RouteMemberLlamacpp, s.Lcpp.URL, s.Lcpp.APIKey)}}
 }
 
-func (lcppEndpointStore) RemoveCredential(_ context.Context, id string) error {
+// RemoveCredential deletes the endpoint only if, inside the store's lock that its writer
+// (handlePutLcppConn) takes too, it is still the confirmed endpoint and still forbidden. The
+// policy reads the endpoint's host from the store, so it is judged here on the stored value.
+func (lcppEndpointStore) RemoveCredential(_ context.Context, id, binding string, forbidden func([]string) bool) error {
 	if id != "endpoint" {
 		return agents.ErrUnknownCredential
 	}
-	if err := secrets.Update(func(s *secrets.Data) error { s.Lcpp = nil; return nil }); err != nil {
+	if err := secrets.Update(func(s *secrets.Data) error {
+		if s.Lcpp == nil || strings.TrimSpace(s.Lcpp.URL) == "" ||
+			credbind.Endpoint(routes.RouteMemberLlamacpp, s.Lcpp.URL, s.Lcpp.APIKey) != binding ||
+			!forbidden([]string{routes.RouteMemberLlamacpp}) {
+			return agents.ErrCredentialChanged
+		}
+		s.Lcpp = nil
+		return nil
+	}); err != nil {
 		return err
 	}
 	lcppMemberCacheReset()
@@ -1322,6 +1333,20 @@ func unusableCredentials(ctx context.Context) ([]unusableCred, bool) {
 	}
 	return out, true
 }
+
+// stillForbidden is the policy's answer at the moment of a removal: true only while a confirmed,
+// restricting policy allows none of routes.
+func stillForbidden(routes []string) bool {
+	if routepolicy.Active().Gate() != nil {
+		return false
+	}
+	p, hiding := routepolicy.Hiding()
+	return hiding && len(routes) > 0 && !slices.ContainsFunc(routes, p.Allows)
+}
+
+// beforeUnusableRemoval runs between the snapshot's check of a credential and its store's
+// conditional removal. A seam for tests that change the credential or the policy there.
+var beforeUnusableRemoval = func(unusableCred) {}
 
 // offerUnusable records creds under a fresh token and returns it; "" for none.
 func offerUnusable(creds []unusableCred) string {
@@ -1417,12 +1442,19 @@ func handleUnusableRemove(w http.ResponseWriter, r *http.Request) {
 			out.Skipped++
 			continue
 		}
-		if err := stores[c.owner].RemoveCredential(r.Context(), c.id); err != nil {
+		// The snapshot above is only a first pass: a credential can be replaced, or the policy
+		// loosened, after it. The store checks the binding again, and the policy through
+		// stillForbidden, under the lock its own writers take, at the moment it removes.
+		beforeUnusableRemoval(c)
+		switch err := stores[c.owner].RemoveCredential(r.Context(), c.id, c.binding, stillForbidden); {
+		case errors.Is(err, agents.ErrCredentialChanged):
+			out.Skipped++
+		case err != nil:
 			log.Printf("unusable credentials: removing %s/%s failed: %v", c.owner, c.id, err)
 			out.Failed++
-			continue
+		default:
+			out.Removed++
 		}
-		out.Removed++
 	}
 	left, _ := unusableCredentials(r.Context())
 	out.Count, out.Token = len(left), offerUnusable(left)

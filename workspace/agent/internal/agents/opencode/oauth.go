@@ -490,6 +490,11 @@ func oauthDisconnect() error {
 		invalidateOAuthStatus()
 		return nil
 	}
+	return deleteCredential(addr, id)
+}
+
+// deleteCredential deletes the Console credential with this id, and drops what cached it.
+func deleteCredential(addr, id string) error {
 	if err := daemonJSON[struct{}]("DELETE", addr, "/api/credential/"+url.PathEscape(id), nil, nil); err != nil {
 		return err
 	}

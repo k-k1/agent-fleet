@@ -2,6 +2,8 @@ package cursor
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
@@ -18,9 +20,20 @@ func (agentImpl) StoredCredentials(context.Context) []agents.StoredCredential {
 	return []agents.StoredCredential{{ID: "login", Routes: []string{l.Route}, Binding: l.Binding}}
 }
 
-func (agentImpl) RemoveCredential(ctx context.Context, id string) error {
+func (agentImpl) RemoveCredential(ctx context.Context, id, binding string, forbidden func([]string) bool) error {
 	if id != "login" {
 		return agents.ErrUnknownCredential
 	}
-	return logout(ctx)
+	return agents.RemoveLogin(ctx, agents.LoginRemoval{
+		Login: routes.RouteCursorLogin,
+		// The status probe's own run, not its cache: the login must be read as it is now.
+		Current: func(context.Context) ([]string, string, bool) {
+			st, ok := statusProbe.Probe()
+			if !ok || !st.IsAuthenticated {
+				return nil, "", false
+			}
+			return []string{routes.RouteCursorLogin}, credbind.AccountOrGeneration(routes.RouteCursorLogin, st.UserInfo.Email), true
+		},
+		Remove: clearLogin,
+	}, binding, forbidden)
 }

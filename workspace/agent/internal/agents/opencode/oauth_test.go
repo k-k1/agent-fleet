@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -80,6 +81,10 @@ func newFakeDaemon(t *testing.T) *fakeDaemon {
 			_, _ = w.Write(b)
 		case r.Method == "DELETE":
 			d.deleted = append(d.deleted, r.URL.Path)
+			// The credential is gone afterwards, as serve's own delete leaves it.
+			if id, ok := strings.CutPrefix(r.URL.Path, "/api/credential/"); ok {
+				d.conns = slices.DeleteFunc(d.conns, func(c map[string]any) bool { return c["id"] == id })
+			}
 			_, _ = w.Write([]byte(`true`))
 		default:
 			w.WriteHeader(http.StatusNotFound)

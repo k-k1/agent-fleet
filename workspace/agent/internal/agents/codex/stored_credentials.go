@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
@@ -18,9 +19,17 @@ func (agentImpl) StoredCredentials(context.Context) []agents.StoredCredential {
 	return []agents.StoredCredential{{ID: "login", Routes: []string{l.Route}, Binding: l.Binding}}
 }
 
-func (agentImpl) RemoveCredential(_ context.Context, id string) error {
+func (agentImpl) RemoveCredential(ctx context.Context, id, binding string, forbidden func([]string) bool) error {
 	if id != "login" {
 		return agents.ErrUnknownCredential
 	}
-	return logout()
+	// Every codex login change, an API-key login included, is begun on chatgpt-subscription.
+	return agents.RemoveLogin(ctx, agents.LoginRemoval{
+		Login: routes.RouteChatGPTSubscription,
+		Current: func(context.Context) ([]string, string, bool) {
+			l := Login()
+			return []string{l.Route}, l.Binding, l.Route != ""
+		},
+		Remove: clearLogin,
+	}, binding, forbidden)
 }

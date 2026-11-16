@@ -22,6 +22,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -306,7 +307,71 @@ var (
 var (
 	opMu    sync.Mutex
 	liveOps = map[string]bool{}
+	// liveLogins counts, per login, the operations of liveOps that change it.
+	liveLogins = map[string]int{}
 )
+
+// dropLive forgets one live operation of each login. Called with opMu held.
+func dropLive(logins []string) {
+	for _, l := range logins {
+		if liveLogins[l]--; liveLogins[l] <= 0 {
+			delete(liveLogins, l)
+		}
+	}
+}
+
+// loginMus holds one mutex per login: Begin takes it for the moment it registers a change, and
+// LockLogin holds it for a whole conditional removal.
+var loginMus sync.Map
+
+func loginMu(login string) *sync.Mutex {
+	m, _ := loginMus.LoadOrStore(login, &sync.Mutex{})
+	return m.(*sync.Mutex)
+}
+
+func sortedUnique(logins []string) []string {
+	out := slices.Clone(logins)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// ErrChanging is LockLogin's refusal while a change of the login is in flight (a sign-in flow, a
+// key being stored, a disconnect), in this process or left pending by an earlier one.
+var ErrChanging = errors.New("a change of this login is in flight")
+
+// Lock is one login held for a conditional removal (ADR 0138 D14a): while it is held no change of
+// the login can begin, so what the holder reads of the login is what it removes.
+type Lock struct {
+	login string
+	once  sync.Once
+}
+
+// LockLogin holds login against every other change until Unlock. It refuses with ErrChanging while
+// a change of the login is in flight: a sign-in flow begins its change when it starts and
+// finishes it when it ends, so a login its CLI may still be writing is never read as settled.
+func LockLogin(login string) (*Lock, error) {
+	m := loginMu(login)
+	m.Lock()
+	opMu.Lock()
+	busy := liveLogins[login] > 0
+	opMu.Unlock()
+	if busy || !markerAbsent(login) {
+		m.Unlock()
+		return nil, ErrChanging
+	}
+	return &Lock{login: login}, nil
+}
+
+// Begin is Begin for the held login, made while the lock is held: the removal's own change.
+// Read the login's binding before it, since a begun change leaves the generation unproven.
+func (l *Lock) Begin() (*Op, error) { return begin(l.login) }
+
+// Unlock lets other changes of the login begin again. Safe to call more than once.
+func (l *Lock) Unlock() {
+	if l != nil {
+		l.once.Do(func() { loginMu(l.login).Unlock() })
+	}
+}
 
 // Op is one credential change the Agent is making: begun durably before it starts, finished
 // when it ends, whatever its outcome.
@@ -324,6 +389,17 @@ type Op struct {
 // the caller must not change the login: proceeding would leave a replaced login nothing to tell
 // it from its predecessor but process memory.
 func Begin(logins ...string) (*Op, error) {
+	// A change waits while a conditional removal holds one of its logins (LockLogin), so the
+	// removal's check and its change cannot interleave with this one.
+	for _, l := range sortedUnique(logins) {
+		m := loginMu(l)
+		m.Lock()
+		defer m.Unlock()
+	}
+	return begin(logins...)
+}
+
+func begin(logins ...string) (*Op, error) {
 	id, err := randomToken()
 	if err != nil {
 		return nil, err
@@ -336,11 +412,15 @@ func Begin(logins ...string) (*Op, error) {
 		return nil, err
 	}
 	liveOps[id] = true
+	for _, l := range logins {
+		liveLogins[l]++
+	}
 	fail := func(err error) (*Op, error) {
 		for _, l := range logins {
 			_ = removeFile(markerPath(l, id))
 		}
 		delete(liveOps, id)
+		dropLive(logins)
 		return nil, err
 	}
 	for _, l := range logins {
@@ -378,6 +458,7 @@ func (o *Op) Finish() {
 		opMu.Lock()
 		defer opMu.Unlock()
 		defer delete(liveOps, o.id)
+		defer dropLive(o.logins)
 		if !bump(o.logins...) {
 			return
 		}

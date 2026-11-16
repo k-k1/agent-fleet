@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin/memberorigintest"
 	"net/http"
@@ -394,9 +395,14 @@ func (f fakeCredStore) StoredCredentials(context.Context) []agents.StoredCredent
 	return slices.Clone(*f.creds)
 }
 
-func (f fakeCredStore) RemoveCredential(_ context.Context, id string) error {
+// RemoveCredential keeps the contract: only the confirmed binding, only while forbidden.
+func (f fakeCredStore) RemoveCredential(_ context.Context, id, binding string, forbidden func([]string) bool) error {
+	i := slices.IndexFunc(*f.creds, func(c agents.StoredCredential) bool { return c.ID == id })
+	if i < 0 || (*f.creds)[i].Binding != binding || !forbidden((*f.creds)[i].Routes) {
+		return agents.ErrCredentialChanged
+	}
 	*f.removed = append(*f.removed, id)
-	*f.creds = slices.DeleteFunc(*f.creds, func(c agents.StoredCredential) bool { return c.ID == id })
+	*f.creds = slices.Delete(*f.creds, i, i+1)
 	return nil
 }
 
@@ -549,10 +555,87 @@ func TestLcppEndpointStore(t *testing.T) {
 	if len(got) != 1 || got[0].Binding == "" || !slices.Equal(got[0].Routes, []string{routes.RouteMemberLlamacpp}) {
 		t.Fatalf("an endpoint: %+v", got)
 	}
-	if err := (lcppEndpointStore{}).RemoveCredential(context.Background(), "endpoint"); err != nil {
+	always := func([]string) bool { return true }
+	if err := (lcppEndpointStore{}).RemoveCredential(context.Background(), "endpoint", "member-llamacpp@other", always); !errors.Is(err, agents.ErrCredentialChanged) {
+		t.Fatalf("another binding: %v", err)
+	}
+	if err := (lcppEndpointStore{}).RemoveCredential(context.Background(), "endpoint", got[0].Binding, func([]string) bool { return false }); !errors.Is(err, agents.ErrCredentialChanged) {
+		t.Fatalf("no longer forbidden: %v", err)
+	}
+	if err := (lcppEndpointStore{}).RemoveCredential(context.Background(), "endpoint", got[0].Binding, always); err != nil {
 		t.Fatal(err)
 	}
 	if got := (lcppEndpointStore{}).StoredCredentials(context.Background()); len(got) != 0 {
 		t.Errorf("after removal: %+v", got)
+	}
+}
+
+// The snapshot's check is not the last word: a credential replaced, or a policy loosened, after it
+// and before the store removes is left alone, because the store checks again under the lock its
+// writers take. Driven through the real llama.cpp endpoint store, whose writer is
+// handlePutLcppConn's secrets.Update.
+func TestUnusableRemovalRechecksAtTheStore(t *testing.T) {
+	memberHome(t)
+	t.Setenv("AF_SECRET_KEY", "")
+	s := memberorigintest.Install(t)
+	mux := buildMux()
+	useCredSources(t, credentialSource{"lcpp", lcppEndpointStore{}})
+	useHidingPolicy(t, apiKeysOnly)
+	setEndpoint := func(url string) {
+		t.Helper()
+		if err := secrets.Update(func(d *secrets.Data) error { d.Lcpp = &secrets.LcppConn{URL: url}; return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	endpoint := func() string {
+		d, err := secrets.Load()
+		if err != nil || d.Lcpp == nil {
+			return ""
+		}
+		return d.Lcpp.URL
+	}
+	remove := func() unusableRemoveWire {
+		t.Helper()
+		got, _ := getUnusable(t)
+		if got.Count != 1 {
+			t.Fatalf("counted %d, want the endpoint", got.Count)
+		}
+		body := []byte(`{"token":"` + got.Token + `"}`)
+		r := httptest.NewRequest(http.MethodPost, "/connections/unusable/remove", strings.NewReader(string(body)))
+		r.Header.Set("Authorization", "Bearer agent-token")
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-AF-Relay", "cp")
+		r.Header.Set(memberorigin.Header, s.Mark(memberorigintest.Claims(r, body)))
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		var out unusableRemoveWire
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("%d %s", w.Code, w.Body)
+		}
+		return out
+	}
+	hook := func(f func()) {
+		old := beforeUnusableRemoval
+		beforeUnusableRemoval = func(unusableCred) { f() }
+		t.Cleanup(func() { beforeUnusableRemoval = old })
+	}
+
+	setEndpoint("http://one.lab.invalid:8080")
+	hook(func() { setEndpoint("http://two.lab.invalid:8080") })
+	if out := remove(); out.Removed != 0 || out.Skipped != 1 || endpoint() != "http://two.lab.invalid:8080" {
+		t.Errorf("replaced after the check: %+v, endpoint %q", out, endpoint())
+	}
+
+	hook(func() {
+		useHidingPolicy(t, routepolicy.Policy{Revision: 9, Restricted: true, Allowed: []string{routes.RouteMemberLlamacpp}})
+	})
+	if out := remove(); out.Removed != 0 || out.Skipped != 1 || endpoint() == "" {
+		t.Errorf("loosened after the check: %+v, endpoint %q", out, endpoint())
+	}
+
+	useHidingPolicy(t, apiKeysOnly)
+	hook(func() {})
+	if out := remove(); out.Removed != 1 || endpoint() != "" {
+		t.Errorf("control, nothing changed: %+v, endpoint %q", out, endpoint())
 	}
 }

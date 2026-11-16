@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
@@ -271,9 +272,12 @@ func logout() error {
 		return err
 	}
 	defer loginOp.Finish()
-	_ = exec.Command("codex", "logout").Run()
+	_ = clearLogin(context.Background())
 	return nil
 }
+
+// clearLogin is the logout itself, with no login change recorded. Its error is the CLI's.
+func clearLogin(ctx context.Context) error { return exec.CommandContext(ctx, "codex", "logout").Run() }
 
 // ensureFolderTrusted pre-accepts codex's per-directory trust gate ("Do you trust
 // the contents of this directory?") for dir, the way claude's ensureFolderTrusted does

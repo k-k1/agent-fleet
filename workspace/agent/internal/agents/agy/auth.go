@@ -313,6 +313,12 @@ func logout() error {
 		return err
 	}
 	defer loginOp.Finish()
+	return clearLogin()
+}
+
+// clearLogin is the logout itself, with no login change recorded: an error wrapping
+// errLogoutFailed when the token file could not be removed.
+func clearLogin() error {
 	if err := os.Remove(tokenPath()); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("%w: %w", errLogoutFailed, err)
 	}
