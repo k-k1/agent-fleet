@@ -13,6 +13,7 @@ import {
   parseProvidedTenant,
   parseSource,
   parseUsd,
+  sameModels,
   usdInput,
   type GrantInput,
   type ProvidedTenantView,
@@ -57,7 +58,7 @@ function SourceEditor({
     body.role_arn !== source.role_arn ||
     body.region !== source.region ||
     body.active !== source.active ||
-    body.models.join("\n") !== source.models.join("\n");
+    !sameModels(body.models, source.models);
   const field = (label: string, value: string, set: (v: string) => void) => (
     <label className="admin-fld">
       <span className="af-cap">{label}</span>

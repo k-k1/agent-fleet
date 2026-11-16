@@ -105,6 +105,24 @@ describe("admin provided-route source", () => {
     expect(host!.querySelectorAll("input, textarea, button").length).toBe(0);
   });
 
+  it("draws no editor for a source without its binding", async () => {
+    api.mockResolvedValue({ source: { ...SOURCE(), binding: undefined } });
+    await mount(<AdminProvidedSourceView />);
+    expect(host!.querySelector("[role=alert]")).not.toBeNull();
+    expect(host!.querySelectorAll("input, textarea, button").length).toBe(0);
+  });
+
+  it("does not offer to save a model list that was only reordered", async () => {
+    api.mockResolvedValue({ source: { ...SOURCE(), models: ["a.model", "b.model"] } });
+    await mount(<AdminProvidedSourceView />);
+    const ta = host!.querySelector("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "b.model, a.model");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(save().disabled).toBe(true);
+  });
+
   it("keeps an inactive source off when it is re-saved", async () => {
     await mount(<AdminProvidedSourceView />);
     await type(inputs()[0], "bedrock");

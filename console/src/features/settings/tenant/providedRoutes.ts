@@ -105,6 +105,7 @@ export function parseSource(d: unknown): { source: SourceView | null } | null {
   if (
     !isObj(s) ||
     typeof s.id !== "string" ||
+    typeof s.binding !== "string" ||
     typeof s.name !== "string" ||
     typeof s.role_arn !== "string" ||
     typeof s.region !== "string" ||
@@ -118,10 +119,14 @@ export function parseSource(d: unknown): { source: SourceView | null } | null {
   return { source: s as unknown as SourceView };
 }
 
+const isReservation = (r: unknown): r is ModelReservation =>
+  isObj(r) && typeof r.model === "string" && num(r.min_micro) && num(r.max_output_micro);
+
 const isMember = (m: unknown): m is ProvidedMember =>
   isObj(m) &&
   typeof m.membership_id === "string" &&
   typeof m.user_key === "string" &&
+  typeof m.email === "string" &&
   typeof m.granted === "boolean" &&
   numOrNull(m.budget_micro) &&
   num(m.effective_micro) &&
@@ -141,6 +146,7 @@ export function parseProvidedTenant(d: unknown): ProvidedTenantView | null {
     !Array.isArray(d.members) ||
     !d.members.every(isMember) ||
     !Array.isArray(d.reservations) ||
+    !d.reservations.every(isReservation) ||
     !num(d.floor_micro)
   )
     return null;
@@ -161,6 +167,13 @@ export function parseUsd(s: string): number | null | undefined {
   if (!/^\d+(\.\d+)?$/.test(t)) return undefined;
   return Math.round(Number(t) * 1e6);
 }
+
+/** sameModels compares two model lists as the CP stores them (NormalizeAllowList sorts and
+ *  de-duplicates), so a reordered list is not a change worth a PUT and an audit row. */
+export const sameModels = (a: string[], b: string[]) => {
+  const n = (l: string[]) => [...new Set(l)].sort().join("\n");
+  return n(a) === n(b);
+};
 
 /** modelsOf reads the source editor's model list: one id per line or comma. */
 export const modelsOf = (text: string) =>

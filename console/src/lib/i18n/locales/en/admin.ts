@@ -1183,6 +1183,6 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.prov_source_name": "Name",
   "admin.prov_source_role": "IAM role ARN",
   "admin.prov_source_region": "Region",
-  "admin.prov_source_models": "Models it may use (one per line)",
+  "admin.prov_source_models": "Models it may use (one per line, or comma-separated)",
   "admin.prov_source_active": "Use this source",
 };

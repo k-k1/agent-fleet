@@ -1179,6 +1179,6 @@ export const admin = {
   "admin.prov_source_name": "名前",
   "admin.prov_source_role": "IAM ロールの ARN",
   "admin.prov_source_region": "リージョン",
-  "admin.prov_source_models": "使ってよいモデル（1 行に 1 つ）",
+  "admin.prov_source_models": "使ってよいモデル（1 行に 1 つ、またはカンマ区切り）",
   "admin.prov_source_active": "この送り元を使う",
 };

@@ -113,6 +113,9 @@ describe("tenant provided routes", () => {
       { error: { code: "no_tenant", message: "unknown tenant", status: 404 } },
       { error: { code: "forbidden", message: "tenant administrators only", status: 403 } },
       { granted: true, members: [] },
+      // Well-formed at the top, broken inside: a reservation row without its amounts.
+      { ...VIEW(), reservations: [{ model: "anthropic.claude-haiku" }] },
+      { ...VIEW(), members: [{ ...VIEW().members[0], email: undefined }] },
     ]) {
       api.mockResolvedValue(answer);
       await mount();
