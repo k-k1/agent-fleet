@@ -33,18 +33,46 @@ type hiddenItemWire struct {
 // layerOrder is the order forbiddenBy lists layers in.
 var layerOrder = []string{routepolicy.LayerCeiling, routepolicy.LayerDeployment, routepolicy.LayerTenantCap, routepolicy.LayerTenant}
 
-// hiddenOf folds the route decisions into what they hide. A per-connection route the layers allow
+// ownerItemWire is one harness, chat backend or image provider with the routes it can use and the
+// subset of them the layers allow, for the "what can members use" view. Invariant: an item is in
+// hidden if and only if its allowed list is empty (both are folded from the same decision).
+type ownerItemWire struct {
+	ID      string   `json:"id"`
+	Routes  []string `json:"routes"`
+	Allowed []string `json:"allowed"`
+}
+
+// ownersWire is the tenant view's owners section: every owner of routes and what is allowed of
+// them. Additive to hidden, which stays what the MCP tool texts read (#4241).
+type ownersWire struct {
+	Kinds    []ownerItemWire `json:"kinds"`
+	Chat     []ownerItemWire `json:"chat"`
+	Imagegen []ownerItemWire `json:"imagegen"`
+}
+
+// foldOwners is the one decision behind hidden and owners. A per-connection route the layers allow
 // on an approved endpoint (endpointRoutes, with at least one approved host) counts as allowed: a
 // member whose endpoint is approved can use it, so its harness is not hidden from the tenant.
-func hiddenOf(layers routepolicy.Layers, endpointRoutes []string, approvedHosts int) hiddenWire {
+// Owners with no routes at all appear in neither.
+func foldOwners(layers routepolicy.Layers, endpointRoutes []string, approvedHosts int) (owners ownersWire, hidden hiddenWire) {
 	allowed := func(r string) bool {
 		return len(layers.ForbiddenBy(r)) == 0 || approvedHosts > 0 && slices.Contains(endpointRoutes, r)
 	}
-	fold := func(ids []string, routesOf func(string) []string) []hiddenItemWire {
-		out := []hiddenItemWire{}
+	fold := func(ids []string, routesOf func(string) []string) ([]ownerItemWire, []hiddenItemWire) {
+		os, hs := []ownerItemWire{}, []hiddenItemWire{}
 		for _, id := range ids {
 			rs := routesOf(id)
-			if len(rs) == 0 || slices.ContainsFunc(rs, allowed) {
+			if len(rs) == 0 { // defensive: no catalog entry is routeless today
+				continue
+			}
+			ok := []string{}
+			for _, r := range rs {
+				if allowed(r) {
+					ok = append(ok, r)
+				}
+			}
+			os = append(os, ownerItemWire{ID: id, Routes: rs, Allowed: ok})
+			if len(ok) > 0 {
 				continue
 			}
 			by := map[string]bool{}
@@ -59,20 +87,19 @@ func hiddenOf(layers routepolicy.Layers, endpointRoutes []string, approvedHosts 
 					item.ForbiddenBy = append(item.ForbiddenBy, l)
 				}
 			}
-			out = append(out, item)
+			hs = append(hs, item)
 		}
-		return out
+		return os, hs
 	}
 	kindRoutes := func(k string) []string {
 		rs := append(agentroutes.RoutesOf(k), agentroutes.FixedRoutesOf(k)...)
 		slices.Sort(rs)
 		return slices.Compact(rs)
 	}
-	return hiddenWire{
-		Kinds:    fold(agentroutes.ModelKinds(), kindRoutes),
-		Chat:     fold(agentroutes.ChatBackends(), agentroutes.ChatRoutesOf),
-		Imagegen: fold(agentroutes.ImagegenProviders(), agentroutes.ImagegenRoutesOf),
-	}
+	owners.Kinds, hidden.Kinds = fold(agentroutes.ModelKinds(), kindRoutes)
+	owners.Chat, hidden.Chat = fold(agentroutes.ChatBackends(), agentroutes.ChatRoutesOf)
+	owners.Imagegen, hidden.Imagegen = fold(agentroutes.ImagegenProviders(), agentroutes.ImagegenRoutesOf)
+	return owners, hidden
 }
 
 // HiddenKinds is the set of harnesses the tenant's effective policy hides altogether, for the
