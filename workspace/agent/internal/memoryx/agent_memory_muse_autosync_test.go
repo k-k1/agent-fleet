@@ -190,7 +190,10 @@ func TestAutoSyncImportsMuseMemoryMdFacts(t *testing.T) {
 	agentMemMu.RLock()
 	es, _, err := agentMemLoadDir(agentMemScopeUser, "user")
 	agentMemMu.RUnlock()
-	if err == nil && len(es) != 0 {
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("user scope unreadable: %v", err)
+	}
+	if len(es) != 0 {
 		t.Fatalf("the personal store was imported silently: %v", es)
 	}
 }

@@ -76,8 +76,11 @@ var (
 	museDirRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@+=-]{0,254}$`)
 	// museHashSuffixRe splits "<slug>-<16 hex>".
 	museHashSuffixRe = regexp.MustCompile(`^(.*)-([0-9a-f]{16})$`)
-	// museIndexLinkRe matches an index line "- [Title](file.md) ...".
-	museIndexLinkRe = regexp.MustCompile(`^\s*[-*+]\s*\[[^\]]*\]\([^)]*\)`)
+	// museIndexLinkRe matches an index line "- [Title](file.md) ...": the link points at a local
+	// .md file, so a fact that opens with an external link is kept.
+	museIndexLinkRe = regexp.MustCompile(`^\s*[-*+]\s*\[[^\]]*\]\([^):\s]+\.md(#[^)\s]*)?\)`)
+	// museHeadingRe matches an ATX heading; "#4301 is ..." is a fact, not a heading.
+	museHeadingRe = regexp.MustCompile(`^#{1,6}(\s|$)`)
 )
 
 // museIndexFacts is MEMORY.md reduced to the facts muse stored in it: index links, blank lines and
@@ -86,7 +89,7 @@ func museIndexFacts(raw []byte) []byte {
 	var keep []string
 	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
 		t := strings.TrimSpace(line)
-		if t == "" || strings.HasPrefix(t, "#") || museIndexLinkRe.MatchString(line) {
+		if t == "" || museHeadingRe.MatchString(t) || museIndexLinkRe.MatchString(line) {
 			continue
 		}
 		keep = append(keep, strings.TrimRight(line, " \t"))

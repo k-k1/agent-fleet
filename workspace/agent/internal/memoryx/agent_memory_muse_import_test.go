@@ -571,9 +571,38 @@ func TestMuseImportMemoryMdNameCollision(t *testing.T) {
 	e := newMuseImportEnv(t)
 	e.raw(e.clone, "MEMORY.md", "- a fact\n")
 	e.raw(e.clone, museIndexNoteName+".md", "topic")
-	for _, it := range e.preview().Items {
+	items := e.preview().Items
+	if len(items) != 2 {
+		t.Fatalf("items = %+v", items)
+	}
+	paths := map[string]bool{}
+	for _, it := range items {
+		paths[it.Path] = true
+	}
+	if !paths["MEMORY.md"] || !paths[museIndexNoteName+".md"] {
+		t.Fatalf("paths = %v", paths)
+	}
+	for _, it := range items {
 		if it.Status != claudeImportInvalid || it.Reason != "name_collision" {
 			t.Errorf("%s = %+v", it.Path, it)
+		}
+	}
+}
+
+// Facts that merely look like a link or a heading are kept.
+func TestMuseIndexFactsKeepsLookalikes(t *testing.T) {
+	for _, fact := range []string{
+		"- [Runbook](https://example.invalid/ops) is required before every deploy",
+		"#4301 is the deployment blocker",
+		"#hashtag fact",
+	} {
+		if got := string(museIndexFacts([]byte(fact + "\n"))); got != fact+"\n" {
+			t.Errorf("%q dropped: %q", fact, got)
+		}
+	}
+	for _, drop := range []string{"- [A](a.md) - x", "* [A](sub/a.md#sec) - x", "## Heading", "#"} {
+		if got := museIndexFacts([]byte(drop + "\n")); got != nil {
+			t.Errorf("%q kept: %q", drop, got)
 		}
 	}
 }
