@@ -120,6 +120,25 @@ describe("settings form", () => {
     const d = draftOf(undefined);
     expect([d.agentKind, d.worktree, d.maxActive, d.batch, d.spendCapUsd, d.enabled]).toEqual(["claude", true, "2", "1", "0", false]);
   });
+  it("keeps the accept-from-own-sessions switch off unless the queue says true", () => {
+    expect(draftOf(undefined).acceptOwnSessions).toBe(false);
+    expect(draftBody(draftOf(undefined), "").acceptOwnSessions).toBe(false);
+    expect(readMemoQueues({ queues: [{ categoryId: "c1" }] })?.queues[0].acceptOwnSessions).toBe(false);
+    expect(readMemoQueues({ queues: [{ categoryId: "c1", acceptOwnSessions: "yes" }] })?.queues[0].acceptOwnSessions).toBe(false);
+    const q = readMemoQueues({ queues: [{ categoryId: "c1", acceptOwnSessions: true }] })!.queues[0];
+    expect(draftOf(q).acceptOwnSessions).toBe(true);
+    expect(draftBody(draftOf(q), "").acceptOwnSessions).toBe(true);
+  });
+  it("says the three facts of the switch in both languages", async () => {
+    const { memo: en } = await import("../../lib/i18n/locales/en/memo.ts");
+    const { memo: ja } = await import("../../lib/i18n/locales/ja/memo.ts");
+    expect(en["memo.q_accept_own_hint"]).toMatch(/started yourself start without your approval/);
+    expect(en["memo.q_accept_own_hint"]).toMatch(/auto-run, a schedule or another session started still wait for your approval/);
+    expect(en["memo.q_accept_own_hint"]).toMatch(/pass itself off as a session you started/);
+    expect(ja["memo.q_accept_own_hint"]).toMatch(/承認を待たずに実行待ちになります/);
+    expect(ja["memo.q_accept_own_hint"]).toMatch(/自動実行・スケジュール・ほかのセッションが起動したセッションのメモは、これまでどおり承認を待ちます/);
+    expect(ja["memo.q_accept_own_hint"]).toMatch(/なりすまして/);
+  });
   it("needs an instruction only to turn it on", () => {
     expect(draftErrors({ ...draftOf(undefined) })).toEqual({});
     expect(draftErrors({ ...draftOf(undefined), enabled: true }).instruction).toBe("memo.q_err_instruction");
@@ -175,7 +194,7 @@ describe("when it runs", () => {
     const th = draftBody({ ...ok, runMode: "threshold", openCron: "0 9 * * *", openAfter: "7" }, "r");
     expect(th).toMatchObject({ openCron: "", openMinutes: 0, tz: "", openAfter: 7 });
     expect(Object.keys(w).sort()).toEqual(
-      ["agentKind", "batch", "effort", "enabled", "instruction", "maxActive", "maxFiresPerDay", "maxTaskHours", "model", "openAfter", "openCron", "openMinutes", "route", "spendCapUsd", "tz", "worktree"],
+      ["acceptOwnSessions", "agentKind", "batch", "effort", "enabled", "instruction", "maxActive", "maxFiresPerDay", "maxTaskHours", "model", "openAfter", "openCron", "openMinutes", "route", "spendCapUsd", "tz", "worktree"],
     );
   });
 });

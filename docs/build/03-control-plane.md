@@ -268,8 +268,17 @@ Memos you accumulate and send to a session in one go (the tables are
   every CP runs this binary ([06](06-data.md)). A queue's memos are messages with a
   state. The face a request arrived by —
   the Console, the token face, `/mcp` — is fixed where the route is registered and decides
-  the provenance and the entering state (`pending` only for the member's own note through
-  the Console, `held` otherwise). `POST /api/memos/release` moves held messages to
+  the provenance and the entering state (`pending` for the member's own note through the
+  Console and, with the queue's `acceptOwnSessions` switch on, for a token-face create whose
+  relayed `producerOrigin` is exactly `user`; `held` otherwise, `/mcp` and an empty or unknown
+  origin included). The switch is `memo_queue.accept_own_sessions` (migrations 0139 and 0124),
+  off by default, written by the settings PUT only (an omitted field means off). A message it
+  makes pending records its release as a press does (hash, time, `release_*` copies) plus
+  `memo.released_by = 'setting'`, shown as `releasedBy` in the list answer and cleared with the
+  release. A token-face change of a pending message whose recorded provenance is `workspace`
+  and origin `user`, into a queue with the switch on, keeps `pending` and re-records the release;
+  the update carries no caller identity, so the recorded origin is all the rule can read. The
+  bounds below hold with the switch on. `POST /api/memos/release` moves held messages to
   `pending`, all or none, each with a conditional write on its own row that also requires
   the content hash the card showed. Settings and release are Console only; on the token
   face and `/mcp` a message in a queue is not flushed or deleted, an edit of a released one

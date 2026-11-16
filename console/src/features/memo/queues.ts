@@ -73,6 +73,7 @@ function readQueue(v: unknown): MemoQueue | null {
     route: str(v.route),
     spendCapUsd: num(v.spendCapUsd, 0),
     worktree: v.worktree !== false,
+    acceptOwnSessions: v.acceptOwnSessions === true,
     maxActive: num(v.maxActive, 2),
     batch: num(v.batch, 1),
     maxTaskHours: num(v.maxTaskHours, QUEUE_TASK_HOURS_DEFAULT),
@@ -266,6 +267,7 @@ export interface QueueDraft {
   effort: string;
   spendCapUsd: string;
   worktree: boolean;
+  acceptOwnSessions: boolean;
   maxActive: string;
   batch: string;
   runMode: RunMode;
@@ -290,6 +292,7 @@ export function draftOf(q: MemoQueue | undefined): QueueDraft {
     effort: q?.effort ?? "",
     spendCapUsd: String(q?.spendCapUsd ?? 0),
     worktree: q?.worktree ?? true,
+    acceptOwnSessions: q?.acceptOwnSessions ?? false,
     maxActive: String(q?.maxActive ?? 2),
     batch: String(q?.batch ?? 1),
     runMode: mode,
@@ -361,6 +364,7 @@ export function draftBody(d: QueueDraft, route: string): MemoQueueInput {
     route,
     spendCapUsd: Number(d.spendCapUsd.trim()),
     worktree: d.worktree,
+    acceptOwnSessions: d.acceptOwnSessions,
     maxActive: Number(d.maxActive.trim()),
     batch: Number(d.batch.trim()),
     maxTaskHours: Number(d.maxTaskHours.trim()),

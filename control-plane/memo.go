@@ -58,9 +58,12 @@ type memoDTO struct {
 	// send them: validateMemo and memoPatch never read them. State is "" for a plain note.
 	// Provenance is the face the memo was created by, "workspace" for a row from before it was
 	// recorded. ContentHash is what a release names (POST /api/memos/release).
-	State       string `json:"state"`
-	Provenance  string `json:"provenance"`
-	ReleasedAt  string `json:"releasedAt,omitempty"`
+	State      string `json:"state"`
+	Provenance string `json:"provenance"`
+	ReleasedAt string `json:"releasedAt,omitempty"`
+	// ReleasedBy is "setting" when the queue's accept-from-own-sessions switch made the message
+	// pending and no press did, absent otherwise.
+	ReleasedBy  string `json:"releasedBy,omitempty"`
 	ContentHash string `json:"contentHash"`
 	// Producer and ProducerOrigin are attribution only: on the token face the session name and
 	// origin the Agent relay supplies on create (the one place a request field is read for
@@ -89,7 +92,7 @@ func memoToDTO(m store.Memo) memoDTO {
 	d := memoDTO{ID: m.ID, Repo: m.Repo, Category: m.Category, Kind: m.Kind,
 		Body: m.Body, RefPath: m.RefPath, Attachments: parseMemoAttachments(m.Attachments),
 		Position: m.Position, CreatedAt: m.CreatedAt, SentAt: m.SentAt,
-		State: m.State, Provenance: memoEffectiveProvenance(m), ReleasedAt: m.ReleasedAt,
+		State: m.State, Provenance: memoEffectiveProvenance(m), ReleasedAt: m.ReleasedAt, ReleasedBy: m.ReleasedBy,
 		ContentHash: memoContentHash(m), Producer: m.Producer, ProducerOrigin: m.ProducerOrigin,
 		DeliveryID: m.DeliveryID, Reference: memoRefToWire(m)}
 	if m.OriginItemID != "" {
@@ -251,7 +254,7 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 	m.Provenance, m.Producer, m.ProducerOrigin = via.provenance(), clipProducer(via.producer), clipProducer(via.producerOrigin)
 	created := true
 	err := st.MemoTx(ctx, mv.MembershipID, func(tx store.MemoTxOps) error {
-		inQ, err := memoInQueue(tx, m.Repo, m.Category)
+		inQ, accept, err := memoQueueSwitch(tx, m.Repo, m.Category)
 		if err != nil {
 			return err
 		}
@@ -292,7 +295,7 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		}
 		m.ID = store.NewID()
 		m.CreatedAt = store.NowTS()
-		if m, aerr = memoQueueMove(m, m, false, inQ, via); aerr != nil {
+		if m, aerr = memoQueueMove(m, m, false, inQ, accept, via); aerr != nil {
 			return memoTxFail(aerr)
 		}
 		if inQ && via.fromWorkspace() {
@@ -372,11 +375,11 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 		if err != nil {
 			return err
 		}
-		inNext, err := memoInQueue(tx, next.Repo, next.Category)
+		inNext, accept, err := memoQueueSwitch(tx, next.Repo, next.Category)
 		if err != nil {
 			return err
 		}
-		if next, aerr = memoQueueMove(cur, next, inPrev, inNext, via); aerr != nil {
+		if next, aerr = memoQueueMove(cur, next, inPrev, inNext, accept, via); aerr != nil {
 			return memoTxFail(aerr)
 		}
 		if inNext && memoOpenState(next.State) && next.RefKey != "" {
@@ -984,10 +987,10 @@ func memoSettleSend(ctx context.Context, st store.MemoStore, membershipID, token
 			case sendErr == nil:
 				next.SentAt = sentAt
 				if next.State != "" {
-					next.State, next.ReleaseHash, next.ReleasedAt = store.MemoStateDelivered, "", ""
+					next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = store.MemoStateDelivered, "", "", ""
 				}
 			case memoSendUnknown(sendErr) && (cur.State == store.MemoStateHeld || cur.State == store.MemoStatePending):
-				next.State, next.ReleaseHash, next.ReleasedAt = store.MemoStateUnconfirmed, "", ""
+				next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = store.MemoStateUnconfirmed, "", "", ""
 			}
 			if err := tx.WriteMemo(next); err != nil {
 				return err

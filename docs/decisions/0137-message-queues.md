@@ -669,3 +669,15 @@ worktree and no branch takes the branch the member's naming rules give for the i
 for GitHub and Bitbucket and `feature/PROJ-7` for Jira, with the rules' base). An existing branch is checked out, as the
 Console's "work on the existing branch" does, and a branch another working copy holds, a name git refuses or no name from
 the rules leaves the throwaway `temp/` branch: a name never fails a delivery. Wire and behaviour: docs/build/04-agent.md.
+
+Added 2026-11-17 (#4151, step 4): the switch is `memo_queue.accept_own_sessions` (off by default, set by the Console's
+settings PUT only; an omitted field means off). With it on, a `workspace` message whose recorded producer origin is
+exactly `user` enters `pending`, with its release recorded as a press records it; every other origin, an empty one
+and `/mcp` stay `held`. A change that arrives by the token face to such a message keeps it `pending` and records the
+release again: the update carries no caller identity, so the Control Plane can only read the origin recorded at the
+create, and the switch already accepts that a session of that origin could have added the changed text as a new
+message. A move into a category without the switch, and a change by `/mcp`, put it back to `held`. A message the switch
+made pending carries `memo.released_by = 'setting'` (`releasedBy` on the wire), which the Console draws as "Approved by
+the setting"; a press or a Console write clears it. The bounds on a create from a session (rate, size, identical
+message, the envelope prefix) and a queue's daily cap and breaker are unchanged. The Agent already relays the session's
+origin (`session.OriginOf`); nothing in the workspace changed.

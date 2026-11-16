@@ -321,7 +321,7 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 		// A release is bound to the content it showed. One that no longer matches goes back
 		// for a new press instead of being fired.
 		if m.ReleaseHash != memoContentHash(m) {
-			m.State, m.ReleaseHash, m.ReleasedAt = store.MemoStateHeld, "", ""
+			m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy = store.MemoStateHeld, "", "", ""
 			if err := tx.WriteMemo(m); err != nil {
 				return none, nil, err
 			}

@@ -32,6 +32,14 @@ const (
 	MemoProvenanceCurator   = "curator"
 )
 
+// MemoReleasedBySetting is memo.released_by for a message that became pending by the queue's
+// accept-from-own-sessions switch and not by a press.
+const MemoReleasedBySetting = "setting"
+
+// MemoOriginUser is the producer origin of a session the member started themselves: the value
+// the Agent's relay sends for session.OriginUser.
+const MemoOriginUser = "user"
+
 // MemoSendStaleAfter bounds a flush in flight: past it, the CP that reserved the rows is taken
 // to have died between its reservation and the send's outcome, and the reservation is taken
 // back (SweepStaleMemoSends). It is above the longest a send can take (two Agent calls of at
@@ -47,7 +55,10 @@ type MemoQueue struct {
 	Route                    string
 	SpendCapUSD              float64
 	Worktree                 bool
-	MaxActive, Batch         int
+	// AcceptOwnSessions drops the release press for a message from a session the member started
+	// (ADR 0137 section 3). It is a guard rail: the Agent supplies the session's origin.
+	AcceptOwnSessions bool
+	MaxActive, Batch  int
 	// MaxTaskHours is how long a delivery of the queue may stay open before it is overdue
 	// (ADR 0137 section 6), 1 to 72.
 	MaxTaskHours int
@@ -211,10 +222,11 @@ func sweepStaleMemoSends(ctx context.Context, q memoQuerier, membershipID string
 		  state=CASE WHEN state IN (?,?) THEN ? ELSE state END,
 		  release_hash=CASE WHEN state IN (?,?) THEN '' ELSE release_hash END,
 		  released_at=CASE WHEN state IN (?,?) THEN '' ELSE released_at END,
+		  released_by=CASE WHEN state IN (?,?) THEN '' ELSE released_by END,
 		  send_token='', send_started_at=''
 		WHERE membership_id=? AND send_token<>'' AND send_started_at<?`,
 		MemoStateHeld, MemoStatePending, MemoStateUnconfirmed,
-		MemoStateHeld, MemoStatePending, MemoStateHeld, MemoStatePending,
+		MemoStateHeld, MemoStatePending, MemoStateHeld, MemoStatePending, MemoStateHeld, MemoStatePending,
 		membershipID, cutoff)
 	return err
 }
@@ -268,7 +280,7 @@ func (t memoTx) DeleteMemo(id string) error {
 
 func (t memoTx) ReleaseMemo(seen Memo, hash, at string) (bool, error) {
 	return affected(t.q.ExecContext(t.ctx,
-		`UPDATE memo SET state=?, release_hash=?, released_at=?,
+		`UPDATE memo SET state=?, release_hash=?, released_at=?, released_by='',
 		   release_repo=repo, release_category=category, release_kind=kind, release_body=body,
 		   release_ref_path=ref_path, release_attachments=attachments,
 		   release_ref_provider=ref_provider, release_ref_key=ref_key, release_ref_url=ref_url
@@ -326,16 +338,17 @@ func (t memoTx) DeleteCategory(id string) error {
 const memoQueueCols = `SELECT category_id, membership_id, instruction, agent_kind, model, effort, route, spend_cap_usd,
 	worktree, max_active, batch, enabled, generation, created_at, updated_at, max_task_hours,
 	open_cron, open_minutes, tz, open_after, max_fires_per_day, draining, paused, paused_at, paused_reason, breaker_after,
-	no_report_at, no_refs_at FROM memo_queue`
+	no_report_at, no_refs_at, accept_own_sessions FROM memo_queue`
 
 func scanMemoQueue(row scanner) (MemoQueue, error) {
 	var q MemoQueue
-	var worktree, enabled, draining, paused int
+	var worktree, enabled, draining, paused, acceptOwn int
 	err := row.Scan(&q.CategoryID, &q.MembershipID, &q.Instruction, &q.AgentKind, &q.Model, &q.Effort, &q.Route,
 		&q.SpendCapUSD, &worktree, &q.MaxActive, &q.Batch, &enabled, &q.Generation, &q.CreatedAt, &q.UpdatedAt, &q.MaxTaskHours,
 		&q.OpenCron, &q.OpenMinutes, &q.TZ, &q.OpenAfter, &q.MaxFiresPerDay, &draining, &paused, &q.PausedAt, &q.PausedReason,
-		&q.BreakerAfter, &q.NoReportAt, &q.NoRefsAt)
+		&q.BreakerAfter, &q.NoReportAt, &q.NoRefsAt, &acceptOwn)
 	q.Worktree, q.Enabled, q.Draining, q.Paused = worktree != 0, enabled != 0, draining != 0, paused != 0
+	q.AcceptOwnSessions = acceptOwn != 0
 	return q, err
 }
 
@@ -363,18 +376,18 @@ func (t memoTx) QueueOf(repo, category string) (MemoQueue, bool, error) {
 func (t memoTx) PutQueue(q MemoQueue) error {
 	_, err := t.q.ExecContext(t.ctx, `INSERT INTO memo_queue(category_id, membership_id, instruction, agent_kind, model,
 		effort, route, spend_cap_usd, worktree, max_active, batch, enabled, generation, created_at, updated_at,
-		max_task_hours, open_cron, open_minutes, tz, open_after, max_fires_per_day)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		max_task_hours, open_cron, open_minutes, tz, open_after, max_fires_per_day, accept_own_sessions)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(category_id) DO UPDATE SET instruction=excluded.instruction, agent_kind=excluded.agent_kind,
 		  model=excluded.model, effort=excluded.effort, route=excluded.route, spend_cap_usd=excluded.spend_cap_usd,
 		  worktree=excluded.worktree, max_active=excluded.max_active, batch=excluded.batch, enabled=excluded.enabled,
 		  max_task_hours=excluded.max_task_hours, open_cron=excluded.open_cron, open_minutes=excluded.open_minutes,
 		  tz=excluded.tz, open_after=excluded.open_after, max_fires_per_day=excluded.max_fires_per_day,
-		  updated_at=excluded.updated_at
+		  accept_own_sessions=excluded.accept_own_sessions, updated_at=excluded.updated_at
 		WHERE memo_queue.membership_id=excluded.membership_id`,
 		q.CategoryID, t.mid, q.Instruction, q.AgentKind, q.Model, q.Effort, q.Route, q.SpendCapUSD,
 		b2i(q.Worktree), q.MaxActive, q.Batch, b2i(q.Enabled), q.Generation, q.CreatedAt, q.UpdatedAt, q.MaxTaskHours,
-		q.OpenCron, q.OpenMinutes, q.TZ, q.OpenAfter, q.MaxFiresPerDay)
+		q.OpenCron, q.OpenMinutes, q.TZ, q.OpenAfter, q.MaxFiresPerDay, b2i(q.AcceptOwnSessions))
 	return err
 }
 

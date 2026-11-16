@@ -122,16 +122,33 @@ func memoStateLocked(s string) bool {
 
 func memoNow() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
-// memoEnter puts a message that enters a queue into its first state: pending only for the
-// member's own note arriving by the Console, held for everything else (ADR 0137 section 3).
-// A memo the member already sent by hand enters as delivered: pending would fire it again.
-func memoEnter(m store.Memo, via memoVia) store.Memo {
+// memoAcceptedBySetting is the one rule that skips the release press for a message from inside
+// the workspace: the queue's switch is on, the message came by the token face, and the Agent
+// named the session's origin as user. The token face is required because /mcp carries no
+// session, and the recorded provenance and origin because an update carries no caller identity.
+// Anything else, an empty or unknown origin included, answers false.
+func memoAcceptedBySetting(m store.Memo, via memoVia, accept bool) bool {
+	return accept && via.face == memoFaceToken &&
+		memoEffectiveProvenance(m) == store.MemoProvenanceWorkspace && m.ProducerOrigin == store.MemoOriginUser
+}
+
+// memoEnter puts a message that enters a queue into its first state: pending for the member's
+// own note arriving by the Console and, with the queue's switch on, for a message from a session
+// the member started; held for everything else (ADR 0137 section 3). accept is the switch of the
+// queue it enters. A memo the member already sent by hand enters as delivered: pending would
+// fire it again.
+func memoEnter(m store.Memo, via memoVia, accept bool) store.Memo {
+	m.ReleasedBy = ""
 	if m.SentAt != "" {
 		m.State, m.ReleaseHash, m.ReleasedAt = store.MemoStateDelivered, "", ""
 		return m
 	}
 	if via.face == memoFaceConsole && memoEffectiveProvenance(m) == store.MemoProvenanceMember {
 		m.State, m.ReleaseHash, m.ReleasedAt = store.MemoStatePending, memoContentHash(m), memoNow()
+		return m
+	}
+	if memoAcceptedBySetting(m, via, accept) {
+		m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy = store.MemoStatePending, memoContentHash(m), memoNow(), store.MemoReleasedBySetting
 		return m
 	}
 	m.State, m.ReleaseHash, m.ReleasedAt = store.MemoStateHeld, "", ""
@@ -141,8 +158,9 @@ func memoEnter(m store.Memo, via memoVia) store.Memo {
 // memoQueueMove applies the queue rules to one row that goes from prev to next, where inPrev
 // and inNext say whether each lies in a queue. Every write path that can change a hashed field
 // or a row's queue goes through it, so a pending message's release hash is its content hash
-// after every write. A plain note that stays out of every queue comes back unchanged.
-func memoQueueMove(prev, next store.Memo, inPrev, inNext bool, via memoVia) (store.Memo, *apiError) {
+// after every write. A plain note that stays out of every queue comes back unchanged. accept is
+// the switch of the queue next is in (false when it is in none).
+func memoQueueMove(prev, next store.Memo, inPrev, inNext, accept bool, via memoVia) (store.Memo, *apiError) {
 	if inNext && memoIsInbox(next) {
 		return next, &apiError{http.StatusConflict, errCodeMemoInboxInQueue, "a memo taken in from the inbox cannot be in a queue: it is sent alone, by you"}
 	}
@@ -157,20 +175,25 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext bool, via memoVia) (sto
 		return next, &apiError{http.StatusConflict, errCodeMemoSending, "this message is being sent"}
 	}
 	if !inNext {
-		next.State, next.ReleaseHash, next.ReleasedAt = "", "", ""
+		next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = "", "", "", ""
 		return next, nil
 	}
 	if !inPrev || prev.State == "" {
-		return memoEnter(next, via), nil
+		return memoEnter(next, via, accept), nil
 	}
 	if memoStateLocked(prev.State) || !moved {
 		return next, nil
 	}
 	if prev.State == store.MemoStatePending {
-		if via.fromWorkspace() {
-			next.State, next.ReleaseHash, next.ReleasedAt = store.MemoStateHeld, "", ""
-		} else {
-			next.ReleaseHash, next.ReleasedAt = memoContentHash(next), memoNow()
+		switch {
+		case memoAcceptedBySetting(next, via, accept):
+			// The switch already accepts that such a session could have added this text as a
+			// new message, so a change of it keeps the state and records the release again.
+			next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = memoContentHash(next), memoNow(), store.MemoReleasedBySetting
+		case via.fromWorkspace():
+			next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = store.MemoStateHeld, "", "", ""
+		default:
+			next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = memoContentHash(next), memoNow(), ""
 		}
 	}
 	return next, nil
@@ -201,6 +224,12 @@ func memoInQueue(tx store.MemoTxOps, repo, category string) (bool, error) {
 	return ok, err
 }
 
+// memoQueueSwitch is memoInQueue plus the queue's accept-from-own-sessions switch.
+func memoQueueSwitch(tx store.MemoTxOps, repo, category string) (inQ, accept bool, err error) {
+	q, ok, err := tx.QueueOf(repo, category)
+	return ok, ok && q.AcceptOwnSessions, err
+}
+
 // memoMoveBucket moves every row of (repo, from) to category to, applying the queue rules to
 // each. inPrev and inNext are the queue membership of the bucket before and after. It is the
 // rename, the merge, the category delete and the settings create or delete.
@@ -220,7 +249,7 @@ func memoMoveBucket(tx store.MemoTxOps, repo, from, to string, inPrev, inNext bo
 	for _, prev := range rows {
 		next := prev
 		next.Category = to
-		next, aerr := memoQueueMove(prev, next, inPrev, inNext, via)
+		next, aerr := memoQueueMove(prev, next, inPrev, inNext, false, via)
 		if aerr != nil {
 			return memoTxFail(aerr)
 		}
@@ -295,8 +324,11 @@ type memoQueueDTO struct {
 	Route       string  `json:"route"`
 	SpendCapUSD float64 `json:"spendCapUsd"`
 	Worktree    bool    `json:"worktree"`
-	MaxActive   int     `json:"maxActive"`
-	Batch       int     `json:"batch"`
+	// AcceptOwnSessions is the switch "accept from sessions I started": a message from a session
+	// the member started enters without a release. Off by default.
+	AcceptOwnSessions bool `json:"acceptOwnSessions"`
+	MaxActive         int  `json:"maxActive"`
+	Batch             int  `json:"batch"`
 	// MaxTaskHours is how long one of its deliveries may stay open before it is overdue.
 	MaxTaskHours int `json:"maxTaskHours"`
 	// When the queue fires by itself (ADR 0137 section 6): OpenCron, OpenMinutes and TZ are a
@@ -329,7 +361,7 @@ type memoQueueDTO struct {
 func memoQueueToDTO(q store.MemoQueue, c store.MemoCategory) memoQueueDTO {
 	return memoQueueDTO{CategoryID: q.CategoryID, Repo: c.Repo, Category: c.Name, Instruction: q.Instruction,
 		AgentKind: q.AgentKind, Model: q.Model, Effort: q.Effort, Route: q.Route, SpendCapUSD: q.SpendCapUSD,
-		Worktree: q.Worktree, MaxActive: q.MaxActive, Batch: q.Batch, MaxTaskHours: memoQueueTaskHours(q),
+		Worktree: q.Worktree, AcceptOwnSessions: q.AcceptOwnSessions, MaxActive: q.MaxActive, Batch: q.Batch, MaxTaskHours: memoQueueTaskHours(q),
 		OpenCron: q.OpenCron, OpenMinutes: q.OpenMinutes, TZ: q.TZ, OpenAfter: q.OpenAfter, MaxFiresPerDay: memoQueueFiresPerDay(q),
 		Paused: q.Paused, PausedAt: q.PausedAt, PausedReason: q.PausedReason, Draining: q.Draining, NoReportAt: q.NoReportAt, NoRefsAt: q.NoRefsAt,
 		Enabled: q.Enabled, Generation: q.Generation, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}
@@ -345,8 +377,10 @@ type memoQueueIn struct {
 	Route       string  `json:"route"`
 	SpendCapUSD float64 `json:"spendCapUsd"`
 	Worktree    *bool   `json:"worktree"`
-	MaxActive   *int    `json:"maxActive"`
-	Batch       *int    `json:"batch"`
+	// AcceptOwnSessions omitted means off.
+	AcceptOwnSessions bool `json:"acceptOwnSessions"`
+	MaxActive         *int `json:"maxActive"`
+	Batch             *int `json:"batch"`
 	// MaxTaskHours is omitted for the default, like the numbers above.
 	MaxTaskHours   *int   `json:"maxTaskHours"`
 	OpenCron       string `json:"openCron"`
@@ -392,12 +426,13 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 		Batch:       memoQueueBatchDefault,
 		Enabled:     in.Enabled,
 
-		MaxTaskHours:   memoQueueMaxTaskHoursDefault,
-		MaxFiresPerDay: memoQueueMaxFiresDefault,
-		OpenCron:       strings.TrimSpace(in.OpenCron),
-		OpenMinutes:    in.OpenMinutes,
-		TZ:             strings.TrimSpace(in.TZ),
-		OpenAfter:      in.OpenAfter,
+		AcceptOwnSessions: in.AcceptOwnSessions,
+		MaxTaskHours:      memoQueueMaxTaskHoursDefault,
+		MaxFiresPerDay:    memoQueueMaxFiresDefault,
+		OpenCron:          strings.TrimSpace(in.OpenCron),
+		OpenMinutes:       in.OpenMinutes,
+		TZ:                strings.TrimSpace(in.TZ),
+		OpenAfter:         in.OpenAfter,
 	}
 	if q.AgentKind == "" {
 		q.AgentKind = "claude"
@@ -711,7 +746,7 @@ func (a memoAPI) release(w http.ResponseWriter, r *http.Request, _ store.Identit
 				out.Stale = append(out.Stale, m.ID)
 				continue
 			}
-			m.State, m.ReleaseHash, m.ReleasedAt = store.MemoStatePending, h, at
+			m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy = store.MemoStatePending, h, at, ""
 			out.Released = append(out.Released, memoToDTO(m))
 		}
 		if len(out.Stale) > 0 {

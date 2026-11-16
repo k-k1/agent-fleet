@@ -626,3 +626,13 @@ docs/build/03-control-plane.md §3.6。
 規則のもの）を使う。既にあるブランチは Console の「既存のブランチで作業」と同じくチェックアウトし、別の作業コピーが持つ
 ブランチ、git が断る名前、規則が名前を返さない場合は使い捨ての `temp/` のまま: 名前のために配信を失敗させない。
 wire と挙動は docs/build/04-agent.md。
+
+追記 2026-11-17（#4151、段 4）: スイッチは `memo_queue.accept_own_sessions`（既定は off、書けるのは Console の設定の PUT
+だけ、省略は off）。on のとき、記録された producer の origin がちょうど `user` の `workspace` メッセージは `pending` で入り、
+release は press と同じく記録される。それ以外の origin、空、`/mcp` は `held` のまま。そのようなメッセージへのトークン面からの
+変更は `pending` のまま release を取り直す。更新は呼び出し元の身元を運ばないので、Control Plane が読めるのは作成時に記録された
+origin だけで、その origin のセッションなら変更後の本文を新しいメッセージとして追加できた、とスイッチがすでに受け入れて
+いるからである。スイッチのないカテゴリへの移動と `/mcp` からの変更は `held` に戻す。スイッチで `pending` になったメッセージは
+`memo.released_by = 'setting'`（ワイヤでは `releasedBy`）を持ち、Console は「設定により承認済み」と描く。press と Console の
+書き込みはこれを消す。セッションからの作成の上限（速さ・大きさ・同じメッセージ・envelope の接頭辞）と、キューの 1 日の上限・
+ブレーカーは変わらない。Agent はすでにセッションの origin（`session.OriginOf`）を中継しており、ワークスペース側の変更はない。
