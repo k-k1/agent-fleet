@@ -15,7 +15,7 @@ import (
 func tmuxWhereOnlyAlive(t *testing.T) {
 	t.Helper()
 	bin := t.TempDir()
-	script := "#!/bin/sh\ncase \"$*\" in *alive*) exit 0;; esac\nexit 1\n"
+	script := "#!/bin/sh\ncase \"$*\" in *alive*) exit 0;; esac\necho \"can't find session: x\" >&2\nexit 1\n"
 	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -94,19 +94,40 @@ func TestSetAsideBrokenMetas(t *testing.T) {
 
 // A tmux that fails for any reason other than "no such session" proves nothing: the file stays.
 func TestSetAsideBrokenMetasKeepsWhatTmuxCouldNotAnswer(t *testing.T) {
-	newRetireEnv(t)
-	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nexit 2\n"), 0o755); err != nil {
-		t.Fatal(err)
+	for label, script := range map[string]string{
+		"exit 2":                    "#!/bin/sh\nexit 2\n",
+		"exit 1, no reason":         "#!/bin/sh\nexit 1\n",
+		"exit 1, permission denied": "#!/bin/sh\necho 'error connecting to /tmp/tmux-1/default (Permission denied)' >&2\nexit 1\n",
+	} {
+		t.Run(label, func(t *testing.T) {
+			newRetireEnv(t)
+			bin := t.TempDir()
+			if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin)
+			writeCutMeta(t, "x", "")
+			if moved := SetAsideBrokenMetas(); len(moved) != 0 {
+				t.Fatalf("set aside %v although tmux could not say the session is absent", moved)
+			}
+			if _, st := session.ReadMetaState("x"); st != session.MetaUnreadable {
+				t.Fatalf("state %v, want unreadable", st)
+			}
+		})
 	}
-	t.Setenv("PATH", bin)
-	writeCutMeta(t, "x", "")
-	if moved := SetAsideBrokenMetas(); len(moved) != 0 {
-		t.Fatalf("set aside %v although tmux failed", moved)
-	}
-	if _, st := session.ReadMetaState("x"); st != session.MetaUnreadable {
-		t.Fatalf("state %v, want unreadable", st)
-	}
+	t.Run("no server running is absent", func(t *testing.T) {
+		newRetireEnv(t)
+		bin := t.TempDir()
+		script := "#!/bin/sh\necho 'no server running on /tmp/tmux-1/default' >&2\nexit 1\n"
+		if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin)
+		writeCutMeta(t, "x", "")
+		if moved := SetAsideBrokenMetas(); len(moved) != 1 {
+			t.Fatalf("set aside %v, want x", moved)
+		}
+	})
 }
 
 // A Managed runtime adopted from the previous Agent may be running a session whose meta is

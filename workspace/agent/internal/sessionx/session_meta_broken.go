@@ -83,18 +83,26 @@ func SetAsideBrokenMetas(runtimes ...RuntimeProbe) []string {
 	return moved
 }
 
-// tmuxSessionAlive tells a session that is not there (tmux exits 1) from a probe that failed
-// (a timeout, tmux missing, any other exit): only the first lets the caller act on "absent".
+// tmuxSessionAlive tells a session that is not there from a probe that failed. Exit 1 is not
+// enough: tmux uses it for "error connecting to <socket> (Permission denied)" as well, a running
+// server the Agent cannot reach. Only tmux's own "can't find session", "no server running" and a
+// socket that does not exist count as absent; a timeout, a missing binary, any other exit or any
+// other message is an error and the caller keeps the file.
 func tmuxSessionAlive(name string) (bool, error) {
-	err := tmuxx.Run("has-session", "-t", session.ExactTarget(session.TmuxName(name)))
+	out, err := tmuxx.CombinedOutput("has-session", "-t", session.ExactTarget(session.TmuxName(name)))
 	var ee *exec.ExitError
 	switch {
 	case err == nil:
 		return true, nil
-	case errors.As(err, &ee) && ee.ExitCode() == 1:
+	case errors.As(err, &ee) && ee.ExitCode() == 1 && tmuxSaysAbsent(string(out)):
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+}
+
+func tmuxSaysAbsent(msg string) bool {
+	return strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") ||
+		(strings.Contains(msg, "error connecting to") && strings.Contains(msg, "No such file or directory"))
 }
 
 // brokenMetaName is a free path for the set-aside file; "" when none could be found.

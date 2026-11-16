@@ -168,7 +168,7 @@ source_of_truth: "コード（本書は地図と設計意図）"
     以後どの読み手にもそのセッションは「無い」と見え、retire の `complete` を妨げなくなる。直すときは中身を修復して
     `<name>.json` に戻す。そのセッションはまたセッションになり、与えられたことのない retire の印は持たない。
     tmux セッションがあるものはそのまま残してログに出す（Agent が説明できないものが動いているので疑いのまま）。
-    tmux の問い合わせが失敗・タイムアウト・exit 1 以外で終わった場合も「動いているかもしれない」として残す。
+    tmux の問い合わせは、exit 1 かつ tmux 自身の「can't find session」「no server running」「ソケットが無い」のメッセージのときだけ「無い」とし、タイムアウト・他の終了コード・「Permission denied」などは「動いているかもしれない」として残す。
     再起動後に Agent が引き継ぐ Managed ランタイム（opencode の `serve` daemon と codex の app-server。
     `MayBeRunning` は、接続拒否か unix ソケット無しのときだけ「動いていない」と答える）が 1 つでも動いているかもしれないときは、
     退避全体を見送り、疑いのまま残した個数を 1 行ログに出す。他の Managed の kind は Agent 自身の stdio 子プロセスか

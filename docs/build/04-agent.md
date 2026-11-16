@@ -204,8 +204,7 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     absent, so it no longer keeps a retire from answering `complete`. To repair it, fix the file and
     rename it back to `<name>.json`: it is a session again, and it carries no retired mark it was
     never given. A file whose tmux session exists is left in place and logged: something runs that
-    the Agent cannot describe, so it stays in doubt (a tmux probe that fails, times out or exits other
-    than 1 counts as "may be running" too). The whole set-aside is also skipped, with one log line
+    the Agent cannot describe, so it stays in doubt (a tmux probe counts as "absent" only for exit 1 with tmux's own "can't find session" / "no server running" / missing-socket message; a timeout, another exit or e.g. "Permission denied" counts as "may be running"). The whole set-aside is also skipped, with one log line
     giving the number of files left in doubt, while any Managed runtime the Agent adopts after a
     restart may be up: the opencode `serve` daemon and the codex app-server (`MayBeRunning`: only a
     refused connection or a missing unix socket says "not running"). The other Managed kinds are the
