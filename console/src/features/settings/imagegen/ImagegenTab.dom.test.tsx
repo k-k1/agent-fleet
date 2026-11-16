@@ -1,9 +1,8 @@
-// ADR 0082 P1: the image provider order list stops being drawn from the two static kind-name
-// placeholders once the Agent has answered, and draws one row per DECLARED images row instead
-// (decision 3 / decision 8). This is the regression class P0 itself shipped once already
-// (fleetProvider() matching the id's spelling): every fixture below is deliberately keyed the
-// way a real deployment's default row is ("image", not "comfy") — a fixture spelled "comfy"
-// cannot catch a reader that still expects one of the two retired kind names.
+// Settings > Image generation (ADR 0138 D16). The provider order is drawn only from the Agent's
+// /imagegen/status `order`, which leaves out what the credential policy forbids or cannot confirm
+// (D10a); with no trustworthy answer the page shows no provider at all. Fleet fixtures are keyed
+// the way a real deployment's default row is ("image", not "comfy") — a fixture spelled "comfy"
+// cannot catch a reader that still expects one of the retired kind names (ADR 0082 P1).
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -23,44 +22,22 @@ vi.mock("../../../core/store/workspace.ts", () => ({
 }));
 
 const { ImagegenTab } = await import("./ImagegenTab.tsx");
-const { setSettings, settingsDefaults, getSettings, IMAGE_PROVIDERS } = await import(
-  "../../../lib/settings.ts"
-);
+const { setSettings, settingsDefaults, getSettings } = await import("../../../lib/settings.ts");
 const { t } = await import("../../../lib/i18n/index.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-/** A LIVE answer naming these fleet rows (possibly zero — a real "this deployment declares
- *  nothing" answer, distinct from noLiveAnswer() below). */
-function respond(imagegenProviders: Array<Record<string, unknown>> = []) {
+const IMAGE = { id: "image", fleet: true, kind: "comfy", service: "ComfyUI" };
+const AGY = { id: "agy", kind: "agy" };
+const CODEX = { id: "codex", kind: "codex" };
+
+/** A live answer: `order` as the Agent sends it (absent when the policy leaves nothing), and the
+ *  ready providers. */
+function respond(order: string[] | undefined, providers: Array<Record<string, unknown>>) {
   api.mockImplementation((path: string) => {
     if (path === "api/imagegen/status") {
-      return Promise.resolve({ enabled: true, ready: imagegenProviders.length > 0, providers: imagegenProviders });
-    }
-    return Promise.resolve({});
-  });
-}
-
-/** No live answer at all — an Agent old enough to omit `providers`, or one this build cannot
- *  reach. This is what the fallback path is FOR, and it is a different fixture from
- *  respond([]) (a live answer that happens to be empty) on purpose (see settings.ts's
- *  normalizeImageProviderOrder `rows === undefined` vs `[]` distinction). */
-function noLiveAnswer() {
-  api.mockImplementation((path: string) => {
-    if (path === "api/imagegen/status") return Promise.resolve({ enabled: false, ready: false });
-    return Promise.resolve({});
-  });
-}
-
-/** An Agent build old enough to predate `kind` (ADR 0082 P0/P1) — `providers` is present, and
- *  every entry has `fleet` (a pre-P1 Agent) or neither field at all (pre-P0), but NONE carry
- *  `kind`. This must read the same as noLiveAnswer(), not as "the fleet row is real but has no
- *  kind" — see isPreAdr0082Status. */
-function oldAgentAnswer() {
-  api.mockImplementation((path: string) => {
-    if (path === "api/imagegen/status") {
-      return Promise.resolve({ enabled: true, ready: true, providers: [{ id: "codex" }, { id: "image", fleet: true }] });
+      return Promise.resolve({ enabled: true, ready: providers.length > 0, ...(order ? { order } : {}), providers });
     }
     return Promise.resolve({});
   });
@@ -73,7 +50,7 @@ async function mount() {
   await act(async () => {
     root!.render(<ImagegenTab />);
   });
-  // Two microtask turns: the fetch ImagegenTab fires on mount, then the state update they queue.
+  // Two microtask turns: the fetch ImagegenTab fires on mount, then the state update it queues.
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
@@ -82,10 +59,11 @@ async function mount() {
 
 const orderRows = (): string[] =>
   Array.from(host!.querySelectorAll(".ds-orderlist-row .ds-orderlist-label")).map((n) => n.textContent || "");
+const text = () => host!.textContent || "";
 
 beforeEach(() => {
   wsState = "running";
-  setSettings({ ...settingsDefaults(), imageGeneration: true, imageProviderOrder: [...IMAGE_PROVIDERS] });
+  setSettings({ ...settingsDefaults(), imageGeneration: true });
 });
 
 afterEach(() => {
@@ -98,87 +76,78 @@ afterEach(() => {
   setSettings(settingsDefaults());
 });
 
-describe("画像生成の優先順位（ADR 0082 P1）", () => {
-  it("Agent が答える前は静的な既定（畳み込み表示）", async () => {
-    noLiveAnswer();
+describe("image provider order follows the policy-filtered answer (ADR 0138 D10a)", () => {
+  it("unrestricted: every provider in the Agent's order, a fleet row under its key and kind", async () => {
+    respond(["image", "agy", "codex"], [IMAGE, AGY, CODEX]);
     await mount();
-    // The fallback fold: both static ids collapse into one "Agent Fleet (self-hosted)" row.
-    expect(orderRows().filter((l) => l === "Agent Fleet (self-hosted)").length).toBe(1);
+    expect(orderRows()).toEqual(["image (ComfyUI)", "Antigravity", "Codex"]);
   });
 
-  // Regression pinned after review of PR #658: an Agent build old enough to predate `kind`
-  // still sends `providers` (with `fleet` on the pre-P1 shape, or neither field at all on
-  // pre-P0), so a check that only looked at "did providers arrive at all" wrongly treated this
-  // as a LIVE answer of zero fleet rows and dropped the fleet's own engine from the ordering
-  // list silently — the same class of bug P0 itself shipped once already, just one layer later.
-  it("kind の無い providers（ADR 0082 より前の Agent）は静的な既定に落ちる。fleet 行が消えない", async () => {
-    oldAgentAnswer();
+  it("keeps an allowed provider that is not ready yet", async () => {
+    respond(["image", "agy", "codex"], [IMAGE]);
     await mount();
-    expect(orderRows()).toContain("Agent Fleet (self-hosted)");
-    expect(orderRows().some((l) => l.startsWith("image"))).toBe(false);
+    expect(orderRows()).toEqual(["image (ComfyUI)", "Antigravity", "Codex"]);
   });
 
-  it("Agent が images 行を 1 本だけ答えたら、その行のキーで 1 行だけ出る（畳み込みではない）", async () => {
-    respond([{ id: "image", fleet: true, kind: "comfy", service: "ComfyUI" }]);
+  it("leaves out a provider the policy hides", async () => {
+    respond(["image", "codex"], [IMAGE, CODEX]);
     await mount();
-    const rows = orderRows();
-    expect(rows.some((l) => l.startsWith("image"))).toBe(true);
-    expect(rows).not.toContain("Agent Fleet (self-hosted)");
+    expect(orderRows()).toEqual(["image (ComfyUI)", "Codex"]);
+    expect(text()).not.toContain("Antigravity");
   });
 
-  it("images 行が 2 本なら、両方が別々の行として、キーで出る", async () => {
-    respond([
-      { id: "image", fleet: true, kind: "comfy", service: "ComfyUI" },
-      { id: "comfy-lan", fleet: true, kind: "comfy", service: "ComfyUI" },
-    ]);
+  it("shows no provider when the policy hides them all", async () => {
+    respond(undefined, []);
     await mount();
-    const rows = orderRows();
-    expect(rows.some((l) => l.startsWith("image"))).toBe(true);
-    expect(rows.some((l) => l.startsWith("comfy-lan"))).toBe(true);
-    expect(rows.length).toBe(4); // the two fleet rows + agy + codex
+    expect(orderRows()).toEqual([]);
+    expect(text()).toContain(t("set.imagegen_order_none"));
+    expect(text()).not.toContain("Antigravity");
+    expect(text()).not.toContain("Codex");
   });
 
-  it("Agent が「行は 0 本」と答えたら、フォールバックの畳み込み行は出さない（あるのはベンダー2行だけ）", async () => {
-    // A REAL live answer that happens to be empty — a deployment with no image engine at all —
-    // is a different fact from "no answer yet", and must NOT fall back to the two static
-    // placeholders: that would offer a rank nothing can ever route to (see settings.ts).
-    respond([]);
+  it("shows no provider while the workspace is stopped", async () => {
+    respond(["image", "agy", "codex"], [IMAGE, AGY, CODEX]);
     await mount();
-    expect(orderRows()).not.toContain("Agent Fleet (self-hosted)");
-    expect(orderRows().length).toBe(2); // agy + codex, no fleet row of any kind
-  });
-
-  it("ワークスペース停止中は静的な既定に戻る（残っていた行は見せない）", async () => {
-    respond([{ id: "image", fleet: true, kind: "comfy", service: "ComfyUI" }]);
-    await mount();
-    expect(orderRows().some((l) => l.startsWith("image"))).toBe(true);
-
+    expect(orderRows().length).toBe(3);
     wsState = "stopped";
     await act(async () => {
       root!.render(<ImagegenTab />);
     });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(orderRows()).toContain("Agent Fleet (self-hosted)");
+    expect(orderRows()).toEqual([]);
+    expect(text()).toContain(t("set.imagegen_order_unavailable"));
+  });
+
+  it("shows no provider when the status cannot be read", async () => {
+    api.mockImplementation(() => Promise.reject(new Error("boom")));
+    await mount();
+    expect(orderRows()).toEqual([]);
+    expect(text()).toContain(t("set.imagegen_order_unavailable"));
+  });
+
+  // An Agent build old enough to predate `kind` (ADR 0082 P0/P1) cannot be trusted with the
+  // fleet's row names either; it reads as no answer.
+  it("shows no provider for an Agent that predates ADR 0082", async () => {
+    respond(["codex", "comfy"], [{ id: "codex" }, { id: "image", fleet: true }]);
+    await mount();
+    expect(orderRows()).toEqual([]);
+    expect(text()).toContain(t("set.imagegen_order_unavailable"));
   });
 });
-
 
 // ADR 0138 D16 moved this switch and the order off the Agents page: the controls must still write
 // the same prefs (imageGeneration, imageProviderOrder), which the Agent reads through ui-prefs.
 describe("Settings > Image generation writes the prefs the Agents page wrote", () => {
-  const choice = (label: string, text: string): HTMLButtonElement => {
+  const choice = (label: string, txt: string): HTMLButtonElement => {
     const row = Array.from(host!.querySelectorAll<HTMLElement>(".ds-row")).find(
       (r) => r.querySelector(".ds-label")?.textContent === label,
     );
-    const b = Array.from(row?.querySelectorAll<HTMLButtonElement>(".seg-btn") ?? []).find((x) => x.textContent === text);
-    if (!b) throw new Error(`no ${text} on ${label}`);
+    const b = Array.from(row?.querySelectorAll<HTMLButtonElement>(".seg-btn") ?? []).find((x) => x.textContent === txt);
+    if (!b) throw new Error(`no ${txt} on ${label}`);
     return b;
   };
 
   it("turns image generation off and hides the order with it", async () => {
-    respond([{ id: "image", fleet: true, kind: "comfy", service: "ComfyUI" }]);
+    respond(["image", "agy", "codex"], [IMAGE, AGY, CODEX]);
     await mount();
     expect(orderRows().length).toBeGreaterThan(0);
     await act(async () => choice(t("agents.image_generation"), t("common.off")).click());
@@ -186,15 +155,14 @@ describe("Settings > Image generation writes the prefs the Agents page wrote", (
     expect(orderRows()).toEqual([]);
   });
 
-  it("stores a reordered list as imageProviderOrder", async () => {
-    respond([{ id: "image", fleet: true, kind: "comfy", service: "ComfyUI" }]);
+  it("stores the reordered visible list, keeping what the policy hides after it", async () => {
+    setSettings({ ...settingsDefaults(), imageGeneration: true, imageProviderOrder: ["agy", "image", "codex"] });
+    respond(["image", "codex"], [IMAGE, CODEX]);
     await mount();
-    const before = getSettings().imageProviderOrder.slice();
-    const shown = orderRows();
     const down = host!.querySelector<HTMLButtonElement>(".ds-orderlist-row button:not([disabled])");
     if (!down) throw new Error("no order control");
     await act(async () => down.click());
-    expect(getSettings().imageProviderOrder).not.toEqual(before);
-    expect(orderRows().slice(0, 2)).toEqual([shown[1], shown[0]]);
+    expect(getSettings().imageProviderOrder).toEqual(["codex", "image", "agy"]);
+    expect(orderRows()).toEqual(["Codex", "image (ComfyUI)"]);
   });
 });

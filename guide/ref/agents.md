@@ -517,7 +517,7 @@ only adds an instruction block asking the agent to use `rtk`; whether it does is
 agent (best effort). cursor, kiro, lcpp and muse have no RTK setting. This row is checked
 against the code: a kind is marked when its driver ships an RTK artifact.
 
-²⁴ Both are opt-in settings, off by default (Settings › Agents › Session). A session starts a
+²⁴ Both are opt-in settings, off by default (Settings › Sessions). A session starts a
 child, or sends a message, with tools of Agent Fleet's own MCP server, which every kind marked in
 "Receives integration (MCP) servers" gets; so this row follows that one, and the check ties it
 to the same code field. The other end accepts every kind in the row: a child can be any of

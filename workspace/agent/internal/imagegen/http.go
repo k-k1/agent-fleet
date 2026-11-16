@@ -507,7 +507,7 @@ type loraRequest struct {
 func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 	if !enabled() {
 		httpx.WriteErr(w, http.StatusForbidden, "imagegen_disabled",
-			"image generation is off (Settings > Agents)")
+			"image generation is off (Settings > Image generation)")
 		return
 	}
 	var body generateRequest

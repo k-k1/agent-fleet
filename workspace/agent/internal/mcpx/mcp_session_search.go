@@ -54,7 +54,7 @@ type searchSessionsArgs struct {
 
 func mcpSearchSessions(id json.RawMessage, raw json.RawMessage) []byte {
 	if !mcpSessionSearchEnabled {
-		return mcpToolErr(id, "past-session search is not enabled for this session (Settings > Agents)")
+		return mcpToolErr(id, "past-session search is not enabled for this session (Settings > Sessions)")
 	}
 	var a searchSessionsArgs
 	if len(raw) > 0 {

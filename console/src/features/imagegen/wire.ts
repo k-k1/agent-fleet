@@ -201,6 +201,12 @@ export interface ImagegenStatus {
   kind?: string;
   ops?: string[];
   providers?: ImagegenProvider[];
+  /**
+   * The effective provider order, ready or not, leaving out every provider the credential
+   * policy forbids or cannot confirm (ADR 0138 D10a). Absent when nothing is left: an Agent
+   * always has agy and codex in it otherwise.
+   */
+  order?: string[];
   error?: ApiError;
 }
 

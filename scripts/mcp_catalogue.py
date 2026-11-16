@@ -439,7 +439,7 @@ Which of them a client sees depends on where it connects from.
 How to read a cell:
 
 - **Session**: ✓ alone means every session has it. A quoted name is the switch in
-  ⚙ Settings → Agents that has to be on; "Agent memory" is the one in ⚙ Settings → Agent memory → Settings.
+  ⚙ Settings → Sessions (⚙ Settings → Image generation for image generation) that has to be on; "Agent memory" is the one in ⚙ Settings → Agent memory → Settings.
   "image studio" means only a session working in the image studio.
 - **Assistant**: "AF read" means an assistant with either grant has it; "AF write" means only an assistant
   allowed to write.
@@ -473,7 +473,7 @@ Agent Fleet は、エージェントやアシスタントが Agent Fleet 自体�
 
 セルの読み方は次のとおりです。
 
-- **セッション**: ✓ だけなら、どのセッションでも使えます。「」付きの名前は、⚙設定 →「エージェント」で
+- **セッション**: ✓ だけなら、どのセッションでも使えます。「」付きの名前は、⚙設定 →「セッション」（画像生成は ⚙設定 →「画像生成」）で
   オンにする必要のあるスイッチです。「エージェントメモリ」は ⚙設定 →「エージェントメモリ」→「設定」にあります。
   「画像スタジオ」は、画像スタジオで作業しているセッションだけで使えます。
 - **アシスタント**: 「AF 読み取り」は、どちらの権限のアシスタントでも使えます。「AF 書き込み」は、書き込みを許可したアシスタントだけが使えます。

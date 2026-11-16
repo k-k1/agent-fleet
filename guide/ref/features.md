@@ -45,7 +45,7 @@ If a feature ships and does not appear here, it is not done
 | Context usage gauge | member | session header | [Check prices and usage](../user/agents/usage.md#see-how-long-the-conversation-is) |
 | Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [Read an answer in your own language](../user/sessions/translate.md) |
 | Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [Have a session make images](../user/images/from-session.md) |
-| Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [Start child sessions from a session](../user/fleet/child-sessions.md) |
+| Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Sessions, then any session, by asking | [Start child sessions from a session](../user/fleet/child-sessions.md) |
 | Abort detection and auto-resume | member | automatic | [A turn was cut off partway](../user/troubleshooting/sessions.md#a-turn-was-cut-off-partway) |
 
 ## Working with code
