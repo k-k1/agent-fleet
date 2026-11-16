@@ -185,6 +185,7 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 		}
 		meta[r.Item.ItemID] = m
 	}
+	order = placeTurnErrors(order, byID)
 	items := make([]msp.Item, 0, len(order))
 	for _, id := range order {
 		items = append(items, byID[id])

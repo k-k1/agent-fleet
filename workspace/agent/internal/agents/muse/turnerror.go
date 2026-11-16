@@ -51,3 +51,42 @@ func turnErrorPart(it msp.Item) transcript.Part {
 	}
 	return p
 }
+
+// placeTurnErrors moves each turnError record to just after the last item of its own turn.
+// First-seen order is wrong for it whenever the turn's items reach the store after the error
+// (a backfill of a missed reply, a late revision): the error would sit in the previous reply,
+// or ahead of its own turn's text. A record whose turn has no item stays where it was seen.
+func placeTurnErrors(order []string, byID map[string]msp.Item) []string {
+	isErr := func(id string) bool { return byID[id].Kind == itemKindTurnError }
+	lastOf := map[string]string{} // turn id -> id of its last ordinary item
+	for _, id := range order {
+		if it := byID[id]; !isErr(id) && it.TurnID != nil {
+			lastOf[*it.TurnID] = id
+		}
+	}
+	after := map[string][]string{}
+	moved := map[string]bool{}
+	for _, id := range order {
+		if !isErr(id) {
+			continue
+		}
+		if t := byID[id].TurnID; t != nil {
+			if anchor, ok := lastOf[*t]; ok {
+				after[anchor] = append(after[anchor], id)
+				moved[id] = true
+			}
+		}
+	}
+	if len(moved) == 0 {
+		return order
+	}
+	out := make([]string, 0, len(order))
+	for _, id := range order {
+		if moved[id] {
+			continue
+		}
+		out = append(out, id)
+		out = append(out, after[id]...)
+	}
+	return out
+}

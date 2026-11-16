@@ -113,6 +113,10 @@ func TestTurnErrorPartIsPlacedOnceAcrossReplayAndBackfill(t *testing.T) {
 	}
 	// A replayed completion of the same turn.
 	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{TurnID: "t-1", SessionID: h.sid, Terminal: msp.TurnTerminalFailed, Error: e})
+	// Notifications are handled in order, so a later one that has been seen means the replay
+	// above has been too.
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-2", SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
 	// The host's history carries no error item; backfilling it must not drop or repeat ours.
 	if _, err := st.backfill([]msp.Item{u1, a1, u2}); err != nil {
 		t.Fatal(err)
@@ -130,5 +134,74 @@ func TestTurnErrorPartIsPlacedOnceAcrossReplayAndBackfill(t *testing.T) {
 		if len(kinds) != 2 || kinds[0] != "text" || kinds[1] != "error" {
 			t.Fatalf("assistant parts = %v, want [text error]", kinds)
 		}
+	}
+}
+
+// The error follows the last item of its own turn even when that turn's items reach the store
+// after it (history the mirror missed, backfilled later), never the previous reply.
+func TestTurnErrorFollowsItsOwnTurnAfterBackfill(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		have []msp.Item // already in the store, with the error after them
+		host []msp.Item
+	}{
+		{"whole turn missed", nil, nil},
+		{"user message only", []msp.Item{turnItem("u2", "t-2", msp.ItemKindUserMessage, "again")}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000e1"}
+			st := openStore(h.slotSid)
+			u1, a1 := turnItem("u1", "t-1", msp.ItemKindUserMessage, "hi"), turnItem("a1", "t-1", msp.ItemKindAgentMessage, "one")
+			u2, a2 := turnItem("u2", "t-2", msp.ItemKindUserMessage, "again"), turnItem("a2", "t-2", msp.ItemKindAgentMessage, "two")
+			for _, it := range []msp.Item{u1, a1} {
+				_ = st.Append(it)
+			}
+			_ = st.Append(turnErrorItem(msp.TurnCompletedParams{TurnID: "t-2", Error: &msp.TurnError{Kind: "modelError", Message: "boom"}}))
+			for _, it := range tc.have {
+				_ = st.Append(it)
+			}
+			if _, err := st.backfill([]msp.Item{u1, a1, u2, a2}); err != nil {
+				t.Fatal(err)
+			}
+			items, _ := st.Items()
+			var ids []string
+			for _, it := range items {
+				ids = append(ids, it.ItemID)
+			}
+			want := []string{"u1", "a1", "u2", "a2", "turnError:t-2"}
+			if len(ids) != len(want) {
+				t.Fatalf("order = %v, want %v", ids, want)
+			}
+			for i := range want {
+				if ids[i] != want[i] {
+					t.Fatalf("order = %v, want %v", ids, want)
+				}
+			}
+			// A fork keeps it with its turn.
+			if err := st.ForkAt("00000000-0000-5000-8000-0000000000e2", ""); err != nil {
+				t.Fatal(err)
+			}
+			fi, _ := openStore("00000000-0000-5000-8000-0000000000e2").Items()
+			if len(fi) != 5 || fi[4].ItemID != "turnError:t-2" {
+				t.Errorf("fork items = %d, last %q", len(fi), fi[len(fi)-1].ItemID)
+			}
+		})
+	}
+}
+
+// A completion for a turn the handle no longer tracks still records its failure.
+func TestStaleFailedCompletionStillRecordsItsError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := &threadHandle{running: true, turnID: "t-new"}
+	newTestHandle(t, h)
+	registerHandle(t, h.name, h)
+	_ = openStore(h.slotSid).Append(turnItem("u-old", "t-old", msp.ItemKindUserMessage, "hi"))
+	h.finishTurn(msp.TurnCompletedParams{TurnID: "t-old", Terminal: msp.TurnTerminalFailed, Error: &msp.TurnError{Kind: "modelError", Message: "late"}})
+	if ps := errorParts(t, h); len(ps) != 1 || ps[0].Text != "late" {
+		t.Fatalf("error parts = %+v", ps)
+	}
+	if !h.running || h.turnID != "t-new" {
+		t.Error("the stale completion ended the newer turn")
 	}
 }

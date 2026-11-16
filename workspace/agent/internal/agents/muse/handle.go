@@ -818,6 +818,12 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 			limit = &lim
 		}
 	}
+	// Recorded before the stale-completion guard below: the guard only protects the state of
+	// the turn that replaced this one, and a failure that was received must not vanish with it
+	// (the host writes no item for it, so nothing could restore it).
+	if p.Error != nil && p.Terminal != msp.TurnTerminalCancelled {
+		h.onItem(turnErrorItem(p))
+	}
 	h.mu.Lock()
 	newest := p.TurnID == "" || h.lastTurn == "" || p.TurnID == h.lastTurn || p.TurnID == h.starting
 	// A completion for a turn this handle no longer tracks (settleIdle already closed it and
@@ -840,9 +846,6 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 		}
 	}
 	h.mu.Unlock()
-	if p.Error != nil && p.Terminal != msp.TurnTerminalCancelled {
-		h.onItem(turnErrorItem(p))
-	}
 	agents.MarkTurnEndErr(h.slotSid, st, failure)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 	// Never on this goroutine: finishTurn runs on the client's reader, and pump waits for the
