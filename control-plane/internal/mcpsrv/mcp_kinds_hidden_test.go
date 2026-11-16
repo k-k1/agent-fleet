@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // hidingCP answers HiddenKinds per tenant.
@@ -17,6 +18,15 @@ type hidingCP struct {
 	*memCP
 	byTenant map[string]map[string]bool
 	err      error
+	// paths records every Agent path asked, when set.
+	paths *[]string
+}
+
+func (c hidingCP) AgentText(ctx context.Context, rt runtime.Runtime, method, path string, body []byte) (string, error) {
+	if c.paths != nil {
+		*c.paths = append(*c.paths, path)
+	}
+	return c.memCP.AgentText(ctx, rt, method, path, body)
 }
 
 func (c hidingCP) HiddenKinds(_ context.Context, tenantID string) (map[string]bool, error) {
@@ -207,5 +217,112 @@ func TestToolListFailsClosed(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// runTool runs one member tool as prin would, with the hidden set of cp.
+func runTool(t *testing.T, cp hidingCP, prin *mcpPrincipal, name string, args map[string]any) (string, error) {
+	t.Helper()
+	a := New(cp)
+	for _, tl := range a.toolsFor(context.Background(), prin) {
+		if tl.name == name {
+			res, _ := cp.ResolveByMembership(context.Background(), "", "")
+			return tl.run(context.Background(), a, res, args)
+		}
+	}
+	t.Fatalf("tool %s not listed", name)
+	return "", nil
+}
+
+// create_session's refusal of a kind, hidden or unknown, names no hidden kind, under a policy that
+// hides some and under one that cannot be read. With nothing hidden the catalogue's own refusal
+// answers, as before.
+func TestCreateSessionRefusalNamesNoHiddenKind(t *testing.T) {
+	base := newMemCP(t, memStore(t), "running")
+	prin := mcpPrincipal{identityID: base.prin.identityID, membershipID: base.prin.membershipID, scope: "write"}
+	some := map[string]bool{"agy": true, "copilot": true, "cursor": true, "kiro": true}
+	for name, c := range map[string]struct {
+		cp     hidingCP
+		hidden []string
+	}{
+		"restricted": {hidingCP{memCP: base, byTenant: map[string]map[string]bool{base.tenantID: some}}, []string{"agy", "copilot", "cursor", "kiro"}},
+		"unreadable": {hidingCP{memCP: base, err: errors.New("database is locked")}, agentroutes.ModelKinds()},
+	} {
+		for _, kind := range []string{"bogus", "agy", "ssm"} {
+			_, err := runTool(t, c.cp, &prin, "create_session", map[string]any{"kind": kind})
+			if err == nil {
+				t.Fatalf("%s: create_session(kind=%s) was not refused", name, kind)
+			}
+			for _, h := range c.hidden {
+				if namesKind(err.Error(), h) && h != kind {
+					t.Errorf("%s: create_session(kind=%s) refusal names the hidden %s: %v", name, kind, h, err)
+				}
+			}
+		}
+	}
+	_, err := runTool(t, hidingCP{memCP: base}, &prin, "create_session", map[string]any{"kind": "bogus"})
+	if err == nil || !strings.Contains(err.Error(), "accepted kinds") {
+		t.Errorf("control, nothing hidden: %v", err)
+	}
+}
+
+// get_agent_usage asks the Agent for, and answers with, only the kinds the tenant shows: each of
+// claude, codex and agy hidden in turn, all of them, and a policy that cannot be read. With nothing
+// hidden it reports all three, as before.
+func TestAgentUsageLeavesOutHiddenKinds(t *testing.T) {
+	base := newMemCP(t, memStore(t), "running")
+	prin := mcpPrincipal{identityID: base.prin.identityID, membershipID: base.prin.membershipID, scope: "write"}
+	run := func(cp hidingCP) (map[string]any, []string) {
+		t.Helper()
+		var paths []string
+		cp.paths = &paths
+		text, err := runTool(t, cp, &prin, "get_agent_usage", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]any
+		if err := json.Unmarshal([]byte(text), &out); err != nil {
+			t.Fatalf("%v: %s", err, text)
+		}
+		return out, paths
+	}
+	keys := func(m map[string]any) []string {
+		var out []string
+		for _, k := range []string{"claude", "codex", "agy"} {
+			if _, ok := m[k]; ok {
+				out = append(out, k)
+			}
+		}
+		return out
+	}
+	if out, paths := run(hidingCP{memCP: base}); !reflect.DeepEqual(keys(out), []string{"claude", "codex", "agy"}) || len(paths) != 3 {
+		t.Fatalf("control: keys %v, paths %v", keys(out), paths)
+	}
+	cases := map[string]hidingCP{
+		"all hidden": {memCP: base, byTenant: map[string]map[string]bool{base.tenantID: {"claude": true, "codex": true, "agy": true}}},
+		"unreadable": {memCP: base, err: errors.New("database is locked")},
+	}
+	for _, k := range []string{"claude", "codex", "agy"} {
+		cases[k+" hidden"] = hidingCP{memCP: base, byTenant: map[string]map[string]bool{base.tenantID: {k: true}}}
+	}
+	for name, cp := range cases {
+		out, paths := run(cp)
+		h, _ := cp.HiddenKinds(context.Background(), base.tenantID)
+		if cp.err != nil {
+			h = allModelKinds()
+		}
+		for _, k := range []string{"claude", "codex", "agy"} {
+			_, answered := out[k]
+			asked := false
+			for _, p := range paths {
+				asked = asked || strings.Contains(p, "/"+k+"/")
+			}
+			if h[k] && (answered || asked) {
+				t.Errorf("%s: %s hidden but answered=%v asked=%v (%v)", name, k, answered, asked, paths)
+			}
+			if !h[k] && !answered {
+				t.Errorf("%s: %s shown but not answered", name, k)
+			}
+		}
 	}
 }

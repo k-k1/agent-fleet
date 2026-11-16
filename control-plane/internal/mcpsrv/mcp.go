@@ -692,22 +692,24 @@ func memberToolsHiding(hidden hiddenKinds) []mcpTool {
 			desc:   agentUsageDesc(hidden),
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a API, res *Resolved, _ map[string]any) (string, error) {
-				cl, err := a.cp.AgentText(ctx, res.RT, "GET", "/claude/usage", nil)
-				if err != nil {
-					return "", err
-				}
-				cx, err := a.cp.AgentText(ctx, res.RT, "GET", "/codex/usage", nil)
-				if err != nil {
-					return "", err
-				}
 				// agy usage sits under the connections path with a distinct shape; it
 				// self-reports authed=false when signed out and never 500s, so merging
-				// its raw blob under an "agy" key is safe.
-				ag, err := a.cp.AgentText(ctx, res.RT, "GET", "/connections/agy/usage", nil)
-				if err != nil {
-					return "", err
+				// its raw blob under an "agy" key is safe. A kind the tenant hides is neither
+				// asked nor answered for (D10a).
+				out := map[string]any{}
+				for _, u := range []struct{ kind, path string }{
+					{"claude", "/claude/usage"}, {"codex", "/codex/usage"}, {"agy", "/connections/agy/usage"},
+				} {
+					if hidden[u.kind] {
+						continue
+					}
+					body, err := a.cp.AgentText(ctx, res.RT, "GET", u.path, nil)
+					if err != nil {
+						return "", err
+					}
+					out[u.kind] = json.RawMessage(body)
 				}
-				return jsonText(map[string]any{"claude": json.RawMessage(cl), "codex": json.RawMessage(cx), "agy": json.RawMessage(ag)})
+				return jsonText(out)
 			},
 		},
 		{
@@ -754,14 +756,22 @@ func memberToolsHiding(hidden hiddenKinds) []mcpTool {
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
 				kind := argStr(args, "kind")
+				// While the tenant's policy hides a kind, or every model kind because the policy
+				// cannot be read, a kind is checked against the shown ones first, so neither a
+				// hidden kind nor an unknown one gets an answer naming what is hidden (D10a).
+				// "" is claude.
+				if len(hidden) > 0 {
+					k := kind
+					if k == "" {
+						k = "claude"
+					}
+					if !slices.Contains(createKinds(hidden), k) {
+						return "", fmt.Errorf("kind must be one of %s", listKinds(createKinds(hidden), "or"))
+					}
+				}
 				// Refused here, with the Workspace untouched, rather than left to the Agent.
 				if err := agentkinds.CheckCreateKind(kind); err != nil {
 					return "", err
-				}
-				// A kind the tenant's policy hides, or every model kind while the policy cannot be
-				// read, is refused naming only what is shown (D10a). "" is claude.
-				if k := kind; hidden[k] || k == "" && hidden["claude"] {
-					return "", fmt.Errorf("kind must be one of %s", listKinds(createKinds(hidden), "or"))
 				}
 				route, aerr := createRouteArgs(kind, args)
 				if aerr != nil {
