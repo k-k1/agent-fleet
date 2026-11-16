@@ -49,7 +49,7 @@ If you want to be billed on the route you chose, check your authentication or su
 
 ## Register API keys
 
-The keys sit on the card of the provider they pay, in **⚙Settings → Model credentials**. OpenCode passes every saved key to its models, and Claude Code's API-key route reads the Anthropic one.
+The keys sit on the card of the provider they pay, in **⚙Settings → Model credentials**. OpenCode can use the provider keys saved there, as far as your organisation's policy allows, and Claude Code's API-key route reads the Anthropic one.
 
 | Card (group) | Environment variable |
 |---|---|
@@ -66,7 +66,7 @@ The keys sit on the card of the provider they pay, in **⚙Settings → Model cr
 
 - You can register as many keys as you like, and pick a connected provider's model when you start
 - Each card says which agents can use its key ("**Usable by**")
-- A key the current route does not pass is not deleted. It stays, marked "**not injected on this route**"
+- On "None (my own keys)" or "Free models only" the opencode.ai key is not passed. It is not deleted: it stays on the OpenCode card, marked "**not injected on this route**"
 - An opencode.ai key is issued from the billing settings once you sign in to opencode.ai. Go and Zen use the same key
 - OpenCode uses a changed key after it restarts: restart it on the OpenCode card
 

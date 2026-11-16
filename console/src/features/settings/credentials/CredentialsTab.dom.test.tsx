@@ -549,3 +549,33 @@ describe("read-only cards", () => {
     useEnginesStore.setState({ rows: null });
   });
 });
+
+describe("Bedrock profiles across a member switch", () => {
+  it("never shows the previous member's profiles while the new member's answer is out", async () => {
+    const { useTenantStore } = await import("../../../core/store/tenant.ts");
+    const bedrockCatalog = catalogOf([{ kind: "claude", routes: ["bedrock", "anthropic-subscription"] }]);
+    let profiles: unknown = [{ id: "alice", label: "Alice profile", region: "us-east-1", modelRoute: true }];
+    let hold: ((v: unknown) => void) | null = null;
+    api.mockImplementation((path: string) => {
+      if (path === "api/ssm/profiles") return hold ? new Promise((r) => (hold = r)) : Promise.resolve(profiles);
+      return Promise.resolve(path === "api/connections" ? { claude: {} } : path === "api/agents/kinds" ? bedrockCatalog : {});
+    });
+    await mount();
+    expect(host!.textContent).toContain("Alice profile");
+    // Bob's profiles request is held.
+    hold = () => {};
+    profiles = [{ id: "bob", label: "Bob profile", region: "eu-west-1", modelRoute: true }];
+    await act(async () => useTenantStore.setState((s) => ({ identityRev: s.identityRev + 1 })));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(host!.textContent).not.toContain("Alice profile");
+    // Bob's answer lands: his profile is shown.
+    await act(async () => hold!(profiles));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(host!.textContent).toContain("Bob profile");
+    expect(host!.textContent).not.toContain("Alice profile");
+  });
+});

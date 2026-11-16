@@ -847,9 +847,29 @@ func TestProviderKeysEntry(t *testing.T) {
 	if got := envs(); !slices.Equal(got, []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}) {
 		t.Errorf("unrestricted: %v", got)
 	}
+	if raw := string(connectionsMap(t)[session.KindOpencode]); !strings.Contains(raw, "OPENAI_API_KEY") || !strings.Contains(raw, "OPENCODE_API_KEY") {
+		t.Errorf("control, unrestricted: opencode's entry %s", raw)
+	}
 	useHidingPolicy(t, routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []string{routes.RouteAnthropicAPI}})
 	if got := envs(); !slices.Equal(got, []string{"ANTHROPIC_API_KEY"}) {
 		t.Errorf("anthropic-api only: %v", got)
+	}
+	// opencode's own entry, still listed (it may run on anthropic-api), names the same keys only.
+	ocEnvs := func() []string {
+		var e struct {
+			Envs []string `json:"envs"`
+		}
+		raw, ok := connectionsMap(t)[session.KindOpencode]
+		if !ok {
+			t.Fatal("opencode has no entry")
+		}
+		if err := json.Unmarshal(raw, &e); err != nil {
+			t.Fatalf("%v: %s", err, raw)
+		}
+		return e.Envs
+	}
+	if got := ocEnvs(); !slices.Equal(got, []string{"ANTHROPIC_API_KEY"}) {
+		t.Errorf("opencode's entry under anthropic-api only lists %v", got)
 	}
 	// The member switched opencode off: claude still reads the key, so it stays listed.
 	writeMemberPrefs(t, map[string]any{"agentEnabled": map[string]any{session.KindOpencode: false}})

@@ -11,6 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -96,6 +97,21 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		// it found, so the page can offer the entry on an approved host.
 		if hiding && slices.Contains(kindRoutesOf(k), routes.RouteMemberLlamacpp) && !hide.Allows(routes.RouteMemberLlamacpp) {
 			st = map[string]any{"enabled": uiprefs.LcppEnabled(), "connected": false}
+		}
+		// The key names opencode's entry lists follow the same rule as provider_keys: one whose
+		// every route the policy forbids is kept but not listed (D14a).
+		if m, ok := st.(map[string]any); ok && hiding {
+			if envs, ok := m["envs"].([]string); ok {
+				shown := make([]string, 0, len(envs))
+				for _, env := range envs {
+					if slices.ContainsFunc(opencode.KeyEnvRoutes(env), hide.Allows) {
+						shown = append(shown, env)
+					}
+				}
+				m = maps.Clone(m)
+				m["envs"] = shown
+				st = m
+			}
 		}
 		out[k] = st
 	}

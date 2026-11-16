@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { agentOf } from "../../agents/registry.ts";
 
 /** A Settings AWS profile the member marked as a model route (ADR 0128 decision 11, option C2):
@@ -41,11 +42,16 @@ export function regionOk(region: string): boolean {
   return r === "" || (REGION_RE.test(r) && !r.startsWith("cn-"));
 }
 
-/** The member's marked profiles, loaded once while enabled. null until the answer arrives, []
- *  when it failed or none is marked: the bedrock route is then not offered at all. */
+/** The member's marked profiles, loaded while enabled and again on a tenant or member switch. null
+ *  until this principal's answer arrives, [] when it failed or none is marked: the bedrock route
+ *  is then not offered at all. */
 export function useModelRouteProfiles(enabled: boolean): ModelRouteProfile[] | null {
   const [profiles, setProfiles] = useState<ModelRouteProfile[] | null>(null);
+  // The profiles are one member's: a tenant or member switch drops them and asks again, and
+  // nothing from before the switch (or from before a disable) is shown while the answer is out.
+  const identity = useTenantStore((s) => `${s.tenant}|${s.identityRev}`);
   useEffect(() => {
+    setProfiles(null);
     if (!enabled) return;
     let live = true;
     api("api/ssm/profiles")
@@ -54,7 +60,7 @@ export function useModelRouteProfiles(enabled: boolean): ModelRouteProfile[] | n
     return () => {
       live = false;
     };
-  }, [enabled]);
+  }, [enabled, identity]);
   return enabled ? profiles : null;
 }
 
