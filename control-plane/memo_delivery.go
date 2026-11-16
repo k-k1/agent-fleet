@@ -312,6 +312,12 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
 			continue
 		}
+		// A fire by itself leaves a reference where it is while the Agent cannot show one: the
+		// message stays pending and the queue says why (waitNoRefs). A press is the member's own
+		// try: it claims the reference, and the send asks the Agent again before it sends.
+		if auto && m.RefKey != "" && q.NoRefsAt != "" {
+			continue
+		}
 		// A release is bound to the content it showed. One that no longer matches goes back
 		// for a new press instead of being fired.
 		if m.ReleaseHash != memoContentHash(m) {
@@ -437,6 +443,8 @@ type memoMemberView struct {
 	// and readAt when it began by the local clock, for display.
 	gens   map[string]int64
 	report bool
+	// refs is set when the Agent that answered can show an item that carries a reference.
+	refs   bool
 	readAt string
 	// actMark is the envelope's actMark of that read, 0 when the Agent sent none.
 	actMark int64
@@ -557,6 +565,7 @@ func (r *memoQueueRunner) view(ctx context.Context, views map[string]*memoMember
 		env, err = r.mgr.agentSessionsEnv(cctx, res.rt)
 		cancel()
 		v.live, v.liveOK, v.report = env.Sessions, err == nil, err == nil && env.reportsQueue()
+		v.refs = err == nil && env.showsReferences()
 		if v.liveOK {
 			v.actMark = env.ActMark
 			if env.ActMark > 0 {
@@ -1511,6 +1520,10 @@ func (r *memoQueueRunner) send(ctx context.Context, d store.MemoDelivery) {
 		notSent("the Agent does not send the queue report, so nothing is fired into it by itself")
 		return
 	}
+	if planHasReference(plan) && !r.agentShowsReferences(ctx, res, d) {
+		notSent("the Agent cannot show a reference, so a delivery that holds one is not sent to it")
+		return
+	}
 	// The quota: the running sessions as the Agent counts them now, and, in the move to
 	// sending below, every delivery whose session the count may not show yet.
 	running, lim, countedAt := 0, 0, store.DeliveryTS(time.Now())
@@ -1564,6 +1577,36 @@ func (r *memoQueueRunner) send(ctx context.Context, d store.MemoDelivery) {
 		cur.State = store.DeliverySending
 		r.reconcileSending(ctx, &memoMemberView{res: res, liveOK: true}, cur)
 	}
+}
+
+func planHasReference(p memoSendPlan) bool {
+	for _, m := range p.messages {
+		if m.RefKey != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// agentShowsReferences is the check of a delivery that holds a reference, made after the wake
+// and before anything is reserved: the Agent must send the queueRefs marker. It records what it
+// found on the queue, so that a fire leaves the references where they are while the Agent
+// cannot show them. An Agent that does not answer is no evidence, and nothing is sent.
+func (r *memoQueueRunner) agentShowsReferences(ctx context.Context, res *resolved, d store.MemoDelivery) bool {
+	cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
+	defer cancel()
+	env, err := r.mgr.agentSessionsEnv(cctx, res.rt)
+	if err != nil {
+		return false
+	}
+	at := ""
+	if !env.showsReferences() {
+		at = store.DeliveryTS(time.Now())
+	}
+	if err := r.mgr.store.SetMemoQueueNoRefs(ctx, d.QueueID, at); err != nil {
+		log.Printf("memo queue: queue %s: note the Agent's references: %v", d.QueueID, err)
+	}
+	return env.showsReferences()
 }
 
 // startSending moves a claimed delivery to sending, with the quota check in the same
@@ -1744,6 +1787,18 @@ type memoDeliveryCreate struct {
 	IdempotencyDurable bool                 `json:"idempotency_durable"`
 	Source             string               `json:"source"`
 	QueueDelivery      memoDeliveryEnvelope `json:"queue_delivery"`
+	// WorkItem is the session's work item, so its branch name and link follow the rules of a
+	// session started from a work item. Set only when the items carry exactly one reference
+	// between them.
+	WorkItem *memoDeliveryWorkItem `json:"work_item,omitempty"`
+}
+
+// memoDeliveryWorkItem is the Agent's session_create work_item: the same object a launch from a
+// work item in the Console sends, without the title, type and labels, which a reference does not
+// keep (the item is never copied).
+type memoDeliveryWorkItem struct {
+	Provider string `json:"provider"`
+	Key      string `json:"key"`
 }
 
 type memoDeliveryRoute struct {
@@ -1759,6 +1814,9 @@ type memoDeliveryEnvelope struct {
 }
 
 type memoDeliveryItem struct {
+	// Reference is the work item the message points at, absent for none. Only an Agent that
+	// sends the queueRefs marker is ever given one.
+	Reference      *memoRefWire     `json:"reference,omitempty"`
 	ID             string           `json:"id"`
 	Kind           string           `json:"kind"`
 	Body           string           `json:"body"`
@@ -1785,6 +1843,8 @@ func memoDeliveryCreateBody(d store.MemoDelivery, p memoSendPlan) []byte {
 	if p.q.Route != "" {
 		body.Route = &memoDeliveryRoute{Route: p.q.Route}
 	}
+	refs := 0
+	var item *memoDeliveryWorkItem
 	for _, m := range p.messages {
 		atts := parseMemoAttachments(m.Attachments)
 		if atts == nil {
@@ -1792,7 +1852,14 @@ func memoDeliveryCreateBody(d store.MemoDelivery, p memoSendPlan) []byte {
 		}
 		body.QueueDelivery.Items = append(body.QueueDelivery.Items, memoDeliveryItem{ID: m.ID, Kind: m.Kind, Body: m.Body,
 			RefPath: m.RefPath, Attachments: atts, Provenance: memoEffectiveProvenance(m), Producer: m.Producer,
-			ProducerOrigin: m.ProducerOrigin})
+			ProducerOrigin: m.ProducerOrigin, Reference: memoRefToWire(m)})
+		if m.RefKey != "" {
+			refs++
+			item = &memoDeliveryWorkItem{Provider: m.RefProvider, Key: m.RefKey}
+		}
+	}
+	if refs == 1 {
+		body.WorkItem = item
 	}
 	b, _ := json.Marshal(body)
 	return b

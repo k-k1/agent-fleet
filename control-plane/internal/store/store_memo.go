@@ -38,6 +38,10 @@ type Memo struct {
 	// none. Only the delivery statements write it: InsertMemo and UpdateMemo never do, so a
 	// write that read the row before a claim cannot take the claim away.
 	DeliveryID string
+	// RefProvider, RefKey and RefURL are the typed reference of ADR 0137 section 4: a pointer to
+	// a work item, never a copy of it. All three are set or none is, and the API layer is what
+	// validates them. A reference is part of what a release is bound to.
+	RefProvider, RefKey, RefURL string
 }
 
 // MemoCategory persists a memo category as a first-class row (docs/log/21 UI overhaul), so a
@@ -82,14 +86,16 @@ type MemoStore interface {
 
 const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at,
 	origin_item_id, origin_sender_membership_id, origin_sender_key,
-	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at, delivery_id FROM memo`
+	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at, delivery_id,
+	ref_provider, ref_key, ref_url FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
 	err := row.Scan(&m.ID, &m.MembershipID, &m.Repo, &m.Category, &m.Kind,
 		&m.Body, &m.RefPath, &m.Attachments, &m.Position, &m.CreatedAt, &m.SentAt,
 		&m.OriginItemID, &m.OriginSenderMembershipID, &m.OriginSenderKey,
-		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt, &m.DeliveryID)
+		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt, &m.DeliveryID,
+		&m.RefProvider, &m.RefKey, &m.RefURL)
 	return m, err
 }
 
@@ -134,21 +140,24 @@ func insertMemo(ctx context.Context, q memoQuerier, m Memo) error {
 	_, err := q.ExecContext(ctx,
 		`INSERT INTO memo(id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at,
 		   state, provenance, producer, producer_origin, release_hash, released_at,
-		   release_repo, release_category, release_kind, release_body, release_ref_path, release_attachments)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   ref_provider, ref_key, ref_url,
+		   release_repo, release_category, release_kind, release_body, release_ref_path, release_attachments,
+		   release_ref_provider, release_ref_key, release_ref_url)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.CreatedAt, m.SentAt,
 		m.State, m.Provenance, m.Producer, m.ProducerOrigin, m.ReleaseHash, m.ReleasedAt,
-		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5])
+		m.RefProvider, m.RefKey, m.RefURL,
+		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8])
 	return err
 }
 
 // releasedContent is what the release_* columns hold: the content of a pending message, and
 // nothing otherwise. The CHECK of migration 0131 requires it for every pending row.
-func releasedContent(m Memo) [6]string {
+func releasedContent(m Memo) [9]string {
 	if m.State != MemoStatePending {
-		return [6]string{}
+		return [9]string{}
 	}
-	return [6]string{m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments}
+	return [9]string{m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.RefProvider, m.RefKey, m.RefURL}
 }
 
 // UpdateMemo writes the editable columns, sent_at and the message state of an owned row.
@@ -164,11 +173,14 @@ func writeMemo(ctx context.Context, q memoQuerier, m Memo) error {
 	_, err := q.ExecContext(ctx,
 		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, attachments=?, position=?, sent_at=?,
 		   state=?, release_hash=?, released_at=?, send_token=?, send_started_at=?,
-		   release_repo=?, release_category=?, release_kind=?, release_body=?, release_ref_path=?, release_attachments=?
+		   ref_provider=?, ref_key=?, ref_url=?,
+		   release_repo=?, release_category=?, release_kind=?, release_body=?, release_ref_path=?, release_attachments=?,
+		   release_ref_provider=?, release_ref_key=?, release_ref_url=?
 		   WHERE id=? AND membership_id=?`,
 		m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.SentAt,
 		m.State, m.ReleaseHash, m.ReleasedAt, m.SendToken, m.SendStartedAt,
-		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], m.ID, m.MembershipID)
+		m.RefProvider, m.RefKey, m.RefURL,
+		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ID, m.MembershipID)
 	return err
 }
 

@@ -61,9 +61,12 @@ type MemoQueue struct {
 	// counts deliveries, NoReportAt when a fire found an Agent that sends no queue report.
 	Draining, Paused                                 bool
 	PausedAt, PausedReason, BreakerAfter, NoReportAt string
-	Enabled                                          bool
-	Generation                                       int
-	CreatedAt, UpdatedAt                             string
+	// NoRefsAt is when a fire found an Agent that cannot show a reference. While it is set the
+	// messages that carry one stay where they are (ADR 0137 section 4).
+	NoRefsAt             string
+	Enabled              bool
+	Generation           int
+	CreatedAt, UpdatedAt string
 }
 
 // MemoQueueStore is the queue half of the memo store.
@@ -83,6 +86,8 @@ type MemoQueueStore interface {
 	// SetMemoQueueDraining and SetMemoQueueNoReport write the dispatcher's state columns.
 	SetMemoQueueDraining(ctx context.Context, queueID string, on bool) error
 	SetMemoQueueNoReport(ctx context.Context, queueID, at string) error
+	// SetMemoQueueNoRefs writes NoRefsAt, '' to clear it.
+	SetMemoQueueNoRefs(ctx context.Context, queueID, at string) error
 	// MemoTx runs f in one transaction that holds the membership's lock first, so every
 	// queue-relevant memo write of a member is serialized behind the others. Before f it
 	// takes back the member's stale send reservations, so f never sees one. f's error
@@ -265,11 +270,14 @@ func (t memoTx) ReleaseMemo(seen Memo, hash, at string) (bool, error) {
 	return affected(t.q.ExecContext(t.ctx,
 		`UPDATE memo SET state=?, release_hash=?, released_at=?,
 		   release_repo=repo, release_category=category, release_kind=kind, release_body=body,
-		   release_ref_path=ref_path, release_attachments=attachments
+		   release_ref_path=ref_path, release_attachments=attachments,
+		   release_ref_provider=ref_provider, release_ref_key=ref_key, release_ref_url=ref_url
 		   WHERE id=? AND membership_id=? AND state=?
-		     AND repo=? AND category=? AND kind=? AND body=? AND ref_path=? AND attachments=?`,
+		     AND repo=? AND category=? AND kind=? AND body=? AND ref_path=? AND attachments=?
+		     AND ref_provider=? AND ref_key=? AND ref_url=?`,
 		MemoStatePending, hash, at, seen.ID, t.mid, MemoStateHeld,
-		seen.Repo, seen.Category, seen.Kind, seen.Body, seen.RefPath, seen.Attachments))
+		seen.Repo, seen.Category, seen.Kind, seen.Body, seen.RefPath, seen.Attachments,
+		seen.RefProvider, seen.RefKey, seen.RefURL))
 }
 
 func (t memoTx) CountQueueIntakeSince(since string) (int, error) {
@@ -318,7 +326,7 @@ func (t memoTx) DeleteCategory(id string) error {
 const memoQueueCols = `SELECT category_id, membership_id, instruction, agent_kind, model, effort, route, spend_cap_usd,
 	worktree, max_active, batch, enabled, generation, created_at, updated_at, max_task_hours,
 	open_cron, open_minutes, tz, open_after, max_fires_per_day, draining, paused, paused_at, paused_reason, breaker_after,
-	no_report_at FROM memo_queue`
+	no_report_at, no_refs_at FROM memo_queue`
 
 func scanMemoQueue(row scanner) (MemoQueue, error) {
 	var q MemoQueue
@@ -326,7 +334,7 @@ func scanMemoQueue(row scanner) (MemoQueue, error) {
 	err := row.Scan(&q.CategoryID, &q.MembershipID, &q.Instruction, &q.AgentKind, &q.Model, &q.Effort, &q.Route,
 		&q.SpendCapUSD, &worktree, &q.MaxActive, &q.Batch, &enabled, &q.Generation, &q.CreatedAt, &q.UpdatedAt, &q.MaxTaskHours,
 		&q.OpenCron, &q.OpenMinutes, &q.TZ, &q.OpenAfter, &q.MaxFiresPerDay, &draining, &paused, &q.PausedAt, &q.PausedReason,
-		&q.BreakerAfter, &q.NoReportAt)
+		&q.BreakerAfter, &q.NoReportAt, &q.NoRefsAt)
 	q.Worktree, q.Enabled, q.Draining, q.Paused = worktree != 0, enabled != 0, draining != 0, paused != 0
 	return q, err
 }
@@ -396,7 +404,9 @@ func (s *SQL) ListMemoQueues(ctx context.Context, membershipID string) ([]MemoQu
 // QueuePending is what a queue has waiting: how many pending messages, the creation time of the
 // oldest, and the latest time any of them was created or released.
 type QueuePending struct {
-	Count          int
+	Count int
+	// Refs is how many of them carry a reference.
+	Refs           int
 	Oldest, Latest string
 }
 
@@ -426,7 +436,7 @@ func (s *SQL) ListMemberQueuePendingStats(ctx context.Context, membershipID stri
 }
 
 func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (map[string]QueuePending, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN m.ref_key<>'' THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at)
 		FROM memo m
 		JOIN memo_category c ON c.membership_id=m.membership_id AND c.repo=m.repo AND c.name=m.category
 		JOIN memo_queue q ON q.category_id=c.id
@@ -440,7 +450,7 @@ func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (
 		var id string
 		var p QueuePending
 		var maxCreated, maxReleased string
-		if err := rows.Scan(&id, &p.Count, &p.Oldest, &maxCreated, &maxReleased); err != nil {
+		if err := rows.Scan(&id, &p.Count, &p.Refs, &p.Oldest, &maxCreated, &maxReleased); err != nil {
 			return nil, err
 		}
 		p.Latest = maxCreated
@@ -463,6 +473,11 @@ func (s *SQL) SetMemoQueueDraining(ctx context.Context, queueID string, on bool)
 
 func (s *SQL) SetMemoQueueNoReport(ctx context.Context, queueID, at string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE memo_queue SET no_report_at=? WHERE category_id=? AND no_report_at<>?`, at, queueID, at)
+	return err
+}
+
+func (s *SQL) SetMemoQueueNoRefs(ctx context.Context, queueID, at string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE memo_queue SET no_refs_at=? WHERE category_id=? AND no_refs_at<>?`, at, queueID, at)
 	return err
 }
 

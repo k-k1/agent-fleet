@@ -632,3 +632,15 @@ session. An act recorded in the current run is after any list of an earlier run 
 closes the restored-state-file case of the note of 2026-11-15 and also keeps a session a person started after a restart
 while its retire was pending. The remaining gap needs two restarts with the retire pending and a rolled-back counter. An
 older Agent sends no identity and an older Control Plane sends none: both behave as before.
+
+Added 2026-11-17 (#4150, slice A of step 3, the Control Plane): a message may carry a reference `{provider, key, url}`
+(`memo.ref_*`, migrations 0138 and 0123), on `/api/memos` and `/internal/memos`. The release hash covers it, so a change
+of it from the token face or `/mcp` puts a released message back to `held`. A queue holds one open message per
+(provider, key): open is `held`, `pending` and `claimed`, closed is `unconfirmed`, `delivered` and `superseded`.
+Adding one that is open answers the existing message (`existing: true`); an update, a move into the queue, a category
+that becomes a queue and a merge that would make two refused whole (`memo_ref_duplicate`). The check is in the
+member's lock, with a partial unique index behind it. A fire passes the reference with the item and, for exactly one
+reference, the session's `work_item`. A delivery that holds a reference is not sent to an Agent that does not send the
+new `queueRefs` marker (the queue's `noRefsAt` and the waiting reason `no_references` say so). Open question 2 is
+untouched: a reference-only message from a session is `held` like any other. Left for the Agent (the marker, the prompt
+and the tool argument) and the Console ("add to auto-run"); the wire is in docs/build/03-control-plane.md §3.6.

@@ -298,6 +298,62 @@ Memos you accumulate and send to a session in one go (the tables are
   /api/memo-queues/{categoryId}/deliveries` lists the newest 50. The session row carries
   `queueDelivery`, and a memo the delivery that claimed it (`deliveryId`).
 
+- **Typed references** ([decisions/0137](../decisions/0137-message-queues.md) §4, step 3, Control Plane half). A message
+  may carry a pointer to a work item, never a copy of it. This is the contract the Agent (step 3b) and the Console
+  (step 3c) are built on.
+  - *Wire.* `reference` is an object `{"provider": "github", "key": "acme/app#12", "url": "https://github.com/acme/app/issues/12"}`,
+    absent when there is none. It is read on `POST /api/memos` and `POST /internal/memos` (create), on the `PATCH` of
+    both (absent leaves it, a full object sets it, `{}` or all three fields empty clears it, `null` reads as absent),
+    and it is in every memo of `GET /api/memos` and `GET /internal/memos`. `/mcp`'s memo tools do not take one in this
+    step. A message that has a reference is a `text` message: its `body` may be empty only when a reference is set
+    (images alone are as before). Storage is three columns, `memo.ref_provider`, `ref_key` and `ref_url`, with `''`
+    for none (migrations 0138 and Postgres 0123).
+  - *Validation* (`400 memo_ref_invalid`). All three or none. `provider` is lower-cased and must be one the work items
+    know (`github`, `jira`, `bitbucket`). `key` is `owner/repo#N` for `github` and `bitbucket` (a bare `#N` is
+    refused) and `PROJ-12` for `jira` (upper-cased), at most 200 bytes. `url` is http or https with a host, no
+    whitespace, at most 2048 bytes. What is stored is the normalised form.
+  - *State and provenance are the face's, as for any message* (§3): the Console enters `pending`, the token face
+    and `/mcp` enter `held` and wait for the release press. A reference-only message from a session gets no exemption
+    (ADR open question 2 stays open). The release hash (`memoContentHash`) covers the reference, and a message
+    without one hashes exactly as before. So a change of the reference from the token face or `/mcp`, setting,
+    changing or clearing it, puts a released message back to `held`, as a change of the body does, and the Console's
+    own change keeps `pending` and re-records the hash. A pending row also keeps `release_ref_*` copies under a
+    CHECK, like the rest of the released content.
+  - *One open message per (queue, provider, key).* Open is `held`, `pending` and `claimed`: a message that can
+    still be fired from, or is being fired in. `unconfirmed`, `delivered` and `superseded` are closed (an
+    `unconfirmed` message is never fired by itself, and the person sees it), so the same item can be added again.
+    The keys of `github` and `bitbucket` compare without regard to case. It is enforced in the transaction behind
+    the member's lock, where every memo write of a member already serialises (so it holds across Control Plane
+    processes on SQLite and Postgres), and a partial unique index `idx_memo_open_ref` over (membership, repo,
+    category, provider, key) for open rows is the second guard for a writer that skips the check.
+    - *Create* of a reference that is already open in the queue is not an error: the answer is the existing message,
+      `200` instead of `201`, with `"existing": true`. Nothing is added, and nothing is counted against the rate
+      limit of the token face. Repeating it is safe.
+    - *An update* that sets or changes a reference, or moves a message into a queue's category, onto an open one is
+      `409 memo_ref_duplicate`, the message says which message holds it.
+    - *A category that becomes a queue* while it holds two notes that would both be open with one reference, and a
+      *rename that merges* categories where the moved rows collide with the survivor's (or with each other), are
+      refused whole with the same `409 memo_ref_duplicate`, and nothing moves: which of two notes to drop is the
+      member's choice. Notes already sent become `delivered` and do not count. A restore of a message to `pending`
+      (a delivery that was not sent returns its claimed messages) cannot collide, because `claimed` is open.
+  - *The fire.* The item the Agent's `POST /sessions` receives in `queue_delivery.items[]` gains
+    `"reference": {"provider","key","url"}` (absent for a message without one; `body` may be `""`). When the items
+    of the delivery carry exactly one reference between them, the create also carries
+    `"work_item": {"provider": "github", "key": "acme/app#12"}`, the object the Agent's `session_create` already
+    takes from a launch from a work item (the item's title, type and labels are not kept, so they are not sent), so
+    the branch name and the link follow the work-item rules. With none, or two or more, there is no `work_item`.
+  - *The marker.* `GET /sessions` answers `"queueRefs": 1` when the Agent composes the prompt for items that carry a
+    reference (a number apart from `queueReport`, which stays at 1). A delivery that holds a reference is never
+    sent to an Agent without it. Until step 3b every Agent lacks it. The send asks the Agent after the wake and
+    before the key is reserved: without the marker the delivery closes as `not_sent`, the messages go back to
+    `pending` where they were, and the queue's `noRefsAt` is set. While `noRefsAt` is set a fire by itself leaves
+    the messages that carry a reference where they are and fires the rest of the queue, a press of "fire now" tries
+    again, and the queue's `waiting` is `{"reason": "no_references"}` when only references wait. The dispatcher
+    clears `noRefsAt` when a running workspace's Agent sends the marker. `noRefsAt` is in the queue's JSON beside
+    `noReportAt`. A refused send backs the queue off like any not sent delivery.
+  - *Hand-sent text.* A reference in a message sent by hand is written as a line `作業項目: <key> (<url>)` by
+    `buildFlushMessage`. The Console's own composer (`composeMemoMessage`) is step 3c's to match.
+
 ## 3.7 Background jobs
 
 All are goroutines inside the CP. Intervals come from the environment, and `0`

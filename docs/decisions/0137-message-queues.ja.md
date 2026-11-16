@@ -591,3 +591,14 @@ meta の書き込み自体も一時ファイルと rename になったので、�
 「状態ファイルを復元した場合」を塞ぎ、retire が保留のまま再起動したあとに人が起動したセッションも守る。残る穴は、
 retire が保留のまま 2 回再起動し、かつカウンタが巻き戻った場合。古い Agent は識別子を送らず、古い Control Plane も送らない。
 どちらも従来どおり動く。
+
+2026-11-17 追記（#4150、step 3 の slice A、Control Plane）: メッセージは参照 `{provider, key, url}` を持てる
+（`memo.ref_*`、移行 0138 と 0123）。`/api/memos` と `/internal/memos` で扱う。release の hash は参照を含むので、token 面や
+`/mcp` から変えれば release 済みは `held` に戻る。キューは (provider, key) ごとに開いているメッセージを 1 つだけ持つ。
+開いている = `held`・`pending`・`claimed`、閉じている = `unconfirmed`・`delivered`・`superseded`。開いているものを足すと
+既存のメッセージを返す（`existing: true`）。更新、キューへの移動、キューになるカテゴリ、2 つが重なる統合は
+全体を断る（`memo_ref_duplicate`）。検査はメンバーの lock の中で行い、後ろに部分 UNIQUE index がある。発火は参照を item に載せ、
+参照がちょうど 1 つならセッションの `work_item` にする。参照を含む配信は、新しいマーカー `queueRefs` を送らない Agent には
+送らない（キューの `noRefsAt` と待ち理由 `no_references` が示す）。未決 2 には触れない: セッションからの参照だけの
+メッセージも他と同じく `held`。Agent（マーカー・prompt・ツール引数）と Console（「auto-run に追加」）に残す。wire は
+docs/build/03-control-plane.md §3.6。

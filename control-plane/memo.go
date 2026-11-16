@@ -70,6 +70,13 @@ type memoDTO struct {
 	// DeliveryID is the queue delivery that claimed the message (memo_delivery.go), written by
 	// the CP. Absent for a message no delivery holds.
 	DeliveryID string `json:"deliveryId,omitempty"`
+	// Reference is the typed pointer to a work item the message carries (memo_reference.go),
+	// absent for none. A create or an update may set it, and an update with all three fields
+	// empty clears it.
+	Reference *memoRefWire `json:"reference,omitempty"`
+	// Existing is set on the answer of a create into a queue that found the same reference
+	// already waiting there: the message returned is that one, and nothing was added.
+	Existing bool `json:"existing,omitempty"`
 }
 
 // memoOriginWire is where a taken-in memo came from: the inbox item and its sender.
@@ -84,7 +91,7 @@ func memoToDTO(m store.Memo) memoDTO {
 		Position: m.Position, CreatedAt: m.CreatedAt, SentAt: m.SentAt,
 		State: m.State, Provenance: memoEffectiveProvenance(m), ReleasedAt: m.ReleasedAt,
 		ContentHash: memoContentHash(m), Producer: m.Producer, ProducerOrigin: m.ProducerOrigin,
-		DeliveryID: m.DeliveryID}
+		DeliveryID: m.DeliveryID, Reference: memoRefToWire(m)}
 	if m.OriginItemID != "" {
 		d.Origin = &memoOriginWire{ItemID: m.OriginItemID, Sender: m.OriginSenderKey}
 	}
@@ -193,6 +200,10 @@ func validateMemo(mv store.MembershipView, in memoDTO) (store.Memo, *apiError) {
 	if aerr != nil {
 		return store.Memo{}, aerr
 	}
+	ref, aerr := memoRefNormalize(derefRef(in.Reference))
+	if aerr != nil {
+		return store.Memo{}, aerr
+	}
 	m := store.Memo{
 		MembershipID: mv.MembershipID,
 		Repo:         strings.TrimSpace(in.Repo),
@@ -203,17 +214,21 @@ func validateMemo(mv store.MembershipView, in memoDTO) (store.Memo, *apiError) {
 		Attachments:  atts,
 		Position:     in.Position,
 	}
+	m = memoSetRef(m, ref)
 	switch m.Kind {
 	case "file":
 		if m.RefPath == "" {
 			return store.Memo{}, &apiError{http.StatusBadRequest, "bad_ref", "refPath is required for kind=file"}
 		}
 	case "text":
-		if m.Body == "" && atts == "" {
-			return store.Memo{}, &apiError{http.StatusBadRequest, "bad_body", "body or attachments is required for kind=text"}
+		if m.Body == "" && atts == "" && m.RefKey == "" {
+			return store.Memo{}, &apiError{http.StatusBadRequest, "bad_body", "body, attachments or a reference is required for kind=text"}
 		}
 	default:
 		return store.Memo{}, &apiError{http.StatusBadRequest, "bad_kind", "kind must be file or text"}
+	}
+	if m.RefKey != "" && m.Kind != "text" {
+		return store.Memo{}, memoRefInvalid("a reference rides on a text message")
 	}
 	return m, nil
 }
@@ -239,6 +254,16 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		inQ, err := memoInQueue(tx, m.Repo, m.Category)
 		if err != nil {
 			return err
+		}
+		if inQ && m.RefKey != "" {
+			rows, err := tx.ListMemosIn(m.Repo, m.Category)
+			if err != nil {
+				return err
+			}
+			if dup, ok := memoOpenRefIn(rows, m); ok {
+				m, created = dup, false
+				return nil
+			}
 		}
 		if inQ && via.fromWorkspace() {
 			dup, aerr, err := memoCreateBounds(tx, m)
@@ -280,7 +305,9 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 	if aerr := memoTxResult(err); aerr != nil {
 		return memoDTO{}, false, aerr
 	}
-	return memoToDTO(m), created, nil
+	dto := memoToDTO(m)
+	dto.Existing = !created
+	return dto, created, nil
 }
 
 func (a memoAPI) create(via memoVia) func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView) {
@@ -316,6 +343,9 @@ type memoPatch struct {
 	RefPath     *string           `json:"refPath"`
 	Attachments *[]memoAttachment `json:"attachments"`
 	Position    *int              `json:"position"`
+	// Reference absent leaves the reference as it is, a full reference sets it, and one with all
+	// three fields empty clears it (a JSON null reads as absent).
+	Reference *memoRefWire `json:"reference"`
 }
 
 // memoUpdateFor applies a partial edit to an owned memo (ownership by membership).
@@ -348,6 +378,15 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 		}
 		if next, aerr = memoQueueMove(cur, next, inPrev, inNext, via); aerr != nil {
 			return memoTxFail(aerr)
+		}
+		if inNext && memoOpenState(next.State) && next.RefKey != "" {
+			rows, err := tx.ListMemosIn(next.Repo, next.Category)
+			if err != nil {
+				return err
+			}
+			if dup, ok := memoOpenRefIn(rows, next); ok {
+				return memoTxFail(memoRefDuplicate(dup))
+			}
 		}
 		out = next
 		return tx.WriteMemo(next)
@@ -382,11 +421,21 @@ func applyMemoPatch(cur store.Memo, in memoPatch) (store.Memo, *apiError) {
 	if in.Position != nil {
 		cur.Position = *in.Position
 	}
+	if in.Reference != nil {
+		ref, aerr := memoRefNormalize(*in.Reference)
+		if aerr != nil {
+			return cur, aerr
+		}
+		cur = memoSetRef(cur, ref)
+	}
 	if cur.Kind == "file" && cur.RefPath == "" {
 		return cur, &apiError{http.StatusBadRequest, "bad_ref", "refPath is required for kind=file"}
 	}
-	if cur.Kind == "text" && cur.Body == "" && cur.Attachments == "" {
-		return cur, &apiError{http.StatusBadRequest, "bad_body", "body or attachments is required for kind=text"}
+	if cur.Kind == "text" && cur.Body == "" && cur.Attachments == "" && cur.RefKey == "" {
+		return cur, &apiError{http.StatusBadRequest, "bad_body", "body, attachments or a reference is required for kind=text"}
+	}
+	if cur.RefKey != "" && cur.Kind != "text" {
+		return cur, memoRefInvalid("a reference rides on a text message")
 	}
 	return cur, nil
 }
@@ -456,6 +505,11 @@ func buildFlushMessage(memos []store.Memo) string {
 			}
 		case m.Body != "":
 			b.WriteString(num(n) + m.Body + "\n")
+			if m.RefKey != "" {
+				b.WriteString(cont + memoRefLine(m) + "\n")
+			}
+		case m.RefKey != "":
+			b.WriteString(num(n) + memoRefLine(m) + "\n")
 		default:
 			b.WriteString(num(n) + "（画像）\n")
 		}
@@ -890,10 +944,11 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 }
 
 // memoSameSentContent says whether a row still holds the text a flush composed from sent: the
-// kind, body, ref path and attachments. Repo and category are where it is filed, not what was
+// kind, body, ref path, attachments and reference. Repo and category are where it is filed, not what was
 // sent.
 func memoSameSentContent(cur, sent store.Memo) bool {
-	return cur.Kind == sent.Kind && cur.Body == sent.Body && cur.RefPath == sent.RefPath && cur.Attachments == sent.Attachments
+	return cur.Kind == sent.Kind && cur.Body == sent.Body && cur.RefPath == sent.RefPath && cur.Attachments == sent.Attachments &&
+		cur.RefProvider == sent.RefProvider && cur.RefKey == sent.RefKey && cur.RefURL == sent.RefURL
 }
 
 // memoSendUnknown is a send whose outcome is unknown: the Agent was not reached or did not
