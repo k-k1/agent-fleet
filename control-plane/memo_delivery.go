@@ -440,6 +440,9 @@ type memoMemberView struct {
 	readAt string
 	// actMark is the envelope's actMark of that read, 0 when the Agent sent none.
 	actMark int64
+	// actIncarnation is the envelope's actIncarnation of that read: "" when the Agent sent none or
+	// sent no mark, and then no incarnation is stored or sent.
+	actIncarnation string
 }
 
 func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.MemoDelivery {
@@ -556,6 +559,9 @@ func (r *memoQueueRunner) view(ctx context.Context, views map[string]*memoMember
 		v.live, v.liveOK, v.report = env.Sessions, err == nil, err == nil && env.reportsQueue()
 		if v.liveOK {
 			v.actMark = env.ActMark
+			if env.ActMark > 0 {
+				v.actIncarnation = env.ActIncarnation
+			}
 		}
 
 	case "stopped":
@@ -855,7 +861,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		return
 	}
 	o := store.DeliveryObservation{Gen: gen, At: v.readAt, HeldBy: why, HeldSession: who, Progress: progress,
-		ProgressAt: store.DeliveryTS(now), LimitKinds: treeLimitKinds(tree), ActMark: v.actMark}
+		ProgressAt: store.DeliveryTS(now), LimitKinds: treeLimitKinds(tree), ActMark: v.actMark, ActIncarnation: v.actIncarnation}
 	if t := tree[0].QueueTurn; t != nil && t.EndedAt != "" {
 		o.TurnOutcome, o.TurnMs, o.TurnEndedAt = t.Outcome, t.Ms, t.EndedAt
 	}
@@ -1045,7 +1051,7 @@ func (r *memoQueueRunner) retireOverdue(ctx context.Context, v *memoMemberView, 
 	// that report is still the kept one; a newer report (or progress) kept first means nothing is
 	// sent and the next tick decides again.
 	fctx, fcancel := memoProgressCtx(ctx)
-	mark, gen, ok, ferr := r.mgr.store.FreezeDeliveryRetireMark(fctx, d.ID, d.HeldGen, d.ActMark)
+	mark, inc, gen, ok, ferr := r.mgr.store.FreezeDeliveryRetireMark(fctx, d.ID, d.HeldGen, d.ActMark, d.ActIncarnation)
 	fcancel()
 	if ferr != nil {
 		log.Printf("memo queue: delivery %s: freeze the retire mark: %v", d.ID, ferr)
@@ -1054,7 +1060,8 @@ func (r *memoQueueRunner) retireOverdue(ctx context.Context, v *memoMemberView, 
 	if !ok {
 		return
 	}
-	if res := r.retire(ctx, v.res, d.Session, mark); res != retireRepeat {
+	res := r.retire(ctx, v.res, d.Session, mark, inc)
+	if res != retireRepeat {
 		wctx, cancel := memoProgressCtx(ctx)
 		defer cancel()
 		if _, err := r.mgr.store.MarkMemoDeliveryRetired(wctx, d.ID, store.DeliveryTS(time.Now()), gen); err != nil {
@@ -1108,7 +1115,7 @@ const (
 // (retirePending), never by this call. The Agent runs one retire of a root at a time and makes
 // a second request wait for the first, so the call keeps its own timeout, and a timeout or a
 // cancelled wait (503 retire_wait_cancelled) is a repeat on a later tick.
-func (r *memoQueueRunner) retire(ctx context.Context, res *resolved, session string, actMark int64) retireResult {
+func (r *memoQueueRunner) retire(ctx context.Context, res *resolved, session string, actMark int64, incarnation string) retireResult {
 	cctx, cancel := context.WithTimeout(ctx, memoRetireCallWait)
 	defer cancel()
 	// ifNoActSince is the actMark of the report the retire was decided on: the Agent leaves a
@@ -1117,9 +1124,12 @@ func (r *memoQueueRunner) retire(ctx context.Context, res *resolved, session str
 	// before, which an Agent without the condition would ignore anyway.
 	var body io.Reader
 	if actMark > 0 {
+		// The incarnation rides with the mark: the Agent judges each session's act against it. None
+		// stored (an older Agent, a row from before the upgrade) sends none, and the mark is compared as before.
 		b, _ := json.Marshal(struct {
-			IfNoActSince int64 `json:"ifNoActSince"`
-		}{actMark})
+			IfNoActSince   int64  `json:"ifNoActSince"`
+			ActIncarnation string `json:"actIncarnation,omitempty"`
+		}{actMark, incarnation})
 		body = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(cctx, http.MethodPost,
@@ -1236,7 +1246,8 @@ func (r *memoQueueRunner) retireOne(ctx context.Context, views map[string]*memoM
 			return
 		}
 	}
-	if res := r.retire(ctx, v.res, d.Session, d.RetireActMark); res != retireRepeat {
+	res := r.retire(ctx, v.res, d.Session, d.RetireActMark, d.RetireActIncarnation)
+	if res != retireRepeat {
 		r.finishRetire(ctx, d, string(res))
 	}
 }

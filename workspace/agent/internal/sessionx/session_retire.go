@@ -197,7 +197,7 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 			"this request's deadline passed before the retire started; nothing was done")
 		return
 	}
-	in, err := beginRetire(name, cond.IfNoActSince)
+	in, err := beginRetire(name, cond.IfNoActSince, cond.ActIncarnation)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "retire_intent_unwritable",
 			"the retire could not be recorded, so nothing was ended: "+err.Error())
@@ -345,6 +345,10 @@ type retireIntent struct {
 	// above it is released from this retire. 0 is none. It lives with the intent so that the
 	// recovery after a restart applies the same one.
 	IfNoActSince int64 `json:"ifNoActSince,omitempty"`
+	// ActIncarnation is the incarnation of the list IfNoActSince came from, kept so that the
+	// recovery after a restart judges each session by the same rule (actAfterList). "" for an intent
+	// written before it existed.
+	ActIncarnation string `json:"actIncarnation,omitempty"`
 }
 
 // retireReq is the optional body of POST /sessions/{name}/retire.
@@ -352,6 +356,9 @@ type retireReq struct {
 	// IfNoActSince is the actMark of the session list the retire was decided on. A session a
 	// person started or typed into after that list (PersonActMark >= it) is not retired.
 	IfNoActSince int64 `json:"ifNoActSince"`
+	// ActIncarnation is the actIncarnation of the same list: the run of the counter that handed the
+	// mark out. Empty: a Control Plane that sends none, and the mark is compared as before.
+	ActIncarnation string `json:"actIncarnation,omitempty"`
 }
 
 var retireIntents = fstore.JSON[retireIntent](paths.AgentStateDir, "session-retire-intent", ".json")
@@ -360,10 +367,13 @@ var retireIntentMu sync.Mutex
 // beginRetire records a new retire before anything is marked. Without a durable intent nothing
 // may be marked: the write is read back, because a directory that accepted it and keeps nothing
 // would leave a crash with no tree to recover.
-func beginRetire(root string, ifNoActSince int64) (*retireIntent, error) {
+func beginRetire(root string, ifNoActSince int64, incarnation string) (*retireIntent, error) {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	in := retireIntent{Root: root, ID: hex.EncodeToString(b), IfNoActSince: max(ifNoActSince, 0)}
+	if in.IfNoActSince > 0 {
+		in.ActIncarnation = incarnation
+	}
 	retireIntentMu.Lock()
 	defer retireIntentMu.Unlock()
 	if err := retireIntents.Write(root, in); err != nil {
@@ -498,8 +508,7 @@ func markOrRelease(rep *retireReport, in *retireIntent) (markState, session.Meta
 			state = markReleased
 			return false
 		}
-		if in.IfNoActSince > 0 && !isRetired(*m) &&
-			(m.PersonActMark >= in.IfNoActSince || in.IfNoActSince > actMarks.now()) {
+		if in.IfNoActSince > 0 && !isRetired(*m) && actAfterList(*m, in) {
 			m.RetiredAt, m.RetireID, m.RetireClearedID = "", "", id
 			state = markReleased
 			return true

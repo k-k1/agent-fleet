@@ -59,10 +59,15 @@ type MemoDelivery struct {
 	// ActMark is the Agent's actMark of the kept report (0: it carried none). A retire sends it
 	// as ifNoActSince.
 	ActMark int64
+	// ActIncarnation is the identity of the Agent's counter run that handed ActMark out ("": the
+	// Agent sent none). The retire echoes it, and the Agent judges a person's act against the list by it.
+	ActIncarnation string
 	// RetireActMark is the mark one retire decision and its unconfirmed retries all send, frozen
 	// when the decision is made (the clean close, or the first attempt of an overdue retire) and
 	// cleared with retired_at when progress is seen. 0: none yet, or the Agent sent no mark.
 	RetireActMark int64
+	// RetireActIncarnation is ActIncarnation frozen with RetireActMark.
+	RetireActIncarnation string
 	// RetireGen is the generation (HeldGen) of the report the overdue retire's condition was
 	// frozen from: 0 means not frozen, and a frozen mark of 0 is a frozen "no mark".
 	RetireGen int64
@@ -111,8 +116,10 @@ type DeliveryObservation struct {
 	ProgressAt               string
 	TurnOutcome, TurnEndedAt string
 	TurnMs                   int64
-	// ActMark is the actMark the read's envelope carried, 0 when it carried none.
-	ActMark int64
+	// ActMark is the actMark the read's envelope carried, 0 when it carried none, and
+	// ActIncarnation the identity that came with it ("" when none).
+	ActMark        int64
+	ActIncarnation string
 }
 
 // DeliveryTS formats a delivery timestamp. Fixed width, so that the text order of two stamps
@@ -149,7 +156,8 @@ type MemoDeliveryStore interface {
 	// was decided on) only while that report is still the kept one and nothing is frozen. When a
 	// condition is already frozen it is returned, a frozen mark of 0 included. ok is false when a
 	// newer report was kept before the freeze: nothing is sent and the next tick decides again.
-	FreezeDeliveryRetireMark(ctx context.Context, id string, gen, mark int64) (frozenMark, frozenGen int64, ok bool, err error)
+	// The mark's incarnation is frozen with it and returned the same way.
+	FreezeDeliveryRetireMark(ctx context.Context, id string, gen, mark int64, incarnation string) (frozenMark int64, frozenIncarnation string, frozenGen int64, ok bool, err error)
 	// ListRetirePendingDeliveries returns the closed deliveries whose session still has to be
 	// retired, oldest first: the ones marked pending, and every clean close of a reported
 	// delivery without a result (an older binary's close sets no mark).
@@ -221,7 +229,7 @@ type MemoDeliveryTxOps interface {
 const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, session, message_ids, idle_ticks,
 	created_at, sent_at, opened_at, closed_at, updated_at,
 	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at, retire_result,
-	turn_outcome, turn_ms, turn_ended_at, auto, limit_kinds, drain, act_mark, retire_act_mark, retire_gen FROM memo_delivery`
+	turn_outcome, turn_ms, turn_ended_at, auto, limit_kinds, drain, act_mark, retire_act_mark, retire_gen, act_incarnation, retire_act_incarnation FROM memo_delivery`
 
 func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	var d MemoDelivery
@@ -230,7 +238,7 @@ func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	err := row.Scan(&d.ID, &d.MembershipID, &d.QueueID, &d.State, &d.Outcome, &d.Session, &ids, &d.IdleTicks,
 		&d.CreatedAt, &d.SentAt, &d.OpenedAt, &d.ClosedAt, &d.UpdatedAt,
 		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt, &d.RetireResult,
-		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto, &d.LimitKinds, &drain, &d.ActMark, &d.RetireActMark, &d.RetireGen)
+		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto, &d.LimitKinds, &drain, &d.ActMark, &d.RetireActMark, &d.RetireGen, &d.ActIncarnation, &d.RetireActIncarnation)
 	d.Reported, d.RetirePending, d.Auto, d.Drain = reported != 0, retire != 0, auto != 0, drain != 0
 	d.MessageIDs = []string{}
 	if err == nil && ids != "" {
@@ -383,19 +391,20 @@ func (t memoTx) ObserveDelivery(id string, o DeliveryObservation) (int, bool, er
 	if o.Progress {
 		progress = 1
 	}
-	kept, err := affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET held_by=?, held_session=?, held_seen_at=?, held_gen=?, limit_kinds=?, act_mark=?,
+	kept, err := affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET held_by=?, held_session=?, held_seen_at=?, held_gen=?, limit_kinds=?, act_mark=?, act_incarnation=?,
 		  reported=1, updated_at=?,
 		  idle_ticks=CASE WHEN ?=1 THEN 0 WHEN reported=1 AND held_by='' AND idle_ticks>=1 THEN 2 ELSE 1 END,
 		  progress_seen_at=CASE WHEN ?=1 THEN ? ELSE progress_seen_at END,
 		  retired_at=CASE WHEN ?=1 THEN '' ELSE retired_at END,
 		  retire_act_mark=CASE WHEN ?=1 THEN 0 ELSE retire_act_mark END,
+		  retire_act_incarnation=CASE WHEN ?=1 THEN '' ELSE retire_act_incarnation END,
 		  retire_gen=CASE WHEN ?=1 THEN 0 ELSE retire_gen END,
 		  turn_outcome=CASE WHEN turn_ended_at='' AND ?<>'' THEN ? ELSE turn_outcome END,
 		  turn_ms=CASE WHEN turn_ended_at='' AND ?<>'' THEN ? ELSE turn_ms END,
 		  turn_ended_at=CASE WHEN turn_ended_at='' THEN ? ELSE turn_ended_at END
 		WHERE id=? AND membership_id=? AND state=? AND held_gen<=?`,
-		o.HeldBy, o.HeldSession, o.At, o.Gen, o.LimitKinds, o.ActMark, DeliveryTS(time.Now()),
-		held, progress, o.ProgressAt, progress, progress, progress,
+		o.HeldBy, o.HeldSession, o.At, o.Gen, o.LimitKinds, o.ActMark, o.ActIncarnation, DeliveryTS(time.Now()),
+		held, progress, o.ProgressAt, progress, progress, progress, progress,
 		o.TurnEndedAt, o.TurnOutcome, o.TurnEndedAt, o.TurnMs, o.TurnEndedAt,
 		id, t.mid, DeliveryOpen, o.Gen))
 	if err != nil {
@@ -425,24 +434,25 @@ func (s *SQL) MarkMemoDeliveryOverdue(ctx context.Context, id, at string) (bool,
 		at, at, id, DeliveryOpen))
 }
 
-func (s *SQL) FreezeDeliveryRetireMark(ctx context.Context, id string, gen, mark int64) (int64, int64, bool, error) {
-	won, err := affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET retire_act_mark=?, retire_gen=?
-		WHERE id=? AND state=? AND held_gen=? AND retire_gen=0`, mark, gen, id, DeliveryOpen, gen))
+func (s *SQL) FreezeDeliveryRetireMark(ctx context.Context, id string, gen, mark int64, incarnation string) (int64, string, int64, bool, error) {
+	won, err := affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET retire_act_mark=?, retire_act_incarnation=?, retire_gen=?
+		WHERE id=? AND state=? AND held_gen=? AND retire_gen=0`, mark, incarnation, gen, id, DeliveryOpen, gen))
 	if err != nil {
-		return 0, 0, false, err
+		return 0, "", 0, false, err
 	}
 	if won {
-		return mark, gen, true, nil
+		return mark, incarnation, gen, true, nil
 	}
 	var m, g int64
-	if err := s.db.QueryRowContext(ctx, `SELECT retire_act_mark, retire_gen FROM memo_delivery WHERE id=? AND state=?`,
-		id, DeliveryOpen).Scan(&m, &g); err != nil {
+	var inc string
+	if err := s.db.QueryRowContext(ctx, `SELECT retire_act_mark, retire_act_incarnation, retire_gen FROM memo_delivery WHERE id=? AND state=?`,
+		id, DeliveryOpen).Scan(&m, &inc, &g); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, 0, false, nil
+			return 0, "", 0, false, nil
 		}
-		return 0, 0, false, err
+		return 0, "", 0, false, err
 	}
-	return m, g, g != 0, nil
+	return m, inc, g, g != 0, nil
 }
 
 func (s *SQL) MarkMemoDeliveryRetired(ctx context.Context, id, at string, gen int64) (bool, error) {
@@ -465,7 +475,7 @@ func (s *SQL) FinishDeliveryRetire(ctx context.Context, id, at, result string) (
 }
 
 func (t memoTx) SetDeliveryRetirePending(id string) error {
-	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET retire_pending=1, retire_act_mark=act_mark WHERE id=? AND membership_id=? AND state=?`,
+	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET retire_pending=1, retire_act_mark=act_mark, retire_act_incarnation=act_incarnation WHERE id=? AND membership_id=? AND state=?`,
 		id, t.mid, DeliveryClosed)
 	return err
 }

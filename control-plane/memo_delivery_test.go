@@ -104,9 +104,19 @@ type fakeQueueAgent struct {
 	// retireBodies is the body of every retire call ("" for none), parallel to retires.
 	actMark      int64
 	retireBodies []string
+	// actIncarnation, when not "", is the actIncarnation the list envelope carries beside the mark
+	// (an Agent that sends an identity).
+	actIncarnation string
 	// retireDrop makes that many retire calls lose their answer: the call is recorded and the
 	// connection is closed without a reply.
 	retireDrop int
+}
+
+// setActIncarnation sets the identity the next list answers carry.
+func (a *fakeQueueAgent) setActIncarnation(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.actIncarnation = id
 }
 
 // setActMark sets the actMark the next list answers carry.
@@ -162,6 +172,9 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if a.actMark != 0 {
 			env["actMark"] = a.actMark
+			if a.actIncarnation != "" {
+				env["actIncarnation"] = a.actIncarnation
+			}
 		}
 		_ = json.NewEncoder(w).Encode(env)
 	case r.Method == "POST" && strings.HasPrefix(path, "/sessions/") && strings.HasSuffix(path, "/retire"):

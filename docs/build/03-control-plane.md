@@ -366,6 +366,15 @@ disables.
   the same generation. A session a
   person started or typed into after that read comes back `released` (root) or `done` (below the
   root), which end the pending retire as before. An Agent that sends no `actMark` gets no body.
+  The envelope's `actIncarnation` (the identity of the Agent's counter run that handed the mark out,
+  #4265) is kept with the mark (`memo_delivery.act_incarnation`) and frozen with it
+  (`retire_act_incarnation`, cleared with it by progress), and the retire body carries it as
+  `{"ifNoActSince": mark, "actIncarnation": id}`; none stored (an older Agent, or a row from before the
+  upgrade) sends none, as before. The Control Plane only stores and sends the pair: the frozen pair stays
+  frozen across an Agent restart, as the mark did, and the Agent judges each session against it (the
+  act of a person recorded in the Agent's current run is after any list of an earlier run). Two Control
+  Planes on one database, one older: the older writes `act_mark` and not the identity, so the pair can be
+  mismatched, which the Agent reads by the same rules (at worst the mark is compared by number, as before).
   An `aborted` close retires nothing.
 
   **Overdue.** A delivery open longer than its queue's `maxTaskHours` (1–72, default 12)

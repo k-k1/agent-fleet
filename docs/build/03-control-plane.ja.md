@@ -289,6 +289,13 @@ Workspace を起こさない。
   先に新しい報告が保存されたら何も送らず次の tick でやり直す。progress は固定を消し、試行の完了記録も同じ世代で条件付ける。その読み取りのあとに人が起動・入力したセッションは
   `released`（root）か `done`（root の下）で返り、どちらも従来どおり保留中の retire を終わらせる。
   `actMark` を送らない Agent には body を付けない。
+  エンベロープの `actIncarnation`（その mark を配った Agent のカウンタの実行を指す識別子。#4265）は mark と一緒に保存し
+  （`memo_delivery.act_incarnation`）、一緒に固定し（`retire_act_incarnation`。progress で一緒に消える）、retire の body に
+  `{"ifNoActSince": mark, "actIncarnation": id}` として載せる。保存した識別子が無い（古い Agent、またはアップグレード前の行）
+  ときは載せず、従来どおり。Control Plane は組を保存して送るだけで、固定した組は Agent が再起動しても mark と同じく固定の
+  まま。Agent がセッションごとに判断する（現在の実行で記録された人の操作は、以前の実行の一覧より後）。古い Control Plane が
+  同じ DB にいると、古いほうは `act_mark` だけを書いて識別子を書かないので組が食い違いうるが、Agent は同じ規則で読む
+  （最悪でも従来どおり番号で比べる）。
   `aborted` の close は何も retire しない。
 
   **Overdue。** キューの `maxTaskHours`（1〜72、既定 12）より長く open の配信には `overdue_at` を

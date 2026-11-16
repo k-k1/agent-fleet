@@ -291,6 +291,9 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	// made durable, which reads as an Agent that sends none.
 	if hasActMark {
 		body["actMark"] = actMark
+		// actIncarnation names the run of the counter that handed actMark out; the retire sent with
+		// that mark must echo it (session_actmark.go).
+		body["actIncarnation"] = actMarks.incarnationID()
 	}
 	// The limit snapshot (ADR 0111 decision 6) rides the same response for the reaper, which
 	// asks for it. Other callers (the Console's list, through the CP) do not, and pay nothing.

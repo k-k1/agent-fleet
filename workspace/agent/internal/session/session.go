@@ -862,6 +862,10 @@ type Meta struct {
 	// ifNoActSince leaves a session whose mark is at or above it alone: that act came after the
 	// session list the retire was decided on.
 	PersonActMark int64 `json:"personActMark,omitempty"`
+	// PersonActIncarnation is the run of the Agent's act counter (sessionx actMarks) that handed
+	// PersonActMark out. A retire whose list came from an earlier run releases a session whose act
+	// was recorded in this one. Empty for an act recorded before this field existed.
+	PersonActIncarnation string `json:"personActIncarnation,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so
 	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached
