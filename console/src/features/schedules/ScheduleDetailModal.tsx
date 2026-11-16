@@ -29,7 +29,7 @@ import {
   scheduleTitle,
 } from "./read.ts";
 import { scheduledKinds } from "../../agents/registry.ts";
-import { defaultRouteUsable } from "../../agents/launchAccess.ts";
+import { defaultRouteUsable, kindOfferedForRuns } from "../../agents/launchAccess.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useSettings } from "../../lib/settings.ts";
@@ -111,7 +111,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
 
   const running = useWorkspaceStore((st) => st.state) === "running";
   const catalog = useMemberCatalog(running);
-  const allowedKinds = useMemo(() => AGENT_KINDS.filter((k) => !!catalog.kinds?.has(k)), [catalog.kinds]);
+  const allowedKinds = useMemo(() => AGENT_KINDS.filter((k) => kindOfferedForRuns(k, catalog.kinds)), [catalog.kinds]);
   const kinds = useMemo(
     () => (allowedKinds.includes(agent) ? allowedKinds : [agent, ...allowedKinds]),
     [agent, allowedKinds],
@@ -127,6 +127,8 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
   const selectable = live?.routes ?? [];
   const profiles = useModelRouteProfiles(running && selectable.includes("bedrock"), identity);
   const routeLabel = (r: string) => tr(("cred.route." + r) as MsgKey);
+  // Only selectable routes are offered. member-llamacpp needs the endpoint binding, but it is only
+  // ever a fixed route (lcpp's, and lcpp takes no scheduled runs), so no binding is passed here.
   const choices = routeChoices(live, routeLabel, profiles, undefined).filter((c) => selectable.includes(c.route));
   const savedDefault = settings.agentLaunchDefaults[agent]?.route;
   const defaultLabel =

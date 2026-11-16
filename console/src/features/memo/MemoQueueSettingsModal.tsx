@@ -17,6 +17,9 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { t, useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { scheduledKinds } from "../../agents/registry.ts";
+import { kindOfferedForRuns } from "../../agents/launchAccess.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useMemberCatalog } from "../settings/credentials/memberCatalog.ts";
 import type { MemoQueue } from "../../types/memo.ts";
 import { memoQueueDelete, memoQueuePut } from "./api.ts";
 import {
@@ -62,10 +65,15 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
   const [tried, setTried] = useState(false);
   const errors = useMemo(() => draftErrors(draft), [draft]);
   const set = <K extends keyof typeof draft>(k: K, v: (typeof draft)[K]) => setDraft((d) => ({ ...d, [k]: v }));
-  const kinds = useMemo(
-    () => (scheduledKinds.includes(draft.agentKind as never) ? scheduledKinds : [draft.agentKind, ...scheduledKinds]),
-    [draft.agentKind],
-  );
+  // Only the kinds the credential policy allows and the member has not switched off (ADR 0138
+  // D10a), from the live catalogue; none without a fresh answer. The queue's own kind stays, so
+  // an edit of another field never rewrites it.
+  const running = useWorkspaceStore((st) => st.state) === "running";
+  const catalog = useMemberCatalog(running);
+  const kinds = useMemo(() => {
+    const allowed = scheduledKinds.filter((k) => kindOfferedForRuns(k, catalog.kinds));
+    return allowed.includes(draft.agentKind as never) ? allowed : [draft.agentKind, ...allowed];
+  }, [draft.agentKind, catalog.kinds]);
   // {max} is the limit of the field the message is about; messages without it ignore it.
   const maxOf: Record<keyof typeof errors, number> = {
     instruction: QUEUE_INSTRUCTION_MAX_BYTES >> 10,

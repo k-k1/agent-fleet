@@ -112,6 +112,17 @@ export function quickLaunchRoute(kind: string, live: LiveKinds | null, saved: Ro
   return emptyRouteOk(kind, k) ? {} : "dialog";
 }
 
+/**
+ * kindOfferedForRuns: a kind a schedule or a memo queue may be pointed at, from the catalogue.
+ * Absent (forbidden, switched off) is out, and so is a kind whose usable routes are known and
+ * empty: the policy allows it but nothing it could run on is held, so every run would be refused.
+ * No connection check: a run starts later, and its login may be added meanwhile.
+ */
+export function kindOfferedForRuns(kind: string, live: LiveKinds | null): boolean {
+  const k = live?.get(kind);
+  return !!k && (!k.usableRoutes || k.usableRoutes.length > 0);
+}
+
 /** Whether kind's assistant chat backend may be offered: only when the catalogue says so. */
 export function chatOffered(kind: string, live: LiveKinds | null): boolean {
   return live?.get(kind)?.chat === true;

@@ -250,8 +250,10 @@ export function LaunchModal(props: LaunchModalProps) {
   );
 }
 
-function LaunchForm({ repo, branch, path, kinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
+function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
   const settings = useSettings();
+  // Without a confirmed catalogue nothing is offered, whatever the caller listed.
+  const kinds = useMemo(() => (access.kinds ? offeredKinds : []), [access.kinds, offeredKinds]);
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
   // Tenant launch defaults (ADR 0114 P3) only prefill: the last-known CP answer, from the Console's
@@ -892,7 +894,15 @@ function LaunchForm({ repo, branch, path, kinds, access, initialKind: wantKind, 
               <OwnSettingsLine hidden line="launch.all_off_line" onReset={() => access.refresh?.()} />
             ) : (
               <div className="muted launch-noagents" data-testid="launch-noagents">
-                {tr(settling ? "launch.agents_checking" : access.kinds && access.noRoute ? "launch.no_route_line" : "launch.agents_none")}
+                {tr(
+                  settling
+                    ? "launch.agents_checking"
+                    : !access.kinds
+                      ? "launch.policy.policy_unconfirmed"
+                      : access.noRoute
+                        ? "launch.no_route_line"
+                        : "launch.agents_none",
+                )}
               </div>
             ))}
           {/* Wrapping grid (ui.css .ui-seg.big): with horizontal scrolling the fourth card

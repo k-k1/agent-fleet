@@ -184,8 +184,9 @@ describe("ScheduleDetailModal under the credential policy", () => {
   });
 
   it("offers no kind the catalogue leaves out, and none without a catalogue", async () => {
-    liveKinds = [{ kind: "claude" }, { kind: "agy" }];
+    liveKinds = [{ kind: "claude" }, { kind: "agy" }, { kind: "codex", usableRoutes: [] }];
     await render("claude");
+    // codex is allowed but nothing it runs on is held: every run would be refused.
     expect(agentOptions()).toEqual(["claude", "agy"]);
     useWorkspaceStore.setState({ state: "stopped" } as never);
     await render("claude");
