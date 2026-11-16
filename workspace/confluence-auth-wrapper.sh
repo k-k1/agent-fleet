@@ -35,7 +35,7 @@
 # - CONFLUENCE_CLI_ANALYTICS=false: the CLI otherwise writes a usage counter file into its config
 #   directory on every call, which would also create that directory.
 set +xa
-unset cred tok site domain apipath auth login why stale sub arg own v d
+unset cred tok site domain apipath auth login why stale sub arg own v d prev f
 
 real="${AF_CONFLUENCE_REAL:-/usr/local/libexec/confluence}"
 
@@ -69,6 +69,26 @@ else
     [ ! -e "$d/config.json" ] || exec "$real" "$@"
   done
 fi
+
+# A page body read with --file must be UTF-8: the CLI decodes it with replacement characters and
+# would write the U+FFFD-mangled text (a Shift_JIS file becomes a page of question marks) and exit
+# 0. Checked before the credential is fetched; a user's own setup has already gone to the CLI.
+case "$sub" in
+  create | create-child | update)
+    prev=""
+    for arg in "$@"; do
+      f=""
+      case "$prev" in -f | --file) f="$arg" ;; esac
+      case "$arg" in --file=*) f="${arg#--file=}" ;; -f?*) f="${arg#-f}" ;; esac
+      prev="$arg"
+      if [ -n "$f" ] && [ -f "$f" ] && command -v iconv >/dev/null 2>&1 &&
+        ! iconv -f UTF-8 -t UTF-8 "$f" >/dev/null 2>&1; then
+        echo "confluence: $f is not valid UTF-8, so nothing was sent; convert it first (for example: iconv -f SHIFT_JIS -t UTF-8 '$f' > page.md)" >&2
+        exit 1
+      fi
+    done
+    unset prev f ;;
+esac
 
 # First value of a `key=value` line in the helper's answer on stdin.
 field() { sed -n "s/^$1=//;T;p;q"; }
@@ -171,12 +191,20 @@ transport_failure() {
   case "$msg" in "" | *"Request failed with status code"*) return 1 ;; esac
   printf '%s\n' "$msg" | grep -Eiq 'ECONNRESET|ETIMEDOUT|ECONNABORTED|EPIPE|EAI_AGAIN|socket hang up|Client network socket disconnected|timeout of [0-9]+ms exceeded|stream has been aborted'
 }
-# Runs the CLI into a private directory, re-running on a transport failure, then replays the last
-# attempt with the CLI's exit status. AF_CONFLUENCE_TIMEOUT bounds one attempt (seconds, default
-# 60, 0 = none) with a shell watchdog, so no helper process holds the token; a timeout counts as a
-# transport failure. AF_CONFLUENCE_RETRY_WAIT (ms) is for the tests.
-run_read_only() {
-  local d n=0 rc wait lim="${AF_CONFLUENCE_TIMEOUT:-60}" late pid="" wd="" sig=""
+# Page writes run once under the same bound: the CLI sets no request timeout, so an unanswered
+# create or update would otherwise hang an unattended run. They are never re-sent, and a write
+# that timed out or lost its connection may still have been applied, so it says so.
+page_write_cmd() {
+  case "$sub" in create | create-child | update | move) true ;; *) false ;; esac
+}
+# Runs the CLI into a private directory, re-running a read-only command on a transport failure
+# (retries = 2; a page write gets 0), then replays the last attempt with the CLI's exit status.
+# AF_CONFLUENCE_TIMEOUT bounds one attempt (seconds, default 60, 0 = none) with a shell watchdog,
+# so no helper process holds the token; a timeout counts as a transport failure.
+# AF_CONFLUENCE_RETRY_WAIT (ms) is for the tests.
+run_bounded() {
+  local retries="$1" d n=0 rc wait lim="${AF_CONFLUENCE_TIMEOUT:-60}" late pid="" wd="" sig=""
+  shift
   d="$(mktemp -d 2>/dev/null)" || return 1
   case "$lim" in "" | *[!0-9]*) lim=60 ;; esac
   trap 'rm -rf "$d"' EXIT
@@ -212,7 +240,11 @@ run_read_only() {
       echo "confluence: no answer within $lim s (AF_CONFLUENCE_TIMEOUT sets the limit, 0 = none)" >>"$d/err"
     fi
     if [ "$rc" -eq 0 ] || { [ -z "$late" ] && ! transport_failure "$d/err"; }; then break; fi
-    if [ "$n" -ge 2 ]; then
+    if [ "$retries" -eq 0 ]; then
+      echo "confluence: the request was sent but no answer came back, so the page may or may not have been written; search for the title or read the page before running it again" >>"$d/err"
+      break
+    fi
+    if [ "$n" -ge "$retries" ]; then
       echo "confluence: giving up after $((n + 1)) attempts: Confluence did not answer" >&2
       break
     fi
@@ -226,7 +258,8 @@ run_read_only() {
   cat "$d/err" >&2
   exit "$rc"
 }
-if readonly_cmd "$@" && [ ! -t 1 ] && [ ! -t 2 ]; then
-  run_read_only "$@"
+if [ ! -t 1 ] && [ ! -t 2 ]; then
+  if readonly_cmd "$@"; then run_bounded 2 "$@"; fi
+  if page_write_cmd; then run_bounded 0 "$@"; fi
 fi
 CONFLUENCE_API_TOKEN="$tok" exec "$real" "$@"

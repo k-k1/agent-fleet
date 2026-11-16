@@ -432,7 +432,10 @@ Jira は git でなく作業項目インボックス
   ETIMEDOUT など。HTTP ステータスは対象外）のあと最大 2 回やり直し、最後の実行だけを出す。stdout と
   stderr が端末でないときに限る。1 回の上限は `AF_CONFLUENCE_TIMEOUT`（既定 60 秒、0 = 無制限）で、
   `timeout(1)` でなくシェルの監視で切るので、トークンを受け継ぐ補助プロセスが無い。知らない語は書き込みと
-  みなして 1 回だけ走らせる。
+  みなして 1 回だけ走らせる。ページの書き込み（`create`・`create-child`・`update`・`move`）も同じ上限で
+  1 回だけ走らせる（CLI はリクエストに期限を設けないため）。期限切れや通信エラーのときは「may or may not
+  have been written」の 1 行を足し、再送はしない。UTF-8 でない `--file` の本文は、認証情報を取る前に
+  （`iconv` で）拒否する。CLI は置換文字で読み込み、化けた本文をそのまま書き込むため。
 - **利用者自身の設定が勝つ。中身は読まず、何があるかで決める**: ホスト・身元・認証情報を選ぶ
   `CONFLUENCE_*` 変数、`--profile` フラグ、`CONFLUENCE_CONFIG_DIR`（なければ
   `$XDG_CONFIG_HOME/confluence-cli` と `~/.confluence-cli`）の `config.json` のどれかがあれば、CLI は

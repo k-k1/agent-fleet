@@ -474,7 +474,11 @@ them in for one `exec`:
   from the CLI's own error line (ECONNRESET, ETIMEDOUT, …; never an HTTP status), replaying only the
   last attempt, and only when stdout and stderr are not terminals. `AF_CONFLUENCE_TIMEOUT` (default
   60 s, 0 = none) bounds one attempt with a shell watchdog rather than `timeout(1)`, so no helper
-  process inherits the token. Unknown words count as writes and run once.
+  process inherits the token. Unknown words count as writes and run once. Page writes (`create`,
+  `create-child`, `update`, `move`) run once under the same bound, because the CLI sets no request
+  timeout; a timeout or transport failure adds a "may or may not have been written" line and is
+  never re-sent. A `--file` body that is not UTF-8 is refused (`iconv`) before the credential is
+  fetched: the CLI would decode it with replacement characters and write the mangled text.
 - **The user's own setup wins, decided by what is there, never by reading a config**: any
   `CONFLUENCE_*` variable that selects a host, identity or credential, a `--profile` flag, or a
   `config.json` in `CONFLUENCE_CONFIG_DIR` (else `$XDG_CONFIG_HOME/confluence-cli` and

@@ -200,18 +200,21 @@ directory belongs to someone else.
   pre-authenticated and token-renewing like `jira`: `confluence search "…"`, `confluence read PAGE_ID`,
   `confluence create "Title" SPACE --content "…"`, `confluence update PAGE_ID …`. It switches to
   Confluence Cloud's v2 API by itself where the old one is gone. `--format markdown` (read and write)
-  handles Japanese and Korean, emoji and `code`/**bold** next to them; files are read as UTF-8.
-  Writes are sent once and never retried: after a "may or may not have been applied" message,
-  search or `read` before repeating. An update that hits a version conflict (409) overwrote
-  nothing: `read` again and redo it.
+  handles Japanese and Korean, emoji and `code`/**bold** next to them; a `--file` that is not UTF-8
+  is refused before anything is sent. Writes are sent once and never retried (`create`,
+  `create-child`, `update` and `move` are also cut at `AF_CONFLUENCE_TIMEOUT` when no terminal is
+  attached): after a "may or may not have been written" message, search or `read` before
+  repeating. An update that hits a version conflict (409) overwrote nothing: `read` again and
+  redo it.
   Read-only commands (`search`, `read`, `info`, `spaces`, `space-lookup`, `find`, `children`,
   `comments`, `attachments` without `-d`, `versions`, `property-list/get`) are re-run on a connection
   reset or timeout (up to twice, only the last attempt shown, the way the jira wrapper does;
   `AF_CONFLUENCE_TIMEOUT` seconds bounds one attempt, default 60, 0 = none); writes (`create`, `update`,
   `delete`, `comment`, uploads, anything unknown) are never re-run, so after a failed or timed-out
-  write check Confluence before repeating it. Pages cannot be deleted (`delete` answers 401/403: the
-  connection does not ask for it), nor can comment replies, inline comments given only
-  `--inline-selection` or `comment-resolve`; listing comments, other comment adds, attachments,
+  write check Confluence before repeating it. On an OAuth connection pages cannot be deleted
+  (`delete` answers 401/403: the connection does not ask for it), nor can comment replies, inline
+  comments given only `--inline-selection` or `comment-resolve`; an API-token connection has the
+  token's own permissions. Listing comments, other comment adds, attachments,
   versions and properties are still on the old API in the CLI and may answer 410 (`export
   --skip-attachments`). A grant from before the current scopes gets one line naming the fix
   before page commands (administrator adds the scopes to the Atlassian app, member reconnects

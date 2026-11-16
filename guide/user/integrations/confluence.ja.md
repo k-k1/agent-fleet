@@ -84,7 +84,7 @@ confluence --help
 ページの操作は、Atlassian の新しい API に自動で切り替わります。次のものはまだ失敗します。
 
 - 「410」（Atlassian が廃止した API をまだ使っている）: コメントの一覧、フッターコメントの追加と `--inline-properties`・`--inline-original-selection`・`--inline-marker-ref` を使うインラインコメントの追加、添付ファイル、ページのバージョン、プロパティ（front matter）。`export` には `--skip-attachments` を付けてください
-- 「401」や「403」（あえて権限を要求していない）: `delete`、コメントへの返信（`--parent`）、`--inline-selection` だけを指定したインラインコメント、`comment-resolve`
+- OAuth の接続で「401」や「403」（あえて権限を要求していない）: `delete`、コメントへの返信（`--parent`）、`--inline-selection` だけを指定したインラインコメント、`comment-resolve`。API トークンの接続は、トークンの権限に従います
 
 `info` や `create-child` などが 401 になり、`confluence` が新しいスコープについて 1 行表示するときは、接続がそれより前のものです。上の Jira のカードの説明を見てください。
 

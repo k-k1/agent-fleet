@@ -397,6 +397,50 @@ reset; oauth_answer
 run STUB_CF_FAILS=9 "STUB_CF_ERR=$(printf '%s[31mError:%s[39m Request failed with status code 400\nAPI response: invalid ECONNRESET' "$esc" "$esc")" -- search q
 [ "$(attempts)" = 1 ] || fail "coloured 400 with ECONNRESET body: attempts=$(attempts), want 1"
 
+# 24. A page write is sent once: a transport failure or a timeout is not re-run, and the output says
+# the page may or may not have been written. A write that succeeds gets no such line.
+for cmdline in "create T SP -c x" "create-child T 1 -c x" "update 1 -c x" "move 1 2"; do
+  reset; oauth_answer
+  run STUB_CF_FAILS=9 -- $cmdline
+  [ "$(attempts)" = 1 ] || fail "write '$cmdline' ECONNRESET: attempts=$(attempts), want 1"
+  [ "$rc" = 1 ] || fail "write '$cmdline' ECONNRESET: exit status $rc, want 1"
+  grep -q "may or may not have been written" "$T/err" || fail "write '$cmdline': no may-or-may-not line"
+  grep -q "ECONNRESET" "$T/err" || fail "write '$cmdline': the CLI's error was not replayed"
+  no_leak "write '$cmdline'" fake-oauth-tok
+done
+reset; oauth_answer
+run AF_CONFLUENCE_TIMEOUT=1 STUB_CF_HANG=1 -- update 1 -c x
+[ "$(attempts)" = 1 ] || fail "write timeout: attempts=$(attempts), want 1"
+[ "$rc" = 124 ] || fail "write timeout: exit status $rc, want 124"
+grep -q "may or may not have been written" "$T/err" || fail "write timeout: no may-or-may-not line"
+reset; oauth_answer
+run -- update 1 -c x
+[ "$rc" = 0 ] && grep -q GOOD "$T/out" || fail "write success: rc=$rc out=$(cat "$T/out")"
+grep -q "may or may not" "$T/err" && fail "write success: may-or-may-not line printed"
+reset; oauth_answer
+run STUB_CF_FAILS=9 "STUB_CF_ERR=$(printf 'Error: Request failed with status code 409\nAPI response: version conflict ECONNRESET')" -- update 1 -c x
+grep -q "may or may not" "$T/err" && fail "write answered 409: may-or-may-not line printed"
+
+# 25. A --file body that is not UTF-8 is refused before anything runs or is fetched; UTF-8 passes.
+printf '\202\240\n' >"$T/sjis.md"
+printf '日本語 **太字**\n' >"$T/ok.md"
+for form in "-f $T/sjis.md" "--file $T/sjis.md" "--file=$T/sjis.md" "-f$T/sjis.md"; do
+  for subcmd in "create T SP" "create-child T 1" "update 1"; do
+    reset; oauth_answer
+    run -- $subcmd $form
+    [ "$rc" = 1 ] || fail "non-UTF-8 '$subcmd $form': exit status $rc, want 1"
+    [ ! -f "$T/cf.seen" ] || fail "non-UTF-8 '$subcmd $form': the CLI ran"
+    [ ! -f "$T/agent.calls" ] || fail "non-UTF-8 '$subcmd $form': the credential was fetched"
+    grep -q "not valid UTF-8" "$T/err" || fail "non-UTF-8 '$subcmd $form': no reason given"
+  done
+done
+reset; oauth_answer
+run -- update 1 --file "$T/ok.md" --format markdown
+[ "$rc" = 0 ] && [ -f "$T/cf.seen" ] || fail "UTF-8 file: rc=$rc, CLI ran: $([ -f "$T/cf.seen" ] && echo yes || echo no)"
+reset; oauth_answer
+run -- search -f "$T/sjis.md"
+[ -f "$T/cf.seen" ] || fail "non-UTF-8 check applied to search"
+
 if [ "$fails" != 0 ]; then
   echo "confluence-auth-wrapper-test: $fails failure(s)" >&2
   exit 1

@@ -85,7 +85,7 @@ re-run on their own. Search for the title or read the page before running it aga
 Page commands switch to Atlassian's newer API by themselves. These still fail:
 
 - With "410" (they still use an API Atlassian has removed): listing comments, adding a footer comment or an inline comment with `--inline-properties`, `--inline-original-selection` or `--inline-marker-ref`, attachments, page versions and properties (front matter). For `export`, add `--skip-attachments`
-- With "401" or "403" (the connection does not ask for the permission on purpose): `delete`, replying to a comment (`--parent`), an inline comment given only `--inline-selection`, and `comment-resolve`
+- With "401" or "403" on an OAuth connection (it does not ask for the permission, on purpose): `delete`, replying to a comment (`--parent`), an inline comment given only `--inline-selection`, and `comment-resolve`. An API-token connection has the token's own permissions
 
 When page commands such as `info` or `create-child` answer 401 and `confluence` prints a line about newer scopes, your connection predates them: see the Jira card above.
 
