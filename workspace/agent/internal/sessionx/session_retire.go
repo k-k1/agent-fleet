@@ -13,7 +13,9 @@ package sessionx
 // orders the whole of it against the starts that check the mark and then launch.
 //
 // The mark means "retired": from the moment it is written no automatic start or input reaches the
-// session. A person's start (POST /start) clears it, and it is an ordinary session from then on.
+// session. A deliberate start clears it (POST /start that is not automatic, a carried answer, a
+// message of a deliberate origin to a Managed session: session_origin.go), and it is an ordinary
+// session from then on.
 // The intent (retireIntent) is on disk, so a process that died half-way finishes the tree at
 // its next start (ReconcileRetired).
 
@@ -25,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -70,7 +73,8 @@ func retireGate(name string) *sync.RWMutex {
 	return v.(*sync.RWMutex)
 }
 
-// errSessionRetired is what an automatic start or input is refused with.
+// errSessionRetired is what an automatic start or input is refused with, and what any start is
+// refused with when the meta cannot be read.
 var errSessionRetired = errors.New("session_retired: this session was retired; resume it from the Console first")
 
 // clearRetired takes the mark off a session a person started. Which retire's mark it was stays on
@@ -635,10 +639,12 @@ func ancestorState(m session.Meta, id string) (released bool, doubt string) {
 	return false, ""
 }
 
-// metaFileExists says the session's meta file is there, readable or not.
+// metaFileExists says the session's meta file may be there, readable or not. Only an explicit
+// "does not exist" says it is not: a stat that fails any other way (no search permission on the
+// directory, an I/O error) is no evidence of absence, and the callers treat it as in doubt.
 func metaFileExists(name string) bool {
 	_, err := os.Stat(session.MetaPath(name))
-	return err == nil
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // underReleased reports whether a session of the walk sits below one this retire found released.

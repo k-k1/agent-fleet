@@ -188,11 +188,20 @@ func (f *wakeFirer) sendToSession(ctx context.Context, rt runtime.Runtime, name 
 	return nil
 }
 
+// startOriginAutomaticQuery is how a start that fires by itself says so to the Agent (its
+// StartOriginQuery). The Agent then records no act for it and refuses it on a retired session
+// with 409 session_retired; a caller that says nothing is a person's start, which is what the
+// Console's relay of the Start button must stay, and an older Agent ignores the parameter.
+const startOriginAutomaticQuery = "?origin=automatic"
+
 func (f *wakeFirer) resumeAndSend(ctx context.Context, rt runtime.Runtime, name, inputPath string, body []byte) error {
-	if _, status, err := f.agentReq(ctx, rt, http.MethodPost, "/sessions/"+url.PathEscape(name)+"/start", nil); err != nil {
+	// The schedule fired by itself, so its start is automatic: a retired session stays stopped,
+	// and the refusal (with its reason) is the run's recorded failure.
+	startBody, status, err := f.agentReq(ctx, rt, http.MethodPost, "/sessions/"+url.PathEscape(name)+"/start"+startOriginAutomaticQuery, nil)
+	if err != nil {
 		return fmt.Errorf("resume: %w", err)
 	} else if status >= 300 {
-		return fmt.Errorf("resume %d", status)
+		return startRefusalError(status, startBody)
 	}
 	// Wait for input-readiness (alive AND composer drawn), not mere aliveness: a freshly
 	// resumed TUI has a pane before its composer is up, and a prompt typed into that boot
@@ -209,6 +218,33 @@ func (f *wakeFirer) resumeAndSend(ctx context.Context, rt runtime.Runtime, name,
 		return fmt.Errorf("send after resume %d: %s", status, strings.TrimSpace(string(respBody)))
 	}
 	return nil
+}
+
+// startRefusalError is the failure of a refused resume: the status, the Agent's code and its
+// message when the body carries them, so a run's recorded outcome (cut to 120 characters) says
+// why, e.g. "resume 409 session_retired: this session was retired; ...".
+func startRefusalError(status int, body []byte) error {
+	var b struct {
+		Code  string `json:"code"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &b) != nil {
+		return fmt.Errorf("resume %d", status)
+	}
+	code := b.Error.Code
+	if code == "" {
+		code = b.Code
+	}
+	switch {
+	case code != "" && b.Error.Message != "":
+		return fmt.Errorf("resume %d %s: %s", status, code, strings.TrimPrefix(b.Error.Message, code+": "))
+	case code != "":
+		return fmt.Errorf("resume %d %s", status, code)
+	}
+	return fmt.Errorf("resume %d", status)
 }
 
 // createReuseSession creates the long-lived session for reuse and returns the Agent's

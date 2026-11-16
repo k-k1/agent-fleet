@@ -138,9 +138,10 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     or retired with the act arriving at a retired session. The condition is kept in the retire's
     intent (`ifNoActSince`), so the start-up recovery applies the same one. No body, or 0, is the
     retire as before.
-    What counts as an act (when in doubt it is one): `POST /start` without the in-process
-    automatic mark (this includes a start through the route by a program: it cannot be told from a
-    person's until #4249); `/input` that carries none of the origin fields (`source` of any value,
+    What counts as an act (when in doubt it is one): `POST /start` unless it is automatic
+    (the in-process mark, or `?origin=automatic`, which the Control Plane's scheduler sends; a caller
+    that says nothing counts as deliberate, a relay of the Console's Start by an older Control Plane
+    included); `/input` that carries none of the origin fields (`source` of any value,
     `peer_from`, `peer_intent`, `report_to`, `schedule_id`, `schedule_slot`, `schedule_delivery`, nor
     the `/mcp` stamp; `inputCarriesOrigin`, not the mirror's `typedByMember`), prompt, keys and seq alike; `/turn` start and steer; `/respond`,
     `/answer`, the permission and plan decisions (the automatic plan review sets `expect_plan` and
@@ -183,8 +184,9 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     in that pass and is reported in `unended` (so `complete` is false and the Control Plane repeats);
     the start-up recovery keeps the intent of a root it cannot read.
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
-    written, the watch sink never starts or injects into the session, a Managed input (any
-    origin) is refused with `409 session_retired`, an automatic `/start` is refused, the session
+    written, the watch sink never starts or injects into the session, a Managed input of an
+    automatic origin is refused with `409 session_retired` (one of a deliberate origin starts the
+    session, below), an automatic `/start` is refused, the session
     reserves no child slot, the engine refuses new subscriptions and built-ins for it, and a
     scheduled usage-limit resume is refused. A retire's intent (root and a retire id) is kept on disk and the Agent
     finishes an interrupted one (tree included) at its next start, reading each member under its
@@ -195,6 +197,42 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     takes the lifecycle gate, then the session's retire gate.
     `POST /sessions/{name}/start` clears it, so a person resuming the session from the Console
     makes it an ordinary session again.
+  - **What starts a retired session again** (#4249; ADR 0137 §6, note of 2026-11-16). A deliberate
+    act does, and clears the mark: the member's (Start, a carried answer, a message typed to a
+    Managed session) or one of the member's own sessions' or connections' (a peer or operator
+    message, `resume_session`). What fires by itself never does (a schedule, a watch or timer
+    notice, a booked usage-limit resume, pull request feedback, a plan-review reviewer): it is
+    refused with `409 session_retired` and the mark stays. Both execution methods follow one rule.
+    - `POST /start` is automatic when the in-process mark is on the request or the query says
+      `origin=automatic` (`StartOriginQuery`, `startIsAutomatic`), or `peer_from=<an auto plan reviewer of
+      the session>` (the start that precedes a peer message); anything else, an unknown value
+      included, is deliberate. An automatic start records no act and is refused on a retired
+      session. A Control Plane older than this sends no parameter (its schedule's start then reads as
+      deliberate, as before); an Agent older than this ignores it.
+    - A Managed input to a retired, stopped session (`resumeManagedAs`) is deliberate when the
+      member typed it (no origin field; `discord`, `slack`), a peer sent it (`peer_from`), an operator
+      sent it (`source` `operator`, or none with `report_to`), or it came over `/mcp` (`source`
+      `mcp`, stamped by the route). It is automatic when it carries `schedule_id`, `schedule_slot` or
+      `schedule_delivery` or any other `source` (`schedule`, `schedule-manual`, `notice`,
+      `auto-resume`, `queue`, `spawn`, one nobody knows): in doubt it is not deliberate
+      (`deliberateInput`, `deliberateOrigin`). A peer message from a reviewer the Agent runs for the
+      session's own plan review is automatic (`planReviewerAutoReply`): the evidence is that the reviewer
+      entry has an auto loop at all, not that it is enabled now, so a refused, spooled or late resend
+      keeps its origin. The start that precedes a peer message to a stopped session says who sends it
+      (`?peer_from=`, `StartPeerFromQuery`) and is refused the same way; the plan review's own
+      follow-up to its reviewer is automatic whatever its body says (`autoInputKey`).
+    - A deliberate Managed input follows `/start`'s order under the read side of the session's
+      retire gate, taken inside `resumeManagedAs` and held from the check to the end of the launch:
+      record the act, launch, then take the mark off. A launch that fails leaves the mark; a meta
+      that cannot be read is in doubt (refused, not launched); a mark that cannot be cleared answers
+      `retire_clear_failed`, as `/start` does. Lock order is the lifecycle gate, then the retire gate,
+      and no path takes the read side twice. A message to a running session, or to a stopped one that
+      is not retired, is judged as before: the member's own bare `/input` and `/turn` start/steer are
+      recorded as an act by `notePersonAct`, a message that carries an origin (peer, operator, `/mcp`) is
+      not. The start of a retired session is the one place such a message records an act.
+    - Controls that deliver no message stay refused on a retired, stopped Managed session: an
+      interrupt, a queue edit, a reply to an interaction by id, a settings read or change, a chat
+      bridge button pick.
 - **How a queue delivery's first turn ended** (ADR 0137 §7): `queueTurn: {outcome, ms, endedAt}`
   on the row of a session that has `queueDelivery`. `outcome` is `clean`, `turn-failed` or
   `turn-aborted`, the values a scheduled run records, and empty for a kind that records no

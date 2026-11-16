@@ -237,7 +237,9 @@ func handleManagedTurn(lease *lifegate.Lease, w http.ResponseWriter, meta sessio
 		return
 	}
 	// An interrupt delivers nothing, so the credential policy does not stand in its way.
-	h, err := resumeManagedFor(d, meta, req.Op != "interrupt")
+	// The Console's own start / steer is the member's message and starts a retired session; an
+	// interrupt delivers nothing and never does.
+	h, err := resumeManagedAs(d, meta, req.Op != "interrupt", req.Op == "start" || req.Op == "steer")
 	if err != nil {
 		writeRuntimeErr(w, err)
 		return

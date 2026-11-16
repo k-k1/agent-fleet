@@ -206,6 +206,10 @@ type fakeAgent struct {
 	// unready names report alive-but-not-input-ready on /status (a booting/zombie pane),
 	// so awaitSessionReady never clears for them — models the sbk7oej silent-drop.
 	unready map[string]bool
+	// startQueries is the raw query of each POST /start, and startRefuse names the sessions the
+	// Agent refuses to start (the body it answers 409 with).
+	startQueries []string
+	startRefuse  map[string]string
 }
 
 func (a *fakeAgent) handler() http.Handler {
@@ -247,6 +251,12 @@ func (a *fakeAgent) handler() http.Handler {
 		case r.Method == http.MethodPost && strings.HasSuffix(p, "/archive"):
 			a.archived = append(a.archived, sessionSeg(p))
 		case r.Method == http.MethodPost && strings.HasSuffix(p, "/start"):
+			a.startQueries = append(a.startQueries, r.URL.RawQuery)
+			if body, refused := a.startRefuse[sessionSeg(p)]; refused {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = io.WriteString(w, body)
+				return
+			}
 			a.startedAt = append(a.startedAt, sessionSeg(p))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -537,5 +547,76 @@ func TestFireReuseCreateCarriesStopAfterRun(t *testing.T) {
 	}
 	if len(a.arms) != 0 {
 		t.Fatalf("create path must not ALSO post the arm (it would race the delivery): %v", a.arms)
+	}
+}
+
+// The scheduler fires by itself, so the start it makes to wake a stopped target says so (the
+// Agent records no act for it and refuses it on a retired session). Without the parameter the
+// Agent reads the start as the member's own (#4249).
+func TestFireReuseStartIsMarkedAutomatic(t *testing.T) {
+	t.Parallel()
+	a := &fakeAgent{sessions: []sessionWire{{Name: "pinned", Alive: false, State: "stopped"}}}
+	sch := store.Schedule{ID: "sch_auto", SessionMode: "reuse", ReuseTarget: "pinned", OwnerConv: "conv1", Prompt: "go"}
+	f, res, _, ctx := newReuseFixture(t, a, sch)
+	f.readyInterval = time.Millisecond
+
+	if status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC()); err != nil || status != "fired" {
+		t.Fatalf("status=%q err=%v, want fired/nil", status, err)
+	}
+	if len(a.startQueries) != 1 || a.startQueries[0] != "origin=automatic" {
+		t.Fatalf("start queries = %q, want [origin=automatic]", a.startQueries)
+	}
+}
+
+// reuseFirer drives fireReuse from the real scheduler, so the run's recorded outcome is read from
+// the ledger the member sees.
+type reuseFirer struct {
+	f   *wakeFirer
+	res *resolved
+}
+
+func (r reuseFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time) (string, string, error) {
+	return r.f.fireReuse(ctx, r.res, sch, slot)
+}
+
+// A retired session the Agent refuses to start is the schedule's failure, and the reason is in the
+// run's recorded outcome: nothing is sent, the run counter does not advance, and the member is told.
+func TestScheduleRunRecordsTheRetiredRefusal(t *testing.T) {
+	a := &fakeAgent{
+		sessions: []sessionWire{{Name: "pinned", Alive: false, State: "stopped"}},
+		// What the Agent answers (httpx.WriteErr) for an automatic start of a retired session.
+		startRefuse: map[string]string{"pinned": `{"error":{"code":"session_retired","message":"session_retired: this session was retired; resume it from the Console first"}}`},
+	}
+	st, ctx := newSchedTestStore(t)
+	mid := realMembership(t, st, ctx)
+	slot := time.Date(2026, 8, 31, 0, 1, 0, 0, time.UTC)
+	sch := store.Schedule{
+		ID: "sch_ret", MembershipID: mid, TenantID: "default", SessionMode: "reuse", ReuseTarget: "pinned",
+		OwnerConv: "conv1", Prompt: "go", SpecKind: "cron", Spec: "0 9 * * *", TZ: "Asia/Tokyo", Enabled: true,
+		SpecLabel: "daily", NextRun: slot.Format(time.RFC3339), CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
+	}
+	if err := st.CreateSchedule(ctx, sch); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(a.handler())
+	t.Cleanup(srv.Close)
+	f := &wakeFirer{mgr: &manager{store: st}, readyInterval: time.Millisecond}
+	sched := newScheduler(st, reuseFirer{f: f, res: &resolved{rt: stubRuntime{endpoint: srv.URL}}}, time.Minute)
+
+	sched.tickAt(ctx, slot.Add(30*time.Second))
+
+	got, _, _ := st.GetSchedule(ctx, "sch_ret")
+	if !strings.HasPrefix(got.LastStatus, "error:") || !strings.Contains(got.LastStatus, "session_retired") {
+		t.Fatalf("last_status = %q, want an error that names session_retired", got.LastStatus)
+	}
+	runs, _ := st.ListScheduleRuns(ctx, "sch_ret", mid, 10)
+	if len(runs) != 1 || !strings.Contains(runs[0].Status, "session_retired") {
+		t.Fatalf("run history = %+v, want one run whose outcome names session_retired", runs)
+	}
+	if len(a.inputs) != 0 || got.ReuseRunCount != 0 {
+		t.Fatalf("a refused start still sent (inputs=%v) or counted (%d)", a.inputs, got.ReuseRunCount)
+	}
+	if n, _ := st.ListNotifications(ctx, mid, "2000-01-01T00:00:00Z", 50); len(n) != 1 {
+		t.Fatalf("notifications = %d, want 1 (the failed run is told)", len(n))
 	}
 }

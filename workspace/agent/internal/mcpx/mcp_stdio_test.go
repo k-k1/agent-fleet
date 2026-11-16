@@ -34,8 +34,12 @@ func TestAgentDoReturnsHTTPError(t *testing.T) {
 
 func TestMCPSendToSessionResumesStoppedSessionAndConfirmsSend(t *testing.T) {
 	var paths []string
+	startQuery := "unset"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.Method+" "+r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/start") {
+			startQuery = r.URL.RawQuery
+		}
 		if strings.HasSuffix(r.URL.Path, "/status") {
 			alive := len(paths) > 1
 			_, _ = fmt.Fprintf(w, `{"alive":%t,"ready":%t}`, alive, alive)
@@ -60,6 +64,10 @@ func TestMCPSendToSessionResumesStoppedSessionAndConfirmsSend(t *testing.T) {
 	resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
 	if got, want := strings.Join(paths, ","), "GET /sessions/slot01/status,POST /sessions/slot01/start,GET /sessions/slot01/status,POST /sessions/slot01/input"; got != want {
 		t.Fatalf("Agent calls = %q, want %q", got, want)
+	}
+	// A message to a stopped session is deliberate (#4249): its start says nothing about its origin.
+	if startQuery != "" {
+		t.Fatalf("start carried %q, want no origin parameter", startQuery)
 	}
 	if !strings.Contains(string(resp), `\"sent\":true`) || !strings.Contains(string(resp), `\"resumed\":true`) {
 		t.Fatalf("MCP response = %s, want sent/resumed confirmation", resp)
@@ -437,14 +445,14 @@ func TestMCPCleanupToolsRelay(t *testing.T) {
 // resume_session must relay to /start.
 func TestMCPStopResumeSessionRelay(t *testing.T) {
 	type hit struct {
-		path string
-		body map[string]any
+		path, query string
+		body        map[string]any
 	}
 	got := make(chan hit, 2)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		got <- hit{path: r.Method + " " + r.URL.Path, body: body}
+		got <- hit{path: r.Method + " " + r.URL.Path, query: r.URL.RawQuery, body: body}
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer srv.Close()
@@ -478,6 +486,9 @@ func TestMCPStopResumeSessionRelay(t *testing.T) {
 	}
 	if h = awaitHit(t, got, "resume_session"); h.path != "POST /sessions/slot01/start" {
 		t.Fatalf("resume_session hit %q, want POST /sessions/slot01/start", h.path)
+	} else if h.query != "" {
+		// A session's own resume is deliberate (#4249): it must not say the start is automatic.
+		t.Fatalf("resume_session start carried %q, want no origin parameter", h.query)
 	}
 
 	// Without --write the tools are refused in-band and the Agent is never called.
@@ -1249,5 +1260,44 @@ func TestMCPStdioInstructionsFollowSessionSurface(t *testing.T) {
 	withMCPFlags(t, true, false, false)
 	if got := mcpStdioInstructions(); !strings.Contains(got, "steer") {
 		t.Errorf("--write assistant instructions = %s", got)
+	}
+}
+
+// A peer message to a stopped Terminal session starts it first, and that start is deliberate
+// (#4249): it carries no origin parameter, so a retired session is started by it and the mark is
+// taken off. Only a caller that fires by itself says ?origin=automatic.
+func TestSendToPeerSessionStartsAStoppedSessionAsDeliberate(t *testing.T) {
+	withFleetSpawn(t, false)
+	mcpPeerMessagingEnabled = true
+	var starts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sessions/child1/status":
+			alive := len(starts) > 0
+			_, _ = fmt.Fprintf(w, `{"alive":%t,"ready":%t,"status":"idle"}`, alive, alive)
+		case "/sessions/child1/start":
+			starts = append(starts, r.URL.RawQuery)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case "/sessions/child1/input":
+			_, _ = w.Write([]byte(`{"sent":"child1"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	args, _ := json.Marshal(map[string]any{"name": "child1", "intent": "notice", "message": "PR #1 is up"})
+	params, _ := json.Marshal(map[string]any{"name": "send_to_peer_session", "arguments": json.RawMessage(args)})
+	if resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}); strings.Contains(string(resp), `"isError":true`) {
+		t.Fatalf("resp = %s", resp)
+	}
+	if len(starts) != 1 || strings.Contains(starts[0], "origin") {
+		t.Fatalf("starts = %q, want one start with no origin parameter", starts)
+	}
+	// The start says who sends the message, so the Agent can refuse an automatic sender's.
+	if !strings.HasPrefix(starts[0], "peer_from=") {
+		t.Fatalf("start query = %q, want peer_from=<sender>", starts[0])
 	}
 }

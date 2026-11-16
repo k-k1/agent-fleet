@@ -106,7 +106,13 @@ func injectManagedPrompt(lease *lifegate.Lease, meta session.Meta, prompt string
 	if !ok {
 		return fmt.Errorf("managed driver unavailable for kind %s", meta.Kind)
 	}
-	h, err := resumeManaged(d, meta)
+	var h agents.ThreadHandle
+	var err error
+	if deliberateOrigin(origin) {
+		h, err = resumeManagedDeliberate(d, meta)
+	} else {
+		h, err = resumeManaged(d, meta)
+	}
 	if err != nil {
 		return err
 	}

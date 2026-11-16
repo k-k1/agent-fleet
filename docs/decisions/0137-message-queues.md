@@ -580,3 +580,12 @@ Added 2026-11-16 (#4291): the same holds once such a session is started again wi
 list carries the kind of the carried interaction under its own field, `carriedLive` (`carried` stays on stopped rows only),
 and the Control Plane counts it as a person's hold, below a machine at work, until the interaction is answered, discarded or
 expired.
+Added 2026-11-16 (#4249, decided by the owner): what starts a retired session again, and clears its mark, is a deliberate
+act: the member's own (Start, a carried answer, a message typed to a Managed session) or one of the member's own sessions'
+or connections' (a peer or operator message, `resume_session`). What fires by itself never does (a schedule, a watch or
+timer notice, a booked usage-limit resume, pull request feedback, a plan-review reviewer): it is refused with 409
+`session_retired` and the mark stays.
+The Control Plane's scheduler says its start is automatic (`?origin=automatic`), so the Agent records no act for it and the
+schedule's run records the refusal as its failure; a caller that says nothing is deliberate, so an older Control Plane keeps
+working. The same rule holds in both execution methods: a deliberate message to a retired, stopped Managed session starts it in
+`/start`'s order (act, launch, mark off after its own launch), an automatic one is refused.

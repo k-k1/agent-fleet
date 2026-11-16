@@ -112,3 +112,17 @@ func TestCreateSessionOriginCannotBeSuppliedOrOmitted(t *testing.T) {
 		t.Errorf("no principal on ctx: err=%v calls=%d, want an error and no Agent call", err, cp.calls)
 	}
 }
+
+// resume_session over /mcp is a connection of the member's, so its start is deliberate (#4249): it
+// goes to the Agent's plain /start with no body and no origin parameter. A caller that fires by
+// itself says ?origin=automatic; this one must never, or a retired session could not be resumed.
+func TestResumeSessionOverMCPIsADeliberateStart(t *testing.T) {
+	cp := newMemCP(t, memStore(t), "running")
+	text, isErr := memCall(t, cp, scopeWrite, "resume_session", map[string]any{"name": "s1"})
+	if isErr {
+		t.Fatalf("resume_session failed: %s", text)
+	}
+	if cp.gotMethod != "POST" || cp.gotPath != "/sessions/s1/start" || cp.gotBody != "" {
+		t.Fatalf("Agent call = %s %s body %q, want POST /sessions/s1/start with no body or origin parameter", cp.gotMethod, cp.gotPath, cp.gotBody)
+	}
+}

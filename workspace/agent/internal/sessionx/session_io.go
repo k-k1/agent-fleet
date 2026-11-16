@@ -198,6 +198,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			"peer_intent は peer_from と一緒にのみ指定できます")
 		return
 	}
+	autoPeer := false // a peer message that is an automatic reviewer's reply (planReviewerAutoReply)
 	if body.PeerFrom != "" {
 		// Non-interference with arming is enforced structurally: a request carrying both
 		// is refused. If a caller bug put a peer message on the instruction ledger, the
@@ -222,6 +223,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			writePeerErr(w, err)
 			return
 		}
+		autoPeer = planReviewerAutoReply(dst, body.PeerFrom)
 		reply, err := peerResolveIntent(body.PeerIntent)
 		if err != nil {
 			writePeerErr(w, err)
@@ -251,7 +253,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			// A target waiting on its user takes the message into its pending spool rather than
 			// refusing it, and so does one that already holds queued messages, which keeps
 			// them in order (peer_pending.go).
-			blockedOn, n, qerr := enqueueDecision(name, dst, body.PeerFrom, strings.TrimSpace(body.PeerIntent), body.Prompt,
+			blockedOn, n, qerr := enqueueDecision(name, dst, body.PeerFrom, strings.TrimSpace(body.PeerIntent), body.Prompt, autoPeer || r.Context().Value(autoInputKey{}) != nil,
 				func() error {
 					return peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), armedAt)
 				})
@@ -317,7 +319,8 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if len(body.Keys) == 0 && len(body.Seq) == 0 {
 		if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
 			handleManagedInputPrompt(lease, w, meta, body.Prompt, body.ReportTo, body.Source, body.PeerFrom,
-				scheduleRefOf(body.Source, body.ScheduleID, body.ScheduleSlot), delivery)
+				scheduleRefOf(body.Source, body.ScheduleID, body.ScheduleSlot), delivery,
+				!autoPeer && r.Context().Value(autoInputKey{}) == nil && deliberateInput(body.Source, body.PeerFrom, body.ScheduleID, body.ScheduleSlot, body.ScheduleDelivery != nil))
 			return
 		}
 	}
@@ -706,7 +709,7 @@ func writePeerErr(w http.ResponseWriter, err error) {
 // start op (session_turn.go) — same ThreadHandle.Send delivery, but keeps /input's
 // report_to contract (addInstruction / recordOperatorInjection) that /turn doesn't
 // carry, so send_to_session's docs/log/30 auto-report keeps working for managed sessions.
-func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta session.Meta, prompt, reportTo, source, peerFrom string, sched agents.ScheduleRef, delivery *chatx.ScheduleDelivery) {
+func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta session.Meta, prompt, reportTo, source, peerFrom string, sched agents.ScheduleRef, delivery *chatx.ScheduleDelivery, deliberate bool) {
 	if err := lease.Check(meta.Name); err != nil {
 		writeGateErr(w, err)
 		return
@@ -726,7 +729,8 @@ func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta
 			msgDriverUnavailable)
 		return
 	}
-	h, err := resumeManaged(d, meta)
+	// A deliberate origin starts a retired session (resumeManagedAs); an automatic one is refused.
+	h, err := resumeManagedAs(d, meta, true, deliberate)
 	if err != nil {
 		writeRuntimeErr(w, err)
 		return

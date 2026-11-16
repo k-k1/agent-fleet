@@ -121,3 +121,27 @@ func TestBrowserAttachmentSetHandoffResultWithoutSessionDoesNotDeliver(t *testin
 		t.Fatalf("a handoff with no session must never deliver, got %v", got)
 	}
 }
+
+// The click's delivery and the startup sweep's retry both go through DeliverBrowserHandoff, and
+// both are deliberate (#4249): the result is the member's click, however late it arrives. The body
+// carries no origin field, so /input reads it as the member's and the start before it (which says
+// nothing about its origin) as a person's; a retired, stopped session is started by it.
+func TestBrowserHandoffDeliveryCarriesNoAutomaticOrigin(t *testing.T) {
+	var body []byte
+	previous := agentSendToSession
+	agentSendToSession = func(_ string, b []byte) (string, bool, error) {
+		body = b
+		return `{"sent":true}`, true, nil
+	}
+	t.Cleanup(func() { agentSendToSession = previous })
+	DeliverBrowserHandoff("s1", BrowserHandoffRow{ID: "h1", AttachmentID: "a1", Result: "completed"})
+	var fields map[string]any
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for k := range fields {
+		if k != "prompt" && k != "confirm" {
+			t.Fatalf("delivery body carries %q, which would make /input read it as an origin", k)
+		}
+	}
+}

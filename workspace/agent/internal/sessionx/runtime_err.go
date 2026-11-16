@@ -24,6 +24,7 @@ package sessionx
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -44,6 +45,14 @@ func writeRuntimeErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, errSessionRetired) {
 		// Permanent until a person starts the session: not a runtime fault to retry.
 		httpx.WriteErr(w, http.StatusConflict, "session_retired", err.Error())
+		return
+	}
+	if errors.Is(err, errActNotRecorded) {
+		httpx.WriteErr(w, http.StatusInternalServerError, "act_not_recorded", err.Error())
+		return
+	}
+	if errors.Is(err, errRetireClearFailed) {
+		httpx.WriteErr(w, http.StatusInternalServerError, "retire_clear_failed", err.Error())
 		return
 	}
 	if errors.Is(err, errDriverSwitching) {
@@ -76,8 +85,12 @@ func runtimeErrMessage(err error) string {
 // already alive keeps the idempotent Resume, and one that would be started is refused, with the
 // reason, when its CLI failed to install. Every managed input path (turn, input, answer, bridge,
 // carried) goes through it, so the refusal is not only on the explicit start endpoints.
+//
+// A retired session is not started here: this is the form for callers that are automatic or that
+// deliver nothing a person typed. resumeManagedDeliberate is the form for input a person (or one
+// of their sessions or connections) sent.
 func resumeManaged(d agents.Driver, m session.Meta) (agents.ThreadHandle, error) {
-	return resumeManagedFor(d, m, true)
+	return resumeManagedAs(d, m, true, false)
 }
 
 // resumeManagedFor is resumeManaged; input says whether the handle is wanted to deliver input
@@ -86,18 +99,49 @@ func resumeManaged(d agents.Driver, m session.Meta) (agents.ThreadHandle, error)
 // refused with the reason, never delivered to a runtime the sweep is about to halt. A control that
 // delivers nothing (an interrupt, a queue edit) is not: stopping work is never refused.
 func resumeManagedFor(d agents.Driver, m session.Meta, input bool) (agents.ThreadHandle, error) {
-	// A retired session is not started by an input of any kind (peer, schedule, notice, a
-	// member's message): only a person's explicit start clears the mark. The read side is held
-	// across the check and the launch so a retire cannot land between them (retireGates).
+	return resumeManagedAs(d, m, input, false)
+}
+
+// resumeManagedDeliberate is resumeManaged for input of a deliberate origin: the member's own
+// message, a peer's or an operator's (deliberateInput, deliberateOrigin). Such input starts a
+// retired, stopped session again, in /start's order.
+func resumeManagedDeliberate(d agents.Driver, m session.Meta) (agents.ThreadHandle, error) {
+	return resumeManagedAs(d, m, true, true)
+}
+
+// errActNotRecorded and errRetireClearFailed are the two ways a deliberate start of a retired
+// session can fail after it was decided on; writeRuntimeErr answers them with /start's codes.
+var (
+	errActNotRecorded    = errors.New("act_not_recorded: the start was not made, because it could not be recorded as a person's")
+	errRetireClearFailed = errors.New("retire_clear_failed: the session started, but its retired mark could not be cleared")
+)
+
+// resumeManagedAs is the one place a Managed session is started for input. deliberate says the
+// input is of a deliberate origin; only then may it start a retired, stopped session.
+//
+// A session that is alive, or not retired, is resumed as it always was. A retired, stopped one is
+// refused (errSessionRetired) unless deliberate and input: then it follows /start's order under
+// the read side of the retire gate, held from the check to the end of the launch: record the act,
+// launch, and only after its own launch take the mark off. A launch that fails leaves the mark as
+// it was. A meta that cannot be read is in doubt and is not launched. The read side is taken here
+// and must not be held by the caller (a second read on one path can deadlock behind a waiting
+// retire); the caller holds the lifecycle gate, which comes first in the lock order.
+func resumeManagedAs(d agents.Driver, m session.Meta, input, deliberate bool) (agents.ThreadHandle, error) {
 	g := retireGate(m.Name)
 	g.RLock()
 	defer g.RUnlock()
+	retired := false
 	if !ManagedAlive(m) {
-		if cur, ok := session.ReadMeta(m.Name); ok && isRetired(cur) {
+		cur, ok := readMetaStable(m.Name)
+		switch {
+		case ok && isRetired(cur):
+			retired = true
+		case !ok && metaFileExists(m.Name):
+			return nil, errSessionRetired // unreadable is in doubt: not launched
+		}
+		if retired && !(deliberate && input) {
 			return nil, errSessionRetired
 		}
-	}
-	if !ManagedAlive(m) {
 		if ref := startRefusalOf(m); ref != nil {
 			return nil, &StartRefusalError{ref}
 		}
@@ -106,7 +150,23 @@ func resumeManagedFor(d agents.Driver, m session.Meta, input bool) (agents.Threa
 			return nil, &StartRefusalError{&SpawnRefusal{Status: ref.Status, Code: ref.Code, Message: ref.Message}}
 		}
 	}
-	return d.Resume(m)
+	if retired {
+		// Before the launch, and refused when it cannot be written: a start that goes unrecorded
+		// is one a retire decided on an older list would stop.
+		if err := recordPersonAct(m.Name); err != nil {
+			return nil, fmt.Errorf("%w: %v", errActNotRecorded, err)
+		}
+	}
+	h, err := d.Resume(m)
+	if err != nil {
+		return nil, err
+	}
+	if retired {
+		if err := clearRetired(m.Name); err != nil {
+			return nil, fmt.Errorf("%w: %v", errRetireClearFailed, err)
+		}
+	}
+	return h, nil
 }
 
 // writeTmuxLaunchErr answers a failed Terminal (CLI) launch. Refusals that waiting does not fix

@@ -117,8 +117,8 @@ source_of_truth: "コード（本書は地図と設計意図）"
     競った act は、released か、retire 済みのセッションに act が届くか、の 2 つのどちらかで終わる。
     条件は retire の意図（`ifNoActSince`）に残るので、起動時の回復も同じ条件を適用する。body なし、または 0 は
     従来どおりの retire。
-    act に数えるもの（迷ったら act）: 自動の印の無い `POST /start`（プログラムが route 越しに行う start も含む。#4249 までは人の start と
-    区別できない）、出どころのフィールド（任意の値の `source`・`peer_from`・`peer_intent`・`report_to`・
+    act に数えるもの（迷ったら act）: 自動でない `POST /start`（自動とは、Agent 内部の印、または Control Plane のスケジューラが付ける
+    `?origin=automatic`。何も言わない呼び出しは意図した操作に数える。古い Control Plane が Console の Start を中継するものも含む）、出どころのフィールド（任意の値の `source`・`peer_from`・`peer_intent`・`report_to`・
     `schedule_id`・`schedule_slot`・`schedule_delivery`・`/mcp` の印）を一切持たない `/input`
     （`inputCarriesOrigin`。mirror の `typedByMember` ではない。prompt・keys・seq とも）、`/turn` の start と steer、
     `/respond`・`/answer`・許可とプランの判断（自動プランレビューは `expect_plan` を付けるので含まない）、
@@ -152,13 +152,41 @@ source_of_truth: "コード（本書は地図と設計意図）"
     祖先の meta が読めないメンバーは、その回は印も停止もせず `unended` に載せる（`complete` は false になり、
     Control Plane は繰り返す）。起動時の回復は、読めない root の意図を残す。
   - meta の `retiredAt` が、終わらせたものを終わったままにする。付けた瞬間から、
-    watch の sink は起動も注入もせず、Managed への入力は（出どころを問わず）`409 session_retired`
-    で断り、自動の `/start` も断り、子の枠も取らせず、エンジンは新しい購読と組み込みを断り、予約された
+    watch の sink は起動も注入もせず、Managed への入力は、自動の出どころのものを `409 session_retired`
+    で断り（意図した出どころのものはセッションを起動する。下記）、自動の `/start` も断り、子の枠も取らせず、エンジンは新しい購読と組み込みを断り、予約された
     利用上限の再開も断る。retire の意図（root と retire id）はディスクに残り、途中で終わった retire は（子孫ごと）次の起動で
     Agent が完了させる。各メンバーは gate の中で読む。その retire の印があれば続きをやり、人の start が
     同じ meta 書込みで残す墓標（`retireClearedID`）があれば触らず、どちらも無ければ未到達として初めて印を付ける。
     利用上限の予約経路は印の付いたセッションを断るので、retire は episode にあるものを取り消す。ロックの順は、ライフサイクル gate → retire gate。`POST /sessions/{name}/start` が外すので、利用者が Console から再開すれば
     普通のセッションに戻る。
+  - **引退したセッションを再び起動するもの**（#4249。ADR 0137 §6、2026-11-16 の追記）。意図した操作は起動して印を
+    外す。利用者本人の操作（開始、運ばれた答え、Managed セッションに打ったメッセージ）と、利用者自身のセッションや
+    接続の操作（peer・オペレーターのメッセージ、`resume_session`）である。自動で起きるもの（スケジュール、watch や
+    タイマーの通知、予約した利用上限の再開、プルリクエストのフィードバック、プランレビューのレビュアー）は決して
+    起動せず、`409 session_retired` で断り、印は残る。2 つの実行方式で規則は同じ。
+    - `POST /start` が自動なのは、リクエストに Agent 内部の印があるか、クエリが `origin=automatic`
+      （`StartOriginQuery`、`startIsAutomatic`）のとき。それ以外は、知らない値も含めて意図した操作。自動の start は
+      操作を記録せず、引退したセッションでは断られる。これより古い Control Plane はパラメータを送らない（スケジュールの
+      start は従来どおり意図した操作に読まれる）。これより古い Agent はパラメータを無視する。
+    - 引退して停止した Managed セッションへの入力（`resumeManagedAs`）が意図したものなのは、利用者が打った
+      （出どころのフィールドなし。`discord`・`slack`）、peer が送った（`peer_from`）、オペレーターが送った（`source` が
+      `operator`、または `report_to` 付きで `source` なし）、`/mcp` から来た（ルートが付ける `source` `mcp`）とき。
+      自動なのは、`schedule_id`・`schedule_slot`・`schedule_delivery`、またはそれ以外の `source`（`schedule`・
+      `schedule-manual`・`notice`・`auto-resume`・`queue`・`spawn`・知らない値）を持つとき。迷ったら意図した操作に
+      しない（`deliberateInput`・`deliberateOrigin`）。セッション自身のプランレビュー（auto 有効）のために Agent が
+      動かすレビュアーの peer メッセージは自動（`planReviewerAutoReply`）。根拠は、レビュアーの項目に auto のループがあること
+      （今有効かどうかではない）なので、断られた・保留された・遅れた再送も出どころは変わらない。停止中のセッションへの peer
+      メッセージの前に行う start は送り手を伝え（`?peer_from=`、`StartPeerFromQuery`）、同じように断られる。プランレビュー
+      自身がレビュアーへ送るフォローアップは、本文に関わらず自動（`autoInputKey`）。
+    - 意図した Managed 入力は `/start` の順序に従い、`resumeManagedAs` の中で取るセッションの retire gate の読み取り側を、
+      確認から起動の終わりまで持つ。操作を記録し、起動し、そのあとで印を外す。起動に失敗すれば印は残る。読めない meta は
+      疑わしい扱い（断る。起動しない）。印を外せなければ `/start` と同じく `retire_clear_failed`。ロックの順はライフサイクル
+      gate → retire gate で、読み取り側を 1 つの経路で 2 度取らない。稼働中のセッション、または引退していない停止中の
+      セッションへのメッセージは今までどおりの扱い: 利用者本人の素の `/input` と `/turn` の start/steer は `notePersonAct` が
+      act に記録し、出どころ付き（peer・オペレーター・`/mcp`）のメッセージは記録しない。出どころ付きのメッセージが act を残すのは、
+      引退したセッションを起動するときだけ。
+    - メッセージを届けない操作は、引退して停止した Managed セッションでは断られたまま: 割り込み、キューの編集、
+      id による interaction への返答、設定の読み書き、チャットブリッジのボタン選択。
 - **キュー配信の最初のターンの終わり方**（ADR 0137 §7）: `queueDelivery` を持つセッションの行に
   `queueTurn: {outcome, ms, endedAt}`。`outcome` は `clean`・`turn-failed`・`turn-aborted`
   （スケジュール実行が記録する値）で、理由を記録しない kind では空。専用の台帳（`status.FirstTurn`）に

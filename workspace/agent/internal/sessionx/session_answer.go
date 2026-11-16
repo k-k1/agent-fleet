@@ -147,7 +147,7 @@ func HandleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 				msgDriverUnavailable)
 			return
 		}
-		h, err := resumeManaged(d, meta)
+		h, err := resumeManagedDeliberate(d, meta) // a person's answer
 		if err != nil {
 			writeRuntimeErr(w, err)
 			return
