@@ -24,6 +24,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
@@ -82,6 +83,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 	// yet: its entry carries the switch the lcpp card turns it back on with, until that switch moves
 	// to the reset line (#4169, P5/P6).
 	hide, hiding := routepolicy.Hiding()
+	out["provider_keys"] = providerKeysStatus(s, hide, hiding)
 	for k, st := range agentConnectionStatuses(agents.StatusInputs{Secrets: s, GithubConnected: ghConnected}) {
 		// A harness whose per-connection route the policy allows on an approved host keeps its entry,
 		// so the member can add a connection there (AddableOnEndpoint names no host).
@@ -98,6 +100,27 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		out[k] = st
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// providerKeysStatus is GET /connections' provider_keys entry: the names (never the keys) of the
+// provider API keys in the store opencode serves from, which claude's anthropic-api route reads
+// too (ADR 0138 D16, decision 3a: the Anthropic key is shown under Anthropic on the same slot).
+// It is not a harness's entry, so a harness the policy forbids or the member switched off does not
+// take it away from the other harness that uses the key. A key whose every route the policy
+// forbids is kept but not listed (D14a), and the opencode.ai key stays on opencode's own entry.
+func providerKeysStatus(s *secrets.Data, hide routepolicy.Policy, hiding bool) map[string]any {
+	envs := []string{}
+	for env := range s.Opencode {
+		if env == opencode.KeyEnvOpencode {
+			continue
+		}
+		if hiding && !slices.ContainsFunc(opencode.KeyEnvRoutes(env), hide.Allows) {
+			continue
+		}
+		envs = append(envs, env)
+	}
+	slices.Sort(envs)
+	return map[string]any{"envs": envs}
 }
 
 // agentConnectionStatuses is every registered kind's GET /connections entry, keyed by kind.

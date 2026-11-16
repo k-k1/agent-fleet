@@ -818,3 +818,45 @@ func TestConnectionsHideAnEndpointOnAnUnapprovedHost(t *testing.T) {
 		t.Errorf("control: the approved endpoint is not shown: %s", body)
 	}
 }
+
+// GET /connections lists the provider keys on their own entry, by name only: claude's anthropic-api
+// reads the same slot, so the key stays listed when opencode itself is hidden. A key whose every
+// route is forbidden is not listed (D14a), and the opencode.ai key stays on opencode's entry.
+func TestProviderKeysEntry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	if err := secrets.Update(func(d *secrets.Data) error {
+		d.Opencode = map[string]string{"ANTHROPIC_API_KEY": "sk-ant-secret", "OPENAI_API_KEY": "sk-oai-secret", "OPENCODE_API_KEY": "oc-secret"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	envs := func() []string {
+		var e struct {
+			Envs []string `json:"envs"`
+		}
+		raw := connectionsMap(t)["provider_keys"]
+		if strings.Contains(string(raw), "secret") {
+			t.Fatalf("provider_keys carries a key: %s", raw)
+		}
+		if err := json.Unmarshal(raw, &e); err != nil {
+			t.Fatalf("%v: %s", err, raw)
+		}
+		return e.Envs
+	}
+	if got := envs(); !slices.Equal(got, []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}) {
+		t.Errorf("unrestricted: %v", got)
+	}
+	useHidingPolicy(t, routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []string{routes.RouteAnthropicAPI}})
+	if got := envs(); !slices.Equal(got, []string{"ANTHROPIC_API_KEY"}) {
+		t.Errorf("anthropic-api only: %v", got)
+	}
+	// The member switched opencode off: claude still reads the key, so it stays listed.
+	writeMemberPrefs(t, map[string]any{"agentEnabled": map[string]any{session.KindOpencode: false}})
+	if _, ok := connectionsMap(t)[session.KindOpencode]; ok {
+		t.Error("control: opencode's entry is listed while switched off")
+	}
+	if got := envs(); !slices.Equal(got, []string{"ANTHROPIC_API_KEY"}) {
+		t.Errorf("with opencode switched off: %v", got)
+	}
+}

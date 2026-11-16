@@ -164,7 +164,7 @@ func TestHandleConnectionsGetKeySet(t *testing.T) {
 		got = append(got, k)
 	}
 	sort.Strings(got)
-	want := []string{"agy", "aws", "bitbucket", "claude", "cloudwatch", "codex", "copilot", "cursor", "discord", "github", "grafana", "internal", "jira", "kiro", "lcpp", "muse", "opencode", "pagerduty", "slack", "svn"}
+	want := []string{"agy", "aws", "bitbucket", "claude", "cloudwatch", "codex", "copilot", "cursor", "discord", "github", "grafana", "internal", "jira", "kiro", "lcpp", "muse", "opencode", "pagerduty", "provider_keys", "slack", "svn"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("GET /connections keys:\n got  %v\n want %v", got, want)
 	}

@@ -730,7 +730,7 @@
             "type": "string"
           },
           "route_connection": {
-            "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset); bedrock takes <profile id>@<region> for one of your Settings AWS profiles marked as a model route (the region may be empty for the profile's own); bedrock-deployment takes none",
+            "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Model credentials > Anthropic API key; bedrock takes <profile id>@<region> for one of your Settings AWS profiles marked as a model route (the region may be empty for the profile's own); bedrock-deployment takes none",
             "type": "string"
           },
           "subdir": {
