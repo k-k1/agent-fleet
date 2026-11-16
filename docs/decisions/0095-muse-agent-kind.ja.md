@@ -2947,3 +2947,18 @@ open enum `ItemKind` への値 `earlierHistory` の追加。チェッカーは�
 
 同じ代償: 1.4.15 のバンドルは `MUSE_VERSION` が動くまで 1.4.14 のバイナリに対して赤。
 ピンの更新は cli-pin-bump の仕事。
+
+### 注記 2026-11-16 — ツール呼び出し前の commentary がワイヤに載った。session.jsonl リーダーは廃止（#2168）
+
+1.4.20-R8619.1（イメージのピン）で、使い捨て HOME の Managed 実ターン 1 回により実測した。モデルが
+ツール呼び出しの前に書く文は `messagePhase: "commentary"` の `agentMessage` として届く。`item/*`
+（AF のストアには `toolCall` より前に `inProgress` と `completed` のリビジョンが記録される）と
+`session/read` の `history.items` の両方に載る。#1696 が muse 内部の `session.jsonl` を読む理由だった
+欠落は解消したので `commentary.go` を削除し、トランスクリプトはワイヤの item だけを描画する。
+commentary はその位置に普通の回答テキストとして出る。
+
+`messagePhase` はモデルの申告であって位置ではない。計画を宣言したあとツールを呼ばずに答えたターンでは、
+その文は `finalAnswer` だった。phase を見て分岐する箇所は無いので、描画は変わらない。
+
+commentary をまだワイヤに載せていなかったホストで記録されたセッションは、ワイヤの item は残るが、
+ログリーダーが差し込んでいた commentary は表示されなくなる。

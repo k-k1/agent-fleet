@@ -185,6 +185,36 @@ func TestSeveralAgentMessagesStayInOneTurn(t *testing.T) {
 	}
 }
 
+// The text the model writes before a tool call arrives as an agentMessage with
+// messagePhase "commentary" ahead of the call (measured on 1.4.20, #2168). It must render
+// before the tool part: a question that says "apply the proposal above?" points at it.
+func TestCommentaryBeforeAToolCallRendersAheadOfIt(t *testing.T) {
+	commentary := msp.MessagePhaseCommentary
+	final := msp.MessagePhaseFinalAnswer
+	pre := item(msp.ItemKindAgentMessage, "a-1", 2)
+	pre.Text = sp("Let me check the files now.")
+	pre.MessagePhase = &commentary
+	tool := item(msp.ItemKindToolCall, "t-1", 1)
+	tool.Tool = sp("shell")
+	tool.CommandText = sp("cat a.txt")
+	answer := item(msp.ItemKindAgentMessage, "a-2", 2)
+	answer.Text = sp("hello")
+	answer.MessagePhase = &final
+
+	turns := turnsFromItems([]msp.Item{pre, tool, answer})
+	if len(turns) != 1 {
+		t.Fatalf("%d turns, want 1: %+v", len(turns), turns)
+	}
+	p := turns[0].Parts
+	if len(p) != 3 || p[0].Kind != "text" || p[0].Text != "Let me check the files now." ||
+		p[1].Kind != "tool" || p[2].Kind != "text" || p[2].Text != "hello" {
+		t.Fatalf("parts = %+v, want commentary text, tool, answer text", p)
+	}
+	if turns[0].Text != "Let me check the files now.\nhello" {
+		t.Errorf("Text = %q", turns[0].Text)
+	}
+}
+
 // The member's own `!command` is their input, not the agent's work.
 func TestUserShellOpensAUserTurn(t *testing.T) {
 	sh := item(msp.ItemKindUserShell, "s-1", 1)
