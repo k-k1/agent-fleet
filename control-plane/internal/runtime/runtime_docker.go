@@ -290,7 +290,8 @@ func (d *dockerRuntime) mountsStagedDocs() {}
 func (d *dockerRuntime) Start(ctx context.Context) error {
 	switch d.State(ctx) {
 	case "running":
-		return d.healAgentAddr(ctx)
+		d.healAgentAddr(ctx)
+		return nil
 	case "starting":
 		// A boot is already in flight (this adapter reports it while the Agent has not
 		// answered yet). Falling through would `docker rm -f` a container that is in the

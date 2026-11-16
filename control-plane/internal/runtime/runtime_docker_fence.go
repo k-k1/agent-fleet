@@ -95,15 +95,19 @@ func (d *dockerRuntime) recordAgentAddr(ctx context.Context) error {
 // A CP killed between `docker run` and recordAgentAddr leaves exactly that, and without
 // the file the workspace reads as running while every call to it goes to a port nothing
 // publishes. A container on a plain network, started before the fence was turned on, is
-// left on its published port.
-func (d *dockerRuntime) healAgentAddr(ctx context.Context) error {
+// left on its published port. Best-effort: a Start on a running workspace has always
+// succeeded, and failing it over one inspect that came back empty repairs nothing. The
+// next Start tries again.
+func (d *dockerRuntime) healAgentAddr(ctx context.Context) {
 	if !d.fenced() || d.network == "" || d.fencedAgentAddr() != "" {
-		return nil
+		return
 	}
 	if d.inspectOne(ctx, "network", d.network, "{{.Internal}}") != "true" {
-		return nil
+		return
 	}
-	return d.writeAgentAddr(ctx)
+	if err := d.writeAgentAddr(ctx); err != nil {
+		log.Printf("docker start: %v", err)
+	}
 }
 
 // dropStaleAgentAddr removes an address on file once docker says the container is gone
@@ -301,7 +305,7 @@ func validateDockerFence(mcfg Config) error {
 		if !strings.HasSuffix(strings.ToLower(k), "_proxy") || strings.EqualFold(k, "no_proxy") {
 			continue
 		}
-		if u, err := url.Parse(v); err != nil || u.Hostname() != mcfg.DockerEgressGateway {
+		if u, err := url.Parse(v); err != nil || !strings.EqualFold(u.Hostname(), mcfg.DockerEgressGateway) {
 			return fmt.Errorf("AF_EGRESS_PROXY_ADDR must name the AF_EGRESS_DOCKER_GATEWAY container (%s:<port>), not %q: a fenced workspace reaches nothing else", mcfg.DockerEgressGateway, v)
 		}
 	}

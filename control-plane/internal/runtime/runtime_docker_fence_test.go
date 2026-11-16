@@ -264,6 +264,8 @@ func TestValidateDockerFence(t *testing.T) {
 	}{
 		{"off", Config{AgentHost: "host.docker.internal"}, true},
 		{"on", Config{DockerEgressGateway: "af-egress", EgressProxyEnv: proxy, AgentHost: "127.0.0.1"}, true},
+		{"on, name in another case", Config{DockerEgressGateway: "af-egress", AgentHost: "127.0.0.1",
+			EgressProxyEnv: []string{"http_proxy=http://AF-Egress:3128"}}, true},
 		{"on, localhost", Config{DockerEgressGateway: "af-egress", EgressProxyEnv: proxy, AgentHost: "localhost"}, true},
 		{"no proxy address", Config{DockerEgressGateway: "af-egress", AgentHost: "127.0.0.1"}, false},
 		{"proxy elsewhere", Config{DockerEgressGateway: "af-egress", AgentHost: "127.0.0.1",
@@ -295,9 +297,7 @@ func TestDockerFenceHealsMissingAddr(t *testing.T) {
 			return "172.20.0.2"
 		},
 	}
-	if err := d.healAgentAddr(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	d.healAgentAddr(context.Background())
 	if got := d.Endpoint(); got != "http://172.20.0.2:7700" {
 		t.Errorf("healed endpoint: %s", got)
 	}
@@ -305,13 +305,37 @@ func TestDockerFenceHealsMissingAddr(t *testing.T) {
 	// A container started before the fence was turned on keeps its published port.
 	d.clearAgentAddr()
 	internal = "false"
-	if err := d.healAgentAddr(context.Background()); err != nil || d.fencedAgentAddr() != "" {
-		t.Errorf("a plain-network container was given an address: err %v, addr %q", err, d.fencedAgentAddr())
+	if d.healAgentAddr(context.Background()); d.fencedAgentAddr() != "" {
+		t.Errorf("a plain-network container was given an address: %q", d.fencedAgentAddr())
 	}
 	internal = "true"
 	d.egressGateway = ""
-	if err := d.healAgentAddr(context.Background()); err != nil || d.fencedAgentAddr() != "" {
-		t.Errorf("the unfenced runtime recorded an address: err %v, addr %q", err, d.fencedAgentAddr())
+	if d.healAgentAddr(context.Background()); d.fencedAgentAddr() != "" {
+		t.Errorf("the unfenced runtime recorded an address: %q", d.fencedAgentAddr())
+	}
+}
+
+// Start on a running workspace has always succeeded. A heal that cannot learn the
+// address (one empty inspect) must not turn it into an error.
+func TestDockerFenceStartOnRunningSurvivesFailedHeal(t *testing.T) {
+	d := &dockerRuntime{
+		name: "af-ws-u1", network: "af-net-u1", dataDir: t.TempDir(), agentHost: "127.0.0.1", agentPort: "7712",
+		egressGateway: "af-egress",
+		inspect: func(_ context.Context, typ, _, format string) string {
+			switch {
+			case typ == "network":
+				return "true"
+			case format == "{{.State.Status}}":
+				return "running"
+			}
+			return "" // the address lookup comes back empty
+		},
+	}
+	if err := d.Start(context.Background()); err != nil {
+		t.Errorf("Start on a running workspace: %v", err)
+	}
+	if d.fencedAgentAddr() != "" {
+		t.Error("an address was recorded from an empty inspect")
 	}
 }
 
