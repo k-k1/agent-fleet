@@ -112,6 +112,15 @@ export function useTranscriptPoll({
     setPendingPerm(null);
     setPendingPermChoices(null);
     setPendingPermId("");
+    // The cards below answer by session name: one left over from the session being left would
+    // be drawn — and offered for an answer — in the new one until its first poll lands.
+    setPendingText("");
+    setPendingApproval(null);
+    setCarried(null);
+    setRestoredAt([]);
+    setAgentCtx(null);
+    setCompactProg(null);
+    setBgBusyReason("");
     setMode("");
     lastNonPlanMode.current = "";
     setSuggestedTitle("");

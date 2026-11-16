@@ -1,5 +1,6 @@
-// Switching sessions must drop the previous session's retry band at once, not when the new
-// session's first transcript response arrives (that one can be slow, or fail).
+// Switching sessions must drop the previous session's state at once (the retry band, a carried
+// question card, …), not when the new session's first transcript response arrives (that one can be
+// slow, or fail).
 import { describe, it, expect, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -45,6 +46,27 @@ describe("useTranscriptPoll reset", () => {
     fns.setRetry.mockClear();
     act(() => root.render(<Probe session="B" st={st} />));
     expect(fns.setRetry).toHaveBeenCalledWith(null);
+    act(() => root.unmount());
+  });
+
+  it("drops the previous session's carried, approval and pending-text state when the session changes", () => {
+    const { st, fns } = fakeState();
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    act(() => root.render(<Probe session="A" st={st} />));
+    // Each empty value is the one the poll itself writes when the field is absent.
+    const empties: Record<string, unknown> = {
+      setCarried: null,
+      setPendingApproval: null,
+      setPendingText: "",
+      setRestoredAt: [],
+      setAgentCtx: null,
+      setCompactProg: null,
+      setBgBusyReason: "",
+    };
+    for (const k of Object.keys(empties)) fns[k].mockClear();
+    act(() => root.render(<Probe session="B" st={st} />));
+    for (const [k, v] of Object.entries(empties)) expect(fns[k], k).toHaveBeenCalledWith(v);
     act(() => root.unmount());
   });
 });
