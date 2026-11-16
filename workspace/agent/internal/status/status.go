@@ -263,8 +263,16 @@ func PersistTurnEndFor(sid, state, reason, promptID string) {
 	if at == "" {
 		at = time.Now().Format(time.RFC3339)
 	}
-	persist(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
+	// The key goes first, and in the same critical section: the record is what a reconciler sweep
+	// settles a scheduled run on, and it stores what the late hook for this end must raise under
+	// this key. A key written after the record leaves a window where the sweep finds none, stores
+	// nothing, and the hook then broadcasts a result the schedule routed (measured by delaying the
+	// second write). Outside the lock, a heal's "working" write would remove the key in between
+	// and the closed turn would be left without one.
+	unlock, _ := lockSid(sid) // a timeout still writes, as in persist
+	defer unlock()
 	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
+	persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
 }
 
 // WriteCompletionKey sets the answer-ready dedup key for the current turn-end.

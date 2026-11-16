@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -75,5 +78,43 @@ func TestKindCatalogUsableRoutes(t *testing.T) {
 	}
 	if u := got[session.KindShell]; u != nil {
 		t.Errorf("shell usable = %v, want absent (no resolver)", *u)
+	}
+}
+
+// writerResolver answers at once but keeps probing: it writes under HOME after delay, the way a
+// slow CLI probe does after the catalog has stopped waiting for it.
+type writerResolver struct {
+	agents.Agent
+	delay    time.Duration
+	finished *atomic.Bool
+}
+
+func (writerResolver) ResolveLaunch(session.Meta) routes.Launch { return routes.Launch{} }
+func (w writerResolver) UsableRoutes() []string {
+	time.Sleep(w.delay)
+	_ = os.WriteFile(filepath.Join(os.Getenv("HOME"), "probe-cache"), []byte("x"), 0o600)
+	w.finished.Store(true)
+	return nil
+}
+
+// A test that builds the live catalog does not end while a probe the catalog gave up on is still
+// running: that probe would write into the test's temporary HOME during its removal.
+func TestKindCatalogProbesAreSettledBeforeTheTestEnds(t *testing.T) {
+	var finished atomic.Bool
+	t.Run("catalog", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		useHidingPolicy(t, routepolicy.Policy{Revision: 1})
+		old := usableRoutesBudget
+		usableRoutesBudget = 20 * time.Millisecond
+		t.Cleanup(func() { usableRoutesBudget = old })
+		w := writerResolver{Agent: agentreg.Of(session.KindAgy), delay: 400 * time.Millisecond, finished: &finished}
+		t.Cleanup(agentreg.SwapForTest(session.KindAgy, w))
+		buildKindCatalog(true)
+		if finished.Load() {
+			t.Fatal("fixture: the probe finished inside the budget")
+		}
+	})
+	if !finished.Load() {
+		t.Error("the test ended while a catalog probe was still running")
 	}
 }
