@@ -174,7 +174,11 @@ func SweepOrphanFirstTurns(live map[string]bool, minAge time.Duration, now time.
 		if live[sid] {
 			continue
 		}
-		unlock, _ := lockSid(sid)
+		unlock, locked := lockSid(sid)
+		if !locked {
+			// Not serialised with an arm or a status write: keep it, the next start retries.
+			continue
+		}
 		// Read again under the lock: a create that re-armed this sid since the listing has a
 		// fresh ArmedAt.
 		if t, ok := firstTurns.Read(sid); ok {
