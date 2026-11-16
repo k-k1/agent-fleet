@@ -16,8 +16,9 @@
 #   any directory the CLI may use is the user's own, and the CLI runs unchanged. A misdetection
 #   can only make a setup look like someone else's, which runs the CLI without the token: that
 #   is the direction to fail in.
-# - The page core (read, info, create, create-child, update, edit, space-lookup) is not the CLI's:
-#   its v1 endpoints are gone, so `workspace-agent confluence-page` answers it over the v2 API.
+# - An OAuth grant that predates the scopes the CLI's v2 page commands need is still served
+#   (search works on it), but confluence-cred adds an `outdated=` hint, printed once before a
+#   command that would otherwise end in a bare 401.
 # - `init`, `profile` and `stats` manage or read the user's configuration and never need the
 #   token; `--version` / `--help` do not either. Skipping the Agent for them keeps the Toolchains
 #   probe (which runs this wrapper) from taking the store lock or renewing a token over the network.
@@ -34,7 +35,7 @@
 # - CONFLUENCE_CLI_ANALYTICS=false: the CLI otherwise writes a usage counter file into its config
 #   directory on every call, which would also create that directory.
 set +xa
-unset cred tok site domain apipath auth login why sub arg own v d
+unset cred tok site domain apipath auth login why stale sub arg own v d f pre wdir unknown_write args fi_ seen i a errfd teepid
 
 real="${AF_CONFLUENCE_REAL:-/usr/local/libexec/confluence}"
 
@@ -55,6 +56,13 @@ case "$sub" in
 esac
 [ -z "$own" ] || exec "$real" "$@"
 
+# Page writes. The CLI sets no request timeout and prints only the socket error when a write loses
+# its answer, so these go through run_write below: bounded when unattended, never re-sent, and
+# followed by a "may or may not have been written" line when the outcome is unknown.
+page_write_cmd() {
+  case "$sub" in create | create-child | update | move) true ;; *) false ;; esac
+}
+
 for v in CONFLUENCE_DOMAIN CONFLUENCE_HOST CONFLUENCE_API_TOKEN CONFLUENCE_PASSWORD \
   CONFLUENCE_EMAIL CONFLUENCE_USERNAME CONFLUENCE_AUTH_TYPE CONFLUENCE_API_PATH \
   CONFLUENCE_COOKIE CONFLUENCE_PROFILE CONFLUENCE_TLS_CLIENT_CERT CONFLUENCE_TLS_CLIENT_KEY; do
@@ -68,24 +76,6 @@ else
     [ ! -e "$d/config.json" ] || exec "$real" "$@"
   done
 fi
-
-# The page core goes to the Agent's v2 shim, not to the CLI: Atlassian has removed the v1 /content
-# and /space endpoints (410), and while confluence-cli 2.31.1 falls back to v2 itself, its Markdown
-# conversion leaves `**` around CJK punctuation unconverted (#3274).
-# The shim takes the connection from the store itself, so no token passes through this shell, and
-# it keeps the CLI's command line and output. Exit 64 means "no Atlassian connection": fall
-# through to the usual hint and the real CLI. Anything else is the shim's own answer. A stuck
-# shim is bounded like the credential helper (the same 30 s only when nobody can interrupt it).
-case "$sub" in
-  read | info | create | create-child | update | edit | space-lookup)
-    if [ ! -t 0 ] && [ ! -t 1 ] && [ ! -t 2 ] && command -v timeout >/dev/null 2>&1; then
-      timeout -k 5 120 workspace-agent confluence-page "$@"
-    else
-      workspace-agent confluence-page "$@"
-    fi
-    rc=$?
-    [ "$rc" -eq 64 ] || exit "$rc" ;;
-esac
 
 # First value of a `key=value` line in the helper's answer on stdin.
 field() { sed -n "s/^$1=//;T;p;q"; }
@@ -104,6 +94,7 @@ bounded() {
 # and fields are picked by their key, so noise on it cannot become a credential.
 cred="$(bounded workspace-agent confluence-cred 2>&1)" || cred=""
 why="$(printf '%s\n' "$cred" | field unusable | tr -cd '[:print:]' | cut -c1-200)"
+stale="$(printf '%s\n' "$cred" | field outdated | tr -cd '[:print:]' | cut -c1-300)"
 tok="$(printf '%s\n' "$cred" | field token)"
 domain="$(printf '%s\n' "$cred" | field domain)"
 apipath="$(printf '%s\n' "$cred" | field apipath)"
@@ -118,6 +109,68 @@ if [ -z "$tok" ] || [ -z "$domain" ] || [ -z "$apipath" ] || [ -z "$auth" ]; the
   fi
   echo "confluence: no Atlassian connection in this workspace. Connect Jira in Settings (it serves Confluence too), or set up your own with 'confluence init'." >&2
   exec "$real" "$@"
+fi
+
+# A page write's --file body is checked before anything is sent: the CLI decodes it with
+# replacement characters and would write the mangled text with exit 0. UTF-32LE as the target makes
+# iconv reject what a UTF-8 -> UTF-8 pass lets through (code points above U+10FFFF, 5-byte forms).
+# A --file that is not a regular file (/dev/stdin, a pipe) is read once into a private copy that
+# is checked and handed to the CLI by path, since run_write gives the CLI no stdin.
+# The arguments are read the way the CLI's parser (commander) reads them: an option that takes a
+# value takes the next word whatever it looks like (`--content '--file=x'` is a body, not a file),
+# nothing after `--` is an option, and of several --file the last one is used. Only that one is
+# checked and, if it is not a regular file, copied.
+wdir=""
+if page_write_cmd; then
+  args=("$@")
+  fi_=-1     # index of the word that holds the --file value
+  pre=""     # what precedes the path inside that word (--file= or -f), empty when separate
+  seen=""
+  i=0
+  while [ "$i" -lt "${#args[@]}" ]; do
+    a="${args[$i]}"
+    if [ -z "$seen" ]; then
+      [ "$a" = "$sub" ] && seen=1
+    else
+      case "$a" in
+        --) break ;;
+        --file=*) fi_=$i pre="--file=" ;;
+        -f | --file) i=$((i + 1)) fi_=$i pre="" ;;
+        -f?*) fi_=$i pre="-f" ;;
+        -c | --content | -t | --title | --format | --type | --plantuml-format) i=$((i + 1)) ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  if [ "$fi_" -ge 0 ] && [ "$fi_" -lt "${#args[@]}" ]; then
+    f="${args[$fi_]#"$pre"}"
+    if [ -n "$f" ] && [ ! -f "$f" ] && [ -r "$f" ]; then
+      wdir="$(mktemp -d 2>/dev/null)" || { echo "confluence: cannot create a temporary directory" >&2; exit 1; }
+      trap 'rm -rf "$wdir"' EXIT
+      cat -- "$f" >"$wdir/body" || exit 1
+      f="$wdir/body"
+      args[$fi_]="$pre$f"
+    fi
+    # A relative name starting with "-" would be read by iconv as an option.
+    case "$f" in -*) f="./$f" ;; esac
+    if [ -n "$f" ] && [ -f "$f" ] && command -v iconv >/dev/null 2>&1 &&
+      ! iconv -f UTF-8 -t UTF-32LE "$f" >/dev/null 2>&1; then
+      echo "confluence: the --file body is not valid UTF-8, so nothing was sent; convert it first (for example: iconv -f SHIFT_JIS -t UTF-8 page.txt > page.md)" >&2
+      exit 1
+    fi
+  fi
+  set -- "${args[@]}"
+  unset args fi_ pre seen i a f
+fi
+
+# The commands confluence-cli moves to the v2 API once v1 answers 410 (its README's list), where a
+# grant without the newer granular scopes gets a bare 401.
+if [ -n "$stale" ]; then
+  case "$sub" in
+    read | info | create | create-child | update | edit | move | delete | children | copy-tree | \
+      export | spaces | space-lookup)
+      echo "confluence: $stale" >&2 ;;
+  esac
 fi
 
 # `confluence api --jq EXPR` spawns jq, which would inherit the token with the rest of the CLI's
@@ -145,9 +198,7 @@ unset CONFLUENCE_ALLOW_INSECURE_HTTP CONFLUENCE_SITE_URL CONFLUENCE_EMAIL
 # Read-only commands are re-run after a transport failure, as the jira wrapper does (up to twice,
 # only the last attempt is shown). A word this does not know is a write: the direction to fail in
 # is "run once", because a lost answer to a create/update/delete/comment/upload may have been
-# applied. The page core (read, info, edit, space-lookup) is answered by the Agent, whose HTTP
-# client re-sends its GETs and never its POST/PUT, so those words only reach here when there was
-# no connection.
+# applied.
 readonly_cmd() {
   case "$sub" in
     search | read | info | spaces | space-lookup | find | children | comments | comment-lookup | \
@@ -179,15 +230,17 @@ transport_failure() {
   case "$msg" in "" | *"Request failed with status code"*) return 1 ;; esac
   printf '%s\n' "$msg" | grep -Eiq 'ECONNRESET|ETIMEDOUT|ECONNABORTED|EPIPE|EAI_AGAIN|socket hang up|Client network socket disconnected|timeout of [0-9]+ms exceeded|stream has been aborted'
 }
-# Runs the CLI into a private directory, re-running on a transport failure, then replays the last
-# attempt with the CLI's exit status. AF_CONFLUENCE_TIMEOUT bounds one attempt (seconds, default
-# 60, 0 = none) with a shell watchdog, so no helper process holds the token; a timeout counts as a
-# transport failure. AF_CONFLUENCE_RETRY_WAIT (ms) is for the tests.
-run_read_only() {
-  local d n=0 rc wait lim="${AF_CONFLUENCE_TIMEOUT:-60}" late pid="" wd="" sig=""
+# Runs the CLI into a private directory, re-running a read-only command on a transport failure
+# (retries = 2; a page write gets 0), then replays the last attempt with the CLI's exit status.
+# AF_CONFLUENCE_TIMEOUT bounds one attempt (seconds, default 60, 0 = none) with a shell watchdog,
+# so no helper process holds the token; a timeout counts as a transport failure.
+# AF_CONFLUENCE_RETRY_WAIT (ms) is for the tests.
+run_bounded() {
+  local retries="$1" d n=0 rc wait lim="${AF_CONFLUENCE_TIMEOUT:-60}" late pid="" wd="" sig=""
+  shift
   d="$(mktemp -d 2>/dev/null)" || return 1
   case "$lim" in "" | *[!0-9]*) lim=60 ;; esac
-  trap 'rm -rf "$d"' EXIT
+  trap 'rm -rf "$d"; [ -z "$wdir" ] || rm -rf "$wdir"' EXIT
   trap 'sig=1; [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null' INT TERM HUP
   while :; do
     rm -f "$d/late"
@@ -220,7 +273,11 @@ run_read_only() {
       echo "confluence: no answer within $lim s (AF_CONFLUENCE_TIMEOUT sets the limit, 0 = none)" >>"$d/err"
     fi
     if [ "$rc" -eq 0 ] || { [ -z "$late" ] && ! transport_failure "$d/err"; }; then break; fi
-    if [ "$n" -ge 2 ]; then
+    if [ "$retries" -eq 0 ]; then
+      echo "$unknown_write" >>"$d/err"
+      break
+    fi
+    if [ "$n" -ge "$retries" ]; then
       echo "confluence: giving up after $((n + 1)) attempts: Confluence did not answer" >&2
       break
     fi
@@ -234,7 +291,30 @@ run_read_only() {
   cat "$d/err" >&2
   exit "$rc"
 }
+unknown_write="confluence: the request was sent but no answer came back, so the page may or may not have been written; search for the title or read the page before running it again"
+# A page write: unattended, it runs once under the watchdog; with a terminal attached it runs with
+# no limit (the person can interrupt it) and its stderr is shown as it comes and also kept, so a
+# transport failure still gets the unknown-outcome line. tee runs without the token.
+run_write() {
+  local rc
+  if [ ! -t 1 ] && [ ! -t 2 ]; then run_bounded 0 "$@"; fi
+  if [ -z "$wdir" ]; then
+    wdir="$(mktemp -d 2>/dev/null)" || { CONFLUENCE_API_TOKEN="$tok" exec "$real" "$@" </dev/null; }
+    trap 'rm -rf "$wdir"' EXIT
+  fi
+  # tee is started from this shell so its PID is known: the copy is read only after tee has
+  # written all of it, and before the EXIT trap removes the directory.
+  exec {errfd}> >(tee "$wdir/err" >&2)
+  teepid=$!
+  CONFLUENCE_API_TOKEN="$tok" "$real" "$@" </dev/null 2>&"$errfd"
+  rc=$?
+  exec {errfd}>&-
+  wait "$teepid" 2>/dev/null
+  if [ "$rc" -ne 0 ] && transport_failure "$wdir/err"; then echo "$unknown_write" >&2; fi
+  exit "$rc"
+}
+if page_write_cmd; then run_write "$@"; fi
 if readonly_cmd "$@" && [ ! -t 1 ] && [ ! -t 2 ]; then
-  run_read_only "$@"
+  run_bounded 2 "$@"
 fi
 CONFLUENCE_API_TOKEN="$tok" exec "$real" "$@"

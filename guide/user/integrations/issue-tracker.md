@@ -53,7 +53,7 @@ Each one goes away once the tenant administrator has fixed the app and you **rec
 |---|---|
 | Boards, sprints and epics: not available. | The board, sprint and epic commands of `jira`, and `jira init` |
 | Confluence: not available. | Every `confluence` command |
-| Confluence: search and comments work, but … | Reading, creating and updating pages with `confluence` |
+| Confluence: search works, but … | Page commands of `confluence` such as `info`, `create-child` and `copy-tree` |
 
 The tenant administrator's steps are in [Choose the OAuth apps for integrations](../../admin/access/oauth-apps.md#register-an-app-for-bitbucket-or-jira).
 

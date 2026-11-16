@@ -497,7 +497,7 @@ func TestGitOAuthScopeListsMatchAuthorizeScopes(t *testing.T) {
 	if strings.Join(got, " ") != strings.Join(wantNoOffline, " ") {
 		t.Fatalf("lists = %v, authorize asks for %v", got, wantNoOffline)
 	}
-	if counts["confluence"] != [2]int{7, 3} || counts["jira_software"] != [2]int{0, 8} || counts["base"] != [2]int{3, 0} {
+	if counts["confluence"] != [2]int{7, 8} || counts["jira_software"] != [2]int{0, 8} || counts["base"] != [2]int{3, 0} {
 		t.Fatalf("split = %v", counts)
 	}
 	if gitOAuthScopeLists("bitbucket") != nil {

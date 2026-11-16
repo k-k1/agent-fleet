@@ -19,18 +19,13 @@ cat >"$T/bin/workspace-agent" <<'STUB'
 #!/bin/sh
 set +x
 echo "$*" >>"$STUB_DIR/agent.calls"
-if [ "$1" = confluence-page ]; then
-  [ -z "${CONFLUENCE_API_TOKEN-}" ] || echo leaked >"$STUB_DIR/agent.leak"
-  shift
-  for a in "$@"; do echo "PAGEARG=$a"; done >"$STUB_DIR/page.seen"
-  exit "${STUB_PAGE_EXIT:-0}"
-fi
 [ "$1" = confluence-cred ] || exit 2
 # A helper must never see the token in its environment (it is exported only for the final exec).
 [ -z "${CONFLUENCE_API_TOKEN-}" ] || echo leaked >"$STUB_DIR/agent.leak"
 [ ! -f "$STUB_DIR/agent.why" ] || { cat "$STUB_DIR/agent.why" >&2; exit 0; }
 [ -f "$STUB_DIR/agent.out" ] || exit 1
 cat "$STUB_DIR/agent.out"
+[ ! -f "$STUB_DIR/agent.stale" ] || cat "$STUB_DIR/agent.stale" >&2
 STUB
 # The "real" CLI: one line per interesting env var plus its argv, one element per line.
 cat >"$T/bin/confluence-real" <<'STUB'
@@ -43,6 +38,13 @@ set +x
   done
   for a in "$@"; do echo "ARG=$a"; done
 } >"$STUB_DIR/cf.seen"
+# The body the CLI would read from --file, as the CLI reads it (by path).
+prev=""
+for a in "$@"; do
+  case "$prev" in -f | --file) cat -- "$a" >"$STUB_DIR/cf.body" 2>/dev/null ;; esac
+  case "$a" in --file=*) cat -- "${a#--file=}" >"$STUB_DIR/cf.body" 2>/dev/null ;; esac
+  prev="$a"
+done
 echo x >>"$STUB_DIR/cf.count"
 if [ -n "${STUB_CF_HANG-}" ]; then
   echo $$ >"$STUB_DIR/cf.pid"
@@ -67,7 +69,7 @@ run() {
   local envs=()
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
-  rm -f "$T/cf.seen" "$T/agent.calls" "$T/agent.leak" "$T/cf.count"
+  rm -f "$T/cf.seen" "$T/agent.calls" "$T/agent.leak" "$T/cf.count" "$T/cf.body"
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_CONFLUENCE_REAL="$T/bin/confluence-real" AF_CONFLUENCE_RETRY_WAIT=0 \
     "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err" </dev/null
   rc=$?
@@ -83,7 +85,7 @@ no_leak() { # no_leak <label> <secret>: not in argv, not in the wrapper's own ou
   if grep -q "$2" "$T/out" "$T/err" 2>/dev/null; then fail "$1: secret in wrapper output"; fi
   if grep -rq "$2" "$T/home" 2>/dev/null; then fail "$1: secret written under HOME"; fi
 }
-reset() { rm -f "$T/agent.out" "$T/agent.why"; rm -rf "$T/home/.config" "$T/home/.confluence-cli" "$T/cfg"; }
+reset() { rm -f "$T/agent.out" "$T/agent.why" "$T/agent.stale"; rm -rf "$T/home/.config" "$T/home/.confluence-cli" "$T/cfg"; }
 oauth_answer() {
   printf 'site=https://acme.atlassian.net\ndomain=api.atlassian.com\napipath=/ex/confluence/cid-1/wiki/rest/api\nauth=bearer\ntoken=fake-oauth-tok\n' >"$T/agent.out"
 }
@@ -265,37 +267,39 @@ run CONFLUENCE_API_TOKEN=mine -- api content --jq .
 run -- search 1 --jq .
 [ -f "$T/cf.seen" ] || fail "jq on another subcommand: the CLI did not run"
 
-# 15. The page core (read, info, create, create-child, update, edit, space-lookup) goes to the
-# Agent's v2 shim with the argv untouched; the credential helper and the real CLI are not
-# involved, so no token exists in this shell for those. Search and the rest stay with the CLI.
-for sub in read info create create-child update edit space-lookup; do
-  reset; oauth_answer; rm -f "$T/page.seen"
-  run STUB_PAGE_EXIT=0 -- "$sub" 12345 -c "日本語 **太字**" --format markdown
+# 15. The page commands go to the real CLI with the injected connection, argv untouched: the CLI
+# itself switches to the v2 API where v1 answers 410.
+for sub in read info create create-child update edit move space-lookup children; do
+  reset; oauth_answer
+  run -- "$sub" 12345 -c "日本語 **太字**" --format markdown
   [ "$rc" = 0 ] || fail "page $sub: exit status $rc, want 0"
-  [ ! -f "$T/cf.seen" ] || fail "page $sub: the real CLI ran"
-  grep -q '^confluence-cred' "$T/agent.calls" 2>/dev/null && fail "page $sub: the credential helper was asked"
-  [ "$(sed -n 1p "$T/page.seen")" = "PAGEARG=$sub" ] || fail "page $sub: argv not passed on: $(cat "$T/page.seen")"
-  grep -qxF 'PAGEARG=日本語 **太字**' "$T/page.seen" || fail "page $sub: argument altered"
+  expect "page $sub" API_TOKEN fake-oauth-tok
+  [ "$(sed -n 's/^ARG=//p' "$T/cf.seen" | head -1)" = "$sub" ] || fail "page $sub: argv not passed on"
+  grep -qxF 'ARG=日本語 **太字**' "$T/cf.seen" || fail "page $sub: argument altered"
+  [ ! -s "$T/err" ] || fail "page $sub: unexpected stderr: $(cat "$T/err")"
 done
+
+# 16. An outdated grant: one hint line before a v2 page command, none before search; the CLI runs
+# either way, with the token, and the hint never carries it.
 reset; oauth_answer
-run STUB_PAGE_EXIT=1 -- read 1
-[ "$rc" = 1 ] || fail "page failure: exit status $rc, want 1"
-[ ! -f "$T/cf.seen" ] || fail "page failure: fell through to the real CLI"
+echo "outdated=this Atlassian authorization predates the scopes; reconnect Jira" >"$T/agent.stale"
+run -- info 1
+[ -f "$T/cf.seen" ] || fail "outdated info: the CLI did not run"
+expect "outdated info" API_TOKEN fake-oauth-tok
+[ "$(grep -c 'reconnect Jira' "$T/err")" = 1 ] || fail "outdated info: want one hint line, got: $(cat "$T/err")"
+grep -q '^confluence: this Atlassian authorization' "$T/err" || fail "outdated info: hint not prefixed"
+no_leak "outdated info" fake-oauth-tok
 run -- search x
-[ -f "$T/cf.seen" ] && expect search-control API_TOKEN fake-oauth-tok
-[ ! -f "$T/page.seen" ] || [ "$(cat "$T/page.seen")" != "PAGEARG=search" ] || fail "search went to the shim"
+[ -f "$T/cf.seen" ] || fail "outdated search: the CLI did not run"
+grep -q 'reconnect Jira' "$T/err" && fail "outdated search: hint printed for a v1 command"
 
-# 16. Exit 64 from the shim ("no Atlassian connection") falls through to the usual hint and the CLI.
-reset
-run STUB_PAGE_EXIT=64 -- read 1
-[ -f "$T/cf.seen" ] || fail "no connection: the CLI did not run"
-grep -q "no Atlassian connection" "$T/err" || fail "no connection: no hint"
-
-# 17. A user's own setup never goes through the shim.
-reset; oauth_answer; rm -f "$T/page.seen"
+# 17. A user's own setup is never given the hint (the helper is not asked at all).
+reset; oauth_answer
+echo "outdated=reconnect Jira" >"$T/agent.stale"
 run CONFLUENCE_API_TOKEN=mine -- read 1
-[ ! -f "$T/page.seen" ] || fail "own setup: the shim was used"
 [ -f "$T/cf.seen" ] || fail "own setup: the CLI did not run"
+grep -q 'reconnect Jira' "$T/err" && fail "own setup: hint printed"
+expect "own setup" API_TOKEN mine
 
 # 18. Read-only commands are re-run after a transport failure (up to twice); only the last attempt
 # is shown. Writes, answered errors and unknown words run once.
@@ -399,6 +403,153 @@ grep -q "${esc}\[31mError:${esc}\[39m read ECONNRESET" "$T/err" || fail "coloure
 reset; oauth_answer
 run STUB_CF_FAILS=9 "STUB_CF_ERR=$(printf '%s[31mError:%s[39m Request failed with status code 400\nAPI response: invalid ECONNRESET' "$esc" "$esc")" -- search q
 [ "$(attempts)" = 1 ] || fail "coloured 400 with ECONNRESET body: attempts=$(attempts), want 1"
+
+# 24. A page write is sent once: a transport failure or a timeout is not re-run, and the output says
+# the page may or may not have been written. A write that succeeds gets no such line.
+for cmdline in "create T SP -c x" "create-child T 1 -c x" "update 1 -c x" "move 1 2"; do
+  reset; oauth_answer
+  run STUB_CF_FAILS=9 -- $cmdline
+  [ "$(attempts)" = 1 ] || fail "write '$cmdline' ECONNRESET: attempts=$(attempts), want 1"
+  [ "$rc" = 1 ] || fail "write '$cmdline' ECONNRESET: exit status $rc, want 1"
+  grep -q "may or may not have been written" "$T/err" || fail "write '$cmdline': no may-or-may-not line"
+  grep -q "ECONNRESET" "$T/err" || fail "write '$cmdline': the CLI's error was not replayed"
+  no_leak "write '$cmdline'" fake-oauth-tok
+done
+reset; oauth_answer
+run AF_CONFLUENCE_TIMEOUT=1 STUB_CF_HANG=1 -- update 1 -c x
+[ "$(attempts)" = 1 ] || fail "write timeout: attempts=$(attempts), want 1"
+[ "$rc" = 124 ] || fail "write timeout: exit status $rc, want 124"
+grep -q "may or may not have been written" "$T/err" || fail "write timeout: no may-or-may-not line"
+reset; oauth_answer
+run -- update 1 -c x
+[ "$rc" = 0 ] && grep -q GOOD "$T/out" || fail "write success: rc=$rc out=$(cat "$T/out")"
+grep -q "may or may not" "$T/err" && fail "write success: may-or-may-not line printed"
+reset; oauth_answer
+run STUB_CF_FAILS=9 "STUB_CF_ERR=$(printf 'Error: Request failed with status code 409\nAPI response: version conflict ECONNRESET')" -- update 1 -c x
+grep -q "may or may not" "$T/err" && fail "write answered 409: may-or-may-not line printed"
+
+# 25. A --file body that is not UTF-8 is refused before anything runs or is fetched; UTF-8 passes.
+printf '\202\240\n' >"$T/sjis.md"
+printf '日本語 **太字**\n' >"$T/ok.md"
+for form in "-f $T/sjis.md" "--file $T/sjis.md" "--file=$T/sjis.md" "-f$T/sjis.md"; do
+  for subcmd in "create T SP" "create-child T 1" "update 1"; do
+    reset; oauth_answer
+    run -- $subcmd $form
+    [ "$rc" = 1 ] || fail "non-UTF-8 '$subcmd $form': exit status $rc, want 1"
+    [ ! -f "$T/cf.seen" ] || fail "non-UTF-8 '$subcmd $form': the CLI ran"
+    grep -q "not valid UTF-8" "$T/err" || fail "non-UTF-8 '$subcmd $form': no reason given"
+  done
+done
+reset; oauth_answer
+run -- update 1 --file "$T/ok.md" --format markdown
+[ "$rc" = 0 ] && [ -f "$T/cf.seen" ] || fail "UTF-8 file: rc=$rc, CLI ran: $([ -f "$T/cf.seen" ] && echo yes || echo no)"
+reset; oauth_answer
+run -- search -f "$T/sjis.md"
+[ -f "$T/cf.seen" ] || fail "non-UTF-8 check applied to search"
+# glibc's UTF-8 -> UTF-8 lets these through; Node would write U+FFFD for each.
+for bad in '\364\220\200\200' '\370\210\200\200\200' '\355\240\200' '\300\257'; do
+  printf "$bad\\n" >"$T/bad.md"
+  reset; oauth_answer
+  run -- update 1 --file "$T/bad.md"
+  [ "$rc" = 1 ] && [ ! -f "$T/cf.seen" ] || fail "invalid UTF-8 $bad: rc=$rc, CLI ran: $([ -f "$T/cf.seen" ] && echo yes || echo no)"
+done
+
+# 26. --file /dev/stdin (a pipe) reaches the CLI intact: the wrapper reads it once into a private
+# copy, checks it and passes the copy's path, which is removed afterwards. A non-UTF-8 pipe is
+# refused like a file.
+for mode in unattended attached; do
+  reset; oauth_answer
+  rm -f "$T/cf.seen" "$T/cf.body"; mkdir -p "$T/tmp3"; rm -rf "$T/tmp3/"*
+  if [ "$mode" = unattended ]; then
+    printf '日本語の本文\n' | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" TMPDIR="$T/tmp3" \
+      AF_CONFLUENCE_REAL="$T/bin/confluence-real" bash "$WRAPPER" update 1 --file /dev/stdin --format markdown >"$T/out" 2>"$T/err"
+    rc=$?
+  else
+    # Only stdout is a terminal here: still "attached", so no watchdog and stdin stays the pipe.
+    printf '日本語の本文\n' | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" TMPDIR="$T/tmp3" \
+      AF_CONFLUENCE_REAL="$T/bin/confluence-real" script -qec "bash '$WRAPPER' update 1 --file /dev/stdin --format markdown" /dev/null >"$T/out" 2>"$T/err"
+    rc=$?
+  fi
+  [ "$rc" = 0 ] || fail "stdin body ($mode): exit status $rc: $(cat "$T/err" "$T/out")"
+  [ "$(cat "$T/cf.body" 2>/dev/null)" = "日本語の本文" ] || fail "stdin body ($mode): the CLI read '$(cat "$T/cf.body" 2>/dev/null)'"
+  grep -q '^ARG=/dev/stdin$' "$T/cf.seen" && fail "stdin body ($mode): /dev/stdin passed on"
+  [ -z "$(ls -A "$T/tmp3")" ] || fail "stdin body ($mode): left files behind: $(ls -A "$T/tmp3")"
+done
+reset; oauth_answer; rm -f "$T/cf.seen"
+printf '\202\240\n' | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
+  AF_CONFLUENCE_REAL="$T/bin/confluence-real" bash "$WRAPPER" update 1 --file /dev/stdin >"$T/out" 2>"$T/err"
+rc=$?
+[ "$rc" = 1 ] && [ ! -f "$T/cf.seen" ] || fail "non-UTF-8 stdin: rc=$rc, CLI ran: $([ -f "$T/cf.seen" ] && echo yes || echo no)"
+
+# 27. With a terminal attached a write is not bounded, but a transport failure still gets the
+# unknown-outcome line (stderr is shown as it comes and kept); a success does not.
+reset; oauth_answer
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" STUB_CF_FAILS=9 STUB_CF_ERR="Error: socket hang up" \
+  AF_CONFLUENCE_REAL="$T/bin/confluence-real" script -qec "bash '$WRAPPER' create T SP -c x" /dev/null >"$T/out" 2>&1
+grep -q "socket hang up" "$T/out" || fail "tty write failure: CLI error not shown: $(cat "$T/out")"
+grep -q "may or may not have been written" "$T/out" || fail "tty write failure: no may-or-may-not line"
+grep -q "fake-oauth-tok" "$T/out" && fail "tty write failure: token in output"
+reset; oauth_answer; rm -f "$T/cf.count"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
+  AF_CONFLUENCE_REAL="$T/bin/confluence-real" script -qec "bash '$WRAPPER' create T SP -c x" /dev/null >"$T/out" 2>&1
+grep -q GOOD "$T/out" || fail "tty write success: output not shown"
+grep -q "may or may not" "$T/out" && fail "tty write success: may-or-may-not line printed"
+
+# 28. --file is found the way the CLI's parser finds it: an option value that looks like --file is
+# a value (left untouched), and of two --file only the last is read, checked and copied.
+pipe_run() { # pipe_run <stdin text> <args…>: the wrapper with that stdin, no terminal
+  local input="$1"
+  shift
+  rm -f "$T/cf.seen" "$T/cf.body"
+  printf '%s' "$input" | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
+    AF_CONFLUENCE_REAL="$T/bin/confluence-real" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err"
+  rc=$?
+}
+reset; oauth_answer
+pipe_run '' create Title SP --content '--file=/dev/stdin'
+grep -qxF 'ARG=--file=/dev/stdin' "$T/cf.seen" || fail "--content value rewritten: $(grep '^ARG=' "$T/cf.seen")"
+pipe_run '' update 1 -c '-f/dev/stdin'
+grep -qxF 'ARG=-f/dev/stdin' "$T/cf.seen" || fail "-c value rewritten: $(grep '^ARG=' "$T/cf.seen")"
+pipe_run '' update 1 --title --file
+grep -qxF 'ARG=--file' "$T/cf.seen" || fail "--title value taken as --file"
+pipe_run $'日本語の本文\n' update 1 --file /dev/stdin --file /dev/stdin
+[ "$rc" = 0 ] && [ "$(cat "$T/cf.body" 2>/dev/null)" = "日本語の本文" ] || fail "two --file /dev/stdin: rc=$rc, the CLI read '$(cat "$T/cf.body" 2>/dev/null)'"
+pipe_run '' update 1 --file "$T/sjis.md" --file "$T/ok.md"
+[ "$rc" = 0 ] && [ -f "$T/cf.seen" ] || fail "an overridden non-UTF-8 --file was checked: rc=$rc $(cat "$T/err")"
+pipe_run '' update 1 --file "$T/ok.md" --file "$T/sjis.md"
+[ "$rc" = 1 ] && [ ! -f "$T/cf.seen" ] || fail "the last --file (non-UTF-8) was not checked: rc=$rc"
+
+# A body file whose name starts with "-" is still checked (iconv must not take it for an option).
+mkdir -p "$T/dashdir"
+printf '\202\240\n' >"$T/dashdir/-c"
+printf 'ok\n' >"$T/dashdir/-ok"
+for form in "--file=-c" "-f-c"; do
+  reset; oauth_answer; rm -f "$T/cf.seen"
+  (cd "$T/dashdir" && env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
+    AF_CONFLUENCE_REAL="$T/bin/confluence-real" bash "$WRAPPER" update 1 "$form" >"$T/out" 2>"$T/err" </dev/null)
+  rc=$?
+  [ "$rc" = 1 ] && [ ! -f "$T/cf.seen" ] || fail "dash-named non-UTF-8 file ($form): rc=$rc, CLI ran: $([ -f "$T/cf.seen" ] && echo yes || echo no)"
+done
+reset; oauth_answer; rm -f "$T/cf.seen"
+(cd "$T/dashdir" && env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
+  AF_CONFLUENCE_REAL="$T/bin/confluence-real" bash "$WRAPPER" update 1 --file -ok >"$T/out" 2>"$T/err" </dev/null)
+rc=$?
+[ "$rc" = 0 ] && grep -qxF 'ARG=-ok' "$T/cf.seen" || fail "dash-named UTF-8 file: rc=$rc, args: $(grep '^ARG=' "$T/cf.seen" 2>/dev/null)"
+
+# 29. A slow tee (attached write) is waited for: the unknown-outcome line still appears and nothing
+# complains about a removed file.
+mkdir -p "$T/slowbin"
+cat >"$T/slowbin/tee" <<'STUB'
+#!/bin/sh
+sleep 0.4
+exec /usr/bin/tee "$@"
+STUB
+chmod +x "$T/slowbin/tee"
+reset; oauth_answer
+env -i PATH="$T/slowbin:$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" STUB_CF_FAILS=9 STUB_CF_ERR="Error: socket hang up" \
+  AF_CONFLUENCE_REAL="$T/bin/confluence-real" script -qec "bash '$WRAPPER' create T SP -c x" /dev/null >"$T/out" 2>&1
+grep -q "may or may not have been written" "$T/out" || fail "slow tee: no may-or-may-not line: $(cat "$T/out")"
+grep -q "No such file" "$T/out" && fail "slow tee: the copy was removed under tee"
 
 if [ "$fails" != 0 ]; then
   echo "confluence-auth-wrapper-test: $fails failure(s)" >&2

@@ -116,17 +116,18 @@ Jira は Atlassian の 3LO アプリで、Bitbucket のコンシューマとは�
 
 メンバーのセッションの `confluence` は、Jira と同じ Atlassian の認可を使います。順番は Jira Software と同じです。
 
-1. Developer Console で、アプリの **Permissions → Confluence API → Configure → Edit Scopes** を開き、下の 10 個を選びます
+1. Developer Console で、アプリの **Permissions → Confluence API → Configure → Edit Scopes** を開き、下の 15 個を選びます
 2. そのあとで、Jira のカードの「このアプリに Confluence のスコープ（confluence CLI 用）も許可済み」にチェックを入れて **保存** を押します
 3. 接続済みのメンバーに、Jira を接続し直してもらいます
 
 | 種類 | スコープ |
 |---|---|
 | クラシック | `read:confluence-content.all`、`read:confluence-content.summary`、`read:confluence-space.summary`、`search:confluence`、`write:confluence-content`、`readonly:content.attachment:confluence`、`write:confluence-file` |
-| 細粒度（granular） | `read:page:confluence`、`write:page:confluence`、`read:space:confluence` |
+| 細粒度（granular） | `read:page:confluence`、`write:page:confluence`、`read:space:confluence`、`read:content.metadata:confluence`、`read:blogpost:confluence`、`read:folder:confluence`、`write:folder:confluence`、`read:hierarchical-content:confluence` |
 
-- 細粒度の 3 つは、ページの閲覧・作成・更新に要ります。ないと 401「scope does not match」になります
-- クラシックの 7 つだけで設定済みのアプリは、細粒度の 3 つを足すだけで済みます。メンバーが接続し直すまで、カードには「Confluence: 検索とコメントは使えますが…」と出て、ページの操作は 1 行の案内を出します
+- 細粒度のスコープは、Confluence Cloud の現行 API でページを操作するのに要ります。ないと 401「scope does not match」になります。削除のスコープは求めないので、エージェントはページを削除できません
+- **Confluence を設定済みのアプリには、これらを要求するバージョンへ Agent Fleet を上げる前に、新しい細粒度スコープを足しておいてください。** 足さないと、Jira を接続・再接続するメンバーが Atlassian の同意画面で断られます。それまでに作った接続はそのまま動きます
+- メンバーが接続し直すまで、カードには「Confluence: 検索は使えますが…」と出て、ページの操作は 1 行の案内を出します
 - チェックを入れないテナントは今までどおり動き、メンバーが `confluence` を使えないだけです
 - メンバーの Jira のカードに「Confluence: 利用できません」と出ていれば、そのメンバーはこれらのスコープなしで接続しています
 

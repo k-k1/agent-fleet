@@ -290,7 +290,10 @@ func TestJiraStatusConfluenceScopes(t *testing.T) {
 		s    *secrets.Data
 		want any
 	}{
-		{"granted", site("read:jira-work", "search:confluence", "read:page:confluence", "write:page:confluence", "read:space:confluence"), "granted"},
+		{"granted", site("read:jira-work", "search:confluence", "read:page:confluence", "write:page:confluence", "read:space:confluence",
+			"read:content.metadata:confluence", "read:blogpost:confluence", "read:folder:confluence",
+			"write:folder:confluence", "read:hierarchical-content:confluence"), "granted"},
+		{"the earlier three page scopes only: reconnect", site("read:jira-work", "search:confluence", "read:page:confluence", "write:page:confluence", "read:space:confluence"), "outdated"},
 		{"classic only: reconnect", site("read:jira-work", "search:confluence"), "outdated"},
 		{"missing", site("read:jira-work", "offline_access"), "missing"},
 		{"unrecorded", site(), nil},
@@ -313,7 +316,9 @@ func sitesOf(t *testing.T, st map[string]any) []map[string]any {
 func TestJiraStatusDedupesSitesByCloudID(t *testing.T) {
 	rows := []secrets.JiraSite{
 		{CloudID: "cid-1", URL: "https://one.atlassian.net", Name: "One", Scopes: []string{"read:jira-work", "write:page:confluence"}},
-		{CloudID: "cid-1", URL: "https://one.atlassian.net/wiki", Name: "One (Confluence)", Scopes: []string{"read:page:confluence", "read:space:confluence"}},
+		{CloudID: "cid-1", URL: "https://one.atlassian.net/wiki", Name: "One (Confluence)", Scopes: []string{"read:page:confluence", "read:space:confluence",
+			"read:content.metadata:confluence", "read:blogpost:confluence", "read:folder:confluence",
+			"write:folder:confluence", "read:hierarchical-content:confluence"}},
 	}
 	s := &secrets.Data{Jira: &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at", Expiry: time.Now().Unix() + 3600, CloudID: "cid-1", Site: "https://one.atlassian.net", Sites: rows}}
 	got := sitesOf(t, jiraStatus(s))

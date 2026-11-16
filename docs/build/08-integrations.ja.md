@@ -411,35 +411,39 @@ Jira は git でなく作業項目インボックス
   （記録済みのスコープに `confluence` を含むものがない）を返し、ラッパーは素の 401 に当たらせる代わりに
   Jira を接続し直すよう 1 行で伝える。スコープが不明（古いストア、取得失敗）の場合は拒否しない。判定は、サイトの id を持つ accessible-resources の全行（Jira と Confluence の行は同じ id）のスコープの和集合で行う。
   設定画面も同じ判定を出す（接続状態の `confluenceScopes: "missing"`）。
-- **ページ操作は v2 で処理する（2026-11-03、#3266）。** confluence-cli 2.31.0 はページの閲覧・作成・更新に
-  v1 の `/content`・`/space` を使っていたが、現行の Cloud サイトは 410 を返す。`workspace-agent confluence-page`
-  （`internal/jirax/confluence_page.go`）が `read`・`info`・`create`・`create-child`・`update`・`edit`・
-  `space-lookup` をラッパーから受け取り、CLI と同じコマンドラインと出力で `/wiki/api/v2` を呼ぶ。変換は
-  Markdown→storage が goldmark（CJK 対応の強調、Jira の ADF で使用済み）、storage→Markdown/テキストが
-  `encoding/xml`。confluence-cli の非公開 `lib/` を node 経由で使わないのは、固定した CLI の内部に依存しない
-  ため。日本語・絵文字・日本語に隣接する `code`/**太字**・リスト・表をゴールデンの往復テストで固定している。
-  グループに細粒度の `read:page`・`write:page`・`read:space` を追加し、Confluence のスコープはあるがこれらが
-  ない認可は `confluenceScopes: "outdated"`（設定画面は再接続を案内、`confluence-cred` は引き続き渡すので
-  検索は動く）。書き込みは 1 回だけ送り、更新は `version+1` を送るので同時編集は 409 になる。
-  フォルダ: shim は `create --type folder` を拒否する。
-- **CLI 自身の v2 切り替え（2.31.1、#3274）。** 2.31.1 から confluence-cli は v1 が 410 を返した時点で
-  そのコマンドを `/wiki/api/v2` に切り替える（Cloud と判定したホストに限る。`api.atlassian.com` の
-  ゲートウェイは常に Cloud と判定される）。グループが要求するスコープで `spaces`・オプションなしの `children`・
-  `move` が v2 で動く（`spaces` と `children` は 2026-11-15 に実機で確認）。`delete`・`copy-tree`・`export`・
-  `children --recursive --json`・`children --format tree` は祖先を読むため `read:content.metadata:confluence`
-  （delete はさらに `delete:*`）、`children --type folders|all` は `read:hierarchical-content:confluence` が要り、
-  どちらも未要求なので 401 か 403 になる。コメントの一覧、フッターコメントの追加と `--inline-properties`・
-  `--inline-original-selection`・`--inline-marker-ref` を使うインラインコメントの追加、添付・バージョン・
-  プロパティは CLI でもまだ v1 で、Atlassian が廃止したサイトでは 410 になる（コメントと添付は実機で 410）。
-  コメントへの返信（`--parent`）、`--inline-selection` だけを指定したインラインコメント、`comment-resolve` は
-  v2 を使い、`read:comment:confluence` / `write:comment:confluence` が要るが、これも未要求。ページ操作の shim を残すのは、CLI の Markdown→storage が CJK 対応の強調を持たない
-  markdown-it で、`**「括弧」**の` のアスタリスクが残るため。shim の撤去と、そのために要るスコープは #3274。
+- **v2 は CLI 自身で（2.31.2、#3274）。** 現行の Cloud サイトは v1 の `/content`・`/space` を廃止している
+  （410）。confluence-cli は 2.31.1 から v1 が 410 を返した時点でそのコマンドを `/wiki/api/v2` に切り替え
+  （Cloud と判定したホストに限る。`api.atlassian.com` のゲートウェイは常に Cloud と判定される）、2.31.2 で
+  Markdown の変換が CJK 対応の強調になった（pchuri/confluence-cli#300）ので、サブコマンドはすべて CLI に渡す。
+  2026-11-03 からそのリリースまでは Agent 側の v2 shim がページ操作を受けていた（#3266）が、CLI が両方を
+  満たした時点で撤去した。グループの細粒度スコープは CLI の README の表に従い、ページ・スペース・祖先
+  （`read:content.metadata`: `info`・`create-child`・`copy-tree`・`export`）・ブログ記事・フォルダ（フォルダの
+  子一覧の `read:hierarchical-content` を含む）。あえて要求しないもの: `delete:*`（エージェントはページを
+  削除しない）と v2 のコメント用スコープ（返信、`--inline-selection` だけのインラインコメント、
+  `comment-resolve`）で、これらは 401/403 になる。コメントの一覧、ほかのコメント追加、添付・バージョン・
+  プロパティは CLI でもまだ v1 で、Atlassian が廃止したサイトでは 410 になる。細粒度スコープ
+  （`jirax.confluenceRequiredScopes`）のどれかが欠けた認可は `confluenceScopes: "outdated"`: 設定画面は
+  再接続を案内し、`confluence-cred` は接続を渡したまま（検索は動く）`outdated=` 行を添え、ラッパーは v2 に
+  移るコマンドの前に 1 度だけ表示する。`workspace/confluence-convert-golden-test.sh`（CI が固定版の CLI を
+  入れて実行）が日本語と韓国語のゴールデンで Markdown↔storage を固定するので、CJK の強調が後退する
+  バージョンへの更新は出荷前に落ちる。
 - **読み取りのリトライ**: ラッパーの `readonly_cmd` に挙げたサブコマンド（`attachments` は
   `-d`/`--download`/`--dest` なしのときだけ）は、CLI 自身のエラー行から読んだ通信エラー（ECONNRESET・
   ETIMEDOUT など。HTTP ステータスは対象外）のあと最大 2 回やり直し、最後の実行だけを出す。stdout と
   stderr が端末でないときに限る。1 回の上限は `AF_CONFLUENCE_TIMEOUT`（既定 60 秒、0 = 無制限）で、
   `timeout(1)` でなくシェルの監視で切るので、トークンを受け継ぐ補助プロセスが無い。知らない語は書き込みと
-  みなして 1 回だけ走らせる。v2 shim は GET を再送し、POST/PUT は再送しない。
+  みなして 1 回だけ走らせる。
+- **ページの書き込み**（`create`・`create-child`・`update`・`move`。`run_write`）は再送しない。端末が
+  なければ同じ上限で 1 回だけ走らせ（CLI はリクエストに期限を設けないため）、端末があれば上限は付けず、
+  stderr をそのまま表示しつつ控えを取る（`tee`。トークンは渡らない）。どちらでも期限切れや通信エラーの
+  ときは「may or may not have been written」の 1 行を足す。CLI はソケットのエラーしか出さないため。
+  `--file` の本文は `iconv -f UTF-8 -t UTF-32LE` で検査し（UTF-8 への変換では U+10FFFF 超や 5 バイト列が
+  通る）、不正なら拒否する。CLI は置換文字で読み込み、化けた本文を終了コード 0 で書き込むため。通常の
+  ファイルでない `--file`（`/dev/stdin`、パイプ）は一度だけ専用の一時ファイルに読み込み、検査してから
+  そのパスを渡す。CLI には stdin を渡さないため。引数は commander と同じ規則で読む（値を取るオプションは
+  次の語を取る、`--` 以降はオプションでない、`--file` が複数なら最後が効く）ので、CLI が実際に使う `--file`
+  だけを検査・コピーし、`--file=…` に見えるだけの本文には触れない。端末ありのときの tee は `exec {fd}>` で
+  開き、写しを読む前に終了を待つ。
 - **利用者自身の設定が勝つ。中身は読まず、何があるかで決める**: ホスト・身元・認証情報を選ぶ
   `CONFLUENCE_*` 変数、`--profile` フラグ、`CONFLUENCE_CONFIG_DIR`（なければ
   `$XDG_CONFIG_HOME/confluence-cli` と `~/.confluence-cli`）の `config.json` のどれかがあれば、CLI は
@@ -452,9 +456,9 @@ Jira は git でなく作業項目インボックス
   `CONFLUENCE_CLI_ANALYTICS=false` で、CLI が設定ディレクトリに利用回数ファイルを書くのを止める。
 - **版の固定**: Dockerfile の `CONFLUENCE_CLI_VERSION`。パッケージは `npm-shrinkwrap.json` を
   同梱するので、依存ツリーも一緒に固定される。Dockerfile は `--version` が固定した版を出すことを確かめる。
-- **エンドツーエンドでは未検証**: イメージのビルドと、実際の Atlassian 認可は実行していない
+- **エンドツーエンドでは未検証**: イメージのビルドと、全スコープを持つ実際の認可は実行していない
   （どちらも開発用ワークスペースからは届かない）。スコープ一覧は CLI の README が書くコマンドに
-  沿っている。フォルダ一覧の `read:hierarchical-content:confluence` のような granular スコープは求めない。
+  沿っている。
 
 ## 8.5 Claude 認証・オンボーディング（L2 の本丸）
 

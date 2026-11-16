@@ -30,7 +30,7 @@ Confluence のための設定やログインは要りません。
 | Jira のカードの表示 | 使えないもの |
 |---|---|
 | Confluence: 利用できません。 | `confluence` のすべてのコマンド |
-| Confluence: 検索とコメントは使えますが… | ページの閲覧・作成・更新 |
+| Confluence: 検索は使えますが… | `info`・`create-child`・`copy-tree` などのページの操作（401 になります） |
 
 どちらも、テナント管理者がアプリにスコープを追加したあとで、あなたが Jira をつなぎ直すと使えるようになります。
 
@@ -81,12 +81,12 @@ confluence --help
 
 ### 「410」「401」「403」で失敗するコマンドがある
 
-`spaces`・オプションなしの `children`・`move` は、Atlassian の新しい API に自動で切り替わります。次のものはまだ失敗します。
+ページの操作は、Atlassian の新しい API に自動で切り替わります。次のものはまだ失敗します。
 
-- 「410」（Atlassian が廃止した API をまだ使っている）: コメントの一覧、フッターコメントの追加と `--inline-properties`・`--inline-original-selection`・`--inline-marker-ref` を使うインラインコメントの追加、添付ファイル、ページのバージョン、プロパティ（front matter）
-- 「401」や「403」（必要な権限を接続が要求していない）: `delete`・`copy-tree`・`export`、`--recursive --json`・`--format tree`・`--type folders` / `all` を付けた `children`、コメントへの返信（`--parent`）、`--inline-selection` だけを指定したインラインコメント、`comment-resolve`
+- 「410」（Atlassian が廃止した API をまだ使っている）: コメントの一覧、フッターコメントの追加と `--inline-properties`・`--inline-original-selection`・`--inline-marker-ref` を使うインラインコメントの追加、添付ファイル、ページのバージョン、プロパティ（front matter）。`export` には `--skip-attachments` を付けてください
+- OAuth の接続で「401」や「403」（あえて権限を要求していない）: `delete`、コメントへの返信（`--parent`）、`--inline-selection` だけを指定したインラインコメント、`comment-resolve`。API トークンの接続は、トークンの権限に従います
 
-フォルダは `create --type folder` で作れません。
+`info` や `create-child` などが 401 になり、`confluence` が新しいスコープについて 1 行表示するときは、接続がそれより前のものです。上の Jira のカードの説明を見てください。
 
 ### 「--jq is not available」と出る
 

@@ -22,9 +22,25 @@ import (
 // confluenceAPIPath is where the CLI's REST calls live below the API host.
 const confluenceAPIPath = "/wiki/rest/api"
 
+// confluenceRequiredScopes are the granular scopes confluence-cli needs once it has switched to
+// the v2 API (its README's per-command table): pages, spaces, ancestors (info, create-child),
+// blog posts and folders. They mirror confluenceGranularScopes in control-plane/oauth_jira.go;
+// keep the two in step.
+var confluenceRequiredScopes = []string{
+	"read:page:confluence", "write:page:confluence", "read:space:confluence",
+	"read:content.metadata:confluence", "read:blogpost:confluence", "read:folder:confluence",
+	"write:folder:confluence", "read:hierarchical-content:confluence",
+}
+
+// confluenceOutdatedHint is the one line the wrapper prints before a v2 page command on an
+// outdated grant, which confluence-cli would otherwise answer with a bare 401.
+const confluenceOutdatedHint = "this Atlassian authorization predates the Confluence scopes page commands need now; " +
+	"the tenant administrator adds them to the Atlassian app, then reconnect Jira in Settings " +
+	"(confluence search keeps working meanwhile)"
+
 // ConfluenceScopes says what the current site's OAuth authorization can do with Confluence:
-// "granted" (holds the v2 page scopes the page shim needs), "outdated" (holds Confluence scopes,
-// but not the v2 page ones: search and comments work, page read/create/update need a reconnect
+// "granted" (holds every scope in confluenceRequiredScopes), "outdated" (holds Confluence scopes,
+// but not all of those: search works, page commands on the v2 API answer 401 until a reconnect
 // after the app gained the scopes), "missing" (no Confluence scope at all), or "" when unknown.
 // An API-token connection and a site whose scopes were never recorded are unknown, never
 // "missing" or "outdated", so a connection stored before the scopes were recorded is not refused
@@ -45,7 +61,7 @@ func ConfluenceScopes(c *secrets.JiraCreds) string {
 	if !any {
 		return "missing"
 	}
-	for _, need := range confluencePageScopeList {
+	for _, need := range confluenceRequiredScopes {
 		if !have[need] {
 			return "outdated"
 		}
@@ -67,6 +83,9 @@ func RunConfluenceCred(_ []string) { confluenceCredGet(os.Stdout, os.Stderr) }
 //	login=   the account email (API token only: an OAuth bearer carries no identity)
 //	token=   last, so a reader that stops early has not taken the secret
 //
+// An OAuth grant that is "outdated" also gets one `outdated=<hint>` line on errw; the connection
+// is still served, because search and the other v1 commands keep working on it.
+//
 // A connection that exists but cannot be used says why as one `unusable=<reason>` line on errw:
 // an OAuth authorization renewal failed, or the authorization is known to hold no Confluence
 // scope (a connection made before they were requested), which Confluence would answer with a bare
@@ -80,9 +99,12 @@ func confluenceCredGet(w, errw io.Writer) {
 	domain, apiPath, auth, login, token := "", confluenceAPIPath, "basic", c.Email, c.Token
 	if c.AuthKind == "oauth" {
 		jiraBackfillScopes(&c)
-		if ConfluenceScopes(&c) == "missing" {
+		switch ConfluenceScopes(&c) {
+		case "missing":
 			unusable("this Atlassian authorization has no Confluence scopes")
 			return
+		case "outdated":
+			fmt.Fprintf(errw, "outdated=%s\n", confluenceOutdatedHint)
 		}
 		u, err := url.Parse(CloudAPIBase)
 		if err != nil || u.Host == "" {

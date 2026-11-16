@@ -53,7 +53,7 @@ OAuth の接続では、Atlassian アプリに許可されている範囲によ�
 |---|---|
 | ボード・スプリント・エピック: 利用できません。 | `jira` のボード・スプリント・エピックのコマンドと `jira init` |
 | Confluence: 利用できません。 | `confluence` のすべてのコマンド |
-| Confluence: 検索とコメントは使えますが… | `confluence` のページの閲覧・作成・更新 |
+| Confluence: 検索は使えますが… | `confluence` の `info`・`create-child`・`copy-tree` などのページの操作 |
 
 テナント管理者の手順は [連携に使う OAuth アプリを選ぶ](../../admin/access/oauth-apps.ja.md#bitbucket-と-jira-のアプリを登録する) にあります。
 
