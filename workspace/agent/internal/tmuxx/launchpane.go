@@ -21,7 +21,8 @@ import (
 // server, and plain tmux follows it (measured: a bogus TMUX makes `tmux list-sessions` fail),
 // so the lookup would miss the session.
 func LaunchPanePID(name string) (int, bool) {
-	cmd := Cmd("list-panes", "-s", "-t", session.ExactTarget(session.TmuxName(name)), "-F", "#{pane_pid} #{pane_dead} #{pane_start_command}")
+	cmd, cancel := OneShotCmd("list-panes", "-s", "-t", session.ExactTarget(session.TmuxName(name)), "-F", "#{pane_pid} #{pane_dead} #{pane_start_command}")
+	defer cancel()
 	cmd.Env = withoutEnv(os.Environ(), "TMUX", "TMUX_PANE")
 	out, err := cmd.Output()
 	if err != nil {

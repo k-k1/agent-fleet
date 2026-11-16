@@ -251,3 +251,58 @@ func TestInputOrderRecoversAfterSimultaneousTimeouts(t *testing.T) {
 		}
 	}
 }
+
+// Forgetting a session while its head still runs must drop the entry without disturbing the
+// running delivery or a follower already waiting behind it.
+func TestInputOrderForgetWhileHeadRuns(t *testing.T) {
+	o := &inputOrder{tails: map[string]*orderTail{}, wait: time.Minute}
+	release := make(chan struct{})
+	started := make(chan struct{})
+	var wg sync.WaitGroup
+	start := func(run func()) {
+		wg.Add(1)
+		go func() { defer wg.Done(); run() }()
+	}
+	var ran sync.WaitGroup
+	ran.Add(1)
+	start(o.enqueue("s", func() { close(started); <-release }, func() { t.Error("head skipped") }))
+	start(o.enqueue("s", func() { ran.Done() }, func() { t.Error("follower skipped") }))
+	<-started
+	o.forget("s")
+	o.mu.Lock()
+	n := len(o.tails)
+	o.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("tails not cleared: %d entries", n)
+	}
+	close(release) // the head returns late, after the entry is gone
+	wg.Wait()
+	ran.Wait()
+	o.mu.Lock()
+	n = len(o.tails)
+	o.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("a late return left %d entries", n)
+	}
+	o.forget("never-existed") // a no-op, not a panic
+}
+
+// A terminal lock held while its session is deleted is released through the mutex its holder
+// already has: no double unlock, and a later caller for the name gets a working lock.
+func TestForgetInputStateWithTerminalLockHeld(t *testing.T) {
+	unlock, ok := lockTerminal("forget-held", time.Second)
+	if !ok {
+		t.Fatal("could not lock")
+	}
+	forgetInputState("forget-held")
+	if _, present := terminalLocks.Load("forget-held"); present {
+		t.Fatal("terminalLocks entry survived")
+	}
+	unlock() // late release: must not panic
+	u2, ok := lockTerminal("forget-held", time.Second)
+	if !ok {
+		t.Fatal("fresh lock unavailable")
+	}
+	u2()
+	terminalLocks.Delete("forget-held")
+}

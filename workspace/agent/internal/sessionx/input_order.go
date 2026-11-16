@@ -57,8 +57,8 @@ func live(x *orderTail) *orderTail {
 // at once and gives the tail back to the live slot it waited behind, so an input enqueued after
 // the timeout is skipped as well and no follower waits on a hung head.
 //
-// Known limit: tmux commands carry no deadline and nothing clears the chain when a session is
-// deleted, so a head that never returns keeps its goroutine and one tails entry until it does.
+// A head that never returns is bounded by the deadline on every tmux call a delivery makes
+// (tmuxx.OneShotTimeout); forget drops the chain's entry when the session is deleted.
 func (o *inputOrder) enqueue(name string, fn, skip func()) (run func()) {
 	o.mu.Lock()
 	prev := o.tails[name]
@@ -98,4 +98,25 @@ func (o *inputOrder) enqueue(name string, fn, skip func()) (run func()) {
 		}()
 		fn()
 	}
+}
+
+// forget drops name's chain entry once the session is gone, so a head still running (or a
+// follower queued behind it) does not keep a tails entry for a session that no longer exists.
+// Running slots are untouched: a head's deferred cleanup compares against the map entry and
+// finds it gone, and a follower waits on the predecessor channels it already holds, so a late
+// return neither panics nor double-closes anything. An input enqueued for the name afterwards
+// starts a fresh chain.
+func (o *inputOrder) forget(name string) {
+	o.mu.Lock()
+	delete(o.tails, name)
+	o.mu.Unlock()
+}
+
+// forgetInputState releases the per-name input state of a session that is being deleted: the
+// when_ready chain and the terminal lock. A holder of the lock keeps the mutex it already
+// has and unlocks that one, so removing the map entry cannot cause a double unlock; at worst a
+// late arrival for the deleted name gets a fresh mutex.
+func forgetInputState(name string) {
+	initialInputOrder.forget(name)
+	terminalLocks.Delete(name)
 }
