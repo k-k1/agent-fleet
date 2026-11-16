@@ -111,6 +111,85 @@ const ADMIN_RES_BASE = {
   settle: 2000,
 };
 
+// Model access (SHOT_MODEL_ACCESS, #4380): Tenant settings › Model access and Admin › Deployment ›
+// Model access in the states a change to those pages is judged by, before and after. The answers
+// are the CP's own (model-access/*.json, see fixtures.mjs modelAccess). Each scene runs on its
+// own; `unfold` writes the first screen as <name>-first and the whole page as <name>.
+const openModelAccess = (admin) => `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector(".acct-btn")?.click();
+      await wait(500);
+      [...document.querySelectorAll(".acct-item")].find((el) => ${admin ? "/^\\s*(管理|Admin)\\s*$/" : "/テナント設定|Tenant settings/"}.test(el.textContent || ""))?.click();
+      const modal = ${JSON.stringify(admin ? ".admin-modal" : ".tenant-modal")};
+      for (let i = 0; i < 50 && !document.querySelector(modal + " .settings-rail-item"); i++) await wait(200);
+      [...document.querySelectorAll(modal + " .settings-rail-item")].find((b) => /^(モデルの利用|Model access)$/.test((b.textContent || "").trim()))?.click();
+    })()`;
+const modelAccessScene = (name, { admin = false, rules, provided = "off", verify, ...rest }) => {
+  const modal = admin ? ".admin-modal" : ".tenant-modal";
+  return {
+    name,
+    guide: true,
+    desktop: true,
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_MODEL_ACCESS: rules, SHOT_PROVIDED: provided, ...(admin ? { SHOT_MODEL_ACCESS_SUPER: "1" } : {}) },
+    sections: FOCUS_TREE,
+    width: 1440,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: openModelAccess(admin),
+    settle: 1500,
+    // Every scene first waits for the rule the page draws, so a page still loading fails the run.
+    verify: `!!document.querySelector("${modal} ${admin ? ".model-access-deployment" : ".model-access-rule"}") && (${verify})`,
+    unfold: modal,
+    clip: modal,
+    pad: 0,
+    ...rest,
+  };
+};
+const MODEL_ACCESS_SCENES = [
+  // Tenant: every layer unrestricted, a CP without provided routes.
+  modelAccessScene("mpol-tenant-open", { rules: "open", verify: `!!document.querySelector('.tenant-modal [data-testid="hidden-none"]')` }),
+  // Tenant: a ceiling, a cap and the tenant's own rule hide harnesses; no provided routes.
+  modelAccessScene("mpol-tenant-hidden", { rules: "restricted", verify: `!!document.querySelector('.tenant-modal [data-hidden="cursor"]')` }),
+  // Tenant: the operator allows Bedrock only; the deployment's provided route exists but this
+  // tenant is not granted it.
+  modelAccessScene("mpol-tenant-notgranted", {
+    rules: "bedrockonly",
+    provided: "notgranted",
+    verify: `!!document.querySelector('.tenant-modal [data-testid="prov-grant"]')`,
+  }),
+  // Tenant: restricted as above, and granted the provided route: six members, budgets and spend.
+  modelAccessScene("mpol-tenant-provided", {
+    rules: "restricted",
+    provided: "granted",
+    verify: `document.querySelectorAll(".tenant-modal .prov-members tbody tr").length >= 6`,
+  }),
+  // The same at phone width.
+  modelAccessScene("mpol-tenant-provided-phone", {
+    rules: "restricted",
+    provided: "granted",
+    width: 390,
+    height: 844,
+    mobile: true,
+    verify: `document.querySelectorAll(".tenant-modal .prov-members tbody tr").length >= 6`,
+  }),
+  // Admin: every layer unrestricted, a CP without provided routes.
+  modelAccessScene("mpol-admin-open", { admin: true, rules: "open", verify: `!!document.querySelector('.admin-modal .mpol-cap[data-tenant="demo"]')` }),
+  // Admin: a ceiling, a cap on Demo Team, a registered source granted to it.
+  modelAccessScene("mpol-admin-provided", {
+    admin: true,
+    rules: "restricted",
+    provided: "granted",
+    verify: `!!document.querySelector('.admin-modal [data-testid="prov-source"]') && !!document.querySelector(".admin-modal .model-access-provided-grant")`,
+  }),
+  // Admin: a deployment rule without subscriptions, and no source registered yet.
+  modelAccessScene("mpol-admin-nosource", {
+    admin: true,
+    rules: "nosubs",
+    provided: "nosource",
+    verify: `!!document.querySelector(".admin-modal .model-access-provided-source textarea") && !document.querySelector('.admin-modal [data-testid="prov-source"]')`,
+  }),
+];
+
 const SCENES = [
   {
     name: "console",
@@ -3482,6 +3561,7 @@ const SCENES = [
     layout: { cols: [col("c0", [pane("p0", null, { kind: "memory", memoryView: "proposals" })])], colRatios: [1], activeId: "p0" },
     ready: `!!document.querySelector(".mem-cs-actions button")`,
   },
+  ...MODEL_ACCESS_SCENES,
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------
@@ -3556,7 +3636,9 @@ const chrome = spawn(
     // should only appear on hover appear on every row — a picture busier than the real thing
     // (docs/log/80 §80.18.7). Left off by default so the README shot set does not change; pass
     // SHOTS_DESKTOP_HOVER=1 when checking how it looks on the desktop.
-    ...(process.env.SHOTS_DESKTOP_HOVER
+    // A scene marked `desktop` asks for it too: the Model access scenes are compared before and
+    // after a change, and a coarse pointer would show every hover-only control in both.
+    ...(process.env.SHOTS_DESKTOP_HOVER || scenes.some((s) => s.desktop)
       ? ["--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4"]
       : []),
     `--lang=${LOCALE === "ja" ? "ja-JP" : "en-US"}`,
@@ -3667,6 +3749,45 @@ try {
       console.log("[measure]", scene.name, m.result?.value);
     }
 
+    // scene.unfold names a modal whose page is taller than the screen. The first screen is
+    // written as <name>-first (what an administrator sees on opening it), then the modal grows to
+    // its content and the viewport to the modal, so the main file is the whole page in one picture.
+    let viewH = scene.height;
+    if (scene.unfold) {
+      const first = await cdp.send("Page.captureScreenshot", { format: "webp", quality: 82 });
+      const firstFile = path.join(OUT, `${scene.name}-first-${LOCALE}${THEME === "light" ? "-light" : ""}.webp`);
+      fs.writeFileSync(firstFile, Buffer.from(first.data, "base64"));
+      console.log("[shot]", path.relative(ROOT, firstFile), `${scene.width}x${scene.height}@2x`);
+      const r = await cdp.send("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `(() => {
+          const modal = document.querySelector(${JSON.stringify(scene.unfold)});
+          if (!modal) return 0;
+          modal.style.height = "auto";
+          modal.style.maxHeight = "none";
+          for (const el of modal.querySelectorAll("*")) {
+            const cs = getComputedStyle(el);
+            if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 2) {
+              el.style.overflow = "visible";
+              el.style.maxHeight = "none";
+              el.style.height = "auto";
+            }
+          }
+          for (let p = modal.parentElement; p && p !== document.body; p = p.parentElement) {
+            p.style.alignItems = "flex-start";
+            p.style.overflow = "visible";
+            p.style.height = "auto";
+            p.style.position = "absolute";
+          }
+          return Math.ceil(modal.getBoundingClientRect().bottom) + 24;
+        })()`,
+      });
+      if (!r.result?.value) throw new Error(`scene ${scene.name}: unfold ${scene.unfold} matched nothing`);
+      viewH = Math.max(scene.height, r.result.value);
+      await cdp.send("Emulation.setDeviceMetricsOverride", { width: scene.width, height: viewH, deviceScaleFactor: 2, mobile: !!scene.mobile });
+      await sleep(800);
+    }
+
     // WebP straight out of Chromium — no post-processing step, and a fifth of the PNG
     // size at a quality where the UI text stays crisp at 2x.
     let clip;
@@ -3686,12 +3807,12 @@ try {
       if (!b) throw new Error(`scene ${scene.name}: clip ${sels.join(", ")} matched nothing`);
       const pad = scene.pad ?? 16;
       const x = Math.max(0, b.x - pad), y = Math.max(0, b.y - pad);
-      clip = { x, y, width: Math.min(scene.width - x, b.w + 2 * pad), height: Math.min(scene.height - y, b.h + 2 * pad), scale: 1 };
+      clip = { x, y, width: Math.min(scene.width - x, b.w + 2 * pad), height: Math.min(viewH - y, b.h + 2 * pad), scale: 1 };
     }
     const shot = await cdp.send("Page.captureScreenshot", { format: "webp", quality: 82, captureBeyondViewport: false, ...(clip ? { clip } : {}) });
     const file = path.join(OUT, `${scene.name}-${LOCALE}${THEME === "light" ? "-light" : ""}.webp`);
     fs.writeFileSync(file, Buffer.from(shot.data, "base64"));
-    console.log("[shot]", path.relative(ROOT, file), `${scene.width}x${scene.height}@2x`);
+    console.log("[shot]", path.relative(ROOT, file), `${scene.width}x${viewH}@2x`);
 
     cdp.ws.close();
     await fetch(`http://127.0.0.1:${CDP_PORT}/json/close/${target.id}`).catch(() => {});
