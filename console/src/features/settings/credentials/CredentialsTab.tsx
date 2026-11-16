@@ -115,7 +115,9 @@ export function CredentialsTab() {
   const card = (kind: string): ReactNode => {
     const st = conns?.[kind as keyof typeof conns] as ProviderConn | undefined;
     const draw = CARDS[kind];
-    return draw ? <Fragment key={kind}>{draw(st, reload, allowedRoutesOf(catalog.kinds?.get(kind)))}</Fragment> : null;
+    // A stored or removed credential can change what the policy allows (a member endpoint on an
+    // approved host makes member-llamacpp usable), so a card's reload asks for both answers again.
+    return draw ? <Fragment key={kind}>{draw(st, () => void refreshAll(), allowedRoutesOf(catalog.kinds?.get(kind)))}</Fragment> : null;
   };
 
   return (

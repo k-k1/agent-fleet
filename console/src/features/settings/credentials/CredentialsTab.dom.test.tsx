@@ -364,6 +364,32 @@ describe("the member's llama.cpp endpoint under approved hosts", () => {
     expect(host!.textContent).toContain("http://llm.corp.example:8081");
   });
 
+  it("shows the endpoint as connected right after it is stored on an approved host, on the same page", async () => {
+    const { apiJSON } = await import("../../../core/api/client.ts");
+    answer({ lcpp: { connected: false } }, catalogOf([], { addableRoutes: ["member-llamacpp"] }));
+    await mount();
+    // The Agent's answers once the endpoint is stored on the approved host.
+    (apiJSON as unknown as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "api/connections/lcpp") {
+        answer({ lcpp: { connected: true, url: "http://llm.corp.example:8081", reachable: true } }, catalogOf([lcppKind]));
+      }
+      return Promise.resolve({});
+    });
+    const [url] = Array.from(host!.querySelectorAll<HTMLInputElement>(".p-card input.cinput"));
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(url, "http://llm.corp.example:8081");
+      url.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const connect = Array.from(host!.querySelectorAll<HTMLButtonElement>(".p-card button")).find((b) => b.textContent === t("conn.connect"))!;
+    await act(async () => connect.click());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(host!.textContent).toContain("http://llm.corp.example:8081");
+    expect(host!.querySelector(".p-card input.cinput")).toBeNull();
+    (apiJSON as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => Promise.resolve({}));
+  });
+
   it("does not show an endpoint stored on a host the policy does not approve, and offers the entry", async () => {
     answer(
       { lcpp: { connected: true, url: "http://other.example:8081", reachable: true } },

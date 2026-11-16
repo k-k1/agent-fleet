@@ -80,11 +80,10 @@ export function useMemberCatalog(running: boolean): MemberCatalog & { refresh: (
     deadline.current = undefined;
     setCat(next ?? EMPTY);
   }, []);
-  // A refresh the page asks for (after the reset) shows nothing until it answers.
-  const refresh = useCallback(async () => {
-    setCat(EMPTY);
-    await load();
-  }, [load]);
+  // A refresh the page asks for (after the reset, after a credential is stored) keeps what is
+  // drawn until the answer replaces it: clearing would unmount the cards, and a card in the middle
+  // of a sign-in would lose it.
+  const refresh = load;
   useEffect(() => {
     // A new principal starts from nothing: the previous one's catalogue is never shown for it.
     setCat(EMPTY);

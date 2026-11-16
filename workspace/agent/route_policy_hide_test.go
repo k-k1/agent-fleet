@@ -778,3 +778,43 @@ func connectionsMap(t *testing.T) map[string]json.RawMessage {
 	}
 	return out
 }
+
+// GET /connections never carries the member's endpoint while the policy does not allow it: an
+// endpoint stored on a host that is not approved is kept but hidden (D14a), so its URL and the
+// model last found there are left out of the raw answer. On the approved host they are shown.
+func TestConnectionsHideAnEndpointOnAnUnapprovedHost(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	raw := func() string {
+		w := httptest.NewRecorder()
+		handleConnectionsGet(w, httptest.NewRequest(http.MethodGet, "/connections", nil))
+		return w.Body.String()
+	}
+	store := func(url string) {
+		t.Helper()
+		if err := secrets.Update(func(d *secrets.Data) error { d.Lcpp = &secrets.LcppConn{URL: url}; return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := apiKeysOnly
+	p.Endpoints, p.EndpointRoutes = []string{"llm.corp.example"}, []string{routes.RouteMemberLlamacpp}
+	useHidingPolicy(t, p)
+	store("http://hidden-box.example:8081")
+	lcppMemberCacheReset()
+	lcppMemberRecordReachable(true)
+	lcppMemberRecordModel([]lcppMemberModel{{ID: "hidden-model-name"}})
+	t.Cleanup(lcppMemberCacheReset)
+	body := raw()
+	for _, leak := range []string{"hidden-box.example", "hidden-model-name"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("GET /connections carries %q for an endpoint the policy does not allow: %s", leak, body)
+		}
+	}
+	if _, ok := connectionsMap(t)[session.KindLcpp]; !ok {
+		t.Error("the lcpp entry is gone, so no endpoint can be entered")
+	}
+	store("http://llm.corp.example:8081")
+	if body := raw(); !strings.Contains(body, "llm.corp.example") {
+		t.Errorf("control: the approved endpoint is not shown: %s", body)
+	}
+}
