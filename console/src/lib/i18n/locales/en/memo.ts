@@ -247,7 +247,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   // The action on a work item's detail, and its picker. The label and the layout are not final.
   "memo.addrun_action": "Add to auto-run",
   "memo.addrun_title": "Add to auto-run",
-  "memo.addrun_intro": "Saves a pointer to {key} as a memo. The item's text is not copied: the session reads it from {provider}.",
+  "memo.addrun_intro": "Saves a link to {key} as a memo. The item's text is not copied: the session reads it from {provider}.",
   "memo.addrun_repo": "Repository",
   "memo.addrun_repo_choose": "Choose a repository",
   "memo.addrun_category": "Category",
@@ -264,6 +264,6 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.addrun_existing": "{key} is already in “{category}” in {repo}, so nothing was added.",
   "memo.addrun_existing_note": "The note you typed was not saved.",
   "memo.addrun_failed": "Could not add it to auto-run.",
-  "memo.addrun_no_link": "This item has no address, so it cannot be added.",
+  "memo.addrun_no_link": "This item has no URL, so it cannot be added.",
   "memo.addrun_load_failed": "Could not load the categories.",
 };

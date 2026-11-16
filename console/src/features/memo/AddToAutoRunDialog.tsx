@@ -38,6 +38,9 @@ export function AddToAutoRunDialog({ reference, repos, defaultRepo, onClose }: P
   const [cats, setCats] = useState<MemoCategory[] | null>(null);
   const [queues, setQueues] = useState<MemoQueue[]>([]);
   const [loadFailed, setLoadFailed] = useState(false);
+  // False when the organization has not allowed auto-run: the categories are still listed, but
+  // nothing in them starts by itself, and the picker is where that has to be said.
+  const [tenantOff, setTenantOff] = useState(false);
   // The repository list can land after the dialog opened; only an unchosen repository follows it.
   useEffect(() => {
     if (!repo) setRepo(defaultMemoRepo(repos, defaultRepo));
@@ -53,7 +56,9 @@ export function AddToAutoRunDialog({ reference, repos, defaultRepo, onClose }: P
           return;
         }
         setCats(cList as MemoCategory[]);
-        setQueues(readMemoQueues(qRaw)?.queues ?? []);
+        const qw = readMemoQueues(qRaw);
+        setQueues(qw?.queues ?? []);
+        setTenantOff(qw ? !qw.tenantEnabled : false);
       })
       .catch(() => alive && setLoadFailed(true));
     return () => {
@@ -151,7 +156,8 @@ export function AddToAutoRunDialog({ reference, repos, defaultRepo, onClose }: P
           </p>
         )}
         {!loadFailed && cats && repo && choices.length === 0 && <p className="wi-shint">{tr("memo.addrun_no_category")}</p>}
-        {chosen && !chosen.autoRun && <p className="wi-shint">{tr("memo.addrun_plain_hint")}</p>}
+        {tenantOff && autoRows.length > 0 && <p className="wi-shint">{tr("memo.waiting_tenant_off")}</p>}
+      {chosen && !chosen.autoRun && <p className="wi-shint">{tr("memo.addrun_plain_hint")}</p>}
         {!reference.url && (
           <p className="wi-merr" role="alert">
             {tr("memo.addrun_no_link")}

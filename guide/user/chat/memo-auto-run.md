@@ -85,29 +85,29 @@ Press "**Remove settings**" and the category is an ordinary memo category again.
 
 ### Add a work item
 
-On an issue, a ticket or a pull request, you can add a pointer to it, with a note of your own, to a category. When that category has auto-run on, the session a run starts is given the item as its work item.
+On an issue, a ticket or a pull request, you can add a link to it, with a note of your own, to a category. When that category has auto-run on, the session a run starts is given the item as its work item.
 
 1. Press the item in the work-item list of the left pane to open its detail
 2. Press "**Add to auto-run**" at the foot
 3. In the small screen that opens, choose the **Repository** and the **Category**, and write "**Your note (optional)**" if you like. Then press "**Add**"
 
 - The repository starts on the one a launch from this item would start in. When that is a worktree, the parent repository is chosen, because memos are filed under the parent repository. Nothing is chosen for you when none is known
-- The categories of that repository are listed with the auto-run ones first, marked "**Auto-run**" (or "**Auto-run off**"), and the others below. In a category without auto-run the pointer is an ordinary memo
-- The item's text is **not** copied. The memo holds only the item's key and address, and your note. Your note is the memo's text, and may be empty
+- The categories of that repository are listed with the auto-run ones first, marked "**Auto-run**" (or "**Auto-run off**"), and the others below. In a category without auto-run the link is an ordinary memo
+- The item's text is **not** copied. The memo holds only the item's key and URL, and your note. Your note is the memo's text, and may be empty
 - It is a memo of yours, so it is "Waiting to run" and needs no approval
-- A message says where it went. A category holds one pointer to an item at a time among the memos that have not been sent yet: when the item is already there, the message says so and that nothing was added. A note you typed is not saved in that case, and the message says that too. Once a memo with the item has been sent, the item can be added again
+- A message says where it went. A category holds one link to an item at a time among the memos that have not been sent yet: when the item is already there, the message says so and that nothing was added. A note you typed is not saved in that case, and the message says that too. Once a memo with the item has been sent, the item can be added again
 - Moving or editing a memo so that a category would hold the same item twice is refused with "This item is already in this auto-run category." A drag that is refused puts the memo back where it was
 
 #### On the list and on the card
 
-- A memo with a pointer shows the item's key as a link to the item, with the item's title when the work-item list holds it, and your note below. A memo may be only the pointer
-- "**Remove the link**" in the memo's edit view drops the pointer when you save. Editing only the text leaves it
-- A memo a session adds can carry a pointer too, and the approval card shows it, with the memo's text. Approving covers it: **a pointer is never approved out of sight**
+- A memo with a link shows the item's key as a link to the item, with the item's title when the work-item list holds it, and your note below. A memo may be only the link
+- "**Remove the link**" in the memo's edit view drops the link when you save. Editing only the text leaves it
+- A memo a session adds can carry a link too, and the approval card shows it, with the memo's text. Approving covers it: **a link is never approved out of sight**
 
 #### What the session receives
 
-- The memo reaches the session as it does today, with the item's key and address beside it. The item's text is not sent: the session reads it with `gh`, `jira` or `bkt`, as a session started from the item does
-- When one run holds exactly one pointer, the session is linked to that item, as when you start from it. With none, or two or more, no link is made
+- The memo reaches the session as it does today, with the item's key and URL beside it. The item's text is not sent: the session reads it with `gh`, `jira` or `bkt`, as a session started from the item does
+- When one run holds exactly one link, the session is linked to that item, as when you start from it. With none, or two or more, no link is made
 
 ### Approve
 
@@ -299,7 +299,7 @@ The pause and the restart each have a notice of their own. A line for another re
 |---|---|
 | Auto-run is paused: the first turns of the last two runs failed, so no run starts by itself. “Run now” still works. | The last two runs failed. Fix the cause and press "Resume" ([Pause and resume](#pause-and-resume)) |
 | This workspace has to be restarted to update it before runs can start by themselves. “Run now” still works. | The workspace is still on the version from before the update. Restart it, and runs can start by themselves. Until then only "Run now" works. It shows only while "Run by itself" is on |
-| Memos that point at a work item cannot run yet: the workspace has to be restarted to update it first. Memos without one still run. | The workspace is still on the version from before the update, and it cannot take memos that point at an item. Restart it. Memos without a pointer run as usual in the meantime. It shows while a run has been held back for this |
+| Memos that point at a work item cannot run yet: the workspace has to be restarted to update it first. Memos without one still run. | The workspace is still on the version from before the update, and it cannot take memos that point at an item. Restart it. Memos without a link run as usual in the meantime. It shows while a run has been held back for this |
 
 ![The notice for a workspace that has to be restarted: under the header, it says the workspace has to be restarted to update it, and that "Run now" still works](../../assets/chatpages-autorun-norestart-en-light.webp)
 

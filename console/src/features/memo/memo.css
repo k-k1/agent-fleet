@@ -880,6 +880,9 @@
   font-weight: 600;
 }
 .memo-release-items {
+  /* A long card keeps its approve button on screen: the items scroll, the foot stays. */
+  max-height: 40vh;
+  overflow-y: auto;
   list-style: none;
   margin: 4px 0;
   padding: 0;

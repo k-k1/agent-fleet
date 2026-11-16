@@ -133,6 +133,9 @@ describe("a row with a reference", () => {
     servedMemos = [aMemo({ reference: ref })];
     await renderSection();
     expect(row().querySelector(".memo-reflink-title")?.textContent).toBe("Crash when saving");
+    // The link reads as the work-item list writes the key, though the note holds it in lower case.
+    expect(link()?.textContent).toBe("Acme/App#12");
+    expect(link()?.getAttribute("href")).toBe(ref.url);
   });
 
   it("does not fold the case of a key it should not: jira keys, and another provider's item", async () => {
@@ -248,7 +251,7 @@ describe("the approval card", () => {
     cacheItems(cached({}));
     await draw([aMemo({ state: "held", contentHash: "h", reference: ref })]);
     const a = document.querySelector<HTMLAnchorElement>(".memo-release a.memo-reflink-key")!;
-    expect(a.textContent).toBe("acme/app#12");
+    expect(a.textContent).toBe("Acme/App#12");
     expect(a.getAttribute("href")).toBe(ref.url);
     expect(document.querySelector(".memo-release .memo-reflink-title")?.textContent).toBe("Crash when saving");
     expect(document.querySelector(".memo-release-text")?.textContent).toBe("my note");

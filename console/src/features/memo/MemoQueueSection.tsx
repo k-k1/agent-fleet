@@ -1424,6 +1424,9 @@ function MemoRow(props: MemoRowProps) {
             <Icon name="inbox" /> {tr("inbox.memo_origin", { who: m.origin.sender })}
           </span>
         )}
+        {/* A file note shows its path instead; the server flush ignores a reference on one, and the
+            Console never attaches one. The edit view and the approval card still show it, so a
+            reference that reached it through the token face is never hidden where it is approved. */}
         {ref && m.kind !== "file" && <MemoReferenceLink reference={ref} />}
         {m.kind === "file" ? (
           <>

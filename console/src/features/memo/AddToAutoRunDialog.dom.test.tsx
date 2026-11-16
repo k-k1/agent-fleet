@@ -132,6 +132,22 @@ describe("the picker", () => {
   });
 });
 
+describe("an organization that has not allowed auto-run", () => {
+  it("says nothing starts by itself, and still lists the categories", async () => {
+    servedCats = [cat("c2", "runs", { queue: true })];
+    servedQueues = { tenantEnabled: false, queues: [queue("c2", true)] };
+    await open([repo("app")], "app");
+    expect(document.body.textContent).toContain(t("memo.waiting_tenant_off"));
+    expect(sel(t("memo.addrun_category")).querySelectorAll("option").length).toBeGreaterThan(1);
+  });
+
+  it("says nothing of it when the organization allows it", async () => {
+    servedCats = [cat("c2", "runs", { queue: true })];
+    await open([repo("app")], "app");
+    expect(document.body.textContent).not.toContain(t("memo.waiting_tenant_off"));
+  });
+});
+
 describe("adding", () => {
   beforeEach(() => {
     servedCats = [cat("c2", "runs", { queue: true })];

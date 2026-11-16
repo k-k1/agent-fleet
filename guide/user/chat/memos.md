@@ -42,11 +42,11 @@ Memos are stored on the server, so the same queue shows on another PC or your ph
 
 ## Point a memo at a work item
 
-In the detail of an issue, a ticket or a pull request, "**Add to auto-run**" saves a pointer to that item as a memo, with a note of your own if you like. Which category it goes in, what is saved and what a session receives are in [Run memos automatically](memo-auto-run.md#add-a-work-item).
+In the detail of an issue, a ticket or a pull request, "**Add to auto-run**" saves a link to that item as a memo, with a note of your own if you like. Which category it goes in, what is saved and what a session receives are in [Run memos automatically](memo-auto-run.md#add-a-work-item).
 
-- A memo that points at an item shows the item's key as a link to it, with the item's title when the work-item list has it, and your note below. A memo may be only the pointer
+- A memo that points at an item shows the item's key as a link to it, with the item's title when the work-item list has it, and your note below. A memo may be only the link
 - The item's text is not copied into the memo
-- Editing the note keeps the pointer. "**Remove the link**" in the edit view drops it, once you save
+- Editing the note keeps the link. "**Remove the link**" in the edit view drops it, once you save
 
 ## Have an assistant tidy them
 
@@ -74,7 +74,7 @@ In the detail of an issue, a ticket or a pull request, "**Add to auto-run**" sav
 
 - Several memos sent together become one message, with a heading per category (`## …`) and numbers from `1.`
 - A single memo is sent as its bare text
-- A memo that points at an item adds one line with the item's key and address after its text, or alone when the memo is only the pointer
+- A memo that points at an item adds one line with the item's key and URL after its text, or alone when the memo is only the link
 - A memo never goes anywhere on its own, such as to someone's mail. It reaches only the destination you pick when you send it
 
 ### Memos taken in from the inbox

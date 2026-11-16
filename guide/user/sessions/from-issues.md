@@ -97,7 +97,7 @@ same name the dialog shows.
 
 ### Add it to auto-run instead
 
-To hand the item to a memo category instead of starting a session now, press **Add to auto-run** at the foot of the detail. It saves a pointer to the item, with a note of your own if you like. The item's text is not copied, and when the category has auto-run on, the session a run starts is given the item as its work item. ([Run memos automatically](../chat/memo-auto-run.md#add-a-work-item))
+To hand the item to a memo category instead of starting a session now, press **Add to auto-run** at the foot of the detail. It saves a link to the item, with a note of your own if you like. The item's text is not copied, and when the category has auto-run on, the session a run starts is given the item as its work item. ([Run memos automatically](../chat/memo-auto-run.md#add-a-work-item))
 
 ## Report the work back
 

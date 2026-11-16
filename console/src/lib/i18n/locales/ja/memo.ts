@@ -244,7 +244,7 @@ export const memo = {
   // 作業項目の詳細にある操作と、その選択ダイアログ。ラベルとレイアウトは確定していません。
   "memo.addrun_action": "自動実行に追加",
   "memo.addrun_title": "自動実行に追加",
-  "memo.addrun_intro": "{key} へのポインタをメモとして保存します。項目の本文はコピーしません。セッションは {provider} から読みます。",
+  "memo.addrun_intro": "{key} へのリンクをメモとして保存します。項目の本文はコピーしません。セッションは {provider} から読みます。",
   "memo.addrun_repo": "リポジトリ",
   "memo.addrun_repo_choose": "リポジトリを選んでください",
   "memo.addrun_category": "カテゴリ",
@@ -261,6 +261,6 @@ export const memo = {
   "memo.addrun_existing": "{key} はすでに {repo} の「{category}」に入っているため、何も追加していません。",
   "memo.addrun_existing_note": "入力したメモは保存されていません。",
   "memo.addrun_failed": "自動実行に追加できませんでした。",
-  "memo.addrun_no_link": "この項目にはアドレスがないため、追加できません。",
+  "memo.addrun_no_link": "この項目にはURLがないため、追加できません。",
   "memo.addrun_load_failed": "カテゴリを読み込めませんでした。",
 };

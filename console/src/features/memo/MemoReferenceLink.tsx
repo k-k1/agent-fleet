@@ -29,7 +29,7 @@ export function MemoReferenceLink({ reference }: { reference: MemoReference }) {
           // A row's body toggles and edits on a click; following the link must not.
           onClick={(e) => e.stopPropagation()}
         >
-          {reference.key}
+          {item?.key || reference.key}
         </a>
       ) : (
         // Drawn all the same, as text: the note holds it and the approval is bound to it.
