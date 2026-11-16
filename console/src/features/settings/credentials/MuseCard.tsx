@@ -35,8 +35,26 @@ import { getMuseInstall, isOk, type CliInstallStatus } from "../api.ts";
 // The launch defaults block carries the model and the reasoning effort only. Its permission
 // choice is deliberately absent (approvals cannot fire — registry.ts), and muse has no plan
 // mode, so those two rows would be controls with nothing behind them.
-export function MuseCard({ running, st, reload }: { running: boolean; st: ProviderConn | undefined; reload: () => void }) {
+export function MuseCard({
+  running,
+  st: rawSt,
+  reload,
+  allowed,
+}: {
+  running: boolean;
+  st: ProviderConn | undefined;
+  reload: () => void;
+  /** The routes the policy allows muse (ADR 0138 D10a). */
+  allowed: Set<string>;
+}) {
   const tr = useT();
+  // Each control is judged by the route it stores a credential for: the account sign-in by
+  // muse-login, a pasted key by meta-api. A stored credential on a forbidden route is shown as not
+  // connected (D14a): `metered` is what tells a key from a sign-in.
+  const loginAllowed = allowed.has("muse-login");
+  const keyAllowed = allowed.has("meta-api");
+  const storedAllowed = rawSt?.metered ? keyAllowed : loginAllowed;
+  const st = rawSt && rawSt.connected && !storedAllowed ? { ...rawSt, connected: false, metered: false, email: undefined } : rawSt;
   const toast = useToast();
   const poll = usePolling();
   const active = useActiveFlow();
@@ -189,10 +207,10 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
   // staging home and replaces the login only when it completes, and a key replaces a key only
   // when one is submitted.
   const reauthMuse = async () => {
-    if (st?.metered) {
+    if (st?.metered && keyAllowed) {
       setKeyReauth(true);
       setMode("key");
-    } else await startLogin();
+    } else if (loginAllowed) await startLogin();
   };
   const disconnect = async () => {
     await raw("api/connections/muse", { method: "DELETE" });
@@ -297,19 +315,23 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
         </>
       ) : (
         <>
-          <div className="p-desc">{tr("agents.muse_desc")}</div>
+          <div className="p-desc">{tr(loginAllowed ? "agents.muse_desc" : "cred.muse_desc_key_only")}</div>
           <div className="p-body">
             <div className="p-opts">
-              <button type="button" className="p-opt" disabled={busy} onClick={startLogin}>
-                <span className="p-opt-t">
-                  {tr("agents.muse_connect")} <span className="p-rec">{tr("git.recommended")}</span>
-                </span>
-                <span className="p-opt-s">{tr("agents.muse_connect_note")}</span>
-              </button>
-              <button type="button" className="p-opt" onClick={() => setMode("key")}>
-                <span className="p-opt-t">{tr("agents.muse_use_key")}</span>
-                <span className="p-opt-s">{tr("agents.muse_use_key_note")}</span>
-              </button>
+              {loginAllowed && (
+                <button type="button" className="p-opt" disabled={busy} onClick={startLogin}>
+                  <span className="p-opt-t">
+                    {tr("agents.muse_connect")} <span className="p-rec">{tr("git.recommended")}</span>
+                  </span>
+                  <span className="p-opt-s">{tr("agents.muse_connect_note")}</span>
+                </button>
+              )}
+              {keyAllowed && (
+                <button type="button" className="p-opt" onClick={() => setMode("key")}>
+                  <span className="p-opt-t">{tr("agents.muse_use_key")}</span>
+                  <span className="p-opt-s">{tr("agents.muse_use_key_note")}</span>
+                </button>
+              )}
             </div>
             <Hint>{tr("agents.muse_hint")}</Hint>
           </div>

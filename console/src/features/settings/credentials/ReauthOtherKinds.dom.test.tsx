@@ -63,7 +63,7 @@ const cards: Record<string, { mount: Mounter; start: string; shows: string }> = 
     shows: "a, .flow-link, code",
   },
   muse: {
-    mount: mounter((st, reload) => <MuseCard running st={st} reload={reload} />),
+    mount: mounter((st, reload) => <MuseCard running st={st} reload={reload} allowed={new Set(["muse-login", "meta-api"])} />),
     start: "POST api/connections/muse/start",
     shows: "a, .flow-link, code",
   },

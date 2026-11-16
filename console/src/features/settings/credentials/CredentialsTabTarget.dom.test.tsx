@@ -20,7 +20,7 @@ vi.mock("../../../core/store/workspace.ts", () => ({
   wsStartBusy: () => false,
 }));
 
-const { CredentialsTab } = await import("./CredentialsTab.tsx");
+const { CredentialsTab, CARD_ROUTES } = await import("./CredentialsTab.tsx");
 const { useSettingsUI } = await import("../store.ts");
 const { resetConnectionsCache } = await import("../parts/useConnections.ts");
 
@@ -28,7 +28,7 @@ const { resetConnectionsCache } = await import("../parts/useConnections.ts");
 const SNAPSHOT = Object.fromEntries(
   ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse"].map((k) => [k, { connected: false }]),
 );
-const KINDS = { kinds: Object.keys(SNAPSHOT).map((kind) => ({ kind })), access: {} };
+const KINDS = { kinds: Object.keys(SNAPSHOT).map((kind) => ({ kind, fixedRoutes: CARD_ROUTES[kind] })), access: {} };
 function answer(conns: Record<string, unknown>) {
   api.mockImplementation((path: string) =>
     Promise.resolve(path === "api/connections" ? conns : path === "api/agents/kinds" ? KINDS : {}),

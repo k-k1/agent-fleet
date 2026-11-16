@@ -870,4 +870,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "cred.own_settings_confirm_title": "Reset your own agent settings?",
   "cred.own_settings_confirm_body": "Every agent you switched off, llama.cpp included, is switched back on. What your organisation's policy allows does not change.",
   "cred.own_settings_reset_failed": "Your settings could not be saved, so nothing was reset. Try again.",
+  "cred.codex_desc_sub_only": "Connect with a ChatGPT subscription.",
+  "cred.codex_desc_key_only": "Connect with an OpenAI API key.",
+  "cred.muse_desc_key_only": "Connect Muse Code with a Meta API key.",
 };

@@ -865,4 +865,7 @@ export const settings = {
   "cred.own_settings_confirm_title": "自分のエージェント設定をリセットしますか？",
   "cred.own_settings_confirm_body": "自分でオフにしたエージェント（llama.cpp を含む）をすべてオンに戻します。組織のポリシーで許されている範囲は変わりません。",
   "cred.own_settings_reset_failed": "設定を保存できなかったため、リセットされていません。もう一度お試しください。",
+  "cred.codex_desc_sub_only": "ChatGPT サブスクで接続します。",
+  "cred.codex_desc_key_only": "OpenAI API キーで接続します。",
+  "cred.muse_desc_key_only": "Meta の API キーで Muse Code を接続します。",
 };

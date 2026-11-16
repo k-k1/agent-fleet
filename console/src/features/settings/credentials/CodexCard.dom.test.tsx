@@ -39,6 +39,7 @@ async function mount(st: Record<string, unknown>, reload = () => {}) {
     root!.render(
       <CodexCard
         running
+        allowed={new Set(["chatgpt-subscription", "openai-api"])}
         st={st}
         reload={reload}
       />,

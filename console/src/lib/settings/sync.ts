@@ -98,7 +98,9 @@ export function waitPrefsSaved(ms = 15_000): Promise<boolean> {
       resolve(ok);
     }
     const check = (): void => {
-      if (syncState === "synced" && unsaved.size === 0 && !saveTimer && !saveInFlight) done(true);
+      // "synced" is set only once the last save carrying every unsaved change has landed (the
+      // PUT's own .then), so it needs no wait for the flight's .finally, which notifies nobody.
+      if (syncState === "synced" && unsaved.size === 0 && !saveTimer) done(true);
       else if (syncState === "failed") done(false);
     };
     unsub = subscribePrefsSync(check);

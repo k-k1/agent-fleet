@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../core/api/client.ts";
+import { useTenantStore } from "../../../core/store/tenant.ts";
 
 /** One kind of the live GET /agents/kinds answer, as far as these pages read it. */
 export interface LiveKind {
@@ -21,10 +22,13 @@ export interface MemberCatalog {
 
 const EMPTY: MemberCatalog = { kinds: null, hiddenByOwn: false };
 
-/** parseMemberCatalog reads a GET /agents/kinds answer; null when it is not one. */
+/** parseMemberCatalog reads a GET /agents/kinds answer; null when it is not one, or when it does
+ *  not prove itself filtered: an Agent from before ADR 0138 M2 sends the same `kinds` unfiltered,
+ *  and only the `access` summary, sent by every Agent that filters, tells the two apart. */
 export function parseMemberCatalog(raw: unknown): MemberCatalog | null {
   const r = raw as { kinds?: unknown; access?: { allOffByOwnSettings?: unknown; someOffByOwnSettings?: unknown } } | null;
   if (!r || typeof r !== "object" || !Array.isArray(r.kinds)) return null;
+  if (!r.access || typeof r.access !== "object") return null;
   const kinds = new Map<string, LiveKind>();
   for (const k of r.kinds as LiveKind[]) {
     if (k && typeof k.kind === "string") kinds.set(k.kind, k);
@@ -33,37 +37,63 @@ export function parseMemberCatalog(raw: unknown): MemberCatalog | null {
   return { kinds, hiddenByOwn: !!a && (a.someOffByOwnSettings === true || a.allOffByOwnSettings === true) };
 }
 
+// CATALOG_REFRESH_MS bounds how long a policy change takes to reach an open page: the Agent pulls
+// the policy at least every 30 s (ADR 0138 D12), and this adds at most one more such period.
+export const CATALOG_REFRESH_MS = 30_000;
+
 /**
- * useMemberCatalog asks the Agent afresh on every mount and refresh: the catalogue this page
- * filters by must be the policy and the member layer as they are now, never a copy from before a
- * tightening. While the workspace is stopped, the answer is out, or it failed, kinds is null and
- * the caller shows no kind at all.
+ * useMemberCatalog asks the Agent afresh on every mount, on every tenant or member switch, every
+ * CATALOG_REFRESH_MS, and on refresh(): the catalogue these pages filter by must be the policy and
+ * the member layer as they are now. Only the newest request may set it. While the workspace is
+ * stopped, the first answer is out, the latest request failed, or no answer has been taken for a
+ * whole refresh period, kinds is null and the caller shows no kind at all.
  */
 export function useMemberCatalog(running: boolean): MemberCatalog & { refresh: () => Promise<void> } {
   const [cat, setCat] = useState<MemberCatalog>(EMPTY);
   const seq = useRef(0);
-  const refresh = useCallback(async () => {
+  const deadline = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const identity = useTenantStore((s) => `${s.tenant}|${s.identityRev}`);
+  const load = useCallback(async () => {
     const id = ++seq.current;
-    setCat(EMPTY);
+    // Fails closed when no answer is taken for a whole period from the oldest open request.
+    if (deadline.current === undefined) {
+      deadline.current = setTimeout(() => {
+        deadline.current = undefined;
+        if (id <= seq.current) setCat(EMPTY);
+      }, CATALOG_REFRESH_MS);
+    }
     let next: MemberCatalog | null = null;
     try {
       next = parseMemberCatalog(await api("api/agents/kinds"));
     } catch {
       next = null;
     }
-    if (id === seq.current) setCat(next ?? EMPTY);
+    if (id !== seq.current) return;
+    clearTimeout(deadline.current);
+    deadline.current = undefined;
+    setCat(next ?? EMPTY);
   }, []);
+  // A refresh the page asks for (after the reset) shows nothing until it answers.
+  const refresh = useCallback(async () => {
+    setCat(EMPTY);
+    await load();
+  }, [load]);
   useEffect(() => {
+    // A new principal starts from nothing: the previous one's catalogue is never shown for it.
+    setCat(EMPTY);
     if (!running) {
       seq.current++;
-      setCat(EMPTY);
       return;
     }
-    void refresh();
+    void load();
+    const timer = setInterval(() => void load(), CATALOG_REFRESH_MS);
     return () => {
       seq.current++;
+      clearInterval(timer);
+      clearTimeout(deadline.current);
+      deadline.current = undefined;
     };
-  }, [running, refresh]);
+  }, [running, load, identity]);
   return { ...cat, refresh };
 }
 

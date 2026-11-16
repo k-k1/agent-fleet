@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Button } from "../../../ui/Button.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
+import { useTenantStore } from "../../../core/store/tenant.ts";
 import { ConnChecking, type ConnPhase } from "../parts/providerCard.tsx";
 import { connectionsProgress, useConnections } from "../parts/useConnections.ts";
 import { allowedRoutesOf, useMemberCatalog } from "./memberCatalog.ts";
@@ -36,14 +37,33 @@ export const CREDENTIAL_GROUPS: { key: string; label: string; kinds: string[] }[
 // One card per GET /connections entry. A map rather than a switch, so the kind names stay data.
 const CARDS: Record<string, (st: ProviderConn | undefined, reload: () => void, allowed: Set<string>) => ReactNode> = {
   claude: (st, reload) => <ClaudeCard running st={st} reload={reload} />,
-  codex: (st, reload) => <CodexCard running st={st} reload={reload} />,
+  codex: (st, reload, allowed) => <CodexCard running st={st} reload={reload} allowed={allowed} />,
   cursor: (st, reload) => <CursorCard running st={st} reload={reload} />,
   copilot: (st) => <CopilotCard running st={st} />,
   kiro: (st, reload) => <KiroCard running st={st} reload={reload} />,
   agy: (st, reload) => <AgyCard running st={st} reload={reload} />,
   opencode: (st, reload, allowed) => <OpencodeCard running st={st} reload={reload} allowed={allowed} />,
   lcpp: (st, reload) => <LcppCard running st={st} reload={reload} />,
-  muse: (st, reload) => <MuseCard running st={st} reload={reload} />,
+  muse: (st, reload, allowed) => <MuseCard running st={st} reload={reload} allowed={allowed} />,
+};
+
+// The routes each card stores a credential for (ADR 0138). A card is drawn only when the policy
+// allows at least one of them; a card holding several (codex, muse, opencode) also hides each
+// control whose route is forbidden. Claude's card is the subscription sign-in alone: the Anthropic
+// API key lives on opencode's slot.
+export const CARD_ROUTES: Record<string, string[]> = {
+  claude: ["anthropic-subscription"],
+  codex: ["chatgpt-subscription", "openai-api"],
+  cursor: ["cursor-login"],
+  copilot: ["copilot-login"],
+  kiro: ["kiro-login"],
+  agy: ["agy-login"],
+  opencode: [
+    "anthropic-api", "openai-api", "openrouter-api", "gemini-api", "sakana-api", "custom-api",
+    "opencode-account", "opencode-go", "opencode-zen",
+  ],
+  lcpp: ["member-llamacpp"],
+  muse: ["muse-login", "meta-api"],
 };
 
 /**
@@ -67,9 +87,11 @@ export function CredentialsTab() {
   // keeps it. With no fresh answer, no card is drawn.
   const [base] = useState(connectionsProgress);
   const catalog = useMemberCatalog(running);
+  // A tenant or member switch clears the shared snapshot (useConnections); this page asks again.
+  const identity = useTenantStore((st) => `${st.tenant}|${st.identityRev}`);
   useEffect(() => {
     if (running) reload();
-  }, [running, reload]);
+  }, [running, reload, identity]);
 
   const fresh = running && answered > base.answered && lastOk && !!conns;
   const failedNow = running && failures > base.failures && !lastOk;
@@ -122,9 +144,11 @@ export function CredentialsTab() {
           <>
             <p className="muted ds-note">{tr("agents.note_apply")}</p>
             {CREDENTIAL_GROUPS.map((g) => {
-              const present = g.kinds.filter(
-                (k) => conns && k in conns && conns[k as keyof typeof conns] && catalog.kinds!.has(k),
-              );
+              const present = g.kinds.filter((k) => {
+                if (!conns || !(k in conns) || !conns[k as keyof typeof conns] || !catalog.kinds!.has(k)) return false;
+                const allowed = allowedRoutesOf(catalog.kinds!.get(k));
+                return (CARD_ROUTES[k] ?? []).some((r) => allowed.has(r));
+              });
               if (present.length === 0) return null;
               return (
                 <section key={g.key} className="ds-group cred-group" data-cred-group={g.key}>

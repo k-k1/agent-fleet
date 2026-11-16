@@ -22,12 +22,22 @@ export function CodexCard({
   running,
   st,
   reload,
+  allowed,
 }: {
   running: boolean;
   st: ProviderConn | undefined;
   reload: () => void;
+  /** The routes the policy allows codex (ADR 0138 D10a). */
+  allowed: Set<string>;
 }) {
   const tr = useT();
+  // Each control is judged by the route it stores a credential for: the ChatGPT sign-in by the
+  // subscription, the API key by openai-api. A stored login on a forbidden route is not shown
+  // (D14a); an allowed API key stays offered when the subscription is forbidden.
+  const subAllowed = allowed.has("chatgpt-subscription");
+  const keyAllowed = allowed.has("openai-api");
+  const storedAllowed = st?.method === "apikey" ? keyAllowed : subAllowed;
+  const connected = !!st?.connected && storedAllowed;
   const toast = useToast();
   const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | device | key
@@ -122,7 +132,7 @@ export function CodexCard({
     reauthing.current = true;
     try {
       if (st?.method === "apikey") setMode("key");
-      else await startDevice();
+      else if (subAllowed) await startDevice();
     } finally {
       reauthing.current = false;
     }
@@ -140,7 +150,7 @@ export function CodexCard({
       name={kindDisplayName("codex")}
       status={
         running ? (
-          <StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>
+          <StatusPill on={connected}>{connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>
         ) : undefined
       }
     >
@@ -184,7 +194,7 @@ export function CodexCard({
           </div>
           <IssueLink url="https://platform.openai.com/api-keys" />
         </div>
-      ) : st?.connected ? (
+      ) : connected && st ? (
         <div className="p-who">
           <span className="p-em" title={st.email || ""}>
             {st.email || (st.method === "apikey" ? tr("agents.codex_apikey_label") : "ChatGPT")}
@@ -195,20 +205,27 @@ export function CodexCard({
         </div>
       ) : (
         <>
-          <div className="p-desc">{tr("agents.codex_desc")}</div>
+          <div className="p-desc">
+            {tr(subAllowed && keyAllowed ? "agents.codex_desc" : subAllowed ? "cred.codex_desc_sub_only" : "cred.codex_desc_key_only")}
+          </div>
           <div className="p-body">
             <div className="p-opts">
-              <button type="button" className="p-opt" disabled={busy} onClick={startDevice}>
-                <span className="p-opt-t">
-                  {tr("agents.codex_connect_sub")} <span className="p-rec">{tr("git.recommended")}</span>
-                </span>
-                <span className="p-opt-s">{tr("agents.codex_sub_note")}</span>
-              </button>
-              <button type="button" className="p-opt" onClick={() => setMode("key")}>
-                <span className="p-opt-t">{tr("agents.codex_connect_key")}</span>
-                <span className="p-opt-s">{tr("agents.codex_key_note")}</span>
-              </button>
+              {subAllowed && (
+                <button type="button" className="p-opt" disabled={busy} onClick={startDevice}>
+                  <span className="p-opt-t">
+                    {tr("agents.codex_connect_sub")} <span className="p-rec">{tr("git.recommended")}</span>
+                  </span>
+                  <span className="p-opt-s">{tr("agents.codex_sub_note")}</span>
+                </button>
+              )}
+              {keyAllowed && (
+                <button type="button" className="p-opt" onClick={() => setMode("key")}>
+                  <span className="p-opt-t">{tr("agents.codex_connect_key")}</span>
+                  <span className="p-opt-s">{tr("agents.codex_key_note")}</span>
+                </button>
+              )}
             </div>
+            {subAllowed && (
             <Hint>
               {tr("agents.codex_hint2_1")}
               <a href="https://chatgpt.com/#settings/Security" target="_blank" rel="noopener" className="flow-link">
@@ -216,6 +233,7 @@ export function CodexCard({
               </a>
               {tr("agents.codex_hint2_2")}
             </Hint>
+            )}
           </div>
         </>
       )}

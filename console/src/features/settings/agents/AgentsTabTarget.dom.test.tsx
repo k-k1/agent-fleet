@@ -104,6 +104,12 @@ describe("Settings > Agents", () => {
     expect(cards()).toEqual(["claude", "codex"]);
   });
 
+  it("draws no card from an Agent that does not prove its catalogue filtered", async () => {
+    kinds = { kinds: ALL.map((kind) => ({ kind })) }; // no access summary: an older Agent
+    await mount();
+    expect(cards()).toEqual([]);
+  });
+
   it("draws no card while the catalogue cannot be read", async () => {
     api.mockImplementation(() => Promise.resolve({ error: { code: "http_502" } }));
     await mount();

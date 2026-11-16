@@ -61,12 +61,14 @@ const OC_ROUTES = ["own", "free", "go", "zen"] as const;
 // allows (D10a): a forbidden route's choice, key preset or sign-in is not named at all. The Agent
 // refuses to store a credential for a forbidden route anyway (CredentialEntryRefusal).
 const DIRECT_KEY_ROUTES = ["anthropic-api", "openai-api", "openrouter-api", "gemini-api", "sakana-api", "custom-api"];
+// The three opencode.ai choices are also reachable through the opencode.ai account sign-in, which
+// pays for them itself: under an account-only policy they are the choices to offer.
 const USAGE_ROUTES: Record<(typeof OC_ROUTES)[number], string[]> = {
   own: DIRECT_KEY_ROUTES,
   // The free models are Zen's, served through opencode.ai's Zen endpoint.
-  free: ["opencode-zen"],
-  go: ["opencode-go"],
-  zen: ["opencode-zen"],
+  free: ["opencode-zen", "opencode-account"],
+  go: ["opencode-go", "opencode-account"],
+  zen: ["opencode-zen", "opencode-account"],
 };
 // OPENCODE_API_KEY opens both opencode.ai billing routes (the Agent's keyEnvRoutes).
 const PRESET_ROUTES: Record<string, string[]> = {
@@ -93,8 +95,10 @@ function OpencodeUsageRows({ allowed }: { allowed: Set<string> }) {
   // persisted: turning opencode off is not a reason to forget the route, and "own" is the
   // right landing place for a workspace switching it on for the first time — it is the only
   // value that reaches no opencode.ai service until the user asks for one.
+  const choices = OC_ROUTES.filter((v) => anyAllowed(allowed, USAGE_ROUTES[v]));
   const [lastRoute, setLastRoute] = useState<Exclude<typeof selected, "off">>(off ? "own" : selected);
-
+  // Switching on lands on the last route when it is still offered, else on the first one that is.
+  const onRoute = choices.includes(lastRoute) ? lastRoute : (choices[0] ?? lastRoute);
 
   return (
     <>
@@ -105,7 +109,7 @@ function OpencodeUsageRows({ allowed }: { allowed: Set<string> }) {
             ["off", tr("agents.oc_enabled_off")],
             ["on", tr("agents.oc_enabled_on")],
           ]}
-          onChange={(v) => setSettings({ opencodeCatalog: v === "off" ? "off" : lastRoute })}
+          onChange={(v) => setSettings({ opencodeCatalog: v === "off" ? "off" : onRoute })}
         />
       </SettingRow>
       <p className="ps-note">{tr(off ? "agents.oc_enabled_note_off" : "agents.oc_enabled_note_on")}</p>
@@ -113,7 +117,7 @@ function OpencodeUsageRows({ allowed }: { allowed: Set<string> }) {
         <>
           <p className="ps-title">{tr("agents.oc_usage")}</p>
           <div className="p-opts p-opts-col" role="radiogroup" aria-label={tr("agents.oc_usage")}>
-            {OC_ROUTES.filter((v) => anyAllowed(allowed, USAGE_ROUTES[v])).map((v) => (
+            {choices.map((v) => (
               <button
                 key={v}
                 type="button"

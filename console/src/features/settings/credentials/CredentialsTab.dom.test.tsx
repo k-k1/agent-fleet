@@ -22,8 +22,9 @@ vi.mock("../../../core/store/workspace.ts", () => ({
   wsStartBusy: () => false,
 }));
 
-const { CredentialsTab, CREDENTIAL_GROUPS } = await import("./CredentialsTab.tsx");
+const { CredentialsTab, CREDENTIAL_GROUPS, CARD_ROUTES } = await import("./CredentialsTab.tsx");
 const { resetConnectionsCache } = await import("../parts/useConnections.ts");
+const { CATALOG_REFRESH_MS } = await import("./memberCatalog.ts");
 const { t } = await import("../../../lib/i18n/index.ts");
 
 let root: Root | null = null;
@@ -32,7 +33,8 @@ let host: HTMLDivElement | null = null;
 const ALL_KINDS = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse"];
 /** The live catalogue: the kinds the policy allows and the member has not switched off. */
 const catalogOf = (kinds: (string | Record<string, unknown>)[], access: Record<string, boolean> = {}) => ({
-  kinds: kinds.map((k) => (typeof k === "string" ? { kind: k } : k)),
+  // A bare name is a kind with every route its card stores a credential for allowed.
+  kinds: kinds.map((k) => (typeof k === "string" ? { kind: k, fixedRoutes: CARD_ROUTES[k] } : k)),
   access,
 });
 let kindsAnswer: unknown = catalogOf(ALL_KINDS);
@@ -208,5 +210,113 @@ describe("opencode card under a partial policy", () => {
     expect(usageChoices()).toEqual(["own", "free", "go", "zen"]);
     expect(presetLabels().length).toBe(7);
     expect(host!.textContent).toContain(t("agents.oc_account_connect"));
+  });
+});
+
+// Every card is judged by the route each of its controls stores a credential for (D10a).
+describe("credential cards under a mixed policy", () => {
+  const optionTitles = () => Array.from(host!.querySelectorAll<HTMLElement>(".p-opt-t")).map((e) => e.textContent || "");
+
+  it("draws no Claude card when only the Anthropic API key is allowed", async () => {
+    answer({ claude: { connected: true, email: "c@example.com" }, opencode: {} }, catalogOf([
+      { kind: "claude", routes: ["anthropic-api"] },
+      { kind: "opencode", fixedRoutes: ["anthropic-api"] },
+    ]));
+    await mount();
+    expect(cards()).toEqual(["opencode"]);
+    expect(host!.textContent).not.toContain("c@example.com");
+  });
+
+  it("offers codex's API key but not its subscription when only openai-api is allowed", async () => {
+    answer({ codex: { connected: false } }, catalogOf([{ kind: "codex", fixedRoutes: ["openai-api"] }]));
+    await mount();
+    expect(optionTitles()).toEqual([t("agents.codex_connect_key")]);
+    expect(host!.textContent).toContain(t("cred.codex_desc_key_only"));
+    expect(host!.textContent).not.toContain("ChatGPT");
+  });
+
+  it("does not show a stored ChatGPT sign-in whose route is forbidden", async () => {
+    answer(
+      { codex: { connected: true, method: "chatgpt", email: "sub@example.com", plan: "plus" } },
+      catalogOf([{ kind: "codex", fixedRoutes: ["openai-api"] }]),
+    );
+    await mount();
+    expect(host!.textContent).not.toContain("sub@example.com");
+    expect(optionTitles()).toEqual([t("agents.codex_connect_key")]);
+  });
+
+  it("offers muse's API key only when the sign-in route is forbidden", async () => {
+    answer({ muse: { supported: true, connected: false } }, catalogOf([{ kind: "muse", fixedRoutes: ["meta-api"] }]));
+    await mount();
+    expect(optionTitles()).toEqual([t("agents.muse_use_key")]);
+  });
+
+  it("unrestricted: offers both of codex's and muse's ways in", async () => {
+    answer({ codex: { connected: false }, muse: { supported: true, connected: false } });
+    await mount();
+    const titles = optionTitles();
+    expect(titles.some((x) => x.startsWith(t("agents.codex_connect_sub")))).toBe(true);
+    expect(titles).toContain(t("agents.codex_connect_key"));
+    expect(titles.some((x) => x.startsWith(t("agents.muse_connect")))).toBe(true);
+    expect(titles).toContain(t("agents.muse_use_key"));
+  });
+});
+
+describe("opencode under an account-only policy", () => {
+  it("lets a fresh member switch opencode on and offers the account sign-in", async () => {
+    const { getSettings, setSettings } = await import("../../../lib/settings.ts");
+    setSettings({ opencodeCatalog: "off" });
+    answer({ opencode: { envs: [] } }, catalogOf([{ kind: "opencode", fixedRoutes: ["opencode-account"] }]));
+    await mount();
+    const on = Array.from(host!.querySelectorAll<HTMLButtonElement>(".seg-btn")).find((b) => b.textContent === t("agents.oc_enabled_on"))!;
+    await act(async () => on.click());
+    expect(getSettings().opencodeCatalog).not.toBe("own");
+    expect(getSettings().opencodeCatalog).not.toBe("off");
+    expect(host!.textContent).toContain(t("agents.oc_account_connect"));
+    // No key preset is offered: none of their routes is allowed.
+    expect(host!.querySelector(".p-card select")).toBeNull();
+  });
+});
+
+describe("the catalogue's freshness", () => {
+  it("draws no card from an Agent that does not prove its catalogue filtered", async () => {
+    answer({ claude: {}, codex: {} }, { kinds: ALL_KINDS.map((kind) => ({ kind, fixedRoutes: CARD_ROUTES[kind] })) });
+    await mount();
+    expect(cards()).toEqual([]);
+  });
+
+  it("drops a card on the next refresh after the policy tightens, with the page left open", async () => {
+    vi.useFakeTimers();
+    try {
+      answer({ claude: {}, codex: {} });
+      host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+      await act(async () => root!.render(<CredentialsTab />));
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(cards()).toEqual(["claude", "codex"]);
+      kindsAnswer = catalogOf(["claude"]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(CATALOG_REFRESH_MS); });
+      expect(cards()).toEqual(["claude"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("forgets the previous member's catalogue on a member switch, and asks again", async () => {
+    const { useTenantStore } = await import("../../../core/store/tenant.ts");
+    answer({ claude: {}, codex: {} });
+    await mount();
+    expect(cards()).toEqual(["claude", "codex"]);
+    let release: (v: unknown) => void = () => {};
+    api.mockImplementation((path: string) =>
+      path === "api/agents/kinds" ? new Promise((r) => (release = r)) : Promise.resolve(path === "api/connections" ? { claude: {}, codex: {} } : {}),
+    );
+    await act(async () => useTenantStore.setState((s) => ({ identityRev: s.identityRev + 1 })));
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(cards()).toEqual([]);
+    await act(async () => release(catalogOf(["codex"])));
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(cards()).toEqual(["codex"]);
   });
 });

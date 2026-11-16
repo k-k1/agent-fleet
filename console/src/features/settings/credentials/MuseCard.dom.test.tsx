@@ -44,7 +44,7 @@ async function mount(st: Record<string, unknown> | undefined, reload = () => {})
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<MuseCard running st={st} reload={reload} />);
+    root!.render(<MuseCard running st={st} reload={reload} allowed={new Set(["muse-login", "meta-api"])} />);
   });
 }
 
