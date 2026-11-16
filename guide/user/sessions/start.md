@@ -49,10 +49,18 @@ Press **＋ Start** on the workspace action bar to open the **Start** screen.
 ![The "Start working: webshop" dialog. It has Agent, Model and First prompt fields, the folded Location and More sections under them, and a "Start in a worktree" button at the bottom](../../assets/sessions-launch-en-light.webp)
 
 1. Under **Agent**, pick the agent to use
-2. Pick the **Model**
-3. If you want, write an instruction in **First prompt (optional)**. It is sent once, automatically, as soon as the session is ready. Left empty, the session just opens
-4. **Location** and **More** stay folded with a summary of what they will do. Press **Change** only to change them
-5. Press **Start in a worktree** (**Launch** when you start directly in this copy)
+2. For an agent that can run on more than one route, pick the **Model route**: where model calls go and which account
+   is billed. Your default route (⚙ Settings → Agents) is already chosen when it can be used now. A route marked "no
+   credential yet" can be picked once its key or login is added in ⚙ Settings → Model credentials. Only the routes
+   your organisation allows are listed ([Amazon Bedrock route](../../ref/bedrock-route.md))
+3. Pick the **Model**
+4. If you want, write an instruction in **First prompt (optional)**. It is sent once, automatically, as soon as the session is ready. Left empty, the session just opens
+5. **Location** and **More** stay folded with a summary of what they will do. Press **Change** only to change them
+6. Press **Start in a worktree** (**Launch** when you start directly in this copy)
+
+When no agent can be listed, the dialog says why in one line: **No model route is available to you. Ask your
+administrator.** when your organisation allows no route, or **You have switched off every agent.** with **Reset my
+settings** when your own switches in ⚙ Settings → Agents turned them all off.
 
 The first prompt box also lets you:
 
@@ -72,7 +80,6 @@ Only the items the chosen agent supports are shown.
 | Item | What it decides |
 |---|---|
 | Execution method | Managed (recommended) or Terminal (CLI) ([Choose the execution method](#choose-the-execution-method)) |
-| Model route | Where model calls go and which account is billed. Shown only for a Terminal (CLI) launch ([Amazon Bedrock route](../../ref/bedrock-route.md)) |
 | Reasoning effort | Left unset, the model's default applies |
 | Start mode | "Plan" spends the first turn on research and a plan |
 | Tool permissions | "Skip approvals (default)" or "Ask every time". When it asks, the agent stops for approval before edits and commands |

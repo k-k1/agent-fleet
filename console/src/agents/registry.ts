@@ -137,6 +137,11 @@ export interface AgentDescriptor {
   // launch dialog offers only those ids, and without it it hides them. opencode: its
   // amazon-bedrock provider on the bedrock route.
   routeModelPrefix?: Record<string, string>;
+  // The route a create with no route selection runs on, for a kind whose CLI picks it the same
+  // way every time (ADR 0138 D11b). Its available() checks that route's login alone, so the
+  // launch menus judge such a kind on the catalogue's usable routes instead, and a launch with no
+  // route is offered only while this one is allowed and held.
+  noSelectionRoute?: string;
   assistantName: string; // how the agent signs its chat turns ("Claude" / "Codex" / …)
   short: string; // 2-char abbrev for tight headers (cc/cx/oc/sh/aw)
   cssClass: string; // .kind-<slug> color class slug
@@ -224,6 +229,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     icon: "brand:claude",
     label: "Claude",
     displayName: "Claude Code",
+    noSelectionRoute: "anthropic-subscription",
     assistantName: "Claude",
     short: "cc",
     cssClass: "claude",

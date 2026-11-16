@@ -212,3 +212,34 @@ describe("AiAssistTab per-feature cards", () => {
     expect(getSettings().aiFeatureModels?.["title.session"]?.claude).toBeUndefined();
   });
 });
+
+// ADR 0138 D10a: the backend order lists only the backends the policy allows and the member has
+// not switched off; a reorder leaves a hidden one where it was.
+describe("AiAssistTab backend order under the credential policy", () => {
+  it("hides a backend whose chat is not offered, and keeps its place on a reorder", async () => {
+    const { useWorkspaceStore } = await import("../../../core/store/workspace.ts");
+    const { getSettings } = await import("../../../lib/settings.ts");
+    useWorkspaceStore.setState({ state: "running" } as never);
+    apiMock.mockImplementation(async (url: string) =>
+      url.includes("agents/kinds")
+        ? {
+            kinds: [
+              { kind: "claude", chat: true },
+              { kind: "codex", chat: false },
+              { kind: "cursor", chat: true },
+            ],
+            access: { policyConfirmed: true },
+          }
+        : { features: [] },
+    );
+    setSetting("aiAssistOrder", ["claude", "codex", "cursor"]);
+    await render();
+    for (let i = 0; i < 3; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+    const list = host.querySelector(".ds-orderlist")!;
+    const labels = [...list.querySelectorAll(".ds-orderlist-label")].map((e) => e.textContent);
+    expect(labels).toEqual(["Claude", "Cursor"]);
+    const down = list.querySelectorAll<HTMLButtonElement>(".ds-orderlist-row")[0].querySelectorAll("button")[1];
+    await act(async () => down.click());
+    expect(getSettings().aiAssistOrder.slice(0, 3)).toEqual(["cursor", "codex", "claude"]);
+  });
+});

@@ -3,9 +3,11 @@
 // which repo the active session / SCM pane points at (for in-place highlight), and
 // the pane→ordinal map. Called once by whatever container renders the rows (the
 // flat Repos section, or the project tree).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
+import { kindLaunchable } from "../../agents/launchAccess.ts";
+import { useMemberCatalog, type MemberCatalog } from "../settings/credentials/memberCatalog.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { repoPanes, sessionPanes, paneCount } from "../../layout/badges.ts";
@@ -18,8 +20,12 @@ import { fetchConnsWithRetry } from "./connsRetry.ts";
 import type { ConnectionsStatus } from "../../types/session.ts";
 
 export interface RepoRailContext {
-  /** Launch kinds the user can actually start: connection-gated, empty until known. */
+  /** Launch kinds the user can actually start: connection-gated and allowed by the credential
+   *  policy and the member's own switches (ADR 0138 D10a), empty until both are known. */
   launchKinds: string[];
+  /** The live, policy-filtered kind catalogue the launch dialog takes its routes and its one line
+   *  from, and refresh() to ask again (after a launch the policy refused). */
+  access: MemberCatalog & { refresh: () => Promise<void> };
   /** The connection check hasn't settled yet — an empty launchKinds means "checking",
    *  not "nothing available", so pickers can say so instead of showing a bare box. */
   connsSettling: boolean;
@@ -120,9 +126,19 @@ export function useRepoRailContext(): RepoRailContext {
   // null — we cannot prove any agent is usable), the launch pickers stay empty rather
   // than offering agents that would fail on launch. connsSettling lets the pickers say
   // "checking" instead of rendering a bare empty box.
-  const ready = (k: string) => connsDone && !!conns && agentOf(k).available({ conns });
+  // The policy filter fails closed the same way: without a confirmed catalogue nothing is offered.
+  const access = useMemberCatalog(running);
+  // A connect or disconnect changes which routes are usable, so the catalogue is asked again too.
+  const seenTick = useRef(connTick);
+  const refreshAccess = access.refresh;
+  useEffect(() => {
+    if (seenTick.current === connTick) return;
+    seenTick.current = connTick;
+    if (running) void refreshAccess();
+  }, [connTick, running, refreshAccess]);
+  const ready = (k: string) => connsDone && !!conns && kindLaunchable(k, { conns }, access.kinds);
   const launchKinds = repoLaunchKinds.filter(ready);
-  const connsSettling = !connsDone;
+  const connsSettling = !connsDone || (running && !!access.pending);
 
   const multiPane = paneCount(layout) > 1;
   const rPanes = multiPane ? repoPanes(layout) : null;
@@ -138,5 +154,5 @@ export function useRepoRailContext(): RepoRailContext {
   const scmRepo = ac && (ac.kind === "scm" || ac.kind === "changes" || ac.kind === "commit") ? ac.scmRepo : null;
 
   const claudeExpired = connsDone && !!conns?.claude?.expired;
-  return { launchKinds, connsSettling, running, claudeExpired, activeRepo, scmRepo, rPanes, sPanes, multiPane, activeSession: activeSessionName };
+  return { launchKinds, access, connsSettling, running, claudeExpired, activeRepo, scmRepo, rPanes, sPanes, multiPane, activeSession: activeSessionName };
 }

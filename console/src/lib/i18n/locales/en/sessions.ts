@@ -552,9 +552,6 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.field.route": "Model route",
   "launch.route_default": "Default (as before)",
   "launch.route_hint": "Where this session's model calls go and which account they are billed to. Default keeps the agent's own behaviour.",
-  "launch.route.anthropic-subscription": "Claude subscription (this workspace's login)",
-  "launch.route.anthropic-api": "Anthropic API key (metered)",
-  "launch.route.bedrock": "Amazon Bedrock (your AWS profile, metered)",
   "launch.field.bedrock_profile": "AWS profile for Bedrock",
   "launch.field.bedrock_region": "Region",
   "launch.bedrock_region_placeholder": "the profile's region",
@@ -1015,4 +1012,16 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "awsconfirm.open_failed": "Could not open this session",
   "awsconfirm.deny": "Deny",
   "awsconfirm.answer_failed": "Could not answer the request ({code})",
+
+  // === Launch dialog under the credential policy (ADR 0138 D10a, D11b) ===
+  "launch.no_route_line": "No model route is available to you. Ask your administrator.",
+  "launch.all_off_line": "You have switched off every agent.",
+  "launch.route_choose": "Choose a route",
+  "launch.route_no_key": "no credential yet",
+  "launch.route_no_key_hint": "A route marked “no credential yet” can be chosen once its key or login is added in",
+  "launch.route_default_unusable": "Your default route cannot be used now. Choose a route for this launch.",
+  "launch.route_required_hint": "Choose a route for this launch: this agent does not start without one.",
+  "launch.policy.route_forbidden": "That model route is not available to you. Choose another one.",
+  "launch.policy.route_required": "Choose a model route for this agent, or set a default route in Settings › Agents.",
+  "launch.policy.policy_unconfirmed": "The workspace could not confirm which model routes you may use. Try again in a moment.",
 };

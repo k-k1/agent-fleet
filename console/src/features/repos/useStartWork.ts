@@ -6,6 +6,7 @@
 // and repo-scoped bookkeeping (repoLast / prompt history) are skipped there.
 import { apiJSON, errDetail, errText, pasteImage } from "../../core/api/client.ts";
 import { routeSelectionBody } from "./bedrockProfiles.ts";
+import { policyRefusalKey, policyRefusalOf } from "./launchPolicy.ts";
 import { AUTH_EXPIRED_CODE, toastSendFailure } from "../../lib/authExpiredToast.tsx";
 import { t } from "../../lib/i18n/index.ts";
 import { buildImagePrompt } from "../../lib/pastedImages.ts";
@@ -38,7 +39,16 @@ export interface HandoffTake {
   renew?: () => Promise<HandoffTake | null>;
 }
 
-export function useStartWork(): (target: StartTarget, opts: LaunchOpts, take?: HandoffTake) => Promise<LaunchResult> {
+/**
+ * useStartWork creates a session for a launch. policyInline: the caller is the launch dialog,
+ * which explains a refusal of the credential policy beside its route picker; every other caller
+ * gets the same sentence as a toast.
+ */
+export function useStartWork({ policyInline = false }: { policyInline?: boolean } = {}): (
+  target: StartTarget,
+  opts: LaunchOpts,
+  take?: HandoffTake,
+) => Promise<LaunchResult> {
   const toast = useToast();
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
@@ -153,6 +163,13 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts, take?: H
       // payload names it so the dialog can say WHERE instead of just failing.
       if (code === "branch_in_use")
         return { ok: false, conflict: "in_use" as const, worktree: String(res.error.worktree || "") };
+      // The credential policy refused it: said in the Console's own words, which name nothing
+      // the policy hides (ADR 0138 D10a).
+      const policy = policyRefusalOf(res.error);
+      if (policy) {
+        if (!policyInline) toast(t(policyRefusalKey(policy)));
+        return { ok: false, policy };
+      }
       // errDetail, not errText: launch failure codes are generic ones like runtime_failed,
       // and WHY it failed lives only in the server's message. errText drops that message
       // whenever the catalogue has wording for the code, leaving a bare "wait and retry"

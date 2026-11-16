@@ -61,7 +61,7 @@ export function StartHost() {
   const picking = useRef(false);
   const hubGen = useRef(0);
   const ctx = useRepoRailContext(); // connection-gated kinds, like the repo rows
-  const startWork = useStartWork();
+  const startWork = useStartWork({ policyInline: true });
   // Coding agents only (runsInDir) — shell/ssm have their own rows in the hub.
   // Not caps.chat: agy is terminal-only (no chat mirror) but still launches here.
   const agentKinds = ctx.launchKinds.filter((k) => agentOf(k).caps.runsInDir);
@@ -111,6 +111,7 @@ export function StartHost() {
           home
           repo=""
           kinds={agentKinds}
+          access={ctx.access}
           claudeExpired={ctx.claudeExpired}
           settling={ctx.connsSettling}
           allowWorktree={false}
@@ -134,6 +135,7 @@ export function StartHost() {
           branch={launch.branch}
           path={launch.path}
           kinds={agentKinds}
+          access={ctx.access}
           claudeExpired={ctx.claudeExpired}
           settling={ctx.connsSettling}
           allowWorktree={!launch.worktree && launch.vcs !== "svn" && !launch.unborn}

@@ -137,4 +137,7 @@ export const assistant = {
   "asst.locked_off": "削除ロックを解除しました",
   "asst.delete_chat": "このチャットを削除",
   "asst.open_new_pane": "新しいペインで開く",
+
+  // === Backend order under the credential policy (ADR 0138 D10a) ===
+  "assistant.order_unavailable": "ワークスペースが起動し、使えるエージェントを答えると表示されます。",
 };

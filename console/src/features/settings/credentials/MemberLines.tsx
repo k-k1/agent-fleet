@@ -107,7 +107,16 @@ export function UnusableLine({ running }: { running: boolean }) {
  * decides. The Agent applies the member layer from the saved ui-prefs, so the page refreshes what
  * the Agent shows (onReset) only once the save has landed, and says so when it has not.
  */
-export function OwnSettingsLine({ hidden, onReset }: { hidden: boolean; onReset: () => void | Promise<void> }) {
+export function OwnSettingsLine({
+  hidden,
+  onReset,
+  line = "cred.own_settings_line",
+}: {
+  hidden: boolean;
+  onReset: () => void | Promise<void>;
+  /** The sentence before the button: the launch dialog says every agent is switched off. */
+  line?: "cred.own_settings_line" | "launch.all_off_line";
+}) {
   const tr = useT();
   const toast = useToast();
   const confirm = useConfirm();
@@ -136,7 +145,7 @@ export function OwnSettingsLine({ hidden, onReset }: { hidden: boolean; onReset:
 
   return (
     <div className="agents-ws-hint cred-line" data-testid="cred-own-settings-line">
-      <p className="muted ds-note">{tr("cred.own_settings_line")}</p>
+      <p className="muted ds-note">{tr(line)}</p>
       <Button icon="refresh" disabled={busy} onClick={() => void reset()}>
         {tr("cred.own_settings_reset")}
       </Button>

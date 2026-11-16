@@ -2,6 +2,8 @@ import { useSettings, setSetting, ASSISTANT_AGENT_KINDS, normalizeAssistantOrder
 import { AI_ASSIST_FEATURES, AI_FEATURE_MODEL_FOLLOW_DEFAULT, type AiAssistFeatureDef } from "./aiAssistFeatures.ts";
 import { useAiAssistResolution, type AiAssistResolutionRow } from "./aiAssistResolution.ts";
 import { agentOf } from "../../../agents/registry.ts";
+import { mergeVisibleOrder } from "../../../agents/launchAccess.ts";
+import { useOfferedChatKinds } from "./offeredChatKinds.ts";
 import { OnOff, OrderList, Row, Select } from "../parts/controls.tsx";
 import { AiModelRow, useResolvedModelLabel, type AiAgentKind } from "../parts/aiModelRow.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -25,6 +27,9 @@ import { useT } from "../../../lib/i18n/index.ts";
 export function AiAssistTab() {
   const tr = useT();
   const s = useSettings();
+  // Only the backends the policy allows and the member has not switched off are listed; a hidden
+  // one keeps its place in the stored order (mergeVisibleOrder).
+  const offered = useOfferedChatKinds();
   // Called ONCE here, not once per card (103-impl-review 重大2: a per-card call fanned one GET
   // /ai-assist/resolution out into 8 identical requests per mount — measured 48 req/min while
   // the tab stayed open — even though the Agent already answers all 8 features in one
@@ -34,17 +39,21 @@ export function AiAssistTab() {
     <>
       <section className="ds-group">
         <Row label={tr("aiassist.agent_order")}>
-          <OrderList
-            value={normalizeAssistantOrder(s.aiAssistOrder)}
-            labels={Object.fromEntries(ASSISTANT_AGENT_KINDS.map((k) => [k, agentOf(k).assistantName]))}
-            onChange={(v) => setSetting("aiAssistOrder", v)}
-          />
+          {offered ? (
+            <OrderList
+              value={normalizeAssistantOrder(s.aiAssistOrder).filter((k) => offered.has(k))}
+              labels={Object.fromEntries(ASSISTANT_AGENT_KINDS.map((k) => [k, agentOf(k).assistantName]))}
+              onChange={(v) => setSetting("aiAssistOrder", mergeVisibleOrder(normalizeAssistantOrder(s.aiAssistOrder), v))}
+            />
+          ) : (
+            <span className="muted">{tr("assistant.order_unavailable")}</span>
+          )}
         </Row>
         <p className="muted ds-note">{tr("aiassist.note_agent_order")}</p>
 
         <h4 className="ds-title">{tr("aiassist.short_models")}</h4>
         <p className="muted ds-note">{tr("aiassist.note_short_models")}</p>
-        {ASSISTANT_AGENT_KINDS.map((kind) => (
+        {ASSISTANT_AGENT_KINDS.filter((k) => offered?.has(k)).map((kind) => (
           <AiModelRow
             key={`short-${kind}`}
             kind={kind}
@@ -56,7 +65,7 @@ export function AiAssistTab() {
 
         <h4 className="ds-title">{tr("aiassist.prose_models")}</h4>
         <p className="muted ds-note">{tr("aiassist.note_prose_models")}</p>
-        {ASSISTANT_AGENT_KINDS.map((kind) => (
+        {ASSISTANT_AGENT_KINDS.filter((k) => offered?.has(k)).map((kind) => (
           <AiModelRow
             key={`prose-${kind}`}
             kind={kind}

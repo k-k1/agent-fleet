@@ -16,6 +16,8 @@ import * as fx from "./fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, "../../dist");
+// The Agent's kind catalogue as checked in; the live answer adds routes and the access summary.
+const KIND_SNAPSHOT = JSON.parse(fs.readFileSync(path.resolve(HERE, "../../../control-plane/internal/agentkinds/catalog.json"), "utf8")).kinds;
 
 const argv = process.argv.slice(2);
 const arg = (name, dflt) => {
@@ -115,6 +117,11 @@ const exact = {
   "/api/fleet-graph": () => (FLEET_LANES ? fx.fleetGraphBig(LOCALE, FLEET_LANES) : fx.fleetGraph(LOCALE)),
   "/api/cleanup/archives": () => ({ archives: fx.cleanupArchives(LOCALE) }),
   "/api/repos": () => ({ repos: fx.repos(LOCALE) }),
+  // The live kind catalogue (GET /agents/kinds): the launch screens list only what it allows (ADR
+  // 0138 D10a) and launch nothing without a confirmed answer. SHOTS_ROUTE_POLICY picks a state:
+  // unset = nothing restricted; "keyonly" = claude on an Anthropic key alone; "none" = the policy
+  // allows nothing; "alloff" = the member switched every agent off.
+  "/api/agents/kinds": () => fx.liveKinds(KIND_SNAPSHOT, process.env.SHOTS_ROUTE_POLICY || ""),
   // Four connected agents: at five the launch dialog's per-card sub-label starts to
   // clip (real behavior — see the note in this directory's README), which reads as a
   // rendering bug in a screenshot.

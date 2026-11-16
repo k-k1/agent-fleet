@@ -7,6 +7,8 @@ import {
   REGION_THEMES,
 } from "../../../lib/settings.ts";
 import { agentOf } from "../../../agents/registry.ts";
+import { mergeVisibleOrder } from "../../../agents/launchAccess.ts";
+import { useOfferedChatKinds } from "./offeredChatKinds.ts";
 import { SwatchGrid } from "../../../ui/SwatchGrid.tsx";
 import { Choice, OnOff, OrderList, Row, Select, Slider } from "../parts/controls.tsx";
 import { AiModelRow } from "../parts/aiModelRow.tsx";
@@ -43,6 +45,9 @@ function AutoTurnModelSelect({ value, onChange }: { value: string; onChange: (v:
 export function AssistantTab() {
   const tr = useT();
   const s = useSettings();
+  // Only the backends the policy allows and the member has not switched off are listed; a hidden
+  // one keeps its place in the stored order (mergeVisibleOrder).
+  const offered = useOfferedChatKinds();
   return (
     <>
       <section className="ds-group">
@@ -55,11 +60,15 @@ export function AssistantTab() {
         </Row>
         <p className="muted ds-note">{tr("assistant.note_output_language")}</p>
         <Row label={tr("assistant.agent_order")}>
-          <OrderList
-            value={normalizeAssistantOrder(s.assistantAgentOrder)}
-            labels={Object.fromEntries(ASSISTANT_AGENT_KINDS.map((k) => [k, agentOf(k).assistantName]))}
-            onChange={(v) => setSetting("assistantAgentOrder", v)}
-          />
+          {offered ? (
+            <OrderList
+              value={normalizeAssistantOrder(s.assistantAgentOrder).filter((k) => offered.has(k))}
+              labels={Object.fromEntries(ASSISTANT_AGENT_KINDS.map((k) => [k, agentOf(k).assistantName]))}
+              onChange={(v) => setSetting("assistantAgentOrder", mergeVisibleOrder(normalizeAssistantOrder(s.assistantAgentOrder), v))}
+            />
+          ) : (
+            <span className="muted">{tr("assistant.order_unavailable")}</span>
+          )}
         </Row>
         <p className="muted ds-note">{tr("assistant.note_agent_order")}</p>
       </section>
@@ -67,7 +76,7 @@ export function AssistantTab() {
       <section className="ds-group">
         <h4 className="ds-title">{tr("assistant.models")}</h4>
         <p className="muted ds-note">{tr("assistant.note_models")}</p>
-        {ASSISTANT_AGENT_KINDS.map((kind) => (
+        {ASSISTANT_AGENT_KINDS.filter((k) => offered?.has(k)).map((kind) => (
           <AiModelRow
             key={`assistant-${kind}`}
             kind={kind}

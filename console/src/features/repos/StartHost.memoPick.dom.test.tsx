@@ -6,7 +6,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTerminal: vi.fn() }));
-vi.mock("./useRepoRail.ts", () => ({ useRepoRailContext: () => ({ launchKinds: ["claude"], connsSettling: false }) }));
+vi.mock("./useRepoRail.ts", () => ({ useRepoRailContext: () => ({ access: { kinds: { get: (k: string) => ({ kind: k }), has: () => true }, noRoute: false, allOff: false, refresh: () => {} }, launchKinds: ["claude"], connsSettling: false }) }));
 vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: vi.fn() }));
 const repo = { name: "app", path: "/home/dev/repos/app", branch: "main" };
 vi.mock("./StartModal.tsx", () => ({

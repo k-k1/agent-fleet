@@ -11,27 +11,53 @@ import { createRoot, type Root } from "react-dom/client";
 
 vi.mock("./api.ts", () => ({ scheduleUpdate: vi.fn() }));
 
+// The live kind catalogue (GET /agents/kinds): every kind allowed unless a test narrows it.
+const ALL = ["claude", "codex", "opencode", "copilot", "cursor", "kiro", "agy", "muse", "lcpp", "shell", "ssm"];
+let liveKinds: Record<string, unknown>[] = ALL.map((kind) => ({ kind }));
+let ssmProfiles: unknown[] = [];
+vi.mock("../../core/api/client.ts", () => ({
+  api: async (url: string) => {
+    if (url.includes("agents/kinds")) return { kinds: liveKinds, access: { policyConfirmed: true } };
+    if (url.includes("ssm/profiles")) return ssmProfiles;
+    return {};
+  },
+  apiJSON: async () => ({}),
+  getTenant: () => "",
+  getUser: () => "",
+  errText: (e: { message?: string }) => e?.message ?? "",
+  errDetail: (e: { message?: string }) => e?.message ?? "",
+  isTransientErr: () => false,
+}));
+
 const { ScheduleDetailModal } = await import("./ScheduleDetailModal.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { scheduleUpdate } = await import("./api.ts");
+const { t } = await import("../../lib/i18n/index.ts");
+const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
+const { getSettings, setSettings } = await import("../../lib/settings.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
 
 const base = { id: "sch_1", spec_kind: "cron", spec: "0 9 * * *", prompt: "hi", enabled: true };
 
-async function render(agentKind?: string): Promise<void> {
+const flush = async () => {
+  for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+};
+
+async function render(agentKind?: string, extra: Record<string, unknown> = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
         <ScheduleDetailModal
-          s={{ ...base, agent_kind: agentKind } as never}
+          s={{ ...base, agent_kind: agentKind, ...extra } as never}
           onClose={() => {}}
           onSaved={() => {}}
         />
       </ToastProvider>,
     );
   });
+  await flush();
 }
 
 // The modal renders into a portal, so the options are read off the document rather than off the
@@ -40,6 +66,9 @@ const agentOptions = (): string[] =>
   Array.from(document.querySelectorAll("#sched-agent option")).map((o) => o.textContent || "");
 
 beforeEach(() => {
+  liveKinds = ALL.map((kind) => ({ kind }));
+  ssmProfiles = [];
+  useWorkspaceStore.setState({ state: "running" } as never);
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -96,6 +125,7 @@ describe("ScheduleDetailModal delivery", () => {
         </ToastProvider>,
       );
     });
+    await flush();
   }
   const targetBox = (label: string): HTMLInputElement => {
     const row = Array.from(document.querySelectorAll(".sched-target")).find((l) => l.textContent === label);
@@ -117,7 +147,7 @@ describe("ScheduleDetailModal delivery", () => {
 
   it("patches the added target and the sentinel, nothing else", async () => {
     await renderWith({ report: true, deliver_to: ["operator"] });
-    expect(targetBox("アシスタントの会話").checked).toBe(true);
+    expect(targetBox(t("sched.target_operator")).checked).toBe(true);
     await act(async () => {
       targetBox("Slack").click();
     });
@@ -134,9 +164,58 @@ describe("ScheduleDetailModal delivery", () => {
   it("refuses to save a report with no target", async () => {
     await renderWith({ report: true, deliver_to: ["operator"] });
     await act(async () => {
-      targetBox("アシスタントの会話").click();
+      targetBox(t("sched.target_operator")).click();
     });
     expect(saveButton().disabled).toBe(true);
-    expect(document.body.textContent).toContain("届け先を 1 つ以上選ぶ");
+    expect(document.body.textContent).toContain(t("sched.f_deliver_to_empty"));
   });
 });
+
+// ADR 0138 D10a and the user's decision 6a on #4169: the kinds a member may point a schedule at
+// are the ones the policy allows and they have not switched off, and a route can be named.
+describe("ScheduleDetailModal under the credential policy", () => {
+  const update = scheduleUpdate as unknown as ReturnType<typeof vi.fn>;
+  const routeOptions = () => Array.from(document.querySelectorAll<HTMLOptionElement>("#sched-route option"));
+  const saveButton = (): HTMLButtonElement => Array.from(document.querySelectorAll("button[type=submit]"))[0] as HTMLButtonElement;
+  beforeEach(() => {
+    update.mockReset();
+    update.mockResolvedValue({ ...base, id: "sch_1" });
+    setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, route: undefined } } });
+  });
+
+  it("offers no kind the catalogue leaves out, and none without a catalogue", async () => {
+    liveKinds = [{ kind: "claude" }, { kind: "agy" }];
+    await render("claude");
+    expect(agentOptions()).toEqual(["claude", "agy"]);
+    useWorkspaceStore.setState({ state: "stopped" } as never);
+    await render("claude");
+    // The schedule's own kind stays, so an edit of another field cannot rewrite it.
+    expect(agentOptions()).toEqual(["claude"]);
+  });
+
+  it("offers the allowed routes and the default route, and patches the one chosen", async () => {
+    liveKinds = [{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api"] }];
+    setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, route: { route: "anthropic-api" } } } });
+    await render("claude", { session_mode: "new" });
+    const opts = routeOptions();
+    expect(opts.map((o) => o.value)).toEqual(["", "anthropic-api|", "anthropic-subscription|"]);
+    expect(opts[0].textContent).toBe(t("sched.route_default_saved", { route: t("cred.route.anthropic-api") }));
+    const sel = document.querySelector<HTMLSelectElement>("#sched-route")!;
+    await act(async () => {
+      sel.value = "anthropic-subscription|";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => saveButton().click());
+    expect(update).toHaveBeenCalledWith("sch_1", { route: "anthropic-subscription", route_connection: "" });
+  });
+
+  it("keeps a stored route the policy now hides without naming it", async () => {
+    liveKinds = [{ kind: "claude", routes: ["anthropic-subscription"] }];
+    await render("claude", { session_mode: "new", route: "anthropic-api" });
+    const opts = routeOptions();
+    expect(opts.map((o) => o.textContent)).toContain(t("sched.route_unavailable"));
+    expect(document.body.textContent).not.toContain(t("cred.route.anthropic-api"));
+    expect((document.querySelector("#sched-route") as HTMLSelectElement).value).toBe("anthropic-api|");
+  });
+});
+

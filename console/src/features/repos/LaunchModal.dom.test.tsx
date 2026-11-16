@@ -65,6 +65,9 @@ const { useUIStateStore: uiStore } = await import("../../core/store/uiState.ts")
 const { parseKindCatalog, setKindCatalog } = await import("../../agents/kindCatalog.ts");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
+import { openAccess } from "../../test/launchAccess.ts";
+
+const ACCESS = openAccess();
 
 type Launch = (o: LaunchOpts) => Promise<LaunchResult>;
 
@@ -104,6 +107,7 @@ async function render(kinds = ["claude"], extra: { repo?: string; initialPrompt?
   await act(async () => {
     root!.render(
       <LaunchModal
+        access={ACCESS}
         repo={extra.repo ?? "app"}
         branch="main"
         kinds={kinds}
@@ -944,7 +948,7 @@ describe("tenant launch defaults", () => {
   it("re-resolves the tenant's agent when the kinds list lands after a cached answer (C2)", async () => {
     useUIStateStore.setState({ state: answer("codex") as never });
     await render([]);
-    await act(async () => root!.render(<LaunchModal repo="app" branch="main" kinds={["claude", "codex"]} onClose={onClose} onLaunch={onLaunch} />));
+    await act(async () => root!.render(<LaunchModal access={ACCESS} repo="app" branch="main" kinds={["claude", "codex"]} onClose={onClose} onLaunch={onLaunch} />));
     await click(byText("Start in a worktree"));
     expect(launchedWith().kind).toBe("codex");
   });
@@ -1007,7 +1011,7 @@ describe("tenant launch defaults", () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "9");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await act(async () => root!.render(<LaunchModal repo="app" branch="main" kinds={["codex"]} onClose={onClose} onLaunch={onLaunch} />));
+    await act(async () => root!.render(<LaunchModal access={ACCESS} repo="app" branch="main" kinds={["codex"]} onClose={onClose} onLaunch={onLaunch} />));
     await click(byText("Start in a worktree"));
     expect(launchedWith().kind).toBe("codex");
     expect(launchedWith().spendCapUsd).toBe(9);

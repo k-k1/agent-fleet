@@ -139,4 +139,7 @@ export const assistant: Record<keyof typeof jaAssistant, string> = {
   "asst.locked_off": "Deletion lock removed",
   "asst.delete_chat": "Delete this chat",
   "asst.open_new_pane": "Open in a new pane",
+
+  // === Backend order under the credential policy (ADR 0138 D10a) ===
+  "assistant.order_unavailable": "Shown once the workspace is running and has said which agents you may use.",
 };
