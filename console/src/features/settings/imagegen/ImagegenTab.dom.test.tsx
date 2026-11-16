@@ -257,3 +257,66 @@ describe("a policy change while the page is open", () => {
     expect(orderRows()).toEqual([]);
   });
 });
+
+// Requests overlap when one is slow: only the newest answer may set the list, and one that never
+// answers fails closed by the next refresh.
+describe("overlapping status requests", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  type Answer = (v: unknown) => void;
+  const pending: Answer[] = [];
+  const deferStatus = () => {
+    api.mockImplementation((path: string) =>
+      path === "api/imagegen/status" ? new Promise((resolve) => pending.push(resolve)) : Promise.resolve({}),
+    );
+  };
+  const answer = (order: string[], providers: Array<Record<string, unknown>>) => ({
+    enabled: true,
+    ready: true,
+    orderFiltered: true,
+    orderKinds: { image: "comfy" },
+    order,
+    providers,
+  });
+  const settle = async (i: number, v: unknown) => {
+    await act(async () => {
+      pending[i](v);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  };
+
+  afterEach(() => {
+    pending.length = 0;
+  });
+
+  it("ignores an older, looser answer that lands after a newer, tighter one", async () => {
+    deferStatus();
+    await mount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_REFRESH_MS);
+    });
+    expect(pending.length).toBe(2);
+    await settle(1, answer(["image", "codex"], [IMAGE, CODEX]));
+    expect(orderRows()).toEqual(["image (ComfyUI)", "Codex"]);
+    await settle(0, answer(["image", "agy", "codex"], [IMAGE, AGY, CODEX]));
+    expect(orderRows()).toEqual(["image (ComfyUI)", "Codex"]);
+    expect(text()).not.toContain("Antigravity");
+  });
+
+  it("fails closed when a request does not answer by the next refresh", async () => {
+    respond(["image", "agy", "codex"], [IMAGE, AGY, CODEX]);
+    await mount();
+    expect(orderRows().length).toBe(3);
+    deferStatus();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_REFRESH_MS);
+    });
+    expect(orderRows().length).toBe(3);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_REFRESH_MS);
+    });
+    expect(orderRows()).toEqual([]);
+  });
+});

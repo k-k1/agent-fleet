@@ -16,6 +16,13 @@ import { isPreAdr0082Status, type ImagegenProvider } from "../../imagegen/wire.t
 // the policy at least every 30 s (ADR 0138 D12), and this adds at most one more such period.
 export const STATUS_REFRESH_MS = 30_000;
 
+// What the page draws from one trusted status answer.
+interface ImagegenStatusView {
+  order: string[];
+  kinds: Record<string, string>;
+  providers: ImagegenProvider[];
+}
+
 export function ImagegenTab() {
   const tr = useT();
   const s = useSettings();
@@ -25,11 +32,7 @@ export function ImagegenTab() {
   // older Agents send the same shape unfiltered). The list is drawn only from a trusted answer,
   // because only the Agent knows what the credential policy allows (ADR 0138 D10a): a static or
   // unfiltered list would name providers the policy hides.
-  const [status, setStatus] = useState<{
-    order: string[];
-    kinds: Record<string, string>;
-    providers: ImagegenProvider[];
-  } | null>(null);
+  const [status, setStatus] = useState<ImagegenStatusView | null>(null);
 
   // Load while the workspace is running, and again every STATUS_REFRESH_MS: a policy changed by
   // an administrator while this page stays open reaches it within the same bound the Agent's own
@@ -42,13 +45,33 @@ export function ImagegenTab() {
       return;
     }
     let live = true;
-    const load = () =>
+    // Only the newest request may set the list: a slower, older answer (perhaps from before a
+    // tightening) landing after a newer one would bring back providers the policy now hides.
+    let latest = 0;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const load = () => {
+      const seq = ++latest;
+      // With no answer taken for a whole refresh period since a request went out, the list fails
+      // closed: the fetch itself has no deadline, and a list kept past the bound may no longer be
+      // allowed. The deadline runs from the oldest unanswered request, so requests that keep
+      // hanging do not push it back.
+      if (deadline === undefined) {
+        deadline = setTimeout(() => {
+          deadline = undefined;
+          if (live) setStatus(null);
+        }, STATUS_REFRESH_MS);
+      }
+      const settle = (next: ImagegenStatusView | null) => {
+        if (!live || seq !== latest) return;
+        clearTimeout(deadline);
+        deadline = undefined;
+        setStatus(next);
+      };
       imagegenStatus()
         .then((st) => {
-          if (!live) return;
-          if (!st || isTransientErr(st) || st.error || st.orderFiltered !== true) return setStatus(null);
+          if (!st || isTransientErr(st) || st.error || st.orderFiltered !== true) return settle(null);
           const providers = Array.isArray(st.providers) ? st.providers : [];
-          if (isPreAdr0082Status(providers)) return setStatus(null);
+          if (isPreAdr0082Status(providers)) return settle(null);
           // `order` is policy-filtered, ready or not, so an allowed provider that is not
           // connected yet keeps its rank; absent means the policy leaves none.
           // A kind name with no declared row (the base order's placeholder for a kind this
@@ -58,14 +81,16 @@ export function ImagegenTab() {
           const order = (Array.isArray(st.order) ? st.order : []).filter(
             (id) => id in kinds || !LEGACY_ALIASES.includes(id),
           );
-          setStatus({ order, kinds, providers });
+          settle({ order, kinds, providers });
         })
-        .catch(() => live && setStatus(null));
-    void load();
-    const timer = setInterval(() => void load(), STATUS_REFRESH_MS);
+        .catch(() => settle(null));
+    };
+    load();
+    const timer = setInterval(load, STATUS_REFRESH_MS);
     return () => {
       live = false;
       clearInterval(timer);
+      clearTimeout(deadline);
     };
   }, [running]);
 
