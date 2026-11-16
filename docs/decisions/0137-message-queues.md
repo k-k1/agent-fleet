@@ -594,3 +594,13 @@ Added 2026-11-16 (#4315): a wake made only to settle is also written to the audi
 `workspace.queue_settle_wake`, actor the system, the member's tenant, the workspace as target, and the category and the
 runs (`sending`, or overdue and not yet retired) that made it necessary. No run history line and no change to the
 deliveries list; no memo or instruction text is kept.
+
+Added 2026-11-16 (#4245): the settle pass and the retire pass are fair across members. Deliveries that need no workspace
+read are settled first, whatever a workspace does: a stale claim is closed, and the sends are taken oldest first up to
+their per-tick cap, so the order of sends does not depend on which member is slow. The deliveries that need a read are
+then taken member by member, the member tried longest ago first, with each member's own deliveries oldest first, and the
+pass stamps a member before it tries it. The retire pass has a budget of its own (60 seconds) and the same order, kept
+apart from the settle pass's. A workspace that never answers therefore costs one budget in one tick and goes to the back,
+so every member with open work is reached within as many ticks as there are members, and in practice within two. The order
+is remembered in the process only: each Control Plane is fair by itself, and nothing depends on two of them agreeing.
+A member the settle pass did not reach has no view in the tick, and the dispatcher reads it itself, once.

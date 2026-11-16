@@ -381,6 +381,11 @@ disables.
   appears. The delivery DTO carries `heldBy`, `heldSession`, `heldSeenAt`, `overdue`,
   `overdueAt` and `firstTurn`.
 
+  **Fairness of the passes.** `settle` closes stale claims and collects the sends first (no
+  workspace read), then reads members least recently tried first (`memoFairOrder`, in memory,
+  per process); the retire pass has its own 60 second budget (`memoRetireBudget`) and its own
+  order. A member that never answers uses one budget and goes last on the next tick.
+
   **The dispatcher** ([decisions/0137](../decisions/0137-message-queues.md) §6 and §7; it
   runs after the settle pass, in the room the settle's sends left of the tick's two queue
   slots, within a 45 second budget). It fires queues by themselves through the same
