@@ -273,6 +273,7 @@ export const sessions = {
     "「{name}」をターミナル実行へ切り替えます。<0/>会話は引き継がれます。セッションごとに追加のメモリ{cost}を消費します。",
   "sess.switch_confirm": "切り替える",
   "sess.switch_busy": "実行中のターンがあります。完了を待つか停止してから切り替えてください",
+  "sess.switch_retired": "このセッションは自動実行によって停止されています。先にセッションを開始してから、もう一度切り替えてください。",
   "sess.switch_failed": "実行方式の切り替えに失敗しました",
   "sess.handoff_failed": "引き継ぎを開始できませんでした",
   "sess.handoff_review": "引き継ぎの依頼文を確認して、送信を押すと始まります",

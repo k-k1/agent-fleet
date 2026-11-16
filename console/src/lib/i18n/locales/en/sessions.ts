@@ -265,6 +265,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
     "Switch “{name}” to terminal execution.<0/>The conversation carries over. It uses additional memory per session{cost}.",
   "sess.switch_confirm": "Switch",
   "sess.switch_busy": "A turn is running. Wait for it to finish or stop it before switching.",
+  "sess.switch_retired": "Auto-run stopped this session. Start the session first, then switch again.",
   "sess.switch_failed": "Failed to switch the execution method",
   "sess.handoff_failed": "Couldn't start the handoff",
   "sess.handoff_review": "Review the handoff request, then press Send to start it",
