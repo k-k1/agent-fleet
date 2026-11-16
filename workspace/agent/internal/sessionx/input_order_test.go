@@ -252,57 +252,66 @@ func TestInputOrderRecoversAfterSimultaneousTimeouts(t *testing.T) {
 	}
 }
 
-// Forgetting a session while its head still runs must drop the entry without disturbing the
-// running delivery or a follower already waiting behind it.
-func TestInputOrderForgetWhileHeadRuns(t *testing.T) {
+// Forgetting a name while its head still runs must not let a later input for the same name
+// start a second chain: it still waits behind the head.
+func TestInputOrderForgetKeepsLiveChain(t *testing.T) {
 	o := &inputOrder{tails: map[string]*orderTail{}, wait: time.Minute}
 	release := make(chan struct{})
 	started := make(chan struct{})
+	var mu sync.Mutex
+	var got []string
+	rec := func(s string) { mu.Lock(); got = append(got, s); mu.Unlock() }
 	var wg sync.WaitGroup
 	start := func(run func()) {
 		wg.Add(1)
 		go func() { defer wg.Done(); run() }()
 	}
-	var ran sync.WaitGroup
-	ran.Add(1)
-	start(o.enqueue("s", func() { close(started); <-release }, func() { t.Error("head skipped") }))
-	start(o.enqueue("s", func() { ran.Done() }, func() { t.Error("follower skipped") }))
+	start(o.enqueue("s", func() { close(started); <-release; rec("old") }, func() { t.Error("head skipped") }))
 	<-started
 	o.forget("s")
+	start(o.enqueue("s", func() { rec("new") }, func() { t.Error("new skipped") }))
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	early := len(got)
+	mu.Unlock()
+	if early != 0 {
+		t.Fatalf("a new input ran ahead of the live head: %v", got)
+	}
+	close(release)
+	wg.Wait()
+	if len(got) != 2 || got[0] != "old" || got[1] != "new" {
+		t.Fatalf("order = %v", got)
+	}
 	o.mu.Lock()
 	n := len(o.tails)
 	o.mu.Unlock()
 	if n != 0 {
-		t.Fatalf("tails not cleared: %d entries", n)
-	}
-	close(release) // the head returns late, after the entry is gone
-	wg.Wait()
-	ran.Wait()
-	o.mu.Lock()
-	n = len(o.tails)
-	o.mu.Unlock()
-	if n != 0 {
-		t.Fatalf("a late return left %d entries", n)
+		t.Fatalf("%d entries left", n)
 	}
 	o.forget("never-existed") // a no-op, not a panic
 }
 
-// A terminal lock held while its session is deleted is released through the mutex its holder
-// already has: no double unlock, and a later caller for the name gets a working lock.
-func TestForgetInputStateWithTerminalLockHeld(t *testing.T) {
+// A terminal lock held while its session is deleted stays exclusive: a new caller for the name
+// cannot take it until the holder releases, and the table empties with the last user.
+func TestForgetInputStateKeepsHeldTerminalLock(t *testing.T) {
 	unlock, ok := lockTerminal("forget-held", time.Second)
 	if !ok {
 		t.Fatal("could not lock")
 	}
 	forgetInputState("forget-held")
-	if _, present := terminalLocks.Load("forget-held"); present {
-		t.Fatal("terminalLocks entry survived")
+	if _, ok := lockTerminal("forget-held", 2*reclaimPoll); ok {
+		t.Fatal("a second holder got the lock while the first still held it")
 	}
-	unlock() // late release: must not panic
+	unlock()
 	u2, ok := lockTerminal("forget-held", time.Second)
 	if !ok {
-		t.Fatal("fresh lock unavailable")
+		t.Fatal("lock unavailable after release")
 	}
 	u2()
-	terminalLocks.Delete("forget-held")
+	terminalLocks.mu.Lock()
+	n := len(terminalLocks.m)
+	terminalLocks.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d lock entries left", n)
+	}
 }

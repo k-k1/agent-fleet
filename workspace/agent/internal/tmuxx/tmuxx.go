@@ -6,6 +6,7 @@ package tmuxx
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
@@ -88,44 +89,62 @@ const killGrace = 2 * time.Second
 
 // OneShotCmd is Cmd with a deadline of OneShotTimeout; the caller must call cancel. On expiry
 // only the tmux client is killed: the tmux server is a separate process and is left as it
-// was, so the call is at worst not applied. Never use it for attach or control-mode streams,
-// which are meant to outlive any deadline.
+// was, but the request may already have reached it, so a timed-out call is "outcome unknown",
+// not "not applied". Never use it for attach or control-mode streams, which are meant to
+// outlive any deadline.
 func OneShotCmd(args ...string) (*exec.Cmd, context.CancelFunc) {
+	c, _, cancel := oneShot(args)
+	return c, cancel
+}
+
+func oneShot(args []string) (*exec.Cmd, context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(context.Background(), OneShotTimeout)
 	c := Cmd(args...)
 	// Rebuild on the same binary and arguments so exec owns the deadline.
 	cc := exec.CommandContext(ctx, c.Path, c.Args[1:]...)
 	cc.Env, cc.WaitDelay = c.Env, killGrace
-	return cc, cancel
+	return cc, ctx, cancel
+}
+
+// timedOut turns the "signal: killed" a deadline leaves behind into an error that satisfies
+// errors.Is(err, context.DeadlineExceeded), so a caller can tell a hung tmux from a refusal.
+func timedOut(ctx context.Context, args []string, err error) error {
+	if err != nil && ctx.Err() != nil {
+		return fmt.Errorf("tmux %s timed out after %v (outcome unknown): %w (%v)", args[0], OneShotTimeout, ctx.Err(), err)
+	}
+	return err
 }
 
 // Output runs a one-shot tmux call under OneShotTimeout and returns its stdout.
 func Output(args ...string) ([]byte, error) {
-	c, cancel := OneShotCmd(args...)
+	c, ctx, cancel := oneShot(args)
 	defer cancel()
-	return c.Output()
+	out, err := c.Output()
+	return out, timedOut(ctx, args, err)
 }
 
 // CombinedOutput is Output with stderr folded into the result.
 func CombinedOutput(args ...string) ([]byte, error) {
-	c, cancel := OneShotCmd(args...)
+	c, ctx, cancel := oneShot(args)
 	defer cancel()
-	return c.CombinedOutput()
+	out, err := c.CombinedOutput()
+	return out, timedOut(ctx, args, err)
 }
 
 // CombinedOutputStdin is CombinedOutput with stdin supplied (load-buffer -).
 func CombinedOutputStdin(stdin string, args ...string) ([]byte, error) {
-	c, cancel := OneShotCmd(args...)
+	c, ctx, cancel := oneShot(args)
 	defer cancel()
 	c.Stdin = strings.NewReader(stdin)
-	return c.CombinedOutput()
+	out, err := c.CombinedOutput()
+	return out, timedOut(ctx, args, err)
 }
 
 // Run runs a one-shot tmux call under OneShotTimeout, discarding its output.
 func Run(args ...string) error {
-	c, cancel := OneShotCmd(args...)
+	c, ctx, cancel := oneShot(args)
 	defer cancel()
-	return c.Run()
+	return timedOut(ctx, args, c.Run())
 }
 
 // spinnerRe matches claude's live working-spinner header — the "<glyph> <Gerund>…

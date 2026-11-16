@@ -948,7 +948,7 @@ func typeLineAndSubmit(name, pane, text string) error {
 		if mine != nil {
 			forgetSubmitted(name, *mine)
 		}
-		return fmt.Errorf("%v: %s", err, out)
+		return fmt.Errorf("%w: %s", err, out)
 	}
 	return nil
 }
@@ -993,7 +993,7 @@ func typePromptText(name, pane, text string) error {
 	text = shapedPrompt(name, text)
 	if !pasteNeeded(kind, text) {
 		if out, err := tmuxx.CombinedOutput("send-keys", "-t", pane, "-l", "--", text); err != nil {
-			return fmt.Errorf("%v: %s", err, out)
+			return fmt.Errorf("%w: %s", err, out)
 		}
 		return nil
 	}
@@ -1007,13 +1007,13 @@ func typePromptText(name, pane, text string) error {
 	if out, err := tmuxx.CombinedOutputStdin(text, "load-buffer", "-b", buffer, "-"); err != nil {
 		// A load that timed out may still have created the buffer.
 		_ = tmuxx.Run("delete-buffer", "-b", buffer)
-		return fmt.Errorf("%v: %s", err, out)
+		return fmt.Errorf("%w: %s", err, out)
 	}
 	// -p enables bracketed paste when the target TUI requested it; -d removes the
 	// one-shot buffer even after a successful paste.
 	if out, err := tmuxx.CombinedOutput("paste-buffer", "-p", "-d", "-b", buffer, "-t", pane); err != nil {
 		_ = tmuxx.Run("delete-buffer", "-b", buffer)
-		return fmt.Errorf("%v: %s", err, out)
+		return fmt.Errorf("%w: %s", err, out)
 	}
 	return nil
 }
@@ -1223,7 +1223,7 @@ func sendNamedKeys(pane string, keys []string) error {
 func sendNamedKeysGap(pane string, keys []string, gap time.Duration) error {
 	for i, k := range keys {
 		if out, err := tmuxx.CombinedOutput("send-keys", "-t", pane, k); err != nil {
-			return fmt.Errorf("%v: %s", err, out)
+			return fmt.Errorf("%w: %s", err, out)
 		}
 		if i < len(keys)-1 {
 			time.Sleep(gap)
