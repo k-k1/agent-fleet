@@ -501,4 +501,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.invalid_route_policy": "The rule has a value the Control Plane does not accept.",
   "err.route_policy_exceeds_ceiling": "The rule would allow something the deployment's ceiling forbids. A layer below the ceiling can only narrow it.",
   "err.route_policy_endpoint_not_approvable": "That host cannot be approved as a self-hosted endpoint: a layer above does not let it through, or it is a vendor's host.",
+  // ADR 0138 M2 P10: the provided-route admin refusals.
+  "err.invalid_source": "The Control Plane did not accept the source's registration.",
+  "err.invalid_input": "The Control Plane did not accept that amount or setting.",
+  "err.no_member": "That member is not in this tenant.",
 };

@@ -72,6 +72,8 @@ beforeEach(() => {
     if (path === "api/admin/route-policy") return Promise.resolve(DEPLOYMENT);
     const m = /^api\/admin\/tenants\/([^/]+)\/route-policy$/.exec(path);
     if (m) return Promise.resolve(tenantView(m[1]));
+    // Provided routes off, as on a CP without them; pinned in adminProvidedRoutes.dom.test.tsx.
+    if (path.includes("provided-routes")) return Promise.resolve({ error: { code: "http_404", status: 404 } });
     return Promise.resolve({ error: { code: "not_found" } });
   });
   apiJSON.mockResolvedValue({ rule: {}, revision: 9 });
@@ -127,7 +129,7 @@ describe("admin model access", () => {
     ).toBe("true");
     // The deployment GET, the first tenant's, and the revision check before the PUT; nothing
     // reloaded after the refusal.
-    expect(api).toHaveBeenCalledTimes(3);
+    expect(api.mock.calls.filter((c) => String(c[0]).endsWith("/route-policy")).length).toBe(3);
   });
 
   it("does not save the deployment rule over a newer revision", async () => {

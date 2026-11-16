@@ -497,4 +497,8 @@ export const errors = {
   "err.invalid_route_policy": "規則に Control Plane が受け付けない値があります。",
   "err.route_policy_exceeds_ceiling": "配備の上限が禁じているものを許す規則になっています。上限より下の層は狭めることしかできません。",
   "err.route_policy_endpoint_not_approvable": "そのホストはセルフホストのエンドポイントとして承認できません。上の層が通していないか、ベンダーのホストです。",
+  // ADR 0138 M2 P10: the provided-route admin refusals.
+  "err.invalid_source": "送り元の登録内容を Control Plane が受け付けませんでした。",
+  "err.invalid_input": "その金額や設定を Control Plane が受け付けませんでした。",
+  "err.no_member": "このテナントにそのメンバーはいません。",
 };

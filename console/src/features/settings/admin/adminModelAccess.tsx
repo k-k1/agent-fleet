@@ -12,6 +12,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import type { Tenant } from "../parts/adminShared.ts";
 import { RuleEditor, RuleSummary } from "../tenant/routePolicyRuleEditor.tsx";
 import { HiddenList } from "../tenant/routePolicyHidden.tsx";
+import { AdminProvidedGrantView, AdminProvidedSourceView } from "./adminProvidedRoutes.tsx";
 import { parseDeploymentPolicy, routeIds, type DeploymentPolicyView } from "../tenant/routePolicyRule.ts";
 import { PolicyLimits, useTenantRoutePolicy } from "../tenant/tenantModelAccess.tsx";
 
@@ -80,6 +81,7 @@ function TenantCap({ slug }: { slug: string }) {
       <RuleSummary rule={view.tenant.rule} />
       {/* Per selected tenant: the effective policy, and so what it hides, is per tenant. */}
       <HiddenList view={view} />
+      <AdminProvidedGrantView slug={slug} />
     </div>
   );
 }
@@ -165,7 +167,8 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
           </>
         )}
       </section>
-      {/* ADR 0138 M2 P10 (provided routes, ADR 0129 Q2) goes here. */}
+      {/* The deployment's provided-route source (ADR 0129): absent where the CP does not serve it. */}
+      <AdminProvidedSourceView />
     </>
   );
 }

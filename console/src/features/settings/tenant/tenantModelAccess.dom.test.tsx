@@ -56,6 +56,7 @@ async function mount() {
   });
 }
 
+const policyReads = () => api.mock.calls.filter((c) => c[0] === PATH).length;
 const flush = async () => {
   await act(async () => {
     await Promise.resolve();
@@ -77,7 +78,11 @@ const click = async (el: HTMLElement) => {
 };
 
 beforeEach(() => {
-  api.mockImplementation(() => Promise.resolve(VIEW()));
+  // The provided-route paths answer as on a CP without them (a plain 404): their section is
+  // pinned in tenantProvidedRoutes.dom.test.tsx.
+  api.mockImplementation((path: string) =>
+    Promise.resolve(path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : VIEW()),
+  );
   apiJSON.mockResolvedValue({ rule: {}, revision: 6 });
 });
 
@@ -120,7 +125,7 @@ describe("tenant model access", () => {
       future: "kept",
     });
     // One read to check the revision before the PUT, and the saved state read back after it.
-    expect(api).toHaveBeenCalledTimes(3);
+    expect(policyReads()).toBe(3);
   });
 
   it("shows a refusal with its reason and keeps the edits", async () => {
@@ -145,7 +150,7 @@ describe("tenant model access", () => {
     expect(field("endpoints").querySelector("textarea")!.value).toBe("llm.corp.example\ngpu.corp.example");
     // Not reloaded after the refusal (the second read is the revision check before the PUT): a
     // reload would replace the edits with the stored rule.
-    expect(api).toHaveBeenCalledTimes(2);
+    expect(policyReads()).toBe(2);
   });
 
   it("does not save over a revision someone else stored after the load", async () => {
