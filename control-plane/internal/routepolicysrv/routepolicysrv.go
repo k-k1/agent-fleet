@@ -142,6 +142,9 @@ type tenantPolicyWire struct {
 	EndpointRoutes []string               `json:"endpointRoutes"`
 	// Hidden is what the policy hides from the tenant's members, and which layers hide it (D10a).
 	Hidden hiddenWire `json:"hidden"`
+	// Owners is every harness, chat backend and image provider with its routes and the ones the
+	// layers allow; additive to Hidden.
+	Owners ownersWire `json:"owners"`
 	layers routepolicy.Layers
 }
 
@@ -217,7 +220,7 @@ func TenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantP
 			approved++
 		}
 	}
-	out.Hidden = hiddenOf(layers, out.EndpointRoutes, approved)
+	out.Owners, out.Hidden = foldOwners(layers, out.EndpointRoutes, approved)
 	return out, nil
 }
 

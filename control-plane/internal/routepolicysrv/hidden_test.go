@@ -84,10 +84,113 @@ func TestHiddenCountsApprovedEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	layers := routepolicy.Layers{Tenant: tenant}
-	if _, ok := hiddenItem(hiddenOf(layers, []string{"member-llamacpp"}, 0).Kinds, "lcpp"); !ok {
+	_, h0 := foldOwners(layers, []string{"member-llamacpp"}, 0)
+	_, h1 := foldOwners(layers, []string{"member-llamacpp"}, 1)
+	if _, ok := hiddenItem(h0.Kinds, "lcpp"); !ok {
 		t.Error("lcpp with no approved host is not listed hidden")
 	}
-	if _, ok := hiddenItem(hiddenOf(layers, []string{"member-llamacpp"}, 1).Kinds, "lcpp"); ok {
+	if _, ok := hiddenItem(h1.Kinds, "lcpp"); ok {
 		t.Error("lcpp with an approved host is listed hidden")
+	}
+}
+
+func ownerItem(items []ownerItemWire, id string) (ownerItemWire, bool) {
+	for _, i := range items {
+		if i.ID == id {
+			return i, true
+		}
+	}
+	return ownerItemWire{}, false
+}
+
+// owners and hidden are folded from one decision: over several layer combinations (none, one
+// layer, a harness hidden by two layers, an approved endpoint), an item is in hidden if and only
+// if its allowed list is empty, and allowed is always a subset of routes.
+func TestOwnersAgreeWithHidden(t *testing.T) {
+	rule := func(s string) routepolicy.Rule {
+		var r routepolicy.Rule
+		if err := json.Unmarshal([]byte(s), &r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	noSubs := `{"classes":["member-key","member-cloud","provided","self-hosted"]}`
+	cases := []struct {
+		name     string
+		layers   routepolicy.Layers
+		epRoutes []string
+		approved int
+	}{
+		{name: "unrestricted"},
+		{name: "cap only", layers: routepolicy.Layers{TenantCap: rule(noSubs)}},
+		{name: "tenant only", layers: routepolicy.Layers{Tenant: rule(`{"deny":["anthropic-api","bedrock"]}`)}},
+		{name: "two layers", layers: routepolicy.Layers{TenantCap: rule(noSubs),
+			Tenant: rule(`{"deny":["anthropic-api","bedrock","bedrock-deployment"]}`)}},
+		{name: "deployment and tenant", layers: routepolicy.Layers{Deployment: rule(noSubs), Tenant: rule(`{"deny":["af-engine-llm"]}`)}},
+		{name: "endpoint approved", layers: routepolicy.Layers{Tenant: rule(`{"deny":["af-engine-llm"]}`)},
+			epRoutes: []string{"member-llamacpp"}, approved: 1},
+		{name: "endpoint not approved", layers: routepolicy.Layers{Tenant: rule(`{"deny":["af-engine-llm"]}`)},
+			epRoutes: []string{"member-llamacpp"}},
+	}
+	sawHidden, sawVisible := false, false
+	for _, c := range cases {
+		o, h := foldOwners(c.layers, c.epRoutes, c.approved)
+		for _, g := range []struct {
+			name string
+			os   []ownerItemWire
+			hs   []hiddenItemWire
+		}{{"kinds", o.Kinds, h.Kinds}, {"chat", o.Chat, h.Chat}, {"imagegen", o.Imagegen, h.Imagegen}} {
+			for _, it := range g.os {
+				_, isHidden := hiddenItem(g.hs, it.ID)
+				if isHidden != (len(it.Allowed) == 0) {
+					t.Errorf("%s/%s/%s: hidden=%v allowed=%v", c.name, g.name, it.ID, isHidden, it.Allowed)
+				}
+				for _, r := range it.Allowed {
+					if !slices.Contains(it.Routes, r) {
+						t.Errorf("%s/%s/%s: allowed %q is not one of %v", c.name, g.name, it.ID, r, it.Routes)
+					}
+				}
+				sawHidden = sawHidden || isHidden
+				sawVisible = sawVisible || !isHidden
+			}
+			for _, hi := range g.hs {
+				if _, ok := ownerItem(g.os, hi.ID); !ok {
+					t.Errorf("%s/%s: hidden %s is missing from owners", c.name, g.name, hi.ID)
+				}
+			}
+		}
+	}
+	if !sawHidden || !sawVisible {
+		t.Fatalf("the cases must cover both hidden and visible items (hidden %v, visible %v)", sawHidden, sawVisible)
+	}
+}
+
+// The view carries owners: unrestricted, every route of every owner is allowed; under a cap with no
+// subscriptions claude keeps its API routes and loses the subscription one; a per-connection route
+// is allowed once an approved endpoint exists.
+func TestTenantViewCarriesOwners(t *testing.T) {
+	_, mux, tn := routePolicyFixture(t, "")
+	base := "/api/admin/tenants/" + tn.Slug + "/route-policy"
+	v := decodePolicy(t, routeAdminDo(mux, "GET", base, "boss-x", "").Body.String())
+	if len(v.Owners.Kinds) == 0 || v.Owners.Chat == nil || v.Owners.Imagegen == nil {
+		t.Fatalf("owners %+v", v.Owners)
+	}
+	for _, k := range v.Owners.Kinds {
+		if !slices.Equal(k.Routes, k.Allowed) {
+			t.Errorf("unrestricted %s: routes %v allowed %v", k.ID, k.Routes, k.Allowed)
+		}
+	}
+	noSubs := `{"classes":["member-key","member-cloud","provided","self-hosted"]}`
+	if w := routeAdminDo(mux, "PUT", base+"/cap", "root-x", noSubs); w.Code != 200 {
+		t.Fatalf("cap: %d %s", w.Code, w.Body)
+	}
+	v = decodePolicy(t, routeAdminDo(mux, "GET", base, "boss-x", "").Body.String())
+	c, ok := ownerItem(v.Owners.Kinds, "claude")
+	if !ok || !slices.Equal(c.Routes, []string{"anthropic-api", "anthropic-subscription", "bedrock", "bedrock-deployment"}) ||
+		slices.Contains(c.Allowed, "anthropic-subscription") || !slices.Contains(c.Allowed, "anthropic-api") {
+		t.Errorf("claude under the cap: %+v", c)
+	}
+	if a, ok := ownerItem(v.Owners.Kinds, "agy"); !ok || len(a.Allowed) != 0 || a.Allowed == nil {
+		t.Errorf("agy under the cap: %+v (allowed must be an empty list, not null)", a)
 	}
 }
