@@ -12,6 +12,7 @@ package sessionx
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,5 +165,56 @@ func TestInitialPromptFailsWithAuthExpiredReason(t *testing.T) {
 	}
 	if m2, _ := session.ReadMeta("ipreason2"); m2.InitialPromptState != "" || m2.InitialPromptReason != "" {
 		t.Errorf("a non-create prompt got state/reason %q/%q, want none", m2.InitialPromptState, m2.InitialPromptReason)
+	}
+}
+
+// TestInitialPromptNoPaneGiveUpCarriesReasonAndClears: a delivery that finds no pane settles failed
+// with the no-pane reason, and a later delivery that starts again clears it, so a stale reason
+// never outlives its failure.
+func TestInitialPromptNoPaneGiveUpCarriesReasonAndClears(t *testing.T) {
+	old := initialPaneTries
+	initialPaneTries = 1
+	t.Cleanup(func() { initialPaneTries = old })
+	_, up, _ := stoppedTmux(t)
+	const name = "nopane_reason"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex,
+		InitialPromptState: session.InitialPromptPending})
+
+	deliverInitialPrompt(name, "first task")
+
+	m, _ := session.ReadMeta(name)
+	if m.InitialPromptState != session.InitialPromptFailed || m.InitialPromptReason != session.InitialPromptReasonNoPane {
+		t.Fatalf("state/reason = %q/%q, want failed/%q", m.InitialPromptState, m.InitialPromptReason, session.InitialPromptReasonNoPane)
+	}
+	if got := wireSession(m, false).InitialPromptReason; got != session.InitialPromptReasonNoPane {
+		t.Errorf("list wire reason = %q, want it carried", got)
+	}
+
+	// A resend with a pane now present moves failed back to pending, which drops the reason; the
+	// delivery then ends in a state other than failed, so a surviving reason is the old one.
+	if err := os.WriteFile(up, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postInput(t, name, `{"prompt":"again","when_ready":true}`); rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	WaitInitialDeliveries()
+	m, _ = session.ReadMeta(name)
+	if m.InitialPromptState == session.InitialPromptFailed || m.InitialPromptReason != "" {
+		t.Errorf("after the resend state/reason = %q/%q, want a settled non-failed state with no reason", m.InitialPromptState, m.InitialPromptReason)
+	}
+}
+
+// A reason noted just before the Agent died must not survive recovery of the pending prompt.
+func TestRecoverPendingInitialPromptsDropsReason(t *testing.T) {
+	isolateAgentState(t)
+	session.WriteMeta(session.Meta{Name: "recover_reason", Dir: t.TempDir(), Kind: session.KindClaude,
+		InitialPromptState: session.InitialPromptPending, InitialPromptReason: session.InitialPromptReasonNoPane})
+	if n := RecoverPendingInitialPrompts(); n != 1 {
+		t.Fatalf("recovered %d, want 1", n)
+	}
+	m, _ := session.ReadMeta("recover_reason")
+	if m.InitialPromptState != session.InitialPromptUnknown || m.InitialPromptReason != "" {
+		t.Errorf("state/reason = %q/%q, want unknown with no reason", m.InitialPromptState, m.InitialPromptReason)
 	}
 }

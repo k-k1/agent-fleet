@@ -1125,6 +1125,7 @@ func typeInitialPrompt(name, prompt string) string {
 	}
 	if pane == "" {
 		log.Printf("initial prompt NOT typed for %s: no tmux pane appeared in 30s", name)
+		noteInitialPromptReason(name, session.InitialPromptReasonNoPane)
 		return session.InitialPromptFailed
 	}
 	// Alive ≠ ready to type: text sent into the boot screen is simply eaten (verified

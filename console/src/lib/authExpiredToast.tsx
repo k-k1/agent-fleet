@@ -88,7 +88,14 @@ export function toastSendFailure(
  *  its toast must neither replace nor be dismissed by this one. */
 export const initialPromptToastKey = (scope: string, session: string) => `${INITIAL_PROMPT_TOAST_KEY}:${scope}:${session}`;
 
-/** toastInitialPromptAuthExpired reports a create-time initial prompt the Agent refused to type
+/** toastInitialPromptFailed reports a first instruction the Agent gave up on for a reason
+ *  that has no login to fix. Sticky and keyed like the auth_expired one: the member may be
+ *  elsewhere when the Agent settles it, and nothing else would say the session got no task. */
+export function toastInitialPromptFailed(toast: ToastSink, scope: string, session: string, text: string): void {
+  toast(text, { kind: "error", duration: 0, key: initialPromptToastKey(scope, session) });
+}
+
+/** toastInitialPromptAuthExpired reports a first instruction the Agent refused to type
  *  because the agent's login (`kind`, default claude) has expired: nothing was sent, and no send of the member's own was
  *  involved, so no other path would tell them why the session sits idle. */
 export function toastInitialPromptAuthExpired(

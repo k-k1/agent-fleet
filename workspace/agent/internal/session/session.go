@@ -837,8 +837,8 @@ type Meta struct {
 	// a second persona turn, so none is offered. A pending left by a previous Agent process can
 	// never finish — RecoverPendingInitialPrompts turns it into unknown at start.
 	InitialPromptState string `json:"initialPromptState,omitempty"`
-	// InitialPromptReason names why the state is failed, when it is known: only
-	// InitialPromptReasonAuthExpired today. Empty for every other failure and for any other state;
+	// InitialPromptReason names why the state is failed, when it is known: one of
+	// InitialPromptReasonAuthExpired and InitialPromptReasonNoPane. Empty for every other failure and for any other state;
 	// it is written just before the state settles to failed and cleared whenever a delivery
 	// starts again, so a stale reason never outlives its failure.
 	InitialPromptReason string `json:"initialPromptReason,omitempty"`
@@ -968,6 +968,10 @@ const (
 // InitialPromptReasonAuthExpired is Meta.InitialPromptReason for a prompt that was not typed
 // because the workspace's Claude login has expired.
 const InitialPromptReasonAuthExpired = "auth_expired"
+
+// InitialPromptReasonNoPane is Meta.InitialPromptReason for a prompt that was not typed because
+// the session never showed a terminal to type into within the wait.
+const InitialPromptReasonNoPane = "no_pane"
 
 // SSMMeta is the persisted, non-secret description of an SSM login target.
 type SSMMeta struct {
