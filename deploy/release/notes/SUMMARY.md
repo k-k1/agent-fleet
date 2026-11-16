@@ -13,6 +13,34 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.46.0](0.46.0.md) — 2026-11-16
+
+**CLI pins** — Claude Code 2.1.325 / Copilot 1.0.112 / Antigravity 1.5.9 / Kiro 3.3.0 / Muse 1.4.20-R8619.1
+
+**New / Improved**
+
+- **[memos]** Memo auto-run: a category's waiting memos run as sessions by "Run now" or by themselves (any time, a time window, a count); approval for memos sessions add, run history, pause/resume, notifications; blocked until a tenant administrator allows it ([#4148](https://github.com/k-k1/agent-fleet/issues/4148), [#4149](https://github.com/k-k1/agent-fleet/issues/4149))
+- **[ecs-ec2]** Return a quarantined slot from the pool view ([#4019](https://github.com/k-k1/agent-fleet/issues/4019))
+- **[agents]** "Not delivered" chip when a session's input never reached the CLI ([#4222](https://github.com/k-k1/agent-fleet/issues/4222))
+- **[agents]** Re-authenticate keeps the current login until the new sign-in completes (Claude, Codex, Antigravity, Cursor, Kiro, Muse) ([#4231](https://github.com/k-k1/agent-fleet/issues/4231))
+- **[watch]** "idle · N watches" on session rows and Home cards, `fleet` watches link their session, finished Actions re-runs noticed within a minute, parked Pipelines runs read less often and PR runs labelled ([#4251](https://github.com/k-k1/agent-fleet/issues/4251), [#4310](https://github.com/k-k1/agent-fleet/issues/4310), [#4147](https://github.com/k-k1/agent-fleet/issues/4147), [#4221](https://github.com/k-k1/agent-fleet/issues/4221))
+- **[agy]** Antigravity no longer marked experimental ([#4238](https://github.com/k-k1/agent-fleet/issues/4238))
+- **[copilot]** Failed turns show their error and end as failed; Free plan recognised; "Model is not available" points at the plan ([#4083](https://github.com/k-k1/agent-fleet/issues/4083), [#4082](https://github.com/k-k1/agent-fleet/issues/4082), [#4128](https://github.com/k-k1/agent-fleet/issues/4128))
+- **[muse]** Failed turns show their error (hint on context overflow); memory import reads `MEMORY.md` facts ([#4102](https://github.com/k-k1/agent-fleet/issues/4102), [#4301](https://github.com/k-k1/agent-fleet/issues/4301))
+- **[console]** Conversation search narrows the archive to the hit's session and shows slug and branch ([#4158](https://github.com/k-k1/agent-fleet/issues/4158))
+- **[mcp]** Long OAuth scope lists folded behind a count ([#4259](https://github.com/k-k1/agent-fleet/issues/4259))
+- **[confluence]** Markdown bold next to Japanese and Korean text converts correctly ([#4206](https://github.com/k-k1/agent-fleet/issues/4206))
+
+**Fixed**
+
+- **[console]** Ctrl/Cmd+P opened the browser's print dialog while a dialog was open ([#4165](https://github.com/k-k1/agent-fleet/issues/4165))
+- **[mirror]** A carried question leaked into another session after a switch and said "stopped" once its session ran again; blank space beside a watch's PR link opened the PR ([#4307](https://github.com/k-k1/agent-fleet/issues/4307), [#4313](https://github.com/k-k1/agent-fleet/issues/4313), [#4131](https://github.com/k-k1/agent-fleet/issues/4131))
+- **[terminal]** Queued inputs could arrive out of order; a permission answer could land on a newer, identical-looking command ([#4178](https://github.com/k-k1/agent-fleet/issues/4178), [#4190](https://github.com/k-k1/agent-fleet/issues/4190), [#3521](https://github.com/k-k1/agent-fleet/issues/3521))
+- **[kiro]** The chip could stay "working" after the turn ended ([#4047](https://github.com/k-k1/agent-fleet/issues/4047))
+- **[ecs-ec2]** Golden bake slots reported dark or wedged, pool view quarantine flags disagreed, `pause.sh` left or missed a running bake ([#4100](https://github.com/k-k1/agent-fleet/issues/4100), [#4088](https://github.com/k-k1/agent-fleet/issues/4088), [#4108](https://github.com/k-k1/agent-fleet/issues/4108), [#4180](https://github.com/k-k1/agent-fleet/issues/4180))
+- **[ecs]** The egress gateway could fail to start (needs a `00-network` update) ([#4211](https://github.com/k-k1/agent-fleet/issues/4211))
+- **[ecs]** Internal Git repositories were lost on every Control Plane task replacement; they now live on their own file system (`10-data` update first) ([#4089](https://github.com/k-k1/agent-fleet/issues/4089))
+
 ## [0.45.0](0.45.0.md) — 2026-11-13
 
 **CLI pins** — Claude Code 2.1.323, Codex 0.169.0, Copilot 1.0.111, OpenCode 2.3.0, Antigravity 1.5.8

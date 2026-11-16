@@ -50,8 +50,8 @@ Main features:
   auth (subtree and multiple-path checkouts, optional per-server trust for
   self-signed certificates, automatic working-copy lock recovery).
 - **Project-centric console**: file browser, commit graph and diffs, session
-  state badges (working / awaiting input), a memo queue with image attachments,
-  a notification center, English/Japanese UI, keyboard-first operation
+  state badges (working / awaiting input), a memo queue with image attachments
+  whose categories can run their memos as sessions (auto-run), a notification center, English/Japanese UI, keyboard-first operation
   (command palette / leader key), and optional text-to-speech for replies
   (VOICEVOX / Zundamon, AWS Polly).
 - **Work items**: Jira issues, GitHub issues and pull requests, and Bitbucket

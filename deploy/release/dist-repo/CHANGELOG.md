@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.46.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.46.0) — 2026-11-16
+
+Memo categories can now run their waiting memos as sessions, by a press or by themselves within
+limits you set, once a tenant administrator allows it. Re-authenticating an agent keeps the current
+login until the new one completes, and a quarantined ECS EC2 slot can be returned from the Console.
+On ECS, read the Upgrade notes before running `update.sh`: `10-data` has to be updated first.
+
 ## [0.45.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.45.0) — 2026-11-13
 
 `watch` can now wait for GitHub releases and tags, a PR's first failing check, and another

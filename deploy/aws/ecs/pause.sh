@@ -178,7 +178,7 @@ golden_name() {
 # golden one. Always prints one line and returns 0: a read that fails says "cannot tell", never
 # "none", and the answer must not move --status's exit code.
 golden_bake() {
-  local arns a got out="" alive t
+  local arns a got seen="" alive t
   local -a names=() batch=() tasks=()
   if ! arns="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null)"; then
     echo "(cannot tell: the service list could not be read)"; return 0
@@ -196,10 +196,10 @@ golden_bake() {
       echo "(cannot tell: the golden services could not be read)"; return 0
     fi
     got="$_rows"
-    for a in $got; do out="$out $a (service running)"; done
+    for a in $got; do seen="$seen $a (service running)"; done
   done
   if ! alive="$(ws_tasks_alive 2>/dev/null)"; then
-    echo "(cannot tell: the cluster's tasks could not be read)${out:+ —$out}"; return 0
+    echo "(cannot tell: the cluster's tasks could not be read)${seen:+ —$seen}"; return 0
   fi
   # shellcheck disable=SC2206  # word splitting is the batching
   tasks=($alive)
@@ -208,12 +208,12 @@ golden_bake() {
     if ! got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks "${batch[@]}" \
         --query "[length(failures), join(' ', tasks[].group)]" --output text 2>/dev/null)" \
         || ! described_rows "$got"; then
-      echo "(cannot tell: the golden tasks could not be read)${out:+ —$out}"; return 0
+      echo "(cannot tell: the golden tasks could not be read)${seen:+ —$seen}"; return 0
     fi
     got="$_rows"
-    for t in $got; do ! golden_name "${t#service:}" || out="$out ${t#service:} (task not STOPPED)"; done
+    for t in $got; do ! golden_name "${t#service:}" || seen="$seen ${t#service:} (task not STOPPED)"; done
   done
-  echo "${out:-(none)}"
+  echo "${seen:-(none)}"
 }
 
 # ws_tasks_wait — until no Workspace task is left (AF_WS_TASK_WAIT_SEC, default 600). Fails on
