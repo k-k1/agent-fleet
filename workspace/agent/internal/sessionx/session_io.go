@@ -253,7 +253,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			// A target waiting on its user takes the message into its pending spool rather than
 			// refusing it, and so does one that already holds queued messages, which keeps
 			// them in order (peer_pending.go).
-			blockedOn, n, qerr := enqueueDecision(name, dst, body.PeerFrom, strings.TrimSpace(body.PeerIntent), body.Prompt,
+			blockedOn, n, qerr := enqueueDecision(name, dst, body.PeerFrom, strings.TrimSpace(body.PeerIntent), body.Prompt, autoPeer || r.Context().Value(autoInputKey{}) != nil,
 				func() error {
 					return peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), armedAt)
 				})

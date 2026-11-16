@@ -204,7 +204,8 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     notice, a booked usage-limit resume, pull request feedback, a plan-review reviewer): it is
     refused with `409 session_retired` and the mark stays. Both execution methods follow one rule.
     - `POST /start` is automatic when the in-process mark is on the request or the query says
-      `origin=automatic` (`StartOriginQuery`, `startIsAutomatic`); anything else, an unknown value
+      `origin=automatic` (`StartOriginQuery`, `startIsAutomatic`), or `peer_from=<an auto plan reviewer of
+      the session>` (the start that precedes a peer message); anything else, an unknown value
       included, is deliberate. An automatic start records no act and is refused on a retired
       session. A Control Plane older than this sends no parameter (its schedule's start then reads as
       deliberate, as before); an Agent older than this ignores it.
@@ -226,7 +227,9 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
       that cannot be read is in doubt (refused, not launched); a mark that cannot be cleared answers
       `retire_clear_failed`, as `/start` does. Lock order is the lifecycle gate, then the retire gate,
       and no path takes the read side twice. A message to a running session, or to a stopped one that
-      is not retired, is judged as before: not an act.
+      is not retired, is judged as before: the member's own bare `/input` and `/turn` start/steer are
+      recorded as an act by `notePersonAct`, a message that carries an origin (peer, operator, `/mcp`) is
+      not. The start of a retired session is the one place such a message records an act.
     - Controls that deliver no message stay refused on a retired, stopped Managed session: an
       interrupt, a queue edit, a reply to an interaction by id, a settings read or change, a chat
       bridge button pick.

@@ -33,7 +33,10 @@ type PendingPeer struct {
 	Message   string
 	BlockedOn string
 	QueuedAt  time.Time
-	seq       uint64
+	// Auto: the Agent sent it on its own (a plan review's follow-up), so its delivery is not
+	// deliberate and does not start a retired session.
+	Auto bool
+	seq  uint64
 }
 
 func (p PendingPeer) file() heldPeer {
@@ -42,7 +45,7 @@ func (p PendingPeer) file() heldPeer {
 		seq = heldSeq.Add(1)
 	}
 	return heldPeer{ID: p.ID, Prompt: p.Message, From: p.From, Intent: p.Intent,
-		BlockedOn: p.BlockedOn, QueuedAt: p.QueuedAt, Seq: seq}
+		BlockedOn: p.BlockedOn, QueuedAt: p.QueuedAt, Seq: seq, Auto: p.Auto}
 }
 
 // PutPendingPeer writes p. Writing it back after a failed delivery keeps its place: the order
@@ -63,7 +66,7 @@ func PendingPeers(name string) []PendingPeer {
 	var out []PendingPeer
 	for _, hp := range loadSpool(pendingSubdir, name) {
 		out = append(out, PendingPeer{ID: hp.ID, From: hp.From, Intent: hp.Intent, Message: hp.Prompt,
-			BlockedOn: hp.BlockedOn, QueuedAt: hp.QueuedAt, seq: hp.Seq})
+			BlockedOn: hp.BlockedOn, QueuedAt: hp.QueuedAt, Auto: hp.Auto, seq: hp.Seq})
 	}
 	return out
 }

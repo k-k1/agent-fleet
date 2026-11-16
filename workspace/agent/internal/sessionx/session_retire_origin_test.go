@@ -6,6 +6,7 @@ package sessionx
 // Managed resume, in Terminal (CLI) and in Managed.
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -509,5 +511,103 @@ func TestPlanFollowUpDoesNotStartARetiredReviewer(t *testing.T) {
 				t.Fatalf("retiredAt=%q actMark=%d", cur.RetiredAt, cur.PersonActMark)
 			}
 		})
+	}
+}
+
+// The Agent's own follow-up keeps its origin through the pending spool: queued behind a reviewer
+// that waits for its user it is stored as automatic, and its delivery after a retire does not start
+// the retired reviewer. The same message queued by a peer is deliverable (it starts the session).
+func TestAutomaticFollowUpKeepsItsOriginThroughThePendingSpool(t *testing.T) {
+	k := carriedKinds[1]
+	for _, auto := range []bool{true, false} {
+		t.Run(map[bool]string{true: "automatic", false: "peer"}[auto], func(t *testing.T) {
+			pendingTestEnv(t)
+			c := newCarriedEnv(t, "")
+			session.WriteMeta(session.Meta{Name: "planner", Kind: session.KindClaude, Dir: t.TempDir()})
+			dst := c.retiredStopped(t, k) // the reviewer "s", retired after the follow-up was queued
+			// Queued behind a message already waiting, as enqueueDecision does for any target holding some.
+			if err := agents.PutPendingPeer("s", agents.PendingPeer{ID: "m0", From: "x", Intent: "request", Message: "first", BlockedOn: "question", QueuedAt: time.Now()}); err != nil {
+				t.Fatal(err)
+			}
+			blocked, _, err := enqueueDecision("s", dst, "planner", "question", "look again", auto, func() error { return nil })
+			if err != nil || blocked == "" {
+				t.Fatalf("not queued: blocked=%q err=%v", blocked, err)
+			}
+			var queued agents.PendingPeer
+			for _, p := range agents.PendingPeers("s") {
+				if p.Message == "look again" {
+					queued = p
+				}
+			}
+			if queued.ID == "" || queued.Auto != auto {
+				t.Fatalf("stored %+v, want Auto=%v", queued, auto)
+			}
+			ok := deliverPendingPeer("s", queued)
+			cur, _ := session.ReadMeta("s")
+			if auto && (ok || cur.RetiredAt == "") {
+				t.Fatalf("an automatic follow-up was delivered to a retired reviewer: ok=%v retiredAt=%q", ok, cur.RetiredAt)
+			}
+			if !auto && cur.RetiredAt != "" {
+				t.Fatalf("a peer's queued message did not start the session (ok=%v)", ok)
+			}
+		})
+	}
+}
+
+// The sender read on a start must not fall to "deliberate" when it lands in the middle of a meta
+// writer: it is read under the meta lock like the check that follows.
+func TestStartPeerSenderIsReadUnderTheMetaLock(t *testing.T) {
+	c := newCarriedEnv(t, "")
+	c.plannerWithAutoReviewer(t, carriedKinds[1], true)
+	good, err := os.ReadFile(session.MetaPath("s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := lifegate.Enter(context.Background(), "s") // taken before the writer, as an input holds it
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	sessionLockMu.Lock()
+	if err := os.WriteFile(session.MetaPath("s"), nil, 0o644); err != nil { // a writer mid-truncate
+		t.Fatal(err)
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPost, "/sessions/s/start?peer_from=rev", nil).WithContext(lifegate.WithLease(context.Background(), lease))
+		req.SetPathValue("name", "s")
+		rec := httptest.NewRecorder()
+		HandleStartSession(rec, req)
+		done <- rec
+	}()
+	time.Sleep(150 * time.Millisecond) // the handler is waiting for the writer
+	if err := os.WriteFile(session.MetaPath("s"), good, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionLockMu.Unlock()
+	rec := <-done
+	c.wantRefused(t, carriedKinds[1], rec, "a reviewer's start during a meta write")
+}
+
+// A meta that cannot be read for any reason, a directory that cannot be searched included, is in
+// doubt: an automatic input is not launched on it (only an explicit "does not exist" says gone).
+func TestAutomaticManagedInputIsRefusedWhenTheMetaDirCannotBeSearched(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory modes")
+	}
+	c := newCarriedEnv(t, "")
+	m := c.retiredStopped(t, carriedKinds[1])
+	called := false
+	useLockingDriver(t, session.KindCodex, &lockingDriver{onResume: func() { called = true }})
+	d, _ := driverOf(m)
+	if err := os.Chmod(session.MetaDir(), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(session.MetaDir(), 0o755) })
+	if _, err := resumeManaged(d, m); !errors.Is(err, errSessionRetired) || called {
+		t.Fatalf("err=%v launched=%v, want session_retired and no launch", err, called)
+	}
+	if _, err := resumeManagedDeliberate(d, m); !errors.Is(err, errSessionRetired) || called {
+		t.Fatalf("deliberate: err=%v launched=%v, want session_retired and no launch", err, called)
 	}
 }

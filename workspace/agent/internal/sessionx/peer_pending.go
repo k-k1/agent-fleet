@@ -190,7 +190,7 @@ func pendingQueueFull() error {
 // A blocker that does not queue (an expired login, the usage-limit menu) wins over a waiting
 // queue: such a send goes ahead and /input refuses it as before. Without one, a message waiting
 // or in flight makes the send queue behind it.
-func enqueueDecision(name string, dst session.Meta, from, intent, message string,
+func enqueueDecision(name string, dst session.Meta, from, intent, message string, auto bool,
 	allow func() error) (blockedOn string, pending int, err error) {
 	t := pendingTargetOf(name)
 	t.mu.Lock()
@@ -222,7 +222,7 @@ func enqueueDecision(name string, dst session.Meta, from, intent, message string
 		return blockedOn, n, err
 	}
 	p := agents.PendingPeer{ID: agents.NormalizeMsgID(""), From: from, Intent: intent,
-		Message: strings.TrimSpace(message), BlockedOn: blockedOn, QueuedAt: pendingPeerNow()}
+		Message: strings.TrimSpace(message), BlockedOn: blockedOn, QueuedAt: pendingPeerNow(), Auto: auto}
 	if err := agents.PutPendingPeer(name, p); err != nil {
 		return blockedOn, n, err
 	}
@@ -359,6 +359,9 @@ func deliverPendingPeer(name string, p agents.PendingPeer) bool {
 	}()
 	body, _ := json.Marshal(map[string]string{"prompt": p.Message, "peer_from": p.From, "peer_intent": p.Intent})
 	ctx := context.WithValue(lifegate.WithLease(context.Background(), lease), pendingDeliveryKey{}, pendingDelivery{queuedAt: p.QueuedAt})
+	if p.Auto {
+		ctx = context.WithValue(ctx, autoInputKey{}, true) // survives the spool: the origin is the Agent's
+	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/sessions/"+name+"/input", bytes.NewReader(body))
 	req.SetPathValue("name", name)
 	rec := &captureWriter{header: http.Header{}}

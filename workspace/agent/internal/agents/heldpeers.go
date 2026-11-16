@@ -65,6 +65,8 @@ type heldPeer struct {
 	Origin   string      `json:"origin,omitempty"`
 	Schedule ScheduleRef `json:"schedule,omitempty"`
 	Instr    string      `json:"instr,omitempty"`
+	// Auto: see PendingPeer.Auto.
+	Auto bool `json:"auto,omitempty"`
 }
 
 func (hp heldPeer) origin() string {

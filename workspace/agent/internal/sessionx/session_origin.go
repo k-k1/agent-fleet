@@ -43,7 +43,12 @@ func startIsAutomatic(r *http.Request) bool {
 	// sends it: the start of a session for its own auto plan reviewer's reply is automatic. The
 	// claim can only make a start stricter.
 	if from := q.Get(StartPeerFromQuery); from != "" {
-		if dst, ok := session.ReadMeta(r.PathValue("name")); ok && planReviewerAutoReply(dst, from) {
+		// Read under the meta lock like the check that follows: a read that lands in the middle of
+		// a writer must not turn an automatic sender into a deliberate one. A meta that exists but
+		// cannot be read is in doubt, which is not deliberate.
+		name := r.PathValue("name")
+		dst, ok := readMetaStable(name)
+		if (ok && planReviewerAutoReply(dst, from)) || (!ok && metaFileExists(name)) {
 			return true
 		}
 	}

@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -638,10 +639,12 @@ func ancestorState(m session.Meta, id string) (released bool, doubt string) {
 	return false, ""
 }
 
-// metaFileExists says the session's meta file is there, readable or not.
+// metaFileExists says the session's meta file may be there, readable or not. Only an explicit
+// "does not exist" says it is not: a stat that fails any other way (no search permission on the
+// directory, an I/O error) is no evidence of absence, and the callers treat it as in doubt.
 func metaFileExists(name string) bool {
 	_, err := os.Stat(session.MetaPath(name))
-	return err == nil
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // underReleased reports whether a session of the walk sits below one this retire found released.
