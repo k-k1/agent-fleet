@@ -112,6 +112,24 @@ describe("ui-prefs: the same owner follows a deletion on another device", () => 
   });
 });
 
+describe("ui-prefs: the same owner follows a deleted launch-default map", () => {
+  it("does not bring back the default route when another device deleted the whole map", async () => {
+    apiMock.mockResolvedValueOnce(serverCopy());
+    const s = await freshSettings({});
+    s.setPrefsOwnerSource(() => "t1|alice");
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().agentLaunchDefaults.claude).toMatchObject({ route: ROUTE });
+    apiMock.mockResolvedValueOnce({ chatSize: 15 }); // the map is gone on the server
+    await s.hydrateUIPrefs();
+    s.setSetting("iconSet", "seti");
+    const body = await savedBody();
+    expect(body.agentLaunchDefaults.claude.route).toBeUndefined();
+    expect(body.agentLaunchDefaults.futurekind).toBeUndefined();
+    // The fields this Console reads are still carried over from the local copy.
+    expect(body.agentLaunchDefaults.claude.effort).toBe("high");
+  });
+});
+
 describe("ui-prefs: an owner switch never carries unknown keys across", () => {
   it("sends none of the previous owner's route or rows after a switch to an empty server copy", async () => {
     let owner = "t1|alice";

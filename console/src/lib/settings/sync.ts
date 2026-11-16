@@ -489,11 +489,11 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // already-normalized local map mask that server-side value during migration.
   // Once the new map exists on the server it is authoritative for every agent.
   // An unsaved local edit stands over the server's map, as the loop above does for other keys.
-  // With no map on the server, the local one stands in; the fields this Console does not read
-  // (the default route and its connection) are the server copy's to carry, so local ones are kept
-  // only for the recorded owner and a server copy with no map never takes another account's
-  // default route from this browser.
-  const localRows = sameOwner ? merged.agentLaunchDefaults : knownLaunchDefaults(merged.agentLaunchDefaults);
+  // With no map on the server, the local one stands in for the fields this Console reads. The
+  // ones it does not read (the default route and its connection) are the server copy's alone: a
+  // map deleted on another device must not come back with them, and another account's must
+  // never be sent.
+  const localRows = knownLaunchDefaults(merged.agentLaunchDefaults);
   const rows = unsaved.has("agentLaunchDefaults")
     ? merged.agentLaunchDefaults
     : serverRows && typeof serverRows === "object"
