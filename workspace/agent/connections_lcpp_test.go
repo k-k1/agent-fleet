@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -510,5 +512,30 @@ func TestHandleConnectionsGetNeverDialsLcppConnection(t *testing.T) {
 	}
 	if hits != 0 {
 		t.Errorf("hits = %d, want 0 — GET /connections must never dial the member's lcpp connection", hits)
+	}
+}
+
+// The lcpp entry carries the endpoint's binding, the reference a default route on member-llamacpp
+// is saved with (ADR 0138 D11b): the same one the launch resolves to, never the key itself.
+func TestLcppStatusCarriesTheEndpointBinding(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	lcppMemberCacheReset()
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: "http://box:9931", APIKey: "sk-lcpp-secret"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := secrets.Load()
+	out := lcppStatus(s)
+	want := credbind.Endpoint(routes.RouteMemberLlamacpp, "http://box:9931", "sk-lcpp-secret")
+	if out["binding"] != want || want == "" {
+		t.Errorf("binding %v, want %q", out["binding"], want)
+	}
+	if b, _ := json.Marshal(out); strings.Contains(string(b), "sk-lcpp-secret") {
+		t.Errorf("the entry carries the key: %s", b)
+	}
+	if out := lcppStatus(&secrets.Data{}); out["binding"] != nil {
+		t.Errorf("no endpoint, binding %v", out["binding"])
 	}
 }

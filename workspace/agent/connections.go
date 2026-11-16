@@ -652,6 +652,11 @@ func lcppStatus(s *secrets.Data) map[string]any {
 	if s.Lcpp != nil && s.Lcpp.URL != "" {
 		out["connected"] = true
 		out["url"] = s.Lcpp.URL
+		// binding: the endpoint's non-secret binding (ADR 0138 D5b, a MAC of the URL and key), the
+		// connection reference a default route on member-llamacpp is saved with. The Agent holds a
+		// launch on that default to this very endpoint (checkDefaultFixed), so the Console needs it
+		// to save one.
+		out["binding"] = credbind.Endpoint(routes.RouteMemberLlamacpp, s.Lcpp.URL, s.Lcpp.APIKey)
 		// reachable: the last OBSERVED outcome, never a fresh dial — this handler is on a hot
 		// path (see the doc comment above) and must not itself pay a LAN round trip.
 		// lcppMemberObservedReachable (engines.go) reads a fact this process already learned,
