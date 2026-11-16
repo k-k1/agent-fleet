@@ -42,7 +42,13 @@
   padding: 4px 0 6px;
   /* A step darker than the pane it steers, in either theme, so the column reads as chrome
      rather than as the pane's first rows. */
-  background: color-mix(in srgb, var(--leftpane-bg) 86%, #000);
+  --actbar-bg: color-mix(in srgb, var(--leftpane-bg) 86%, #000);
+  /* The column is chrome like the bars above it, so what it marks takes the top bar's colour
+     rather than the left pane's: one accent runs from the bars down the column. */
+  --actbar-accent: var(--topbar-accent, var(--accent));
+  /* Opaque, because the two-part icon's mark paints this colour as its cut-out disc. */
+  --actbar-active-bg: color-mix(in srgb, var(--actbar-accent) 18%, var(--actbar-bg));
+  background: var(--actbar-bg);
   border-right: 1px solid var(--border);
   overflow: hidden auto;
   scrollbar-width: none;
@@ -73,8 +79,8 @@
 }
 .actbar-btn.active {
   color: var(--fg);
-  border-left-color: var(--accent);
-  background: var(--lp-active-bg);
+  border-left-color: var(--actbar-accent);
+  background: var(--actbar-active-bg);
 }
 .actbar-btn:focus-visible {
   outline: 2px solid var(--focus-ring);
@@ -87,12 +93,12 @@
   right: 5px;
   bottom: 5px;
   font-size: 14px;
-  color: var(--accent);
+  color: var(--actbar-accent);
   border-radius: 50%;
-  background: color-mix(in srgb, var(--leftpane-bg) 86%, #000);
+  background: var(--actbar-bg);
 }
 .actbar-btn.active > .actbar-mark {
-  background: var(--lp-active-bg);
+  background: var(--actbar-active-bg);
 }
 /* Badges sit at the upper right, the mark at the lower right: a count never covers it. */
 .actbar-badge {
