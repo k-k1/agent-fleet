@@ -170,3 +170,30 @@ func TestAutoSyncMuseTroubleDoesNotFailTheSwitch(t *testing.T) {
 		t.Errorf("no too_many_files row: %+v", st.Run.Rows)
 	}
 }
+
+// The switch imports a project's MEMORY.md facts and leaves a personal MEMORY.md waiting.
+func TestAutoSyncImportsMuseMemoryMdFacts(t *testing.T) {
+	e := newAutoEnv(t)
+	memoryWrite(t, filepath.Join(e.clone, ".agents", "memory", "MEMORY.md"), "- [x](x.md) - x\n- a project fact\n")
+	memoryWrite(t, e.museStore("personal", "MEMORY.md"), "- a personal fact\n")
+	pv, err := autoPreview("on")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pv.Apply != 1 || pv.MusePersonal != 1 {
+		t.Fatalf("preview = %+v", pv)
+	}
+	e.flip(true)
+	if !eq(afNames(t, e.pid), []string{museIndexNoteName}) {
+		t.Fatalf("AF after import: %v", afNames(t, e.pid))
+	}
+	agentMemMu.RLock()
+	es, _, err := agentMemLoadDir(agentMemScopeUser, "user")
+	agentMemMu.RUnlock()
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("user scope unreadable: %v", err)
+	}
+	if len(es) != 0 {
+		t.Fatalf("the personal store was imported silently: %v", es)
+	}
+}
