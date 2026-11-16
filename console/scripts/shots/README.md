@@ -20,7 +20,7 @@ node console/scripts/shots/capture.mjs --locale en
 - `capture.mjs` starts the stub, drives headless Chromium over raw CDP (Node 22's
   global `WebSocket` — no Playwright/Puppeteer), seeds `localStorage` the way a
   returning user's browser would look (locale, theme, the saved pane layout, rail
-  section fold state), then screenshots each scene as WebP at `deviceScaleFactor: 2`.
+  section fold state, the left-pane view `af-left-view` picked by `railViewOf`), then screenshots each scene as WebP at `deviceScaleFactor: 2`.
 - Scenes live at the top of `capture.mjs`: a pane layout + a viewport, optionally a
   `settings` section to pre-select and an `action` snippet evaluated after boot (the
   launch-dialog scene clicks its way into the agent picker; the usage scene opens
