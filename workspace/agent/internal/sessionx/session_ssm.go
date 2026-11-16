@@ -1,12 +1,14 @@
 package sessionx
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -40,6 +42,18 @@ type ssmLoginStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
+// writeStartMetaUnreadable answers a start whose session's meta exists but cannot be read, at the
+// lifecycle gate or at the handler's own read. An automatic start is refused as a retired one (the
+// mark may be on the file); a person's gets 503, which is not "no such session".
+func writeStartMetaUnreadable(w http.ResponseWriter, auto bool) {
+	if auto {
+		httpx.WriteErr(w, http.StatusConflict, "session_retired", errSessionRetired.Error())
+		return
+	}
+	httpx.WriteErr(w, http.StatusServiceUnavailable, "meta_unreadable",
+		"the session's meta could not be read, so the start was not made; try again")
+}
+
 // afterStartGate is a test seam: it runs once HandleStartSession holds both gates, before it
 // reads the meta. The lifecycle gate has read the meta already, so only a hook can put a cut file
 // between that read and this handler's own.
@@ -59,8 +73,14 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	// lifecycle lease when it reaches resumeManaged). The retire gate is held from the check of
 	// the retired mark to the end of the launch and the clearing of the mark, so a retire cannot
 	// slip between them (retireGates).
-	lease, ok := enterSessionGate(w, r, name)
-	if !ok {
+	auto := startIsAutomatic(r)
+	lease, err := lifegate.Enter(r.Context(), name)
+	if err != nil {
+		if errors.Is(err, lifegate.ErrMetaUnreadable) {
+			writeStartMetaUnreadable(w, auto)
+			return
+		}
+		writeGateErr(w, err)
 		return
 	}
 	defer lease.Release()
@@ -70,17 +90,12 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	if afterStartGate != nil {
 		afterStartGate()
 	}
-	auto := startIsAutomatic(r)
 	// One read decides both questions. An automatic start never goes ahead on a meta it could not
 	// read: the retired mark may be on it.
 	cur, st := readMetaDecide(name)
 	switch {
-	case st == session.MetaUnreadable && auto:
-		httpx.WriteErr(w, http.StatusConflict, "session_retired", errSessionRetired.Error())
-		return
 	case st == session.MetaUnreadable:
-		httpx.WriteErr(w, http.StatusServiceUnavailable, "meta_unreadable",
-			"the session's meta could not be read, so the start was not made; try again")
+		writeStartMetaUnreadable(w, auto)
 		return
 	case st == session.MetaAbsent:
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)

@@ -160,7 +160,7 @@ source_of_truth: "コード（本書は地図と設計意図）"
     Control Plane は繰り返す）。起動時の回復は、読めない root の意図を残す。木を歩く一覧も同じで、
     ディレクトリ内の読めないファイルは子かもしれないので、root の `unended` に名前を載せ、`complete` にはしない。
     meta が読めない root の retire は 404 ではなく `503 meta_unreadable`。そのセッションの自動の `/start` は
-    `409 session_retired` で断り、購読も禁止する。人の操作の記録（`recordPersonAct`）は、読めないときに
+    `409 session_retired` で断り（最初からライフサイクルゲートで読めなかった場合も同じ。人の起動は `503 meta_unreadable`）、購読も禁止する。人の操作の記録（`recordPersonAct`）は、読めないときに
     「記録済み」とは読まずエラーを返す。
   - meta の `retiredAt` が、終わらせたものを終わったままにする。付けた瞬間から、
     watch の sink は起動も注入もせず、Managed への入力は、自動の出どころのものを `409 session_retired`

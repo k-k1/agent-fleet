@@ -118,3 +118,33 @@ func TestWatchBarredTreatsAnUnreadableMetaAsRetired(t *testing.T) {
 		t.Fatal("an absent session is barred")
 	}
 }
+
+// A meta that is unreadable from the start is stopped at the lifecycle gate; the start answers
+// as a start does: an automatic one as retired, a person's as 503 meta_unreadable.
+func TestStartOfAnAlreadyUnreadableMetaAnswersAsAStart(t *testing.T) {
+	for label, body := range cutMetaBodies {
+		for _, auto := range []bool{true, false} {
+			t.Run(label+map[bool]string{true: "/automatic", false: "/person"}[auto], func(t *testing.T) {
+				r := newRetireEnv(t)
+				writeCutMeta(t, "c", body)
+				req := httptest.NewRequest(http.MethodPost, "/sessions/c/start", nil)
+				req.SetPathValue("name", "c")
+				if auto {
+					req = asAutomaticStart(req)
+				}
+				rec := httptest.NewRecorder()
+				HandleStartSession(rec, req)
+				want, code := http.StatusServiceUnavailable, "meta_unreadable"
+				if auto {
+					want, code = http.StatusConflict, "session_retired"
+				}
+				if rec.Code != want || !strings.Contains(rec.Body.String(), code) {
+					t.Fatalf("start = %d %s, want %d %s", rec.Code, rec.Body, want, code)
+				}
+				if len(r.started) != 0 {
+					t.Fatalf("started: %v", r.started)
+				}
+			})
+		}
+	}
+}

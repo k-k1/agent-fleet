@@ -195,7 +195,7 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     list: a file in the sessions directory that cannot be read may be a child, so it is named in the
     root's `unended` and the answer is never `complete`; a retire of a root whose meta cannot be read
     is `503 meta_unreadable`, not 404. An automatic `/start` of such a session is refused with
-    `409 session_retired`, and a subscription is barred for it. The person-act record
+    `409 session_retired` (also when the meta was already unreadable at the lifecycle gate; a person's start gets `503 meta_unreadable`), and a subscription is barred for it. The person-act record
     (`recordPersonAct`) returns an error for it instead of reading as "already recorded".
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
     written, the watch sink never starts or injects into the session, a Managed input of an
