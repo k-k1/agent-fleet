@@ -197,6 +197,14 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     is `503 meta_unreadable`, not 404. An automatic `/start` of such a session is refused with
     `409 session_retired` (also when the meta was already unreadable at the lifecycle gate; a person's start gets `503 meta_unreadable`), and a subscription is barred for it. The person-act record
     (`recordPersonAct`) returns an error for it instead of reading as "already recorded".
+  - **A meta broken for good is set aside at Agent start** (`SetAsideBrokenMetas`, in `serve()` before
+    anything is started or any request accepted). A `*.json` that cannot be read and has no tmux
+    session of that name is renamed in place to `<name>.json.broken-<unix seconds>` (never deleted;
+    no walker takes that name), and one line is logged. After that every reader sees the session as
+    absent, so it no longer keeps a retire from answering `complete`. To repair it, fix the file and
+    rename it back to `<name>.json`: it is a session again, and it carries no retired mark it was
+    never given. A file whose tmux session exists is left in place and logged: something runs that
+    the Agent cannot describe, so it stays in doubt. The runtime checks above are not relaxed.
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
     written, the watch sink never starts or injects into the session, a Managed input of an
     automatic origin is refused with `409 session_retired` (one of a deliberate origin starts the

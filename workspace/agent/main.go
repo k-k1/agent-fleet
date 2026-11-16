@@ -165,6 +165,9 @@ func serve() {
 	// Record where the git OAuth refresh bridge lives (docs/log/71 §71.8) so the separate
 	// `workspace-agent cred` process can reach it without depending on its own env.
 	seedGitOAuthBridge()
+	// A meta that cannot be read would keep every retire from completing: set it aside while no
+	// write is in flight and nothing has been started or accepted (sessionx.SetAsideBrokenMetas).
+	sessionx.SetAsideBrokenMetas()
 	// Make claude emit working/idle/question via hooks into the status files.
 	claude.EnsureStatusHooks()
 	// Drop expired carried interactions (docs/log/75). This is the only place they are

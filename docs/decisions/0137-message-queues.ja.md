@@ -560,3 +560,6 @@ Control Plane のスケジューラは、自分の start が自動だと言う�
 歩く一覧にそのようなファイルがあれば root の `unended` に名前を載せて `complete` にせず、読めない root の retire は
 `503 meta_unreadable`、そのセッションの自動の起動は `409 session_retired` で断り、人の操作の記録はエラーにする。
 meta の書き込み自体も一時ファイルと rename になったので、通常は読み手が途中で切れたファイルに当たらない。
+ずっと読めない meta は retire の `complete` を妨げ続けるので、Agent は起動時に、同名の tmux セッションが無いものを
+`<name>.json.broken-<unix 秒>` に rename して脇へ退ける（削除はしない）。セッションがあるものはそのまま残して疑いのままにする。
+直したあと元の名前に戻せば、retire の印の無い通常のセッションに戻る。

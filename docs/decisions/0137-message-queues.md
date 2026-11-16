@@ -599,3 +599,6 @@ Added 2026-11-16 (#4269): the retire's reads of a session's meta no longer take 
 "absent". Such a file in the walk's list is named in the root's `unended` (never `complete`), a retire of a root with one
 is `503 meta_unreadable`, an automatic start of it is refused with `409 session_retired`, and the act record is an error.
 The meta write itself is now a temporary file and a rename, so a reader no longer meets a cut file in normal operation.
+A meta that stays unreadable would keep every retire from completing, so the Agent sets such a file aside at start
+(renamed `<name>.json.broken-<unix seconds>`, never deleted) when no tmux session of that name exists; one whose session
+exists stays in place and in doubt. Renaming it back after a repair makes it a session again, with no retired mark.
