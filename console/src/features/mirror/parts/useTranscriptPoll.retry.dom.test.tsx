@@ -54,12 +54,19 @@ describe("useTranscriptPoll reset", () => {
     const host = document.createElement("div");
     const root = createRoot(host);
     act(() => root.render(<Probe session="A" st={st} />));
-    for (const k of ["setCarried", "setPendingApproval", "setPendingText", "setRestoredAt"]) fns[k].mockClear();
+    // Each empty value is the one the poll itself writes when the field is absent.
+    const empties: Record<string, unknown> = {
+      setCarried: null,
+      setPendingApproval: null,
+      setPendingText: "",
+      setRestoredAt: [],
+      setAgentCtx: null,
+      setCompactProg: null,
+      setBgBusyReason: "",
+    };
+    for (const k of Object.keys(empties)) fns[k].mockClear();
     act(() => root.render(<Probe session="B" st={st} />));
-    expect(fns.setCarried).toHaveBeenCalledWith(null);
-    expect(fns.setPendingApproval).toHaveBeenCalledWith(null);
-    expect(fns.setPendingText).toHaveBeenCalledWith("");
-    expect(fns.setRestoredAt).toHaveBeenCalledWith([]);
+    for (const [k, v] of Object.entries(empties)) expect(fns[k], k).toHaveBeenCalledWith(v);
     act(() => root.unmount());
   });
 });
