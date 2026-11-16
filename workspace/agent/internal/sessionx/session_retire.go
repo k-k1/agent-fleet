@@ -55,9 +55,10 @@ func isRetired(m session.Meta) bool { return m.RetiredAt != "" }
 
 // watchBarred is the engine's Barred hook: no subscription that could start a retired session
 // is made for it.
+// A meta that exists but cannot be read is barred too: the mark may be on it.
 func watchBarred(owner string) bool {
-	m, ok := session.ReadMeta(owner)
-	return ok && isRetired(m)
+	m, st := session.ReadMetaState(owner)
+	return st == session.MetaUnreadable || (st == session.MetaOK && isRetired(m))
 }
 
 // retireGates serialise a retire of one session against the starts that check the mark and then
@@ -91,13 +92,25 @@ func clearRetired(name string) error {
 	return err
 }
 
-// readMetaStable reads a session's meta under the meta lock. A plain read can land in the middle
-// of a writer that truncates and rewrites the file and then comes back empty or cut short; the
-// retire must not take that for "no act and no release" and go on to mark and stop the session.
+// errMetaUnreadable is the answer for a meta file that exists but cannot be read or parsed: in
+// doubt, which no caller may take for "absent" or "nothing to do".
+var errMetaUnreadable = errors.New("the session's meta exists but could not be read")
+
+// readMetaStable reads a session's meta under the meta lock, so it is ordered against the
+// read-modify-write updates. Whoever decides on the answer must use readMetaDecide instead:
+// false here covers both "absent" and "unreadable".
 func readMetaStable(name string) (session.Meta, bool) {
+	m, st := readMetaDecide(name)
+	return m, st == session.MetaOK
+}
+
+// readMetaDecide is readMetaStable that tells an absent meta from one that exists but cannot be
+// read (cut, empty, not JSON, an I/O error). The retire, an automatic start and the act record
+// stop or start nothing on the second answer and report it.
+func readMetaDecide(name string) (session.Meta, session.MetaState) {
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
-	return session.ReadMeta(name)
+	return session.ReadMetaState(name)
 }
 
 type autoStartKey struct{}
@@ -142,8 +155,14 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	m, ok := readMetaStable(name)
-	if !ok {
+	m, st := readMetaDecide(name)
+	if st == session.MetaUnreadable {
+		// Not "no such session": the Control Plane would drop the retire as moot. Nothing was done.
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "meta_unreadable",
+			"the session's meta could not be read, so nothing was ended; retire again")
+		return
+	}
+	if st != session.MetaOK {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
@@ -196,12 +215,23 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 	const maxRounds = 20
 	seen := map[string]*retireReport{}
 	var order []*retireReport
+	var doubts []string // reasons the tree may not be whole; they go on the root's report
 	for round := 0; ; round++ {
 		names := []string{}
 		if round == 0 {
 			names = append(names, root)
 		}
-		metas := session.ListMetas()
+		metas, unreadable, listErr := session.ListMetasChecked()
+		// A file that cannot be read may be a member of this tree, and a directory that cannot be
+		// listed may hide any: the tree is not known to be whole, so the answer is not complete.
+		for _, n := range unreadable {
+			if seen[n] == nil { // a member the walk already has reports its own doubt (retireOne)
+				doubts = appendNew(doubts, "the meta of "+n+" could not be read, so the tree may be incomplete; retire again")
+			}
+		}
+		if listErr != nil {
+			doubts = appendNew(doubts, "the sessions could not be listed ("+listErr.Error()+"), so the tree may be incomplete; retire again")
+		}
 		for _, d := range spendDescendants(root, metas) {
 			if !underReleased(d, metas, seen, in.ID) {
 				names = append(names, d.Name)
@@ -230,11 +260,15 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 			order[0].Unended = appendNew(order[0].Unended, "a child create was still in flight; retire again once it has finished")
 		}
 	}
+	order[0].Unended = appendNew(order[0].Unended, doubts...)
 	// What the answer says is the state now: a session a person started after this retire marked it
 	// is released and running, not stopped.
 	for _, rep := range order {
-		if cur, ok := readMetaStable(rep.Name); ok && releasedFrom(cur, in.ID) {
+		switch cur, st := readMetaDecide(rep.Name); {
+		case st == session.MetaOK && releasedFrom(cur, in.ID):
 			rep.Released, rep.Running, rep.Stopped = true, SessionAlive(cur), false
+		case st == session.MetaUnreadable:
+			rep.Unended = appendNew(rep.Unended, "the session's meta could not be read at the end, so whether a person started it meanwhile is not known; retire again")
 		}
 	}
 	out := make([]retireReport, 0, len(order))
@@ -554,8 +588,12 @@ func cancelBookedResume(name string) (cancelled bool, unended []string) {
 
 // stopRetired stops one session with the ordinary, resumable stop.
 func stopRetired(rep *retireReport) {
-	m, ok := readMetaStable(rep.Name)
-	if !ok {
+	m, st := readMetaDecide(rep.Name)
+	if st == session.MetaUnreadable {
+		rep.Unended = appendNew(rep.Unended, "stop: the session's meta could not be read, so it was not stopped; retire again")
+		return
+	}
+	if st != session.MetaOK {
 		return
 	}
 	if _, err := haltSessionMeta(m); err != nil {

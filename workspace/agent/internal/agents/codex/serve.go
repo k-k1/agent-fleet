@@ -96,6 +96,10 @@ const defaultIdleGrace = 2 * time.Minute
 // Serve returns the package-wide supervisor instance.
 func Serve() *Supervisor { return supervisor }
 
+// MayBeRunning reports whether a daemon this package adopts at start (Ensure / AdoptIfRunning)
+// may be up, started by the previous Agent: only a refused connection says it is not.
+func (s *Supervisor) MayBeRunning() bool { return agents.ListenerMayBeUp(s.Addr()) }
+
 // Disabled reports whether the shared app-server is switched off (same env the
 // pre-P3 startCodexAppServer honored).
 func (s *Supervisor) Disabled() bool { return os.Getenv("AF_CODEX_APP_SERVER_DISABLE") == "1" }

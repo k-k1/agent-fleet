@@ -41,6 +41,13 @@ source_of_truth: "コード（本書は地図と設計意図）"
 - **メタデータは `~/.local/state/agent-fleet/sessions` に保存する**（`session.MetaDir`。
   `AF_SESSIONS_DIR` で上書き可）。home ボリューム上にあり、ファイルブラウザからは隠れている。
   だから **Stop → Start を跨いで一覧と再開が生きる**。
+  - **meta は原子的に書く。** `WriteMeta`（ベストエフォート、fsync なし）も `WriteMetaChecked`（fsync あり、
+    エラーを返す）も、同じディレクトリに `.meta-*.tmp`（mode 0600）を書いて、削除ガードの下で
+    `<name>.json` へ rename する。読み手は古い meta か新しい meta のどちらかを見て、空や途中で切れたファイルは見ない。
+    ディレクトリを歩く処理は `*.json` だけを拾うので、一時ファイルはセッションではなく、クラッシュで残ったものも無視される。
+  - **判断する読み手は「無い」と「読めない」を区別する。** `session.ReadMetaState` と `ListMetasChecked` は
+    無い / 読めない / 読めた を返す（表示用の `ReadMeta` と `ListMetas` はそのまま）。retire（木の一覧を含む）、
+    自動の `/start`、人の操作の記録は、存在するのに読めない meta を疑いとして扱う（下の retire を参照）。
 - **停止したセッションは TTL を過ぎると自動でアーカイブへ移る。消しはしない**
   （[decisions/0097](../decisions/0097-session-retention.ja.md)）。
   - TTL は利用者の設定（`sessionStoppedArchiveDays`。「しない」も選べる）、無ければ
@@ -150,7 +157,23 @@ source_of_truth: "コード（本書は地図と設計意図）"
     その更新が読んだ meta に対する 1 回の checked な更新で行い、購読を終わらせて停止するのは印を確実に書いたあとだけ
     （印や release が書けない、または更新の中で meta が読めない場合は、何も終わらせず止めず、`unended` に載せる）。meta が存在するのに読めないメンバー、または
     祖先の meta が読めないメンバーは、その回は印も停止もせず `unended` に載せる（`complete` は false になり、
-    Control Plane は繰り返す）。起動時の回復は、読めない root の意図を残す。
+    Control Plane は繰り返す）。起動時の回復は、読めない root の意図を残す。木を歩く一覧も同じで、
+    ディレクトリ内の読めないファイルは子かもしれないので、root の `unended` に名前を載せ、`complete` にはしない。
+    meta が読めない root の retire は 404 ではなく `503 meta_unreadable`。そのセッションの自動の `/start` は
+    `409 session_retired` で断り（最初からライフサイクルゲートで読めなかった場合も同じ。人の起動は `503 meta_unreadable`）、購読も禁止する。人の操作の記録（`recordPersonAct`）は、読めないときに
+    「記録済み」とは読まずエラーを返す。
+  - **ずっと壊れている meta は Agent 起動時に脇へ退ける**（`SetAsideBrokenMetas`。`serve()` で、何も起動せず
+    リクエストも受ける前に行う）。読めない `*.json` で、同名の tmux セッションが無いものは、その場で
+    `<name>.json.broken-<unix 秒>` に rename し（削除はしない。この名前はどの走査にも拾われない）、1 行ログを出す。
+    以後どの読み手にもそのセッションは「無い」と見え、retire の `complete` を妨げなくなる。直すときは中身を修復して
+    `<name>.json` に戻す。そのセッションはまたセッションになり、与えられたことのない retire の印は持たない。
+    tmux セッションがあるものはそのまま残してログに出す（Agent が説明できないものが動いているので疑いのまま）。
+    tmux の問い合わせは、exit 1 かつ tmux 自身の「can't find session」「no server running」「ソケットが無い」のメッセージのときだけ「無い」とし、タイムアウト・他の終了コード・「Permission denied」などは「動いているかもしれない」として残す。
+    再起動後に Agent が引き継ぐ Managed ランタイム（opencode の `serve` daemon と codex の app-server。
+    `MayBeRunning` は、接続拒否か unix ソケット無しのときだけ「動いていない」と答える）が 1 つでも動いているかもしれないときは、
+    退避全体を見送り、疑いのまま残した個数を 1 行ログに出す。他の Managed の kind は Agent 自身の stdio 子プロセスか
+    プロセス無しなので引き継ぎ対象にならない。引き継げるランタイムを増やすときは、`serve()` の `SetAsideBrokenMetas` の
+    呼び出しに probe を足す。上の実行時の扱いは緩めない。
   - meta の `retiredAt` が、終わらせたものを終わったままにする。付けた瞬間から、
     watch の sink は起動も注入もせず、Managed への入力は、自動の出どころのものを `409 session_retired`
     で断り（意図した出どころのものはセッションを起動する。下記）、自動の `/start` も断り、子の枠も取らせず、エンジンは新しい購読と組み込みを断り、予約された

@@ -43,6 +43,15 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
 - **Metadata is persisted** in `~/.local/state/agent-fleet/sessions`
   (`session.MetaDir`, overridden by `AF_SESSIONS_DIR`). It is on the home volume and
   hidden from the file browser, so **the list and resumability survive stop and start**.
+  - **A meta is written atomically.** `WriteMeta` (best effort, no fsync) and
+    `WriteMetaChecked` (durable, fsync, returns the error) write a `.meta-*.tmp` file in the same
+    directory (mode 0600) and rename it over `<name>.json`, under the delete guard, so a reader sees
+    the old meta or the new one, never an empty or cut file. Walkers of the directory take only
+    `*.json`, so a temporary file is not a session; one left by a crash is ignored.
+  - **Readers that decide tell "absent" from "unreadable".** `session.ReadMetaState` and
+    `ListMetasChecked` answer absent / unreadable / ok; `ReadMeta` and `ListMetas` stay for display.
+    The retire (its tree list included), an automatic `/start` and the person-act record treat a
+    meta that exists but cannot be read as in doubt (see the retire below).
 - **A stopped session is auto-archived — never deleted — once its TTL is up**
   ([decisions/0097](../decisions/0097-session-retention.md)).
   - The TTL is the user's setting (`sessionStoppedArchiveDays`, which can be "never"),
@@ -182,7 +191,25 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     reported in `unended`). A member
     whose meta exists but cannot be read, or whose ancestor's cannot, is neither marked nor stopped
     in that pass and is reported in `unended` (so `complete` is false and the Control Plane repeats);
-    the start-up recovery keeps the intent of a root it cannot read.
+    the start-up recovery keeps the intent of a root it cannot read. The same holds for the walk's
+    list: a file in the sessions directory that cannot be read may be a child, so it is named in the
+    root's `unended` and the answer is never `complete`; a retire of a root whose meta cannot be read
+    is `503 meta_unreadable`, not 404. An automatic `/start` of such a session is refused with
+    `409 session_retired` (also when the meta was already unreadable at the lifecycle gate; a person's start gets `503 meta_unreadable`), and a subscription is barred for it. The person-act record
+    (`recordPersonAct`) returns an error for it instead of reading as "already recorded".
+  - **A meta broken for good is set aside at Agent start** (`SetAsideBrokenMetas`, in `serve()` before
+    anything is started or any request accepted). A `*.json` that cannot be read and has no tmux
+    session of that name is renamed in place to `<name>.json.broken-<unix seconds>` (never deleted;
+    no walker takes that name), and one line is logged. After that every reader sees the session as
+    absent, so it no longer keeps a retire from answering `complete`. To repair it, fix the file and
+    rename it back to `<name>.json`: it is a session again, and it carries no retired mark it was
+    never given. A file whose tmux session exists is left in place and logged: something runs that
+    the Agent cannot describe, so it stays in doubt (a tmux probe counts as "absent" only for exit 1 with tmux's own "can't find session" / "no server running" / missing-socket message; a timeout, another exit or e.g. "Permission denied" counts as "may be running"). The whole set-aside is also skipped, with one log line
+    giving the number of files left in doubt, while any Managed runtime the Agent adopts after a
+    restart may be up: the opencode `serve` daemon and the codex app-server (`MayBeRunning`: only a
+    refused connection or a missing unix socket says "not running"). The other Managed kinds are the
+    Agent's own stdio children or have no process, so they cannot be adopted. A new adoptable runtime
+    needs a probe in `SetAsideBrokenMetas`'s call in `serve()`. The runtime checks above are not relaxed.
   - The mark `retiredAt` on the meta is what keeps the ended things ended: from the moment it is
     written, the watch sink never starts or injects into the session, a Managed input of an
     automatic origin is refused with `409 session_retired` (one of a deliberate origin starts the

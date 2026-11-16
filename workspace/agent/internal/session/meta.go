@@ -37,9 +37,30 @@ func MetaDir() string {
 
 func MetaPath(name string) string { return filepath.Join(MetaDir(), name+".json") }
 
+// metaWriteGap is a test seam: WriteMeta calls it once its temporary file is complete and before
+// the rename, so a test can hold a writer there and read the meta meanwhile.
+var metaWriteGap func()
+
+// WriteMeta stores m best effort and reports nothing. The file is replaced by a rename from a
+// temporary file in MetaDir (the rename is atomic only inside one directory), so a concurrent
+// reader sees the old meta or the new one, never a truncated or half-written file: ReadMeta
+// would answer "not found" for that and ListMetas would drop the session, and some readers
+// decide on that answer (retire, an automatic start, the person-act record). No fsync: this is
+// the hot path (the session list's stopped stamp among them) and a lost write is rewritten by
+// the next one; WriteMetaChecked is the durable variant.
 func WriteMeta(m Meta) {
 	if err := os.MkdirAll(MetaDir(), 0o700); err != nil {
 		return
+	}
+	var tmp string
+	if b, err := json.Marshal(m); err == nil {
+		tmp, _ = writeMetaTemp(b, false)
+	}
+	if tmp != "" {
+		defer os.Remove(tmp) // a no-op after a successful rename
+	}
+	if metaWriteGap != nil {
+		metaWriteGap()
 	}
 	metaWriteMu.Lock()
 	defer metaWriteMu.Unlock()
@@ -49,12 +70,35 @@ func WriteMeta(m Meta) {
 		// took seconds, a restore from the shelf — and writing that back would bring the row
 		// back with its transcript already in the trash. Names are never reused, so a deleted
 		// name stays deleted until a restore from the trash (CreateMetaIfAbsent) clears it.
+		// The check is made here, after the temporary file, because a delete can land in between.
 		return
 	}
-	if b, err := json.Marshal(m); err == nil {
-		_ = os.WriteFile(MetaPath(m.Name), b, 0o600)
+	if tmp != "" {
+		_ = os.Rename(tmp, MetaPath(m.Name))
 	}
 	rememberCWD(m)
+}
+
+// writeMetaTemp writes b to a new temporary file in MetaDir (mode 0600) and returns its path;
+// nothing is left behind on an error. The name starts with a dot and ends in .tmp, which every
+// walker of the directory skips (they take only *.json).
+func writeMetaTemp(b []byte, durable bool) (string, error) {
+	tmp, err := os.CreateTemp(MetaDir(), ".meta-*.tmp")
+	if err != nil {
+		return "", err
+	}
+	_, werr := tmp.Write(b)
+	if werr == nil && durable {
+		werr = tmp.Sync()
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+		return "", werr
+	}
+	return tmp.Name(), nil
 }
 
 // ErrMetaDeleted is WriteMetaChecked's answer for a meta deleted since the caller read it.
@@ -62,8 +106,8 @@ var ErrMetaDeleted = errors.New("the session's meta was deleted")
 
 // WriteMetaChecked is WriteMeta for a writer that must know the meta reached the disk: a move's
 // moving / movedTo is the only record of a closed source after a restart, and success there
-// must mean it is on disk. It writes a temporary file and renames it over the meta, so a reader
-// sees the old meta or the new one, never a torn one, and returns every error.
+// must mean it is on disk. It fsyncs the temporary file before the rename and returns every
+// error.
 func WriteMetaChecked(m Meta) error {
 	if err := os.MkdirAll(MetaDir(), 0o700); err != nil {
 		return err
@@ -72,27 +116,17 @@ func WriteMetaChecked(m Meta) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(MetaDir(), ".meta-*.tmp")
+	tmp, err := writeMetaTemp(b, true)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
-	_, werr := tmp.Write(b)
-	if werr == nil {
-		werr = tmp.Sync()
-	}
-	if cerr := tmp.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr != nil {
-		return werr
-	}
+	defer os.Remove(tmp)
 	metaWriteMu.Lock()
 	defer metaWriteMu.Unlock()
 	if deletedMetas[MetaPath(m.Name)] {
 		return ErrMetaDeleted
 	}
-	if err := os.Rename(tmp.Name(), MetaPath(m.Name)); err != nil {
+	if err := os.Rename(tmp, MetaPath(m.Name)); err != nil {
 		return err
 	}
 	rememberCWD(m)
@@ -143,6 +177,39 @@ func CreateMetaIfAbsent(m Meta) (created bool, err error) {
 	delete(deletedMetas, MetaPath(m.Name))
 	rememberCWD(m)
 	return true, nil
+}
+
+// MetaState is what ReadMetaState found.
+type MetaState int
+
+const (
+	// MetaAbsent: there is no meta file of that name (os reported "does not exist").
+	MetaAbsent MetaState = iota
+	// MetaUnreadable: a meta file may be there but could not be read or parsed (empty, cut,
+	// not JSON, a permission or I/O error). It is no evidence of absence: a caller that decides
+	// something on the meta treats it as in doubt.
+	MetaUnreadable
+	// MetaOK: the meta was read.
+	MetaOK
+)
+
+// ReadMetaState is ReadMeta that tells "absent" from "present but unreadable". For the readers
+// that decide something (retire, an automatic start, the person-act record); a reader that only
+// displays keeps ReadMeta.
+func ReadMetaState(name string) (Meta, MetaState) {
+	var m Meta
+	b, err := os.ReadFile(MetaPath(name))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return m, MetaAbsent
+		}
+		return m, MetaUnreadable
+	}
+	if json.Unmarshal(b, &m) != nil {
+		return Meta{}, MetaUnreadable
+	}
+	rememberCWD(m)
+	return m, MetaOK
 }
 
 func ReadMeta(name string) (Meta, bool) {
@@ -205,4 +272,31 @@ func ListMetas() []Meta {
 		}
 	}
 	return out
+}
+
+// ListMetasChecked is ListMetas that also names the sessions whose meta file exists but could not
+// be read, and reports whether the directory itself could be listed (an absent directory is an
+// empty list, not a failure). A caller that decides on the list must not treat a name in
+// unreadable, or listErr != nil, as "no such session".
+func ListMetasChecked() (metas []Meta, unreadable []string, listErr error) {
+	ents, err := os.ReadDir(MetaDir())
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".json")
+		switch m, st := ReadMetaState(name); st {
+		case MetaOK:
+			metas = append(metas, m)
+		case MetaUnreadable:
+			unreadable = append(unreadable, name)
+		}
+	}
+	return metas, unreadable, nil
 }

@@ -614,3 +614,12 @@ Added 2026-11-16 (#4210): a create that fails to start its session now removes t
 the Agent removes at start the records no session meta claims (armed more than a day ago; the round is skipped when
 a meta cannot be read). Nothing about what the record holds or when it settles changed. The retire's walk reporting
 a child create still in flight in `unended` is covered by the Control Plane repeating a retire that is not complete.
+
+Added 2026-11-16 (#4269): the retire's reads of a session's meta no longer take a file that exists but cannot be read for
+"absent". Such a file in the walk's list is named in the root's `unended` (never `complete`), a retire of a root with one
+is `503 meta_unreadable`, an automatic start of it is refused with `409 session_retired`, and the act record is an error.
+The meta write itself is now a temporary file and a rename, so a reader no longer meets a cut file in normal operation.
+A meta that stays unreadable would keep every retire from completing, so the Agent sets such a file aside at start
+(renamed `<name>.json.broken-<unix seconds>`, never deleted) when no tmux session of that name exists; one whose session
+exists stays in place and in doubt. Renaming it back after a repair makes it a session again, with no retired mark.
+The set-aside is skipped while an adoptable Managed runtime (opencode serve, the codex app-server) may be up from the previous Agent, since a running turn there has no tmux session.
