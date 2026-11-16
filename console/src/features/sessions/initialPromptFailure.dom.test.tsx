@@ -1,5 +1,5 @@
-// A create-time initial prompt that settles failed because the Claude login expired must tell
-// the member why, once, on the list update that carries the change; and nothing else may.
+// A first instruction the Agent gave up on must tell the member why, once, on the list update
+// that carries the change; and nothing else may.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";

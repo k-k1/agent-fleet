@@ -363,6 +363,7 @@ func RecoverPendingInitialPrompts() int {
 			continue
 		}
 		m.InitialPromptState = session.InitialPromptUnknown
+		m.InitialPromptReason = "" // a reason noted just before the crash belongs to no failure
 		session.WriteMeta(m)
 		n++
 	}
