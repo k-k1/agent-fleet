@@ -75,8 +75,9 @@ has an image engine.
 
 The left pane shows the view chosen on the activity bar.
 
-- The **Sessions** and **Assistants** views start with the working-set bar ("All"). It narrows what is listed to a named
-  group; "All" shows everything
+- The **Sessions**, **Assistants**, **Schedules** and **Files** views start with the working-set bar ("All"). It narrows
+  what is listed to a named group; "All" shows everything. The marks on the activity bar count only what the chosen
+  group lists
 - In the Sessions view, click the **Other sessions** or **Shared sessions** heading to fold or unfold it. Shared sessions
   is not shown when there are none
 

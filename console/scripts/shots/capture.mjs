@@ -462,6 +462,7 @@ const SCENES = [
   {
     // The new-chat picker of the Assistant section: where the Fleet Operator is chosen.
     name: "fleet-operator",
+    view: "assistant",
     guide: true,
     stubEnv: { SHOT_FLEET_GUIDE: "1" },
     clip: [".assistant-picker-wrap", ".assistant-picker"],
@@ -2372,6 +2373,7 @@ const SCENES = [
   {
     // The rail's "+" (new chat): the three builtins, an assistant of the member's own, and Create.
     name: "chatpages-picker",
+    view: "assistant",
     guide: true,
     stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
     clip: [".assistant-picker", "#shot-asst-head"],
@@ -2392,6 +2394,7 @@ const SCENES = [
   {
     // The create-assistant dialog, empty, so its placeholders show a translator as the example.
     name: "chatpages-create",
+    view: "assistant",
     guide: true,
     stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
     clip: ".ui-modal",

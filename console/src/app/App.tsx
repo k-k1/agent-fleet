@@ -603,8 +603,10 @@ export function App() {
               one is displayed. */}
           <div className="app-rail">
             {/* Working sets (docs/log/52): pinned OUTSIDE the scroll area so the active scope
-                stays visible however far the view scrolls. Only on the views it scopes, and
-                rendered for a stopped workspace too (the switcher works without the agent). */}
+                stays visible however far the view scrolls. On every view the set narrows —
+                a view that lost rows to a scope with no switcher in sight cannot be widened
+                from where the member is looking — and rendered for a stopped workspace too
+                (the switcher works without the agent). */}
             <RailView id="sessions" active={railView} scoped>
               {workspaceRunning ? (
                 <>
@@ -647,13 +649,13 @@ export function App() {
               </SoloSection>
             </RailView>
             {schedulerEnabled && (
-              <RailView id="schedules" active={railView}>
+              <RailView id="schedules" active={railView} scoped>
                 <SoloSection>
                   <SchedulesSection />
                 </SoloSection>
               </RailView>
             )}
-            <RailView id="files" active={railView}>
+            <RailView id="files" active={railView} scoped>
               <SoloSection>
                 {workspaceRunning ? <FilesSection /> : <StoppedRailSection id="files" title={tr("ui.files")} icon="files" />}
               </SoloSection>

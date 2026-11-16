@@ -47,7 +47,12 @@ memo queue, repositories, other sessions, shared sessions, files. Three things f
      notification rules), work items that moved (a count) and schedules whose latest run failed (a
      red dot). For the last two, opening the view acknowledges what is unread at that moment; the
      rows keep their own marks.
-   A view whose rows only the member adds (the memo queue, files) has no badge.
+   A view whose rows only the member adds (the memo queue, files) has no badge. A badge counts
+   only rows its view lists: with a working set active, sessions, conversations and schedules
+   outside the set do not count, and a failed run the view does not list is not acknowledged by
+   opening it. A count with no row behind it in the view the badge leads to is worse than no
+   count; the working-set bar, shown on every view the set narrows (sessions, assistants,
+   schedules, files), is what says the rest is out of sight.
 5. **A reveal brings its view forward.** Features keep firing the reveal signals they had; one
    module maps each signal to its view. A reveal that is a side effect of something finishing (a
    clone landing) does not switch the view.

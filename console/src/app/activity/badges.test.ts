@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { pendingNews, waitingSessions, workItemNewsKeys } from "./badges.ts";
+import { hasUnreadConversation, hasUnreadSession, pendingNews, waitingSessions, workItemNewsKeys } from "./badges.ts";
+import type { FleetNotification } from "../../features/notifications/store.ts";
+import type { WorkingSet } from "../../lib/workingSets.ts";
 import { failedScheduleKeys } from "../../features/schedules/read.ts";
 import type { Session } from "../../types/session.ts";
 import type { WorkItem } from "../../features/workitems/read.ts";
@@ -18,6 +20,37 @@ describe("waitingSessions", () => {
   it("leaves out states nobody answers in the pane, and stopped sessions", () => {
     const list = [sess("a", "limited"), sess("b", "auth"), sess("c", "blocked"), sess("d", "question", false)];
     expect(waitingSessions(list)).toBe(0);
+  });
+});
+
+describe("badges under a working set", () => {
+  const set: WorkingSet = { id: "w1", name: "A", repos: ["webshop"], convs: ["c-in"], sessions: ["solo"], schedules: [] };
+  const inRepo = (name: string, state: string, repo: string) => ({ name, state, alive: true, cwd: `/home/dev/repos/${repo}`, repo }) as unknown as Session;
+  const note = (over: Partial<FleetNotification>): FleetNotification => ({
+    seq: 1, id: "n", kind: "answer-ready", target: { type: "session", id: "s" }, displayName: "", payload: {}, createdAt: "", seen: false, ...over,
+  });
+
+  it("counts waiting sessions the set lists, by repository or by direct assignment", () => {
+    const list = [inRepo("a", "question", "webshop"), inRepo("b", "question", "payments-api"), sess("solo", "plan")];
+    expect(waitingSessions(list)).toBe(3);
+    expect(waitingSessions(list, set)).toBe(2);
+  });
+
+  it("marks unread sessions only when one of them is listed", () => {
+    const list = [inRepo("a", "", "webshop"), inRepo("b", "", "payments-api")];
+    const onB = [note({ target: { type: "session", id: "b" } })];
+    expect(hasUnreadSession(onB, list, null)).toBe(true);
+    expect(hasUnreadSession(onB, list, set)).toBe(false);
+    expect(hasUnreadSession([note({ target: { type: "session", id: "a" } })], list, set)).toBe(true);
+    // A session the list does not know cannot be placed in the set.
+    expect(hasUnreadSession([note({ target: { type: "session", id: "gone" } })], list, set)).toBe(false);
+  });
+
+  it("marks unread conversations only when one of them is listed", () => {
+    const report = (id: string) => note({ kind: "session-report", payload: { conversation_id: id } });
+    expect(hasUnreadConversation([report("c-out")], null)).toBe(true);
+    expect(hasUnreadConversation([report("c-out")], set)).toBe(false);
+    expect(hasUnreadConversation([report("c-in")], set)).toBe(true);
   });
 });
 

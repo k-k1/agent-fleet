@@ -36,9 +36,26 @@ export function focusRegion(region: Region): void {
     (active?.querySelector<HTMLElement>(CONTENT_SELECTOR) ?? active)?.focus?.();
     return;
   }
-  // The rail keeps every view mounted and shows one; focus has to land in that one.
-  const root = document.querySelector<HTMLElement>(region === "rail" ? ".app-rail .rail-view:not([hidden])" : ".wsbar");
-  root?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)?.focus();
+  if (region === "rail") {
+    focusRail();
+    return;
+  }
+  document.querySelector<HTMLElement>(".wsbar")?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)?.focus();
+}
+
+// The rail keeps every view mounted and shows one, so focus has to land in that one. With the
+// pane folded away there is no view to land in, and the activity bar is the part of the rail
+// still on screen: its pressed icon, or its first one.
+function focusRail(): void {
+  const view = document.querySelector<HTMLElement>(".app-rail .rail-view:not([hidden])");
+  const pane = view?.closest<HTMLElement>(".app-rail");
+  const folded = !!pane && getComputedStyle(pane).display === "none";
+  const inView = view && !folded ? view.querySelector<HTMLElement>(FOCUSABLE_SELECTOR) : null;
+  const target =
+    inView ??
+    document.querySelector<HTMLElement>('.actbar .actbar-btn[aria-pressed="true"]') ??
+    document.querySelector<HTMLElement>(".actbar .actbar-btn");
+  target?.focus();
 }
 
 /** Focus (and select) the left rail's quick-filter box — ProjectTree's search input,

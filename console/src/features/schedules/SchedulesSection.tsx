@@ -326,7 +326,6 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const sectionOpen = sectionStored !== false;
   const reveal = useSchedulesStore((s) => s.reveal);
   const setFailed = useSchedulesStore((s) => s.setFailed);
-  useEffect(() => setFailed(failedScheduleKeys(items)), [items, setFailed]);
   const serRef = useRef("");
   // Working sets (docs/log/52): a CP-persisted schedule DERIVES its membership — from repo /
   // owner_conv (the conversation it was created in) / reuse_target (conversation slug or
@@ -389,6 +388,9 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const sorted = useMemo(() => sortSchedules(items), [items]);
   const scoped = useMemo(() => (wset ? sorted.filter((s) => scheduleInSet(wset, s, wctx)) : sorted), [sorted, wset, wctx]);
   const activeCount = useMemo(() => scoped.filter((s) => s.enabled).length, [scoped]);
+  // From the rows the active working set lists, not from everything loaded: opening the view
+  // acknowledges what it publishes, and a failure the view does not show must stay unread.
+  useEffect(() => setFailed(failedScheduleKeys(scoped)), [scoped, setFailed]);
 
   const setRowBusy = (id: string, v: boolean) => setBusy((b) => ({ ...b, [id]: v }));
 

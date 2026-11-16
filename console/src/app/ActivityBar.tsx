@@ -7,8 +7,7 @@ import { useLeftRail } from "../core/store/leftRail.ts";
 import type { RailView } from "../core/store/leftRail.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { useNotificationStore } from "../features/notifications/store.ts";
-import { opensConversation } from "../features/notifications/read.ts";
-import { useUnreadSessions } from "../features/notifications/unread.ts";
+import { useActiveWorkingSet } from "../lib/workingSetsStore.ts";
 import { useWorkItemStore } from "../features/workitems/store.ts";
 import { useSeenStore } from "../features/workitems/seen.ts";
 import { dedupeWorkItems, sortWorkItems } from "../features/workitems/read.ts";
@@ -22,7 +21,7 @@ import { hintSuffix } from "../features/keys/keyHint.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
-import { pendingNews, useRailAck, waitingSessions, workItemNewsKeys } from "./activity/badges.ts";
+import { hasUnreadConversation, hasUnreadSession, pendingNews, useRailAck, waitingSessions, workItemNewsKeys } from "./activity/badges.ts";
 import type { RailBadge } from "./activity/badges.ts";
 
 interface ViewDef {
@@ -157,9 +156,13 @@ function badgeText(b: RailBadge, tr: ReturnType<typeof useT>): string {
 // The badge of each view. `onScreen` is the view somebody is looking at (null while the pane
 // is folded away): its news is acknowledged as it arrives, so it never shows a news badge.
 function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, RailBadge>> {
-  const waiting = useSessionsStore((s) => waitingSessions(s.sessions));
-  const unreadSessions = useUnreadSessions().size > 0;
-  const unreadConversation = useNotificationStore((s) => s.items.some((n) => !n.seen && opensConversation(n)));
+  const wset = useActiveWorkingSet();
+  const sessions = useSessionsStore((s) => s.sessions);
+  const waiting = useMemo(() => waitingSessions(sessions, wset), [sessions, wset]);
+  // Selectors that answer a boolean: the notification list is replaced on every poll, and a
+  // subscription to the list itself would re-render the column each time.
+  const unreadSessions = useNotificationStore((s) => hasUnreadSession(s.items, sessions, wset));
+  const unreadConversation = useNotificationStore((s) => hasUnreadConversation(s.items, wset));
   const payload = useWorkItemStore((s) => s.payload);
   const seen = useSeenStore((s) => s.map);
   const failedRuns = useSchedulesStore((s) => s.failed);
