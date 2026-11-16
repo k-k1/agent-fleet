@@ -277,8 +277,6 @@ export const settings = {
     "画像生成で試す提供元の順番です。上から順に使用可能なものが選ばれ、失敗したときは次の提供元を試します。既定はこの配備が自前で動かすエンジン（Agent Fleet (self-hosted)）が先で、外部サービスはその後です。自前のエンジンはこの配備が払う GPU を使い、外部サービスは利用者本人のプランの利用枠を消費します。ここに並んでいない提供元が後から増えたときも、自前のエンジンは先頭に、外部サービスは末尾に入ります（ここで並べたものの順番は変わりません）。",
   "agents.image_kind_comfy": "ComfyUI",
   "agents.image_kind_openai_compat": "OpenAI 互換",
-  "agents.image_provider_order_fallback":
-    "既定の並びを表示しています。ワークスペースを起動すると、この配備が実際に持つ画像エンジンがそれぞれの名前で並びます。",
   "agents.rate_limit_resume": "利用上限リセット後の自動再開",
   "agents.note_claude_rate_limit_resume":
     "Claude セッションが利用上限で中断したとき、上限が解ける時刻に、そのセッションへ「続きを進めて」と 1 回だけ送る再開予約を作ります。予約は使用後に削除され、繰り返し実行はしません。待機中にワークスペースが停止しても、予約時刻に起動して届けます。その時刻に人がすでにセッションを動かしていれば見送ります。利用上限に達したときと、実際に自動再開したときは通知センターにも表示します。Console から直接起動したセッションも対象です。既定ではオンです。\nオフにしても、上限メニュー（「1. リセットまで待つ / 2. 管理者に増枠を依頼」）は自動確定します。メニュー中は通知・報告・入力を受け付けず、自動で選ぶのは待つ側（無課金）だけです。2 を選びたい場合は、メニュー表示中に自分で選んでください。\nこのスイッチは Codex（マネージド）にも適用されます（Codex カードの同じ項目と同じ設定です）。",
@@ -838,4 +836,9 @@ export const settings = {
   "skills.argument_hint": "引数:",
   "skills.files": "フォルダ内のファイル:",
   "skills.other_kinds": "Cursor・Antigravity・Kiro・Copilot には個人スキルのフォルダがありません（セッションのスキル一覧には、他のエージェントのスキルが読み込み用として出ます）。",
+  // ADR 0138 D16: Sessions and Image generation, out of the Agents page.
+  "set.tab_sessions": "セッション",
+  "set.tab_imagegen": "画像生成",
+  "set.imagegen_order_unavailable": "ワークスペースを起動すると、使える画像生成の提供元が並び、順番を決められます。",
+  "set.imagegen_order_none": "使える画像生成の提供元がありません。",
 };

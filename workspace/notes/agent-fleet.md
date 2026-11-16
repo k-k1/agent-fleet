@@ -122,7 +122,7 @@ see it.
 ## Starting a session, and being one that was started
 
 **`create_session`** — **only present when the user turned "starting sessions from sessions" on**
-(Settings → Agents → Session, off by default).
+(Settings → Sessions, off by default).
 Start one when work genuinely splits — a long independent subtask, a second repository, something
 that would fill your context — and **tell your user you are doing it and what for**. A child is a
 whole agent's memory on a host you share with every other session, so it is not the answer to
@@ -294,7 +294,7 @@ Console; an edit of a released one sends it back to wait. You cannot release, se
 ## Generating an image
 
 **`generate_image(prompt, …)`** — **only present when the user turned image generation on**
-(Settings → Agents → Session, off by default): when it is absent, say that rather than that images
+(Settings → Image generation, off by default): when it is absent, say that rather than that images
 are impossible here. A session is not offered it when the route would be its OWN CLI (a codex
 session on the Codex route, an agy session on the Antigravity one) — that CLI's built-in image
 tool is already there.

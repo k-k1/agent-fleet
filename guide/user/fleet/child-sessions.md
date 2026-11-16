@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants one session to split work across other sessions"
-source_of_truth: "The Console's Settings > Agents > Session, and the af tool create_session"
+source_of_truth: "The Console's Settings > Sessions, and the af tool create_session"
 ---
 
 # Start child sessions from a session
@@ -23,11 +23,11 @@ For a one-line note between sessions, see [Let sessions message each other](mess
 
 ## Turn it on
 
-1. Open **⚙ Settings → Agents**
-2. Under "Session", turn on **Starting sessions from sessions**
+1. Open **⚙ Settings → Sessions**
+2. Turn on **Starting sessions from sessions**
 3. Under it, pick **Children per session**: how many children one session can have at a time
 
-![Settings > Agents > Session: Messages between sessions, Starting sessions from sessions and Tell sessions about their PR's feedback on, Children per session at 3](../../assets/fleet-settings-en-light.webp)
+![Settings > Sessions: Messages between sessions, Starting sessions from sessions and Tell sessions about their PR's feedback on, Children per session at 3](../../assets/fleet-settings-en-light.webp)
 
 - It is off by default. Once on, it applies **from the next session started**. Running sessions keep the old behaviour until they restart
 - Children per session ranges from 1 to 10 and defaults to 3. It counts per parent, so two parents can each have that many

@@ -131,7 +131,7 @@ AF_ENGINES_JSON='{"engines":[
 | An OpenAI-compatible image server | An `external` row with `provider: "openai-compat"`. The weights live on the server, so there are no files to declare |
 | A bearer per row | `AF_ENGINE_API_KEY_<KEY>`, where `<KEY>` is the row's key in upper case with every non-alphanumeric character turned into `_` (key `oai-image` reads `AF_ENGINE_API_KEY_OAI_IMAGE`) |
 
-- Members decide which engine goes first. Each engine appears under its own name in Settings → Agents → "**Image provider order**", and a failure moves on to the next ([Have a session make images](../../user/images/from-session.md))
+- Members decide which engine goes first. Each engine appears under its own name in Settings → Image generation → "**Image provider order**", and a failure moves on to the next ([Have a session make images](../../user/images/from-session.md))
 - Passing a row's key as `generate_image`'s `provider` uses that engine only. A failure does not move on
 - The Control Plane can drive the providers `comfy` and `openai-compat`. A row naming any other provider is marked on the Inference engines screen with the provider it names. Point the row somewhere else
 

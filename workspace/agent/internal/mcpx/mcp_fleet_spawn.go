@@ -477,7 +477,7 @@ func fleetSpawnTools() []toolSpec {
 			// not advertise.
 			refuse: func() string {
 				if !mcpFleetSpawnEnabled {
-					return "このセッションはセッションの起動・操縦を許可されていません（設定 > エージェント）"
+					return "このセッションはセッションの起動・操縦を許可されていません（設定 > セッション）"
 				}
 				return ""
 			},
@@ -513,7 +513,7 @@ func fleetSpawnTools() []toolSpec {
 			// the operator through by design.
 			refuse: func() string {
 				if !mcpFleetSpawnEnabled {
-					return "このセッションはセッションの起動・操縦を許可されていません（設定 > エージェント）"
+					return "このセッションはセッションの起動・操縦を許可されていません（設定 > セッション）"
 				}
 				return ""
 			},

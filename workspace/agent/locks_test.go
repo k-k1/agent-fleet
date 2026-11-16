@@ -174,7 +174,7 @@ func TestSessionLockSurvivesTTLSweep(t *testing.T) {
 }
 
 // TestTTLSweepFollowsTheUsersSetting: the archive period is the user's setting (Settings >
-// Agents > Session) ahead of AF_SESSION_STOPPED_TTL, read on the list itself, so a change needs
+// Sessions) ahead of AF_SESSION_STOPPED_TTL, read on the list itself, so a change needs
 // no restart. The env var is set to 1s throughout: a row that survives it survived because the
 // setting won. The locked twin is exempt whatever the period.
 func TestTTLSweepFollowsTheUsersSetting(t *testing.T) {
