@@ -22,6 +22,8 @@ import { openChat } from "../chat/open.ts";
 import { memoCreate, memoList } from "./api.ts";
 import { useMemoStore } from "./store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useReposStore } from "../repos/store.ts";
+import { folderBase, repoBaseName } from "../../lib/workingSets.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { sessionPanes, ordClass } from "../../layout/badges.ts";
@@ -83,6 +85,11 @@ export function SendSelectionModal({
 
   // The repo the file lives in (repos/<repo>/…), used to prefer a session in it.
   const fileRepo = filePath.startsWith("repos/") ? filePath.split("/")[1] : null;
+  // A note is filed under the base repository, never under a worktree folder: a queue set on
+  // the base's category must see it. The repo record knows its parent; the folder name is the
+  // fallback when the record is gone. `fileRepo` stays the working copy for ranking sessions.
+  const fileRepoRec = useReposStore((st) => (fileRepo ? st.repos.find((r) => r.name === fileRepo) : undefined));
+  const memoRepo = !fileRepo ? "" : fileRepoRec ? repoBaseName(fileRepoRec) : folderBase(fileRepo);
   // "Waiting for input": an alive coding-agent session that's idle (not working/question/…) — the
   // best target since it picks the instruction up immediately (see sessionview stateInfo).
   const isWaiting = (s: Session) =>
@@ -191,8 +198,8 @@ export function SendSelectionModal({
     setBusy(true);
     try {
       const input = fileMode
-        ? { kind: "file" as const, repo: fileRepo || "", category: category.trim(), refPath: pathRef, body: comment.trim() }
-        : { kind: "text" as const, repo: fileRepo || "", category: category.trim(), body: composed };
+        ? { kind: "file" as const, repo: memoRepo, category: category.trim(), refPath: pathRef, body: comment.trim() }
+        : { kind: "text" as const, repo: memoRepo, category: category.trim(), body: composed };
       const res = await memoCreate(input);
       if ((res as { error?: unknown }).error) {
         toast(t("memo.add_failed"));

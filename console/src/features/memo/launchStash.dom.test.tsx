@@ -110,6 +110,18 @@ describe("startFromMemo", () => {
     expect(useLaunchTarget.getState().target?.name).toBe("app");
   });
 
+  // The dialog's draft is saved per working copy on purpose, and its memo goes back to that
+  // same working copy: a worktree's draft is not filed under the base repository.
+  it("keeps a worktree's draft under the worktree's own name", async () => {
+    useReposStore.setState({ repos: [{ name: "app@one", path: "/home/dev/repos/app@one", worktree: true, parent: "app" } as never] });
+    localStorage.setItem("af.launch-prompt.app@one", "書きかけ");
+    const r = await startFromMemo(memo({ repo: "app@one" }));
+    expect(r).toEqual({ ok: true, saved: true });
+    expect(createMock).toHaveBeenCalledWith({ kind: "text", repo: "app@one", body: "書きかけ" });
+    expect(readLaunchPrompt("app@one")).toBe("");
+    expect(useLaunchTarget.getState().target?.name).toBe("app@one");
+  });
+
   it("opens nothing and keeps the stored draft when it cannot be saved", async () => {
     localStorage.setItem("af.launch-prompt.app", "書きかけ");
     createMock.mockResolvedValueOnce({ error: { code: "x" } });
