@@ -424,9 +424,10 @@ func TestBeginDuringFinishCleanup(t *testing.T) {
 	}
 }
 
-// leaksBump lists the package-level exported names in one non-test source file that reach the
-// bump functions: a func or a var/const named like one, or an exported func, var or const whose
-// body or value mentions bump or bumpLocked. Methods are the allowed way in (Op.Finish).
+// leaksBump lists what in one non-test source file reaches the bump functions beyond the two
+// allowed callers, bump (which calls bumpLocked) and Op.Finish: any func or method whose body
+// mentions bump or bumpLocked, an exported func named like bump, and an exported var or const
+// named like it or whose value mentions it.
 func leaksBump(t *testing.T, name, src string) []string {
 	t.Helper()
 	f, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
@@ -443,12 +444,25 @@ func leaksBump(t *testing.T, name, src string) []string {
 		})
 		return found
 	}
+	allowed := map[string]bool{"bump": true, "*Op.Finish": true}
 	var out []string
 	for _, d := range f.Decls {
 		switch d := d.(type) {
 		case *ast.FuncDecl:
-			if d.Recv == nil && d.Name.IsExported() && (strings.Contains(strings.ToLower(d.Name.Name), "bump") || mentions(d)) {
-				out = append(out, d.Name.Name)
+			key := d.Name.Name
+			if d.Recv != nil && len(d.Recv.List) == 1 {
+				t := d.Recv.List[0].Type
+				ptr := ""
+				if st, ok := t.(*ast.StarExpr); ok {
+					t, ptr = st.X, "*"
+				}
+				if id, ok := t.(*ast.Ident); ok {
+					key = ptr + id.Name + "." + key
+				}
+			}
+			named := d.Recv == nil && d.Name.IsExported() && strings.Contains(strings.ToLower(d.Name.Name), "bump")
+			if named || (d.Body != nil && mentions(d.Body) && !allowed[key]) {
+				out = append(out, key)
 			}
 		case *ast.GenDecl:
 			for _, sp := range d.Specs {
@@ -479,8 +493,17 @@ func TestNoBumpOutsideAnOp(t *testing.T) {
 			t.Errorf("positive control %q: not refused", name)
 		}
 	}
-	if got := leaksBump(t, "ok", "package p\nfunc (o *Op) Finish() { bump() }\nfunc bump() {}"); len(got) != 0 {
-		t.Errorf("a method calling bump was refused: %v", got)
+	for name, src := range map[string]string{
+		"method":       "package p\nfunc (*Op) Rebuild(l ...string) bool { return bump(l...) }",
+		"value method": "package p\nfunc (Op) Finish() { bump() }",
+		"internal":     "package p\nfunc helper() { bumpLocked(nil) }",
+	} {
+		if len(leaksBump(t, name, src)) == 0 {
+			t.Errorf("positive control %q: not refused", name)
+		}
+	}
+	if got := leaksBump(t, "ok", "package p\nfunc (o *Op) Finish() { bump() }\nfunc bump() { bumpLocked(nil) }"); len(got) != 0 {
+		t.Errorf("the allowed callers were refused: %v", got)
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
