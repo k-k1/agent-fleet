@@ -47,7 +47,7 @@ afterEach(() => {
 describe("HarnessHead", () => {
   it("offers only the routes the catalogue allows, and saves the pick", async () => {
     await mount(
-      <HarnessHead kind="claude" live={{ kind: "claude", routes: ["anthropic-api"] }} profiles={[]} onSwitched={() => {}} />,
+      <HarnessHead kind="claude" live={{ kind: "claude", routes: ["anthropic-api"] }} profiles={[]} onToggled={() => {}} />,
     );
     expect(options()).toEqual([t("agents.default_route_none"), route("anthropic-api")]);
     expect(options()).not.toContain(route("anthropic-subscription"));
@@ -65,7 +65,7 @@ describe("HarnessHead", () => {
         kind="claude"
         live={{ kind: "claude", routes: ["bedrock"] }}
         profiles={[{ id: "work", label: "Work", region: "us-east-1" }]}
-        onSwitched={() => {}}
+        onToggled={() => {}}
       />,
     );
     await choose(`${route("bedrock")} — Work`);
@@ -74,7 +74,7 @@ describe("HarnessHead", () => {
 
   it("saves a llama.cpp default with the endpoint's binding, and offers none without an endpoint", async () => {
     await mount(
-      <HarnessHead kind="lcpp" live={{ kind: "lcpp", fixedRoutes: ["member-llamacpp"] }} profiles={null} ownSwitch onSwitched={() => {}} />,
+      <HarnessHead kind="lcpp" live={{ kind: "lcpp", fixedRoutes: ["member-llamacpp"] }} profiles={null} ownSwitch onToggled={() => {}} />,
     );
     expect(select()).toBeNull();
     act(() => root?.unmount());
@@ -86,7 +86,7 @@ describe("HarnessHead", () => {
         profiles={null}
         lcppBinding="member-llamacpp@mac123"
         ownSwitch
-        onSwitched={() => {}}
+        onToggled={() => {}}
       />,
     );
     await choose(route("member-llamacpp"));
@@ -103,29 +103,59 @@ describe("HarnessHead", () => {
       },
     });
     await mount(
-      <HarnessHead kind="claude" live={{ kind: "claude", routes: ["anthropic-api"] }} profiles={[]} onSwitched={() => {}} />,
+      <HarnessHead kind="claude" live={{ kind: "claude", routes: ["anthropic-api"] }} profiles={[]} onToggled={() => {}} />,
     );
     expect(select()!.value).toBe("");
     expect(host!.textContent).toContain(t("agents.default_route_unusable"));
     expect(host!.textContent).not.toContain(route("anthropic-subscription"));
   });
 
+  it("does not call a saved Bedrock default unusable while the profiles are still loading", async () => {
+    setSettings({
+      agentLaunchDefaults: {
+        ...settingsDefaults().agentLaunchDefaults,
+        claude: { ...settingsDefaults().agentLaunchDefaults.claude, route: { route: "bedrock", connection: "work@us-east-1" } },
+      },
+    });
+    const live = { kind: "claude", routes: ["bedrock", "anthropic-api"] };
+    await mount(<HarnessHead kind="claude" live={live} profiles={null} connectionsKnown={false} onToggled={() => {}} />);
+    expect(host!.textContent).not.toContain(t("agents.default_route_unusable"));
+    act(() => root?.unmount());
+    host?.remove();
+    // Loaded: the saved profile is chosen.
+    await mount(
+      <HarnessHead kind="claude" live={live} profiles={[{ id: "work", label: "Work", region: "us-east-1" }]} onToggled={() => {}} />,
+    );
+    expect(select()!.selectedOptions[0].textContent).toBe(`${route("bedrock")} — Work`);
+    expect(host!.textContent).not.toContain(t("agents.default_route_unusable"));
+    act(() => root?.unmount());
+    host?.remove();
+    // Loaded and the profile is gone: now it is unusable.
+    await mount(<HarnessHead kind="claude" live={live} profiles={[]} onToggled={() => {}} />);
+    expect(host!.textContent).toContain(t("agents.default_route_unusable"));
+  });
+
   it("switches the harness off through agentEnabled and asks the page to refresh", async () => {
-    const onSwitched = vi.fn();
-    await mount(<HarnessHead kind="codex" live={{ kind: "codex", fixedRoutes: ["openai-api"] }} profiles={[]} onSwitched={onSwitched} />);
+    const onToggled = vi.fn();
+    await mount(<HarnessHead kind="codex" live={{ kind: "codex", fixedRoutes: ["openai-api"] }} profiles={[]} onToggled={onToggled} />);
     const off = Array.from(host!.querySelectorAll<HTMLButtonElement>(".seg-btn")).find((b) => b.textContent === t("common.off"))!;
     await act(async () => off.click());
     expect(getSettings().agentEnabled).toEqual({ codex: false });
-    expect(onSwitched).toHaveBeenCalledTimes(1);
+    expect(onToggled).toHaveBeenCalledTimes(1);
+    // Back on: the page asks again too, so its routes are not stale for a refresh period.
+    const on = Array.from(host!.querySelectorAll<HTMLButtonElement>(".seg-btn")).find((b) => b.textContent === t("common.on"))!;
+    await act(async () => on.click());
+    expect(getSettings().agentEnabled).toEqual({});
+    expect(onToggled).toHaveBeenCalledTimes(2);
   });
 
   it("says what the harness runs on now, by the catalogue's usable routes", async () => {
     await mount(
       <HarnessHead
         kind="opencode"
-        live={{ kind: "opencode", fixedRoutes: ["anthropic-api", "opencode-zen"], usableRoutes: ["anthropic-api"] } as never}
+        live={{ kind: "opencode", fixedRoutes: ["anthropic-api", "opencode-zen"], usableRoutes: ["anthropic-api"] }}
         profiles={[]}
-        onSwitched={() => {}}
+        onToggled={() => {}}
       />,
     );
     expect(host!.querySelector(".harness-runs-on")!.textContent).toContain(`${t("agents.runs_on")} ${route("anthropic-api")}`);

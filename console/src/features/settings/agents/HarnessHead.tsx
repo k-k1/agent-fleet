@@ -52,8 +52,9 @@ export function HarnessHead({
   live,
   profiles,
   lcppBinding,
+  connectionsKnown = true,
   ownSwitch,
-  onSwitched,
+  onToggled,
 }: {
   kind: string;
   live: LiveKind | undefined;
@@ -61,8 +62,11 @@ export function HarnessHead({
   lcppBinding?: string;
   /** The harness has an on/off of its own (llama.cpp's lcppEnabled), drawn by its card. */
   ownSwitch?: boolean;
-  /** Called once a switch-off is saved, so the page asks the Agent what is shown now. */
-  onSwitched: () => void;
+  /** Whether the member's connections (marked profiles, the llama.cpp binding) have been read: until
+   *  then a saved default that names one is not called unusable. */
+  connectionsKnown?: boolean;
+  /** Called when the switch is turned either way, so the page asks the Agent what is shown now. */
+  onToggled: () => void;
 }) {
   const tr = useT();
   const s = useSettings();
@@ -70,8 +74,11 @@ export function HarnessHead({
   const choices = routeChoices(live, routeLabel, profiles, lcppBinding);
   const saved = s.agentLaunchDefaults[kind]?.route;
   const savedKey = saved ? choiceKey(saved) : "";
-  const savedUsable = !saved || choices.some((c) => choiceKey(c) === savedKey);
-  const usable = (live as { usableRoutes?: string[] } | undefined)?.usableRoutes;
+  const savedMatches = !saved || choices.some((c) => choiceKey(c) === savedKey);
+  // A saved default on a per-connection route is judged only once the connections are read; until
+  // then the row shows nothing chosen without calling it unusable.
+  const savedUsable = savedMatches || (!connectionsKnown && !!saved?.connection);
+  const usable = live?.usableRoutes;
 
   const setRoute = (key: string) => {
     const cur = getSettings().agentLaunchDefaults;
@@ -94,7 +101,7 @@ export function HarnessHead({
                 if (v) delete next[kind];
                 else next[kind] = false;
                 setSettings({ agentEnabled: next });
-                if (!v) onSwitched();
+                onToggled();
               }}
             />
           </SettingRow>
@@ -105,7 +112,7 @@ export function HarnessHead({
         <>
           <SettingRow label={tr("agents.default_route")}>
             <Select
-              value={savedUsable ? savedKey : ""}
+              value={savedMatches ? savedKey : ""}
               options={[["", tr("agents.default_route_none")], ...choices.map((c): [string, string] => [choiceKey(c), c.label])]}
               onChange={(v: string) => setRoute(v)}
             />

@@ -111,15 +111,19 @@ export function AgentsTab() {
   }, [running, reloadConns, identity]);
   const anyBedrock = [...(catalog.kinds?.values() ?? [])].some((k) => [...(k.routes ?? []), ...(k.fixedRoutes ?? [])].includes("bedrock"));
   const profiles = useModelRouteProfiles(running && anyBedrock, identity);
-  const lcppBinding = (conns?.lcpp as { binding?: string } | undefined)?.binding;
+  const lcppBinding = conns?.lcpp?.binding;
+  // The connections a saved default may name are known once both answers are in: until then a
+  // saved Bedrock or llama.cpp default is not called unusable.
+  const connectionsKnown = !!conns && (!anyBedrock || profiles !== null);
   const head = (kind: string, ownSwitch = false) => (
     <HarnessHead
       kind={kind}
       live={catalog.kinds?.get(kind)}
       profiles={profiles}
       lcppBinding={lcppBinding}
+      connectionsKnown={connectionsKnown}
       ownSwitch={ownSwitch}
-      onSwitched={() => void waitPrefsSaved().then(() => catalog.refresh())}
+      onToggled={() => void waitPrefsSaved().then(() => catalog.refresh())}
     />
   );
   const behaviors: [string, ReactNode][] = [
