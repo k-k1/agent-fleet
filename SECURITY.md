@@ -186,12 +186,21 @@ declare.
   authorization. The policy is an allow-list, so it binds anonymous (workspace) mounts; an
   IAM principal of the same account whose own policy grants the EFS client actions is not
   stopped by it, which stays inside the account trust boundary above (no template role has
-  such a grant). Workspace volumes still mount without IAM authorization and the task role
-  is shared across memberships, so a workspace task that learns another member's access
-  point ID can mount it. Binding each task to its own access points needs a per-membership
-  role ([#3455](https://github.com/k-k1/agent-fleet/issues/3455)). On `ecs-ec2` the access
-  points also carry no `PosixUser`, and neither target can mount the volume `nosuid`: ECS
-  exposes no mount options for EFS volumes.
+  such a grant). The policy cannot bind a member to their own access points: the task role
+  is shared across memberships and EFS enforces no tag condition for NFS clients, so only a
+  task role per membership could, and that was not adopted (the Control Plane would need
+  `iam:CreateRole`, and the account's role quota would cap the number of members).
+  - On `ecs-ec2` the binding is done by the network instead. The slot mounts the member's
+    access points (`nosuid,nodev`) and the task bind-mounts them, so the task is not an NFS
+    client. Set `EfsWorkspaceIngress=deny` on `10-data` once every workspace has restarted
+    on such a release: the mount targets then admit only the slots and the home task, and
+    no process in a workspace can open an NFS connection, whatever access point ID it
+    knows. Until it is set, the workspace security group still reaches NFS. The access
+    points carry no `PosixUser` on this target.
+  - On `ecs` (Fargate) this limit stays: volumes mount through the task's own network
+    interface, without IAM authorization, so a workspace task that learns another member's
+    access point ID can mount it, and ECS exposes no mount options (`nosuid`) for EFS
+    volumes. Use `ecs-ec2` where members must be kept apart at this level.
 
 - **Give each deployment its own AWS account.** The CP task role (`CpTaskRole` in
   `20-platform.yaml`) is scoped to the account, not to one deployment: its ECS

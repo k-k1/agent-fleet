@@ -129,7 +129,7 @@ aws backup start-restore-job --recovery-point-arn <rp-arn> \
 aws backup describe-restore-job --restore-job-id <id>    # wait for COMPLETED
 ```
 
-The restored copy is outside every access point, so no workspace can see it. Putting it back needs a mount of the file system root: a one-off Fargate task in the private subnets with the workspace security group, an EFS volume on `$EFS` with root directory `/` and transit encryption on, running as root.
+The restored copy is outside every access point, so no workspace can see it. Putting it back needs a mount of the file system root: a one-off Fargate task in the private subnets with the home task's security group (the `HomeOpsSgId` output of `10-data`; the workspace security group no longer reaches the file system once `EfsWorkspaceIngress=deny`), an EFS volume on `$EFS` with root directory `/` and transit encryption on, running as root.
 
 1. Stop that member's workspace and ask them not to start it, so nothing writes to the directory while it is replaced
 2. In the task, run `mv /mnt/home/<membership> /mnt/home/<membership>.before-restore`, then `cp -a /mnt/aws-backup-restore_<ts>/home/<membership> /mnt/home/` (the same for `claude-config` / `home-keep`). Ownership comes back as it was backed up, which is the access point's uid/gid

@@ -131,7 +131,7 @@ The same operation with the previous tag rolls back.
 
 ## `00-network` and `10-data` are not upgraded
 
-`00-network` and `10-data` are part of neither this procedure nor `update.sh`. A release that needs either says so in its release notes. [The Control Plane's data root](#the-control-planes-data-root) and [Upgrade from v0.34.x](#upgrade-from-v034x) below are two.
+`00-network` and `10-data` are part of neither this procedure nor `update.sh`. A release that needs either says so in its release notes. [The Control Plane's data root](#the-control-planes-data-root), [Keep workspace tasks off NFS](#ecs-ec2-keep-workspace-tasks-off-nfs) and [Upgrade from v0.34.x](#upgrade-from-v034x) below are three.
 
 ## Clear a parameter
 
@@ -254,6 +254,31 @@ A repository that printed `lost` cannot be recovered from the deployment. A memb
 ### Go back
 
 Taking `30-ingress` back to v0.45.x puts `WS_DATA` back on `/tmp`. What was pushed in the meantime stays on `CpDataFileSystem` but is not served, and anything pushed after going back is on the task's disk again. The `10-data` additions can stay.
+
+## `ecs-ec2`: keep workspace tasks off NFS
+
+A member's sign-in data is on EFS, under an access point of their own. The file system cannot tell one member's task from another's, so a workspace that learned another member's access point ID could mount it. From this release the slot mounts the access points and the task only receives them as directories, which makes it possible to close the file system to workspace tasks altogether. On Fargate (`WsRuntime=ecs`) this cannot be done: leave `EfsWorkspaceIngress` at `allow` there.
+
+It takes two steps, and the second one is yours to time.
+
+1. **Update `10-data` before `update.sh`**, through a change set, with the parameters it already has. It only adds resources: a security group for the home task and two outputs. `update.sh` stops with "no readable HomeOpsSgId / EfsSgId output" until it can read them, and nothing is changed when it stops. Then run `update.sh` as usual; it adds the slots' NFS rule with `40-ec2-pool`.
+2. **Set `EfsWorkspaceIngress=deny` on `10-data`** once every workspace has been stopped and started on the new release. A workspace still running from before the upgrade mounts EFS through its own network interface and loses its sign-in data when the rule goes, so check first.
+
+   ```bash
+   aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
+     --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM \
+     --parameter-overrides EfsWorkspaceIngress=deny --no-execute-changeset
+   ```
+
+   Review the change set (it modifies the file system's security group and nothing else), then execute it.
+
+| If | Then |
+|---|---|
+| A Start fails with "mounting access point ... failed" in the Control Plane's log | The slots cannot reach the mount targets. `40-ec2-pool` was not updated, or it names another data stack (`DataStackName`). Nothing is quarantined; start again after fixing it |
+| You go back to a release from before this one | Set `EfsWorkspaceIngress=allow` first. The old release mounts EFS from the task |
+| A member's workspace was never restarted and step 2 is done | It keeps running until its NFS connection is reopened, then loses `~/.claude` and its logins until it is restarted. Restart it |
+
+The details are in [PARAMETERS.md](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md), "EFS: who may reach the mount targets".
 
 ## Upgrade from v0.34.x
 

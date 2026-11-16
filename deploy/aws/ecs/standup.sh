@@ -404,6 +404,10 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
      af_stack_exists "$stack" && [ -z "$(af_stack_param "$stack" S3EndpointEnabled)" ]; then
     af_param_override S3EndpointEnabled false
   fi
+  # The slots' NFS rule goes on this deployment's data stack, whatever the capture says.
+  if [ "$slug" = 40-ec2-pool ] && grep -q '^  DataStackName:' "$CFN_DIR/$tpl"; then
+    af_param_override DataStackName "$AF_STACK_DATA"
+  fi
   if [ "$slug" = 20-platform ] && grep -q '^  EgressArchiveBucket:' "$CFN_DIR/$tpl"; then
     # Always named, empty included: an omitted parameter keeps its previous value, and an old
     # grant would outlive a bucket that is gone.

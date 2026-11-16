@@ -22,7 +22,10 @@ that matter and fails when
   - a Deny names an action other than the three client actions (a Deny on everything would
     refuse CreateAccessPoint, which carries no access point);
   - the home task stops using the role, stops asking for IAM authorization, or the CP loses
-    the right to pass that role.
+    the right to pass that role;
+  - the security groups stop being able to keep workspace tasks off NFS on ecs-ec2: the
+    workspace rule is unconditional again, the home task or the slots lose their own rule,
+    or the ecs-ec2 task definition goes back to EFS volumes (mounted through the task's ENI).
 
 Positive controls at the end run the same checks against broken copies.
 
@@ -137,6 +140,40 @@ def mount(*, ap=True, tls=True, mt=True, role=None):
     return ctx
 
 
+def nfs_rule(rule, source):
+    return (isinstance(rule, dict) and rule.get("IpProtocol") == "tcp" and rule.get("FromPort") == 2049
+            and rule.get("ToPort") == 2049 and source in str(rule.get("SourceSecurityGroupId")))
+
+
+def check_sg(data, ingress, pool):
+    """Who can reach the mount targets. The policy cannot tell members apart, so on ecs-ec2
+    the workspace group has to be closable without taking the home task or the slots with it."""
+    fails = []
+    rules = data["Resources"]["EfsSg"]["Properties"]["SecurityGroupIngress"]
+    ws = [r for r in rules if "WsSgId" in str(r)]
+    if len(ws) != 1 or "!If" not in ws[0] or ws[0]["!If"][0] != "EfsAdmitsWorkspaces" \
+            or not nfs_rule(ws[0]["!If"][1], "WsSgId") or ws[0]["!If"][2] != {"!Ref": "AWS::NoValue"}:
+        fails.append("EfsSg must admit the workspace group only under EfsAdmitsWorkspaces")
+    if data.get("Conditions", {}).get("EfsAdmitsWorkspaces") != {"!Equals": [{"!Ref": "EfsWorkspaceIngress"}, "allow"]}:
+        fails.append("EfsAdmitsWorkspaces must be EfsWorkspaceIngress == allow")
+    param = data["Parameters"].get("EfsWorkspaceIngress", {})
+    if param.get("Default") != "allow" or param.get("AllowedValues") != ["allow", "deny"]:
+        fails.append("EfsWorkspaceIngress must offer allow|deny and default to allow (ecs needs it)")
+    if not any(nfs_rule(r, "HomeOpsSg") for r in rules):
+        fails.append("EfsSg must admit the home task's own group unconditionally")
+    for out in ("HomeOpsSgId", "EfsSgId"):
+        if data["Outputs"].get(out, {}).get("Export") is None:
+            fails.append("10-data must export %s" % out)
+    env = ingress["Resources"]["TaskDef"]["Properties"]["ContainerDefinitions"][0]["Environment"]
+    if not any(isinstance(e, dict) and e.get("Name") == "AF_ECS_HOME_OPS_SECURITY_GROUP"
+               and "HomeOpsSgId" in str(e.get("Value")) for e in env):
+        fails.append("30-ingress must pass 10-data's HomeOpsSgId as AF_ECS_HOME_OPS_SECURITY_GROUP")
+    slot = pool["Resources"].get("SlotEfsIngress", {}).get("Properties", {})
+    if not nfs_rule(slot, "SlotSg") or "EfsSgId" not in str(slot.get("GroupId")):
+        fails.append("40-ec2-pool must admit SlotSg to 10-data's EfsSgId on 2049")
+    return fails
+
+
 def check(data, ingress):
     fails = []
     fs = data["Resources"]["FileSystem"]["Properties"]
@@ -201,12 +238,18 @@ def check_go():
     for need in ("EFSTransitEncryptionEnabled", "AccessPointId"):
         if need not in body:
             fails.append("efsVolume no longer sets %s; the file-system policy refuses such a mount" % need)
+    rt = os.path.join(ROOT, "control-plane", "internal", "runtime")
+    if "efsVolume(" in open(os.path.join(rt, "runtime_ecs_ec2_taskdef.go")).read():
+        fails.append("the ecs-ec2 task definition declares an EFS volume; ECS mounts it through the "
+                     "task's ENI, which EfsWorkspaceIngress=deny closes")
+    if "homeTaskSecurityGroup()" not in open(os.path.join(rt, "runtime_ecs_home_task.go")).read():
+        fails.append("the home task no longer runs in its own security group")
     return fails
 
 
 def main():
-    data, ingress = load("10-data.yaml"), load("30-ingress.yaml")
-    fails = check(data, ingress) + check_go()
+    data, ingress, pool = load("10-data.yaml"), load("30-ingress.yaml"), load("40-ec2-pool.yaml")
+    fails = check(data, ingress) + check_sg(data, ingress, pool) + check_go()
     if fails:
         for f in fails:
             print("FAIL:", f)
@@ -215,7 +258,20 @@ def main():
     def broken(mutate):
         d, i = copy.deepcopy(data), copy.deepcopy(ingress)
         mutate(d, i)
-        return check(d, i)
+        return check(d, i) + check_sg(d, i, pool)
+
+    def sg_rules(d):
+        return d["Resources"]["EfsSg"]["Properties"]["SecurityGroupIngress"]
+
+    def unconditional_ws(d, i):
+        rules = sg_rules(d)
+        n = next(n for n, r in enumerate(rules) if "WsSgId" in str(r))
+        rules[n] = rules[n]["!If"][1]
+
+    def broken_pool(mutate):
+        p = copy.deepcopy(pool)
+        mutate(p)
+        return check_sg(data, ingress, p)
 
     def stmt(d, sid):
         return next(s for s in d["Resources"]["FileSystem"]["Properties"]["FileSystemPolicy"]["Statement"]
@@ -249,9 +305,30 @@ def main():
                 next(n for n, g in enumerate(i["Resources"]["CpHomeOpsManagedPolicy"]["Properties"][
                     "PolicyDocument"]["Statement"]) if g.get("Action") == "iam:PassRole")),
     }
+    controls.update({
+        "workspace NFS rule unconditional": unconditional_ws,
+        "home task NFS rule removed": lambda d, i: sg_rules(d).__delitem__(
+            next(n for n, r in enumerate(sg_rules(d)) if "HomeOpsSg" in str(r))),
+        "EfsWorkspaceIngress defaults to deny": lambda d, i: d["Parameters"]["EfsWorkspaceIngress"]
+        .__setitem__("Default", "deny"),
+        "EfsSgId export removed": lambda d, i: d["Outputs"].pop("EfsSgId"),
+        "home task group not passed to the CP": lambda d, i: i["Resources"]["TaskDef"]["Properties"][
+            "ContainerDefinitions"][0]["Environment"].__delitem__(
+                next(n for n, e in enumerate(i["Resources"]["TaskDef"]["Properties"]["ContainerDefinitions"][0][
+                    "Environment"]) if isinstance(e, dict) and e.get("Name") == "AF_ECS_HOME_OPS_SECURITY_GROUP")),
+    })
     for name, m in controls.items():
         if not broken(m):
             fails.append("positive control %r was not caught" % name)
+    pool_controls = {
+        "slot NFS rule removed": lambda p: p["Resources"].pop("SlotEfsIngress"),
+        "slot NFS rule on another port": lambda p: p["Resources"]["SlotEfsIngress"]["Properties"]
+        .__setitem__("FromPort", 0),
+    }
+    for name, m in pool_controls.items():
+        if not broken_pool(m):
+            fails.append("positive control %r was not caught" % name)
+    controls.update(pool_controls)
     if fails:
         for f in fails:
             print("FAIL:", f)

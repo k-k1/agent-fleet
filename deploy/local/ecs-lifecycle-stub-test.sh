@@ -229,6 +229,11 @@ case "$args" in
   # 10-data's HomeOpsEfsRoleArn (EFS file-system policy). STUB_NO_HOME_ROLE=1 = a data stack older than it.
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='HomeOpsEfsRoleArn']"*)
     [ "${STUB_NO_HOME_ROLE:-0}" = 1 ] || echo "arn:aws:iam::111122223333:role/t-data-HomeOpsEfsRole-X" ;;
+  # 10-data's HomeOpsSgId / EfsSgId (#3903). STUB_NO_HOME_SG=1 = a data stack older than them.
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='HomeOpsSgId']"*)
+    [ "${STUB_NO_HOME_SG:-0}" = 1 ] || echo "sg-homeops" ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsSgId']"*)
+    [ "${STUB_NO_HOME_SG:-0}" = 1 ] || echo "sg-efs" ;;
   # 10-data's CpDataEfsId (the CP's own data root, #4089). STUB_NO_CP_DATA=1 = a data stack older than it.
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CpDataEfsId']"*)
     [ "${STUB_NO_CP_DATA:-0}" = 1 ] || echo "fs-cp" ;;
@@ -767,6 +772,7 @@ grep -q "deploy --stack-name t-data .*CAPABILITY_AUTO_EXPAND" "$LOG" || fail "10
 grep -q "deploy --stack-name t-data .*CAPABILITY_IAM" "$LOG" || fail "10-data needs CAPABILITY_IAM (the EFS backup role)"
 grep -q "deploy --stack-name t-platform .*CAPABILITY_NAMED_IAM" "$LOG" || fail "20-platform needs CAPABILITY_NAMED_IAM"
 grep -q "deploy --stack-name t-pool .*CAPABILITY_NAMED_IAM" "$LOG" || fail "40-ec2-pool needs CAPABILITY_NAMED_IAM"
+grep -q "deploy --stack-name t-pool .*DataStackName=t-data" "$LOG" || fail "standup.sh did not name this deployment's data stack to 40-ec2-pool (the slots' NFS rule)"
 # The rebuilt pool's *new* launch template has to reach 30. Leave the old value in and both
 # CFN and the CP succeed while the slots alone never come up again.
 grep -q "deploy --stack-name t-ingress .*Ec2SlotLaunchTemplate=lt-NEW" "$LOG" || fail "30-ingress got a stale launch template"
@@ -1183,6 +1189,8 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_PRE_P6=1 
 # pool left on an old template launches every future slot without it.
 grep -q "deploy --stack-name t-pool .*40-ec2-pool.yaml.*CAPABILITY_NAMED_IAM" "$LOG" \
   || fail "update.sh did not redeploy the slot pool (new slots would miss the IMDS block)"
+grep -q "deploy --stack-name t-pool .*--parameter-overrides DataStackName=t-data" "$LOG" \
+  || fail "update.sh did not name this deployment's data stack to 40-ec2-pool (the slots' NFS rule)"
 grep -q "deploy --stack-name af-ecs-engines .*--parameter-overrides LlmEnabled=true ImageEnabled=true" "$LOG" \
   || fail "update.sh did not carry the roles over (this update would delete both engine services)"
 grep -q "LlmEnabled=true (it was implied by LlmModelS3Key" "$WORK/out3h" \
@@ -1243,8 +1251,8 @@ grep -q "DRY: aws cloudformation deploy --stack-name af-ecs-engines .*--paramete
   || fail "--dry-run did not show the planned translation"
 hasnt "cloudformation deploy --stack-name af-ecs-engines --template-file"   # nothing was run
 
-echo "== case 3h-home: update.sh stops before anything runs when 10-data lacks HomeOpsEfsRoleArn / CpDataEfsId or cannot be found =="
-for knob in STUB_NO_HOME_ROLE STUB_NO_CP_DATA STUB_INGRESS_UNREADABLE; do
+echo "== case 3h-home: update.sh stops before anything runs when 10-data lacks HomeOpsEfsRoleArn / CpDataEfsId / HomeOpsSgId or cannot be found =="
+for knob in STUB_NO_HOME_ROLE STUB_NO_CP_DATA STUB_NO_HOME_SG STUB_INGRESS_UNREADABLE; do
   : > "$LOG"
   if env "$knob=1" VERSION=9.9.9-dev-test STUB_ECR_HAS=1 \
     "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3hh" 2>&1; then

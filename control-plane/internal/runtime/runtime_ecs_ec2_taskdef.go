@@ -176,7 +176,8 @@ func (e *ecsEC2Runtime) serviceTaskDefIfFingerprint(ctx context.Context, fp stri
 //     a disk-backed /tmp would both leak (readable from the host) and let one user fill
 //     the volume out from under the next (ADR 0045 decision 8, price 2). The Fargate
 //     revision sets no tmpfs: there each task has its own disk.
-//   - home is a host bind of the freshly mounted EBS, not an EFS volume.
+//   - home is a host bind of the freshly mounted EBS, not an EFS volume, and the two
+//     EFS access points are host binds too (ec2EFSMountBase).
 //
 // It takes a ctx because the backend-drift stamp is probed from ECR here
 // (runtime_ecs_stale.go). That stamp is part of what taskDefFingerprint hashes, and
@@ -302,8 +303,16 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 				Name: aws.String("home"),
 				Host: &ecstypes.HostVolumeProperties{SourcePath: aws.String(e.homeMountPoint() + "/dev")},
 			},
-			efsVolume("claude", e.base.cfg.efsFileSystem, prep.claudeAP),
-			efsVolume("keep", e.base.cfg.efsFileSystem, prep.keepAP),
+			// Host binds of what the slot mounted (mountMemberEFS), not EFS volumes: see
+			// ec2EFSMountBase for why the task must not be the NFS client.
+			{
+				Name: aws.String("claude"),
+				Host: &ecstypes.HostVolumeProperties{SourcePath: aws.String(e.efsMountPoint(prep.claudeAP))},
+			},
+			{
+				Name: aws.String("keep"),
+				Host: &ecstypes.HostVolumeProperties{SourcePath: aws.String(e.efsMountPoint(prep.keepAP))},
+			},
 		},
 	}
 	return in

@@ -129,7 +129,7 @@ aws backup start-restore-job --recovery-point-arn <rp-arn> \
 aws backup describe-restore-job --restore-job-id <id>    # COMPLETED になるまで待つ
 ```
 
-復元したコピーはどのアクセスポイントの範囲にも入らないので、どのワークスペースからも見えません。元の場所に戻すには、ファイルシステムのルートをマウントする必要があります。そのために、root で動く使い捨ての Fargate タスクを使います。タスクはプライベートサブネットで動かし、ワークスペースのセキュリティグループを付けます。EFS ボリュームには `$EFS` のルートディレクトリ `/` を指定し、転送中の暗号化をオンにします。
+復元したコピーはどのアクセスポイントの範囲にも入らないので、どのワークスペースからも見えません。元の場所に戻すには、ファイルシステムのルートをマウントする必要があります。そのために、root で動く使い捨ての Fargate タスクを使います。タスクはプライベートサブネットで動かし、Home タスクのセキュリティグループ（`10-data` の出力 `HomeOpsSgId`）を付けます。`EfsWorkspaceIngress=deny` にしたあとは、ワークスペースのセキュリティグループからはファイルシステムに届きません。EFS ボリュームには `$EFS` のルートディレクトリ `/` を指定し、転送中の暗号化をオンにします。
 
 1. そのメンバーのワークスペースを止め、起動しないよう頼みます。置き換えるあいだに、だれもディレクトリに書かないようにします
 2. タスクの中で、`mv /mnt/home/<membership> /mnt/home/<membership>.before-restore` を実行し、次に `cp -a /mnt/aws-backup-restore_<ts>/home/<membership> /mnt/home/` を実行します（`claude-config` / `home-keep` も同じ）。所有者はバックアップしたときのまま、つまりアクセスポイントの uid/gid で戻ります

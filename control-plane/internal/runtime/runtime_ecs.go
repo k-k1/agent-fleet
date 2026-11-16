@@ -138,6 +138,7 @@ type ecsConfig struct {
 	subnets        []string // awsvpc private subnets for the tasks
 	wsSubnets      []string // AF_ECS_WORKSPACE_SUBNETS: the workspace task ENIs' own subnets; empty = subnets (see workspaceSubnets)
 	securityGroup  string   // ws SG: CP -> Agent:7700 + egress to git/Anthropic
+	homeOpsSG      string   // AF_ECS_HOME_OPS_SECURITY_GROUP: the home task's own SG; empty = securityGroup (see homeTaskSecurityGroup)
 	efsFileSystem  string   // EFS id; two per-membership access points back each home
 	namespaceArn   string   // Service Connect (Cloud Map) namespace ARN
 	execRole       string   // task execution role (pull image, logs, read SSM secrets)
@@ -312,6 +313,7 @@ func newECSFactory(mcfg Config) (RuntimeFactory, error) {
 		subnets:        splitCSV(os.Getenv("AF_ECS_SUBNETS")),
 		wsSubnets:      splitCSV(os.Getenv("AF_ECS_WORKSPACE_SUBNETS")),
 		securityGroup:  os.Getenv("AF_ECS_SECURITY_GROUP"),
+		homeOpsSG:      os.Getenv("AF_ECS_HOME_OPS_SECURITY_GROUP"),
 		efsFileSystem:  os.Getenv("AF_ECS_EFS_ID"),
 		namespaceArn:   os.Getenv("AF_ECS_NAMESPACE_ARN"),
 		execRole:       os.Getenv("AF_ECS_EXEC_ROLE"),
@@ -1028,12 +1030,23 @@ func efsVolume(name, fsID, apID string) ecstypes.Volume {
 				// IAM auth off: the workspace task role has no EFS grant, so the mount is
 				// anonymous and the file-system policy (10-data) admits it only because it
 				// names an access point and uses TLS. Task roles are shared across
-				// memberships, so this does not stop a task naming another member's access
-				// point; that needs IAM authorization with a per-membership role (#3455).
+				// memberships, so on Fargate this does not stop a task naming another
+				// member's access point: that would need a task role per membership, which
+				// was not adopted (SECURITY.md). ecs-ec2 does not use this: the slot mounts
+				// the access points and the task cannot reach NFS (ec2EFSMountBase).
 				Iam: ecstypes.EFSAuthorizationConfigIAMDisabled,
 			},
 		},
 	}
+}
+
+// homeTaskSecurityGroup is the home task's security group: its own when the deployment
+// has one, so the file system can admit it without admitting workspace tasks.
+func (c ecsConfig) homeTaskSecurityGroup() string {
+	if c.homeOpsSG != "" {
+		return c.homeOpsSG
+	}
+	return c.securityGroup
 }
 
 // workspaceSubnets is where a workspace task's ENI goes: AF_ECS_WORKSPACE_SUBNETS, or

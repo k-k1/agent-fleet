@@ -954,6 +954,7 @@ Resources:
             - !If [HasEgressArchive, {Name: AF_EGRESS_ARCHIVE_URL, Value: !Sub "s3://${EgressArchiveBucket}"}, !Ref "AWS::NoValue"]
             - !If [HasEgressEventRetention, {Name: AF_EGRESS_EVENT_RETENTION_DAYS, Value: !Ref EgressEventRetentionDays}, !Ref "AWS::NoValue"]
             - {Name: AF_ECS_SECURITY_GROUP, Value: !ImportValue {"Fn::Sub": "${NetworkStackName}-WsSgId"}}
+            - {Name: AF_ECS_HOME_OPS_SECURITY_GROUP, Value: !ImportValue {"Fn::Sub": "${DataStackName}-HomeOpsSgId"}}
             - {Name: AF_EFS_BACKUP, Value: !Ref EfsBackup}
             - {Name: AF_ECS_EFS_ID, Value: !ImportValue {"Fn::Sub": "${DataStackName}-EfsId"}}
             - {Name: AF_ECS_NAMESPACE_ARN, Value: !ImportValue {"Fn::Sub": "${PlatformStackName}-NamespaceArn"}}

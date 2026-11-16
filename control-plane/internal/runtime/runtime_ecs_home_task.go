@@ -694,7 +694,7 @@ func (e *ecsRuntime) startHomeTask(ctx context.Context, what HomeWipe, token str
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
 				Subnets:        e.cfg.subnets,
-				SecurityGroups: []string{e.cfg.securityGroup},
+				SecurityGroups: []string{e.cfg.homeTaskSecurityGroup()},
 				AssignPublicIp: ecstypes.AssignPublicIpDisabled,
 			},
 		},
