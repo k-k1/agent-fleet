@@ -97,6 +97,7 @@ var sessionWireBinding = map[string]string{
 	"SpendCapUSD":          "spendCapUsd",
 	"SpendCapHitAt":        "spendCapHitAt",
 	"Carried":              "carried",
+	"CarriedLive":          "carriedLive",
 	"HandoffPending":       "handoffPending",
 	"OriginSession":        "originSession",
 	"Origin":               "origin",
@@ -157,6 +158,9 @@ var goOnlyExempt = map[string]string{
 	"wakers":        "the Console declares it in the message-queue Console slice (#4164)",
 	"wakersUnknown": "the Console declares it in the message-queue Console slice (#4164)",
 	"queueTurn":     "the Console declares it in the message-queue Console slice (#4164)",
+	// Read by the Control Plane alone (a run stays open on it); the Console's list shows the
+	// card through `carried` and must not change.
+	"carriedLive": "read only by the Control Plane's queue rule (#4291); the Console does not draw it",
 }
 
 // sessionContractFamily describes the sessionWire family. The body of the check lives in

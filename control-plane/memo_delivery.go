@@ -657,7 +657,7 @@ func (r *memoQueueRunner) closeIfDoneUnreported(ctx context.Context, v *memoMemb
 		} else {
 			r.markIdle(ctx, d, 0)
 		}
-	case row.State == stateIdle && sessionActivityAt(*row, now, 0) == activityIdleWait:
+	case row.State == stateIdle && row.CarriedLive == "" && sessionActivityAt(*row, now, 0) == activityIdleWait:
 		if d.IdleTicks >= 1 {
 			r.closeOpen(ctx, d, store.DeliveryClean)
 		} else {
@@ -723,6 +723,11 @@ func sessionHold(s sessionWire, now time.Time) string {
 		why = store.HeldPerson
 	case act == activityUnknown:
 		why = store.HeldUnknown
+	}
+	// Started again with the question / plan / permission still unanswered: a person has to
+	// act, until the card is answered, discarded or expired. A machine at work outranks it.
+	if s.Alive && s.CarriedLive != "" && memoHoldRank[why] < memoHoldRank[store.HeldPerson] {
+		why = store.HeldPerson
 	}
 	if why == "" && (s.State == stateLimited || s.RateLimitResumeAt != "") {
 		why = store.HeldLimit
