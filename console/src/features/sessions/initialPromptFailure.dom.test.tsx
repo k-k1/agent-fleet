@@ -94,14 +94,53 @@ describe("noteInitialPromptFailures", () => {
     expect(toastMock).not.toHaveBeenCalled();
   });
 
-  it("stays quiet for failures in the opening snapshot, without the reason, and for a delivery", () => {
-    noteInitialPromptFailures([s("failed", "auth_expired")]); // e.g. after a reload
-    noteInitialPromptFailures([s("failed", "auth_expired")]);
+  it("stays quiet for failures in the opening snapshot and for a delivery", () => {
+    noteInitialPromptFailures([s("failed", "auth_expired"), s("failed", "no_pane", "np"), s("failed", undefined, "gen")]); // e.g. after a reload
+    noteInitialPromptFailures([s("failed", "auth_expired"), s("failed", "no_pane", "np"), s("failed", undefined, "gen")]);
     expect(toastMock).not.toHaveBeenCalled();
-    noteInitialPromptFailures([s("pending", undefined, "b"), s("failed", "auth_expired")]);
-    noteInitialPromptFailures([s("failed", undefined, "b"), s("failed", "auth_expired")]);
     noteInitialPromptFailures([s("delivered", undefined, "c"), s("failed", "auth_expired")]);
     expect(toastMock).not.toHaveBeenCalled();
+  });
+
+  it("toasts a new no-pane failure once, sticky, with its own text and no internal words", async () => {
+    noteInitialPromptFailures([s("pending", undefined, "np")]);
+    noteInitialPromptFailures([s("failed", "no_pane", "np")]);
+    noteInitialPromptFailures([s("failed", "no_pane", "np")]);
+    expect(toastMock).toHaveBeenCalledTimes(1);
+    const [node, opts] = toastMock.mock.calls[0] as [ReactNode, { duration?: number; key?: string }];
+    expect(opts.duration).toBe(0);
+    expect(opts.key).toContain("np");
+    expect(String(node)).toContain("np");
+    expect(String(node)).toContain("時間内に使える状態になりませんでした");
+    expect(String(node)).not.toMatch(/pane|tmux|when_ready|ペイン/i);
+  });
+
+  it("toasts a failure with an unknown or missing reason with the generic text", () => {
+    noteInitialPromptFailures([s("pending", undefined, "a"), s("pending", undefined, "b")]);
+    noteInitialPromptFailures([s("failed", "from_the_future", "a"), s("failed", undefined, "b")]);
+    expect(toastMock).toHaveBeenCalledTimes(2);
+    for (const c of toastMock.mock.calls) {
+      expect(String(c[0])).toContain("もう一度指示を送ってください");
+      expect(String(c[0])).not.toContain("使える状態");
+    }
+  });
+
+  it("toasts again when a resend fails again after leaving failed", () => {
+    noteInitialPromptFailures([s("pending", undefined, "np")]);
+    noteInitialPromptFailures([s("failed", "no_pane", "np")]);
+    noteInitialPromptFailures([s("pending", undefined, "np")]);
+    noteInitialPromptFailures([s("failed", "no_pane", "np")]);
+    expect(toastMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("withdraws a no-pane toast on a scope change", () => {
+    noteInitialPromptFailures([s("pending", undefined, "np")]);
+    noteInitialPromptFailures([s("failed", "no_pane", "np")]);
+    const key = (toastMock.mock.calls[0][1] as { key: string }).key;
+    scopeTenant = "b";
+    noteInitialPromptFailures([s("failed", "no_pane", "np")]);
+    expect(toastMock).toHaveBeenCalledTimes(1);
+    expect(dismissMock).toHaveBeenCalledWith(key);
   });
 
   it("does not carry observations across a tenant switch, and withdraws the old sticky toast", () => {
