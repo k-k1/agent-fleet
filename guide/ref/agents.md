@@ -243,8 +243,7 @@ What the switch **"Let sessions use Agent Fleet memory"**
 ## claude: the "API key" route
 
 A claude session can be started on an explicit route (Terminal only). **anthropic-api** runs on the
-Anthropic API key you saved under Settings > Connections > Model credentials > the OpenCode card > API keys
-(Anthropic preset), billed per use; **anthropic-subscription** runs on this workspace's claude.ai
+Anthropic API key you saved under Settings > Connections > Model credentials > Anthropic API key, billed per use; **anthropic-subscription** runs on this workspace's claude.ai
 login. A session with no route behaves as before.
 
 - The CLI asks "Detected a custom API key in your environment · use this API key?" once per key. An

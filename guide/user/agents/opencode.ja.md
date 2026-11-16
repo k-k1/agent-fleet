@@ -49,22 +49,26 @@ OpenCode は、Anthropic・OpenAI・OpenRouter など、いくつもの LLM プ�
 
 ## API キーを登録する
 
-1. プリセットからプロバイダーを選びます。環境変数の名前が自動で入ります
-2. キーを貼り付けて「**接続**」を押します
+キーは、**⚙設定 →「モデルの認証情報」** の、支払い先のプロバイダーのカードにあります。OpenCode は保存されたキーをすべてモデルに渡し、Claude Code の API キーの経路は Anthropic のキーを読みます。
 
-| プリセット | 環境変数 |
+| カード（グループ） | 環境変数 |
 |---|---|
-| opencode.ai（Go / Zen 共通キー） | `OPENCODE_API_KEY` |
-| Anthropic | `ANTHROPIC_API_KEY` |
-| OpenAI | `OPENAI_API_KEY` |
-| OpenRouter | `OPENROUTER_API_KEY` |
-| Google Gemini | `GEMINI_API_KEY` |
-| Sakana AI（Fugu / Fugu Ultra） | `SAKANA_API_KEY` |
-| カスタム… | 自分で指定します（`GROQ_API_KEY` など） |
+| OpenCode（opencode.ai）、Go と Zen 共通のキー | `OPENCODE_API_KEY` |
+| Anthropic API キー（Anthropic） | `ANTHROPIC_API_KEY` |
+| OpenAI API キー（OpenAI） | `OPENAI_API_KEY` |
+| Gemini API キー（Google） | `GEMINI_API_KEY` |
+| その他のプロバイダのキー（その他のプロバイダ）: OpenRouter | `OPENROUTER_API_KEY` |
+| その他のプロバイダのキー（その他のプロバイダ）: Sakana AI（Fugu / Fugu Ultra） | `SAKANA_API_KEY` |
+| その他のプロバイダのキー（その他のプロバイダ）: カスタム… | 自分で指定します（`GROQ_API_KEY` など） |
+
+1. カードでキーを貼り付けます（「その他のプロバイダのキー」では先にプロバイダーを選びます）
+2. 「**接続**」を押します
 
 - キーはいくつでも登録でき、起動するときに、接続したプロバイダーのモデルを選べます
+- カードごとに、そのキーを使えるエージェントが「**使えるエージェント**」に出ます
 - 今の枠では渡さないキーも消えません。「**この枠では注入しません**」と出たまま残ります
 - opencode.ai のキーは、opencode.ai にログインして、課金の設定から発行します。Go と Zen で同じキーです
+- 変更したキーを OpenCode が使うのは再起動のあとです。OpenCode のカードで再起動してください
 
 ### opencode.ai のアカウントでログインする
 

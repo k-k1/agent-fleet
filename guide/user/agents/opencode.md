@@ -49,22 +49,26 @@ If you want to be billed on the route you chose, check your authentication or su
 
 ## Register API keys
 
-1. Pick a provider from the presets. The environment variable's name fills in
-2. Paste the key and press "**Connect**"
+The keys sit on the card of the provider they pay, in **⚙Settings → Model credentials**. OpenCode passes every saved key to its models, and Claude Code's API-key route reads the Anthropic one.
 
-| Preset | Environment variable |
+| Card (group) | Environment variable |
 |---|---|
-| opencode.ai (one key for Go and Zen) | `OPENCODE_API_KEY` |
-| Anthropic | `ANTHROPIC_API_KEY` |
-| OpenAI | `OPENAI_API_KEY` |
-| OpenRouter | `OPENROUTER_API_KEY` |
-| Google Gemini | `GEMINI_API_KEY` |
-| Sakana AI (Fugu / Fugu Ultra) | `SAKANA_API_KEY` |
-| Custom… | You name it (`GROQ_API_KEY`, say) |
+| OpenCode (opencode.ai), the key Go and Zen share | `OPENCODE_API_KEY` |
+| Anthropic API key (Anthropic) | `ANTHROPIC_API_KEY` |
+| OpenAI API key (OpenAI) | `OPENAI_API_KEY` |
+| Gemini API key (Google) | `GEMINI_API_KEY` |
+| Other provider keys (Other providers): OpenRouter | `OPENROUTER_API_KEY` |
+| Other provider keys (Other providers): Sakana AI (Fugu / Fugu Ultra) | `SAKANA_API_KEY` |
+| Other provider keys (Other providers): Custom… | You name it (`GROQ_API_KEY`, say) |
+
+1. On the card, paste the key (on "Other provider keys", pick the provider first)
+2. Press "**Connect**"
 
 - You can register as many keys as you like, and pick a connected provider's model when you start
+- Each card says which agents can use its key ("**Usable by**")
 - A key the current route does not pass is not deleted. It stays, marked "**not injected on this route**"
 - An opencode.ai key is issued from the billing settings once you sign in to opencode.ai. Go and Zen use the same key
+- OpenCode uses a changed key after it restarts: restart it on the OpenCode card
 
 ### Sign in with an opencode.ai account
 

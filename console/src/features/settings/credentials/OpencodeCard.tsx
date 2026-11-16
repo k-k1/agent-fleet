@@ -313,8 +313,10 @@ export function OpencodeCard({
   const [busy, setBusy] = useState(false);
   const [flow, setFlow] = useState<DeviceFlow | null>(null);
   const [oauthBusy, setOauthBusy] = useState(false);
-  // A stored key whose route the policy forbids is kept but not listed (D14a).
-  const envs = (st?.envs || []).filter((e: string) => anyAllowed(allowed, keyEnvRoutes(e)));
+  // Only the opencode.ai key is this card's: the provider API keys have their providers' cards
+  // (ProviderKeyCard, ADR 0138 D16). A stored key whose route the policy forbids is kept but not
+  // listed (D14a).
+  const envs = (st?.envs || []).filter((e: string) => e === "OPENCODE_API_KEY" && anyAllowed(allowed, keyEnvRoutes(e)));
   const account = !!st?.oauth;
   const accountOff = !!st?.oauth_disabled;
   const usage = s.opencodeCatalog; // off | own | free | go | zen — see OpencodeUsageRows
@@ -323,7 +325,7 @@ export function OpencodeCard({
   // On "own" the opencode.ai key is not injected at all (auth.go's env()), so offering to
   // store one here would be a form whose result does nothing. The preset falls back to the
   // first remaining entry rather than sticking on a hidden one.
-  const presets = (usesOpencodeAI ? OC_PRESETS : OC_PRESETS.filter((p) => p[0] !== "go")).filter((p) =>
+  const presets = (usesOpencodeAI ? OC_PRESETS.filter((p) => p[0] === "go") : []).filter((p) =>
     anyAllowed(allowed, PRESET_ROUTES[String(p[0])] ?? []),
   );
   const active = presets.some((p) => p[0] === preset) ? preset : String(presets[0]?.[0] ?? "");
@@ -499,7 +501,9 @@ export function OpencodeCard({
           {/* The usage page is opencode.ai's Go allowance, so it belongs to the routes that
               can spend it. */}
           {usesOpencodeAI && usage !== "free" && <OpencodeWorkspaceRow st={st} reload={reload} />}
-          <div className="p-desc">{tr(usesOpencodeAI ? "agents.oc_desc" : "agents.oc_desc_own")}</div>
+          {(presets.length > 0 || envs.length > 0) && (
+          <>
+          <div className="p-desc">{tr("cred.oc_key_desc")}</div>
           <div className="p-body">
             {active === "go" && (
               <Hint>
@@ -558,6 +562,8 @@ export function OpencodeCard({
             </div>
             )}
           </div>
+          </>
+          )}
           </>
           )}
         </>

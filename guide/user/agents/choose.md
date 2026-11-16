@@ -50,7 +50,7 @@ Both are terminal only, with no conversation, states or notifications.
 ## Connect
 
 Open **⚙Settings → Model credentials** and connect on the card of the agent you want. The steps differ per card, so follow each page in the table above.
-The cards are grouped by where the sign-in or key goes: Anthropic, OpenAI, opencode.ai, Google, Meta, "GitHub, Cursor, Kiro" and Self-hosted.
+The cards are grouped by where the sign-in or key goes: Anthropic, OpenAI, opencode.ai, Google, Meta, "GitHub, Cursor, Kiro", Other providers, Amazon Bedrock and Self-hosted. The provider API keys sit on their providers' cards (the Anthropic key under Anthropic, and so on), each card says which agents can use it ("**Usable by**"), and AWS profiles marked as a model route and the deployment's engine are shown read-only.
 A card appears only while the workspace is running and your organisation's policy allows that agent.
 
 - A connected card reads "**Connected**". claude and codex also show the account's email and plan

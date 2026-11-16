@@ -69,7 +69,7 @@ Turning it on is not enough in these cases.
 
 ## Good to know
 
-- **It can run on an API key too.** Choose the route when you start it in Terminal (CLI), and it runs on the Anthropic API key saved on the OpenCode card, billed per use.
+- **It can run on an API key too.** Choose the route when you start it in Terminal (CLI), and it runs on the Anthropic API key saved under Model credentials (Anthropic), billed per use.
   The details are in the [Agents reference](../../ref/agents.md#claude-the-api-key-route)
 - **Your own skills, hooks and subagents work as well.** See [Bring your Claude Code setup](bring-claude-setup.md)
 - Usage chips and RTK are in [Check prices and usage](usage.md)

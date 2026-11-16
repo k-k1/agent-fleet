@@ -110,7 +110,9 @@ describe("opencode の「使う」と「opencode.ai への課金」", () => {
     await mount({ envs: ["ANTHROPIC_API_KEY"] });
 
     expect(presetValues()).not.toContain("go"); // the OPENCODE_API_KEY preset
-    expect(presetValues()).toContain("anthropic");
+    // Provider keys are on their providers' cards (ADR 0138 D16): nothing to add here on own.
+    expect(host!.querySelector('input[type="password"]')).toBeNull();
+    expect(host!.textContent).not.toContain("ANTHROPIC_API_KEY");
     // The account sign-in block is opencode.ai's: its connect button must not be offered.
     expect(host!.querySelector(".p-opts:not(.p-opts-col)")).toBeNull();
   });
