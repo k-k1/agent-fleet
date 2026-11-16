@@ -582,3 +582,11 @@ meta の書き込み自体も一時ファイルと rename になったので、�
 `<name>.json.broken-<unix 秒>` に rename して脇へ退ける（削除はしない）。セッションがあるものはそのまま残して疑いのままにする。
 直したあと元の名前に戻せば、retire の印の無い通常のセッションに戻る。
 前の Agent から引き継げる Managed ランタイム（opencode serve、codex app-server）が動いているかもしれないあいだは退避しない（そこで動くターンには tmux セッションが無いため）。
+
+2026-11-16 追記（#4265）: act mark に、Agent のカウンタの実行を指す識別子（`actIncarnation`）を添える。カウンタを読み込む
+たびに作り、状態ファイルには入れないので、復元した古いコピーが持つことはできない。Control Plane は識別子を mark と一緒に
+保存し（`memo_delivery.act_incarnation`・`retire_act_incarnation`。移行 0137、Postgres は 0122）、retire に両方を載せる。
+Agent は別の実行の mark に `409 act_incarnation_changed` を返し、何も止めず印も付けない。Control Plane は固定した条件を
+捨てる（open な配信）か次の読み取りの mark に置き換え（closed な配信）、判断し直す。2026-11-15 の追記にある
+「状態ファイルを復元した場合」を塞ぐ。代償は、Agent 再起動後に配信ごとに retire が 1 回断られること。古い Agent は識別子を
+送らず、古い Control Plane も送らない。どちらも従来どおり動く。

@@ -843,3 +843,117 @@ func TestMarkOrReleaseSaysDoubtOnATypeInvalidMeta(t *testing.T) {
 		t.Fatalf("the meta was written: %q", b)
 	}
 }
+
+// listActEnvelope answers GET /sessions and returns the mark and the incarnation it carried.
+func listActEnvelope(t *testing.T) (int64, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	HandleListSessions(rec, httptest.NewRequest(http.MethodGet, "/sessions", nil))
+	var env struct {
+		ActMark        int64  `json:"actMark"`
+		ActIncarnation string `json:"actIncarnation"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("list answer: %v: %s", err, rec.Body)
+	}
+	return env.ActMark, env.ActIncarnation
+}
+
+func postRetireWith(t *testing.T, name string, req retireReq) (int, string) {
+	t.Helper()
+	b, _ := json.Marshal(req)
+	r := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/retire", bytes.NewReader(b))
+	r.SetPathValue("name", name)
+	rec := httptest.NewRecorder()
+	HandleSessionRetire(rec, r)
+	return rec.Code, rec.Body.String()
+}
+
+// The case the identity exists for: the state file is restored from an older copy, the counter
+// passes again through numbers it handed out, a person acts under a reused number below the old
+// retire's, and the retire decided on the old list arrives. Without the identity it stops the
+// session the person acted on.
+func TestRetireFromBeforeAStateRestoreStopsNothing(t *testing.T) {
+	setup := func(t *testing.T) (oldMark int64, oldInc string) {
+		newActEnv(t)
+		writeMeta(t, session.Meta{Name: "a"})
+		// The run that made the list: its counter is far ahead of the clock.
+		if err := actMarkStore.Write(actMarkKey, actMarkState{Reserved: time.Now().UnixMilli() + 1<<40}); err != nil {
+			t.Fatal(err)
+		}
+		resetActMarks()
+		oldMark, oldInc = listActEnvelope(t)
+		// The restore: an older copy of the file, and a restart.
+		if err := actMarkStore.Write(actMarkKey, actMarkState{Reserved: oldMark - 10}); err != nil {
+			t.Fatal(err)
+		}
+		resetActMarks()
+		notePersonAct("a") // under a reused number, below oldMark
+		for i := 0; i < 20; i++ {
+			listActMark(t) // the counter passes oldMark again
+		}
+		if m, _ := session.ReadMeta("a"); m.PersonActMark == 0 || m.PersonActMark >= oldMark {
+			t.Fatalf("setup: the act carries %d, want a reused number below %d", m.PersonActMark, oldMark)
+		}
+		return oldMark, oldInc
+	}
+	t.Run("with the identity of the old run it is refused", func(t *testing.T) {
+		mark, inc := setup(t)
+		code, body := postRetireWith(t, "a", retireReq{IfNoActSince: mark, ActIncarnation: inc})
+		if code != http.StatusConflict || !strings.Contains(body, errActIncarnationChanged) {
+			t.Fatalf("retire = %d %s, want 409 %s", code, body, errActIncarnationChanged)
+		}
+		if m, _ := session.ReadMeta("a"); m.RetiredAt != "" || m.RetireID != "" {
+			t.Fatalf("a refused retire marked the session: %+v", m)
+		}
+	})
+	t.Run("a Control Plane that sends no identity is read as before", func(t *testing.T) {
+		mark, _ := setup(t)
+		if code, _ := postRetireWith(t, "a", retireReq{IfNoActSince: mark}); code != http.StatusOK {
+			t.Fatalf("retire = %d", code)
+		}
+		if m, _ := session.ReadMeta("a"); m.RetiredAt == "" {
+			t.Fatal("documented gap closed by accident: an identity-less retire is meant to behave as before")
+		}
+	})
+}
+
+// A retire that carries this run's identity behaves exactly as before.
+func TestRetireWithThisRunsIdentityBehavesAsBefore(t *testing.T) {
+	newActEnv(t)
+	writeMeta(t, session.Meta{Name: "a"})
+	writeMeta(t, session.Meta{Name: "b"})
+	mark, inc := listActEnvelope(t)
+	if inc == "" {
+		t.Fatal("the list carries no identity")
+	}
+	notePersonAct("b") // after the list: released, as without an identity
+	if code, body := postRetireWith(t, "a", retireReq{IfNoActSince: mark, ActIncarnation: inc}); code != http.StatusOK {
+		t.Fatalf("retire a = %d %s", code, body)
+	}
+	if m, _ := session.ReadMeta("a"); m.RetiredAt == "" {
+		t.Fatal("a session nobody acted on was not retired")
+	}
+	if code, _ := postRetireWith(t, "b", retireReq{IfNoActSince: mark, ActIncarnation: inc}); code != http.StatusOK {
+		t.Fatalf("retire b = %d", code)
+	}
+	if m, _ := session.ReadMeta("b"); m.RetiredAt != "" {
+		t.Fatal("a session a person acted on after the list was retired")
+	}
+}
+
+// Every start of the Agent has an identity of its own, and the mark stays below the next run's.
+func TestActIncarnationChangesWithEachLoadOfTheCounter(t *testing.T) {
+	newActEnv(t)
+	_, a := listActEnvelope(t)
+	_, again := listActEnvelope(t)
+	resetActMarks()
+	_, b := listActEnvelope(t)
+	if a == "" || a != again || a == b {
+		t.Fatalf("identities %q, %q, then after a restart %q", a, again, b)
+	}
+	// A retire with no condition ignores the identity.
+	if code, _ := postRetireWith(t, "ghost", retireReq{ActIncarnation: a}); code == http.StatusConflict {
+		t.Fatal("an unconditional retire was refused for its identity")
+	}
+}

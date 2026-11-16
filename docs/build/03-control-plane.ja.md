@@ -289,6 +289,16 @@ Workspace を起こさない。
   先に新しい報告が保存されたら何も送らず次の tick でやり直す。progress は固定を消し、試行の完了記録も同じ世代で条件付ける。その読み取りのあとに人が起動・入力したセッションは
   `released`（root）か `done`（root の下）で返り、どちらも従来どおり保留中の retire を終わらせる。
   `actMark` を送らない Agent には body を付けない。
+  エンベロープの `actIncarnation`（その mark を配った Agent のカウンタの実行を指す識別子。#4265）は mark と一緒に保存し
+  （`memo_delivery.act_incarnation`）、一緒に固定し（`retire_act_incarnation`）、retire の body に
+  `{"ifNoActSince": mark, "actIncarnation": id}` として載せる。保存した識別子が無い（古い Agent、またはアップグレード前の行）
+  ときは載せず、従来どおり。Agent は別の実行の mark に `409 act_incarnation_changed` を返す。これは結果ではない:
+  open な配信の固定した条件は捨て（`DropDeliveryRetireMark`。世代と識別子で条件付き）、次の読み取りが新しい mark を保存し、
+  次の tick で固定して判断し直す。closed な配信の保留中の retire は、この tick の読み取りの mark と識別子に置き換え
+  （`RefreshDeliveryRetireMark`。断られた識別子で条件付き）、同じ tick ではなく次の tick に送る。だから 1 tick の中で
+  断りが回り続けない。識別子の無い読み取りや、断られたものと同じ識別子の読み取りは何も変えない。古い Control Plane が
+  同じ DB にいると、古いほうは `act_mark` だけを書いて識別子を書かないので組が食い違いうるが、Agent は断ることしかできず
+  （安全側）、受け入れることはない。
   `aborted` の close は何も retire しない。
 
   **Overdue。** キューの `maxTaskHours`（1〜72、既定 12）より長く open の配信には `overdue_at` を

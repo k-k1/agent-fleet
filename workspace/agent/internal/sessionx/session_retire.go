@@ -182,6 +182,11 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if cond.IfNoActSince > 0 && cond.ActIncarnation != "" && cond.ActIncarnation != actMarks.incarnationID() {
+		httpx.WriteErr(w, http.StatusConflict, errActIncarnationChanged,
+			"the act mark of this retire came from another run of this Agent's counter; nothing was done, read the list again")
+		return
+	}
 	// One retire of a root at a time, from the intent to the end, recovery included: a second
 	// request waits for the first, so an older run never goes on with a tree a newer one has
 	// already been through and a person has resumed since.
@@ -352,7 +357,16 @@ type retireReq struct {
 	// IfNoActSince is the actMark of the session list the retire was decided on. A session a
 	// person started or typed into after that list (PersonActMark >= it) is not retired.
 	IfNoActSince int64 `json:"ifNoActSince"`
+	// ActIncarnation is the actIncarnation of the same list. A mark from another run of the counter
+	// proves nothing about the order of acts (the state file may have been restored), so the retire
+	// is refused. Empty: a Control Plane that does not send one, and the mark is used as before.
+	ActIncarnation string `json:"actIncarnation,omitempty"`
 }
+
+// errActIncarnationChanged is the code of a retire refused because its mark came from another run
+// of the act counter: nothing was stopped, marked or recorded, and the caller decides again on a
+// fresh list.
+const errActIncarnationChanged = "act_incarnation_changed"
 
 var retireIntents = fstore.JSON[retireIntent](paths.AgentStateDir, "session-retire-intent", ".json")
 var retireIntentMu sync.Mutex

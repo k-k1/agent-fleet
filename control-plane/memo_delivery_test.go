@@ -104,9 +104,20 @@ type fakeQueueAgent struct {
 	// retireBodies is the body of every retire call ("" for none), parallel to retires.
 	actMark      int64
 	retireBodies []string
+	// actIncarnation, when not "", is the actIncarnation the list envelope carries beside the mark,
+	// and the one a retire's body must echo: any other identity is answered 409
+	// act_incarnation_changed with nothing done (an Agent of #4265).
+	actIncarnation string
 	// retireDrop makes that many retire calls lose their answer: the call is recorded and the
 	// connection is closed without a reply.
 	retireDrop int
+}
+
+// setActIncarnation sets the identity the next list answers carry and the retires must echo.
+func (a *fakeQueueAgent) setActIncarnation(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.actIncarnation = id
 }
 
 // setActMark sets the actMark the next list answers carry.
@@ -162,11 +173,23 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if a.actMark != 0 {
 			env["actMark"] = a.actMark
+			if a.actIncarnation != "" {
+				env["actIncarnation"] = a.actIncarnation
+			}
 		}
 		_ = json.NewEncoder(w).Encode(env)
 	case r.Method == "POST" && strings.HasPrefix(path, "/sessions/") && strings.HasSuffix(path, "/retire"):
 		rb, _ := io.ReadAll(r.Body)
 		a.retireBodies = append(a.retireBodies, string(rb))
+		var cond struct {
+			ActIncarnation string `json:"actIncarnation"`
+		}
+		_ = json.Unmarshal(rb, &cond)
+		if a.actIncarnation != "" && cond.ActIncarnation != "" && cond.ActIncarnation != a.actIncarnation {
+			a.retires = append(a.retires, "refused")
+			agentErr(w, http.StatusConflict, "act_incarnation_changed")
+			return
+		}
 		if a.retireDrop > 0 {
 			a.retireDrop--
 			a.retires = append(a.retires, "dropped")

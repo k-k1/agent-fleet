@@ -176,14 +176,23 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     input with an origin (peer, schedule, `/mcp`, notice, auto-resume, a queue delivery's prompt).
     A retire whose `ifNoActSince` is above the Agent's own counter (a restored older state file)
     cannot be ordered here, so it reads as an act: the tree is released, never retired. The
-    monotonic guarantee holds while the state file survives. **Known gap (#4265):** restoring an
-    older copy of `act-mark/mark.json` is not enough by itself, because a restart begins at the
-    higher of the restored ceiling and the clock. A number handed out before the restore is reused
-    only when it is above both: the clock is behind it (stepped back, or the counter had run ahead
-    of it) or the restore falls inside the block reserved ahead of the clock. A retire whose number
-    is then at or below the counter cannot be told from one that was reused, and can stop a session a
-    person acted on. Restoring Agent state is outside the guarantee until the Control Plane echoes
-    an incarnation identity.
+    monotonic guarantee holds while the state file survives. Restoring an older copy of
+    `act-mark/mark.json` is not enough to break that by itself, because a restart begins at the
+    higher of the restored ceiling and the clock, but a number handed out before the restore can be
+    reused when it is above both (the clock is behind it, or the restore falls inside the block
+    reserved ahead of the clock), and a retire carrying such a number cannot be told from one that
+    was reused. That case is closed by an **incarnation identity** (#4265): a random value made
+    each time the counter is loaded (every Agent start), carried as `"actIncarnation"` beside
+    `actMark` (only when the mark is sent), echoed by the Control Plane as `actIncarnation` in the
+    retire body, and **refused with `409 act_incarnation_changed`** when it is not this run's:
+    nothing is stopped, marked or recorded, and the Control Plane decides again on a fresh read.
+    The identity is deliberately **not** kept in the state file: an older copy of the file would
+    carry the same identity and the restore would go unseen, whereas a value that lives only in the
+    process cannot be restored. The price is that a mark read before an Agent restart is refused
+    after it (once per delivery), and a retire frozen before the restart takes the post-restart
+    read's mark. A retire with no `actIncarnation` (an older Control Plane) or with no mark is
+    read as before. The recovery of a retire after a restart replays the mark of its intent as
+    before, which is not checked against the identity.
   - **A meta that cannot be read is in doubt.** The retire decides, and writes the mark or the
     release, in one checked meta update on the meta that update reads under the meta lock, and ends
     subscriptions and stops only after the mark is written durably (a mark or release that could not

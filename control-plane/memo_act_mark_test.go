@@ -205,7 +205,7 @@ func TestMemoActMarkFreezeIsOneConditionalWrite(t *testing.T) {
 		// A newer report kept between the decision (gen 100, mark 10) and the freeze.
 		e.observe(e.st, d.ID, 100, 10, false)
 		e.observe(e.other, d.ID, 200, 20, false)
-		if _, _, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 100, 10); err != nil || ok {
+		if _, _, _, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 100, 10, ""); err != nil || ok {
 			t.Fatalf("a freeze on an overtaken report went through: ok=%v err=%v", ok, err)
 		}
 		if got := e.delivery(d.ID); got.RetireGen != 0 || got.RetireActMark != 0 {
@@ -213,11 +213,11 @@ func TestMemoActMarkFreezeIsOneConditionalWrite(t *testing.T) {
 		}
 
 		// Frozen on the current report; a later report does not replace it.
-		if m, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 200, 20); err != nil || !ok || m != 20 || g != 200 {
+		if m, _, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 200, 20, ""); err != nil || !ok || m != 20 || g != 200 {
 			t.Fatalf("freeze: %d %d %v %v", m, g, ok, err)
 		}
 		e.observe(e.other, d.ID, 300, 30, false)
-		if m, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 300, 30); err != nil || !ok || m != 20 || g != 200 {
+		if m, _, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 300, 30, ""); err != nil || !ok || m != 20 || g != 200 {
 			t.Fatalf("a later report replaced the frozen condition: %d %d %v %v", m, g, ok, err)
 		}
 
@@ -226,7 +226,7 @@ func TestMemoActMarkFreezeIsOneConditionalWrite(t *testing.T) {
 		if won, err := e.st.MarkMemoDeliveryRetired(ctx, d.ID, store.DeliveryTS(time.Now()), 200); err != nil || won {
 			t.Fatalf("the completion of a stale attempt was recorded: %v %v", won, err)
 		}
-		if m, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 400, 40); err != nil || !ok || m != 40 || g != 400 {
+		if m, _, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 400, 40, ""); err != nil || !ok || m != 40 || g != 400 {
 			t.Fatalf("after progress: %d %d %v %v", m, g, ok, err)
 		}
 		if won, err := e.st.MarkMemoDeliveryRetired(ctx, d.ID, store.DeliveryTS(time.Now()), 400); err != nil || !won {
@@ -238,11 +238,11 @@ func TestMemoActMarkFreezeIsOneConditionalWrite(t *testing.T) {
 		ctx := context.Background()
 		_, d := e.openReported(nil)
 		e.observe(e.st, d.ID, 100, 0, false)
-		if m, _, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 100, 0); err != nil || !ok || m != 0 {
+		if m, _, _, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 100, 0, ""); err != nil || !ok || m != 0 {
 			t.Fatalf("%d %v %v", m, ok, err)
 		}
 		e.observe(e.other, d.ID, 200, 50, false)
-		if m, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 200, 50); err != nil || !ok || m != 0 || g != 100 {
+		if m, _, g, ok, err := e.st.FreezeDeliveryRetireMark(ctx, d.ID, 200, 50, ""); err != nil || !ok || m != 0 || g != 100 {
 			t.Fatalf("a mark appeared in a frozen retire without one: %d %d %v %v", m, g, ok, err)
 		}
 	})

@@ -21,10 +21,16 @@ package sessionx
 // behind it (the clock stepped back, or the counter had run ahead of it) or the restore falls
 // inside the block reserved ahead of the clock. A retire carrying a number above the counter is
 // never read as "no act since" (retireOne releases the tree instead), but a number at or below it
-// cannot be told from a reused one. Closing that needs an incarnation identity the Control Plane
-// echoes (#4265).
+// cannot be told from a reused one. That case is closed by an incarnation identity: a random value
+// made each time the counter is loaded (every Agent start), sent beside the mark, echoed by the
+// Control Plane with the retire, and refused when it is not this run's. The identity is NOT kept in
+// the state file: an older copy of the file would carry the same identity and the restore would go
+// unseen, while a value that lives only in this process cannot be restored. The price is one
+// refused retire after each restart, which the Control Plane answers with a fresh read.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"log"
 	"strings"
 	"sync"
@@ -50,6 +56,8 @@ type actClock struct {
 	loaded   bool
 	cur      int64
 	reserved int64
+	// incarnation names this load of the counter (see the file header); never persisted.
+	incarnation string
 	// recorded is the mark each session's meta already holds from an act, so a keystroke at an
 	// unchanged mark costs a map lookup and no write.
 	recorded map[string]int64
@@ -65,7 +73,18 @@ func (c *actClock) loadLocked() {
 	c.cur = max(st.Reserved, time.Now().UnixMilli())
 	c.reserved = max(st.Reserved, c.cur)
 	c.recorded = map[string]int64{}
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	c.incarnation = hex.EncodeToString(b[:])
 	c.loaded = true
+}
+
+// incarnationID is the identity of this load of the counter.
+func (c *actClock) incarnationID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.loadLocked()
+	return c.incarnation
 }
 
 // take hands out a new mark. ok is false when the ceiling could not be made durable: a value that
