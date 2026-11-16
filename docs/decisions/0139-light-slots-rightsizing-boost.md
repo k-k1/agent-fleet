@@ -9,6 +9,7 @@ English | [日本語](0139-light-slots-rightsizing-boost.ja.md)
   `t3` instance was read for this record**, and no AWS call was made: every such figure below is an
   estimate from list-price proportionality and is marked as one. No decision rests on an estimate alone;
   the ones that wait on a measurement say so.
+- Follow-ups: #4332, #4333, #4334, #4335
 - Related: [0045](0045-ec2-persistent-workspace.md) decision 8 (a slot is exclusive to one member;
   co-tenancy rejected) and decision 21 (size is one axis, memory; the ladder is declared by the operator) /
   [0074](0074-engine-instance-classes.md) (a stored choice wins; a change reaches the NEXT instance) /
