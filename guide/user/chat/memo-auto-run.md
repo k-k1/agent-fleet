@@ -108,6 +108,7 @@ On an issue, a ticket or a pull request, you can add a link to it, with a note o
 
 - The memo reaches the session as it does today, with the item's key and URL beside it. The item's text is not sent: the session reads it with `gh`, `jira` or `bkt`, as a session started from the item does
 - When one run holds exactly one link, the session is linked to that item, as when you start from it. With none, or two or more, no link is made
+- In that case, when the category runs each time in a new worktree, the branch is named by the repository's [branch naming rules](../sessions/from-issues.md#branch-names), as for a session started from the item (by default `feature/<number>`). When a branch of that name already exists, the session works on it instead of creating a new one. When another working copy holds that branch, or the rules give no name, the session gets a temporary branch
 
 ### Approve
 
