@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 )
@@ -131,15 +132,30 @@ func TestAgentModelsSaysNothingWhenTheMenuWorks(t *testing.T) {
 // recommendation is the pinned modelfallback.ChatCodex, and the answer has to say so:
 // list_models is what an assistant reads before naming a model, and an id the account never
 // confirmed should not look like one it did. The fake codex fails like a signed-out one; the
-// package caches only successful reads, and nothing else in this package reads codex's
-// catalog, so the cache is still empty here.
+// package caches successful reads for a minute, so the test empties that cache before and
+// after: a read of a real codex by another test or an earlier -count round would otherwise
+// answer instead of the fake.
 func TestAgentModelsSaysWhenTheRecommendationIsAFallback(t *testing.T) {
 	writeUIPrefs(t, `{"hiddenModels":{}}`)
 	bin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Prime the cache with a successful read first, as an earlier round or test would leave it;
+	// without the reset below the failing fake is never reached and the test fails.
+	good := t.TempDir()
+	catalog := `{"models":[{"slug":"gpt-primed","visibility":"list","priority":1}]}`
+	if err := os.WriteFile(filepath.Join(good, "codex"), []byte("#!/bin/sh\necho '"+catalog+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", good+string(os.PathListSeparator)+os.Getenv("PATH"))
+	codex.ResetModelsCacheForTest()
+	if len(codex.Models()) == 0 {
+		t.Fatal("priming read returned no models")
+	}
+	t.Cleanup(codex.ResetModelsCacheForTest)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	codex.ResetModelsCacheForTest()
 
 	req := httptest.NewRequest(http.MethodGet, "/agents/codex/models", nil)
 	req.SetPathValue("kind", "codex")
