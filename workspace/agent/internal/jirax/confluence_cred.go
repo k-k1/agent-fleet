@@ -32,6 +32,16 @@ var confluenceRequiredScopes = []string{
 	"write:folder:confluence", "read:hierarchical-content:confluence",
 }
 
+// confluenceUnlistedScopes are required scopes that accessible-resources never lists, even for a
+// token that holds them, so their absence from the recorded scopes says nothing and the outdated
+// check skips them. Measured: a grant that leaves these three out of that list answers 200 on
+// /api/v2/pages/{id}/direct-children (read:hierarchical-content) and 404, not 401, on
+// /api/v2/folders/{id}, while a scope it really lacks answers 401 "scope does not match".
+var confluenceUnlistedScopes = map[string]bool{
+	"read:folder:confluence": true, "write:folder:confluence": true,
+	"read:hierarchical-content:confluence": true,
+}
+
 // confluenceOutdatedHint is the one line the wrapper prints before a v2 page command on an
 // outdated grant, which confluence-cli would otherwise answer with a bare 401.
 const confluenceOutdatedHint = "this Atlassian authorization predates the Confluence scopes page commands need now; " +
@@ -39,7 +49,7 @@ const confluenceOutdatedHint = "this Atlassian authorization predates the Conflu
 	"(confluence search keeps working meanwhile)"
 
 // ConfluenceScopes says what the current site's OAuth authorization can do with Confluence:
-// "granted" (holds every scope in confluenceRequiredScopes), "outdated" (holds Confluence scopes,
+// "granted" (holds every scope in confluenceRequiredScopes that accessible-resources lists), "outdated" (holds Confluence scopes,
 // but not all of those: search works, page commands on the v2 API answer 401 until a reconnect
 // after the app gained the scopes), "missing" (no Confluence scope at all), or "" when unknown.
 // An API-token connection and a site whose scopes were never recorded are unknown, never
@@ -62,7 +72,7 @@ func ConfluenceScopes(c *secrets.JiraCreds) string {
 		return "missing"
 	}
 	for _, need := range confluenceRequiredScopes {
-		if !have[need] {
+		if !have[need] && !confluenceUnlistedScopes[need] {
 			return "outdated"
 		}
 	}
