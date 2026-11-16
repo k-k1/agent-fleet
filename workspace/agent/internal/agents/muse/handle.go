@@ -840,6 +840,9 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 		}
 	}
 	h.mu.Unlock()
+	if p.Error != nil && p.Terminal != msp.TurnTerminalCancelled {
+		h.onItem(turnErrorItem(p))
+	}
 	agents.MarkTurnEndErr(h.slotSid, st, failure)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 	// Never on this goroutine: finishTurn runs on the client's reader, and pump waits for the

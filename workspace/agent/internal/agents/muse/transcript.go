@@ -418,6 +418,10 @@ func turnsWithCommentary(items []msp.Item, cs *commentarySet) []transcript.Turn 
 			})
 			assistant = -1
 
+		case itemKindTurnError:
+			t := openAssistant(it)
+			t.Parts = append(t.Parts, turnErrorPart(it))
+
 		default:
 			// `hookRun` and any kind a later muse adds: the schema's rule is that an unknown
 			// kind is rendered generically, never skipped — a dropped item is a hook that ran
