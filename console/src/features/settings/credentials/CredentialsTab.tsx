@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Button } from "../../../ui/Button.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { ConnChecking, type ConnPhase } from "../parts/providerCard.tsx";
-import { useConnections } from "../parts/useConnections.ts";
+import { connectionsProgress, useConnections } from "../parts/useConnections.ts";
+import { allowedRoutesOf, useMemberCatalog } from "./memberCatalog.ts";
 import { useSettingsTarget } from "../parts/useSettingsTarget.ts";
 import { ClaudeCard } from "./ClaudeCard.tsx";
 import { CodexCard } from "./CodexCard.tsx";
@@ -33,14 +34,14 @@ export const CREDENTIAL_GROUPS: { key: string; label: string; kinds: string[] }[
 ];
 
 // One card per GET /connections entry. A map rather than a switch, so the kind names stay data.
-const CARDS: Record<string, (st: ProviderConn | undefined, reload: () => void) => ReactNode> = {
+const CARDS: Record<string, (st: ProviderConn | undefined, reload: () => void, allowed: Set<string>) => ReactNode> = {
   claude: (st, reload) => <ClaudeCard running st={st} reload={reload} />,
   codex: (st, reload) => <CodexCard running st={st} reload={reload} />,
   cursor: (st, reload) => <CursorCard running st={st} reload={reload} />,
   copilot: (st) => <CopilotCard running st={st} />,
   kiro: (st, reload) => <KiroCard running st={st} reload={reload} />,
   agy: (st, reload) => <AgyCard running st={st} reload={reload} />,
-  opencode: (st, reload) => <OpencodeCard running st={st} reload={reload} />,
+  opencode: (st, reload, allowed) => <OpencodeCard running st={st} reload={reload} allowed={allowed} />,
   lcpp: (st, reload) => <LcppCard running st={st} reload={reload} />,
   muse: (st, reload) => <MuseCard running st={st} reload={reload} />,
 };
@@ -60,25 +61,39 @@ export function CredentialsTab() {
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
   const running = wsState === "running";
-  const { conns, reload, failed } = useConnections();
+  const { conns, reload, answered, failures, lastOk } = useConnections();
+  // Only an answer fetched since this page opened counts: the shared snapshot may be from before a
+  // policy tightened or the member switched a harness off, and a reload that fails afterwards
+  // keeps it. With no fresh answer, no card is drawn.
+  const [base] = useState(connectionsProgress);
+  const catalog = useMemberCatalog(running);
   useEffect(() => {
     if (running) reload();
   }, [running, reload]);
 
-  const checking = running && !conns;
-  const connFailed = running && !!conns && failed;
-  const phase: ConnPhase = checking ? "checking" : connFailed ? "failed" : "ok";
-  const known = running && phase === "ok" && !!conns;
+  const fresh = running && answered > base.answered && lastOk && !!conns;
+  const failedNow = running && failures > base.failures && !lastOk;
+  const checking = running && !fresh && !failedNow;
+  const phase: ConnPhase = checking ? "checking" : failedNow ? "failed" : "ok";
+  // A card is drawn for a kind both answers name: GET /connections omits a kind the policy
+  // forbids or the member switched off, and the catalogue applies every member switch (llama.cpp's
+  // own one too).
+  const known = fresh && catalog.kinds !== null;
 
   // A deep link (the transcript's Re-authenticate button) names the card to land on; scrolling
-  // waits for the snapshot, whose cards are what the target is among.
+  // waits until the cards are drawn.
   const rootRef = useRef<HTMLDivElement>(null);
-  useSettingsTarget(rootRef, phase !== "checking");
+  useSettingsTarget(rootRef, known || failedNow || !running);
+
+  const refreshAll = async () => {
+    reload();
+    await catalog.refresh();
+  };
 
   const card = (kind: string): ReactNode => {
     const st = conns?.[kind as keyof typeof conns] as ProviderConn | undefined;
     const draw = CARDS[kind];
-    return draw ? <Fragment key={kind}>{draw(st, reload)}</Fragment> : null;
+    return draw ? <Fragment key={kind}>{draw(st, reload, allowedRoutesOf(catalog.kinds?.get(kind)))}</Fragment> : null;
   };
 
   return (
@@ -92,10 +107,10 @@ export function CredentialsTab() {
         </div>
       )}
       <UnusableLine running={running} />
-      <OwnSettingsLine running={running} />
+      <OwnSettingsLine hidden={running && catalog.hiddenByOwn} onReset={refreshAll} />
       <ConnChecking.Provider value={phase}>
         {checking && <p className="muted ds-note">{tr("cred.checking")}</p>}
-        {connFailed && (
+        {failedNow && (
           <div className="agents-ws-hint">
             <p className="muted ds-note">{tr("conn.check_failed_note")}</p>
             <Button icon="refresh" onClick={reload}>
@@ -107,7 +122,9 @@ export function CredentialsTab() {
           <>
             <p className="muted ds-note">{tr("agents.note_apply")}</p>
             {CREDENTIAL_GROUPS.map((g) => {
-              const present = g.kinds.filter((k) => conns && k in conns && conns[k as keyof typeof conns]);
+              const present = g.kinds.filter(
+                (k) => conns && k in conns && conns[k as keyof typeof conns] && catalog.kinds!.has(k),
+              );
               if (present.length === 0) return null;
               return (
                 <section key={g.key} className="ds-group cred-group" data-cred-group={g.key}>

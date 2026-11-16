@@ -867,4 +867,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "cred.unusable_remove_failed": "Could not remove the credentials: {msg}",
   "cred.own_settings_line": "Some agents or credentials are hidden by your own settings.",
   "cred.own_settings_reset": "Reset my settings",
+  "cred.own_settings_confirm_title": "Reset your own agent settings?",
+  "cred.own_settings_confirm_body": "Every agent you switched off, llama.cpp included, is switched back on. What your organisation's policy allows does not change.",
+  "cred.own_settings_reset_failed": "Your settings could not be saved, so nothing was reset. Try again.",
 };

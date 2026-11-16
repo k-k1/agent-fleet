@@ -862,4 +862,7 @@ export const settings = {
   "cred.unusable_remove_failed": "認証情報を削除できませんでした: {msg}",
   "cred.own_settings_line": "一部のエージェントや認証情報が、あなた自身の設定で非表示になっています。",
   "cred.own_settings_reset": "自分の設定をリセット",
+  "cred.own_settings_confirm_title": "自分のエージェント設定をリセットしますか？",
+  "cred.own_settings_confirm_body": "自分でオフにしたエージェント（llama.cpp を含む）をすべてオンに戻します。組織のポリシーで許されている範囲は変わりません。",
+  "cred.own_settings_reset_failed": "設定を保存できなかったため、リセットされていません。もう一度お試しください。",
 };

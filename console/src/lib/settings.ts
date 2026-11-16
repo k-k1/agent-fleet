@@ -143,6 +143,7 @@ export {
   subscribePrefsSync,
   uiPrefsLoaded,
   usePrefsSyncState,
+  waitPrefsSaved,
   type PrefsSyncState,
 } from "./settings/sync.ts";
 

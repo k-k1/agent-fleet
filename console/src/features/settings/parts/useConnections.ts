@@ -23,7 +23,17 @@ import type { ConnectionsStatus } from "../../../types/session.ts";
 // starting from null and waiting out the whole GET /connections again. It is only ever
 // replaced by a real answer (or set to {} when nothing was ever loaded), never cleared by a
 // failure; resetConnectionsCache() is for when the workspace it described is gone.
-const useConnectionsCache = create<{ conns: ConnectionsStatus | null; failed: boolean }>(() => ({ conns: null, failed: false }));
+// answered / failures count the fetches that came back with an answer, and the reloads that gave
+// up, so a consumer that must not show a snapshot from before it mounted (Model credentials: a
+// policy may have tightened since) can tell a fresh answer from the cached one.
+// lastOk says whether the latest reload to finish came back with an answer.
+const useConnectionsCache = create<{
+  conns: ConnectionsStatus | null;
+  failed: boolean;
+  answered: number;
+  failures: number;
+  lastOk: boolean;
+}>(() => ({ conns: null, failed: false, answered: 0, failures: 0, lastOk: false }));
 
 // Request generation, at the same scope as the snapshot: the latest reload from ANY consumer
 // wins, and a reset invalidates every request still out, so a slow GET from an earlier mount
@@ -34,6 +44,7 @@ let connSeq = 0;
 export function resetConnectionsCache() {
   connSeq++;
   useConnectionsCache.setState({ conns: null, failed: false });
+  useConnectionsCache.setState((s) => ({ failures: s.failures + 1, lastOk: false }));
 }
 
 // Any path that takes the Agent away (stop, restart, recreate) clears the snapshot, whether or
@@ -63,13 +74,14 @@ export function useConnections() {
     // data"), but `failed` tells the Agents tab this is not an answer, so it shows a retryable
     // error instead of "not connected".
     const giveUp = () =>
-      useConnectionsCache.setState((s) => (s.conns ? s : { conns: {}, failed: true }));
+      useConnectionsCache.setState((s) => ({ ...(s.conns ? s : { conns: {}, failed: true }), failures: s.failures + 1, lastOk: false }));
     const attempt = (retriesLeft: number) => {
       api("api/connections")
         .then((d) => {
           if (id !== connSeq) return;
           if (d && !d.error) {
             setConns(d);
+            useConnectionsCache.setState((s) => ({ answered: s.answered + 1, lastOk: true }));
             return;
           }
           if (retriesLeft > 0) setTimeout(() => attempt(retriesLeft - 1), 1200);
@@ -84,5 +96,14 @@ export function useConnections() {
     attempt(2);
     bumpConn();
   }, [bumpConn, setConns]);
-  return { conns, reload, failed };
+  const answered = useConnectionsCache((s) => s.answered);
+  const failures = useConnectionsCache((s) => s.failures);
+  const lastOk = useConnectionsCache((s) => s.lastOk);
+  return { conns, reload, failed, answered, failures, lastOk };
 }
+
+/** The answered / failures counters now, for a consumer to mark where its mount began. */
+export const connectionsProgress = (): { answered: number; failures: number } => {
+  const s = useConnectionsCache.getState();
+  return { answered: s.answered, failures: s.failures };
+};

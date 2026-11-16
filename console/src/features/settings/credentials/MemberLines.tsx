@@ -4,7 +4,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
-import { setSettings } from "../../../lib/settings.ts";
+import { setSettings, waitPrefsSaved } from "../../../lib/settings.ts";
 
 // The two lines a member's credential screens carry under ADR 0138. Neither names a layer or a
 // hidden item (D10a): the Agent answers with a count and booleans only, and so do these.
@@ -65,9 +65,13 @@ export function UnusableLine({ running }: { running: boolean }) {
     if (!ok) return;
     setBusy(true);
     try {
-      const r = (await apiJSON("api/connections/unusable/remove", "POST", { token: offer.token })) as
-        | (UnusableRemoveAnswer & { error?: ApiError })
-        | null;
+      let r: (UnusableRemoveAnswer & { error?: ApiError }) | null;
+      try {
+        r = (await apiJSON("api/connections/unusable/remove", "POST", { token: offer.token })) as typeof r;
+      } catch (e) {
+        // A network failure: whether anything was removed is unknown, so ask the Agent again.
+        r = { error: { code: "network", message: e instanceof Error ? e.message : String(e) } } as typeof r;
+      }
       if (!r || r.error || typeof r.removed !== "number") {
         toast(tr("cred.unusable_remove_failed", { msg: errDetail(r?.error) }));
         load();
@@ -95,50 +99,45 @@ export function UnusableLine({ running }: { running: boolean }) {
   );
 }
 
-/** The access summary GET /agents/kinds carries (ADR 0138 D10a): booleans only. */
-interface MemberAccess {
-  allOffByOwnSettings?: boolean;
-  someOffByOwnSettings?: boolean;
-}
-
 /**
- * OwnSettingsLine is shown only while the member's own switches hide something the policy allows:
- * "Some agents or credentials are hidden by your own settings", with Reset my settings. The reset
- * clears exactly the member layer — every harness's on/off (agentEnabled) and llama.cpp's own
- * switch — and nothing the policy decides.
+ * OwnSettingsLine is shown only while the member's own switches hide something the policy allows
+ * (hidden, from the page's fresh GET /agents/kinds): "Some agents or credentials are hidden by your
+ * own settings", with Reset my settings. The reset asks first, clears exactly the member layer —
+ * every harness's on/off (agentEnabled) and llama.cpp's own switch — and nothing the policy
+ * decides. The Agent applies the member layer from the saved ui-prefs, so the page refreshes what
+ * the Agent shows (onReset) only once the save has landed, and says so when it has not.
  */
-export function OwnSettingsLine({ running }: { running: boolean }) {
+export function OwnSettingsLine({ hidden, onReset }: { hidden: boolean; onReset: () => void | Promise<void> }) {
   const tr = useT();
-  const [hidden, setHidden] = useState(false);
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [busy, setBusy] = useState(false);
+  if (!hidden) return null;
 
-  useEffect(() => {
-    if (!running) {
-      setHidden(false);
-      return;
+  const reset = async () => {
+    const ok = await confirm({
+      title: tr("cred.own_settings_confirm_title"),
+      body: tr("cred.own_settings_confirm_body"),
+      confirmLabel: tr("cred.own_settings_reset"),
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      setSettings({ agentEnabled: {}, lcppEnabled: true });
+      if (!(await waitPrefsSaved())) {
+        toast(tr("cred.own_settings_reset_failed"));
+        return;
+      }
+      await onReset();
+    } finally {
+      setBusy(false);
     }
-    let live = true;
-    api("api/agents/kinds")
-      .then((r) => {
-        const a = (r as { access?: MemberAccess } | null)?.access;
-        if (live) setHidden(!!a && (a.someOffByOwnSettings === true || a.allOffByOwnSettings === true));
-      })
-      .catch(() => live && setHidden(false));
-    return () => {
-      live = false;
-    };
-  }, [running]);
-
-  if (!running || !hidden) return null;
-
-  const reset = () => {
-    setSettings({ agentEnabled: {}, lcppEnabled: true });
-    setHidden(false);
   };
 
   return (
     <div className="agents-ws-hint cred-line" data-testid="cred-own-settings-line">
       <p className="muted ds-note">{tr("cred.own_settings_line")}</p>
-      <Button icon="refresh" onClick={reset}>
+      <Button icon="refresh" disabled={busy} onClick={() => void reset()}>
         {tr("cred.own_settings_reset")}
       </Button>
     </div>

@@ -1,5 +1,7 @@
-// openSettings("agents", { target }) on the Agents page: its harness cards need no connection
-// snapshot, so a target lands at once; a target with no card falls back to the top quietly.
+// Settings > Agents draws a harness card only for a kind the live catalogue (GET /agents/kinds)
+// lists: one the policy forbids, or the member switched off, has none (ADR 0138 D10a), and with no
+// answer no card is drawn. The member's own switches come back through the reset line. A deep
+// link to a harness lands once the cards are drawn; one with no card falls back quietly.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -11,7 +13,12 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: vi.fn(),
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
-let wsState = "stopped";
+vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(true) }));
+vi.mock("../../../lib/settings.ts", async (importActual) => ({
+  ...(await importActual<typeof import("../../../lib/settings.ts")>()),
+  waitPrefsSaved: () => Promise.resolve(true),
+}));
+let wsState = "running";
 vi.mock("../../../core/store/workspace.ts", () => ({
   useWorkspaceStore: (sel: (s: { state: string; start: () => void }) => unknown) => sel({ state: wsState, start: () => {} }),
   wsStartBusy: () => false,
@@ -19,7 +26,11 @@ vi.mock("../../../core/store/workspace.ts", () => ({
 
 const { AgentsTab } = await import("./AgentsTab.tsx");
 const { useSettingsUI } = await import("../store.ts");
-const { resetConnectionsCache } = await import("../parts/useConnections.ts");
+const { getSettings, setSettings, settingsDefaults } = await import("../../../lib/settings.ts");
+const { t } = await import("../../../lib/i18n/index.ts");
+
+const ALL = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse"];
+let kinds: unknown = { kinds: ALL.map((kind) => ({ kind })), access: {} };
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -32,13 +43,18 @@ async function mount() {
   await act(async () => {
     root!.render(<AgentsTab />);
   });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
 }
 const card = (id: string) => host!.querySelector<HTMLElement>(`[data-settings-target="${id}"]`);
+const cards = () => Array.from(host!.querySelectorAll<HTMLElement>(".p-card")).map((c) => c.dataset.settingsTarget);
 
 beforeEach(() => {
-  wsState = "stopped";
+  wsState = "running";
+  kinds = { kinds: ALL.map((kind) => ({ kind })), access: {} };
   scrolled.length = 0;
-  api.mockImplementation(() => Promise.resolve({}));
+  api.mockImplementation((path: string) => Promise.resolve(path === "api/agents/kinds" ? kinds : {}));
   Element.prototype.scrollIntoView = function (this: HTMLElement, opts?: unknown) {
     scrolled.push({ id: this.dataset.settingsTarget, opts });
   };
@@ -52,7 +68,54 @@ afterEach(() => {
   host = null;
   api.mockReset();
   useSettingsUI.setState({ settingsTarget: null });
-  resetConnectionsCache();
+  setSettings(settingsDefaults());
+});
+
+describe("Settings > Agents", () => {
+  it("unrestricted: draws every harness, with no sign-in control", async () => {
+    await mount();
+    expect(cards()).toEqual(ALL);
+    expect(host!.querySelector("input.cinput")).toBeNull();
+    expect(host!.textContent).not.toContain(t("cred.own_settings_line"));
+  });
+
+  it("restricted: draws no card for a harness the catalogue leaves out", async () => {
+    kinds = { kinds: [{ kind: "codex" }, { kind: "opencode" }], access: {} };
+    await mount();
+    expect(cards()).toEqual(["codex", "opencode"]);
+    expect(host!.textContent).not.toContain(t("cred.own_settings_line"));
+  });
+
+  it("switched off: hides the harness and offers the reset, which brings it back once saved", async () => {
+    setSettings({ agentEnabled: { codex: false } });
+    kinds = { kinds: [{ kind: "claude" }], access: { someOffByOwnSettings: true } };
+    await mount();
+    expect(cards()).toEqual(["claude"]);
+    expect(host!.textContent).toContain(t("cred.own_settings_line"));
+    kinds = { kinds: [{ kind: "claude" }, { kind: "codex" }], access: {} };
+    const reset = Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent === t("cred.own_settings_reset"),
+    )!;
+    await act(async () => reset.click());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(getSettings().agentEnabled).toEqual({});
+    expect(cards()).toEqual(["claude", "codex"]);
+  });
+
+  it("draws no card while the catalogue cannot be read", async () => {
+    api.mockImplementation(() => Promise.resolve({ error: { code: "http_502" } }));
+    await mount();
+    expect(cards()).toEqual([]);
+  });
+
+  it("draws no card while the workspace is stopped", async () => {
+    wsState = "stopped";
+    await mount();
+    expect(cards()).toEqual([]);
+    expect(api).not.toHaveBeenCalled();
+  });
 });
 
 describe("Settings > Agents target", () => {
@@ -71,14 +134,5 @@ describe("Settings > Agents target", () => {
     expect(scrolled).toEqual([]);
     expect(host!.querySelector(".p-card-flash")).toBeNull();
     expect(useSettingsUI.getState().settingsTarget).toBeNull();
-  });
-
-  // Sign-ins are on Model credentials (ADR 0138 D16): no harness card offers one here.
-  it("draws no sign-in, key or endpoint control", async () => {
-    wsState = "running";
-    await mount();
-    expect(host!.querySelectorAll(".p-card").length).toBeGreaterThanOrEqual(9);
-    expect(host!.querySelector("input.cinput")).toBeNull();
-    expect(host!.textContent).not.toContain("Not connected");
   });
 });

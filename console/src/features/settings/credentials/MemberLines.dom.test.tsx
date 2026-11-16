@@ -17,6 +17,13 @@ let confirmAnswer = true;
 const confirm = vi.fn(() => Promise.resolve(confirmAnswer));
 vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => confirm }));
 
+// Whether the ui-prefs save lands: the reset waits for it before refreshing what the Agent shows.
+let saved = true;
+vi.mock("../../../lib/settings.ts", async (importActual) => ({
+  ...(await importActual<typeof import("../../../lib/settings.ts")>()),
+  waitPrefsSaved: () => Promise.resolve(saved),
+}));
+
 const { UnusableLine, OwnSettingsLine } = await import("./MemberLines.tsx");
 const { getSettings, setSettings, settingsDefaults } = await import("../../../lib/settings.ts");
 const { t } = await import("../../../lib/i18n/index.ts");
@@ -42,6 +49,7 @@ const button = (label: string) =>
 
 beforeEach(() => {
   confirmAnswer = true;
+  saved = true;
   setSettings(settingsDefaults());
 });
 afterEach(() => {
@@ -105,6 +113,18 @@ describe("UnusableLine (D14a)", () => {
     expect(text()).toContain(t("cred.unusable_line"));
   });
 
+  it("reports a removal that never reached the Agent, and asks again", async () => {
+    offer(1, "tok-1");
+    apiJSON.mockRejectedValue(new Error("network down"));
+    await mount(<UnusableLine running />);
+    api.mockClear();
+    offer(1, "tok-2");
+    await act(async () => button(t("cred.unusable_remove"))!.click());
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(String(toast.mock.calls[0][0])).toContain("network down");
+    expect(api).toHaveBeenCalledWith("api/connections/unusable");
+  });
+
   it("asks again after a refused removal (an expired confirmation)", async () => {
     offer(1, "tok-old");
     apiJSON.mockResolvedValue({ error: { code: "unusable_offer_expired", message: "expired" } });
@@ -118,34 +138,47 @@ describe("UnusableLine (D14a)", () => {
 });
 
 describe("OwnSettingsLine", () => {
-  const access = (a: Record<string, boolean> | undefined) => api.mockResolvedValue(a ? { kinds: [], access: a } : { kinds: [] });
-
   it("is absent when the member's own switches hide nothing", async () => {
-    access({ noRouteAvailable: false, allOffByOwnSettings: false, someOffByOwnSettings: false });
-    await mount(<OwnSettingsLine running />);
-    expect(text()).toBe("");
-  });
-
-  it("is absent when the Agent sends no access summary", async () => {
-    access(undefined);
-    await mount(<OwnSettingsLine running />);
+    await mount(<OwnSettingsLine hidden={false} onReset={() => {}} />);
     expect(text()).toBe("");
   });
 
   it("shows the line when some harness is off by the member's own settings", async () => {
-    access({ someOffByOwnSettings: true });
-    await mount(<OwnSettingsLine running />);
+    await mount(<OwnSettingsLine hidden onReset={() => {}} />);
     expect(text()).toContain(t("cred.own_settings_line"));
   });
 
-  it("resets exactly the member layer: every harness switch and llama.cpp's", async () => {
-    setSettings({ agentEnabled: { codex: false, kiro: false }, lcppEnabled: false, peerMessaging: true });
-    access({ allOffByOwnSettings: true, someOffByOwnSettings: true });
-    await mount(<OwnSettingsLine running />);
+  it("resets nothing when the confirmation is declined", async () => {
+    confirmAnswer = false;
+    setSettings({ agentEnabled: { codex: false }, lcppEnabled: false });
+    const onReset = vi.fn();
+    await mount(<OwnSettingsLine hidden onReset={onReset} />);
     await act(async () => button(t("cred.own_settings_reset"))!.click());
+    expect(getSettings().agentEnabled).toEqual({ codex: false });
+    expect(getSettings().lcppEnabled).toBe(false);
+    expect(onReset).not.toHaveBeenCalled();
+  });
+
+  it("resets exactly the member layer, then refreshes once the save has landed", async () => {
+    setSettings({ agentEnabled: { codex: false, kiro: false }, lcppEnabled: false, peerMessaging: true });
+    const onReset = vi.fn();
+    await mount(<OwnSettingsLine hidden onReset={onReset} />);
+    await act(async () => button(t("cred.own_settings_reset"))!.click());
+    expect(confirm).toHaveBeenCalledTimes(1);
     expect(getSettings().agentEnabled).toEqual({});
     expect(getSettings().lcppEnabled).toBe(true);
     expect(getSettings().peerMessaging).toBe(true);
-    expect(text()).toBe("");
+    expect(onReset).toHaveBeenCalledTimes(1);
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("says so and refreshes nothing when the save does not land", async () => {
+    saved = false;
+    const onReset = vi.fn();
+    await mount(<OwnSettingsLine hidden onReset={onReset} />);
+    await act(async () => button(t("cred.own_settings_reset"))!.click());
+    expect(onReset).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith(t("cred.own_settings_reset_failed"));
+    expect(text()).toContain(t("cred.own_settings_line"));
   });
 });

@@ -18,6 +18,12 @@ vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 
 const { OpencodeCard } = await import("./OpencodeCard.tsx");
 
+// An unrestricted policy: every route opencode can run on is allowed.
+const ALL_ROUTES = new Set([
+  "anthropic-api", "openai-api", "openrouter-api", "gemini-api", "sakana-api", "custom-api",
+  "opencode-account", "opencode-go", "opencode-zen", "af-engine-llm",
+]);
+
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
@@ -32,7 +38,7 @@ async function mount(st: Record<string, unknown>, reload = () => {}) {
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      <OpencodeCard running st={st} reload={reload} />,
+      <OpencodeCard running st={st} reload={reload} allowed={ALL_ROUTES} />,
     );
   });
 }

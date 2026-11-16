@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { errDetail } from "../../../core/api/client.ts";
 import {
@@ -28,6 +29,8 @@ import {
   MuseBehavior,
   OpencodeBehavior,
 } from "./AgentBehaviors.tsx";
+import { OwnSettingsLine } from "../credentials/MemberLines.tsx";
+import { useMemberCatalog } from "../credentials/memberCatalog.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 
@@ -89,9 +92,25 @@ export function AgentsTab() {
   const updateCodex = mkUpdate(putCodexSettings, setCodex);
   const updateAgents = mkUpdate(putAgentRtk, setAgents);
 
-  // A deep link naming a harness lands on its card.
+  // What may be shown (ADR 0138 D10a): a harness the policy forbids, or the member switched off,
+  // has no card here. The catalogue is asked afresh; with no answer (stopped, out, failed) no
+  // card is drawn, rather than every card.
+  const catalog = useMemberCatalog(running);
+  const behaviors: [string, ReactNode][] = [
+    ["claude", <ClaudeBehavior key="claude" claude={claude} updateClaude={updateClaude} />],
+    ["codex", <CodexBehavior key="codex" codex={codex} updateCodex={updateCodex} agents={agents} updateAgents={updateAgents} />],
+    ["cursor", <CursorBehavior key="cursor" />],
+    ["copilot", <CopilotBehavior key="copilot" agents={agents} updateAgents={updateAgents} />],
+    ["kiro", <KiroBehavior key="kiro" />],
+    ["agy", <AgyBehavior key="agy" agents={agents} updateAgents={updateAgents} />],
+    ["opencode", <OpencodeBehavior key="opencode" agents={agents} updateAgents={updateAgents} />],
+    ["lcpp", <LcppBehavior key="lcpp" />],
+    ["muse", <MuseBehavior key="muse" />],
+  ];
+
+  // A deep link naming a harness lands on its card once the catalogue has drawn the cards.
   const rootRef = useRef<HTMLDivElement>(null);
-  useSettingsTarget(rootRef, true);
+  useSettingsTarget(rootRef, catalog.kinds !== null || !running);
 
   return (
     <div className="conns" ref={rootRef}>
@@ -103,6 +122,7 @@ export function AgentsTab() {
           </Button>
         </div>
       )}
+      <OwnSettingsLine hidden={running && catalog.hiddenByOwn} onReset={catalog.refresh} />
       {/* Sign-ins, keys and endpoints are on Model credentials (ADR 0138 D16). */}
       <p className="muted ds-note">
         {tr("agents.credentials_moved")}{" "}
@@ -110,16 +130,9 @@ export function AgentsTab() {
           {tr("set.tab_credentials")}
         </button>
       </p>
-      {running && <p className="muted ds-note">{tr("agents.note_apply")}</p>}
-      <ClaudeBehavior claude={claude} updateClaude={updateClaude} />
-      <CodexBehavior codex={codex} updateCodex={updateCodex} agents={agents} updateAgents={updateAgents} />
-      <CursorBehavior />
-      <CopilotBehavior agents={agents} updateAgents={updateAgents} />
-      <KiroBehavior />
-      <AgyBehavior agents={agents} updateAgents={updateAgents} />
-      <OpencodeBehavior agents={agents} updateAgents={updateAgents} />
-      <LcppBehavior />
-      <MuseBehavior />
+      {running && catalog.kinds === null && <p className="muted ds-note">{tr("cred.checking")}</p>}
+      {running && catalog.kinds !== null && <p className="muted ds-note">{tr("agents.note_apply")}</p>}
+      {catalog.kinds && behaviors.filter(([k]) => catalog.kinds!.has(k)).map(([, node]) => node)}
       {running && agents === false && <p className="muted ds-note">{tr("agents.rtk_unsupported")}</p>}
     </div>
   );

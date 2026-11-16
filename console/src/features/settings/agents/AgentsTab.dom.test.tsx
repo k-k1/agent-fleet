@@ -12,6 +12,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
+vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(true) }));
 let wsState = "running";
 vi.mock("../../../core/store/workspace.ts", () => ({
   useWorkspaceStore: (sel: (s: { state: string; start: () => void }) => unknown) => sel({ state: wsState, start: () => {} }),
@@ -58,8 +59,12 @@ afterEach(() => {
 
 describe("Agents page (harness only)", () => {
   it("draws neither the session rows nor image generation", async () => {
-    api.mockResolvedValue({});
+    const all = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse"];
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path === "api/agents/kinds" ? { kinds: all.map((kind) => ({ kind })), access: {} } : {}),
+    );
     await mount();
+    expect(host!.querySelectorAll(".p-card").length).toBe(all.length);
     const labels = Array.from(host!.querySelectorAll(".ds-label")).map((l) => l.textContent);
     for (const k of [
       "agents.stopped_archive",

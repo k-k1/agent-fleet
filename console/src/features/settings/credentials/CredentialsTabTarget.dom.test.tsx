@@ -28,8 +28,11 @@ const { resetConnectionsCache } = await import("../parts/useConnections.ts");
 const SNAPSHOT = Object.fromEntries(
   ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse"].map((k) => [k, { connected: false }]),
 );
+const KINDS = { kinds: Object.keys(SNAPSHOT).map((kind) => ({ kind })), access: {} };
 function answer(conns: Record<string, unknown>) {
-  api.mockImplementation((path: string) => Promise.resolve(path === "api/connections" ? conns : {}));
+  api.mockImplementation((path: string) =>
+    Promise.resolve(path === "api/connections" ? conns : path === "api/agents/kinds" ? KINDS : {}),
+  );
 }
 
 let root: Root | null = null;
@@ -89,7 +92,7 @@ describe("Settings > Model credentials target", () => {
   it("draws no card while the snapshot is out, and holds the deep-link until it lands", async () => {
     let release: (v: unknown) => void = () => {};
     api.mockImplementation((path: string) =>
-      path === "api/connections" ? new Promise((r) => (release = r)) : Promise.resolve({}),
+      path === "api/connections" ? new Promise((r) => (release = r)) : Promise.resolve(path === "api/agents/kinds" ? KINDS : {}),
     );
     useSettingsUI.getState().openSettings("credentials", { target: "claude" });
     await mount();
@@ -121,10 +124,11 @@ describe("Settings > Model credentials target", () => {
     }
   });
 
-  it("draws the cards at once from the last snapshot while the refetch is still out", async () => {
+  // A snapshot from an earlier visit may predate a policy tightening: the page waits for its own.
+  it("does not draw the last snapshot while this page's refetch is still out", async () => {
     const releases: Array<(v: unknown) => void> = [];
     api.mockImplementation((path: string) =>
-      path === "api/connections" ? new Promise((r) => releases.push(r)) : Promise.resolve({}),
+      path === "api/connections" ? new Promise((r) => releases.push(r)) : Promise.resolve(path === "api/agents/kinds" ? KINDS : {}),
     );
     await mount();
     await act(async () => releases.shift()!(SNAPSHOT));
@@ -135,6 +139,9 @@ describe("Settings > Model credentials target", () => {
     await mount();
     await flushed();
     expect(releases.length).toBe(1);
+    expect(card("claude")).toBeNull();
+    await act(async () => releases.shift()!(SNAPSHOT));
+    await flushed();
     expect(card("claude")).not.toBeNull();
   });
 
