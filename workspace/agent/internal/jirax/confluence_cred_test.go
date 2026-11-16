@@ -207,6 +207,25 @@ func TestConfluenceCredFlagsAnOutdatedGrantButServesIt(t *testing.T) {
 	}
 }
 
+// The scopes accessible-resources reported for a grant that holds all eight granular scopes (a
+// live grant answered 200 on direct-children): folder and hierarchical-content are not listed.
+// That grant is current, so no outdated= line.
+func TestConfluenceCredDoesNotFlagScopesAccessibleResourcesOmits(t *testing.T) {
+	seedJiraStore(t, func(s *secrets.Data) {
+		s.Jira = &secrets.JiraCreds{AuthKind: "oauth", Site: "https://a.atlassian.net", CloudID: "c1",
+			AccessToken: "fake-at", Expiry: time.Now().Add(time.Hour).Unix(),
+			Sites: []secrets.JiraSite{{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{
+				"read:blogpost:confluence", "read:confluence-content.all", "read:confluence-content.summary",
+				"read:confluence-space.summary", "read:content.metadata:confluence", "read:page:confluence",
+				"read:space:confluence", "readonly:content.attachment:confluence", "search:confluence",
+				"write:confluence-content", "write:confluence-file", "write:page:confluence"}}}}
+	})
+	got, why := confluenceCredBoth()
+	if !strings.HasSuffix(got, "token=fake-at\n") || why != "" {
+		t.Fatalf("answered %q (stderr %q): want the credential and no hint", got, why)
+	}
+}
+
 // The lookup keeps every row's scopes for an id instead of the last one winning.
 func TestBackfillKeepsTheUnionOfRowsWithOneID(t *testing.T) {
 	stubAccessibleResources(t, `[{"id":"cid-1","url":"https://acme.atlassian.net","scopes":["read:confluence-content.all"]},`+
