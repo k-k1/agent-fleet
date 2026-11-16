@@ -31,6 +31,7 @@ import { TenantMemberDefaultsPanel } from "./tenantMemberDefaults.tsx";
 import { TenantGitOAuthView } from "./tenantGitOAuth.tsx";
 import { TenantMachineView } from "./tenantMachine.tsx";
 import { TenantEngineAccessView } from "./tenantEngineAccess.tsx";
+import { TenantModelAccessView } from "./tenantModelAccess.tsx";
 import { MembersPanel } from "./tenantMembers.tsx";
 import { MemberView } from "./tenantMemberDetail.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
@@ -54,6 +55,9 @@ export function tenantScopeGroups(opts: { cost: boolean; engines?: boolean }): S
     // Who may use the self-hosted engines (#1215). The tenant admin's own setting, under the
     // deployment admin's tenant-wide switch on the limits screen.
     ["engine-access", "tenant.tab_engine_access"],
+    // Which model routes members may use (ADR 0138 D16): the tenant's own credential-policy rule
+    // under the deployment's. The CP answers it to tenant_admin and super_admin only.
+    ["model-access", "tenant.tab_model_access"],
     ["sessions", "tenant.tab_sessions"],
     ["usage", "tenant.tab_usage"],
     // Cloud cost only exists on a deployment with AWS billing: the item is not created at all
@@ -565,6 +569,7 @@ export function TenantScopeBody({
   }
   if (section === "limit-board") return <TenantLimitBoardView key={slug} slug={slug} />;
   if (section === "engine-access") return <TenantEngineAccessView key={slug} slug={slug} />;
+  if (section === "model-access") return <TenantModelAccessView key={slug} slug={slug} isSuper={isSuper} />;
   // The reduced engine panel, which since the panel was split in two is the MODELS screen and
   // only that — the other half buys and stops a GPU, which a tenant admin may never do. Still
   // the same component the operator sees: it draws itself from the `super_admin` flag in its

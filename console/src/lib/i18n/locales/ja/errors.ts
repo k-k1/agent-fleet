@@ -493,4 +493,8 @@ export const errors = {
   "err.memo_ref_invalid": "項目のリンクが正しくありません。provider（github・jira・bitbucket）、key（owner/repo#12 または PROJ-12）、url（http(s)）を3つそろえてください。",
   "err.memo_ref_duplicate": "この項目は、この自動実行のカテゴリにすでに入っています。",
   "err.session_retired": "このセッションは自動実行によって停止されています。先にセッションを開始してから、もう一度送ってください。",
+  // ADR 0138 M2 P8: the credential policy's refusals on the Model access pages.
+  "err.invalid_route_policy": "規則に Control Plane が受け付けない値があります。",
+  "err.route_policy_exceeds_ceiling": "配備の上限が禁じているものを許す規則になっています。上限より下の層は狭めることしかできません。",
+  "err.route_policy_endpoint_not_approvable": "そのホストはセルフホストのエンドポイントとして承認できません。上の層が通していないか、ベンダーのホストです。",
 };

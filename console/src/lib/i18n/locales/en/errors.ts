@@ -497,4 +497,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memo_ref_invalid": "This item needs a valid link: provider (github, jira or bitbucket), key like owner/repo#12 or PROJ-12, and an http(s) url — all three together.",
   "err.memo_ref_duplicate": "This item is already in this auto-run category.",
   "err.session_retired": "Auto-run stopped this session. Start the session first, then send again.",
+  // ADR 0138 M2 P8: the credential policy's refusals on the Model access pages.
+  "err.invalid_route_policy": "The rule has a value the Control Plane does not accept.",
+  "err.route_policy_exceeds_ceiling": "The rule would allow something the deployment's ceiling forbids. A layer below the ceiling can only narrow it.",
+  "err.route_policy_endpoint_not_approvable": "That host cannot be approved as a self-hosted endpoint: a layer above does not let it through, or it is a vendor's host.",
 };

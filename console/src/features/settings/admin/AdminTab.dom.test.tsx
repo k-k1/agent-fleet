@@ -272,3 +272,23 @@ describe("AdminTab deployment warnings", () => {
     expect(host!.querySelector('.settings-content [role="alert"]')).toBeNull();
   });
 });
+
+// Admin > Model access (ADR 0138 M2 P8) is the super_admin's: every write there is super_admin
+// on the CP, so the item does not exist for anyone else, and a remembered visit to it does not
+// draw the page or fetch the policy.
+describe("model access item", () => {
+  it("is offered to a super_admin", async () => {
+    respond(true);
+    await mount();
+    expect(rail()).toContain("モデルの利用");
+  });
+
+  it("is absent for anyone else, even when it was the last place visited", async () => {
+    localStorage.setItem("af-admin-place", JSON.stringify({ root: "model-access", scope: null, scopeSection: "limits" }));
+    respond(false);
+    await mount();
+    expect(rail()).not.toContain("モデルの利用");
+    expect(api).not.toHaveBeenCalledWith("api/admin/route-policy");
+    expect(host!.querySelectorAll(".tenant-card").length).toBe(2);
+  });
+});

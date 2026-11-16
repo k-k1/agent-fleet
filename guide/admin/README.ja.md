@@ -32,6 +32,7 @@ source_of_truth: "Console のテナント設定（画面と食い違ったら画
 | [サインインの方法を決める](access/signin-methods.ja.md) | 自社の IdP や GitHub の組織を登録し、サインイン規則を読む |
 | [サインインできるネットワークを絞る](access/networks.ja.md) | テナントを使える接続元を、決まったアドレスの範囲に絞る |
 | [連携に使う OAuth アプリを選ぶ](access/oauth-apps.ja.md) | GitHub・Bitbucket・Jira の「OAuth で接続」が使うアプリを決める |
+| [メンバーが使えるモデルを決める](access/model-access.ja.md) | 認証情報の種類と送り先でモデルの経路を許す・禁じる、セルフホストのエンドポイントを承認する |
 
 ## リソース
 
