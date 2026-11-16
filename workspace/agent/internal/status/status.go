@@ -60,7 +60,7 @@ type SessionStatus struct {
 	// the turn has not ended yet. Empty means a clean end, and also an old record written
 	// before this field existed — both must read as "no reason", not a crash or a false alarm.
 	TurnEndReason string `json:"turnEndReason,omitempty"`
-	// Rev names THIS write of the record. Every write gets a fresh random one (persist), so
+	// Rev names THIS write of the record. Every write gets a fresh random one (persistLocked), so
 	// it is the identity a poll's observation can be pinned to: an observation of the end of
 	// the turn this record describes stops counting the moment anything writes a new record
 	// (the next turn's working, a settle, a heal) — see ObservedTurnEnd.
@@ -215,12 +215,12 @@ func PersistRev(sid, state string) string {
 	return persistDroppingKey(sid, SessionStatus{State: state})
 }
 
-// persistDroppingKey is persist that, for a "working" record, also drops the previous turn's
-// completion key (a new turn started; the next end mints a fresh one). Both happen under the
-// per-session lock, like PersistTurnEndFor's key and record: a removal after the unlock could
+// persistDroppingKey writes the record and, for a "working" one, drops the previous turn's
+// completion key (a new turn started; the next end mints a fresh one), both under the
+// per-session lock like PersistTurnEndFor's key and record: a removal after the unlock could
 // delete the key a turn end written in between and leave that end without one.
 func persistDroppingKey(sid string, s SessionStatus) string {
-	unlock, _ := lockSid(sid) // a timeout still writes, as in persist
+	unlock, _ := lockSid(sid) // a lock timeout still writes: the hook's record is authoritative, only the heal (PersistIf) gives way
 	defer unlock()
 	rev := persistLocked(sid, s)
 	if s.State == "working" {
@@ -276,7 +276,7 @@ func PersistTurnEndFor(sid, state, reason, promptID string) {
 	// nothing, and the hook then broadcasts a result the schedule routed (measured by delaying the
 	// second write). Outside the lock, a heal's "working" write would remove the key in between
 	// and the closed turn would be left without one.
-	unlock, _ := lockSid(sid) // a timeout still writes, as in persist
+	unlock, _ := lockSid(sid) // a lock timeout still writes: the hook's record is authoritative, only the heal (PersistIf) gives way
 	defer unlock()
 	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
 	persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
@@ -394,14 +394,6 @@ func TurnMarkOf(sid string) (string, bool) {
 		return "", false
 	}
 	return rec.Mark, true
-}
-
-func persist(sid string, s SessionStatus) string {
-	// A timeout still writes: the hook's record is authoritative, and only the conditional
-	// heal (PersistIf) is allowed to give way.
-	unlock, _ := lockSid(sid)
-	defer unlock()
-	return persistLocked(sid, s)
 }
 
 func persistLocked(sid string, s SessionStatus) string {
