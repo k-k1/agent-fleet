@@ -9,9 +9,9 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// The act mark comes with the identity of the run of the Agent's counter that handed it out
-// (issue #4265). The Control Plane keeps the two together, sends both with the retire, and when the
-// Agent refuses the mark as another run's it drops the condition and decides again on a fresh read.
+// The act mark comes with the identity of the run of the Agent's counter that handed it out. The
+// Control Plane keeps the two together and sends both with the retire, frozen as one pair; the Agent
+// judges each session by them.
 
 func wantBodyInc(mark int64, inc string) string {
 	return `{"ifNoActSince":` + strconv.FormatInt(mark, 10) + `,"actIncarnation":"` + inc + `"}`
@@ -53,8 +53,8 @@ func TestMemoActIncarnationAnOlderAgentIsSentNone(t *testing.T) {
 	})
 }
 
-// A row frozen before the upgrade (a mark, no identity) is retired as before, and the Agent's
-// refusal never applies to it.
+// A row frozen before the upgrade (a mark, no identity) is retired as before: no identity is sent
+// for it, even once the Agent reports one.
 func TestMemoActIncarnationAFrozenRowWithoutOneIsSentAsBefore(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		agent, d := e.openReported(nil)

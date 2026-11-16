@@ -60,7 +60,7 @@ type MemoDelivery struct {
 	// as ifNoActSince.
 	ActMark int64
 	// ActIncarnation is the identity of the Agent's counter run that handed ActMark out ("": the
-	// Agent sent none). The retire echoes it, and the Agent refuses a mark from another run.
+	// Agent sent none). The retire echoes it, and the Agent judges a person's act against the list by it.
 	ActIncarnation string
 	// RetireActMark is the mark one retire decision and its unconfirmed retries all send, frozen
 	// when the decision is made (the clean close, or the first attempt of an overdue retire) and

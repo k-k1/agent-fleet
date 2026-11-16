@@ -165,7 +165,10 @@ func recordPersonAct(name string) error {
 		if m.PersonActMark >= mark && m.PersonActIncarnation == inc {
 			return false
 		}
-		m.PersonActMark, m.PersonActIncarnation = mark, inc
+		// The number is kept at the higher of the two: an act of an earlier run may hold a number
+		// above this run's (a restored counter restarts low), and a caller that compares numbers only
+		// (a Control Plane that sends no identity) must still see that act as after its list.
+		m.PersonActMark, m.PersonActIncarnation = max(m.PersonActMark, mark), inc
 		return true
 	})
 	if err != nil {

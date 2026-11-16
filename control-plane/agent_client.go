@@ -326,8 +326,8 @@ type agentSessionsEnvelope struct {
 	// typed into after this read. 0 when the Agent sends none, and no condition is sent then.
 	ActMark int64 `json:"actMark,omitempty"`
 	// ActIncarnation names the run of the Agent's counter that handed ActMark out. The retire
-	// echoes it, and the Agent refuses a mark from another run (the counter can be restored
-	// from an older copy). "" when the Agent sends none.
+	// echoes it, and the Agent compares a person's act against the list by it: an act recorded in
+	// a later run is after the list whatever the numbers say. "" when the Agent sends none.
 	ActIncarnation string `json:"actIncarnation,omitempty"`
 }
 

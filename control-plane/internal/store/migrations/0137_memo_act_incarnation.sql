@@ -1,6 +1,6 @@
--- Message queues, issue 4265 (ADR 0137 section 6): the act mark of 0136 comes with the identity of the
--- run of the Agent's counter that handed it out, so the Agent can refuse a retire whose mark came from
--- another run (the state file restored from an older copy and the counter passing numbers again).
+-- Message queues (ADR 0137 section 6): the act mark of 0136 comes with the identity of the run of the
+-- Agent's counter that handed it out, so the Agent can tell an act recorded after a restart (or after
+-- its state file was restored) from one recorded before the list the retire was decided on.
 -- memo_delivery.act_incarnation is the Agent's actIncarnation of the last kept report, '' for a report
 -- that carried none (an older Agent). memo_delivery.retire_act_incarnation is the identity frozen with
 -- retire_act_mark, and travels with it.

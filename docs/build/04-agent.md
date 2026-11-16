@@ -187,8 +187,8 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     would go unseen, whereas a value that lives only in the process cannot be restored. The list
     carries it as `"actIncarnation"` beside `actMark` (only when the mark is sent), the Control Plane
     echoes it as `actIncarnation` in the retire body, and an act records it beside its mark
-    (`personActIncarnation` on the meta; an act of another run is rewritten even when its number is
-    higher). Nothing is refused on a mismatch: each session of the tree is judged with what its own
+    (`personActIncarnation` on the meta; an act of another run is rewritten with this run's identity but
+    keeps the higher number, so a caller that compares numbers only still sees it as after its list). Nothing is refused on a mismatch: each session of the tree is judged with what its own
     meta knows (`actAfterList`). **(a)** No identity sent, or this run's: the numbers are compared as
     before. **(b)** The list is of another run and the act was recorded in this one: a list of an
     earlier run was taken before this process started, so the act is after it, and the session is

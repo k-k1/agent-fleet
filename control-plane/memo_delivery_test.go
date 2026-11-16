@@ -105,7 +105,7 @@ type fakeQueueAgent struct {
 	actMark      int64
 	retireBodies []string
 	// actIncarnation, when not "", is the actIncarnation the list envelope carries beside the mark
-	// (an Agent of #4265).
+	// (an Agent that sends an identity).
 	actIncarnation string
 	// retireDrop makes that many retire calls lose their answer: the call is recorded and the
 	// connection is closed without a reply.

@@ -1028,8 +1028,9 @@ func TestRecoveryUsesTheIncarnationOfTheIntent(t *testing.T) {
 	}
 }
 
-// An older Agent's intent has no identity, and an act records its incarnation beside its mark.
-func TestActRecordsItsIncarnationAndRewritesAnActOfAnotherRun(t *testing.T) {
+// An act records its incarnation beside its mark. An act of another run takes this run's identity
+// and keeps the higher number.
+func TestActRecordsItsIncarnationAndKeepsTheHigherNumberOfAnotherRun(t *testing.T) {
 	newActEnv(t)
 	writeMeta(t, session.Meta{Name: "a"})
 	_, runA := listActEnvelope(t)
@@ -1048,8 +1049,8 @@ func TestActRecordsItsIncarnationAndRewritesAnActOfAnotherRun(t *testing.T) {
 	runB := actMarks.incarnationID()
 	notePersonAct("a")
 	got, _ := session.ReadMeta("a")
-	if got.PersonActIncarnation != runB || got.PersonActMark >= 1<<62 {
-		t.Fatalf("an act of another run was not rewritten: %+v", got)
+	if got.PersonActIncarnation != runB || got.PersonActMark != 1<<62 {
+		t.Fatalf("an act of another run must take this run's identity and keep the higher number: %+v", got)
 	}
 }
 
@@ -1105,5 +1106,42 @@ func TestRetireFromAnEarlierRunReleasesWhatAPersonActedOnInThisRun(t *testing.T)
 	}
 	if m, _ := session.ReadMeta("a"); m.RetiredAt != "" {
 		t.Fatalf("a session a person started in this run was retired: %+v", m)
+	}
+}
+
+// A restored counter restarts below the number an earlier run recorded for a session. The act in
+// the new run must not lower that number: a Control Plane that sends no identity compares numbers
+// only, and the person's act is after its list.
+func TestRestoreDoesNotLowerTheRecordedActForAnIdentityLessRetire(t *testing.T) {
+	for _, withIdentity := range []bool{false, true} {
+		t.Run(map[bool]string{false: "older Control Plane", true: "with the identity"}[withIdentity], func(t *testing.T) {
+			newActEnv(t)
+			writeMeta(t, session.Meta{Name: "a"})
+			if err := actMarkStore.Write(actMarkKey, actMarkState{Reserved: time.Now().UnixMilli() + 1<<40}); err != nil {
+				t.Fatal(err)
+			}
+			resetActMarks()
+			listMark, runA := listActEnvelope(t)
+			notePersonAct("a") // after the list: the meta holds a number at or above listMark
+			// The counter is restored to an older copy and run B starts below listMark.
+			if err := actMarkStore.Write(actMarkKey, actMarkState{Reserved: listMark - 10}); err != nil {
+				t.Fatal(err)
+			}
+			resetActMarks()
+			notePersonAct("a") // acts again, under a number below listMark
+			for i := 0; i < 20; i++ {
+				listActMark(t) // the counter passes listMark again
+			}
+			req := retireReq{IfNoActSince: listMark}
+			if withIdentity {
+				req.ActIncarnation = runA
+			}
+			if code, _ := postRetireWith(t, "a", req); code != http.StatusOK {
+				t.Fatalf("retire = %d", code)
+			}
+			if m, _ := session.ReadMeta("a"); m.RetiredAt != "" {
+				t.Fatalf("a session a person acted on after the list was stopped: %+v", m)
+			}
+		})
 	}
 }
