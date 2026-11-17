@@ -263,6 +263,18 @@ const (
 	HomeResizeFailed = "failed"
 )
 
+// ReportOnSave reports whether a quota save should surface this result. A shrink is
+// news only when this save changed the stored disk number: the volume stays larger than
+// the setting for as long as the member keeps it, so repeating the warning on every
+// unrelated save (slot class, memory, a disk of 0 meaning "default") tells an admin they
+// asked for a smaller disk when they did not. Every other outcome is reported as before.
+func (h HomeResize) ReportOnSave(diskChanged bool) bool {
+	if h.Outcome == "" {
+		return false
+	}
+	return h.Outcome != HomeResizeShrink || diskChanged
+}
+
 // --- cost -----------------------------------------------------------------------
 
 // CostProfile is the runtime's answer to "is there money to show here, and what does it
