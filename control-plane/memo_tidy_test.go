@@ -1061,7 +1061,7 @@ func TestMemoTidyOlderWriterCannotReviveASupersededRow(t *testing.T) {
 		b := e.tidyRow("r", "q", "b", "member", "", "", store.MemoStatePending)
 		e.tidyApply(q, store.TidyTriggerAuto, []store.Memo{a, b}, nil, merge("ab", a.ID, b.ID))
 		mid := e.members["a"]
-		// The UpdateMemo statement of store_memo.go (writeMemo) as it stood before migration 0141, verbatim.
+		// The UpdateMemo statement of store_memo.go (writeMemo) as it stood before migration 0142, verbatim.
 		// If writeMemo changes its columns, compare this copy: it stands for the older binary.
 		olderWrite := func(m store.Memo) error {
 			rel := [9]string{}

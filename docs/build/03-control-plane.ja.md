@@ -232,7 +232,7 @@ Workspace を起こさない。
   name が空）、`releasedBy: "tidy"` が加わる。*操作*: モデルの返答は `{"operations":[merge|split|move|keep ...]}`。
   `control-plane/internal/memotidy` が純粋な検証器で（上限はすべて名前付き定数: 操作は 80 まで、merge の元は 2〜10、
   split の部分は 2〜5、本文は 1 バイト〜16 KiB、merge の本文と split の部分の合計は元より 1 KiB までしか長くならず、
-  1 日 10 回）、1 つでも違反があれば返答全体を拒む。merge と split は plain なテキストノート（ファイル・添付・参照なし）
+  1 回の run が読むメッセージは 40、提示する宛先は 100 まで、1 日 10 回。40 や 100 を超える入力は run 全体を理由 `bad_shape` で `dropped` にする）、1 つでも違反があれば返答全体を拒む。merge と split は plain なテキストノート（ファイル・添付・参照なし）
   だけで、merge は 1 つのグループの元だけ。グループは（provenance、producer、producer origin）で、`curator` のメッセージは
   `source_provenance` で読む。*適用*（`memo_tidy.go` の `memoTidyApply`、1 つの `MemoTx`）: 入力のメッセージはすべて、
   まだそのキューにあり、`pending`（手動のときは `pending` か `held`）で、未送信・未 claim・flush 中でなく、run が読んだ
