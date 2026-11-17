@@ -1111,6 +1111,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.model_access_caps_note": "Narrows the restriction for all tenants for one tenant. The tenant's administrators set their own restriction under it and cannot change this one.",
   "admin.model_access_tenant": "Tenant",
   "admin.model_access_no_tenants": "No tenant yet.",
+  "admin.model_access_open_discard_title": "Leave this page?",
+  "admin.model_access_open_discard_body": "The restriction for all tenants has changes that are not saved. Opening the tenant discards them.",
   "admin.model_access_col_cap": "Deployment admin's restriction",
   "admin.model_access_col_own": "Tenant's own restriction",
   "admin.model_access_tenants_note": "Open a tenant to change, on its own Model access page, the deployment admin's restriction on it and its provided-model grant. Read per tenant when this view is first opened, twenty at a time.",

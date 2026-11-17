@@ -485,9 +485,10 @@ function MemberRow({
   );
 }
 
-/** TenantProvidedRoutesView is the tenant page's section. The grant and ceiling are shown
- *  read-only: they are the super_admin's, edited on the admin page. onServed hears whether the
- *  CP serves provided routes once the first read answers. */
+/** TenantProvidedRoutesView is the tenant page's section. For the super_admin it also holds the
+ *  grant and the tenant's monthly pool: edited here and only here (ADR 0138 D16, note of
+ *  2026-11-17); a tenant administrator sees them read-only in the status line. onServed hears
+ *  whether the CP serves provided routes once the first read answers. */
 export function TenantProvidedRoutesView({
   slug,
   onServed,

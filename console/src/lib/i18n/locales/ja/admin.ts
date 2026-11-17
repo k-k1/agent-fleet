@@ -1107,6 +1107,8 @@ export const admin = {
   "admin.model_access_caps_note": "全テナント共通の制限を、1 つのテナントについてさらに狭めます。テナントの管理者はこの下で自分たちの制限を決めますが、この制限は変更できません。",
   "admin.model_access_tenant": "テナント",
   "admin.model_access_no_tenants": "テナントはまだありません。",
+  "admin.model_access_open_discard_title": "このページを離れますか？",
+  "admin.model_access_open_discard_body": "全テナント共通の制限に、保存していない変更があります。テナントを開くと、その変更は消えます。",
   "admin.model_access_col_cap": "配備の管理者からの制限",
   "admin.model_access_col_own": "テナント自身の制限",
   "admin.model_access_tenants_note": "テナントを開くと、そのテナントのモデルの利用ページで、配備の管理者からの制限と提供モデルの許可を変えられます。このタブを初めて開いたときに、テナントごとに 20 件ずつ読み込みます。",

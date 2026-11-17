@@ -23,7 +23,8 @@ import {
   type RouteRule,
 } from "../tenant/routePolicyRule.ts";
 import { PolicyLimits, useTenantRoutePolicy } from "../tenant/tenantModelAccess.tsx";
-import { TabbedViews, useShowView, useViewActive } from "../parts/tabbedViews.tsx";
+import { TabbedViews, usePageDirty, useShowView, useViewActive } from "../parts/tabbedViews.tsx";
+import { askConfirm } from "../../../ui/confirmBridge.ts";
 
 // The variable the ceiling is read from (routepolicy.EnvCeiling), named when the wire's source is
 // "deployment", the only source the CP has; any other source is shown as the CP spells it.
@@ -127,7 +128,12 @@ function GrantCell({ slug }: { slug: string }) {
     parseProvidedTenant,
   );
   if (!load) return <span className="muted">{tr("common.loading")}</span>;
-  if (load.state !== "ok") return <span className="admin-hint warn">{tr("admin.prov_load_failed")}</span>;
+  if (load.state !== "ok")
+    return (
+      <span className="admin-hint warn">
+        {(load.state === "failed" && load.reason) || tr("admin.prov_load_failed")}
+      </span>
+    );
   const v = load.value;
   if (!v.granted) return <span className="muted">{tr("admin.prov_grant_off")}</span>;
   return <Usage used={v.spent_micro + v.reserved_micro} of={v.ceiling_micro} spent={v.spent_micro} />;
@@ -148,6 +154,23 @@ function AdminTenantsTable({
   const active = useViewActive();
   const [opened, setOpened] = useState(false);
   const [shown, setShown] = useState(TENANT_PAGE);
+  const pageDirty = usePageDirty();
+  // Opening a tenant leaves this page, which drops an unsaved restriction for all tenants: ask
+  // first, as other places that would discard edits do.
+  const open = onOpen
+    ? async (slug: string) => {
+        if (
+          pageDirty() &&
+          !(await askConfirm({
+            title: tr("admin.model_access_open_discard_title"),
+            body: tr("admin.model_access_open_discard_body"),
+            danger: true,
+          }))
+        )
+          return;
+        onOpen(slug);
+      }
+    : undefined;
   useEffect(() => {
     if (active) setOpened(true);
   }, [active]);
@@ -172,7 +195,7 @@ function AdminTenantsTable({
               </thead>
               <tbody>
                 {tenants.slice(0, shown).map((t) => (
-                  <TenantRow key={t.slug} tenant={t} provided={provided} onOpen={onOpen} />
+                  <TenantRow key={t.slug} tenant={t} provided={provided} onOpen={open} />
                 ))}
               </tbody>
             </table>

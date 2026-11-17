@@ -222,8 +222,7 @@ const MODEL_ACCESS_SCENES = [
     admin: true,
     rules: "open",
     view: "tenants",
-    // Before #4380 P-8 the view held the picked tenant's cap; from it, a table of the tenants.
-    verify: `(${visible('.admin-modal .mpol-tenants [data-tenant="demo"] [data-col="cap"]')} || ${visible('.admin-modal .mpol-cap[data-tenant="demo"]')})`,
+    verify: visible('.admin-modal .mpol-tenants [data-tenant="demo"] [data-col="cap"]'),
   }),
   // Admin: a ceiling, a cap on Demo Team, a registered source granted to it; the source's view.
   modelAccessScene("mpol-admin-provided", {

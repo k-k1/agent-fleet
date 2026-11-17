@@ -442,6 +442,46 @@ describe("admin overview and tenants", () => {
     expect(onOpen).toHaveBeenCalledWith("beta");
   });
 
+  it("asks before a tenant's Open drops an unsaved restriction for all tenants", async () => {
+    const onOpen = vi.fn();
+    const confirm = vi.spyOn(window, "confirm");
+    await mountNode(<AdminModelAccessView tenants={TENANTS} onOpenTenant={onOpen} />);
+    await click(tab("テナントごと"));
+    await flush();
+    const open = () => click(within('.mpol-tenants [data-tenant="beta"]').querySelector("button")!);
+    // Nothing unsaved: no question.
+    await open();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await click(tab("全テナント共通の制限"));
+    await click(tickIn(within(".model-access-deployment"), "deny", "anthropic-api"));
+    await click(tab("テナントごと"));
+    confirm.mockReturnValueOnce(false);
+    await open();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    confirm.mockReturnValueOnce(true);
+    await open();
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    confirm.mockRestore();
+  });
+
+  it("names why a tenant's grant could not be read", async () => {
+    serve(SOURCE());
+    const base = api.getMockImplementation()!;
+    api.mockImplementation((path: string) =>
+      /tenants\/beta\/provided-routes/.test(path)
+        ? Promise.resolve({ error: { code: "internal", message: "grant read broke", status: 500 } })
+        : base(path),
+    );
+    await mountNode(<AdminModelAccessView tenants={TENANTS} onOpenTenant={() => {}} />);
+    await click(tab("テナントごと"));
+    await flush();
+    expect(within('.mpol-tenants [data-tenant="beta"] [data-col="provided"]').textContent).toContain(
+      "grant read broke",
+    );
+  });
+
   it("edits caps and grants nowhere on this page: the restriction for all tenants is its one editor", async () => {
     serve(SOURCE());
     await mountNode(<AdminModelAccessView tenants={TENANTS} onOpenTenant={() => {}} />);
