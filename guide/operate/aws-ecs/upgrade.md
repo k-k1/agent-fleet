@@ -261,7 +261,7 @@ A member's sign-in data is on EFS, under an access point of their own. The file 
 
 It takes two steps, and the second one is yours to time.
 
-1. **Update `10-data` before `update.sh`**, through a change set, with the parameters it already has. It only adds resources: a security group for the home task and two outputs. `update.sh` stops with "no readable HomeOpsSgId / EfsSgId output" until it can read them, and nothing is changed when it stops. Then run `update.sh` as usual; it adds the slots' NFS rule with `40-ec2-pool`.
+1. **Update `10-data` before `update.sh`**, through a change set, with the parameters it already has. It adds a security group for the home task, a rule on the file system's security group that admits it, and two outputs; nothing is replaced or removed. `update.sh` stops with "no readable HomeOpsSgId / EfsSgId output" until it can read them, and nothing is changed when it stops. Then run `update.sh` as usual; it adds the slots' NFS rule with `40-ec2-pool`.
 2. **Set `EfsWorkspaceIngress=deny` on `10-data`** once every workspace has been stopped and started on the new release. A workspace still running from before the upgrade mounts EFS through its own network interface and loses its sign-in data when the rule goes, so check first.
 
    ```bash
