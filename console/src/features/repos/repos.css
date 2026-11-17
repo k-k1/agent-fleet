@@ -624,7 +624,6 @@
    pushes Launch under the name or past .app-rail-scroll's overflow-x clip, where it cannot be
    tapped. The ::before is the forced line break; the buttons get a taller tap target. */
 @media (hover: none) {
-  .repo-id,
   .repo-lines {
     order: -2;
   }

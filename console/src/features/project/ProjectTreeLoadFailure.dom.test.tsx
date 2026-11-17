@@ -154,6 +154,7 @@ describe("repos view header", () => {
     for (const b of actions) expect(b.textContent?.trim()).toBe("");
     const add = actions.find((b) => b.getAttribute("aria-label") === "Add");
     expect(add).toBeTruthy();
+    // The workspace is running (beforeEach), so the name carries no stopped-state reason.
     expect(add!.getAttribute("title")).toBe("Add");
   });
 });

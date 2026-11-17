@@ -151,8 +151,7 @@ export const ProjectTree = memo(function ProjectTree() {
               cut to "REPO…"); the label stays as the accessible name and tooltip. */}
           <IconButton
             icon="add"
-            label={tr("pj.clone")}
-            title={running ? tr("pj.clone") : tr("pj.clone_ws_stopped")}
+            label={running ? tr("pj.clone") : tr("pj.clone_ws_stopped")}
             disabled={!running}
             onClick={() => setShowClone((s) => !s)}
           />
