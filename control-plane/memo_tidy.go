@@ -200,7 +200,7 @@ func memoTidyApplyTx(tx store.MemoTxOps, in memoTidyApplyIn, out *memoTidyApplyO
 		}
 		rows[it.ID] = m
 	}
-	if len(in.Input) > memotidy.MaxInputItems {
+	if len(in.Input) > memotidy.MaxInputItems || len(in.Destinations) > memotidy.MaxDestinations {
 		return finish(store.TidyRunDropped, memotidy.CodeBadShape, nil)
 	}
 

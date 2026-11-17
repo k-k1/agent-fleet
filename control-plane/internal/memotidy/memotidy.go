@@ -28,6 +28,8 @@ const (
 	GrowthSlackBytes = 1 << 10
 	// MaxInputItems bounds the messages one run reads.
 	MaxInputItems = 40
+	// MaxDestinations bounds the categories one run is offered.
+	MaxDestinations = 100
 	// DailyCap is the most runs a queue reserves in 24 hours, every outcome counted.
 	DailyCap = 10
 	// EnvelopePrefix is what no result text may start with: it is the opening of the line the

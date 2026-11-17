@@ -470,6 +470,9 @@ func TestMemoTidyRefusedReplyLeavesTheQueueAsItWas(t *testing.T) {
 				t.Fatalf("%s: stale input changed rows", name)
 			}
 		}
+		if out := e.tidyApply(q, store.TidyTriggerAuto, []store.Memo{b}, make([]string, memotidy.MaxDestinations+1)); out.Run.State != "dropped" || out.Run.Reason != memotidy.CodeBadShape {
+			t.Fatalf("too many destinations: %+v", out.Run)
+		}
 		if out := e.tidyApply(q, store.TidyTriggerAuto, []store.Memo{{ID: "gone", State: store.MemoStatePending}}, nil); out.Run.Reason != "stale_input" {
 			t.Fatalf("a row that is gone: %+v", out.Run)
 		}
@@ -1058,7 +1061,8 @@ func TestMemoTidyOlderWriterCannotReviveASupersededRow(t *testing.T) {
 		b := e.tidyRow("r", "q", "b", "member", "", "", store.MemoStatePending)
 		e.tidyApply(q, store.TidyTriggerAuto, []store.Memo{a, b}, nil, merge("ab", a.ID, b.ID))
 		mid := e.members["a"]
-		// store_memo.go UpdateMemo and ReassignMemoCategory, MarkMemosSent on origin/main, verbatim.
+		// The UpdateMemo statement of store_memo.go (writeMemo) as it stood before migration 0141, verbatim.
+		// If writeMemo changes its columns, compare this copy: it stands for the older binary.
 		olderWrite := func(m store.Memo) error {
 			rel := [9]string{}
 			if m.State == store.MemoStatePending {
