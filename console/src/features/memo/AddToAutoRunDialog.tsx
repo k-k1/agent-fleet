@@ -11,11 +11,11 @@ import { useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import type { Repo } from "../repos/store.ts";
 import { PROVIDER_NAMES } from "../workitems/read.ts";
-import { memoCategoryList, memoCreate, memoQueueList } from "./api.ts";
+import { memoCategoryList, memoCreate, memoList, memoQueueList } from "./api.ts";
 import { useMemoStore } from "./store.ts";
 import { readMemoQueues } from "./queues.ts";
 import { addToAutoRunInput, categoryChoices, defaultMemoRepo, memoRepoChoices } from "./addToAutoRun.ts";
-import type { MemoCategory, MemoQueue, MemoReference } from "../../types/memo.ts";
+import type { Memo, MemoCategory, MemoQueue, MemoReference } from "../../types/memo.ts";
 
 interface Props {
   /** The item to point at. `url` is its address at the tracker. */
@@ -36,6 +36,9 @@ export function AddToAutoRunDialog({ reference, repos, defaultRepo, onClose }: P
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [cats, setCats] = useState<MemoCategory[] | null>(null);
+  // The notes only supply the names no category row has; if they cannot be read the table's
+  // categories are still offered.
+  const [memos, setMemos] = useState<Memo[]>([]);
   const [queues, setQueues] = useState<MemoQueue[]>([]);
   const [loadFailed, setLoadFailed] = useState(false);
   // False when the organization has not allowed auto-run: the categories are still listed, but
@@ -48,14 +51,15 @@ export function AddToAutoRunDialog({ reference, repos, defaultRepo, onClose }: P
 
   useEffect(() => {
     let alive = true;
-    void Promise.all([memoCategoryList(), memoQueueList().catch(() => null)])
-      .then(([cList, qRaw]) => {
+    void Promise.all([memoCategoryList(), memoQueueList().catch(() => null), memoList().catch(() => null)])
+      .then(([cList, qRaw, mList]) => {
         if (!alive) return;
         if (!Array.isArray(cList)) {
           setLoadFailed(true);
           return;
         }
         setCats(cList as MemoCategory[]);
+        setMemos(Array.isArray(mList) ? mList : []);
         const qw = readMemoQueues(qRaw);
         setQueues(qw?.queues ?? []);
         setTenantOff(qw ? !qw.tenantEnabled : false);
@@ -66,8 +70,8 @@ export function AddToAutoRunDialog({ reference, repos, defaultRepo, onClose }: P
     };
   }, []);
 
-  const choices = useMemo(() => categoryChoices(cats ?? [], queues, repo), [cats, queues, repo]);
-  const chosen = choices.find((c) => c.category.id === categoryId);
+  const choices = useMemo(() => categoryChoices(cats ?? [], queues, repo, memos), [cats, queues, repo, memos]);
+  const chosen = choices.find((c) => c.key === categoryId);
   const autoRows = choices.filter((c) => c.autoRun);
   const plainRows = choices.filter((c) => !c.autoRun);
   const provider = PROVIDER_NAMES[reference.provider] || reference.provider;
@@ -78,13 +82,13 @@ export function AddToAutoRunDialog({ reference, repos, defaultRepo, onClose }: P
     setBusy(true);
     const typed = note.trim() !== "";
     try {
-      const res = await memoCreate(addToAutoRunInput(repo, chosen.category.name, reference, note));
+      const res = await memoCreate(addToAutoRunInput(repo, chosen.name, reference, note));
       if (res.error) {
         const err = res.error as { code?: string };
         toast(err.code?.startsWith("memo_") ? errText(res.error) : tr("memo.addrun_failed"), { kind: "warn" });
         return;
       }
-      const where = { key: reference.key, category: chosen.category.name, repo: repoLabel };
+      const where = { key: reference.key, category: chosen.name, repo: repoLabel };
       if (res.existing) {
         // Nothing was added, so the text typed with it was not stored either.
         toast(tr("memo.addrun_existing", where) + (typed ? " " + tr("memo.addrun_existing_note") : ""), { kind: "warn" });
@@ -101,8 +105,8 @@ export function AddToAutoRunDialog({ reference, repos, defaultRepo, onClose }: P
   };
 
   const option = (c: (typeof choices)[number]) => (
-    <option key={c.category.id} value={c.category.id}>
-      {c.category.name}
+    <option key={c.key} value={c.key}>
+      {c.name}
       {c.autoRun ? ` — ${tr(c.off ? "memo.autorun_badge_off" : "memo.autorun_badge")}` : ""}
     </option>
   );
