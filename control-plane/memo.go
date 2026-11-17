@@ -278,8 +278,8 @@ func validateMemo(mv store.MembershipView, in memoDTO) (store.Memo, *apiError) {
 // instead of leaving it a memo-only leftover. Every path that files a note under a name calls it
 // after the checks that can reject the note and in the same transaction, so a rejected note
 // leaves no row. The duplicate answers of a create return before it because a queue always has
-// its row already. The unfiled
-// bucket has no row. Names match exactly, case included, as the memo list groups them.
+// its row already. The unfiled bucket has no row. Names match exactly, case included, as the
+// memo list groups them.
 func memoEnsureRow(tx store.MemoTxOps, repo, category string) error {
 	if category == "" {
 		return nil
@@ -355,14 +355,8 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 				return err
 			}
 		}
-		// Every create path files a note under a category row, so the name is a real
-		// category (with a position and room for settings) and not a memo-only leftover.
-		// The unfiled bucket has no row. This runs after every check that can reject the
-		// note, and in the same transaction, so a rejected note leaves no row behind.
-		if m.Category != "" {
-			if _, err := tx.EnsureCategory(m.Repo, m.Category); err != nil {
-				return err
-			}
+		if err := memoEnsureRow(tx, m.Repo, m.Category); err != nil {
+			return err
 		}
 		return tx.InsertMemo(m)
 	})

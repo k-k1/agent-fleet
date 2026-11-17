@@ -147,8 +147,8 @@ type MemoTxOps interface {
 	FindCategory(repo, name string) (MemoCategory, bool, error)
 	// EnsureCategory makes the category row (repo, name) when the member's repo has none, at
 	// the end of the repo's order, and answers the row. A row that exists is left as it is.
-	// Names match exactly, case included. The unique (membership, repo, name) index backs the membership lock: of two creators
-	// the second reads the first's row, and never fails.
+	// Names match exactly, case included. The unique (membership, repo, name) index backs the
+	// membership lock: of two creators the second reads the first's row, and never fails.
 	EnsureCategory(repo, name string) (MemoCategory, error)
 	UpdateCategory(c MemoCategory) error
 	DeleteCategory(id string) error
