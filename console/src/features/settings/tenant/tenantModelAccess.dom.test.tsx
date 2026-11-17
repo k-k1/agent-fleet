@@ -232,6 +232,13 @@ describe("tenant model access", () => {
     expect(host!.querySelectorAll("input, textarea, button").length).toBe(0);
   });
 
+  it("draws no editor when the vocabulary is empty", async () => {
+    api.mockResolvedValue({ ...VIEW(), vocabulary: { classes: [], destinations: [], routes: [] } });
+    await mount();
+    expect(host!.querySelector("[role=alert]")?.textContent).toContain("読み込めませんでした");
+    expect(host!.querySelectorAll("input, textarea, button").length).toBe(0);
+  });
+
   it("offers what the CP serves, and shows an id the Console has no label for as itself", async () => {
     api.mockResolvedValue({
       ...VIEW(),
@@ -379,7 +386,18 @@ describe("restrictions help", () => {
       future: "kept",
       classes: ["member-cloud", "member-key", "provided", "self-hosted"],
       destinations: [
-        "af-engine", "anthropic", "aws-bedrock", "cursor", "github", "google", "kiro", "meta", "openai", "openrouter", "sakana", "self-hosted",
+        "af-engine",
+        "anthropic",
+        "aws-bedrock",
+        "cursor",
+        "github",
+        "google",
+        "kiro",
+        "meta",
+        "openai",
+        "openrouter",
+        "sakana",
+        "self-hosted",
       ],
     });
   });

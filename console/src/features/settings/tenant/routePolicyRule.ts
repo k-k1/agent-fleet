@@ -200,20 +200,24 @@ const isCatalogRoute = (v: unknown): v is CatalogRoute =>
   typeof v.destination === "string" &&
   (v.perConnection === undefined || typeof v.perConnection === "boolean");
 
-/** parseVocabulary is null unless all three lists are present and well formed: a partial answer
- *  must never become pickers that offer less than the CP accepts. Ids the Console has no label
+/** parseVocabulary is null unless all three lists are present, well formed and non-empty: a partial
+ *  or empty answer must never become pickers that offer less than the CP accepts (the CP never
+ *  serves an empty list, its catalogue is not empty). Ids the Console has no label
  *  for are kept; they are drawn as the raw id. */
 export function parseVocabulary(d: unknown): Vocabulary | null {
   if (!isObj(d) || !Array.isArray(d.classes) || !Array.isArray(d.destinations) || !Array.isArray(d.routes)) return null;
   if (!isStrList(d.classes) || !isStrList(d.destinations) || !d.routes.every(isCatalogRoute)) return null;
+  if (d.classes.length === 0 || d.destinations.length === 0 || d.routes.length === 0) return null;
   return d as unknown as Vocabulary;
 }
 
 /** isOlderPolicyAnswer: the answer is a well-formed policy that carries no vocabulary at all, as
  *  a Control Plane from before it sends. The page says so and draws no editor, rather than
  *  falling back to a list of its own that could offer a value that CP refuses. */
-export function isOlderPolicyAnswer(d: unknown): boolean {
-  return isObj(d) && d.vocabulary === undefined && isCeiling(d.ceiling) && isLayer(d.deployment);
+export function isOlderPolicyAnswer(d: unknown, tenant = false): boolean {
+  if (!isObj(d) || d.vocabulary !== undefined || !isCeiling(d.ceiling) || !isLayer(d.deployment)) return false;
+  // A tenant answer from an older CP is otherwise whole; one missing the rest is a damaged answer.
+  return !tenant || (isLayer(d.cap) && isLayer(d.tenant) && Array.isArray(d.routes) && Array.isArray(d.endpoints));
 }
 
 /** The vocabulary's route ids plus any the caller names that it does not list, sorted. */

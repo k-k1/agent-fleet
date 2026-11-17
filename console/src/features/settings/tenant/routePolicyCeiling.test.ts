@@ -4,7 +4,7 @@
 // ceiling, and its matched rule is accepted. AF_UPDATE_MATCH_CASES=1 rewrites the file.
 import { describe, it, expect } from "vitest";
 import { readFileSync, writeFileSync } from "node:fs";
-import { PRESET_KEYS, allows, applyPreset, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
+import { PRESET_KEYS, allows, presetAvailable, applyPreset, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
 import { draftOf, ruleEqual, ruleFromDraft, type RouteRule, type Vocabulary } from "./routePolicyRule.ts";
 
 const DIR = "scripts/shots/model-access";
@@ -55,6 +55,16 @@ describe("presets", () => {
     for (const other of PRESET_KEYS.filter((k) => k !== key)) {
       expect(ruleEqual(ruleFromDraft(BASE, applyPreset(d, other, VOCAB)), body), other).toBe(false);
     }
+  });
+});
+
+describe("preset availability", () => {
+  it("offers every preset on the CP's vocabulary and drops one whose target the CP no longer has", () => {
+    expect(PRESET_KEYS.filter((k) => presetAvailable(k, VOCAB))).toEqual([...PRESET_KEYS]);
+    const noBedrock = { ...VOCAB, destinations: VOCAB.destinations.filter((d) => d !== "aws-bedrock") };
+    expect(PRESET_KEYS.filter((k) => !presetAvailable(k, noBedrock))).toEqual(["bedrock_only"]);
+    const noProvided = { ...VOCAB, classes: VOCAB.classes.filter((c) => c !== "provided") };
+    expect(PRESET_KEYS.filter((k) => !presetAvailable(k, noProvided))).toEqual(["provided_only"]);
   });
 });
 

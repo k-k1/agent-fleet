@@ -232,6 +232,19 @@ describe("admin model access", () => {
     expect(host!.querySelectorAll("input, textarea, button, select").length).toBe(0);
   });
 
+  it("draws no editor when the vocabulary is empty", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "api/admin/route-policy"
+          ? { ...DEPLOYMENT, vocabulary: { classes: [], destinations: [], routes: [] } }
+          : tenantView("acme"),
+      ),
+    );
+    await mount();
+    expect(host!.querySelector("[role=alert]")?.textContent).toContain("読み込めませんでした");
+    expect(host!.querySelectorAll("input, textarea, button, select").length).toBe(0);
+  });
+
   it("offers the classes, destinations and routes the CP serves, ids it has no label for included", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(

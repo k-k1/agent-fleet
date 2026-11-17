@@ -9,7 +9,7 @@ import { useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { useReportDirty } from "../parts/dirtyScope.tsx";
-import { PRESET_KEYS, applyPreset, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
+import { PRESET_KEYS, applyPreset, presetAvailable, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
 import {
   draftOf,
   endpointLines,
@@ -201,7 +201,7 @@ function Presets({
     <div className="admin-fgroup mpol-presets" data-field="presets">
       <span className="admin-subhead">{tr("admin.mpol_presets")}</span>
       <div className="mpol-preset-row">
-        {PRESET_KEYS.map((key) => {
+        {PRESET_KEYS.filter((key) => presetAvailable(key, vocab)).map((key) => {
           const next = applyPreset(draft, key, vocab);
           const on = ruleEqual(ruleFromDraft(base, next), now);
           return (

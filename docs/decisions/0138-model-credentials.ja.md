@@ -777,3 +777,5 @@ pi の経路は ADR 0136 の P1 が入った時点で M0 の水準で入る。�
   class・destination・`perConnection` を持つ `routes`）を返す。`Rule.Validate` が読むのと同じ経路カタログから作る。
   コンソールは選択肢・プリセット・要約をこれから描き、自前の一覧は持たない。`vocabulary` を送らない古い
   Control Plane は読み込み失敗とは区別し、「Control Plane が古い」と表示して編集欄は出さない。
+  `vocabulary` を送らない Control Plane を読んだコンソールは、読み取り専用の表示も含めてこの警告だけを出す。2 つは同時に配備する前提で、
+  半端な答えから描いたページより、理由を言う空のページのほうがよい。

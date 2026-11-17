@@ -830,4 +830,6 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
   carry a `vocabulary` (`classes`, `destinations` without `unclassified`, and `routes` with class, destination and
   `perConnection`), built from the same route catalogue `Rule.Validate` reads. The Console draws its pickers, presets and
   summaries from it and keeps no list of its own. A Control Plane that sends none is told apart from a failed read: the
-  page says the Control Plane is older and draws no editor.
+  page says the Control Plane is older and draws no editor. A Console that reads a Control Plane
+  without it shows that alert alone, read-only views included: the two ship together, and a page drawn from half an answer
+  is worse than one that says why it is empty.

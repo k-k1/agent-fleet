@@ -106,6 +106,16 @@ export const PRESET_KEYS = ["none", "no_subscriptions", "no_plan_logins", "bedro
 
 export type PresetKey = (typeof PRESET_KEYS)[number];
 
+/** presetAvailable: a preset that names a value outright is offered only while the CP's vocabulary
+ *  has it, so a button never fills in a draft the CP would refuse. */
+export function presetAvailable(key: PresetKey, vocab: Vocabulary): boolean {
+  const p = presetRule(key, vocab);
+  return (
+    (p.classes ?? []).every((c) => vocab.classes.includes(c)) &&
+    (p.destinations ?? []).every((d) => vocab.destinations.includes(d))
+  );
+}
+
 export function presetRule(key: PresetKey, vocab: Vocabulary): RouteRule {
   const noSubs = vocab.classes.filter((c) => c !== "subscription");
   switch (key) {

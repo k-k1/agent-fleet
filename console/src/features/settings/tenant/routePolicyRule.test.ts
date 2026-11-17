@@ -45,6 +45,17 @@ describe("the served vocabulary", () => {
     }
   });
 
+  it("refuses a vocabulary with an empty list, so an empty answer draws no editor", () => {
+    const v = answers("open")["deployment"].vocabulary;
+    for (const bad of [
+      { classes: [], destinations: [], routes: [] },
+      { ...v, classes: [] },
+      { ...v, destinations: [] },
+      { ...v, routes: [] },
+    ])
+      expect(parseVocabulary(bad)).toBeNull();
+  });
+
   it("tells a Control Plane that sends none (older) from a malformed answer", () => {
     const a = answers("open");
     const { vocabulary: _d, ...oldDep } = a["deployment"];
@@ -56,6 +67,10 @@ describe("the served vocabulary", () => {
     expect(isOlderPolicyAnswer(a["deployment"])).toBe(false);
     expect(isOlderPolicyAnswer({ ...a["deployment"], vocabulary: {} })).toBe(false);
     expect(isOlderPolicyAnswer({ error: "x" })).toBe(false);
+    // A tenant answer cut short is damaged, not older.
+    const { cap: _c, ...cut } = oldTen;
+    expect(isOlderPolicyAnswer(cut, true)).toBe(false);
+    expect(isOlderPolicyAnswer(oldTen, true)).toBe(true);
   });
 
   it("keeps a route, class or destination it has no label for, and offers it", () => {

@@ -35,7 +35,7 @@ export function useTenantRoutePolicy(slug: string) {
       setFailed(
         d?.error
           ? errText(d.error)
-          : tr(isOlderPolicyAnswer(d) ? "admin.mpol_vocab_missing" : "admin.mpol_load_failed"),
+          : tr(isOlderPolicyAnswer(d, true) ? "admin.mpol_vocab_missing" : "admin.mpol_load_failed"),
       );
     } catch {
       setView(null);
