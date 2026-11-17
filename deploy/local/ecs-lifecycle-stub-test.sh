@@ -327,6 +327,8 @@ case "$args" in
   *"ParameterKey=='EgressRoute'"*) echo "${STUB_EGRESS_ROUTE:-None}" ;;
   # Unset = a gateway stack older than the switch (its gateway is on).
   *"ParameterKey=='GatewayEnabled'"*) echo "${STUB_GW_ENABLED:-None}" ;;
+  # Unset = the route follows EgressRoute (a stack older than GatewayRouteEnabled, or the default "true").
+  *"ParameterKey=='GatewayRouteEnabled'"*) echo "${STUB_GW_ROUTE:-None}" ;;
   *"ParameterKey=='EgressTokenSecretArn'"*) live t-ingress "${STUB_ING_EGRESS:-None}" ;;
   *"ParameterKey=='EgressProxyAddr'"*) live t-ingress "${STUB_ING_EGRESS_ADDR:-${STUB_ING_EGRESS:+10.20.0.50:3128}}" ;;
   *"--stack-name t-platform"*"ParameterKey=='EgressArchiveBucket'"*) live t-platform "${STUB_PLAT_ARCHIVE:-None}" ;;
@@ -1403,6 +1405,26 @@ upd() { # upd <out> [VAR=val ...]: update.sh on p4; fails the test when it fails
     --stack t-ingress > "$WORK/$out" 2>&1 || { cat "$WORK/$out"; fail "update.sh failed ($out)"; }
 }
 cs_line() { grep "create-change-set --stack-name $1 --change-set-name af-clear-" "$LOG" || true; }
+# The switch TO the gateway (#4399): workspaces must not be routed through it before the CP holds
+# its token. update.sh cannot stop a 00-network deploy that already moved the route, but it says so.
+echo "== case 4i-egress-order: update.sh and the order of the gateway switch (#4399) =="
+GWENV="STUB_EGRESS_ADDR=10.20.0.50:3128 STUB_EGRESS_SECRET=$SECRET_ARN"
+# shellcheck disable=SC2086
+upd outo1 $GWENV
+grep -q "WARNING: t-network already routes workspaces through the egress gateway" "$WORK/outo1" \
+  || fail "update.sh did not warn that the route moved before the CP held the token"
+# shellcheck disable=SC2086
+upd outo2 $GWENV STUB_GW_ROUTE=false
+if grep -q "already routes workspaces" "$WORK/outo2"; then fail "update.sh warned although the route is still on the NAT"; fi
+grep -q "NEXT: the Control Plane has the egress token" "$WORK/outo2" \
+  || fail "update.sh did not name the second step (GatewayRouteEnabled=true)"
+# shellcheck disable=SC2086
+upd outo3 $GWENV STUB_ING_EGRESS="$SECRET_ARN"
+if grep -q "already routes workspaces" "$WORK/outo3"; then fail "update.sh warned although the CP already holds the token"; fi
+if grep -q "NEXT: the Control Plane" "$WORK/outo3"; then fail "update.sh asked for GatewayRouteEnabled=true while the route is already on"; fi
+upd outo4
+if grep -qE "already routes workspaces|NEXT: the Control Plane" "$WORK/outo4"; then fail "update.sh talked about the gateway on a nat-gateway deployment"; fi
+
 # The switch back to nat-gateway: the ingress stack still has the gateway's secret.
 upd outc1 STUB_ING_EGRESS="$SECRET_ARN"
 l="$(cs_line t-ingress)"
@@ -2722,6 +2744,12 @@ echo "GatewayEnabled=false" >> "$STATE6/params/00-network"
 "$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4l2" </dev/null
 grep -q "GatewayEnabled=true" "$WORK/out4l2" || fail "standup did not force GatewayEnabled=true"
 if grep -q "GatewayEnabled=false" "$WORK/out4l2"; then fail "standup passed the captured GatewayEnabled=false on"; fi
+# And for a capture taken between the two halves of the gateway switch (#4399).
+echo "GatewayRouteEnabled=false" >> "$STATE6/params/00-network"
+: > "$LOG"
+"$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4l3" </dev/null
+grep -q "GatewayRouteEnabled=true" "$WORK/out4l3" || fail "standup did not force GatewayRouteEnabled=true"
+if grep -q "GatewayRouteEnabled=false" "$WORK/out4l3"; then fail "standup passed the captured GatewayRouteEnabled=false on"; fi
 
 echo "== case 4l-eip: a handed-back workspace egress address is checked before anything is built (#2728) =="
 STATE7="$AF_DEPLOY_STATE_DIR/p7.ap-northeast-1.t-ingress"

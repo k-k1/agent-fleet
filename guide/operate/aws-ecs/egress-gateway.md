@@ -15,7 +15,7 @@ Every connection is then recorded with its destination's name, and an allowlist 
 | What you do | What happens |
 |---|---|
 | Allocate the workspace address first and have it allow-listed | The organisation on the other side can admit the address before the switch |
-| Deploy `00-network` with `EgressRoute=gateway`, then run `update.sh` | The workspace route points at the gateway, and the Control Plane hands workspaces the proxy |
+| Switch in two `00-network` deploys with `update.sh` between them (`GatewayRouteEnabled=false`, then `true`; see [Turn it on](#turn-it-on)) | The Control Plane holds the token before the workspace route points at the gateway, and hands workspaces the proxy |
 | Choose the mode and the allowlist in Admin → "**Egress**" | The gateway's agent writes that policy into Squid, records connections and ships them to the Control Plane |
 | Pause with `pause.sh` | Workspaces stop, the record is shipped, then the gateway goes to zero instances |
 
@@ -99,21 +99,38 @@ A connection whose decision could be recorded is a line ending `<verdict> <entry
 
 An existing stack keeps `nat-gateway` until you do this. Allocate the workspace address first and have it allow-listed ([Register two addresses](#register-two-addresses)).
 
-1. Deploy `00-network`, then run `update.sh`
+The switch is five steps in this order, because the Control Plane must hold the gateway's token before any workspace is routed through it. `00-network` creates the token, and the Control Plane only gets it from `update.sh` (a new task, about 90 seconds). A gateway that takes traffic before that gets 401 on every policy fetch and stays closed, so every workspace is cut off even in log-only.
+
+1. Build the gateway with the workspace route still on the NAT gateway
 
    ```bash
    aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
-     --capabilities CAPABILITY_IAM --parameter-overrides EgressRoute=gateway \
+     --capabilities CAPABILITY_IAM --parameter-overrides EgressRoute=gateway GatewayRouteEnabled=false \
      GatewayEipAllocationId=eipalloc-... GatewayEipAddress=<its public address>
-   ./update.sh --profile <p> --region <r>    # 20-platform (the token read) and 30-ingress
    ```
 
-2. Wait until the gateway passes traffic (the table below)
-3. Running workspaces get the proxy variables on their next start. Until then they are intercepted
+2. Give the Control Plane the token, and the gateway its configuration
+
+   ```bash
+   VERSION=<v> ./update.sh --profile <p> --region <r>    # 20-platform (the token read) and 30-ingress
+   ```
+
+   Running workspaces are not affected so far. Do not start or restart one until step 4 is done: its task definition would name the proxy while the gateway still refuses everything. `update.sh` ends with a `NEXT:` line while `GatewayRouteEnabled` is `false`.
+3. Wait until the gateway has applied its first policy: `journalctl -u af-egress-agent` on the instance shows `policy applied` (reach the instance through SSM, as in [Check that the gateway works](#check-that-the-gateway-works); `/var/log/af-egress-gateway.log` shows the install steps)
+4. Move the workspaces onto it
+
+   ```bash
+   aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
+     --capabilities CAPABILITY_IAM --parameter-overrides GatewayRouteEnabled=true
+   ```
+
+5. Running workspaces get the proxy variables on their next start. Until then they are intercepted
+
+`GatewayRouteEnabled` defaults to `true`, which is the old one-deploy switch: it still works, but it has the cut-off above, and `update.sh` warns when it finds the route already on the gateway while `30-ingress` has no token. A gateway that is only being **recreated** needs the same split: a new `GatewayEni` (the interface is replaced when `PublicSubnet0` is, or when the gateway is switched off and on again) creates a new token, because its name carries the interface id. Set `GatewayRouteEnabled=false` in the deploy that does it, then run steps 2 to 4. A replaced instance, or a new AMI, keeps the interface and the token, so it needs nothing.
 
 Without the two `GatewayEip*` parameters the stack allocates the address itself (and retains it), so you learn the address only once workspaces already egress from it.
 
-The route moves to `GatewayEni` as soon as the first command finishes. After that:
+What workspace egress looks like once the route points at `GatewayEni`. With the split above the first two rows are already behind you at step 4; the one-deploy switch goes through all of them:
 
 | Stage | Workspace egress |
 |---|---|

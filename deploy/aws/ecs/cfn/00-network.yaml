@@ -109,6 +109,13 @@ Parameters:
       does this while a deployment sleeps. GatewayEni and GatewayEip stay, so "true" brings back
       the same route target, proxy address and egress address. While it is false the workspace
       route blackholes: fine only while every workspace is stopped.
+  GatewayRouteEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: [ "true", "false" ]
+    Description: >-
+      "false" builds the gateway but keeps the workspace route on the NAT until the CP holds
+      the token; then "true". PARAMETERS.md, "Egress token".
   GatewayInstanceType:
     Type: String
     Default: t3.small
@@ -153,10 +160,10 @@ Conditions:
   # Only the group's size follows it: the interface, its address and the route never do.
   GatewayUp: !Equals [ !Ref GatewayEnabled, "true" ]
   # The workspace default route exists while its target does: the gateway, or the NAT
-  # gateway (which NatEnabled=false deletes). One resource for both targets, so switching
-  # EgressRoute replaces the route's target in place instead of creating a second
-  # 0.0.0.0/0 route next to the first (CreateRoute would fail with RouteAlreadyExists).
-  WorkspaceRouteOn: !Or [ !Condition GatewayOn, !Condition NatOn ]
+  # gateway (which NatEnabled=false deletes). One resource for both targets: switching
+  # replaces the target in place (a second 0.0.0.0/0 route would fail with RouteAlreadyExists).
+  GatewayRouteOn: !And [ !Condition GatewayOn, !Equals [ !Ref GatewayRouteEnabled, "true" ] ]
+  WorkspaceRouteOn: !Or [ !Condition GatewayRouteOn, !Condition NatOn ]
 
 Resources:
   Vpc:
@@ -297,8 +304,8 @@ Resources:
     Properties:
       RouteTableId: !Ref WorkspaceRt
       DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !If [ GatewayOn, !Ref "AWS::NoValue", !Ref Nat ]
-      NetworkInterfaceId: !If [ GatewayOn, !Ref GatewayEni, !Ref "AWS::NoValue" ]
+      NatGatewayId: !If [ GatewayRouteOn, !Ref "AWS::NoValue", !Ref Nat ]
+      NetworkInterfaceId: !If [ GatewayRouteOn, !Ref GatewayEni, !Ref "AWS::NoValue" ]
   WorkspaceAssoc0:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref WorkspaceSubnet0, RouteTableId: !Ref WorkspaceRt }
@@ -317,10 +324,9 @@ Resources:
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
       VpcEndpointType: Gateway
       RouteTableIds: [ !Ref PrivateRt ]
-      # Only what the stack itself needs is admitted. A refused request does NOT fall back to the
-      # NAT (the S3 prefix-list route is more specific): it is AccessDenied, acceptable only because
-      # nothing a user drives runs on this route table. A new bucket used from a private subnet
-      # must be added here (deploy/local/cfn-s3-endpoint-test.py pins this list).
+      # Only what the stack itself needs; a refused request is AccessDenied, never a NAT
+      # fallback. A new bucket used from a private subnet must be added here
+      # (deploy/local/cfn-s3-endpoint-test.py pins this list).
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -331,14 +337,13 @@ Resources:
             Principal: "*"
             Action: [ "s3:GetObject" ]
             Resource: !Sub "arn:${AWS::Partition}:s3:::prod-${AWS::Region}-starport-layer-bucket/*"
-          # Amazon Linux 2023 package repositories. Read-only; nothing runs dnf today.
+          # Amazon Linux 2023 package repositories. Read-only.
           - Sid: Al2023Repos
             Effect: Allow
             Principal: "*"
             Action: [ "s3:GetObject" ]
             Resource: !Sub "arn:${AWS::Partition}:s3:::al2023-repos-${AWS::Region}-de612dc2/*"
-          # SSM Agent updates on the slot and engine instances. Read-only; the other buckets of
-          # the AWS table are left out because nothing here uses them.
+          # SSM Agent updates on the slot and engine instances. Read-only.
           - Sid: SsmAgentUpdate
             Effect: Allow
             Principal: "*"
@@ -346,8 +351,7 @@ Resources:
             Resource:
               - !Sub "arn:${AWS::Partition}:s3:::amazon-ssm-${AWS::Region}/*"
               - !Sub "arn:${AWS::Partition}:s3:::aws-ssm-${AWS::Region}/*"
-          # ECS agent image download by ecs-init. Refused here, the slot or engine instance never
-          # registers with the cluster. Read-only.
+          # ECS agent image download by ecs-init (without it a slot never registers). Read-only.
           - Sid: EcsAgentDownload
             Effect: Allow
             Principal: "*"
@@ -899,8 +903,7 @@ Resources:
             - { Ws0: !Ref WorkspaceSubnet0Cidr, Ws1: !Ref WorkspaceSubnet1Cidr }
 
   # Group of ONE; terminate-before-launch (two instances cannot share GatewayEni). MaxSize stays 1
-  # even at DesiredCapacity 0: the rolling update needs MinInstancesInService (0) < MaxSize, or an
-  # update to a paused group fails. PARAMETERS.md, 00-network: "Egress gateway group".
+  # even at DesiredCapacity 0 (PARAMETERS.md, 00-network: "Egress gateway group").
   GatewayAsg:
     Type: AWS::AutoScaling::AutoScalingGroup
     Condition: GatewayOn
@@ -921,10 +924,8 @@ Resources:
 
 
 Outputs:
-  # The egress source IP's allocation, whoever created it. Capture it (capture-env.sh
-  # stores it as a 00-network parameter) and pass it back as NatEipAllocationId to
-  # rebuild the deployment behind the same address. Never empty: the false branch is
-  # a non-empty parameter by construction, and an empty Export fails the whole stack.
+  # The egress source IP's allocation, whoever created it; capture-env.sh stores it so a rebuild
+  # keeps the address (NatEipAllocationId). Never empty: an empty Export fails the whole stack.
   NatEipAllocationId:
     Value: !If [ CreateNatEip, !GetAtt NatEip.AllocationId, !Ref NatEipAllocationId ]
     Export: { Name: !Sub "${AWS::StackName}-NatEipAllocationId" }

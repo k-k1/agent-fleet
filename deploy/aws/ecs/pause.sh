@@ -435,7 +435,8 @@ nat_enabled() {
 # (`deploy` leaves what it is not given at UsePreviousValue). For the NAT the wait is the point:
 # on `--up` nothing may start until the route exists again. Both default routes (private and
 # workspace route table) follow NatEnabled, except that under EgressRoute=gateway the workspace
-# route stays on GatewayEni whatever either switch says.
+# route stays on GatewayEni whatever either switch says, unless GatewayRouteEnabled=false holds
+# it on the NAT (the first half of the switch, #4399).
 #
 # This deploys the checkout's template, so a network stack older than it gains what it adds. The
 # workspace subnets are harmless before the CP uses them, but the S3 endpoint is not: its policy

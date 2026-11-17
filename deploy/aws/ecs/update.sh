@@ -352,6 +352,22 @@ NOTE: $NETWORK_STACK has no WorkspaceSubnets output (its 00-network template has
       S3 requests of every workspace still in a private subnet.
 EOF
 fi
+# Egress gateway switch order (#4399): the CP must hold the gateway's token before workspaces
+# are routed through it, or the gateway agent gets 401 until this update's new CP task is up and
+# its closed bootstrap mode cuts every workspace off. GatewayRouteEnabled=false is the first half.
+GW_ROUTE=""
+if [ -n "$EGRESS_SECRET" ]; then
+  GW_ROUTE="$(af_stack_param "$NETWORK_STACK" GatewayRouteEnabled)"
+  if [ "$GW_ROUTE" != false ] && [ "$(af_stack_param "$STACK" EgressTokenSecretArn)" != "$EGRESS_SECRET" ]; then
+    cat >&2 <<EOF
+WARNING: $NETWORK_STACK already routes workspaces through the egress gateway, but $STACK does not
+         hold its token yet. Until the new Control Plane task is up (about 90 s) the gateway agent is
+         refused (401) and every workspace is cut off, even in log-only. Next time deploy
+         00-network with GatewayRouteEnabled=false first (guide/operate/aws-ecs/egress-gateway.md,
+         "Turn it on"). Continuing: this update is what gives the CP the token.
+EOF
+  fi
+fi
 # The pin only applies to the copy above. Said here, before anything runs, so a pin that would
 # otherwise do nothing is not mistaken for one that was checked.
 if [ -n "$COMFY_DIGEST" ] && { [ "$COMFY_REPAIR" != 1 ] || [ "$COMFY_PULLED" != 1 ]; }; then
@@ -937,6 +953,13 @@ if [ -n "${ws_private// /}" ] || [ -n "${ws_unknown// /}" ]; then
   fi
   for n in $ws_private; do echo "  - $n"; done
   for n in $ws_unknown; do echo "  - $n (its task could not be read; check its ENI by hand)"; done
+fi
+
+if [ "$GW_ROUTE" = false ]; then
+  echo
+  echo "NEXT: the Control Plane has the egress token, but $NETWORK_STACK still routes workspaces through the NAT"
+  echo "      (GatewayRouteEnabled=false). When the gateway has applied its first policy, deploy 00-network"
+  echo "      with GatewayRouteEnabled=true to move them (guide/operate/aws-ecs/egress-gateway.md, \"Turn it on\")."
 fi
 
 case "${AF_EFS_BACKUP_VERDICT:-}" in

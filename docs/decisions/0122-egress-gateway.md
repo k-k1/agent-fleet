@@ -891,3 +891,25 @@ dial rule are unit-tested; no daemon ran any of it. The run, and the question of
 #4373.
 
 Follow-ups: #4373
+
+
+## Addendum (2026-11-17) — switching on: the CP holds the token before the route moves (#4399)
+
+Switching an existing deployment to `EgressRoute=gateway` created the token in `00-network` and moved
+the workspace route in the same deploy, while the CP got `AF_EGRESS_TOKEN` only from the later
+`update.sh` and a new task. In between the gateway agent was refused (401), never got a first policy,
+and decision 5's closed bootstrap mode cut every workspace off, log-only included (about 90 s).
+
+**Decided with the maintainer, 2026-11-17.** The CP gets the token before the gateway takes workspace
+traffic. Closed-until-first-policy stays as it is, and so does `ip_forward = 0`: passing traffic with
+the redirect off would need forwarding and masquerade, open and unlogged until the first policy, and
+opening log-only after failed fetches would add an exception to the closed design.
+
+The mechanism is a parameter, `GatewayRouteEnabled` (default `true`, the old behaviour). With `false`,
+`00-network` builds the gateway and its token while the workspace route stays on the NAT; `update.sh`
+then gives the CP the token; once the agent has its first policy a second deploy sets `true`.
+`update.sh` warns when it finds the route already on the gateway and the token missing from
+30-ingress. A `GatewayEni` replacement makes a new token and takes the same two deploys; an instance
+replacement keeps both. Guide: egress-gateway.md, "Turn it on".
+
+Follow-ups: #4399 (a run on a real deployment)
