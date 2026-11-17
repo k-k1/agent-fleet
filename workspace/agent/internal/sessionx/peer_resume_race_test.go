@@ -214,6 +214,39 @@ func TestPeerSendDroppedDuringBootLeavesNoWorkingAndCanBeRetried(t *testing.T) {
 	}
 }
 
+// The withdrawal of the optimistic working is a conditional write that gives way on a stalled
+// lock (status.PersistIf), which a loaded host produces: the first attempt here gives way
+// without writing, the way that stall does. The status must still end idle, not stay working
+// for a session whose message was never typed into a turn.
+func TestDroppedPeerSendWithdrawsWorkingAfterAWriteGaveWay(t *testing.T) {
+	pendingTestEnv(t)
+	b := fakeBootingClaudeTmux(t, "race_giveway", "")
+	session.WriteMeta(session.Meta{Name: raceFrom, Dir: t.TempDir(), Kind: session.KindClaude})
+	m, _ := session.ReadMeta(b.name)
+
+	prev := persistIfRev
+	var calls atomic.Int32
+	wantSid := session.UUID(m.Dir, m.Name)
+	persistIfRev = func(sid, state, wasRev string, existed bool) bool {
+		if sid == wantSid && calls.Add(1) == 1 {
+			return false // gave way: the record is untouched
+		}
+		return prev(sid, state, wasRev, existed)
+	}
+	t.Cleanup(func() { persistIfRev = prev })
+
+	code, body := racePeerSend(t, b.name)
+	if code != http.StatusBadGateway || !strings.Contains(body, "delivery_unconfirmed") {
+		t.Fatalf("send into the booting pane: %d %s, want 502 delivery_unconfirmed", code, body)
+	}
+	if calls.Load() < 2 { // at least: the forced give-way, then the retry
+		t.Fatal("the withdrawal never retried")
+	}
+	if got := status.LiveState(session.UUID(m.Dir, m.Name)); got != "idle" {
+		t.Fatalf("status after a withdrawal that gave way once = %q, want idle (no turn started)", got)
+	}
+}
+
 // The fix for the race itself: a send to a session the Agent launched moments ago is held in
 // the pending spool (blocked_on "starting"), nothing is typed while the CLI boots, and the
 // message is typed once the pane has settled, becoming exactly one turn.
