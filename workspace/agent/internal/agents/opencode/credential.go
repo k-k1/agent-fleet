@@ -15,6 +15,7 @@ import (
 var (
 	_ agents.CredentialResolver = agentImpl{}
 	_ agents.PerCallRouter      = agentImpl{}
+	_ agents.ModelRouteLister   = agentImpl{}
 )
 
 // RoutesPerCall implements agents.PerCallRouter: a call's route is its model's provider.
@@ -87,6 +88,27 @@ func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
 func ModelLaunch(model string) routes.Launch {
 	keys, pref, acct := credentialView()
 	return resolveModel(model, keys, pref, acct, engineProviderIDs())
+}
+
+// ModelRoutes implements agents.ModelRouteLister for opencode.ai's own providers: Zen (or Go) by
+// key, or the Console account. They share one destination, so a policy that forbids all of them
+// forbids the model whichever payer would pay. A billing choice that keeps opencode.ai out gives
+// none: that launch does not run there at all. Provider models (anthropic/…) stay nil: without a
+// stored key they may run on opencode's own auth-store login, which no policy route judges, so a
+// forbid-all over their single catalogued route would be unsound.
+func (agentImpl) ModelRoutes(model string) []string {
+	prov, _, ok := splitModel(model)
+	_, pref, _ := credentialView()
+	if !ok || pref == UsageOff || pref == UsageOwn {
+		return nil
+	}
+	switch prov {
+	case "opencode":
+		return []string{routes.RouteOpencodeZen, routes.RouteOpencodeAccount}
+	case "opencode-go":
+		return []string{routes.RouteOpencodeGo, routes.RouteOpencodeAccount}
+	}
+	return nil
 }
 
 func resolveModel(model string, keys map[string]string, pref string, acct oauthState, engines []string) routes.Launch {
