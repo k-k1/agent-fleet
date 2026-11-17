@@ -1816,6 +1816,11 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 		MaxSessions: body.MaxSessions, DiskGB: body.DiskGB,
 		MemLimit: body.MemLimit, CPULimit: body.CPULimit, SlotClass: strings.TrimSpace(body.SlotClass),
 	}
+	// Read before the write: "did this save change the disk number" is what decides
+	// whether a shrink is worth reporting. A failed read answers false — saying nothing
+	// beats a warning about a change that may not have happened.
+	prev, _, prevErr := a.cp.Store().GetUserLimit(r.Context(), mem.ID)
+	diskChanged := prevErr == nil && body.DiskGB != prev.DiskGB
 	if err := a.cp.Store().PutUserLimit(r.Context(), mem.ID, q); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -1846,7 +1851,7 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 	// The error is dropped on purpose and the note simply omitted: a lookup that failed
 	// is not a reason to fail a save that succeeded, and saying nothing beats saying
 	// something wrong about somebody's disk.
-	if hr, err := a.cp.ResizeHomeByMembership(r.Context(), mem.ID); err == nil && hr.Outcome != "" {
+	if hr, err := a.cp.ResizeHomeByMembership(r.Context(), mem.ID); err == nil && hr.ReportOnSave(diskChanged) {
 		resp["home_resize"] = hr
 	}
 	writeJSON(w, http.StatusOK, resp)

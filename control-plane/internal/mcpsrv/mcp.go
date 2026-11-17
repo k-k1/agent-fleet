@@ -1641,6 +1641,9 @@ func (a API) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, 
 	if err != nil {
 		return "", err
 	}
+	// Same read-before-write as the admin API's save; see tenantsrv SetUserLimits.
+	prev, _, prevErr := a.cp.Store().GetUserLimit(ctx, mem.ID)
+	diskChanged := prevErr == nil && q.DiskGB != prev.DiskGB
 	if err := a.cp.Store().PutUserLimit(ctx, mem.ID, q); err != nil {
 		return "", err
 	}
@@ -1661,7 +1664,7 @@ func (a API) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, 
 	// Same step, and the same order, as the admin API's save: the disk axis is the only
 	// one that reaches a resource that already exists. Without it this tool would be the
 	// route by which a disk request is stored and quietly never applied.
-	if hr, err := a.cp.ResizeHomeByMembership(ctx, mem.ID); err == nil && hr.Outcome != "" {
+	if hr, err := a.cp.ResizeHomeByMembership(ctx, mem.ID); err == nil && hr.ReportOnSave(diskChanged) {
 		out["home_resize"] = hr
 	}
 	return jsonText(out)
