@@ -19,13 +19,15 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Error codes this package emits. Package main's errcodes.go declares the same values (this
-// package cannot import it) so that the Console-catalogue test sees them: change a spelling in
-// both places and in console/src/lib/i18n/locales/{en,ja}/errors.ts.
+// Error codes this package emits. This package cannot import package main, so the same values
+// are declared as errCode* in errcodes.go (which puts them in the Console-catalogue test's view);
+// TestRoutePolicyErrCodesMatchRootConstants pins each pair. Keep the spellings identical in
+// errcodes.go, here, and console/src/lib/i18n/locales/{en,ja}/errors.ts. Package-local codes
+// like mcpsrv's, plus the root registration.
 const (
-	codeInvalidRoutePolicy    = "invalid_route_policy"
-	codeExceedsCeiling        = "route_policy_exceeds_ceiling"
-	codeEndpointNotApprovable = "route_policy_endpoint_not_approvable"
+	codeInvalidRoutePolicy               = "invalid_route_policy"
+	codeRoutePolicyExceedsCeiling        = "route_policy_exceeds_ceiling"
+	codeRoutePolicyEndpointNotApprovable = "route_policy_endpoint_not_approvable"
 )
 
 // ceilingState is the operator ceiling this CP started with.
@@ -260,12 +262,12 @@ func readRule(w http.ResponseWriter, r *http.Request, above *routepolicy.Rule) (
 	in = in.Normalize()
 	if above != nil {
 		if wider := in.Exceeds(*above); len(wider) > 0 {
-			writeAPIErr(w, &APIError{http.StatusBadRequest, codeExceedsCeiling,
+			writeAPIErr(w, &APIError{http.StatusBadRequest, codeRoutePolicyExceedsCeiling,
 				fmt.Sprintf("the deployment's ceiling forbids routes this rule would allow: %v; a layer below the ceiling can only narrow it", wider)})
 			return in, "", false
 		}
 		if wider := in.EndpointsExceed(*above); len(wider) > 0 {
-			writeAPIErr(w, &APIError{http.StatusBadRequest, codeExceedsCeiling,
+			writeAPIErr(w, &APIError{http.StatusBadRequest, codeRoutePolicyExceedsCeiling,
 				fmt.Sprintf("the deployment's ceiling does not let these endpoint patterns be approved: %v; a layer below the ceiling can only narrow it", wider)})
 			return in, "", false
 		}
@@ -358,7 +360,7 @@ func (a admin) putTenant(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, h := range *in.Endpoints {
 			if by := v.layers.EndpointExcludedBy(h); len(by) > 0 {
-				writeAPIErr(w, &APIError{http.StatusBadRequest, codeEndpointNotApprovable,
+				writeAPIErr(w, &APIError{http.StatusBadRequest, codeRoutePolicyEndpointNotApprovable,
 					fmt.Sprintf("%s cannot be approved as a self-hosted endpoint: excluded by %v", h, by)})
 				return
 			}
