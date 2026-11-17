@@ -2,7 +2,7 @@
 
 English | [日本語](0139-light-slots-rightsizing-boost.ja.md)
 
-- Status: **proposed** (2026-11-16). Documentation only: nothing below is built. Every code fact was read
+- Status: **accepted** (2026-11-17; proposed 2026-11-16). Documentation only: nothing below is built. Every code fact was read
   from the tree at `f21201685` on this date. **What is measured and what is not.** Prices and
   per-instance performance quoted from [70](../log/70-slot-instance-classes.md) §70.3 are that journal's
   Pricing API reads and benchmarks (ap-northeast-1, 2026-08-22). **No price for a `medium`, a `t4g` or a
