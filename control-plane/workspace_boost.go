@@ -93,7 +93,7 @@ type sizingBoost struct {
 	Enabled bool `json:"enabled"`
 	Active  bool `json:"active"`
 	// Available: pressing Boost would do something. Otherwise Reason says why not:
-	// "disabled" | "top_rung" | "limit" | "budget_spent".
+	// "disabled" | "class" | "top_rung" | "limit" | "budget_spent".
 	Available    bool        `json:"available"`
 	Reason       string      `json:"reason,omitempty"`
 	Target       *sizingBox  `json:"target,omitempty"`
@@ -124,6 +124,10 @@ func (m *manager) boostPlan(ns nextStart, lim tenantLimits) (target *runtime.Wor
 		return nil, "unsupported"
 	case !lim.BoostEnabled:
 		return nil, "disabled"
+	case !classUsable(m.workspaceSizing(), lim, ns.baseClass):
+		// The base class is a last-resort fallback the overlay would refuse: a boost granted
+		// here would never apply, so say so up front.
+		return nil, "class"
 	case ns.baseIdx+1 >= len(ns.baseLadder):
 		return nil, "top_rung"
 	}
@@ -208,7 +212,7 @@ func (m *manager) sizingFor(ctx context.Context, res *resolved) workspaceSizingW
 		Source: ns.Source, Until: ns.Until, Note: ns.Note,
 	}
 	out.Running = m.runningBox(ctx, res, p, ns.SlotClass)
-	out.RestartOffered = out.Running != nil && out.NextStart.Box.MemMiB > out.Running.MemMiB
+	out.RestartOffered = out.Running != nil && boxBigger(out.NextStart.Box, out.Running)
 
 	b := sizingBoost{Enabled: lim.BoostEnabled, Active: ns.Source == store.SizeOverrideBoost,
 		DefaultHours: boostDefaultHours, MaxHours: boostMaxHours,
@@ -266,6 +270,9 @@ func (a workspaceAPI) boost(w http.ResponseWriter, r *http.Request, res *resolve
 	case "disabled":
 		writeAPIErr(w, &apiError{http.StatusForbidden, "boost_disabled", "boost is not enabled for this tenant"})
 		return
+	case "class":
+		writeAPIErr(w, &apiError{http.StatusConflict, "boost_class", "this machine class is not allowed for the tenant, so it cannot be boosted"})
+		return
 	case "top_rung":
 		writeAPIErr(w, &apiError{http.StatusConflict, "boost_top_rung", "there is no bigger machine size in this class"})
 		return
@@ -283,7 +290,9 @@ func (a workspaceAPI) boost(w http.ResponseWriter, r *http.Request, res *resolve
 		SlotClass: ns.baseClass, ExpiresAt: until.Format(time.RFC3339)}
 	if ns.Source == store.SizeOverrideBoost {
 		// Boosting while a boost is live extends it and does not climb further. It keeps the
-		// box it has even if the recommender has since moved the base.
+		// box it has even if the recommender has since moved the base. A row the stored size has
+		// caught up with is shadowed (ns.Source is not boost): it boosts nothing, so pressing
+		// again is a new boost from the next-start box, not an extension of it.
 		ov.SlotClass, ov.MemMiB = ns.SlotClass, ns.MemBytes/mib
 		if cur, perr := time.Parse(time.RFC3339, ns.Until); perr == nil && cur.After(until) {
 			ov.ExpiresAt = ns.Until
@@ -535,8 +544,10 @@ func (m *manager) overlaySizeOverrides(ctx context.Context, ws store.Workspace, 
 	if !ok {
 		return ns
 	}
-	if exp, perr := time.Parse(time.RFC3339, ov.ExpiresAt); perr != nil || !boostNow().Before(exp) {
-		return ns // expired (or unreadable, which is treated the same): inert, never an error
+	if ov.ExpiresAt != "" {
+		if exp, perr := time.Parse(time.RFC3339, ov.ExpiresAt); perr != nil || !boostNow().Before(exp) {
+			return ns // expired (or unreadable, which is treated the same): inert, never an error
+		}
 	}
 	lim := m.tenantLimitsOf(ctx, ws.TenantID)
 	switch {
@@ -581,4 +592,20 @@ func (m *manager) resolveNextStart(ctx context.Context, ws store.Workspace) next
 func (m *manager) sizeDrifted(ctx context.Context, ws store.Workspace) (store.Workspace, bool) {
 	fresh := m.withResolvedSize(ctx, ws)
 	return fresh, fresh.MemBytes != ws.MemBytes || fresh.SlotClass != ws.SlotClass
+}
+
+// sizeUntil is when the override deciding ws's next-start box ends, zero when none does.
+func (m *manager) sizeUntil(ctx context.Context, ws store.Workspace) time.Time {
+	if ns := m.resolveNextStart(ctx, ws); ns.Until != "" {
+		if t, err := time.Parse(time.RFC3339, ns.Until); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+// boxBigger: restarting would land on a bigger box than the one running. A box of another class is
+// a different machine (and maybe architecture), so a class change counts even at equal memory.
+func boxBigger(next, running *sizingBox) bool {
+	return next.MemMiB > running.MemMiB || (next.MemMiB == running.MemMiB && next.Class != running.Class)
 }

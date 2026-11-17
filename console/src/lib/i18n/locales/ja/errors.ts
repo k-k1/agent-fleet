@@ -9,6 +9,7 @@ export const errors = {
   // Go 側の安定コード（control-plane/errcodes.go, workspace/agent/errcodes.go）と対。
   "err.not_configured": "この環境ではその機能が有効になっていません。運用者に確認してください。",
   "err.boost_disabled": "このテナントではブーストが有効になっていません。",
+  "err.boost_class": "このマシンのクラスはテナントで許可されていないため、ブーストできません。",
   "err.boost_top_rung": "このクラスにはこれより大きいマシンがありません。",
   "err.boost_limit": "ひとつ上のサイズは、管理者が設定した上限を超えています。",
   "err.boost_budget_spent": "今月のブースト時間を使い切りました。",

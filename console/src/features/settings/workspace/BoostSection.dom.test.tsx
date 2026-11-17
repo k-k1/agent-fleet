@@ -106,6 +106,10 @@ describe("BoostView", () => {
     // Pressing the offer opens the confirmation and calls nothing.
     expect(h.ownerDocument.body.textContent).toContain("中で動いているセッションは終了します");
     expect(api).not.toHaveBeenCalledWith("api/workspace/stop", expect.anything());
+    // Confirming is what restarts: stop, then start.
+    const ok = [...h.ownerDocument.querySelectorAll("button")].filter((b) => b.textContent?.includes("大きいマシンで再起動")).pop()!;
+    await act(async () => ok.click());
+    expect(api).toHaveBeenCalledWith("api/workspace/stop", { method: "POST" });
   });
 
   it("says a running workspace keeps its box when the next start is not bigger", async () => {
@@ -154,5 +158,23 @@ describe("BoostView", () => {
     await mount(base({ next_start: { box: big, source: "boost", until: "2026-11-17T18:00:00Z" } }, { active: true, target: big }));
     await act(async () => byText("ブーストを終了")!.click());
     expect(api).toHaveBeenCalledWith("api/workspace/boost", { method: "DELETE" });
+  });
+});
+
+describe("BoostView without a target", () => {
+  it("draws a plain disabled Boost button, never one with an empty box name", async () => {
+    const h = await mount(base({}, { available: false, reason: "top_rung", target: undefined }));
+    const b = byText("ブースト")!;
+    expect(b.disabled).toBe(true);
+    expect(b.textContent).toBe("ブースト");
+    expect(h.textContent).toContain("これより大きいマシンがありません");
+  });
+
+  it("says a class change is a different machine even at the same memory, and warns about the architecture", async () => {
+    const arm: SizingBox = { class: "arm", instance_type: "m8g.large", arch: "arm64", mem_mib: 8192 };
+    const x86: SizingBox = { class: "standard", instance_type: "m7i.large", arch: "x86_64", mem_mib: 8192 };
+    const h = await mount(base({ running: arm, restart_offered: false, next_start: { box: x86, source: "stored" } }));
+    expect(h.textContent).toContain("稼働中のワークスペースは今のマシンのままです");
+    expect(h.textContent).toContain("別の CPU アーキテクチャ");
   });
 });

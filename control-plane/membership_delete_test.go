@@ -45,6 +45,9 @@ func cleanupFixture(t *testing.T) (*store.SQL, *manager, store.Tenant, string) {
 	if err := st.PutUserLimit(ctx, mem.ID, store.UserQuota{MaxSessions: 3}); err != nil {
 		t.Fatalf("user limit: %v", err)
 	}
+	if err := st.PutSizeOverride(ctx, store.SizeOverride{MembershipID: mem.ID, Source: store.SizeOverrideBoost, SlotClass: "standard", MemMiB: 16384}); err != nil {
+		t.Fatalf("size override: %v", err)
+	}
 	if err := st.AddUsage(ctx, mem.ID, tn.ID, "2026-07-01", 3600); err != nil {
 		t.Fatalf("usage: %v", err)
 	}
@@ -126,6 +129,10 @@ func TestDeleteMembershipRemovesTheWorkAndKeepsTheHistory(t *testing.T) {
 	}
 	if _, ok, err := st.GetUserLimit(ctx, memID); err != nil || ok {
 		t.Errorf("the per-membership quota survived (ok=%v err=%v)", ok, err)
+	}
+
+	if _, ok, err := st.GetSizeOverride(ctx, memID, store.SizeOverrideBoost); err != nil || ok {
+		t.Errorf("the size override survived (ok=%v err=%v)", ok, err)
 	}
 
 	// Survivor 1: occupancy.

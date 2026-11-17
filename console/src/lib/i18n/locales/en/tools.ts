@@ -502,6 +502,9 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.pressure_note":
     "The share of time tasks waited on memory (the chart is “some”). For measurement only: nothing is warned, refused or stopped because of it.",
   "boost.title": "Machine size for the next start",
+  "boost.press_plain": "Boost",
+  "boost.reason_class": "This machine class is not allowed for the tenant, so it cannot be boosted.",
+  "boost.arch_change": "The next start is on a different processor architecture, which reinstalls part of your home.",
   "boost.roster_boost": "boosted",
   "boost.roster_auto": "auto",
   "boost.next_start": "Next start",

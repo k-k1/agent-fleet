@@ -151,6 +151,8 @@ func TestBoostResolution(t *testing.T) {
 		"the tenant's highest boost rung is below it": func(t *testing.T, e *boostEnv) {
 			e.setLimits(t, tenantLimits{BoostEnabled: true, BoostMaxMemMiB: 8192})
 		},
+		"the rung is no longer declared":  func(t *testing.T, e *boostEnv) { e.grant(t, "standard", 12288, time.Hour) },
+		"the class is no longer declared": func(t *testing.T, e *boostEnv) { e.grant(t, "gone", 16384, time.Hour) },
 		"the stored size already reaches the rung": func(t *testing.T, e *boostEnv) {
 			e.store(t, store.UserQuota{MemLimit: 16 * gib})
 		},
@@ -531,5 +533,73 @@ func TestLaunchOverrideAndDriftFollowTheBoost(t *testing.T) {
 	}
 	if got := e.m.launchOverride(ctx, e.ws()); got != "" {
 		t.Fatalf("expired: override %q", got)
+	}
+}
+
+func TestBoostNoEndAndShadowedRows(t *testing.T) {
+	ctx := context.Background()
+	t.Run("an empty expiry means no end", func(t *testing.T) {
+		e := newBoostEnv(t, onBoost)
+		if err := e.m.store.PutSizeOverride(ctx, store.SizeOverride{MembershipID: e.memID, Source: store.SizeOverrideBoost, SlotClass: "standard", MemMiB: 16384}); err != nil {
+			t.Fatal(err)
+		}
+		e.now = e.now.Add(1000 * time.Hour)
+		if ns := e.m.resolveNextStart(ctx, e.ws()); ns.Source != "boost" {
+			t.Fatalf("%+v", ns)
+		}
+	})
+
+	t.Run("a boost row the stored size caught up with boosts nothing, so pressing is a new boost", func(t *testing.T) {
+		e := newBoostEnv(t, onBoost)
+		e.grant(t, "standard", 16384, time.Hour)
+		e.store(t, store.UserQuota{MemLimit: 16 * gib}) // the stored size now reaches the row's rung
+		code, out, body := e.call(t, http.MethodPost, ``)
+		if code != 200 || out.NextStart.Box.MemMiB != 32768 || out.Stored.MemMiB != 16384 {
+			t.Fatalf("%d %s", code, body)
+		}
+	})
+
+	t.Run("a base class the tenant does not allow cannot be boosted", func(t *testing.T) {
+		// The tenant allows only a class the deployment no longer declares, so resolveSlotClass
+		// falls back to the deployment default (standard) as a last resort and the overlay would
+		// refuse it: the plan must say so instead of granting a row that never applies.
+		e := newBoostEnv(t, tenantLimits{BoostEnabled: true, AllowedSlotClasses: []string{"retired"}})
+		sz := e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident})
+		if sz.Boost.Available || sz.Boost.Reason != "class" {
+			t.Fatalf("%+v", sz.Boost)
+		}
+		if code, _, body := e.call(t, http.MethodPost, ``); code != 409 || !strings.Contains(body, "boost_class") {
+			t.Fatalf("%d %s", code, body)
+		}
+		if _, ok, _ := e.m.store.GetSizeOverride(ctx, e.memID, store.SizeOverrideBoost); ok {
+			t.Fatal("a dead row was written")
+		}
+	})
+
+	t.Run("a memoized runtime built under a boost is dropped when the boost ends", func(t *testing.T) {
+		e := newBoostEnv(t, onBoost)
+		e.m.rts["M"] = cachedRT{sizeUntil: e.now.Add(time.Hour)}
+		if _, ok := e.m.cachedRTFor("M"); !ok {
+			t.Fatal("dropped too early")
+		}
+		e.now = e.now.Add(2 * time.Hour)
+		if _, ok := e.m.cachedRTFor("M"); ok {
+			t.Fatal("served a runtime sized for an ended boost")
+		}
+	})
+}
+
+func TestRunningBoxFallsBackToTheMemoryCap(t *testing.T) {
+	ctx := context.Background()
+	e := newBoostEnv(t, onBoost)
+	e.grant(t, "standard", 16384, time.Hour)
+	// No SMBIOS reading: the cgroup cap (8192 less the 2048 reserve) names the small rung.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"mem_max":6442450944}`))
+	}))
+	defer srv.Close()
+	sz := e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident, rt: runningFake{endpoint: srv.URL}})
+	if sz.Running == nil || sz.Running.MemMiB != 8192 || !sz.RestartOffered {
+		t.Fatalf("%+v", sz)
 	}
 }

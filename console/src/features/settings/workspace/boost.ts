@@ -20,7 +20,7 @@ export interface SizingBoost {
   active: boolean;
   /** Pressing Boost would do something. Otherwise `reason` says why not. */
   available: boolean;
-  reason?: "unsupported" | "disabled" | "top_rung" | "limit" | "budget_spent";
+  reason?: "unsupported" | "disabled" | "class" | "top_rung" | "limit" | "budget_spent";
   /** The box a press gives, or the box the live boost gave. */
   target?: SizingBox;
   default_hours: number;
@@ -50,11 +50,21 @@ export function boxText(b: SizingBox | undefined): string {
 }
 
 /** The i18n key for why Boost is unavailable; null when it is available. */
-export function boostReasonKey(b: SizingBoost): string | null {
+export type BoostReasonKey =
+  | "boost.reason_disabled"
+  | "boost.reason_class"
+  | "boost.reason_top_rung"
+  | "boost.reason_limit"
+  | "boost.reason_budget_spent"
+  | "boost.reason_unsupported";
+
+export function boostReasonKey(b: SizingBoost): BoostReasonKey | null {
   if (b.available) return null;
   switch (b.reason) {
     case "disabled":
       return "boost.reason_disabled";
+    case "class":
+      return "boost.reason_class";
     case "top_rung":
       return "boost.reason_top_rung";
     case "limit":

@@ -499,6 +499,9 @@ export const tools = {
   "machine.pressure_note":
     "タスクがメモリ待ちで止まっていた時間の割合です（グラフは some）。計測のみで、これを理由に警告・拒否・停止は行いません。",
   "boost.title": "次回起動のマシンサイズ",
+  "boost.press_plain": "ブースト",
+  "boost.reason_class": "このマシンのクラスはテナントで許可されていないため、ブーストできません。",
+  "boost.arch_change": "次回起動は別の CPU アーキテクチャになり、ホームの一部が入れ直しになります。",
   "boost.roster_boost": "ブースト中",
   "boost.roster_auto": "自動",
   "boost.next_start": "次回起動",

@@ -269,6 +269,9 @@ type cachedRT struct {
 	// gitEpoch is the internal git token epoch read before rt's env was built (-1 when
 	// it could not be read). refreshGitTokenForStart compares it with the live one.
 	gitEpoch int64
+	// sizeUntil is when the boost rt was built under ends (zero = no end). A boost ends by the
+	// clock and nothing evicts the memo then, so cachedRTFor treats an entry past this as a miss.
+	sizeUntil time.Time
 }
 
 // resolved is the full per-request resolution: runtime + workspace record +

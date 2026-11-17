@@ -100,8 +100,11 @@ export function BoostView({ d, reload }: { d: WsSizingView; reload: () => Promis
           </Button>
         </p>
       )}
-      {!d.restart_offered && d.running && next && next.box.mem_mib !== d.running.mem_mib && (
+      {!d.restart_offered && d.running && next && (next.box.mem_mib !== d.running.mem_mib || next.box.class !== d.running.class) && (
         <p className="muted ds-note">{tr("boost.applies_next_start")}</p>
+      )}
+      {d.running && next && next.box.arch && d.running.arch && next.box.arch !== d.running.arch && (
+        <p className="muted ds-note">{tr("boost.arch_change")}</p>
       )}
 
       {boost.enabled || boost.active ? (
@@ -124,7 +127,7 @@ export function BoostView({ d, reload }: { d: WsSizingView; reload: () => Promis
                 </Button>
               </>
             ) : (
-              <Button disabled>{tr("boost.press", { box: boxText(boost.target) })}</Button>
+              <Button disabled>{boost.target ? tr("boost.press", { box: boxText(boost.target) }) : tr("boost.press_plain")}</Button>
             )}
             {boost.active && (
               <Button disabled={busy} onClick={cancel}>
@@ -132,7 +135,7 @@ export function BoostView({ d, reload }: { d: WsSizingView; reload: () => Promis
               </Button>
             )}
           </div>
-          {blocked && <p className="muted ds-note">{tr(blocked as never)}</p>}
+          {blocked && <p className="muted ds-note">{tr(blocked)}</p>}
           {boost.budget.monthly_hours > 0 && (
             <p className="muted ds-note">
               {boost.budget.counted

@@ -10,6 +10,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   // --- API errors (mirror of ERR_TEXT + inline fallbacks) ---
   "err.not_configured": "That feature is not enabled on this deployment. Ask your operator.",
   "err.boost_disabled": "Boost is not enabled for this tenant.",
+  "err.boost_class": "This machine class is not allowed for the tenant, so it cannot be boosted.",
   "err.boost_top_rung": "There is no bigger machine in this class.",
   "err.boost_limit": "The next size up is above a limit your administrator set.",
   "err.boost_budget_spent": "This month's boost hours are used up.",
