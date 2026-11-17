@@ -6,6 +6,8 @@
 // takes SourceInput alone and reads an absent `active` as true, so the body always carries the
 // loaded or edited `active`: re-saving an inactive source must never switch it back on.
 import { useEffect, useState } from "react";
+import type { Tenant } from "../parts/adminShared.ts";
+import { useShowView, useViewActive } from "../parts/tabbedViews.tsx";
 import { apiJSON } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
@@ -24,6 +26,8 @@ import {
 } from "../tenant/providedRoutes.ts";
 import {
   ProvidedSpend,
+  Usage,
+  approx,
   Refusal,
   Warnings,
   useGuardedSave,
@@ -34,7 +38,9 @@ import {
 const SOURCE_PATH = "api/admin/provided-routes/deployment";
 
 const sameSource = (a: SourceView | null, b: SourceView | null) =>
-  a === null || b === null ? a === b : a.updated_at === b.updated_at && a.fingerprint === b.fingerprint && a.active === b.active;
+  a === null || b === null
+    ? a === b
+    : a.updated_at === b.updated_at && a.fingerprint === b.fingerprint && a.active === b.active;
 
 function SourceEditor({
   source,
@@ -53,7 +59,13 @@ function SourceEditor({
   // A new registration is meant to be used (the CP's own default); an existing one keeps its state.
   const [active, setActive] = useState(source?.active ?? true);
   const { busy, refusal, setRefusal, submit } = useGuardedSave(onSaved);
-  const body: SourceInput = { name: name.trim(), role_arn: role.trim(), region: region.trim(), models: modelsOf(models), active };
+  const body: SourceInput = {
+    name: name.trim(),
+    role_arn: role.trim(),
+    region: region.trim(),
+    models: modelsOf(models),
+    active,
+  };
   // A first registration has nothing to differ from: it is ready once it has what the CP
   // requires (the role, the one Region and at least one model; only the name is defaulted), so
   // an empty or partial form never offers a Save the CP would refuse.
@@ -173,7 +185,12 @@ export function AdminProvidedSourceView({ onServed }: { onServed?: (served: bool
       ) : (
         <p className="muted">{tr("admin.prov_source_none")}</p>
       )}
-      <SourceEditor key={src ? `${src.updated_at}:${src.fingerprint}:${src.active}` : "new"} source={src} peek={peek} onSaved={reload} />
+      <SourceEditor
+        key={src ? `${src.updated_at}:${src.fingerprint}:${src.active}` : "new"}
+        source={src}
+        peek={peek}
+        onSaved={reload}
+      />
     </section>
   );
 }
@@ -278,5 +295,101 @@ export function AdminProvidedGrantView({ slug }: { slug: string }) {
         </>
       )}
     </div>
+  );
+}
+
+// The grant table reads one tenant's provided view per row (no CP list route; study §7 decision 9),
+// so it waits until the Provided models view is first opened and then reads a page at a time.
+const GRANT_PAGE = 20;
+
+/** GrantRow: one tenant's grant and month, read-only; editing stays on the per-tenant view. */
+function GrantRow({ tenant, onOpen }: { tenant: Tenant; onOpen: (slug: string) => void }) {
+  const tr = useT();
+  const path = `api/admin/tenants/${encodeURIComponent(tenant.slug)}/provided-routes/deployment`;
+  const { load } = useProvided(path, parseProvidedTenant);
+  const v = load?.state === "ok" ? load.value : null;
+  return (
+    <tr data-tenant={tenant.slug}>
+      <td>{tenant.name || tenant.slug}</td>
+      {!load ? (
+        <td colSpan={3} className="muted">
+          {tr("common.loading")}
+        </td>
+      ) : !v ? (
+        <td colSpan={3} className="admin-hint warn">
+          {(load.state === "failed" && load.reason) || tr("admin.prov_load_failed")}
+        </td>
+      ) : (
+        <>
+          <td data-label={tr("admin.prov_col_grant")}>
+            <span className={v.granted ? "mpol-ok" : "muted"}>
+              {tr(v.granted ? "admin.prov_grant_on" : "admin.prov_grant_off")}
+            </span>
+          </td>
+          <td data-label={tr("admin.prov_ceiling")}>{v.ceiling_micro === null ? "—" : approx(v.ceiling_micro)}</td>
+          <td data-label={tr("tenant.prov_col_use")}>
+            <Usage
+              used={v.spent_micro + v.reserved_micro}
+              of={v.granted ? v.ceiling_micro : null}
+              spent={v.spent_micro}
+            />
+          </td>
+        </>
+      )}
+      <td>
+        <button type="button" className="btn xs" onClick={() => onOpen(tenant.slug)}>
+          {tr("admin.model_access_go_change")}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+/** AdminProvidedGrantTable: every tenant's grant, pool and month on the Provided models view.
+ *  A row's button opens that tenant on the per-tenant view, where the grant is edited. */
+export function AdminProvidedGrantTable({ tenants, onOpen }: { tenants: Tenant[]; onOpen: (slug: string) => void }) {
+  const tr = useT();
+  const active = useViewActive();
+  const [opened, setOpened] = useState(false);
+  const [shown, setShown] = useState(GRANT_PAGE);
+  const showTenants = useShowView("tenants");
+  useEffect(() => {
+    if (active) setOpened(true);
+  }, [active]);
+  if (tenants.length === 0) return null;
+  const open = (slug: string) => {
+    onOpen(slug);
+    showTenants?.();
+  };
+  return (
+    <section className="admin-panel model-access-grants">
+      <h4>{tr("admin.prov_grants_title")}</h4>
+      <p className="admin-hint">{tr("admin.prov_grants_note")}</p>
+      {opened && (
+        <>
+          <table className="admin-table prov-grants">
+            <thead>
+              <tr>
+                <th>{tr("admin.model_access_tenant")}</th>
+                <th>{tr("admin.prov_col_grant")}</th>
+                <th>{tr("admin.prov_ceiling")}</th>
+                <th>{tr("tenant.prov_col_use")}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {tenants.slice(0, shown).map((t) => (
+                <GrantRow key={t.slug} tenant={t} onOpen={open} />
+              ))}
+            </tbody>
+          </table>
+          {tenants.length > shown && (
+            <button type="button" className="btn sm" onClick={() => setShown((n) => n + GRANT_PAGE)}>
+              {tr("admin.prov_grants_more", { n: Math.min(GRANT_PAGE, tenants.length - shown) })}
+            </button>
+          )}
+        </>
+      )}
+    </section>
   );
 }

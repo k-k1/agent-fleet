@@ -12,15 +12,25 @@ import { useT } from "../../../lib/i18n/index.ts";
 import type { Tenant } from "../parts/adminShared.ts";
 import { RuleEditor, RuleSummary } from "../tenant/routePolicyRuleEditor.tsx";
 import { HiddenList } from "../tenant/routePolicyHidden.tsx";
-import { AdminProvidedGrantView, AdminProvidedSourceView } from "./adminProvidedRoutes.tsx";
-import { parseDeploymentPolicy, routeIds, type DeploymentPolicyView } from "../tenant/routePolicyRule.ts";
+import { AdminProvidedGrantTable, AdminProvidedGrantView, AdminProvidedSourceView } from "./adminProvidedRoutes.tsx";
+import { layerClauses } from "../tenant/routePolicyOverview.tsx";
+import { summarizeLayer } from "../tenant/routePolicySummary.ts";
+import { useProvided } from "../tenant/tenantProvidedRoutes.tsx";
+import { parseSource } from "../tenant/providedRoutes.ts";
+import {
+  parseDeploymentPolicy,
+  routeIds,
+  type DeploymentPolicyView,
+  type RouteRule,
+} from "../tenant/routePolicyRule.ts";
 import { PolicyLimits, useTenantRoutePolicy } from "../tenant/tenantModelAccess.tsx";
-import { TabbedViews } from "../parts/tabbedViews.tsx";
+import { TabbedViews, useShowView } from "../parts/tabbedViews.tsx";
 
 // The variable the ceiling is read from (routepolicy.EnvCeiling), named when the wire's source is
 // "deployment", the only source the CP has; any other source is shown as the CP spells it.
 const CEILING_ENV = "AF_MODEL_ROUTE_CEILING";
 const PATH = "api/admin/route-policy";
+const SOURCE_PATH = "api/admin/provided-routes/deployment";
 
 function useDeploymentRoutePolicy() {
   const tr = useT();
@@ -89,6 +99,92 @@ function TenantCap({ slug }: { slug: string }) {
   );
 }
 
+/** OverviewLink: a button that opens another view of the page; nothing outside the tabbed page. */
+function OverviewLink({ view, label }: { view: string; label: string }) {
+  const show = useShowView(view);
+  if (!show) return null;
+  return (
+    <button type="button" className="btn sm" data-goto={view} onClick={show}>
+      {label}
+    </button>
+  );
+}
+
+/** AdminOverview: who decides what across the deployment, top first, in plain lines (#4380 P-7):
+ *  the operator setting, the restriction for all tenants, the per-tenant restrictions, and the
+ *  provided-route source. Each points at the view where it is changed. */
+function AdminOverview({ view }: { view: DeploymentPolicyView }) {
+  const tr = useT();
+  const words = (rule: RouteRule, ceiling: boolean) =>
+    layerClauses(tr, summarizeLayer(rule, ceiling), false).join(tr("tenant.mpol_clause_sep"));
+  return (
+    <>
+      <p className="admin-hint">{tr("admin.model_access_note")}</p>
+      <section className="admin-panel model-access-ceiling model-access-who">
+        <h4>{tr("admin.model_access_who_title")}</h4>
+        <ol className="mpol-who">
+          <li data-layer="ceiling">
+            <strong>{tr("admin.mpol_layer_ceiling")}</strong>{" "}
+            <span>{view.ceiling.raw ? words(view.ceiling.rule, true) : tr("admin.model_access_ceiling_none")}</span>
+            <p className="admin-hint">
+              {view.ceiling.source === "deployment"
+                ? tr("admin.model_access_ceiling_source", { env: CEILING_ENV })
+                : tr("admin.model_access_ceiling_source_other", { source: view.ceiling.source })}
+            </p>
+            {view.ceiling.raw && (
+              <details className="mpol-raw-fold">
+                <summary>{tr("admin.model_access_ceiling_raw")}</summary>
+                <code className="mpol-raw">{view.ceiling.raw}</code>
+                <RuleSummary rule={view.ceiling.rule} ceiling />
+              </details>
+            )}
+          </li>
+          <li data-layer="deployment">
+            <strong>{tr("admin.mpol_layer_deployment")}</strong> <span>{words(view.deployment.rule, false)}</span>{" "}
+            <OverviewLink view="deployment" label={tr("admin.model_access_go_change")} />
+          </li>
+          <li data-layer="tenant_cap">
+            <strong>{tr("admin.model_access_who_caps")}</strong> <span>{tr("admin.model_access_who_caps_note")}</span>{" "}
+            <OverviewLink view="tenants" label={tr("admin.model_access_go_tenants")} />
+          </li>
+        </ol>
+      </section>
+      <ProvidedSourceLine />
+    </>
+  );
+}
+
+/** ProvidedSourceLine: the provided-route source's state for the overview. Nothing where the CP
+ *  does not serve provided routes; a failed read says so and claims no state. */
+function ProvidedSourceLine() {
+  const tr = useT();
+  const { load } = useProvided(SOURCE_PATH, parseSource);
+  if (!load || load.state === "off") return null;
+  const src = load.state === "ok" ? load.value.source : undefined;
+  return (
+    <section className="admin-panel model-access-provided-line" data-testid="overview-source">
+      <h4>{tr("admin.model_access_view_provided")}</h4>
+      <p>
+        {load.state === "failed" ? (
+          <span className="admin-hint warn" role="alert">
+            {load.reason ?? tr("admin.prov_load_failed")}
+          </span>
+        ) : src === null ? (
+          <span className="muted">{tr("admin.prov_source_none")}</span>
+        ) : (
+          <span>
+            {tr("admin.model_access_source_line", { name: src!.name, region: src!.region })}{" "}
+            <span className={src!.active ? "mpol-ok" : "mpol-no"}>
+              {tr(src!.active ? "admin.prov_source_on" : "admin.prov_source_off")}
+            </span>
+          </span>
+        )}{" "}
+        <OverviewLink view="provided" label={tr("admin.model_access_go_open")} />
+      </p>
+    </section>
+  );
+}
+
 export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
   const tr = useT();
   const { view, failed, load } = useDeploymentRoutePolicy();
@@ -107,27 +203,7 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
     );
   }
 
-  const overview = (
-    <>
-      <p className="admin-hint">{tr("admin.model_access_note")}</p>
-      <section className="admin-panel model-access-ceiling">
-        <h4>{tr("admin.mpol_layer_ceiling")}</h4>
-        <p className="admin-hint">
-          {view.ceiling.source === "deployment"
-            ? tr("admin.model_access_ceiling_source", { env: CEILING_ENV })
-            : tr("admin.model_access_ceiling_source_other", { source: view.ceiling.source })}
-        </p>
-        {view.ceiling.raw ? (
-          <p>
-            <code className="mpol-raw">{view.ceiling.raw}</code>
-          </p>
-        ) : (
-          <p className="muted">{tr("admin.model_access_ceiling_none")}</p>
-        )}
-        <RuleSummary rule={view.ceiling.rule} ceiling />
-      </section>
-    </>
-  );
+  const overview = <AdminOverview view={view} />;
   const deployment = (
     <section className="admin-panel model-access-deployment">
       <h4>
@@ -148,6 +224,8 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
       />
     </section>
   );
+  // From a provided grant's row: open that tenant on the per-tenant view.
+  const openTenant = (t: string) => setSlug(t);
   const perTenant = (
     <section className="admin-panel model-access-caps">
       <h4>{tr("admin.mpol_layer_tenant_cap")}</h4>
@@ -190,7 +268,12 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
             label: tr("admin.model_access_view_provided"),
             // The deployment's provided-route source (ADR 0129): no tab where the CP does not serve it.
             shown: provided,
-            node: <AdminProvidedSourceView onServed={setProvided} />,
+            node: (
+              <>
+                <AdminProvidedSourceView onServed={setProvided} />
+                <AdminProvidedGrantTable tenants={tenants} onOpen={openTenant} />
+              </>
+            ),
           },
         ]}
       />

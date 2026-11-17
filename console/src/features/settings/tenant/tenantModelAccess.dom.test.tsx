@@ -628,6 +628,10 @@ describe("model access views", () => {
     expect(host!.querySelector('[data-testid="prov-rule-stops"]')!.textContent).toContain(
       "止めているのは: このテナント",
     );
+    // And opens the Restrictions view, where it is changed.
+    await click(tab("提供モデルと予算")!);
+    await click(host!.querySelector<HTMLButtonElement>('[data-testid="prov-rule-stops"] button')!);
+    expect(shown(host!.querySelector(".model-access-rule")!)).toBe(true);
   });
 
   it("keeps D12's and D13's sentences on screen on every view", async () => {

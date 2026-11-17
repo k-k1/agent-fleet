@@ -105,7 +105,8 @@ describe("admin model access", () => {
     const c = within(".model-access-ceiling");
     expect(c.textContent).toContain("AF_MODEL_ROUTE_CEILING");
     expect(c.querySelector("code")?.textContent).toBe("classes=-subscription");
-    expect(c.querySelectorAll("input, textarea, button").length).toBe(0);
+    // The operator's line carries no control: the setting cannot be changed here.
+    expect(c.querySelector('[data-layer="ceiling"]')!.querySelectorAll("input, textarea, button").length).toBe(0);
   });
 
   it("pairs every label in a rule summary with its value, unrestricted layers included", async () => {
@@ -473,5 +474,121 @@ describe("under the operator setting", () => {
       deny: ["cursor-login"],
       classes: ["member-key", "member-cloud", "provided", "self-hosted"],
     });
+  });
+});
+
+// #4380 P-7: the overview says who decides what in plain lines and links to where each is changed;
+// the provided view lists every tenant's grant, read only once that view is first opened.
+describe("admin overview and grants", () => {
+  const SOURCE = (active = true) => ({
+    source: {
+      id: "S1",
+      binding: "S1#fp1",
+      name: "Shared Bedrock",
+      role_arn: "arn:aws:iam::000000000000:role/route",
+      region: "us-east-1",
+      models: ["anthropic.claude-haiku"],
+      fingerprint: "fp1",
+      policy_version: 1,
+      active,
+      updated_at: "2026-11-16T10:00:00Z",
+    },
+  });
+  const GRANT = (granted: boolean) => ({
+    granted,
+    ceiling_micro: granted ? 500_000_000 : null,
+    members_only: false,
+    member_default_micro: 0,
+    month: "2026-11",
+    spent_micro: granted ? 187_150_000 : 0,
+    reserved_micro: 0,
+    members: [],
+    reservations: [],
+    floor_micro: 0,
+  });
+  const serve = (source: unknown) => {
+    const base = api.getMockImplementation()!;
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/provided-routes/deployment") return Promise.resolve(source);
+      const m = /^api\/admin\/tenants\/([^/]+)\/provided-routes\/deployment$/.exec(path);
+      if (m) return Promise.resolve(GRANT(m[1] === "acme"));
+      return base(path);
+    });
+  };
+  const tab = (text: string) =>
+    Array.from(host!.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent?.startsWith(text))!;
+  const shown = (el: Element) => el.closest("[hidden]") === null;
+  const grantReads = () => api.mock.calls.filter((c) => /tenants\/[^/]+\/provided-routes/.test(String(c[0]))).length;
+
+  it("says who decides what in plain lines and opens the view where each is changed", async () => {
+    serve(SOURCE());
+    await mount();
+    await flush();
+    const who = within(".model-access-who");
+    expect(who.querySelector('[data-layer="ceiling"] > span')!.textContent).toBe(
+      "認証情報の種類 5 のうち 4（サブスクリプション・ログイン 以外）",
+    );
+    expect(who.querySelector('[data-layer="deployment"] > span')!.textContent).toContain(
+      "送り先 13 のうち 2: Anthropic・Amazon Bedrock",
+    );
+    await click(who.querySelector<HTMLButtonElement>('[data-goto="deployment"]')!);
+    expect(shown(within(".model-access-deployment"))).toBe(true);
+    await click(tab("概要"));
+    expect(within('[data-testid="overview-source"]').textContent).toContain(
+      "接続元: Shared Bedrock（us-east-1） 使用中",
+    );
+    await click(within('[data-testid="overview-source"]').querySelector<HTMLButtonElement>('[data-goto="provided"]')!);
+    expect(shown(within(".model-access-provided-source"))).toBe(true);
+  });
+
+  it("says nothing of a source where the CP has none, and says when it could not be read", async () => {
+    await mount();
+    await flush();
+    expect(host!.querySelector('[data-testid="overview-source"]')).toBeNull();
+    act(() => root?.unmount());
+    host?.remove();
+    serve({ error: { code: "internal", message: "boom", status: 500 } });
+    await mount();
+    await flush();
+    expect(within('[data-testid="overview-source"] [role=alert]').textContent).toContain("boom");
+  });
+
+  it("reads the grants only once the provided view is opened, and opens a tenant from its row", async () => {
+    serve(SOURCE(false));
+    await mount();
+    await flush();
+    expect(within('[data-testid="overview-source"]').textContent).toContain("停止中");
+    // The per-tenant view reads the first tenant's grant; the table has read nothing yet.
+    const before = grantReads();
+    expect(host!.querySelector(".prov-grants")).toBeNull();
+    await click(tab("提供モデル"));
+    await flush();
+    expect(grantReads()).toBe(before + 2);
+    const row = (slug: string) => within(`.prov-grants [data-tenant="${slug}"]`);
+    expect(row("acme").textContent).toContain("許可済み");
+    expect(row("acme").textContent).toContain("≈ $500.00 のうち ≈ $187.15");
+    expect(row("beta").textContent).toContain("未許可");
+    await click(row("beta").querySelector("button")!);
+    expect(shown(within(".model-access-caps"))).toBe(true);
+    expect((within(".model-access-caps select") as HTMLSelectElement).value).toBe("beta");
+  });
+
+  it("reads twenty tenants at a time", async () => {
+    serve(SOURCE());
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const many = Array.from({ length: 25 }, (_, i) => ({ slug: `t${i}`, name: `T${i}` }));
+    await act(async () => {
+      root!.render(<AdminModelAccessView tenants={many} />);
+    });
+    await flush();
+    await flush();
+    await click(tab("提供モデル"));
+    await flush();
+    expect(host!.querySelectorAll(".prov-grants tbody tr").length).toBe(20);
+    await click(btnIn(within(".model-access-grants"), "さらに 5 件表示"));
+    await flush();
+    expect(host!.querySelectorAll(".prov-grants tbody tr").length).toBe(25);
   });
 });
