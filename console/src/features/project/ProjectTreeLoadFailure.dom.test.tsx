@@ -143,3 +143,18 @@ describe("repos rail on a failed load", () => {
     expect(hasAdd()).toBe(true);
   });
 });
+
+describe("repos view header", () => {
+  it("keeps the title's width: every header action is icon-only, Add included", async () => {
+    useReposStore.setState({ repos: REPOS, loadState: "ok" });
+    await render();
+    const actions = [...host.querySelectorAll(".ui-section-actions button")];
+    expect(actions.length).toBeGreaterThan(0);
+    // A labelled button here squeezed the title down to "REPO…" at the default pane width.
+    for (const b of actions) expect(b.textContent?.trim()).toBe("");
+    const add = actions.find((b) => b.getAttribute("aria-label") === "Add");
+    expect(add).toBeTruthy();
+    // The workspace is running (beforeEach), so the name carries no stopped-state reason.
+    expect(add!.getAttribute("title")).toBe("Add");
+  });
+});

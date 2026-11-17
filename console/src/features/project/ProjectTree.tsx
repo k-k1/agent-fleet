@@ -147,16 +147,14 @@ export const ProjectTree = memo(function ProjectTree() {
       count={wset ? countRepoNodes(scoped) : repos.length}
       actions={
         <>
-          <Button
-            small
-            variant="ghost"
+          {/* Icon-only: the labelled button took the width the view's title needs (the title was
+              cut to "REPO…"); the label stays as the accessible name and tooltip. */}
+          <IconButton
             icon="add"
-            title={running ? tr("pj.clone") : tr("pj.clone_ws_stopped")}
+            label={running ? tr("pj.clone") : tr("pj.clone_ws_stopped")}
             disabled={!running}
             onClick={() => setShowClone((s) => !s)}
-          >
-            {tr("pj.clone")}
-          </Button>
+          />
           <IconButton icon="refresh" label={tr("pj.refresh")} onClick={() => void refreshRepos()} />
           <IconButton icon="broadcast" label={tr("share.list_title")} onClick={() => setShowShares(true)} />
           <span className="proj-head-sep" aria-hidden="true" />
