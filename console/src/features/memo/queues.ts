@@ -7,7 +7,18 @@
 // so the owner can change a word with one line.
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import { browserTimeZone, isValidTimeZone } from "../../lib/intl.ts";
-import type { Memo, MemoDelivery, MemoQueue, MemoQueueInput, MemoQueueWaiting, MemoQueuesWire, MemoWaitingReason } from "../../types/memo.ts";
+import type {
+  Memo,
+  MemoDelivery,
+  MemoQueue,
+  MemoQueueInput,
+  MemoQueueWaiting,
+  MemoQueuesWire,
+  MemoTidyBlocked,
+  MemoTidyRun,
+  MemoTidyRunsWire,
+  MemoWaitingReason,
+} from "../../types/memo.ts";
 
 // Limits the Control Plane enforces (control-plane/memo_queue.go). The form checks them first
 // so a mistake is named next to its field; the Control Plane stays the authority.
@@ -19,6 +30,8 @@ export const QUEUE_TASK_HOURS_MAX = 72;
 export const QUEUE_FIRES_PER_DAY_MAX = 200;
 export const QUEUE_WINDOW_MAX_MINUTES = 24 * 60;
 export const QUEUE_OPEN_AFTER_MAX = 100;
+// Most categories one tidy may move a message to (control-plane/store MaxTidyDestinations).
+export const QUEUE_TIDY_DESTINATIONS_MAX = 10;
 // What a row that never had these gets (the Control Plane's own defaults).
 export const QUEUE_TASK_HOURS_DEFAULT = 12;
 export const QUEUE_FIRES_PER_DAY_DEFAULT = 20;
@@ -27,6 +40,7 @@ export const QUEUE_WINDOW_DEFAULT_MINUTES = 60;
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const num = (v: unknown, d: number): number => (typeof v === "number" && Number.isFinite(v) ? v : d);
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
 
 const WAITING_REASONS: readonly string[] = [
   "tenant_off",
@@ -41,6 +55,8 @@ const WAITING_REASONS: readonly string[] = [
   "backoff",
   "usage_limit",
   "no_place",
+  "tidying",
+  "no_tidy",
 ] satisfies MemoWaitingReason[];
 
 /** The `waiting` of a queue: absent from an older Control Plane, and a reason this Console does
@@ -74,6 +90,8 @@ function readQueue(v: unknown): MemoQueue | null {
     spendCapUsd: num(v.spendCapUsd, 0),
     worktree: v.worktree !== false,
     acceptOwnSessions: v.acceptOwnSessions === true,
+    tidy: v.tidy === true,
+    tidyDestinations: strings(v.tidyDestinations),
     maxActive: num(v.maxActive, 2),
     batch: num(v.batch, 1),
     maxTaskHours: num(v.maxTaskHours, QUEUE_TASK_HOURS_DEFAULT),
@@ -88,6 +106,7 @@ function readQueue(v: unknown): MemoQueue | null {
     draining: v.draining === true,
     noReportAt: str(v.noReportAt),
     noRefsAt: str(v.noRefsAt),
+    noTidyAt: str(v.noTidyAt),
     enabled: v.enabled === true,
     generation: num(v.generation, 0),
     createdAt: str(v.createdAt),
@@ -145,7 +164,7 @@ export function readDeliveries(raw: unknown): MemoDelivery[] | null {
 
 /** The line that says why a category with notes waiting starts nothing: a catalogue key and its
  *  parameters. Null when there is nothing to say: no `waiting` (a run can start, nothing waits, an
- *  older Control Plane), and for a pause and a workspace that has to be restarted (for runs, or for notes that point at an item), which have
+ *  older Control Plane), and for a pause and a workspace that has to be restarted (for runs, for notes that point at an item, or for notes a tidy made), which have
  *  notices of their own that must not be said twice. `at` writes a time the way the screen does. */
 export function waitingWords(
   q: Pick<MemoQueue, "waiting">,
@@ -153,7 +172,7 @@ export function waitingWords(
   agentName: (kind: string) => string,
 ): { key: MsgKey; params?: Record<string, string | number> } | null {
   const w = q.waiting;
-  if (!w || w.reason === "paused" || w.reason === "no_report" || w.reason === "no_references") return null;
+  if (!w || w.reason === "paused" || w.reason === "no_report" || w.reason === "no_references" || w.reason === "no_tidy") return null;
   const when = w.until && !Number.isNaN(Date.parse(w.until)) ? { at: at(w.until) } : null;
   switch (w.reason) {
     case "tenant_off":
@@ -174,6 +193,8 @@ export function waitingWords(
       return { key: "memo.waiting_usage_limit", params: { agent: agentName(w.detail?.agentKind ?? "") } };
     case "no_place":
       return { key: w.detail?.by === "member" ? "memo.waiting_no_place_member" : "memo.waiting_no_place" };
+    case "tidying":
+      return { key: "memo.waiting_tidying" };
   }
 }
 
@@ -268,6 +289,8 @@ export interface QueueDraft {
   spendCapUsd: string;
   worktree: boolean;
   acceptOwnSessions: boolean;
+  tidy: boolean;
+  tidyDestinations: string[];
   maxActive: string;
   batch: string;
   runMode: RunMode;
@@ -293,6 +316,8 @@ export function draftOf(q: MemoQueue | undefined): QueueDraft {
     spendCapUsd: String(q?.spendCapUsd ?? 0),
     worktree: q?.worktree ?? true,
     acceptOwnSessions: q?.acceptOwnSessions ?? false,
+    tidy: q?.tidy ?? false,
+    tidyDestinations: q?.tidyDestinations ?? [],
     maxActive: String(q?.maxActive ?? 2),
     batch: String(q?.batch ?? 1),
     runMode: mode,
@@ -318,7 +343,8 @@ export type DraftField =
   | "tz"
   | "openAfter"
   | "maxFiresPerDay"
-  | "maxTaskHours";
+  | "maxTaskHours"
+  | "tidyDestinations";
 export type DraftErrors = Partial<Record<DraftField, MsgKey>>;
 
 const wholeIn = (s: string, lo: number, hi: number): boolean => {
@@ -340,6 +366,7 @@ export function draftErrors(d: QueueDraft): DraftErrors {
   if (!wholeIn(d.batch, 1, QUEUE_BATCH_MAX)) e.batch = "memo.q_err_batch";
   if (!wholeIn(d.maxFiresPerDay, 1, QUEUE_FIRES_PER_DAY_MAX)) e.maxFiresPerDay = "memo.q_err_fires";
   if (!wholeIn(d.maxTaskHours, 1, QUEUE_TASK_HOURS_MAX)) e.maxTaskHours = "memo.q_err_task_hours";
+  if (d.tidyDestinations.length > QUEUE_TIDY_DESTINATIONS_MAX) e.tidyDestinations = "memo.q_err_tidy_destinations";
   if (d.runMode === "window") {
     if (d.openCron.trim().split(/\s+/).filter(Boolean).length !== 5) e.openCron = "memo.q_err_cron";
     if (!wholeIn(d.openMinutes, 1, QUEUE_WINDOW_MAX_MINUTES)) e.openMinutes = "memo.q_err_window";
@@ -365,6 +392,10 @@ export function draftBody(d: QueueDraft, route: string): MemoQueueInput {
     spendCapUsd: Number(d.spendCapUsd.trim()),
     worktree: d.worktree,
     acceptOwnSessions: d.acceptOwnSessions,
+    tidy: d.tidy,
+    // Always the current choice, also with the switch off: a PUT replaces the row, and an omitted
+    // list would forget what the member picked.
+    tidyDestinations: d.tidyDestinations,
     maxActive: Number(d.maxActive.trim()),
     batch: Number(d.batch.trim()),
     maxTaskHours: Number(d.maxTaskHours.trim()),
@@ -481,6 +512,189 @@ export function confirmShown(prev: ReadonlyMap<string, ShownNote>, items: readon
     if (r && r.changed && m.contentHash) next.set(keyOf(m.id), { ...r, ack: m.contentHash });
   }
   return next;
+}
+
+// ---- tidying ---------------------------------------------------------------------------------
+
+/** What a row says about a tidy run's part in a message: a catalogue key and its parameters. */
+export interface TidyMark {
+  key: MsgKey;
+  params?: Record<string, string | number>;
+  /** The longer explanation, for a tooltip. */
+  title?: MsgKey;
+}
+
+/** The marks a message carries from a tidy run, in the order a row shows them: that it was made from
+ *  other notes (and whose), that it was moved from another category. The replaced state and the
+ *  release mark have their own words. An id list that is empty reads as not derived. */
+export function tidyMarks(m: Pick<Memo, "derivedFrom" | "sourceProvenance" | "producer" | "tidyFrom">): TidyMark[] {
+  const out: TidyMark[] = [];
+  const count = m.derivedFrom?.length ?? 0;
+  if (count > 0) {
+    const who = (m.producer ?? "").trim();
+    switch (m.sourceProvenance) {
+      case "member":
+        out.push({ key: "memo.tidy_derived_member", params: { count } });
+        break;
+      case "workspace":
+        out.push(who ? { key: "memo.tidy_derived_session", params: { count, name: who } } : { key: "memo.tidy_derived_session_unknown", params: { count } });
+        break;
+      case "mcp":
+        out.push(who ? { key: "memo.tidy_derived_mcp", params: { count, name: who } } : { key: "memo.tidy_derived_mcp_unknown", params: { count } });
+        break;
+      default:
+        out.push({ key: "memo.tidy_derived", params: { count } });
+    }
+  }
+  for (const k of out) k.title = "memo.tidy_derived_title";
+  const from = m.tidyFrom;
+  if (from && from.id) {
+    // A category that is gone, or an answer that carries no names, still says that it was moved.
+    out.push(from.name ? { key: "memo.tidy_moved_from", params: { name: from.repo ? from.repo + " / " + from.name : from.name }, title: "memo.tidy_moved_title" } : { key: "memo.tidy_moved_unknown", title: "memo.tidy_moved_title" });
+  }
+  return out;
+}
+
+/** The released-by-tidy mark sits next to the "accepted without approval" one: only a pending
+ *  message was put there by a run. */
+export const releasedByTidy = (m: Pick<Memo, "state" | "releasedBy">): boolean => m.state === "pending" && m.releasedBy === "tidy";
+
+/** A replaced note is read-only: the Control Plane locks it, so the row offers no edit or send. */
+export const isSuperseded = (m: Pick<Memo, "state">): boolean => m.state === "superseded";
+
+const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+const count0 = (v: unknown): number => Math.max(0, Math.trunc(num(v, 0)));
+
+function readBlocked(v: unknown): MemoTidyBlocked[] {
+  if (!Array.isArray(v)) return [];
+  const out: MemoTidyBlocked[] = [];
+  for (const b of v) if (isObj(b) && typeof b.id === "string") out.push({ id: b.id, why: str(b.why) });
+  return out;
+}
+
+function readTidyRun(v: unknown): MemoTidyRun | null {
+  if (!isObj(v) || typeof v.id !== "string" || !v.id) return null;
+  return {
+    id: v.id,
+    trigger: str(v.trigger),
+    state: str(v.state),
+    reason: str(v.reason),
+    createdAt: str(v.createdAt),
+    finishedAt: str(v.finishedAt),
+    undoneAt: str(v.undoneAt),
+    merged: count0(v.merged),
+    split: count0(v.split),
+    moved: count0(v.moved),
+    held: count0(v.held),
+    sourceIds: strList(v.sourceIds),
+    resultIds: strList(v.resultIds),
+    movedIds: strList(v.movedIds),
+    undoable: v.undoable === true,
+    blocked: readBlocked(v.blocked),
+  };
+}
+
+/** GET .../tidy-runs, normalised. null = the read failed (an error body, a Control Plane without it). */
+export function readTidyRuns(raw: unknown): MemoTidyRunsWire | null {
+  if (!isObj(raw) || raw.error) return null;
+  const runs: MemoTidyRun[] = [];
+  for (const r of Array.isArray(raw.runs) ? raw.runs : []) {
+    const run = readTidyRun(r);
+    if (run) runs.push(run);
+  }
+  return { runs, usedToday: count0(raw.usedToday), dailyCap: count0(raw.dailyCap) };
+}
+
+const TIDY_STATE_KEYS: Record<string, MsgKey> = {
+  running: "memo.tidy_state_running",
+  applied: "memo.tidy_state_applied",
+  kept: "memo.tidy_state_kept",
+  dropped: "memo.tidy_state_dropped",
+  skipped: "memo.tidy_state_skipped",
+  failed: "memo.tidy_state_failed",
+  undone: "memo.tidy_state_undone",
+};
+
+/** The word for a run's state; null for one this Console does not know. */
+export const tidyStateKey = (state: string): MsgKey | null => TIDY_STATE_KEYS[state] ?? null;
+
+// The reasons a run ends without a change that are not a refusal of the model's reply.
+const TIDY_REASON_KEYS: Record<string, MsgKey> = {
+  stale_input: "memo.tidy_why_stale_input",
+  no_queue: "memo.tidy_why_no_queue",
+  takeover: "memo.tidy_why_takeover",
+  no_marker: "memo.tidy_why_no_marker",
+  agent_unreachable: "memo.tidy_why_unreachable",
+  wake_failed: "memo.tidy_why_wake_failed",
+  no_workspace: "memo.tidy_why_no_workspace",
+  timeout: "memo.tidy_why_timeout",
+  call_failed: "memo.tidy_why_call_failed",
+  agent_error: "memo.tidy_why_call_failed",
+};
+// The Control Plane's checks of the model's reply (control-plane/internal/memotidy): one word for
+// all of them, since the member cannot act on which rule it broke.
+const TIDY_REFUSED: readonly string[] = [
+  "bad_shape",
+  "too_many_operations",
+  "unknown_id",
+  "duplicate_id",
+  "merge_sources",
+  "split_parts",
+  "not_mergeable",
+  "mixed_group",
+  "bad_text",
+  "text_too_long",
+  "text_envelope",
+  "text_growth",
+  "bad_destination",
+  "move_self",
+  "duplicate_ref",
+  "already_moved",
+];
+
+/** Why a run that changed nothing ended, in words; null when it has no reason or one this Console
+ *  does not know (better silent than an identifier). */
+export function tidyReasonKey(r: Pick<MemoTidyRun, "state" | "reason">): MsgKey | null {
+  if (!r.reason || r.state === "applied" || r.state === "kept" || r.state === "undone") return null;
+  if (TIDY_REASON_KEYS[r.reason]) return TIDY_REASON_KEYS[r.reason];
+  return TIDY_REFUSED.includes(r.reason) ? "memo.tidy_why_refused" : null;
+}
+
+/** What an applied run did, as the words of the parts that are not zero. */
+export function tidyCountMarks(r: Pick<MemoTidyRun, "merged" | "split" | "moved" | "held">): TidyMark[] {
+  const out: TidyMark[] = [];
+  if (r.merged > 0) out.push({ key: "memo.tidy_n_merged", params: { count: r.merged } });
+  if (r.split > 0) out.push({ key: "memo.tidy_n_split", params: { count: r.split } });
+  if (r.moved > 0) out.push({ key: r.held > 0 ? "memo.tidy_n_moved_held" : "memo.tidy_n_moved", params: { count: r.moved, held: r.held } });
+  return out;
+}
+
+const UNDO_WHY_KEYS: Record<string, MsgKey> = {
+  claimed: "memo.tidy_block_claimed",
+  sent: "memo.tidy_block_sent",
+  changed: "memo.tidy_block_changed",
+  gone: "memo.tidy_block_gone",
+  later_run: "memo.tidy_block_later_run",
+  duplicate_ref: "memo.tidy_block_duplicate_ref",
+};
+
+/** The messages that keep a run from being undone, grouped by reason (first seen first), each
+ *  with its words. A reason this Console does not know reads as changed: the nearest true word. */
+export function tidyBlockedGroups(blocked: readonly MemoTidyBlocked[]): { why: string; key: MsgKey; count: number }[] {
+  const by = new Map<string, number>();
+  for (const b of blocked) {
+    const why = UNDO_WHY_KEYS[b.why] ? b.why : "changed";
+    by.set(why, (by.get(why) ?? 0) + 1);
+  }
+  return [...by].map(([why, count]) => ({ why, key: UNDO_WHY_KEYS[why], count }));
+}
+
+/** The blocked messages of an undo the Control Plane refused (409 memo_tidy_not_undoable); null for
+ *  any other answer, so the caller shows that error as it comes. */
+export function undoRefusal(res: unknown): MemoTidyBlocked[] | null {
+  const e = isObj(res) && isObj(res.error) ? res.error : null;
+  if (!e || e.code !== "memo_tidy_not_undoable") return null;
+  return readBlocked(e.blocked);
 }
 
 // ---- deliveries --------------------------------------------------------------------------

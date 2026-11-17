@@ -20,4 +20,6 @@ export {
   memoQueueFire,
   memoQueueResume,
   memoQueueDeliveries,
+  memoTidyRuns,
+  memoTidyUndo,
 } from "../../core/api/client.ts";

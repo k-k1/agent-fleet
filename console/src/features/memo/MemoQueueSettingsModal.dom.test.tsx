@@ -30,7 +30,7 @@ async function render(): Promise<void> {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <MemoQueueSettingsModal categoryName="c" categoryId="cat1" queue={undefined} tenantEnabled onClose={() => {}} onChanged={() => {}} />
+          <MemoQueueSettingsModal categoryName="c" categoryId="cat1" queue={undefined} tenantEnabled destinations={[]} onClose={() => {}} onChanged={() => {}} />
         </ConfirmProvider>
       </ToastProvider>,
     );
