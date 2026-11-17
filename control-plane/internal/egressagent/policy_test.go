@@ -1,8 +1,10 @@
 package egressagent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -388,5 +390,43 @@ func TestPolicySyncWritesTheTCPTable(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(s.cfg.AllowFile); strings.Contains(string(b), "192.0.2.77") || strings.Contains(string(b), "tcp") {
 		t.Fatalf("a tcp entry reached Squid's allow file:\n%s", b)
+	}
+}
+
+// The deployment's bootstrap files (closed until the first policy) are a state of their
+// own: not log-only, and no verdict may read allowed while Squid terminates everything.
+func TestPolicyBootstrapFilesAreClosed(t *testing.T) {
+	cp := &fakeCP{status: http.StatusServiceUnavailable}
+	s, reloads := newPolicyFixture(t, cp)
+	if err := os.WriteFile(s.cfg.AllowFile, []byte(".invalid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := "# bootstrap: closed until the first policy\nssl_bump peek af_step1\nssl_bump terminate all\nhttp_access deny all\n"
+	if err := os.WriteFile(s.cfg.ModeFile, []byte(bootstrap), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	s.loadFromDisk()
+	snap := s.cur.Load()
+	if snap == nil || !snap.closed || snap.enforce || snap.match.Allows("github.com") || snap.match.Allows("x.invalid") {
+		t.Fatalf("snapshot = %+v: want closed, not enforce, allowing nothing", snap)
+	}
+	if err := s.sync(context.Background()); err == nil || reloads() != 1 {
+		t.Fatalf("err %v, %d reloads: the owed reload must still be paid", err, reloads())
+	}
+	if out := buf.String(); !strings.Contains(out, "(closed, waiting for the first policy)") || strings.Contains(out, "(log-only)") {
+		t.Fatalf("log = %q: want the closed state, not log-only", out)
+	}
+	// A file the agent itself rendered is never taken for the bootstrap one.
+	for _, m := range []string{ModeLogOnly, ModeEnforce} {
+		if err := os.WriteFile(s.cfg.ModeFile, []byte(m), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := s.readDisk(); got.closed {
+			t.Fatalf("a rendered mode file read as closed:\n%s", m)
+		}
 	}
 }
