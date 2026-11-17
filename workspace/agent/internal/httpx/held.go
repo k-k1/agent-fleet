@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -30,6 +31,10 @@ var heldHeartbeat = HeldHeartbeatInterval
 // handler's plain response unchanged, so the handler itself is written as an ordinary JSON
 // handler. The request context still ends when the browser goes away, as before.
 //
+// The request body is read in full (bounded by heldMaxBody) before the stream starts, because the
+// HTTP/1 server drops an unread body once the headers are written; the handler gets it back as a
+// fresh reader.
+//
 // The CP must relay these routes through its flushing stream proxy: its buffered REST relay
 // would hold the heartbeats back and the ingress would cut the call anyway.
 func HeldOpen(next http.HandlerFunc) http.HandlerFunc {
@@ -37,6 +42,11 @@ func HeldOpen(next http.HandlerFunc) http.HandlerFunc {
 		flusher, ok := w.(http.Flusher)
 		if !ok || !acceptsEventStream(r.Header.Get("Accept")) {
 			next(w, r)
+			return
+		}
+		tooLarge, err := bufferBody(r)
+		if err != nil {
+			WriteErr(w, http.StatusBadRequest, "bad_request", "cannot read request body")
 			return
 		}
 		h := w.Header()
@@ -47,6 +57,11 @@ func HeldOpen(next http.HandlerFunc) http.HandlerFunc {
 		flusher.Flush()
 
 		rec := &heldRecorder{header: http.Header{}}
+		if tooLarge {
+			WriteErr(rec, http.StatusRequestEntityTooLarge, "too_large", "request body exceeds the size limit")
+			writeHeldFrame(w, flusher, rec)
+			return
+		}
 		// The heartbeat goroutine is the only writer to w until stopped is closed, so the final
 		// frame below never interleaves with a keepalive. The deferred stop also runs when next
 		// panics, which would otherwise leave the ticker writing to a dead response.
@@ -72,10 +87,43 @@ func HeldOpen(next http.HandlerFunc) http.HandlerFunc {
 			next(rec, r)
 		}()
 
-		b, _ := json.Marshal(heldFrame{Status: rec.statusOr200(), Body: rec.jsonBody()})
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
-		flusher.Flush()
+		writeHeldFrame(w, flusher, rec)
 	}
+}
+
+func writeHeldFrame(w http.ResponseWriter, flusher http.Flusher, rec *heldRecorder) {
+	b, _ := json.Marshal(heldFrame{Status: rec.statusOr200(), Body: rec.jsonBody()})
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+	flusher.Flush()
+}
+
+// heldMaxBody bounds the request body HeldOpen reads before it commits the stream: the largest
+// limit among the wrapped handlers (fsx's editSuggestMaxBody; chat ask had none). A body over it
+// is answered 413 in the final frame without running the handler.
+const heldMaxBody = 2 << 20
+
+// bufferBody reads the whole request body, at most heldMaxBody bytes, and replaces r.Body with a
+// fresh reader over it. Done before the headers go out, because net/http's HTTP/1 server discards
+// the unread body when it writes them (ResponseController.EnableFullDuplex would turn that off,
+// but then the body would depend on what the client and the relay do with a half-duplex request).
+// It runs on the handler's goroutine, so a client that goes away ends the read with an error and
+// leaves nothing behind. tooLarge reports a body over the bound; err any other read failure.
+func bufferBody(r *http.Request) (tooLarge bool, err error) {
+	if r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0 {
+		return false, nil
+	}
+	if r.ContentLength > heldMaxBody {
+		return true, nil
+	}
+	b, err := io.ReadAll(io.LimitReader(r.Body, heldMaxBody+1))
+	if err != nil {
+		return false, err
+	}
+	if len(b) > heldMaxBody {
+		return true, nil
+	}
+	r.Body = io.NopCloser(bytes.NewReader(b))
+	return false, nil
 }
 
 // heldFrame is the final frame of a held response.

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/taskid"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -231,5 +232,31 @@ func TestHealthzTaskID(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
 	if got["task_id"] != "abc123" || strings.Contains(w.Body.String(), "arn:") {
 		t.Fatalf("body = %s", w.Body.String())
+	}
+}
+
+// Over a real HTTP/1 connection the server drops an unread request body once the held stream's
+// headers are written, so the wrapped handlers must still see the JSON they were sent. A
+// recorder-based request cannot show that.
+func TestHeldRoutesSeeTheirRequestBody(t *testing.T) {
+	srv := httptest.NewServer(smokeHandler(t))
+	defer srv.Close()
+	for path, body := range map[string]string{
+		"/chat/ask":        `{"prompt":"x"}`,
+		"/fs/suggest-edit": `{"path":"a.txt"}`,
+	} {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer smoke-token")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !strings.Contains(string(b), `data: {"status":`) || strings.Contains(string(b), "invalid JSON body") {
+			t.Errorf("POST %s: the handler did not see its body: %q", path, b)
+		}
 	}
 }
