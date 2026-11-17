@@ -4,12 +4,14 @@
 // folding), open a file into a pane, drag-drop upload, and a right-click menu for
 // the core file ops. It reuses the shared primitives (api fs endpoints,
 // FileIcon/DirIcon, the .fstree/.fsrow classes); per-copy git changes live in the
-// SCM pane, not here. Mounted only while its section is open, so the fetch is lazy.
+// SCM pane, not here. The Files view mounts it on first show, and while that view is
+// hidden it reads nothing on its own (lib/viewShown.ts).
 import { createPortal } from "react-dom";
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
 import { api, uploadFiles, fsMkdir, fsNewFile, fsRename, fsDelete, fsSearch, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
+import { useOnShow, useShownValue, useViewShown } from "../../lib/viewShown.ts";
 import FileIcon, { DirIcon } from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -113,6 +115,8 @@ const addedPaths = (prev: Entry[] | null | undefined, next: Entry[], dir: string
  *  animation in features/files/files.css — the class is dropped when this
  *  elapses, so a longer animation would be cut off mid-fade. */
 const FRESH_MS = 5000;
+/** Directory reads the prefetch keeps out at once. */
+const PREFETCH_SLOTS = 4;
 /** Shared empty set — one stable reference, like NO_ROWS below. */
 const NO_FRESH: Set<string> = new Set();
 
@@ -201,6 +205,18 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
   const revalidatingRef = useRef<Set<string>>(new Set());
+  // First reads of a directory that are on the wire, so a path is asked for once however
+  // often the prefetch effect re-runs while they are out (it re-runs on every answer).
+  const firstReadsRef = useRef<Map<string, Promise<Entry[]>>>(new Map());
+  // Prefetch reads waiting for a slot, and how many are out (see PREFETCH_SLOTS).
+  const prefetchQueueRef = useRef<string[]>([]);
+  const prefetchActiveRef = useRef(0);
+  // Whether the Files view is on screen. A hidden tree makes no automatic read; the working
+  // copies whose turn ended meanwhile are owed one read each when it is shown again.
+  const shown = useViewShown();
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const owedPrefixesRef = useRef<Set<string>>(new Set());
   // The tenant right now. Every read below that writes back after an await compares it with the
   // tenant it started under: an answer from the previous tenant's workspace must not land in a
   // cache the switch just emptied (fetchInto would then keep it over the new answer).
@@ -224,6 +240,10 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // A tenant switch is a different workspace: its listing replaces the old one, and the old
   // expansion, selection and cached dirs name paths that may not exist there.
   const loadedTenantRef = useRef(tenant);
+  // A refresh tick or a workspace start that lands while the view is hidden reloads on the
+  // next show instead of reading for nobody.
+  const loadTick = useShownValue(filesTick);
+  const loadRunning = useShownValue(running);
   useRetryLoad(async (signal) => {
     const switched = loadedTenantRef.current !== tenant;
     if (switched) {
@@ -237,6 +257,9 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       setSearchTrunc(false);
       setCollapsedRepos(new Set());
       revalidatingRef.current = new Set(); // an old re-read of the same path must not block the new one
+      firstReadsRef.current = new Map();
+      prefetchQueueRef.current = [];
+      owedPrefixesRef.current = new Set();
     }
     const r = await fsList(root);
     if (signal.aborted) return true;
@@ -253,7 +276,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       });
     }
     return true;
-  }, [root, filesTick, running, tenant]);
+  }, [root, loadTick, loadRunning, tenant]);
 
   // Hold the rows that just appeared, then let them go. Each path keeps its own
   // timer so a second batch does not cut the first one's highlight short.
@@ -345,11 +368,22 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
         revalidate(path);
         return cache[path];
       }
+      const pending = firstReadsRef.current.get(path);
+      if (pending) return pending;
       const started = tenantRef.current;
-      const d = await fsList(path);
-      const e = d.entries || [];
-      if (tenantRef.current === started) setCache((c) => (c[path] ? c : { ...c, [path]: e }));
-      return e;
+      const reads = firstReadsRef.current;
+      const read: Promise<Entry[]> = fsList(path).then((d) => {
+        const e = d.entries || [];
+        if (tenantRef.current === started) setCache((c) => (c[path] ? c : { ...c, [path]: e }));
+        return e;
+      });
+      reads.set(path, read);
+      // Dropped once settled: the cache answers from then on, and a later miss (a tenant
+      // switch emptied it) reads again.
+      void read.finally(() => {
+        if (reads.get(path) === read) reads.delete(path);
+      });
+      return read;
     },
     [cache, revalidate],
   );
@@ -457,8 +491,25 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // Whether an automatic re-read may run at all (the §7.2 gate set of the
   // editor's external-change probe, in tree form).
   const autoRefreshAllowed = useCallback(
-    () => running && !searchMode && !menuOpenRef.current && !document.hidden,
+    () => running && shownRef.current && !searchMode && !menuOpenRef.current && !document.hidden,
     [running, searchMode],
+  );
+
+  // Re-read the rows on screen under the given working copies.
+  const refreshPrefixes = useCallback(
+    (prefixes: string[]) => {
+      const under = (p: string) => prefixes.some((x) => p === x || p.startsWith(x + "/"));
+      const targets = liveDirsRef.current.filter(under);
+      // A working copy can also appear or vanish under the turn (a worktree added
+      // or removed), which shows in its PARENT's listing — one extra read when
+      // that parent is this tree's root. It is also the whole cost of a session
+      // whose folder is not under ~/repos at all (a shell in the home dir): its
+      // prefix matches no row, and this single read is all that happens.
+      const alsoRoot = prefixes.some((x) => parentOf(x) === root);
+      if (!targets.length && !alsoRoot) return;
+      return runRefresh(targets, alsoRoot);
+    },
+    [root, runRefresh],
   );
 
   // Scoped auto-refresh: a session's turn ended, so re-read what is on screen
@@ -477,19 +528,24 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     // re-running that query per turn would be a recursive search each time; the
     // context menu holds a row it is about to act on, and pulling that row out
     // from under it turns the next click into an error toast; a hidden tab is
-    // picked up by the visibility trigger below instead.
+    // picked up by the visibility trigger below instead. A hidden view owes the
+    // working copy one read, made when the view is shown again.
+    if (!shownRef.current) {
+      owedPrefixesRef.current.add(prefix);
+      return;
+    }
     if (!autoRefreshAllowed()) return;
-    const targets = liveDirsRef.current.filter((p) => p === prefix || p.startsWith(prefix + "/"));
-    // A working copy can also appear or vanish under the turn (a worktree added
-    // or removed), which shows in its PARENT's listing — one extra read when
-    // that parent is this tree's root. It is also the whole cost of a session
-    // whose folder is not under ~/repos at all (a shell in the home dir): its
-    // prefix matches no row, and this single read is all that happens.
-    const alsoRoot = parentOf(prefix) === root;
-    if (!targets.length && !alsoRoot) return;
-    return runRefresh(targets, alsoRoot);
+    return refreshPrefixes([prefix]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopedRefresh.n]);
+
+  // Pay what the hidden view owes: only the working copies whose turn ended while it was
+  // hidden, not the whole tree, so switching views is not a re-read of every directory.
+  useOnShow(() => {
+    const owed = [...owedPrefixesRef.current];
+    owedPrefixesRef.current = new Set();
+    if (owed.length && autoRefreshAllowed()) refreshPrefixes(owed);
+  });
 
   // Coming back to the tab (or to the window) is where an unseen change is most
   // likely to be waiting — the same reasoning as the editor's external-change
@@ -657,9 +713,32 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     };
   }, [displayRows, searchMode]);
 
-  // Prefetch entries for visible dirs whose children we don't have yet.
+  // Prefetch entries for visible dirs whose children we don't have yet (a folded a/b/c row
+  // is decided by them). At most PREFETCH_SLOTS at a time: the repos root lists every
+  // working copy, and a page load that asks for all of them at once is a burst the
+  // Workspace's file system and the Console's other connections both pay for.
+  const pumpPrefetch = useCallback(() => {
+    const queue = prefetchQueueRef.current;
+    while (prefetchActiveRef.current < PREFETCH_SLOTS && queue.length) {
+      const p = queue.shift()!;
+      if (cacheRef.current[p] !== undefined) continue;
+      prefetchActiveRef.current++;
+      void fetchInto(p).finally(() => {
+        prefetchActiveRef.current--;
+        pumpPrefetch();
+      });
+    }
+  }, [fetchInto]);
+  useEffect(
+    () => () => {
+      prefetchQueueRef.current = []; // an unmounted tree starts nothing new
+    },
+    [],
+  );
   useEffect(() => {
-    need.forEach((p) => void fetchInto(p));
+    const queued = new Set(prefetchQueueRef.current);
+    for (const p of need) if (!queued.has(p) && !firstReadsRef.current.has(p)) prefetchQueueRef.current.push(p);
+    pumpPrefetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [need.join("\n")]);
 

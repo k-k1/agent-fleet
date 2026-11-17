@@ -37,7 +37,11 @@ memo queue, repositories, other sessions, shared sessions, files. Three things f
 3. **The left pane shows one view at a time.** The icon of the view on screen folds the pane away;
    the column stays, so every view is one click from anywhere. Every view stays mounted and only
    the chosen one is displayed, because a section's poller, its draft and its scroll position live
-   in the section.
+   in the section. The exception is a view that reads the Workspace's file system (Files): it
+   mounts on its first show, and while it is not on screen it makes no read of its own; a turn
+   that ended meanwhile is read once when it is shown again (#4426). A hidden view that read
+   like a shown one sent ~1,360 listings on every Console load and stalled the terminal's
+   WebSocket.
 4. **A badge is a notice, not an inventory.** It marks something that arrived in a view that is
    not on screen. There are two kinds, and they clear differently:
    - *Waiting* (Sessions, an amber count): running sessions stopped on the member's answer. It

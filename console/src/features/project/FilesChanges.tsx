@@ -14,6 +14,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createPortal } from "react-dom";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
+import { useOnShow, useShownValue, useViewShown } from "../../lib/viewShown.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -106,10 +107,18 @@ export function FilesChanges() {
     fn();
   };
 
+  // While the Files view is hidden nothing here reads on its own (it is one git status per
+  // working copy); a reload asked for meanwhile runs on the next show.
+  const shown = useViewShown();
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const loadTick = useShownValue(filesTick);
+  const loadRunning = useShownValue(running);
+
   // Right after a WS start the agent is unreachable and api() returns http_5xx, so a transient
   // failure is retried (isTransientErr).
   useRetryLoad(async (signal) => {
-    if (!running) return true; // nothing to load while the WS is stopped
+    if (!loadRunning) return true; // nothing to load while the WS is stopped
     setChanges(null);
     let d;
     try {
@@ -121,7 +130,7 @@ export function FilesChanges() {
     if (isTransientErr(d)) return false;
     setChanges(d.changes || []);
     return true;
-  }, [running, filesTick]);
+  }, [loadRunning, loadTick]);
 
   // Auto-refresh when a session goes back to waiting for input
   // (features/files/sessionRefresh.ts). The loader above is not reused because of its
@@ -133,6 +142,7 @@ export function FilesChanges() {
   const autoInFlight = useRef(false);
   const lastAutoAt = useRef(0);
   const mountedTick = useRef(autoTick); // signals from before mount are covered by the initial load
+  const owed = useRef(false); // a turn ended while the view was hidden
   const reload = useCallback(async () => {
     if (!running || autoInFlight.current || document.hidden) return;
     autoInFlight.current = true;
@@ -150,8 +160,17 @@ export function FilesChanges() {
   }, [running]);
   useEffect(() => {
     if (autoTick === mountedTick.current) return;
+    if (!shownRef.current) {
+      owed.current = true;
+      return;
+    }
     void reload();
   }, [autoTick, reload]);
+  useOnShow(() => {
+    if (!owed.current) return;
+    owed.current = false;
+    void reload();
+  });
 
   // On returning to the tab/window (same idea as docs/log/44 §7.2). This is the only way to
   // pick up turns that ended while away, sessions that carry no state, and changes made outside
@@ -159,7 +178,7 @@ export function FilesChanges() {
   // (features/scm/SourceControlView.tsx).
   useEffect(() => {
     const onBack = () => {
-      if (document.hidden || Date.now() - lastAutoAt.current < REVALIDATE_GAP_MS) return;
+      if (document.hidden || !shownRef.current || Date.now() - lastAutoAt.current < REVALIDATE_GAP_MS) return;
       void reload();
     };
     document.addEventListener("visibilitychange", onBack);

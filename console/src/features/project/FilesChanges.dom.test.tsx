@@ -286,3 +286,59 @@ describe("auto-refresh at the end of a turn", () => {
     expect(host.querySelector(".ui-empty")).toBeNull();
   });
 });
+
+// The list is one git status per working copy (#4426). While the Files view is hidden a turn
+// end only marks the list as owed, and showing the view pays that once.
+const { ViewShownContext } = await import("../../lib/viewShown.ts");
+const { api } = await import("../../core/api/client.ts");
+
+describe("while the Files view is hidden", () => {
+  const renderShown = async (shown: boolean) => {
+    await act(async () => {
+      root!.render(
+        <ViewShownContext.Provider value={shown}>
+          <FilesChanges />
+        </ViewShownContext.Provider>,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  };
+  const turnEnded = async () => {
+    await act(async () => {
+      useFilesStore.getState().refreshUnder("repos/demo");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  };
+
+  it("reads nothing at the end of a turn, then once when shown", async () => {
+    await renderShown(true);
+    await renderShown(false);
+    vi.mocked(api).mockClear();
+
+    await turnEnded();
+    await turnEnded();
+    expect(vi.mocked(api)).not.toHaveBeenCalled();
+
+    served = [{ path: "repos/demo/src/new.ts", repo: "demo", untracked: true }];
+    await renderShown(true);
+    expect(vi.mocked(api)).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain("new.ts");
+  });
+
+  it("holds a refresh tick and ignores coming back to the window", async () => {
+    await renderShown(true);
+    await renderShown(false);
+    vi.mocked(api).mockClear();
+
+    await act(async () => useFilesStore.getState().bump());
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(vi.mocked(api)).not.toHaveBeenCalled();
+
+    await renderShown(true);
+    expect(vi.mocked(api)).toHaveBeenCalledTimes(1); // the held tick, nothing for the focus
+  });
+});
