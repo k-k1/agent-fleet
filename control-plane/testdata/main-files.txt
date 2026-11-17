@@ -149,6 +149,7 @@ memo_bridge.go
 memo_delivery.go
 memo_dispatch.go
 memo_queue.go
+memo_tidy.go
 metrics.go
 metrics_pressure.go
 notification.go

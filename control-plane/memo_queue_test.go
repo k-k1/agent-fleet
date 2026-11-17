@@ -218,7 +218,7 @@ func (e *inboxEnv) release(id, hash string) *httptest.ResponseRecorder {
 
 func (e *inboxEnv) setState(id, state string) {
 	e.t.Helper()
-	if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state=? WHERE id=?`, state, id); err != nil {
+	if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state=?, sent_at=CASE WHEN ?='superseded' THEN ? ELSE sent_at END, tidy_run_id=CASE WHEN ?='superseded' THEN 'run' ELSE tidy_run_id END WHERE id=?`, state, state, store.NowTS(), state, id); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -712,6 +712,8 @@ func TestMemoQueueInvariantOnEveryWritePath(t *testing.T) {
 			t.Fatalf("token move out to unfiled: %d %+v", code, e.memoRow(own3.ID))
 		}
 		e.assertPendingReleaseMatches()
+		// Superseded and derived rows (ADR 0137 section 8) on the same paths.
+		memoTidyWritePathChecks(t, e)
 	})
 }
 

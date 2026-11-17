@@ -736,3 +736,20 @@ Option B, an existing session as a queue's consumer. Each reason would need an a
 
 What reopens it is a real, recurring case that sending a selection by hand does not cover; a new issue is opened then.
 #4153 is closed by this note.
+
+Added 2026-11-17 (#4152, step 5, slice S1, the Control Plane's core): the schema (migrations 0142 and 0127), the settings
+`tidy`, `tidyDestinations` and the read-only `noTidyAt`, the validator (`control-plane/internal/memotidy`), apply, undo and
+the run list are built, and inert: nothing starts a run and the dispatcher does not read `tidy`. The Console's wire and the
+codes are in docs/build/03-control-plane.md. Decisions taken for the build: a derived message takes the state of its sources
+(§3, the `curator` row), so tidying `pending` messages gives `pending` results with no press; a message the manual path
+tidies while `held` gives `held` ones, and a move never releases a held message. The tidy switch is a guard rail, not a
+wall, exactly as "accept from sessions I started" is (§3, fact 1): the model's reply is produced inside the workspace, so
+with the switch on, code there that can answer for the Agent can choose the text of a derived message. What bounds that is
+checked by the Control Plane and not by the Agent: the operations are over the input ids only, a merge needs one
+(provenance, producer, producer origin) group and plain text notes, a text is at most 16 KiB and at most 1 KiB longer than
+its sources, a move is decided from the stored settings at apply time and never from the reply (so a reply cannot send a
+message into a queue the person did not list as pending), the whole reply is dropped on one violation, and a run is undone
+in one press until a result is claimed. What it can do is put words the person did not write into a message that then fires, which is why the switch is off
+by default and says so.
+A superseded row, which keeps `sent_at` so the existing sweep collects it, never becomes `held` or `pending` except by undo
+on any write path, and an older binary turns one into a sent note or a `delivered` message at worst.

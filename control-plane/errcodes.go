@@ -249,4 +249,5 @@ const (
 	errCodeMemoQueueItemInvalid    = "memo_queue_item_invalid"
 	errCodeMemoRefInvalid          = "memo_ref_invalid"
 	errCodeMemoRefDuplicate        = "memo_ref_duplicate"
+	errCodeMemoTidyNotUndoable     = "memo_tidy_not_undoable"
 )

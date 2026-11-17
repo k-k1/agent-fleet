@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 )
 
@@ -46,6 +47,13 @@ type Memo struct {
 	// a work item, never a copy of it. All three are set or none is, and the API layer is what
 	// validates them. A reference is part of what a release is bound to.
 	RefProvider, RefKey, RefURL string
+	// The tidy fields of ADR 0137 section 8, written by a tidy run (store_memo_tidy.go) and by
+	// nothing else: InsertMemo writes them for a derived row, WriteMemo and UpdateMemo never do.
+	// DerivedFrom is the JSON array of the source ids of a message a run made, SourceProvenance
+	// the provenance its sources had (Provenance is curator for such a row), TidyFrom the category
+	// id a run moved the row from, TidyRunID the run that made, moved or superseded it, and
+	// TidySeenHash the content hash a run last looked at.
+	DerivedFrom, SourceProvenance, TidyFrom, TidySeenHash, TidyRunID string
 }
 
 // MemoCategory persists a memo category as a first-class row (docs/log/21 UI overhaul), so a
@@ -91,7 +99,8 @@ type MemoStore interface {
 const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at,
 	origin_item_id, origin_sender_membership_id, origin_sender_key,
 	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at, delivery_id,
-	ref_provider, ref_key, ref_url, released_by FROM memo`
+	ref_provider, ref_key, ref_url, released_by,
+	derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
@@ -99,7 +108,8 @@ func scanMemo(row scanner) (Memo, error) {
 		&m.Body, &m.RefPath, &m.Attachments, &m.Position, &m.CreatedAt, &m.SentAt,
 		&m.OriginItemID, &m.OriginSenderMembershipID, &m.OriginSenderKey,
 		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt, &m.DeliveryID,
-		&m.RefProvider, &m.RefKey, &m.RefURL, &m.ReleasedBy)
+		&m.RefProvider, &m.RefKey, &m.RefURL, &m.ReleasedBy,
+		&m.DerivedFrom, &m.SourceProvenance, &m.TidyFrom, &m.TidySeenHash, &m.TidyRunID)
 	return m, err
 }
 
@@ -146,12 +156,14 @@ func insertMemo(ctx context.Context, q memoQuerier, m Memo) error {
 		   state, provenance, producer, producer_origin, release_hash, released_at,
 		   ref_provider, ref_key, ref_url,
 		   release_repo, release_category, release_kind, release_body, release_ref_path, release_attachments,
-		   release_ref_provider, release_ref_key, release_ref_url, released_by)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   release_ref_provider, release_ref_key, release_ref_url, released_by,
+		   derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.CreatedAt, m.SentAt,
 		m.State, m.Provenance, m.Producer, m.ProducerOrigin, m.ReleaseHash, m.ReleasedAt,
 		m.RefProvider, m.RefKey, m.RefURL,
-		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy)
+		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy,
+		m.DerivedFrom, m.SourceProvenance, m.TidyFrom, m.TidySeenHash, m.TidyRunID)
 	return err
 }
 
@@ -171,21 +183,56 @@ func (s *SQL) UpdateMemo(ctx context.Context, m Memo) error {
 	return writeMemo(ctx, s.db, m)
 }
 
+// ErrMemoSuperseded is the refusal of a write that would make a superseded row held or pending
+// again. Only an undo (RestoreMemo) does that.
+var ErrMemoSuperseded = errors.New("a superseded message becomes held or pending again only by undoing its run")
+
 func writeMemo(ctx context.Context, q memoQuerier, m Memo) error {
+	return writeMemoRow(ctx, q, m, false, false)
+}
+
+// writeMemoRow is writeMemo. withTidy also writes the columns of a tidy run, which only a run's
+// apply and undo do. restore lifts the guard on a superseded row.
+func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore bool) error {
 	rel := releasedContent(m)
+	tidyCols, tidyArgs := "", []any(nil)
+	if withTidy {
+		tidyCols, tidyArgs = ", tidy_from=?, tidy_run_id=?, tidy_seen_hash=?", []any{m.TidyFrom, m.TidyRunID, m.TidySeenHash}
+	}
+	// A superseded row never becomes held or pending by a write: the row is the evidence of what a
+	// run did, and the run's undo is the one way back. Locked rows reach here with their state
+	// unchanged, and a row that leaves its queue is written as a plain note or as delivered.
+	guard := ""
+	if !restore {
+		guard = " AND (state<>'superseded' OR CAST(? AS TEXT) NOT IN ('held','pending'))"
+	}
+	args := []any{m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.SentAt,
+		m.State, m.ReleaseHash, m.ReleasedAt, m.SendToken, m.SendStartedAt,
+		m.RefProvider, m.RefKey, m.RefURL,
+		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy}
+	args = append(args, tidyArgs...)
+	args = append(args, m.ID, m.MembershipID)
+	if !restore {
+		args = append(args, m.State)
+	}
 	// membership_id in the WHERE so a member can only update their own row.
-	_, err := q.ExecContext(ctx,
+	res, err := q.ExecContext(ctx,
 		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, attachments=?, position=?, sent_at=?,
 		   state=?, release_hash=?, released_at=?, send_token=?, send_started_at=?,
 		   ref_provider=?, ref_key=?, ref_url=?,
 		   release_repo=?, release_category=?, release_kind=?, release_body=?, release_ref_path=?, release_attachments=?,
-		   release_ref_provider=?, release_ref_key=?, release_ref_url=?, released_by=?
-		   WHERE id=? AND membership_id=?`,
-		m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.SentAt,
-		m.State, m.ReleaseHash, m.ReleasedAt, m.SendToken, m.SendStartedAt,
-		m.RefProvider, m.RefKey, m.RefURL,
-		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy, m.ID, m.MembershipID)
-	return err
+		   release_ref_provider=?, release_ref_key=?, release_ref_url=?, released_by=?`+tidyCols+`
+		   WHERE id=? AND membership_id=?`+guard, args...)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 && !restore && (m.State == MemoStateHeld || m.State == MemoStatePending) {
+		var one int
+		if q.QueryRowContext(ctx, `SELECT 1 FROM memo WHERE id=? AND membership_id=? AND state='superseded'`, m.ID, m.MembershipID).Scan(&one) == nil {
+			return ErrMemoSuperseded
+		}
+	}
+	return nil
 }
 
 func (s *SQL) DeleteMemo(ctx context.Context, id, membershipID string) error {

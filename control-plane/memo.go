@@ -80,6 +80,22 @@ type memoDTO struct {
 	// Existing is set on the answer of a create into a queue that found the same reference
 	// already waiting there: the message returned is that one, and nothing was added.
 	Existing bool `json:"existing,omitempty"`
+	// The tidy fields of ADR 0137 section 8, written by the CP. DerivedFrom is the source ids of a
+	// message a tidy run made (Provenance is then "curator" and SourceProvenance the provenance of
+	// its sources), TidyRunID the run that made, moved or superseded the row, and TidyFrom the
+	// category a run moved it from.
+	DerivedFrom      []string      `json:"derivedFrom,omitempty"`
+	SourceProvenance string        `json:"sourceProvenance,omitempty"`
+	TidyRunID        string        `json:"tidyRunId,omitempty"`
+	TidyFrom         *memoTidyFrom `json:"tidyFrom,omitempty"`
+}
+
+// memoTidyFrom names the category a tidy run moved a message from. Repo and Name are empty on a
+// single message's answer and for a category since deleted: the list fills them in.
+type memoTidyFrom struct {
+	ID   string `json:"id"`
+	Repo string `json:"repo"`
+	Name string `json:"name"`
 }
 
 // memoOriginWire is where a taken-in memo came from: the inbox item and its sender.
@@ -94,7 +110,11 @@ func memoToDTO(m store.Memo) memoDTO {
 		Position: m.Position, CreatedAt: m.CreatedAt, SentAt: m.SentAt,
 		State: m.State, Provenance: memoEffectiveProvenance(m), ReleasedAt: m.ReleasedAt, ReleasedBy: m.ReleasedBy,
 		ContentHash: memoContentHash(m), Producer: m.Producer, ProducerOrigin: m.ProducerOrigin,
-		DeliveryID: m.DeliveryID, Reference: memoRefToWire(m)}
+		DeliveryID: m.DeliveryID, Reference: memoRefToWire(m),
+		DerivedFrom: decodeIDs(m.DerivedFrom), SourceProvenance: m.SourceProvenance, TidyRunID: m.TidyRunID}
+	if m.TidyFrom != "" {
+		d.TidyFrom = &memoTidyFrom{ID: m.TidyFrom}
+	}
 	if m.OriginItemID != "" {
 		d.Origin = &memoOriginWire{ItemID: m.OriginItemID, Sender: m.OriginSenderKey}
 	}
@@ -180,8 +200,26 @@ func memoListFor(ctx context.Context, st store.MemoStore, membershipID string) (
 		}
 	}
 	out := make([]memoDTO, 0, len(rows))
+	var cats map[string]store.MemoCategory
 	for _, m := range rows {
-		out = append(out, memoToDTO(m))
+		d := memoToDTO(m)
+		if d.TidyFrom != nil {
+			// A moved message names the category it came from, so that nobody asks for it.
+			if cats == nil {
+				all, err := st.ListCategories(ctx, membershipID)
+				if err != nil {
+					return nil, err
+				}
+				cats = make(map[string]store.MemoCategory, len(all))
+				for _, c := range all {
+					cats[c.ID] = c
+				}
+			}
+			if c, ok := cats[d.TidyFrom.ID]; ok {
+				d.TidyFrom.Repo, d.TidyFrom.Name = c.Repo, c.Name
+			}
+		}
+		out = append(out, d)
 	}
 	return out, nil
 }
@@ -884,9 +922,13 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 			if m.SendToken != "" {
 				return memoTxFail(&apiError{http.StatusConflict, errCodeMemoSending, "this memo is being sent"})
 			}
-			// A claimed message belongs to its delivery: nobody sends it by hand.
+			// A claimed message belongs to its delivery: nobody sends it by hand. A superseded one was
+			// replaced by a tidy run, and what replaced it is what gets sent.
 			if m.State == store.MemoStateClaimed {
 				return memoTxFail(&apiError{http.StatusConflict, errCodeMemoLocked, "this message has been taken by a delivery"})
+			}
+			if m.State == store.MemoStateSuperseded {
+				return memoTxFail(&apiError{http.StatusConflict, errCodeMemoLocked, "this message was replaced by a tidy run"})
 			}
 			// A message in a queue is sent from the Console only (ADR 0137 section 3): a send
 			// from inside the workspace or /mcp is the unattended path the release guards.

@@ -222,6 +222,41 @@ Workspace を起こさない。
   flush も削除もできず、解放済みを編集すると `held` に戻り、キューの改名・統合・削除はできず、
   キューへの作成には上限がある（16 KiB、`[agent-fleet:` で始まる本文は不可、同じ本文が待って
   いればそれを返す、1 分 30 件）。
+- **整理（Tidy）**（[decisions/0137](../decisions/0137-message-queues.ja.md) §8、段 5、slice S1）: 「発火の前の整理」の
+  Control Plane 側の核。まだ何も呼ばない（dispatcher は `tidy` を読まず、返答を適用するルートもない）。
+  *設定*: `PUT /api/memo-queues/{categoryId}` は `tidy`（bool、省略は off）と `tidyDestinations`（カテゴリ id、最大 10、
+  重複は除く。各 id は自分のこのキュー以外のキューで、そうでなければ `400 memo_queue_bad_settings`）を受ける。
+  `GET /api/memo-queues` は `tidy`、`tidyDestinations`（キューの設定が消えた id は出さない）、読み取り専用の
+  `noTidyAt`（整理できない Agent を見つけた発火だけが立てる）を返す。メモの答えには `derivedFrom`（元の id）、
+  `sourceProvenance`、`tidyRunId`、`tidyFrom`（`{id, repo, name}`。1 件の作成・更新の答えと、消えたカテゴリでは repo と
+  name が空）、`releasedBy: "tidy"` が加わる。*操作*: モデルの返答は `{"operations":[merge|split|move|keep ...]}`。
+  `control-plane/internal/memotidy` が純粋な検証器で（上限はすべて名前付き定数: 操作は 80 まで、merge の元は 2〜10、
+  split の部分は 2〜5、本文は 1 バイト〜16 KiB、merge の本文と split の部分の合計は元より 1 KiB までしか長くならず、
+  1 回の run が読むメッセージは 40、提示する宛先は 100 まで、1 日 10 回。40 や 100 を超える入力は run 全体を理由 `bad_shape` で `dropped` にする）、1 つでも違反があれば返答全体を拒む。merge と split は plain なテキストノート（ファイル・添付・参照なし）
+  だけで、merge は 1 つのグループの元だけ。グループは（provenance、producer、producer origin）で、`curator` のメッセージは
+  `source_provenance` で読む。*適用*（`memo_tidy.go` の `memoTidyApply`、1 つの `MemoTx`）: 入力のメッセージはすべて、
+  まだそのキューにあり、`pending`（手動のときは `pending` か `held`）で、未送信・未 claim・flush 中でなく、run が読んだ
+  ハッシュのままでなければならない。そうでなければ run は理由 `stale_input` で `dropped` になり何も変わらない。
+  merge と split の元は `superseded` になり、`sent_at`（7 日の掃除が拾うため）と run の id が付く。派生メッセージは
+  `provenance='curator'`、`source_provenance`、元の producer、`derived_from`、元の状態（1 つでも `held` なら `held`）、
+  最も古い `created_at`、`released_by='tidy'`、見た印つき。move は適用時に保存されたキューの設定を読む: キューでない
+  カテゴリならプレーンなノート、`tidy_destinations` にあるキューならそこで `pending`（`held` は `held` のまま）、
+  それ以外のキューなら `tidy_from` つきの `held`。結果にかかわらず入力は見た印がつく（`memo.tidy_seen_hash` = run が
+  読んだハッシュ。あとで編集か移動があればハッシュが変わり、書き込みなしで未見に戻る）。*run の記録*: `memo_tidy_run`
+  （状態は `running`・`applied`・`kept`・`dropped`・`skipped`・`failed`・`undone`。id・ハッシュ・件数だけで本文は持たない）。
+  ユニークインデックスがメンバーごとに `running` を 1 つに制限する。*取り消し*: `POST /api/memo-tidy-runs/{runId}/undo`
+  （Console だけ。トークン面と `/mcp` にはない）は `200 {"run", "restored":[memo], "removed":["id"]}` か、
+  `409 memo_tidy_not_undoable`（`error.blocked: [{"id","why"}]`。`why` は `claimed`（claim 済みか flush 中）、`sent`、
+  `changed`、`gone`、`later_run`、`duplicate_ref`）。全部か無しで、適用済みでない run では `blocked` が空。派生行は削除され、
+  元と移したメッセージは元の状態に戻る（`pending` に戻るのは、保存した release がまだ合い、カテゴリがまだキューのときだけ。
+  そうでなければ `held`、キューでなければプレーンなノート）。run は `undone`。
+  `GET /api/memo-queues/{categoryId}/tidy-runs` は `{"runs":[{id, trigger, state, reason, createdAt, finishedAt, undoneAt,
+  merged, split, moved, held, sourceIds, resultIds, movedIds, undoable, blocked}], "usedToday", "dailyCap"}`（新しい 20 件。
+  `held` は `held` に着いた移動の数）。*ほかの書き込み経路*: superseded の行はロックされたままで、undo 以外では
+  `held` にも `pending` にもならない（store が拒む: `ErrMemoSuperseded`）。手での送信は `409 memo_locked`、設定やカテゴリの
+  削除は送信済みノートにし、派生メッセージはほかと同じに編集・移動・release できる（プレーンなカテゴリからキューへの移動は
+  `held` で入る）。整理のスイッチは壁ではなくガードレール: 返答はワークスペースの中で作られるので、Agent の代わりに答え
+  られるコードは、この上限の中で派生メッセージの本文を選べる。マイグレーションは 0142（SQLite）と 0127（Postgres）。
 - **配信**（decisions/0137 §6、段 1c）: 配信はキューの 1 回の発火。閉じていない配信は 1 つずつ
   キューの `maxActive` の枠を 1 つ占め、メンバー全体の上限 4 にも数える。
   `POST /api/memo-queues/{categoryId}/fire`（Console だけ）は 1 つの `MemoTx` で枠を予約し、
