@@ -173,6 +173,8 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only mpol-ten
   the pages had tabs the click finds nothing and the whole page is drawn, so one scene shoots
   both sides of a change. The notgranted, provided and phone scenes open the provided tab, and
   `mpol-admin-open` the per-tenant one.
+- `mpol-guide-*` are the guide's pictures: the open view's panel alone, without the first-screen
+  file, written with `--out guide/assets` (ja and en, light, one scene per run).
 - Each writes `<scene>-first-<locale>-light.webp`, the screen an administrator opens on, and
   `<scene>-<locale>-light.webp`, the whole modal grown to its content (`unfold`).
 - They run with the desktop pointer flags (`desktop: true`), so hover-only controls stay hidden.

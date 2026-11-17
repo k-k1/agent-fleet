@@ -73,25 +73,27 @@ ID as `model` with the route.
 
 ## Budgets and reservations (the deployment's Bedrock route)
 
-This applies when the deployment itself provides the Bedrock route and a tenant administrator sets a monthly budget
-per member and a monthly ceiling for the tenant.
+This applies when the deployment itself provides the Bedrock route: the deployment administrator grants it to a tenant
+with a **tenant's monthly pool**, and the tenant administrator sets a monthly budget per member
+([Choose which models members may use](../admin/access/model-access.md#give-the-team-amazon-bedrock-with-budgets)).
+The Control Plane's API and messages call the pool the tenant's ceiling (`ceiling_micro`).
 
 - **Reservation**: before a call is sent, the gateway reserves its pre-call upper bound: the model's whole context
   window at its dearest input rate plus the requested output cap at its dearest output rate. The call is admitted only
-  when that whole amount fits under both the member's budget and the tenant's ceiling; the reservation is settled
+  when that whole amount fits under both the member's budget and the tenant's pool; the reservation is settled
   to the real cost afterwards. Claude Code asks for tens of thousands of output tokens, so its reservation is far
   above that of a short call.
 - **Floor**: the smallest budget that admits one call of the cheapest model on the list, that is, the smallest of the
   models' one-token-output reservations. Below it no call of any model can ever be admitted. The tenant view (`GET /api/admin/tenants/{slug}/provided-routes/deployment`) lists
   each model's reservations and the floor (`reservations`, `floor_micro`).
-- **A 400 on save**: a member or default budget, or a ceiling while the grant is on, above zero and below the floor is
+- **A 400 on save**: a member or default budget, or a pool while the grant is on, above zero and below the floor is
   refused, because no call could ever be admitted. Set at least the floor, or 0 for no use. 0 is accepted for a budget
-  and for a ceiling while the grant is off; a ceiling of 0 with the grant on is refused for a different reason (a
-  granted tenant needs a ceiling above zero). While the grant is off the ceiling is inert and is not checked against the floor.
+  and for a pool while the grant is off; a pool of 0 with the grant on is refused for a different reason (a
+  granted tenant needs a pool above zero). While the grant is off the pool is inert and is not checked against the floor.
 - **A warning on save**: an amount at or above the floor but below a model's full-output reservation is saved, and the
   answer carries a warning. Calls fit only while the output cap they ask for is small.
 - **A 503 at call time** (`route_budget_exhausted`): the call's reservation does not fit in what is left of the
-  budget or ceiling this month. When nothing has been spent, the message says the budget is smaller than one call's
+  budget or pool this month. When nothing has been spent, the message says the budget is smaller than one call's
   reservation. Ask the tenant administrator to raise it. A refused call writes no usage row.
 
 ## When a call is refused
