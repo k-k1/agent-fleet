@@ -622,28 +622,22 @@
 /* Touch layout: the launch button lives in-flow (no hover overlay). The name and Launch share
    the first line and the chips / badges / ords always take the second one, so a busy row never
    pushes Launch under the name or past .app-rail-scroll's overflow-x clip, where it cannot be
-   tapped. The ::after is the forced line break; the buttons get a taller tap target. */
+   tapped. The ::before is the forced line break; the buttons get a taller tap target. */
 @media (hover: none) {
   .repo-id,
   .repo-lines {
-    order: 1;
+    order: -2;
   }
   .launch-wrap {
-    order: 2;
+    order: -1;
     margin-left: auto;
   }
-  .repo-info::after {
+  /* order 0, first in DOM order: the break sits after name + Launch and before every chip. */
+  .repo-info::before {
     content: "";
-    order: 3;
     flex: 0 0 100%;
     height: 0;
-    margin-top: -2px; /* cancels row-gap when no chips follow, so a bare row stays one line tall */
-  }
-  .repo-state,
-  .repo-info > .unread-dot,
-  .repo-sess-badge,
-  .repo-ords {
-    order: 4;
+    margin-bottom: -2px; /* cancels row-gap when no chips follow, so a bare row stays one line tall */
   }
   .launch-main,
   .launch-caret {
