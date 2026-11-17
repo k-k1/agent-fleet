@@ -253,4 +253,11 @@ const (
 	errCodeMemoTidyStale           = "memo_tidy_stale"
 	errCodeMemoTidyInvalid         = "memo_tidy_invalid"
 	errCodeMemoTidyBusy            = "memo_tidy_busy"
+
+	// Route policy administration (ADR 0138). internal/routepolicysrv emits the same literals;
+	// declaring them here is what puts them in TestCPEmittedErrCodesHaveConsoleCatalogEntry's
+	// view, which only looks for the values declared in this file.
+	errCodeInvalidRoutePolicy               = "invalid_route_policy"
+	errCodeRoutePolicyExceedsCeiling        = "route_policy_exceeds_ceiling"
+	errCodeRoutePolicyEndpointNotApprovable = "route_policy_endpoint_not_approvable"
 )

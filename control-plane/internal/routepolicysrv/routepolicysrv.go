@@ -19,6 +19,15 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
+// Error codes this package emits. Package main's errcodes.go declares the same values (this
+// package cannot import it) so that the Console-catalogue test sees them: change a spelling in
+// both places and in console/src/lib/i18n/locales/{en,ja}/errors.ts.
+const (
+	codeInvalidRoutePolicy    = "invalid_route_policy"
+	codeExceedsCeiling        = "route_policy_exceeds_ceiling"
+	codeEndpointNotApprovable = "route_policy_endpoint_not_approvable"
+)
+
 // ceilingState is the operator ceiling this CP started with.
 type ceilingState struct {
 	raw  string
@@ -245,18 +254,18 @@ func readRule(w http.ResponseWriter, r *http.Request, above *routepolicy.Rule) (
 		return in, "", false
 	}
 	if err := in.Validate(); err != nil {
-		writeAPIErr(w, &APIError{http.StatusBadRequest, "invalid_route_policy", err.Error()})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, codeInvalidRoutePolicy, err.Error()})
 		return in, "", false
 	}
 	in = in.Normalize()
 	if above != nil {
 		if wider := in.Exceeds(*above); len(wider) > 0 {
-			writeAPIErr(w, &APIError{http.StatusBadRequest, "route_policy_exceeds_ceiling",
+			writeAPIErr(w, &APIError{http.StatusBadRequest, codeExceedsCeiling,
 				fmt.Sprintf("the deployment's ceiling forbids routes this rule would allow: %v; a layer below the ceiling can only narrow it", wider)})
 			return in, "", false
 		}
 		if wider := in.EndpointsExceed(*above); len(wider) > 0 {
-			writeAPIErr(w, &APIError{http.StatusBadRequest, "route_policy_exceeds_ceiling",
+			writeAPIErr(w, &APIError{http.StatusBadRequest, codeExceedsCeiling,
 				fmt.Sprintf("the deployment's ceiling does not let these endpoint patterns be approved: %v; a layer below the ceiling can only narrow it", wider)})
 			return in, "", false
 		}
@@ -339,7 +348,7 @@ func (a admin) putTenant(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Endpoints != nil {
 		if err := in.ExactEndpoints(); err != nil {
-			writeAPIErr(w, &APIError{http.StatusBadRequest, "invalid_route_policy", err.Error()})
+			writeAPIErr(w, &APIError{http.StatusBadRequest, codeInvalidRoutePolicy, err.Error()})
 			return
 		}
 		v, err := TenantPolicy(r.Context(), a.cp.Store(), t.ID)
@@ -349,7 +358,7 @@ func (a admin) putTenant(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, h := range *in.Endpoints {
 			if by := v.layers.EndpointExcludedBy(h); len(by) > 0 {
-				writeAPIErr(w, &APIError{http.StatusBadRequest, "route_policy_endpoint_not_approvable",
+				writeAPIErr(w, &APIError{http.StatusBadRequest, codeEndpointNotApprovable,
 					fmt.Sprintf("%s cannot be approved as a self-hosted endpoint: excluded by %v", h, by)})
 				return
 			}
