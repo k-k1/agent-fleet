@@ -699,12 +699,13 @@ life for what is another way to ask for the same thing. The three reasons under 
 session") still hold. Either option may be wanted later, so what each has to settle is recorded here. Nothing below is
 decided, and the options are not ranked.
 
-Option A, a pull tool: a tool with which a session a person is driving takes the next N messages of a queue. Nothing is
-injected unattended, so the provenance rules of §3 are not widened. To settle before it is built:
+Option A, a pull tool: a tool with which a session a person is driving takes the next N messages of a queue. If only a
+session a person is driving could take, nothing would be injected unattended and the provenance rules of §3 would not
+widen. Whether that "if" can hold is the question below. To settle before it is built:
 
 - *Which messages may be taken.* A `held` message has not had its press, and §3 makes the press the only wall. A tool is
   offered to every session, ones nobody is driving included ("Letting sessions enqueue straight into automatic fires").
-  The Control Plane does not know which session calls (fact 1), and the origin the Agent stamps is a guard rail, not a
+  The Control Plane cannot verify which session calls (fact 1), and the origin the Agent stamps is a guard rail, not a
   wall (§3). So: may a take reach `held` messages at all, and what says that a person is driving the taker?
 - *The claim.* The ledger of §6 records one delivery per fire, bound to the session it creates through the durable key
   `q_<delivery>`. A take needs a record that names the taking session, and the move out of `pending` has to be as
@@ -721,16 +722,17 @@ Option B, an existing session as a queue's consumer. Each reason would need an a
   `idempotency_durable`, a record on disk, and reserve, abandon and lookup answers that reconciliation acts on
   (`workspace/agent/internal/sessionx/session_idempotency.go`). Input to an existing session has no such key. The only
   de-duplication there is a Managed driver's per-session ledger of the last 200 client message ids
-  (`agents/msgledger.go`, used by `agents/turnqueue.go`): it drops a resend, is not tied to a delivery, and cannot answer
+  (`workspace/agent/internal/agents/msgledger.go`, used by `workspace/agent/internal/agents/turnqueue.go`): it drops a resend, is not tied to a delivery, and cannot answer
   "was this input taken" the way abandon does. A Terminal session has no such ledger.
 - *Knowing that the session took the input.* A Terminal session's input queue is invisible to Agent Fleet. The ADR says
   nothing different of a Managed session; the Agent has a turn queue for one, and whether the Control Plane can read it
   to settle a delivery is not decided here.
 - *A bound on the consumer's context* (ADR 0021 decision 3).
 - What else assumes one session per fire: retire (§6) ends the watches and timers of the session a delivery started and
-  of the sessions it started, and stops them, which cannot be done to a session that is the person's own; the worktree
-  is new per fire because two sessions in one working copy corrupt each other; and unattended input into a session a
-  person is driving is what §3 allows only after a press or under the queue's standing switch.
+  of the sessions it started, cancels their booked resumes, and stops them, which cannot be done to a session that is the person's own; the worktree
+  is new per fire because two sessions in one working copy corrupt each other; §3 gives no standing permission for unattended
+  input into a driven session at all, since its press-or-switch rule is about causing an unattended run, not about
+  feeding one; and how pushed input is marked so it does not read as the member typing (fact 2).
 
 What reopens it is a real, recurring case that sending a selection by hand does not cover; a new issue is opened then.
 #4153 is closed by this note.
