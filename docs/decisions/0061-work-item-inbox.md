@@ -656,3 +656,11 @@ checks and the branch's strategies were read from a real pull request.
 its items stay read-only, as decided. A message in a queue may carry a reference to an item (provider, key and URL;
 never the body, so decisions 2 and 5 hold), and the Console may offer "add to queue" on an item (0137 §4). Nothing of
 0137 is built yet (#4150).
+
+## Note (2026-11-18, #4448): the rail no longer folds at 10 rows
+
+Decision 14 amended: the "10 rows by default plus show more (N remaining)" fold is gone, and with it the "show less"
+pinned to the bottom of the rail. The rail draws every row the query returned and the left pane scrolls. On real data
+(150 rows, the work-items view filling the whole left pane) the fold left most of the pane empty and put a press in
+front of every row past the tenth. The in-rail filter (shown past 10 rows), the order and decision 15 (the cap is on the
+fetch, never the display) are unchanged.

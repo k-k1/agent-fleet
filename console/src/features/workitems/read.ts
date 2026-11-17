@@ -573,12 +573,12 @@ function better(a: WorkItem, b: WorkItem, rank: (s: string) => number): boolean 
   return a.queryId < b.queryId;
 }
 
-/** How many rows the rail draws before folding, and the threshold above which the
- * one-line filter appears (docs/log/80 §80.18.4).
+/** The row count above which the one-line filter appears (docs/log/80 §80.18.4). It never
+ * caps the rows drawn: the rail renders every row and scrolls.
  *
- * The fold is a DISPLAY decision, not a fetch one: the stopped rail draws the CP cache
- * and cannot go and get "more" — going would mean waking the Workspace to render a list,
- * which ADR 0061 decision 1 forbids. So the payload stays whole and the section folds. */
+ * The payload always stays whole: the stopped rail draws the CP cache and cannot go and get
+ * "more" — going would mean waking the Workspace to render a list, which ADR 0061 decision 1
+ * forbids. */
 export const RAIL_VISIBLE = 10;
 
 /** Every label of a row, in the order the rail draws them: priority labels first, the rest in

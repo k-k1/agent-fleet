@@ -37,7 +37,7 @@ The list can be read while the workspace is stopped.
 - A row shows only what differs between rows. If every row of a query has the same assignee or repository, that field is left out
 - The relative update time appears only on rows that have not moved for 24 hours or more
 - What you have seen is remembered per browser. Opening the detail counts as seen; an item new to the list gets no mark
-- A long list folds at 10 rows with **Show more (N left)**. While it is unfolded, **Show less** stays at the bottom of the left pane
+- Every row is listed; a long list scrolls with the left pane
 
 ### Search within the list
 

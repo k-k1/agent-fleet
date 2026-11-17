@@ -29,8 +29,6 @@ export const workitems = {
   "wi.search_failed": "トラッカーを探せませんでした",
   "wi.search_stopped": "トラッカーを探せるのはワークスペースの起動中だけです",
   "wi.search_skipped": "「{labels}」は語で絞り込めないため探していません",
-  "wi.show_more": "さらに表示（残り {n} 件）",
-  "wi.show_less": "たたむ",
   "wi.rel_now": "たった今",
   "wi.rel_min": "{n} 分前",
   "wi.rel_hour": "{n} 時間前",

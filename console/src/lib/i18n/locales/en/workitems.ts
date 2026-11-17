@@ -31,8 +31,6 @@ export const workitems: Record<keyof typeof jaWorkitems, string> = {
   "wi.search_failed": "Couldn't search the tracker",
   "wi.search_stopped": "The tracker can only be searched while the workspace is running",
   "wi.search_skipped": "Not searched: “{labels}” can't be narrowed by words",
-  "wi.show_more": "Show more ({n} left)",
-  "wi.show_less": "Show less",
   "wi.rel_now": "just now",
   "wi.rel_min": "{n}m ago",
   "wi.rel_hour": "{n}h ago",
