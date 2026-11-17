@@ -117,6 +117,9 @@ type CP interface {
 	// HiddenKinds is the set of harnesses the tenant's credential policy forbids altogether
 	// (ADR 0138 D10a), which the tool texts leave out (#4241). An error means it cannot be read.
 	HiddenKinds(ctx context.Context, tenantID string) (map[string]bool, error)
+	// AllowedRoutes is, per harness, the routes the tenant's effective policy allows (the tenant
+	// view's owners[].allowed), for create_session's route text (#4323).
+	AllowedRoutes(ctx context.Context, tenantID string) (map[string][]string, error)
 	MemoList(ctx context.Context, membershipID string) (any, error)
 	// MemoCreate's connection is the authenticated connection id, recorded as the producer.
 	// ref is the typed reference of a create (nil for none). An update's ref is three-way: nil

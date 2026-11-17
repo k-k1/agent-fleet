@@ -160,6 +160,14 @@ func (d cpDeps) HiddenKinds(ctx context.Context, tenantID string) (map[string]bo
 	return v.HiddenKinds(), nil
 }
 
+func (d cpDeps) AllowedRoutes(ctx context.Context, tenantID string) (map[string][]string, error) {
+	v, err := routepolicysrv.TenantPolicy(ctx, d.m.store, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return v.AllowedRoutes(), nil
+}
+
 func (d cpDeps) ScheduleGuardErr(ctx context.Context, membershipID, repoName, sessionName string) error {
 	return scheduleGuardErr(ctx, d.m.store, membershipID, repoName, sessionName)
 }

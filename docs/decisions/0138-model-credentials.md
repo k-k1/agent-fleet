@@ -819,3 +819,7 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
   monthly pool. A tenant_admin never sees either card, and the CP still refuses their cap and grant writes. Admin >
   Model access keeps the ceiling, the deployment-wide policy, the per-tenant list (read-only) and the deployment
   source. So one tenant's settings are in one place, and the cap has exactly one editor.
+- 2026-11-18, D10a (#4323): the hosted MCP `create_session` texts (`route`, `route_connection`, and the
+  Bedrock clause of `model`) name only the routes the caller's tenant policy allows, read per call from the tenant
+  view's `owners[].allowed`; an unreadable policy names none. Enforcement is unchanged: a create naming a
+  forbidden route is still refused with `route_forbidden`.

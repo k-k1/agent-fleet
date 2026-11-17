@@ -32,6 +32,9 @@ type testCP struct {
 	// hidden is what HiddenKinds answers for every tenant; hiddenErr fails it.
 	hidden    map[string]bool
 	hiddenErr error
+	// allowed is what AllowedRoutes answers for every tenant (nil = nothing forbidden); allowedErr fails it.
+	allowed    map[string][]string
+	allowedErr error
 }
 
 var _ CP = testCP{}
@@ -50,6 +53,16 @@ func (c testCP) RoutePolicyErr(context.Context, store.MembershipView, runtime.Ru
 }
 func (c testCP) HiddenKinds(context.Context, string) (map[string]bool, error) {
 	return c.hidden, c.hiddenErr
+}
+func (c testCP) AllowedRoutes(context.Context, string) (map[string][]string, error) {
+	if c.allowed == nil && c.allowedErr == nil {
+		// A tenant whose policy forbids nothing.
+		return map[string][]string{
+			"claude":   {"anthropic-subscription", "anthropic-api", "bedrock", "bedrock-deployment"},
+			"opencode": {"bedrock"},
+		}, nil
+	}
+	return c.allowed, c.allowedErr
 }
 func (c testCP) TenantSel(*http.Request) string { unwired("TenantSel"); return "" }
 

@@ -3,6 +3,7 @@ package mcpsrv
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
@@ -320,30 +321,125 @@ func agentUsageDesc(hidden hiddenKinds) string {
 }
 
 // createModelDesc is create_session's model argument description: claude's Bedrock clause only
-// while claude is shown.
-func createModelDesc(hidden hiddenKinds) string {
+// while claude is shown and its bedrock route is allowed.
+func createModelDesc(hidden hiddenKinds, routes allowedRoutes) string {
 	out := "model override (optional)"
-	if !hidden["claude"] {
+	if !hidden["claude"] && routes.ok("claude", "bedrock") {
 		out += ". claude on route=bedrock requires one: a Bedrock model id or system inference profile id as Bedrock writes it (anthropic.… or <scope>.anthropic.…, scope us, eu, apac, jp, au, us-gov or global). Aliases such as opus, claude-… ids and ARNs are refused; the session then runs on that one model for every call, subagents included, with no fallback to another"
 	}
 	return out
 }
 
-// createRouteDesc is create_session's route argument description: each kind's routes only while
-// the kind is shown. Which routes the policy forbids is #4323.
-func createRouteDesc(hidden hiddenKinds) string {
-	var accepts []string
-	if !hidden["claude"] {
-		accepts = append(accepts, "claude accepts anthropic-subscription, anthropic-api, bedrock or bedrock-deployment (Bedrock the deployment pays for, within the budget your tenant administrator sets)")
+// allowedRoutes is, per kind, the routes the caller's tenant policy allows (ADR 0138 D10a, #4323):
+// create_session's route text names only those. nil means "not restricted" (the static texts);
+// a non-nil map is exhaustive, so a kind or route missing from it is not named.
+type allowedRoutes map[string]map[string]bool
+
+// ok says whether route may be named for kind.
+func (r allowedRoutes) ok(kind, route string) bool {
+	return r == nil || r[kind][route]
+}
+
+// allowedRoutes is what the caller's tenant policy allows. It fails closed like hiddenKinds: when
+// the membership or the policy cannot be read the map is empty, so no route is named.
+func (a API) allowedRoutes(ctx context.Context, prin *mcpPrincipal) allowedRoutes {
+	none := allowedRoutes{}
+	ms, err := a.cp.Store().ListMemberships(ctx, prin.identityID)
+	if err != nil {
+		return none
 	}
-	if !hidden["opencode"] {
+	for _, m := range ms {
+		if m.MembershipID != prin.membershipID {
+			continue
+		}
+		byKind, err := a.cp.AllowedRoutes(ctx, m.TenantID)
+		if err != nil {
+			return none
+		}
+		out := allowedRoutes{}
+		for k, rs := range byKind {
+			out[k] = map[string]bool{}
+			for _, r := range rs {
+				out[k][r] = true
+			}
+		}
+		return out
+	}
+	return none
+}
+
+// createRouteDesc is create_session's route argument description: each kind's routes only while
+// the kind is shown and the policy allows the route. Naming a forbidden route would only invite a
+// create the CP refuses with route_forbidden.
+func createRouteDesc(hidden hiddenKinds, routes allowedRoutes) string {
+	pick := func(kind string, candidates ...string) []string {
+		if hidden[kind] {
+			return nil
+		}
+		var out []string
+		for _, r := range candidates {
+			if routes.ok(kind, r) {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	var accepts []string
+	bedrock := false
+	if rs := pick("claude", "anthropic-subscription", "anthropic-api", "bedrock", "bedrock-deployment"); len(rs) > 0 {
+		s := "claude accepts " + listKinds(rs, "or")
+		for _, r := range rs {
+			if strings.HasPrefix(r, "bedrock") {
+				bedrock = true
+			}
+		}
+		if slices.Contains(rs, "bedrock-deployment") {
+			s += " (Bedrock the deployment pays for, within the budget your tenant administrator sets)"
+		}
+		accepts = append(accepts, s)
+	}
+	if rs := pick("opencode", "bedrock"); len(rs) > 0 {
 		accepts = append(accepts, "opencode accepts bedrock (with an amazon-bedrock/<id> model)")
+		bedrock = true
 	}
 	out := "explicit model route id (optional; omit to keep the kind's own default resolution). "
 	if len(accepts) > 0 {
-		out += strings.Join(accepts, ", ") + "; all Terminal sessions only, and bedrock / bedrock-deployment only on a workspace where their acceptance switch is set. Any other kind, or a route the kind does not declare, is refused"
+		out += strings.Join(accepts, ", ") + "; all Terminal sessions only"
+		if bedrock {
+			out += ", and bedrock / bedrock-deployment only on a workspace where their acceptance switch is set"
+		}
+		out += ". Any other kind, or a route the kind does not declare, is refused"
 	} else {
 		out += "A route the kind does not declare is refused"
 	}
 	return out + " with the reason, never run on the default route instead."
+}
+
+// createRouteConnectionDesc is create_session's route_connection argument description: what each
+// route takes, only for the routes the kinds shown to the caller are allowed to use (#4323). Both
+// claude and opencode declare bedrock, so it stays while either may use it.
+func createRouteConnectionDesc(hidden hiddenKinds, routes allowedRoutes) string {
+	shown := func(route string, kinds ...string) bool {
+		for _, k := range kinds {
+			if !hidden[k] && routes.ok(k, route) {
+				return true
+			}
+		}
+		return false
+	}
+	var takes []string
+	if shown("anthropic-api", "claude") {
+		takes = append(takes, "anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Model credentials > Anthropic API key")
+	}
+	if shown("bedrock", "claude", "opencode") {
+		takes = append(takes, "bedrock takes <profile id>@<region> for one of your Settings AWS profiles marked as a model route (the region may be empty for the profile's own)")
+	}
+	if shown("bedrock-deployment", "claude") {
+		takes = append(takes, "bedrock-deployment takes none")
+	}
+	out := "stable reference to the connection the route runs on (optional; only with route)."
+	if len(takes) == 0 {
+		return out
+	}
+	return out + " " + strings.Join(takes, "; ")
 }

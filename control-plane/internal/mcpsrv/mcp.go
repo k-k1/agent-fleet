@@ -479,10 +479,10 @@ type mcpTool struct {
 
 // memberTools are the Phase-1 member/drive tools (E). Each runs against the
 // caller's own Workspace, resolved from the PAT's membership.
-func memberTools() []mcpTool { return memberToolsHiding(nil) }
+func memberTools() []mcpTool { return memberToolsHiding(nil, nil) }
 
-// memberToolsHiding is memberTools whose texts leave out the kinds hidden names (#4241).
-func memberToolsHiding(hidden hiddenKinds) []mcpTool {
+// memberToolsHiding is memberTools whose texts leave out the kinds hidden names (#4241) and the routes routes does not allow (#4323).
+func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 	nameArg := map[string]any{
 		"type":       "object",
 		"properties": map[string]any{"name": map[string]any{"type": "string", "description": "session name"}},
@@ -745,14 +745,14 @@ func memberToolsHiding(hidden hiddenKinds) []mcpTool {
 					"dir":              map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
 					"title":            map[string]any{"type": "string", "description": "display name (optional)"},
 					"kind":             map[string]any{"type": "string", "description": createKindDesc(hidden)},
-					"model":            map[string]any{"type": "string", "description": createModelDesc(hidden)},
+					"model":            map[string]any{"type": "string", "description": createModelDesc(hidden, routes)},
 					"initial_prompt":   map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
 					"worktree":         map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
 					"branch":           map[string]any{"type": "string", "description": "base branch for the new worktree (optional; default current HEAD)"},
 					"new_branch":       map[string]any{"type": "string", "description": "branch to create in the new worktree (optional; omitted = temporary branch)"},
 					"subdir":           map[string]any{"type": "string", "description": "relative path INSIDE the working copy to start the agent in, e.g. \"console\" or \"apps/web\" (optional; default = the working copy root). With worktree=true it is resolved inside the newly created worktree. A path that does not exist is rejected."},
-					"route":            map[string]any{"type": "string", "description": createRouteDesc(hidden)},
-					"route_connection": map[string]any{"type": "string", "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Model credentials > Anthropic API key; bedrock takes <profile id>@<region> for one of your Settings AWS profiles marked as a model route (the region may be empty for the profile's own); bedrock-deployment takes none"},
+					"route":            map[string]any{"type": "string", "description": createRouteDesc(hidden, routes)},
+					"route_connection": map[string]any{"type": "string", "description": createRouteConnectionDesc(hidden, routes)},
 				},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
@@ -941,7 +941,7 @@ func (a API) toolsFor(ctx context.Context, prin *mcpPrincipal) []mcpTool {
 	var out []mcpTool
 	if !a.memoryOnly {
 		hidden := a.hiddenKinds(ctx, prin)
-		for _, t := range memberToolsHiding(hidden) {
+		for _, t := range memberToolsHiding(hidden, a.allowedRoutes(ctx, prin)) {
 			if a.cp.ScopeRank(prin.scope) >= a.cp.ScopeRank(t.minScope) {
 				out = append(out, t)
 			}
