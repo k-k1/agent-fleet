@@ -656,6 +656,21 @@ func memoTidyRunToDTO(r store.MemoTidyRun, rec memoTidyRecord) memoTidyRunDTO {
 	return d
 }
 
+// memoTidyRunToCheckedDTO is memoTidyRunToDTO plus the undo verdict (Undoable, Blocked) that only an
+// applied run has. Every answer that carries a run goes through it, so the apply answer and the
+// run list cannot disagree; rd must read committed state, after the run's own transaction.
+func memoTidyRunToCheckedDTO(rd store.MemoTidyReader, run store.MemoTidyRun, rec memoTidyRecord) (memoTidyRunDTO, error) {
+	d := memoTidyRunToDTO(run, rec)
+	if run.State == store.TidyRunApplied {
+		_, blocked, err := memoTidyUndoCheck(rd, run, rec)
+		if err != nil {
+			return d, err
+		}
+		d.Blocked, d.Undoable = blocked, len(blocked) == 0
+	}
+	return d, nil
+}
+
 // memoTidyRunsWire is GET /api/memo-queues/{categoryId}/tidy-runs.
 type memoTidyRunsWire struct {
 	Runs      []memoTidyRunDTO `json:"runs"`
@@ -692,13 +707,9 @@ func (a memoAPI) listTidyRuns(w http.ResponseWriter, r *http.Request, _ store.Id
 			if run.Ops != "" {
 				_ = json.Unmarshal([]byte(run.Ops), &rec)
 			}
-			d := memoTidyRunToDTO(run, rec)
-			if run.State == store.TidyRunApplied {
-				_, blocked, err := memoTidyUndoCheck(rd, run, rec)
-				if err != nil {
-					return err
-				}
-				d.Blocked, d.Undoable = blocked, len(blocked) == 0
+			d, err := memoTidyRunToCheckedDTO(rd, run, rec)
+			if err != nil {
+				return err
 			}
 			out.Runs = append(out.Runs, d)
 		}
@@ -948,9 +959,13 @@ func (a memoAPI) applyTidy(w http.ResponseWriter, r *http.Request, _ store.Ident
 	if out.Run.Ops != "" {
 		_ = json.Unmarshal([]byte(out.Run.Ops), &rec)
 	}
-	wire := memoTidyApplyWire{Run: memoTidyRunToDTO(out.Run, rec), Memos: []memoDTO{}}
+	wire := memoTidyApplyWire{Memos: []memoDTO{}}
 	touched := slices.Concat(out.Sources, out.Results, out.Moved)
 	err = a.store.MemoTidyRead(ctx, mv.MembershipID, func(rd store.MemoTidyReader) error {
+		var err error
+		if wire.Run, err = memoTidyRunToCheckedDTO(rd, out.Run, rec); err != nil {
+			return err
+		}
 		for _, id := range touched {
 			m, ok, err := rd.GetMemo(id)
 			if err != nil {
