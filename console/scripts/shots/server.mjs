@@ -46,6 +46,11 @@ const FLEET_LANES = Number(arg("fleet-lanes", "0")) || 0;
 const DEMO_NAME = argv.includes("--demo") ? arg("demo", "day") : "";
 if (DEMO_NAME && !/^[a-z]+$/.test(DEMO_NAME)) throw new Error(`--demo: bad scenario name ${DEMO_NAME}`);
 const DEMO = DEMO_NAME ? (await import(`./demo/${DEMO_NAME}.mjs`)).fixtures(LOCALE, fx) : null;
+// The Model access pages (SHOT_MODEL_ACCESS=<rules>, SHOT_PROVIDED=<state>, fixtures.mjs
+// modelAccess). SHOT_MODEL_ACCESS_SUPER=1 makes the caller the deployment administrator, whose
+// account menu offers the admin modal.
+const MODEL_ACCESS = process.env.SHOT_MODEL_ACCESS ? fx.modelAccess(process.env.SHOT_MODEL_ACCESS, process.env.SHOT_PROVIDED || "off") : null;
+const MA_SUPER = !!MODEL_ACCESS && process.env.SHOT_MODEL_ACCESS_SUPER === "1";
 // The memory pages of the user guide: their own memory set, served only in a run that asks.
 const MEM_GUIDE = !!process.env.SHOT_MEMORY_GUIDE;
 
@@ -84,7 +89,7 @@ const exact = {
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
     // The operate guide's pages (SHOT_OPERATE_*) are the deployment administrator's.
-    super_admin: ["SHOT_OPERATE_RUN", "SHOT_OPERATE_SIGNIN", "SHOT_OPERATE_SECURE", "SHOT_OPERATE_KEYS", "SHOT_OPERATE_GPU", "SHOT_OPERATE_ENGINES"].some((k) => !!process.env[k]),
+    super_admin: MA_SUPER || ["SHOT_OPERATE_RUN", "SHOT_OPERATE_SIGNIN", "SHOT_OPERATE_SECURE", "SHOT_OPERATE_KEYS", "SHOT_OPERATE_GPU", "SHOT_OPERATE_ENGINES"].some((k) => !!process.env[k]),
   }),
   // SHOT_AGENT_SILENT: the Agent has stopped answering, so the bar shows the "Not responding" badge
   // (guide scene ws-agent-silent). The getting-started pages (SHOT_START_GUIDE=stale) show the bar's
@@ -300,7 +305,7 @@ const exact = {
   "/api/admin/tenants": () => {
     const d = ADMIN_RES ? fx.adminResTenants() : fx.adminTenants();
     // SHOT_OPERATE_SLOT_HOMES: the limits editor (and its slot-pool fields) is super_admin's view.
-    return process.env.SHOT_OPERATE_SIGNIN || process.env.SHOT_OPERATE_SECURE || process.env.SHOT_OPERATE_SLOT_HOMES ? { ...d, super_admin: true } : d;
+    return MA_SUPER || process.env.SHOT_OPERATE_SIGNIN || process.env.SHOT_OPERATE_SECURE || process.env.SHOT_OPERATE_SLOT_HOMES ? { ...d, super_admin: true } : d;
   },
   // Admin › Slots of the operate guide (SHOT_OPERATE_KEYS): an ecs-ec2 pool with an outdated, a
   // reserved and a wedged slot. Without it the route stays unhandled and the tab is hidden.
@@ -948,6 +953,12 @@ const server = http.createServer((req, res) => {
     const phase = url.searchParams.get("phase") || "";
     res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(DEMO.setPhase(phase)));
+    return;
+  }
+  const ma = MODEL_ACCESS?.(p, req.method);
+  if (ma) {
+    res.writeHead(ma.status, { "content-type": ma.type, "cache-control": "no-store" });
+    res.end(ma.body);
     return;
   }
   if (p.startsWith("/api/")) {
