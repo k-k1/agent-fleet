@@ -50,6 +50,15 @@ describe("summarizeLayer, on the CP's answers", () => {
       },
     ],
     [
+      "unapproved",
+      {
+        ceiling: "dest 11/13 -openrouter,sakana; endpoints *.corp.example",
+        deployment: "none",
+        tenant_cap: "dest 11/13 -openrouter,sakana; deny cursor-login",
+        tenant: "classes 4/5 -subscription; except copilot-login; endpoints ",
+      },
+    ],
+    [
       "bedrockonly",
       { ceiling: `dest 1/13 -${NOT_BEDROCK}; no endpoints`, deployment: "none", tenant_cap: "none", tenant: "none" },
     ],
@@ -117,8 +126,35 @@ describe("memberUse, on the CP's answers", () => {
     expect(rows(g.chat)).toBe(chat);
   });
 
+  it("names a missing server, not the layers, for a per-connection route the layers allow", () => {
+    // unapproved: the restricted layers with no host approved. The layers allow member-llamacpp
+    // and custom-api on an approved host (endpointRoutes), so approving one is the whole fix,
+    // although the CP's raw forbiddenBy for them names three layers.
+    const v = fixture("unapproved");
+    expect(v.routes.find((r) => r.id === "member-llamacpp")!.forbiddenBy).toEqual(["ceiling", "tenant_cap", "tenant"]);
+    const u = memberUse(v) as Extract<MemberUse, { state: "owners" }>;
+    const lcpp = u.groups.kinds.find((o) => o.id === "lcpp")!;
+    expect(lcpp.routes.find((r) => r.id === "member-llamacpp")).toEqual({
+      id: "member-llamacpp",
+      allowed: false,
+      stoppedBy: [],
+      needsServer: true,
+    });
+    expect(lcpp.stoppedBy).toEqual([]);
+    const opencode = u.groups.kinds.find((o) => o.id === "opencode")!;
+    expect(opencode.routes.find((r) => r.id === "custom-api")!.needsServer).toBe(true);
+    // Where a layer does forbid self-hosting (bedrockonly: endpointRoutes is empty), the layer is named.
+    const b = memberUse(fixture("bedrockonly")) as Extract<MemberUse, { state: "owners" }>;
+    expect(b.groups.kinds.find((o) => o.id === "lcpp")!.routes.find((r) => r.id === "member-llamacpp")).toEqual({
+      id: "member-llamacpp",
+      allowed: false,
+      stoppedBy: ["ceiling"],
+      needsServer: false,
+    });
+  });
+
   it("agrees with hidden: an item is unusable exactly when the CP lists it as hidden", () => {
-    for (const name of ["open", "restricted", "bedrockonly", "nosubs"]) {
+    for (const name of ["open", "restricted", "unapproved", "bedrockonly", "nosubs"]) {
       const v = fixture(name);
       const u = memberUse(v) as Extract<MemberUse, { state: "owners" }>;
       const hidden = v.hidden as Record<"kinds" | "chat" | "imagegen", { id: string }[]>;

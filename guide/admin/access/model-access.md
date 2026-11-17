@@ -74,6 +74,7 @@ Open a row to see its routes, each with ✔ or ✖ and, for one that is not allo
 |---|---|
 | ✔ with "Usable on 3 of its 4 routes" | Members see it with only the routes left |
 | ✖ with who stops it | It is hidden from every member of the tenant. To bring it back, everyone named for at least one of its routes has to allow it |
+| "no approved self-hosted server" on a member's own llama.cpp or custom endpoint | Every layer allows it on an approved host, and none is approved. Approve the host on **Restrictions**; no rule has to change |
 | Only the hidden items, with a line saying so | The Control Plane is older and does not say what each agent can use |
 | A line saying the list could not be read | The Control Plane did not answer it. This is not the same as "everything is usable" |
 

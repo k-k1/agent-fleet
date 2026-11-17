@@ -348,6 +348,19 @@ describe("what members can use", () => {
     expect(section().querySelector("[role=alert]")).toBeNull();
   });
 
+  it("says a per-connection route lacks an approved server rather than blaming the layers", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : fx("unapproved"),
+      ),
+    );
+    await mount();
+    const route = row("kinds", "lcpp").querySelector('[data-route="member-llamacpp"]')!;
+    expect(route.textContent).toContain("承認したセルフホストのサーバーがありません");
+    expect(route.textContent).not.toContain("止めているのは");
+    expect(row("kinds", "lcpp").querySelector("summary")!.textContent).toContain("2 の経路のうち 1 つで使えます");
+  });
+
   it("lists everything as usable only from a well-formed owners", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : fx("open")),

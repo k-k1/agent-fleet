@@ -9,7 +9,6 @@
 import {
   ROUTE_CLASSES,
   ROUTE_DESTINATIONS,
-  isPerConnection,
   parseHidden,
   parseOwners,
   withExtra,
@@ -82,7 +81,8 @@ export interface RouteRow {
   allowed: boolean;
   /** The layers that forbid it, top first; empty for an allowed route. */
   stoppedBy: string[];
-  /** Not allowed although no layer forbids it: a per-connection route without an approved host. */
+  /** Not allowed only for want of an approved self-hosted server: a per-connection route every
+   *  layer allows on one (stoppedBy is then empty). */
   needsServer: boolean;
 }
 
@@ -115,9 +115,20 @@ const ordered = (ls: Iterable<string>) => {
 /** memberUse folds a tenant view into the overview's list. */
 export function memberUse(v: TenantPolicyView): MemberUse {
   const byRoute = new Map(v.routes.map((r) => [r.id, r.forbiddenBy ?? []]));
+  // A per-connection route every layer allows on an approved host (endpointRoutes) that is still
+  // not allowed lacks only an approved host: its forbiddenBy is the layers' raw verdict, which
+  // the host's approval overrides, so naming them would send the reader to change a rule that
+  // needs no change.
+  const onHost = new Set(Array.isArray(v.endpointRoutes) ? v.endpointRoutes : []);
   const routeRow = (id: string, allowed: boolean, fallback: string[] = []): RouteRow => {
-    const by = allowed ? [] : ordered(byRoute.get(id)?.length ? byRoute.get(id)! : fallback);
-    return { id, allowed, stoppedBy: by, needsServer: !allowed && by.length === 0 && isPerConnection(id) };
+    if (allowed) return { id, allowed, stoppedBy: [], needsServer: false };
+    if (onHost.has(id)) return { id, allowed, stoppedBy: [], needsServer: true };
+    return {
+      id,
+      allowed,
+      stoppedBy: ordered(byRoute.get(id)?.length ? byRoute.get(id)! : fallback),
+      needsServer: false,
+    };
   };
   const row = (id: string, routes: RouteRow[]): OwnerRow => ({
     id,

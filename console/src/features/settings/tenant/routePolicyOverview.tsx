@@ -76,8 +76,11 @@ function rowText(tr: Tr, o: OwnerRow): string {
   const ok = o.routes.filter((r) => r.allowed).length;
   if (ok === o.routes.length) return tr("tenant.mpol_use_all");
   if (ok > 0) return tr("tenant.mpol_use_some", { n: ok, m: o.routes.length });
-  const why = o.stoppedBy.length > 0 ? byList(tr, o.stoppedBy) : tr("tenant.mpol_needs_server");
-  return tr("tenant.mpol_use_none", { who: why });
+  const why = [
+    ...(o.stoppedBy.length > 0 ? [tr("tenant.mpol_stopped_by", { who: byList(tr, o.stoppedBy) })] : []),
+    ...(o.routes.some((r) => r.needsServer) ? [tr("tenant.mpol_needs_server")] : []),
+  ];
+  return tr("tenant.mpol_use_none", { why: why.join(tr("tenant.mpol_clause_sep")) });
 }
 
 function Group({ name, title, rows }: { name: string; title: string; rows: OwnerRow[] }) {
@@ -98,7 +101,7 @@ function Group({ name, title, rows }: { name: string; title: string; rows: Owner
                 {o.routes.map((r) => (
                   <li key={r.id} data-route={r.id}>
                     <Mark ok={r.allowed} /> <RouteLabel id={r.id} />
-                    {!r.allowed && <span className="muted"> — {reason(tr, r)}</span>}
+                    {!r.allowed && reason(tr, r) && <span className="muted"> — {reason(tr, r)}</span>}
                   </li>
                 ))}
               </ul>
@@ -118,7 +121,7 @@ function MemberUse({ view }: { view: TenantPolicyView }) {
       <h4>{tr("tenant.mpol_use_title")}</h4>
       {use.state === "unavailable" ? (
         <p className="admin-hint warn" role="alert">
-          {tr("admin.mpol_hidden_unavailable")}
+          {tr("tenant.mpol_use_unavailable")}
         </p>
       ) : (
         <>
