@@ -10,12 +10,16 @@ import type { Repo } from "../repos/store.ts";
 
 let servedCats: MemoCategory[] = [];
 let servedMemos: { repo: string; category: string }[] = [];
+let memoListFails = false;
 let servedQueues: unknown = { tenantEnabled: true, queues: [] };
 const memoCreate = vi.fn(async (_i: MemoInput): Promise<Record<string, unknown>> => ({ id: "new" }));
 vi.mock("./api.ts", () => ({
   memoCategoryList: async () => servedCats,
   memoQueueList: async () => servedQueues,
-  memoList: async () => servedMemos,
+  memoList: async () => {
+    if (memoListFails) throw new Error("down");
+    return servedMemos;
+  },
   memoCreate: (i: MemoInput) => memoCreate(i),
 }));
 
@@ -78,6 +82,7 @@ async function press() {
 beforeEach(() => {
   servedCats = [];
   servedMemos = [];
+  memoListFails = false;
   servedQueues = { tenantEnabled: true, queues: [] };
   memoCreate.mockClear();
   memoCreate.mockResolvedValue({ id: "new" });
@@ -155,6 +160,14 @@ describe("a category that exists only as the name on notes", () => {
     expect(document.body.textContent).toContain(t("memo.addrun_plain_hint"));
     await press();
     expect(memoCreate.mock.calls[0][0]).toMatchObject({ repo: "app", category: "legacy" });
+  });
+
+  it("still offers the table's categories when the notes cannot be read", async () => {
+    servedCats = [cat("c1", "plain", { position: 0 })];
+    memoListFails = true;
+    await open([repo("app")], "app");
+    expect([...sel(t("memo.addrun_category")).querySelectorAll("option")].map((o) => o.textContent)).toContain("plain");
+    expect(document.body.textContent).not.toContain(t("memo.addrun_load_failed"));
   });
 
   it("does not turn the organization's auto-run notice on when it is the only category", async () => {
