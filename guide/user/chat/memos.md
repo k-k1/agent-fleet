@@ -55,6 +55,19 @@ In the detail of an issue, a ticket or a pull request, "**Add to auto-run**" sav
 3. The "**Tidy with assistant**" screen lists the rewritten instructions and the suggested categories
 4. Choose the suggestions to apply and press "**Apply ◯ item(s)**". The memos do not change until you press it
 
+When every ticked memo is in one auto-run category, the screen is "**Tidy auto-run notes**" and the assistant also proposes
+merging notes into one, splitting one note into several, moving a note to another category, or leaving it. Each proposal is
+shown as a before and after, with what it means for the note: the new note waits to run or waits for approval (it takes the
+state of the notes it came from), a moved note keeps waiting to run only in a category that this category lists as a
+destination, otherwise it waits for approval there, and a move to an ordinary category makes it an ordinary note. Untick the
+proposals you do not want and press "**Apply ◯ proposals**": they are applied together as one tidy, and you can undo it from
+the category's tidy history until its notes are sent. Some proposals are shown under "Proposals not applied" and change
+nothing: merging notes that were added from different places or are in different states (waiting to run and waiting for
+approval), merging or splitting file notes, notes with images and notes that point at an item (these can still be moved),
+and anything the Control Plane would refuse. If a note changed after the screen showed it, nothing is applied and the
+notes are reloaded. A selection over several categories, or in a category that does not run by itself, gets the one-by-one
+rewrite above, as before.
+
 ## Send them together
 
 1. Tick the memos to send and press "**Send…**" at the bottom. "**Send**" on a category header sends that whole category

@@ -30,7 +30,8 @@ const (
 	MaxInputItems = 40
 	// MaxDestinations bounds the categories one run is offered.
 	MaxDestinations = 100
-	// DailyCap is the most runs a queue reserves in 24 hours, every outcome counted.
+	// DailyCap is the most automatic runs a queue reserves in 24 hours, every outcome counted.
+	// Manual runs are never refused by it and are not counted.
 	DailyCap = 10
 	// EnvelopePrefix is what no result text may start with: it is the opening of the line the
 	// Agent puts before a delivery, and a result that starts with it could pass for one.

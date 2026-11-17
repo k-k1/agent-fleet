@@ -257,6 +257,22 @@ Workspace を起こさない。
   削除は送信済みノートにし、派生メッセージはほかと同じに編集・移動・release できる（プレーンなカテゴリからキューへの移動は
   `held` で入る）。整理のスイッチは壁ではなくガードレール: 返答はワークスペースの中で作られるので、Agent の代わりに答え
   られるコードは、この上限の中で派生メッセージの本文を選べる。マイグレーションは 0142（SQLite）と 0127（Postgres）。
+- **整理の手動実行**（[decisions/0137](../decisions/0137-message-queues.ja.md) §8、段 5、slice S5。コードは `memo_tidy.go` の
+  `applyTidy`）: `POST /api/memo-tidy/apply`。Console だけ（トークン面と `/mcp` にはない）。Console が `POST /api/chat/ask` で
+  提案をもらってプレビューを見せ、承認すると `{"repo","category","items":[{"id","contentHash"}],"operations":[...]}` を
+  送る。1 回の呼び出しで自動実行のカテゴリ 1 つ。操作は契約のもの（`merge`・`split`・`move`・`keep`、id だけ）。Agent は
+  呼ばず、カテゴリの `tidy` 設定も読まない。items はプレビューが見せたとおりのメッセージで、違うもの（ハッシュ、`pending` か
+  `held` でない、claim 済み、送信済み、flush 中）が 1 つでもあれば、run を作る前に全体を断る。移動先は自動実行と同じ
+  `memoTidyDestinations` が決める（一覧にある移動先、続いてキュー自身のリポジトリのカテゴリ。キュー自身は含めず、最大 100）。
+  呼び出しは `Trigger: "manual"`・`RunID: ""` の `memoTidyApply` なので、効果は自動実行とまったく同じ。答え:
+  `200 {"run", "memos"}`（run は run 一覧と同じ形。memos は置き換え済みになった元、派生メッセージ、移したメッセージ。何も
+  変えなかった run でも同じ）、`409 memo_tidy_stale`（`error.stale` に違うものの id。run は残らない。読み取りと apply の
+  ロックのあいだの変化も同じ答えで、apply が `stale_input` として見つける。こちらは `dropped` の run が残り、入力に見た印がつく）、`400 memo_tidy_invalid`（`error.tidyCode` に
+  検証の code。読めない operations は `bad_shape`。run は `dropped` で記録され入力は見た印がつくが、`bad_shape` は run に
+  届かない）、`409 memo_tidy_busy`（メンバーのもう 1 つの run が実行中）、`404`（自動実行のカテゴリでない、またはそこにない
+  メモ）、`400 bad_request`（items が無い、重複、41 件以上）。*1 日の上限*: 手動の run は上限で断られず、
+  `CountMemoTidyRunsSince` も手動を数えないので、人が押した分は自動実行の 10 回を減らさない（上限はモデル呼び出しを
+  抑えるもので、この経路は呼ばない）。run 一覧には trigger `manual` で出て、取り消しは同じ route。
 - **整理の自動実行**（[decisions/0137](../decisions/0137-message-queues.ja.md) §8、段 5、slice S3。コードは
   `memo_tidy_run.go` と `memo_dispatch.go` の `fireQueue`）: キューに `tidy` が入るまで、配備先では動かない（入れられる
   のは Console の設定 PUT だけ）。*tick のどこにあるか*: settle（突き合わせと close）、dispatch、送信、そして dispatch が

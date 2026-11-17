@@ -326,6 +326,26 @@ Memos you accumulate and send to a session in one go (the tables are
   message is edited, moved and released like any other (a move into a queue from a plain category enters it `held`).
   The tidy switch is a guard rail, not a wall: the reply is produced inside the workspace, so code there that can answer
   for the Agent chooses the text of a derived message inside these bounds. Migrations 0142 (SQLite) and 0127 (Postgres).
+- **Tidy, the manual path** ([decisions/0137](../decisions/0137-message-queues.md) §8, step 5, slice S5; code in
+  `memo_tidy.go` `applyTidy`): `POST /api/memo-tidy/apply`, Console only (not on the token face or `/mcp`). The Console
+  asks `POST /api/chat/ask` for a proposal and shows the member a preview; approving sends
+  `{"repo","category","items":[{"id","contentHash"}],"operations":[...]}`, one auto-run category per call, the
+  operations being the contract's (`merge`, `split`, `move`, `keep`; ids only). It never calls the Agent and does not
+  read the category's `tidy` setting. The items are the messages as the preview showed them: one that differs (hash,
+  not `pending` or `held`, claimed, sent or in a flush) refuses the whole call before any run exists. The destinations
+  are offered by `memoTidyDestinations`, the one function the automatic run uses (the listed destinations, then the
+  categories of the queue's own repository, never the queue itself, at most 100), and the call is
+  `memoTidyApply` with `Trigger: "manual"` and `RunID: ""`, so the effects are exactly the automatic run's. Answers:
+  `200 {"run", "memos"}` (the run as the run list shows it, and the sources now superseded, the derived messages and the
+  moved ones, also for a run that kept everything); `409 memo_tidy_stale` with `error.stale` (the ids that differ, no
+  run recorded; a change between the read and apply's lock is the same answer, found by apply as `stale_input`, and that one is recorded as a `dropped` run with its input marked seen);
+  `400 memo_tidy_invalid` with `error.tidyCode` (the validator's code, or `bad_shape` for operations that cannot be
+  read; the run is recorded `dropped` and its input marked seen, except for `bad_shape`, which never reaches a run);
+  `409 memo_tidy_busy` (the member's other run is in flight); `404` for a category that is not an auto-run category of
+  the member's or a message that is not in it; `400 bad_request` for no, duplicate or more than 40 items. *Daily cap*:
+  a manual run is never refused by it and `CountMemoTidyRunsSince` leaves manual runs out, so a person's presses do not
+  use up the automatic run's 10 (the cap bounds model calls, and this path makes none). The run list shows the run
+  with trigger `manual`, and its undo is the same route.
 - **Tidy, the automatic run** ([decisions/0137](../decisions/0137-message-queues.md) §8, step 5, slice S3; code in
   `memo_tidy_run.go`, `memo_dispatch.go` `fireQueue`): inert on a deployment until a queue has `tidy` on, which only the
   Console's settings PUT can set. *Where it sits in a tick*: settle (reconcile and close), then dispatch, then the sends,

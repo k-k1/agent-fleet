@@ -17,6 +17,7 @@ export {
   memoQueuePut,
   memoQueueDelete,
   memoRelease,
+  memoTidyApply,
   memoQueueFire,
   memoQueueResume,
   memoQueueDeliveries,

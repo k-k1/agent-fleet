@@ -1496,6 +1496,10 @@ export const memoQueueDelete = (categoryId: string): Promise<Response> =>
 // message answers 409 memo_release_stale with error.stale.
 export const memoRelease = (items: { id: string; contentHash: string }[]): Promise<MemoWriteResult> =>
   apiJSON("api/memos/release", "POST", { items });
+// The manual Tidy's apply (ADR 0137 section 8): the operations the member approved, as one run.
+// 409 memo_tidy_stale (error.stale names the changed notes) and 400 memo_tidy_invalid
+// (error.tidyCode is the validator's code) both change nothing.
+export const memoTidyApply = (body: unknown): Promise<MemoWriteResult> => apiJSON("api/memo-tidy/apply", "POST", body);
 export const memoQueueFire = (categoryId: string): Promise<MemoWriteResult> =>
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/fire`, "POST", {});
 // Lifts a pause: the Control Plane stopped starting runs by itself after two in a row failed at

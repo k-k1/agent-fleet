@@ -732,3 +732,13 @@ PUT は行を置き換えるので、`tidy` と `tidyDestinations` は常にフ�
 Control Plane が取り消せるとした run の取り消しボタン。拒否された取り消し（409 `memo_tidy_not_undoable`）は、邪魔している
 メッセージを理由ごとに示し、`later_run` は新しい run から先に取り消すよう言う。取り消しは確認なしの 1 回の操作で、run が
 取ったものを戻すだけだから。古い Console は、知らない待ちの理由を捨てるのと同じに、新しい 2 つの理由を捨てる。
+
+2026-11-17 追記（#4152、段 5、slice S5、手動実行）: Console の整理に操作が加わり、手動の経路のまま残る。1 つの自動実行の
+カテゴリの中で選んだメモには、アシスタント（`POST /api/chat/ask`）が merge・split・move・keep を提案し、プレビューが
+それぞれを整理前と整理後、そのメモがどうなるかとともに見せ、承認で `POST /api/memo-tidy/apply`（Console だけ）を 1 回
+送る。この route は移動先を自動実行と同じ関数で決め、手動 trigger で apply を呼び、run 一覧に出て取り消せる run を 1 つ
+記録する。人の承認は何も release しない。効果は自動実行とまったく同じで、実行待ちと承認待ちが混ざった元はプレビューで
+断られ、`held` は `held` のまま。プレビュー後の変化は 409 `memo_tidy_stale`、断られた提案は検証の code つきの 400
+`memo_tidy_invalid` で、Control Plane がすべてもう一度確かめる。手動の run は 1 日の上限で断られず、自動実行の 10 回も
+減らさない（上限はモデル呼び出しを抑えるもので、この経路は呼ばない）。操作できない選択（複数のカテゴリ、ふつうの
+カテゴリ）は、これまでどおり `PATCH` による 1 件ずつの整形のまま。route とその code は docs/build/03-control-plane.md にある。

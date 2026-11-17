@@ -388,7 +388,8 @@ func decodeIDs(s string) []string {
 	return out
 }
 
-// memoTidyDailyUsed is how many runs a queue reserved in the last 24 hours, every outcome counted.
+// memoTidyDailyUsed is how many automatic runs a queue reserved in the last 24 hours, every outcome
+// counted. Manual runs are not counted.
 func memoTidyDailyUsed(ctx context.Context, st store.MemoTidyStore, queueID string, now time.Time) (int, error) {
 	return st.CountMemoTidyRunsSince(ctx, queueID, now.UTC().Add(-24*time.Hour).Format(time.RFC3339Nano))
 }
@@ -752,4 +753,218 @@ func (a memoAPI) undoTidy(w http.ResponseWriter, r *http.Request, _ store.Identi
 		d.Restored = append(d.Restored, memoToDTO(m))
 	}
 	writeJSON(w, http.StatusOK, d)
+}
+
+// --- The manual Tidy ----------------------------------------------------------------------------
+//
+// ADR 0137 section 8: the member selects messages of one auto-run category, the
+// Console's assistant proposes operations, the member reads a preview and approves, and this route
+// applies them as one run that can be undone. The proposal never reaches this file: the Console asks
+// POST /api/chat/ask, so the Agent is not called here and the category's tidy setting is not read.
+// The person's reading of the preview is the check the automatic run does not have, and it
+// releases nothing: apply decides every effect from the stored settings, exactly as for an
+// automatic run.
+
+// memoTidyApplyBodyMax bounds the request: 40 ids and hashes and at most 80 operations of 16 KiB.
+const memoTidyApplyBodyMax = 4 << 20
+
+// memoTidyApplyItem is a message of the preview: the id and the content hash the member saw.
+type memoTidyApplyItem struct {
+	ID          string `json:"id"`
+	ContentHash string `json:"contentHash"`
+}
+
+// memoTidyApplyBody is POST /api/memo-tidy/apply. Operations stays raw: memotidy.Parse reads it
+// strictly, as it reads the Agent's reply.
+type memoTidyApplyBody struct {
+	Repo       string              `json:"repo"`
+	Category   string              `json:"category"`
+	Items      []memoTidyApplyItem `json:"items"`
+	Operations json.RawMessage     `json:"operations"`
+}
+
+// memoTidyApplyWire is the 200: the run as the run list shows it, and the messages it touched.
+type memoTidyApplyWire struct {
+	Run   memoTidyRunDTO `json:"run"`
+	Memos []memoDTO      `json:"memos"`
+}
+
+// memoTidyErrWire is the 409 and 400 of apply: the usual error envelope plus what the Console needs
+// to say what happened. Stale names the messages that changed since the preview, TidyCode the
+// validator's refusal.
+type memoTidyErrWire struct {
+	Error struct {
+		Code     string   `json:"code"`
+		Message  string   `json:"message"`
+		Stale    []string `json:"stale,omitempty"`
+		TidyCode string   `json:"tidyCode,omitempty"`
+	} `json:"error"`
+}
+
+func writeMemoTidyErr(w http.ResponseWriter, status int, code, message string, stale []string, tidyCode string) {
+	var body memoTidyErrWire
+	body.Error.Code, body.Error.Message, body.Error.Stale, body.Error.TidyCode = code, message, stale, tidyCode
+	writeJSON(w, status, body)
+}
+
+// applyTidy (POST /api/memo-tidy/apply) applies the operations of an approved preview as one manual
+// run. Console only: no route of the token face or /mcp reaches it. It answers
+//
+//	200 {run, memos}                    applied or kept (a valid reply that changed nothing)
+//	409 memo_tidy_stale  {stale}        a message differs from the preview: nothing was changed
+//	400 memo_tidy_invalid {tidyCode}    the operations were refused whole: nothing was changed
+//	409 memo_tidy_busy                  the member's other tidy run is in flight
+//	404                                 the category is not an auto-run category of the member's, or a message is not in it
+func (a memoAPI) applyTidy(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	ctx := r.Context()
+	var in memoTidyApplyBody
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, memoTidyApplyBodyMax)).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	if len(in.Items) == 0 || len(in.Items) > memotidy.MaxInputItems {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "items must hold between 1 and 40 messages"})
+		return
+	}
+	ids := make([]string, 0, len(in.Items))
+	for _, it := range in.Items {
+		if it.ID == "" || it.ContentHash == "" || slices.Contains(ids, it.ID) {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "every item needs its own id and contentHash"})
+			return
+		}
+		ids = append(ids, it.ID)
+	}
+	// An unreadable reply is refused before any run exists, as the Agent's reply is.
+	ops, ref := memotidy.Parse(append(append([]byte(`{"operations":`), in.Operations...), '}'))
+	if ref != nil {
+		writeMemoTidyErr(w, http.StatusBadRequest, errCodeMemoTidyInvalid, "the operations were refused: "+ref.Code, nil, ref.Code)
+		return
+	}
+
+	cats, err := a.store.ListCategories(ctx, mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	queues, err := a.store.ListMemoQueues(ctx, mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	var cat store.MemoCategory
+	for _, c := range cats {
+		if c.Repo == in.Repo && c.Name == in.Category {
+			cat = c
+		}
+	}
+	var queue store.MemoQueue
+	for _, q := range queues {
+		if q.CategoryID == cat.ID && cat.ID != "" {
+			queue = q
+		}
+	}
+	if queue.CategoryID == "" {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "category is not an auto-run category"})
+		return
+	}
+
+	// What the member saw is what is applied: a message that is no longer so, or is not in this
+	// category, refuses the whole call before a run exists.
+	input := make([]memoTidyItem, 0, len(in.Items))
+	var stale []string
+	var missing bool
+	read := func() error {
+		stale, missing, input = nil, false, input[:0]
+		return a.store.MemoTidyRead(ctx, mv.MembershipID, func(rd store.MemoTidyReader) error {
+			for _, it := range in.Items {
+				m, ok, err := rd.GetMemo(it.ID)
+				if err != nil {
+					return err
+				}
+				if !ok || m.Repo != cat.Repo || m.Category != cat.Name {
+					missing = true
+					return nil
+				}
+				if memoContentHash(m) != it.ContentHash || (m.State != store.MemoStatePending && m.State != store.MemoStateHeld) ||
+					m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
+					stale = append(stale, m.ID)
+				}
+				input = append(input, memoTidyItem{ID: m.ID, Hash: it.ContentHash, State: m.State})
+			}
+			return nil
+		})
+	}
+	if err := read(); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if missing {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "memo not found"})
+		return
+	}
+	if len(stale) > 0 {
+		writeMemoTidyErr(w, http.StatusConflict, errCodeMemoTidyStale, "a message changed since it was shown", stale, "")
+		return
+	}
+
+	offered := memoTidyDestinations(cat, queue.TidyDestinations, cats, queues)
+	destIDs := make([]string, 0, len(offered))
+	for _, d := range offered {
+		destIDs = append(destIDs, d.ID)
+	}
+	out, err := memoTidyApply(ctx, a.store, memoTidyApplyIn{MembershipID: mv.MembershipID, QueueID: cat.ID, Trigger: store.TidyTriggerManual,
+		Input: slices.Clone(input), Destinations: destIDs, Ops: ops})
+	if err != nil {
+		// The member has one run at a time, and an automatic run may be in flight.
+		busy := false
+		_ = a.store.MemoRead(ctx, mv.MembershipID, func(rd store.MemoWaitOps) error {
+			_, busy, _ = rd.RunningTidyRun()
+			return nil
+		})
+		if busy {
+			writeMemoTidyErr(w, http.StatusConflict, errCodeMemoTidyBusy, "a tidy run is in progress", nil, "")
+			return
+		}
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	switch {
+	case out.Run.State == store.TidyRunDropped && out.Run.Reason == memoTidyReasonStaleInput:
+		// A message changed between the read above and apply's lock: name the ones that differ now.
+		if err := read(); err == nil && len(stale) == 0 {
+			stale = ids
+		}
+		writeMemoTidyErr(w, http.StatusConflict, errCodeMemoTidyStale, "a message changed since it was shown", stale, "")
+		return
+	case out.Run.State == store.TidyRunDropped && out.Run.Reason == memoTidyReasonNoQueue:
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "category is not an auto-run category"})
+		return
+	case out.Run.State == store.TidyRunDropped:
+		writeMemoTidyErr(w, http.StatusBadRequest, errCodeMemoTidyInvalid, "the operations were refused: "+out.Run.Reason, nil, out.Run.Reason)
+		return
+	}
+
+	var rec memoTidyRecord
+	if out.Run.Ops != "" {
+		_ = json.Unmarshal([]byte(out.Run.Ops), &rec)
+	}
+	wire := memoTidyApplyWire{Run: memoTidyRunToDTO(out.Run, rec), Memos: []memoDTO{}}
+	touched := slices.Concat(out.Sources, out.Results, out.Moved)
+	err = a.store.MemoTidyRead(ctx, mv.MembershipID, func(rd store.MemoTidyReader) error {
+		for _, id := range touched {
+			m, ok, err := rd.GetMemo(id)
+			if err != nil {
+				return err
+			}
+			if ok {
+				wire.Memos = append(wire.Memos, memoToDTO(m))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, wire)
 }

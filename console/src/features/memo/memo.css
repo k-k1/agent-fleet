@@ -1122,3 +1122,26 @@
   font-size: 11px;
   color: var(--warn, var(--accent));
 }
+
+/* Tidy operations preview (MemoTidyOpsModal) */
+.memo-tidy-op {
+  font-weight: 600;
+  color: var(--fg);
+}
+.memo-tidy-effect {
+  font-size: 11px;
+  color: var(--accent);
+}
+.memo-tidy-leftout {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.memo-tidy-leftout .memo-tidy-row {
+  cursor: default;
+  opacity: 0.85;
+}
+.memo-tidy-done p {
+  margin: 0 0 6px;
+}
