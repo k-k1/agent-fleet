@@ -50,10 +50,20 @@ export interface Memo {
   /** What a release names: the hash of the content the card showed. */
   contentHash?: string;
   releasedAt?: string;
-  /** "setting" when the category's accept-from-own-sessions switch made the message pending and no approval did. */
+  /** "setting" when the category's accept-from-own-sessions switch made the message pending and no
+   *  approval did; "tidy" when a tidy run put it there. */
   releasedBy?: string;
   /** The delivery (one fire) that took the message (#4163). */
   deliveryId?: string;
+  /** Set on a message a tidy run made from other notes: their ids. Absent on any other. */
+  derivedFrom?: string[];
+  /** The provenance of the notes a derived message was made from (member, workspace or mcp). */
+  sourceProvenance?: string;
+  /** The tidy run that made, moved or replaced the message. */
+  tidyRunId?: string;
+  /** The category a tidy run moved the message from. repo and name are empty when the Control
+   *  Plane could not name it: a single create or update answer, or a category since deleted. */
+  tidyFrom?: { id: string; repo: string; name: string };
 }
 
 /** A message's state in a queue; "" is a note outside any queue. */
@@ -116,6 +126,10 @@ export interface MemoQueue {
   worktree: boolean;
   /** Notes from sessions the member started themselves start without an approval. */
   acceptOwnSessions: boolean;
+  /** A model in the workspace tidies the waiting notes before an automatic run. */
+  tidy: boolean;
+  /** The auto-run categories a tidy may move a message to so that it waits to run there. */
+  tidyDestinations: string[];
   maxActive: number;
   batch: number;
   /** Hours after which a run that is still open counts as overdue. */
@@ -137,6 +151,8 @@ export interface MemoQueue {
   /** Set while the notes that point at an item are held back because the workspace's Agent
    *  cannot take them yet; notes without one still run. */
   noRefsAt: string;
+  /** Set while the notes a tidy made are held back because the workspace's Agent cannot take them. */
+  noTidyAt: string;
   enabled: boolean;
   generation: number;
   createdAt: string;
@@ -159,7 +175,9 @@ export type MemoWaitingReason =
   | "daily_cap"
   | "backoff"
   | "usage_limit"
-  | "no_place";
+  | "no_place"
+  | "tidying"
+  | "no_tidy";
 
 export interface MemoQueueWaiting {
   reason: MemoWaitingReason;
@@ -179,6 +197,8 @@ export type MemoQueueInput = Pick<
   | "spendCapUsd"
   | "worktree"
   | "acceptOwnSessions"
+  | "tidy"
+  | "tidyDestinations"
   | "maxActive"
   | "batch"
   | "maxTaskHours"
@@ -233,4 +253,39 @@ export interface MemoCategoryInput {
 export interface MemoCategoryPatch {
   name?: string;
   position?: number;
+}
+
+/** One run of the tidy before a fire (GET /api/memo-queues/{categoryId}/tidy-runs). */
+export interface MemoTidyRun {
+  id: string;
+  trigger: string; // auto | manual
+  state: string; // running | applied | kept | dropped | skipped | failed | undone
+  /** A short code for how a run that changed nothing ended; "" otherwise. */
+  reason: string;
+  createdAt: string;
+  finishedAt: string;
+  undoneAt: string;
+  merged: number;
+  split: number;
+  moved: number;
+  /** Of the moved messages, those that now wait for approval. */
+  held: number;
+  sourceIds: string[];
+  resultIds: string[];
+  movedIds: string[];
+  undoable: boolean;
+  blocked: MemoTidyBlocked[];
+}
+
+/** A message that keeps a run from being undone; why is claimed, sent, changed, gone, later_run or duplicate_ref. */
+export interface MemoTidyBlocked {
+  id: string;
+  why: string;
+}
+
+export interface MemoTidyRunsWire {
+  runs: MemoTidyRun[];
+  /** Runs reserved in the last 24 hours, of dailyCap. */
+  usedToday: number;
+  dailyCap: number;
 }

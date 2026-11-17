@@ -11,13 +11,12 @@ import {
   readTidyDestinationIds,
   reviewOps,
   tidyDestinations,
-  type TidyMemo,
 } from "./tidyOps.ts";
 
 const cat = (id: string, name: string, over: Partial<MemoCategory> = {}): MemoCategory => ({
   id, repo: "app", name, position: 0, createdAt: "", ...over,
 });
-const note = (id: string, over: Partial<TidyMemo> = {}): TidyMemo => ({
+const note = (id: string, over: Partial<Memo> = {}): Memo => ({
   id, repo: "app", category: "run", kind: "text", body: "body " + id, refPath: "", position: 0, createdAt: "", sentAt: "",
   state: "pending", provenance: "member", contentHash: "h-" + id, ...over,
 });
@@ -83,7 +82,7 @@ describe("buildOpsPrompt", () => {
     note("c", { state: "held" }),
     note("d", { kind: "file", refPath: "~/x.md", body: "" }),
     note("e", { reference: { provider: "github", key: "a/b#1", url: "u" } }),
-    note("f", { tidyFrom: { id: "run" } }),
+    note("f", { tidyFrom: { id: "run", repo: "app", name: "run" } }),
   ];
   const prompt = buildOpsPrompt(memos, dests);
   const items = JSON.parse(prompt.slice(prompt.indexOf("メモ:\n") + 4, prompt.indexOf("\n\ndestinations:")));
@@ -142,7 +141,7 @@ describe("reviewOps", () => {
     note("w", { provenance: "workspace", producer: "s" }),
     note("h", { state: "held" }),
     note("f", { kind: "file", refPath: "~/f", body: "" }),
-    note("m", { tidyFrom: { id: "run" } }),
+    note("m", { tidyFrom: { id: "run", repo: "app", name: "run" } }),
   ];
   const review = (ops: Parameters<typeof reviewOps>[0]) => reviewOps(ops, memos, dests);
 

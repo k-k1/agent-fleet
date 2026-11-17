@@ -25,7 +25,6 @@ import {
   type PreviewItem,
   type Review,
   type TidyDest,
-  type TidyMemo,
 } from "./tidyOps.ts";
 
 interface Props {
@@ -83,7 +82,7 @@ export function MemoTidyOpsModal({ memos, category, categories, allMemos, onDone
         // No listed destinations: a move then lands as approval-pending, which the Control Plane decides anyway.
       }
       dests.current = tidyDestinations(category, listed, categories);
-      const r = await askAssistant(buildOpsPrompt(memos as TidyMemo[], dests.current));
+      const r = await askAssistant(buildOpsPrompt(memos, dests.current));
       if (!alive) return;
       if (r.error) {
         setErr(errText(r.error) || tr("sx.tidy_failed"));
@@ -96,7 +95,7 @@ export function MemoTidyOpsModal({ memos, category, categories, allMemos, onDone
         setPhase("failed");
         return;
       }
-      const rv = reviewOps(parsed.ops, memos as TidyMemo[], dests.current, allMemos);
+      const rv = reviewOps(parsed.ops, memos, dests.current, allMemos);
       setMalformed(parsed.malformed);
       setReview(rv);
       setPick(Object.fromEntries(rv.items.map((_, i) => [i, true])));

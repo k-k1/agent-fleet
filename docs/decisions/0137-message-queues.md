@@ -767,6 +767,23 @@ sendable only to an Agent that shows `queueTidy`: by itself the claim leaves it 
 that leaves fewer than its threshold still fires. The codes, the bounds and what clears `no_tidy_at` are in
 docs/build/03-control-plane.md.
 
+Added 2026-11-17 (#4152, step 5, slice S4, the Console): the switch that turns tidying on and everything a member sees of it.
+The settings dialog has the switch (off by default; its hint says that a model inside the workspace rewrites the waiting
+notes, that code there that can answer for the Agent could put words the member did not write into a note that then runs, and
+to turn it on only for a workspace they trust) and, with it on, the choice of the other auto-run categories a move may land in
+as pending. The PUT replaces the row, so `tidy` and `tidyDestinations` are always sent with the form's value, the list also
+while the switch is off. A category's notices say `tidying` as a waiting reason and say `no_tidy` and `noTidyAt` once, with
+what to do (a workspace that can run Claude, or the switch off and the run undone), whether or not the switch is still on,
+because the derived notes wait either way. The memo list marks a derived message (made from N notes, of that origin), a
+moved one (from the category, or without a name when it is gone), the pending ones a run released (next to "accepted without
+approval"), and a replaced one, which is read-only: no edit or send, no select box, and a link that opens the run history
+with that run marked; a hand delete stays, as it does for a sent note, and undo then says `gone`. The release card of a
+category shows where a held message a tidy moved came from. The tidy runs are a part of the run history dialog, below the
+runs: state and reason in words, counts, `usedToday` of `dailyCap`, and an undo button where the Control Plane says the run
+is undoable; a refused undo (409 `memo_tidy_not_undoable`) names the blocked messages by reason, and `later_run` says to undo
+the newer run first. Undo is one press with no confirmation, since it puts back what the run took. An older Console would
+drop the two new waiting reasons, as it drops any it does not know.
+
 Added 2026-11-17 (#4152, step 5, slice S5, the manual path): the Console's Tidy gains the operations and stays the manual
 path. For a selection inside one auto-run category the assistant (`POST /api/chat/ask`) proposes merge, split, move and
 keep, the preview shows each as a before and after with what it means for the note, and the approval sends one

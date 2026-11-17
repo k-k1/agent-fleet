@@ -29,6 +29,7 @@ import {
   QUEUE_MAX_ACTIVE_MAX,
   QUEUE_OPEN_AFTER_MAX,
   QUEUE_SPEND_MAX,
+  QUEUE_TIDY_DESTINATIONS_MAX,
   QUEUE_TASK_HOURS_MAX,
   QUEUE_WINDOW_MAX_MINUTES,
   type RunMode,
@@ -50,16 +51,22 @@ interface Props {
   /** The category's current settings; undefined = it has none yet. */
   queue: MemoQueue | undefined;
   tenantEnabled: boolean;
+  /** The member's other auto-run categories: where a tidy may move a message to. */
+  destinations: { id: string; label: string }[];
   onClose: () => void;
   /** Saved or removed: the caller refetches. */
   onChanged: () => void;
 }
 
-export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenantEnabled, onClose, onChanged }: Props) {
+export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenantEnabled, destinations, onClose, onChanged }: Props) {
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
-  const [draft, setDraft] = useState(() => draftOf(queue));
+  const [draft, setDraft] = useState(() => {
+    // A destination that is no longer an auto-run category would make the save fail: leave it out.
+    const d = draftOf(queue);
+    return { ...d, tidyDestinations: d.tidyDestinations.filter((id) => destinations.some((x) => x.id === id)) };
+  });
   const [busy, setBusy] = useState(false);
   // Errors show once the person has tried to save, so an untouched form is not red.
   const [tried, setTried] = useState(false);
@@ -86,6 +93,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
     openAfter: QUEUE_OPEN_AFTER_MAX,
     maxFiresPerDay: QUEUE_FIRES_PER_DAY_MAX,
     maxTaskHours: QUEUE_TASK_HOURS_MAX,
+    tidyDestinations: QUEUE_TIDY_DESTINATIONS_MAX,
   };
   const show = (f: keyof typeof errors) => (tried && errors[f] ? tr(errors[f]!, { max: maxOf[f] }) : null);
   const blocked = !tenantEnabled;
@@ -294,6 +302,43 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
             </span>
           </span>
         </label>
+
+        <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+          <input type="checkbox" checked={draft.tidy} disabled={blocked} onChange={(e) => set("tidy", e.target.checked)} />
+          <span>
+            {tr("memo.q_tidy")}
+            <span className="ui-field-hint" style={{ display: "block" }}>
+              {tr("memo.q_tidy_hint")}
+            </span>
+          </span>
+        </label>
+
+        {draft.tidy && (
+          <fieldset className="ui-field memo-q-tidy-dest" disabled={blocked}>
+            <legend className="ui-field-label">{tr("memo.q_tidy_dest")}</legend>
+            <div className="ui-field-hint">{tr("memo.q_tidy_dest_hint")}</div>
+            {destinations.length === 0 ? (
+              <div className="ui-field-hint">{tr("memo.q_tidy_dest_none")}</div>
+            ) : (
+              destinations.map((x) => (
+                <label key={x.id} className="memo-q-when-opt">
+                  <input
+                    type="checkbox"
+                    checked={draft.tidyDestinations.includes(x.id)}
+                    onChange={(e) =>
+                      set(
+                        "tidyDestinations",
+                        e.target.checked ? [...draft.tidyDestinations, x.id] : draft.tidyDestinations.filter((id) => id !== x.id),
+                      )
+                    }
+                  />
+                  <span>{x.label}</span>
+                </label>
+              ))
+            )}
+            {fieldErr("tidyDestinations")}
+          </fieldset>
+        )}
 
         <fieldset className="ui-field memo-q-when" disabled={blocked}>
           <legend className="ui-field-label">{tr("memo.q_when")}</legend>

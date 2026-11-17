@@ -194,7 +194,7 @@ describe("when it runs", () => {
     const th = draftBody({ ...ok, runMode: "threshold", openCron: "0 9 * * *", openAfter: "7" }, "r");
     expect(th).toMatchObject({ openCron: "", openMinutes: 0, tz: "", openAfter: 7 });
     expect(Object.keys(w).sort()).toEqual(
-      ["acceptOwnSessions", "agentKind", "batch", "effort", "enabled", "instruction", "maxActive", "maxFiresPerDay", "maxTaskHours", "model", "openAfter", "openCron", "openMinutes", "route", "spendCapUsd", "tz", "worktree"],
+      ["acceptOwnSessions", "agentKind", "batch", "effort", "enabled", "instruction", "maxActive", "maxFiresPerDay", "maxTaskHours", "model", "openAfter", "openCron", "openMinutes", "route", "spendCapUsd", "tidy", "tidyDestinations", "tz", "worktree"],
     );
   });
 });

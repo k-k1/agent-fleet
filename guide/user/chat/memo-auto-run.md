@@ -47,6 +47,8 @@ Auto-run is not a [schedule](../fleet/schedules.md). A schedule runs a fixed pro
 | Spend limit (USD) | A limit for each run, from 0 to 10,000. 0 means no limit. It starts at 0 |
 | Run each time in a new worktree | When on, each run works in a new worktree of the category's repository. On to begin with. It has no effect on a category without a repository |
 | Accept notes from sessions I started without approval | When on, a memo added by a session you started yourself is "Waiting to run" at once, with no approval. Off to begin with. See [Skip the approval for your own sessions](#skip-the-approval-for-your-own-sessions) before turning it on |
+| Tidy the waiting memos before a run | When on, a model in the workspace tidies the memos waiting to run before an automatic run. Off to begin with. See [Tidy the memos before a run](#tidy-the-memos-before-a-run) before turning it on |
+| Auto-run categories a tidy may move memos to | Shown with the switch above. Up to 10 of your other auto-run categories. Memos moved there wait to run; memos moved to any other auto-run category wait for approval |
 | Sessions at the same time | How many runs the category may have open at once. A whole number from 1 to 6. It starts at 2 |
 | Memos per session | How many memos go into one run. A whole number from 1 to 20. It starts at 1 |
 | When it runs | The condition for starting by itself (next table) |
@@ -141,6 +143,71 @@ By default every memo a session adds waits for your approval. Turn on "**Accept 
 - The limits on what a session can add (size, speed, identical memos, the `[agent-fleet:` prefix), "Runs per day" and the automatic pause after failed runs apply as before
 - Only you can change the setting, in the Console
 
+### Tidy the memos before a run
+
+Turn on "**Tidy the waiting memos before a run**" in a category's auto-run settings, and before the category runs by itself, a model rewrites the memos that are waiting to run. It is off to begin with.
+
+What a tidy does:
+
+- **Merges** memos that say nearly the same thing, **splits** a memo that holds several things, and **moves** a memo to another category. It never rewrites a memo in place, and it never changes what the category's settings say or when it runs
+- Merges and splits take plain text memos only. A file memo, a memo with an attachment and a memo that points at a work item can be moved or left alone, never merged or split. Memos of different origin (you, a session, an `/mcp` connection) are never merged together
+- It happens before an automatic run, when a waiting memo is new or was edited since the last tidy. **"Run now" never tidies**: it runs what you see
+- A memo made by a merge or a split takes the state of the memos it came from. Tidying memos that are waiting to run gives memos that are waiting to run, with no approval to press
+- The original memos stay for 7 days as "**Replaced**". They are read-only: you cannot edit or send them
+
+Where a moved memo ends up:
+
+| The memo is moved to | What it becomes there |
+|---|---|
+| An auto-run category you listed under "Auto-run categories a tidy may move memos to" | "Waiting to run" there, marked "Accepted without approval (tidy)" |
+| An auto-run category you did not list | "Waits for approval" there. It shows on that category's approval card with "Moved from “…” by a tidy" |
+| A category that does not auto-run | An ordinary memo |
+
+A memo that was already waiting for approval stays so. A memo moved to another category runs with that category's instruction and budget, not those of the category it came from.
+
+**What you see**
+
+- A memo a tidy made shows "Tidied from N memos you added" (or the session or `/mcp` connection that added them), and one it moved shows "Moved from “…” by a tidy"
+- A replaced memo shows "Replaced" and a link, "Open the run history", that opens the run history with the tidy that replaced it marked
+- The run history has a "**Tidy before a run**" part below the runs. Each tidy shows its state, when it ran, whether it ran before a run or was started by hand, what it did (merged, split, moved, and how many of those are waiting for approval) and, when it changed nothing, why. The part also says how many of the 10 automatic tidies a category may use in 24 hours are used. It shows while the setting is on, and while there are tidies to show
+- While a tidy is running, the category says "The memos are being tidied. They run when that is done."
+
+| State | What it means |
+|---|---|
+| Tidying… | It is running |
+| Tidied | It changed something |
+| No change | The model answered, and nothing needed changing |
+| Not applied | The memos changed during the tidy, or the model's answer broke the rules. Nothing was changed |
+| Skipped | Nothing reached a model: the workspace could not be reached or started, or the workspace has to be restarted to update it |
+| Failed | The call failed or took too long. Nothing was changed |
+| Undone | You undid it |
+
+A tidy that failed, was skipped or was not applied changes nothing, and the memos run as they are.
+
+**Undo**
+
+A tidy that changed something has an "**Undo**" button in the run history. One press brings the original memos back and removes the memos the tidy made. Moved memos go back to the category they came from. A memo goes back to "Waiting to run" only if its approval still matches its text, and otherwise to "Waits for approval".
+
+It is all or nothing, and it is refused once a result has been used. The history then says how many memos are in the way and why:
+
+| Why | What it means |
+|---|---|
+| Already taken into a run | A memo the tidy made or moved is part of a run |
+| Already sent | You sent it by hand |
+| Changed since the tidy | You or a session edited it |
+| Gone | You deleted a memo the undo needs |
+| Used by a later tidy | A newer tidy used a result. Undo the newer tidy first |
+| Bringing back would put two memos that point at the same item in one category | Edit or delete one of them first |
+
+**The limits**
+
+- At most 10 automatic tidies per category in 24 hours. Every one that was started counts, whatever it did. A tidy you start by hand is not counted and is never refused by this limit
+- At most 40 memos and 96 KB of text per tidy. One tidy at a time for each member
+- It needs a workspace that can run Claude. With another agent the tidy is skipped, and when a memo a tidy made cannot be sent to the workspace, the category says "Memos a tidy made cannot run in this workspace. …". Use a workspace that can run Claude, or turn the setting off and undo the tidy
+- The usage appears as "Memo tidy before auto-run" in the usage screen
+
+> **Turn it on only for a workspace you trust.** The model runs inside the workspace, and a program in the workspace that can answer for the Agent could put words you did not write into a memo that then runs. The Control Plane checks every answer and drops one that breaks its rules, but it cannot tell that the words are the model's. This is a guard rail, not a lock, like "Accept notes from sessions I started without approval".
+
 ### Run now
 
 1. Press the history button of the category ("**Run history**")
@@ -193,6 +260,7 @@ The states of a memo show on its row in the category:
 | Starting | A session is being started to run it |
 | Sent | Sent to a session |
 | Needs a look | Whether the session started could not be confirmed. Check the run history. It is not run again by itself |
+| Replaced | A tidy replaced it with other memos ([Tidy the memos before a run](#tidy-the-memos-before-a-run)). Read-only, and kept for 7 days |
 
 A memo that is "Starting" cannot be changed.
 
@@ -319,6 +387,8 @@ The pause and the restart each have a notice of their own. A line for another re
 | Auto-run is paused: the first turns of the last two runs failed, so no run starts by itself. “Run now” still works. | The last two runs failed. Fix the cause and press "Resume" ([Pause and resume](#pause-and-resume)) |
 | This workspace has to be restarted to update it before runs can start by themselves. “Run now” still works. | The workspace is still on the version from before the update. Restart it, and runs can start by themselves. Until then only "Run now" works. It shows only while "Run by itself" is on |
 | Memos that point at a work item cannot run yet: the workspace has to be restarted to update it first. Memos without one still run. | The workspace is still on the version from before the update, and it cannot take memos that point at an item. Restart it. Memos without a link run as usual in the meantime. It shows while a run has been held back for this |
+| The memos are being tidied. They run when that is done. | A tidy is running for you. The category starts nothing until it ends, one that has not finished in 10 minutes is ended ([Tidy the memos before a run](#tidy-the-memos-before-a-run)) |
+| Memos a tidy made cannot run in this workspace. … | The workspace cannot take memos a tidy made: restart it to update it, or use a workspace that can run Claude. You can also turn the tidy setting off and undo the tidy in the run history |
 
 ![The notice for a workspace that has to be restarted: under the header, it says the workspace has to be restarted to update it, and that "Run now" still works](../../assets/chatpages-autorun-norestart-en-light.webp)
 

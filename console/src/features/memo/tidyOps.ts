@@ -22,9 +22,6 @@ export const TIDY_LIMITS = {
   destinations: 100,
 } as const;
 
-/** The two fields a Memo carries for a tidy run that types/memo.ts does not name. */
-export type TidyMemo = Memo & { sourceProvenance?: string; tidyFrom?: { id: string } | null };
-
 export type TidyOp =
   | { op: "merge"; ids: string[]; text: string }
   | { op: "split"; id: string; texts: string[] }
@@ -78,7 +75,7 @@ export function planSelection(memos: readonly Memo[], cats: readonly MemoCategor
 export const isPlainText = (m: Memo): boolean =>
   m.kind === "text" && m.body !== "" && !m.refPath && !(m.attachments && m.attachments.length > 0) && !m.reference;
 
-const originKey = (m: TidyMemo): string =>
+const originKey = (m: Memo): string =>
   [m.provenance === "curator" ? m.sourceProvenance || "" : m.provenance || "workspace", m.producer || "", m.producerOrigin || ""].join("\x00");
 
 /** True when the selection holds both waiting and approval-pending notes. */
@@ -124,7 +121,7 @@ export function tidyDestinations(own: MemoCategory, listedIds: readonly string[]
 
 /** The prompt that asks for operations. The notes are data inside a JSON block: nothing of a note
  *  is placed outside it, and the instruction says so. */
-export function buildOpsPrompt(memos: readonly TidyMemo[], dests: readonly TidyDest[]): string {
+export function buildOpsPrompt(memos: readonly Memo[], dests: readonly TidyDest[]): string {
   const groups = new Map<string, number>();
   const items = memos.map((m) => {
     const key = originKey(m) + "\x00" + m.state;
@@ -307,7 +304,7 @@ function textProblem(text: string): boolean {
  *  so that one bad proposal does not cost the approval of the rest. */
 export function reviewOps(
   ops: readonly TidyOp[],
-  memos: readonly TidyMemo[],
+  memos: readonly Memo[],
   dests: readonly TidyDest[],
   allMemos: readonly Memo[] = [],
 ): Review {
@@ -319,7 +316,7 @@ export function reviewOps(
   const leftOut: LeftOut[] = [];
   const named = (op: TidyOp): string[] => (op.op === "merge" ? op.ids : [op.id]);
   const out = (op: TidyOp, why: LeftOutWhy) =>
-    leftOut.push({ op, why, notes: named(op).map((id) => byId.get(id)).filter((m): m is TidyMemo => !!m) });
+    leftOut.push({ op, why, notes: named(op).map((id) => byId.get(id)).filter((m): m is Memo => !!m) });
 
   // A keep names a note and changes nothing; it still claims the id, as the validator counts it.
   let counted = 0;
