@@ -581,7 +581,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     const patches: Promise<unknown>[] = [];
     for (const { repo, category } of groups) {
       const grp = list.filter((m) => m.repo === repo && m.category === category);
-      grp.forEach((m, i) => patches.push(memoUpdate(m.id, { position: i, category, repo })));
+      // A replaced note is locked: the Control Plane refuses every write to it, which would undo the whole move.
+      grp.forEach((m, i) => {
+        if (!isSuperseded(m)) patches.push(memoUpdate(m.id, { position: i, category, repo }));
+      });
     }
     let refused: unknown = null;
     try {
@@ -1431,7 +1434,7 @@ function MemoRow(props: MemoRowProps) {
     >
       <span
         className="memo-grip"
-        draggable
+        draggable={!replaced}
         title={tr("memo.reorder_memo")}
         onDragStart={props.onDragStart}
         onDragEnd={props.onDragEnd}

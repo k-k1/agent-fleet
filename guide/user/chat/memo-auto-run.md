@@ -178,7 +178,7 @@ A memo that was already waiting for approval stays so. A memo moved to another c
 | Tidied | It changed something |
 | No change | The model answered, and nothing needed changing |
 | Not applied | The memos changed during the tidy, or the model's answer broke the rules. Nothing was changed |
-| Skipped | Nothing reached a model: the workspace could not be reached or started, or its Agent cannot tidy |
+| Skipped | Nothing reached a model: the workspace could not be reached or started, or the workspace has to be restarted to update it |
 | Failed | The call failed or took too long. Nothing was changed |
 | Undone | You undid it |
 
@@ -388,7 +388,7 @@ The pause and the restart each have a notice of their own. A line for another re
 | This workspace has to be restarted to update it before runs can start by themselves. “Run now” still works. | The workspace is still on the version from before the update. Restart it, and runs can start by themselves. Until then only "Run now" works. It shows only while "Run by itself" is on |
 | Memos that point at a work item cannot run yet: the workspace has to be restarted to update it first. Memos without one still run. | The workspace is still on the version from before the update, and it cannot take memos that point at an item. Restart it. Memos without a link run as usual in the meantime. It shows while a run has been held back for this |
 | The memos are being tidied. They run when that is done. | A tidy is running for you. The category starts nothing until it ends, one that has not finished in 10 minutes is ended ([Tidy the memos before a run](#tidy-the-memos-before-a-run)) |
-| Memos a tidy made cannot run in this workspace. … | The workspace's Agent cannot take memos a tidy made. Use a workspace that can run Claude, or turn the tidy setting off and undo the tidy in the run history |
+| Memos a tidy made cannot run in this workspace. … | The workspace cannot take memos a tidy made: restart it to update it, or use a workspace that can run Claude. You can also turn the tidy setting off and undo the tidy in the run history |
 
 ![The notice for a workspace that has to be restarted: under the header, it says the workspace has to be restarted to update it, and that "Run now" still works](../../assets/chatpages-autorun-norestart-en-light.webp)
 

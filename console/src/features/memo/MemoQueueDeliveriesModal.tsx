@@ -260,7 +260,7 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                   const groups = tidyBlockedGroups(shown);
                   return (
                     <li key={r.id} className={"memo-d-row memo-tidy-row" + (focusRun === r.id ? " focus" : "")} data-tidy-run={r.id}>
-                      <span className={"memo-d-state memo-tidy-state s-" + r.state}>{state ? tr(state) : r.state}</span>
+                      <span className={"memo-d-state memo-tidy-state s-" + r.state}>{state ? tr(state) : tr("memo.tidy_state_unknown")}</span>
                       <span className="memo-d-at">{fmtDateTime(r.createdAt)}</span>
                       <span className="memo-d-tag">{tr(r.trigger === "manual" ? "memo.tidy_manual" : "memo.tidy_auto")}</span>
                       {counts.map((c) => (

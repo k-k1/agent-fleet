@@ -158,7 +158,7 @@ describe("the tidy setting", () => {
     const box = must(labelled(t("memo.q_tidy")).querySelector<HTMLInputElement>("input[type=checkbox]"), "tidy switch");
     expect(box.checked).toBe(false);
     // The trust claim: a program in the workspace could put words you did not write into a note that runs.
-    expect(labelled(t("memo.q_tidy")).textContent).toMatch(/なりすま|pass itself off/);
+    expect(labelled(t("memo.q_tidy")).textContent).toMatch(/偽って作る|fake the model/);
     expect(labelled(t("memo.q_tidy")).textContent).toMatch(/信頼できるワークスペース|workspace you trust/);
     expect(dialog().querySelector(".memo-q-tidy-dest")).toBeNull();
     await click(box);
@@ -253,6 +253,17 @@ describe("the marks on the memo list", () => {
 });
 
 describe("a replaced note", () => {
+  it("cannot be dragged, since the Control Plane refuses every write to it", async () => {
+    servedMemos = [
+      aMemo({ id: "s", state: "superseded", sentAt: "2026-11-17T01:00:00Z", tidyRunId: "run1", body: "old" }),
+      aMemo({ id: "p", state: "pending", provenance: "member", position: 1, body: "live" }),
+    ];
+    await render();
+    const grip = (text: string) =>
+      must([...document.querySelectorAll<HTMLElement>(".memo-row")].find((r) => r.textContent?.includes(text))?.querySelector<HTMLElement>(".memo-grip"), text);
+    expect(grip("old").draggable).toBe(false);
+    expect(grip("live").draggable).toBe(true);
+  });
   it("does not open for editing when its body is clicked again, where a plain note does", async () => {
     servedMemos = [
       aMemo({ id: "s", state: "superseded", sentAt: "2026-11-17T01:00:00Z", tidyRunId: "run1", body: "old" }),
@@ -372,6 +383,15 @@ describe("the tidy history", () => {
     await click(must(rows()[0].querySelector("button"), "undo"));
     expect(rows()[0].querySelector(".memo-tidy-blocked")).toBeNull();
     expect(document.body.textContent).not.toContain(t("memo.tidy_undone"));
+  });
+
+  it("says a state it does not know in words, never as an identifier", async () => {
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ tidy: true })] };
+    servedRuns = { runs: [aRun({ state: "brand_new", undoable: false })], usedToday: 0, dailyCap: 10 };
+    await render();
+    await openHistory();
+    expect(rows()[0].textContent).toContain(t("memo.tidy_state_unknown"));
+    expect(rows()[0].textContent).not.toContain("brand_new");
   });
 
   it("has no tidy section for a category that has it off and never ran one", async () => {

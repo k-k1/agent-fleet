@@ -489,7 +489,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memo_queue_category": "An auto-run category cannot be renamed, merged or deleted from inside the workspace. Do it from the Console.",
   "err.memo_inbox_in_queue": "A memo taken in from the inbox cannot go into an auto-run category.",
   "err.memo_release_stale": "A memo changed after it was shown, so nothing was approved. Check it again.",
-  "err.memo_tidy_not_undoable": "This tidy run cannot be undone: a message it made or moved was sent, taken by a delivery, changed or tidied again since.",
+  "err.memo_tidy_not_undoable": "This tidy run cannot be undone: a message it made or moved was sent, taken into a run, changed, deleted or used by a later tidy, or bringing one back would duplicate a link to the same item.",
   "err.memo_too_large": "The memo is too large. Shorten it.",
   "err.memo_envelope": "A memo body cannot start with [agent-fleet:.",
   "err.memo_rate_limited": "Memos are being added too fast. Wait a moment and try again.",
