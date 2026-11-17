@@ -53,8 +53,17 @@ var squidEntryRe = regexp.MustCompile(`^\.?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 // shipper reports verdicts with.
 type snapshot struct {
 	enforce bool
-	match   *egressallow.Policy
+	// closed is the deployment's bootstrap mode file (BootstrapMarker): Squid terminates
+	// and denies everything until the first policy arrives. enforce is false then, but the
+	// gateway is not log-only, and match allows nothing so every verdict reads not allowed.
+	closed bool
+	match  *egressallow.Policy
 }
+
+// BootstrapMarker opens the mode file the deployment's user data writes before the agent's
+// first policy (deploy/aws/ecs/cfn/00-network.yaml). Nothing the agent renders starts
+// with it, and deploy/local/cfn-egress-gateway-test.py holds the file to it.
+const BootstrapMarker = "# bootstrap:"
 
 // renderAllow is the allow file for entries: the minimal sorted set, one per line, so the
 // same policy always yields the same bytes and a reload happens only on a real change.
@@ -132,7 +141,18 @@ func (s *policySync) readDisk() *snapshot {
 	if err1 != nil || err2 != nil {
 		return nil
 	}
+	if bytes.HasPrefix(mode, []byte(BootstrapMarker)) {
+		// Whatever the allow file holds, Squid terminates and denies everything.
+		return &snapshot{closed: true, match: egressallow.New(nil)}
+	}
 	return &snapshot{enforce: bytes.Equal(mode, []byte(ModeEnforce)), match: parseAllow(allow)}
+}
+
+func (n *snapshot) modeName() string {
+	if n.closed {
+		return "closed, waiting for the first policy"
+	}
+	return modeName(n.enforce)
 }
 
 // reloadFromDisk pays an owed reload with the files on disk while the CP is unreachable,
@@ -149,7 +169,7 @@ func (s *policySync) reloadFromDisk(ctx context.Context) {
 	}
 	s.reloadOwed = false
 	s.cur.Store(snap)
-	log.Printf("egress-agent: reloaded Squid with the policy on disk (%s)", modeName(snap.enforce))
+	log.Printf("egress-agent: reloaded Squid with the policy on disk (%s)", snap.modeName())
 }
 
 // errEmptyPolicy refuses an answer with no entries: the CP always sends its built-in
