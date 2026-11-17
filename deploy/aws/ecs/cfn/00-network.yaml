@@ -903,8 +903,7 @@ Resources:
             - { Ws0: !Ref WorkspaceSubnet0Cidr, Ws1: !Ref WorkspaceSubnet1Cidr }
 
   # Group of ONE; terminate-before-launch (two instances cannot share GatewayEni). MaxSize stays 1
-  # even at DesiredCapacity 0: the rolling update needs MinInstancesInService (0) < MaxSize, or an
-  # update to a paused group fails. PARAMETERS.md, 00-network: "Egress gateway group".
+  # even at DesiredCapacity 0 (PARAMETERS.md, 00-network: "Egress gateway group").
   GatewayAsg:
     Type: AWS::AutoScaling::AutoScalingGroup
     Condition: GatewayOn
@@ -925,10 +924,8 @@ Resources:
 
 
 Outputs:
-  # The egress source IP's allocation, whoever created it. Capture it (capture-env.sh
-  # stores it as a 00-network parameter) and pass it back as NatEipAllocationId to
-  # rebuild the deployment behind the same address. Never empty: the false branch is
-  # a non-empty parameter by construction, and an empty Export fails the whole stack.
+  # The egress source IP's allocation, whoever created it; capture-env.sh stores it so a rebuild
+  # keeps the address (NatEipAllocationId). Never empty: an empty Export fails the whole stack.
   NatEipAllocationId:
     Value: !If [ CreateNatEip, !GetAtt NatEip.AllocationId, !Ref NatEipAllocationId ]
     Export: { Name: !Sub "${AWS::StackName}-NatEipAllocationId" }
