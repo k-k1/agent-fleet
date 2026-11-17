@@ -85,6 +85,9 @@ func newLaunchPolicyRefusal(kind string, sel *routes.Selection, m session.Meta) 
 	l, _ := withinBudget(kind+" ResolveLaunch", func() routes.Launch { return cr.ResolveLaunch(m) })
 	switch {
 	case l.Route == "" && perCall && !oneRoute:
+		if r := forbiddenModelRoute(a, m.Model, p); r != "" {
+			return forbiddenRefusal(kind, r, p), nil
+		}
 		return requiredRefusal(kind, p, "the route of its model cannot be told"), nil
 	case l.Route == "":
 		return requiredRefusal(kind, p, "its current login cannot be told"), nil
@@ -92,6 +95,27 @@ func newLaunchPolicyRefusal(kind string, sel *routes.Selection, m session.Meta) 
 		return forbiddenRefusal(kind, l.Route, p), nil
 	}
 	return nil, &l
+}
+
+// forbiddenModelRoute is the first route a named model may run on when the policy forbids every
+// one of them, "" otherwise (no model named, no candidates, or any candidate allowed). It lets a
+// create whose payer cannot be proven be refused as forbidden rather than asking for a route that
+// cannot help; it never allows anything.
+func forbiddenModelRoute(a agents.Agent, model string, p routepolicy.Policy) string {
+	l, ok := a.(agents.ModelRouteLister)
+	if !ok || model == "" {
+		return ""
+	}
+	cands := l.ModelRoutes(model)
+	for _, r := range cands {
+		if p.Allows(r) {
+			return ""
+		}
+	}
+	if len(cands) == 0 {
+		return ""
+	}
+	return cands[0]
 }
 
 // storedLaunchPolicyRefusal judges a start of a stored session (a start, a resume, an

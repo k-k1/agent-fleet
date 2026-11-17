@@ -130,3 +130,25 @@ func TestOAuthCachedIsCurrentOnly(t *testing.T) {
 		t.Errorf("during a refresh: %+v after %v", st, time.Since(start))
 	}
 }
+
+// ModelRoutes lists every route a launch on opencode.ai's providers might run on when the payer
+// is not proven, and nothing for any other provider or a billing choice that keeps opencode.ai out.
+func TestModelRoutes(t *testing.T) {
+	old := credentialView
+	t.Cleanup(func() { credentialView = old })
+	pref := ""
+	credentialView = func() (map[string]string, string, oauthState) { return nil, pref, oauthState{} }
+	a := agentImpl{}
+	want := func(name, model string, routes ...string) {
+		t.Helper()
+		if got := a.ModelRoutes(model); !slices.Equal(got, routes) {
+			t.Errorf("%s: ModelRoutes(%q) = %v, want %v", name, model, got, routes)
+		}
+	}
+	want("zen", "opencode/iceman-free", "opencode-zen", "opencode-account")
+	want("go", "opencode-go/glm", "opencode-go", "opencode-account")
+	want("other provider", "anthropic/claude-x")
+	want("no model", "")
+	pref = UsageOwn
+	want("own keys only", "opencode/iceman-free")
+}

@@ -82,6 +82,16 @@ type PerCallRouter interface {
 	RoutesPerCall()
 }
 
+// ModelRouteLister is an optional capability of a PerCallRouter: the routes a launch on model can
+// end up on when ResolveLaunch cannot prove which payer pays (a signed-in account beside a key, an
+// account state not yet known). The list is every route the launch might run on, empty when the
+// model's destination cannot be told. A restriction that forbids all of them can refuse the
+// create as forbidden without knowing the payer; one that allows any of them still needs the
+// route named.
+type ModelRouteLister interface {
+	ModelRoutes(model string) []string
+}
+
 // LaunchBinder is an optional capability of a CredentialResolver: the launch record's binding of
 // an explicit selection, where the stored connection does not identify the credential instance
 // (a subscription selection names no connection) or is not fit to travel (a plain key
