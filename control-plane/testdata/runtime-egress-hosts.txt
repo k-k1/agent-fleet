@@ -80,6 +80,8 @@ authenticate.cursor.sh     cursor    cursor      docs       # same
 app.kiro.dev               kiro      kiro        docs       # kiro.dev firewall doc
 prod.us-east-1.auth.desktop.kiro.dev kiro kiro    docs      # same
 runtime.us-east-1.kiro.dev kiro      kiro        docs       # same; current Kiro service (US region only; eu variants are the admin's)
+# management.us-east-1.kiro.dev (access management) is named in the vendor doc but not added:
+# whether the CLI uses it is unconfirmed, deferred to #4398.
 # Legacy inference host, already inside the default suffix .amazonaws.com, so M4 cannot
 # drop it by destination.
 q.us-east-1.amazonaws.com  kiro      kiro        docs
