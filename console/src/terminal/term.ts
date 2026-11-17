@@ -45,6 +45,9 @@ interface Inst {
   rx?: boolean; // any PTY byte received on the CURRENT socket (see ensureAttached)
   connAt?: number; // ms when the CURRENT socket began connecting (stall watchdog — see ensureAttached)
   connWd?: ReturnType<typeof setTimeout>; // connect-stall watchdog timer (see attach)
+  connStall?: number; // stall window of the CURRENT socket (see connStallWindow)
+  connTries?: number; // consecutive connects to this session that never opened
+  opened?: boolean; // the CURRENT socket reached OPEN
   cleanups?: (() => void)[]; // document-level listeners owned by this pane's terminal
   webgl?: WebglAddon | null; // live WebGL renderer addon (dropped while hidden — see hideTerm)
   canvas?: CanvasAddon | null; // 2D fallback renderer, when WebGL is unavailable/lost/over budget (see loadCanvas)
@@ -1250,9 +1253,18 @@ const HB_TIMEOUT = 45000; // no pong for this long ⇒ dead → re-attach
 // in-flight — the CP accepted the socket while the session was still booting but
 // never completed the /ws/pty handshake, and CONNECTING never fires onclose/onerror.
 // Past this window we stop trusting it and re-attach (see connStalled / reconnect /
-// ensureAttached). A normal connect reaches OPEN well under a second, so this only
-// ever trips on a genuinely stuck one.
+// ensureAttached). The first window is short so that hang clears quickly, and it doubles
+// with every connect that never opened, up to CONNECT_STALL_MAX: a new socket costs a TCP
+// connect, a TLS handshake and the upgrade, and on a link with a ~1 s round trip that is
+// over 3 s. A fixed window cut every such connect off just before it completed, forever
+// (#4432).
 const CONNECT_STALL = 3000;
+const CONNECT_STALL_MAX = 30_000;
+
+/** The stall window for a connect after `tries` consecutive ones that never opened. */
+export function connStallWindow(tries: number): number {
+  return Math.min(CONNECT_STALL_MAX, CONNECT_STALL * 2 ** Math.min(Math.max(tries, 0), 8));
+}
 
 // Close reason the Agent sends when the session is not running (see
 // workspace/agent/terminal.go). A browser cannot read the status of a REFUSED
@@ -1263,7 +1275,7 @@ const PTY_CLOSE_SESSION_STOPPED = "session stopped";
 // in the Agent). An older Agent also sends it when a halt ended the PTY, hence the wording.
 const PTY_CLOSE_PTY_CLOSED = "pty closed";
 
-// connStalled reports a socket wedged in CONNECTING past CONNECT_STALL — the
+// connStalled reports a socket wedged in CONNECTING past its stall window — the
 // "black terminal right after launch" that no drop/heartbeat path catches (no close frame ever
 // arrives). Both the focus/active reconnect and the reveal retry ladder use it to
 // decide a hung connect must be torn down and re-opened.
@@ -1272,7 +1284,7 @@ function connStalled(it: Inst | null | undefined) {
     !!it &&
     !!it.ws &&
     it.ws.readyState === WebSocket.CONNECTING &&
-    Date.now() - (it.connAt ?? 0) >= CONNECT_STALL
+    Date.now() - (it.connAt ?? 0) >= (it.connStall ?? CONNECT_STALL)
   );
 }
 
@@ -1371,6 +1383,9 @@ export function attach(paneId: string, session: string, auto = false) {
   // Detach the old socket's handlers before closing it: an intentional switch
   // must not fire its onclose (which would flash "[disconnected]" over the
   // freshly-reset terminal). Only an unexpected server-side drop should show it.
+  // A connect to the same session that never opened makes the next window longer; one that
+  // opened, or a different session, starts over at the short one.
+  it.connTries = it.ws && it.session === session && !it.opened ? (it.connTries ?? 0) + 1 : 0;
   if (it.ws) {
     it.ws.onclose = null;
     it.ws.onmessage = null;
@@ -1390,11 +1405,13 @@ export function attach(paneId: string, session: string, auto = false) {
   const ws = new WebSocket(wsURL(session, auto));
   it.ws = ws;
   it.connAt = Date.now();
+  it.opened = false;
+  it.connStall = connStallWindow(it.connTries);
   ws.binaryType = "arraybuffer";
   // Connect-stall watchdog. A PTY upgrade that never completes stays CONNECTING with
   // no close frame — onopen/onclose/onerror and the heartbeat all never fire — so an
   // idle/off-screen pane (whose focus/active reconnect never triggers) would sit black
-  // forever. If this socket is still CONNECTING past CONNECT_STALL, tear it down and
+  // forever. If this socket is still CONNECTING past its window, tear it down and
   // re-attach: a fresh connect, by when the session has finished booting, completes and
   // draws. attach() schedules a new watchdog, so it keeps retrying until the PTY opens.
   // A healthy connect reaches onopen first and clears this.
@@ -1403,9 +1420,10 @@ export function attach(paneId: string, session: string, auto = false) {
     if (cur && cur.ws === ws && ws.readyState === WebSocket.CONNECTING && cur.session) {
       attach(paneId, cur.session, true);
     }
-  }, CONNECT_STALL + 500);
+  }, it.connStall + 500);
   ws.onopen = () => {
     clearConnWd(it); // connected → the stall watchdog is done
+    it.opened = true;
     fitInst(it); // size the grid before reporting it to the PTY (next line)
     setSoftKeyboard(it, true); // PTY connected → allow the soft keyboard for input
     ws.send(JSON.stringify({ type: "resize", cols: it.term!.cols, rows: it.term!.rows }));
@@ -1527,7 +1545,7 @@ export function ensureAttached(paneId: string, session: string) {
   // nastier one: CONNECTING never fires onclose/onerror, so the drop-flag reconnect
   // and heartbeat never trip, and — if we blindly trust CONNECTING — every retry rung
   // (and the reveal re-check) skips it, leaving the pane black until a focus tap or
-  // reload. So only a FRESH connect (CONNECTING within CONNECT_STALL) counts as live;
+  // reload. So only a FRESH connect (CONNECTING within its stall window) counts as live;
   // a stalled one is re-attached (a new connect, by when the agent is up, draws).
   const rs = it.ws && it.ws.readyState;
   const live =
