@@ -13,7 +13,6 @@ import {
   parseTenantPolicy,
   ruleEqual,
   ruleFromDraft,
-  routesAllowedAbove,
 } from "./routePolicyRule.ts";
 
 const CATALOG = new URL("../../../../../control-plane/internal/agentroutes/catalog.json", import.meta.url);
@@ -79,17 +78,6 @@ describe("ruleEqual", () => {
     expect(ruleEqual({ classes: ["a", "b"] }, { classes: ["b", "a"] })).toBe(true);
     expect(ruleEqual({}, { classes: [] })).toBe(false);
     expect(ruleEqual({ except: [] }, {})).toBe(true);
-  });
-});
-
-describe("routesAllowedAbove", () => {
-  it("keeps a route only the tenant's own rule forbids", () => {
-    const routes = [
-      { id: "a", class: "c", destination: "d", allowed: true },
-      { id: "b", class: "c", destination: "d", allowed: false, forbiddenBy: ["tenant"] },
-      { id: "c", class: "c", destination: "d", allowed: false, forbiddenBy: ["ceiling", "tenant"] },
-    ];
-    expect(routesAllowedAbove(routes).map((r) => r.id)).toEqual(["a", "b"]);
   });
 });
 

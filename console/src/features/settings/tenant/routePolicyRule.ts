@@ -61,6 +61,9 @@ export interface TenantPolicyView {
   endpointRoutes: string[];
   /** What the layers hide from the tenant's members; read through parseHidden. */
   hidden?: unknown;
+  /** Every harness, chat backend and image provider with its routes and the allowed ones; read
+   *  through parseOwners. Absent from a CP older than #4381. */
+  owners?: unknown;
 }
 
 /** hiddenItemWire: a harness, chat backend or image provider none of whose routes the layers
@@ -76,6 +79,21 @@ export interface HiddenView {
   kinds: HiddenItem[];
   chat: HiddenItem[];
   imagegen: HiddenItem[];
+}
+
+/** ownerItemWire: one harness, chat backend or image provider, its routes, and the ones the
+ *  layers allow (empty exactly when it is hidden). */
+export interface OwnerItem {
+  id: string;
+  routes: string[];
+  allowed: string[];
+}
+
+/** ownersWire. */
+export interface OwnersView {
+  kinds: OwnerItem[];
+  chat: OwnerItem[];
+  imagegen: OwnerItem[];
 }
 
 /** GET /api/admin/route-policy. */
@@ -122,6 +140,29 @@ export function parseHidden(d: unknown): HiddenView | null {
     if (!Array.isArray(l) || !l.every(isHiddenItem)) return null;
   }
   return d as unknown as HiddenView;
+}
+
+const isOwnerItem = (v: unknown): v is OwnerItem =>
+  isObj(v) &&
+  typeof v.id === "string" &&
+  Array.isArray(v.routes) &&
+  isStrList(v.routes) &&
+  v.routes.length > 0 &&
+  Array.isArray(v.allowed) &&
+  isStrList(v.allowed) &&
+  // An allowed route the item does not have is an answer the page cannot draw truthfully.
+  (v.allowed as string[]).every((r) => (v.routes as string[]).includes(r));
+
+/** parseOwners: undefined when the answer carries no owners at all (a CP from before them), null
+ *  when it carries a malformed one, which fails the whole list closed. */
+export function parseOwners(d: unknown): OwnersView | null | undefined {
+  if (d === undefined) return undefined;
+  if (!isObj(d)) return null;
+  for (const k of ["kinds", "chat", "imagegen"]) {
+    const l = d[k];
+    if (!Array.isArray(l) || !l.every(isOwnerItem)) return null;
+  }
+  return d as unknown as OwnersView;
 }
 
 export function parseDeploymentPolicy(d: unknown): DeploymentPolicyView | null {
@@ -275,8 +316,3 @@ export function ruleEqual(a: RouteRule, b: RouteRule): boolean {
 /** restricts mirrors routepolicy.Rule.Restricted: an exception alone restricts nothing. */
 export const restricts = (r: RouteRule) =>
   r.classes !== undefined || r.destinations !== undefined || (r.deny?.length ?? 0) > 0;
-
-/** routesAllowedAbove: the routes no layer above the tenant forbids, i.e. what the deployment
- *  leaves the tenant's own rule to narrow. */
-export const routesAllowedAbove = (routes: RouteDecision[]) =>
-  routes.filter((r) => (r.forbiddenBy ?? []).every((l) => l === "tenant"));

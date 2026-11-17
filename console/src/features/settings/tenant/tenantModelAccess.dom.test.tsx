@@ -10,6 +10,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { readFileSync } from "node:fs";
 
 const api = vi.fn();
 const apiJSON = vi.fn();
@@ -24,7 +25,11 @@ import { TenantModelAccessView } from "./tenantModelAccess.tsx";
 const PATH = "api/admin/tenants/acme/route-policy";
 
 const VIEW = () => ({
-  ceiling: { raw: "classes=-subscription", rule: { classes: ["member-key", "member-cloud", "provided", "self-hosted"] }, source: "deployment" },
+  ceiling: {
+    raw: "classes=-subscription",
+    rule: { classes: ["member-key", "member-cloud", "provided", "self-hosted"] },
+    source: "deployment",
+  },
   deployment: { rule: {}, revision: 0 },
   cap: { rule: { deny: ["openrouter-api"] }, revision: 2 },
   tenant: { rule: { endpoints: ["llm.corp.example"], except: ["copilot-login"], future: "kept" }, revision: 5 },
@@ -32,8 +37,20 @@ const VIEW = () => ({
   revision: 9,
   routes: [
     { id: "anthropic-api", class: "member-key", destination: "anthropic", allowed: true },
-    { id: "anthropic-subscription", class: "subscription", destination: "anthropic", allowed: false, forbiddenBy: ["ceiling"] },
-    { id: "openrouter-api", class: "member-key", destination: "openrouter", allowed: false, forbiddenBy: ["tenant_cap"] },
+    {
+      id: "anthropic-subscription",
+      class: "subscription",
+      destination: "anthropic",
+      allowed: false,
+      forbiddenBy: ["ceiling"],
+    },
+    {
+      id: "openrouter-api",
+      class: "member-key",
+      destination: "openrouter",
+      allowed: false,
+      forbiddenBy: ["tenant_cap"],
+    },
     { id: "gemini-api", class: "member-key", destination: "google", allowed: false, forbiddenBy: ["tenant"] },
   ],
   endpoints: [{ host: "llm.corp.example", approved: false, excludedBy: ["ceiling"] }],
@@ -66,7 +83,8 @@ const field = (name: string) => host!.querySelector<HTMLElement>(`.model-access-
 const segBtn = (name: string, text: string) =>
   Array.from(field(name).querySelectorAll<HTMLButtonElement>(".seg-btn")).find((b) => b.textContent === text)!;
 const tickIn = (name: string, text: string) =>
-  Array.from(field(name).querySelectorAll<HTMLLabelElement>("label")).find((l) => l.textContent?.includes(text))!
+  Array.from(field(name).querySelectorAll<HTMLLabelElement>("label"))
+    .find((l) => l.textContent?.includes(text))!
     .querySelector("input")!;
 const button = (text: string) =>
   Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === text);
@@ -95,40 +113,27 @@ afterEach(() => {
 });
 
 describe("tenant model access", () => {
-  it("shows the layers above read-only and only the routes they leave", async () => {
+  it("says who restricts what, one line per layer, read-only", async () => {
     await mount();
     expect(api).toHaveBeenCalledWith(PATH);
-    const above = host!.querySelector(".model-access-above")!;
-    expect(above.querySelectorAll("[data-layer]").length).toBe(3);
-    // No control in the layers above: they belong to the operator and the super_admin.
-    expect(above.querySelectorAll("input, textarea, button").length).toBe(0);
-    const left = Array.from(host!.querySelectorAll('[data-testid="routes-above"] code')).map((c) => c.textContent);
-    // The ceiling's and the cap's routes are gone; the one only the tenant forbids stays.
-    expect(left).toEqual(["anthropic-api", "gemini-api"]);
-    expect(host!.querySelector('[data-host="llm.corp.example"]')?.textContent).toContain("配備の上限（運用者）");
+    const who = host!.querySelector(".model-access-who")!;
+    const lines = Array.from(who.querySelectorAll<HTMLElement>("[data-layer]"));
+    expect(lines.map((l) => l.dataset.layer)).toEqual(["ceiling", "deployment", "tenant_cap", "tenant"]);
+    // No control here: the layers above belong to the operator and the super_admin, and the
+    // tenant's own is edited on the Restrictions tab.
+    expect(who.querySelectorAll("input, textarea, button").length).toBe(0);
+    expect(lines[0].textContent).toBe(
+      "運用者（配備の設定・ここでは変更不可） 認証情報の種類 5 のうち 4（サブスクリプション・ログイン 以外）",
+    );
+    expect(lines[1].textContent).toContain("制限なし");
+    expect(lines[2].textContent).toContain("個別に禁止: OpenRouter");
+    // The tenant's own hosts, each with its state and who keeps it out.
+    expect(host!.querySelector('[data-host="llm.corp.example"]')?.textContent).toContain("止めているのは: 運用者");
     // The sentences the policy page states: D12's delay and its window while the CP is
     // unreachable, and D13's.
     expect(host!.textContent).toContain("30 秒");
     expect(host!.textContent).toContain("Control Plane に届かない間");
     expect(host!.textContent).toContain("手作業でモデルにサインイン");
-  });
-
-  it("pairs every label in a layer summary with its value, unrestricted layers included", async () => {
-    await mount();
-    // The grid lays the list out two cells per row, so one unpaired dt or dd shifts every row
-    // below it onto the wrong value.
-    const lists = Array.from(host!.querySelectorAll(".model-access-above dl"));
-    expect(lists.length).toBe(3);
-    for (const dl of lists) {
-      const tags = Array.from(dl.children).map((c) => c.tagName);
-      expect(tags.length % 2).toBe(0);
-      tags.forEach((t, i) => expect(t).toBe(i % 2 === 0 ? "DT" : "DD"));
-      expect(Array.from(dl.querySelectorAll("dd")).every((dd) => dd.textContent !== "")).toBe(true);
-    }
-    // The deployment rule restricts nothing: it says so above its list, not as a row of it.
-    const deployment = host!.querySelector('[data-layer="deployment"]')!;
-    expect(deployment.querySelector(".mpol-summary-head")?.textContent).toBe("制限なし");
-    expect(deployment.querySelector(".mpol-summary-head")?.closest("dl")).toBeNull();
   });
 
   it("saves the loaded rule with only the edited field replaced", async () => {
@@ -163,7 +168,11 @@ describe("tenant model access", () => {
       ta.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await click(button("保存")!);
-    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", expect.objectContaining({ endpoints: ["llm.corp.example", "gpu.corp.example"] }));
+    expect(apiJSON).toHaveBeenCalledWith(
+      PATH,
+      "PUT",
+      expect.objectContaining({ endpoints: ["llm.corp.example", "gpu.corp.example"] }),
+    );
     const alert = host!.querySelector(".model-access-rule [role=alert]")!;
     expect(alert.textContent).toContain("セルフホストのエンドポイントとして承認できません");
     expect(alert.textContent).toContain("gpu.corp.example");
@@ -216,8 +225,11 @@ describe("tenant model access", () => {
 
 // ADR 0138 M2 P9: what the policy hides, and from which layer. Fail closed: only a present,
 // well-formed and empty `hidden` reads as "nothing is hidden".
-describe("what the policy hides", () => {
-  const section = () => host!.querySelector(".model-access-hidden")!;
+// What members can use, on a CP without `owners`: only the hidden items can be named, with the
+// guarantees of the list it replaces (#4368): every layer named, per route, and never "nothing is
+// hidden" from a missing or partial answer.
+describe("what members can use, from hidden alone", () => {
+  const section = () => host!.querySelector(".model-access-use")!;
   const withHidden = (hidden: unknown, routes = VIEW().routes) =>
     api.mockImplementation(() => Promise.resolve({ ...VIEW(), hidden, routes }));
 
@@ -230,31 +242,49 @@ describe("what the policy hides", () => {
       },
       [
         ...VIEW().routes,
-        { id: "agy-login", class: "subscription", destination: "google", allowed: false, forbiddenBy: ["ceiling", "tenant"] },
-        { id: "chatgpt-subscription", class: "subscription", destination: "openai", allowed: false, forbiddenBy: ["ceiling"] },
+        {
+          id: "agy-login",
+          class: "subscription",
+          destination: "google",
+          allowed: false,
+          forbiddenBy: ["ceiling", "tenant"],
+        },
+        {
+          id: "chatgpt-subscription",
+          class: "subscription",
+          destination: "openai",
+          allowed: false,
+          forbiddenBy: ["ceiling"],
+        },
         { id: "openai-api", class: "member-key", destination: "openai", allowed: false, forbiddenBy: ["tenant_cap"] },
       ],
     );
     await mount();
     const agy = section().querySelector('[data-hidden="agy"]')!;
     // Hidden by two layers: both are named.
-    expect(agy.textContent).toContain("配備の上限（運用者）, テナントの規則");
+    expect(agy.textContent).toContain("止めているのは: 運用者・このテナント");
     expect(section().querySelector('[data-hidden="comfy"]')!.textContent).toContain("この配備のエンジン（ComfyUI）");
-    expect(section().querySelector('[data-hidden="comfy"]')!.textContent).toContain("配備の規則");
+    expect(section().querySelector('[data-hidden="comfy"]')!.textContent).toContain("配備の管理者（全テナント共通）");
     // Each route carries its own layers, not only the item's union.
     const codex = section().querySelector('[data-hidden="codex"]')!;
-    expect(codex.querySelector('[data-route="chatgpt-subscription"]')!.textContent).toContain("配備の上限（運用者）");
-    expect(codex.querySelector('[data-route="chatgpt-subscription"]')!.textContent).not.toContain("テナントの上限");
-    expect(codex.querySelector('[data-route="openai-api"]')!.textContent).toContain("テナントの上限");
+    expect(codex.querySelector('[data-route="chatgpt-subscription"]')!.textContent).toContain("止めているのは: 運用者");
+    expect(codex.querySelector('[data-route="chatgpt-subscription"]')!.textContent).not.toContain("このテナント向け");
+    expect(codex.querySelector('[data-route="openai-api"]')!.textContent).toContain("配備の管理者（このテナント向け）");
     expect(section().querySelector('[data-testid="hidden-none"]')).toBeNull();
     // codex is hidden as a chat backend here, so its row sits in the chat list.
     expect(section().querySelector('[data-group="chat"] [data-hidden="codex"]')).not.toBeNull();
+    // Only the hidden items can be named, and the page says why.
+    expect(section().textContent).toContain("隠れているものだけ");
     // Decision 9: the members' own switches are not covered, and the page says so.
     expect(section().textContent).toContain("メンバー自身の切り替え");
   });
 
   it("shows an id outside the registry as itself, inherited object keys included", async () => {
-    withHidden({ kinds: [{ id: "toString", routes: ["agy-login"], forbiddenBy: ["ceiling"] }], chat: [], imagegen: [] });
+    withHidden({
+      kinds: [{ id: "toString", routes: ["agy-login"], forbiddenBy: ["ceiling"] }],
+      chat: [],
+      imagegen: [],
+    });
     await mount();
     expect(section().querySelector('[data-hidden="toString"] strong')!.textContent).toBe("toString");
   });
@@ -271,6 +301,90 @@ describe("what the policy hides", () => {
       await mount();
       expect(section().querySelector('[data-testid="hidden-none"]')).toBeNull();
       expect(section().querySelector("[data-hidden]")).toBeNull();
+      expect(section().querySelector("[role=alert]")?.textContent).toContain("読めませんでした");
+      act(() => root?.unmount());
+      host?.remove();
+      root = null;
+      host = null;
+    }
+  });
+});
+
+// What members can use, from `owners` (#4380 P-4), on the CP's own answers (the shots fixtures,
+// written by the real handlers): one row per agent, image provider and chat backend, its routes by
+// name with the id on hover, and who stops each one.
+describe("what members can use", () => {
+  const fx = (name: string) =>
+    JSON.parse(readFileSync(`scripts/shots/model-access/policy-${name}.json`, "utf8"))["tenant/demo"];
+  const section = () => host!.querySelector(".model-access-use")!;
+  const row = (group: string, id: string) =>
+    section().querySelector<HTMLElement>(`[data-group="${group}"] [data-owner="${id}"]`)!;
+
+  it("marks each agent usable or not, and names its routes and who stops them", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : fx("restricted"),
+      ),
+    );
+    await mount();
+    const claude = row("kinds", "claude");
+    expect(claude.dataset.usable).toBe("true");
+    expect(claude.querySelector("summary")!.textContent).toContain("4 の経路のうち 3 つで使えます");
+    const sub = claude.querySelector('[data-route="anthropic-subscription"]')!;
+    expect(sub.textContent).toContain("Claude サブスク");
+    expect(sub.textContent).toContain("止めているのは: このテナント");
+    // The route's id is on hover, not in the text.
+    expect(sub.textContent).not.toContain("anthropic-subscription");
+    expect(sub.querySelector("[title]")!.getAttribute("title")).toBe("anthropic-subscription");
+    const cursor = row("kinds", "cursor");
+    expect(cursor.dataset.usable).toBe("false");
+    expect(cursor.querySelector("summary")!.textContent).toContain(
+      "メンバーには見えません ― 止めているのは: 配備の管理者（このテナント向け）・このテナント",
+    );
+    // The same owner is judged per list: Claude Code's chat backend has only the subscription.
+    expect(row("chat", "claude").dataset.usable).toBe("false");
+    expect(row("imagegen", "comfy").dataset.usable).toBe("true");
+    expect(section().textContent).toContain("メンバー自身の切り替え");
+    expect(section().querySelector("[role=alert]")).toBeNull();
+  });
+
+  it("says a per-connection route lacks an approved server rather than blaming the layers", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : fx("unapproved"),
+      ),
+    );
+    await mount();
+    const route = row("kinds", "lcpp").querySelector('[data-route="member-llamacpp"]')!;
+    expect(route.textContent).toContain("承認したセルフホストのサーバーがありません");
+    expect(route.textContent).not.toContain("止めているのは");
+    expect(row("kinds", "lcpp").querySelector("summary")!.textContent).toContain("2 の経路のうち 1 つで使えます");
+  });
+
+  it("lists everything as usable only from a well-formed owners", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : fx("open")),
+    );
+    await mount();
+    const rows = Array.from(section().querySelectorAll<HTMLElement>("[data-owner]"));
+    expect(rows.length).toBe(20);
+    expect(rows.every((r) => r.dataset.usable === "true")).toBe(true);
+  });
+
+  it("fails closed on a malformed owners, never falling back to hidden", async () => {
+    const v = fx("open");
+    for (const owners of [
+      { ...v.owners, chat: undefined },
+      { ...v.owners, kinds: [{ id: "claude", routes: ["anthropic-api"], allowed: ["bedrock"] }] },
+    ]) {
+      api.mockImplementation((path: string) =>
+        Promise.resolve(
+          path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : { ...v, owners },
+        ),
+      );
+      await mount();
+      expect(section().querySelector("[data-owner]")).toBeNull();
+      expect(section().querySelector('[data-testid="hidden-none"]')).toBeNull();
       expect(section().querySelector("[role=alert]")?.textContent).toContain("読めませんでした");
       act(() => root?.unmount());
       host?.remove();
@@ -303,7 +417,7 @@ describe("model access views", () => {
   it("reaches every section from a tab, and has no provided tab where the CP has none", async () => {
     await mount();
     expect(Array.from(host!.querySelectorAll('[role="tab"]')).map((t) => t.textContent)).toEqual(["概要", "制限"]);
-    for (const sel of [".model-access-above", ".model-access-endpoints", ".model-access-hidden", ".model-access-rule"]) {
+    for (const sel of [".model-access-use", ".model-access-who", ".model-access-rule"]) {
       const panel = host!.querySelector(sel)!.closest<HTMLElement>('[role="tabpanel"]')!;
       const t = host!.querySelector<HTMLButtonElement>(`[role="tab"][aria-controls="${panel.id}"]`);
       expect(t, sel).not.toBeNull();
@@ -356,7 +470,9 @@ describe("model access views", () => {
   });
 
   it("keeps a draft and its refusal across a switch, and marks the unsaved tab", async () => {
-    apiJSON.mockResolvedValue({ error: { code: "route_policy_endpoint_not_approvable", message: "refused for the test" } });
+    apiJSON.mockResolvedValue({
+      error: { code: "route_policy_endpoint_not_approvable", message: "refused for the test" },
+    });
     await mount();
     await click(tab("制限")!);
     expect(tab("制限")!.getAttribute("aria-label")).toBeNull();

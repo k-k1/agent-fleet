@@ -153,7 +153,11 @@ const modelAccessScene = (name, { admin = false, rules, provided = "off", view =
 };
 const MODEL_ACCESS_SCENES = [
   // Tenant: every layer unrestricted, a CP without provided routes.
-  modelAccessScene("mpol-tenant-open", { rules: "open", verify: visible('.tenant-modal [data-testid="hidden-none"]') }),
+  // (Before #4380 P-4 the page said "nothing is hidden"; from it, every agent's row is usable.)
+  modelAccessScene("mpol-tenant-open", {
+    rules: "open",
+    verify: `(${visible('.tenant-modal [data-testid="hidden-none"]')} || ${visible('.tenant-modal [data-owner="claude"][data-usable="true"]')})`,
+  }),
   // Tenant: a ceiling, a cap and the tenant's own rule hide harnesses; no provided routes.
   modelAccessScene("mpol-tenant-hidden", { rules: "restricted", verify: visible('.tenant-modal [data-hidden="cursor"]') }),
   // Tenant: the operator allows Bedrock only; the deployment's provided route exists but this

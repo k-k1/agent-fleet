@@ -37,6 +37,12 @@ var shotPolicyScenes = []struct {
 		{"tenants/demo/route-policy/cap", `{"destinations":["af-engine","anthropic","aws-bedrock","cursor","github","google","kiro","meta","openai","opencode.ai","self-hosted"],"deny":["cursor-login"]}`},
 		{"tenants/demo/route-policy", `{"classes":["member-key","member-cloud","provided","self-hosted"],"except":["copilot-login"],"endpoints":["llm.corp.example"]}`},
 	}},
+	// The restricted layers with no host approved: the per-connection routes every layer allows
+	// (endpointRoutes) are still unusable, for want of a server rather than of a rule.
+	{name: "unapproved", ceiling: shotCeilingRestricted, puts: [][2]string{
+		{"tenants/demo/route-policy/cap", `{"destinations":["af-engine","anthropic","aws-bedrock","cursor","github","google","kiro","meta","openai","opencode.ai","self-hosted"],"deny":["cursor-login"]}`},
+		{"tenants/demo/route-policy", `{"classes":["member-key","member-cloud","provided","self-hosted"],"except":["copilot-login"],"endpoints":[]}`},
+	}},
 	{name: "bedrockonly", ceiling: "destinations=aws-bedrock"},
 	{name: "nosubs", puts: [][2]string{
 		{"route-policy", `{"classes":["member-key","member-cloud","provided","self-hosted"]}`},
