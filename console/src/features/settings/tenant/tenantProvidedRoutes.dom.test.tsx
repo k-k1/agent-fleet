@@ -19,6 +19,7 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
 import { DirtyScope } from "../parts/dirtyScope.tsx";
+import { fmtDateTime } from "../../../lib/intl.ts";
 
 const PATH = "api/admin/tenants/acme/provided-routes/deployment";
 const VIEW = () => ({
@@ -174,27 +175,44 @@ describe("tenant provided routes", () => {
     await mount();
     await click(btn(policy(), "許可したメンバーだけ"));
     await click(btn(policy(), "保存"));
-    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/policy`, "PUT", { members_only: true, member_default_micro: 5_000_000 });
+    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/policy`, "PUT", {
+      members_only: true,
+      member_default_micro: 5_000_000,
+    });
   });
 
   it("saves one member, an emptied budget going back to the default", async () => {
-    apiJSON.mockResolvedValue({ warnings: ["the member's monthly budget admits a call only while its output cap is small"] });
+    apiJSON.mockResolvedValue({
+      warnings: ["the member's monthly budget admits a call only while its output cap is small"],
+    });
     await mount();
     await type(row("alice").querySelector<HTMLInputElement>('input[type="text"]')!, "");
     await click(btn(row("alice"), "保存"));
-    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/members`, "PUT", { membership_id: "M-a", granted: true, budget_micro: null });
+    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/members`, "PUT", {
+      membership_id: "M-a",
+      granted: true,
+      budget_micro: null,
+    });
     expect(host!.querySelector(".prov-warnings")?.textContent).toContain("output cap is small");
   });
 
   it("keeps a refusal and the edits beside the row", async () => {
     apiJSON.mockResolvedValue({
-      error: { code: "invalid_input", message: "the member's monthly budget ≈$0.05 is below the smallest reservation of one call", status: 400 },
+      error: {
+        code: "invalid_input",
+        message: "the member's monthly budget ≈$0.05 is below the smallest reservation of one call",
+        status: 400,
+      },
     });
     await mount();
     const input = row("bob").querySelector<HTMLInputElement>('input[type="text"]')!;
     await type(input, "0.05");
     await click(btn(row("bob"), "保存"));
-    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/members`, "PUT", { membership_id: "M-b", granted: false, budget_micro: 50_000 });
+    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/members`, "PUT", {
+      membership_id: "M-b",
+      granted: false,
+      budget_micro: 50_000,
+    });
     const alert = row("bob").querySelector("[role=alert]")!;
     expect(alert.textContent).toContain("Control Plane が受け付けませんでした");
     expect(alert.textContent).toContain("smallest reservation");
@@ -216,5 +234,88 @@ describe("tenant provided routes", () => {
     await click(btn(policy(), "保存"));
     expect(apiJSON).not.toHaveBeenCalled();
     expect(policy().querySelector("[role=alert]")!.textContent).toContain("ほかの人がこの規則を更新");
+  });
+});
+
+// #4380 P-6: the tab says whether the tenant may use the route, its month against the pool and
+// when the month resets, why a member at zero cannot, and that the restriction can stop the route
+// whatever the budget. Not granted, the budgets stay editable.
+describe("tenant provided routes, status and month", () => {
+  const mountWith = async (view: unknown, ruleStops?: string) => {
+    api.mockImplementation(() => Promise.resolve(view));
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<TenantProvidedRoutesView slug="acme" ruleStops={ruleStops} />);
+    });
+    await flush();
+  };
+  const summary = () => host!.querySelector<HTMLElement>('[data-testid="prov-grant"]')!;
+
+  it("shows the grant, the month against the pool with what is held, and the reset", async () => {
+    await mountWith({ ...VIEW(), reserved_micro: 750_000 });
+    expect(summary().querySelector('[data-state="granted"]')!.textContent).toContain("このテナントで使えます");
+    expect(summary().textContent).toContain("テナント全体の月の枠: ≈ $100.00");
+    const bar = summary().querySelector<HTMLMeterElement>(".prov-tenant-use meter")!;
+    // Spent and held both count against the pool, as admission counts them.
+    expect([bar.max, bar.value]).toEqual([100_000_000, 2_000_000]);
+    expect(summary().textContent).toContain("≈ $100.00 のうち ≈ $1.25");
+    expect(summary().textContent).toContain("実行中の呼び出しの取り置き: ≈ $0.75");
+    // The month ends at 00:00 UTC on the 1st, shown in the viewer's time.
+    expect(summary().textContent).toContain(`${fmtDateTime(new Date(Date.UTC(2026, 11, 1)))} にリセット`);
+  });
+
+  it("keeps the budgets editable under a not-granted banner, without a pool bar", async () => {
+    await mountWith({ ...VIEW(), granted: false, ceiling_micro: null, spent_micro: 0 });
+    const banner = summary().querySelector('[data-state="not-granted"]')!;
+    expect(banner.textContent).toContain("まだ使えません");
+    expect(banner.textContent).toContain("許可されたときから効きます");
+    expect(summary().querySelector(".prov-tenant-use")).toBeNull();
+    expect(policy().querySelector<HTMLInputElement>('input[type="text"]')!.disabled).toBe(false);
+    expect(row("alice").querySelector<HTMLInputElement>('input[type="text"]')!.disabled).toBe(false);
+  });
+
+  it("says why a member whose budget is zero cannot use it", async () => {
+    const v = VIEW();
+    v.member_default_micro = 0;
+    v.members[0] = { ...v.members[0], budget_micro: 0, effective_micro: 0 };
+    v.members[1] = { ...v.members[1], effective_micro: 0 };
+    await mountWith(v);
+    expect(row("alice").textContent).toContain("予算が 0 のため使えません");
+    // Everyone may use it (not "granted members only"), so bob's zero default is said too.
+    expect(row("bob").textContent).toContain("予算が 0 のため使えません");
+    expect(policy().textContent).toContain("既定の予算が 0 なので");
+  });
+
+  it("shows no budget for a member who is not granted under granted members only", async () => {
+    await mountWith({ ...VIEW(), members_only: true });
+    const use = row("bob").querySelector('[data-label="今月の使用 / 予算"]')!;
+    expect(use.textContent).toBe("—");
+    expect(use.querySelector("meter")).toBeNull();
+  });
+
+  it("shows each member's month against their budget in one column", async () => {
+    await mountWith(VIEW());
+    const use = row("alice").querySelector('[data-label="今月の使用 / 予算"]')!;
+    expect(use.textContent).toContain("≈ $20.00 のうち ≈ $1.00");
+    expect(use.querySelector("meter")).not.toBeNull();
+  });
+
+  it("names who stops the route by the restriction, and nothing when it is allowed", async () => {
+    await mountWith(VIEW(), "このテナント");
+    expect(host!.querySelector('[data-testid="prov-rule-stops"]')!.textContent).toContain(
+      "止めているのは: このテナント",
+    );
+    act(() => root?.unmount());
+    host?.remove();
+    await mountWith(VIEW());
+    expect(host!.querySelector('[data-testid="prov-rule-stops"]')).toBeNull();
+  });
+
+  it("shows no reset for a month it cannot read", async () => {
+    await mountWith({ ...VIEW(), month: "2026-13" });
+    expect(summary().textContent).toContain("今月（2026-13・UTC）");
+    expect(summary().textContent).not.toContain("リセット");
   });
 });

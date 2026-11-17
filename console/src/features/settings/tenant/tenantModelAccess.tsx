@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
-import { TenantOverview } from "./routePolicyOverview.tsx";
+import { TenantOverview, byList } from "./routePolicyOverview.tsx";
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
 import { TabbedViews } from "../parts/tabbedViews.tsx";
 import { RuleEditor } from "./routePolicyRuleEditor.tsx";
@@ -87,6 +87,9 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
   }
 
   const overview = <TenantOverview view={view} isSuper={isSuper} />;
+  // The deployment's provided route as the layers decide it: a budget cannot reopen what they stop.
+  const provRoute = view.routes.find((r) => r.id === "bedrock-deployment");
+  const providedStops = provRoute && !provRoute.allowed ? byList(tr, provRoute.forbiddenBy ?? []) : undefined;
   return (
     <>
       {/* Above the views, so D12's and D13's sentences stay on screen whichever view is open. */}
@@ -134,7 +137,14 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
             label: tr("tenant.model_access_view_provided"),
             // Provided routes (ADR 0129): no tab where the CP does not serve them.
             shown: provided,
-            node: <TenantProvidedRoutesView key={`prov-${slug}`} slug={slug} onServed={onServed} />,
+            node: (
+              <TenantProvidedRoutesView
+                key={`prov-${slug}`}
+                slug={slug}
+                onServed={onServed}
+                ruleStops={providedStops}
+              />
+            ),
           },
         ]}
       />

@@ -38,7 +38,7 @@ const BY = {
 
 // A layer the Console does not know (a newer CP's, or "vendor" for an endpoint) keeps its own word.
 const byLabel = (tr: Tr, l: string) => (Object.hasOwn(BY, l) ? tr(BY[l as keyof typeof BY]) : layerLabel(tr, l));
-const byList = (tr: Tr, ls: string[]) => ls.map((l) => byLabel(tr, l)).join(tr("tenant.mpol_list_sep"));
+export const byList = (tr: Tr, ls: string[]) => ls.map((l) => byLabel(tr, l)).join(tr("tenant.mpol_list_sep"));
 
 /** RouteLabel: the route's name; its id, which the CP's refusals use, on hover. */
 function RouteLabel({ id }: { id: string }) {

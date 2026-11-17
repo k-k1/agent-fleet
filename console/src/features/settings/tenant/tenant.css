@@ -1309,6 +1309,38 @@
   margin-left: 12px;
 }
 
+/* The provided-route tab (#4380 P-6): the status line or the not-granted banner, the month against
+ * the pool as a bar, and each member's month against their budget. */
+.prov-banner {
+  padding: 8px 10px;
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+}
+
+.prov-banner > p {
+  margin: 0;
+}
+
+.prov-banner > p + p {
+  margin-top: 4px;
+}
+
+.prov-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.prov-usage meter {
+  width: 10em;
+  max-width: 100%;
+}
+
+.prov-tenant-use meter {
+  width: 18em;
+}
+
 /* The provided-route members table at phone width: one card per member, each value under its
  * column's name (data-label), so no column is cut off past the screen's edge. */
 @media (max-width: 760px) {
