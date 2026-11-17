@@ -205,7 +205,9 @@ those are reservations against the instance). EC2 on-demand pricing is perfectly
 vCPU, so bigger slots are not more expensive per user (ADR 0045 decision 8). The vCPU field is
 optional and display-only: the Console prints it so a tenant admin can see which instance a
 memory number lands on, and omitting it just omits the label (ADR 0045 decision 21 — asking EC2
-instead would mean an extra IAM action for a label).
+instead would mean an extra IAM action for a label). A fourth field, `type:memoryMiB:vcpu:baselinePct`,
+declares a burstable rung's CPU baseline (percent of the whole box, 1-99) for the usage history's
+"minutes above baseline" figure only (ADR 0139 decision 3).
 
 Two shapes, and the old one is not deprecated (docs/log/70 §70.4.2):
 

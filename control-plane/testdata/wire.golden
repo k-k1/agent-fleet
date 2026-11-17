@@ -545,6 +545,7 @@ workItemSessionDTO.provider string
 workItemSessionDTO.repo string
 workItemSessionDTO.sessionName string
 workspaceMachineWire.declared.arch string,omitempty
+workspaceMachineWire.declared.burst_baseline_pct number,omitempty
 workspaceMachineWire.declared.class_id string,omitempty
 workspaceMachineWire.declared.class_label string,omitempty
 workspaceMachineWire.declared.dedicated bool

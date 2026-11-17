@@ -997,7 +997,7 @@ func (rp *reaper) stopWorkspaceIf(ctx context.Context, rt runtime.Runtime, ws st
 	if env, err := rp.mgr.agentSessionsEnv(lease.Context(), rt); err != nil || env.holdsWorkspace(bgMax) {
 		return false
 	}
-	if err := rt.Stop(lease.Context()); err != nil {
+	if err := rp.mgr.stopRecorded(lease.Context(), ws, rt, true); err != nil {
 		log.Printf("idle-stop: stop %s: %v", ws.ContainerName, err)
 		return false
 	}

@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with every routeSwitch on (routes_golden_test.go).
-# count: 798
+# count: 801
 ANY /
 ANY /.well-known/oauth-authorization-server/mcp-oauth
 ANY /.well-known/oauth-protected-resource/mcp
@@ -120,6 +120,7 @@ DELETE /api/admin/tenants/{slug}/members/{key}/home-backups
 GET /api/admin/tenants/{slug}/members/{key}/home-backups
 GET /api/admin/tenants/{slug}/members/{key}/sessions
 GET /api/admin/tenants/{slug}/members/{key}/stats
+GET /api/admin/tenants/{slug}/members/{key}/usage-history
 GET /api/admin/tenants/{slug}/members/{key}/usage-hourly
 GET /api/admin/tenants/{slug}/members/{key}/usage-monthly
 GET /api/admin/tenants/{slug}/memo-queues
@@ -141,6 +142,7 @@ GET /api/admin/tts
 PUT /api/admin/tts
 PUT /api/admin/tts/dict
 GET /api/admin/usage
+GET /api/admin/usage/history
 GET /api/admin/usage/hourly
 PUT /api/admin/user-limits
 GET /api/admin/workspace-sizing
@@ -676,6 +678,7 @@ POST /api/tts/wake
 POST /api/update/apply
 GET /api/update/status
 GET /api/usage/all
+GET /api/usage/me/history
 GET /api/usage/me/hourly
 GET /api/usage/me/monthly
 GET /api/usage/series

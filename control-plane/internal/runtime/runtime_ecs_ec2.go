@@ -66,8 +66,10 @@ type ecsEC2Runtime struct {
 	// resolution that placement uses rather than a second one computed elsewhere.
 	slotMemMiB int64
 	slotVCPU   int
-	classID    string
-	classLabel string
+	// slotBaseline is the rung's declared burst baseline (ec2Slot.baselinePct), 0 = undeclared.
+	slotBaseline int
+	classID      string
+	classLabel   string
 
 	// azOfSubnet resolves the deployment's subnets to their AZ (cached in the factory):
 	// an EBS volume never leaves its AZ, so the volume pins the AZ and the AZ picks

@@ -252,6 +252,10 @@ type ec2Slot struct {
 	instanceType string
 	memMiB       int64
 	vcpu         int
+	// baselinePct is the rung's burst baseline as a percent of the WHOLE box's CPU (a
+	// burstable instance's sustained CPU entitlement), declared as a fourth field. 0 = not
+	// declared, and the usage history then has no minutes-above-baseline figure for the rung.
+	baselinePct int
 }
 
 // CPU architectures a class may declare. They are the ECS/EC2 spellings, so the
@@ -460,6 +464,7 @@ func (f *ecsEC2Factory) New(ws Workspace, keys SecretKeys, extraEnv []string) Ru
 		homeGiB:      f.homeGiB(ws),
 		slotMemMiB:   rung.memMiB,
 		slotVCPU:     rung.vcpu,
+		slotBaseline: rung.baselinePct,
 		classID:      class.id,
 		classLabel:   class.label,
 		azOfSubnet:   f.subnetAZs,
@@ -647,7 +652,7 @@ func parseSlotClasses(spec string) []ec2SlotClass {
 		}
 		parts := strings.SplitN(entry, "|", 4)
 		if len(parts) != 4 {
-			log.Printf("ecs-ec2: ignoring slot class %q (want id|label|arch|type:memMiB[:vcpu],…)", entry)
+			log.Printf("ecs-ec2: ignoring slot class %q (want id|label|arch|type:memMiB[:vcpu[:baselinePct]],…)", entry)
 			continue
 		}
 		id, label := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
@@ -683,7 +688,8 @@ func parseSlotSizes(spec string) []ec2Slot {
 		if !ok {
 			continue
 		}
-		memStr, cpuStr, _ := strings.Cut(rest, ":")
+		memStr, rest, _ := strings.Cut(rest, ":")
+		cpuStr, baseStr, _ := strings.Cut(rest, ":")
 		mem, err := strconv.ParseInt(strings.TrimSpace(memStr), 10, 64)
 		if err != nil || mem <= 0 || strings.TrimSpace(name) == "" {
 			continue
@@ -691,6 +697,11 @@ func parseSlotSizes(spec string) []ec2Slot {
 		slot := ec2Slot{instanceType: strings.TrimSpace(name), memMiB: mem}
 		if cpu, err := strconv.Atoi(strings.TrimSpace(cpuStr)); err == nil && cpu > 0 {
 			slot.vcpu = cpu
+		}
+		// Like the vCPU, optional and never a reason to drop the rung. 100 or more is not a
+		// baseline (it would never be exceeded), so it is read as undeclared.
+		if b, err := strconv.Atoi(strings.TrimSpace(baseStr)); err == nil && b > 0 && b < 100 {
+			slot.baselinePct = b
 		}
 		out = append(out, slot)
 	}

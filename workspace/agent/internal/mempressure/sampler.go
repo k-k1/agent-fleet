@@ -78,6 +78,16 @@ type Sources struct {
 	Procs    func() map[int]procx.Info
 	Rollup   func(pid int) (string, error)
 	Now      func() time.Time
+	// CPUUsec reads the cgroup's cumulative CPU time in microseconds. It is read by the sampler
+	// itself, once per window, and never through the Stats endpoint's shared meter: that one
+	// returns a delta since ANYONE's last call, so its window is not fixed. nil = CPU is not
+	// measured and every line says so.
+	CPUUsec func() (uint64, bool)
+	// LaunchID is the id the Control Plane gave this container's launch (LaunchIDEnv). Every
+	// series line carries it so the Control Plane can keep a minute on the box it was
+	// measured on after a resize. Empty = not told, and the Control Plane then ignores the
+	// line.
+	LaunchID string
 }
 
 // Sampler reads the container cgroup every Interval. It is a single goroutine that keeps one
@@ -95,6 +105,12 @@ type Sampler struct {
 	acc   accum
 	ticks int
 	rotor rotor
+
+	// cpuPrev is the cumulative CPU reading at the previous flush (or at the first tick), the
+	// start of the current window. cpuHave is false until one has been taken.
+	cpuPrev   uint64
+	cpuPrevAt time.Time
+	cpuHave   bool
 
 	warnedWrite bool
 }
@@ -119,6 +135,9 @@ func (s *Sampler) Tick() {
 	s.latest = cur
 	s.mu.Unlock()
 	s.acc.add(cur)
+	if !s.cpuHave {
+		s.takeCPUBaseline(cur.At)
+	}
 	s.ticks++
 	if s.ticks%recordEvery != 0 {
 		return
@@ -271,6 +290,17 @@ type Record struct {
 
 	RefaultFile    *uint64  `json:"refault_file,omitempty"`
 	RefaultRateMax *float64 `json:"refault_rate_max,omitempty"`
+	// RefaultRateAvg is the mean of this window's per-sample refault rates (per second);
+	// absent when no sample had one.
+	RefaultRateAvg *float64 `json:"refault_rate_avg,omitempty"`
+
+	// LID is the Control Plane's launch id (Sources.LaunchID).
+	LID string `json:"lid,omitempty"`
+	// CPUPct is the CPU used over this window in percent of ONE core (the docker stats
+	// convention), from usage_usec deltas over the window's own wall time. Absent when the
+	// window has no clean delta (first window with no baseline, counter reset, a stalled
+	// sampler); never zero for that.
+	CPUPct *float64 `json:"cpu_pct,omitempty"`
 
 	EvHigh    *uint64 `json:"ev_high,omitempty"`
 	EvMax     *uint64 `json:"ev_max,omitempty"`
@@ -289,6 +319,8 @@ type accum struct {
 	some10Max  *float64
 	full10Max  *float64
 	rateMax    *float64
+	rateSum    float64
+	rateN      int
 	latMax     *float64
 	probeFail  int
 }
@@ -308,6 +340,10 @@ func (a *accum) add(c *Sample) {
 	maxp(&a.some10Max, c.Some10)
 	maxp(&a.full10Max, c.Full10)
 	maxp(&a.rateMax, c.RefaultRate)
+	if c.RefaultRate != nil {
+		a.rateSum += *c.RefaultRate
+		a.rateN++
+	}
 	if c.Latency != nil {
 		ms := float64(*c.Latency) / float64(time.Millisecond)
 		maxp(&a.latMax, &ms)
@@ -328,6 +364,12 @@ func (s *Sampler) flush(at time.Time, pass *Pass) {
 		EvHigh: c.EvHigh, EvMax: c.EvMax, EvOOM: c.EvOOM, EvOOMKill: c.EvOOMKill,
 		LatencyMaxMs: s.acc.latMax, ProbeFailed: s.acc.probeFail,
 	}
+	if s.acc.rateN > 0 {
+		avg := s.acc.rateSum / float64(s.acc.rateN)
+		r.RefaultRateAvg = &avg
+	}
+	r.LID = s.src.LaunchID
+	r.CPUPct = s.windowCPU(at)
 	s.acc = accum{}
 	// The log line is the pressure summary alone; the per-session observations are for the series.
 	b, err := json.Marshal(r)
@@ -348,6 +390,44 @@ func (s *Sampler) flush(at time.Time, pass *Pass) {
 		s.warnedWrite = true // once: a full disk would otherwise add a line a minute to the log it is full of
 		log.Printf("mem-pressure: series not written: %v", err)
 	}
+}
+
+// Bounds of a window's wall time for a CPU figure: the nominal window is 60 s, and a delta over
+// something far from that (a sampler that stalled, a clock that jumped) is not a one-minute
+// figure, so it is left unmeasured rather than stretched.
+const (
+	cpuWindowMin = 30 * time.Second
+	cpuWindowMax = 120 * time.Second
+)
+
+func (s *Sampler) takeCPUBaseline(at time.Time) {
+	if s.src.CPUUsec == nil {
+		return
+	}
+	if v, ok := s.src.CPUUsec(); ok {
+		s.cpuPrev, s.cpuPrevAt, s.cpuHave = v, at, true
+	}
+}
+
+// windowCPU closes the CPU window at `at` and opens the next one from the same reading, so
+// consecutive windows tile without a gap. nil means unmeasured.
+func (s *Sampler) windowCPU(at time.Time) *float64 {
+	if s.src.CPUUsec == nil {
+		return nil
+	}
+	cur, ok := s.src.CPUUsec()
+	if !ok {
+		s.cpuHave = false // re-baseline at the next tick
+		return nil
+	}
+	prev, prevAt, had := s.cpuPrev, s.cpuPrevAt, s.cpuHave
+	s.cpuPrev, s.cpuPrevAt, s.cpuHave = cur, at, true
+	wall := at.Sub(prevAt)
+	if !had || cur < prev || wall < cpuWindowMin || wall > cpuWindowMax {
+		return nil
+	}
+	pct := float64(cur-prev) / float64(wall.Microseconds()) * 100
+	return &pct
 }
 
 // Run ticks until stop is closed. The first sample is one Interval after the call, so the latency

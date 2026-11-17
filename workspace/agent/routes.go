@@ -36,6 +36,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mempressure"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usageall"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/watchhook"
 )
@@ -52,6 +53,9 @@ func buildMux() *http.ServeMux {
 	// What the workspace RUNS ON (arch / vCPU / memory / EC2 instance type). Its own route
 	// rather than a part of the stats above: this does not change while the container lives.
 	mux.HandleFunc("GET /workspace/machine", handleWorkspaceMachine)
+	// The mem-pressure series' one-minute windows after a cursor, for the CP's per-member usage
+	// history (ADR 0139 decision 3). CP-only, like the two above.
+	mux.HandleFunc("GET /workspace/usage-windows", mempressure.HandleWindows)
 	mux.HandleFunc("GET /sessions", sessionx.HandleListSessions)
 	mux.HandleFunc("GET /sessions/catalog", sessionx.HandleSessionCatalog)
 	// Fleet session graph (ADR 0096 decision 7): lanes = sessions, x = time. CP allowlist
