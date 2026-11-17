@@ -407,3 +407,54 @@ func TestMemoTidyManualIgnoresTheTenantSwitch(t *testing.T) {
 		}
 	})
 }
+
+// The run in the apply answer carries the same undo verdict the run list gives right after: an applied
+// run nothing blocks says undoable, a kept run does not.
+func TestMemoTidyManualApplyAnswersUndoVerdict(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.category("r", "q")
+		if rec := e.do("a", "PUT", "/api/memo-queues/"+q, map[string]any{"instruction": "x", "tidy": false}); rec.Code != 200 {
+			t.Fatalf("queue: %d %s", rec.Code, rec.Body.String())
+		}
+		a := e.tidyRow("r", "q", "first", "member", "", "", store.MemoStatePending)
+		b := e.tidyRow("r", "q", "second", "member", "", "", store.MemoStatePending)
+		k := e.tidyRow("r", "q", "kept", "member", "", "", store.MemoStatePending)
+
+		rec := e.manualApply("a", "r", "q", []store.Memo{a, b}, opMerge("first and second", a.ID, b.ID))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("apply: %d %s", rec.Code, rec.Body.String())
+		}
+		applied := decode[memoTidyApplyWire](t, rec).Run
+		if applied.State != store.TidyRunApplied || !applied.Undoable || len(applied.Blocked) != 0 {
+			t.Fatalf("applied answer: %+v", applied)
+		}
+
+		rec = e.manualApply("a", "r", "q", []store.Memo{k}, map[string]any{"op": "keep", "id": k.ID})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("keep: %d %s", rec.Code, rec.Body.String())
+		}
+		kept := decode[memoTidyApplyWire](t, rec).Run
+		if kept.State == store.TidyRunApplied || kept.Undoable {
+			t.Fatalf("kept answer: %+v", kept)
+		}
+
+		for _, r := range e.runs(q).Runs {
+			want := map[string]memoTidyRunDTO{applied.ID: applied, kept.ID: kept}[r.ID]
+			if r.Undoable != want.Undoable || !reflect.DeepEqual(r.Blocked, want.Blocked) {
+				t.Fatalf("run %s: list says undoable=%v blocked=%v, answer said undoable=%v blocked=%v",
+					r.ID, r.Undoable, r.Blocked, want.Undoable, want.Blocked)
+			}
+		}
+
+		// Once a result is edited by hand the list names it as blocking; the answer above was true
+		// when it was given, and the list is where the verdict moves afterwards.
+		if code, _ := (memoFaceClient{"console", e}).update(applied.ResultIDs[0], map[string]any{"body": "edited by hand"}); code != 200 {
+			t.Fatal("edit derived")
+		}
+		for _, r := range e.runs(q).Runs {
+			if r.ID == applied.ID && (r.Undoable || !reflect.DeepEqual(r.Blocked, []memoTidyBlock{{applied.ResultIDs[0], memoTidyBlockChanged}})) {
+				t.Fatalf("blocked run in the list: %+v", r)
+			}
+		}
+	})
+}
