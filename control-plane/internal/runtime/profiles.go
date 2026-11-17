@@ -330,6 +330,10 @@ func CostRoleGroup(role string) string {
 		return CostRoleGroupPlatform
 	case ttsEngineRole:
 		return CostRoleGroupTTS
+	case egressGatewayRole, egressArchiveRole:
+		// Base infrastructure with a tag of its own: shown as its own row, grouped with the
+		// NAT / ALB / RDS residual rather than as "other" (a value this build does not know).
+		return CostRoleGroupPlatform
 	case ec2RoleHome, ec2RoleSlot, ec2RoleBackup, ec2RoleQuarantined,
 		EC2RoleGolden, EC2RoleGoldenCandidate, EC2RoleGoldenRejected:
 		// Workspace infrastructure that no member is holding right now: unclaimed warm
@@ -348,7 +352,7 @@ const (
 	CostRoleGroupEngine   = "engine"   // engine-llm / engine-image / engine-models / engine-logs
 	CostRoleGroupTTS      = "tts"      // tts-engine
 	CostRoleGroupPool     = "pool"     // workspace resources nobody is holding
-	CostRoleGroupPlatform = "platform" // no af-role: NAT, ALB, RDS, DNS, tax
+	CostRoleGroupPlatform = "platform" // no af-role (NAT, ALB, RDS, DNS, tax), or egress-gateway / egress-archive
 	CostRoleGroupOther    = "other"    // a tag value this build does not know
 )
 
@@ -360,6 +364,10 @@ const (
 	// ttsEngineRole is 50-tts.yaml's, and it is NOT `engine-tts` — renaming it now would
 	// split its history in the bill, where the old value keeps the spend it already has.
 	ttsEngineRole = "tts-engine"
+	// The egress gateway's instance, volume, interface and address (00-network.yaml), and the
+	// egress archive bucket (10-data.yaml). Written by CloudFormation, like the engine roles.
+	egressGatewayRole = "egress-gateway"
+	egressArchiveRole = "egress-archive"
 )
 
 // CostProfile — docker: the operator's own hardware. There is no invoice to read.
