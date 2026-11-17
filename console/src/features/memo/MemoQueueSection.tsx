@@ -438,11 +438,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         toast(t("memo.add_failed"));
         return;
       }
-      // A brand-new category becomes first-class so it's reorderable straight away. Match
-      // on (repo, name) — that is the server's uniqueness key, and a name alone would skip
-      // creating the row for a repo bucket that borrows a common-bucket category's name.
-      if (category && !cats.some((c) => c.repo === repo && c.name === category))
-        await memoCategoryCreate({ repo, name: category }).catch(() => {});
+      // The Control Plane makes the category row when the note arrives under a new name.
       setNewText("");
       setNewImages([]);
       bumpMemos();
@@ -485,8 +481,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         toast(err.code?.startsWith("memo_") ? errText(err) : t("common.send_failed"));
         return;
       }
-      if (category.trim() && !catNames.includes(category.trim()))
-        await memoCategoryCreate({ repo: m.repo, name: category.trim() }).catch(() => {});
       bumpMemos();
       toast(t("memo.updated"), { kind: "success" });
     } catch {

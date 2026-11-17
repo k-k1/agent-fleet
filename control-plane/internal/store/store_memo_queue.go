@@ -145,6 +145,11 @@ type MemoTxOps interface {
 
 	GetCategory(id string) (MemoCategory, bool, error)
 	FindCategory(repo, name string) (MemoCategory, bool, error)
+	// EnsureCategory makes the category row (repo, name) when the member's repo has none, at
+	// the end of the repo's order, and answers the row. A row that exists is left as it is.
+	// Names match exactly, case included. The unique (membership, repo, name) index backs the
+	// membership lock: of two creators the second reads the first's row, and never fails.
+	EnsureCategory(repo, name string) (MemoCategory, error)
 	UpdateCategory(c MemoCategory) error
 	DeleteCategory(id string) error
 
@@ -342,6 +347,32 @@ func (t memoTx) FindCategory(repo, name string) (MemoCategory, bool, error) {
 		return MemoCategory{}, false, nil
 	}
 	return c, err == nil, err
+}
+
+func (t memoTx) EnsureCategory(repo, name string) (MemoCategory, error) {
+	if c, ok, err := t.FindCategory(repo, name); err != nil || ok {
+		return c, err
+	}
+	var maxPos sql.NullInt64
+	if err := t.q.QueryRowContext(t.ctx, `SELECT MAX(position) FROM memo_category WHERE membership_id=? AND repo=?`,
+		t.mid, repo).Scan(&maxPos); err != nil {
+		return MemoCategory{}, err
+	}
+	next := 0
+	if maxPos.Valid {
+		next = int(maxPos.Int64) + 1
+	}
+	c := MemoCategory{ID: NewID(), MembershipID: t.mid, Repo: repo, Name: name, Position: next, CreatedAt: NowTS()}
+	if _, err := t.q.ExecContext(t.ctx, `INSERT INTO memo_category(id, membership_id, repo, name, position, created_at)
+		VALUES(?,?,?,?,?,?) ON CONFLICT(membership_id, repo, name) DO NOTHING`,
+		c.ID, c.MembershipID, c.Repo, c.Name, c.Position, c.CreatedAt); err != nil {
+		return MemoCategory{}, err
+	}
+	got, ok, err := t.FindCategory(repo, name)
+	if err == nil && !ok {
+		err = errors.New("store: category row missing right after its insert")
+	}
+	return got, err
 }
 
 func (t memoTx) UpdateCategory(c MemoCategory) error {
