@@ -175,7 +175,7 @@ func (d *silentStop) stop(ctx context.Context, c silentCandidate) {
 	if !agentLive.sameVerdict(c.key, tok) {
 		return
 	}
-	if err := rt.Stop(lease.Context()); err != nil {
+	if err := d.mgr.stopRecorded(lease.Context(), ws, rt, false); err != nil {
 		log.Printf("agent silent stop: stop %s: %v", ws.ContainerName, err)
 		return
 	}

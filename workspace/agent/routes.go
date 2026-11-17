@@ -8,6 +8,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memconsol"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memotidy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
@@ -36,6 +37,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mempressure"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usageall"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/watchhook"
 )
@@ -52,6 +54,9 @@ func buildMux() *http.ServeMux {
 	// What the workspace RUNS ON (arch / vCPU / memory / EC2 instance type). Its own route
 	// rather than a part of the stats above: this does not change while the container lives.
 	mux.HandleFunc("GET /workspace/machine", handleWorkspaceMachine)
+	// The mem-pressure series' one-minute windows after a cursor, for the CP's per-member usage
+	// history (ADR 0139 decision 3). CP-only, like the two above.
+	mux.HandleFunc("GET /workspace/usage-windows", mempressure.HandleWindows)
 	mux.HandleFunc("GET /sessions", sessionx.HandleListSessions)
 	mux.HandleFunc("GET /sessions/catalog", sessionx.HandleSessionCatalog)
 	// Fleet session graph (ADR 0096 decision 7): lanes = sessions, x = time. CP allowlist
@@ -258,6 +263,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /memos", memorelay.HandleList)
 	mux.HandleFunc("POST /memos", memorelay.HandleCreate)
 	mux.HandleFunc("PATCH /memos/{id}", memorelay.HandleUpdate)
+	// A queue's tidy run (ADR 0137 §8): the one deny-all model call over the pending notes. The
+	// Control Plane's dispatcher calls it directly; no browser relay exists for it.
+	mux.HandleFunc("POST /memos/tidy", memotidy.HandleTidy)
 	mux.HandleFunc("GET /sessions/{name}/status", sessionx.HandleSessionStatus)
 	mux.HandleFunc("GET /sessions/{name}/output", sessionx.HandleSessionOutput)
 	mux.HandleFunc("GET /sessions/{name}/ssm-login", sessionx.HandleSSMLoginStatus)

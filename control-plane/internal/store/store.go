@@ -36,6 +36,7 @@ type Store interface {
 	EgressAttributionStore
 	SettingsStore
 	UsageStore
+	UsageHistoryStore
 	EngineModelStore
 	EngineIngestStore
 	EngineUsageAttributionStore

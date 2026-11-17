@@ -241,6 +241,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// One member's hourly occupancy — the heatmap next to the stop / disk-quota buttons
 	// (docs/log/83). Same body as /api/usage/me/hourly, keyed by membership.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/usage-hourly", adm.memberUsageHourly)
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/usage-history", adm.memberUsageHistory)
 	// One member's monthly running hours for the member-detail view (issue #3609).
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/usage-monthly", adm.memberUsageMonthly)
 	// The third and last cleanup step (docs/log/61 §61.18): only a row already offboarded
@@ -354,6 +355,10 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// answers "when, and with how many sessions open", and only one of them has a
 	// heartbeat series telling the reader which hours were observed at all.
 	mux.HandleFunc("GET /api/admin/usage/hourly", adm.adminUsageHourly)
+	// Per-member resource usage history (ADR 0139 decision 3): the member's own, a tenant's, and
+	// one member's on the member detail.
+	mux.HandleFunc("GET /api/admin/usage/history", adm.adminUsageHistory)
+	mux.HandleFunc("GET /api/usage/me/history", adm.withMembership(adm.myUsageHistory))
 	mux.HandleFunc("GET /api/usage/me/monthly", adm.withMembership(adm.myUsageMonthly)) // the caller's OWN monthly hours
 	mux.HandleFunc("GET /api/usage/me/hourly", adm.withMembership(adm.myUsageHourly))   // the caller's OWN occupancy
 	// Cloud cost — the AWS invoice (docs/log/67 + ADR 0048). Deliberately NOT folded into

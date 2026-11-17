@@ -117,6 +117,11 @@ func (u *usageSampler) sample(ctx context.Context) {
 	// are done, so a slow home delays none of them.
 	var disks []diskJob
 	defer func() { u.recordDisks(ctx, disks) }()
+	// The usage history pulls after the accounting for the same reason as the disks: slow Agents
+	// delay nothing that matters to the next tick. Registered after recordDisks's defer, so it runs
+	// first (defers run last-in first-out): history is accounting, the disk gauge is cosmetic.
+	var pulls []usagePullJob
+	defer func() { u.pullUsageJobs(ctx, pulls) }()
 	found := map[string]bool{}
 	var overdue []overdueStart
 	var silent []silentCandidate
@@ -131,6 +136,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 		for _, ws := range wss {
 			found[ws.ID] = true
 			rt := u.mgr.runtimeFor(ws, noSecretKeys)
+			observedAt := time.Now()
 			state := rt.State(ctx)
 			if u.deadline.observe(ws, rt, state, time.Now()) {
 				overdue = append(overdue, overdueStart{rt, ws})
@@ -139,6 +145,9 @@ func (u *usageSampler) sample(ctx context.Context) {
 			// The dead-man check rides the sweep: it is the traffic that reaches a workspace
 			// nobody has open.
 			flagged := u.mgr.checkAgentSilent(ctx, ws, rt, state)
+			if u.mgr.tickUsageHistory(ctx, ws, rt, state, observedAt) {
+				pulls = append(pulls, usagePullJob{ws: ws, rt: rt})
+			}
 			if state != "running" {
 				continue
 			}
@@ -357,6 +366,7 @@ func (u *usageSampler) prune(ctx context.Context, now time.Time) {
 	// each controller so the deployment has one hourly-bucket janitor rather than one per
 	// engine racing on the same clock — and so an engine table that shrinks does not strand
 	// the rows of an engine nobody runs any more.
+	u.pruneUsageHistory(ctx, now)
 	if err := u.mgr.store.PruneEngineHourly(ctx, cutoff); err != nil {
 		log.Printf("showback: prune hourly engine occupancy: %v", err)
 	}

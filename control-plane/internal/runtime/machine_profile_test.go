@@ -63,3 +63,27 @@ func TestMachineProfileNamesNoClassOnASingleLadder(t *testing.T) {
 		t.Errorf("instance_type = %q, want the smallest rung", m.InstanceType)
 	}
 }
+
+// The burst baseline is a fourth, optional field of a rung. It reaches MachineProfile so the
+// usage history can count minutes above it, and a malformed or impossible one costs only that
+// figure: the rung keeps its place in the ladder (placement must not change) and the baseline
+// reads as undeclared.
+func TestMachineProfileCarriesTheDeclaredBurstBaseline(t *testing.T) {
+	slots := parseSlotSizes("t3.large:8192:2:30, t3.xlarge:16384:4, m7i.2xlarge:32768:8:oops, c7i.4xlarge:65536:16:100")
+	if len(slots) != 4 {
+		t.Fatalf("a bad baseline dropped a rung: %+v", slots)
+	}
+	want := []int{30, 0, 0, 0}
+	for i, s := range slots {
+		if s.baselinePct != want[i] {
+			t.Errorf("%s baseline = %d, want %d", s.instanceType, s.baselinePct, want[i])
+		}
+	}
+	h := newEC2Harness(t)
+	f := h.factory()
+	f.pool.classes = parseSlotClasses("t3.large:8192:2:30,t3.xlarge:16384:4")
+	rt := f.New(Workspace{MembershipID: "M-1", MemBytes: 4096 * mib}, SecretKeys{Key: "dek"}, nil).(*ecsEC2Runtime)
+	if m := rt.MachineProfile(); m.InstanceType != "t3.large" || m.BurstBaselinePct != 30 || m.VCPU != 2 {
+		t.Errorf("profile = %+v", m)
+	}
+}

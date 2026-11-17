@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .
 # ANY = registered without a method.
-# count: 462
+# count: 463
 GET /agents/kinds
 GET /agents/memory-consolidation
 GET /agents/memory-consolidation/proposal
@@ -307,6 +307,7 @@ POST /memos
 POST /memos/images/gc
 GET /memos/images/{file}
 POST /memos/paste-image
+POST /memos/tidy
 PATCH /memos/{id}
 GET /muse/usage
 GET /notifications
@@ -461,6 +462,7 @@ POST /work-items/jira-projects
 POST /work-items/merge
 GET /workspace/machine
 GET /workspace/stats
+GET /workspace/usage-windows
 GET /ws/browser
 GET /ws/browser-attachments
 GET /ws/pty

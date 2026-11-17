@@ -217,6 +217,7 @@ tts_speakers.go
 tts_wake.go
 update.go
 usage.go
+usage_history.go
 usage_hourly.go
 usage_monthly.go
 version_info.go

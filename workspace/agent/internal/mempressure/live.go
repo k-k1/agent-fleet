@@ -15,6 +15,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/procx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/resources"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -52,6 +53,18 @@ func Start(agentAddr string) {
 	go s.Run(nil)
 }
 
+// WindowsSince serves the Default sampler's series (see Series.WindowsSince). Without a sampler
+// (switched off, or not started) there is nothing measured and the page is empty.
+func WindowsSince(since int64, limit int) (WindowsPage, error) {
+	defMu.RLock()
+	d := Default
+	defMu.RUnlock()
+	if d == nil || d.series == nil {
+		return WindowsPage{Windows: []Window{}, Cursor: since}, nil
+	}
+	return d.series.WindowsSince(since, limit)
+}
+
 func liveSources(agentAddr string) Sources {
 	_, port, err := net.SplitHostPort(agentAddr)
 	if err != nil {
@@ -62,6 +75,8 @@ func liveSources(agentAddr string) Sources {
 	return Sources{
 		ReadFile: os.ReadFile,
 		Now:      time.Now,
+		CPUUsec:  resources.UsageUsec,
+		LaunchID: os.Getenv(LaunchIDEnv),
 		Probe: func() (time.Duration, error) {
 			start := time.Now()
 			ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)

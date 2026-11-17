@@ -113,6 +113,28 @@ source_of_truth: "コード（本書は地図と設計意図）"
     転送する: 無い（または `null`）は据え置き、`{}` は外す、完全な object は設定。ツール（`add_memo`・`update_memo`）は
     Control Plane の答えをそのまま返すので、セッションは `existing` と state を見る。参照を送ったのに答えに参照が無い
     呼び出しは、参照が保たれなかったと伝えるエラーを返す（古い Control Plane はこの項目を無視する）。
+  - **tidy**（ADR 0137 §8、`internal/memotidy`）。`GET /sessions` は `"queueTidy": 1` を載せる。これは
+    `POST /memos/tidy` があることと、配信が `curator` item を持てることの両方を表す
+    （`queueTidyVersion`。Control Plane は `>=` で読む）。
+    `POST /memos/tidy`（Agent token。Control Plane の中継なし）は `{run, trigger:"auto", queue:{id,label},
+    items:[{id, kind:"text"|"file", text, file, group, merge, move}], destinations:[{id, name, queue}],
+    limits:{mergeSources, splitParts, textBytes, operations}}` を取り、`200 {run, operations, kind, model}` を返す。
+    `operations` は `merge{ids,text}`・`split{id,texts}`・`move{id,to}`・`keep{id}`。`chatx.OneShotDenyAll` を
+    1 回だけ呼び（usage の feature は `memo.tidy`、prose tier、trigger は `auto`）、ツールを持つ呼び出しへの
+    フォールバックも再試行もしない。prompt は固定のペルソナと作業文のあとに、キュー・item・宛先を 1 行の
+    JSON として置く。キューの standing instruction と run id は入れない。40 件、本文 96 KiB、重複する id、
+    `auto` 以外の trigger、10 / 5 / 16 KiB / 80 を超える limits は `400 bad_tidy_request`。返答は JSON object 1 つ
+    （コードフェンス 1 つで囲むのは可）で 256 KiB 以下、未知のキーも後続のデータも無く、各 operation の形と
+    `limits` に収まること。規則は Control Plane がもう一度検証する。コード: `409 tidy_busy`（ワークスペースで
+    同時に 1 回）、`422 tidy_malformed`、`502 tidy_failed`（呼び出しの失敗、または実行自身の出力が deny-all の
+    姿勢を示さなかった。返答は捨てる）、`503 deny_all_unavailable`（`errors.Is(err, chatx.ErrDenyAllUnavailable)`
+    のときだけ。モデルに何も届かず、ledger の行も無い）、`504 tidy_timeout`（handler 全体を probe 込みで 120 秒
+    で区切る）、資格情報ポリシーの `403 route_forbidden` / `503 policy_unconfirmed` / `403 agent_disabled` はそのまま（最後は解決と起動の間に kind が切られたときだけ）、prompt を組めないときの `500 tidy_failed`（検証済みの要求では届かないガード）。エラーのとき
+    返答の本文は返さず、ログにも書かない。
+    `provenance: "curator"` の配信 item は `sourceProvenance`（`member`・`workspace`・`mcp`）、`derivedFrom`
+    （元のメモの数、1〜100）、元の `producer` / `producerOrigin` を持つ。参照・パス・添付の無いテキストのメモで、
+    この 2 項目は他の provenance では断る。出所の行はこの項目だけから作る（「tidied by Agent Fleet from 3 notes
+    your user added in the Console」）。本文は他の item と同じく引用されたデータのまま。
   - `POST /sessions/{name}/retire` は、そのセッションと、それが始めた全セッション（深さを問わない。
     `origin == "session"` と `originSession` の連鎖で、`spendDescendants` と同じ辿り方）について、
     上のものを全部終わらせ、予約済みの再開を取り消し、halt する。答えは、セッションの一覧、それぞれで

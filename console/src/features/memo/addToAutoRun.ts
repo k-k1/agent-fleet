@@ -3,7 +3,7 @@
 // React, so the choices are testable without the dialog.
 import { repoBaseName } from "../../lib/workingSets.ts";
 import type { Repo } from "../repos/store.ts";
-import type { MemoCategory, MemoInput, MemoQueue, MemoReference } from "../../types/memo.ts";
+import type { Memo, MemoCategory, MemoInput, MemoQueue, MemoReference } from "../../types/memo.ts";
 
 /** The repository the picker starts on: the one a launch from this item would default to
  *  (`defaultRepo`, resolved by resolveLaunchRepo), as its PARENT repository when that is a
@@ -20,25 +20,57 @@ export function defaultMemoRepo(repos: readonly Repo[], defaultRepo: string): st
 /** The repositories a note can be filed under: base clones only. */
 export const memoRepoChoices = (repos: readonly Repo[]): string[] => repos.filter((r) => !r.worktree).map((r) => r.name);
 
+/** The named categories of one repository, as the memo list shows them: the table's categories
+ *  in position order, then each name that only notes carry, in the order the notes come. The
+ *  uncategorized bucket ("") is not a named category. A memo-only name has no `category` row. */
+export interface RepoCategory {
+  name: string;
+  category?: MemoCategory;
+}
+export function repoCategories(cats: readonly MemoCategory[], memos: readonly Pick<Memo, "repo" | "category">[], repo: string): RepoCategory[] {
+  const out: RepoCategory[] = cats
+    .filter((c) => c.repo === repo)
+    .sort((a, b) => a.position - b.position)
+    .map((category) => ({ name: category.name, category }));
+  const seen = new Set(out.map((c) => c.name));
+  for (const m of memos) {
+    if (m.repo !== repo || m.category === "" || seen.has(m.category)) continue;
+    seen.add(m.category);
+    out.push({ name: m.category });
+  }
+  return out;
+}
+
+/** The key of a memo-only choice. A table choice is keyed by its category id; this prefix is not
+ *  an id's shape, so the two cannot collide, and a category's own name can be anything. */
+export const MEMO_ONLY_PREFIX = "memo-only:";
+
 export interface CategoryChoice {
-  category: MemoCategory;
-  /** The category has auto-run settings (on or off). */
+  /** What the picker's value holds: the category id, or MEMO_ONLY_PREFIX + name. */
+  key: string;
+  /** The name the note is filed under. */
+  name: string;
+  /** The category has auto-run settings (on or off). A memo-only category never does. */
   autoRun: boolean;
   /** Its auto-run is switched off: the note still waits in it, but nothing starts by itself. */
   off: boolean;
 }
 
 /** One repository's categories in the order the picker lists them: the auto-run ones first (in
- *  the order the memo list has them), the others below. In an ordinary category the note is an
- *  ordinary note. A category counts as auto-run when it has settings, as the memo list's badge
- *  does, whether or not they are switched on. */
-export function categoryChoices(cats: readonly MemoCategory[], queues: readonly MemoQueue[], repo: string): CategoryChoice[] {
+ *  the order the memo list has them), the others below, the memo-only names last among those. In
+ *  an ordinary category the note is an ordinary note. A category counts as auto-run when it has
+ *  settings, as the memo list's badge does, whether or not they are switched on. */
+export function categoryChoices(
+  cats: readonly MemoCategory[],
+  queues: readonly MemoQueue[],
+  repo: string,
+  memos: readonly Pick<Memo, "repo" | "category">[] = [],
+): CategoryChoice[] {
   const byCat = new Map(queues.map((q) => [q.categoryId, q]));
-  const own = cats.filter((c) => c.repo === repo).sort((a, b) => a.position - b.position);
-  const all = own.map((category): CategoryChoice => {
+  const all = repoCategories(cats, memos, repo).map(({ name, category }): CategoryChoice => {
+    if (!category) return { key: MEMO_ONLY_PREFIX + name, name, autoRun: false, off: false };
     const q = byCat.get(category.id);
-    const autoRun = !!q || !!category.queue;
-    return { category, autoRun, off: !!q && !q.enabled };
+    return { key: category.id, name, autoRun: !!q || !!category.queue, off: !!q && !q.enabled };
   });
   return [...all.filter((c) => c.autoRun), ...all.filter((c) => !c.autoRun)];
 }
