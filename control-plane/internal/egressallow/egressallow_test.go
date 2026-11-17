@@ -1,6 +1,9 @@
 package egressallow
 
 import (
+	"errors"
+	"net"
+	"net/netip"
 	"reflect"
 	"testing"
 )
@@ -58,6 +61,67 @@ func TestAllowsIPv6InAnySpelling(t *testing.T) {
 	for _, h := range []string{"2001:db8::6", "[2001:db8::6]", "2001:db8::", "::1"} {
 		if p.Allows(h) {
 			t.Errorf("Allows(%q) = true, want false", h)
+		}
+	}
+}
+
+// The docker fence attaches the proxy to every per-user network. A destination on any of
+// them is refused, a private address elsewhere is still served, and the narrower set
+// (loopback, link-local) stays refused.
+func TestAttachedDialControl(t *testing.T) {
+	attached := []netip.Prefix{netip.MustParsePrefix("172.20.0.0/16"), netip.MustParsePrefix("fd00:1::/64")}
+	control := AttachedDialControl(func() []netip.Prefix { return attached })
+	for _, tc := range []struct {
+		addr    string
+		refused bool
+	}{
+		{"172.20.0.3:7700", true},
+		{"[::ffff:172.20.0.3]:7700", true},
+		{"[fd00:1::5]:80", true},
+		{"172.17.0.1:8098", false},
+		{"10.1.2.3:443", false},
+		{"93.184.216.34:443", false},
+		{"127.0.0.1:80", true},
+		{"169.254.169.254:80", true},
+		{"not-an-address", true},
+	} {
+		err := control("tcp", tc.addr, nil)
+		if got := errors.Is(err, ErrRefusedAddr); got != tc.refused {
+			t.Errorf("%s: refused = %v, want %v", tc.addr, got, tc.refused)
+		}
+	}
+	// A network attached after the control was built is refused too.
+	attached = append(attached, netip.MustParsePrefix("172.21.0.0/16"))
+	if err := control("tcp", "172.21.0.9:22", nil); !errors.Is(err, ErrRefusedAddr) {
+		t.Errorf("a network attached later is not refused: %v", err)
+	}
+}
+
+func TestInterfacePrefixesCoverLoopback(t *testing.T) {
+	lo := netip.MustParseAddr("127.0.0.1")
+	for _, p := range InterfacePrefixes() {
+		if p.Contains(lo) {
+			return
+		}
+	}
+	t.Errorf("InterfacePrefixes() = %v: the loopback network is missing", InterfacePrefixes())
+}
+
+// An interface address that cannot be read as a prefix must not open its network.
+func TestPrefixesOfFailsClosed(t *testing.T) {
+	_, ws, _ := net.ParseCIDR("172.20.0.2/16")
+	got := prefixesOf([]net.Addr{ws})
+	if len(got) != 1 || got[0] != netip.MustParsePrefix("172.20.0.0/16") {
+		t.Fatalf("prefixesOf = %v", got)
+	}
+	got = prefixesOf([]net.Addr{ws, &net.UnixAddr{Name: "/run/x", Net: "unix"}})
+	for _, a := range []string{"172.21.0.9", "93.184.216.34", "2001:db8::1"} {
+		in := false
+		for _, p := range got {
+			in = in || p.Contains(netip.MustParseAddr(a))
+		}
+		if !in {
+			t.Errorf("%s is not refused after an unreadable interface address (%v)", a, got)
 		}
 	}
 }

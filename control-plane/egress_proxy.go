@@ -44,8 +44,9 @@ type proxyPolicy struct {
 type egressProxy struct {
 	cur   atomic.Pointer[proxyPolicy]
 	batch *egressBatcher
-	// dial and rt are nil in production. A test that needs a resolver of its own sets them,
-	// built on newEgressDialer so egressallow.ProxyDialControl is still the thing under test.
+	// dial and rt are nil unless AF_EGRESS_REFUSE_ATTACHED swaps the dial control. A test that
+	// needs a resolver of its own sets them, built on newEgressDialer so
+	// egressallow.ProxyDialControl is still the thing under test.
 	dial *net.Dialer
 	rt   *http.Transport
 }
@@ -64,6 +65,12 @@ func runEgressProxy() {
 	}
 	p := &egressProxy{batch: newEgressBatcher(os.Getenv("AF_EGRESS_INGEST_URL"), os.Getenv("AF_EGRESS_TOKEN"))}
 	p.cur.Store(&proxyPolicy{policy: newEgressPolicy(entries), enforce: os.Getenv("AF_EGRESS_ENFORCE") == "1"})
+	// On the docker fence this proxy is attached to every per-user workspace network; it
+	// must not become the way from one workspace into another's.
+	if os.Getenv("AF_EGRESS_REFUSE_ATTACHED") == "1" {
+		p.dial, p.rt = newAttachedEgressDial(egressallow.InterfacePrefixes)
+		log.Print("egress-proxy: refusing destinations on the networks this host is attached to")
+	}
 	go p.batch.run(context.Background())
 	if u := os.Getenv("AF_EGRESS_POLICY_URL"); u != "" {
 		go p.pollPolicy(context.Background(), u, os.Getenv("AF_EGRESS_TOKEN"))
@@ -188,6 +195,16 @@ func upstreamFailed(w http.ResponseWriter, err error, msg string) {
 		return
 	}
 	http.Error(w, msg, http.StatusBadGateway)
+}
+
+// newAttachedEgressDial is the dialer and plain-HTTP transport with
+// egressallow.AttachedDialControl in place of ProxyDialControl.
+func newAttachedEgressDial(prefixes func() []netip.Prefix) (*net.Dialer, *http.Transport) {
+	d := newEgressDialer()
+	d.Control = egressallow.AttachedDialControl(prefixes)
+	rt := newEgressTransport()
+	rt.DialContext = d.DialContext
+	return d, rt
 }
 
 // dialer and transport return the test seam when set, else the process-wide default.

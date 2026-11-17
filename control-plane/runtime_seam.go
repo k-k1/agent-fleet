@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -59,6 +60,7 @@ func newRuntimeFactory(profile string, m *manager) (runtime.RuntimeFactory, erro
 		SessionCmd:           m.sessionCmd,
 		ExtraEnv:             m.extraEnv,
 		EgressProxyEnv:       m.egressProxyEnv,
+		DockerEgressGateway:  dockerEgressGateway(profile),
 		AuthMode:             m.authMode,
 		RootDataDir:          func(ws runtime.Workspace) string { return m.rootedDataDir(store.Workspace(ws)) },
 		HomeLeases:           m.store,
@@ -67,6 +69,30 @@ func newRuntimeFactory(profile string, m *manager) (runtime.RuntimeFactory, erro
 		OnSlotWedged:         m.auditSlotWedged,
 		OnAddressesReleasing: addressReleaseHook(m),
 	})
+}
+
+// dockerEgressGateway is AF_EGRESS_DOCKER_GATEWAY for the docker profile and "" for the
+// others, which have no per-user docker network to fence.
+func dockerEgressGateway(profile string) string {
+	switch profile {
+	case "", "local", "docker":
+		return os.Getenv("AF_EGRESS_DOCKER_GATEWAY")
+	}
+	return ""
+}
+
+// startDockerEgressFence keeps the egress gateway attached to the fenced networks for as
+// long as the CP runs. It is a no-op without the fence.
+func startDockerEgressFence(ctx context.Context, profile string) {
+	gw := dockerEgressGateway(profile)
+	if gw == "" {
+		if os.Getenv("AF_EGRESS_DOCKER_GATEWAY") != "" {
+			log.Printf("egress: AF_EGRESS_DOCKER_GATEWAY is ignored on AF_RUNTIME=%s", profile)
+		}
+		return
+	}
+	log.Printf("egress: workspace networks are internal; %s is the only way out", gw)
+	go runtime.RunDockerEgressFence(ctx, gw, 30*time.Second)
 }
 
 // --- boot wiring -----------------------------------------------------------------------

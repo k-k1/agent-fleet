@@ -111,12 +111,65 @@ Programs that honour those variables go through the proxy; **a process that igno
 | Deployment | Does enforce hold? |
 |---|---|
 | AWS (`ecs`, `ecs-ec2`) with `EgressRoute=gateway` in `00-network` | Yes. The workspaces' route table goes through the egress gateway, and there is no other way out |
+| Docker Compose with the egress fence ([below](#fence-workspaces-on-docker-compose)) | Yes by design, but it has not been run on a real Docker host yet. Workspace networks have no route out, and the proxy is the only exit |
 | Everything else | No. A network or security-group rule that leaves the proxy as the only way out is not provided yet. You can run it up to observing and growing the allowlist |
 
 - The egress gateway is new and has been checked on a test deployment only; it is not in production use yet ([Choose where to deploy](../choose.md#choose-the-egress-route-on-aws))
 - The gateway decides by the name the client sends (the HTTP Host, the TLS SNI). Its other limits are in `SECURITY.md`
-- The Control Plane's internal address (`AF_CP_INTERNAL_URL`) is excluded from the proxy on docker, Kubernetes, ecs and ecs-ec2
+- The Control Plane's internal address (`AF_CP_INTERNAL_URL`) is excluded from the proxy on docker, Kubernetes, ecs and ecs-ec2. With the Docker Compose fence it goes through the proxy instead
 - On ecs and ecs-ec2 the proxy refuses link-local destinations, so the task and instance metadata addresses (`169.254.170.2`, `169.254.169.254`) are excluded too
+
+## Fence workspaces on Docker Compose
+
+Leave the proxy as the only way out of a workspace on a Docker Compose deployment.
+This is for rootful Docker on Linux with the Control Plane on the host network. It is off by default.
+
+> [!WARNING]
+> **This has not been run on a real Docker host yet.** Try it on a deployment you can afford to stop, and keep the four lines ready to remove.
+
+| What you do | What happens |
+|---|---|
+| Write four variables into `.env` and run `docker compose --profile egress up -d` | The `egress` service (the proxy) starts, and the Control Plane starts with the fence on |
+| Stop and start each workspace in the Console | Its network is recreated with no route out, and the proxy is attached to it |
+
+The fence only removes the other ways out. What the proxy lets through is still the mode: in log-only everything passes and is recorded, and [enforce](#3-switch-to-enforce) blocks what is not on the allowlist.
+`docker restart` does not recreate the network; use the Console's stop and start.
+
+```bash
+# .env
+AF_EGRESS_DOCKER_GATEWAY=af-egress
+AF_EGRESS_PROXY_ADDR=af-egress:3128
+AF_EGRESS_TOKEN=<openssl rand -hex 32>
+COMPOSE_PROFILES=egress
+```
+
+| Variable | What to put in it |
+|---|---|
+| `AF_EGRESS_DOCKER_GATEWAY` | The proxy's container name. Setting it turns the fence on |
+| `AF_EGRESS_PROXY_ADDR` | The same name and the proxy's port. Workspaces get it as their proxy variables. The Control Plane refuses to start when the name differs |
+| `AF_EGRESS_TOKEN` | A secret the Control Plane and the proxy share, for the proxy's reports |
+| `COMPOSE_PROFILES` | `egress`, so that `docker compose up -d` also starts the proxy |
+
+What changes for a fenced workspace:
+
+- A program that ignores the proxy variables connects to nothing. The attempt fails and is not recorded
+- Only HTTP and HTTPS pass. Git over SSH, databases and queries sent straight to an outside DNS server do not; use HTTPS remotes
+- Ordinary name lookups may still leave through Docker's resolver, depending on the Docker version. Do not count on the fence to stop data carried in DNS queries
+- The proxy refuses destinations on the workspace networks, so it never connects one workspace to another
+- The workspace still reaches whatever the host itself listens on at the network's gateway address
+
+What to line up:
+
+| Item | What to do |
+|---|---|
+| The proxy's reports | The proxy reports to `PUBLIC_BASE_URL` and reads the mode and the allowlist from it, so `PUBLIC_BASE_URL` must be set. If containers cannot reach it, set `AF_EGRESS_INGEST_URL` and `AF_EGRESS_POLICY_URL` to an address they can |
+| Updating the proxy | Recreating the `egress` container detaches it from every workspace network. The Control Plane reattaches it within about 30 seconds |
+| The Control Plane's log | `docker egress fence:` lines name a proxy container that is missing or cannot be attached. A workspace does not start while the proxy is missing |
+| Turning it off | Remove the four lines, run `docker compose up -d`, then stop and start each workspace |
+
+While the proxy cannot reach the Control Plane it keeps the mode it last had; a proxy that has just started is in log-only unless `AF_EGRESS_ENFORCE=1` is in `.env`.
+
+The Control Plane refuses to start with the fence on when `AF_EGRESS_PROXY_ADDR` is missing or names another host, or when it is not on the host network (the Mac overlay).
 
 ## Keep the records
 

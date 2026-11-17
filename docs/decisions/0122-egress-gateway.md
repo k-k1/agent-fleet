@@ -6,7 +6,7 @@ English | [日本語](0122-egress-gateway.ja.md)
   template facts were read from the tree on this date. Squid's behaviour was read from its
   published documentation and an AWS blog post, **not run**; no Docker and no cloud account were
   available while writing this.
-- Follow-ups: #1181, #2603, #2604, #2657, #2658, #2674, #2687, #2699
+- Follow-ups: #1181, #2603, #2604, #2657, #2658, #2674, #2687, #2699, #4373
 - Related: [0047](0047-tenant-network-restriction.md) (inbound IP restriction; this record does
   not touch it) / #1056 (credential injection, needs this fence first) / #1067 (why an OS sandbox
   is not the answer)
@@ -844,3 +844,50 @@ TCP connection to a named host and port, and an unnamed host and port dropped an
 sandbox stack with `EgressRoute=gateway`.
 
 Follow-ups: #3369
+
+## Addendum (2026-11-17) — open point 2: the docker fence (#1181)
+
+Open point 2 asked for a gateway the per-user networks route through, without changing how the CP
+reaches the agent. docker has no route table to point at a gateway: the only way to redirect a
+container's default route is a privileged helper in its network namespace. This addendum takes
+the other road, and reverses one line of "Rejected" for docker.
+
+**Decided with the maintainer, 2026-11-17.**
+
+1. **The per-user network is `--internal`.** docker gives an internal network no route off the
+   host, so a process that ignores the proxy variables connects to nothing. That is the fence; no
+   host firewall rule is added. Name resolution is a separate matter: whether docker's embedded
+   resolver still forwards outside names from an internal network depends on the engine version,
+   so DNS is not claimed closed (a lookup of an attacker's domain may still leave; #4373 checks).
+2. **The own forward proxy is the gateway.** The compose `egress` service runs
+   `control-plane egress-proxy` in a container, and the CP attaches it to every per-user network
+   at `Start` (and again every 30 s, because recreating the container drops its attachments).
+   Workspaces keep the proxy variables, now naming that container. docker stays on the own proxy
+   as "Rejected" already allowed; Squid's intercept mode is not brought to compose.
+3. **The CP reaches a fenced Agent by the container's address**, recorded at `Start` in the
+   workspace's data directory, because a port published on an internal network is not reachable. "Rejected" called
+   this a large change to how the CP connects; it is one function (`Endpoint`), and only fenced
+   workspaces take it. It needs the CP in the host's network namespace, so the Mac overlay
+   (a bridged CP) is refused at boot.
+4. **The proxy refuses destinations on the networks it is attached to**
+   (`AF_EGRESS_REFUSE_ATTACHED`). It sits on every per-user network, and without this it would be
+   the way from one workspace into another's.
+5. **The Agent reaches the CP through the proxy too**, the workspace listener
+   (`AF_CP_INTERNAL_URL`) included: a fenced workspace has no route to the host's docker0
+   address, so that host is no longer added to `NO_PROXY`. The proxy container resolves
+   `host.docker.internal` itself.
+6. **Off by default** (`AF_EGRESS_DOCKER_GATEWAY`), against decision 1's "always on", until it has
+   run on a real host: turning it on stops every non-HTTP flow of an existing deployment.
+
+**What it does not do.** The fence removes the other ways out; what the proxy lets through is
+still the mode, so in log-only everything that speaks the proxy passes. A blocked direct connection is not recorded (decision 1 wanted it
+recorded; that needs a logging rule on the host). Non-HTTP traffic does not pass, and there is no
+per-destination TCP passthrough as on AWS. Events are not attributed to a workspace: the own
+proxy reports a host and a count. A workspace still reaches whatever the host itself listens on
+at the bridge's gateway address, as it does without the fence.
+
+**Not verified.** Written with no Docker available. The docker CLI arguments and the proxy's
+dial rule are unit-tested; no daemon ran any of it. The run, and the question of the default, are
+#4373.
+
+Follow-ups: #4373

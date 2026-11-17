@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -41,6 +42,11 @@ type dockerRuntime struct {
 	// CLI, and Destroy's contract — never unlink the home while the container can still
 	// be writing to it — is exactly what needs asserting). nil = the real Stop.
 	stopFn func(ctx context.Context) error
+	// egressGateway is the egress proxy's container name when the docker fence is on
+	// (runtime_docker_fence.go); "" = an ordinary bridge network and a published port.
+	egressGateway string
+	// docker overrides the docker CLI for the fence's network commands (tests only).
+	docker func(ctx context.Context, args ...string) ([]byte, error)
 	// cpus is the per-workspace CPU cap as docker --cpus (fractional cores); "" = no
 	// flag = every core. Native has no cgroup, so it ignores this axis entirely.
 	cpus string
@@ -59,6 +65,8 @@ type dockerFactory struct {
 	extraEnv    []string
 	rootDataDir func(Workspace) string
 	onRelease   AddressReleaseHook
+	// egressGateway is Config.DockerEgressGateway.
+	egressGateway string
 }
 
 func (f *dockerFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runtime {
@@ -95,10 +103,15 @@ func (f *dockerFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Ru
 		onRelease:  f.onRelease,
 		membership: ws.MembershipID,
 		wsID:       ws.ID,
+
+		egressGateway: f.egressGateway,
 	}
 }
 
 func (d *dockerRuntime) Endpoint() string {
+	if a := d.fencedAgentAddr(); a != "" {
+		return "http://" + net.JoinHostPort(a, dockerAgentPort)
+	}
 	return fmt.Sprintf("http://%s:%s", d.agentHost, d.agentPort)
 }
 
@@ -123,6 +136,7 @@ func (d *dockerRuntime) Name() string  { return d.name }
 func (d *dockerRuntime) State(ctx context.Context) string {
 	switch d.inspectOne(ctx, "container", d.name, "{{.State.Status}}") {
 	case "":
+		d.dropStaleAgentAddr(ctx)
 		return "none" // docker inspect returned nothing = there is no such container
 	case "running":
 		if d.startingMarker().active(ctx, d.Endpoint()) {
@@ -276,6 +290,7 @@ func (d *dockerRuntime) mountsStagedDocs() {}
 func (d *dockerRuntime) Start(ctx context.Context) error {
 	switch d.State(ctx) {
 	case "running":
+		d.healAgentAddr(ctx)
 		return nil
 	case "starting":
 		// A boot is already in flight (this adapter reports it while the Agent has not
@@ -286,6 +301,7 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 		return nil
 	}
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", d.name).Run() // clear any stopped remnant
+	d.clearAgentAddr()
 
 	home := filepath.Join(d.dataDir, "home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
@@ -322,13 +338,13 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 		// setuid bits from every other executable, leaving chrome-sandbox as the
 		// sole path that can acquire this bounded capability.
 		"--cap-add=SYS_ADMIN",
-		"-p", fmt.Sprintf("127.0.0.1:%s:7700", d.agentPort),
 		"-v", home + ":/home/dev",
 		"-v", claudeCfg + ":/var/lib/af/claude",
 		"-e", "CLAUDE_CONFIG_DIR=/var/lib/af/claude",
 		// Graceful-shutdown budget for the Agent's SIGTERM handler; see Stop.
 		"-e", fmt.Sprintf("AGENT_STOP_GRACE_SEC=%d", agentStopGraceSec()),
 	}
+	args = append(args, d.publishArgs()...)
 	args = append(args, d.memoryLimitArgs()...)
 	if d.cpus != "" {
 		args = append(args, "--cpus", d.cpus)
@@ -365,6 +381,12 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	args = append(args, d.image)
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("docker run: %v: %s", err, out)
+	}
+	if err := d.recordAgentAddr(ctx); err != nil {
+		// Without the address nothing can reach this container, and State would still
+		// call it running: remove it so the next Start begins again.
+		_ = exec.CommandContext(ctx, "docker", "rm", "-f", d.name).Run()
+		return err
 	}
 	// Record which image this container actually came from, so Stale() can later
 	// tell that the tag moved on while it keeps running the old code.
@@ -520,6 +542,9 @@ func dockerEnvValues(env []string) map[string]string {
 // host.docker.internal, which exists only in the container's /etc/hosts, so without this
 // every Agent → CP call would fail once the egress proxy is on.
 func (d *dockerRuntime) cpProxyBypass() []string {
+	if d.fenced() {
+		return nil // no direct route to the host: the CP is reached through the proxy
+	}
 	vals := dockerEnvValues(d.extraEnv)
 	before := [2]string{vals["NO_PROXY"], vals["no_proxy"]}
 	bypassProxyForCP(vals)
@@ -540,25 +565,14 @@ const dockerHostGateway = "host.docker.internal"
 // inter-network isolation does not apply. Any other host is left to DNS: overriding a name
 // the operator chose would send the Agent somewhere they did not ask for.
 func (d *dockerRuntime) hostArgs() []string {
+	if d.fenced() {
+		return nil // the proxy container resolves the name, not the workspace
+	}
 	u, err := url.Parse(dockerEnvValues(d.extraEnv)["AF_CP_INTERNAL_URL"])
 	if err != nil || !strings.EqualFold(u.Hostname(), dockerHostGateway) {
 		return nil
 	}
 	return []string{"--add-host", dockerHostGateway + ":host-gateway"}
-}
-
-// ensureNetwork creates the per-user network if it does not already exist.
-func (d *dockerRuntime) ensureNetwork(ctx context.Context) error {
-	if d.network == "" {
-		return nil
-	}
-	if exec.CommandContext(ctx, "docker", "network", "inspect", d.network).Run() == nil {
-		return nil // already exists
-	}
-	if out, err := exec.CommandContext(ctx, "docker", "network", "create", d.network).CombinedOutput(); err != nil {
-		return fmt.Errorf("docker network create %s: %v: %s", d.network, err, out)
-	}
-	return nil
 }
 
 // stopGraceSec is the workspace stop grace (seconds) before the runtime's hard
@@ -617,10 +631,9 @@ func (d *dockerRuntime) Stop(ctx context.Context) error {
 			return fmt.Errorf("docker rm: %v: %s", err, out)
 		}
 	}
+	d.clearAgentAddr()
 	// Best-effort: drop the now-empty per-user network (recreated on next start).
-	if d.network != "" {
-		_ = exec.CommandContext(ctx, "docker", "network", "rm", d.network).Run()
-	}
+	d.removeNetwork(ctx)
 	return nil
 }
 
