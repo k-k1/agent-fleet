@@ -244,6 +244,28 @@ describe("CloudCostAdminView", () => {
     expect(text()).toContain("Amazon Elastic Compute Cloud - Compute");
   });
 
+  // #4440: the gateway and the archive bucket carry their own af-role. Shown raw, they read as a
+  // leak in the tagging rather than as the base infrastructure they are.
+  it("labels the egress gateway and the egress archive instead of showing the raw tag", async () => {
+    api.mockResolvedValue({
+      members: [],
+      attributed_micro: 0,
+      shared_micro: 900_000,
+      shared_services: [],
+      shared_groups: [{ group: "platform", unblended_micro: 900_000 }],
+      shared_roles: [
+        { role: "egress-gateway", group: "platform", unblended_micro: 700_000 },
+        { role: "egress-archive", group: "platform", unblended_micro: 200_000 },
+      ],
+      meta: meta(),
+    });
+    await mount(<CloudCostAdminView tenants={tenants} isSuper={true} />);
+    expect(text()).toContain("egress ゲートウェイ");
+    expect(text()).toContain("egress アーカイブ");
+    expect(text()).not.toContain("egress-gateway");
+    expect(text()).not.toContain("egress-archive");
+  });
+
   // An af-role this build has no wording for must show the raw tag value. A blank row, or the
   // money silently joining a bucket it does not belong to, is how a new stack's cost becomes
   // something nobody ever asks about.

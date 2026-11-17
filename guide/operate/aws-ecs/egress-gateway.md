@@ -36,6 +36,8 @@ The Control Plane, the slot instances, the inference engines and the home task l
 | Non-HTTP egress (SSH git, other ports) | Works | Enforce: only destinations named by `tcp:` entries; the rest dropped and recorded. Log-only (the default mode): passed and recorded as would-deny |
 | Workspace source address | `NatEip` | The gateway's own address, a second one to allow-list |
 
+To see what the gateway costs, open Admin > Cloud cost. The instance, its root volume, its network interfaces and the Elastic IP that `00-network` creates carry `af-role: egress-gateway`, which shows as its own "Egress gateway" row under "What it was for". The NAT gateway and its address are not tagged that way: the Control Plane and the hosts use them too. Tags count only from the day they are set, so earlier spend stays under "No role tag". An Elastic IP you handed in is not tagged by the stack; tag it `af-role: egress-gateway` yourself if you want it on that row.
+
 ## Under the hood
 
 - An Auto Scaling group of one AL2023 instance in `PublicSubnet0`
