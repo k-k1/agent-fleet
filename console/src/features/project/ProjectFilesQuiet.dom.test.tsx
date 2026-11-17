@@ -6,7 +6,9 @@
 //      sent 1,363 listings in five seconds for ~130 working copies and stalled every other
 //      connection to the Console, terminal WebSockets included.
 //   2. While the Files view is hidden, nothing reads: not the end of a turn, not a refresh
-//      tick, not coming back to the window. Showing the view again reads only what it owes.
+//      tick, not a tenant switch, not a search, not coming back to the window, not the
+//      prefetch. Showing the view again reads what it owes, once, and a debt it cannot pay
+//      yet (a search owns the rows) is kept for the next show.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -23,6 +25,7 @@ let maxInFlight = 0;
 // Answer after a delay that differs per path, so answers arrive one by one and each one
 // re-runs the prefetch effect while the others are still out.
 let delayed = false;
+let searches = 0;
 
 vi.mock("../../core/api/client.ts", () => ({
   apiJSON: async () => ({}),
@@ -50,7 +53,10 @@ vi.mock("../../core/api/client.ts", () => ({
   fsNewFile: vi.fn(),
   fsRename: vi.fn(),
   fsDelete: vi.fn(),
-  fsSearch: vi.fn(async () => ({ results: [], truncated: false })),
+  fsSearch: vi.fn(async () => {
+    searches++;
+    return { results: [], truncated: false };
+  }),
 }));
 
 const { ProjectFiles } = await import("./ProjectFiles.tsx");
@@ -60,6 +66,8 @@ const { ViewShownContext } = await import("../../lib/viewShown.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { useReposStore } = await import("../repos/store.ts");
 const { useFilesStore } = await import("../files/store.ts");
+const { useFilesFilter } = await import("./filesFilter.ts");
+const { useTenantStore } = await import("../../core/store/tenant.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -70,7 +78,7 @@ async function render(shown = true): Promise<void> {
       <ViewShownContext.Provider value={shown}>
         <ToastProvider>
           <ConfirmProvider>
-            <ProjectFiles root="repos" markRepos />
+            <ProjectFiles root="repos" markRepos searchable />
           </ConfirmProvider>
         </ToastProvider>
       </ViewShownContext.Provider>,
@@ -91,6 +99,8 @@ async function settle(): Promise<void> {
   }
 }
 
+/** Each path read, sorted, with repeats kept: a set would hide a second read of a path. */
+const sorted = (xs: string[]) => [...xs].sort();
 const row = (p: string) => host.querySelector<HTMLLIElement>(`li[data-path="${p}"]`);
 const click = async (el: Element | null) => {
   await act(async () => (el as HTMLElement).click());
@@ -107,6 +117,9 @@ beforeEach(() => {
   useWorkspaceStore.setState({ state: "running" });
   useFilesStore.setState({ reveal: { path: null, n: 0, focus: false }, tick: 0, scoped: { prefix: "", n: 0 } });
   useReposStore.setState({ repos: [] });
+  useTenantStore.setState({ tenant: "alpha" });
+  useFilesFilter.setState({ q: "" });
+  searches = 0;
   served = {
     repos: [
       { name: "agent-fleet", type: "dir" },
@@ -164,8 +177,8 @@ describe("while the Files view is hidden", () => {
 
     served["repos/agent-fleet"] = [{ name: "NEW.md", type: "file" }];
     await render(true);
-    // The same scope a turn end reads when shown: the working copy's rows and the root.
-    expect(new Set(calls)).toEqual(new Set(["repos", "repos/agent-fleet", "repos/agent-fleet/docs"]));
+    // The same scope a turn end reads when shown: the working copy's rows and the root, once each.
+    expect(sorted(calls)).toEqual(["repos", "repos/agent-fleet", "repos/agent-fleet/docs"]);
     expect(row("repos/agent-fleet/NEW.md")).not.toBeNull();
   });
 
@@ -192,12 +205,91 @@ describe("while the Files view is hidden", () => {
     expect(calls).toContain("repos/agent-fleet");
   });
 
-  it("ignores coming back to the window", async () => {
+  it("owes a return to the window and pays it once when shown", async () => {
     await render();
+    await click(row("repos/agent-fleet"));
     await render(false);
     calls = [];
     await act(async () => window.dispatchEvent(new Event("focus")));
+    await act(async () => window.dispatchEvent(new Event("focus")));
     await settle();
     expect(calls).toEqual([]);
+
+    await render(true);
+    // Everything on screen and the root, as the return itself would have read.
+    expect(sorted(calls)).toEqual(["repos", "repos/agent-fleet", "repos/agent-fleet/docs", "repos/other"]);
   });
+
+  it("reads each path once when a tick and a turn end are both owed", async () => {
+    await render();
+    await click(row("repos/agent-fleet"));
+    await render(false);
+    calls = [];
+    await act(async () => useFilesStore.getState().bump());
+    await turnEnded("repos/agent-fleet");
+    expect(calls).toEqual([]);
+
+    await render(true);
+    const counts = new Map<string, number>();
+    for (const c of calls) counts.set(c, (counts.get(c) ?? 0) + 1);
+    expect([...counts.values()].every((n) => n === 1)).toBe(true);
+    expect(calls).toContain("repos/agent-fleet");
+  });
+
+  it("holds a tenant switch, and its prefetch, until shown", async () => {
+    await render();
+    await render(false);
+    calls = [];
+    await act(async () => useTenantStore.setState({ tenant: "beta" }));
+    await settle();
+    expect(calls).toEqual([]);
+
+    await render(true);
+    expect(sorted(calls)).toEqual(["repos", "repos/agent-fleet", "repos/other"]);
+  });
+
+  it("holds the prefetch a background reveal would start until shown", async () => {
+    await render();
+    await render(false);
+    calls = [];
+    // A reveal that is a side effect (a clone landing) does not bring the view forward. It may
+    // read the folders on the way to its target, but not prefetch what opening them shows.
+    await act(async () => useFilesStore.getState().revealInFiles("repos/agent-fleet/README.md"));
+    await settle();
+    expect(calls).not.toContain("repos/agent-fleet/docs");
+
+    await render(true);
+    expect(calls.filter((c) => c === "repos/agent-fleet/docs")).toHaveLength(1);
+  });
+
+  it("runs no search while hidden, and keeps a debt a search blocks", async () => {
+    await render();
+    await act(async () => useFilesFilter.setState({ q: "readme" }));
+    await settle();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 250)); // the search is debounced
+    });
+    const before = searches;
+    expect(before).toBe(1);
+
+    await render(false);
+    await act(async () => useFilesStore.getState().bump());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 250));
+    });
+    expect(searches).toBe(before);
+
+    // A turn end owed while hidden cannot be paid while the search owns the rows...
+    await turnEnded("repos/agent-fleet");
+    calls = [];
+    await render(true);
+    await act(async () => useFilesFilter.setState({ q: "" }));
+    await settle();
+    expect(calls).not.toContain("repos/agent-fleet");
+    // ...so it is still owed at the next show.
+    await render(false);
+    await render(true);
+    expect(calls).toContain("repos/agent-fleet");
+  });
+
 });

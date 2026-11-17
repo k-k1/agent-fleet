@@ -117,6 +117,8 @@ const addedPaths = (prev: Entry[] | null | undefined, next: Entry[], dir: string
 const FRESH_MS = 5000;
 /** Directory reads the prefetch keeps out at once. */
 const PREFETCH_SLOTS = 4;
+/** No paths to leave out. */
+const NO_PATHS: Set<string> = new Set();
 /** Shared empty set — one stable reference, like NO_ROWS below. */
 const NO_FRESH: Set<string> = new Set();
 
@@ -211,12 +213,18 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // Prefetch reads waiting for a slot, and how many are out (see PREFETCH_SLOTS).
   const prefetchQueueRef = useRef<string[]>([]);
   const prefetchActiveRef = useRef(0);
-  // Whether the Files view is on screen. A hidden tree makes no automatic read; the working
-  // copies whose turn ended meanwhile are owed one read each when it is shown again.
+  // Whether the Files view is on screen. A hidden tree makes no automatic read. What it skipped
+  // is owed and paid when it is shown again: one read per working copy whose turn ended, and
+  // one revalidation if the member came back to the window meanwhile.
   const shown = useViewShown();
   const shownRef = useRef(shown);
   shownRef.current = shown;
   const owedPrefixesRef = useRef<Set<string>>(new Set());
+  const focusOwedRef = useRef(false);
+  // Paths the load started in this commit reads; null when none started (see the loader).
+  const reloadingRef = useRef<Set<string> | null>(null);
+  // The prefetch pump, for the show handler declared above it.
+  const pumpPrefetchRef = useRef<() => void>(() => {});
   // The tenant right now. Every read below that writes back after an await compares it with the
   // tenant it started under: an answer from the previous tenant's workspace must not land in a
   // cache the switch just emptied (fetchInto would then keep it over the new answer).
@@ -240,12 +248,22 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // A tenant switch is a different workspace: its listing replaces the old one, and the old
   // expansion, selection and cached dirs name paths that may not exist there.
   const loadedTenantRef = useRef(tenant);
-  // A refresh tick or a workspace start that lands while the view is hidden reloads on the
-  // next show instead of reading for nobody.
+  // A refresh tick, a workspace start or a tenant switch that lands while the view is hidden
+  // reloads on the next show instead of reading for nobody. (A retry already scheduled when
+  // the view was hidden still runs: one root read, at most.)
   const loadTick = useShownValue(filesTick);
   const loadRunning = useShownValue(running);
+  const loadTenant = useShownValue(tenant);
   useRetryLoad(async (signal) => {
     const switched = loadedTenantRef.current !== tenant;
+    // What this load reads: the root and every open directory. The show handler below runs
+    // after it (effects run in order, and the first call of load is synchronous) and leaves
+    // these out of what it pays, so a show that both reloads and owes reads each path once.
+    reloadingRef.current = new Set([root, ...(switched ? [] : open)]);
+    // Effects of one commit run in one synchronous pass, so this outlives exactly that pass.
+    queueMicrotask(() => {
+      reloadingRef.current = null;
+    });
     if (switched) {
       loadedTenantRef.current = tenant;
       setEntries(null);
@@ -259,7 +277,8 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       revalidatingRef.current = new Set(); // an old re-read of the same path must not block the new one
       firstReadsRef.current = new Map();
       prefetchQueueRef.current = [];
-      owedPrefixesRef.current = new Set();
+      owedPrefixesRef.current = new Set(); // the other workspace's debts
+      focusOwedRef.current = false;
     }
     const r = await fsList(root);
     if (signal.aborted) return true;
@@ -276,7 +295,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       });
     }
     return true;
-  }, [root, loadTick, loadRunning, tenant]);
+  }, [root, loadTick, loadRunning, loadTenant]);
 
   // Hold the rows that just appeared, then let them go. Each path keeps its own
   // timer so a second batch does not cut the first one's highlight short.
@@ -497,17 +516,30 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
 
   // Re-read the rows on screen under the given working copies.
   const refreshPrefixes = useCallback(
-    (prefixes: string[]) => {
+    (prefixes: string[], skip: Set<string> = NO_PATHS) => {
       const under = (p: string) => prefixes.some((x) => p === x || p.startsWith(x + "/"));
-      const targets = liveDirsRef.current.filter(under);
+      const targets = liveDirsRef.current.filter((p) => under(p) && !skip.has(p));
       // A working copy can also appear or vanish under the turn (a worktree added
       // or removed), which shows in its PARENT's listing — one extra read when
       // that parent is this tree's root. It is also the whole cost of a session
       // whose folder is not under ~/repos at all (a shell in the home dir): its
       // prefix matches no row, and this single read is all that happens.
-      const alsoRoot = prefixes.some((x) => parentOf(x) === root);
+      const alsoRoot = prefixes.some((x) => parentOf(x) === root) && !skip.has(root);
       if (!targets.length && !alsoRoot) return;
       return runRefresh(targets, alsoRoot);
+    },
+    [root, runRefresh],
+  );
+
+  // Re-read everything on screen and the root, at most once per REVALIDATE_GAP_MS. False when
+  // the gap skipped it: an automatic read ran lately, but not necessarily of everything.
+  const revalidateAll = useCallback(
+    (skip: Set<string> = NO_PATHS): boolean => {
+      if (Date.now() - lastAutoAtRef.current < REVALIDATE_GAP_MS) return false;
+      const targets = liveDirsRef.current.filter((p) => !skip.has(p));
+      if (!targets.length && entriesRef.current === null) return true;
+      runRefresh(targets, !skip.has(root));
+      return true;
     },
     [root, runRefresh],
   );
@@ -539,13 +571,28 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopedRefresh.n]);
 
-  // Pay what the hidden view owes: only the working copies whose turn ended while it was
-  // hidden, not the whole tree, so switching views is not a re-read of every directory.
+  // Pay what the hidden view owes. A return to the window meanwhile is paid as that return
+  // would have been (everything on screen, gated by REVALIDATE_GAP_MS), which covers the
+  // owed working copies too. Otherwise only the working copies whose turn ended are read, so
+  // switching views is not a re-read of every directory. A debt that cannot be paid now (a
+  // search owns the rows, a menu is open, the tab is hidden) waits for the next show.
   useOnShow(() => {
+    const skip = reloadingRef.current ?? NO_PATHS;
+    pumpPrefetchRef.current();
+    if (!autoRefreshAllowed()) return;
+    if (focusOwedRef.current) {
+      focusOwedRef.current = false;
+      if (revalidateAll(skip)) {
+        owedPrefixesRef.current = new Set();
+        return;
+      }
+    }
     const owed = [...owedPrefixesRef.current];
+    if (!owed.length) return;
     owedPrefixesRef.current = new Set();
-    if (owed.length && autoRefreshAllowed()) refreshPrefixes(owed);
+    refreshPrefixes(owed, skip);
   });
+
 
   // Coming back to the tab (or to the window) is where an unseen change is most
   // likely to be waiting — the same reasoning as the editor's external-change
@@ -554,11 +601,12 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // Fleet. Kept to one re-read per REVALIDATE_GAP_MS so alt-tabbing is not a poll.
   useEffect(() => {
     const onBack = () => {
-      if (!autoRefreshAllowed()) return;
-      if (Date.now() - lastAutoAtRef.current < REVALIDATE_GAP_MS) return;
-      const targets = liveDirsRef.current;
-      if (!targets.length && entriesRef.current === null) return;
-      runRefresh(targets, true);
+      if (document.hidden) return;
+      if (!shownRef.current) {
+        focusOwedRef.current = true;
+        return;
+      }
+      if (autoRefreshAllowed()) revalidateAll();
     };
     document.addEventListener("visibilitychange", onBack);
     window.addEventListener("focus", onBack);
@@ -566,7 +614,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       document.removeEventListener("visibilitychange", onBack);
       window.removeEventListener("focus", onBack);
     };
-  }, [autoRefreshAllowed, runRefresh]);
+  }, [autoRefreshAllowed, revalidateAll]);
 
   // Quick filter: keep rows whose displayed name matches, plus the ancestor dirs
   // that lead to them (so the match keeps its place in the tree). Rows are
@@ -620,7 +668,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       clearTimeout(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchMode, q, root, filesTick, tenant]);
+  }, [searchMode, q, root, loadTick, loadTenant]);
 
   // The rows actually shown / navigated: flat search hits in search mode, else
   // the (tree-)filtered rows — both scoped to the active working set (docs/log/52)
@@ -718,6 +766,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // working copy, and a page load that asks for all of them at once is a burst the
   // Workspace's file system and the Console's other connections both pay for.
   const pumpPrefetch = useCallback(() => {
+    if (!shownRef.current) return; // the queue waits for the next show
     const queue = prefetchQueueRef.current;
     while (prefetchActiveRef.current < PREFETCH_SLOTS && queue.length) {
       const p = queue.shift()!;
@@ -729,6 +778,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       });
     }
   }, [fetchInto]);
+  pumpPrefetchRef.current = pumpPrefetch;
   useEffect(
     () => () => {
       prefetchQueueRef.current = []; // an unmounted tree starts nothing new

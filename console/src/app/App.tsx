@@ -606,7 +606,7 @@ export function App() {
                 a view that lost rows to a scope with no switcher in sight cannot be widened
                 from where the member is looking — and rendered for a stopped workspace too
                 (the switcher works without the agent). */}
-            <RailView id="sessions" active={railView} scoped>
+            <RailView id="sessions" active={railView} shown={railShown} scoped>
               {workspaceRunning ? (
                 <>
                   <SoloSection>
@@ -625,7 +625,7 @@ export function App() {
                 </>
               )}
             </RailView>
-            <RailView id="assistant" active={railView} scoped>
+            <RailView id="assistant" active={railView} shown={railShown} scoped>
               <SoloSection>
                 {workspaceRunning ? (
                   <AssistantSection />
@@ -637,18 +637,18 @@ export function App() {
             {/* Shown for a stopped workspace too, and that is the point (docs/log/80): it
                 reads the CP's cache, which is what makes waking a stopped Workspace from a
                 ticket work. */}
-            <RailView id="workitems" active={railView}>
+            <RailView id="workitems" active={railView} shown={railShown}>
               <SoloSection>
                 <WorkItemsSection />
               </SoloSection>
             </RailView>
-            <RailView id="memo" active={railView}>
+            <RailView id="memo" active={railView} shown={railShown}>
               <SoloSection>
                 <MemoQueueSection />
               </SoloSection>
             </RailView>
             {schedulerEnabled && (
-              <RailView id="schedules" active={railView} scoped>
+              <RailView id="schedules" active={railView} shown={railShown} scoped>
                 <SoloSection>
                   <SchedulesSection />
                 </SoloSection>

@@ -114,10 +114,14 @@ export function FilesChanges() {
   shownRef.current = shown;
   const loadTick = useShownValue(filesTick);
   const loadRunning = useShownValue(running);
+  // Something asked for a reload while the view was hidden (a turn ended, or the member came
+  // back to the window). One reload on show pays all of it.
+  const owed = useRef(false);
 
   // Right after a WS start the agent is unreachable and api() returns http_5xx, so a transient
   // failure is retried (isTransientErr).
   useRetryLoad(async (signal) => {
+    owed.current = false; // this load is the reload anything owed asked for
     if (!loadRunning) return true; // nothing to load while the WS is stopped
     setChanges(null);
     let d;
@@ -142,7 +146,6 @@ export function FilesChanges() {
   const autoInFlight = useRef(false);
   const lastAutoAt = useRef(0);
   const mountedTick = useRef(autoTick); // signals from before mount are covered by the initial load
-  const owed = useRef(false); // a turn ended while the view was hidden
   const reload = useCallback(async () => {
     if (!running || autoInFlight.current || document.hidden) return;
     autoInFlight.current = true;
@@ -166,8 +169,9 @@ export function FilesChanges() {
     }
     void reload();
   }, [autoTick, reload]);
+  // Runs after the loader above, which clears the debt when the show also reloads it.
   useOnShow(() => {
-    if (!owed.current) return;
+    if (!owed.current || !running || document.hidden || autoInFlight.current) return;
     owed.current = false;
     void reload();
   });
@@ -178,7 +182,12 @@ export function FilesChanges() {
   // (features/scm/SourceControlView.tsx).
   useEffect(() => {
     const onBack = () => {
-      if (document.hidden || !shownRef.current || Date.now() - lastAutoAt.current < REVALIDATE_GAP_MS) return;
+      if (document.hidden) return;
+      if (!shownRef.current) {
+        owed.current = true;
+        return;
+      }
+      if (Date.now() - lastAutoAt.current < REVALIDATE_GAP_MS) return;
       void reload();
     };
     document.addEventListener("visibilitychange", onBack);

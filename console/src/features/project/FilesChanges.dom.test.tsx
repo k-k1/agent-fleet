@@ -329,16 +329,28 @@ describe("while the Files view is hidden", () => {
     expect(host.textContent).toContain("new.ts");
   });
 
-  it("holds a refresh tick and ignores coming back to the window", async () => {
+  it("owes a return to the window and pays it with one read", async () => {
+    await renderShown(true);
+    await renderShown(false);
+    vi.mocked(api).mockClear();
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(vi.mocked(api)).not.toHaveBeenCalled();
+
+    await renderShown(true);
+    expect(vi.mocked(api)).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads once when a held tick and an owed turn end meet at the show", async () => {
     await renderShown(true);
     await renderShown(false);
     vi.mocked(api).mockClear();
 
     await act(async () => useFilesStore.getState().bump());
-    await act(async () => window.dispatchEvent(new Event("focus")));
+    await turnEnded();
     expect(vi.mocked(api)).not.toHaveBeenCalled();
 
     await renderShown(true);
-    expect(vi.mocked(api)).toHaveBeenCalledTimes(1); // the held tick, nothing for the focus
+    expect(vi.mocked(api)).toHaveBeenCalledTimes(1); // the held tick's load pays the turn end
   });
 });
