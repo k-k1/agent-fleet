@@ -86,7 +86,7 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
     );
   }
 
-  const overview = <TenantOverview view={view} isSuper={isSuper} />;
+  const overview = <TenantOverview view={view} />;
   // The deployment's provided route as the layers decide it: a budget cannot reopen what they stop.
   const provRoute = view.routes.find((r) => r.id === "bedrock-deployment");
   const providedStops = provRoute && !provRoute.allowed ? byList(tr, provRoute.forbiddenBy ?? []) : undefined;
@@ -106,30 +106,56 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
             key: "restrictions",
             label: tr("tenant.model_access_view_restrictions"),
             node: (
-              <section className="admin-panel model-access-rule">
-                <h4>
-                  {tr("tenant.model_access_rule")}
-                  <span className="af-note">{tr("admin.mpol_revision", { n: view.tenant.revision })}</span>
-                </h4>
-                <RuleEditor
-                  key={`${slug}:${view.tenant.revision}`}
-                  base={view.tenant.rule}
-                  revision={view.tenant.revision}
-                  currentRevision={async () => (await peek())?.tenant.revision ?? null}
-                  routeOptions={routeIds(view.routes.map((r) => r.id))}
-                  endpointsMode="hosts"
-                  hostState={(h) => view.endpoints.find((e) => e.host === h)}
-                  // The tenant's write is not checked against the ceiling: what the layers above
-                  // forbid is marked, never locked.
-                  above={[
-                    { layer: "ceiling", rule: view.ceiling.rule },
-                    { layer: "deployment", rule: view.deployment.rule },
-                    { layer: "tenant_cap", rule: view.cap.rule },
-                  ]}
-                  save={(body) => apiJSON(path, "PUT", body)}
-                  onSaved={load}
-                />
-              </section>
+              <>
+                {/* The super_admin's restriction on this tenant (the cap): edited here and only
+                    here (ADR 0138 D16, note of 2026-11-17). A tenant administrator never sees it,
+                    and the CP refuses their cap write. */}
+                {isSuper && (
+                  <section className="admin-panel model-access-cap" data-cap-editor={slug}>
+                    <h4>
+                      {tr("admin.mpol_layer_tenant_cap")}
+                      <span className="af-note">{tr("admin.mpol_revision", { n: view.cap.revision })}</span>
+                    </h4>
+                    <p className="admin-hint">{tr("admin.model_access_caps_note")}</p>
+                    <RuleEditor
+                      key={`${slug}:cap:${view.cap.revision}`}
+                      base={view.cap.rule}
+                      revision={view.cap.revision}
+                      currentRevision={async () => (await peek())?.cap.revision ?? null}
+                      routeOptions={routeIds(view.routes.map((r) => r.id))}
+                      endpointsMode="patterns"
+                      ceiling={view.ceiling.rule}
+                      above={[{ layer: "deployment", rule: view.deployment.rule }]}
+                      save={(body) => apiJSON(`${path}/cap`, "PUT", body)}
+                      onSaved={load}
+                    />
+                  </section>
+                )}
+                <section className="admin-panel model-access-rule">
+                  <h4>
+                    {tr("tenant.model_access_rule")}
+                    <span className="af-note">{tr("admin.mpol_revision", { n: view.tenant.revision })}</span>
+                  </h4>
+                  <RuleEditor
+                    key={`${slug}:${view.tenant.revision}`}
+                    base={view.tenant.rule}
+                    revision={view.tenant.revision}
+                    currentRevision={async () => (await peek())?.tenant.revision ?? null}
+                    routeOptions={routeIds(view.routes.map((r) => r.id))}
+                    endpointsMode="hosts"
+                    hostState={(h) => view.endpoints.find((e) => e.host === h)}
+                    // The tenant's write is not checked against the ceiling: what the layers above
+                    // forbid is marked, never locked.
+                    above={[
+                      { layer: "ceiling", rule: view.ceiling.rule },
+                      { layer: "deployment", rule: view.deployment.rule },
+                      { layer: "tenant_cap", rule: view.cap.rule },
+                    ]}
+                    save={(body) => apiJSON(path, "PUT", body)}
+                    onSaved={load}
+                  />
+                </section>
+              </>
             ),
           },
           {
@@ -143,6 +169,7 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                 slug={slug}
                 onServed={onServed}
                 ruleStops={providedStops}
+                isSuper={isSuper}
               />
             ),
           },

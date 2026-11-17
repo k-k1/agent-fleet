@@ -17,11 +17,10 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
-import { AdminProvidedGrantView, AdminProvidedSourceView } from "./adminProvidedRoutes.tsx";
+import { AdminProvidedSourceView } from "./adminProvidedRoutes.tsx";
 import { fmtDateTime } from "../../../lib/intl.ts";
 
 const SOURCE_PATH = "api/admin/provided-routes/deployment";
-const GRANT_PATH = "api/admin/tenants/acme/provided-routes/deployment";
 const SOURCE = () => ({
   id: "S1",
   binding: "S1#fp1",
@@ -83,13 +82,12 @@ const typeModels = async (value: string) => {
     ta.dispatchEvent(new Event("input", { bubbles: true }));
   });
 };
-const save = () => Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === "保存")!;
+const save = () =>
+  Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === "保存")!;
 const inputs = () => Array.from(host!.querySelectorAll<HTMLInputElement>('input[type="text"]'));
 
 beforeEach(() => {
-  api.mockImplementation((path: string) =>
-    Promise.resolve(path === SOURCE_PATH ? { source: SOURCE() } : TENANT()),
-  );
+  api.mockImplementation((path: string) => Promise.resolve(path === SOURCE_PATH ? { source: SOURCE() } : TENANT()));
   apiJSON.mockResolvedValue({ warnings: [] });
 });
 afterEach(() => {
@@ -197,37 +195,5 @@ describe("admin provided-route source", () => {
     await click(save());
     expect(apiJSON).not.toHaveBeenCalled();
     expect(host!.querySelector("[role=alert]")!.textContent).toContain("ほかの人がこの規則を更新");
-  });
-});
-
-describe("admin provided-route grant", () => {
-  it("draws nothing where the CP does not serve provided routes", async () => {
-    api.mockResolvedValue({ error: { code: "http_404", message: "404 page not found" } });
-    await mount(<AdminProvidedGrantView slug="acme" />);
-    expect(host!.innerHTML).toBe("");
-  });
-
-  it("grants with a ceiling as the CP's input shape", async () => {
-    await mount(<AdminProvidedGrantView slug="acme" />);
-    await click(host!.querySelector<HTMLInputElement>('.prov-grant input[type="checkbox"]')!);
-    await type(inputs()[0], "50");
-    await click(save());
-    expect(apiJSON).toHaveBeenCalledWith(`${GRANT_PATH}/grant`, "PUT", { granted: true, ceiling_micro: 50_000_000 });
-  });
-
-  it("keeps the CP's refusal and the edits", async () => {
-    apiJSON.mockResolvedValue({
-      error: {
-        code: "invalid_input",
-        message: "granting the deployment's Bedrock route needs a monthly ceiling above zero for the tenant",
-        status: 400,
-      },
-    });
-    await mount(<AdminProvidedGrantView slug="acme" />);
-    await click(host!.querySelector<HTMLInputElement>('.prov-grant input[type="checkbox"]')!);
-    await click(save());
-    expect(apiJSON).toHaveBeenCalledWith(`${GRANT_PATH}/grant`, "PUT", { granted: true, ceiling_micro: null });
-    expect(host!.querySelector("[role=alert]")!.textContent).toContain("monthly ceiling above zero");
-    expect(host!.querySelector<HTMLInputElement>('.prov-grant input[type="checkbox"]')!.checked).toBe(true);
   });
 });

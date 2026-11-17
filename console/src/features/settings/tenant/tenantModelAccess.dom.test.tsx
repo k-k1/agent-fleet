@@ -61,12 +61,12 @@ const VIEW = () => ({
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-async function mount() {
+async function mount(isSuper = false) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<TenantModelAccessView slug="acme" />);
+    root!.render(<TenantModelAccessView slug="acme" isSuper={isSuper} />);
   });
   await act(async () => {
     await Promise.resolve();
@@ -671,5 +671,103 @@ describe("model access views", () => {
     expect(refusal()).toContain("refused for the test");
     expect(tickIn("classes", "メンバーの API キー").checked).toBe(true);
     expect(tab("制限")!.textContent).toBe("制限●");
+  });
+});
+
+// #4380 P-8 (ADR 0138 D16, note of 2026-11-17): the deployment admin's restriction on a tenant (the
+// cap) and the tenant's provided-route grant are edited on the tenant's own page, by the
+// super_admin only. A tenant administrator never sees either card.
+describe("the super_admin's cards", () => {
+  const PROVIDED = () => ({
+    granted: false,
+    ceiling_micro: null,
+    members_only: false,
+    member_default_micro: 0,
+    month: "2026-11",
+    spent_micro: 0,
+    reserved_micro: 0,
+    members: [],
+    reservations: [],
+    floor_micro: 0,
+  });
+  const served = (view: unknown = VIEW()) =>
+    api.mockImplementation((path: string) => Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : view));
+  const cap = () => host!.querySelector<HTMLElement>("[data-cap-editor]")!;
+  const capTick = (name: string, text: string) =>
+    Array.from(cap().querySelectorAll<HTMLLabelElement>(`[data-field="${name}"] label`))
+      .find(
+        (l) =>
+          l.textContent?.includes(text) || l.querySelector("input")?.getAttribute("aria-label")?.endsWith(`: ${text}`),
+      )!
+      .querySelector("input")!;
+  const btnIn = (scope: Element, text: string) =>
+    Array.from(scope.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === text)!;
+
+  it("shows a tenant administrator neither the cap nor the grant", async () => {
+    served();
+    await mount(false);
+    await flush();
+    expect(host!.querySelector("[data-cap-editor]")).toBeNull();
+    expect(host!.querySelectorAll(".model-access-rule .mpol-editor").length).toBe(1);
+    expect(host!.querySelector(".model-access-provided")).not.toBeNull();
+    expect(host!.querySelector(".prov-grant")).toBeNull();
+  });
+
+  it("gives the super_admin one cap editor, beside the tenant's own, and the grant card", async () => {
+    served();
+    await mount(true);
+    await flush();
+    expect(host!.querySelectorAll("[data-cap-editor]").length).toBe(1);
+    expect(cap().closest('[role="tabpanel"]')).toBe(
+      host!.querySelector(".model-access-rule")!.closest('[role="tabpanel"]'),
+    );
+    expect(host!.querySelectorAll(".prov-grant").length).toBe(1);
+  });
+
+  it("saves the cap to its own path after re-reading its revision, and refuses over a newer one", async () => {
+    served({ ...VIEW(), ceiling: { raw: "", rule: {}, source: "deployment" } });
+    await mount(true);
+    await click(capTick("deny", "anthropic-api"));
+    await click(btnIn(cap(), "保存"));
+    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/cap`, "PUT", { deny: ["openrouter-api", "anthropic-api"] });
+    apiJSON.mockClear();
+    act(() => root?.unmount());
+    host?.remove();
+    served({ ...VIEW(), ceiling: { raw: "", rule: {}, source: "deployment" } });
+    await mount(true);
+    await click(capTick("deny", "anthropic-api"));
+    api.mockImplementation(() => Promise.resolve({ ...VIEW(), cap: { rule: {}, revision: 3 } }));
+    await click(btnIn(cap(), "保存"));
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(cap().querySelector("[role=alert]")?.textContent).toContain("ほかの人がこの規則を更新");
+  });
+
+  it("warns before a cap the CP would refuse, and matching it makes a save the CP accepts (#4376)", async () => {
+    // The loaded cap only blocks OpenRouter: under a ceiling without subscriptions it still allows
+    // them, which the CP refuses.
+    served();
+    await mount(true);
+    const warn = cap().querySelector('[data-testid="exceeds"]')!;
+    expect(warn.textContent).toContain("このままでは保存できません: 運用者の設定が");
+    await click(btnIn(warn, "運用者の設定に合わせる"));
+    expect(cap().querySelector('[data-testid="exceeds"]')).toBeNull();
+    await click(btnIn(cap(), "保存"));
+    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/cap`, "PUT", {
+      deny: ["openrouter-api"],
+      classes: ["member-key", "member-cloud", "provided", "self-hosted"],
+    });
+  });
+
+  it("locks what the ceiling forbids on the cap, and marks what the restriction for all tenants stops", async () => {
+    served({ ...VIEW(), deployment: { rule: { destinations: ["anthropic", "aws-bedrock"] }, revision: 3 } });
+    await mount(true);
+    await click(btnIn(cap().querySelector('[data-field="classes"]')!, "選んだものだけ許す"));
+    expect(
+      capTick("classes", "サブスクリプション・ログイン").closest("label")!.querySelector(".mpol-mark.locked"),
+    ).not.toBeNull();
+    await click(btnIn(cap().querySelector('[data-field="destinations"]')!, "選んだものだけ許す"));
+    const google = capTick("destinations", "Google").closest("label")!;
+    expect(google.querySelector(".mpol-mark")!.getAttribute("aria-label")).toBe("止めているのは: 全テナント共通の制限");
+    expect(google.querySelector(".mpol-mark.locked")).toBeNull();
   });
 });

@@ -11,12 +11,11 @@ import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import type { Tenant } from "../parts/adminShared.ts";
 import { RuleEditor, RuleSummary } from "../tenant/routePolicyRuleEditor.tsx";
-import { HiddenList } from "../tenant/routePolicyHidden.tsx";
-import { AdminProvidedGrantTable, AdminProvidedGrantView, AdminProvidedSourceView } from "./adminProvidedRoutes.tsx";
+import { AdminProvidedSourceCard, useSourceRead, type SourceRead } from "./adminProvidedRoutes.tsx";
 import { layerClauses } from "../tenant/routePolicyOverview.tsx";
 import { summarizeLayer } from "../tenant/routePolicySummary.ts";
-import { useProvided } from "../tenant/tenantProvidedRoutes.tsx";
-import { parseSource } from "../tenant/providedRoutes.ts";
+import { Usage, useProvided } from "../tenant/tenantProvidedRoutes.tsx";
+import { parseProvidedTenant } from "../tenant/providedRoutes.ts";
 import {
   parseDeploymentPolicy,
   routeIds,
@@ -24,13 +23,12 @@ import {
   type RouteRule,
 } from "../tenant/routePolicyRule.ts";
 import { PolicyLimits, useTenantRoutePolicy } from "../tenant/tenantModelAccess.tsx";
-import { TabbedViews, useShowView } from "../parts/tabbedViews.tsx";
+import { TabbedViews, useShowView, useViewActive } from "../parts/tabbedViews.tsx";
 
 // The variable the ceiling is read from (routepolicy.EnvCeiling), named when the wire's source is
 // "deployment", the only source the CP has; any other source is shown as the CP spells it.
 const CEILING_ENV = "AF_MODEL_ROUTE_CEILING";
 const PATH = "api/admin/route-policy";
-const SOURCE_PATH = "api/admin/provided-routes/deployment";
 
 function useDeploymentRoutePolicy() {
   const tr = useT();
@@ -66,36 +64,127 @@ async function currentDeploymentRevision(): Promise<number | null> {
   }
 }
 
-function TenantCap({ slug }: { slug: string }) {
+// The tenant table reads each tenant's policy view (and its provided view) per row: the CP has no
+// list route (study §7 decision 9). It waits until the view is first opened and reads a page at
+// a time, like the provided view's table.
+const TENANT_PAGE = 20;
+
+/** TenantRow: one tenant's restrictions at a glance; opening it goes to that tenant's own Model
+ *  access page, where the cap and the grant are edited (ADR 0138 D16, note of 2026-11-17). */
+function TenantRow({
+  tenant,
+  provided,
+  onOpen,
+}: {
+  tenant: Tenant;
+  provided: boolean;
+  onOpen?: (slug: string) => void;
+}) {
   const tr = useT();
-  const { view, failed, load, peek, path } = useTenantRoutePolicy(slug);
-  if (!view) {
-    return (
-      <p className={failed ? "admin-hint warn" : "muted"} role={failed ? "alert" : undefined}>
-        {failed ?? tr("common.loading")}
-      </p>
-    );
-  }
+  const { view, failed } = useTenantRoutePolicy(tenant.slug);
+  const words = (rule: RouteRule) => {
+    const s = summarizeLayer(rule);
+    return s.none ? tr("admin.mpol_unrestricted") : layerClauses(tr, s, false).join(tr("tenant.mpol_clause_sep"));
+  };
   return (
-    <div className="mpol-cap" data-tenant={slug}>
-      <RuleEditor
-        key={`${slug}:${view.cap.revision}`}
-        base={view.cap.rule}
-        revision={view.cap.revision}
-        currentRevision={async () => (await peek())?.cap.revision ?? null}
-        routeOptions={routeIds(view.routes.map((r) => r.id))}
-        endpointsMode="patterns"
-        ceiling={view.ceiling.rule}
-        above={[{ layer: "deployment", rule: view.deployment.rule }]}
-        save={(body) => apiJSON(`${path}/cap`, "PUT", body)}
-        onSaved={load}
-      />
-      <h5 className="admin-subhead">{tr("admin.model_access_tenant_rule")}</h5>
-      <RuleSummary rule={view.tenant.rule} />
-      {/* Per selected tenant: the effective policy, and so what it hides, is per tenant. */}
-      <HiddenList view={view} />
-      <AdminProvidedGrantView slug={slug} />
-    </div>
+    <tr data-tenant={tenant.slug}>
+      <td className="prov-member-name">{tenant.name || tenant.slug}</td>
+      {!view ? (
+        <td colSpan={2} className={failed ? "admin-hint warn" : "muted"}>
+          {failed ?? tr("common.loading")}
+        </td>
+      ) : (
+        <>
+          <td data-label={tr("admin.model_access_col_cap")} data-col="cap">
+            {words(view.cap.rule)}
+          </td>
+          <td data-label={tr("admin.model_access_col_own")} data-col="own">
+            {words(view.tenant.rule)}
+          </td>
+        </>
+      )}
+      {provided && (
+        <td data-label={tr("admin.model_access_view_provided")} data-col="provided">
+          <GrantCell slug={tenant.slug} />
+        </td>
+      )}
+      <td className="prov-member-save">
+        {onOpen && (
+          <button type="button" className="btn xs" onClick={() => onOpen(tenant.slug)}>
+            {tr("admin.model_access_go_open")}
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+/** GrantCell: a tenant's provided-route grant and month, read-only. */
+function GrantCell({ slug }: { slug: string }) {
+  const tr = useT();
+  const { load } = useProvided(
+    `api/admin/tenants/${encodeURIComponent(slug)}/provided-routes/deployment`,
+    parseProvidedTenant,
+  );
+  if (!load) return <span className="muted">{tr("common.loading")}</span>;
+  if (load.state !== "ok") return <span className="admin-hint warn">{tr("admin.prov_load_failed")}</span>;
+  const v = load.value;
+  if (!v.granted) return <span className="muted">{tr("admin.prov_grant_off")}</span>;
+  return <Usage used={v.spent_micro + v.reserved_micro} of={v.ceiling_micro} spent={v.spent_micro} />;
+}
+
+/** AdminTenantsTable: every tenant's restrictions and grant on the per-tenant view, opened from
+ *  each row on the tenant's own page. */
+function AdminTenantsTable({
+  tenants,
+  provided,
+  onOpen,
+}: {
+  tenants: Tenant[];
+  provided: boolean;
+  onOpen?: (slug: string) => void;
+}) {
+  const tr = useT();
+  const active = useViewActive();
+  const [opened, setOpened] = useState(false);
+  const [shown, setShown] = useState(TENANT_PAGE);
+  useEffect(() => {
+    if (active) setOpened(true);
+  }, [active]);
+  return (
+    <section className="admin-panel model-access-caps">
+      <h4>{tr("admin.model_access_view_tenants")}</h4>
+      <p className="admin-hint">{tr("admin.model_access_tenants_note")}</p>
+      {tenants.length === 0 ? (
+        <p className="muted">{tr("admin.model_access_no_tenants")}</p>
+      ) : (
+        opened && (
+          <>
+            <table className="admin-table prov-members mpol-tenants">
+              <thead>
+                <tr>
+                  <th>{tr("admin.model_access_tenant")}</th>
+                  <th>{tr("admin.model_access_col_cap")}</th>
+                  <th>{tr("admin.model_access_col_own")}</th>
+                  {provided && <th>{tr("admin.model_access_view_provided")}</th>}
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {tenants.slice(0, shown).map((t) => (
+                  <TenantRow key={t.slug} tenant={t} provided={provided} onOpen={onOpen} />
+                ))}
+              </tbody>
+            </table>
+            {tenants.length > shown && (
+              <button type="button" className="btn sm" onClick={() => setShown((n) => n + TENANT_PAGE)}>
+                {tr("admin.prov_grants_more", { n: Math.min(TENANT_PAGE, tenants.length - shown) })}
+              </button>
+            )}
+          </>
+        )
+      )}
+    </section>
   );
 }
 
@@ -113,7 +202,7 @@ function OverviewLink({ view, label }: { view: string; label: string }) {
 /** AdminOverview: who decides what across the deployment, top first, in plain lines (#4380 P-7):
  *  the operator setting, the restriction for all tenants, the per-tenant restrictions, and the
  *  provided-route source. Each points at the view where it is changed. */
-function AdminOverview({ view }: { view: DeploymentPolicyView }) {
+function AdminOverview({ view, source }: { view: DeploymentPolicyView; source: SourceRead }) {
   const tr = useT();
   const words = (rule: RouteRule, ceiling: boolean) =>
     layerClauses(tr, summarizeLayer(rule, ceiling), false).join(tr("tenant.mpol_clause_sep"));
@@ -149,16 +238,16 @@ function AdminOverview({ view }: { view: DeploymentPolicyView }) {
           </li>
         </ol>
       </section>
-      <ProvidedSourceLine />
+      <ProvidedSourceLine read={source} />
     </>
   );
 }
 
 /** ProvidedSourceLine: the provided-route source's state for the overview. Nothing where the CP
  *  does not serve provided routes; a failed read says so and claims no state. */
-function ProvidedSourceLine() {
+function ProvidedSourceLine({ read }: { read: SourceRead }) {
   const tr = useT();
-  const { load } = useProvided(SOURCE_PATH, parseSource);
+  const { load } = read;
   if (load?.state === "off") return null;
   if (!load) {
     // Held in place while the source is read, so the overview does not shift under the reader.
@@ -194,18 +283,19 @@ function ProvidedSourceLine() {
   );
 }
 
-export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
+export function AdminModelAccessView({
+  tenants,
+  onOpenTenant,
+}: {
+  tenants: Tenant[];
+  onOpenTenant?: (slug: string) => void;
+}) {
   const tr = useT();
   const { view, failed, load } = useDeploymentRoutePolicy();
-  const [slug, setSlug] = useState(tenants[0]?.slug ?? "");
-  const shownSlug = tenants.some((t) => t.slug === slug) ? slug : (tenants[0]?.slug ?? "");
-  const [opened, setOpened] = useState<string[]>([]);
-  // The tenants opened so far, the shown one included, among those that still exist.
-  const visited = [...new Set([...opened, shownSlug])].filter((t) => t && tenants.some((x) => x.slug === t));
-  useEffect(() => {
-    if (shownSlug) setOpened((o) => (o.includes(shownSlug) ? o : [...o, shownSlug]));
-  }, [shownSlug]);
-  const [provided, setProvided] = useState(false);
+  // One read of the deployment source for the overview's line and the provided view's card.
+  const source = useSourceRead();
+  // Whether the CP serves provided routes: only its plain 404 says no; a failed read keeps the tab.
+  const provided = !!source.load && source.load.state !== "off";
 
   if (!view) {
     return (
@@ -218,7 +308,7 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
     );
   }
 
-  const overview = <AdminOverview view={view} />;
+  const overview = <AdminOverview view={view} source={source} />;
   const deployment = (
     <section className="admin-panel model-access-deployment">
       <h4>
@@ -239,38 +329,7 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
       />
     </section>
   );
-  // From a provided grant's row: open that tenant on the per-tenant view.
-  const openTenant = (t: string) => setSlug(t);
-  const perTenant = (
-    <section className="admin-panel model-access-caps">
-      <h4>{tr("admin.mpol_layer_tenant_cap")}</h4>
-      <p className="admin-hint">{tr("admin.model_access_caps_note")}</p>
-      {tenants.length === 0 ? (
-        <p className="muted">{tr("admin.model_access_no_tenants")}</p>
-      ) : (
-        <>
-          <label className="admin-fld">
-            <span className="af-cap">{tr("admin.model_access_tenant")}</span>
-            <select value={shownSlug} onChange={(e) => setSlug(e.target.value)}>
-              {tenants.map((t) => (
-                <option key={t.slug} value={t.slug}>
-                  {t.name || t.slug}
-                </option>
-              ))}
-            </select>
-          </label>
-          {/* Every tenant opened here stays mounted, hidden when another is picked: switching
-              tenants (the select, or a grant row's button from another view) never drops an
-              unsaved cap and its refusal, and the view's mark keeps showing it. */}
-          {visited.map((t) => (
-            <div key={t} hidden={t !== shownSlug} data-cap-tenant={t}>
-              <TenantCap slug={t} />
-            </div>
-          ))}
-        </>
-      )}
-    </section>
-  );
+  const perTenant = <AdminTenantsTable tenants={tenants} provided={provided} onOpen={onOpenTenant} />;
   return (
     <>
       {/* Above the views, so D12's and D13's sentences stay on screen whichever view is open. */}
@@ -290,12 +349,7 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
             label: tr("admin.model_access_view_provided"),
             // The deployment's provided-route source (ADR 0129): no tab where the CP does not serve it.
             shown: provided,
-            node: (
-              <>
-                <AdminProvidedSourceView onServed={setProvided} />
-                <AdminProvidedGrantTable tenants={tenants} onOpen={openTenant} />
-              </>
-            ),
+            node: <AdminProvidedSourceCard read={source} />,
           },
         ]}
       />

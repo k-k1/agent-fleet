@@ -809,3 +809,13 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
   generation get pages of their own.
 - With no restriction set, nothing a member does today changes, except that the Anthropic key appears where a
   member would look for it.
+
+## Notes
+
+- 2026-11-17, D16 (#4380, P-8): the per-tenant cap and the provided-route grant are edited on the tenant's own
+  page, not on Admin > Model access. The super_admin opens a tenant from the admin page's per-tenant list (Admin >
+  Tenants > [tenant] > Model access), where the Restrictions tab carries the deployment admin's restriction on the
+  tenant (the cap) above the tenant's own, and the Provided models & budgets tab carries the grant and the tenant's
+  monthly pool. A tenant_admin never sees either card, and the CP still refuses their cap and grant writes. Admin >
+  Model access keeps the ceiling, the deployment-wide policy, the per-tenant list (read-only) and the deployment
+  source. So one tenant's settings are in one place, and the cap has exactly one editor.

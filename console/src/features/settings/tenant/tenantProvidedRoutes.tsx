@@ -22,6 +22,7 @@ import {
   usd,
   usdInput,
   type Load,
+  type GrantInput,
   type MemberInput,
   type PolicyInput,
   type ProvidedMember,
@@ -236,6 +237,77 @@ function TenantProvidedSummary({ view }: { view: ProvidedTenantView }) {
   );
 }
 
+/** GrantEditor: the super_admin's grant to this tenant and the tenant's monthly pool. A tenant
+ *  administrator never gets it: the CP refuses their grant write, and the page does not draw it. */
+function GrantEditor({
+  path,
+  view,
+  peek,
+  onSaved,
+}: {
+  path: string;
+  view: ProvidedTenantView;
+  peek: () => Promise<ProvidedTenantView | null>;
+  onSaved: (warnings: string[]) => void;
+}) {
+  const tr = useT();
+  const [granted, setGranted] = useState(view.granted);
+  const [ceiling, setCeiling] = useState(usdInput(view.ceiling_micro));
+  const { busy, refusal, setRefusal, submit } = useGuardedSave((res) => onSaved(warningsOf(res)));
+  const micro = parseUsd(ceiling);
+  const dirty = granted !== view.granted || micro !== view.ceiling_micro;
+  useReportDirty(dirty);
+  const save = () => {
+    if (micro === undefined) {
+      setRefusal(tr("admin.prov_bad_amount"));
+      return;
+    }
+    const body: GrantInput = { granted, ceiling_micro: micro };
+    submit(
+      async () => {
+        const now = await peek();
+        return now && now.granted === view.granted && now.ceiling_micro === view.ceiling_micro;
+      },
+      () => apiJSON(`${path}/grant`, "PUT", body),
+    );
+  };
+  return (
+    <div className="admin-fgroup prov-grant">
+      <label className="admin-check">
+        <input
+          type="checkbox"
+          checked={granted}
+          disabled={busy}
+          onChange={(e) => {
+            setGranted(e.target.checked);
+            setRefusal(null);
+          }}
+        />
+        {tr("admin.prov_grant")}
+      </label>
+      <label className="admin-fld">
+        <span className="af-cap">{tr("admin.prov_ceiling")}</span>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={ceiling}
+          disabled={busy}
+          onChange={(e) => {
+            setCeiling(e.target.value);
+            setRefusal(null);
+          }}
+        />
+      </label>
+      <Refusal text={refusal} />
+      <div className="admin-actions">
+        <button type="button" className="btn primary" disabled={busy || !dirty} onClick={save}>
+          {tr("admin.mpol_save")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PolicyEditor({
   path,
   view,
@@ -420,8 +492,11 @@ export function TenantProvidedRoutesView({
   slug,
   onServed,
   ruleStops,
+  isSuper = false,
 }: {
   slug: string;
+  /** The caller is the super_admin: the grant card is drawn (ADR 0138 D16, note of 2026-11-17). */
+  isSuper?: boolean;
   onServed?: (served: boolean) => void;
   /** Who the route policy's layers name as stopping the deployment's provided route; empty while
    *  it is allowed, undefined where that is not known. A budget does not reopen it (ADR 0138 D7a:
@@ -472,6 +547,18 @@ export function TenantProvidedRoutesView({
         </div>
       )}
       <TenantProvidedSummary view={view} />
+      {isSuper && (
+        <div className="model-access-provided-grant" data-tenant={slug}>
+          <h5 className="admin-subhead">{tr("admin.prov_grant_title")}</h5>
+          <GrantEditor
+            key={`${view.granted}:${view.ceiling_micro}`}
+            path={path}
+            view={view}
+            peek={peek}
+            onSaved={saved}
+          />
+        </div>
+      )}
       <Warnings list={warnings} />
       <PolicyEditor key={key} path={path} view={view} peek={peek} onSaved={saved} />
       <h5 className="admin-subhead">{tr("admin.prov_members")}</h5>

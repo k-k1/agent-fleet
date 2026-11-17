@@ -130,13 +130,14 @@ const openModelAccess = (admin, view) => `(async () => {
     })()`;
 // visible is an expression true when the selector matches an element no hidden view contains.
 const visible = (sel) => `[...document.querySelectorAll(${JSON.stringify(sel)})].some((el) => !el.closest("[hidden]"))`;
-const modelAccessScene = (name, { admin = false, rules, provided = "off", view = "", verify, ...rest }) => {
+// asSuper opens the tenant page as the deployment administrator, who sees the cap and grant cards.
+const modelAccessScene = (name, { admin = false, asSuper = false, rules, provided = "off", view = "", verify, ...rest }) => {
   const modal = admin ? ".admin-modal" : ".tenant-modal";
   return {
     name,
     guide: true,
     desktop: true,
-    stubEnv: { SHOTS_ADMIN: "1", SHOT_MODEL_ACCESS: rules, SHOT_PROVIDED: provided, ...(admin ? { SHOT_MODEL_ACCESS_SUPER: "1" } : {}) },
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_MODEL_ACCESS: rules, SHOT_PROVIDED: provided, ...(admin || asSuper ? { SHOT_MODEL_ACCESS_SUPER: "1" } : {}) },
     sections: FOCUS_TREE,
     width: 1440,
     height: 900,
@@ -193,6 +194,14 @@ const MODEL_ACCESS_SCENES = [
     view: "restrictions",
     verify: visible('.tenant-modal .model-access-rule [data-field="classes"]'),
   }),
+  // Tenant, opened by the deployment administrator: the cap above the tenant's own restriction.
+  modelAccessScene("mpol-tenant-super", {
+    asSuper: true,
+    rules: "restricted",
+    provided: "granted",
+    view: "restrictions",
+    verify: `(${visible(".tenant-modal [data-cap-editor]")} || ${visible(".tenant-modal .model-access-rule")})`,
+  }),
   // Admin: the overview under a ceiling, with a registered source.
   modelAccessScene("mpol-admin-overview", {
     admin: true,
@@ -213,7 +222,8 @@ const MODEL_ACCESS_SCENES = [
     admin: true,
     rules: "open",
     view: "tenants",
-    verify: visible('.admin-modal .mpol-cap[data-tenant="demo"]'),
+    // Before #4380 P-8 the view held the picked tenant's cap; from it, a table of the tenants.
+    verify: `(${visible('.admin-modal .mpol-tenants [data-tenant="demo"] [data-col="cap"]')} || ${visible('.admin-modal .mpol-cap[data-tenant="demo"]')})`,
   }),
   // Admin: a ceiling, a cap on Demo Team, a registered source granted to it; the source's view.
   modelAccessScene("mpol-admin-provided", {
