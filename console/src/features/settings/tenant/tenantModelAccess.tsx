@@ -116,6 +116,13 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                   routeOptions={routeIds(view.routes.map((r) => r.id))}
                   endpointsMode="hosts"
                   hostState={(h) => view.endpoints.find((e) => e.host === h)}
+                  // The tenant's write is not checked against the ceiling: what the layers above
+                  // forbid is marked, never locked.
+                  above={[
+                    { layer: "ceiling", rule: view.ceiling.rule },
+                    { layer: "deployment", rule: view.deployment.rule },
+                    { layer: "tenant_cap", rule: view.cap.rule },
+                  ]}
                   save={(body) => apiJSON(path, "PUT", body)}
                   onSaved={load}
                 />

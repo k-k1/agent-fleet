@@ -75,6 +75,8 @@ function TenantCap({ slug }: { slug: string }) {
         currentRevision={async () => (await peek())?.cap.revision ?? null}
         routeOptions={routeIds(view.routes.map((r) => r.id))}
         endpointsMode="patterns"
+        ceiling={view.ceiling.rule}
+        above={[{ layer: "deployment", rule: view.deployment.rule }]}
         save={(body) => apiJSON(`${path}/cap`, "PUT", body)}
         onSaved={load}
       />
@@ -140,6 +142,7 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
         currentRevision={currentDeploymentRevision}
         routeOptions={routeIds()}
         endpointsMode="patterns"
+        ceiling={view.ceiling.rule}
         save={(body) => apiJSON(PATH, "PUT", body)}
         onSaved={load}
       />

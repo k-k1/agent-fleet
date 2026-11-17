@@ -437,3 +437,41 @@ describe("admin model access views", () => {
     expect(tab("テナントごと")!.textContent).toBe("テナントごと");
   });
 });
+
+// #4380 P-5b, #4376 item 5: under the operator's ceiling the deployment rule and a cap lock what
+// the ceiling forbids, warn before a save the CP would refuse, and can narrow the draft to fit.
+describe("under the operator setting", () => {
+  it("locks what the ceiling forbids, and marks what the restriction for all tenants stops on a cap", async () => {
+    await mount();
+    const d = within(".model-access-deployment");
+    await click(btnIn(d.querySelector<HTMLElement>('[data-field="classes"]')!, "選んだものだけ許す"));
+    const sub = tickIn(d, "classes", "サブスクリプション・ログイン").closest("label")!;
+    expect(sub.querySelector(".mpol-mark.locked")!.getAttribute("aria-label")).toBe("運用者の設定が禁じています");
+    expect(d.querySelector('[data-field="classes"]')!.textContent).toContain("許したままでは保存できません");
+    const cap = within('.mpol-cap[data-tenant="acme"]');
+    await click(btnIn(cap.querySelector<HTMLElement>('[data-field="destinations"]')!, "選んだものだけ許す"));
+    // The restriction for all tenants allows Anthropic and Amazon Bedrock only: the rest is marked.
+    const google = tickIn(cap, "destinations", "Google").closest("label")!;
+    expect(google.querySelector(".mpol-mark")!.getAttribute("aria-label")).toBe("止めているのは: 全テナント共通の制限");
+    expect(google.querySelector(".mpol-mark.locked")).toBeNull();
+  });
+
+  it("warns before a cap the CP would refuse, and matching it makes a save the CP accepts", async () => {
+    await mount();
+    const cap = within('.mpol-cap[data-tenant="acme"]');
+    // #4376 item 5: a cap that only blocks Cursor's login still allows every subscription the
+    // ceiling forbids, so the CP refuses it.
+    await click(tickIn(cap, "deny", "cursor-login"));
+    const warn = cap.querySelector('[data-testid="exceeds"]')!;
+    expect(warn.textContent).toContain("このままでは保存できません: 運用者の設定が");
+    expect(warn.textContent).toContain("Claude サブスク");
+    expect(apiJSON).not.toHaveBeenCalled();
+    await click(btnIn(warn as HTMLElement, "運用者の設定に合わせる"));
+    expect(cap.querySelector('[data-testid="exceeds"]')).toBeNull();
+    await click(btnIn(cap, "保存"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/route-policy/cap", "PUT", {
+      deny: ["cursor-login"],
+      classes: ["member-key", "member-cloud", "provided", "self-hosted"],
+    });
+  });
+});
