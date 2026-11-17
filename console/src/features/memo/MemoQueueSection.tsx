@@ -481,8 +481,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         toast(err.code?.startsWith("memo_") ? errText(err) : t("common.send_failed"));
         return;
       }
-      if (category.trim() && !catNames.includes(category.trim()))
-        await memoCategoryCreate({ repo: m.repo, name: category.trim() }).catch(() => {});
       bumpMemos();
       toast(t("memo.updated"), { kind: "success" });
     } catch {

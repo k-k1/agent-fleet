@@ -147,7 +147,7 @@ type MemoTxOps interface {
 	FindCategory(repo, name string) (MemoCategory, bool, error)
 	// EnsureCategory makes the category row (repo, name) when the member's repo has none, at
 	// the end of the repo's order, and answers the row. A row that exists is left as it is.
-	// The unique (membership, repo, name) index backs the membership lock: of two creators
+	// Names match exactly, case included. The unique (membership, repo, name) index backs the membership lock: of two creators
 	// the second reads the first's row, and never fails.
 	EnsureCategory(repo, name string) (MemoCategory, error)
 	UpdateCategory(c MemoCategory) error
@@ -368,7 +368,10 @@ func (t memoTx) EnsureCategory(repo, name string) (MemoCategory, error) {
 		c.ID, c.MembershipID, c.Repo, c.Name, c.Position, c.CreatedAt); err != nil {
 		return MemoCategory{}, err
 	}
-	got, _, err := t.FindCategory(repo, name)
+	got, ok, err := t.FindCategory(repo, name)
+	if err == nil && !ok {
+		err = errors.New("store: category row missing right after its insert")
+	}
 	return got, err
 }
 

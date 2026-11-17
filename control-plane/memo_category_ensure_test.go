@@ -96,3 +96,35 @@ func TestMemoCreateSameNewCategoryConcurrently(t *testing.T) {
 		}
 	})
 }
+
+// Moving a note to a new name through an update makes the row too, on every face; an update the
+// queue rules reject leaves none.
+func TestMemoUpdateMakesTheCategoryRow(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		for _, f := range []memoFaceClient{{"console", e}, {"token", e}, {"mcp", e}} {
+			_, m := f.create(textMemo("r", "", "note "+f.name))
+			name := "moved-" + f.name
+			if code, _ := f.update(m.ID, map[string]any{"category": name}); code != http.StatusOK {
+				t.Fatalf("%s update: %d", f.name, code)
+			}
+			n := 0
+			for _, c := range e.categoryRows("r") {
+				if c.Name == name {
+					n++
+				}
+			}
+			if n != 1 {
+				t.Fatalf("%s: %d rows named %q", f.name, n, name)
+			}
+		}
+		_, m := (memoFaceClient{"console", e}).create(textMemo("r", "", "bad"))
+		if code, _ := (memoFaceClient{"console", e}).update(m.ID, map[string]any{"category": "ghost", "body": ""}); code < 400 {
+			t.Fatalf("empty body update: %d", code)
+		}
+		for _, c := range e.categoryRows("r") {
+			if c.Name == "ghost" {
+				t.Fatalf("rejected update left a row: %+v", c)
+			}
+		}
+	})
+}
