@@ -66,8 +66,8 @@ membership 検証（§5.4）。「中継」は CP が呼び出しをそのまま
 | その他 | `GET /api/drawio/stencils*`（CP 側のキャッシュ。[ADR 0046](../decisions/0046-drawio-viewer.ja.md)）・`GET /api/update/status`・`POST /api/update/apply`（native のみ。[ADR 0025](../decisions/0025-native-auto-update.ja.md)）・ログインと OAuth（`/login`・`/login/{slug}`・`/oauth2/{login,callback,logout,link}`）・`GET /healthz` と `GET /readyz`（[09 §9.9](09-deploy.ja.md)）・`/manifest.webmanifest` と `/brand/*`・`/agent-fleet*`（旧ブックマーク向けにルート直下の同じパスへ 302）・`/`（Console）| CP | [07](07-security.ja.md) |
 
 - **`GET /api/events`** はタブごとに 1 本の SSE で、Console の常設ポーリングを置き換える。4 秒ごとに
-  JSON が変わったストリームだけを `data: {"stream": <名前>, "data": <対応する REST の本文>}` で送る。
-  ストリームは `workspace`・`stats`・`sessions`・`notifications`・`workitems`・`engines` で、
+  JSON が変わったストリームだけを `data: {"stream": <名前>, "data": <対応する REST の本文>}` で送る（ただし `provided_routes` の data は購読者自身のテナントの `{"rev": <不透明なダイジェスト>}` だけで、そのテナントの管理者にしか送らない。ダイジェストが変わったら Console は REST のビューを読み直す。[ADR 0129](../decisions/0129-provided-model-routes.ja.md) D3）。
+  ストリームは `workspace`・`stats`・`sessions`・`notifications`・`workitems`・`engines`・`provided_routes` で、
   20 秒黙るとコメントの ping を送る。このルートを持たない CP は 404 を返し、Console は REST の
   ポーリングに戻る。このストリームはアイドル停止の活動に数えない。
 - **長い操作は即答してポーリングする。** Workspace の起動は返った後に状態を見張る。clone と svn

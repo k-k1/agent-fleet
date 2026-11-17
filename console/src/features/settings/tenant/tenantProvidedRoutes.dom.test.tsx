@@ -429,6 +429,20 @@ describe("tenant provided routes follow the events stream", () => {
     expect(host!.querySelector("[role=alert]")).toBeNull();
   });
 
+  it("does not replace a draft being typed: the read is owed until the edits are gone (#4464)", async () => {
+    await mount();
+    const calls = seenCalls();
+    await frame("r1");
+    await type(policy().querySelector<HTMLInputElement>("input")!, "12");
+    api.mockImplementation(() => Promise.resolve({ ...VIEW(), spent_micro: 2_250_000 }));
+    await frame("r2");
+    expect(seenCalls()).toBe(calls);
+    expect(policy().querySelector<HTMLInputElement>("input")!.value).toBe("12");
+    // Saving leaves no draft: the owed read is paid.
+    await click(btn(policy(), "保存"));
+    expect(seenCalls()).toBeGreaterThan(calls);
+  });
+
   it("a hidden view does not read on its own and pays one read when shown", async () => {
     host = document.createElement("div");
     document.body.append(host);

@@ -28,3 +28,9 @@ export function resetProvidedRev(): void {
   last = null;
   listeners.clear();
 }
+
+/** forgetProvidedRev drops the baseline, keeping the listeners: after a tenant switch the next
+ *  frame is another tenant's baseline, not a change. */
+export function forgetProvidedRev(): void {
+  last = null;
+}

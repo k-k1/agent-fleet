@@ -184,8 +184,8 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 		// shape decision 3 forbade for e.ecs.view(). Read ONCE per tick here, not once per
 		// engine row inside enginesMemberPayload.
 		wrote = emit("engines", enginesMemberPayload(ctx, a.engines, memberEngineGateFor(ctx, a.mgr, res.mv))) || wrote
-		// ADR 0129 D3 gate 4: the subscriber's own tenant's provided-route revision, nothing else.
-		if p, ok := providedRoutesPayload(ctx, a.mgr, res.mv.TenantID); ok {
+		// ADR 0129 D3 gate 4: the subscriber's own tenant's provided-route revision, to its admins only.
+		if p, ok := providedRoutesPayload(ctx, a.mgr, res.ident, res.mv.TenantID); ok {
 			wrote = emit("provided_routes", p) || wrote
 		}
 		if wrote {

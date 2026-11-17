@@ -426,7 +426,8 @@ func agentPolicyRefusal(ctx context.Context, st store.Store, tenantID, kind stri
 // revision of the subscriber's own tenant and a frame goes out only when it changed. That also
 // reaches a subscriber on another CP replica, which an in-process publish from the PUT could
 // not. The frame is `{"rev":"<digest>"}` and nothing else: no amounts, ids or names, and it is
-// built from the subscriber's own tenant alone, so it cannot name another tenant's change.
+// built from the subscriber's own tenant alone, so it cannot name another tenant's change; only
+// that tenant's admins (and super_admins) are sent it.
 
 // providedRevisionTTL bounds the per-tenant read the way tenantEngineLimitsTTL does: one query
 // pair per tenant per interval, not per open tab per tick. A save on this replica drops the
@@ -441,10 +442,35 @@ type providedRevisionEntry struct {
 
 var providedRevisionCache sync.Map // tenantID -> *providedRevisionEntry
 
-// providedRoutesPayload is the stream's frame for one tenant. ok is false when the revision
-// cannot be read (a store error drops this tick only) or the subscriber has no tenant.
-func providedRoutesPayload(ctx context.Context, mgr *manager, tenantID string) (map[string]any, bool) {
-	if tenantID == "" || mgr == nil || mgr.store == nil {
+// providedAdminTTL bounds the role check the same way: the frame is a signal about values only
+// tenant admins may read (GET .../provided-routes/deployment is tenant_admin or super_admin), so
+// a plain member must get none, not even its timing.
+const providedAdminTTL = 3 * time.Second
+
+type providedAdminEntry struct {
+	at time.Time
+	ok bool
+}
+
+var providedAdminCache sync.Map // identity id + "/" + tenant id -> providedAdminEntry
+
+func providedAdminFor(ctx context.Context, mgr *manager, ident store.Identity, tenantID string) bool {
+	key := ident.ID + "/" + tenantID
+	if v, ok := providedAdminCache.Load(key); ok {
+		if e := v.(providedAdminEntry); time.Since(e.at) < providedAdminTTL {
+			return e.ok
+		}
+	}
+	ok := mgr.tenantAdminFor(ctx, ident, tenantID)
+	providedAdminCache.Store(key, providedAdminEntry{at: time.Now(), ok: ok})
+	return ok
+}
+
+// providedRoutesPayload is the stream's frame for the subscriber's own tenant. ok is false when
+// the subscriber may not read the tenant's provided routes, has no tenant, or the revision cannot
+// be read (a store error drops this tick only).
+func providedRoutesPayload(ctx context.Context, mgr *manager, ident store.Identity, tenantID string) (map[string]any, bool) {
+	if tenantID == "" || mgr == nil || mgr.store == nil || !providedAdminFor(ctx, mgr, ident, tenantID) {
 		return nil, false
 	}
 	v, _ := providedRevisionCache.LoadOrStore(tenantID, &providedRevisionEntry{})
