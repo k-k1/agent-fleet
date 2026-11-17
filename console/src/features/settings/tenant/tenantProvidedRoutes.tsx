@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errDetail, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useReportDirty } from "../parts/dirtyScope.tsx";
+import { useShowView } from "../parts/tabbedViews.tsx";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import {
   isOff,
@@ -114,7 +115,7 @@ export function Warnings({ list }: { list: string[] }) {
 export const warningsOf = (res: { warnings?: unknown }) =>
   Array.isArray(res.warnings) ? res.warnings.filter((w): w is string => typeof w === "string") : [];
 
-const approx = (micro: number) => "≈ " + usd(micro);
+export const approx = (micro: number) => "≈ " + usd(micro);
 
 /** ProvidedSpend: the tenant's grant, ceiling and this month's spend, read-only. */
 export function ProvidedSpend({ view }: { view: ProvidedTenantView }) {
@@ -174,7 +175,7 @@ function Reservations({ view }: { view: ProvidedTenantView }) {
 
 /** Usage: an amount against its limit as text and a bar. The bar counts what is held for calls in
  *  flight too, the way admission does (ADR 0129 D4); without a limit only the text is shown. */
-function Usage({ used, of, spent }: { used: number; of: number | null; spent: number }) {
+export function Usage({ used, of, spent }: { used: number; of: number | null; spent: number }) {
   const tr = useT();
   if (of === null || of <= 0) return <>{approx(spent)}</>;
   return (
@@ -431,6 +432,7 @@ export function TenantProvidedRoutesView({
   const path = `api/admin/tenants/${encodeURIComponent(slug)}/provided-routes/deployment`;
   const { load, reload, peek } = useProvided(path, parseProvidedTenant);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const showRestrictions = useShowView("restrictions");
   // Whether the CP serves provided routes at all, for a page that gives them a tab: a failed read
   // is served (its "could not be read" line has to be reachable), only the plain 404 is not.
   useEffect(() => {
@@ -460,9 +462,14 @@ export function TenantProvidedRoutesView({
       <h4>{tr("admin.prov_title")}</h4>
       <p className="admin-hint">{tr("admin.prov_note")}</p>
       {ruleStops && (
-        <p className="admin-hint warn prov-banner" data-testid="prov-rule-stops">
-          {tr("tenant.prov_rule_stops", { who: ruleStops })}
-        </p>
+        <div className="admin-hint warn prov-banner" data-testid="prov-rule-stops">
+          <p>{tr("tenant.prov_rule_stops", { who: ruleStops })}</p>
+          {showRestrictions && (
+            <button type="button" className="btn sm" onClick={showRestrictions}>
+              {tr("tenant.prov_see_restrictions")}
+            </button>
+          )}
+        </div>
       )}
       <TenantProvidedSummary view={view} />
       <Warnings list={warnings} />

@@ -193,6 +193,14 @@ const MODEL_ACCESS_SCENES = [
     view: "restrictions",
     verify: visible('.tenant-modal .model-access-rule [data-field="classes"]'),
   }),
+  // Admin: the overview under a ceiling, with a registered source.
+  modelAccessScene("mpol-admin-overview", {
+    admin: true,
+    rules: "restricted",
+    provided: "granted",
+    // Before #4380 P-7 the overview was the ceiling's panel alone.
+    verify: `(${visible('.admin-modal [data-layer="ceiling"]')} || ${visible(".admin-modal .model-access-ceiling")})`,
+  }),
   // Admin: the restriction for all tenants under an operator setting (the deployment editor).
   modelAccessScene("mpol-admin-deployment", {
     admin: true,
