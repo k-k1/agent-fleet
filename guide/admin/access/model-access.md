@@ -43,7 +43,7 @@ The page has a tab for each part: **Overview**, **Restrictions** and, where the 
 
 1. Open **Tenant settings → Operations → Model access**
 2. On **Overview**, read **Who restricts what**: one line for each of the three restrictions above yours (the operator, and your deployment's administrator for all tenants and for this tenant), then your own
-3. On **Restrictions**, under **This tenant's restriction**, set:
+3. On **Restrictions**, under **This tenant's restriction**, start from one of the **Common choices** if one fits (**No restriction**, **No subscriptions**, **No plan logins**, **Amazon Bedrock only**, **Provided models only**). A choice only fills in the fields below and is marked ✓ while the fields match it; your servers are left as they are. Then set:
    - **Type of credential**: **No limit (new ones too)**, or **Only these** with the types you allow. Each type says what it covers
    - **Where prompts go**: **No limit (new ones too)**, or **Only these** with the destinations you allow
    - Under **Individual changes** (closed until you open it), **Allowed individually**: a route your types or destinations would forbid, which you still allow. "No subscriptions except Copilot" is the type restriction plus Copilot here
@@ -51,6 +51,7 @@ The page has a tab for each part: **Overview**, **Restrictions** and, where the 
 4. Press **Save**
 
 **Only these** with nothing ticked allows nothing; it is not the same as **No limit**.
+An option marked ⚠ is stopped by a restriction above yours: ticking it does not let members use it. Hover the mark to see who stops it.
 Routes are shown by name; hover one for the id the Control Plane's refusals use.
 When the Control Plane refuses a restriction, the reason is shown above the button and your edits stay, so you can correct the one value.
 Every save is recorded in the audit log with the restriction before and after ([Read the audit log](../audit.md)).
@@ -116,7 +117,7 @@ The admin modal's **Deployment → Model access** has the restrictions above the
 - **Provided models**, where the deployment pays for Bedrock: the **Source (the IAM role that calls Amazon Bedrock)**, its Region and models, and **Use this source**. Switching it off keeps its spend and sessions on record
 - On **Per tenant**, under each tenant, **Grant to this tenant and monthly pool**: **Grant to this tenant** with the **Tenant's monthly pool (dollars)**. A grant needs a pool above zero
 
-These editors refuse a restriction that would allow something the operator setting forbids.
+These editors mark with 🔒 what the operator setting forbids. A restriction that would still allow any of it cannot be saved, and the editor says so before you press **Save**, naming what it would allow. **Match the operator setting** narrows the fields to what the operator setting allows, so it can be saved: for example a tenant restriction that only blocks Cursor's login gets the operator setting's destinations as well. It never widens anything and does not save. On a tenant's restriction, options the restriction for all tenants stops are marked ⚠.
 Their **Self-hosted servers that may be approved** name the host patterns a tenant may approve, one row each: an exact host or `*.example.com`. **No limit** leaves the restriction above in charge; **Only these** with no pattern lets no host be approved.
 
 ## Related

@@ -9,6 +9,7 @@ import { useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { useReportDirty } from "../parts/dirtyScope.tsx";
+import { PRESETS, applyPreset, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
 import {
   ROUTE_CLASSES,
   ROUTE_DESTINATIONS,
@@ -153,6 +154,112 @@ export function RuleSummary({ rule, ceiling = false }: { rule: RouteRule; ceilin
 const toggle = (l: string[], v: string, on: boolean) =>
   on ? [...l.filter((x) => x !== v), v] : l.filter((x) => x !== v);
 
+interface Mark {
+  /** The operator's ceiling forbids it on this write: the CP refuses a save that allows it. */
+  locked: boolean;
+  /** The layers above that leave it out. */
+  by: string[];
+}
+
+function MarkIcon({ mark }: { mark: Mark | undefined }) {
+  const tr = useT();
+  if (!mark) return null;
+  const text = mark.locked ? tr("admin.mpol_locked") : tr("admin.mpol_hidden_by", { layers: layersLabel(tr, mark.by) });
+  return (
+    <span className={"mpol-mark" + (mark.locked ? " locked" : "")} role="img" aria-label={text} title={text}>
+      {mark.locked ? " 🔒" : " ⚠"}
+    </span>
+  );
+}
+
+const PRESET_KEY = {
+  none: "admin.mpol_preset_none",
+  no_subscriptions: "admin.mpol_preset_no_subscriptions",
+  no_plan_logins: "admin.mpol_preset_no_plan_logins",
+  bedrock_only: "admin.mpol_preset_bedrock_only",
+  provided_only: "admin.mpol_preset_provided_only",
+} as const;
+
+/** Presets: ADR 0138 §6's configurations as buttons that fill in the draft. The one the draft
+ *  already equals is pressed. */
+function Presets({
+  base,
+  draft,
+  disabled,
+  onPick,
+}: {
+  base: RouteRule;
+  draft: RuleDraft;
+  disabled: boolean;
+  onPick: (d: RuleDraft) => void;
+}) {
+  const tr = useT();
+  const now = ruleFromDraft(base, draft);
+  return (
+    <div className="admin-fgroup mpol-presets" data-field="presets">
+      <span className="admin-subhead">{tr("admin.mpol_presets")}</span>
+      <div className="mpol-preset-row">
+        {PRESETS.map((p) => {
+          const next = applyPreset(draft, p.key);
+          const on = ruleEqual(ruleFromDraft(base, next), now);
+          return (
+            <button
+              key={p.key}
+              type="button"
+              className="btn sm mpol-preset"
+              aria-pressed={on}
+              data-preset={p.key}
+              disabled={disabled}
+              onClick={() => onPick(next)}
+            >
+              {tr(PRESET_KEY[p.key])}
+              {on && " ✓"}
+            </button>
+          );
+        })}
+      </div>
+      <p className="admin-hint">{tr("admin.mpol_presets_hint")}</p>
+    </div>
+  );
+}
+
+// A long list of routes is cut, so the warning stays one line.
+function namesOf(tr: Tr, ids: string[]): string {
+  const shown = ids.slice(0, 4).map((id) => tMaybe("cred.route." + id) ?? id);
+  const sep = tr("tenant.mpol_list_sep");
+  return ids.length > 4 ? tr("admin.mpol_and_more", { list: shown.join(sep), n: ids.length - 4 }) : shown.join(sep);
+}
+
+/** Exceeds warns, before a save, that the CP would refuse the draft under the operator's ceiling
+ *  (route_policy_exceeds_ceiling), and offers to narrow the draft to fit. */
+function Exceeds({
+  body,
+  ceiling,
+  disabled,
+  onMatch,
+}: {
+  body: RouteRule;
+  ceiling: RouteRule;
+  disabled: boolean;
+  onMatch: () => void;
+}) {
+  const tr = useT();
+  const x = exceeds(body, ceiling);
+  if (x.routes.length + x.endpoints.length === 0) return null;
+  return (
+    <div className="mpol-exceeds" data-testid="exceeds">
+      {x.routes.length > 0 && <p className="admin-hint warn">{tr("admin.mpol_exceeds_routes", { list: namesOf(tr, x.routes) })}</p>}
+      {x.endpoints.length > 0 && (
+        <p className="admin-hint warn">{tr("admin.mpol_exceeds_endpoints", { list: x.endpoints.join(tr("tenant.mpol_list_sep")) })}</p>
+      )}
+      <button type="button" className="btn" disabled={disabled} onClick={onMatch}>
+        {tr("admin.mpol_match")}
+      </button>
+      <p className="admin-hint">{tr("admin.mpol_match_hint")}</p>
+    </div>
+  );
+}
+
 /** AllOrOnly: the "every value" / "only these" choice and, under "only these", one tick per
  *  value. Ticking nothing under "only these" is a real rule (none allowed), not the same as all. */
 function AllOrOnly({
@@ -163,6 +270,7 @@ function AllOrOnly({
   options,
   label,
   describe,
+  markOf,
   disabled,
   onChange,
 }: {
@@ -174,10 +282,14 @@ function AllOrOnly({
   label: (v: string) => string;
   /** One line under a value saying what it covers; nothing for a value without one. */
   describe?: (v: string) => string | undefined;
+  /** What already stops a value above this layer: the ceiling the CP enforces on this write
+   *  ("locked", a save allowing it is refused), or the layers that leave it out. */
+  markOf?: (v: string) => Mark | undefined;
   disabled: boolean;
   onChange: (all: boolean, values: string[]) => void;
 }) {
   const tr = useT();
+  const marks = options.map((o) => markOf?.(o));
   return (
     <fieldset className="admin-fgroup mpol-field" data-field={name}>
       <legend className="admin-subhead">{legend}</legend>
@@ -215,12 +327,15 @@ function AllOrOnly({
               />
               <span>
                 {label(o)}
+                <MarkIcon mark={marks[options.indexOf(o)]} />
                 {describe?.(o) && <span className="mpol-desc">{describe(o)}</span>}
               </span>
             </label>
           ))}
         </div>
       )}
+      {!all && marks.some((m) => m?.locked) && <p className="admin-hint">{tr("admin.mpol_locked_note")}</p>}
+      {!all && marks.some((m) => m && !m.locked) && <p className="admin-hint">{tr("admin.mpol_stopped_note")}</p>}
     </fieldset>
   );
 }
@@ -368,6 +483,8 @@ export function RuleEditor({
   routeOptions,
   endpointsMode,
   hostState,
+  ceiling,
+  above = [],
   save,
   onSaved,
 }: {
@@ -382,6 +499,11 @@ export function RuleEditor({
   endpointsMode: "patterns" | "hosts";
   /** A stored host's effect (the tenant page's endpoint decisions); undefined for one not saved. */
   hostState?: (host: string) => HostState | undefined;
+  /** The operator's ceiling, where the CP checks this write against it (the deployment rule and a
+   *  cap): its forbidden options are locked and an exceeding draft is warned about before saving. */
+  ceiling?: RouteRule;
+  /** The layers above whose narrowing stops an option without refusing the save, top first. */
+  above?: readonly { layer: string; rule: RouteRule }[];
   save: (body: RouteRule) => Promise<unknown>;
   onSaved: () => void;
 }) {
@@ -427,8 +549,15 @@ export function RuleEditor({
     }
   };
 
+  const markFor = (field: "classes" | "destinations") => (v: string) => {
+    if (ceiling?.[field] !== undefined && !ceiling[field]!.includes(v)) return { locked: true, by: ["ceiling"] };
+    const by = stoppedBy(above, field, v);
+    return by.length > 0 ? { locked: false, by } : undefined;
+  };
+
   return (
     <div className="mpol-editor">
+      <Presets base={base} draft={draft} disabled={busy} onPick={(d) => edit(d)} />
       <AllOrOnly
         name="classes"
         legend={tr("admin.mpol_classes")}
@@ -437,6 +566,7 @@ export function RuleEditor({
         options={withExtra(ROUTE_CLASSES, base.classes)}
         label={(c) => classLabel(tr, c)}
         describe={(c) => classDesc(tr, c)}
+        markOf={markFor("classes")}
         disabled={busy}
         onChange={(all, classes) => edit({ classesAll: all, classes })}
       />
@@ -447,6 +577,7 @@ export function RuleEditor({
         values={draft.destinations}
         options={withExtra(ROUTE_DESTINATIONS, base.destinations)}
         label={(d) => destLabel(tr, d)}
+        markOf={markFor("destinations")}
         disabled={busy}
         onChange={(all, destinations) => edit({ destinationsAll: all, destinations })}
       />
@@ -526,6 +657,7 @@ export function RuleEditor({
           />
         )}
       </fieldset>
+      {ceiling && <Exceeds body={body} ceiling={ceiling} disabled={busy} onMatch={() => edit(matchCeiling(draft, ceiling))} />}
       {refusal && (
         <p className="admin-hint warn" role="alert">
           {tr("admin.mpol_refused", { reason: refusal })}

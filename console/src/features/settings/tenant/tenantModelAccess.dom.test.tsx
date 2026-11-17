@@ -326,6 +326,57 @@ describe("restrictions editor", () => {
   });
 });
 
+// #4380 P-5b: presets fill in the draft, and options the layers above stop are marked. The
+// tenant's own write is not checked against the ceiling, so nothing is locked here.
+describe("restrictions help", () => {
+  const preset = (key: string) => host!.querySelector<HTMLButtonElement>(`.model-access-rule [data-preset="${key}"]`)!;
+
+  it("fills in the draft from a preset and marks it as the current one", async () => {
+    await mount();
+    expect(preset("none").getAttribute("aria-pressed")).toBe("false");
+    await click(preset("no_subscriptions"));
+    expect(preset("no_subscriptions").getAttribute("aria-pressed")).toBe("true");
+    expect(preset("no_plan_logins").getAttribute("aria-pressed")).toBe("false");
+    expect(tickIn("classes", "サブスクリプション・ログイン").checked).toBe(false);
+    expect(tickIn("destinations", "opencode.ai").checked).toBe(false);
+    // Nothing is sent until Save.
+    expect(apiJSON).not.toHaveBeenCalled();
+    await click(button("保存")!);
+    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", {
+      endpoints: ["llm.corp.example"],
+      future: "kept",
+      classes: ["member-key", "member-cloud", "provided", "self-hosted"],
+      destinations: [
+        "anthropic",
+        "openai",
+        "google",
+        "meta",
+        "github",
+        "cursor",
+        "kiro",
+        "openrouter",
+        "sakana",
+        "aws-bedrock",
+        "af-engine",
+        "self-hosted",
+      ],
+    });
+  });
+
+  it("marks what the layers above stop, and locks nothing on the tenant's own rule", async () => {
+    await mount();
+    await click(segBtn("classes", "選んだものだけ許す"));
+    const sub = tickIn("classes", "サブスクリプション・ログイン").closest("label")!;
+    expect(sub.querySelector(".mpol-mark")!.getAttribute("aria-label")).toBe(
+      "止めているのは: 運用者の設定（変更不可）",
+    );
+    expect(sub.querySelector(".mpol-mark.locked")).toBeNull();
+    expect(tickIn("classes", "メンバーの API キー").closest("label")!.querySelector(".mpol-mark")).toBeNull();
+    expect(field("classes").textContent).toContain("上の制限が止めています");
+    expect(host!.querySelector('.model-access-rule [data-testid="exceeds"]')).toBeNull();
+  });
+});
+
 // What members can use, on a CP without `owners`: only the hidden items can be named, with the
 // guarantees of the list it replaces (#4368): every layer named, per route, and never "nothing is
 // hidden" from a missing or partial answer.

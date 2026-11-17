@@ -1199,6 +1199,36 @@
   font-size: 12px;
 }
 
+/* #4380 P-5b: the presets, the marks on options stopped above, and the warning before a save the
+ * operator setting would refuse. */
+.mpol-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.mpol-preset[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mpol-mark {
+  margin-left: 2px;
+  color: var(--warn);
+}
+
+.mpol-exceeds {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+}
+
+.mpol-exceeds > p {
+  margin: 0 0 6px;
+}
+
 .mpol-individual > summary {
   cursor: pointer;
   font-weight: 600;

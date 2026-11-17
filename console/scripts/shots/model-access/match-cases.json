@@ -1,0 +1,735 @@
+{
+ "cases": [
+  {
+   "ceilingRaw": "destinations=-openrouter,-sakana;endpoints=*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example"
+    ]
+   },
+   "rule": {},
+   "matched": {
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=-openrouter,-sakana;endpoints=*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example"
+    ]
+   },
+   "rule": {
+    "deny": [
+     "cursor-login"
+    ]
+   },
+   "matched": {
+    "deny": [
+     "cursor-login"
+    ],
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=-openrouter,-sakana;endpoints=*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example"
+    ]
+   },
+   "rule": {
+    "classes": [
+     "member-key"
+    ],
+    "except": [
+     "openrouter-api"
+    ]
+   },
+   "matched": {
+    "classes": [
+     "member-key"
+    ],
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=-openrouter,-sakana;endpoints=*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example"
+    ]
+   },
+   "rule": {
+    "classes": [
+     "subscription",
+     "member-key"
+    ]
+   },
+   "matched": {
+    "classes": [
+     "subscription",
+     "member-key"
+    ],
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=-openrouter,-sakana;endpoints=*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example"
+    ]
+   },
+   "rule": {
+    "destinations": [
+     "openrouter",
+     "anthropic"
+    ]
+   },
+   "matched": {
+    "destinations": [
+     "anthropic"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=-openrouter,-sakana;endpoints=*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example"
+    ]
+   },
+   "rule": {
+    "destinations": [
+     "anthropic"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "*.other.example"
+    ]
+   },
+   "matched": {
+    "destinations": [
+     "anthropic"
+    ],
+    "endpoints": [
+     "*.corp.example"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=-openrouter,-sakana;endpoints=*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example"
+    ]
+   },
+   "rule": {
+    "endpoints": [
+     "llm.corp.example"
+    ]
+   },
+   "matched": {
+    "endpoints": [
+     "llm.corp.example"
+    ],
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=aws-bedrock",
+   "ceiling": {
+    "destinations": [
+     "aws-bedrock"
+    ]
+   },
+   "rule": {},
+   "matched": {
+    "destinations": [
+     "aws-bedrock"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=aws-bedrock",
+   "ceiling": {
+    "destinations": [
+     "aws-bedrock"
+    ]
+   },
+   "rule": {
+    "deny": [
+     "cursor-login"
+    ]
+   },
+   "matched": {
+    "deny": [
+     "cursor-login"
+    ],
+    "destinations": [
+     "aws-bedrock"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=aws-bedrock",
+   "ceiling": {
+    "destinations": [
+     "aws-bedrock"
+    ]
+   },
+   "rule": {
+    "classes": [
+     "member-key"
+    ],
+    "except": [
+     "openrouter-api"
+    ]
+   },
+   "matched": {
+    "classes": [
+     "member-key"
+    ],
+    "destinations": [
+     "aws-bedrock"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=aws-bedrock",
+   "ceiling": {
+    "destinations": [
+     "aws-bedrock"
+    ]
+   },
+   "rule": {
+    "classes": [
+     "subscription",
+     "member-key"
+    ]
+   },
+   "matched": {
+    "classes": [
+     "subscription",
+     "member-key"
+    ],
+    "destinations": [
+     "aws-bedrock"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=aws-bedrock",
+   "ceiling": {
+    "destinations": [
+     "aws-bedrock"
+    ]
+   },
+   "rule": {
+    "destinations": [
+     "openrouter",
+     "anthropic"
+    ]
+   },
+   "matched": {
+    "destinations": []
+   }
+  },
+  {
+   "ceilingRaw": "destinations=aws-bedrock",
+   "ceiling": {
+    "destinations": [
+     "aws-bedrock"
+    ]
+   },
+   "rule": {
+    "destinations": [
+     "anthropic"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "*.other.example"
+    ]
+   },
+   "matched": {
+    "destinations": [],
+    "endpoints": []
+   }
+  },
+  {
+   "ceilingRaw": "destinations=aws-bedrock",
+   "ceiling": {
+    "destinations": [
+     "aws-bedrock"
+    ]
+   },
+   "rule": {
+    "endpoints": [
+     "llm.corp.example"
+    ]
+   },
+   "matched": {
+    "endpoints": [],
+    "destinations": [
+     "aws-bedrock"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=-subscription",
+   "ceiling": {
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   },
+   "rule": {},
+   "matched": {
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=-subscription",
+   "ceiling": {
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   },
+   "rule": {
+    "deny": [
+     "cursor-login"
+    ]
+   },
+   "matched": {
+    "deny": [
+     "cursor-login"
+    ],
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=-subscription",
+   "ceiling": {
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   },
+   "rule": {
+    "classes": [
+     "subscription",
+     "member-key"
+    ]
+   },
+   "matched": {
+    "classes": [
+     "member-key"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=-subscription",
+   "ceiling": {
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   },
+   "rule": {
+    "destinations": [
+     "openrouter",
+     "anthropic"
+    ]
+   },
+   "matched": {
+    "destinations": [
+     "openrouter",
+     "anthropic"
+    ],
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=-subscription",
+   "ceiling": {
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   },
+   "rule": {
+    "destinations": [
+     "anthropic"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "*.other.example"
+    ]
+   },
+   "matched": {
+    "destinations": [
+     "anthropic"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "*.other.example"
+    ],
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=-subscription",
+   "ceiling": {
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   },
+   "rule": {
+    "endpoints": [
+     "llm.corp.example"
+    ]
+   },
+   "matched": {
+    "endpoints": [
+     "llm.corp.example"
+    ],
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=provided",
+   "ceiling": {
+    "classes": [
+     "provided"
+    ]
+   },
+   "rule": {},
+   "matched": {
+    "classes": [
+     "provided"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=provided",
+   "ceiling": {
+    "classes": [
+     "provided"
+    ]
+   },
+   "rule": {
+    "deny": [
+     "cursor-login"
+    ]
+   },
+   "matched": {
+    "deny": [
+     "cursor-login"
+    ],
+    "classes": [
+     "provided"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=provided",
+   "ceiling": {
+    "classes": [
+     "provided"
+    ]
+   },
+   "rule": {
+    "classes": [
+     "member-key"
+    ],
+    "except": [
+     "openrouter-api"
+    ]
+   },
+   "matched": {
+    "classes": []
+   }
+  },
+  {
+   "ceilingRaw": "classes=provided",
+   "ceiling": {
+    "classes": [
+     "provided"
+    ]
+   },
+   "rule": {
+    "classes": [
+     "subscription",
+     "member-key"
+    ]
+   },
+   "matched": {
+    "classes": []
+   }
+  },
+  {
+   "ceilingRaw": "classes=provided",
+   "ceiling": {
+    "classes": [
+     "provided"
+    ]
+   },
+   "rule": {
+    "destinations": [
+     "openrouter",
+     "anthropic"
+    ]
+   },
+   "matched": {
+    "destinations": [
+     "openrouter",
+     "anthropic"
+    ],
+    "classes": [
+     "provided"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=provided",
+   "ceiling": {
+    "classes": [
+     "provided"
+    ]
+   },
+   "rule": {
+    "destinations": [
+     "anthropic"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "*.other.example"
+    ]
+   },
+   "matched": {
+    "destinations": [
+     "anthropic"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "*.other.example"
+    ],
+    "classes": [
+     "provided"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=provided",
+   "ceiling": {
+    "classes": [
+     "provided"
+    ]
+   },
+   "rule": {
+    "endpoints": [
+     "llm.corp.example"
+    ]
+   },
+   "matched": {
+    "endpoints": [
+     "llm.corp.example"
+    ],
+    "classes": [
+     "provided"
+    ]
+   }
+  }
+ ]
+}
