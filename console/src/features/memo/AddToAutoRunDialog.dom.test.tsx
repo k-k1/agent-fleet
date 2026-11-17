@@ -9,11 +9,13 @@ import type { MemoCategory, MemoInput } from "../../types/memo.ts";
 import type { Repo } from "../repos/store.ts";
 
 let servedCats: MemoCategory[] = [];
+let servedMemos: { repo: string; category: string }[] = [];
 let servedQueues: unknown = { tenantEnabled: true, queues: [] };
 const memoCreate = vi.fn(async (_i: MemoInput): Promise<Record<string, unknown>> => ({ id: "new" }));
 vi.mock("./api.ts", () => ({
   memoCategoryList: async () => servedCats,
   memoQueueList: async () => servedQueues,
+  memoList: async () => servedMemos,
   memoCreate: (i: MemoInput) => memoCreate(i),
 }));
 
@@ -75,6 +77,7 @@ async function press() {
 
 beforeEach(() => {
   servedCats = [];
+  servedMemos = [];
   servedQueues = { tenantEnabled: true, queues: [] };
   memoCreate.mockClear();
   memoCreate.mockResolvedValue({ id: "new" });
@@ -129,6 +132,37 @@ describe("the picker", () => {
     expect(document.body.textContent).toContain(t("memo.addrun_plain_hint"));
     await choose(sel(t("memo.addrun_category")), "c2");
     expect(document.body.textContent).not.toContain(t("memo.addrun_plain_hint"));
+  });
+});
+
+describe("a category that exists only as the name on notes", () => {
+  it("is offered below the table's categories as an ordinary one, and files the note under its name", async () => {
+    servedCats = [cat("c1", "plain", { position: 0 }), cat("c2", "runs", { queue: true, position: 1 })];
+    servedMemos = [
+      { repo: "app", category: "runs" },
+      { repo: "app", category: "legacy" },
+      { repo: "app", category: "" },
+      { repo: "web", category: "elsewhere" },
+    ];
+    servedQueues = { tenantEnabled: false, queues: [queue("c2", true)] };
+    await open([repo("app"), repo("web")], "app");
+    const groups = [...sel(t("memo.addrun_category")).querySelectorAll("optgroup")];
+    expect([...groups[0].querySelectorAll("option")].map((o) => o.textContent)).toEqual([`runs — ${t("memo.autorun_badge")}`]);
+    expect([...groups[1].querySelectorAll("option")].map((o) => o.textContent)).toEqual(["plain", "legacy"]);
+
+    const legacy = [...groups[1].querySelectorAll("option")][1].value;
+    await choose(sel(t("memo.addrun_category")), legacy);
+    expect(document.body.textContent).toContain(t("memo.addrun_plain_hint"));
+    await press();
+    expect(memoCreate.mock.calls[0][0]).toMatchObject({ repo: "app", category: "legacy" });
+  });
+
+  it("does not turn the organization's auto-run notice on when it is the only category", async () => {
+    servedMemos = [{ repo: "app", category: "legacy" }];
+    servedQueues = { tenantEnabled: false, queues: [] };
+    await open([repo("app")], "app");
+    expect(document.body.textContent).not.toContain(t("memo.waiting_tenant_off"));
+    expect(document.body.textContent).not.toContain(t("memo.addrun_no_category"));
   });
 });
 

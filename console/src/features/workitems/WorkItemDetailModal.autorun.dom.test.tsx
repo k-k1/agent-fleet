@@ -8,6 +8,7 @@ vi.mock("./api.ts", async (orig) => ({ ...(await orig<typeof import("./api.ts")>
 const memoCreate = vi.fn(async (_i: unknown): Promise<Record<string, unknown>> => ({ id: "n" }));
 vi.mock("../memo/api.ts", () => ({
   memoCategoryList: async () => [{ id: "c1", repo: "app", name: "runs", position: 0, createdAt: "", queue: true }],
+  memoList: async () => [],
   memoQueueList: async () => ({ tenantEnabled: true, queues: [] }),
   memoCreate: (i: unknown) => memoCreate(i),
 }));
