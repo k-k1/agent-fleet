@@ -42,7 +42,7 @@ A route is usable only when every layer allows it. Nothing you allow can reopen 
 The page has a tab for each part: **Overview**, **Restrictions** and, where the deployment offers provided routes, **Provided models & budgets**. The sentences on when a change applies stay above the tabs. Switching tabs keeps what you have not saved, and a tab with unsaved changes is marked with ●.
 
 1. Open **Tenant settings → Operations → Model access**
-2. On **Overview**, read **What the deployment allows**: the three layers above yours, and the routes they leave to your rule
+2. On **Overview**, read **Who restricts what**: one line for each of the three layers above yours (the operator, and your deployment's administrator for all tenants and for this tenant), then your own
 3. On **Restrictions**, under **This tenant's rule**, set:
    - **Classes of credential**: **All**, or **Only these** with the classes you allow
    - **Destinations**: **All**, or **Only these** with the destinations you allow
@@ -62,22 +62,22 @@ A member's own llama.cpp, or another endpoint they type in, cannot be vouched fo
 2. Press **Save**
 
 A host is approved only while every layer above lets it through, and a vendor's host is never approvable.
-**Approved self-hosted endpoints, in effect**, on **Overview**, lists each host you entered and, for one that is not approved, which layer keeps it out.
+On **Overview**, the **This tenant** line of **Who restricts what** lists each host you entered with ✔ or ✖ and, for one that is not approved, who keeps it out.
 Allowing the class and the destination **Self-hosted** is what lets members use an approved endpoint.
 
 ## Find out why members cannot see something
 
-**What the policy hides**, on **Overview**, lists the agents, image providers and assistant chat backends your members no longer see because none of their routes is allowed.
-Each one names the layers that hide it, and each of its routes names its own: an agent can be hidden by two layers at once, one forbidding each of its routes.
+**What members can use**, on **Overview**, has one row for each agent, image provider and assistant chat backend: ✔ when members can use it on at least one route, ✖ when it is hidden from them because none of its routes is allowed.
+Open a row to see its routes, each with ✔ or ✖ and, for one that is not allowed, who stops it. An agent can be stopped by two people at once, one forbidding each of its routes. Hover a route's name for the id the Control Plane's refusals use.
 
 | What the list shows | Means |
 |---|---|
-| Items with their layers | Those are hidden from every member of the tenant. To bring one back, every layer named for at least one of its routes has to allow it |
-| **These layers hide nothing.** | No agent, image provider or chat backend is hidden by the layers above |
-| A line saying the list could not be read | The Control Plane did not answer it. This is not the same as "nothing is hidden" |
+| ✔ with "Usable on 3 of its 4 routes" | Members see it with only the routes left |
+| ✖ with who stops it | It is hidden from every member of the tenant. To bring it back, everyone named for at least one of its routes has to allow it |
+| Only the hidden items, with a line saying so | The Control Plane is older and does not say what each agent can use |
+| A line saying the list could not be read | The Control Plane did not answer it. This is not the same as "everything is usable" |
 
-An agent that keeps at least one allowed route is not listed: members see it with only the routes left.
-Members' own switches (an agent a member turned off for themselves) are not in this list, because they live in the member's workspace and the Control Plane cannot see them.
+Members' own switches (an agent a member turned off for themselves) are not on this list, because they live in the member's workspace and the Control Plane cannot see them.
 
 ## Set members' budgets for provided routes
 
@@ -110,7 +110,7 @@ The admin modal's **Deployment → Model access** has the layers above the tenan
 
 - **Overview**: the **Deployment ceiling (operator)**, read-only, with the value the deployment was started with
 - **Restrictions for all tenants**: the **Deployment rule**, for every tenant
-- **Per tenant**: the **Tenant cap** of each tenant: choose the tenant, then edit its cap. That tenant's own rule is shown below it, read-only, followed by what the policy hides from that tenant
+- **Per tenant**: the **Tenant cap** of each tenant: choose the tenant, then edit its cap. That tenant's own rule is shown below it, read-only, followed by **What the policy hides** from that tenant: each hidden agent, image provider or chat backend with the layers that hide it
 - **Provided models**, where the deployment pays for Bedrock: the **Provided-route source**, the IAM role the stack created, its Region and models, and **Use this source**. Switching it off keeps its spend and sessions on record
 - On **Per tenant**, under each tenant, the **Provided-route grant**: **Grant to this tenant** with the **Tenant's monthly ceiling (dollars)**. A grant needs a ceiling above zero
 

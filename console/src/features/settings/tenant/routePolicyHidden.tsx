@@ -23,7 +23,7 @@ const PROVIDER_KEY = {
 
 // kindDisplayName falls back to Claude for a kind it does not know, so an id outside the
 // registry is shown as itself rather than under another harness's name.
-function ownerName(tr: Tr, id: string): string {
+export function ownerName(tr: Tr, id: string): string {
   if (Object.hasOwn(PROVIDER_KEY, id)) return tr(PROVIDER_KEY[id as keyof typeof PROVIDER_KEY]);
   return (SESSION_KINDS as readonly string[]).includes(id) ? kindDisplayName(id) : id;
 }

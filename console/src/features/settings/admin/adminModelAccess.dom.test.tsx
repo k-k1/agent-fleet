@@ -96,6 +96,22 @@ describe("admin model access", () => {
     expect(c.querySelectorAll("input, textarea, button").length).toBe(0);
   });
 
+  it("pairs every label in a rule summary with its value, unrestricted layers included", async () => {
+    await mount();
+    // The grid lays the list out two cells per row, so one unpaired dt or dd shifts every row
+    // below it onto the wrong value (#4376). The ceiling restricts; the acme tenant's rule does not.
+    const lists = [within(".model-access-ceiling dl"), within('.mpol-cap[data-tenant="acme"] dl')];
+    for (const dl of lists) {
+      const tags = Array.from(dl.children).map((c) => c.tagName);
+      expect(tags.length % 2).toBe(0);
+      tags.forEach((t, i) => expect(t).toBe(i % 2 === 0 ? "DT" : "DD"));
+      expect(Array.from(dl.querySelectorAll("dd")).every((dd) => dd.textContent !== "")).toBe(true);
+    }
+    const head = within('.mpol-cap[data-tenant="acme"]').querySelector(".mpol-summary-head");
+    expect(head?.textContent).toBe("制限なし");
+    expect(head?.closest("dl")).toBeNull();
+  });
+
   it("saves the deployment rule to its own path, keeping the fields not edited", async () => {
     await mount();
     const d = within(".model-access-deployment");

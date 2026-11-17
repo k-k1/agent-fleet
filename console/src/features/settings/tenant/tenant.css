@@ -1191,6 +1191,53 @@
   margin-top: 6px;
 }
 
+/* What members can use (tenant Overview, #4380 P-4): one row per agent, image provider and chat
+ * backend, which opens onto its routes. */
+.mpol-use {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.mpol-use > li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.mpol-use summary {
+  cursor: pointer;
+}
+
+.mpol-use .mpol-routes {
+  list-style: none;
+  padding-left: 22px;
+}
+
+.mpol-ok {
+  color: var(--ok);
+}
+
+/* Who restricts what: one line per layer, top first. */
+.mpol-who {
+  margin: 4px 0 0;
+  padding-left: 22px;
+  font-size: 13px;
+}
+
+.mpol-who > li + li {
+  margin-top: 6px;
+}
+
+.mpol-hosts {
+  margin-top: 2px;
+  font-size: 12.5px;
+}
+
+.mpol-host + .mpol-host {
+  margin-left: 12px;
+}
+
 /* The provided-route members table at phone width: one card per member, each value under its
  * column's name (data-label), so no column is cut off past the screen's edge. */
 @media (max-width: 760px) {
