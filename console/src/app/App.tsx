@@ -6,7 +6,6 @@
 // the per-tenant sync effect loads that tenant's layout. History (back/forward)
 // traverses layout states.
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
 import { useRetryLoad } from "../lib/retryLoad.ts";
 import { reloadCloudProfiles } from "./cloudProfilesReload.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
@@ -18,7 +17,6 @@ import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspac
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireKeys } from "../features/keys/dispatcher.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
-import type { RailView as RailViewId } from "../core/store/leftRail.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { wireAttentionBeacon } from "../lib/attention.ts";
 import { disposeAllBrowsers, resetBrowserRuntime, wireBrowserReconcile } from "../features/browser/service.ts";
@@ -54,8 +52,8 @@ import { applyTenantAppearance, watchOtherTabs, getSettings, hydrateUIPrefs, ref
 import { getTenant, getUser } from "../core/api/client.ts";
 import { MOBILE_QUERY, coarsePointer, useIsMobile } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
-import { WorkingSetBar } from "./WorkingSetBar.tsx";
 import { ActivityBar } from "./ActivityBar.tsx";
+import { RailView } from "./RailView.tsx";
 import { wireRailReveals } from "./activity/reveals.ts";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
@@ -544,6 +542,7 @@ export function App() {
   // A stored choice of the schedules view outlives the scheduler being switched off; show the
   // default view rather than an empty pane.
   const railView = storedRailView === "schedules" && !schedulerEnabled ? "sessions" : storedRailView;
+  const railShown = isMobile ? navOpen : leftOpen;
 
   if (notProvisioned) return <NotProvisioned />;
 
@@ -597,17 +596,17 @@ export function App() {
             away, so every view is one click from anywhere; on a phone the two slide out
             together as the drawer. */}
         <nav className="app-side">
-          <ActivityBar view={railView} shown={isMobile ? navOpen : leftOpen} foldable={!isMobile} schedulerEnabled={schedulerEnabled} />
-          {/* One view at a time (ADR 0140). All of them stay mounted — a section's poller,
-              its draft and its scroll position live in the section — and only the chosen
-              one is displayed. */}
+          <ActivityBar view={railView} shown={railShown} foldable={!isMobile} schedulerEnabled={schedulerEnabled} />
+          {/* One view at a time (ADR 0140). Once mounted a view stays mounted — a section's
+              poller, its draft and its scroll position live in the section — and only the
+              chosen one is displayed. */}
           <div className="app-rail">
             {/* Working sets (docs/log/52): pinned OUTSIDE the scroll area so the active scope
                 stays visible however far the view scrolls. On every view the set narrows —
                 a view that lost rows to a scope with no switcher in sight cannot be widened
                 from where the member is looking — and rendered for a stopped workspace too
                 (the switcher works without the agent). */}
-            <RailView id="sessions" active={railView} scoped>
+            <RailView id="sessions" active={railView} shown={railShown} scoped>
               {workspaceRunning ? (
                 <>
                   <SoloSection>
@@ -626,7 +625,7 @@ export function App() {
                 </>
               )}
             </RailView>
-            <RailView id="assistant" active={railView} scoped>
+            <RailView id="assistant" active={railView} shown={railShown} scoped>
               <SoloSection>
                 {workspaceRunning ? (
                   <AssistantSection />
@@ -638,24 +637,27 @@ export function App() {
             {/* Shown for a stopped workspace too, and that is the point (docs/log/80): it
                 reads the CP's cache, which is what makes waking a stopped Workspace from a
                 ticket work. */}
-            <RailView id="workitems" active={railView}>
+            <RailView id="workitems" active={railView} shown={railShown}>
               <SoloSection>
                 <WorkItemsSection />
               </SoloSection>
             </RailView>
-            <RailView id="memo" active={railView}>
+            <RailView id="memo" active={railView} shown={railShown}>
               <SoloSection>
                 <MemoQueueSection />
               </SoloSection>
             </RailView>
             {schedulerEnabled && (
-              <RailView id="schedules" active={railView} scoped>
+              <RailView id="schedules" active={railView} shown={railShown} scoped>
                 <SoloSection>
                   <SchedulesSection />
                 </SoloSection>
               </RailView>
             )}
-            <RailView id="files" active={railView} scoped>
+            {/* Mounted on first show: the tree reads the Workspace's file system, and a load
+                that pays for a view nobody opened was a burst big enough to stall every other
+                connection to the Console (#4426). */}
+            <RailView id="files" active={railView} shown={railShown} scoped lazy>
               <SoloSection>
                 {workspaceRunning ? <FilesSection /> : <StoppedRailSection id="files" title={tr("ui.files")} icon="files" />}
               </SoloSection>
@@ -694,16 +696,6 @@ export function App() {
       <WhichKey />
       <CommandPalette />
       <CheatSheet />
-    </div>
-  );
-}
-
-// One view of the left pane. Hidden rather than unmounted while another view is on screen.
-function RailView({ id, active, scoped, children }: { id: RailViewId; active: RailViewId; scoped?: boolean; children: ReactNode }) {
-  return (
-    <div className="rail-view" data-rail-view={id} hidden={id !== active}>
-      {scoped && <WorkingSetBar />}
-      <div className="app-rail-scroll">{children}</div>
     </div>
   );
 }
