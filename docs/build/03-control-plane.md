@@ -298,8 +298,8 @@ Memos you accumulate and send to a session in one go (the tables are
   deleted) and `releasedBy: "tidy"`. *Operations*: the model's reply is `{"operations":[merge|split|move|keep ...]}`;
   `control-plane/internal/memotidy` is the pure validator (every bound a named constant: at most 80 operations,
   2 to 10 merge sources, 2 to 5 split parts, texts of 1 byte to 16 KiB, a merge or the parts of a split at most
-  1 KiB longer than their sources, at most 40 messages read and 100 destinations offered per run, 10 runs a day) and refuses the whole reply on one violation. A merge or a split
-  (an input over 40 messages or an offer over 100 destinations drops the whole run with reason `bad_shape`) takes plain text notes only (no file, attachment or reference) and a merge only sources of one group, the group being
+  1 KiB longer than their sources, at most 40 messages read and 100 destinations offered per run, 10 runs a day) and refuses the whole reply on one violation.
+  An input over 40 messages or an offer over 100 destinations drops the whole run with reason `bad_shape`. A merge or a split takes plain text notes only (no file, attachment or reference) and a merge only sources of one group, the group being
   (provenance, producer, producer origin) with a `curator` message read by its `source_provenance`. *Apply*
   (`memoTidyApply` in `memo_tidy.go`, one `MemoTx`): every input message must still be in the queue, `pending`
   (`pending` or `held` for the manual trigger), unsent, unclaimed, not in a flush, with the hash the run read, else
