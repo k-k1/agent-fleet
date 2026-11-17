@@ -417,14 +417,19 @@
 .repo-info {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  row-gap: 2px;
   min-width: 0;
 }
 /* Name + inline branch share the flexible slot; each ellipsizes on its own so a
    long branch can't push the chips/badges off the row. */
 .repo-id {
-  flex: 1;
+  /* The 9em basis is what the name is guaranteed before the chips/badges (flex:none) wrap to a
+     second line. Without it a row with several chips crushed the name to a few letters under
+     them (measured: "webshop" clipped, a worktree's branch cut to "fea" with the chips over it). */
+  flex: 1 1 9em;
   min-width: 0;
   display: inline-flex;
   align-items: center;
@@ -433,7 +438,7 @@
 /* Holds .repo-id plus, on a folded node, the session summary line under it. Takes over the
    flexible slot .repo-id had; the chips and badges stay centred beside both lines. */
 .repo-lines {
-  flex: 1;
+  flex: 1 1 9em;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -614,25 +619,31 @@
     pointer-events: auto;
   }
 }
-/* Touch layout: the launch button lives in-flow (no hover overlay), and the
-   trailing cluster (chips / sess badge / ords / launch) is all flex:none — a busy
-   row overflows the narrow phone drawer, crushing .repo-id to width 0 (the name
-   then paints under the chips) and pushing the launch button past .app-rail-scroll's
-   overflow-x clip, where it cannot be tapped. Wrap instead: the cluster drops
-   to a second line, right-aligned, and the buttons get a taller tap target. */
+/* Touch layout: the launch button lives in-flow (no hover overlay). The name and Launch share
+   the first line and the chips / badges / ords always take the second one, so a busy row never
+   pushes Launch under the name or past .app-rail-scroll's overflow-x clip, where it cannot be
+   tapped. The ::after is the forced line break; the buttons get a taller tap target. */
 @media (hover: none) {
-  .repo-info {
-    flex-wrap: wrap;
-    row-gap: 2px;
-  }
-  /* auto basis (not 0%) so the name claims its content width on line 1 and the
-     overflowing trailing items wrap below, instead of squeezing to nothing. */
   .repo-id,
   .repo-lines {
-    flex: 1 1 auto;
+    order: 1;
   }
   .launch-wrap {
+    order: 2;
     margin-left: auto;
+  }
+  .repo-info::after {
+    content: "";
+    order: 3;
+    flex: 0 0 100%;
+    height: 0;
+    margin-top: -2px; /* cancels row-gap when no chips follow, so a bare row stays one line tall */
+  }
+  .repo-state,
+  .unread-dot,
+  .repo-sess-badge,
+  .repo-ords {
+    order: 4;
   }
   .launch-main,
   .launch-caret {
