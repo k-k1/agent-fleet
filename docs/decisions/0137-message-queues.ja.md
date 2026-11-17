@@ -716,3 +716,13 @@ run は 1 つで、Control Plane のプロセスをまたいで保たれる（�
 自動の claim は pending のまま残し（`no_tidy_at`、待ちの理由 `no_tidy`）、送信は wake のあとにマーカーを確かめる。しきい値の
 キューは予約が draining にするので、merge でしきい値を下回っても発火する。コードと上限と `no_tidy_at` を消すものは
 docs/build/03-control-plane.md にある。
+
+2026-11-17 追記（#4152、段 5、slice S5、手動実行）: Console の整理に操作が加わり、手動の経路のまま残る。1 つの自動実行の
+カテゴリの中で選んだメモには、アシスタント（`POST /api/chat/ask`）が merge・split・move・keep を提案し、プレビューが
+それぞれを整理前と整理後、そのメモがどうなるかとともに見せ、承認で `POST /api/memo-tidy/apply`（Console だけ）を 1 回
+送る。この route は移動先を自動実行と同じ関数で決め、手動 trigger で apply を呼び、run 一覧に出て取り消せる run を 1 つ
+記録する。人の承認は何も release しない。効果は自動実行とまったく同じで、実行待ちと承認待ちが混ざった元はプレビューで
+断られ、`held` は `held` のまま。プレビュー後の変化は 409 `memo_tidy_stale`、断られた提案は検証の code つきの 400
+`memo_tidy_invalid` で、Control Plane がすべてもう一度確かめる。手動の run は 1 日の上限で断られず、自動実行の 10 回も
+減らさない（上限はモデル呼び出しを抑えるもので、この経路は呼ばない）。操作できない選択（複数のカテゴリ、ふつうの
+カテゴリ）は、これまでどおり `PATCH` による 1 件ずつの整形のまま。route とその code は docs/build/03-control-plane.md にある。

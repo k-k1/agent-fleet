@@ -1,15 +1,20 @@
 // MemoTidyModal (docs/log/21 memo tidy-up) — hands the selected memos to a stateless assistant
 // turn that returns cleaned text + a suggested category per memo, previews old→new, and on
 // approval PATCHes the changes. We never auto-apply — a bad tidy shouldn't need undo.
+// A selection inside one auto-run category is the operations dialog's (MemoTidyOpsModal): merge,
+// split and move go through the Control Plane as one run that can be undone. This file keeps the
+// in-place tidy for every other selection.
 import { useEffect, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { useT } from "../../lib/i18n/index.ts";
+import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { askAssistant } from "../chat/api.ts";
 import { memoUpdate } from "./api.ts";
-import type { Memo } from "../../types/memo.ts";
+import { MemoTidyOpsModal } from "./MemoTidyOpsModal.tsx";
+import { planSelection } from "./tidyOps.ts";
+import type { Memo, MemoCategory } from "../../types/memo.ts";
 
 interface TidyRow {
   id: string;
@@ -19,7 +24,48 @@ interface TidyRow {
 
 interface MemoTidyModalProps {
   memos: Memo[]; // the selected memos to tidy
+  categories: MemoCategory[]; // tells which category runs by itself
   onDone: () => void; // applied → refetch
+  onReload?: () => void; // refetch and stay open: the notes changed under the preview
+  onClose: () => void;
+}
+
+export function MemoTidyModal({ memos, categories, onDone, onReload, onClose }: MemoTidyModalProps) {
+  const tr = useT();
+  const plan = planSelection(memos, categories);
+  if (plan.mode === "ops") {
+    return (
+      <MemoTidyOpsModal
+        memos={memos}
+        category={plan.category}
+        categories={categories}
+        onDone={onDone}
+        onReload={onReload ?? onDone}
+        onClose={onClose}
+      />
+    );
+  }
+  if (plan.mode === "blocked") {
+    return (
+      <Modal title={tr("memo.tidyop_title")} onClose={onClose} className="memo-tidy-modal">
+        <div className="ui-modal-body">
+          <div className="ui-field-hint warn">⚠ {tr(plan.reason, { count: plan.count ?? 0 })}</div>
+        </div>
+        <footer className="ui-modal-foot">
+          <Button variant="primary" onClick={onClose}>
+            {tr("common.close")}
+          </Button>
+        </footer>
+      </Modal>
+    );
+  }
+  return <InPlaceTidyModal memos={memos} notice={plan.notice} onDone={onDone} onClose={onClose} />;
+}
+
+interface InPlaceProps {
+  memos: Memo[];
+  notice?: MsgKey;
+  onDone: () => void;
   onClose: () => void;
 }
 
@@ -66,7 +112,7 @@ function parseTidyReply(reply: string): TidyRow[] {
     }));
 }
 
-export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
+function InPlaceTidyModal({ memos, notice, onDone, onClose }: InPlaceProps) {
   const toast = useToast();
   const tr = useT();
   const [loading, setLoading] = useState(true);
@@ -152,6 +198,7 @@ export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
   return (
     <Modal title={tr("sx.tidy_title")} onClose={onClose} className="memo-tidy-modal" lockClose={busy}>
       <div className="ui-modal-body">
+        {notice && <div className="ui-field-hint warn">⚠ {tr(notice)}</div>}
         {loading ? (
           <div className="ui-field-hint">{tr("sx.tidy_loading")}</div>
         ) : err ? (

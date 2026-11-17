@@ -508,4 +508,7 @@ export const errors = {
   "err.invalid_source": "送り元の登録内容を Control Plane が受け付けませんでした。",
   "err.invalid_input": "その金額や設定を Control Plane が受け付けませんでした。",
   "err.no_member": "このテナントにそのメンバーはいません。",
+  "err.memo_tidy_stale": "表示したあとに内容が変わったメモがあるため、何も反映していません。もう一度整理してください。",
+  "err.memo_tidy_invalid": "整理の提案が受け付けられなかったため、何も変更していません。",
+  "err.memo_tidy_busy": "別の整理が進行中です。少し待ってからもう一度お試しください。",
 };

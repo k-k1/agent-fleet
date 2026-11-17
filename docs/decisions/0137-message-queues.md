@@ -766,3 +766,15 @@ sendable only to an Agent that shows `queueTidy`: by itself the claim leaves it 
 `no_tidy`), and the send checks the marker after its wake. A threshold queue is made draining by the reservation, so a merge
 that leaves fewer than its threshold still fires. The codes, the bounds and what clears `no_tidy_at` are in
 docs/build/03-control-plane.md.
+
+Added 2026-11-17 (#4152, step 5, slice S5, the manual path): the Console's Tidy gains the operations and stays the manual
+path. For a selection inside one auto-run category the assistant (`POST /api/chat/ask`) proposes merge, split, move and
+keep, the preview shows each as a before and after with what it means for the note, and the approval sends one
+`POST /api/memo-tidy/apply` (Console only), which offers the destinations by the same function as the automatic run, calls
+apply with the manual trigger and records one run the run list shows and undo takes back. The person's approval releases
+nothing: the effects are exactly the automatic run's, so a mix of waiting and approval-pending sources is refused in the
+preview and a held note stays held. A change since the preview is a 409 `memo_tidy_stale`, a refused proposal a 400
+`memo_tidy_invalid` with the validator's code, and the Control Plane checks everything again. A manual run is never refused
+by the daily cap and no longer uses up the automatic run's 10: the cap bounds model calls and this path makes none. The
+selection that cannot be operated on (several categories, an ordinary category) keeps the one-by-one rewrite by `PATCH`.
+The route and its codes are in docs/build/03-control-plane.md.

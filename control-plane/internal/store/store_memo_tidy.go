@@ -50,8 +50,10 @@ type MemoTidyRun struct {
 type MemoTidyStore interface {
 	// ListMemoTidyRuns returns a queue's newest runs, at most limit.
 	ListMemoTidyRuns(ctx context.Context, membershipID, queueID string, limit int) ([]MemoTidyRun, error)
-	// CountMemoTidyRunsSince counts the runs of a queue created at or after since, whatever
-	// their outcome: the daily cap counts every run that was reserved.
+	// CountMemoTidyRunsSince counts the automatic runs of a queue created at or after since,
+	// whatever their outcome: the daily cap counts every automatic run that was reserved. A manual
+	// run is a person's own press, calls no model and is never refused, so it does not use the
+	// automatic run's budget.
 	CountMemoTidyRunsSince(ctx context.Context, queueID, since string) (int, error)
 	// MemoTidyRead runs f with the reads that decide whether a run can be undone, outside a
 	// transaction and without the membership's lock: the run list is polled and must not queue
@@ -121,7 +123,7 @@ func (s *SQL) ListMemoTidyRuns(ctx context.Context, membershipID, queueID string
 
 func (s *SQL) CountMemoTidyRunsSince(ctx context.Context, queueID, since string) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memo_tidy_run WHERE queue_id=? AND created_at>=?`, queueID, since).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memo_tidy_run WHERE queue_id=? AND created_at>=? AND trigger<>'manual'`, queueID, since).Scan(&n)
 	return n, err
 }
 
@@ -160,7 +162,7 @@ func (t memoTx) RunningTidyRun() (MemoTidyRun, bool, error) {
 
 func (t memoTx) CountTidyRunsSince(queueID, since string) (int, error) {
 	var n int
-	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_tidy_run WHERE queue_id=? AND created_at>=?`, queueID, since).Scan(&n)
+	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_tidy_run WHERE queue_id=? AND created_at>=? AND trigger<>'manual'`, queueID, since).Scan(&n)
 	return n, err
 }
 

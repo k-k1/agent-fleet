@@ -415,6 +415,19 @@ func (r *memoQueueRunner) tidyRequest(ctx context.Context, job *memoTidyJob) (me
 	if cerr != nil || qerr != nil {
 		return req, []string{} // no destination is offered: the model can only merge, split and keep
 	}
+	req.Destinations = memoTidyDestinations(job.c, job.q.TidyDestinations, cats, queues)
+	offered := make([]string, 0, len(req.Destinations))
+	for _, d := range req.Destinations {
+		offered = append(offered, d.ID)
+	}
+	return req, offered
+}
+
+// memoTidyDestinations is what a tidy of queue own may move a message to, for the automatic run and
+// the manual Tidy alike: the queue's listed destinations first, then the categories of its own
+// repository, queues or not, at most MaxDestinations. The queue itself and a category whose label
+// the Agent would refuse are never offered. The result is never nil.
+func memoTidyDestinations(own store.MemoCategory, listed []string, cats []store.MemoCategory, queues []store.MemoQueue) []memoTidyWireDest {
 	isQueue := map[string]bool{}
 	for _, q := range queues {
 		isQueue[q.CategoryID] = true
@@ -423,31 +436,27 @@ func (r *memoQueueRunner) tidyRequest(ctx context.Context, job *memoTidyJob) (me
 	for _, c := range cats {
 		byID[c.ID] = c
 	}
-	offered := []string{}
+	out := []memoTidyWireDest{}
+	seen := map[string]bool{}
 	add := func(c store.MemoCategory) {
 		name := c.Repo + "/" + c.Name
-		if c.ID == job.c.ID || !tidyLabelOK(name) || len(offered) >= memotidy.MaxDestinations {
+		if c.ID == own.ID || seen[c.ID] || !tidyLabelOK(name) || len(out) >= memotidy.MaxDestinations {
 			return
 		}
-		for _, id := range offered {
-			if id == c.ID {
-				return
-			}
-		}
-		offered = append(offered, c.ID)
-		req.Destinations = append(req.Destinations, memoTidyWireDest{ID: c.ID, Name: name, Queue: isQueue[c.ID]})
+		seen[c.ID] = true
+		out = append(out, memoTidyWireDest{ID: c.ID, Name: name, Queue: isQueue[c.ID]})
 	}
-	for _, id := range job.q.TidyDestinations {
+	for _, id := range listed {
 		if c, ok := byID[id]; ok {
 			add(c)
 		}
 	}
 	for _, c := range cats {
-		if c.Repo == job.c.Repo {
+		if c.Repo == own.Repo {
 			add(c)
 		}
 	}
-	return req, offered
+	return out
 }
 
 // tidyLabelOK is the Agent's rule for a label: short, valid UTF-8, no control character.

@@ -512,4 +512,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.invalid_source": "The Control Plane did not accept the source's registration.",
   "err.invalid_input": "The Control Plane did not accept that amount or setting.",
   "err.no_member": "That member is not in this tenant.",
+  "err.memo_tidy_stale": "A note changed after it was shown, so nothing was applied. Tidy again.",
+  "err.memo_tidy_invalid": "The tidy proposal was refused, so nothing was changed.",
+  "err.memo_tidy_busy": "Another tidy is in progress. Wait a moment and try again.",
 };
