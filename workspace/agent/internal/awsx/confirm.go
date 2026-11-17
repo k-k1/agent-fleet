@@ -299,13 +299,17 @@ func ConfirmGate(o ConfirmOptions) (ConfirmResult, error) {
 		}
 		return nil
 	}
-	// granted is checked only after stale: a grant for what the run planned does not count once
-	// the session or Settings moved on, even when it was there before the run started.
+	// granted reads the grants first and Settings after, so a grant that is seen was written
+	// before the Settings read that judges it. The other order lets a grant land between the
+	// two reads and confirm a run whose Settings changed before that grant. A grant for what the
+	// run planned does not count once the session or Settings moved on, even when it was there
+	// before the run started.
 	granted := func() (ConfirmResult, bool, error) {
+		ok, relayed := allGranted(inc, targets, time.Now())
 		if err := stale(); err != nil {
 			return ConfirmResult{}, false, err
 		}
-		if ok, relayed := allGranted(inc, targets, time.Now()); ok {
+		if ok {
 			return ConfirmResult{Confirmed: true, OutsideConsole: !relayed}, true, nil
 		}
 		return ConfirmResult{}, false, nil
