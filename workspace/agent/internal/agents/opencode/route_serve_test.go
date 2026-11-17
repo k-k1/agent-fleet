@@ -183,48 +183,84 @@ func TestRouteServeIsTheSessionsOwn(t *testing.T) {
 	}
 }
 
-// A server that dies on its own is forgotten, and the next ensure starts a new one.
+// A server that dies on its own is forgotten, and the next ensure starts a new one. The kernel may
+// hand the replacement the port the dead server freed, so "replaced" is judged by the registered
+// server, its process and its generation, never by a different address.
 func TestRouteServeIsReplacedAfterItDies(t *testing.T) {
-	isolatedHome(t)
-	useMajor(t, 2)
-	useFakeRouteServe(t)
-	g := &fakeGateway{}
-	withGateway(t, g)
-	m := managedBedrockMeta(t, "oc_route2")
-	addr, gen, err := ensureRouteServe(m)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { stopRouteServe(m.Name, "test") })
-	rs := routeServeOf(m.Name)
-	// A handle on it, so the death is a crash of a running session and not a start's leftover.
-	h := &threadHandle{name: m.Name, routed: true, alive: true, addr: addr, events: make(chan agents.Event, 64)}
-	handlesMu.Lock()
-	handles[m.Name] = h
-	handlesMu.Unlock()
-	t.Cleanup(func() { forgetHandle(m.Name, h) })
-	_ = rs.cmd.Process.Kill()
-	select {
-	case <-rs.done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the dead server was not reaped")
-	}
-	if routeServeOf(m.Name) != nil || len(agents.RuntimeRoots(m.Name)) != 0 {
-		t.Fatal("a dead server is still registered")
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	for g.revokedCount() == 0 && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	if g.revokedCount() == 0 {
-		t.Fatal("a dead server's route token was not ended")
-	}
-	addr2, gen2, err := ensureRouteServe(m)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if addr2 == addr || gen2 <= gen {
-		t.Fatalf("replacement = %q gen %d, after %q gen %d", addr2, gen2, addr, gen)
+	for _, tc := range []struct {
+		name      string
+		samePort  bool
+		sessionID string
+	}{
+		{"any port", false, "oc_route2"},
+		{"same port as the dead server", true, "oc_route2b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolatedHome(t)
+			useMajor(t, 2)
+			useFakeRouteServe(t)
+			g := &fakeGateway{}
+			withGateway(t, g)
+			m := managedBedrockMeta(t, tc.sessionID)
+			addr, gen, err := ensureRouteServe(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { stopRouteServe(m.Name, "test") })
+			rs := routeServeOf(m.Name)
+			oldPid := rs.cmd.Process.Pid
+			// A handle on it, so the death is a crash of a running session and not a start's leftover.
+			h := &threadHandle{name: m.Name, routed: true, alive: true, addr: addr, events: make(chan agents.Event, 64)}
+			handlesMu.Lock()
+			handles[m.Name] = h
+			handlesMu.Unlock()
+			t.Cleanup(func() { forgetHandle(m.Name, h) })
+			_ = rs.cmd.Process.Kill()
+			select {
+			case <-rs.done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the dead server was not reaped")
+			}
+			if routeServeOf(m.Name) != nil || len(agents.RuntimeRoots(m.Name)) != 0 {
+				t.Fatal("a dead server is still registered")
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for g.revokedCount() == 0 && time.Now().Before(deadline) {
+				time.Sleep(20 * time.Millisecond)
+			}
+			if g.revokedCount() == 0 {
+				t.Fatal("a dead server's route token was not ended")
+			}
+			if tc.samePort {
+				_, port, _ := strings.Cut(strings.TrimPrefix(addr, "http://"), ":")
+				old := freeLoopbackPort
+				freeLoopbackPort = func() (string, error) { return port, nil }
+				t.Cleanup(func() { freeLoopbackPort = old })
+			}
+			addr2, gen2, err := ensureRouteServe(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.samePort && addr2 != addr {
+				t.Fatalf("test setup: replacement at %q, want the dead server's %q", addr2, addr)
+			}
+			rs2 := routeServeOf(m.Name)
+			if rs2 == nil || rs2 == rs || rs2.addr != addr2 || rs2.gen != gen2 {
+				t.Fatalf("registered server %+v is not a new one at %q gen %d", rs2, addr2, gen2)
+			}
+			if gen2 <= gen {
+				t.Fatalf("replacement gen %d, after gen %d", gen2, gen)
+			}
+			if rs2.cmd.Process.Pid == oldPid {
+				t.Fatalf("replacement is the old process %d", oldPid)
+			}
+			if alive(oldPid) {
+				t.Fatalf("the dead server's process %d is still alive", oldPid)
+			}
+			if !healthy(addr2) {
+				t.Fatal("the replacement does not answer")
+			}
+		})
 	}
 }
 
