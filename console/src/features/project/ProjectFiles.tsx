@@ -1148,7 +1148,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       >
         {!running ? (
           <EmptyState icon="debug-disconnect" title={tr("mirror.ws_stopped")} />
-        ) : searchMode ? (
+        ) : searchMode && !otherTenant ? (
           searching && !searchRows ? (
             <EmptyState icon="loading" title={tr("start.searching")} />
           ) : displayRows.length === 0 ? (
