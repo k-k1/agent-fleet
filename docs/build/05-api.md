@@ -87,7 +87,9 @@ agent unchanged (§5.3). "CP" means the CP answers it itself, usually from its d
   a `: keepalive` comment every 20 s, and one final frame
   `data: {"status": <the status>, "body": <the JSON body>}`. Without that header they answer
   plain JSON (the MCP `ask_assistant` tool relies on this). The CP relays them
-  through its flushing stream proxy (`httpx.HeldOpen` on the agent side).
+  through its flushing stream proxy (`httpx.HeldOpen` on the agent side). The agent reads the request
+  body (at most 2 MiB, else a 413 final frame) before the stream starts, because its HTTP/1 server
+  drops an unread body once the headers are written.
 - `GET /api/workspace/stats` answers `{running: true, mem_used, mem_max?, cpu_pct?,
   oom_kill_total?, oom_recent?}` while the workspace runs. On `docker` the CP reads the
   container's cgroup from the host. Elsewhere it asks the agent's `GET /workspace/stats`.
