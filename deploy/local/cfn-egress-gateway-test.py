@@ -552,7 +552,7 @@ def check_cost_role(net):
             f.append("%s lacks the af-role: egress-gateway tag (its cost lands under 'No role tag')" % rid)
     specs = {t.get("ResourceType"): t.get("Tags") for t in
              props("GatewayLaunchTemplate").get("LaunchTemplateData", {}).get("TagSpecifications", [])}
-    for kind in ("instance", "volume", "network-interface"):  # the last is device 0, which bills the boot-time public IPv4
+    for kind in ("instance", "volume", "network-interface"):  # the last is device 0; believed to carry the boot-time public IPv4 charge (unverified, #4440)
         if not tagged(specs.get(kind)):
             f.append("the launch template's %s tags lack af-role: egress-gateway" % kind)
     for rid in ("Nat", "NatEip"):
@@ -724,6 +724,16 @@ def main():
     def r(t):
         return t["Resources"]
 
+    def untag(tags):
+        # Drop the af-role tag by value, so a reordered tag list cannot make a control fail for
+        # another reason.
+        tags[:] = [x for x in tags if x.get("Key") != "af-role"]
+
+    def untag_spec(t, kind):
+        for sp in r(t)["GatewayLaunchTemplate"]["Properties"]["LaunchTemplateData"]["TagSpecifications"]:
+            if sp.get("ResourceType") == kind:
+                untag(sp["Tags"])
+
     def role_stmts(t):
         return r(t)["GatewayRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
 
@@ -785,11 +795,11 @@ def main():
         ("host interface takes inbound", m(lambda t: r(t)["GatewayHostSg"]["Properties"].update(
             SecurityGroupIngress=[{"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "0.0.0.0/0"}]))),
         ("source/dest check on", m(lambda t: r(t)["GatewayEni"]["Properties"].update(SourceDestCheck=True))),
-        ("gateway interface untagged", m(lambda t: r(t)["GatewayEni"]["Properties"]["Tags"].pop())),
+        ("gateway interface untagged", m(lambda t: untag(r(t)["GatewayEni"]["Properties"]["Tags"]))),
         ("gateway address untagged", m(lambda t: r(t)["GatewayEip"]["Properties"].update(Tags=[]))),
-        ("root volume untagged", m(lambda t: r(t)["GatewayLaunchTemplate"]["Properties"]["LaunchTemplateData"]["TagSpecifications"].pop(1))),
-        ("device-0 interface untagged", m(lambda t: r(t)["GatewayLaunchTemplate"]["Properties"]["LaunchTemplateData"]["TagSpecifications"].pop(2))),
-        ("instance untagged", m(lambda t: r(t)["GatewayLaunchTemplate"]["Properties"]["LaunchTemplateData"]["TagSpecifications"][0]["Tags"].pop())),
+        ("root volume untagged", m(lambda t: untag_spec(t, "volume"))),
+        ("device-0 interface untagged", m(lambda t: untag_spec(t, "network-interface"))),
+        ("instance untagged", m(lambda t: untag_spec(t, "instance"))),
         ("NAT address tagged as the gateway", m(lambda t: r(t)["NatEip"]["Properties"].setdefault("Tags", []).append({"Key": "af-role", "Value": "egress-gateway"}))),
         ("IMDSv1 allowed", m(lambda t: r(t)["GatewayLaunchTemplate"]["Properties"]["LaunchTemplateData"]["MetadataOptions"].update(HttpTokens="optional"))),
         ("two instances", m(lambda t: r(t)["GatewayAsg"]["Properties"].update(MaxSize="2"))),

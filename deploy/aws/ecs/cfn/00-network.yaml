@@ -215,7 +215,7 @@ Resources:
       CidrBlock: !FindInMap [ Subnets, Private1, Cidr ]
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-private-1" } ]
   # Workspace subnets (#2716): task ENIs only, on a route table of their own (PARAMETERS.md,
-  # 00-network: "Workspace subnets"). One per AZ of the private subnets: the CP refuses a home
+  # "Workspace subnets"). One per AZ of the private subnets: the CP refuses a home
   # in an AZ without one rather than fall back to the private subnet.
   WorkspaceSubnet0:
     Type: AWS::EC2::Subnet
@@ -255,7 +255,7 @@ Resources:
   # the CP and hosts (and of workspaces unless EgressRoute=gateway, which adds GatewayEip as a
   # second address), which a customer allow-lists. The stack must never release it, on delete or
   # replacement; handing it back as NatEipAllocationId rebuilds behind the same IP.
-  # PARAMETERS.md, 00-network: "NAT egress address".
+  # PARAMETERS.md, "NAT egress address".
   NatEip:
     Type: AWS::EC2::EIP
     Condition: CreateNatEip
@@ -315,7 +315,7 @@ Resources:
 
   # S3 gateway endpoint on the PRIVATE route table only; workspace tasks are not on it (WorkspaceRt),
   # so the policy never decides their S3. Interface endpoints are deliberately NOT here: they cost
-  # more than the NAT they would relieve (PARAMETERS.md, 00-network: "S3 endpoint").
+  # more than the NAT they would relieve (PARAMETERS.md, "S3 endpoint").
   S3Endpoint:
     Type: AWS::EC2::VPCEndpoint
     Condition: S3EndpointOn
@@ -361,7 +361,7 @@ Resources:
               - !Sub "arn:${AWS::Partition}:s3:::amazon-ecs-agent-${AWS::Region}/*"
           # Optional models bucket of 60-engines. The stack-name part is a wildcard, so the
           # s3:ResourceAccount test below is what ties it to this account (PARAMETERS.md,
-          # 00-network: "S3 endpoint policy"). IAM on each role narrows it further.
+          # "S3 endpoint policy"). IAM on each role narrows it further.
           - Sid: ModelsObjects
             Effect: Allow
             Principal: "*"
@@ -439,8 +439,9 @@ Resources:
 
   # --- Egress gateway (EgressRoute=gateway; ADR 0122 decision 5, guide egress-gateway) ---
   # The workspace route targets the fixed GatewayEni, which each instance attaches at boot, so
-  # the route target, proxy and egress address survive replacement. It is bound to PublicSubnet0's
-  # AZ and the route blackholes during a replacement (PARAMETERS.md, "Egress gateway").
+  # the route target, proxy address and egress address survive replacement. The interface is
+  # bound to PublicSubnet0's AZ and the route blackholes during a replacement (PARAMETERS.md,
+  # "Egress gateway").
   GatewaySg:
     Type: AWS::EC2::SecurityGroup
     Condition: GatewayOn
@@ -448,7 +449,7 @@ Resources:
       GroupDescription: !Sub "af-${AWS::StackName} egress gateway (workspace subnets only)"
       VpcId: !Ref Vpc
       # Workspace subnets only, any TCP port: nftables decides and records (ADR 0122 addendum
-      # 2026-11-05, PARAMETERS.md "Egress gateway"). UDP, ICMP stay dropped here.
+      # 2026-11-05, PARAMETERS.md "Egress gateway"). UDP and ICMP stay dropped here.
       SecurityGroupIngress:
         - { IpProtocol: tcp, FromPort: 0, ToPort: 65535, CidrIp: !Ref WorkspaceSubnet0Cidr }
         - { IpProtocol: tcp, FromPort: 0, ToPort: 65535, CidrIp: !Ref WorkspaceSubnet1Cidr }
@@ -470,14 +471,14 @@ Resources:
       Description: !Sub "af-${AWS::StackName} egress gateway (workspace route target)"
       SubnetId: !Ref PublicSubnet0
       GroupSet: [ !Ref GatewaySg ]
-      # It receives packets addressed to the internet (a route target).
+      # It receives packets addressed to the internet (it is a route target).
       SourceDestCheck: false
       Tags:
         - { Key: Name, Value: !Sub "af-${AWS::StackName}-egress-gateway" }
         - { Key: af-egress-gateway, Value: !Ref AWS::StackName }
         - { Key: af-role, Value: egress-gateway }
   # Retained like NatEip; NOT the NAT address (#2728). Created only without a
-  # GatewayEipAllocationId; a handed-in address is never created, replaced or released.
+  # GatewayEipAllocationId; a handed-in address is never created, replaced or released here.
   GatewayEip:
     Type: AWS::EC2::EIP
     Condition: CreateGatewayEip
@@ -493,7 +494,7 @@ Resources:
       AllocationId: !If [ CreateGatewayEip, !GetAtt GatewayEip.AllocationId, !Ref GatewayEipAllocationId ]
       NetworkInterfaceId: !Ref GatewayEni
   # Must admit the gateway's address even when AlbIngressCidr is narrowed: workspaces and the
-  # gateway agent reach the CP's public URL through it. Keep (PARAMETERS.md, "ALB rules").
+  # gateway agent reach the CP's public URL through it. Do not remove (PARAMETERS.md, "ALB rules").
   AlbFromGateway:
     Type: AWS::EC2::SecurityGroupIngress
     Condition: CreateGatewayEip
@@ -907,7 +908,7 @@ Resources:
             - { Ws0: !Ref WorkspaceSubnet0Cidr, Ws1: !Ref WorkspaceSubnet1Cidr }
 
   # Group of ONE; terminate-before-launch (two instances cannot share GatewayEni). MaxSize stays 1
-  # even at DesiredCapacity 0 (PARAMETERS.md, 00-network: "Egress gateway group").
+  # even at DesiredCapacity 0 (PARAMETERS.md, "Egress gateway group").
   GatewayAsg:
     Type: AWS::AutoScaling::AutoScalingGroup
     Condition: GatewayOn
