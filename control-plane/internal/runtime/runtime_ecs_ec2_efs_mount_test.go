@@ -239,3 +239,21 @@ func TestECSEC2FailedEFSMountDoesNotQuarantineTheSlot(t *testing.T) {
 		t.Errorf("the claim %q is still on the home; the workspace would read starting until it expires", v)
 	}
 }
+
+// An error or a log line names a script by its first line, not by all of it: the EFS mount
+// script is some twenty lines, and it would otherwise be repeated in every line about it.
+func TestSlotCommandLabelKeepsAScriptToOneLine(t *testing.T) {
+	if got := slotCommandLabel("af-umount /af-home/M-1"); got != "af-umount /af-home/M-1" {
+		t.Errorf("a one-line command became %q", got)
+	}
+	if got := slotCommandLabel("set -eu\nFS=fs-1\nmnt a b\n"); got != "set -eu … (+2 lines)" {
+		t.Errorf("label = %q", got)
+	}
+	cmd, err := efsMountCommand("fs-1", []string{"fsap-claude", "fsap-keep"}, "/af-efs/M-1", slotMountInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := slotCommandLabel(cmd); strings.Contains(got, "\n") || strings.Contains(got, "fsap-") {
+		t.Errorf("the label still carries the script: %q", got)
+	}
+}
