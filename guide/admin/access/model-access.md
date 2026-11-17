@@ -160,8 +160,8 @@ Its **Self-hosted servers that may be approved** name the host patterns a tenant
 
 A tenant's own page is where you change what is that tenant's alone. You see two cards there that its administrators do not:
 
-- On **Restrictions**, above the tenant's own restriction, the **Deployment admin's restriction on this tenant**. It locks with 🔒 and matches the operator setting like the restriction for all tenants, and marks with ⚠ what the restriction for all tenants already stops
-- On **Provided models & budgets**, **Grant to this tenant and monthly pool**: **Grant to this tenant** with the **Tenant's monthly pool (dollars)**. A grant needs a pool above zero, and the deployment's source has to be registered first
+- On **Restrictions**, above the tenant's own restriction, the **Deployment admin's restriction on this tenant**. It has the same 🔒 marks and **Match the operator setting** as the restriction for all tenants, and marks with ⚠ what the restriction for all tenants already stops
+- On **Provided models & budgets**, **Grant to this tenant and monthly pool**: **Grant to this tenant** with the **Tenant's monthly pool (dollars)**. A grant needs a pool above zero. Register the deployment's source first: a grant saved without one is kept, but admits no calls until the source is registered
 
 To find out why a tenant's members cannot see something, open the tenant and read its **Overview**, as above.
 
