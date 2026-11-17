@@ -461,7 +461,9 @@ func routeServeSecretEnv() []string {
 // freeLoopbackPort asks the kernel for a free loopback port. Another process can take it before
 // the server binds; the server then fails to start and the probe, which needs this server's
 // password, cannot mistake the other one for it.
-func freeLoopbackPort() (string, error) {
+//
+// A var so a test can make the replacement of a dead server get the very port that server freed.
+var freeLoopbackPort = func() (string, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", err

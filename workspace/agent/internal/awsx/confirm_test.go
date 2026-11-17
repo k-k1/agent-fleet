@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -451,6 +452,42 @@ func TestConfirmGrantDoesNotSkipTheSettingsCheck(t *testing.T) {
 		}
 	case <-time.After(gateSlack):
 		t.Fatal("the run never ended")
+	}
+}
+
+// G1b: the gate reads grants before Settings. A grant that lands between a poll's Settings
+// read and its grant read, after Settings changed, must not confirm the run. The hook plays
+// exactly that interleaving: the first Settings read returns the old Settings, and then
+// Settings change and the grant lands.
+func TestConfirmGrantLandingAfterTheSettingsReadDoesNotConfirm(t *testing.T) {
+	s := gateEnv(t)
+	inc := incarnation(session.Meta{Name: "s1", Kind: session.KindShell, Dir: "/w", CreatedAt: "2026-10-31T00:00:00Z"})
+	target := confirmTargets(s, "prod-admin")[0]
+	edited := map[string]Profile{}
+	for k, v := range s {
+		edited[k] = v
+	}
+	p := edited["prod-admin"]
+	p.RoleName = "AdministratorAccess"
+	edited["prod-admin"] = p
+	setSettings(s)
+	base := currentSettings
+	var once sync.Once
+	currentSettings = func() map[string]Profile {
+		old := base()
+		once.Do(func() {
+			setSettings(edited)
+			g := confirmGrant{Session: "s1", Incarnation: inc, ProfileID: target.ProfileID, Identity: target.Identity,
+				Expires: time.Now().Add(time.Hour).UTC().Format(time.RFC3339), Relayed: true}
+			if err := writeJSONAtomic(grantPath(inc, target.ProfileID), g); err != nil {
+				t.Error(err)
+			}
+		})
+		return old
+	}
+	res, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: "s1", Wait: gateLongWait})
+	if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "changed in Settings") {
+		t.Fatalf("grant landing after the Settings read = %+v, %v", res, err)
 	}
 }
 
