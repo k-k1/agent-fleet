@@ -2,7 +2,7 @@
 //
 //   node console/scripts/shots/demo.mjs --scenario day|phone|review|plan|unattended
 //                                       [--locale en|ja] [--out docs/img]
-//                                       [--port 8766] [--cdp-port 9224] [--keep-frames]
+//                                       [--port 8766] [--keep-frames]
 //
 // Drives the real Console bundle against `server.mjs --demo <scenario>` (a stateful fixture fleet,
 // demo/<scenario>.mjs) in headless Chromium, records it with CDP's screencast, and encodes the
@@ -30,6 +30,7 @@ const OUT = path.resolve(ROOT, arg("out", "docs/img"));
 const PORT = Number(arg("port", 8766));
 const FPS = Number(arg("fps", 12));
 const KEEP = argv.includes("--keep-frames");
+if (argv.includes("--cdp-port")) console.warn("[shots] --cdp-port was removed and is ignored: Chromium takes a free port itself");
 const BASE = `http://127.0.0.1:${PORT}/`;
 
 if (!/^[a-z]+$/.test(SCENARIO) || !fs.existsSync(path.join(HERE, "demo", `${SCENARIO}.mjs`))) {
@@ -107,8 +108,18 @@ const stub = spawn(
   [path.join(HERE, "server.mjs"), "--port", String(PORT), "--locale", LOCALE, "--demo", SCENARIO],
   { stdio: ["ignore", "ignore", "inherit"] },
 );
-// A failed launch must not leave the stub server behind (it was started just above).
-const browser = await launchChromium({
+// Handlers go in before the launch wait: a signal in that window would otherwise leave the stub
+// and the frames dir behind (launchChromium cleans up its own browser and profile on exit).
+let browser = null;
+const cleanup = () => {
+  browser?.close();
+  try { stub.kill(); } catch {}
+  if (!KEEP) fs.rmSync(FRAMES, { recursive: true, force: true });
+};
+process.on("exit", cleanup);
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(1));
+
+browser = await launchChromium({
   args: [
     "--disable-gpu",
     "--hide-scrollbars",
@@ -122,18 +133,8 @@ const browser = await launchChromium({
     `--lang=${LOCALE === "ja" ? "ja-JP" : "en-US"}`,
     "about:blank",
   ],
-}).catch((e) => {
-  stub.kill(); fs.rmSync(FRAMES, { recursive: true, force: true });
-  throw e;
 });
 const CDP_PORT = browser.port;
-const cleanup = () => {
-  browser.close();
-  try { stub.kill(); } catch {}
-  if (!KEEP) fs.rmSync(FRAMES, { recursive: true, force: true });
-};
-process.on("exit", cleanup);
-process.on("SIGINT", () => process.exit(1));
 
 let cdp;
 const ev = async (expression) => {

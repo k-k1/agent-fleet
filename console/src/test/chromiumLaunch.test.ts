@@ -21,7 +21,7 @@ function fakeChromium(body: string) {
   fs.writeFileSync(
     bin,
     `#!/bin/sh\nfor a in "$@"; do case "$a" in --user-data-dir=*) d="\${a#--user-data-dir=}";; esac; done\n` +
-      `printf '%s\\n' "$@" > "$d/argv"\n${body}\nsleep 30\n`,
+      `printf '%s\\n' "$@" > "$d/argv"\necho $$ > "$d/pid"\n${body}\nsleep 30\n`,
     { mode: 0o755 },
   );
   return { root, bin };
@@ -80,10 +80,24 @@ describe("launchChromium", () => {
   it("cleans up the profile and the process when the port never appears", async () => {
     const work = fs.mkdtempSync(path.join(os.tmpdir(), "work-"));
     made.push(work);
-    const { bin } = fakeChromium("");
+    // Record the pid outside the profile (which is removed) so the test can check the process.
+    const pidFile = path.join(work, "pid.txt");
+    const { bin } = fakeChromium(`cp "$d/pid" "${pidFile}"`);
     await expect(
-      launchChromium({ bin, env: { AF_WORK_DIR: work }, argv: [], tries: 3, pauseMs: 20 }),
+      launchChromium({ bin, env: { AF_WORK_DIR: work }, argv: [], tries: 5, pauseMs: 40 }),
     ).rejects.toThrow(/did not open a debugging port/);
-    expect(fs.readdirSync(work)).toEqual([]);
+    expect(fs.readdirSync(work)).toEqual(["pid.txt"]);
+    const pid = Number(fs.readFileSync(pidFile, "utf8"));
+    expect(pid).toBeGreaterThan(0);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+  });
+
+  it("fails fast, naming the exit status, when the browser dies before opening its port", async () => {
+    const t0 = Date.now();
+    await expect(
+      launchChromium({ bin: "/bin/false", env: {}, argv: [], tries: 200, pauseMs: 50 }),
+    ).rejects.toThrow(/exited before opening a debugging port.*code 1/);
+    expect(Date.now() - t0).toBeLessThan(3000);
   });
 });

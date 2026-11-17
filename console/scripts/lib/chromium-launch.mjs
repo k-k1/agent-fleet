@@ -70,23 +70,31 @@ export async function launchChromium({
     try { process.kill(-proc.pid, "SIGKILL"); } catch {}
     try { proc.kill("SIGKILL"); } catch {}
   };
-  // Synchronous, for `exit` handlers: kill the whole group and remove the profile.
+  // Synchronous, for `exit` handlers: kill the whole group and remove the profile. The group kill
+  // is POSIX (a negative pid); elsewhere only the direct child is killed.
   const close = () => {
     killGroup();
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   };
+  // While we wait for the port nobody holds the handle yet: an exit (a signal handler calling
+  // process.exit, an uncaught error) in this window would leak the process group and the profile.
+  process.on("exit", close);
+  const settle = () => process.off("exit", close);
+  const fail = (msg) => {
+    close();
+    settle();
+    throw new Error(msg);
+  };
   let port = 0;
   for (let i = 0; i < tries && !port; i++) {
     await sleep(pauseMs);
-    if (spawnErr) {
-      close();
-      throw new Error(`cannot start the browser: ${bin}: ${spawnErr.message}`);
-    }
+    if (spawnErr) fail(`cannot start the browser: ${bin}: ${spawnErr.message}`);
     port = readDevToolsPort(dir);
+    if (!port && (proc.exitCode !== null || proc.signalCode !== null)) {
+      fail(`chromium exited before opening a debugging port (${bin}, code ${proc.exitCode}, signal ${proc.signalCode}); if it dies at once in a container without user namespaces, retry with SHOTS_NO_SANDBOX=1`);
+    }
   }
-  if (!port) {
-    close();
-    throw new Error(`chromium did not open a debugging port (${bin}); if it exits at once in a container without user namespaces, retry with SHOTS_NO_SANDBOX=1`);
-  }
+  if (!port) fail(`chromium did not open a debugging port within ${(tries * pauseMs) / 1000}s (${bin})`);
+  settle();
   return { proc, port, dir, close };
 }

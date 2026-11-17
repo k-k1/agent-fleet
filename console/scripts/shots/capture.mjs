@@ -27,6 +27,7 @@ const ONLY = arg("only", "");
 const OUT = path.resolve(ROOT, arg("out", "docs/img"));
 const PORT = Number(arg("port", 8765));
 const BASE = `http://127.0.0.1:${PORT}/`;
+if (argv.includes("--cdp-port")) console.warn("[shots] --cdp-port was removed and is ignored: Chromium takes a free port itself");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -3704,8 +3705,17 @@ const stub = spawn(process.execPath, [path.join(HERE, "server.mjs"), "--port", S
   env: { ...process.env, ...stubEnv },
 });
 
-// A failed launch must not leave the stub server behind (it was started just above).
-const browser = await launchChromium({
+// Handlers go in before the launch wait: a signal in that window would otherwise leave the stub
+// behind (launchChromium cleans up its own browser and profile on exit).
+let browser = null;
+const cleanup = () => {
+  browser?.close();
+  try { stub.kill(); } catch {}
+};
+process.on("exit", cleanup);
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(1));
+
+browser = await launchChromium({
   args: [
     "--disable-gpu",
     "--hide-scrollbars",
@@ -3724,18 +3734,8 @@ const browser = await launchChromium({
     `--lang=${LOCALE === "ja" ? "ja-JP" : "en-US"}`,
     "about:blank",
   ],
-}).catch((e) => {
-  stub.kill();
-  throw e;
 });
 const CDP_PORT = browser.port;
-
-const cleanup = () => {
-  browser.close();
-  try { stub.kill(); } catch {}
-};
-process.on("exit", cleanup);
-process.on("SIGINT", () => { cleanup(); process.exit(1); });
 
 try {
   await fetchJSON(`http://127.0.0.1:${CDP_PORT}/json/version`);
