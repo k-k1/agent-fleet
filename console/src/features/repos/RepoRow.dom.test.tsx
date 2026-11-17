@@ -133,6 +133,16 @@ describe("RepoRow worktree row", () => {
   });
 });
 
+describe("RepoRow tab order", () => {
+  it("puts Launch right after the name, before the chips (the touch layout shows it there)", async () => {
+    await render({ ...WT, dirty: true, ahead: 2 });
+    const info = host.querySelector(".repo-info")!;
+    const kids = [...info.children].map((c) => c.className.split(" ")[0]);
+    expect(kids.indexOf("launch-wrap")).toBe(kids.indexOf("repo-lines") + 1);
+    expect(kids.indexOf("repo-state")).toBeGreaterThan(kids.indexOf("launch-wrap"));
+  });
+});
+
 describe("RepoRow Initialize Git Flow", () => {
   const CLONE: Repo = { name: "app", path: "/home/dev/repos/app", branch: "main", vcs: "git" };
 

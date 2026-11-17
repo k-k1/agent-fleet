@@ -1641,14 +1641,17 @@ func (a API) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, 
 	if err != nil {
 		return "", err
 	}
+	// Resolved before the write, as in the admin API's save (tenantsrv SetUserLimits).
+	ws := store.Workspace{MembershipID: mem.ID, TenantID: ac.tenant.ID}
+	_, _, prevDisk := a.cp.ResolveWorkspaceSize(ctx, ws)
 	if err := a.cp.Store().PutUserLimit(ctx, mem.ID, q); err != nil {
 		return "", err
 	}
 	// The size axes feed the built runtime, so drop the cached one → applied at next start.
 	a.cp.EvictMembershipCache(mem.ID)
-	ws := store.Workspace{MembershipID: mem.ID, TenantID: ac.tenant.ID}
 	effMem, effCPU, effDisk := a.cp.ResolveWorkspaceSize(ctx, ws)
 	effClass, classNote := a.cp.ResolveSlotClass(ctx, ws)
+	diskChanged := effDisk != prevDisk
 	a.mcpAudit(ctx, ac, "set_user_quota", userKey, fmt.Sprintf("max_sessions=%d disk_gb=%d mem=%s cpu=%d class=%s",
 		q.MaxSessions, effDisk, formatMemHuman(effMem), effCPU, effClass))
 	out := map[string]any{
@@ -1661,7 +1664,7 @@ func (a API) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, 
 	// Same step, and the same order, as the admin API's save: the disk axis is the only
 	// one that reaches a resource that already exists. Without it this tool would be the
 	// route by which a disk request is stored and quietly never applied.
-	if hr, err := a.cp.ResizeHomeByMembership(ctx, mem.ID); err == nil && hr.Outcome != "" {
+	if hr, err := a.cp.ResizeHomeByMembership(ctx, mem.ID); err == nil && hr.ReportOnSave(diskChanged) {
 		out["home_resize"] = hr
 	}
 	return jsonText(out)

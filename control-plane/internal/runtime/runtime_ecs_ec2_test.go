@@ -389,9 +389,15 @@ func (f *fakeEC2) CreateVolume(_ context.Context, in *ec2.CreateVolumeInput, _ .
 	for _, ts := range in.TagSpecifications {
 		tags = append(tags, ts.Tags...)
 	}
+	// Like EBS: a request smaller than the snapshot's VolumeSize is not an error, the
+	// volume simply comes out at the snapshot's size.
+	size := in.Size
+	if snap := f.snapshots[aws.ToString(in.SnapshotId)]; snap != nil && aws.ToInt32(snap.VolumeSize) > aws.ToInt32(size) {
+		size = snap.VolumeSize
+	}
 	f.volumes[id] = &ec2types.Volume{
 		VolumeId: aws.String(id), AvailabilityZone: in.AvailabilityZone,
-		State: ec2types.VolumeStateAvailable, Size: in.Size, Tags: tags,
+		State: ec2types.VolumeStateAvailable, Size: size, Tags: tags,
 		SnapshotId: in.SnapshotId,
 	}
 	f.log("CreateVolume %s az=%s tags=%d", id, aws.ToString(in.AvailabilityZone), len(tags))
@@ -400,7 +406,7 @@ func (f *fakeEC2) CreateVolume(_ context.Context, in *ec2.CreateVolumeInput, _ .
 	// wrong direction of the usual fake bug, but still a fake that does not model AWS.
 	return &ec2.CreateVolumeOutput{
 		VolumeId: aws.String(id), AvailabilityZone: in.AvailabilityZone,
-		State: ec2types.VolumeStateAvailable, Tags: tags,
+		State: ec2types.VolumeStateAvailable, Size: size, Tags: tags,
 	}, nil
 }
 

@@ -94,7 +94,7 @@ node console/scripts/shots/capture.mjs --locale ja --only overview,fleetgraph --
 node console/scripts/shots/capture.mjs --locale en --only overview,fleetgraph --out guide/assets
 ```
 
-The container is shared, so pass `--port` / `--cdp-port` that nothing else is listening on.
+The container is shared, so pass a `--port` that nothing else is listening on. Chromium takes a free debugging port of its own (port 0, read back from `DevToolsActivePort`) and a per-run profile removed at exit; `--cdp-port` no longer exists. `--no-sandbox` is off unless you set `SHOTS_NO_SANDBOX=1` (or pass `--no-sandbox`), for hosts that cannot create the sandbox.
 
 Scenes marked `guide: true` are for the rewritten guide and the public docs site (ADR 0131). The
 default run skips them, so name them in `--only` and pass `--out`. A scene with its own stub data (`stubEnv`:
@@ -151,7 +151,7 @@ those pages is judged by (#4380). They are for before/after pictures in a pull r
 `docs/img/`, so write them under `$AF_WORK_DIR` and run each on its own:
 
 ```bash
-node console/scripts/shots/capture.mjs --locale ja --theme light --only mpol-tenant-provided --out "$AF_WORK_DIR/shots" --port <free> --cdp-port <free>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only mpol-tenant-provided --out "$AF_WORK_DIR/shots" --port <free>
 ```
 
 | Scene | State |

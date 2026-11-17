@@ -1816,6 +1816,10 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 		MaxSessions: body.MaxSessions, DiskGB: body.DiskGB,
 		MemLimit: body.MemLimit, CPULimit: body.CPULimit, SlotClass: strings.TrimSpace(body.SlotClass),
 	}
+	// Resolved before the write: whether a shrink is worth reporting depends on the size the
+	// member gets (after the tenant cap and deployment ceiling), not on the number typed —
+	// raising 60 to 70 under a cap of 50 changes nothing, and lowering 70 to 60 neither.
+	_, _, prevDisk := a.cp.ResolveWorkspaceSize(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
 	if err := a.cp.Store().PutUserLimit(r.Context(), mem.ID, q); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -1829,6 +1833,7 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 			q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass))
 	a.cp.EvictMembershipCache(mem.ID)
 	effMem, effCPU, effDisk := a.cp.ResolveWorkspaceSize(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
+	diskChanged := effDisk != prevDisk
 	effClass, classNote := a.cp.ResolveSlotClass(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
 	resp := map[string]any{
 		"user_key": key, "tenant": t.Slug, "max_sessions": body.MaxSessions, "disk_gb": body.DiskGB,
@@ -1846,7 +1851,7 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 	// The error is dropped on purpose and the note simply omitted: a lookup that failed
 	// is not a reason to fail a save that succeeded, and saying nothing beats saying
 	// something wrong about somebody's disk.
-	if hr, err := a.cp.ResizeHomeByMembership(r.Context(), mem.ID); err == nil && hr.Outcome != "" {
+	if hr, err := a.cp.ResizeHomeByMembership(r.Context(), mem.ID); err == nil && hr.ReportOnSave(diskChanged) {
 		resp["home_resize"] = hr
 	}
 	writeJSON(w, http.StatusOK, resp)

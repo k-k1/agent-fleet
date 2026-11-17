@@ -101,7 +101,13 @@ func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2ty
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("ecs-ec2: created %s (%d GiB, %s) for %s", aws.ToString(out.VolumeId), e.homeGiB, az, e.base.name)
+	// EBS builds a volume from a snapshot at no less than the snapshot's size and does not
+	// error when the request is smaller, so the response, not the request, is the size.
+	gib := e.homeGiB
+	if out.Size != nil {
+		gib = *out.Size
+	}
+	log.Printf("ecs-ec2: created %s (%d GiB, %s) for %s", aws.ToString(out.VolumeId), gib, az, e.base.name)
 	if restored {
 		// ONLY after restoring the user's OWN home. The golden snapshot is shared by every
 		// future user and must never be swept up here — deleteHomeSnapshots filters on

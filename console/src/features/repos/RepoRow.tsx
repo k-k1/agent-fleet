@@ -296,84 +296,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claude
           </span>
           {peek && <RepoPeek s={peek.s} />}
           </div>
-          {(r.dirty || r.integration || ((r.ahead || r.behind) ?? 0) > 0) && (
-            <span className="repo-state">
-              {r.dirty && (
-                <span className="repo-chip dirty" title={tr("repo.uncommitted_title")}>
-                  <Icon name="circle-filled" /> {tr("repo.uncommitted")}
-                </span>
-              )}
-              {r.integration && (
-                <span
-                  className={`repo-chip integration ${r.integration.relation}`}
-                  title={parentSyncTitle(r.integration)}
-                >
-                  {parentSyncLabel(r.integration)}
-                </span>
-              )}
-              {/* Distance from origin: behind only = a clean fast-forward is possible / both =
-                  diverged and needs a merge / ahead only = not pushed. The Agent's auto-fetch
-                  keeps the origin refs current, so this appears without pressing anything. */}
-              {((r.ahead || r.behind) ?? 0) > 0 && (
-                <span
-                  className={"repo-chip ab" + (r.behind ? (r.ahead ? " diverged" : " ff") : "")}
-                  title={
-                    r.behind
-                      ? r.ahead
-                        ? tr("repo.origin.diverged", { ahead: r.ahead ?? 0, behind: r.behind ?? 0 })
-                        : tr("repo.origin.behind", { behind: r.behind ?? 0 })
-                      : tr("repo.origin.ahead", { ahead: r.ahead ?? 0 })
-                  }
-                >
-                  <AheadBehind ahead={r.ahead} behind={r.behind} />
-                  {r.behind ? <span>{r.ahead ? tr("repo.need_merge") : tr("repo.ff_ok")}</span> : null}
-                </span>
-              )}
-            </span>
-          )}
-          {/* A folded node hides its session rows, so their unread dot rolls up here next
-              to the tally — same reason the tally folds descendants in. */}
-          {unread && (
-            <span className="unread-dot" role="img"
-              aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />
-          )}
-          {/* Session tally: alive count (green) wins; otherwise stopped count in
-              muted — so a folded project still shows what's running inside. */}
-          {sess && sess.alive > 0 && (
-            <span
-              className="repo-sess-badge run"
-              title={
-                tr("repo.sess_running", { n: sess.alive }) +
-                (alsoRunning && alsoRunning.length > 0 ? "\n" + tr("pj.peek_more", { names: alsoRunning.join("\n") }) : "")
-              }
-            >
-              ●{sess.alive}
-            </span>
-          )}
-          {sess && sess.alive === 0 && sess.total > 0 && (
-            <span className="repo-sess-badge" title={tr("repo.sess_stopped", { n: sess.total })}>
-              {sess.total}
-            </span>
-          )}
-          {opens && opens.length > 0 && (
-            <span className="sess-ords repo-ords">
-              {opens.map((o) => (
-                <button
-                  key={o.id}
-                  type="button"
-                  className={"rail-ord " + ordClass(o.ordinal)}
-                  title={tr("common.focus_pane", { ordinal: o.ordinal })}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onFocusPane?.(o.id);
-                  }}
-                >
-                  {o.ordinal}
-                </button>
-              ))}
-            </span>
-          )}
-          {/* Hidden until the row is hovered/focused (kept while the quick menu is
+          {/* Right after the name in DOM order so Tab / screen readers meet it where the touch layout shows it. Hidden until the row is hovered/focused (kept while the quick menu is
               open); touch devices show it always — see repos.css. */}
           <div className={"launch-wrap" + (showLaunch ? " open" : "")} ref={wrapRef} onClick={(e) => e.stopPropagation()}>
             {/* Split button: launch opens the modal; the ▼ caret opens the quick
@@ -451,6 +374,83 @@ export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claude
                 document.body,
               )}
           </div>
+          {(r.dirty || r.integration || ((r.ahead || r.behind) ?? 0) > 0) && (
+            <span className="repo-state">
+              {r.dirty && (
+                <span className="repo-chip dirty" title={tr("repo.uncommitted_title")}>
+                  <Icon name="circle-filled" /> {tr("repo.uncommitted")}
+                </span>
+              )}
+              {r.integration && (
+                <span
+                  className={`repo-chip integration ${r.integration.relation}`}
+                  title={parentSyncTitle(r.integration)}
+                >
+                  {parentSyncLabel(r.integration)}
+                </span>
+              )}
+              {/* Distance from origin: behind only = a clean fast-forward is possible / both =
+                  diverged and needs a merge / ahead only = not pushed. The Agent's auto-fetch
+                  keeps the origin refs current, so this appears without pressing anything. */}
+              {((r.ahead || r.behind) ?? 0) > 0 && (
+                <span
+                  className={"repo-chip ab" + (r.behind ? (r.ahead ? " diverged" : " ff") : "")}
+                  title={
+                    r.behind
+                      ? r.ahead
+                        ? tr("repo.origin.diverged", { ahead: r.ahead ?? 0, behind: r.behind ?? 0 })
+                        : tr("repo.origin.behind", { behind: r.behind ?? 0 })
+                      : tr("repo.origin.ahead", { ahead: r.ahead ?? 0 })
+                  }
+                >
+                  <AheadBehind ahead={r.ahead} behind={r.behind} />
+                  {r.behind ? <span>{r.ahead ? tr("repo.need_merge") : tr("repo.ff_ok")}</span> : null}
+                </span>
+              )}
+            </span>
+          )}
+          {/* A folded node hides its session rows, so their unread dot rolls up here next
+              to the tally — same reason the tally folds descendants in. */}
+          {unread && (
+            <span className="unread-dot" role="img"
+              aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />
+          )}
+          {/* Session tally: alive count (green) wins; otherwise stopped count in
+              muted — so a folded project still shows what's running inside. */}
+          {sess && sess.alive > 0 && (
+            <span
+              className="repo-sess-badge run"
+              title={
+                tr("repo.sess_running", { n: sess.alive }) +
+                (alsoRunning && alsoRunning.length > 0 ? "\n" + tr("pj.peek_more", { names: alsoRunning.join("\n") }) : "")
+              }
+            >
+              ●{sess.alive}
+            </span>
+          )}
+          {sess && sess.alive === 0 && sess.total > 0 && (
+            <span className="repo-sess-badge" title={tr("repo.sess_stopped", { n: sess.total })}>
+              {sess.total}
+            </span>
+          )}
+          {opens && opens.length > 0 && (
+            <span className="sess-ords repo-ords">
+              {opens.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  className={"rail-ord " + ordClass(o.ordinal)}
+                  title={tr("common.focus_pane", { ordinal: o.ordinal })}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onFocusPane?.(o.id);
+                  }}
+                >
+                  {o.ordinal}
+                </button>
+              ))}
+            </span>
+          )}
         </div>
       </div>
 

@@ -351,6 +351,52 @@ func TestNamedOpencodeModelIsJudgedOnItsRoute(t *testing.T) {
 	wantPolicyRefusal(t, "the default model", ref, http.StatusConflict, routes.CodePolicyRequired)
 }
 
+// modelRoutesAgent is perCallAgent that also lists the routes a named model might run on.
+type modelRoutesAgent struct {
+	perCallAgent
+	cands []string
+}
+
+func (a modelRoutesAgent) ModelRoutes(model string) []string {
+	if model == "" {
+		return nil
+	}
+	return a.cands
+}
+
+// A named opencode model whose payer cannot be proven (resolver answers nothing) is refused as
+// forbidden when every route it might run on is forbidden, and stays route_required when any one
+// of them is allowed or none can be listed.
+func TestNamedOpencodeModelWithUnprovenPayer(t *testing.T) {
+	zenAcct := []string{routes.RouteOpencodeZen, routes.RouteOpencodeAccount}
+	goAcct := []string{routes.RouteOpencodeGo, routes.RouteOpencodeAccount}
+	for name, c := range map[string]struct {
+		allowed []string
+		cands   []string
+		model   string
+		status  int
+		code    string
+	}{
+		"every candidate forbidden": {nil, zenAcct, "opencode/iceman-free", 403, routes.CodePolicyForbidden},
+		"go provider forbidden":     {nil, goAcct, "opencode-go/glm", 403, routes.CodePolicyForbidden},
+		"one candidate allowed":     {[]string{routes.RouteOpencodeAccount}, zenAcct, "opencode/iceman-free", 409, routes.CodePolicyRequired},
+		"no candidates (ambiguous)": {nil, nil, "mystery/model", 409, routes.CodePolicyRequired},
+		"no model named":            {nil, zenAcct, "", 409, routes.CodePolicyRequired},
+	} {
+		t.Run(name, func(t *testing.T) {
+			usePolicy(t, routepolicy.Policy{Revision: 3, Restricted: true, Allowed: append([]string{routes.RouteAnthropicAPI}, c.allowed...)})
+			l := routes.Launch{}
+			t.Cleanup(agentreg.SwapForTest(session.KindOpencode, modelRoutesAgent{
+				perCallAgent: perCallAgent{Agent: AgentOf(session.KindOpencode), launch: &l}, cands: c.cands}))
+			ref, judged := newLaunchPolicyRefusal(session.KindOpencode, nil, session.Meta{Kind: session.KindOpencode, Model: c.model})
+			wantPolicyRefusal(t, name, ref, c.status, c.code)
+			if judged != nil {
+				t.Errorf("a refused create was handed back to be recorded: %+v", judged)
+			}
+		})
+	}
+}
+
 // The recorded credential identity is compared in every branch: an explicit selection whose
 // binding is now another account's, an opencode session on the same allowed route with another
 // key, and an lcpp session whose connection moved (a one-route kind even though it is per-call).
