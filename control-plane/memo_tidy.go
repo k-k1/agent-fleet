@@ -657,8 +657,7 @@ func memoTidyRunToDTO(r store.MemoTidyRun, rec memoTidyRecord) memoTidyRunDTO {
 }
 
 // memoTidyRunToCheckedDTO is memoTidyRunToDTO plus the undo verdict (Undoable, Blocked) that only an
-// applied run has. Every answer that carries a run goes through it, so the apply answer and the
-// run list cannot disagree; rd must read committed state, after the run's own transaction.
+// applied run has. The run list and the apply answer both go through it, so they cannot disagree; rd must read committed state, after the run's own transaction.
 func memoTidyRunToCheckedDTO(rd store.MemoTidyReader, run store.MemoTidyRun, rec memoTidyRecord) (memoTidyRunDTO, error) {
 	d := memoTidyRunToDTO(run, rec)
 	if run.State == store.TidyRunApplied {
@@ -962,9 +961,12 @@ func (a memoAPI) applyTidy(w http.ResponseWriter, r *http.Request, _ store.Ident
 	wire := memoTidyApplyWire{Memos: []memoDTO{}}
 	touched := slices.Concat(out.Sources, out.Results, out.Moved)
 	err = a.store.MemoTidyRead(ctx, mv.MembershipID, func(rd store.MemoTidyReader) error {
-		var err error
-		if wire.Run, err = memoTidyRunToCheckedDTO(rd, out.Run, rec); err != nil {
-			return err
+		// The run is already committed: a failed undo check must not turn the answer into a 500 the
+		// member would retry into a stale 409. Fall back to the unchecked run (undoable:false); the
+		// run list recomputes the verdict.
+		var cerr error
+		if wire.Run, cerr = memoTidyRunToCheckedDTO(rd, out.Run, rec); cerr != nil {
+			wire.Run = memoTidyRunToDTO(out.Run, rec)
 		}
 		for _, id := range touched {
 			m, ok, err := rd.GetMemo(id)

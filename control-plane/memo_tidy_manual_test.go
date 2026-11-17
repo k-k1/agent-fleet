@@ -440,9 +440,20 @@ func TestMemoTidyManualApplyAnswersUndoVerdict(t *testing.T) {
 
 		for _, r := range e.runs(q).Runs {
 			want := map[string]memoTidyRunDTO{applied.ID: applied, kept.ID: kept}[r.ID]
-			if r.Undoable != want.Undoable || len(r.Blocked) != len(want.Blocked) {
-				t.Fatalf("run %s: list says undoable=%v blocked=%d, answer said undoable=%v blocked=%d",
-					r.ID, r.Undoable, len(r.Blocked), want.Undoable, len(want.Blocked))
+			if r.Undoable != want.Undoable || !reflect.DeepEqual(r.Blocked, want.Blocked) {
+				t.Fatalf("run %s: list says undoable=%v blocked=%v, answer said undoable=%v blocked=%v",
+					r.ID, r.Undoable, r.Blocked, want.Undoable, want.Blocked)
+			}
+		}
+
+		// Once a result is edited by hand the list names it as blocking; the answer above was true
+		// when it was given, and the list is where the verdict moves afterwards.
+		if code, _ := (memoFaceClient{"console", e}).update(applied.ResultIDs[0], map[string]any{"body": "edited by hand"}); code != 200 {
+			t.Fatal("edit derived")
+		}
+		for _, r := range e.runs(q).Runs {
+			if r.ID == applied.ID && (r.Undoable || !reflect.DeepEqual(r.Blocked, []memoTidyBlock{{applied.ResultIDs[0], memoTidyBlockChanged}})) {
+				t.Fatalf("blocked run in the list: %+v", r)
 			}
 		}
 	})
