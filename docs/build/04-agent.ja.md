@@ -639,6 +639,10 @@ tmux 3.5a で実測: 素の OSC も tmux のパススルー包み（`ESC P tmux;
     メッセージカーソルは残す**ので、戻せば native のセッションが続きから使える。
   - 相手のバックエンドが見ていない履歴は次の送信で再生する（`syncProviderPrompt`）。フォールバックと
     同じ経路。
+- **`POST /chat/ask`** はステートレスな助言 1 ターンで、ツールは常に off。アシスタントを名指しした
+  リクエスト（id、次に完全一致の名前）はその persona・モデル・knowledge を載せ、存在しない名前は
+  `404 chat_assistant_not_found`。名指ししないリクエスト（Console のメモ整理と読み上げ要約）は素のターン
+  になる: persona も knowledge も無く、使える headless エージェントの既定とそのモデル既定で動く。
 
 ### prompt をどの言語で書くか
 

@@ -782,6 +782,11 @@ The same approach as cmux.
     session.
   - History the other backend has not seen is replayed on the next send
     (`syncProviderPrompt`), the same path as a fallback.
+- **`POST /chat/ask`** is one stateless advisory turn with tools off. A request that
+  names an assistant (id, then exact name) carries that assistant's persona, model and
+  knowledge, and an unknown name is `404 chat_assistant_not_found`. A request that names
+  none (the Console's memo Tidy and spoken summary) gets a plain turn: no persona, no
+  knowledge, the default available headless agent and its default model.
 
 ### Which language a prompt is written in
 
