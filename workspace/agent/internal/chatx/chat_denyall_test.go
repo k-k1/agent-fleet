@@ -524,3 +524,35 @@ func TestOneShotDenyAllReturnsWhenTheCallIsCutAndAChildOutlivesIt(t *testing.T) 
 		t.Fatalf("the call was still blocked %s after its context ended", time.Since(start))
 	}
 }
+
+// The ledger split S3 reads as skipped versus failed: a probe that refuses leaves no row, because
+// nothing reached a model, while a run that was handed the transcript and then failed the posture
+// check leaves one.
+func TestOneShotDenyAllLedgerRowOnlyOnceTheTranscriptIsSent(t *testing.T) {
+	ctx := usagex.WithTag(context.Background(), usagex.Tag{Feature: usagex.FeatureMemoTidy, Trigger: usagex.TriggerAuto})
+	t.Run("a refused probe leaves no row", func(t *testing.T) {
+		denyAllEnv(t)
+		t.Setenv("AF_USAGE_DIR", t.TempDir())
+		fakeDenyAllClaude(t, fakeRun{Out: lines(`{"type":"system","subtype":"init","tools":["Bash"],"mcp_servers":[]}`, probeResult)}, cleanRun)
+		_, err := OneShotDenyAll(ctx, usagex.FeatureMemoTidy, OneShotProse, "persona", secretPrompt)
+		if !errors.Is(err, ErrDenyAllUnavailable) {
+			t.Fatalf("err = %v, want ErrDenyAllUnavailable", err)
+		}
+		if rows := usagex.ReadRows(); len(rows) != 0 {
+			t.Errorf("a probe refusal left ledger rows: %+v", rows)
+		}
+	})
+	t.Run("a run that showed tools after the transcript leaves a row", func(t *testing.T) {
+		denyAllEnv(t)
+		t.Setenv("AF_USAGE_DIR", t.TempDir())
+		fakeDenyAllClaude(t, cleanProbe, fakeRun{Out: lines(`{"type":"system","subtype":"init","tools":["Bash"],"mcp_servers":[]}`, runResult)})
+		_, err := OneShotDenyAll(ctx, usagex.FeatureMemoTidy, OneShotProse, "persona", secretPrompt)
+		if err == nil || errors.Is(err, ErrDenyAllUnavailable) {
+			t.Fatalf("err = %v, want a failure that is not ErrDenyAllUnavailable", err)
+		}
+		rows := usagex.ReadRows()
+		if len(rows) != 1 || rows[0].Feature != usagex.FeatureMemoTidy {
+			t.Errorf("rows = %+v, want one memo.tidy row", rows)
+		}
+	})
+}

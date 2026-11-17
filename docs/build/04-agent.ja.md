@@ -129,7 +129,7 @@ source_of_truth: "コード（本書は地図と設計意図）"
     同時に 1 回）、`422 tidy_malformed`、`502 tidy_failed`（呼び出しの失敗、または実行自身の出力が deny-all の
     姿勢を示さなかった。返答は捨てる）、`503 deny_all_unavailable`（`errors.Is(err, chatx.ErrDenyAllUnavailable)`
     のときだけ。モデルに何も届かず、ledger の行も無い）、`504 tidy_timeout`（handler 全体を probe 込みで 120 秒
-    で区切る）、資格情報ポリシーの `403 route_forbidden` / `503 policy_unconfirmed` はそのまま。エラーのとき
+    で区切る）、資格情報ポリシーの `403 route_forbidden` / `503 policy_unconfirmed` / `403 agent_disabled` はそのまま（最後は解決と起動の間に kind が切られたときだけ）、prompt を組めないときの `500 tidy_failed`（検証済みの要求では届かないガード）。エラーのとき
     返答の本文は返さず、ログにも書かない。
     `provenance: "curator"` の配信 item は `sourceProvenance`（`member`・`workspace`・`mcp`）、`derivedFrom`
     （元のメモの数、1〜100）、元の `producer` / `producerOrigin` を持つ。参照・パス・添付の無いテキストのメモで、

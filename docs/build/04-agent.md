@@ -147,7 +147,7 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     failed, or the run's own output did not show the deny-all posture: the reply is discarded), `503
     deny_all_unavailable` (only `errors.Is(err, chatx.ErrDenyAllUnavailable)`: nothing reached a model and no
     ledger row was written), `504 tidy_timeout` (the whole handler is bounded at 120 s, probe included), and
-    the credential policy's `403 route_forbidden` / `503 policy_unconfirmed` unchanged. No reply text is
+    the credential policy's `403 route_forbidden` / `503 policy_unconfirmed` / `403 agent_disabled` unchanged (the last only when the kind was switched off between resolving and launching), and `500 tidy_failed` if the prompt cannot be built (a guard that a validated request does not reach). No reply text is
     returned or logged on an error.
     A delivery item with `provenance: "curator"` carries `sourceProvenance` (`member`, `workspace` or `mcp`),
     `derivedFrom` (the number of source notes, 1 to 100) and the sources' `producer` / `producerOrigin`; it is
