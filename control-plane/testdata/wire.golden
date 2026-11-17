@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 560
+# count: 573
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -225,6 +225,7 @@ memoDTO.category string
 memoDTO.contentHash string
 memoDTO.createdAt string
 memoDTO.deliveryId string,omitempty
+memoDTO.derivedFrom [string],omitempty
 memoDTO.existing bool,omitempty
 memoDTO.id string
 memoDTO.kind string
@@ -242,7 +243,12 @@ memoDTO.releasedAt string,omitempty
 memoDTO.releasedBy string,omitempty
 memoDTO.repo string
 memoDTO.sentAt string
+memoDTO.sourceProvenance string,omitempty
 memoDTO.state string
+memoDTO.tidyFrom.id string
+memoDTO.tidyFrom.name string
+memoDTO.tidyFrom.repo string
+memoDTO.tidyRunId string,omitempty
 memoDeliveryDTO.auto bool
 memoDeliveryDTO.closedAt string
 memoDeliveryDTO.createdAt string
@@ -278,6 +284,7 @@ memoQueueDTO.maxTaskHours number
 memoQueueDTO.model string
 memoQueueDTO.noRefsAt string
 memoQueueDTO.noReportAt string
+memoQueueDTO.noTidyAt string
 memoQueueDTO.openAfter number
 memoQueueDTO.openCron string
 memoQueueDTO.openMinutes number
@@ -287,6 +294,8 @@ memoQueueDTO.pausedReason string
 memoQueueDTO.repo string
 memoQueueDTO.route string
 memoQueueDTO.spendCapUsd number
+memoQueueDTO.tidy bool
+memoQueueDTO.tidyDestinations [string]
 memoQueueDTO.tz string
 memoQueueDTO.updatedAt string
 memoQueueDTO.waiting.detail.agentKind string,omitempty
@@ -313,6 +322,7 @@ memoQueuesWire.queues[].maxTaskHours number
 memoQueuesWire.queues[].model string
 memoQueuesWire.queues[].noRefsAt string
 memoQueuesWire.queues[].noReportAt string
+memoQueuesWire.queues[].noTidyAt string
 memoQueuesWire.queues[].openAfter number
 memoQueuesWire.queues[].openCron string
 memoQueuesWire.queues[].openMinutes number
@@ -322,6 +332,8 @@ memoQueuesWire.queues[].pausedReason string
 memoQueuesWire.queues[].repo string
 memoQueuesWire.queues[].route string
 memoQueuesWire.queues[].spendCapUsd number
+memoQueuesWire.queues[].tidy bool
+memoQueuesWire.queues[].tidyDestinations [string]
 memoQueuesWire.queues[].tz string
 memoQueuesWire.queues[].updatedAt string
 memoQueuesWire.queues[].waiting.detail.agentKind string,omitempty

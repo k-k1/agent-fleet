@@ -479,6 +479,7 @@ export const errors = {
   "err.memo_queue_category": "自動実行のカテゴリは、ワークスペースの中からは名前の変更、統合、削除ができません。Console から操作してください。",
   "err.memo_inbox_in_queue": "受信箱から取り込んだメモは、自動実行のカテゴリに入れられません。",
   "err.memo_release_stale": "表示後に内容が変わったメモがあるため、何も承認していません。もう一度確認してください。",
+  "err.memo_tidy_not_undoable": "この整理は取り消せません。整理で作った・移したメッセージが、送信、配信への取り込み、編集、再整理のいずれかをされています。",
   "err.memo_too_large": "メモが大きすぎます。短くしてください。",
   "err.memo_envelope": "メモの本文を [agent-fleet: で始めることはできません。",
   "err.memo_rate_limited": "メモを短時間に追加しすぎています。少し待ってからもう一度試してください。",
