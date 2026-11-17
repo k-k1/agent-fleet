@@ -1142,9 +1142,15 @@ func TestMemoTidyOlderWriterAndADerivedRow(t *testing.T) {
 		if _, err := e.st.DB().ExecContext(ctx, `UPDATE memo SET body='x' WHERE id=?`, id); err == nil {
 			t.Fatal("an older statement changed a derived pending message without its release")
 		}
-		// A claim of it is refused here and so by an older binary, whose rule this is.
-		if why := memoDeliveryItemProblem(got); why == "" {
-			t.Fatal("a derived message passes the claim's item check")
+		// A well-formed derived message passes the claim's item check (an older binary refuses it, and
+		// sends nothing); one that does not say where it came from does not.
+		if why := memoDeliveryItemProblem(got); why != "" {
+			t.Fatalf("a derived message fails the claim's item check: %s", why)
+		}
+		bad := got
+		bad.SourceProvenance = ""
+		if why := memoDeliveryItemProblem(bad); why == "" {
+			t.Fatal("a derived message of unknown origin passes the claim's item check")
 		}
 	})
 }

@@ -223,7 +223,7 @@ Workspace を起こさない。
   キューへの作成には上限がある（16 KiB、`[agent-fleet:` で始まる本文は不可、同じ本文が待って
   いればそれを返す、1 分 30 件）。
 - **整理（Tidy）**（[decisions/0137](../decisions/0137-message-queues.ja.md) §8、段 5、slice S1）: 「発火の前の整理」の
-  Control Plane 側の核。まだ何も呼ばない（dispatcher は `tidy` を読まず、返答を適用するルートもない）。
+  Control Plane 側の核。返答を適用するルートはまだない（dispatcher の自動実行は次の項目）。
   *設定*: `PUT /api/memo-queues/{categoryId}` は `tidy`（bool、省略は off）と `tidyDestinations`（カテゴリ id、最大 10、
   重複は除く。各 id は自分のこのキュー以外のキューで、そうでなければ `400 memo_queue_bad_settings`）を受ける。
   `GET /api/memo-queues` は `tidy`、`tidyDestinations`（キューの設定が消えた id は出さない）、読み取り専用の
@@ -257,6 +257,45 @@ Workspace を起こさない。
   削除は送信済みノートにし、派生メッセージはほかと同じに編集・移動・release できる（プレーンなカテゴリからキューへの移動は
   `held` で入る）。整理のスイッチは壁ではなくガードレール: 返答はワークスペースの中で作られるので、Agent の代わりに答え
   られるコードは、この上限の中で派生メッセージの本文を選べる。マイグレーションは 0142（SQLite）と 0127（Postgres）。
+- **整理の自動実行**（[decisions/0137](../decisions/0137-message-queues.ja.md) §8、段 5、slice S3。コードは
+  `memo_tidy_run.go` と `memo_dispatch.go` の `fireQueue`）: キューに `tidy` が入るまで、配備先では動かない（入れられる
+  のは Console の設定 PUT だけ）。*tick のどこにあるか*: settle（突き合わせと close）、dispatch、送信、そして dispatch が
+  返したジョブ（wake と整理の run。tick の fire スロットで動く）。dispatch はメンバーごとに、後始末、古い run の引き継ぎ
+  （`takeOverTidy`: ロックなしの読み取りで、期限を過ぎた run があるときだけトランザクション）、続いてキューごとに
+  `fireQueue`（待ちの一番古いメッセージの順）。`fireQueue` の `MemoTx` の中で、`memoWaitingFor` が発火を許したあと、
+  `memoReserveAndClaim` の前に、`tidy` が on で、Agent が整理でき、見ていない `pending` メッセージ（`tidy_seen_hash` が内容の
+  ハッシュと違う）を持つキューは、claim せずに run を予約し（`reserveTidy`、状態 `running`）、ジョブを返す。claim は次の
+  tick。Agent が整理できるとは、動いているワークスペースが今の `GET /sessions` で `queueTidy >= 1` を見せること。止まって
+  いて誰も尋ねていないワークスペースでは、キューの `no_tidy_at` が空であること（ジョブが wake のあとにマーカーを読む）。
+  見ていないものがない、24 時間にそのキューで 10 回予約済み（`memotidy.DailyCap`、メンバーのロックの内側で数える）、
+  Agent が整理できない、のいずれかなら run を作らず、そのまま発火する。「今すぐ実行」は整理しない。*同時に 1 つ*:
+  メンバーの `running` は 1 つ（ユニークインデックス。`tidy` が on のキューは、run が動いている間 `memoWaitingFor` が
+  `tidying` を返し、整理も発火もしない）。1 tick に予約するのは 2 つまで（`memoTidyRunsPerTick`）、超えたキューは次の
+  tick を待つ。`memoTidyTakeoverAfter`（10 分 = 冷たい起動の待ち最大 5 分 + セッション読み取り 15 秒 + 150 秒の呼び出し + 余裕）を過ぎた run は、それに出会った次の
+  tick が理由 `takeover` の `failed` で終え、入力を見た印にする。最初のプロセスの遅い apply は
+  `errMemoTidyNotRunning` になり何も書かない。*入力*: 一番古い `pending` から最大 40 件、本文 96 KiB（`memoTidyTextBytes`）
+  まで。残りは見た印をつけてそのまま発火し、選んだ中に見ていないものがなければ run は予約しない。*ジョブ*（`runTidy`）:
+  送信と同じ keep-alive つきの wake（`wakeAndWait`。`wake` と共有）、`GET /sessions`、続いて `agentLongCallClient` で
+  150 秒（`memoTidyCallWait`）の期限つきの `POST /memos/tidy`、`Content-Type: application/json`: `trigger: "auto"`、上限は
+  10 / 5 / 16384 / 80、古い順の items（`group` は実効的な元の provenance・producer・producer origin ごとに 1 つの数で、派生
+  メッセージは `source_provenance` で読む。`merge` はプレーンなテキストノートだけ、`move` は run がすでに移したものを false）、
+  宛先はキュー自身のリポジトリのカテゴリ（`queue` は true か false）と列挙された `tidyDestinations`（別リポジトリも可）。
+  キュー自身は含めず、最大 100。返答は `memotidy.Parse` と、run の id・送った items・出した宛先の id を渡した
+  `memoTidyApply` を通る。*コード*（ステータスではなく `error.code` で分ける）: 拒否された 200 と `422 tidy_malformed` は
+  `dropped`（理由は拒否のコードか `tidy_malformed`）、`409 tidy_busy`・`503 deny_all_unavailable`・`503 policy_unconfirmed`・
+  `403 route_forbidden`・`403 agent_disabled`・`400 bad_tidy_request` は、そのコードを理由に `skipped`、`502`/`500 tidy_failed`・
+  `504 tidy_timeout`・切れたか失われた呼び出し（`timeout`、`call_failed`）・その他の答え（`agent_error`）は `failed`、wake の
+  あとにマーカーがない・Agent に届かない・wake の失敗は `skipped`（`no_marker`、`agent_unreachable`、`wake_failed`）。apply
+  以外の終わり方はすべて入力を丸ごと見た印にし、メッセージもキューの行も変えないので、次の tick は元のものを発火する。
+  *`no_tidy_at`* を立てるのは、マーカーを見せない動いているワークスペース（`no_refs_at` と同じく毎 tick）、wake のあとに
+  マーカーを読めなかったジョブ、`503 deny_all_unavailable`、マーカーのない Agent への派生メッセージの送信。マーカーを
+  見せる動いているワークスペースが消し（だから `deny_all_unavailable` のあとは次の run でまた立つ）、マーカーを見つけた
+  送信も消す。設定の PUT は触らない。*派生（`curator`）メッセージが送れる*: item は `provenance: "curator"`、
+  `sourceProvenance`、`derivedFrom`（元の数）、元の producer と producer origin を持ち、テキストだけ
+  （`memoCuratorItemProblem` が壊れたものを拒む）。自動の claim は `no_tidy_at` が立っている間それを `pending` に残し、
+  送信は wake のあとにマーカーを確かめ、なければ何も送らない。*待ちの理由*に `tidying` と `no_tidy`（待っているものが
+  すべて派生で Agent が受けられない）が加わる。Console は知らない理由を捨てる。*しきい値のキュー*は N 件で開いたあと、
+  予約が draining にするので、merge で N 件を下回っても残りは発火する。
 - **配信**（decisions/0137 §6、段 1c）: 配信はキューの 1 回の発火。閉じていない配信は 1 つずつ
   キューの `maxActive` の枠を 1 つ占め、メンバー全体の上限 4 にも数える。
   `POST /api/memo-queues/{categoryId}/fire`（Console だけ）は 1 つの `MemoTx` で枠を予約し、

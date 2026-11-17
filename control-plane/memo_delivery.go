@@ -87,6 +87,10 @@ func memoDeliveryItemProblem(m store.Memo) string {
 	}
 	switch memoEffectiveProvenance(m) {
 	case store.MemoProvenanceMember, store.MemoProvenanceWorkspace, store.MemoProvenanceMCP:
+	case store.MemoProvenanceCurator:
+		if why := memoCuratorItemProblem(m); why != "" {
+			return why
+		}
 	default:
 		return "its origin cannot be sent to a session"
 	}
@@ -101,6 +105,25 @@ func memoDeliveryItemProblem(m store.Memo) string {
 		if len(a.Path) > memoDeliveryPathMax || len(a.Name) > memoDeliveryPathMax || !filepath.IsAbs(a.Path) {
 			return "an attachment's path or name cannot be sent"
 		}
+	}
+	return ""
+}
+
+// memoCuratorSourcesMax is the most sources a curator item may name (the Agent's bound).
+const memoCuratorSourcesMax = 100
+
+// memoCuratorItemProblem says why a derived message is not what the Agent takes as a curator item:
+// a plain text note whose sources' provenance and count are known. "" when it is.
+func memoCuratorItemProblem(m store.Memo) string {
+	switch {
+	case m.Kind != "text" || m.RefPath != "" || m.RefKey != "" || m.Attachments != "":
+		return "a derived message is a plain text note"
+	case m.SourceProvenance != store.MemoProvenanceMember && m.SourceProvenance != store.MemoProvenanceWorkspace &&
+		m.SourceProvenance != store.MemoProvenanceMCP:
+		return "the origin of the notes it was derived from cannot be sent to a session"
+	}
+	if n := len(decodeIDs(m.DerivedFrom)); n < 1 || n > memoCuratorSourcesMax {
+		return "the notes it was derived from cannot be counted"
 	}
 	return ""
 }
@@ -318,6 +341,11 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 		if auto && m.RefKey != "" && q.NoRefsAt != "" {
 			continue
 		}
+		// The same for a derived message while the Agent cannot take one: it waits, and the queue
+		// says why (waitNoTidy). Nothing derived is ever sent to an Agent without the marker.
+		if auto && m.Provenance == store.MemoProvenanceCurator && q.NoTidyAt != "" {
+			continue
+		}
 		// A release is bound to the content it showed. One that no longer matches goes back
 		// for a new press instead of being fired.
 		if m.ReleaseHash != memoContentHash(m) {
@@ -413,8 +441,12 @@ type memoQueueRunner struct {
 	// tickViews is the settle pass's view of each member's workspace in this tick, which the
 	// dispatch pass that follows reuses. A tick is one goroutine, so no lock.
 	tickViews map[string]*memoMemberView
-	// wakeJobs are the wakes made only to settle that this tick's dispatch pass decided on.
+	// wakeJobs are the wakes made only to settle that this tick's dispatch pass decided on, and
+	// tidyJobs the tidy runs it reserved. Both run in the tick's fire slots.
 	wakeJobs []func(context.Context)
+	tidyJobs []func(context.Context)
+	// tidyCallWait is the wait for the Agent's tidy answer, memoTidyCallWait when zero.
+	tidyCallWait time.Duration
 }
 
 func newMemoQueueRunner(mgr *manager, f *wakeFirer) *memoQueueRunner {
@@ -444,7 +476,9 @@ type memoMemberView struct {
 	gens   map[string]int64
 	report bool
 	// refs is set when the Agent that answered can show an item that carries a reference.
-	refs   bool
+	refs bool
+	// tidy is set when the Agent that answered has the tidy endpoint and takes a derived message.
+	tidy   bool
 	readAt string
 	// actMark is the envelope's actMark of that read, 0 when the Agent sent none.
 	actMark int64
@@ -566,6 +600,7 @@ func (r *memoQueueRunner) view(ctx context.Context, views map[string]*memoMember
 		cancel()
 		v.live, v.liveOK, v.report = env.Sessions, err == nil, err == nil && env.reportsQueue()
 		v.refs = err == nil && env.showsReferences()
+		v.tidy = err == nil && env.showsTidy()
 		if v.liveOK {
 			v.actMark = env.ActMark
 			if env.ActMark > 0 {
@@ -1524,6 +1559,10 @@ func (r *memoQueueRunner) send(ctx context.Context, d store.MemoDelivery) {
 		notSent("the Agent cannot show a reference, so a delivery that holds one is not sent to it")
 		return
 	}
+	if planHasCurator(plan) && !r.agentShowsTidy(ctx, res, d) {
+		notSent("the Agent cannot take a derived message, so a delivery that holds one is not sent to it")
+		return
+	}
 	// The quota: the running sessions as the Agent counts them now, and, in the move to
 	// sending below, every delivery whose session the count may not show yet.
 	running, lim, countedAt := 0, 0, store.DeliveryTS(time.Now())
@@ -1586,6 +1625,35 @@ func planHasReference(p memoSendPlan) bool {
 		}
 	}
 	return false
+}
+
+func planHasCurator(p memoSendPlan) bool {
+	for _, m := range p.messages {
+		if m.Provenance == store.MemoProvenanceCurator {
+			return true
+		}
+	}
+	return false
+}
+
+// agentShowsTidy is agentShowsReferences for a delivery that holds a derived message: the Agent
+// must send the queueTidy marker. The answer is recorded on the queue (NoTidyAt), so that a fire
+// leaves derived messages where they are while the Agent cannot take them.
+func (r *memoQueueRunner) agentShowsTidy(ctx context.Context, res *resolved, d store.MemoDelivery) bool {
+	cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
+	defer cancel()
+	env, err := r.mgr.agentSessionsEnv(cctx, res.rt)
+	if err != nil {
+		return false
+	}
+	at := ""
+	if !env.showsTidy() {
+		at = store.DeliveryTS(time.Now())
+	}
+	if err := r.mgr.store.SetMemoQueueNoTidy(ctx, d.QueueID, at); err != nil {
+		log.Printf("memo queue: queue %s: note the Agent's tidy: %v", d.QueueID, err)
+	}
+	return env.showsTidy()
 }
 
 // agentShowsReferences is the check of a delivery that holds a reference, made after the wake
@@ -1687,24 +1755,31 @@ func (r *memoQueueRunner) plan(ctx context.Context, d store.MemoDelivery) (memoS
 // container reclaimed under it. A failure here sent nothing, and closes the delivery as not
 // sent. It reports whether the Agent is ready.
 func (r *memoQueueRunner) wake(ctx context.Context, res *resolved, d store.MemoDelivery) bool {
-	notSent := func(why string) bool {
+	if why := r.wakeAndWait(ctx, res); why != "" {
 		log.Printf("memo queue: delivery %s not sent: %s", d.ID, why)
 		r.closeNotSent(ctx, d, store.DeliveryClaimed)
 		return false
 	}
+	return true
+}
+
+// wakeAndWait is the wake of a send and of a tidy run: the keep-alive first, then the start of a
+// workspace that is not running, then the wait for the Agent. It answers why it failed, "" when
+// the Agent is ready.
+func (r *memoQueueRunner) wakeAndWait(ctx context.Context, res *resolved) string {
 	release, err := r.mgr.trackWorkspaceConnection(ctx, res.ws.ID, "")
 	if err != nil {
 		if errors.Is(err, errWorkspaceStopping) {
-			return notSent("the workspace is stopping")
+			return "the workspace is stopping"
 		}
-		return notSent("keep-alive: " + err.Error())
+		return "keep-alive: " + err.Error()
 	}
 	r.f.scheduleRelease(release)
 	var wakeErr error
 	if res.rt.State(ctx) != "running" {
 		if aerr := r.f.wsAPI.ensureWorkspaceStartedUnattended(ctx, res); aerr != nil {
 			if aerr.code == "quota_workspaces" {
-				return notSent("the tenant is at its running-workspace cap")
+				return "the tenant is at its running-workspace cap"
 			}
 			wakeErr = fmt.Errorf("wake: %s", aerr.message)
 		}
@@ -1713,13 +1788,13 @@ func (r *memoQueueRunner) wake(ctx context.Context, res *resolved, d store.MemoD
 		if wakeErr != nil {
 			err = fmt.Errorf("%w (after %v)", err, wakeErr)
 		}
-		return notSent("agent not ready: " + err.Error())
+		return "agent not ready: " + err.Error()
 	}
 	if wakeErr != nil {
 		_ = r.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
 		_ = r.mgr.touchWorkspace(ctx, res.ws.ID)
 	}
-	return true
+	return ""
 }
 
 // reserveDeliveryCreate records the delivery's key on the Agent before its create is sent, so
@@ -1825,6 +1900,10 @@ type memoDeliveryItem struct {
 	Provenance     string           `json:"provenance"`
 	Producer       string           `json:"producer"`
 	ProducerOrigin string           `json:"producerOrigin"`
+	// SourceProvenance and DerivedFrom are set on a curator item only: the provenance of the notes a
+	// tidy run derived it from, and how many there were. Producer and ProducerOrigin are theirs.
+	SourceProvenance string `json:"sourceProvenance,omitempty"`
+	DerivedFrom      int    `json:"derivedFrom,omitempty"`
 }
 
 // memoDeliveryCreateBody builds the create. A queue with a repository gets a new worktree off
@@ -1850,9 +1929,13 @@ func memoDeliveryCreateBody(d store.MemoDelivery, p memoSendPlan) []byte {
 		if atts == nil {
 			atts = []memoAttachment{}
 		}
-		body.QueueDelivery.Items = append(body.QueueDelivery.Items, memoDeliveryItem{ID: m.ID, Kind: m.Kind, Body: m.Body,
+		it := memoDeliveryItem{ID: m.ID, Kind: m.Kind, Body: m.Body,
 			RefPath: m.RefPath, Attachments: atts, Provenance: memoEffectiveProvenance(m), Producer: m.Producer,
-			ProducerOrigin: m.ProducerOrigin, Reference: memoRefToWire(m)})
+			ProducerOrigin: m.ProducerOrigin, Reference: memoRefToWire(m)}
+		if m.Provenance == store.MemoProvenanceCurator {
+			it.SourceProvenance, it.DerivedFrom = m.SourceProvenance, len(decodeIDs(m.DerivedFrom))
+		}
+		body.QueueDelivery.Items = append(body.QueueDelivery.Items, it)
 		if m.RefKey != "" {
 			refs++
 			item = &memoDeliveryWorkItem{Provider: m.RefProvider, Key: m.RefKey}
