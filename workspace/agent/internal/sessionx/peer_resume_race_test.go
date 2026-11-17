@@ -226,8 +226,9 @@ func TestDroppedPeerSendWithdrawsWorkingAfterAWriteGaveWay(t *testing.T) {
 
 	prev := persistIfRev
 	var calls atomic.Int32
+	wantSid := session.UUID(m.Dir, m.Name)
 	persistIfRev = func(sid, state, wasRev string, existed bool) bool {
-		if calls.Add(1) == 1 {
+		if sid == wantSid && calls.Add(1) == 1 {
 			return false // gave way: the record is untouched
 		}
 		return prev(sid, state, wasRev, existed)
@@ -238,8 +239,8 @@ func TestDroppedPeerSendWithdrawsWorkingAfterAWriteGaveWay(t *testing.T) {
 	if code != http.StatusBadGateway || !strings.Contains(body, "delivery_unconfirmed") {
 		t.Fatalf("send into the booting pane: %d %s, want 502 delivery_unconfirmed", code, body)
 	}
-	if calls.Load() == 0 {
-		t.Fatal("the withdrawal never ran")
+	if calls.Load() < 2 { // at least: the forced give-way, then the retry
+		t.Fatal("the withdrawal never retried")
 	}
 	if got := status.LiveState(session.UUID(m.Dir, m.Name)); got != "idle" {
 		t.Fatalf("status after a withdrawal that gave way once = %q, want idle (no turn started)", got)
