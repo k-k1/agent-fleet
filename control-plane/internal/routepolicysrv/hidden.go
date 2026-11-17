@@ -111,3 +111,14 @@ func (v tenantPolicyWire) HiddenKinds() map[string]bool {
 	}
 	return out
 }
+
+// AllowedRoutes is, per harness, the routes the tenant's effective policy allows, for the hosted
+// MCP create_session text (#4323). Every harness with routes has an entry, empty when none is
+// allowed.
+func (v tenantPolicyWire) AllowedRoutes() map[string][]string {
+	out := map[string][]string{}
+	for _, k := range v.Owners.Kinds {
+		out[k.ID] = k.Allowed
+	}
+	return out
+}

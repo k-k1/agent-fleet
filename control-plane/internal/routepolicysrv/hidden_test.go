@@ -74,6 +74,26 @@ func TestTenantViewListsWhatIsHidden(t *testing.T) {
 	if !v.HiddenKinds()["claude"] || v.HiddenKinds()["codex"] {
 		t.Errorf("HiddenKinds %v", v.HiddenKinds())
 	}
+	// AllowedRoutes reads the same decision: claude has none left, opencode keeps its own.
+	if got := v.AllowedRoutes(); len(got["claude"]) != 0 || len(got["opencode"]) == 0 {
+		t.Errorf("AllowedRoutes %v", got)
+	}
+}
+
+// AllowedRoutes lists the routes the layers allow per harness: the denied one drops out.
+func TestAllowedRoutesDropsDeniedRoute(t *testing.T) {
+	var tenant routepolicy.Rule
+	if err := json.Unmarshal([]byte(`{"deny":["bedrock"]}`), &tenant); err != nil {
+		t.Fatal(err)
+	}
+	owners, _ := foldOwners(routepolicy.Layers{Tenant: tenant}, nil, 0)
+	got := tenantPolicyWire{Owners: owners}.AllowedRoutes()
+	if slices.Contains(got["claude"], "bedrock") || !slices.Contains(got["claude"], "anthropic-api") {
+		t.Errorf("claude allowed %v", got["claude"])
+	}
+	if slices.Contains(got["opencode"], "bedrock") {
+		t.Errorf("opencode allowed %v", got["opencode"])
+	}
 }
 
 // A per-connection route allowed on an approved endpoint keeps its harness visible to the tenant:

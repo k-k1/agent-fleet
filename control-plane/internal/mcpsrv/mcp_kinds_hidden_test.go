@@ -91,7 +91,7 @@ func TestToolTextsLeaveOutHiddenKinds(t *testing.T) {
 	// Another tenant, hiding nothing: the texts are exactly the unhidden ones.
 	plain := hidingCP{memCP: base, byTenant: nil}
 	got := New(plain).toolsFor(context.Background(), &prin)
-	want := memberToolsHiding(nil)
+	want := memberToolsHiding(nil, allAllowed)
 	for _, name := range []string{"list_models", "create_session"} {
 		if toolTexts(t, got, name) != toolTexts(t, want, name) {
 			t.Errorf("%s changed for a tenant that hides nothing", name)
@@ -111,7 +111,7 @@ func TestToolTextsWithEveryKindHidden(t *testing.T) {
 	if s := listModelsKindNotes(all); s != "" {
 		t.Errorf("list_models notes %q", s)
 	}
-	for _, tl := range memberToolsHiding(all) {
+	for _, tl := range memberToolsHiding(all, allAllowed) {
 		if strings.Contains(tl.desc, ";  ") || strings.Contains(tl.desc, "  If") || strings.Contains(tl.desc, "`kind`.  ") {
 			t.Errorf("%s: malformed description %q", tl.name, tl.desc)
 		}
