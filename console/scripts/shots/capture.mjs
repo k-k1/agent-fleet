@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { launchChromium } from "../lib/chromium-launch.mjs";
 import { DETAIL_SHA } from "./fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -25,8 +26,8 @@ const THEME = arg("theme", "dark");
 const ONLY = arg("only", "");
 const OUT = path.resolve(ROOT, arg("out", "docs/img"));
 const PORT = Number(arg("port", 8765));
-const CDP_PORT = Number(arg("cdp-port", 9223));
 const BASE = `http://127.0.0.1:${PORT}/`;
+if (argv.includes("--cdp-port")) console.warn("[shots] --cdp-port was removed and is ignored: Chromium takes a free port itself");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -3704,16 +3705,22 @@ const stub = spawn(process.execPath, [path.join(HERE, "server.mjs"), "--port", S
   env: { ...process.env, ...stubEnv },
 });
 
-const chrome = spawn(
-  "/usr/bin/chromium",
-  [
-    "--headless=new",
-    "--no-sandbox",
+// Handlers go in before the launch wait: a signal in that window would otherwise leave the stub
+// behind (launchChromium cleans up its own browser and profile on exit).
+let browser = null;
+const cleanup = () => {
+  browser?.close();
+  try { stub.kill(); } catch {}
+};
+process.on("exit", cleanup);
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(1));
+
+browser = await launchChromium({
+  args: [
     "--disable-gpu",
     "--hide-scrollbars",
     "--force-device-scale-factor=2",
     "--font-render-hinting=none",
-    `--remote-debugging-port=${CDP_PORT}`,
     "--remote-allow-origins=*",
     // Headless reports a coarse pointer, so `@media (hover: none)` applies and controls that
     // should only appear on hover appear on every row — a picture busier than the real thing
@@ -3727,15 +3734,8 @@ const chrome = spawn(
     `--lang=${LOCALE === "ja" ? "ja-JP" : "en-US"}`,
     "about:blank",
   ],
-  { stdio: ["ignore", "ignore", "ignore"] },
-);
-
-const cleanup = () => {
-  try { chrome.kill(); } catch {}
-  try { stub.kill(); } catch {}
-};
-process.on("exit", cleanup);
-process.on("SIGINT", () => { cleanup(); process.exit(1); });
+});
+const CDP_PORT = browser.port;
 
 try {
   await fetchJSON(`http://127.0.0.1:${CDP_PORT}/json/version`);
