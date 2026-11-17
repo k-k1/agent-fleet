@@ -390,4 +390,6 @@ export const memo = {
   "memo.tidyop_code_move_self": "同じカテゴリへは移せません",
   "memo.tidyop_code_duplicate_ref": "移動先に、同じ作業項目を指しているメモがすでにあります",
   "memo.tidyop_code_already_moved": "整理で移したメモは、もう一度移せません",
+  "memo.tidyop_replaced_all": "選んだメモは、すでに整理で置き換えられているため、整理できません",
+  "memo.tidyop_replaced_some": "整理で置き換え済みのメモ {count} 件を除いて整理します",
 };

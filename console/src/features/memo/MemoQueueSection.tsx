@@ -52,6 +52,7 @@ import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
 import { memoReference } from "./reference.ts";
 import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
+import { tidySelection } from "./tidyOps.ts";
 import { isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
@@ -729,12 +730,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         aria-label={tr("memo.organize_title")}
         disabled={!workspaceRunning || selectedIds.length === 0}
         onClick={() => {
-          // A replaced note is read-only and is never a source of a tidy.
-          const tidyable = selectedMemos.filter((m) => !isSuperseded(m));
-          if (tidyable.length === 0) {
+          if (selectedMemos.length === 0) {
             toast(t("memo.select_to_organize"), { kind: "warn" });
             return;
           }
+          // A replaced note is read-only and is never a source of a tidy.
+          const { memos: tidyable, dropped } = tidySelection(selectedMemos);
+          if (tidyable.length === 0) {
+            toast(t("memo.tidyop_replaced_all"), { kind: "warn" });
+            return;
+          }
+          if (dropped > 0) toast(t("memo.tidyop_replaced_some", { count: dropped }));
           setTidy(tidyable);
         }}
       />

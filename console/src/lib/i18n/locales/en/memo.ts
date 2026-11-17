@@ -393,4 +393,6 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.tidyop_code_move_self": "A note cannot be moved into its own category",
   "memo.tidyop_code_duplicate_ref": "The destination already holds an open note for the same item",
   "memo.tidyop_code_already_moved": "A note that a tidy moved cannot be moved again",
+  "memo.tidyop_replaced_all": "The selected notes were already replaced by a tidy, so they cannot be tidied",
+  "memo.tidyop_replaced_some": "Tidying without {count} notes that a tidy already replaced",
 };

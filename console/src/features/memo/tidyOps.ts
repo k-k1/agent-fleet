@@ -71,6 +71,14 @@ export function planSelection(memos: readonly Memo[], cats: readonly MemoCategor
   return { mode: "ops", category: catOf(memos[0])! };
 }
 
+/** The notes of a selection a tidy may read. A note a tidy already replaced is read-only (and S4's
+ *  select-all skips it), but one selected just before a run replaced it can still be in the
+ *  selection: it is left out, and `dropped` says how many. */
+export function tidySelection(selected: readonly Memo[]): { memos: Memo[]; dropped: number } {
+  const memos = selected.filter((m) => m.state !== "superseded");
+  return { memos, dropped: selected.length - memos.length };
+}
+
 /** A note a merge or a split may take: plain text only (decision 6 of the contract). */
 export const isPlainText = (m: Memo): boolean =>
   m.kind === "text" && m.body !== "" && !m.refPath && !(m.attachments && m.attachments.length > 0) && !m.reference;

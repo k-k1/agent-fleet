@@ -10,6 +10,7 @@ import {
   planSelection,
   readTidyDestinationIds,
   reviewOps,
+  tidySelection,
   tidyDestinations,
 } from "./tidyOps.ts";
 
@@ -41,6 +42,16 @@ describe("planSelection", () => {
     expect(planSelection([note("a", { sentAt: "x" })], cats).mode).toBe("blocked");
     const many = Array.from({ length: 41 }, (_, i) => note("n" + i));
     expect(planSelection(many, cats)).toMatchObject({ mode: "blocked", reason: "memo.tidyop_too_many" });
+  });
+});
+
+describe("tidySelection", () => {
+  it("leaves out notes a tidy already replaced and counts them", () => {
+    const r = tidySelection([note("a"), note("b", { state: "superseded" }), note("c", { state: "held" })]);
+    expect(r.memos.map((m) => m.id)).toEqual(["a", "c"]);
+    expect(r.dropped).toBe(1);
+    expect(tidySelection([note("b", { state: "superseded" })])).toEqual({ memos: [], dropped: 1 });
+    expect(tidySelection([note("a")]).dropped).toBe(0);
   });
 });
 
