@@ -49,8 +49,9 @@ var (
 	base   = context.Background()
 )
 
-// beginRun and endRun bracket a run while its owner holds runMu, so Running is true exactly while
-// runMu is held.
+// beginRun marks the run Running while its owner holds runMu; endRun clears it just before the owner
+// unlocks, so Running can read false while the lock is still held. Wait for a run on runMu, not on
+// Running.
 func beginRun(manual, all bool, now time.Time) {
 	progMu.Lock()
 	prog = RunProgress{Running: true, Manual: manual, All: manual && all, Started: now}
