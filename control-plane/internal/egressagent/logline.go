@@ -41,6 +41,8 @@ type logLine struct {
 	host   string
 	// denied is Squid's own refusal: a terminated TLS connection or a DENIED status.
 	denied bool
+	// duplicate marks the CONNECT half of a spliced TLS connection; see isSpliceConnect.
+	duplicate bool
 }
 
 // parseLine reads one line in LogFormat. ok is false when the line is not ours or lacks
@@ -72,8 +74,40 @@ func parseLine(s string) (logLine, bool) {
 	}
 	status, bump := f[4], f[5]
 	l.denied = strings.Contains(status, "DENIED") || bump == "terminate"
+	l.duplicate = isSpliceConnect(status, bump)
 	l.host = hostOf(f[6], f[7])
 	return l, true
+}
+
+// isSpliceConnect reports whether a line is the first of the two Squid writes for one
+// spliced TLS connection, which the shipper drops so the connection counts once.
+//
+// Both the intercepted path (egress-relay's CONNECT to :3131) and the explicit-proxy path
+// (:3128) reach ConnStateData::splice() (client_side.cc), which calls context->finished()
+// on the client's CONNECT and then starts a second, fake tunneled CONNECT for the same
+// socket. The first is logged with no forward, so status NONE_NONE, bump mode splice and no
+// server address; the second is the tunnel proper (TCP_TUNNEL, with the server address).
+// Production logs agree: equal counts of the two, ~1 ms apart.
+//
+// The match is deliberately narrow, so nothing that is the only record of a connection is
+// dropped:
+//   - terminate (enforce-mode denial) is also NONE_NONE but has no second line (the
+//     connection is closed at once); it is kept and counts as denied.
+//   - NONE_NONE_ABORTED (peek aborted: the client left before a usable ClientHello, so no
+//     SNI and no tunnel) is kept. It is a real connection attempt that reached the gateway
+//     and was not allowed through; it shows by address, not allowed.
+//   - Plain HTTP intercept (:3129) is one TCP_MISS/TCP_DENIED line and has no bump mode.
+//
+// Visibility: the kept TCP_TUNNEL line is written when the tunnel closes, so a long-lived
+// connection is not visible (Observed, attribution, would-block audit) until then. Its
+// time is the start time, so daily counts are right. Before, the CONNECT line made it
+// visible at splice time.
+//
+// Squid creates the second CONNECT synchronously inside splice(), and it always produces a
+// line (TCP_TUNNEL, *_ABORTED or TCP_DENIED), so a lone NONE_NONE splice is not expected;
+// a crash between the two writes is the only way to lose a connection here.
+func isSpliceConnect(status, bump string) bool {
+	return status == "NONE_NONE" && bump == "splice"
 }
 
 // parseSquidTime reads "%tS" (seconds, a dot, a fraction; Squid prints milliseconds) as

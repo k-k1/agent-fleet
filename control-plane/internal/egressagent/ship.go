@@ -228,7 +228,8 @@ func readBatch(r *bufio.Reader, ident string, off int64, snap *snapshot) ([]Even
 }
 
 // lineConv turns one log line into an event (without its id); ok is false for a line that
-// is not in the log's format.
+// is not in the log's format. An event with Count 0 is a line that counts nothing (the
+// duplicate half of a spliced connection): it is consumed silently.
 type lineConv func(line string) (Event, bool)
 
 // squidConv reads Squid's af1 lines, attaching the verdict the policy snapshot gives.
@@ -237,6 +238,11 @@ func squidConv(snap *snapshot) lineConv {
 		l, ok := parseLine(line)
 		if !ok {
 			return Event{}, false
+		}
+		if l.duplicate {
+			// Count 0 pairs with the skip in readBatchWith; the CP would count a
+			// shipped Count-0 event as 1 (egress.go), so it must never be sent.
+			return Event{}, true
 		}
 		return Event{
 			At: l.at, Source: l.source, Dest: l.dest, Host: l.host,
@@ -247,7 +253,7 @@ func squidConv(snap *snapshot) lineConv {
 
 func readBatchWith(r *bufio.Reader, ident string, off int64, conv lineConv) ([]Event, int64, error) {
 	var evs []Event
-	size := 0
+	size, skipped := 0, 0
 	for size < maxBatchBytes {
 		line, err := readLine(r)
 		if errors.Is(err, io.EOF) {
@@ -267,10 +273,17 @@ func readBatchWith(r *bufio.Reader, ident string, off int64, conv lineConv) ([]E
 			log.Printf("egress-agent: skipping a line not in the af1/af2 format at %s@%d: %.200q", ident, pos, line.text)
 			continue
 		}
+		if ev.Count == 0 {
+			skipped++
+			continue
+		}
 		ev.ID = ident + "@" + strconv.FormatInt(pos, 10)
 		b, _ := json.Marshal(ev)
 		size += len(b) + 1
 		evs = append(evs, ev)
+	}
+	if skipped > 0 {
+		log.Printf("egress-agent: %d duplicate splice lines skipped in %s", skipped, ident)
 	}
 	return evs, off, nil
 }

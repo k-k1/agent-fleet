@@ -512,3 +512,58 @@ func TestShipTCPRelayLog(t *testing.T) {
 		t.Fatalf("resent after commit: %d -> %d", before, len(f.cp.got))
 	}
 }
+
+// A spliced TLS connection is two Squid lines (the client's CONNECT, then the tunnel); a
+// terminated one is a single NONE_NONE line and must still count.
+func TestShipCountsSplicedConnectionOnce(t *testing.T) {
+	f := newShipFixture(t)
+	appendFile(t, f.log,
+		"af1 1761300001.311 10.0.1.5 - NONE_NONE splice api.github.com api.github.com\n"+
+			"af1 1761300001.312 10.0.1.5 140.82.112.3 TCP_TUNNEL splice api.github.com api.github.com\n"+
+			"af1 1761300002.000 10.0.1.5 - NONE_NONE terminate evil.example 203.0.113.9\n"+
+			"af1 1761300003.000 10.0.1.5 - NONE_NONE_ABORTED splice - 198.51.100.7\n"+
+			"af1 1761300004.000 10.0.1.5 - TCP_DENIED - - evil.example\n")
+	if err := f.sh.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range f.cp.got {
+		got = append(got, fmt.Sprintf("%d %s %v", e.At, e.Host, e.Allowed))
+	}
+	want := []string{
+		"1761300001312 api.github.com true",
+		"1761300002000 evil.example false",
+		"1761300003000  false",
+		"1761300004000 evil.example false",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("events = %q, want %q", got, want)
+	}
+}
+
+// The skipped line's bytes are consumed and committed: a second pass sends nothing, and a
+// failed POST resends the surviving event once.
+func TestShipSkippedLineIsCommitted(t *testing.T) {
+	f := newShipFixture(t)
+	appendFile(t, f.log,
+		"af1 1761300001.311 10.0.1.5 - NONE_NONE splice api.github.com api.github.com\n"+
+			"af1 1761300001.312 10.0.1.5 140.82.112.3 TCP_TUNNEL splice api.github.com api.github.com\n"+
+			"af1 1761300002.000 10.0.1.5 - NONE_NONE splice evil.example evil.example\n")
+	f.cp.set(func(c *ingestCP) { c.fail = 1 })
+	if err := f.sh.pass(context.Background()); err == nil {
+		t.Fatal("want the first pass to fail")
+	}
+	f.restart(t)
+	if err := f.sh.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.cp.got) != 1 {
+		t.Fatalf("got %d events, want 1", len(f.cp.got))
+	}
+	if err := f.sh.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.cp.got) != 1 {
+		t.Fatalf("second pass resent: %d events", len(f.cp.got))
+	}
+}

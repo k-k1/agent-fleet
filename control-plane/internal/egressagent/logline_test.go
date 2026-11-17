@@ -57,6 +57,24 @@ func TestParseLine(t *testing.T) {
 			ok:   true,
 			want: logLine{at: 1761300000000, source: "10.0.1.5", dest: "203.0.113.9", denied: true},
 		},
+		{
+			name: "CONNECT half of a splice (no server address)",
+			line: "af1 1794880574.311 10.0.32.5 - NONE_NONE splice api.atlassian.com api.atlassian.com",
+			ok:   true,
+			want: logLine{at: 1794880574311, source: "10.0.32.5", host: "api.atlassian.com", duplicate: true},
+		},
+		{
+			name: "tunnel half of a splice",
+			line: "af1 1794880574.312 10.0.32.5 203.0.113.4 TCP_TUNNEL splice api.atlassian.com api.atlassian.com",
+			ok:   true,
+			want: logLine{at: 1794880574312, source: "10.0.32.5", dest: "203.0.113.4", host: "api.atlassian.com"},
+		},
+		{
+			name: "peek aborted, no SNI: kept",
+			line: "af1 1794880575.000 10.0.32.5 - NONE_NONE_ABORTED splice - 198.51.100.7",
+			ok:   true,
+			want: logLine{at: 1794880575000, source: "10.0.32.5"},
+		},
 		{name: "another format", line: "1761300000.000 10.0.1.5 TCP_TUNNEL/200 0 CONNECT x:443", ok: false},
 		{
 			name: "fraction shorter or longer than milliseconds",
