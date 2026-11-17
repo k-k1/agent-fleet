@@ -3,8 +3,11 @@ package mcpsrv
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 )
 
 // routesCP answers AllowedRoutes per tenant.
@@ -89,12 +92,44 @@ func (a API) routeDescFor(t *testing.T, tenantID string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := allowedRoutes{}
-	for k, rs := range byKind {
-		r[k] = map[string]bool{}
-		for _, x := range rs {
-			r[k][x] = true
+	r := allowedRoutesOf(byKind)
+	return createRouteDesc(nil, r)
+}
+
+// The routes create_session's text can name are written out by hand in createRouteDesc; they must
+// be the routes the catalogue declares for claude and opencode, or a new route would never be named.
+func TestCreateRouteTextCandidatesMatchCatalogue(t *testing.T) {
+	for kind, routes := range allAllowed {
+		var want []string
+		for r := range routes {
+			want = append(want, r)
+		}
+		got := slices.Clone(agentroutes.RoutesOf(kind))
+		slices.Sort(want)
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: catalogue declares %v, create_session text knows %v", kind, got, want)
 		}
 	}
-	return createRouteDesc(nil, r)
+}
+
+// A bedrock route the policy forbids is not named by the acceptance-switch clause either.
+func TestCreateRouteTextAcceptanceClauseNamesAllowedBedrockOnly(t *testing.T) {
+	clause := func(h hiddenKinds, claude ...string) string {
+		out := createRouteDesc(h, allowedRoutesOf(map[string][]string{"claude": claude, "opencode": {"bedrock"}}))
+		i := strings.Index(out, "and bedrock")
+		if i < 0 {
+			return ""
+		}
+		return out[i:]
+	}
+	if c := clause(nil, "bedrock"); strings.Contains(c, "bedrock-deployment") || !strings.Contains(c, "bedrock only") {
+		t.Errorf("bedrock only: %q", c)
+	}
+	if c := clause(hiddenKinds{"opencode": true}, "bedrock-deployment"); strings.Contains(c, "bedrock / ") || !strings.Contains(c, "and bedrock-deployment only") {
+		t.Errorf("deployment only: %q", c)
+	}
+	if c := clause(hiddenKinds{"claude": true}, "bedrock", "bedrock-deployment"); strings.Contains(c, "bedrock-deployment") {
+		t.Errorf("claude hidden: %q", c)
+	}
 }

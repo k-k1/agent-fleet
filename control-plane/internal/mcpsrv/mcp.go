@@ -479,7 +479,7 @@ type mcpTool struct {
 
 // memberTools are the Phase-1 member/drive tools (E). Each runs against the
 // caller's own Workspace, resolved from the PAT's membership.
-func memberTools() []mcpTool { return memberToolsHiding(nil, nil) }
+func memberTools() []mcpTool { return memberToolsHiding(nil, allAllowed) }
 
 // memberToolsHiding is memberTools whose texts leave out the kinds hidden names (#4241) and the routes routes does not allow (#4323).
 func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
@@ -940,8 +940,9 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 func (a API) toolsFor(ctx context.Context, prin *mcpPrincipal) []mcpTool {
 	var out []mcpTool
 	if !a.memoryOnly {
-		hidden := a.hiddenKinds(ctx, prin)
-		for _, t := range memberToolsHiding(hidden, a.allowedRoutes(ctx, prin)) {
+		tenantID, known := a.tenantOf(ctx, prin)
+		hidden := a.hiddenKinds(ctx, tenantID, known)
+		for _, t := range memberToolsHiding(hidden, a.allowedRoutes(ctx, tenantID, known)) {
 			if a.cp.ScopeRank(prin.scope) >= a.cp.ScopeRank(t.minScope) {
 				out = append(out, t)
 			}

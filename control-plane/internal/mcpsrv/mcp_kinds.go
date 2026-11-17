@@ -225,21 +225,30 @@ func spaced(s string) string {
 // membership or the policy cannot be read, every kind that runs a model is hidden, so the texts
 // name none and list_models and create_session refuse every model kind until it can be read
 // (D10a: a hidden item stays absent even while the policy is unknown).
-func (a API) hiddenKinds(ctx context.Context, prin *mcpPrincipal) hiddenKinds {
-	ms, err := a.cp.Store().ListMemberships(ctx, prin.identityID)
+func (a API) hiddenKinds(ctx context.Context, tenantID string, ok bool) hiddenKinds {
+	if !ok {
+		return allModelKinds()
+	}
+	h, err := a.cp.HiddenKinds(ctx, tenantID)
 	if err != nil {
 		return allModelKinds()
 	}
+	return h
+}
+
+// tenantOf is the tenant behind the caller's membership, read once per tool list; false when it
+// cannot be read, which both policy views treat as "show nothing".
+func (a API) tenantOf(ctx context.Context, prin *mcpPrincipal) (string, bool) {
+	ms, err := a.cp.Store().ListMemberships(ctx, prin.identityID)
+	if err != nil {
+		return "", false
+	}
 	for _, m := range ms {
 		if m.MembershipID == prin.membershipID {
-			h, err := a.cp.HiddenKinds(ctx, m.TenantID)
-			if err != nil {
-				return allModelKinds()
-			}
-			return h
+			return m.TenantID, true
 		}
 	}
-	return allModelKinds()
+	return "", false
 }
 
 // allModelKinds hides every kind that runs on a model credential: the fail-closed answer.
@@ -331,41 +340,44 @@ func createModelDesc(hidden hiddenKinds, routes allowedRoutes) string {
 }
 
 // allowedRoutes is, per kind, the routes the caller's tenant policy allows (ADR 0138 D10a, #4323):
-// create_session's route text names only those. nil means "not restricted" (the static texts);
-// a non-nil map is exhaustive, so a kind or route missing from it is not named.
+// create_session's route text names only those. The map is exhaustive, so a kind or route missing
+// from it, and the nil zero value, name nothing. The unrestricted texts pass allAllowed.
 type allowedRoutes map[string]map[string]bool
+
+// allAllowed names every route create_session knows: the static, unrestricted text.
+var allAllowed = allowedRoutes{
+	"claude":   {"anthropic-subscription": true, "anthropic-api": true, "bedrock": true, "bedrock-deployment": true},
+	"opencode": {"bedrock": true},
+}
 
 // ok says whether route may be named for kind.
 func (r allowedRoutes) ok(kind, route string) bool {
-	return r == nil || r[kind][route]
+	return r[kind][route]
+}
+
+// allowedRoutesOf is the allowedRoutes view of a per-kind route list.
+func allowedRoutesOf(byKind map[string][]string) allowedRoutes {
+	out := allowedRoutes{}
+	for k, rs := range byKind {
+		out[k] = map[string]bool{}
+		for _, r := range rs {
+			out[k][r] = true
+		}
+	}
+	return out
 }
 
 // allowedRoutes is what the caller's tenant policy allows. It fails closed like hiddenKinds: when
-// the membership or the policy cannot be read the map is empty, so no route is named.
-func (a API) allowedRoutes(ctx context.Context, prin *mcpPrincipal) allowedRoutes {
-	none := allowedRoutes{}
-	ms, err := a.cp.Store().ListMemberships(ctx, prin.identityID)
+// the tenant or the policy cannot be read the map is empty, so no route is named.
+func (a API) allowedRoutes(ctx context.Context, tenantID string, ok bool) allowedRoutes {
+	if !ok {
+		return allowedRoutes{}
+	}
+	byKind, err := a.cp.AllowedRoutes(ctx, tenantID)
 	if err != nil {
-		return none
+		return allowedRoutes{}
 	}
-	for _, m := range ms {
-		if m.MembershipID != prin.membershipID {
-			continue
-		}
-		byKind, err := a.cp.AllowedRoutes(ctx, m.TenantID)
-		if err != nil {
-			return none
-		}
-		out := allowedRoutes{}
-		for k, rs := range byKind {
-			out[k] = map[string]bool{}
-			for _, r := range rs {
-				out[k][r] = true
-			}
-		}
-		return out
-	}
-	return none
+	return allowedRoutesOf(byKind)
 }
 
 // createRouteDesc is create_session's route argument description: each kind's routes only while
@@ -385,14 +397,17 @@ func createRouteDesc(hidden hiddenKinds, routes allowedRoutes) string {
 		return out
 	}
 	var accepts []string
-	bedrock := false
-	if rs := pick("claude", "anthropic-subscription", "anthropic-api", "bedrock", "bedrock-deployment"); len(rs) > 0 {
-		s := "claude accepts " + listKinds(rs, "or")
+	var bedrock []string
+	addBedrock := func(rs ...string) {
 		for _, r := range rs {
-			if strings.HasPrefix(r, "bedrock") {
-				bedrock = true
+			if strings.HasPrefix(r, "bedrock") && !slices.Contains(bedrock, r) {
+				bedrock = append(bedrock, r)
 			}
 		}
+	}
+	if rs := pick("claude", "anthropic-subscription", "anthropic-api", "bedrock", "bedrock-deployment"); len(rs) > 0 {
+		s := "claude accepts " + listKinds(rs, "or")
+		addBedrock(rs...)
 		if slices.Contains(rs, "bedrock-deployment") {
 			s += " (Bedrock the deployment pays for, within the budget your tenant administrator sets)"
 		}
@@ -400,13 +415,14 @@ func createRouteDesc(hidden hiddenKinds, routes allowedRoutes) string {
 	}
 	if rs := pick("opencode", "bedrock"); len(rs) > 0 {
 		accepts = append(accepts, "opencode accepts bedrock (with an amazon-bedrock/<id> model)")
-		bedrock = true
+		addBedrock("bedrock")
 	}
 	out := "explicit model route id (optional; omit to keep the kind's own default resolution). "
 	if len(accepts) > 0 {
 		out += strings.Join(accepts, ", ") + "; all Terminal sessions only"
-		if bedrock {
-			out += ", and bedrock / bedrock-deployment only on a workspace where their acceptance switch is set"
+		if len(bedrock) > 0 {
+			slices.Sort(bedrock) // bedrock before bedrock-deployment, as the static text has them
+			out += ", and " + strings.Join(bedrock, " / ") + " only on a workspace where " + verb(len(bedrock), "its", "their") + " acceptance switch is set"
 		}
 		out += ". Any other kind, or a route the kind does not declare, is refused"
 	} else {
