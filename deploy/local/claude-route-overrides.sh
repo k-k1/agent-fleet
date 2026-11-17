@@ -75,10 +75,16 @@ fi
 # The families TestRouteOverridesCoverTheCLIsLists names: provider switches and auth skips,
 # base URLs and endpoints, keys and tokens (file descriptors included), and every
 # ANTHROPIC_* name, which is where scoping settings such as *_PROJECT_ID live.
+# Only the bundled source counts. The engine's identifier table (a string that is the name
+# and nothing else) and an export alias (`esr as STOP_USING_API_KEY_HINT`) name JS constants
+# as readily as variables; the CLI reads a variable somewhere in its source, so a real one
+# always turns up elsewhere too. Measured on 2.1.326: two UI-message constants read as new
+# variables without this, and every name in routeOverrides survives it.
 names() {
   strings -n 6 "$1" |
-    grep -oE '\b(CLAUDE_CODE_USE_[A-Z0-9_]+|CLAUDE_CODE_SKIP_[A-Z0-9_]+_AUTH|[A-Z0-9_]*_BASE_URL|AWS_ENDPOINT_URL[A-Z0-9_]*|[A-Z0-9_]*_API_KEY[A-Z0-9_]*|[A-Z0-9_]*_AUTH_TOKEN[A-Z0-9_]*|[A-Z0-9_]*_FILE_DESCRIPTOR|ANTHROPIC_[A-Z0-9_]+|CLOUD_ML_REGION)\b' |
-    grep -v '_$' | sort -u || true
+    grep -vxE '[A-Z0-9_]+' |
+    grep -oE '(\bas )?\b(CLAUDE_CODE_USE_[A-Z0-9_]+|CLAUDE_CODE_SKIP_[A-Z0-9_]+_AUTH|[A-Z0-9_]*_BASE_URL|AWS_ENDPOINT_URL[A-Z0-9_]*|[A-Z0-9_]*_API_KEY[A-Z0-9_]*|[A-Z0-9_]*_AUTH_TOKEN[A-Z0-9_]*|[A-Z0-9_]*_FILE_DESCRIPTOR|ANTHROPIC_[A-Z0-9_]+|CLOUD_ML_REGION)\b' |
+    grep -v '_$' | awk '$1 != "as"' | sort -u || true
 }
 
 for v in "$from" "$pin"; do
