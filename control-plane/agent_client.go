@@ -327,6 +327,10 @@ type agentSessionsEnvelope struct {
 	// none, and would write a prompt with an empty item, so a delivery that holds a reference is
 	// never sent to one.
 	QueueRefs int `json:"queueRefs,omitempty"`
+	// QueueTidy is the marker of an Agent that has POST /memos/tidy and takes a curator item on a
+	// delivery (ADR 0137 section 8). Read with >=, as QueueRefs is: an older Agent sends none, and
+	// would refuse the item.
+	QueueTidy int `json:"queueTidy,omitempty"`
 	// ActMark orders this answer against the acts of a person that follow it (the Agent's
 	// session act mark): a retire sent with it as ifNoActSince leaves a session a person started or
 	// typed into after this read. 0 when the Agent sends none, and no condition is sent then.
@@ -352,6 +356,13 @@ const queueRefsVersion = 1
 // showsReferences says the Agent that sent this envelope can show a queue item that carries a
 // reference.
 func (e agentSessionsEnvelope) showsReferences() bool { return e.QueueRefs >= queueRefsVersion }
+
+// queueTidyVersion is the version of the tidy endpoint and the curator item this Control Plane
+// speaks. An Agent that reports a later one still understands it.
+const queueTidyVersion = 1
+
+// showsTidy says the Agent that sent this envelope can tidy and takes a curator item.
+func (e agentSessionsEnvelope) showsTidy() bool { return e.QueueTidy >= queueTidyVersion }
 
 // jobsRunning reports whether session-less work is in flight in the workspace.
 func (e agentSessionsEnvelope) jobsRunning() bool { return e.RepoJobs > 0 || e.ImageJobs > 0 }

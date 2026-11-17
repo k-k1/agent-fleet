@@ -150,6 +150,7 @@ memo_delivery.go
 memo_dispatch.go
 memo_queue.go
 memo_tidy.go
+memo_tidy_run.go
 metrics.go
 metrics_pressure.go
 notification.go

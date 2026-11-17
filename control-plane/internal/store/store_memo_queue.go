@@ -189,6 +189,8 @@ type MemoWaitOps interface {
 	// NthOldestDeliverySince is the creation time of the queue's skip-th oldest delivery (0 is
 	// the oldest) created at or after since, counted as CountDeliveriesCreatedSince counts.
 	NthOldestDeliverySince(queueID, since string, skip int) (string, bool, error)
+	// RunningTidyRun is the member's tidy run that is in flight, at most one (a unique index).
+	RunningTidyRun() (MemoTidyRun, bool, error)
 }
 
 // memoQuerier is what *sqlDB and *sqlTx have in common.
@@ -441,8 +443,8 @@ func (s *SQL) ListMemoQueues(ctx context.Context, membershipID string) ([]MemoQu
 // oldest, and the latest time any of them was created or released.
 type QueuePending struct {
 	Count int
-	// Refs is how many of them carry a reference.
-	Refs           int
+	// Refs is how many of them carry a reference, Curators how many a tidy run derived.
+	Refs, Curators int
 	Oldest, Latest string
 }
 
@@ -472,7 +474,7 @@ func (s *SQL) ListMemberQueuePendingStats(ctx context.Context, membershipID stri
 }
 
 func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (map[string]QueuePending, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN m.ref_key<>'' THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN m.ref_key<>'' THEN 1 ELSE 0 END), SUM(CASE WHEN m.provenance='curator' THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at)
 		FROM memo m
 		JOIN memo_category c ON c.membership_id=m.membership_id AND c.repo=m.repo AND c.name=m.category
 		JOIN memo_queue q ON q.category_id=c.id
@@ -486,7 +488,7 @@ func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (
 		var id string
 		var p QueuePending
 		var maxCreated, maxReleased string
-		if err := rows.Scan(&id, &p.Count, &p.Refs, &p.Oldest, &maxCreated, &maxReleased); err != nil {
+		if err := rows.Scan(&id, &p.Count, &p.Refs, &p.Curators, &p.Oldest, &maxCreated, &maxReleased); err != nil {
 			return nil, err
 		}
 		p.Latest = maxCreated

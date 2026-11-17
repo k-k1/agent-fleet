@@ -753,3 +753,16 @@ in one press until a result is claimed. What it can do is put words the person d
 by default and says so.
 A superseded row, which keeps `sent_at` so the existing sweep collects it, never becomes `held` or `pending` except by undo
 on any write path, and an older binary turns one into a sent note or a `delivered` message at worst.
+
+Added 2026-11-17 (#4152, step 5, slice S3, the dispatcher): the automatic run is built and stays inert until the Console can
+set `tidy`. The built order is claim, then wake, so "after the wake and before the claim" became a stage of its own inside
+the fire's transaction: after the queue may fire and before the claim, a queue with `tidy` on and a message no run has looked
+at reserves a run instead of claiming, and the claim is a later tick's; the job wakes the workspace, calls the Agent and
+hands the reply to apply, and every failure, skip and refusal marks the input seen, so the messages fire as they are. "Run
+now" never tidies. One run at a time per member holds across Control Plane processes (a unique index; a queue meets it as the
+waiting reason `tidying`), a run past 5 minutes is ended by the next tick (`takeover`) and its late apply writes nothing, at
+most 2 runs are reserved per tick, and the daily cap of 10 is counted behind the member's lock. A `curator` message is
+sendable only to an Agent that shows `queueTidy`: by itself the claim leaves it pending (`no_tidy_at`, the waiting reason
+`no_tidy`), and the send checks the marker after its wake. A threshold queue is made draining by the reservation, so a merge
+that leaves fewer than its threshold still fires. The codes, the bounds and what clears `no_tidy_at` are in
+docs/build/03-control-plane.md.

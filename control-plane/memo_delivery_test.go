@@ -113,6 +113,93 @@ type fakeQueueAgent struct {
 	// retireDrop makes that many retire calls lose their answer: the call is recorded and the
 	// connection is closed without a reply.
 	retireDrop int
+	// tidy makes GET /sessions send the envelope's queueTidy marker, and makes the Agent take a
+	// curator item on a delivery (an Agent of ADR 0137 step 5).
+	tidy bool
+	// tidyCalls is every POST /memos/tidy body, tidyTypes the Content-Type of each. tidyReply
+	// answers a call: a status and a body (an error body for a code, a reply object for a 200);
+	// nil answers 200 with no operations. tidyDelay holds the answer back.
+	tidyCalls []map[string]any
+	tidyTypes []string
+	tidyReply func(req map[string]any) (int, any)
+	tidyDelay time.Duration
+}
+
+// setTidy makes the list answers carry the queueTidy marker, or not.
+func (a *fakeQueueAgent) setTidy(on bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.tidy = on
+}
+
+// tidyCallCount is how many POST /memos/tidy the Agent has answered or begun to.
+func (a *fakeQueueAgent) tidyCallCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.tidyCalls)
+}
+
+// serveTidy answers POST /memos/tidy the way the Agent's handler checks a request (workspace/agent
+// internal/memotidy request.go): the content type, the trigger, the limits and the bounds. The
+// caller holds a.mu.
+func (a *fakeQueueAgent) serveTidy(w http.ResponseWriter, r *http.Request) {
+	var req map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		agentErr(w, http.StatusBadRequest, "bad_tidy_request")
+		return
+	}
+	a.tidyCalls = append(a.tidyCalls, req)
+	a.tidyTypes = append(a.tidyTypes, r.Header.Get("Content-Type"))
+	items, _ := req["items"].([]any)
+	text := 0
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		t, _ := m["text"].(string)
+		f, _ := m["file"].(string)
+		text += len(t) + len(f)
+	}
+	lim, _ := req["limits"].(map[string]any)
+	if r.Header.Get("Content-Type") != "application/json" || req["trigger"] != "auto" || len(items) == 0 || len(items) > 40 ||
+		text > 96<<10 || lim["mergeSources"] != float64(10) || lim["splitParts"] != float64(5) ||
+		lim["textBytes"] != float64(16384) || lim["operations"] != float64(80) {
+		agentErr(w, http.StatusBadRequest, "bad_tidy_request")
+		return
+	}
+	if d := a.tidyDelay; d > 0 {
+		a.mu.Unlock()
+		time.Sleep(d)
+		a.mu.Lock()
+	}
+	status, body := http.StatusOK, any(map[string]any{"run": req["run"], "operations": []any{}, "kind": "claude", "model": "m"})
+	if a.tidyReply != nil {
+		status, body = a.tidyReply(req)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if s, ok := body.(string); ok {
+		_, _ = io.WriteString(w, s)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// tidyErrReply is an Agent's error answer for a code.
+func tidyErrReply(status int, code string) func(map[string]any) (int, any) {
+	return func(map[string]any) (int, any) {
+		return status, map[string]any{"error": map[string]any{"code": code, "message": "x"}}
+	}
+}
+
+// tidyOpsReply answers 200 with operations built from the request's own ids.
+func tidyOpsReply(f func(ids []string, req map[string]any) []any) func(map[string]any) (int, any) {
+	return func(req map[string]any) (int, any) {
+		var ids []string
+		items, _ := req["items"].([]any)
+		for _, it := range items {
+			ids = append(ids, it.(map[string]any)["id"].(string))
+		}
+		return http.StatusOK, map[string]any{"run": req["run"], "operations": f(ids, req), "kind": "claude", "model": "m"}
+	}
 }
 
 // setRefs makes the list answers carry the queueRefs marker, or not.
@@ -183,6 +270,9 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		if a.refs {
 			env["queueRefs"] = 1
 		}
+		if a.tidy {
+			env["queueTidy"] = 1
+		}
 		if a.actMark != 0 {
 			env["actMark"] = a.actMark
 			if a.actIncarnation != "" {
@@ -238,6 +328,8 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		default:
 			agentErr(w, http.StatusServiceUnavailable, "create_outcome_unknown")
 		}
+	case r.Method == "POST" && path == "/memos/tidy":
+		a.serveTidy(w, r)
 	case r.Method == "POST" && path == "/sessions":
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -245,7 +337,7 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		a.creates = append(a.creates, body)
 		// The real Agent checks the delivery before it takes the key (sessionx
 		// checkQueueDelivery), and its refusal carries no create headers.
-		if a.createMode == "invalid" || !validQueueDelivery(body) {
+		if a.createMode == "invalid" || !validQueueDelivery(body) || (hasCuratorItem(body) && !a.tidy) {
 			agentErr(w, http.StatusBadRequest, "bad_queue_delivery")
 			return
 		}
@@ -405,6 +497,19 @@ func validQueueDelivery(body map[string]any) bool {
 		b, _ := m["body"].(string)
 		switch m["provenance"] {
 		case "member", "workspace", "mcp":
+			if _, ok := m["sourceProvenance"]; ok {
+				return false
+			}
+		case "curator":
+			// checkCuratorItem: a plain text note whose sources' provenance and count are named.
+			sp, _ := m["sourceProvenance"].(string)
+			n, _ := m["derivedFrom"].(float64)
+			path, _ := m["refPath"].(string)
+			atts, _ := m["attachments"].([]any)
+			if m["kind"] != "text" || m["reference"] != nil || path != "" || len(atts) != 0 || n < 1 || n > 100 ||
+				(sp != "member" && sp != "workspace" && sp != "mcp") {
+				return false
+			}
 		default:
 			return false
 		}
@@ -413,6 +518,19 @@ func validQueueDelivery(body map[string]any) bool {
 		}
 	}
 	return true
+}
+
+// hasCuratorItem says a create body carries a derived message, which an Agent without the
+// queueTidy marker refuses.
+func hasCuratorItem(body map[string]any) bool {
+	qd, _ := body["queue_delivery"].(map[string]any)
+	items, _ := qd["items"].([]any)
+	for _, it := range items {
+		if m, _ := it.(map[string]any); m["provenance"] == "curator" {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *fakeQueueAgent) createCount() int {

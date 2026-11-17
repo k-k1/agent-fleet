@@ -74,7 +74,7 @@ type memoMemberWork struct {
 // that a member with many queues does not starve the others. It answers the claimed deliveries,
 // and the wakes the tick runs in its fire slots.
 func (r *memoQueueRunner) dispatch(ctx context.Context, now time.Time, room int) ([]store.MemoDelivery, []func(context.Context)) {
-	r.wakeJobs = nil
+	r.wakeJobs, r.tidyJobs = nil, nil
 	ctx, cancel := context.WithTimeout(ctx, memoDispatchBudget)
 	defer cancel()
 	queues, err := r.mgr.store.ListEnabledMemoQueues(ctx)
@@ -128,6 +128,7 @@ func (r *memoQueueRunner) dispatch(ctx context.Context, now time.Time, room int)
 		for _, w := range m.queues {
 			r.houseKeep(ctx, w, liveBy[m.membershipID], now)
 		}
+		r.takeOverTidy(ctx, m.membershipID, now)
 		ready = append(ready, m)
 	}
 	var out []store.MemoDelivery
@@ -184,7 +185,7 @@ func (r *memoQueueRunner) dispatch(ctx context.Context, now time.Time, room int)
 			woke[m.membershipID] = len(r.wakeJobs) > before // one wake of a workspace per tick
 		}
 	}
-	return out, r.wakeJobs
+	return out, append(r.wakeJobs, r.tidyJobs...)
 }
 
 // wakeQueue wakes the stopped workspace of a queue that would fire but for deliveries only a
@@ -509,6 +510,9 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 		return store.MemoDelivery{}, false
 	}
 	res := v.res
+	// tidyKnown is whether this tick has seen the Agent's tidy marker: a running workspace is asked
+	// now, a stopped one is not, and its queue's last finding stands until a running one shows it.
+	tidyKnown, tidyOK := false, false
 	switch res.rt.State(ctx) {
 	case "running":
 		// A running workspace is asked now: only an Agent that sends the report is fired into by itself.
@@ -521,6 +525,8 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 		}
 		r.setNoReport(ctx, q, "")
 		r.setNoRefs(ctx, q, !v.refs)
+		r.setNoTidy(ctx, q, !v.tidy)
+		tidyKnown, tidyOK = true, v.tidy
 	case "stopped":
 		// A stopped workspace is not asked. One found without the report stays skipped until a
 		// running workspace shows it (the send checks again after its wake).
@@ -540,6 +546,7 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 		}
 	}
 	var out store.MemoDelivery
+	var job *memoTidyJob
 	claimed := false
 	err := r.mgr.store.MemoTx(ctx, q.MembershipID, func(tx store.MemoTxOps) error {
 		// Everything below is read again behind the membership lock: what the tick read before
@@ -550,6 +557,10 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 		}
 		cur, ok, err := tx.GetQueue(q.CategoryID)
 		if err != nil || !ok {
+			return err
+		}
+		// A run that has been running too long is ended first: it would hold this queue back.
+		if _, err := memoTidyTakeOver(tx, now); err != nil {
 			return err
 		}
 		// The rules of "may this queue fire now" are memoWaitingFor's, which the member's list reads
@@ -565,6 +576,22 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 			}})
 		if err != nil || why != nil {
 			return err
+		}
+		// Tidying comes after "may fire" and before the claim. "Fire now" never gets here: the press
+		// claims what the person sees.
+		if cur.Tidy && (tidyOK || (!tidyKnown && cur.NoTidyAt == "")) {
+			c, ok, err := tx.GetCategory(q.CategoryID)
+			if err != nil || !ok {
+				return err
+			}
+			j, hold, err := r.reserveTidy(tx, cur, c, start, now)
+			if err != nil || hold {
+				return err
+			}
+			if j != nil {
+				job = j
+				return nil
+			}
 		}
 		d, aerr, err := memoReserveAndClaim(tx, q.CategoryID, running, limit, true)
 		if err != nil {
@@ -592,6 +619,9 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 		log.Printf("memo queue: queue %s: fire by itself: %v", q.CategoryID, err)
 		return store.MemoDelivery{}, false
 	}
+	if job != nil {
+		r.tidyJobs = append(r.tidyJobs, func(ctx context.Context) { r.runTidy(ctx, job) })
+	}
 	return out, claimed
 }
 
@@ -605,6 +635,9 @@ func pendingOf(rows []store.Memo) store.QueuePending {
 		p.Count++
 		if m.RefKey != "" {
 			p.Refs++
+		}
+		if m.Provenance == store.MemoProvenanceCurator {
+			p.Curators++
 		}
 		if p.Oldest == "" || m.CreatedAt < p.Oldest {
 			p.Oldest = m.CreatedAt
@@ -641,6 +674,22 @@ func (r *memoQueueRunner) setNoRefs(ctx context.Context, q store.MemoQueue, none
 	// nothing when the mark is already empty.
 	if err := r.mgr.store.SetMemoQueueNoRefs(ctx, q.CategoryID, at); err != nil {
 		log.Printf("memo queue: queue %s: note the Agent's references: %v", q.CategoryID, err)
+	}
+}
+
+// setNoTidy keeps the queue's mark of an Agent that cannot tidy in line with the Agent a running
+// workspace answered with, as setNoRefs does for references. A later finding of a running
+// workspace clears it; so does a send that finds the marker. The queue's settings do not.
+func (r *memoQueueRunner) setNoTidy(ctx context.Context, q store.MemoQueue, none bool) {
+	at := ""
+	if none {
+		if q.NoTidyAt != "" {
+			return
+		}
+		at = store.DeliveryTS(time.Now())
+	}
+	if err := r.mgr.store.SetMemoQueueNoTidy(ctx, q.CategoryID, at); err != nil {
+		log.Printf("memo queue: queue %s: note the Agent's tidy: %v", q.CategoryID, err)
 	}
 }
 
@@ -835,6 +884,11 @@ const (
 	waitNoPlace        = "no_place"
 	// waitNoRefs: every message waiting carries a reference and the Agent cannot show one.
 	waitNoRefs = "no_references"
+	// waitTidying: a tidy run of the member is in flight, and this queue neither tidies nor fires
+	// until it ends.
+	waitTidying = "tidying"
+	// waitNoTidy: every message waiting is one a tidy run derived and the Agent cannot take it.
+	waitNoTidy = "no_tidy"
 )
 
 // memoWaiting is "waiting" on the wire: why a queue with notes waiting starts nothing now.
@@ -921,6 +975,15 @@ func memoWaitingFor(tx store.MemoWaitOps, in memoWaitInput) (w *memoWaiting, sta
 	if err != nil || held != nil {
 		return held, false, err
 	}
+	if q.Tidy {
+		// One run at a time per member, across queues and across Control Planes (a unique index).
+		if _, running, err := tx.RunningTidyRun(); err != nil || running {
+			if err != nil {
+				return nil, false, err
+			}
+			return &memoWaiting{Reason: waitTidying}, false, nil
+		}
+	}
 	return nil, start, nil
 }
 
@@ -969,6 +1032,9 @@ func memoQueueWaiting(tx store.MemoWaitOps, q store.MemoQueue, tenantOn bool, pe
 	}
 	if q.NoRefsAt != "" && pending.Refs == pending.Count {
 		return &memoWaiting{Reason: waitNoRefs}, nil
+	}
+	if q.NoTidyAt != "" && pending.Curators == pending.Count {
+		return &memoWaiting{Reason: waitNoTidy}, nil
 	}
 	inQueue, inMember, err := tx.CountLiveDeliveries(q.CategoryID)
 	if err != nil {

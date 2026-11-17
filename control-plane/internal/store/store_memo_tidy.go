@@ -87,6 +87,9 @@ type MemoTidyTxOps interface {
 	RestoreMemo(m Memo) error
 	// MarkTidySeen sets tidy_seen_hash of a row to hash, which is how a run marks a message seen.
 	MarkTidySeen(id, hash string) error
+	// CountTidyRunsSince is CountMemoTidyRunsSince read behind the membership's lock, which is
+	// where the daily cap has to be decided: two Control Planes cannot both pass the last slot.
+	CountTidyRunsSince(queueID, since string) (int, error)
 }
 
 const memoTidyRunCols = `SELECT id, membership_id, queue_id, trigger, state, reason, input, ops, created_at, finished_at, undone_at, updated_at FROM memo_tidy_run`
@@ -145,6 +148,20 @@ func (t memoTx) FinishTidyRun(r MemoTidyRun) (bool, error) {
 	return affected(t.q.ExecContext(t.ctx, `UPDATE memo_tidy_run SET state=?, reason=?, ops=?, finished_at=?, updated_at=?
 		WHERE id=? AND membership_id=? AND state=?`,
 		r.State, r.Reason, r.Ops, r.FinishedAt, r.UpdatedAt, r.ID, t.mid, TidyRunRunning))
+}
+
+func (t memoTx) RunningTidyRun() (MemoTidyRun, bool, error) {
+	r, err := scanMemoTidyRun(t.q.QueryRowContext(t.ctx, memoTidyRunCols+` WHERE membership_id=? AND state=?`, t.mid, TidyRunRunning))
+	if errors.Is(err, sql.ErrNoRows) {
+		return MemoTidyRun{}, false, nil
+	}
+	return r, err == nil, err
+}
+
+func (t memoTx) CountTidyRunsSince(queueID, since string) (int, error) {
+	var n int
+	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_tidy_run WHERE queue_id=? AND created_at>=?`, queueID, since).Scan(&n)
+	return n, err
 }
 
 func (t memoTx) UndoTidyRun(id, at string) (bool, error) {

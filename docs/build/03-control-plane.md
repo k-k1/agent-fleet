@@ -288,7 +288,7 @@ Memos you accumulate and send to a session in one go (the tables are
   queue is bounded (16 KiB, no `[agent-fleet:` prefix, an identical waiting message
   answered instead, 30 a minute).
 - **Tidy** ([decisions/0137](../decisions/0137-message-queues.md) §8, step 5, slice S1): the Control Plane's core of
-  "tidying before a fire", with nothing calling it yet (no dispatcher reads `tidy`, no route applies a reply).
+  "tidying before a fire", with no route that applies a reply yet (the dispatcher's automatic run is the next entry).
   *Settings*: `PUT /api/memo-queues/{categoryId}` takes `tidy` (bool, omitted means off) and `tidyDestinations`
   (category ids, at most 10, deduplicated, each a queue of the member's other than this one, else
   `400 memo_queue_bad_settings`); `GET /api/memo-queues` answers `tidy`, `tidyDestinations` (ids whose queue settings are
@@ -326,6 +326,48 @@ Memos you accumulate and send to a session in one go (the tables are
   message is edited, moved and released like any other (a move into a queue from a plain category enters it `held`).
   The tidy switch is a guard rail, not a wall: the reply is produced inside the workspace, so code there that can answer
   for the Agent chooses the text of a derived message inside these bounds. Migrations 0142 (SQLite) and 0127 (Postgres).
+- **Tidy, the automatic run** ([decisions/0137](../decisions/0137-message-queues.md) §8, step 5, slice S3; code in
+  `memo_tidy_run.go`, `memo_dispatch.go` `fireQueue`): inert on a deployment until a queue has `tidy` on, which only the
+  Console's settings PUT can set. *Where it sits in a tick*: settle (reconcile and close), then dispatch, then the sends,
+  then the jobs the dispatch answered (wakes and tidy runs, in the tick's fire slots). Dispatch per member: house-keeping,
+  the takeover of a stale run (`takeOverTidy`: a read without the lock, a transaction only when a run is past the bound),
+  then `fireQueue` per queue, oldest waiting message first. Inside `fireQueue`'s `MemoTx`, after `memoWaitingFor` allows the
+  fire and before `memoReserveAndClaim`, a queue with `tidy` on whose Agent can tidy and that holds an unseen `pending`
+  message (`tidy_seen_hash` differs from its content hash) reserves a run (`reserveTidy`, state `running`) and returns a job
+  instead of claiming; the claim is a later tick's. The Agent can tidy when a running workspace shows `queueTidy >= 1` in
+  `GET /sessions` now, or, for a stopped workspace that nothing asked, when the queue's `no_tidy_at` is empty (the job reads
+  the marker after its wake). A queue fires as it is, with no run, when nothing is unseen, when 10 runs of the queue were
+  reserved in 24 hours (`memotidy.DailyCap`, counted behind the membership lock), or when the Agent cannot tidy. "Run now"
+  never tidies. *One at a time*: a member has one `running` run (unique index, and `memoWaitingFor` answers `tidying` for a
+  queue with `tidy` on while one is in flight, so it neither tidies nor fires). At most 2 runs are reserved per tick
+  (`memoTidyRunsPerTick`); a queue past that waits for the next tick. A run past `memoTidyTakeoverAfter` (5 minutes: the
+  150 s call, a cold wake and a margin) is ended `failed` with reason `takeover` by the next tick that meets it, its input
+  is marked seen, and the first process's late apply gets `errMemoTidyNotRunning` and writes nothing. *The input*: the
+  oldest `pending` messages, at most 40 and 96 KiB of text (`memoTidyTextBytes`); the rest are marked seen and fire as they
+  are, and no run is reserved when none of the chosen is unseen. *The job* (`runTidy`): wake with the keep-alive of a send
+  (`wakeAndWait`, shared with `wake`), read `GET /sessions`, then `POST /memos/tidy` on `agentLongCallClient` with a 150 s
+  deadline (`memoTidyCallWait`) and `Content-Type: application/json`: `trigger: "auto"`, limits 10 / 5 / 16384 / 80, items
+  oldest first with `group` (one number per effective source provenance, producer and producer origin; a derived message
+  by its `source_provenance`), `merge` only for a plain text note, `move` false for a message a run already moved, and the
+  destinations: the categories of the queue's own repository (`queue` true or false) and its listed `tidyDestinations`
+  (any repository), never the queue itself, at most 100. The reply goes through `memotidy.Parse` and `memoTidyApply` with
+  the run's id, the items as sent and the destination ids offered. *Codes* (read from `error.code`, never the status): a
+  200 that is refused, or `422 tidy_malformed`, ends the run `dropped` (reason the refusal's code or `tidy_malformed`);
+  `409 tidy_busy`, `503 deny_all_unavailable`, `503 policy_unconfirmed`, `403 route_forbidden`, `403 agent_disabled`,
+  `400 bad_tidy_request`: `skipped` with that code; `502`/`500 tidy_failed`, `504 tidy_timeout`, a cut or lost call
+  (`timeout`, `call_failed`) and any other answer (`agent_error`): `failed`; no marker after the wake, an unreachable Agent
+  and a failed wake: `skipped` (`no_marker`, `agent_unreachable`, `wake_failed`). Every ending but an apply marks the
+  whole input seen and changes no message or queue row, so the next tick fires the original items. *`no_tidy_at`* is set by
+  a running workspace that does not show the marker (each tick, as `no_refs_at` is), by the job that reads no marker after
+  its wake, by `503 deny_all_unavailable`, and by a send of a derived message to an Agent without it; a running
+  workspace that shows the marker clears it (so after a `deny_all_unavailable` it is set again by the next run), and so
+  does a send that finds the marker; the settings PUT keeps it. *A derived (`curator`) message is sendable*: the item
+  carries `provenance: "curator"`, `sourceProvenance`, `derivedFrom` (the count of sources) and the sources' producer and
+  producer origin, text only (`memoCuratorItemProblem` refuses a malformed one). The automatic claim leaves it `pending`
+  while `no_tidy_at` is set, and the send checks the marker after its wake and sends nothing without it. *Waiting
+  reasons* gain `tidying` and `no_tidy` (all waiting messages are derived and the Agent cannot take them); the Console
+  drops a reason it does not know. *A threshold queue* that opened on N messages is made draining by the reservation, so
+  a merge that leaves fewer than N still fires.
 - **Deliveries** (decisions/0137 §6, step 1c): a delivery is one fire of a queue, and
   every delivery that is not closed occupies one of the queue's `maxActive` slots and
   counts toward a member-wide limit of 4. `POST /api/memo-queues/{categoryId}/fire`
