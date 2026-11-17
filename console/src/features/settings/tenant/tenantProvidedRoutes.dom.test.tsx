@@ -274,6 +274,10 @@ describe("tenant provided routes, status and month", () => {
     expect(summary().querySelector(".prov-tenant-use")).toBeNull();
     expect(policy().querySelector<HTMLInputElement>('input[type="text"]')!.disabled).toBe(false);
     expect(row("alice").querySelector<HTMLInputElement>('input[type="text"]')!.disabled).toBe(false);
+    // No member's budget applies yet: no bar and no amount reads as theirs to use.
+    expect(host!.querySelector(".prov-members meter")).toBeNull();
+    expect(row("alice").querySelector('[data-label="今月の使用 / 予算"]')!.textContent).toBe("≈ $1.00");
+    expect(row("bob").querySelector('[data-label="今月の使用 / 予算"]')!.textContent).toBe("—");
   });
 
   it("says why a member whose budget is zero cannot use it", async () => {
@@ -293,6 +297,21 @@ describe("tenant provided routes, status and month", () => {
     const use = row("bob").querySelector('[data-label="今月の使用 / 予算"]')!;
     expect(use.textContent).toBe("—");
     expect(use.querySelector("meter")).toBeNull();
+  });
+
+  it("keeps what a member no longer granted still holds visible", async () => {
+    const v = { ...VIEW(), members_only: true };
+    v.members[1] = { ...v.members[1], reserved_micro: 620_000 };
+    await mountWith(v);
+    expect(row("bob").querySelector('[data-label="今月の使用 / 予算"]')!.textContent).toBe(
+      "実行中の呼び出しの取り置き: ≈ $0.62",
+    );
+  });
+
+  it("reads the same amount aloud as the text shows", async () => {
+    await mountWith({ ...VIEW(), reserved_micro: 750_000 });
+    const bar = summary().querySelector<HTMLMeterElement>(".prov-tenant-use meter")!;
+    expect(bar.getAttribute("aria-label")).toBe("≈ $100.00 のうち ≈ $1.25");
   });
 
   it("shows each member's month against their budget in one column", async () => {

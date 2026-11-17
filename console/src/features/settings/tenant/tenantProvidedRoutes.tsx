@@ -184,7 +184,8 @@ function Usage({ used, of, spent }: { used: number; of: number | null; spent: nu
         min={0}
         max={of}
         value={Math.min(used, of)}
-        aria-label={tr("tenant.prov_use_of", { used: approx(used), of: approx(of) })}
+        // The same amount the text says; the bar's own value also counts what is held.
+        aria-label={tr("tenant.prov_use_of", { used: approx(spent), of: approx(of) })}
       />
     </span>
   );
@@ -321,8 +322,8 @@ function MemberRow({
 }: {
   path: string;
   member: ProvidedMember;
-  /** The member may use the route as far as the grant goes: everyone, or granted under "granted
-   *  members only". */
+  /** The member may use the route as far as the grants go: the tenant is granted it, and the
+   *  member is everyone or granted under "granted members only". */
   canUse: boolean;
   peek: () => Promise<ProvidedTenantView | null>;
   onSaved: (warnings: string[]) => void;
@@ -381,9 +382,13 @@ function MemberRow({
       </td>
       <td data-label={tr("tenant.prov_col_use")}>
         {!canUse ? (
-          // Not granted under "granted members only": no budget applies, so none is shown as theirs.
-          member.spent_micro > 0 ? (
-            approx(member.spent_micro)
+          // Not granted (the tenant, or the member under "granted members only"): no budget applies,
+          // so none is shown as theirs. What they spent or still hold this month stays visible.
+          member.spent_micro + member.reserved_micro > 0 ? (
+            [
+              ...(member.spent_micro > 0 ? [approx(member.spent_micro)] : []),
+              ...(member.reserved_micro > 0 ? [tr("tenant.prov_held", { held: approx(member.reserved_micro) })] : []),
+            ].join(" · ")
           ) : (
             "—"
           )
@@ -482,7 +487,8 @@ export function TenantProvidedRoutesView({
                 key={`${m.membership_id}:${m.granted}:${m.budget_micro}`}
                 path={path}
                 member={m}
-                canUse={m.granted || !view.members_only}
+                // MayUse on the CP, under the tenant's grant: not granted, no member's budget applies.
+                canUse={view.granted && (m.granted || !view.members_only)}
                 peek={peek}
                 onSaved={saved}
               />
