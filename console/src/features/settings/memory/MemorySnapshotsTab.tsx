@@ -36,7 +36,7 @@ import type { RestoreBody } from "./memoryRestore.tsx";
 import type { RestoreScopeState } from "./memoryRestore.tsx";
 import { RestorePanel } from "./memoryRestore.tsx";
 import { TransferSection } from "./memoryTransfer.tsx";
-import { ViewNav, useSectionView, type ViewDef } from "./viewNav.tsx";
+import { ViewNav, useSectionView, type ViewDef } from "../parts/viewNav.tsx";
 import { useSettings } from "../../../lib/settings.ts";
 import { openMemoryView } from "../../memory/open.ts";
 import { lastSnapshotsShowAf, rememberSnapshotsShowAf } from "../store.ts";

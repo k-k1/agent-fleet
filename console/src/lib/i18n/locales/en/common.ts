@@ -16,6 +16,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   // --- shared toggles / font names ---
   "common.on": "On",
   "common.off": "Off",
+  "common.unsaved_changes": "unsaved changes",
   "common.move_up": "Move up",
   "common.move_down": "Move down",
   "font.sys_mono": "System mono",

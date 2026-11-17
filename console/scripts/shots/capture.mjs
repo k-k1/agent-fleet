@@ -115,7 +115,9 @@ const ADMIN_RES_BASE = {
 // Model access in the states a change to those pages is judged by, before and after. The answers
 // are the CP's own (model-access/*.json, see fixtures.mjs modelAccess). Each scene runs on its
 // own; `unfold` writes the first screen as <name>-first and the whole page as <name>.
-const openModelAccess = (admin) => `(async () => {
+// `view` picks the page's tab by key (#4380 P-3 split the pages into views); on a build without
+// tabs the click finds nothing and the page is drawn whole, so one scene shoots before and after.
+const openModelAccess = (admin, view) => `(async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms));
       document.querySelector(".acct-btn")?.click();
       await wait(500);
@@ -123,8 +125,12 @@ const openModelAccess = (admin) => `(async () => {
       const modal = ${JSON.stringify(admin ? ".admin-modal" : ".tenant-modal")};
       for (let i = 0; i < 50 && !document.querySelector(modal + " .settings-rail-item"); i++) await wait(200);
       [...document.querySelectorAll(modal + " .settings-rail-item")].find((b) => /^(モデルの利用|Model access)$/.test((b.textContent || "").trim()))?.click();
+      ${view ? `for (let i = 0; i < 50 && !document.querySelector(modal + ' [role="tab"][id$="-tab-${view}"]'); i++) await wait(200);
+      document.querySelector(modal + ' [role="tab"][id$="-tab-${view}"]')?.click();` : ""}
     })()`;
-const modelAccessScene = (name, { admin = false, rules, provided = "off", verify, ...rest }) => {
+// visible is an expression true when the selector matches an element no hidden view contains.
+const visible = (sel) => `[...document.querySelectorAll(${JSON.stringify(sel)})].some((el) => !el.closest("[hidden]"))`;
+const modelAccessScene = (name, { admin = false, rules, provided = "off", view = "", verify, ...rest }) => {
   const modal = admin ? ".admin-modal" : ".tenant-modal";
   return {
     name,
@@ -135,10 +141,10 @@ const modelAccessScene = (name, { admin = false, rules, provided = "off", verify
     width: 1440,
     height: 900,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
-    action: openModelAccess(admin),
+    action: openModelAccess(admin, view),
     settle: 1500,
     // Every scene first waits for the rule the page draws, so a page still loading fails the run.
-    verify: `!!document.querySelector("${modal} ${admin ? ".model-access-deployment" : ".model-access-rule"}") && (${verify})`,
+    verify: `!!document.querySelector("${modal} ${admin ? ".model-access-deployment" : ".model-access-rule"}") && ${verify}`,
     unfold: modal,
     clip: modal,
     pad: 0,
@@ -147,48 +153,58 @@ const modelAccessScene = (name, { admin = false, rules, provided = "off", verify
 };
 const MODEL_ACCESS_SCENES = [
   // Tenant: every layer unrestricted, a CP without provided routes.
-  modelAccessScene("mpol-tenant-open", { rules: "open", verify: `!!document.querySelector('.tenant-modal [data-testid="hidden-none"]')` }),
+  modelAccessScene("mpol-tenant-open", { rules: "open", verify: visible('.tenant-modal [data-testid="hidden-none"]') }),
   // Tenant: a ceiling, a cap and the tenant's own rule hide harnesses; no provided routes.
-  modelAccessScene("mpol-tenant-hidden", { rules: "restricted", verify: `!!document.querySelector('.tenant-modal [data-hidden="cursor"]')` }),
+  modelAccessScene("mpol-tenant-hidden", { rules: "restricted", verify: visible('.tenant-modal [data-hidden="cursor"]') }),
   // Tenant: the operator allows Bedrock only; the deployment's provided route exists but this
   // tenant is not granted it.
   modelAccessScene("mpol-tenant-notgranted", {
     rules: "bedrockonly",
     provided: "notgranted",
-    verify: `!!document.querySelector('.tenant-modal [data-testid="prov-grant"]')`,
+    view: "provided",
+    verify: visible('.tenant-modal [data-testid="prov-grant"]'),
   }),
   // Tenant: restricted as above, and granted the provided route: six members, budgets and spend.
   modelAccessScene("mpol-tenant-provided", {
     rules: "restricted",
     provided: "granted",
-    verify: `document.querySelectorAll(".tenant-modal .prov-members tbody tr").length >= 6`,
+    view: "provided",
+    verify: visible(".tenant-modal .prov-members tbody tr"),
   }),
   // The same at phone width, with the phone's coarse pointer: the desktop flags would hide the
   // hover-only controls a real phone shows.
   modelAccessScene("mpol-tenant-provided-phone", {
     rules: "restricted",
     provided: "granted",
+    view: "provided",
     width: 390,
     height: 844,
     mobile: true,
     desktop: false,
-    verify: `document.querySelectorAll(".tenant-modal .prov-members tbody tr").length >= 6`,
+    verify: visible(".tenant-modal .prov-members tbody tr"),
   }),
-  // Admin: every layer unrestricted, a CP without provided routes.
-  modelAccessScene("mpol-admin-open", { admin: true, rules: "open", verify: `!!document.querySelector('.admin-modal .mpol-cap[data-tenant="demo"]')` }),
-  // Admin: a ceiling, a cap on Demo Team, a registered source granted to it.
+  // Admin: every layer unrestricted, a CP without provided routes; the per-tenant view.
+  modelAccessScene("mpol-admin-open", {
+    admin: true,
+    rules: "open",
+    view: "tenants",
+    verify: visible('.admin-modal .mpol-cap[data-tenant="demo"]'),
+  }),
+  // Admin: a ceiling, a cap on Demo Team, a registered source granted to it; the source's view.
   modelAccessScene("mpol-admin-provided", {
     admin: true,
     rules: "restricted",
     provided: "granted",
-    verify: `!!document.querySelector('.admin-modal [data-testid="prov-source"]') && !!document.querySelector(".admin-modal .model-access-provided-grant")`,
+    view: "provided",
+    verify: visible('.admin-modal [data-testid="prov-source"]'),
   }),
   // Admin: a deployment rule without subscriptions, and no source registered yet.
   modelAccessScene("mpol-admin-nosource", {
     admin: true,
     rules: "nosubs",
     provided: "nosource",
-    verify: `!!document.querySelector(".admin-modal .model-access-provided-source textarea") && !document.querySelector('.admin-modal [data-testid="prov-source"]')`,
+    view: "provided",
+    verify: `${visible(".admin-modal .model-access-provided-source textarea")} && !document.querySelector('.admin-modal [data-testid="prov-source"]')`,
   }),
 ];
 

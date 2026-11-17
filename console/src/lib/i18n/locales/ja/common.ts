@@ -14,6 +14,7 @@ export const common = {
   // --- 共通トグル / フォント名（controls.tsx / lib/settings.ts のフォント配列）---
   "common.on": "オン",
   "common.off": "オフ",
+  "common.unsaved_changes": "未保存の変更あり",
   "common.move_up": "上へ",
   "common.move_down": "下へ",
   "font.sys_mono": "システム等幅",

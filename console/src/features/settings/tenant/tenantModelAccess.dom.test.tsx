@@ -279,3 +279,84 @@ describe("what the policy hides", () => {
     }
   });
 });
+
+// #4380 P-3: the page is split into views. Pinned here: every section is still reachable from a
+// tab, D12's and D13's sentences stay on screen on every view, and the views stay mounted so a
+// draft and a refusal survive a switch, with the tab of the unsaved view marked.
+describe("model access views", () => {
+  const PROVIDED = () => ({
+    granted: false,
+    ceiling_micro: null,
+    members_only: false,
+    member_default_micro: 0,
+    month: "2026-11",
+    spent_micro: 0,
+    reserved_micro: 0,
+    members: [],
+    reservations: [],
+    floor_micro: 0,
+  });
+  const tab = (text: string) =>
+    Array.from(host!.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent?.startsWith(text));
+  const shown = (el: Element) => el.closest("[hidden]") === null;
+
+  it("reaches every section from a tab, and has no provided tab where the CP has none", async () => {
+    await mount();
+    expect(Array.from(host!.querySelectorAll('[role="tab"]')).map((t) => t.textContent)).toEqual(["概要", "制限"]);
+    for (const sel of [".model-access-above", ".model-access-endpoints", ".model-access-hidden", ".model-access-rule"]) {
+      const panel = host!.querySelector(sel)!.closest<HTMLElement>('[role="tabpanel"]')!;
+      const t = host!.querySelector<HTMLButtonElement>(`[role="tab"][aria-controls="${panel.id}"]`);
+      expect(t, sel).not.toBeNull();
+      await click(t!);
+      expect(shown(host!.querySelector(sel)!), sel).toBe(true);
+    }
+  });
+
+  it("gives provided routes their own tab where the CP serves them", async () => {
+    api.mockImplementation((path: string) => Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : VIEW()));
+    await mount();
+    await flush();
+    const t = tab("提供モデルと予算")!;
+    expect(shown(host!.querySelector(".model-access-provided")!)).toBe(false);
+    await click(t);
+    expect(shown(host!.querySelector(".model-access-provided")!)).toBe(true);
+    expect(shown(host!.querySelector(".model-access-rule")!)).toBe(false);
+  });
+
+  it("keeps D12's and D13's sentences on screen on every view", async () => {
+    api.mockImplementation((path: string) => Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : VIEW()));
+    await mount();
+    await flush();
+    const tabs = Array.from(host!.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    expect(tabs.length).toBe(3);
+    for (const t of tabs) {
+      await click(t);
+      for (const text of ["30 秒", "Control Plane に届かない間", "手作業でモデルにサインイン"]) {
+        const p = Array.from(host!.querySelectorAll("p")).find((x) => x.textContent?.includes(text));
+        expect(p && shown(p), `${t.textContent}: ${text}`).toBe(true);
+      }
+    }
+  });
+
+  it("keeps a draft and its refusal across a switch, and marks the unsaved tab", async () => {
+    apiJSON.mockResolvedValue({ error: { code: "route_policy_endpoint_not_approvable", message: "refused for the test" } });
+    await mount();
+    await click(tab("制限")!);
+    expect(tab("制限")!.getAttribute("aria-label")).toBeNull();
+    await click(segBtn("classes", "選んだものだけ"));
+    await click(tickIn("classes", "メンバーの API キー"));
+    expect(tab("制限")!.textContent).toBe("制限●");
+    expect(tab("制限")!.getAttribute("aria-label")).toBe("制限, 未保存の変更あり");
+    await click(button("保存")!);
+    await flush();
+    const refusal = () => host!.querySelector(".model-access-rule [role=alert]")?.textContent ?? "";
+    expect(refusal()).toContain("refused for the test");
+
+    await click(tab("概要")!);
+    expect(shown(host!.querySelector(".model-access-rule")!)).toBe(false);
+    await click(tab("制限")!);
+    expect(refusal()).toContain("refused for the test");
+    expect(tickIn("classes", "メンバーの API キー").checked).toBe(true);
+    expect(tab("制限")!.textContent).toBe("制限●");
+  });
+});

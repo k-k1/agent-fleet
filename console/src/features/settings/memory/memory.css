@@ -300,31 +300,6 @@
   border-color: var(--accent);
 }
 
-.mem-viewnav-tabs {
-  display: flex;
-  gap: 4px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  border-bottom: 1px solid var(--border);
-}
-
-.mem-viewnav-tab {
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: none;
-  padding: 6px 10px;
-  color: var(--muted);
-  white-space: nowrap;
-  flex: none;
-}
-
-.mem-viewnav-tab.active {
-  color: var(--fg);
-  border-bottom-color: var(--accent);
-}
-
 .mem-view {
   display: flex;
   flex-direction: column;
@@ -332,11 +307,6 @@
 }
 
 @media (max-width: 760px) {
-  .mem-viewnav-tab {
-    padding: 6px 8px;
-    min-height: 40px;
-  }
-
   /* Two panes do not work at a narrow width (phone, tablet portrait), so stack them. */
   .mem-body {
       grid-template-columns: 1fr;
@@ -705,18 +675,6 @@
 }
 
 /* The count beside a view's label (proposals waiting for a decision). */
-.mem-viewnav-count {
-  display: inline-block;
-  margin-left: 6px;
-  min-width: 1.4em;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--bg);
-  font-size: 0.8em;
-  line-height: 1.5;
-  text-align: center;
-}
 
 /* The review's proposals (Changes > Proposed). */
 .mem-changes-sub {

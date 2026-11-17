@@ -165,6 +165,10 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only mpol-ten
 | `mpol-admin-provided` | a ceiling, a cap on Demo Team, a registered source granted to it |
 | `mpol-admin-nosource` | a deployment rule without subscriptions, no source registered |
 
+- A scene with a `view` opens that tab of the page (`provided`, `tenants`); on a build from before
+  the pages had tabs the click finds nothing and the whole page is drawn, so one scene shoots
+  both sides of a change. The notgranted, provided and phone scenes open the provided tab, and
+  `mpol-admin-open` the per-tenant one.
 - Each writes `<scene>-first-<locale>-light.webp`, the screen an administrator opens on, and
   `<scene>-<locale>-light.webp`, the whole modal grown to its content (`unfold`).
 - They run with the desktop pointer flags (`desktop: true`), so hover-only controls stay hidden.

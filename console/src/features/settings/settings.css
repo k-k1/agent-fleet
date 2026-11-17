@@ -34,4 +34,5 @@
 @import "./agents/agents.css";
 @import "./mcp/mcp.css";
 @import "./tenant/tenant.css";
+@import "./parts/viewnav.css";
 @import "./memory/memory.css";

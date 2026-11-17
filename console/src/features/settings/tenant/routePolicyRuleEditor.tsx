@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
+import { useReportDirty } from "../parts/dirtyScope.tsx";
 import {
   ROUTE_CLASSES,
   ROUTE_DESTINATIONS,
@@ -256,6 +257,7 @@ export function RuleEditor({
   const [refusal, setRefusal] = useState<string | null>(null);
   const body = ruleFromDraft(base, draft);
   const dirty = !ruleEqual(body, base);
+  useReportDirty(dirty);
   const edit = (patch: Partial<RuleDraft>) => {
     setDraft((d) => ({ ...d, ...patch }));
     setRefusal(null);

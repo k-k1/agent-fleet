@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errDetail, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+import { useReportDirty } from "../parts/dirtyScope.tsx";
 import {
   isOff,
   parseProvidedTenant,
@@ -172,6 +173,7 @@ function PolicyEditor({
   const { busy, refusal, setRefusal, submit } = useGuardedSave((res) => onSaved(warningsOf(res)));
   const micro = parseUsd(budget);
   const dirty = membersOnly !== view.members_only || micro !== view.member_default_micro;
+  useReportDirty(dirty);
   const save = () => {
     // The default budget has no "none": an empty field is zero, which is no use (D3).
     if (micro === undefined) {
@@ -248,6 +250,7 @@ function MemberRow({
   const { busy, refusal, setRefusal, submit } = useGuardedSave((res) => onSaved(warningsOf(res)));
   const micro = parseUsd(budget);
   const dirty = granted !== member.granted || micro !== member.budget_micro;
+  useReportDirty(dirty);
   const save = () => {
     if (micro === undefined) {
       setRefusal(tr("admin.prov_bad_amount"));
@@ -266,8 +269,8 @@ function MemberRow({
   };
   return (
     <tr data-member={member.user_key}>
-      <td>{member.user_key}</td>
-      <td>
+      <td className="prov-member-name">{member.user_key}</td>
+      <td data-label={tr("admin.prov_col_granted")}>
         <input
           type="checkbox"
           aria-label={tr("admin.prov_member_granted", { user: member.user_key })}
@@ -279,7 +282,7 @@ function MemberRow({
           }}
         />
       </td>
-      <td>
+      <td data-label={tr("admin.prov_col_budget")}>
         <input
           type="text"
           inputMode="decimal"
@@ -293,9 +296,9 @@ function MemberRow({
           }}
         />
       </td>
-      <td>{approx(member.effective_micro)}</td>
-      <td>{approx(member.spent_micro)}</td>
-      <td>
+      <td data-label={tr("admin.prov_col_effective")}>{approx(member.effective_micro)}</td>
+      <td data-label={tr("admin.prov_col_spent")}>{approx(member.spent_micro)}</td>
+      <td className="prov-member-save">
         <button type="button" className="btn xs" disabled={busy || !dirty} onClick={save}>
           {tr("admin.mpol_save")}
         </button>
@@ -306,12 +309,18 @@ function MemberRow({
 }
 
 /** TenantProvidedRoutesView is the tenant page's section. The grant and ceiling are shown
- *  read-only: they are the super_admin's, edited on the admin page. */
-export function TenantProvidedRoutesView({ slug }: { slug: string }) {
+ *  read-only: they are the super_admin's, edited on the admin page. onServed hears whether the
+ *  CP serves provided routes once the first read answers. */
+export function TenantProvidedRoutesView({ slug, onServed }: { slug: string; onServed?: (served: boolean) => void }) {
   const tr = useT();
   const path = `api/admin/tenants/${encodeURIComponent(slug)}/provided-routes/deployment`;
   const { load, reload, peek } = useProvided(path, parseProvidedTenant);
   const [warnings, setWarnings] = useState<string[]>([]);
+  // Whether the CP serves provided routes at all, for a page that gives them a tab: a failed read
+  // is served (its "could not be read" line has to be reachable), only the plain 404 is not.
+  useEffect(() => {
+    if (load) onServed?.(load.state !== "off");
+  }, [load, onServed]);
   if (!load || load.state === "off") return null;
   if (load.state === "failed") {
     return (
