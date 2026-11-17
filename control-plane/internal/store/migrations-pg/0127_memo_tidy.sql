@@ -1,4 +1,4 @@
--- Message queues, step 5 (ADR 0137 section 8), Postgres mirror of migrations/0141_memo_tidy.sql. See that file.
+-- Message queues, step 5 (ADR 0137 section 8), Postgres mirror of migrations/0142_memo_tidy.sql. See that file.
 -- NOTE the migrator splits on the semicolon, so comments must not contain one.
 ALTER TABLE memo_queue ADD COLUMN IF NOT EXISTS tidy INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE memo_queue ADD COLUMN IF NOT EXISTS tidy_destinations TEXT NOT NULL DEFAULT '[]';

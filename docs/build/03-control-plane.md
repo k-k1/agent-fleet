@@ -325,7 +325,7 @@ Memos you accumulate and send to a session in one go (the tables are
   of one is refused `409 memo_locked`, a settings delete or a category delete turns it into a sent note, and a derived
   message is edited, moved and released like any other (a move into a queue from a plain category enters it `held`).
   The tidy switch is a guard rail, not a wall: the reply is produced inside the workspace, so code there that can answer
-  for the Agent chooses the text of a derived message inside these bounds. Migrations 0141 (SQLite) and 0126 (Postgres).
+  for the Agent chooses the text of a derived message inside these bounds. Migrations 0142 (SQLite) and 0127 (Postgres).
 - **Deliveries** (decisions/0137 §6, step 1c): a delivery is one fire of a queue, and
   every delivery that is not closed occupies one of the queue's `maxActive` slots and
   counts toward a member-wide limit of 4. `POST /api/memo-queues/{categoryId}/fire`

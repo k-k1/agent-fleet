@@ -737,7 +737,7 @@ Option B, an existing session as a queue's consumer. Each reason would need an a
 What reopens it is a real, recurring case that sending a selection by hand does not cover; a new issue is opened then.
 #4153 is closed by this note.
 
-Added 2026-11-17 (#4152, step 5, slice S1, the Control Plane's core): the schema (migrations 0141 and 0126), the settings
+Added 2026-11-17 (#4152, step 5, slice S1, the Control Plane's core): the schema (migrations 0142 and 0127), the settings
 `tidy`, `tidyDestinations` and the read-only `noTidyAt`, the validator (`control-plane/internal/memotidy`), apply, undo and
 the run list are built, and inert: nothing starts a run and the dispatcher does not read `tidy`. The Console's wire and the
 codes are in docs/build/03-control-plane.md. Decisions taken for the build: a derived message takes the state of its sources

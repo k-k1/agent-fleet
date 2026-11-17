@@ -689,7 +689,7 @@ press のもの。origin は中継の値を trim したあとで比べるので�
 これを開き直すのは、メッセージを選んで手で送るだけでは足りない、実際に繰り返し起きる場合である。そのときは新しい Issue を開く。
 #4153 はこの追記で閉じる。
 
-追記 2026-11-17（#4152、段 5、slice S1、Control Plane の核）: スキーマ（マイグレーション 0141 と 0126）、設定の
+追記 2026-11-17（#4152、段 5、slice S1、Control Plane の核）: スキーマ（マイグレーション 0142 と 0127）、設定の
 `tidy`・`tidyDestinations` と読み取り専用の `noTidyAt`、検証器（`control-plane/internal/memotidy`）、適用、取り消し、
 run の一覧を作った。まだ何も動かさない: run を始めるものはなく、dispatcher は `tidy` を読まない。Console に見える wire と
 コードは docs/build/03-control-plane.ja.md にある。作るにあたって決めたこと: 派生メッセージは元の状態を引き継ぐ（§3 の
