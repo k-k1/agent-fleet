@@ -416,9 +416,12 @@ describe("on a tenant switch", () => {
     await switchTo("beta");
     let open!: () => void;
     gate = { wait: new Promise<void>((r) => (open = r)), open: () => open() };
-    await renderShown(true); // the load under beta is held: nothing of alpha may show meanwhile
+    // The hidden view stays mounted, so whatever its DOM holds is what the first frame of the
+    // show paints: the old tenant's rows must already be gone, not cleared by an effect later.
     expect(names()).toEqual([]);
+    await renderShown(true); // the load under beta is held
     expect(host.textContent).not.toContain("alpha.ts");
+    expect(names()).toEqual([]);
     gate.open();
     gate = null;
     await act(async () => {
