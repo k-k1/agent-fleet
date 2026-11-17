@@ -640,7 +640,7 @@
     margin-top: -2px; /* cancels row-gap when no chips follow, so a bare row stays one line tall */
   }
   .repo-state,
-  .unread-dot,
+  .repo-info > .unread-dot,
   .repo-sess-badge,
   .repo-ords {
     order: 4;
