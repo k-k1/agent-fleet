@@ -573,6 +573,46 @@ describe("admin overview and grants", () => {
     expect((within(".model-access-caps select") as HTMLSelectElement).value).toBe("beta");
   });
 
+  it("keeps a tenant's unsaved cap when a grant row opens another tenant", async () => {
+    serve(SOURCE());
+    await mount();
+    await flush();
+    await click(tab("テナントごと"));
+    const acme = within('.mpol-cap[data-tenant="acme"]');
+    await click(tickIn(acme, "deny", "anthropic-api"));
+    expect(tab("テナントごと").textContent).toBe("テナントごと●");
+    await click(tab("提供モデル"));
+    await flush();
+    await click(within('.prov-grants [data-tenant="beta"]').querySelector("button")!);
+    await flush();
+    expect(shown(within('.mpol-cap[data-tenant="beta"]'))).toBe(true);
+    expect(shown(acme)).toBe(false);
+    // Still unsaved, and still marked, while another tenant is shown.
+    expect(tab("テナントごと").textContent).toBe("テナントごと●");
+    const sel = within(".model-access-caps select") as HTMLSelectElement;
+    await act(async () => {
+      sel.value = "acme";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    expect(tickIn(within('.mpol-cap[data-tenant="acme"]'), "deny", "anthropic-api").checked).toBe(true);
+  });
+
+  it("moves the focus to the tab a link opens", async () => {
+    serve(SOURCE());
+    await mount();
+    await flush();
+    await click(within(".model-access-who").querySelector<HTMLButtonElement>('[data-goto="deployment"]')!);
+    expect(document.activeElement?.id).toBe("admin-mpol-tab-deployment");
+  });
+
+  it("holds the source line's place while it is read", async () => {
+    serve(new Promise(() => {}));
+    await mount();
+    await flush();
+    expect(within('[data-testid="overview-source"]').textContent).toContain("読み込み中");
+  });
+
   it("reads twenty tenants at a time", async () => {
     serve(SOURCE());
     host = document.createElement("div");

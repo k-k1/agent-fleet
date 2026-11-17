@@ -159,7 +159,16 @@ function AdminOverview({ view }: { view: DeploymentPolicyView }) {
 function ProvidedSourceLine() {
   const tr = useT();
   const { load } = useProvided(SOURCE_PATH, parseSource);
-  if (!load || load.state === "off") return null;
+  if (load?.state === "off") return null;
+  if (!load) {
+    // Held in place while the source is read, so the overview does not shift under the reader.
+    return (
+      <section className="admin-panel model-access-provided-line" data-testid="overview-source">
+        <h4>{tr("admin.model_access_view_provided")}</h4>
+        <p className="muted">{tr("common.loading")}</p>
+      </section>
+    );
+  }
   const src = load.state === "ok" ? load.value.source : undefined;
   return (
     <section className="admin-panel model-access-provided-line" data-testid="overview-source">
@@ -190,6 +199,12 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
   const { view, failed, load } = useDeploymentRoutePolicy();
   const [slug, setSlug] = useState(tenants[0]?.slug ?? "");
   const shownSlug = tenants.some((t) => t.slug === slug) ? slug : (tenants[0]?.slug ?? "");
+  const [opened, setOpened] = useState<string[]>([]);
+  // The tenants opened so far, the shown one included, among those that still exist.
+  const visited = [...new Set([...opened, shownSlug])].filter((t) => t && tenants.some((x) => x.slug === t));
+  useEffect(() => {
+    if (shownSlug) setOpened((o) => (o.includes(shownSlug) ? o : [...o, shownSlug]));
+  }, [shownSlug]);
   const [provided, setProvided] = useState(false);
 
   if (!view) {
@@ -244,7 +259,14 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
               ))}
             </select>
           </label>
-          <TenantCap key={shownSlug} slug={shownSlug} />
+          {/* Every tenant opened here stays mounted, hidden when another is picked: switching
+              tenants (the select, or a grant row's button from another view) never drops an
+              unsaved cap and its refusal, and the view's mark keeps showing it. */}
+          {visited.map((t) => (
+            <div key={t} hidden={t !== shownSlug} data-cap-tenant={t}>
+              <TenantCap slug={t} />
+            </div>
+          ))}
         </>
       )}
     </section>

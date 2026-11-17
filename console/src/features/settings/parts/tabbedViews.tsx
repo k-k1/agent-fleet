@@ -1,7 +1,7 @@
 // A settings page split into views by a ViewNav, with every view kept mounted. Only the active
 // view is shown; the others are hidden, never unmounted, so a draft or a refusal in one view
 // survives a switch to another, and the tab of a view with unsaved edits carries a mark.
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
 import { DirtyScope } from "./dirtyScope.tsx";
 import { ViewNav } from "./viewNav.tsx";
@@ -49,8 +49,22 @@ export function TabbedViews({ label, prefix, views }: { label: string; prefix: s
       ),
     [keys],
   );
+  // A switch asked for from inside a view moves the focus to the new view's tab: the button that
+  // asked is now in a hidden view, and the focus would otherwise fall back to the page.
+  const focusNext = useRef<string | null>(null);
+  useEffect(() => {
+    if (focusNext.current !== value) return;
+    focusNext.current = null;
+    document.getElementById(`${prefix}-tab-${value}`)?.focus();
+  }, [value, prefix]);
   const tabs = useMemo(
-    () => ({ show: setPicked, has: (k: string) => shown.some((v) => v.key === k) }),
+    () => ({
+      show: (k: string) => {
+        focusNext.current = k;
+        setPicked(k);
+      },
+      has: (k: string) => shown.some((v) => v.key === k),
+    }),
     // shown is rebuilt each render; its keys are what matter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [shown.map((v) => v.key).join("\n")],
