@@ -24,6 +24,9 @@ import { TenantModelAccessView } from "./tenantModelAccess.tsx";
 
 const PATH = "api/admin/tenants/acme/route-policy";
 
+// The vocabulary the CP serves, as the real handlers wrote it (routepolicysrv TestShotFixturesPolicy).
+const VOCAB = JSON.parse(readFileSync("scripts/shots/model-access/policy-open.json", "utf8"))["deployment"].vocabulary;
+
 const VIEW = () => ({
   ceiling: {
     raw: "classes=-subscription",
@@ -56,6 +59,7 @@ const VIEW = () => ({
   endpoints: [{ host: "llm.corp.example", approved: false, excludedBy: ["ceiling"] }],
   endpointRoutes: [],
   hidden: { kinds: [], chat: [], imagegen: [] },
+  vocabulary: VOCAB,
 });
 
 let root: Root | null = null;
@@ -220,6 +224,41 @@ describe("tenant model access", () => {
     expect(host!.querySelectorAll("input, textarea, button").length).toBe(0);
   });
 
+  it("says the Control Plane is older, and draws no editor, when the answer carries no vocabulary", async () => {
+    const { vocabulary: _v, ...older } = VIEW();
+    api.mockResolvedValue(older);
+    await mount();
+    expect(host!.querySelector("[role=alert]")?.textContent).toContain("古く");
+    expect(host!.querySelectorAll("input, textarea, button").length).toBe(0);
+  });
+
+  it("draws no editor when the vocabulary is empty", async () => {
+    api.mockResolvedValue({ ...VIEW(), vocabulary: { classes: [], destinations: [], routes: [] } });
+    await mount();
+    expect(host!.querySelector("[role=alert]")?.textContent).toContain("読み込めませんでした");
+    expect(host!.querySelectorAll("input, textarea, button").length).toBe(0);
+  });
+
+  it("offers what the CP serves, and shows an id the Console has no label for as itself", async () => {
+    api.mockResolvedValue({
+      ...VIEW(),
+      vocabulary: {
+        classes: ["subscription", "brand-new-class"],
+        destinations: ["anthropic", "brand-new-dest"],
+        routes: [{ id: "brand-new-route", class: "brand-new-class", destination: "brand-new-dest" }],
+      },
+    });
+    await mount();
+    await click(segBtn("classes", "選んだものだけ許す"));
+    await click(segBtn("destinations", "選んだものだけ許す"));
+    const text = host!.querySelector(".model-access-rule")!.textContent!;
+    expect(text).toContain("brand-new-class");
+    expect(text).toContain("brand-new-dest");
+    expect(text).toContain("brand-new-route");
+    // A route the CP no longer lists is not offered: the list is the CP's, not a copy here.
+    expect(field("deny").textContent).not.toContain("openai-api");
+  });
+
   it("draws no editor when the read fails or answers a partial shape", async () => {
     api.mockRejectedValue(new Error("offline"));
     await mount();
@@ -345,19 +384,19 @@ describe("restrictions help", () => {
     expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", {
       endpoints: ["llm.corp.example"],
       future: "kept",
-      classes: ["member-key", "member-cloud", "provided", "self-hosted"],
+      classes: ["member-cloud", "member-key", "provided", "self-hosted"],
       destinations: [
+        "af-engine",
         "anthropic",
-        "openai",
-        "google",
-        "meta",
-        "github",
+        "aws-bedrock",
         "cursor",
+        "github",
+        "google",
         "kiro",
+        "meta",
+        "openai",
         "openrouter",
         "sakana",
-        "aws-bedrock",
-        "af-engine",
         "self-hosted",
       ],
     });

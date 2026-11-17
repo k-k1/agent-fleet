@@ -5,26 +5,17 @@
 //
 // Nothing here saves. Every function returns a draft; what is sent is still ruleFromDraft's.
 //
-// The route test mirrors routepolicy.Rule.Allows over ROUTE_CATALOG, which routePolicyRule.test.ts
-// holds equal to the CP's catalogue; match-cases.json, written from here, is replayed through the
+// The route test mirrors routepolicy.Rule.Allows over the vocabulary the CP serves; match-cases.json, written from here, is replayed through the
 // CP's own PUT handlers by routepolicysrv TestMatchCases, so a drift between the two is a failing
 // Go test, not a refusal an administrator meets.
-import {
-  ROUTE_CATALOG,
-  ROUTE_CLASSES,
-  ROUTE_DESTINATIONS,
-  endpointLines,
-  restricts,
-  type RouteRule,
-  type RuleDraft,
-} from "./routePolicyRule.ts";
+import { endpointLines, restricts, type RouteRule, type RuleDraft, type Vocabulary } from "./routePolicyRule.ts";
 
 /** allows mirrors routepolicy.Rule.Allows. */
-export function allows(r: RouteRule, id: string): boolean {
+export function allows(r: RouteRule, id: string, vocab: Vocabulary): boolean {
   if (!restricts(r)) return true;
   if (r.deny?.includes(id)) return false;
   if (r.except?.includes(id)) return true;
-  const rt = ROUTE_CATALOG.find((x) => x.id === id);
+  const rt = vocab.routes.find((x) => x.id === id);
   if (!rt || rt.destination === "unclassified") return false;
   return (
     (r.classes === undefined || r.classes.includes(rt.class)) &&
@@ -49,8 +40,14 @@ function covers(outer: string, inner: string): boolean {
 
 /** exceeds lists what the CP would refuse writing rule under the operator's ceiling: the routes it
  *  would allow that the ceiling forbids, then its endpoint patterns the ceiling does not cover. */
-export function exceeds(rule: RouteRule, ceiling: RouteRule): { routes: string[]; endpoints: string[] } {
-  const routes = ROUTE_CATALOG.filter((rt) => allows(rule, rt.id) && !allows(ceiling, rt.id)).map((rt) => rt.id);
+export function exceeds(
+  rule: RouteRule,
+  ceiling: RouteRule,
+  vocab: Vocabulary,
+): { routes: string[]; endpoints: string[] } {
+  const routes = vocab.routes
+    .filter((rt) => allows(rule, rt.id, vocab) && !allows(ceiling, rt.id, vocab))
+    .map((rt) => rt.id);
   // The ceiling narrows endpoints when it names patterns, or (no patterns) once it restricts destinations.
   const narrows = ceiling.endpoints !== undefined || ceiling.destinations !== undefined;
   const ps = ceiling.endpoints ?? [];
@@ -62,7 +59,7 @@ export function exceeds(rule: RouteRule, ceiling: RouteRule): { routes: string[]
 /** matchCeiling narrows a draft until the ceiling has nothing to refuse, and never widens it:
  *  each list is cut to what the ceiling allows, an individual allowance the ceiling forbids is
  *  dropped, the ceiling's own blocks are added, and patterns it does not cover are removed. */
-export function matchCeiling(d: RuleDraft, ceiling: RouteRule): RuleDraft {
+export function matchCeiling(d: RuleDraft, ceiling: RouteRule, vocab: Vocabulary): RuleDraft {
   if (!restricts(ceiling) && ceiling.endpoints === undefined) return d;
   const cut = (all: boolean, list: string[], above: string[] | undefined) =>
     above === undefined
@@ -78,7 +75,7 @@ export function matchCeiling(d: RuleDraft, ceiling: RouteRule): RuleDraft {
     classes: c.list,
     destinationsAll: t.all,
     destinations: t.list,
-    except: d.except.filter((id) => allows(ceiling, id)),
+    except: d.except.filter((id) => allows(ceiling, id, vocab)),
     deny,
   };
   if (!d.endpointsAll) {
@@ -102,27 +99,42 @@ export function stoppedBy(
   return above.filter((a) => a.rule[field] !== undefined && !a.rule[field]!.includes(value)).map((a) => a.layer);
 }
 
-/** The ADR 0138 §6 configurations. Each replaces the draft's credential types, destinations and
- *  individual changes; the endpoints and any key the Console does not know stay as they are. */
-export const PRESETS = [
-  { key: "none", rule: {} },
-  // #4159: no subscriptions, and no opencode.ai, whose Zen key is metered but its plans are not.
-  {
-    key: "no_subscriptions",
-    rule: {
-      classes: ROUTE_CLASSES.filter((c) => c !== "subscription"),
-      destinations: ROUTE_DESTINATIONS.filter((d) => d !== "opencode.ai"),
-    },
-  },
-  { key: "no_plan_logins", rule: { classes: ROUTE_CLASSES.filter((c) => c !== "subscription") } },
-  { key: "bedrock_only", rule: { destinations: ["aws-bedrock"] } },
-  { key: "provided_only", rule: { classes: ["provided"] } },
-] as const satisfies readonly { key: string; rule: RouteRule }[];
+/** The ADR 0138 §6 configurations, as rules over the CP's vocabulary. Each replaces the draft's
+ *  credential types, destinations and individual changes; the endpoints and any key the Console
+ *  does not know stay as they are. */
+export const PRESET_KEYS = ["none", "no_subscriptions", "no_plan_logins", "bedrock_only", "provided_only"] as const;
 
-export type PresetKey = (typeof PRESETS)[number]["key"];
+export type PresetKey = (typeof PRESET_KEYS)[number];
 
-export function applyPreset(d: RuleDraft, key: PresetKey): RuleDraft {
-  const p: RouteRule = PRESETS.find((x) => x.key === key)!.rule;
+/** presetAvailable: a preset that names a value outright is offered only while the CP's vocabulary
+ *  has it, so a button never fills in a draft the CP would refuse. */
+export function presetAvailable(key: PresetKey, vocab: Vocabulary): boolean {
+  const p = presetRule(key, vocab);
+  return (
+    (p.classes ?? []).every((c) => vocab.classes.includes(c)) &&
+    (p.destinations ?? []).every((d) => vocab.destinations.includes(d))
+  );
+}
+
+export function presetRule(key: PresetKey, vocab: Vocabulary): RouteRule {
+  const noSubs = vocab.classes.filter((c) => c !== "subscription");
+  switch (key) {
+    case "none":
+      return {};
+    // #4159: no subscriptions, and no opencode.ai, whose Zen key is metered but its plans are not.
+    case "no_subscriptions":
+      return { classes: noSubs, destinations: vocab.destinations.filter((d) => d !== "opencode.ai") };
+    case "no_plan_logins":
+      return { classes: noSubs };
+    case "bedrock_only":
+      return { destinations: ["aws-bedrock"] };
+    case "provided_only":
+      return { classes: ["provided"] };
+  }
+}
+
+export function applyPreset(d: RuleDraft, key: PresetKey, vocab: Vocabulary): RuleDraft {
+  const p = presetRule(key, vocab);
   return {
     ...d,
     classesAll: p.classes === undefined,

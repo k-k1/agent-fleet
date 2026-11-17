@@ -13,7 +13,7 @@ import { TenantOverview, byList } from "./routePolicyOverview.tsx";
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
 import { TabbedViews } from "../parts/tabbedViews.tsx";
 import { RuleEditor } from "./routePolicyRuleEditor.tsx";
-import { parseTenantPolicy, routeIds, type TenantPolicyView } from "./routePolicyRule.ts";
+import { isOlderPolicyAnswer, parseTenantPolicy, type TenantPolicyView } from "./routePolicyRule.ts";
 
 export function useTenantRoutePolicy(slug: string) {
   const tr = useT();
@@ -32,7 +32,11 @@ export function useTenantRoutePolicy(slug: string) {
       // A failed reload drops the view too: an editor left on an older answer would save over
       // whatever changed since.
       setView(null);
-      setFailed(d?.error ? errText(d.error) : tr("admin.mpol_load_failed"));
+      setFailed(
+        d?.error
+          ? errText(d.error)
+          : tr(isOlderPolicyAnswer(d, true) ? "admin.mpol_vocab_missing" : "admin.mpol_load_failed"),
+      );
     } catch {
       setView(null);
       setFailed(tr("admin.mpol_load_failed"));
@@ -122,7 +126,7 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                       base={view.cap.rule}
                       revision={view.cap.revision}
                       currentRevision={async () => (await peek())?.cap.revision ?? null}
-                      routeOptions={routeIds(view.routes.map((r) => r.id))}
+                      vocab={view.vocabulary}
                       endpointsMode="patterns"
                       ceiling={view.ceiling.rule}
                       above={[{ layer: "deployment", rule: view.deployment.rule }]}
@@ -141,7 +145,7 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                     base={view.tenant.rule}
                     revision={view.tenant.revision}
                     currentRevision={async () => (await peek())?.tenant.revision ?? null}
-                    routeOptions={routeIds(view.routes.map((r) => r.id))}
+                    vocab={view.vocabulary}
                     endpointsMode="hosts"
                     hostState={(h) => view.endpoints.find((e) => e.host === h)}
                     // The tenant's write is not checked against the ceiling: what the layers above

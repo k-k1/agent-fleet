@@ -3,42 +3,84 @@
 //      the CP refuses or misses one it accepts.
 //   2. A save body is the loaded rule with only the edited fields replaced: a field the page does
 //      not edit survives, and "every class" (absent) never becomes "no class" ([]) or the reverse.
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  ROUTE_CATALOG,
-  ROUTE_CLASSES,
-  ROUTE_DESTINATIONS,
   draftOf,
+  isOlderPolicyAnswer,
+  parseDeploymentPolicy,
   parseTenantPolicy,
+  parseVocabulary,
+  routeIds,
   ruleEqual,
   ruleFromDraft,
 } from "./routePolicyRule.ts";
 
-const CATALOG = new URL("../../../../../control-plane/internal/agentroutes/catalog.json", import.meta.url);
-const haveCatalog = existsSync(CATALOG);
-const catalog: {
-  routes: { id: string; class: string; destination: string; perConnection?: boolean }[];
-  destinations: { id: string }[];
-} = haveCatalog ? JSON.parse(readFileSync(CATALOG, "utf8")) : { routes: [], destinations: [] };
+// The vocabulary is served by the CP (routepolicysrv), not kept here. These answers are the real
+// handlers' own, written by routepolicysrv TestShotFixturesPolicy.
+const answers = (name: string) => JSON.parse(readFileSync(`scripts/shots/model-access/policy-${name}.json`, "utf8"));
 
-describe.skipIf(!haveCatalog)("vocabulary against the CP's route catalogue", () => {
-  it("lists every catalogued route with its class, destination and per-connection mark", () => {
-    expect(ROUTE_CATALOG.map((r) => ({ ...r, perConnection: !!r.perConnection }))).toEqual(
-      catalog.routes
-        .map((r) => ({ id: r.id, class: r.class, destination: r.destination, perConnection: !!r.perConnection }))
-        .sort((a, b) => a.id.localeCompare(b.id)),
-    );
+describe("the served vocabulary", () => {
+  it("parses from both GETs, and the two agree", () => {
+    const a = answers("open");
+    const dep = parseDeploymentPolicy(a["deployment"]);
+    const ten = parseTenantPolicy(a["tenant/demo"]);
+    expect(dep?.vocabulary.routes.length).toBeGreaterThan(0);
+    expect(dep?.vocabulary.classes).toContain("subscription");
+    expect(dep?.vocabulary.destinations).not.toContain("unclassified");
+    expect(ten?.vocabulary).toEqual(dep?.vocabulary);
   });
 
-  it("offers exactly the catalogue's classes and its destinations except unclassified", () => {
-    expect([...ROUTE_CLASSES].sort()).toEqual([...new Set(catalog.routes.map((r) => r.class))].sort());
-    expect([...ROUTE_DESTINATIONS].sort()).toEqual(
-      catalog.destinations
-        .map((d) => d.id)
-        .filter((d) => d !== "unclassified")
-        .sort(),
-    );
+  it("refuses an answer whose vocabulary is malformed, so no picker is drawn from part of a list", () => {
+    const a = answers("open");
+    for (const bad of [
+      null,
+      {},
+      { ...a["deployment"].vocabulary, routes: "x" },
+      { ...a["deployment"].vocabulary, classes: [1] },
+    ]) {
+      expect(parseVocabulary(bad)).toBeNull();
+      expect(parseDeploymentPolicy({ ...a["deployment"], vocabulary: bad })).toBeNull();
+      expect(parseTenantPolicy({ ...a["tenant/demo"], vocabulary: bad })).toBeNull();
+    }
+  });
+
+  it("refuses a vocabulary with an empty list, so an empty answer draws no editor", () => {
+    const v = answers("open")["deployment"].vocabulary;
+    for (const bad of [
+      { classes: [], destinations: [], routes: [] },
+      { ...v, classes: [] },
+      { ...v, destinations: [] },
+      { ...v, routes: [] },
+    ])
+      expect(parseVocabulary(bad)).toBeNull();
+  });
+
+  it("tells a Control Plane that sends none (older) from a malformed answer", () => {
+    const a = answers("open");
+    const { vocabulary: _d, ...oldDep } = a["deployment"];
+    const { vocabulary: _t, ...oldTen } = a["tenant/demo"];
+    expect(parseDeploymentPolicy(oldDep)).toBeNull();
+    expect(parseTenantPolicy(oldTen)).toBeNull();
+    expect(isOlderPolicyAnswer(oldDep)).toBe(true);
+    expect(isOlderPolicyAnswer(oldTen)).toBe(true);
+    expect(isOlderPolicyAnswer(a["deployment"])).toBe(false);
+    expect(isOlderPolicyAnswer({ ...a["deployment"], vocabulary: {} })).toBe(false);
+    expect(isOlderPolicyAnswer({ error: "x" })).toBe(false);
+    // A tenant answer cut short is damaged, not older.
+    const { cap: _c, ...cut } = oldTen;
+    expect(isOlderPolicyAnswer(cut, true)).toBe(false);
+    expect(isOlderPolicyAnswer(oldTen, true)).toBe(true);
+  });
+
+  it("keeps a route, class or destination it has no label for, and offers it", () => {
+    const v = parseVocabulary({
+      classes: ["subscription", "new-class"],
+      destinations: ["anthropic", "mars"],
+      routes: [{ id: "new-route", class: "new-class", destination: "mars", perConnection: true }],
+    });
+    expect(v).not.toBeNull();
+    expect(routeIds(v!, ["held-route"])).toEqual(["held-route", "new-route"]);
   });
 });
 
@@ -68,7 +110,11 @@ describe("ruleFromDraft", () => {
   });
 
   it("splits endpoint text on lines, spaces and commas", () => {
-    const d = { ...draftOf({}), endpointsAll: false, endpoints: " a.corp.example\nb.corp.example, c.corp.example \n\n" };
+    const d = {
+      ...draftOf({}),
+      endpointsAll: false,
+      endpoints: " a.corp.example\nb.corp.example, c.corp.example \n\n",
+    };
     expect(ruleFromDraft({}, d).endpoints).toEqual(["a.corp.example", "b.corp.example", "c.corp.example"]);
   });
 });
@@ -95,7 +141,11 @@ describe("parseHidden", () => {
     expect(parseHidden(undefined)).toBeNull();
     expect(parseHidden({ kinds: [], chat: [] })).toBeNull();
     expect(parseHidden({ kinds: [{ id: "agy", routes: ["agy-login"] }], chat: [], imagegen: [] })).toBeNull();
-    expect(parseHidden({ kinds: [{ id: "agy", routes: ["agy-login"], forbiddenBy: [] }], chat: [], imagegen: [] })).toBeNull();
-    expect(parseHidden({ kinds: [{ id: "agy", routes: [], forbiddenBy: ["ceiling"] }], chat: [], imagegen: [] })).toBeNull();
+    expect(
+      parseHidden({ kinds: [{ id: "agy", routes: ["agy-login"], forbiddenBy: [] }], chat: [], imagegen: [] }),
+    ).toBeNull();
+    expect(
+      parseHidden({ kinds: [{ id: "agy", routes: [], forbiddenBy: ["ceiling"] }], chat: [], imagegen: [] }),
+    ).toBeNull();
   });
 });

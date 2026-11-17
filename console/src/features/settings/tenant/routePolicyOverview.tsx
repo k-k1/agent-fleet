@@ -189,7 +189,7 @@ function WhoRestricts({ view }: { view: TenantPolicyView }) {
       <p className="admin-hint">{tr("tenant.mpol_who_note")}</p>
       <ol className="mpol-who">
         {LAYERS.map((l) => {
-          const s = summarizeLayer(rules[l], l === "ceiling");
+          const s = summarizeLayer(rules[l], view.vocabulary, l === "ceiling");
           const own = l === "tenant";
           const clauses = layerClauses(tr, s, own);
           return (

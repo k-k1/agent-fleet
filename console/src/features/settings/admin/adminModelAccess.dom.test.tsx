@@ -3,6 +3,7 @@
 //      editor. A tenant's cap and grant are edited on that tenant's own page, never here.
 //   2. A rule above the ceiling is refused by the CP; the refusal is shown and the edits stay.
 //   3. A refused read draws no editor (fail closed).
+import { readFileSync } from "node:fs";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -23,10 +24,13 @@ const CEILING = {
   rule: { classes: ["member-key", "member-cloud", "provided", "self-hosted"] },
   source: "deployment",
 };
+// The vocabulary the CP serves, as the real handlers wrote it (routepolicysrv TestShotFixturesPolicy).
+const VOCAB = JSON.parse(readFileSync("scripts/shots/model-access/policy-open.json", "utf8"))["deployment"].vocabulary;
 const DEPLOYMENT = {
   ceiling: CEILING,
   deployment: { rule: { destinations: ["anthropic", "aws-bedrock"] }, revision: 3 },
   revision: 7,
+  vocabulary: VOCAB,
 };
 const tenantView = (slug: string) => ({
   ceiling: CEILING,
@@ -38,6 +42,7 @@ const tenantView = (slug: string) => ({
   routes: [{ id: "anthropic-api", class: "member-key", destination: "anthropic", allowed: true }],
   endpoints: [],
   endpointRoutes: [],
+  vocabulary: VOCAB,
 });
 const TENANTS = [
   { slug: "acme", name: "Acme" },
@@ -215,6 +220,55 @@ describe("admin model access", () => {
     const c = within(".model-access-ceiling");
     expect(c.textContent).toContain("file");
     expect(c.textContent).not.toContain("AF_MODEL_ROUTE_CEILING");
+  });
+
+  it("says the Control Plane is older, and draws no editor, when the answer carries no vocabulary", async () => {
+    const { vocabulary: _v, ...older } = DEPLOYMENT;
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path === "api/admin/route-policy" ? older : tenantView("acme")),
+    );
+    await mount();
+    expect(host!.querySelector("[role=alert]")?.textContent).toContain("古く");
+    expect(host!.querySelectorAll("input, textarea, button, select").length).toBe(0);
+  });
+
+  it("draws no editor when the vocabulary is empty", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "api/admin/route-policy"
+          ? { ...DEPLOYMENT, vocabulary: { classes: [], destinations: [], routes: [] } }
+          : tenantView("acme"),
+      ),
+    );
+    await mount();
+    expect(host!.querySelector("[role=alert]")?.textContent).toContain("読み込めませんでした");
+    expect(host!.querySelectorAll("input, textarea, button, select").length).toBe(0);
+  });
+
+  it("offers the classes, destinations and routes the CP serves, ids it has no label for included", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "api/admin/route-policy"
+          ? {
+              ...DEPLOYMENT,
+              vocabulary: {
+                classes: ["subscription", "brand-new-class"],
+                destinations: ["anthropic", "brand-new-dest"],
+                routes: [{ id: "brand-new-route", class: "brand-new-class", destination: "brand-new-dest" }],
+              },
+            }
+          : tenantView("acme"),
+      ),
+    );
+    await mount();
+    const d = within(".model-access-deployment");
+    for (const f of ["classes", "destinations"])
+      await click(btnIn(d.querySelector<HTMLElement>(`[data-field="${f}"]`)!, "選んだものだけ許す"));
+    const text = d.textContent!;
+    expect(text).toContain("brand-new-class");
+    expect(text).toContain("brand-new-dest");
+    expect(text).toContain("brand-new-route");
+    expect(text).not.toContain("copilot-login");
   });
 
   it("draws no editor when the read is refused", async () => {

@@ -59,6 +59,8 @@ export interface TenantPolicyView {
   routes: RouteDecision[];
   endpoints: EndpointDecision[];
   endpointRoutes: string[];
+  /** What a rule may name; parseTenantPolicy refuses an answer without it. */
+  vocabulary: Vocabulary;
   /** What the layers hide from the tenant's members; read through parseHidden. */
   hidden?: unknown;
   /** Every harness, chat backend and image provider with its routes and the allowed ones; read
@@ -101,6 +103,8 @@ export interface DeploymentPolicyView {
   ceiling: PolicyCeiling;
   deployment: PolicyLayer;
   revision: number;
+  /** What a rule may name; parseDeploymentPolicy refuses an answer without it. */
+  vocabulary: Vocabulary;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -114,8 +118,9 @@ const isCeiling = (v: unknown): v is PolicyCeiling =>
 // Shape checks rather than trust: a page that cannot read the policy must not draw an editor
 // whose save would write a rule built from a partial answer (fail closed).
 export function parseTenantPolicy(d: unknown): TenantPolicyView | null {
-  if (!isObj(d) || !isCeiling(d.ceiling) || !isLayer(d.deployment) || !isLayer(d.cap) || !isLayer(d.tenant)) return null;
-  if (!Array.isArray(d.routes) || !Array.isArray(d.endpoints)) return null;
+  if (!isObj(d) || !isCeiling(d.ceiling) || !isLayer(d.deployment) || !isLayer(d.cap) || !isLayer(d.tenant))
+    return null;
+  if (!Array.isArray(d.routes) || !Array.isArray(d.endpoints) || !parseVocabulary(d.vocabulary)) return null;
   return d as unknown as TenantPolicyView;
 }
 
@@ -166,32 +171,11 @@ export function parseOwners(d: unknown): OwnersView | null | undefined {
 }
 
 export function parseDeploymentPolicy(d: unknown): DeploymentPolicyView | null {
-  if (!isObj(d) || !isCeiling(d.ceiling) || !isLayer(d.deployment)) return null;
+  if (!isObj(d) || !isCeiling(d.ceiling) || !isLayer(d.deployment) || !parseVocabulary(d.vocabulary)) return null;
   return d as unknown as DeploymentPolicyView;
 }
 
-// The vocabulary, held equal to control-plane/internal/agentroutes/catalog.json by
-// routePolicyRule.test.ts. The deployment rule's GET carries no catalogue, so the editors need
-// their own list; values a server sends that are not here are still shown and kept.
-export const ROUTE_CLASSES = ["subscription", "member-key", "member-cloud", "provided", "self-hosted"] as const;
-
-// "unclassified" is left out on purpose: the CP refuses it in an allow list.
-export const ROUTE_DESTINATIONS = [
-  "anthropic",
-  "openai",
-  "google",
-  "meta",
-  "github",
-  "cursor",
-  "kiro",
-  "opencode.ai",
-  "openrouter",
-  "sakana",
-  "aws-bedrock",
-  "af-engine",
-  "self-hosted",
-] as const;
-
+/** One catalogued route as the CP's vocabulary lists it. */
 export interface CatalogRoute {
   id: string;
   class: string;
@@ -200,41 +184,51 @@ export interface CatalogRoute {
   perConnection?: boolean;
 }
 
-export const ROUTE_CATALOG: CatalogRoute[] = [
-  { id: "af-engine-image", class: "self-hosted", destination: "af-engine" },
-  { id: "af-engine-llm", class: "self-hosted", destination: "af-engine" },
-  { id: "agy-login", class: "subscription", destination: "google" },
-  { id: "anthropic-api", class: "member-key", destination: "anthropic" },
-  { id: "anthropic-subscription", class: "subscription", destination: "anthropic" },
-  { id: "bedrock", class: "member-cloud", destination: "aws-bedrock" },
-  { id: "bedrock-deployment", class: "provided", destination: "aws-bedrock" },
-  { id: "bedrock-tenant", class: "provided", destination: "aws-bedrock" },
-  { id: "chatgpt-subscription", class: "subscription", destination: "openai" },
-  { id: "copilot-login", class: "subscription", destination: "github" },
-  { id: "cursor-login", class: "subscription", destination: "cursor" },
-  { id: "custom-api", class: "member-key", destination: "unclassified", perConnection: true },
-  { id: "gemini-api", class: "member-key", destination: "google" },
-  { id: "kiro-login", class: "subscription", destination: "kiro" },
-  { id: "member-llamacpp", class: "member-key", destination: "unclassified", perConnection: true },
-  { id: "meta-api", class: "member-key", destination: "meta" },
-  { id: "muse-login", class: "subscription", destination: "meta" },
-  { id: "openai-api", class: "member-key", destination: "openai" },
-  { id: "opencode-account", class: "subscription", destination: "opencode.ai" },
-  { id: "opencode-go", class: "subscription", destination: "opencode.ai" },
-  { id: "opencode-zen", class: "member-key", destination: "opencode.ai" },
-  { id: "openrouter-api", class: "member-key", destination: "openrouter" },
-  { id: "sakana-api", class: "member-key", destination: "sakana" },
-  { id: "vertex", class: "provided", destination: "google" },
-];
+/** vocabularyWire: what a rule may name, served by the CP beside the policy (single source:
+ *  the route catalogue the CP validates against). The destinations leave out "unclassified",
+ *  which the CP refuses in an allow list; a route's own destination may still be it. */
+export interface Vocabulary {
+  classes: string[];
+  destinations: string[];
+  routes: CatalogRoute[];
+}
 
-/** The catalogue's route ids plus any the server named that it does not list, sorted. */
-export function routeIds(...extra: (string[] | undefined)[]): string[] {
-  const out = new Set(ROUTE_CATALOG.map((r) => r.id));
+const isCatalogRoute = (v: unknown): v is CatalogRoute =>
+  isObj(v) &&
+  typeof v.id === "string" &&
+  typeof v.class === "string" &&
+  typeof v.destination === "string" &&
+  (v.perConnection === undefined || typeof v.perConnection === "boolean");
+
+/** parseVocabulary is null unless all three lists are present, well formed and non-empty: a partial
+ *  or empty answer must never become pickers that offer less than the CP accepts (the CP never
+ *  serves an empty list, its catalogue is not empty). Ids the Console has no label
+ *  for are kept; they are drawn as the raw id. */
+export function parseVocabulary(d: unknown): Vocabulary | null {
+  if (!isObj(d) || !Array.isArray(d.classes) || !Array.isArray(d.destinations) || !Array.isArray(d.routes)) return null;
+  if (!isStrList(d.classes) || !isStrList(d.destinations) || !d.routes.every(isCatalogRoute)) return null;
+  if (d.classes.length === 0 || d.destinations.length === 0 || d.routes.length === 0) return null;
+  return d as unknown as Vocabulary;
+}
+
+/** isOlderPolicyAnswer: the answer is a well-formed policy that carries no vocabulary at all, as
+ *  a Control Plane from before it sends. The page says so and draws no editor, rather than
+ *  falling back to a list of its own that could offer a value that CP refuses. */
+export function isOlderPolicyAnswer(d: unknown, tenant = false): boolean {
+  if (!isObj(d) || d.vocabulary !== undefined || !isCeiling(d.ceiling) || !isLayer(d.deployment)) return false;
+  // A tenant answer from an older CP is otherwise whole; one missing the rest is a damaged answer.
+  return !tenant || (isLayer(d.cap) && isLayer(d.tenant) && Array.isArray(d.routes) && Array.isArray(d.endpoints));
+}
+
+/** The vocabulary's route ids plus any the caller names that it does not list, sorted. */
+export function routeIds(vocab: Vocabulary, ...extra: (string[] | undefined)[]): string[] {
+  const out = new Set(vocab.routes.map((r) => r.id));
   for (const l of extra) for (const id of l ?? []) out.add(id);
   return [...out].sort();
 }
 
-export const isPerConnection = (id: string) => ROUTE_CATALOG.some((r) => r.id === id && r.perConnection);
+export const isPerConnection = (vocab: Vocabulary, id: string) =>
+  vocab.routes.some((r) => r.id === id && r.perConnection);
 
 /** withExtra lists the known values first and then any value a rule holds that is not known. */
 export function withExtra(known: readonly string[], ...held: (string[] | undefined)[]): string[] {
