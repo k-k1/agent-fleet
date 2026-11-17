@@ -541,6 +541,7 @@
   "uiPrefsLoaded": "function/0",
   "usePrefsSyncState": "function/0",
   "useSettings": "function/0",
+  "useUIPrefsLoading": "function/0",
   "VOICEVOX_ZUNDAMON": [
    [
     "3",

@@ -1023,6 +1023,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.route_choose": "Choose a route",
   "launch.route_no_key": "no credential yet",
   "launch.route_no_key_hint": "A route marked “no credential yet” can be chosen once its key or login is added in",
+  "launch.route_loading": "Loading your saved settings…",
   "launch.route_default_unusable": "Your default route cannot be used now. Choose a route for this launch.",
   "launch.route_required_hint": "Choose a route for this launch: this agent does not start without one.",
   "launch.policy.route_forbidden": "That model route is not available to you. Choose another one.",

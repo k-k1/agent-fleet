@@ -322,6 +322,25 @@ function warnPrefsSaveFailed(err: unknown): void {
   } catch {}
 }
 
+// The server copy has not been read yet, but a read is running or scheduled. Once the automatic
+// retries are used up this turns false, so an unreachable server never blocks a screen for good.
+let hydrateInFlight = 0;
+const loadingSubs = new Set<() => void>();
+const notifyPrefsLoading = (): void => loadingSubs.forEach((fn) => fn());
+export const uiPrefsLoading = (): boolean => !prefsLoaded && (hydrateInFlight > 0 || hydrateRetry !== null);
+
+/** Reactive uiPrefsLoading: a screen that must not act on defaults not yet delivered waits on it. */
+export function useUIPrefsLoading(): boolean {
+  return useSyncExternalStore(
+    (fn) => {
+      loadingSubs.add(fn);
+      return () => void loadingSubs.delete(fn);
+    },
+    uiPrefsLoading,
+    uiPrefsLoading,
+  );
+}
+
 /** Exported for tests: has the server copy been read at least once this session? */
 export const uiPrefsLoaded = (): boolean => prefsLoaded;
 
@@ -376,6 +395,17 @@ let hydrateGen = 0;
 // at boot after the tenant is resolved (App.tsx). Server wins over localStorage —
 // EXCEPT device-local keys, which stay whatever this browser's localStorage holds.
 export async function hydrateUIPrefs(): Promise<boolean> {
+  hydrateInFlight++;
+  notifyPrefsLoading();
+  try {
+    return await hydrateUIPrefsOnce();
+  } finally {
+    hydrateInFlight--;
+    notifyPrefsLoading();
+  }
+}
+
+async function hydrateUIPrefsOnce(): Promise<boolean> {
   const gen = ++hydrateGen;
   const owner = ownerSource();
   let srv: any;

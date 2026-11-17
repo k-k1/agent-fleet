@@ -11,7 +11,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 let ssmProfiles: unknown[] = [];
+// When set, api/env/ui-prefs waits on it: the synced prefs "arrive" when a test resolves it.
+let prefsGate: Promise<unknown> | null = null;
 const apiMock = vi.fn(async (url: string) => {
+  if (url.includes("api/env/ui-prefs") && prefsGate) return prefsGate;
   if (url.includes("api/ssm/profiles")) return ssmProfiles;
   if (url.includes("api/me/ui-state")) return {};
   return { branches: [] };
@@ -89,6 +92,7 @@ beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
   resetAttachDraftDB();
   ssmProfiles = [];
+  prefsGate = null;
   setDefault("claude", undefined);
   onLaunch = vi.fn<Launch>(async () => ({ ok: true }));
   host = document.createElement("div");
@@ -141,6 +145,44 @@ describe("route step", () => {
     expect(routeSelect()!.value).toBe("anthropic-api");
     await click(launchBtn());
     expect(launchedWith().route).toBe("anthropic-api");
+  });
+
+  it("keeps the current route when the already selected agent is clicked again", async () => {
+    setDefault("claude", { route: "anthropic-api" });
+    const k: LiveKindAccess = { kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] };
+    await render(["claude", "codex"], access([k, { kind: "codex" }]));
+    expect(routeSelect()!.value).toBe("anthropic-api");
+    const claudeBtn = [...document.querySelectorAll<HTMLButtonElement>("button.seg-btn")].find((b) => b.classList.contains("active"))!;
+    await click(claudeBtn);
+    expect(routeSelect()!.value).toBe("anthropic-api");
+    // A route the member chose by hand survives the same click.
+    await choose(routeSelect()!, "anthropic-subscription");
+    await click(claudeBtn);
+    expect(routeSelect()!.value).toBe("anthropic-subscription");
+  });
+
+  it("applies the default when synced prefs arrive while the dialog is open", async () => {
+    await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] }]));
+    expect(routeSelect()!.value).toBe("");
+    await act(async () => void setDefault("claude", { route: "anthropic-api" }));
+    await settle();
+    expect(routeSelect()!.value).toBe("anthropic-api");
+  });
+
+  it("applies the default when the catalogue arrives after the prefs", async () => {
+    await render(["claude"], access(null));
+    expect(routeSelect()).toBeUndefined();
+    await act(async () => void setDefault("claude", { route: "anthropic-api" }));
+    await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] }]));
+    expect(routeSelect()!.value).toBe("anthropic-api");
+  });
+
+  it("does not override a route the member chose before the prefs arrived", async () => {
+    await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] }]));
+    await choose(routeSelect()!, "anthropic-subscription");
+    await act(async () => void setDefault("claude", { route: "anthropic-api" }));
+    await settle();
+    expect(routeSelect()!.value).toBe("anthropic-subscription");
   });
 
   it("preselects a Bedrock default with its profile and region once the profiles are read", async () => {
