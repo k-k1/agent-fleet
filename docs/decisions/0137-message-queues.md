@@ -689,3 +689,48 @@ that a session of origin `user` moves into a queue with the switch on is treated
 the mark. During a rolling update an older Control Plane that presses such a message leaves `released_by = 'setting'`
 on it until the newer one writes the row again: a display slip only, the state and the release copies are the press's.
 The origin is compared after the relay's value is trimmed, so `" user "` is `user`.
+
+Added 2026-11-17 (#4153, open question 3, decided by the owner): neither, for now. No pull tool is built, and an existing
+session does not become a queue's consumer. A queue keeps delivering only by starting a new session per fire (§6). A
+person who wants a session they are driving to work on waiting messages ticks them in the memo queue and sends them to
+that running session with "Send…" (the Send memos dialog, `console/src/features/memo/SendMemoModal.tsx`; guide/user/chat/memos.md,
+"Send them together"), as today. That already covers the case, and a pull tool would add a state and a claim to a message's
+life for what is another way to ask for the same thing. The three reasons under "Rejected" ("Delivering into an existing
+session") still hold. Either option may be wanted later, so what each has to settle is recorded here. Nothing below is
+decided, and the options are not ranked.
+
+Option A, a pull tool: a tool with which a session a person is driving takes the next N messages of a queue. Nothing is
+injected unattended, so the provenance rules of §3 are not widened. To settle before it is built:
+
+- *Which messages may be taken.* A `held` message has not had its press, and §3 makes the press the only wall. A tool is
+  offered to every session, ones nobody is driving included ("Letting sessions enqueue straight into automatic fires").
+  The Control Plane does not know which session calls (fact 1), and the origin the Agent stamps is a guard rail, not a
+  wall (§3). So: may a take reach `held` messages at all, and what says that a person is driving the taker?
+- *The claim.* The ledger of §6 records one delivery per fire, bound to the session it creates through the durable key
+  `q_<delivery>`. A take needs a record that names the taking session, and the move out of `pending` has to be as
+  conditional as a fire's claim, so that the same message is not also fired.
+- *What a taken message counts as.* When it is closed; whether it holds one of the queue's `max_active` places (§6: every
+  delivery not closed does) and counts toward the daily cap and the breaker (§7, which reads the first turn of a
+  delivery's session); and what becomes of it when the session never acts on it.
+- *The standing instruction and the data rules.* Whether the taker receives the queue's standing instruction, and
+  whether the messages reach it as data with an origin line under §5's rules (the four prohibitions of a peer message).
+
+Option B, an existing session as a queue's consumer. Each reason would need an answer:
+
+- *Idempotency per fire.* The durable key of §6 covers the create of a session: `POST /sessions` with
+  `idempotency_durable`, a record on disk, and reserve, abandon and lookup answers that reconciliation acts on
+  (`workspace/agent/internal/sessionx/session_idempotency.go`). Input to an existing session has no such key. The only
+  de-duplication there is a Managed driver's per-session ledger of the last 200 client message ids
+  (`agents/msgledger.go`, used by `agents/turnqueue.go`): it drops a resend, is not tied to a delivery, and cannot answer
+  "was this input taken" the way abandon does. A Terminal session has no such ledger.
+- *Knowing that the session took the input.* A Terminal session's input queue is invisible to Agent Fleet. The ADR says
+  nothing different of a Managed session; the Agent has a turn queue for one, and whether the Control Plane can read it
+  to settle a delivery is not decided here.
+- *A bound on the consumer's context* (ADR 0021 decision 3).
+- What else assumes one session per fire: retire (§6) ends the watches and timers of the session a delivery started and
+  of the sessions it started, and stops them, which cannot be done to a session that is the person's own; the worktree
+  is new per fire because two sessions in one working copy corrupt each other; and unattended input into a session a
+  person is driving is what §3 allows only after a press or under the queue's standing switch.
+
+What reopens it is a real, recurring case that sending a selection by hand does not cover; a new issue is opened then.
+#4153 is closed by this note.
