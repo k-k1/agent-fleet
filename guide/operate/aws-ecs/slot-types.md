@@ -88,6 +88,39 @@ Before declaring an arm64 class, prepare in this order.
 - With an arm64 class declared and `Ec2SlotAmiArm64` empty, the Control Plane refuses to boot, rather than show a class that cannot launch
 - `Ec2SlotAmiArm64` is only the initial and fallback value. The Control Plane reads the same SSM parameter itself and launches slots with it, so patching needs no redeploy
 
+## Add light classes (opt-in)
+
+For members whose agents mostly read, edit and run small commands, a 4 GiB instance costs about half as much as an 8 GiB one. Declare these as **separate, opt-in classes**. The shipped `Ec2SlotTypes` default does not change, and adding a class moves nobody.
+
+```
+…;light-arm|Light (Arm)|arm64|m8g.medium:4096:1,m8g.large:8192:2
+;burst-arm|Burstable (Arm)|arm64|t4g.medium:4096:2,t4g.large:8192:2
+;burst-x86|Burstable (Intel)|x86_64|t3.medium:4096:2,t3.large:8192:2
+```
+
+**Append them to the value you already run (the `…`); do not replace it.** The first class is the default when `Ec2DefaultSlotClass` is empty, so a value that starts with a light class would put every member who chose nothing on it. The `arm64` ones need the arm64 steps in [Add a Graviton (arm64) class](#add-a-graviton-arm64-class). For more memory per vCPU, give `r8g.medium:8192:1` a class of its own. Do not put it on the `light-arm` ladder: it ties `m8g.large:8192` on memory, and the order of tied rungs is not defined
+
+- **A light rung is always its own class. Never add it under an existing class.** A member whose size is 0 (no memory request) lands on the smallest rung of their class. Put `m8g.medium` under `arm` and every member of that class who never chose a size silently drops to 4 GiB. A tenant default of `arm` with no choice of its own keeps starting on `m8g.large`, the smallest rung of `arm`, not on a light class
+- **A 4 GiB rung gives the workspace 2048 MiB.** The reserve is a flat 2 GiB off every rung at the default `Ec2HostReserveMb` of `auto` ([What a workspace actually gets](slot-pool.md#what-a-workspace-actually-gets)), so a 4 GiB rung leaves half
+  - That is enough for light agent work. Measured on `m8g.medium` and `t4g.medium`: clone and `go vet` finished on both, `npm ci` and `tsc --noEmit` finished on `t4g.medium` (not run on `m8g.medium`), and the agent CLI and the Agent both stayed up
+  - It is not enough for a large Go build. `go build ./...` of this repository was OOM-killed on both, one `compile` of the AWS EC2 SDK needing about 1.7 GiB on its own. **Members who build big projects start at 8 GiB**
+- **Burstable classes run in `unlimited` credit mode (`t4g` measured, `t3` the account default).** A `t4g` slot the Control Plane launched was measured as `unlimited`, and the account default is `unlimited` for both `t4g` and `t3`; the `t3` credit mode on a launched slot was not measured. Sustained CPU on them bills surplus credits on top of the hourly price, so a member who keeps the CPU busy can cost more than on `m8g`. Whether a long build actually spends surplus credits was not measured
+- **Set `Ec2SlotTerminateAfterSec` on the deployment when you add these classes** (`14400` is recommended, [Three limits](slot-pool.md#three-limits)). It is one deployment-wide value that covers every class. At the default `0` an idle slot is never terminated, so spare slots and their root volumes pile up until `Ec2MaxSlots`
+
+On-demand Linux prices in ap-northeast-1, shared tenancy (Pricing API, November 2026):
+
+| Type | vCPU / memory | USD per hour |
+|---|---|---|
+| m8g.medium | 1 / 4 GiB | 0.05797 |
+| m8g.large | 2 / 8 GiB | 0.11594 |
+| t4g.medium | 2 / 4 GiB | 0.0432 |
+| t4g.large | 2 / 8 GiB | 0.0864 |
+| t3.medium | 2 / 4 GiB | 0.0544 |
+| t3.large | 2 / 8 GiB | 0.1088 |
+| r8g.medium | 1 / 8 GiB | 0.07106 |
+
+Prices change; read them again before you decide.
+
 ## Set the default class
 
 `Ec2DefaultSlotClass` is the `id` of the class a member with no per-user and no per-tenant choice lands on. Empty means the first class in `Ec2SlotTypes`.
