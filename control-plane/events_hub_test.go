@@ -109,6 +109,11 @@ func startSub(t *testing.T, a eventsAPI, res *resolved) *hubSub {
 		defer close(s.done)
 		a.stream(s.rec, httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx), res)
 	}()
+	// Every subscriber's tick starts a detached work-item fetch keyed by its own membership, and
+	// eventsTestEnv only waits for the env's membership. Registered before the cancel cleanup so it
+	// runs after it: once the stream has returned no new fetch can start. Without it a second
+	// member's fetch still touches sqlite while TempDir is being removed.
+	t.Cleanup(func() { waitWorkItemFetchIdle(t, res.mv.MembershipID) })
 	t.Cleanup(func() { cancel(); <-s.done })
 	return s
 }
