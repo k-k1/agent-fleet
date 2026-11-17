@@ -17,7 +17,11 @@ func TestHomeResizeReportOnSave(t *testing.T) {
 		{HomeResizeSame, false, true},
 		{HomeResizeNoHome, false, true},
 		{HomeResizeFailed, false, true},
+		{HomeResizeSame, true, true},
+		{HomeResizeNoHome, true, true},
+		{HomeResizeFailed, true, true},
 		{"", true, false},
+		{"", false, false},
 	}
 	for _, c := range cases {
 		if got := (HomeResize{Outcome: c.outcome}).ReportOnSave(c.diskChanged); got != c.want {

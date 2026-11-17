@@ -1816,11 +1816,10 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 		MaxSessions: body.MaxSessions, DiskGB: body.DiskGB,
 		MemLimit: body.MemLimit, CPULimit: body.CPULimit, SlotClass: strings.TrimSpace(body.SlotClass),
 	}
-	// Read before the write: "did this save change the disk number" is what decides
-	// whether a shrink is worth reporting. A failed read answers false — saying nothing
-	// beats a warning about a change that may not have happened.
-	prev, _, prevErr := a.cp.Store().GetUserLimit(r.Context(), mem.ID)
-	diskChanged := prevErr == nil && body.DiskGB != prev.DiskGB
+	// Resolved before the write: whether a shrink is worth reporting depends on the size the
+	// member gets (after the tenant cap and deployment ceiling), not on the number typed —
+	// raising 60 to 70 under a cap of 50 changes nothing, and lowering 70 to 60 neither.
+	_, _, prevDisk := a.cp.ResolveWorkspaceSize(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
 	if err := a.cp.Store().PutUserLimit(r.Context(), mem.ID, q); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -1834,6 +1833,7 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 			q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass))
 	a.cp.EvictMembershipCache(mem.ID)
 	effMem, effCPU, effDisk := a.cp.ResolveWorkspaceSize(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
+	diskChanged := effDisk != prevDisk
 	effClass, classNote := a.cp.ResolveSlotClass(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
 	resp := map[string]any{
 		"user_key": key, "tenant": t.Slug, "max_sessions": body.MaxSessions, "disk_gb": body.DiskGB,
