@@ -499,7 +499,7 @@ func TestMemoTidyKeptAndNoQueue(t *testing.T) {
 			t.Fatalf("no queue: %+v", out.Run)
 		}
 		if r := e.runs(q); r.UsedToday != 2 {
-			t.Fatalf("usedToday counts every run: %+v", r)
+			t.Fatalf("usedToday counts every automatic run: %+v", r)
 		}
 	})
 }

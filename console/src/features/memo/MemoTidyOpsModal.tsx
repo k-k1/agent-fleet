@@ -113,6 +113,9 @@ export function MemoTidyOpsModal({ memos, category, categories, allMemos, onDone
   }, []);
 
   const chosen = review ? review.items.filter((_, i) => pick[i]) : [];
+  // Notes no ticked proposal changes, so that unticking a proposal moves its notes into this count.
+  const changedIds = new Set(chosen.flatMap((c) => (c.kind === "merge" ? c.notes.map((n) => n.id) : [c.note.id])));
+  const keptCount = memos.filter((m) => !changedIds.has(m.id)).length;
 
   const apply = async () => {
     if (!review || chosen.length === 0) return;
@@ -211,10 +214,10 @@ export function MemoTidyOpsModal({ memos, category, categories, allMemos, onDone
             {mixed && <div className="ui-field-hint warn">⚠ {tr("memo.tidyop_mixed_states")}</div>}
             {notice && <div className="ui-field-hint warn">⚠ {notice}</div>}
             {malformed > 0 && <div className="ui-field-hint">{tr("memo.tidyop_malformed", { count: malformed })}</div>}
-            {review.items.length === 0 && <div className="ui-field-hint">{tr("memo.tidyop_none")}</div>}
+            {review.items.length === 0 && review.leftOut.length === 0 && <div className="ui-field-hint">{tr("memo.tidyop_none")}</div>}
             <div className="memo-tidy-list">{review.items.map(row)}</div>
             {review.items.length > 0 && (
-              <div className="ui-field-hint">{tr("memo.tidyop_kept", { count: review.kept.length })}</div>
+              <div className="ui-field-hint">{tr("memo.tidyop_kept", { count: keptCount })}</div>
             )}
             {review.leftOut.length > 0 && (
               <div className="memo-tidy-leftout">

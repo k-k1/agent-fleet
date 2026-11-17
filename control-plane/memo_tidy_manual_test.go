@@ -392,3 +392,18 @@ func TestMemoTidyDestinationsAreSharedRule(t *testing.T) {
 		t.Fatalf("offered %d", n)
 	}
 }
+
+// Like undo, the manual apply does not read the tenant's memo-queue switch: queue rows exist, and
+// what is in them can be tidied whatever the switch says now.
+func TestMemoTidyManualIgnoresTheTenantSwitch(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.category("r", "q")
+		e.tidyQueue(q)
+		a := e.tidyRow("r", "q", "a", "member", "", "", store.MemoStatePending)
+		b := e.tidyRow("r", "q", "b", "member", "", "", store.MemoStatePending)
+		e.memoQueuesOn(false)
+		if rec := e.manualApply("a", "r", "q", []store.Memo{a, b}, opMerge("ab", a.ID, b.ID)); rec.Code != 200 {
+			t.Fatalf("apply with the switch off: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+}

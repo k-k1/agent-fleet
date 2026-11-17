@@ -267,7 +267,7 @@ Workspace を起こさない。
   呼び出しは `Trigger: "manual"`・`RunID: ""` の `memoTidyApply` なので、効果は自動実行とまったく同じ。答え:
   `200 {"run", "memos"}`（run は run 一覧と同じ形。memos は置き換え済みになった元、派生メッセージ、移したメッセージ。何も
   変えなかった run でも同じ）、`409 memo_tidy_stale`（`error.stale` に違うものの id。run は残らない。読み取りと apply の
-  ロックのあいだの変化も同じ答えで、apply が `stale_input` として見つける）、`400 memo_tidy_invalid`（`error.tidyCode` に
+  ロックのあいだの変化も同じ答えで、apply が `stale_input` として見つける。こちらは `dropped` の run が残り、入力に見た印がつく）、`400 memo_tidy_invalid`（`error.tidyCode` に
   検証の code。読めない operations は `bad_shape`。run は `dropped` で記録され入力は見た印がつくが、`bad_shape` は run に
   届かない）、`409 memo_tidy_busy`（メンバーのもう 1 つの run が実行中）、`404`（自動実行のカテゴリでない、またはそこにない
   メモ）、`400 bad_request`（items が無い、重複、41 件以上）。*1 日の上限*: 手動の run は上限で断られず、

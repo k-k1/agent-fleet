@@ -58,6 +58,11 @@ describe("tidyDestinations", () => {
     const d = tidyDestinations(cats[0], ["far"], [...cats, far, bad]);
     expect(d.map((x) => x.id)).toEqual(["far", "listed", "other", "plain"]);
   });
+  it("measures a label in bytes, as the Control Plane does", () => {
+    const long = cat("jp", "あ".repeat(70)); // 210 bytes, 70 characters
+    expect(tidyDestinations(cats[0], [], [cats[0], long]).map((d) => d.id)).toEqual([]);
+    expect(tidyDestinations(cats[0], [], [cats[0], cat("c1", "x\u0085y")]).map((d) => d.id)).toEqual([]);
+  });
   it("caps at 100", () => {
     const many = [cats[0], ...Array.from({ length: 150 }, (_, i) => cat("c" + i, "c" + i))];
     expect(tidyDestinations(cats[0], [], many)).toHaveLength(TIDY_LIMITS.destinations);
@@ -185,6 +190,11 @@ describe("reviewOps", () => {
     const r = reviewOps([{ op: "merge", ids: ["a", "i"], text: "x" }, { op: "split", id: "r", texts: ["x", "y"] }], withImg, dests);
     expect(r.leftOut.map((l) => l.why)).toEqual(["not_plain", "not_plain"]);
   });
+  it("treats a note with a file path or a NUL in the text as not mergeable or not valid", () => {
+    const withPath = [...memos, note("p", { refPath: "~/x" })];
+    expect(reviewOps([{ op: "merge", ids: ["a", "p"], text: "x" }], withPath, dests).leftOut[0].why).toBe("not_plain");
+    expect(review([{ op: "merge", ids: ["a", "b"], text: "a\0b" }]).leftOut[0].why).toBe("bad_text");
+  });
   it("applies the counts, the text rules and the growth rule", () => {
     const why = (ops: Parameters<typeof reviewOps>[0]) => review(ops).leftOut[0]?.why;
     expect(why([{ op: "merge", ids: ["a"], text: "x" }])).toBe("merge_count");
@@ -213,6 +223,7 @@ describe("reviewOps", () => {
     const why = (ops: Parameters<typeof reviewOps>[0], all: Memo[]) => reviewOps(ops, mine, dests, all).leftOut.map((l) => l.why);
     expect(why([{ op: "move", id: "r1", to: "listed" }], [...mine, there("held")])).toEqual(["duplicate_ref"]);
     expect(why([{ op: "move", id: "r1", to: "listed" }], [...mine, there("claimed")])).toEqual(["duplicate_ref"]);
+    expect(why([{ op: "move", id: "r1", to: "listed" }], [...mine, there("pending")])).toEqual(["duplicate_ref"]);
     expect(why([{ op: "move", id: "r1", to: "listed" }], [...mine, there("delivered")])).toEqual([]); // not open
     expect(why([{ op: "move", id: "r1", to: "listed" }], [...mine, there("pending", "a/b#9")])).toEqual([]);
     expect(why([{ op: "move", id: "r1", to: "other" }], [...mine, there("pending")])).toEqual([]); // another destination

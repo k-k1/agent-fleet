@@ -76,7 +76,7 @@ export function planSelection(memos: readonly Memo[], cats: readonly MemoCategor
 
 /** A note a merge or a split may take: plain text only (decision 6 of the contract). */
 export const isPlainText = (m: Memo): boolean =>
-  m.kind === "text" && m.body !== "" && !(m.attachments && m.attachments.length > 0) && !m.reference;
+  m.kind === "text" && m.body !== "" && !m.refPath && !(m.attachments && m.attachments.length > 0) && !m.reference;
 
 const originKey = (m: TidyMemo): string =>
   [m.provenance === "curator" ? m.sourceProvenance || "" : m.provenance || "workspace", m.producer || "", m.producerOrigin || ""].join("\x00");
@@ -97,7 +97,8 @@ export function readTidyDestinationIds(raw: unknown, categoryId: string): string
   return [];
 }
 
-const labelOK = (s: string): boolean => s.length <= 200 && !/[\u0000-\u001f\u007f]/.test(s);
+// The Agent's rule for a label, as the Control Plane applies it: at most 200 bytes, no control character.
+const labelOK = (s: string): boolean => utf8Len(s) <= 200 && !/\p{Cc}/u.test(s);
 
 /** What a tidy of `own` may move a note to: its listed destinations, then the categories of its own
  *  repository, never itself, at most 100. The Control Plane builds the same list when it applies,
@@ -298,7 +299,7 @@ function openRefsIn(all: readonly Memo[], dest: TidyDest): Set<string> {
 
 function textProblem(text: string): boolean {
   const t = text.trim();
-  return t === "" || utf8Len(t) > TIDY_LIMITS.textBytes || LONE_SURROGATE.test(t) || t.startsWith(ENVELOPE_PREFIX);
+  return t === "" || t.includes("\0") || utf8Len(t) > TIDY_LIMITS.textBytes || LONE_SURROGATE.test(t) || t.startsWith(ENVELOPE_PREFIX);
 }
 
 /** Reads each proposed operation against the notes and destinations the member is looking at. An

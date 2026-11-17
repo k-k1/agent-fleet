@@ -338,7 +338,7 @@ Memos you accumulate and send to a session in one go (the tables are
   `memoTidyApply` with `Trigger: "manual"` and `RunID: ""`, so the effects are exactly the automatic run's. Answers:
   `200 {"run", "memos"}` (the run as the run list shows it, and the sources now superseded, the derived messages and the
   moved ones, also for a run that kept everything); `409 memo_tidy_stale` with `error.stale` (the ids that differ, no
-  run recorded; a change between the read and apply's lock is the same answer, found by apply as `stale_input`);
+  run recorded; a change between the read and apply's lock is the same answer, found by apply as `stale_input`, and that one is recorded as a `dropped` run with its input marked seen);
   `400 memo_tidy_invalid` with `error.tidyCode` (the validator's code, or `bad_shape` for operations that cannot be
   read; the run is recorded `dropped` and its input marked seen, except for `bad_shape`, which never reaches a run);
   `409 memo_tidy_busy` (the member's other run is in flight); `404` for a category that is not an auto-run category of
