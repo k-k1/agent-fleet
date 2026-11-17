@@ -461,6 +461,7 @@ POST /work-items/jira-projects
 POST /work-items/merge
 GET /workspace/machine
 GET /workspace/stats
+GET /workspace/usage-windows
 GET /ws/browser
 GET /ws/browser-attachments
 GET /ws/pty

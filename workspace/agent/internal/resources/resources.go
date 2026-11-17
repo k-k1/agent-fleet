@@ -227,6 +227,12 @@ func (m *cpuMeter) pct(now time.Time) (float64, bool) {
 	return m.last, true
 }
 
+// UsageUsec is the container's cumulative CPU time in microseconds, for a caller that keeps its
+// own fixed windows (the mem-pressure sampler). It is deliberately not routed through the
+// shared cpuMeter: that meter's delta window is "since anyone's last Stats call", and a reader
+// of it would both disturb the Console's figure and inherit its unfixed window.
+func UsageUsec() (uint64, bool) { return readUsageUsec() }
+
 // readUsageUsec returns cumulative CPU time in MICROSECONDS. v1's cpuacct.usage is in
 // NANOSECONDS, so without normalising the unit here the percentage comes out 1000x too
 // high (an idle workspace looking like tens of thousands of percent). Callers need not

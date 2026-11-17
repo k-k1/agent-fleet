@@ -73,3 +73,9 @@ func CheckMemoryMax(b Boundary, dir, requested string) (Agreement, string) {
 	raw, _ := os.ReadFile(dir + "/memory.max")
 	return CompareMemoryMax(requested, string(raw))
 }
+
+// LaunchIDEnv carries the Control Plane's id for this container launch (ADR 0139 decision 3).
+// The Control Plane sets it on every start of a runtime that has a box to name; the sampler
+// stamps it on each series line. Unset or empty means "not told", and the Control Plane
+// ignores such lines (it cannot say which box they were measured on).
+const LaunchIDEnv = "AF_LAUNCH_ID"
