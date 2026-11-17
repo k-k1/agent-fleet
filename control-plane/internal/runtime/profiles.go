@@ -180,6 +180,9 @@ type WorkspaceMachine struct {
 	// VCPU is the rung's DECLARED vCPU count (0 = the operator did not declare one, so
 	// nothing is shown rather than a guess — see WorkspaceSlot.VCPU).
 	VCPU int `json:"vcpu,omitempty"`
+	// BurstBaselinePct is the rung's DECLARED burst baseline as a percent of the whole box's CPU
+	// (0 = not declared). The usage history counts minutes above it only where it is declared.
+	BurstBaselinePct int `json:"burst_baseline_pct,omitempty"`
 	// SlotMemMiB is the box's memory, MemCapMiB the share the workspace container is
 	// actually given (0 = uncapped, where the box IS the answer).
 	SlotMemMiB int64 `json:"slot_mem_mib,omitempty"`
@@ -200,13 +203,14 @@ type WorkspaceMachine struct {
 // within its class.
 func (e *ecsEC2Runtime) MachineProfile() WorkspaceMachine {
 	m := WorkspaceMachine{
-		InstanceType: e.instanceType,
-		Arch:         e.arch,
-		VCPU:         e.slotVCPU,
-		SlotMemMiB:   e.slotMemMiB,
-		MemCapMiB:    e.memCapMiB,
-		HomeGiB:      e.homeGiB,
-		Dedicated:    true,
+		InstanceType:     e.instanceType,
+		Arch:             e.arch,
+		VCPU:             e.slotVCPU,
+		BurstBaselinePct: e.slotBaseline,
+		SlotMemMiB:       e.slotMemMiB,
+		MemCapMiB:        e.memCapMiB,
+		HomeGiB:          e.homeGiB,
+		Dedicated:        true,
 	}
 	// Named only where the operator declared more than one class, for the same reason
 	// SizingProfile omits SlotClasses there: a single unnamed ladder has no class name.
