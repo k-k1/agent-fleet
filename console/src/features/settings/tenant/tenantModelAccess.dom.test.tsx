@@ -278,6 +278,23 @@ describe("restrictions editor", () => {
     expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", { deny: ["gemini-api", "openai-api"] });
   });
 
+  it("draws a repeated stored host once, and keeps a repeat that adds nothing in the field", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.includes("/provided-routes/")
+          ? { error: { code: "http_404", status: 404 } }
+          : { ...VIEW(), tenant: { rule: { endpoints: ["llm.corp.example", "llm.corp.example"] }, revision: 5 } },
+      ),
+    );
+    await mount();
+    expect(servers()).toEqual(["llm.corp.example"]);
+    await addServer("llm.corp.example");
+    expect(servers()).toEqual(["llm.corp.example"]);
+    expect(field("endpoints").querySelector<HTMLInputElement>(".mpol-server-add input")!.value).toBe(
+      "llm.corp.example",
+    );
+  });
+
   it("shows each stored server's state and marks a new one as not saved", async () => {
     await mount();
     await addServer("gpu.corp.example");

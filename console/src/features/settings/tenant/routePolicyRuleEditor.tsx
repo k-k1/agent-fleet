@@ -58,9 +58,12 @@ const LAYER_KEY = {
 } as const;
 
 // A value the Console has no label for (a newer CP's) is shown as its id rather than dropped.
-export const classLabel = (tr: Tr, c: string) => (Object.hasOwn(CLASS_KEY, c) ? tr(CLASS_KEY[c as keyof typeof CLASS_KEY]) : c);
-export const destLabel = (tr: Tr, d: string) => (Object.hasOwn(DEST_KEY, d) ? tr(DEST_KEY[d as keyof typeof DEST_KEY]) : d);
-export const layerLabel = (tr: Tr, l: string) => (Object.hasOwn(LAYER_KEY, l) ? tr(LAYER_KEY[l as keyof typeof LAYER_KEY]) : l);
+export const classLabel = (tr: Tr, c: string) =>
+  Object.hasOwn(CLASS_KEY, c) ? tr(CLASS_KEY[c as keyof typeof CLASS_KEY]) : c;
+export const destLabel = (tr: Tr, d: string) =>
+  Object.hasOwn(DEST_KEY, d) ? tr(DEST_KEY[d as keyof typeof DEST_KEY]) : d;
+export const layerLabel = (tr: Tr, l: string) =>
+  Object.hasOwn(LAYER_KEY, l) ? tr(LAYER_KEY[l as keyof typeof LAYER_KEY]) : l;
 export const layersLabel = (tr: Tr, ls: string[] | undefined) => (ls ?? []).map((l) => layerLabel(tr, l)).join(", ");
 
 /** RouteName: the member-facing route name. The id the policy and the CP's refusals use is on
@@ -76,7 +79,19 @@ export function RouteName({ id }: { id: string }) {
   );
 }
 
-export const routeLabel = (id: string) => tMaybe("cred.route." + id) ?? id;
+/** RouteNames: a comma-separated list of RouteName, each keeping its id on hover. */
+function RouteNames({ ids }: { ids: string[] }) {
+  return (
+    <>
+      {ids.map((id, i) => (
+        <span key={id}>
+          {i > 0 && ", "}
+          <RouteName id={id} />
+        </span>
+      ))}
+    </>
+  );
+}
 
 const CLASS_DESC = {
   subscription: "admin.mpol_class_desc_subscription",
@@ -115,13 +130,17 @@ export function RuleSummary({ rule, ceiling = false }: { rule: RouteRule; ceilin
         {(rule.except?.length ?? 0) > 0 && (
           <>
             <dt>{tr("admin.mpol_except_short")}</dt>
-            <dd>{rule.except!.map(routeLabel).join(", ")}</dd>
+            <dd>
+              <RouteNames ids={rule.except!} />
+            </dd>
           </>
         )}
         {(rule.deny?.length ?? 0) > 0 && (
           <>
             <dt>{tr("admin.mpol_deny_short")}</dt>
-            <dd>{rule.deny!.map(routeLabel).join(", ")}</dd>
+            <dd>
+              <RouteNames ids={rule.deny!} />
+            </dd>
           </>
         )}
         <dt>{tr("admin.mpol_endpoints_short")}</dt>
@@ -131,7 +150,8 @@ export function RuleSummary({ rule, ceiling = false }: { rule: RouteRule; ceilin
   );
 }
 
-const toggle = (l: string[], v: string, on: boolean) => (on ? [...l.filter((x) => x !== v), v] : l.filter((x) => x !== v));
+const toggle = (l: string[], v: string, on: boolean) =>
+  on ? [...l.filter((x) => x !== v), v] : l.filter((x) => x !== v);
 
 /** AllOrOnly: the "every value" / "only these" choice and, under "only these", one tick per
  *  value. Ticking nothing under "only these" is a real rule (none allowed), not the same as all. */
@@ -271,10 +291,13 @@ function ServerRows({
 }) {
   const tr = useT();
   const [adding, setAdding] = useState("");
-  const rows = endpointLines(text);
+  // One row per distinct entry: a stored list with a repeat reads, and saves, as a set anyway.
+  const rows = [...new Set(endpointLines(text))];
   const add = () => {
     const more = [...new Set(endpointLines(adding))].filter((h) => !rows.includes(h));
-    if (more.length > 0) onChange([...rows, ...more].join("\n"));
+    // Nothing new (a repeat, or only spaces) keeps what was typed, so it does not look accepted.
+    if (more.length === 0) return;
+    onChange([...rows, ...more].join("\n"));
     setAdding("");
   };
   return (
@@ -294,7 +317,9 @@ function ServerRows({
                   ) : st.approved ? (
                     <span className="mpol-ok">{tr("admin.mpol_approved")}</span>
                   ) : (
-                    <span className="mpol-no">{tr("admin.mpol_excluded_by", { layers: layersLabel(tr, st.excludedBy) })}</span>
+                    <span className="mpol-no">
+                      {tr("admin.mpol_excluded_by", { layers: layersLabel(tr, st.excludedBy) })}
+                    </span>
                   ))}
                 <button
                   type="button"

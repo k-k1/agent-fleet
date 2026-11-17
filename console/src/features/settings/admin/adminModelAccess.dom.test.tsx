@@ -232,6 +232,62 @@ describe("admin model access", () => {
     });
   });
 
+  it("edits a cap's server patterns as rows and sends them as the CP's list", async () => {
+    await mount();
+    const cap = within('.mpol-cap[data-tenant="acme"]');
+    const ep = cap.querySelector<HTMLElement>('[data-field="endpoints"]')!;
+    // Loaded without endpoints: "no limit", no rows, no field to add to.
+    expect(ep.querySelector(".mpol-server-add")).toBeNull();
+    await click(btnIn(ep, "選んだものだけ許す"));
+    const input = ep.querySelector<HTMLInputElement>(".mpol-server-add input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "*.acme.example");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(btnIn(ep, "追加"));
+    expect(Array.from(ep.querySelectorAll("[data-server]")).map((r) => r.getAttribute("data-server"))).toEqual([
+      "*.acme.example",
+    ]);
+    // Patterns carry no per-host state: that is the tenant page's.
+    expect(ep.querySelector('[data-server="*.acme.example"]')!.textContent).not.toContain("まだ保存していません");
+    await click(btnIn(cap, "保存"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/route-policy/cap", "PUT", {
+      endpoints: ["*.acme.example"],
+    });
+  });
+
+  it("sends an empty pattern list, not none, when every pattern row is removed", async () => {
+    await mount();
+    const sel = within(".model-access-caps select") as HTMLSelectElement;
+    await act(async () => {
+      sel.value = "beta";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    await flush();
+    const cap = within('.mpol-cap[data-tenant="beta"]');
+    await click(cap.querySelector<HTMLButtonElement>('[data-server="*.beta.example"] button')!);
+    expect(cap.querySelectorAll("[data-server]").length).toBe(0);
+    await click(btnIn(cap, "保存"));
+    // "Only these" with no pattern approves no host: [] is a rule, unlike an absent list.
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/beta/route-policy/cap", "PUT", { endpoints: [] });
+  });
+
+  it("names a rule summary's routes with their ids on hover", async () => {
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/route-policy") return Promise.resolve(DEPLOYMENT);
+      const slug = /tenants\/([^/]+)\/route-policy$/.exec(path)?.[1];
+      if (slug)
+        return Promise.resolve({ ...tenantView(slug), tenant: { rule: { except: ["copilot-login"] }, revision: 1 } });
+      return Promise.resolve({ error: { code: "http_404", status: 404 } });
+    });
+    await mount();
+    const dd = Array.from(within('.mpol-cap[data-tenant="acme"]').querySelectorAll("dd")).find((d) =>
+      d.querySelector('[title="copilot-login"]'),
+    )!;
+    expect(dd.textContent).toBe("GitHub Copilot");
+  });
+
   it("draws no editor when the read is refused", async () => {
     api.mockResolvedValue({ error: { code: "forbidden", message: "super_admin only", status: 403 } });
     await mount();
