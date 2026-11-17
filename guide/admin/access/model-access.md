@@ -86,13 +86,20 @@ Members' own switches (an agent a member turned off for themselves) are not on t
 
 Some deployments pay for Amazon Bedrock themselves and offer it to tenants as a **provided route**. Where the deployment does not, the **Provided models & budgets** tab is not on the page.
 
-The deployment administrator grants it to your tenant with a **tenant's monthly pool**. Within it, you decide who may use it and how much:
+The deployment administrator grants it to your tenant with a **tenant's monthly pool**. Within it, you decide who may use it and how much.
+
+The top of the tab says where things stand:
+
+- **Usable in this tenant**, with the pool, or a banner saying it is **not usable yet** because it is not granted. The budgets below stay editable either way: set them first, and they apply from the moment it is granted
+- This month, in UTC, with when it resets in your local time, and a bar of what is spent and held for calls in flight against the pool
+- A banner when your restrictions stop "Amazon Bedrock (this deployment)", naming who: members cannot use it, whatever their budget, until the restriction allows it
+
 
 1. Under **Who may use them**, choose **Every member** or **Granted members only**
 2. Enter **Members' monthly budget (default, dollars)**, then press **Save**
 3. In **Each member's grant and budget**, tick a member to grant them, or enter a budget of their own (leave it empty for the default), then press **Save** on that row
 
-A member whose budget is zero cannot use the route. Amounts are estimates at Bedrock's list price and reset at the start of each month (UTC).
+A member whose budget is zero cannot use the route, and their row says so; with a default of zero, only members with a budget of their own can. Each member's row shows this month against their budget. Amounts are estimates at Bedrock's list price and reset at the start of each month (UTC).
 A budget so small that no single call fits is refused, with the reason beside the button; one that fits only calls with a small output is saved with a warning.
 
 ## When a change applies

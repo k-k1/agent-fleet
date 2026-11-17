@@ -181,3 +181,17 @@ export const modelsOf = (text: string) =>
     .split(/[\s,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+
+/** resetOf is when the admission month `month` ("2026-11") ends: the first of the next month,
+ *  00:00 UTC (ADR 0129 D4: the period is the calendar month in UTC; the Console shows the reset in
+ *  the viewer's local time). null for a month it cannot read, so no reset is shown rather than a
+ *  wrong one. */
+export function resetOf(month: string): Date | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  if (mo < 1 || mo > 12) return null;
+  // Date.UTC takes a zero-based month, so mo itself is the next month (and 12 rolls into January).
+  return new Date(Date.UTC(y, mo, 1));
+}

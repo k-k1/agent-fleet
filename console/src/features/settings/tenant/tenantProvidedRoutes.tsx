@@ -12,10 +12,12 @@ import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errDetail, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useReportDirty } from "../parts/dirtyScope.tsx";
+import { fmtDateTime } from "../../../lib/intl.ts";
 import {
   isOff,
   parseProvidedTenant,
   parseUsd,
+  resetOf,
   usd,
   usdInput,
   type Load,
@@ -125,8 +127,22 @@ export function ProvidedSpend({ view }: { view: ProvidedTenantView }) {
           : tr("admin.prov_not_granted")}
       </p>
       <p className="admin-hint">
-        {tr("admin.prov_month", { month: view.month, spent: approx(view.spent_micro), reserved: approx(view.reserved_micro) })}
+        {tr("admin.prov_month", {
+          month: view.month,
+          spent: approx(view.spent_micro),
+          reserved: approx(view.reserved_micro),
+        })}
       </p>
+      <Reservations view={view} />
+    </>
+  );
+}
+
+/** Reservations: what one call holds per model, folded. */
+function Reservations({ view }: { view: ProvidedTenantView }) {
+  const tr = useT();
+  return (
+    <>
       {view.reservations.length > 0 && (
         <details className="prov-reservations">
           <summary>{tr("admin.prov_reservations", { floor: approx(view.floor_micro) })}</summary>
@@ -153,6 +169,69 @@ export function ProvidedSpend({ view }: { view: ProvidedTenantView }) {
         </details>
       )}
     </>
+  );
+}
+
+/** Usage: an amount against its limit as text and a bar. The bar counts what is held for calls in
+ *  flight too, the way admission does (ADR 0129 D4); without a limit only the text is shown. */
+function Usage({ used, of, spent }: { used: number; of: number | null; spent: number }) {
+  const tr = useT();
+  if (of === null || of <= 0) return <>{approx(spent)}</>;
+  return (
+    <span className="prov-usage">
+      {tr("tenant.prov_use_of", { used: approx(spent), of: approx(of) })}
+      <meter
+        min={0}
+        max={of}
+        value={Math.min(used, of)}
+        // The same amount the text says; the bar's own value also counts what is held.
+        aria-label={tr("tenant.prov_use_of", { used: approx(spent), of: approx(of) })}
+      />
+    </span>
+  );
+}
+
+/** TenantProvidedSummary: whether the tenant may use the route, its month against the pool, and
+ *  when the month resets. Where it is not granted the budgets below stay editable: they apply from
+ *  the moment it is (#4380 decision 9). */
+function TenantProvidedSummary({ view }: { view: ProvidedTenantView }) {
+  const tr = useT();
+  const reset = resetOf(view.month);
+  const pool = view.granted ? view.ceiling_micro : null;
+  return (
+    <div className="prov-summary" data-testid="prov-grant">
+      {view.granted ? (
+        <p className="mpol-ok" data-state="granted">
+          {tr("tenant.prov_status_on")}
+          {view.ceiling_micro !== null && (
+            <span className="muted"> {tr("tenant.prov_pool", { pool: approx(view.ceiling_micro) })}</span>
+          )}
+        </p>
+      ) : (
+        <div className="admin-hint warn prov-banner" data-state="not-granted">
+          <p>{tr("tenant.prov_status_off")}</p>
+          <p>{tr("tenant.prov_status_off_hint")}</p>
+        </div>
+      )}
+      <p className="admin-hint">
+        {reset
+          ? tr("tenant.prov_month", { month: view.month, reset: fmtDateTime(reset) })
+          : tr("tenant.prov_month_noreset", { month: view.month })}
+      </p>
+      {pool !== null ? (
+        <p className="prov-tenant-use">
+          <Usage used={view.spent_micro + view.reserved_micro} of={pool} spent={view.spent_micro} />
+        </p>
+      ) : (
+        view.spent_micro > 0 && (
+          <p className="admin-hint">{tr("tenant.prov_spent", { spent: approx(view.spent_micro) })}</p>
+        )
+      )}
+      {view.reserved_micro > 0 && (
+        <p className="admin-hint">{tr("tenant.prov_held", { held: approx(view.reserved_micro) })}</p>
+      )}
+      <Reservations view={view} />
+    </div>
   );
 }
 
@@ -223,6 +302,7 @@ function PolicyEditor({
           }}
         />
       </label>
+      {view.member_default_micro === 0 && <p className="admin-hint">{tr("tenant.prov_zero_default")}</p>}
       <Refusal text={refusal} />
       <div className="admin-actions">
         <button type="button" className="btn primary" disabled={busy || !dirty} onClick={save}>
@@ -236,11 +316,15 @@ function PolicyEditor({
 function MemberRow({
   path,
   member,
+  canUse,
   peek,
   onSaved,
 }: {
   path: string;
   member: ProvidedMember;
+  /** The member may use the route as far as the grants go: the tenant is granted it, and the
+   *  member is everyone or granted under "granted members only". */
+  canUse: boolean;
   peek: () => Promise<ProvidedTenantView | null>;
   onSaved: (warnings: string[]) => void;
 }) {
@@ -296,8 +380,28 @@ function MemberRow({
           }}
         />
       </td>
-      <td data-label={tr("admin.prov_col_effective")}>{approx(member.effective_micro)}</td>
-      <td data-label={tr("admin.prov_col_spent")}>{approx(member.spent_micro)}</td>
+      <td data-label={tr("tenant.prov_col_use")}>
+        {!canUse ? (
+          // Not granted (the tenant, or the member under "granted members only"): no budget applies,
+          // so none is shown as theirs. What they spent or still hold this month stays visible.
+          member.spent_micro + member.reserved_micro > 0 ? (
+            [
+              ...(member.spent_micro > 0 ? [approx(member.spent_micro)] : []),
+              ...(member.reserved_micro > 0 ? [tr("tenant.prov_held", { held: approx(member.reserved_micro) })] : []),
+            ].join(" · ")
+          ) : (
+            "—"
+          )
+        ) : member.effective_micro === 0 ? (
+          <span className="mpol-no">{tr("tenant.prov_zero_member")}</span>
+        ) : (
+          <Usage
+            used={member.spent_micro + member.reserved_micro}
+            of={member.effective_micro}
+            spent={member.spent_micro}
+          />
+        )}
+      </td>
       <td className="prov-member-save">
         <button type="button" className="btn xs" disabled={busy || !dirty} onClick={save}>
           {tr("admin.mpol_save")}
@@ -311,7 +415,18 @@ function MemberRow({
 /** TenantProvidedRoutesView is the tenant page's section. The grant and ceiling are shown
  *  read-only: they are the super_admin's, edited on the admin page. onServed hears whether the
  *  CP serves provided routes once the first read answers. */
-export function TenantProvidedRoutesView({ slug, onServed }: { slug: string; onServed?: (served: boolean) => void }) {
+export function TenantProvidedRoutesView({
+  slug,
+  onServed,
+  ruleStops,
+}: {
+  slug: string;
+  onServed?: (served: boolean) => void;
+  /** Who the route policy's layers name as stopping the deployment's provided route; empty while
+   *  it is allowed, undefined where that is not known. A budget does not reopen it (ADR 0138 D7a:
+   *  the policy filters first, the budget only within what it allows). */
+  ruleStops?: string;
+}) {
   const tr = useT();
   const path = `api/admin/tenants/${encodeURIComponent(slug)}/provided-routes/deployment`;
   const { load, reload, peek } = useProvided(path, parseProvidedTenant);
@@ -344,7 +459,12 @@ export function TenantProvidedRoutesView({ slug, onServed }: { slug: string; onS
     <section className="admin-panel model-access-provided">
       <h4>{tr("admin.prov_title")}</h4>
       <p className="admin-hint">{tr("admin.prov_note")}</p>
-      <ProvidedSpend view={view} />
+      {ruleStops && (
+        <p className="admin-hint warn prov-banner" data-testid="prov-rule-stops">
+          {tr("tenant.prov_rule_stops", { who: ruleStops })}
+        </p>
+      )}
+      <TenantProvidedSummary view={view} />
       <Warnings list={warnings} />
       <PolicyEditor key={key} path={path} view={view} peek={peek} onSaved={saved} />
       <h5 className="admin-subhead">{tr("admin.prov_members")}</h5>
@@ -357,8 +477,7 @@ export function TenantProvidedRoutesView({ slug, onServed }: { slug: string; onS
               <th>{tr("tenant.tab_members")}</th>
               <th>{tr("admin.prov_col_granted")}</th>
               <th>{tr("admin.prov_col_budget")}</th>
-              <th>{tr("admin.prov_col_effective")}</th>
-              <th>{tr("admin.prov_col_spent")}</th>
+              <th>{tr("tenant.prov_col_use")}</th>
               <th />
             </tr>
           </thead>
@@ -368,6 +487,8 @@ export function TenantProvidedRoutesView({ slug, onServed }: { slug: string; onS
                 key={`${m.membership_id}:${m.granted}:${m.budget_micro}`}
                 path={path}
                 member={m}
+                // MayUse on the CP, under the tenant's grant: not granted, no member's budget applies.
+                canUse={view.granted && (m.granted || !view.members_only)}
                 peek={peek}
                 onSaved={saved}
               />
