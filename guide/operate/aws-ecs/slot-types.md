@@ -38,7 +38,8 @@ id|label|arch|<ladder>[;id|label|arch|<ladder>] one class per entry
 | `<ladder>` | `instanceType:memoryMiB[:vcpu]` rungs, ascending, separated by commas |
 
 - A workspace lands on the smallest rung that holds its memory request and gets the whole instance. The class picks the ladder and memory picks the rung within it, so "8 GB" means the same in every class
-- The vCPU field is optional and display-only: the Console uses it to show which instance a memory number lands on
+- The vCPU field is optional: the Console uses it to show which instance a memory number lands on, and the usage history uses it to express CPU as a share of the whole box
+- A fourth field, `instanceType:memoryMiB:vcpu:baselinePct`, declares a burstable rung's CPU baseline as a percent of the whole box (1 to 99). It is optional, and only the usage history reads it, to count the minutes a member ran above it. Without it, or without the vCPU field, that figure is left empty. A value that does not parse costs only that figure, never the rung
 - Classes are separated by `;` or a newline. A class with no usable rung is dropped
 
 The default declares two Intel classes:
