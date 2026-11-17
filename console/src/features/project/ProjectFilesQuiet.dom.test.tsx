@@ -220,6 +220,29 @@ describe("while the Files view is hidden", () => {
     expect(sorted(calls)).toEqual(["repos", "repos/agent-fleet", "repos/agent-fleet/docs", "repos/other"]);
   });
 
+  it("keeps a return the gap skipped owed for a later show", async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      await render();
+      await click(row("repos/agent-fleet"));
+      await turnEnded("repos/agent-fleet"); // a scoped read: it sets the gap
+      await render(false);
+      await act(async () => window.dispatchEvent(new Event("focus")));
+      calls = [];
+
+      await render(true); // within the gap: nothing is read yet...
+      expect(calls).toEqual([]);
+
+      now += 60_000;
+      await render(false);
+      await render(true); // ...and the return is paid at the next show
+      expect(sorted(calls)).toEqual(["repos", "repos/agent-fleet", "repos/agent-fleet/docs", "repos/other"]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("reads each path once when a tick and a turn end are both owed", async () => {
     await render();
     await click(row("repos/agent-fleet"));

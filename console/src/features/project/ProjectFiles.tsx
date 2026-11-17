@@ -537,6 +537,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     (skip: Set<string> = NO_PATHS): boolean => {
       if (Date.now() - lastAutoAtRef.current < REVALIDATE_GAP_MS) return false;
       const targets = liveDirsRef.current.filter((p) => !skip.has(p));
+      focusOwedRef.current = false; // this read is what a return owed
       if (!targets.length && entriesRef.current === null) return true;
       runRefresh(targets, !skip.has(root));
       return true;
@@ -580,19 +581,16 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     const skip = reloadingRef.current ?? NO_PATHS;
     pumpPrefetchRef.current();
     if (!autoRefreshAllowed()) return;
-    if (focusOwedRef.current) {
-      focusOwedRef.current = false;
-      if (revalidateAll(skip)) {
-        owedPrefixesRef.current = new Set();
-        return;
-      }
+    // A return the gap skipped stays owed: the read that set the gap may have been a scoped one.
+    if (focusOwedRef.current && revalidateAll(skip)) {
+      owedPrefixesRef.current = new Set();
+      return;
     }
     const owed = [...owedPrefixesRef.current];
     if (!owed.length) return;
     owedPrefixesRef.current = new Set();
     refreshPrefixes(owed, skip);
   });
-
 
   // Coming back to the tab (or to the window) is where an unseen change is most
   // likely to be waiting — the same reasoning as the editor's external-change
@@ -674,7 +672,10 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // the (tree-)filtered rows — both scoped to the active working set (docs/log/52)
   // for the repos-rooted tree: a row is kept when its top-level working copy
   // belongs to the group (worktree folders resolve via their "<base>@" prefix).
-  const allRows = searchMode ? searchRows ?? NO_ROWS : filteredRows;
+  // A tenant switch held while hidden is applied by the loader's effect, after the first paint
+  // on show; until then the rows are the other workspace's, so show the loading state instead.
+  const otherTenant = loadedTenantRef.current !== tenant;
+  const allRows = otherTenant ? NO_ROWS : searchMode ? searchRows ?? NO_ROWS : filteredRows;
   const displayRows = useMemo(() => {
     if (!wset || root !== "repos") return allRows;
     return allRows.filter((r) => {
@@ -1153,7 +1154,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
           ) : displayRows.length === 0 ? (
             <li className="proj-sub-empty">{tr("proj.no_match", { q: q.trim() })}</li>
           ) : null
-        ) : entries === null ? (
+        ) : entries === null || otherTenant ? (
           <EmptyState icon="loading" title={tr("chat.ph_loading")} />
         ) : entries.length === 0 ? (
           <li className="proj-sub-empty">{tr("proj.empty")}</li>
