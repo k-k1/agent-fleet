@@ -8,11 +8,12 @@
 //
 // No PUT here carries a revision, so each save re-reads the stored values first and refuses when
 // they moved since the page loaded; a save racing in between is not caught (#4367).
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errDetail, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useReportDirty } from "../parts/dirtyScope.tsx";
-import { useShowView } from "../parts/tabbedViews.tsx";
+import { useShowView, useViewActive } from "../parts/tabbedViews.tsx";
+import { onProvidedRoutesChanged } from "./providedRevision.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import {
   isOff,
@@ -30,7 +31,7 @@ import {
 } from "./providedRoutes.ts";
 
 /** useProvided reads one provided-routes path. null while the first read is in flight. */
-export function useProvided<T>(path: string, parse: (d: unknown) => T | null) {
+export function useProvided<T>(path: string, parse: (d: unknown) => T | null, live = false) {
   const tr = useT();
   const [load, setLoad] = useState<Load<T> | null>(null);
   const read = useCallback(async (): Promise<Load<T>> => {
@@ -48,6 +49,39 @@ export function useProvided<T>(path: string, parse: (d: unknown) => T | null) {
   useEffect(() => {
     reload();
   }, [reload]);
+  // live: read again when the events stream says this tenant's grant or budgets moved. A hidden
+  // view does not read on its own: it owes one read and pays it when shown. A failed background
+  // read keeps what is drawn, and bursts coalesce into one more read after the one in flight.
+  const active = useViewActive();
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const owed = useRef(false);
+  const flight = useRef<"idle" | "running" | "again">("idle");
+  const refresh = useCallback(async () => {
+    if (flight.current !== "idle") {
+      flight.current = "again";
+      return;
+    }
+    do {
+      flight.current = "running";
+      const l = await read();
+      if (l.state !== "failed") setLoad(l);
+    } while ((flight.current as string) === "again");
+    flight.current = "idle";
+  }, [read]);
+  useEffect(() => {
+    if (!live) return;
+    return onProvidedRoutesChanged(() => {
+      if (activeRef.current) void refresh();
+      else owed.current = true;
+    });
+  }, [live, refresh]);
+  useEffect(() => {
+    if (live && active && owed.current) {
+      owed.current = false;
+      void refresh();
+    }
+  }, [live, active, refresh]);
   /** peek reads the stored value now without replacing the drawn one: the pre-save check. */
   const peek = useCallback(async () => {
     const l = await read();
@@ -506,7 +540,7 @@ export function TenantProvidedRoutesView({
 }) {
   const tr = useT();
   const path = `api/admin/tenants/${encodeURIComponent(slug)}/provided-routes/deployment`;
-  const { load, reload, peek } = useProvided(path, parseProvidedTenant);
+  const { load, reload, peek } = useProvided(path, parseProvidedTenant, true);
   const [warnings, setWarnings] = useState<string[]>([]);
   const showRestrictions = useShowView("restrictions");
   // Whether the CP serves provided routes at all, for a page that gives them a tab: a failed read

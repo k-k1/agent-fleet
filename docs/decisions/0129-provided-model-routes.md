@@ -668,3 +668,13 @@ None of these was exercised against AWS; each is also linked at the claim it sup
   (CP `writeRouteRefusal`, Agent `wireStatus`) now send 403 and 409 refusals (grant off, profile unmarked, model not
   allowed, source gone) as 412, and keep 401 for the token and the AWS login. opencode reads `x-should-retry` before any
   status, so it does not retry either. Unverified against a real provided route.
+
+- 2026-11-18, events stream (#4371): D3's fourth place is now a stream on `/api/events`, `provided_routes`, framed as
+  `{"rev":"<digest>"}` for the subscriber's own tenant only. The stream is poll-and-diff, so there is no publish call:
+  the CP digests the tenant's grant, policy and member overrides (the values, not `updated_at`, whose one-second
+  resolution would hide a second save) and frames when the digest moves, which also reaches subscribers on other
+  replicas. A save on the serving replica drops the cached digest so the next tick sees it; a save on another
+  replica is seen within 3 s. A refused or no-op PUT changes no value and so sends nothing. The frame carries no
+  amounts, ids or names. The tenant Model access view and the admin page's tenant-scoped section read again on a
+  moved digest; a hidden view owes one read and pays it when shown. Left: the admin tenant table's grant cells
+  (`GrantCell`) and the deployment-source PUT do not follow the stream. Unverified against a live deployment.
