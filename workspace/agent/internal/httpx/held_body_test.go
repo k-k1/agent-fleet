@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -69,18 +70,19 @@ func jsonPrompt(n int) []byte {
 }
 
 func TestHeldOpenHandsTheHandlerTheBodyItWasSent(t *testing.T) {
-	for name, n := range map[string]int{"small": 5, "near the bound": heldMaxBody - 100} {
+	// 200 KiB is under net/http's 256 KiB post-handler discard limit, so the server drops it
+	// deterministically once the headers are written. "near the bound" only calibrates the
+	// accepted size: loopback delivers it before the headers, so it passes even unfixed.
+	for name, n := range map[string]int{"small": 5, "discarded by the server": 200 << 10, "near the bound": heldMaxBody - 100} {
 		t.Run(name, func(t *testing.T) {
 			_, _, raw := heldCall(t, HeldOpen(jsonEcho), bytes.NewReader(jsonPrompt(n)), "text/event-stream")
 			status, body := heldFrameOf(t, raw)
-			if status != http.StatusOK || string(body) != `{"n":`+itoa(n)+`}` {
+			if status != http.StatusOK || string(body) != `{"n":`+strconv.Itoa(n)+`}` {
 				t.Fatalf("frame = %d %s, want 200 with n=%d", status, body, n)
 			}
 		})
 	}
 }
-
-func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }
 
 func TestHeldOpenCarriesAnErrorStatusForABodyItRead(t *testing.T) {
 	h := HeldOpen(func(w http.ResponseWriter, r *http.Request) {

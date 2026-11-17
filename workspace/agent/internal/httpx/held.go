@@ -99,7 +99,9 @@ func writeHeldFrame(w http.ResponseWriter, flusher http.Flusher, rec *heldRecord
 
 // heldMaxBody bounds the request body HeldOpen reads before it commits the stream: the largest
 // limit among the wrapped handlers (fsx's editSuggestMaxBody; chat ask had none). A body over it
-// is answered 413 in the final frame without running the handler.
+// is answered 413 in the final frame without running the handler. This read happens before the
+// first byte goes out, so the heartbeat does not cover it and the Agent's server sets no read
+// timeout: a client trickling a large body can still hit the ingress idle timeout.
 const heldMaxBody = 2 << 20
 
 // bufferBody reads the whole request body, at most heldMaxBody bytes, and replaces r.Body with a
