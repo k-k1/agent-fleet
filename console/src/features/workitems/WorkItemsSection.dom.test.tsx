@@ -528,99 +528,14 @@ describe("WorkItemsSection", () => {
       }),
     );
 
-  it("draws 10 rows by default even for 41 items, keeps the badge at the full count and names the remainder", async () => {
-    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+  it("draws every row past RAIL_VISIBLE with no fold, and the badge counts them all (#4448)", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(150), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
-    expect(rows()).toBe(10);
-    // Folded, not hidden: the section badge still reads 41.
-    expect(host.querySelector(".ui-section-count")?.textContent).toBe("41");
-    const more = host.querySelector<HTMLButtonElement>(".wi-more")!;
-    expect(more.textContent).toBe(t("wi.show_more", { n: 31 }));
-    await act(async () => more.click());
-    expect(rows()).toBe(41);
-    // Collapsing takes it back, so it does not stay expanded.
-    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
-    expect(rows()).toBe(10);
-  });
-
-  // jsdom computes no layout, so the pin is checked at its source: only Collapse carries the
-  // sticky class (#3296), and that class sticks to the scroller's bottom.
-  it("pins only the Collapse button to the bottom of the rail", async () => {
-    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
-    await render();
-    expect(host.querySelector<HTMLButtonElement>(".wi-more")!.classList.contains("wi-less")).toBe(false);
-    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
-    const less = host.querySelectorAll<HTMLButtonElement>(".wi-less");
-    expect(less).toHaveLength(1);
-    expect(less[0].textContent).toBe(t("wi.show_less"));
-    const { readFileSync } = await import("node:fs");
-    const css = readFileSync("src/features/workitems/workitems.css", "utf8");
-    expect(css).toMatch(/\.wi-less \{[^}]*position: sticky;[^}]*bottom: 0;/);
-    // Rows keep clear of the pinned button when focus scrolls them into view.
-    expect(css).toMatch(/:has\(> \.wi-less\) :is\(a, button, input, \[tabindex\]\):not\(\.wi-less\) \{[^}]*scroll-margin-bottom: \d+px;/);
-  });
-
-  it("pins the section top to the scroller when collapsing the expanded list (#1348)", async () => {
-    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
-    await act(async () => {
-      root!.render(
-        <ToastProvider>
-          <ConfirmProvider>
-            <div className="app-rail-scroll">
-              <WorkItemsSection />
-              <WorkItemModalHost />
-            </div>
-          </ConfirmProvider>
-        </ToastProvider>,
-      );
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
-    expect(rows()).toBe(41);
-    const scroller = host.querySelector(".app-rail-scroll") as HTMLElement;
-    const sec = host.querySelector(".ui-section") as HTMLElement;
-    // Scrolled deep into the expanded list: the section top sits above the scroller top.
-    scroller.scrollTop = 2500;
-    scroller.getBoundingClientRect = () => ({ top: 0 }) as unknown as DOMRect;
-    sec.getBoundingClientRect = () => ({ top: -2000 }) as unknown as DOMRect;
-    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
-    expect(rows()).toBe(10);
-    // The section top is pinned back to the scroller top instead of leaving scrollTop
-    // behind for the browser to clamp onto a later section.
-    expect(scroller.scrollTop).toBe(500);
-  });
-
-  it("leaves scrollTop alone when the section top is still visible on collapse", async () => {
-    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
-    await act(async () => {
-      root!.render(
-        <ToastProvider>
-          <ConfirmProvider>
-            <div className="app-rail-scroll">
-              <WorkItemsSection />
-              <WorkItemModalHost />
-            </div>
-          </ConfirmProvider>
-        </ToastProvider>,
-      );
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
-    expect(rows()).toBe(41);
-    const scroller = host.querySelector(".app-rail-scroll") as HTMLElement;
-    const sec = host.querySelector(".ui-section") as HTMLElement;
-    // Everything fits on screen: the section top sits below the scroller top, so no rows
-    // above the viewport disappear and the browser keeps scrollTop on its own.
-    scroller.scrollTop = 0;
-    scroller.getBoundingClientRect = () => ({ top: 0 }) as unknown as DOMRect;
-    sec.getBoundingClientRect = () => ({ top: 80 }) as unknown as DOMRect;
-    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
-    expect(rows()).toBe(10);
-    expect(scroller.scrollTop).toBe(0);
+    expect(rows()).toBe(150);
+    expect(host.querySelector(".ui-section-count")?.textContent).toBe("150");
+    // The filter box still appears on a crowded rail; only the fold is gone.
+    expect(host.querySelector(".wi-filter")).not.toBeNull();
+    expect(host.querySelector(".wi-more, .wi-less")).toBeNull();
   });
 
   // docs/log/80 §80.20: reported from the real rail — the same JQL saved twice turned 41 items
@@ -637,7 +552,6 @@ describe("WorkItemsSection", () => {
     });
     await render();
     expect(host.querySelector(".ui-section-count")?.textContent).toBe("41");
-    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
     expect(rows()).toBe(41);
   });
 
@@ -649,7 +563,7 @@ describe("WorkItemsSection", () => {
     // Only the rendering was dropped: the assignee is still in the row's tooltip.
     expect(host.querySelector(".wi-title")?.getAttribute("title")).toContain("Rin Aoyagi");
     // In place of the freed height, the reason for the sort order appears (relative update time).
-    expect(host.querySelectorAll(".wi-when").length).toBe(10);
+    expect(host.querySelectorAll(".wi-when").length).toBe(41);
   });
 
   it("shows the assignee when it varies (a team query)", async () => {
@@ -659,14 +573,13 @@ describe("WorkItemsSection", () => {
     expect(text()).toContain("@Rin Aoyagi");
   });
 
-  it("filters the rail by reducing rows only, filtering before folding", async () => {
+  it("filters the rail by reducing rows only", async () => {
     const mixed = [...jiraRows(40), item({ id: "gh", key: "acme/web#45", title: "ログイン後に一覧が空になる" })];
     workItemList.mockResolvedValue({ items: mixed, queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
     const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
     await act(async () => typeInto(input, "ログイン"));
     expect(rows()).toBe(1);
-    expect(host.querySelector(".wi-more")).toBeNull(); // one remaining row needs no fold
     await act(async () => typeInto(input, "存在しない語"));
     expect(rows()).toBe(0);
     expect(text()).toContain(t("wi.filter_empty"));
@@ -722,13 +635,13 @@ describe("WorkItemsSection", () => {
     expect(rows()).toBe(1);
     await act(async () => host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!.click());
     expect(input.value).toBe("");
-    expect(rows()).toBe(10);
+    expect(rows()).toBe(41);
     expect(host.querySelector(".wi-filter .proj-filter-clear")).toBeNull();
 
     await act(async () => typeInto(input, "ログイン"));
     await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(input.value).toBe("");
-    expect(rows()).toBe(10);
+    expect(rows()).toBe(41);
   });
 
   it("returns focus to the filter only when the × was pressed from the keyboard", async () => {
@@ -752,54 +665,6 @@ describe("WorkItemsSection", () => {
     expect(document.activeElement).not.toBe(input);
   });
 
-  it("hands focus to the opposite fold button only when the fold was toggled from the keyboard (#1360)", async () => {
-    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
-    await render();
-    const fold = () => host.querySelector<HTMLButtonElement>(".wi-more")!;
-    // jsdom never scrolls on focus, so the option is what proves the handoff leaves the
-    // collapse pin (#1348) alone.
-    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
-    const press = async (detail: number) => {
-      fold().focus();
-      focusSpy.mockClear();
-      await act(async () => fold().dispatchEvent(new MouseEvent("click", { bubbles: true, detail })));
-      for (const call of focusSpy.mock.calls) expect(call).toEqual([{ preventScroll: true }]);
-    };
-
-    // Keyboard (detail 0): the pressed button unmounts, focus lands on the one that replaced it.
-    await press(0);
-    expect(fold().textContent).toBe(t("wi.show_less"));
-    expect(document.activeElement).toBe(fold());
-    await press(0);
-    expect(fold().textContent).toBe(t("wi.show_more", { n: 31 }));
-    expect(document.activeElement).toBe(fold());
-
-    // Pointer (detail >= 1): no focus jump in either direction.
-    await press(1);
-    expect(fold().textContent).toBe(t("wi.show_less"));
-    expect(document.activeElement).not.toBe(fold());
-    await press(1);
-    expect(fold().textContent).toBe(t("wi.show_more", { n: 31 }));
-    expect(document.activeElement).not.toBe(fold());
-    focusSpy.mockRestore();
-  });
-
-  it("falls back to the filter when a keyboard collapse leaves no show-more to land on", async () => {
-    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
-    await render();
-    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
-    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
-    // One match: nothing is hidden once folded, so show-more will not render.
-    await act(async () => typeInto(input, "G3M-100"));
-    expect(rows()).toBe(1);
-    const less = host.querySelector<HTMLButtonElement>(".wi-more")!;
-    expect(less.textContent).toBe(t("wi.show_less"));
-    less.focus();
-    await act(async () => less.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })));
-    expect(host.querySelector(".wi-more")).toBeNull();
-    expect(document.activeElement).toBe(input);
-  });
-
   it("drops the error of a tracker search that was still in flight when the filter was cleared", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     let fail!: (v: unknown) => void;
@@ -821,7 +686,6 @@ describe("WorkItemsSection", () => {
     workItemList.mockResolvedValue({ items: jiraRows(4), queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
     expect(host.querySelector(".wi-filter")).toBeNull();
-    expect(host.querySelector(".wi-more")).toBeNull();
     expect(rows()).toBe(4);
   });
 
