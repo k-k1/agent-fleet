@@ -152,7 +152,38 @@ const modelAccessScene = (name, { admin = false, asSuper = false, rules, provide
     ...rest,
   };
 };
+// The guide's pictures of the Model access pages (guide/admin/access/model-access): each the open
+// view's panel alone, grown to its content, in guide/assets.
+const modelAccessGuideScene = (name, opts) =>
+  modelAccessScene(name, {
+    rules: "restricted",
+    provided: "granted",
+    width: 1500,
+    first: false,
+    clip: `${opts.admin ? ".admin-modal" : ".tenant-modal"} [data-view="${opts.view || "overview"}"]`,
+    pad: 8,
+    ...opts,
+  });
+
 const MODEL_ACCESS_SCENES = [
+  modelAccessGuideScene("mpol-guide-tenant-overview", { verify: visible('.tenant-modal [data-owner="claude"]') }),
+  modelAccessGuideScene("mpol-guide-tenant-restrictions", {
+    view: "restrictions",
+    verify: visible('.tenant-modal .model-access-rule [data-field="presets"]'),
+  }),
+  modelAccessGuideScene("mpol-guide-tenant-provided", {
+    view: "provided",
+    verify: visible(".tenant-modal .prov-members tbody tr"),
+  }),
+  modelAccessGuideScene("mpol-guide-admin-overview", {
+    admin: true,
+    verify: visible('.admin-modal [data-layer="ceiling"]'),
+  }),
+  modelAccessGuideScene("mpol-guide-admin-tenants", {
+    admin: true,
+    view: "tenants",
+    verify: visible('.admin-modal .mpol-tenants [data-tenant="demo"] [data-col="cap"]'),
+  }),
   // Tenant: every layer unrestricted, a CP without provided routes.
   // (Before #4380 P-4 the page said "nothing is hidden"; from it, every agent's row is usable.)
   modelAccessScene("mpol-tenant-open", {
@@ -3806,10 +3837,13 @@ try {
     // its content and the viewport to the modal, so the main file is the whole page in one picture.
     let viewH = scene.height;
     if (scene.unfold) {
-      const first = await cdp.send("Page.captureScreenshot", { format: "webp", quality: 82 });
-      const firstFile = path.join(OUT, `${scene.name}-first-${LOCALE}${THEME === "light" ? "-light" : ""}.webp`);
-      fs.writeFileSync(firstFile, Buffer.from(first.data, "base64"));
-      console.log("[shot]", path.relative(ROOT, firstFile), `${scene.width}x${scene.height}@2x`);
+      // A guide scene (first: false) only wants the clipped picture of the grown page.
+      if (scene.first !== false) {
+        const first = await cdp.send("Page.captureScreenshot", { format: "webp", quality: 82 });
+        const firstFile = path.join(OUT, `${scene.name}-first-${LOCALE}${THEME === "light" ? "-light" : ""}.webp`);
+        fs.writeFileSync(firstFile, Buffer.from(first.data, "base64"));
+        console.log("[shot]", path.relative(ROOT, firstFile), `${scene.width}x${scene.height}@2x`);
+      }
       const r = await cdp.send("Runtime.evaluate", {
         returnByValue: true,
         expression: `(() => {

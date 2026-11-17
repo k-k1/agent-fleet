@@ -32,7 +32,7 @@ For your own work, see [Find what you want to do](../user/README.md).
 | [Choose how people sign in](access/signin-methods.md) | Register your company's IdP or a GitHub organisation, and read the sign-in rules |
 | [Limit the networks people sign in from](access/networks.md) | Narrow where your tenant can be used from to a set of address ranges |
 | [Choose the OAuth apps for integrations](access/oauth-apps.md) | Decide which app "Connect with OAuth" uses for GitHub, Bitbucket and Jira |
-| [Choose which models members may use](access/model-access.md) | Allow or forbid model routes by credential class and destination, and approve self-hosted endpoints |
+| [Choose which models members may use](access/model-access.md) | See what members can use and who stops the rest; restrict by type of credential and where prompts go; approve self-hosted servers; set budgets for provided models |
 
 ## Resources
 
