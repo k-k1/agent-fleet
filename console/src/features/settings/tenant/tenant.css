@@ -1191,6 +1191,47 @@
   margin-top: 6px;
 }
 
+/* The rule editor (#4380 P-5): a line under each credential type saying what it covers, the
+ * individual allow/block lists folded into one row, and the servers as rows. */
+.mpol-desc {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mpol-individual > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.mpol-server-rows {
+  margin: 4px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mpol-server-rows > li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.mpol-server-rows > li > button {
+  margin-left: auto;
+}
+
+.mpol-server-add {
+  display: flex;
+  gap: 8px;
+  max-width: 32em;
+}
+
+.mpol-server-add input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* What members can use (tenant Overview, #4380 P-4): one row per agent, image provider and chat
  * backend, which opens onto its routes. */
 .mpol-use {

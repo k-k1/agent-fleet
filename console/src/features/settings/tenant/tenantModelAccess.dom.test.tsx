@@ -82,10 +82,26 @@ const flush = async () => {
 const field = (name: string) => host!.querySelector<HTMLElement>(`.model-access-rule [data-field="${name}"]`)!;
 const segBtn = (name: string, text: string) =>
   Array.from(field(name).querySelectorAll<HTMLButtonElement>(".seg-btn")).find((b) => b.textContent === text)!;
+// A route tick shows the route's name; its input's accessible name carries the id.
 const tickIn = (name: string, text: string) =>
   Array.from(field(name).querySelectorAll<HTMLLabelElement>("label"))
-    .find((l) => l.textContent?.includes(text))!
+    .find(
+      (l) =>
+        l.textContent?.includes(text) || l.querySelector("input")?.getAttribute("aria-label")?.endsWith(`: ${text}`),
+    )!
     .querySelector("input")!;
+const servers = () =>
+  Array.from(field("endpoints").querySelectorAll("[data-server]")).map((r) => r.getAttribute("data-server"));
+const addServer = async (host: string) => {
+  const input = field("endpoints").querySelector<HTMLInputElement>(".mpol-server-add input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, host);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await click(
+    Array.from(field("endpoints").querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === "追加")!,
+  );
+};
 const button = (text: string) =>
   Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === text);
 const click = async (el: HTMLElement) => {
@@ -139,7 +155,7 @@ describe("tenant model access", () => {
   it("saves the loaded rule with only the edited field replaced", async () => {
     await mount();
     expect(button("保存")!.disabled).toBe(true);
-    await click(segBtn("classes", "選んだものだけ"));
+    await click(segBtn("classes", "選んだものだけ許す"));
     await click(tickIn("classes", "メンバーの API キー"));
     await click(button("保存")!);
     expect(apiJSON).toHaveBeenCalledTimes(1);
@@ -161,12 +177,7 @@ describe("tenant model access", () => {
       },
     });
     await mount();
-    const ta = field("endpoints").querySelector("textarea")!;
-    await act(async () => {
-      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-      set.call(ta, "llm.corp.example\ngpu.corp.example");
-      ta.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await addServer("gpu.corp.example");
     await click(button("保存")!);
     expect(apiJSON).toHaveBeenCalledWith(
       PATH,
@@ -174,9 +185,9 @@ describe("tenant model access", () => {
       expect.objectContaining({ endpoints: ["llm.corp.example", "gpu.corp.example"] }),
     );
     const alert = host!.querySelector(".model-access-rule [role=alert]")!;
-    expect(alert.textContent).toContain("セルフホストのエンドポイントとして承認できません");
+    expect(alert.textContent).toContain("セルフホストのサーバーとして承認できません");
     expect(alert.textContent).toContain("gpu.corp.example");
-    expect(field("endpoints").querySelector("textarea")!.value).toBe("llm.corp.example\ngpu.corp.example");
+    expect(servers()).toEqual(["llm.corp.example", "gpu.corp.example"]);
     // Not reloaded after the refusal (the second read is the revision check before the PUT): a
     // reload would replace the edits with the stored rule.
     expect(policyReads()).toBe(2);
@@ -225,6 +236,96 @@ describe("tenant model access", () => {
 
 // ADR 0138 M2 P9: what the policy hides, and from which layer. Fail closed: only a present,
 // well-formed and empty `hidden` reads as "nothing is hidden".
+// #4380 P-5a: the Restrictions tab's layout. The servers are rows, the individual allow/block
+// lists fold into one row, routes are named (the id on hover), and each credential type says what
+// it covers. What a save sends is unchanged: the loaded rule with only the edited fields over it.
+describe("restrictions editor", () => {
+  const rowsBtn = (host_: string) =>
+    field("endpoints").querySelector<HTMLButtonElement>(`[data-server="${host_}"] button`)!;
+
+  it("edits the servers as rows and sends only the endpoints changed", async () => {
+    await mount();
+    expect(servers()).toEqual(["llm.corp.example"]);
+    await addServer("gpu.corp.example, gpu.corp.example");
+    expect(servers()).toEqual(["llm.corp.example", "gpu.corp.example"]);
+    await click(rowsBtn("llm.corp.example"));
+    expect(servers()).toEqual(["gpu.corp.example"]);
+    await click(button("保存")!);
+    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", {
+      endpoints: ["gpu.corp.example"],
+      except: ["copilot-login"],
+      future: "kept",
+    });
+  });
+
+  it("keeps a rule without endpoints without them after a server is added and removed", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.includes("/provided-routes/")
+          ? { error: { code: "http_404", status: 404 } }
+          : { ...VIEW(), tenant: { rule: { deny: ["gemini-api"] }, revision: 5 } },
+      ),
+    );
+    await mount();
+    expect(servers()).toEqual([]);
+    await addServer("llm.corp.example");
+    expect(button("保存")!.disabled).toBe(false);
+    await click(rowsBtn("llm.corp.example"));
+    // Back to the loaded rule: absent, not [] (which would approve no host on purpose).
+    expect(button("保存")!.disabled).toBe(true);
+    await click(tickIn("deny", "openai-api"));
+    await click(button("保存")!);
+    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", { deny: ["gemini-api", "openai-api"] });
+  });
+
+  it("draws a repeated stored host once, and keeps a repeat that adds nothing in the field", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.includes("/provided-routes/")
+          ? { error: { code: "http_404", status: 404 } }
+          : { ...VIEW(), tenant: { rule: { endpoints: ["llm.corp.example", "llm.corp.example"] }, revision: 5 } },
+      ),
+    );
+    await mount();
+    expect(servers()).toEqual(["llm.corp.example"]);
+    await addServer("llm.corp.example");
+    expect(servers()).toEqual(["llm.corp.example"]);
+    expect(field("endpoints").querySelector<HTMLInputElement>(".mpol-server-add input")!.value).toBe(
+      "llm.corp.example",
+    );
+  });
+
+  it("shows each stored server's state and marks a new one as not saved", async () => {
+    await mount();
+    await addServer("gpu.corp.example");
+    const row = (h: string) => field("endpoints").querySelector(`[data-server="${h}"]`)!.textContent;
+    expect(row("llm.corp.example")).toContain("承認されていません: 運用者の設定（変更不可）");
+    expect(row("gpu.corp.example")).toContain("まだ保存していません");
+  });
+
+  it("folds the individual changes into one row that counts them", async () => {
+    await mount();
+    const fold = host!.querySelector<HTMLDetailsElement>('.model-access-rule [data-field="individual"]')!;
+    expect(fold.tagName).toBe("DETAILS");
+    expect(fold.open).toBe(false);
+    expect(fold.querySelector("summary")!.textContent).toBe("個別の変更: 1 件");
+    await click(tickIn("deny", "anthropic-api"));
+    expect(fold.querySelector("summary")!.textContent).toBe("個別の変更: 2 件");
+  });
+
+  it("names routes and keeps their ids on hover, and says what each credential type covers", async () => {
+    await mount();
+    const label = tickIn("except", "copilot-login").closest("label")!;
+    expect(label.textContent).toContain("GitHub Copilot");
+    expect(label.textContent).not.toContain("copilot-login");
+    expect(label.querySelector("[title]")!.getAttribute("title")).toBe("copilot-login");
+    await click(segBtn("classes", "選んだものだけ許す"));
+    expect(tickIn("classes", "サブスクリプション・ログイン").closest("label")!.textContent).toContain(
+      "Copilot、Cursor、Kiro",
+    );
+  });
+});
+
 // What members can use, on a CP without `owners`: only the hidden items can be named, with the
 // guarantees of the list it replaces (#4368): every layer named, per route, and never "nothing is
 // hidden" from a missing or partial answer.
@@ -476,7 +577,7 @@ describe("model access views", () => {
     await mount();
     await click(tab("制限")!);
     expect(tab("制限")!.getAttribute("aria-label")).toBeNull();
-    await click(segBtn("classes", "選んだものだけ"));
+    await click(segBtn("classes", "選んだものだけ許す"));
     await click(tickIn("classes", "メンバーの API キー"));
     expect(tab("制限")!.textContent).toBe("制限●");
     expect(tab("制限")!.getAttribute("aria-label")).toBe("制限, 未保存の変更あり");

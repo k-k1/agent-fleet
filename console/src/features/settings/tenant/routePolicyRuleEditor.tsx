@@ -13,6 +13,7 @@ import {
   ROUTE_CLASSES,
   ROUTE_DESTINATIONS,
   draftOf,
+  endpointLines,
   isPerConnection,
   restricts,
   ruleEqual,
@@ -57,21 +58,50 @@ const LAYER_KEY = {
 } as const;
 
 // A value the Console has no label for (a newer CP's) is shown as its id rather than dropped.
-export const classLabel = (tr: Tr, c: string) => (Object.hasOwn(CLASS_KEY, c) ? tr(CLASS_KEY[c as keyof typeof CLASS_KEY]) : c);
-export const destLabel = (tr: Tr, d: string) => (Object.hasOwn(DEST_KEY, d) ? tr(DEST_KEY[d as keyof typeof DEST_KEY]) : d);
-export const layerLabel = (tr: Tr, l: string) => (Object.hasOwn(LAYER_KEY, l) ? tr(LAYER_KEY[l as keyof typeof LAYER_KEY]) : l);
+export const classLabel = (tr: Tr, c: string) =>
+  Object.hasOwn(CLASS_KEY, c) ? tr(CLASS_KEY[c as keyof typeof CLASS_KEY]) : c;
+export const destLabel = (tr: Tr, d: string) =>
+  Object.hasOwn(DEST_KEY, d) ? tr(DEST_KEY[d as keyof typeof DEST_KEY]) : d;
+export const layerLabel = (tr: Tr, l: string) =>
+  Object.hasOwn(LAYER_KEY, l) ? tr(LAYER_KEY[l as keyof typeof LAYER_KEY]) : l;
 export const layersLabel = (tr: Tr, ls: string[] | undefined) => (ls ?? []).map((l) => layerLabel(tr, l)).join(", ");
 
-/** RouteName: the member-facing route name with the id the policy and the CP's refusals use. */
+/** RouteName: the member-facing route name. The id the policy and the CP's refusals use is on
+ *  hover; a route the Console has no name for is shown as its id. */
 export function RouteName({ id }: { id: string }) {
   const name = tMaybe("cred.route." + id);
-  return (
-    <span className="mpol-route">
-      {name && <>{name} </>}
-      <code>{id}</code>
+  return name ? (
+    <span className="mpol-route" title={id}>
+      {name}
     </span>
+  ) : (
+    <code className="mpol-route">{id}</code>
   );
 }
+
+/** RouteNames: a comma-separated list of RouteName, each keeping its id on hover. */
+function RouteNames({ ids }: { ids: string[] }) {
+  return (
+    <>
+      {ids.map((id, i) => (
+        <span key={id}>
+          {i > 0 && ", "}
+          <RouteName id={id} />
+        </span>
+      ))}
+    </>
+  );
+}
+
+const CLASS_DESC = {
+  subscription: "admin.mpol_class_desc_subscription",
+  "member-key": "admin.mpol_class_desc_member_key",
+  "member-cloud": "admin.mpol_class_desc_member_cloud",
+  provided: "admin.mpol_class_desc_provided",
+  "self-hosted": "admin.mpol_class_desc_self_hosted",
+} as const;
+const classDesc = (tr: Tr, c: string) =>
+  Object.hasOwn(CLASS_DESC, c) ? tr(CLASS_DESC[c as keyof typeof CLASS_DESC]) : undefined;
 
 /** RuleSummary draws one layer's rule read-only. ceiling marks the operator's layer, whose unset
  *  endpoint list means "none" once it restricts destinations (ADR 0138 §2). */
@@ -100,13 +130,17 @@ export function RuleSummary({ rule, ceiling = false }: { rule: RouteRule; ceilin
         {(rule.except?.length ?? 0) > 0 && (
           <>
             <dt>{tr("admin.mpol_except_short")}</dt>
-            <dd>{rule.except!.join(", ")}</dd>
+            <dd>
+              <RouteNames ids={rule.except!} />
+            </dd>
           </>
         )}
         {(rule.deny?.length ?? 0) > 0 && (
           <>
             <dt>{tr("admin.mpol_deny_short")}</dt>
-            <dd>{rule.deny!.join(", ")}</dd>
+            <dd>
+              <RouteNames ids={rule.deny!} />
+            </dd>
           </>
         )}
         <dt>{tr("admin.mpol_endpoints_short")}</dt>
@@ -116,7 +150,8 @@ export function RuleSummary({ rule, ceiling = false }: { rule: RouteRule; ceilin
   );
 }
 
-const toggle = (l: string[], v: string, on: boolean) => (on ? [...l.filter((x) => x !== v), v] : l.filter((x) => x !== v));
+const toggle = (l: string[], v: string, on: boolean) =>
+  on ? [...l.filter((x) => x !== v), v] : l.filter((x) => x !== v);
 
 /** AllOrOnly: the "every value" / "only these" choice and, under "only these", one tick per
  *  value. Ticking nothing under "only these" is a real rule (none allowed), not the same as all. */
@@ -127,6 +162,7 @@ function AllOrOnly({
   values,
   options,
   label,
+  describe,
   disabled,
   onChange,
 }: {
@@ -136,6 +172,8 @@ function AllOrOnly({
   values: string[];
   options: string[];
   label: (v: string) => string;
+  /** One line under a value saying what it covers; nothing for a value without one. */
+  describe?: (v: string) => string | undefined;
   disabled: boolean;
   onChange: (all: boolean, values: string[]) => void;
 }) {
@@ -175,7 +213,10 @@ function AllOrOnly({
                 disabled={disabled}
                 onChange={(e) => onChange(false, toggle(values, o, e.target.checked))}
               />
-              {label(o)}
+              <span>
+                {label(o)}
+                {describe?.(o) && <span className="mpol-desc">{describe(o)}</span>}
+              </span>
             </label>
           ))}
         </div>
@@ -227,6 +268,96 @@ function RouteTicks({
   );
 }
 
+export interface HostState {
+  approved: boolean;
+  excludedBy?: string[];
+}
+
+/** ServerRows edits the endpoint list as rows: one per host or pattern, a remove button each, and
+ *  a field to add more. The draft keeps its text form (one entry per line), so what is saved is
+ *  still ruleFromDraft's reading of that text. */
+function ServerRows({
+  label,
+  text,
+  stateOf,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  text: string;
+  stateOf?: (host: string) => HostState | undefined;
+  disabled: boolean;
+  onChange: (text: string) => void;
+}) {
+  const tr = useT();
+  const [adding, setAdding] = useState("");
+  // One row per distinct entry: a stored list with a repeat reads, and saves, as a set anyway.
+  const rows = [...new Set(endpointLines(text))];
+  const add = () => {
+    const more = [...new Set(endpointLines(adding))].filter((h) => !rows.includes(h));
+    // Nothing new (a repeat, or only spaces) keeps what was typed, so it does not look accepted.
+    if (more.length === 0) return;
+    onChange([...rows, ...more].join("\n"));
+    setAdding("");
+  };
+  return (
+    <div className="mpol-servers">
+      {rows.length === 0 ? (
+        <p className="muted">{tr("admin.mpol_servers_none")}</p>
+      ) : (
+        <ul className="mpol-server-rows" aria-label={label}>
+          {rows.map((h) => {
+            const st = stateOf?.(h);
+            return (
+              <li key={h} data-server={h}>
+                <code>{h}</code>
+                {stateOf &&
+                  (st === undefined ? (
+                    <span className="muted">{tr("admin.mpol_server_unsaved")}</span>
+                  ) : st.approved ? (
+                    <span className="mpol-ok">{tr("admin.mpol_approved")}</span>
+                  ) : (
+                    <span className="mpol-no">
+                      {tr("admin.mpol_excluded_by", { layers: layersLabel(tr, st.excludedBy) })}
+                    </span>
+                  ))}
+                <button
+                  type="button"
+                  className="btn xs"
+                  aria-label={tr("admin.mpol_server_remove", { host: h })}
+                  disabled={disabled}
+                  onClick={() => onChange(rows.filter((x) => x !== h).join("\n"))}
+                >
+                  ×
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="mpol-server-add">
+        <input
+          type="text"
+          aria-label={tr("admin.mpol_server_new")}
+          placeholder={tr("admin.mpol_server_new")}
+          value={adding}
+          disabled={disabled}
+          onChange={(e) => setAdding(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <button type="button" className="btn" disabled={disabled || endpointLines(adding).length === 0} onClick={add}>
+          {tr("admin.mpol_server_add")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** RuleEditor edits one layer's rule. save sends the body and answers the API result; a result
  *  with an error is shown and the edits kept. Re-key it on the loaded revision so a fresh load
  *  replaces the draft. */
@@ -236,6 +367,7 @@ export function RuleEditor({
   currentRevision,
   routeOptions,
   endpointsMode,
+  hostState,
   save,
   onSaved,
 }: {
@@ -248,6 +380,8 @@ export function RuleEditor({
   /** patterns: the deployment rule and a cap (absent = does not narrow); hosts: the tenant
    *  rule's approved exact hosts. */
   endpointsMode: "patterns" | "hosts";
+  /** A stored host's effect (the tenant page's endpoint decisions); undefined for one not saved. */
+  hostState?: (host: string) => HostState | undefined;
   save: (body: RouteRule) => Promise<unknown>;
   onSaved: () => void;
 }) {
@@ -302,6 +436,7 @@ export function RuleEditor({
         values={draft.classes}
         options={withExtra(ROUTE_CLASSES, base.classes)}
         label={(c) => classLabel(tr, c)}
+        describe={(c) => classDesc(tr, c)}
         disabled={busy}
         onChange={(all, classes) => edit({ classesAll: all, classes })}
       />
@@ -315,25 +450,33 @@ export function RuleEditor({
         disabled={busy}
         onChange={(all, destinations) => edit({ destinationsAll: all, destinations })}
       />
-      <RouteTicks
-        name="except"
-        legend={tr("admin.mpol_except")}
-        hint={tr("admin.mpol_except_hint")}
-        values={draft.except}
-        options={withExtra(routeOptions, base.except)}
-        disabledIds={isPerConnection}
-        disabled={busy}
-        onChange={(except) => edit({ except })}
-      />
-      <RouteTicks
-        name="deny"
-        legend={tr("admin.mpol_deny")}
-        hint={tr("admin.mpol_deny_hint")}
-        values={draft.deny}
-        options={withExtra(routeOptions, base.deny)}
-        disabled={busy}
-        onChange={(deny) => edit({ deny })}
-      />
+      {/* Folded: forty-odd ticks are rarely what an administrator came to change. */}
+      <details className="admin-fgroup mpol-individual" data-field="individual">
+        <summary>
+          {draft.except.length + draft.deny.length === 0
+            ? tr("admin.mpol_individual_none")
+            : tr("admin.mpol_individual", { n: draft.except.length + draft.deny.length })}
+        </summary>
+        <RouteTicks
+          name="except"
+          legend={tr("admin.mpol_except")}
+          hint={tr("admin.mpol_except_hint")}
+          values={draft.except}
+          options={withExtra(routeOptions, base.except)}
+          disabledIds={isPerConnection}
+          disabled={busy}
+          onChange={(except) => edit({ except })}
+        />
+        <RouteTicks
+          name="deny"
+          legend={tr("admin.mpol_deny")}
+          hint={tr("admin.mpol_deny_hint")}
+          values={draft.deny}
+          options={withExtra(routeOptions, base.deny)}
+          disabled={busy}
+          onChange={(deny) => edit({ deny })}
+        />
+      </details>
       <fieldset className="admin-fgroup mpol-field" data-field="endpoints">
         <legend className="admin-subhead">
           {tr(endpointsMode === "hosts" ? "admin.mpol_endpoints_hosts" : "admin.mpol_endpoints_patterns")}
@@ -366,19 +509,18 @@ export function RuleEditor({
           </span>
         )}
         {(endpointsMode === "hosts" || !draft.endpointsAll) && (
-          <textarea
-            className="mpol-endpoints"
-            rows={3}
-            aria-label={tr(endpointsMode === "hosts" ? "admin.mpol_endpoints_hosts" : "admin.mpol_endpoints_patterns")}
-            value={draft.endpoints}
+          <ServerRows
+            label={tr(endpointsMode === "hosts" ? "admin.mpol_endpoints_hosts" : "admin.mpol_endpoints_patterns")}
+            text={draft.endpoints}
+            stateOf={endpointsMode === "hosts" ? hostState : undefined}
             disabled={busy}
-            onChange={(e) =>
+            onChange={(text) =>
               // The tenant rule has no "does not narrow": its list is the hosts it approves, and a
-              // rule loaded without one stays without one until a host is typed.
+              // rule loaded without one stays without one until a host is added.
               edit(
                 endpointsMode === "hosts"
-                  ? { endpoints: e.target.value, endpointsAll: base.endpoints === undefined && e.target.value.trim() === "" }
-                  : { endpoints: e.target.value },
+                  ? { endpoints: text, endpointsAll: base.endpoints === undefined && text.trim() === "" }
+                  : { endpoints: text },
               )
             }
           />
