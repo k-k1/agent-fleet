@@ -104,6 +104,6 @@ func compareShotFixture(t *testing.T, path string, m map[string]json.RawMessage)
 		t.Fatalf("%v (run with -update-shot-fixtures)", err)
 	}
 	if !bytes.Equal(got, want) {
-		t.Errorf("%s differs from the handlers' answer; run go test -run TestShotFixturesPolicy -update-shot-fixtures and commit the diff", path)
+		t.Errorf("%s differs from the handlers' answer; run go test -run TestShotFixturesPolicy -update-shot-fixtures ./internal/routepolicysrv/ (from control-plane) and commit the diff", path)
 	}
 }

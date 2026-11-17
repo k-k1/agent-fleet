@@ -163,13 +163,15 @@ const MODEL_ACCESS_SCENES = [
     provided: "granted",
     verify: `document.querySelectorAll(".tenant-modal .prov-members tbody tr").length >= 6`,
   }),
-  // The same at phone width.
+  // The same at phone width, with the phone's coarse pointer: the desktop flags would hide the
+  // hover-only controls a real phone shows.
   modelAccessScene("mpol-tenant-provided-phone", {
     rules: "restricted",
     provided: "granted",
     width: 390,
     height: 844,
     mobile: true,
+    desktop: false,
     verify: `document.querySelectorAll(".tenant-modal .prov-members tbody tr").length >= 6`,
   }),
   // Admin: every layer unrestricted, a CP without provided routes.

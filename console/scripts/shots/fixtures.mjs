@@ -3546,9 +3546,12 @@ export function modelAccess(rules, provided) {
     let m;
     // acme carries no layer of its own: any other tenant reads as it does.
     if ((m = p.match(/^\/api\/admin\/tenants\/([^/]+)\/route-policy$/))) return json(200, pol[`tenant/${m[1]}`] ?? pol["tenant/acme"]);
-    if (!prov) return { status: 404, type: "text/plain; charset=utf-8", body: "404 page not found\n" };
+    const notFound = { status: 404, type: "text/plain; charset=utf-8", body: "404 page not found\n" };
+    if (!prov) return notFound;
     if (p === "/api/admin/provided-routes/deployment") return json(200, prov[`${provided}/source`]);
     if (/^\/api\/admin\/tenants\/[^/]+\/provided-routes\/deployment$/.test(p)) return json(200, prov[`${provided}/tenant/demo`]);
-    return undefined;
+    // The CP registers no GET under these paths beyond the ones above (…/cap, …/grant, …/policy,
+    // …/members are writes only): a plain 404, never the stub's catch-all {} drawn as an empty state.
+    return notFound;
   };
 }
