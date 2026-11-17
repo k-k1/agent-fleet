@@ -248,9 +248,13 @@ function Exceeds({
   if (x.routes.length + x.endpoints.length === 0) return null;
   return (
     <div className="mpol-exceeds" data-testid="exceeds">
-      {x.routes.length > 0 && <p className="admin-hint warn">{tr("admin.mpol_exceeds_routes", { list: namesOf(tr, x.routes) })}</p>}
+      {x.routes.length > 0 && (
+        <p className="admin-hint warn">{tr("admin.mpol_exceeds_routes", { list: namesOf(tr, x.routes) })}</p>
+      )}
       {x.endpoints.length > 0 && (
-        <p className="admin-hint warn">{tr("admin.mpol_exceeds_endpoints", { list: x.endpoints.join(tr("tenant.mpol_list_sep")) })}</p>
+        <p className="admin-hint warn">
+          {tr("admin.mpol_exceeds_endpoints", { list: x.endpoints.join(tr("tenant.mpol_list_sep")) })}
+        </p>
       )}
       <button type="button" className="btn" disabled={disabled} onClick={onMatch}>
         {tr("admin.mpol_match")}
@@ -317,7 +321,7 @@ function AllOrOnly({
       </span>
       {!all && (
         <div className="mpol-ticks">
-          {options.map((o) => (
+          {options.map((o, i) => (
             <label key={o} className="admin-check">
               <input
                 type="checkbox"
@@ -327,7 +331,7 @@ function AllOrOnly({
               />
               <span>
                 {label(o)}
-                <MarkIcon mark={marks[options.indexOf(o)]} />
+                <MarkIcon mark={marks[i]} />
                 {describe?.(o) && <span className="mpol-desc">{describe(o)}</span>}
               </span>
             </label>
@@ -657,7 +661,9 @@ export function RuleEditor({
           />
         )}
       </fieldset>
-      {ceiling && <Exceeds body={body} ceiling={ceiling} disabled={busy} onMatch={() => edit(matchCeiling(draft, ceiling))} />}
+      {ceiling && (
+        <Exceeds body={body} ceiling={ceiling} disabled={busy} onMatch={() => edit(matchCeiling(draft, ceiling))} />
+      )}
       {refusal && (
         <p className="admin-hint warn" role="alert">
           {tr("admin.mpol_refused", { reason: refusal })}

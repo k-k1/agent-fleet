@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, writeFileSync } from "node:fs";
 import { PRESETS, allows, applyPreset, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
-import { draftOf, ruleEqual, ruleFromDraft, type RouteRule } from "./routePolicyRule.ts";
+import { ROUTE_CATALOG, draftOf, ruleEqual, ruleFromDraft, type RouteRule } from "./routePolicyRule.ts";
 
 const DIR = "scripts/shots/model-access";
 const ceilingOf = (name: string): { raw: string; rule: RouteRule } =>
@@ -92,6 +92,8 @@ describe("allows and exceeds, against the CP fixtures", () => {
         endpoints: ["x.other.example"],
       },
     );
+    // Compared as the CP stores it: case and a trailing dot do not matter.
+    expect(exceeds({ destinations: ["anthropic"], endpoints: ["LLM.Corp.Example."] }, ceiling).endpoints).toEqual([]);
     // An absent endpoint list leaves the ceiling in charge: nothing to refuse.
     expect(exceeds({ destinations: ["anthropic"] }, ceiling)).toEqual({ routes: [], endpoints: [] });
   });
@@ -117,6 +119,16 @@ const CEILINGS: { raw: string; rule: RouteRule }[] = [
   ceilingOf("bedrockonly"),
   { raw: "classes=-subscription", rule: { classes: ["member-cloud", "member-key", "provided", "self-hosted"] } },
   { raw: "classes=provided", rule: { classes: ["provided"] } },
+  // A ceiling's own blocks and allowances: match adds the first and drops what the rule allows
+  // individually against them.
+  {
+    raw: "classes=-subscription;deny=openrouter-api",
+    rule: { classes: ["member-cloud", "member-key", "provided", "self-hosted"], deny: ["openrouter-api"] },
+  },
+  {
+    raw: "destinations=anthropic,aws-bedrock;except=copilot-login",
+    rule: { destinations: ["anthropic", "aws-bedrock"], except: ["copilot-login"] },
+  },
 ];
 const RULES: RouteRule[] = [
   {},
@@ -125,6 +137,9 @@ const RULES: RouteRule[] = [
   { classes: ["subscription", "member-key"] },
   { destinations: ["openrouter", "anthropic"] },
   { destinations: ["anthropic"], endpoints: ["*.corp.example", "*.other.example"] },
+  // As typed: the CP lower-cases and drops a trailing dot before it compares, so the first stays.
+  { destinations: ["anthropic"], endpoints: ["LLM.Corp.Example.", "x.other.example"] },
+  { except: ["openrouter-api", "copilot-login"] },
   // No key the Console does not know: the CP refuses one (the presets pin that it is carried).
   { endpoints: ["llm.corp.example"] },
 ];
@@ -146,14 +161,7 @@ describe("match the operator's setting", () => {
     expect(cases.length).toBeGreaterThan(15);
     for (const c of cases) {
       expect(exceeds(c.matched, c.ceiling), JSON.stringify(c)).toEqual({ routes: [], endpoints: [] });
-      for (const rt of [
-        "anthropic-api",
-        "anthropic-subscription",
-        "openrouter-api",
-        "bedrock",
-        "vertex",
-        "copilot-login",
-      ]) {
+      for (const rt of [...ROUTE_CATALOG.map((r) => r.id), "no-such-route"]) {
         if (allows(c.matched, rt)) expect(allows(c.rule, rt), `${JSON.stringify(c)} ${rt}`).toBe(true);
       }
     }

@@ -32,8 +32,15 @@ export function allows(r: RouteRule, id: string): boolean {
   );
 }
 
+// The CP compares patterns as it stores them (routepolicy.NormalizePattern): lower case, no
+// trailing dot. Without this, "LLM.Corp.Example." reads as outside "*.corp.example" and match would
+// drop a row the CP accepts. (Its punycode step is left out: the Console sends what was typed.)
+const norm = (s: string) => s.trim().toLowerCase().replace(/\.$/, "");
+
 // covers mirrors routepolicy's covers: an exact host or a "*." pattern holding another pattern.
-function covers(o: string, i: string): boolean {
+function covers(outer: string, inner: string): boolean {
+  const o = norm(outer);
+  const i = norm(inner);
   if (i.startsWith("*.")) {
     return o.startsWith("*.") && (i.slice(2) === o.slice(2) || i.slice(2).endsWith("." + o.slice(2)));
   }
