@@ -302,6 +302,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // The member picked kind k: that is their choice, and what depended on the old kind starts over.
   const pickKindByHand = (k: string) => {
     mark("kind");
+    // Clicking the agent already selected changes nothing: re-seeding would drop the preselected
+    // default route (and anything else picked for this kind) back to its blank state.
+    if (k === kind) return;
     for (const f of ["perm", "driver", ...KIND_BOUND]) dirty.current.delete(f);
     setKind(k);
     seedFields(k, true);

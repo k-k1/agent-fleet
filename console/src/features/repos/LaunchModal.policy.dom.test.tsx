@@ -143,6 +143,36 @@ describe("route step", () => {
     expect(launchedWith().route).toBe("anthropic-api");
   });
 
+  it("keeps the current route when the already selected agent is clicked again", async () => {
+    setDefault("claude", { route: "anthropic-api" });
+    const k: LiveKindAccess = { kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] };
+    await render(["claude", "codex"], access([k, { kind: "codex" }]));
+    expect(routeSelect()!.value).toBe("anthropic-api");
+    const claudeBtn = [...document.querySelectorAll<HTMLButtonElement>("button.seg-btn")].find((b) => b.classList.contains("active"))!;
+    await click(claudeBtn);
+    expect(routeSelect()!.value).toBe("anthropic-api");
+    // A route the member chose by hand survives the same click.
+    await choose(routeSelect()!, "anthropic-subscription");
+    await click(claudeBtn);
+    expect(routeSelect()!.value).toBe("anthropic-subscription");
+  });
+
+  it("applies the default when synced prefs arrive while the dialog is open", async () => {
+    await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] }]));
+    expect(routeSelect()!.value).toBe("");
+    await act(async () => void setDefault("claude", { route: "anthropic-api" }));
+    await settle();
+    expect(routeSelect()!.value).toBe("anthropic-api");
+  });
+
+  it("does not override a route the member chose before the prefs arrived", async () => {
+    await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] }]));
+    await choose(routeSelect()!, "anthropic-subscription");
+    await act(async () => void setDefault("claude", { route: "anthropic-api" }));
+    await settle();
+    expect(routeSelect()!.value).toBe("anthropic-subscription");
+  });
+
   it("preselects a Bedrock default with its profile and region once the profiles are read", async () => {
     ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
     setDefault("claude", { route: "bedrock", connection: "p-marked@us-west-2" });
