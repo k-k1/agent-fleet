@@ -103,6 +103,11 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 		log.Printf("ecs-ec2: %s restarted mid-release; re-mounting instead of detaching", e.base.name)
 		return e.mountHomeLocked(ctx, ec2Placement{volumeID: volumeID, instanceID: instanceID})
 	}
+	if running {
+		// Only now, past the "restarted mid-release" branch: that branch re-mounts the home
+		// alone, and a task starting on it needs these still in place.
+		e.umountMemberEFS(ctx, instanceID)
+	}
 	// Asked here, not left to the context: its end is a timer's callback, which a goroutine
 	// resumed past the deadline can outrun, and a detach after the lease is gone is the one
 	// step that must not happen.

@@ -16,6 +16,10 @@ Parameters:
     Type: String
     Default: af-ecs-platform
     Description: Name of the 20-platform stack (ECS cluster).
+  DataStackName:
+    Type: String
+    Default: af-ecs-data
+    Description: Name of the 10-data stack (the EFS mount targets' security group).
   SlotAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
@@ -176,7 +180,7 @@ Resources:
 
   # --- SG for the instance itself. No ingress at all: the workspace task has its own
   # ENI and the ws SG (awsvpc), so nothing needs to reach the host. Egress covers the
-  # image pull, SSM and the agent's control channel. ---
+  # image pull, SSM, the agent's control channel and NFS to the EFS mount targets. ---
   SlotSg:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -187,6 +191,20 @@ Resources:
         - { IpProtocol: -1, CidrIp: 0.0.0.0/0, Description: outbound only }
       Tags:
         - { Key: Name, Value: !Sub "af-${AWS::StackName}-slot" }
+
+  # The slot is the NFS client for a member's EFS access points: the CP mounts them on the
+  # slot over SSM and the task bind-mounts the result (runtime_ecs_ec2_efs_mount.go). A rule
+  # on the file system's group rather than a second group on the launch template, so that
+  # slots already running get it too.
+  SlotEfsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue { "Fn::Sub": "${DataStackName}-EfsSgId" }
+      SourceSecurityGroupId: !Ref SlotSg
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      Description: NFS from the EC2 slots
 
   SlotLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
@@ -427,6 +445,10 @@ Resources:
               exit 1
               SH
               chmod +x /usr/local/bin/af-mount /usr/local/bin/af-umount
+              # The EFS mount helper, for the access points the CP mounts on the slot. The
+              # CP's own script installs it when it is missing, so a failure here only costs
+              # the first Start on this slot the install time.
+              { command -v mount.efs || [ -x /sbin/mount.efs ]; } >/dev/null 2>&1 || dnf install -y -q amazon-efs-utils || true
             - Cluster:
                 Fn::ImportValue: !Sub "${PlatformStackName}-ClusterName"
               Cleanup: !Ref TaskCleanupWait

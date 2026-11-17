@@ -265,6 +265,16 @@ if [ -z "$(af_stack_output "$DATA_STACK" CpDataEfsId)" ]; then
   echo "       \"The Control Plane's data root\". Nothing was changed." >&2
   exit 1
 fi
+# The same for the security groups that keep workspace tasks off NFS (#3903): 30-ingress imports
+# HomeOpsSgId for the home task, and 40-ec2-pool imports EfsSgId for the slots' rule.
+if [ -z "$(af_stack_output "$DATA_STACK" HomeOpsSgId)" ] || [ -z "$(af_stack_output "$DATA_STACK" EfsSgId)" ]; then
+  echo "ERROR: $DATA_STACK has no readable HomeOpsSgId / EfsSgId output - it predates the home task's" >&2
+  echo "       own security group, or could not be read. If it predates it, update it from this" >&2
+  echo "       release's cfn/10-data.yaml first (same parameters; it only adds resources), then run" >&2
+  echo "       this script again. cfn/PARAMETERS.md, \"EFS: who may reach the mount targets\"." >&2
+  echo "       Nothing was changed." >&2
+  exit 1
+fi
 # The same verdict goes to the Console: the ingress stack carries it to the Control Plane as
 # EfsBackup, so an operator who never reads this output still sees the warning. Empty = unknown,
 # in which case the parameter is not passed at all.
@@ -397,10 +407,12 @@ fi
 if [ -n "$POOL_STACK" ]; then
   echo "==> cloudformation deploy $POOL_STACK (40-ec2-pool, parameters unchanged)"
   if [ "$DRY" = 1 ]; then
-    echo "DRY: aws cloudformation deploy --stack-name $POOL_STACK --template-file $HERE/cfn/40-ec2-pool.yaml --capabilities CAPABILITY_NAMED_IAM"
+    echo "DRY: aws cloudformation deploy --stack-name $POOL_STACK --template-file $HERE/cfn/40-ec2-pool.yaml --capabilities CAPABILITY_NAMED_IAM --parameter-overrides DataStackName=$DATA_STACK"
   else
+    # DataStackName is named because the template's default may not be this deployment's
+    # data stack; every other parameter keeps its value.
     af_cfn_deploy "$POOL_STACK" "$HERE/cfn/40-ec2-pool.yaml" --no-fail-on-empty-changeset \
-      --capabilities CAPABILITY_NAMED_IAM
+      --capabilities CAPABILITY_NAMED_IAM --parameter-overrides "DataStackName=$DATA_STACK"
   fi
 fi
 

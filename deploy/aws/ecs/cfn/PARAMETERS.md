@@ -883,6 +883,42 @@ in place and is run again by the CP's reconciler or by retrying once 30-ingress 
 Rolling 10-data back removes the policy and the export, so roll 30-ingress back first.
 A file-system policy applied by hand is replaced by the template's on the 10-data update.
 
+### EFS: who may reach the mount targets
+
+The file-system policy cannot bind a member to their own access points: the workspace task role
+is shared, and EFS enforces only `aws:SecureTransport`, `aws:SourceIp`,
+`elasticfilesystem:AccessPointArn` and `elasticfilesystem:AccessedViaMountTarget` for NFS
+clients, so no tag or principal condition can tell two members apart. A task role per membership
+would (IAM authorization with a condition on the member's access point ARNs), and was not
+adopted: the CP task role would gain `iam:CreateRole` / `iam:PutRolePolicy` / `iam:DeleteRole`,
+and the account's role quota (1,000, 10,000 at most) would become a ceiling on members.
+
+On `ecs-ec2` the security groups do it instead. The CP mounts the member's access points on the
+slot over SSM (`/af-efs/<membership>/<access point>`, TLS, `nosuid,nodev`) and the task
+definition binds those directories; ECS-managed EFS volumes would be mounted through the task's
+ENI. Three rules on 10-data's `EfsSg` decide who can open an NFS connection:
+
+| Source | Declared in | For |
+|---|---|---|
+| `HomeOpsSg` | 10-data, always | the home task (30-ingress passes the group as `AF_ECS_HOME_OPS_SECURITY_GROUP`) |
+| `SlotSg` | 40-ec2-pool, `SlotEfsIngress` | the slots; a rule rather than a second group on the launch template, so running slots get it |
+| the workspace group | 10-data, only under `EfsWorkspaceIngress=allow` (default) | Fargate tasks, and ecs-ec2 tasks started before the slots mounted |
+
+`EfsWorkspaceIngress=deny` is what closes the gap, and it is the operator's step: only they know
+when the last workspace started before the upgrade has been restarted. `WsRuntime=ecs` must keep
+`allow`, because Fargate mounts through the task's ENI; there a task that learns another member's
+access point ID can still mount it.
+
+A slot that cannot mount (no rule, wrong `DataStackName` on the pool stack) fails the Start with
+the script's message in the CP log and is not quarantined: the cause is the deployment's, and a
+quarantine would cost one slot per Start. Mounts are taken off when the slot is released;
+a mount left behind by a failed unmount is reachable only by root on the slot.
+
+**Upgrade order: 10-data, then `update.sh`**, as for the home task above: `update.sh` stops
+before touching anything when the data stack lacks `HomeOpsSgId` or `EfsSgId`, then deploys
+40-ec2-pool (naming this deployment's data stack) before the CP moves. Verified offline by
+`deploy/local/cfn-efs-policy-test.py`; the slot-side mount has not been run on a real pool yet.
+
 ### Home task grant
 
 The CP's grant for the home task: it lives in this stack because only this stack can name the

@@ -1744,8 +1744,9 @@ func TestECSEC2LostSlotIsAbandonedAndTheWorkspaceMovesOn(t *testing.T) {
 		t.Fatalf("home ended up on %q, want i-good", inst)
 	}
 	// 5. and the workspace actually came up there, with no second Start from the user
-	if !strings.HasPrefix(h.ssmc.commands[len(h.ssmc.commands)-1], "af-mount vol-1 /af-home/M-1") {
-		t.Errorf("home was never mounted on the replacement slot: %v", h.ssmc.commands)
+	if n := len(h.ssmc.commands); n < 2 || !strings.HasPrefix(h.ssmc.commands[n-2], "af-mount vol-1 /af-home/M-1") ||
+		!strings.Contains(h.ssmc.commands[n-1], "mount -t efs") {
+		t.Errorf("home and access points were never mounted on the replacement slot: %v", h.ssmc.commands)
 	}
 	up := false
 	for _, c := range h.ecs.updateCalls {
@@ -2533,12 +2534,13 @@ func TestECSEC2ReleaseUnmountsBeforeDetach(t *testing.T) {
 	if err := h.rt.releaseSlot(ctx); err != nil {
 		t.Fatalf("releaseSlot: %v", err)
 	}
-	if len(h.ssmc.commands) != 1 || !strings.HasPrefix(h.ssmc.commands[0], "af-umount") {
-		t.Fatalf("expected an umount, got %v", h.ssmc.commands)
+	if len(h.ssmc.commands) != 2 || !strings.HasPrefix(h.ssmc.commands[0], "af-umount") ||
+		!strings.HasPrefix(h.ssmc.commands[1], "EFSDIR=/af-efs/M-1 ") {
+		t.Fatalf("expected the home's umount, then the access points', got %v", h.ssmc.commands)
 	}
 	umount, detach := -1, -1
 	for i, c := range h.ec2.calls {
-		if strings.HasPrefix(c, "SSM af-umount") {
+		if strings.HasPrefix(c, "SSM af-umount") || strings.HasPrefix(c, "SSM EFSDIR=") {
 			umount = i
 		}
 		if strings.HasPrefix(c, "DetachVolume") {

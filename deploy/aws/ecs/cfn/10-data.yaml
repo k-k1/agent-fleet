@@ -104,6 +104,18 @@ Parameters:
       true = stop the RDS instance again when AWS starts it by itself after 7 stopped days
       (RDS-EVENT-0154), but only while pause.sh's af-paused tag is on it. AWS cannot be
       told not to start it; this is the only way to keep a long pause cheap.
+  EfsWorkspaceIngress:
+    Type: String
+    Default: allow
+    AllowedValues: [ allow, deny ]
+    Description: >-
+      allow = workspace tasks (the workspace security group) may reach the EFS mount targets.
+      WsRuntime=ecs needs it: Fargate mounts a task's EFS volumes through the task's own ENI.
+      deny = only the home task and, on ecs-ec2, the slots may (40-ec2-pool, SlotEfsIngress).
+      Set deny on an ecs-ec2 deployment once every workspace has been started on a release
+      whose slots mount the access points: no process in a workspace can then open an NFS
+      connection, so none can name another member's access point.
+      PARAMETERS.md, "EFS: who may reach the mount targets".
 
 Conditions:
   RestopOn: !Equals [ !Ref RdsRestopOnForcedStart, "true" ]
@@ -112,6 +124,7 @@ Conditions:
   CreateEgressArchive: !Equals [ !Ref EgressArchive, create ]
   HasEgressArchive: !Or [ !Condition CreateEgressArchive, !Equals [ !Ref EgressArchive, existing ] ]
   IsProvisionedTp: !Equals [ !Ref EfsThroughputMode, provisioned ]
+  EfsAdmitsWorkspaces: !Equals [ !Ref EfsWorkspaceIngress, allow ]
 
 Resources:
   # --- EFS ---
@@ -121,14 +134,39 @@ Resources:
       GroupDescription: !Sub "af-${AWS::StackName} EFS mount targets (NFS from workspace tasks)"
       VpcId:
         Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      # Who can open an NFS connection at all. The file-system policy below cannot tell one
+      # member from another (the task role is shared), so on ecs-ec2 the members are kept
+      # apart here instead: the slot mounts the access points and the workspace security
+      # group is closed (EfsWorkspaceIngress=deny). The slots' own rule is 40-ec2-pool's
+      # (SlotEfsIngress): that stack is optional and created after this one.
       SecurityGroupIngress:
+        - !If
+          - EfsAdmitsWorkspaces
+          - IpProtocol: tcp
+            FromPort: 2049
+            ToPort: 2049
+            SourceSecurityGroupId:
+              Fn::ImportValue: !Sub "${NetworkStackName}-WsSgId"
+            Description: NFS from workspace tasks only
+          - !Ref "AWS::NoValue"
         - IpProtocol: tcp
           FromPort: 2049
           ToPort: 2049
-          SourceSecurityGroupId:
-            Fn::ImportValue: !Sub "${NetworkStackName}-WsSgId"
-          Description: NFS from workspace tasks only
+          SourceSecurityGroupId: !Ref HomeOpsSg
+          Description: NFS from the home task
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-efs-sg" } ]
+
+  # The home task's own security group (30-ingress passes it to the CP as
+  # AF_ECS_HOME_OPS_SECURITY_GROUP). Without it the task runs in the workspace security
+  # group, and closing that group's NFS would stop Recreate, Clean home and Destroy.
+  # No ingress; the default egress covers the image pull, the logs and NFS.
+  HomeOpsSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} home task (NFS to the EFS root, no ingress)"
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-home-ops-sg" } ]
 
   # !! ThroughputMode is a PARAMETER, and the parameter must track the live file system.
   # The 24-hour restriction is ASYMMETRIC: after a switch TO provisioned, or a change of
@@ -168,12 +206,13 @@ Resources:
       # not enforce for NFS clients (only SecureTransport, SourceIp, AccessPointArn and
       # AccessedViaMountTarget are). The only mount without an access point is the home
       # task's role (HomeOpsEfsRole), which Destroy needs: the access point cannot remove its
-      # own root directory. Binding each member to their own access point is #3455.
+      # own root directory. This policy does not bind a member to their own access points:
+      # on ecs-ec2 the security groups do (EfsSg above), on ecs nothing does (SECURITY.md).
       # Limit: EFS admits an action on an Allow from the identity OR this policy, so a same-account
       # role whose identity policy grants the client actions can still mount without an access
       # point (no template role has such a grant). An explicit Deny would close that, but its
       # exception for the home task needs a key EFS may not enforce, or a root access point whose
-      # ARN would make this policy and the access point depend on each other (#3455).
+      # ARN would make this policy and the access point depend on each other.
       # This policy replaces any file-system policy set by hand outside the stack.
       FileSystemPolicy:
         Version: "2012-10-17"
@@ -696,6 +735,14 @@ Outputs:
     Description: Task role of 30-ingress's home task; the only principal FileSystemPolicy lets mount without an access point.
     Value: !GetAtt HomeOpsEfsRole.Arn
     Export: { Name: !Sub "${AWS::StackName}-HomeOpsEfsRoleArn" }
+  HomeOpsSgId:
+    Description: Security group of 30-ingress's home task.
+    Value: !Ref HomeOpsSg
+    Export: { Name: !Sub "${AWS::StackName}-HomeOpsSgId" }
+  EfsSgId:
+    Description: Security group of the EFS mount targets; 40-ec2-pool adds the slots' NFS rule to it.
+    Value: !Ref EfsSg
+    Export: { Name: !Sub "${AWS::StackName}-EfsSgId" }
   EfsBackupVaultName:
     Condition: IsRetain
     Description: AWS Backup vault holding the daily EFS recovery points (Persistence=retain).

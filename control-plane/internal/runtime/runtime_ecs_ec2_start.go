@@ -732,6 +732,17 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 		e.quarantineSlot(ctx, p, err)
 		return fmt.Errorf("mount home on %s: %w", p.instanceID, err)
 	}
+	if err := e.mountMemberEFS(ctx, p, prep); err != nil {
+		// Not the slot's doing as far as anyone can tell (errEFSMount), so no quarantine:
+		// a deployment whose file system does not admit its slots would otherwise lose one
+		// box per Start. The claim goes, so the workspace reads stopped and can be retried.
+		if errors.Is(err, errHomeLeftSlot) || errors.Is(err, errHomeLockLost) {
+			e.unclaimIfOurs(ctx, p)
+		} else {
+			e.unclaimUnlessSuperseded(ctx, p)
+		}
+		return fmt.Errorf("mount the EFS access points on %s: %w", p.instanceID, err)
+	}
 	if p.wipe != "" {
 		if err := e.wipeMountedHome(ctx, p); err != nil {
 			// The mark is still on the home, so the next Start tries again; until then the
@@ -840,6 +851,7 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 					log.Printf("ecs-ec2: unmounting %s on the quarantined slot %s before the detach: %v", p.volumeID, p.instanceID, err)
 				}
 				cancel()
+				e.umountMemberEFS(c, p.instanceID)
 				// Both locks: the mount lock keeps releases and mounts out, the claim lock (c)
 				// is what a Stop on another replica waits on. Losing either leaves the home
 				// attached for whoever holds the operation now.

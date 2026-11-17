@@ -131,7 +131,7 @@ VERSION=<v> ./update.sh --profile <p> --region <r> --dry-run
 
 ## `00-network` と `10-data` は上げない
 
-`00-network` と `10-data` は、この手順にも `update.sh` にも含まれません。どちらかが要るリリースは、リリースノートにそう書きます。下の [Control Plane のデータルート](#control-plane-のデータルート) と [v0.34.x から上げる](#v034x-から上げる) がその例です。
+`00-network` と `10-data` は、この手順にも `update.sh` にも含まれません。どちらかが要るリリースは、リリースノートにそう書きます。下の [Control Plane のデータルート](#control-plane-のデータルート)、[ワークスペースのタスクを NFS から切り離す](#ecs-ec2-ワークスペースのタスクを-nfs-から切り離す)、[v0.34.x から上げる](#v034x-から上げる) がその例です。
 
 ## パラメータを空に戻す
 
@@ -254,6 +254,31 @@ Control Plane は、内部 git のリポジトリとその LFS オブジェク�
 ### 戻す
 
 `30-ingress` を v0.45.x に戻すと、`WS_DATA` は `/tmp` に戻ります。その間に push されたものは `CpDataFileSystem` に残りますが応答されず、戻したあとの push はまたタスクのディスクに置かれます。`10-data` に足したものは、そのままで構いません。
+
+## `ecs-ec2`: ワークスペースのタスクを NFS から切り離す
+
+メンバーのログイン情報は EFS の、そのメンバー専用のアクセスポイントの下にあります。ファイルシステムの側ではどのメンバーのタスクかを見分けられないので、他のメンバーのアクセスポイント ID を知ったワークスペースは、それをマウントできました。このリリースからは、スロットがアクセスポイントをマウントし、タスクはディレクトリとして受け取るだけになります。これで、ファイルシステムをワークスペースのタスクから完全に閉じられます。Fargate（`WsRuntime=ecs`）ではできないので、`EfsWorkspaceIngress` は `allow` のままにします。
+
+手順は 2 段で、2 段目の時期は運用者が決めます。
+
+1. **`update.sh` の前に `10-data` を更新します**。チェンジセットを通し、パラメータは今のままにします。増えるのは Home タスク用のセキュリティグループと出力 2 つだけです。`update.sh` は、それを読めるまで "no readable HomeOpsSgId / EfsSgId output" で止まり、止まったときは何も変えません。そのあと `update.sh` をいつもどおり実行します。スロット用の NFS のルールは、`update.sh` が `40-ec2-pool` で足します。
+2. **すべてのワークスペースが新しいリリースで停止・起動を済ませたら、`10-data` の `EfsWorkspaceIngress` を `deny` にします**。アップグレード前から動いたままのワークスペースは、自分のネットワークインターフェース経由で EFS をマウントしているので、ルールが消えるとログイン情報を失います。先に確かめてください。
+
+   ```bash
+   aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
+     --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM \
+     --parameter-overrides EfsWorkspaceIngress=deny --no-execute-changeset
+   ```
+
+   チェンジセットを確かめ（変わるのはファイルシステムのセキュリティグループだけです）、実行します。
+
+| こうなったら | こうする |
+|---|---|
+| Start が失敗し、Control Plane のログに "mounting access point ... failed" が出る | スロットからマウントターゲットに届いていません。`40-ec2-pool` が更新されていないか、別のデータスタックを指しています（`DataStackName`）。スロットは隔離されません。直してからもう一度起動します |
+| このリリースより前に戻す | 先に `EfsWorkspaceIngress=allow` に戻します。古いリリースはタスクから EFS をマウントします |
+| 再起動していないワークスペースが残ったまま 2 段目を済ませた | NFS の接続が張り直されるまでは動き続け、そのあと再起動するまで `~/.claude` とログイン情報を失います。再起動します |
+
+詳しくは [PARAMETERS.md](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md) の "EFS: who may reach the mount targets" にあります。
 
 ## v0.34.x から上げる
 
