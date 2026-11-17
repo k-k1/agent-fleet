@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +46,10 @@ type ProvidedRouteStore interface {
 	SetProvidedRouteMemberPolicy(ctx context.Context, tenantID, source string, membersOnly bool, defaultMicro int64) error
 	GetProvidedRouteMember(ctx context.Context, membershipID, source string) (ProvidedRouteMember, error)
 	SetProvidedRouteMember(ctx context.Context, tenantID, membershipID, source string, granted bool, budgetMicro *int64) error
+	// ProvidedRouteRevision is an opaque digest of one tenant's grant, policy and member overrides
+	// for a source: it changes exactly when one of those values does, and a write that stores the
+	// same values leaves it as it was. The events stream diffs it (ADR 0129 D3 gate 4).
+	ProvidedRouteRevision(ctx context.Context, tenantID, source string) (string, error)
 
 	AdmitProvidedRouteCall(ctx context.Context, c ProvidedRouteCall, lim ProvidedRouteLimits) (ProvidedRouteAdmission, error)
 	SettleProvidedRouteCall(ctx context.Context, callID string, finalMicro int64) (bool, error)
@@ -417,6 +423,45 @@ func (s *SQL) SetProvidedRouteMember(ctx context.Context, tenantID, membershipID
 		ON CONFLICT(membership_id, source) DO UPDATE SET granted=excluded.granted, budget_micro=excluded.budget_micro,
 		updated_at=excluded.updated_at`, membershipID, tenantID, source, boolInt(granted), nullMicro(budgetMicro), NowTS())
 	return err
+}
+
+// ProvidedRouteRevision digests the values GetProvidedRouteGrant and GetProvidedRouteMember read
+// for one tenant, not their updated_at: updated_at has one-second resolution, so two saves in
+// the same second would leave a timestamp digest unchanged and the second one unannounced.
+func (s *SQL) ProvidedRouteRevision(ctx context.Context, tenantID, source string) (string, error) {
+	h := sha256.New()
+	var granted, membersOnly int
+	var ceiling sql.NullInt64
+	var def int64
+	err := s.db.QueryRowContext(ctx, `SELECT granted, ceiling_micro, members_only, member_default_micro
+		FROM provided_route_grant WHERE tenant_id=? AND source=?`, tenantID, source).Scan(&granted, &ceiling, &membersOnly, &def)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		fmt.Fprint(h, "grant:none;")
+	case err != nil:
+		return "", err
+	default:
+		fmt.Fprintf(h, "grant:%d,%d,%t,%d,%d;", granted, ceiling.Int64, ceiling.Valid, membersOnly, def)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT membership_id, granted, budget_micro FROM provided_route_member
+		WHERE tenant_id=? AND source=? ORDER BY membership_id`, tenantID, source)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var g int
+		var b sql.NullInt64
+		if err := rows.Scan(&id, &g, &b); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "member:%s,%d,%d,%t;", id, g, b.Int64, b.Valid)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)[:8]), nil
 }
 
 // ProvidedRouteCall is one call's reservation row (D4).

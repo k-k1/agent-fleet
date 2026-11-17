@@ -15,7 +15,7 @@
 // so there is no need for the WS-style query-param auth special case.
 import { rel } from "../api/client.ts";
 
-export type PushStream = "workspace" | "sessions" | "stats" | "notifications" | "workitems" | "engines";
+export type PushStream = "workspace" | "sessions" | "stats" | "notifications" | "workitems" | "engines" | "provided_routes";
 // data is exactly the per-stream REST response shape; validating it is the applying side's
 // (the store's) job.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -8,11 +8,12 @@
 //
 // No PUT here carries a revision, so each save re-reads the stored values first and refuses when
 // they moved since the page loaded; a save racing in between is not caught (#4367).
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errDetail, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
-import { useReportDirty } from "../parts/dirtyScope.tsx";
-import { useShowView } from "../parts/tabbedViews.tsx";
+import { DirtyScope, useReportDirty } from "../parts/dirtyScope.tsx";
+import { useShowView, useViewActive } from "../parts/tabbedViews.tsx";
+import { onProvidedRoutesChanged } from "./providedRevision.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import {
   isOff,
@@ -30,7 +31,7 @@ import {
 } from "./providedRoutes.ts";
 
 /** useProvided reads one provided-routes path. null while the first read is in flight. */
-export function useProvided<T>(path: string, parse: (d: unknown) => T | null) {
+export function useProvided<T>(path: string, parse: (d: unknown) => T | null, live = false, held = false) {
   const tr = useT();
   const [load, setLoad] = useState<Load<T> | null>(null);
   const read = useCallback(async (): Promise<Load<T>> => {
@@ -48,6 +49,42 @@ export function useProvided<T>(path: string, parse: (d: unknown) => T | null) {
   useEffect(() => {
     reload();
   }, [reload]);
+  // live: read again when the events stream says this tenant's grant or budgets moved. A hidden
+  // view does not read on its own: it owes one read and pays it when shown. A failed background
+  // read keeps what is drawn, and bursts coalesce into one more read after the one in flight. A
+  // view holding unsaved edits (held) owes the read the same way: the editors are keyed on the
+  // loaded values and would start again from them, discarding what was typed.
+  const active = useViewActive();
+  const ready = active && !held;
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
+  const owed = useRef(false);
+  const flight = useRef<"idle" | "running" | "again">("idle");
+  const refresh = useCallback(async () => {
+    if (flight.current !== "idle") {
+      flight.current = "again";
+      return;
+    }
+    do {
+      flight.current = "running";
+      const l = await read();
+      if (l.state !== "failed") setLoad(l);
+    } while ((flight.current as string) === "again");
+    flight.current = "idle";
+  }, [read]);
+  useEffect(() => {
+    if (!live) return;
+    return onProvidedRoutesChanged(() => {
+      if (readyRef.current) void refresh();
+      else owed.current = true;
+    });
+  }, [live, refresh]);
+  useEffect(() => {
+    if (live && ready && owed.current) {
+      owed.current = false;
+      void refresh();
+    }
+  }, [live, ready, refresh]);
   /** peek reads the stored value now without replacing the drawn one: the pre-save check. */
   const peek = useCallback(async () => {
     const l = await read();
@@ -489,12 +526,7 @@ function MemberRow({
  *  grant and the tenant's monthly pool: edited here and only here (ADR 0138 D16, note of
  *  2026-11-17); a tenant administrator sees them read-only in the status line. onServed hears
  *  whether the CP serves provided routes once the first read answers. */
-export function TenantProvidedRoutesView({
-  slug,
-  onServed,
-  ruleStops,
-  isSuper = false,
-}: {
+interface ViewProps {
   slug: string;
   /** The caller is the super_admin: the grant card is drawn (ADR 0138 D16, note of 2026-11-17). */
   isSuper?: boolean;
@@ -503,10 +535,24 @@ export function TenantProvidedRoutesView({
    *  it is allowed, undefined where that is not known. A budget does not reopen it (ADR 0138 D7a:
    *  the policy filters first, the budget only within what it allows). */
   ruleStops?: string;
-}) {
+}
+
+export function TenantProvidedRoutesView(props: ViewProps) {
+  // The editors report to the nearest DirtyScope. This one folds them for the live read and passes
+  // the same flag on to the page's scope, so the tab's mark still shows.
+  const [held, setHeld] = useState(false);
+  useReportDirty(held);
+  return (
+    <DirtyScope onChange={setHeld}>
+      <TenantProvidedRoutesBody {...props} held={held} />
+    </DirtyScope>
+  );
+}
+
+function TenantProvidedRoutesBody({ slug, onServed, ruleStops, isSuper = false, held }: ViewProps & { held: boolean }) {
   const tr = useT();
   const path = `api/admin/tenants/${encodeURIComponent(slug)}/provided-routes/deployment`;
-  const { load, reload, peek } = useProvided(path, parseProvidedTenant);
+  const { load, reload, peek } = useProvided(path, parseProvidedTenant, true, held);
   const [warnings, setWarnings] = useState<string[]>([]);
   const showRestrictions = useShowView("restrictions");
   // Whether the CP serves provided routes at all, for a page that gives them a tab: a failed read

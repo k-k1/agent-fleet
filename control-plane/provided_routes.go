@@ -16,7 +16,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/providedroutes"
@@ -242,6 +244,7 @@ func (a providedRouteAdmin) putGrant(w http.ResponseWriter, r *http.Request) {
 		writeRouteAdminErr(w, err)
 		return
 	}
+	invalidateProvidedRevision(t.ID)
 	a.audit(r, ident, t.ID, "provided_route.deployment_grant", t.Slug,
 		fmt.Sprintf("granted=%t ceiling_micro=%s", in.Granted, microDetail(in.CeilingMicro)))
 	writeJSON(w, http.StatusOK, grantSaved{in, nonNil(warn)})
@@ -261,6 +264,7 @@ func (a providedRouteAdmin) putPolicy(w http.ResponseWriter, r *http.Request) {
 		writeRouteAdminErr(w, err)
 		return
 	}
+	invalidateProvidedRevision(t.ID)
 	a.audit(r, ident, t.ID, "provided_route.deployment_policy", t.Slug,
 		fmt.Sprintf("members_only=%t member_default_micro=%d", in.MembersOnly, in.MemberDefaultMicro))
 	writeJSON(w, http.StatusOK, policySaved{in, nonNil(warn)})
@@ -298,6 +302,7 @@ func (a providedRouteAdmin) putMember(w http.ResponseWriter, r *http.Request) {
 		writeRouteAdminErr(w, err)
 		return
 	}
+	invalidateProvidedRevision(t.ID)
 	a.audit(r, ident, t.ID, "provided_route.deployment_member", target.UserKey,
 		fmt.Sprintf("granted=%t budget_micro=%s", in.Granted, microDetail(in.BudgetMicro)))
 	writeJSON(w, http.StatusOK, memberSaved{in, nonNil(warn)})
@@ -410,4 +415,80 @@ func agentPolicyRefusal(ctx context.Context, st store.Store, tenantID, kind stri
 		return &apiError{e.Status, e.Code, e.Message}
 	}
 	return nil
+}
+
+// --- the events stream's provided_routes frame ---
+
+// The events stream's "provided_routes" frame (ADR 0129 D3, the
+// fourth place: the Console is told when a grant or a budget changes).
+//
+// The events stream is poll-and-diff, so there is no publish call: each tick reads one opaque
+// revision of the subscriber's own tenant and a frame goes out only when it changed. That also
+// reaches a subscriber on another CP replica, which an in-process publish from the PUT could
+// not. The frame is `{"rev":"<digest>"}` and nothing else: no amounts, ids or names, and it is
+// built from the subscriber's own tenant alone, so it cannot name another tenant's change; only
+// that tenant's admins (and super_admins) are sent it.
+
+// providedRevisionTTL bounds the per-tenant read the way tenantEngineLimitsTTL does: one query
+// pair per tenant per interval, not per open tab per tick. A save on this replica drops the
+// entry, so only a save on another replica waits it out.
+const providedRevisionTTL = 3 * time.Second
+
+type providedRevisionEntry struct {
+	mu  sync.Mutex
+	at  time.Time
+	rev string
+}
+
+var providedRevisionCache sync.Map // tenantID -> *providedRevisionEntry
+
+// providedAdminTTL bounds the role check the same way: the frame is a signal about values only
+// tenant admins may read (GET .../provided-routes/deployment is tenant_admin or super_admin), so
+// a plain member must get none, not even its timing.
+const providedAdminTTL = 3 * time.Second
+
+type providedAdminEntry struct {
+	at time.Time
+	ok bool
+}
+
+var providedAdminCache sync.Map // identity id + "/" + tenant id -> providedAdminEntry
+
+func providedAdminFor(ctx context.Context, mgr *manager, ident store.Identity, tenantID string) bool {
+	key := ident.ID + "/" + tenantID
+	if v, ok := providedAdminCache.Load(key); ok {
+		if e := v.(providedAdminEntry); time.Since(e.at) < providedAdminTTL {
+			return e.ok
+		}
+	}
+	ok := mgr.tenantAdminFor(ctx, ident, tenantID)
+	providedAdminCache.Store(key, providedAdminEntry{at: time.Now(), ok: ok})
+	return ok
+}
+
+// providedRoutesPayload is the stream's frame for the subscriber's own tenant. ok is false when
+// the subscriber may not read the tenant's provided routes, has no tenant, or the revision cannot
+// be read (a store error drops this tick only).
+func providedRoutesPayload(ctx context.Context, mgr *manager, ident store.Identity, tenantID string) (map[string]any, bool) {
+	if tenantID == "" || mgr == nil || mgr.store == nil || !providedAdminFor(ctx, mgr, ident, tenantID) {
+		return nil, false
+	}
+	v, _ := providedRevisionCache.LoadOrStore(tenantID, &providedRevisionEntry{})
+	e := v.(*providedRevisionEntry)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.rev == "" || time.Since(e.at) >= providedRevisionTTL {
+		rev, err := mgr.store.ProvidedRouteRevision(ctx, tenantID, providedroutes.SourceDeployment)
+		if err != nil {
+			return nil, false
+		}
+		e.rev, e.at = rev, time.Now()
+	}
+	return map[string]any{"rev": e.rev}, true
+}
+
+// invalidateProvidedRevision drops one tenant's cached revision after a committed write, so the
+// next tick reads the stored values instead of waiting out providedRevisionTTL.
+func invalidateProvidedRevision(tenantID string) {
+	providedRevisionCache.Delete(tenantID)
 }

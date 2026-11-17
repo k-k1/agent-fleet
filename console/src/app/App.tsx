@@ -11,6 +11,7 @@ import { reloadCloudProfiles } from "./cloudProfilesReload.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useT } from "../lib/i18n/index.ts";
 import { startPushChannel, restartPush } from "../core/push/events.ts";
+import { forgetProvidedRev } from "../features/settings/tenant/providedRevision.ts";
 import { wirePushApply } from "../core/push/wire.ts";
 import { PushPausedNote } from "./PushPausedNote.tsx";
 import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspace.ts";
@@ -449,6 +450,7 @@ export function App() {
     // Tear down the old tenant's push stream before resetting the notification store; the
     // other order lets one of its frames slip in after the reset.
     restartPush();
+    forgetProvidedRev();
     useNotificationStore.getState().reset();
     void useNotificationStore.getState().refresh();
     // The member's UI state is per membership (ADR 0114), so a tenant switch reads it again.

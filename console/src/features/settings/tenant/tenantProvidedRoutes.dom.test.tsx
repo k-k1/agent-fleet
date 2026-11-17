@@ -19,6 +19,8 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
 import { DirtyScope } from "../parts/dirtyScope.tsx";
+import { TabbedViews } from "../parts/tabbedViews.tsx";
+import { noteProvidedRev, resetProvidedRev } from "./providedRevision.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 
 const PATH = "api/admin/tenants/acme/provided-routes/deployment";
@@ -392,5 +394,80 @@ describe("the super_admin's grant card", () => {
     await click(btn(grant(), "保存"));
     expect(apiJSON).not.toHaveBeenCalled();
     expect(grant().querySelector("[role=alert]")).not.toBeNull();
+  });
+});
+
+describe("tenant provided routes follow the events stream", () => {
+  const seenCalls = () => api.mock.calls.filter((c) => c[0] === PATH).length;
+  const frame = async (rev: string) => {
+    await act(async () => {
+      noteProvidedRev({ rev });
+    });
+    await flush();
+    await flush();
+  };
+  beforeEach(() => resetProvidedRev());
+
+  it("reads again when the revision moves, not on the baseline or a repeat", async () => {
+    await mount();
+    expect(seenCalls()).toBe(1);
+    await frame("r1");
+    await frame("r1");
+    expect(seenCalls()).toBe(1);
+    api.mockImplementation(() => Promise.resolve({ ...VIEW(), spent_micro: 2_250_000 }));
+    await frame("r2");
+    expect(seenCalls()).toBe(2);
+    expect(host!.textContent).toContain("≈ $2.25");
+  });
+
+  it("keeps what is drawn when the background read fails", async () => {
+    await mount();
+    await frame("r1");
+    api.mockRejectedValue(new Error("down"));
+    await frame("r2");
+    expect(host!.querySelector(".prov-policy")).not.toBeNull();
+    expect(host!.querySelector("[role=alert]")).toBeNull();
+  });
+
+  it("does not replace a draft being typed: the read is owed until the edits are gone (#4464)", async () => {
+    await mount();
+    const calls = seenCalls();
+    await frame("r1");
+    await type(policy().querySelector<HTMLInputElement>("input")!, "12");
+    api.mockImplementation(() => Promise.resolve({ ...VIEW(), spent_micro: 2_250_000 }));
+    await frame("r2");
+    expect(seenCalls()).toBe(calls);
+    expect(policy().querySelector<HTMLInputElement>("input")!.value).toBe("12");
+    // Saving leaves no draft: the owed read is paid.
+    await click(btn(policy(), "保存"));
+    expect(seenCalls()).toBeGreaterThan(calls);
+  });
+
+  it("a hidden view does not read on its own and pays one read when shown", async () => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <TabbedViews
+          label="t"
+          prefix="t"
+          views={[
+            { key: "a", label: "A", node: <div>a</div> },
+            { key: "b", label: "B", node: <TenantProvidedRoutesView slug="acme" /> },
+          ]}
+        />,
+      );
+    });
+    await flush();
+    const base = seenCalls();
+    await frame("r1");
+    await frame("r2");
+    await frame("r3");
+    expect(seenCalls()).toBe(base);
+    await click(document.getElementById("t-tab-b") as HTMLElement);
+    expect(seenCalls()).toBe(base + 1);
+    await frame("r4");
+    expect(seenCalls()).toBe(base + 2);
   });
 });
