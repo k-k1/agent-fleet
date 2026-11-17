@@ -88,6 +88,11 @@ type QueueDeliveryItem struct {
 	Provenance     string                  `json:"provenance"`
 	Producer       string                  `json:"producer"`
 	ProducerOrigin string                  `json:"producerOrigin"`
+	// SourceProvenance and DerivedFrom are set on a curator item only: the effective provenance
+	// of the notes a tidy run derived it from, and how many there were. Producer and
+	// ProducerOrigin are then the sources'.
+	SourceProvenance string `json:"sourceProvenance,omitempty"`
+	DerivedFrom      int    `json:"derivedFrom,omitempty"`
 }
 
 // QueueDeliveryReference is the typed pointer {provider, key, url} of an item. All three are set
@@ -104,13 +109,17 @@ type QueueDeliveryAttachment struct {
 	Name string `json:"name"`
 }
 
-// The provenances a delivered item may carry (ADR 0137 §3). inbox is never fired, and curator
-// belongs to a later step, so neither is accepted here.
+// The provenances a delivered item may carry (ADR 0137 §3). inbox is never fired, so it is not
+// accepted here.
 const (
 	queueProvenanceMember    = "member"
 	queueProvenanceWorkspace = "workspace"
 	queueProvenanceMCP       = "mcp"
+	queueProvenanceCurator   = "curator"
 )
+
+// queueDerivedFromMax bounds the source count a curator item names.
+const queueDerivedFromMax = 100
 
 // queueRefusal is a queue create that cannot be composed: the status, code and message it is
 // answered with.
@@ -205,8 +214,15 @@ func checkQueueDelivery(d *QueueDelivery) *queueRefusal {
 		}
 		switch it.Provenance {
 		case queueProvenanceMember, queueProvenanceWorkspace, queueProvenanceMCP:
+			if it.SourceProvenance != "" || it.DerivedFrom != 0 {
+				return queueBad("queue_delivery.items[%d]: sourceProvenance and derivedFrom belong to a curator item", i)
+			}
+		case queueProvenanceCurator:
+			if ref := checkCuratorItem(i, it); ref != nil {
+				return ref
+			}
 		default:
-			return queueBad("queue_delivery.items[%d].provenance must be member, workspace or mcp", i)
+			return queueBad("queue_delivery.items[%d].provenance must be member, workspace, mcp or curator", i)
 		}
 		if len(it.Body) > queueItemBodyMax {
 			return queueBad("queue_delivery.items[%d].body is longer than %d bytes", i, queueItemBodyMax)
@@ -241,6 +257,23 @@ func checkQueueDelivery(d *QueueDelivery) *queueRefusal {
 				return queueBad("queue_delivery text must be UTF-8")
 			}
 		}
+	}
+	return nil
+}
+
+// checkCuratorItem refuses a curator item that is not what a tidy run makes: a plain text note
+// that names what it was derived from, with no reference, path or attachment of its own.
+func checkCuratorItem(i int, it QueueDeliveryItem) *queueRefusal {
+	switch it.SourceProvenance {
+	case queueProvenanceMember, queueProvenanceWorkspace, queueProvenanceMCP:
+	default:
+		return queueBad("queue_delivery.items[%d].sourceProvenance must be member, workspace or mcp", i)
+	}
+	if it.DerivedFrom < 1 || it.DerivedFrom > queueDerivedFromMax {
+		return queueBad("queue_delivery.items[%d].derivedFrom must be 1 to %d", i, queueDerivedFromMax)
+	}
+	if it.Kind != "text" || it.Reference != nil || it.RefPath != "" || len(it.Attachments) > 0 {
+		return queueBad("queue_delivery.items[%d]: a curator item is a text note with no reference, path or attachment", i)
 	}
 	return nil
 }
@@ -367,15 +400,43 @@ func queueOriginLine(it QueueDeliveryItem) string {
 	case queueProvenanceMember:
 		return "from your user, in the Console"
 	case queueProvenanceWorkspace:
-		line := "from session " + queueToken(it.Producer)
-		if it.ProducerOrigin != "" {
-			line += " (origin " + queueToken(it.ProducerOrigin) + ")"
-		}
-		return line + ", by add_memo"
+		return "from session " + queueSessionSource(it) + ", by add_memo"
 	case queueProvenanceMCP:
 		return "from MCP connection " + queueToken(it.Producer)
+	case queueProvenanceCurator:
+		return queueCuratorLine(it)
 	}
 	return "from an unknown origin"
+}
+
+func queueSessionSource(it QueueDeliveryItem) string {
+	s := queueToken(it.Producer)
+	if it.ProducerOrigin != "" {
+		s += " (origin " + queueToken(it.ProducerOrigin) + ")"
+	}
+	return s
+}
+
+// queueCuratorLine says that Agent Fleet derived the note, from how many notes and of what
+// origin: the structured fields only, never the sources' text. An origin it does not know is
+// named unknown, not guessed.
+func queueCuratorLine(it QueueDeliveryItem) string {
+	n := strconv.Itoa(it.DerivedFrom) + " notes"
+	if it.DerivedFrom == 1 {
+		n = "1 note"
+	}
+	var from string
+	switch it.SourceProvenance {
+	case queueProvenanceMember:
+		from = "your user added in the Console"
+	case queueProvenanceWorkspace:
+		from = "session " + queueSessionSource(it) + " added by add_memo"
+	case queueProvenanceMCP:
+		from = "MCP connection " + queueToken(it.Producer) + " added"
+	default:
+		from = "of an unknown origin"
+	}
+	return "tidied by Agent Fleet from " + n + " " + from
 }
 
 // queueQuote prefixes every line of s with "> ". Every character a reader could take for a line

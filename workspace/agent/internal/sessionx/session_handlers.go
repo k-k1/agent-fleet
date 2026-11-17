@@ -289,6 +289,10 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		// and names the session's branch from the single referenced item (ADR 0137 §4). The
 		// Control Plane sends a delivery that holds a reference only to an Agent that says so.
 		"queueRefs": queueRefsVersion,
+		// queueTidy says both that POST /memos/tidy exists and that a delivery may carry a
+		// curator item (a message a tidy run derived). The Control Plane sends neither to an
+		// Agent that does not say so, and reads the marker with >=.
+		"queueTidy": queueTidyVersion,
 	}
 	// actMark orders this answer against the acts of a person that follow it: a retire sent with
 	// ifNoActSince = this value leaves a session such an act touched. Omitted when it could not be
@@ -312,6 +316,9 @@ const queueReportVersion = 1
 
 // queueRefsVersion is the value of the list envelope's queueRefs marker.
 const queueRefsVersion = 1
+
+// queueTidyVersion is the value of the list envelope's queueTidy marker.
+const queueTidyVersion = 1
 
 // HandleSessionCatalog is the sharing inventory. Unlike the ordinary list it
 // includes archived rows, but only kinds with a structured transcript. With ?since= it

@@ -172,6 +172,13 @@ func denyAllModel(feature string, tier OneShotTier, kind string) string {
 	return strings.TrimSpace(selected)
 }
 
+// DenyAllResult is a deny-all reply with the backend and model that produced it.
+type DenyAllResult struct {
+	Reply string
+	Kind  string
+	Model string
+}
+
 // OneShotDenyAll runs one prompt on a backend that is verified to have no tool and no MCP
 // server, and returns the reply. feature picks the pin as for OneShotHeadless; the ledger row is
 // written from here under the caller's usagex tag. It makes ONE model call: retry policy
@@ -179,17 +186,33 @@ func denyAllModel(feature string, tier OneShotTier, kind string) string {
 //
 // Errors wrap ErrDenyAllUnavailable when nothing was sent to a model.
 func OneShotDenyAll(ctx context.Context, feature string, tier OneShotTier, persona, prompt string) (reply string, err error) {
+	res, err := OneShotDenyAllResult(ctx, feature, tier, persona, prompt)
+	return res.Reply, err
+}
+
+// OneShotDenyAllResult is OneShotDenyAll for a caller that reports which backend and model ran.
+// Kind and Model are set on every return that got as far as choosing them, so the answer names
+// the one that was chosen, not one resolved a second time.
+func OneShotDenyAllResult(ctx context.Context, feature string, tier OneShotTier, persona, prompt string) (DenyAllResult, error) {
 	kind, err := resolveDenyAllKind(feature, tier)
 	if err != nil {
-		return "", err
+		return DenyAllResult{}, err
 	}
-	selected := denyAllModel(feature, tier, kind)
+	res := DenyAllResult{Kind: kind, Model: denyAllModel(feature, tier, kind)}
 
 	run := denyAllBackends[kind]
 	if run == nil {
-		return "", fmt.Errorf("%w: %q has no verified deny-all route", ErrDenyAllUnavailable, kind)
+		return res, fmt.Errorf("%w: %q has no verified deny-all route", ErrDenyAllUnavailable, kind)
 	}
-	return run(ctx, persona, prompt, selected)
+	res.Reply, err = run(ctx, persona, prompt, res.Model)
+	return res, err
+}
+
+// PolicyRefusal is the status and code of a credential policy refusal or cancel carried by err
+// (route_forbidden, policy_unconfirmed, agent_disabled), with ok false for any other error.
+func PolicyRefusal(err error) (status int, code string, ok bool) {
+	status, code = policyErrCode(err)
+	return status, code, code != ""
 }
 
 // runClaudeDenyAll is claude's runner: probe with the same argv and environment and a prompt that

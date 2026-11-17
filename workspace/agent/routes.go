@@ -8,6 +8,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memconsol"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memotidy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
@@ -258,6 +259,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /memos", memorelay.HandleList)
 	mux.HandleFunc("POST /memos", memorelay.HandleCreate)
 	mux.HandleFunc("PATCH /memos/{id}", memorelay.HandleUpdate)
+	// A queue's tidy run (ADR 0137 §8): the one deny-all model call over the pending notes. The
+	// Control Plane's dispatcher calls it directly; no browser relay exists for it.
+	mux.HandleFunc("POST /memos/tidy", memotidy.HandleTidy)
 	mux.HandleFunc("GET /sessions/{name}/status", sessionx.HandleSessionStatus)
 	mux.HandleFunc("GET /sessions/{name}/output", sessionx.HandleSessionOutput)
 	mux.HandleFunc("GET /sessions/{name}/ssm-login", sessionx.HandleSSMLoginStatus)
