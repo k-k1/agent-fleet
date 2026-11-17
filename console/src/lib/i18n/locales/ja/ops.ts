@@ -340,6 +340,8 @@ export const ops = {
   "cost.role_home": "ホームボリューム",
   "cost.role_golden": "ゴールデンスナップショット",
   "cost.role_backup": "バックアップ",
+  "cost.role_egress_gateway": "egress ゲートウェイ",
+  "cost.role_egress_archive": "egress アーカイブ",
   "uptime.my_title": "ワークスペースが動いていた時間",
   "uptime.my_intro":
     "1 マスが 1 時間です。灰色は停止していた時間、濃いほど同時に開いていたセッションが多い時間です。金額ではありません。その日のクラウド費用がそうなっている理由の方です。",

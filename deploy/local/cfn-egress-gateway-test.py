@@ -156,6 +156,7 @@ def check(net, ingress, platform, doc_lines):
         elif res[rid].get("Condition") != cond:
             f.append("%s is not behind %s" % (rid, cond))
     f += check_eip(net)
+    f += check_cost_role(net)
     for oid in ("EgressProxyAddr", "EgressTokenSecretArn", "GatewayEipAddress"):
         if net.get("Outputs", {}).get(oid, {}).get("Condition") != "GatewayOn":
             f.append("output %s exists without GatewayOn" % oid)
@@ -532,6 +533,34 @@ def check_hardening(ud):
     return f
 
 
+def check_cost_role(net):
+    """#4440: what the gateway bills carries af-role: egress-gateway (the cost view's own row).
+
+    The instance, its root volume, its device-0 interface, GatewayEni and a GatewayEip this stack creates. Never the NAT
+    gateway or NatEip: they serve the CP and the slots too, so a role there would mislabel them.
+    """
+    f = []
+    res = net["Resources"]
+    want = {"Key": "af-role", "Value": "egress-gateway"}
+
+    def tagged(tags):
+        return want in (tags or [])
+
+    props = lambda rid: res.get(rid, {}).get("Properties", {})
+    for rid in ("GatewayEni", "GatewayEip"):
+        if not tagged(props(rid).get("Tags")):
+            f.append("%s lacks the af-role: egress-gateway tag (its cost lands under 'No role tag')" % rid)
+    specs = {t.get("ResourceType"): t.get("Tags") for t in
+             props("GatewayLaunchTemplate").get("LaunchTemplateData", {}).get("TagSpecifications", [])}
+    for kind in ("instance", "volume", "network-interface"):  # the last is device 0; believed to carry the boot-time public IPv4 charge (unverified, #4440)
+        if not tagged(specs.get(kind)):
+            f.append("the launch template's %s tags lack af-role: egress-gateway" % kind)
+    for rid in ("Nat", "NatEip"):
+        if any(t.get("Key") == "af-role" for t in props(rid).get("Tags") or []):
+            f.append("%s carries af-role, but it also serves the CP and the slots" % rid)
+    return f
+
+
 def check_eip(net):
     """GatewayEipAllocationId (#2728): a handed-in workspace address is used, never owned."""
     f = []
@@ -695,6 +724,16 @@ def main():
     def r(t):
         return t["Resources"]
 
+    def untag(tags):
+        # Drop the af-role tag by value, so a reordered tag list cannot make a control fail for
+        # another reason.
+        tags[:] = [x for x in tags if x.get("Key") != "af-role"]
+
+    def untag_spec(t, kind):
+        for sp in r(t)["GatewayLaunchTemplate"]["Properties"]["LaunchTemplateData"]["TagSpecifications"]:
+            if sp.get("ResourceType") == kind:
+                untag(sp["Tags"])
+
     def role_stmts(t):
         return r(t)["GatewayRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
 
@@ -756,6 +795,12 @@ def main():
         ("host interface takes inbound", m(lambda t: r(t)["GatewayHostSg"]["Properties"].update(
             SecurityGroupIngress=[{"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "0.0.0.0/0"}]))),
         ("source/dest check on", m(lambda t: r(t)["GatewayEni"]["Properties"].update(SourceDestCheck=True))),
+        ("gateway interface untagged", m(lambda t: untag(r(t)["GatewayEni"]["Properties"]["Tags"]))),
+        ("gateway address untagged", m(lambda t: r(t)["GatewayEip"]["Properties"].update(Tags=[]))),
+        ("root volume untagged", m(lambda t: untag_spec(t, "volume"))),
+        ("device-0 interface untagged", m(lambda t: untag_spec(t, "network-interface"))),
+        ("instance untagged", m(lambda t: untag_spec(t, "instance"))),
+        ("NAT address tagged as the gateway", m(lambda t: r(t)["NatEip"]["Properties"].setdefault("Tags", []).append({"Key": "af-role", "Value": "egress-gateway"}))),
         ("IMDSv1 allowed", m(lambda t: r(t)["GatewayLaunchTemplate"]["Properties"]["LaunchTemplateData"]["MetadataOptions"].update(HttpTokens="optional"))),
         ("two instances", m(lambda t: r(t)["GatewayAsg"]["Properties"].update(MaxSize="2"))),
         ("paused group with MaxSize 0 under the rolling update", m(lambda t: r(t)["GatewayAsg"]["Properties"].update(MaxSize={"!If": ["GatewayUp", "1", "0"]}))),

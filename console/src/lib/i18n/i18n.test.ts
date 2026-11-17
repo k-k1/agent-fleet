@@ -46,6 +46,13 @@ describe("i18n runtime", () => {
     expect(en["err.title_empty"]).toBeTruthy();
   });
 
+  it("has its own member-facing text for a named assistant that does not exist", () => {
+    // POST /chat/ask answers 404 chat_assistant_not_found; errText shows err.<code>, not the generic bad_request line.
+    expect(tMaybe("err.chat_assistant_not_found")).toBe(ja["err.chat_assistant_not_found"]);
+    expect(ja["err.chat_assistant_not_found"]).not.toBe(ja["err.bad_request"]);
+    expect(en["err.chat_assistant_not_found"]).not.toBe(en["err.bad_request"]);
+  });
+
   it("exposes ja + en as supported locales", () => {
     expect(SUPPORTED_LOCALES).toContain("ja");
     expect(SUPPORTED_LOCALES).toContain("en");

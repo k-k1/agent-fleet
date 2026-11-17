@@ -28,6 +28,10 @@ func TestCostRoleGroupPlacesEveryRoleThisProductWrites(t *testing.T) {
 		EC2RoleGolden:          CostRoleGroupPool,
 		EC2RoleGoldenCandidate: CostRoleGroupPool,
 		EC2RoleGoldenRejected:  CostRoleGroupPool,
+		// 00-network.yaml's gateway and 10-data.yaml's archive bucket carry their own tag
+		// (#4440): base infrastructure, not a value this build does not know.
+		"egress-gateway": CostRoleGroupPlatform,
+		"egress-archive": CostRoleGroupPlatform,
 		// No af-role at all: NAT, ALB, RDS, Route53, tax. Not a gap — these cannot carry
 		// one, and naming that is the point of the row.
 		"": CostRoleGroupPlatform,

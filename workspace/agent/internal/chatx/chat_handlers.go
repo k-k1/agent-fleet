@@ -222,10 +222,13 @@ type chatAskReq struct {
 }
 
 // HandleChatAsk runs ONE advisory turn with the named assistant and returns its reply
-// text. The consult is stateless and forced tools=none: with no tool grant the sub-turn
+// text; with no assistant named it runs a plain turn (no assistant persona, no knowledge; the
+// generic chat persona and output rules still apply). The turn
+// is stateless and forced tools=none: with no tool grant the sub-turn
 // attaches no MCP, so it cannot write to sessions and cannot itself call ask_assistant —
 // recursion and privilege-escalation are ruled out by construction (single hop, advice
-// only). Reached only via the local Agent REST (mcp_stdio → localhost); not CP-exposed.
+// only). Reached from ask_assistant (mcp_stdio → localhost) and, through the Control Plane's
+// held relay, from the Console's one-shot callers.
 func HandleChatAsk(w http.ResponseWriter, r *http.Request) {
 	var req chatAskReq
 	if !httpx.DecodeJSON(w, r, &req) {
@@ -236,16 +239,25 @@ func HandleChatAsk(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatPromptEmpty, "prompt is empty")
 		return
 	}
-	a, err := assistants.Resolve(strings.TrimSpace(req.Assistant), assistantDeps())
-	if err != nil {
-		httpx.WriteErr(w, http.StatusNotFound, errCodeChatAssistantNotFound, "assistant not found")
-		return
-	}
-	// Ephemeral, non-persisted conversation carrying the assistant's persona/model/knowledge
-	// but NO tools (advisory only).
-	c := &ChatConversation{
-		ID: RandUUID(), Agent: a.Agent, Model: ResolveChatModel(a.Agent, a.Model),
-		Persona: a.Persona, Tools: assistants.ToolsNone, Knowledge: a.Knowledge,
+	// The Console's one-shot callers (memo tidy, spoken summary) name no assistant: they want a
+	// plain advisory turn, and a persona would bend an answer that must be JSON. A name that
+	// matches nothing stays a 404 so ask_assistant's model learns it asked for a stranger.
+	c := &ChatConversation{ID: RandUUID(), Tools: assistants.ToolsNone}
+	assistantName := ""
+	if name := strings.TrimSpace(req.Assistant); name != "" {
+		a, err := assistants.Resolve(name, assistantDeps())
+		if err != nil {
+			httpx.WriteErr(w, http.StatusNotFound, errCodeChatAssistantNotFound, "assistant not found")
+			return
+		}
+		// Ephemeral, non-persisted conversation carrying the assistant's persona/model/knowledge
+		// but NO tools (advisory only).
+		c.Agent, c.Model = a.Agent, ResolveChatModel(a.Agent, a.Model)
+		c.Persona, c.Knowledge = a.Persona, a.Knowledge
+		assistantName = a.Name
+	} else {
+		c.Agent = PreferredHeadlessAgent()
+		c.Model = ResolveChatModel(c.Agent, "")
 	}
 	prov := ChatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 	actualAgent := ChatProviderKind(c, prov)
@@ -265,7 +277,7 @@ func HandleChatAsk(w http.ResponseWriter, r *http.Request) {
 		writeChatErr(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"assistant": a.Name, "reply": reply})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"assistant": assistantName, "reply": reply})
 }
 
 func HandleChatGet(w http.ResponseWriter, r *http.Request) {

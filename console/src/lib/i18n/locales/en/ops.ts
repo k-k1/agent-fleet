@@ -343,6 +343,8 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "cost.role_home": "Home volumes",
   "cost.role_golden": "Golden snapshot",
   "cost.role_backup": "Backups",
+  "cost.role_egress_gateway": "Egress gateway",
+  "cost.role_egress_archive": "Egress archive",
   "uptime.my_title": "When your workspace was running",
   "uptime.my_intro":
     "Each square is one hour: grey means the workspace was stopped, warmer means more sessions were open. Nothing here is a charge. It is what your workspace was doing, which is usually the reason a day's cloud cost looks the way it does.",

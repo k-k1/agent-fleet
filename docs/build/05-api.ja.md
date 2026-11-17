@@ -82,7 +82,8 @@ membership 検証（§5.4）。「中継」は CP が呼び出しをそのまま
   20 秒ごとに `: keepalive` コメントを送り、最後に
   `data: {"status": <ステータス>, "body": <JSON 本文>}` を 1 フレーム返す。ヘッダが無ければ
   素の JSON（MCP の `ask_assistant` ツールはこちら）。CP は flush する stream 中継で通す
-  （Agent 側は `httpx.HeldOpen`）。
+  （Agent 側は `httpx.HeldOpen`）。リクエスト本文はストリーム開始の前に（最大 2 MiB、超過は
+  最終フレームで 413）読み切る。HTTP/1 サーバはヘッダを書いた時点で未読の本文を捨てるため。
 - `GET /api/workspace/stats` は稼働中なら `{running: true, mem_used, mem_max?, cpu_pct?,
   oom_kill_total?, oom_recent?}` を返す。`docker` では CP がホストからコンテナの cgroup を読み、
   それ以外では Agent の `GET /workspace/stats` に聞く。`oom_recent` はどちらの経路でも CP が
