@@ -323,6 +323,23 @@ describe("model access views", () => {
     expect(shown(host!.querySelector(".model-access-rule")!)).toBe(false);
   });
 
+  it("does not carry one tenant's provided tab to the next before its own read answers", async () => {
+    api.mockImplementation((path: string) => Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : VIEW()));
+    await mount();
+    await flush();
+    expect(tab("提供モデルと予算")).toBeDefined();
+    // The next tenant's provided read never answers here.
+    api.mockImplementation((path: string) =>
+      path.includes("/provided-routes/") ? new Promise(() => {}) : Promise.resolve(VIEW()),
+    );
+    await act(async () => {
+      root!.render(<TenantModelAccessView slug="beta" />);
+    });
+    await flush();
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/beta/route-policy");
+    expect(tab("提供モデルと予算")).toBeUndefined();
+  });
+
   it("keeps D12's and D13's sentences on screen on every view", async () => {
     api.mockImplementation((path: string) => Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : VIEW()));
     await mount();

@@ -69,7 +69,11 @@ export function PolicyLimits() {
 export function TenantModelAccessView({ slug, isSuper = false }: { slug: string; isSuper?: boolean }) {
   const tr = useT();
   const { view, failed, load, peek, path } = useTenantRoutePolicy(slug);
-  const [provided, setProvided] = useState(false);
+  // Whether the CP serves provided routes, as this tenant's view last heard: an answer for
+  // another tenant does not count, so a switch never shows the tab before its own read answers.
+  const [served, setServed] = useState<{ slug: string; on: boolean }>({ slug: "", on: false });
+  const provided = served.slug === slug && served.on;
+  const onServed = useCallback((on: boolean) => setServed({ slug, on }), [slug]);
 
   if (!view) {
     return (
@@ -179,7 +183,7 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
             label: tr("tenant.model_access_view_provided"),
             // Provided routes (ADR 0129): no tab where the CP does not serve them.
             shown: provided,
-            node: <TenantProvidedRoutesView key={`prov-${slug}`} slug={slug} onServed={setProvided} />,
+            node: <TenantProvidedRoutesView key={`prov-${slug}`} slug={slug} onServed={onServed} />,
           },
         ]}
       />

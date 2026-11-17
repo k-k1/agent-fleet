@@ -17,10 +17,13 @@ export interface TabbedView {
 
 export function TabbedViews({ label, prefix, views }: { label: string; prefix: string; views: readonly TabbedView[] }) {
   const tr = useT();
-  const shown = views.filter((v) => v.shown !== false);
+  const [dirty, setDirty] = useState<Record<string, boolean>>({});
+  // A view holding unsaved edits keeps its tab even when it says it should not exist, so the
+  // edits are never left where no tab leads.
+  const hasTab = (v: TabbedView) => v.shown !== false || !!dirty[v.key];
+  const shown = views.filter(hasTab);
   const [picked, setPicked] = useState(views[0]?.key ?? "");
   const value = shown.some((v) => v.key === picked) ? picked : (shown[0]?.key ?? "");
-  const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const keys = views.map((v) => v.key).join("\n");
   // One stable callback per view: DirtyScope re-reports whenever its onChange changes.
   const onDirty = useMemo(
@@ -46,7 +49,8 @@ export function TabbedViews({ label, prefix, views }: { label: string; prefix: s
           key={v.key}
           role="tabpanel"
           id={`${prefix}-panel-${v.key}`}
-          aria-labelledby={`${prefix}-tab-${v.key}`}
+          // A view without a tab names none: the id would point at nothing.
+          aria-labelledby={hasTab(v) ? `${prefix}-tab-${v.key}` : undefined}
           hidden={v.key !== value}
           data-view={v.key}
           className="tabbed-view"
