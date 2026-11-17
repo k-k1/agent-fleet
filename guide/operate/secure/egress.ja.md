@@ -55,8 +55,12 @@ source_of_truth: "Console の 管理 >「通信」、Control Plane の egress �
 | 宛先 | 扱い |
 |---|---|
 | 製品の既定 | ワークスペース自身のインストーラ（JDK・Node.js・Go・gcloud・MySQL・Postgres・Chromium）と、起動時に入れて更新するエージェントの CLI（Claude・Cursor・Kiro・muse・Antigravity）の取得元。追加分がなくても有効なので、enforce でも 設定 › ツールチェーン と起動時の導入は動きます |
+| エージェント CLI の実行時の宛先 | ログイン・推論・モデル一覧のための正確なホスト（と接尾辞 `.claude.com`）: Claude Code、codex（`chatgpt.com`・`auth.openai.com`・`api.openai.com`）、Antigravity（`daily-cloudcode-pa.googleapis.com`・`cloudcode-pa.googleapis.com`・`accounts.google.com`・`oauth2.googleapis.com`）、opencode（`models.dev`・`opencode.ai`・`models.opencode.ai`・`console.opencode.ai`）、Gradle と Maven（`plugins.gradle.org`・`services.gradle.org`・`repo.maven.apache.org`）、および Copilot・Cursor・Kiro・muse のドキュメント由来のホスト。各ホストのエージェントの種類・宛先・実測かどうかは `control-plane/testdata/runtime-egress-hosts.txt` にあります |
 | この配備の Control Plane | 公開 URL と、設定していれば内部 URL のホスト。「**組み込み**」として出て、取り消せません。ワークスペースは egress の経路を通って Control Plane に届くためです |
 
+- `www.googleapis.com` も既定に入っていません。Cloud Storage のアップロード API も提供しており、`storage.googleapis.com` と同じ危険があるためです。Antigravity のログインを使うワークスペースがあるときに足してください
+- Antigravity の付随通信（`www.gstatic.com`・`lh3.googleusercontent.com`・`play.googleapis.com`・`antigravity-unleash.goog`: 画像、アバター、テレメトリ、機能フラグ）は意図して外してあります。enforce で Antigravity が動かないときは、Egress の記録に出たホストを足してください
+- 実測で通信を確認したのは一覧で measured と付けたホストだけです。残りはベンダーのドキュメント由来で、enforce ではまだ動かしていません
 - `storage.googleapis.com` は既定に入っていません。誰でもアップロードできる汎用のストレージだからです。Antigravity を使うワークスペース（初回の導入と更新のたびにここから取得する）や、x64 で Chromium を導入するワークスペースがあるときに足してください
 - 組み込みのエントリはホスト全体（どのポート・パスも）を許します。Control Plane には、ほかのサービスと共有しないホスト名を付けてください
 - 組み込みのエントリでも、ゲートウェイのそのほかの拒否（ほかのポート、内部アドレス）は外れません
