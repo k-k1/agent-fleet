@@ -17,8 +17,16 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 
 import { AdminModelAccessView } from "./adminModelAccess.tsx";
 
-const CEILING = { raw: "classes=-subscription", rule: { classes: ["member-key", "member-cloud", "provided", "self-hosted"] }, source: "deployment" };
-const DEPLOYMENT = { ceiling: CEILING, deployment: { rule: { destinations: ["anthropic", "aws-bedrock"] }, revision: 3 }, revision: 7 };
+const CEILING = {
+  raw: "classes=-subscription",
+  rule: { classes: ["member-key", "member-cloud", "provided", "self-hosted"] },
+  source: "deployment",
+};
+const DEPLOYMENT = {
+  ceiling: CEILING,
+  deployment: { rule: { destinations: ["anthropic", "aws-bedrock"] }, revision: 3 },
+  revision: 7,
+};
 const tenantView = (slug: string) => ({
   ceiling: CEILING,
   deployment: DEPLOYMENT.deployment,
@@ -56,10 +64,14 @@ async function mount() {
 const within = (sel: string) => host!.querySelector<HTMLElement>(sel)!;
 const btnIn = (scope: HTMLElement, text: string) =>
   Array.from(scope.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === text)!;
+// A route tick shows the route's name; its input's accessible name carries the id.
 const tickIn = (scope: HTMLElement, field: string, text: string) =>
-  Array.from(scope.querySelectorAll<HTMLLabelElement>(`[data-field="${field}"] label`)).find((l) =>
-    l.textContent?.includes(text),
-  )!.querySelector("input")!;
+  Array.from(scope.querySelectorAll<HTMLLabelElement>(`[data-field="${field}"] label`))
+    .find(
+      (l) =>
+        l.textContent?.includes(text) || l.querySelector("input")?.getAttribute("aria-label")?.endsWith(`: ${text}`),
+    )!
+    .querySelector("input")!;
 const click = async (el: HTMLElement) => {
   await act(async () => {
     el.click();
@@ -133,15 +145,20 @@ describe("admin model access", () => {
     await mount();
     const d = within(".model-access-deployment");
     // Widening the destinations back to all is what the ceiling's classes still forbid here.
-    await click(btnIn(within('.model-access-deployment [data-field="destinations"]'), "すべて"));
+    await click(
+      btnIn(within('.model-access-deployment [data-field="destinations"]'), "絞らない（今後増えるものも許す）"),
+    );
     await click(btnIn(d, "保存"));
     expect(apiJSON).toHaveBeenCalledWith("api/admin/route-policy", "PUT", {});
     const alert = d.querySelector("[role=alert]")!;
-    expect(alert.textContent).toContain("配備の上限が禁じているものを許す規則");
+    expect(alert.textContent).toContain("運用者の設定が禁じているものを許す内容");
     expect(alert.textContent).toContain("anthropic-subscription");
     // Still "all": the edit was not thrown away.
     expect(
-      btnIn(within('.model-access-deployment [data-field="destinations"]'), "すべて").getAttribute("aria-checked"),
+      btnIn(
+        within('.model-access-deployment [data-field="destinations"]'),
+        "絞らない（今後増えるものも許す）",
+      ).getAttribute("aria-checked"),
     ).toBe("true");
     // The deployment GET, the first tenant's, and the revision check before the PUT; nothing
     // reloaded after the refusal.
@@ -153,7 +170,11 @@ describe("admin model access", () => {
     const d = within(".model-access-deployment");
     await click(tickIn(d, "deny", "anthropic-api"));
     api.mockImplementation((path: string) =>
-      Promise.resolve(path === "api/admin/route-policy" ? { ...DEPLOYMENT, deployment: { rule: {}, revision: 4 } } : tenantView("acme")),
+      Promise.resolve(
+        path === "api/admin/route-policy"
+          ? { ...DEPLOYMENT, deployment: { rule: {}, revision: 4 } }
+          : tenantView("acme"),
+      ),
     );
     await click(btnIn(d, "保存"));
     expect(apiJSON).not.toHaveBeenCalled();
@@ -165,7 +186,9 @@ describe("admin model access", () => {
     const cap = within('.mpol-cap[data-tenant="acme"]');
     await click(tickIn(cap, "deny", "anthropic-api"));
     api.mockImplementation((path: string) =>
-      Promise.resolve(path === "api/admin/route-policy" ? DEPLOYMENT : { ...tenantView("acme"), cap: { rule: {}, revision: 2 } }),
+      Promise.resolve(
+        path === "api/admin/route-policy" ? DEPLOYMENT : { ...tenantView("acme"), cap: { rule: {}, revision: 2 } },
+      ),
     );
     await click(btnIn(cap, "保存"));
     expect(apiJSON).not.toHaveBeenCalled();
@@ -175,7 +198,9 @@ describe("admin model access", () => {
   it("shows the ceiling's source as the wire names it", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(
-        path === "api/admin/route-policy" ? { ...DEPLOYMENT, ceiling: { ...CEILING, source: "file" } } : tenantView("acme"),
+        path === "api/admin/route-policy"
+          ? { ...DEPLOYMENT, ceiling: { ...CEILING, source: "file" } }
+          : tenantView("acme"),
       ),
     );
     await mount();
@@ -196,7 +221,9 @@ describe("admin model access", () => {
     await flush();
     expect(api).toHaveBeenCalledWith("api/admin/tenants/beta/route-policy");
     const cap = within('.mpol-cap[data-tenant="beta"]');
-    expect(cap.querySelector("textarea")!.value).toBe("*.beta.example");
+    expect(Array.from(cap.querySelectorAll("[data-server]")).map((r) => r.getAttribute("data-server"))).toEqual([
+      "*.beta.example",
+    ]);
     await click(tickIn(cap, "deny", "anthropic-api"));
     await click(btnIn(cap, "保存"));
     expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/beta/route-policy/cap", "PUT", {
@@ -235,7 +262,7 @@ describe("what the policy hides, per tenant", () => {
     await flush();
     await flush();
     const item = within('.mpol-cap[data-tenant="beta"] [data-hidden="cursor"]');
-    expect(item.textContent).toContain("テナントの上限");
+    expect(item.textContent).toContain("配備の管理者からこのテナントへの制限");
   });
 
   it("shows no list when the tenant view carries none", async () => {

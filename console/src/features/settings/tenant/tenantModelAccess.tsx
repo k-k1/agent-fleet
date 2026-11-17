@@ -115,6 +115,7 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                   currentRevision={async () => (await peek())?.tenant.revision ?? null}
                   routeOptions={routeIds(view.routes.map((r) => r.id))}
                   endpointsMode="hosts"
+                  hostState={(h) => view.endpoints.find((e) => e.host === h)}
                   save={(body) => apiJSON(path, "PUT", body)}
                   onSaved={load}
                 />

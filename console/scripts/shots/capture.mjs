@@ -187,6 +187,19 @@ const MODEL_ACCESS_SCENES = [
     desktop: false,
     verify: visible(".tenant-modal .prov-members tbody tr"),
   }),
+  // Tenant: the Restrictions tab under the restricted layers (the rule editor).
+  modelAccessScene("mpol-tenant-restrictions", {
+    rules: "restricted",
+    view: "restrictions",
+    verify: visible('.tenant-modal .model-access-rule [data-field="classes"]'),
+  }),
+  // Admin: the restriction for all tenants under an operator setting (the deployment editor).
+  modelAccessScene("mpol-admin-deployment", {
+    admin: true,
+    rules: "restricted",
+    view: "deployment",
+    verify: visible('.admin-modal .model-access-deployment [data-field="classes"]'),
+  }),
   // Admin: every layer unrestricted, a CP without provided routes; the per-tenant view.
   modelAccessScene("mpol-admin-open", {
     admin: true,

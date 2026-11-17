@@ -1,5 +1,5 @@
 ---
-audience: "a tenant administrator who decides which model routes the team's members may use, and the deployment administrator who sets the layers above"
+audience: "a tenant administrator who decides which model routes the team's members may use, and the deployment administrator who sets the restrictions above"
 source_of_truth: "the Console's tenant settings, Operations › Model access, and the admin modal's Deployment › Model access"
 ---
 
@@ -13,57 +13,58 @@ What you forbid disappears from your members' screens: the launch dialog, the ag
 ## How it works
 
 A **route** is where an agent's model calls go and with which credential: a Claude subscription, an Anthropic API key, Amazon Bedrock through the member's AWS profile, and so on.
-Every route has a **class of credential** and a **destination**, and a rule is written with those two:
+Every route has a **credential type** and a **destination** (where its prompts go), and a restriction is written with those two:
 
-| Class of credential | Means |
+| Credential type | Means |
 |---|---|
 | Subscriptions and logins | A plan or account login (a Claude or ChatGPT subscription, Copilot, Cursor, Kiro, an opencode.ai account) |
 | Members' API keys | A metered key the member stores (Anthropic, OpenAI, Gemini, OpenRouter and so on) |
 | Members' cloud accounts | Amazon Bedrock through the member's own AWS profile |
 | Provided by the deployment or tenant | A route the Control Plane holds the credential for |
-| Self-hosted | This deployment's engine, and self-hosted endpoints you approved |
+| Self-hosted | This deployment's engine, and self-hosted servers you approved |
 
-The destination is who receives the prompts: Anthropic, OpenAI, Google, Amazon Bedrock, this deployment's engine, an approved self-hosted endpoint, and the other vendors.
+The destination is who receives the prompts: Anthropic, OpenAI, Google, Amazon Bedrock, this deployment's engine, an approved self-hosted server, and the other vendors.
 
-A rule is set in layers, and **each layer can only narrow the one above it**:
+Restrictions are set by several people in turn, and **each one can only narrow the ones above it**:
 
-| Layer | Who sets it |
+| On screen | Who sets it |
 |---|---|
-| Deployment ceiling | The operator, in the deployment's configuration. Read-only on screen |
-| Deployment rule | The deployment administrator, for every tenant |
-| Tenant cap | The deployment administrator, for one tenant |
-| Tenant rule | You, the tenant administrator |
+| Operator setting (fixed) | The operator, in the deployment's configuration. Read-only on screen |
+| Restriction for all tenants | The deployment administrator, for every tenant |
+| Deployment admin's restriction on this tenant | The deployment administrator, for one tenant |
+| This tenant's restriction | You, the tenant administrator |
 | A member's own switches | Each member, for themselves |
 
-A route is usable only when every layer allows it. Nothing you allow can reopen what a layer above forbids.
+A route is usable only when every one of them allows it. Nothing you allow can reopen what a restriction above forbids.
 
-## Set your tenant's rule
+## Set your tenant's restriction
 
 The page has a tab for each part: **Overview**, **Restrictions** and, where the deployment offers provided routes, **Provided models & budgets**. The sentences on when a change applies stay above the tabs. Switching tabs keeps what you have not saved, and a tab with unsaved changes is marked with ●.
 
 1. Open **Tenant settings → Operations → Model access**
-2. On **Overview**, read **Who restricts what**: one line for each of the three layers above yours (the operator, and your deployment's administrator for all tenants and for this tenant), then your own
-3. On **Restrictions**, under **This tenant's rule**, set:
-   - **Classes of credential**: **All**, or **Only these** with the classes you allow
-   - **Destinations**: **All**, or **Only these** with the destinations you allow
-   - **Routes allowed as exceptions**: a route your classes or destinations would forbid, which you still allow. "No subscriptions except Copilot" is the class rule plus Copilot here
-   - **Routes denied**: a route your classes and destinations would allow, which you still forbid. A route in both lists is denied
+2. On **Overview**, read **Who restricts what**: one line for each of the three restrictions above yours (the operator, and your deployment's administrator for all tenants and for this tenant), then your own
+3. On **Restrictions**, under **This tenant's restriction**, set:
+   - **Credential type**: **No limit (new ones too)**, or **Only these** with the types you allow. Each type says what it covers
+   - **Where prompts go**: **No limit (new ones too)**, or **Only these** with the destinations you allow
+   - Under **Individual changes** (closed until you open it), **Allowed individually**: a route your types or destinations would forbid, which you still allow. "No subscriptions except Copilot" is the type restriction plus Copilot here
+   - Under **Individual changes**, **Blocked individually**: a route your types and destinations would allow, which you still forbid. A route in both lists is blocked
 4. Press **Save**
 
-**Only these** with nothing ticked allows nothing; it is not the same as **All**.
-When the Control Plane refuses a rule, the reason is shown above the button and your edits stay, so you can correct the one value.
-Every save is recorded in the audit log with the rule before and after ([Read the audit log](../audit.md)).
+**Only these** with nothing ticked allows nothing; it is not the same as **No limit**.
+Routes are shown by name; hover one for the id the Control Plane's refusals use.
+When the Control Plane refuses a restriction, the reason is shown above the button and your edits stay, so you can correct the one value.
+Every save is recorded in the audit log with the restriction before and after ([Read the audit log](../audit.md)).
 
-## Approve a self-hosted endpoint
+## Approve a self-hosted server
 
-A member's own llama.cpp, or another endpoint they type in, cannot be vouched for by Agent Fleet: under any restriction it is refused unless its host is approved.
+A member's own llama.cpp, or another server they type in, cannot be vouched for by Agent Fleet: under any restriction it is refused unless its host is approved.
 
-1. On **Restrictions**, in **Self-hosted endpoints this tenant approves**, enter one exact host per line (no wildcard, port or scheme)
+1. On **Restrictions**, under **Self-hosted servers (host names)**, type an exact host (no wildcard, port or scheme) and press **Add**. Each host is a row: its state, and × to remove it
 2. Press **Save**
 
-A host is approved only while every layer above lets it through, and a vendor's host is never approvable.
+A host is approved only while every restriction above lets it through, and a vendor's host is never approvable.
 On **Overview**, the **This tenant** line of **Who restricts what** lists each host you entered with ✔ or ✖ and, for one that is not approved, who keeps it out.
-Allowing the class and the destination **Self-hosted** is what lets members use an approved endpoint.
+Allowing the credential type and the destination **Self-hosted** is what lets members use an approved server.
 
 ## Find out why members cannot see something
 
@@ -74,7 +75,7 @@ Open a row to see its routes, each with ✔ or ✖ and, for one that is not allo
 |---|---|
 | ✔ with "Usable on 3 of its 4 routes" | Members see it with only the routes left |
 | ✖ with who stops it | It is hidden from every member of the tenant. To bring it back, everyone named for at least one of its routes has to allow it |
-| "no approved self-hosted server" on a member's own llama.cpp or custom endpoint | Every layer allows it on an approved host, and none is approved. Approve the host on **Restrictions**; no rule has to change |
+| "no approved self-hosted server" on a member's own llama.cpp or custom endpoint | Every restriction allows it on an approved host, and none is approved. Approve the host on **Restrictions**; no restriction has to change |
 | Only the hidden items, with a line saying so | The Control Plane is older and does not say what each agent can use |
 | A line saying the list could not be read | The Control Plane did not answer it. This is not the same as "everything is usable" |
 
@@ -84,7 +85,7 @@ Members' own switches (an agent a member turned off for themselves) are not on t
 
 Some deployments pay for Amazon Bedrock themselves and offer it to tenants as a **provided route**. Where the deployment does not, the **Provided models & budgets** tab is not on the page.
 
-The deployment administrator grants it to your tenant with a monthly ceiling. Under that, you decide who may use it and how much:
+The deployment administrator grants it to your tenant with a **tenant's monthly pool**. Within it, you decide who may use it and how much:
 
 1. Under **Who may use them**, choose **Every member** or **Granted members only**
 2. Enter **Members' monthly budget (default, dollars)**, then press **Save**
@@ -98,7 +99,7 @@ A budget so small that no single call fits is refused, with the reason beside th
 - A change reaches members' new launches within 30 seconds
 - A running session on a route that became forbidden is stopped within 30 seconds plus one reconciler tick
 - While a workspace cannot reach the Control Plane, a change waits for its next successful pull, so the delay is as long as the outage. Where the member was already restricted or the deployment has a ceiling, new launches are refused after 15 minutes without a successful pull; running sessions are left alone
-- A stored credential whose every route is forbidden is kept, not deleted, and is hidden from the member. Loosening the rule makes it usable again without signing in again
+- A stored credential whose every route is forbidden is kept, not deleted, and is hidden from the member. Loosening the restriction makes it usable again without signing in again
 
 ## What this cannot stop
 
@@ -107,16 +108,16 @@ This rule binds Agent Fleet's own launches, not what a member runs by hand.
 
 ## For the deployment administrator
 
-The admin modal's **Deployment → Model access** has the layers above the tenants', on four tabs:
+The admin modal's **Deployment → Model access** has the restrictions above the tenants', on four tabs:
 
-- **Overview**: the **Deployment ceiling (operator)**, read-only, with the value the deployment was started with
-- **Restrictions for all tenants**: the **Deployment rule**, for every tenant
-- **Per tenant**: the **Tenant cap** of each tenant: choose the tenant, then edit its cap. That tenant's own rule is shown below it, read-only, followed by **What the policy hides** from that tenant: each hidden agent, image provider or chat backend with the layers that hide it
-- **Provided models**, where the deployment pays for Bedrock: the **Provided-route source**, the IAM role the stack created, its Region and models, and **Use this source**. Switching it off keeps its spend and sessions on record
-- On **Per tenant**, under each tenant, the **Provided-route grant**: **Grant to this tenant** with the **Tenant's monthly ceiling (dollars)**. A grant needs a ceiling above zero
+- **Overview**: the **Operator setting (fixed)**, read-only, with the value the deployment was started with
+- **Restrictions for all tenants**: the **Restriction for all tenants**, which applies to every tenant
+- **Per tenant**: the **Deployment admin's restriction on this tenant**, for each tenant: choose the tenant, then edit it. That tenant's own restriction is shown below it, read-only, followed by **Hidden from members** for that tenant: each hidden agent, image provider or chat backend and who stops it
+- **Provided models**, where the deployment pays for Bedrock: the **Source (the IAM role that calls Amazon Bedrock)**, its Region and models, and **Use this source**. Switching it off keeps its spend and sessions on record
+- On **Per tenant**, under each tenant, **Grant to this tenant and monthly pool**: **Grant to this tenant** with the **Tenant's monthly pool (dollars)**. A grant needs a pool above zero
 
-The deployment rule and tenant cap editors refuse a rule that would allow something the ceiling forbids.
-Their endpoint list names the host patterns a tenant may approve: an exact host or `*.example.com`. **Not narrowed** leaves the layer above in charge; **Only these** with no pattern lets no host be approved.
+These editors refuse a restriction that would allow something the operator setting forbids.
+Their **Self-hosted servers that may be approved** name the host patterns a tenant may approve, one row each: an exact host or `*.example.com`. **No limit** leaves the restriction above in charge; **Only these** with no pattern lets no host be approved.
 
 ## Related
 

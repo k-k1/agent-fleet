@@ -161,6 +161,8 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only mpol-ten
 | `mpol-tenant-notgranted` | the operator allows Bedrock only; a provided route exists, not granted to the tenant |
 | `mpol-tenant-provided` | restricted as above, and granted the provided route: six members, budgets and spend |
 | `mpol-tenant-provided-phone` | the same at 390×844 |
+| `mpol-tenant-restrictions` | the Restrictions tab (the tenant's rule editor) under the restricted layers |
+| `mpol-admin-deployment` | the admin editor for all tenants under an operator setting |
 | `mpol-admin-open` | the admin page, every layer unrestricted, no provided routes |
 | `mpol-admin-provided` | a ceiling, a cap on Demo Team, a registered source granted to it |
 | `mpol-admin-nosource` | a deployment rule without subscriptions, no source registered |
