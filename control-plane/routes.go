@@ -625,6 +625,9 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	// person's press, through the same reservation and claim as an automatic fire.
 	mux.HandleFunc("POST /api/memo-queues/{categoryId}/fire", memo.withResolved(memo.fire))
 	mux.HandleFunc("GET /api/memo-queues/{categoryId}/deliveries", memo.withMembership(memo.listDeliveries))
+	// Tidy runs (ADR 0137 section 8): the Console's run list and undo. Neither is on the token face or /mcp.
+	mux.HandleFunc("GET /api/memo-queues/{categoryId}/tidy-runs", memo.withMembership(memo.listTidyRuns))
+	mux.HandleFunc("POST /api/memo-tidy-runs/{runId}/undo", memo.withMembership(memo.undoTidy))
 
 	// Internal (operator-token) face: an in-container fleet operator has no
 	// gateway session, so it hits these with its AF_MEMO_TOKEN Bearer (memo_bridge.go).

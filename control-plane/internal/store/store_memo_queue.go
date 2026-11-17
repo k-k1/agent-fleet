@@ -32,6 +32,13 @@ const (
 	MemoProvenanceCurator   = "curator"
 )
 
+// MemoReleasedByTidy is memo.released_by for a message a tidy run made pending: a derived message
+// that took its pending sources' state, or a message it moved into a queue its source queue lists.
+const MemoReleasedByTidy = "tidy"
+
+// MaxTidyDestinations bounds a queue's tidy_destinations.
+const MaxTidyDestinations = 10
+
 // MemoReleasedBySetting is memo.released_by for a message that became pending by the queue's
 // accept-from-own-sessions switch and not by a press.
 const MemoReleasedBySetting = "setting"
@@ -74,7 +81,14 @@ type MemoQueue struct {
 	PausedAt, PausedReason, BreakerAfter, NoReportAt string
 	// NoRefsAt is when a fire found an Agent that cannot show a reference. While it is set the
 	// messages that carry one stay where they are (ADR 0137 section 4).
-	NoRefsAt             string
+	NoRefsAt string
+	// Tidy turns the tidy run before a fire on (ADR 0137 section 8). TidyDestinations are the
+	// queues a run may move a message to as pending, at most MaxTidyDestinations category ids.
+	// NoTidyAt is set by a fire that found an Agent that cannot tidy. Only the settings PUT
+	// writes the first two, and nothing writes them in a run.
+	Tidy                 bool
+	TidyDestinations     []string
+	NoTidyAt             string
 	Enabled              bool
 	Generation           int
 	CreatedAt, UpdatedAt string
@@ -99,12 +113,15 @@ type MemoQueueStore interface {
 	SetMemoQueueNoReport(ctx context.Context, queueID, at string) error
 	// SetMemoQueueNoRefs writes NoRefsAt, '' to clear it.
 	SetMemoQueueNoRefs(ctx context.Context, queueID, at string) error
+	// SetMemoQueueNoTidy writes NoTidyAt, '' to clear it.
+	SetMemoQueueNoTidy(ctx context.Context, queueID, at string) error
 	// MemoTx runs f in one transaction that holds the membership's lock first, so every
 	// queue-relevant memo write of a member is serialized behind the others. Before f it
 	// takes back the member's stale send reservations, so f never sees one. f's error
 	// rolls the transaction back and is returned as is.
 	MemoTx(ctx context.Context, membershipID string, f func(MemoTxOps) error) error
 	MemoDeliveryStore
+	MemoTidyStore
 }
 
 // MemoTxOps are the reads and writes a MemoTx may make, all scoped to its membership.
@@ -158,6 +175,7 @@ type MemoTxOps interface {
 	ResumeQueue(categoryID, at string) (bool, error)
 
 	MemoDeliveryTxOps
+	MemoTidyTxOps
 	MemoWaitOps
 }
 
@@ -338,17 +356,19 @@ func (t memoTx) DeleteCategory(id string) error {
 const memoQueueCols = `SELECT category_id, membership_id, instruction, agent_kind, model, effort, route, spend_cap_usd,
 	worktree, max_active, batch, enabled, generation, created_at, updated_at, max_task_hours,
 	open_cron, open_minutes, tz, open_after, max_fires_per_day, draining, paused, paused_at, paused_reason, breaker_after,
-	no_report_at, no_refs_at, accept_own_sessions FROM memo_queue`
+	no_report_at, no_refs_at, accept_own_sessions, tidy, tidy_destinations, no_tidy_at FROM memo_queue`
 
 func scanMemoQueue(row scanner) (MemoQueue, error) {
 	var q MemoQueue
-	var worktree, enabled, draining, paused, acceptOwn int
+	var worktree, enabled, draining, paused, acceptOwn, tidy int
+	var dests string
 	err := row.Scan(&q.CategoryID, &q.MembershipID, &q.Instruction, &q.AgentKind, &q.Model, &q.Effort, &q.Route,
 		&q.SpendCapUSD, &worktree, &q.MaxActive, &q.Batch, &enabled, &q.Generation, &q.CreatedAt, &q.UpdatedAt, &q.MaxTaskHours,
 		&q.OpenCron, &q.OpenMinutes, &q.TZ, &q.OpenAfter, &q.MaxFiresPerDay, &draining, &paused, &q.PausedAt, &q.PausedReason,
-		&q.BreakerAfter, &q.NoReportAt, &q.NoRefsAt, &acceptOwn)
+		&q.BreakerAfter, &q.NoReportAt, &q.NoRefsAt, &acceptOwn, &tidy, &dests, &q.NoTidyAt)
 	q.Worktree, q.Enabled, q.Draining, q.Paused = worktree != 0, enabled != 0, draining != 0, paused != 0
 	q.AcceptOwnSessions = acceptOwn != 0
+	q.Tidy, q.TidyDestinations = tidy != 0, decodeIDList(dests)
 	return q, err
 }
 
@@ -376,18 +396,21 @@ func (t memoTx) QueueOf(repo, category string) (MemoQueue, bool, error) {
 func (t memoTx) PutQueue(q MemoQueue) error {
 	_, err := t.q.ExecContext(t.ctx, `INSERT INTO memo_queue(category_id, membership_id, instruction, agent_kind, model,
 		effort, route, spend_cap_usd, worktree, max_active, batch, enabled, generation, created_at, updated_at,
-		max_task_hours, open_cron, open_minutes, tz, open_after, max_fires_per_day, accept_own_sessions)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		max_task_hours, open_cron, open_minutes, tz, open_after, max_fires_per_day, accept_own_sessions,
+		tidy, tidy_destinations)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(category_id) DO UPDATE SET instruction=excluded.instruction, agent_kind=excluded.agent_kind,
 		  model=excluded.model, effort=excluded.effort, route=excluded.route, spend_cap_usd=excluded.spend_cap_usd,
 		  worktree=excluded.worktree, max_active=excluded.max_active, batch=excluded.batch, enabled=excluded.enabled,
 		  max_task_hours=excluded.max_task_hours, open_cron=excluded.open_cron, open_minutes=excluded.open_minutes,
 		  tz=excluded.tz, open_after=excluded.open_after, max_fires_per_day=excluded.max_fires_per_day,
-		  accept_own_sessions=excluded.accept_own_sessions, updated_at=excluded.updated_at
+		  accept_own_sessions=excluded.accept_own_sessions, tidy=excluded.tidy,
+		  tidy_destinations=excluded.tidy_destinations, updated_at=excluded.updated_at
 		WHERE memo_queue.membership_id=excluded.membership_id`,
 		q.CategoryID, t.mid, q.Instruction, q.AgentKind, q.Model, q.Effort, q.Route, q.SpendCapUSD,
 		b2i(q.Worktree), q.MaxActive, q.Batch, b2i(q.Enabled), q.Generation, q.CreatedAt, q.UpdatedAt, q.MaxTaskHours,
-		q.OpenCron, q.OpenMinutes, q.TZ, q.OpenAfter, q.MaxFiresPerDay, b2i(q.AcceptOwnSessions))
+		q.OpenCron, q.OpenMinutes, q.TZ, q.OpenAfter, q.MaxFiresPerDay, b2i(q.AcceptOwnSessions),
+		b2i(q.Tidy), encodeIDList(q.TidyDestinations))
 	return err
 }
 
@@ -491,6 +514,11 @@ func (s *SQL) SetMemoQueueNoReport(ctx context.Context, queueID, at string) erro
 
 func (s *SQL) SetMemoQueueNoRefs(ctx context.Context, queueID, at string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE memo_queue SET no_refs_at=? WHERE category_id=? AND no_refs_at<>?`, at, queueID, at)
+	return err
+}
+
+func (s *SQL) SetMemoQueueNoTidy(ctx context.Context, queueID, at string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE memo_queue SET no_tidy_at=? WHERE category_id=? AND no_tidy_at<>?`, at, queueID, at)
 	return err
 }
 

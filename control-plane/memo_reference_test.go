@@ -405,7 +405,7 @@ func (e *inboxEnv) markSent(id string) {
 // pending row's copy of its release (the CHECK of migration 0131 and 0138).
 func (e *inboxEnv) setStateKeepingRelease(id, state string) {
 	e.t.Helper()
-	if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state=? WHERE id=?`, state, id); err != nil {
+	if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state=?, sent_at=CASE WHEN ?='superseded' THEN ? ELSE sent_at END, tidy_run_id=CASE WHEN ?='superseded' THEN 'run' ELSE tidy_run_id END WHERE id=?`, state, state, store.NowTS(), state, id); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -454,8 +454,13 @@ func TestMemoReferenceConcurrentAddsLeaveOne(t *testing.T) {
 		// and a closed one is not.
 		row := e.memoRow(out[0].id)
 		ins := func(id, state string) error {
-			_, err := e.st.DB().ExecContext(context.Background(), `INSERT INTO memo(id, membership_id, repo, category, kind, body, created_at, state, provenance, ref_provider, ref_key, ref_url)
-				VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, row.MembershipID, row.Repo, row.Category, "text", "x", store.NowTS(), state, "workspace", row.RefProvider, row.RefKey, row.RefURL)
+			// A superseded row carries the sent_at and the run id the database requires of it.
+			sentAt, runID := "", ""
+			if state == store.MemoStateSuperseded {
+				sentAt, runID = store.NowTS(), "run"
+			}
+			_, err := e.st.DB().ExecContext(context.Background(), `INSERT INTO memo(id, membership_id, repo, category, kind, body, created_at, state, provenance, ref_provider, ref_key, ref_url, sent_at, tidy_run_id)
+				VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, row.MembershipID, row.Repo, row.Category, "text", "x", store.NowTS(), state, "workspace", row.RefProvider, row.RefKey, row.RefURL, sentAt, runID)
 			return err
 		}
 		for _, st := range []string{store.MemoStateHeld, store.MemoStatePending, store.MemoStateClaimed} {

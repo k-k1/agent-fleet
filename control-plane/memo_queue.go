@@ -178,6 +178,11 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext, accept bool, via memoV
 		next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = "", "", "", ""
 		return next, nil
 	}
+	// A superseded message was replaced by a tidy run and comes back only by undoing it: whatever
+	// else moves it, it never enters a queue again as held or pending.
+	if prev.State == store.MemoStateSuperseded {
+		return next, nil
+	}
 	if !inPrev || prev.State == "" {
 		return memoEnter(next, via, accept), nil
 	}
@@ -350,11 +355,17 @@ type memoQueueDTO struct {
 	NoReportAt   string `json:"noReportAt"`
 	// NoRefsAt is set while the Agent cannot show a reference: the messages that carry one stay
 	// where they are, and the rest of the queue fires as usual.
-	NoRefsAt   string `json:"noRefsAt"`
-	Enabled    bool   `json:"enabled"`
-	Generation int    `json:"generation"`
-	CreatedAt  string `json:"createdAt"`
-	UpdatedAt  string `json:"updatedAt"`
+	NoRefsAt string `json:"noRefsAt"`
+	// Tidy turns the tidy run before a fire on (ADR 0137 section 8), TidyDestinations are the
+	// queues a run may move a message to as pending, and NoTidyAt is set while the workspace's
+	// Agent cannot tidy. A guard rail, not a wall: see memo_tidy.go.
+	Tidy             bool     `json:"tidy"`
+	TidyDestinations []string `json:"tidyDestinations"`
+	NoTidyAt         string   `json:"noTidyAt"`
+	Enabled          bool     `json:"enabled"`
+	Generation       int      `json:"generation"`
+	CreatedAt        string   `json:"createdAt"`
+	UpdatedAt        string   `json:"updatedAt"`
 	// Waiting is set by the list only: why a queue with notes waiting starts nothing now (see
 	// memoQueueWaiting). Absent when nothing waits or a run can start.
 	Waiting *memoWaiting `json:"waiting,omitempty"`
@@ -366,6 +377,7 @@ func memoQueueToDTO(q store.MemoQueue, c store.MemoCategory) memoQueueDTO {
 		Worktree: q.Worktree, AcceptOwnSessions: q.AcceptOwnSessions, MaxActive: q.MaxActive, Batch: q.Batch, MaxTaskHours: memoQueueTaskHours(q),
 		OpenCron: q.OpenCron, OpenMinutes: q.OpenMinutes, TZ: q.TZ, OpenAfter: q.OpenAfter, MaxFiresPerDay: memoQueueFiresPerDay(q),
 		Paused: q.Paused, PausedAt: q.PausedAt, PausedReason: q.PausedReason, Draining: q.Draining, NoReportAt: q.NoReportAt, NoRefsAt: q.NoRefsAt,
+		Tidy: q.Tidy, TidyDestinations: nonNilIDs(q.TidyDestinations), NoTidyAt: q.NoTidyAt,
 		Enabled: q.Enabled, Generation: q.Generation, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}
 }
 
@@ -391,6 +403,16 @@ type memoQueueIn struct {
 	OpenAfter      int    `json:"openAfter"`
 	MaxFiresPerDay *int   `json:"maxFiresPerDay"`
 	Enabled        bool   `json:"enabled"`
+	// Tidy omitted means off, like AcceptOwnSessions. TidyDestinations are category ids.
+	Tidy             bool     `json:"tidy"`
+	TidyDestinations []string `json:"tidyDestinations"`
+}
+
+func nonNilIDs(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
 }
 
 // memoQueueFiresPerDay is the queue's daily bound, the default for a row that never had one.
@@ -429,6 +451,7 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 		Enabled:     in.Enabled,
 
 		AcceptOwnSessions: in.AcceptOwnSessions,
+		Tidy:              in.Tidy,
 		MaxTaskHours:      memoQueueMaxTaskHoursDefault,
 		MaxFiresPerDay:    memoQueueMaxFiresDefault,
 		OpenCron:          strings.TrimSpace(in.OpenCron),
@@ -510,6 +533,20 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 	if len(q.Instruction) > memoQueueInstructionMax {
 		return q, badQueueSettings(fmt.Sprintf("instruction is at most %d bytes", memoQueueInstructionMax))
 	}
+	seen := map[string]bool{}
+	for _, id := range in.TidyDestinations {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return q, badQueueSettings("tidyDestinations holds an empty id")
+		}
+		if !seen[id] {
+			seen[id] = true
+			q.TidyDestinations = append(q.TidyDestinations, id)
+		}
+	}
+	if len(q.TidyDestinations) > store.MaxTidyDestinations {
+		return q, badQueueSettings(fmt.Sprintf("tidyDestinations holds at most %d queues", store.MaxTidyDestinations))
+	}
 	if q.Enabled && q.Instruction == "" {
 		return q, &apiError{http.StatusBadRequest, errCodeMemoQueueNoInstruction, "a queue without an instruction cannot be enabled"}
 	}
@@ -549,6 +586,10 @@ func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Iden
 		return
 	}
 	out := make([]memoQueueDTO, 0, len(qs))
+	queueSet := make(map[string]struct{}, len(qs))
+	for _, q := range qs {
+		queueSet[q.CategoryID] = struct{}{}
+	}
 	now := time.Now()
 	err = a.store.MemoRead(r.Context(), mv.MembershipID, func(rd store.MemoWaitOps) error {
 		for _, q := range qs {
@@ -557,6 +598,13 @@ func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Iden
 				continue
 			}
 			dto := memoQueueToDTO(q, c)
+			// A destination whose queue settings are gone is not shown: apply ignores it the same way.
+			dto.TidyDestinations = []string{}
+			for _, id := range q.TidyDestinations {
+				if _, isQ := queueSet[id]; isQ {
+					dto.TidyDestinations = append(dto.TidyDestinations, id)
+				}
+			}
 			var err error
 			if dto.Waiting, err = memoQueueWaiting(rd, q, on, stats[q.CategoryID], now); err != nil {
 				return err
@@ -609,10 +657,19 @@ func (a memoAPI) putQueue(w http.ResponseWriter, r *http.Request, _ store.Identi
 		if err != nil {
 			return err
 		}
+		// A destination is another queue of the member's: a run could not move a message out of a
+		// queue into itself, and an id that is no queue of theirs names nothing.
+		for _, id := range q.TidyDestinations {
+			if _, isQ, err := tx.GetQueue(id); err != nil {
+				return err
+			} else if !isQ || id == c.ID {
+				return memoTxFail(badQueueSettings("tidyDestinations must name other queues of yours"))
+			}
+		}
 		now := store.NowTS()
 		q.CategoryID, q.MembershipID, q.UpdatedAt = c.ID, mv.MembershipID, now
 		if existed {
-			q.CreatedAt, q.Generation = cur.CreatedAt, cur.Generation
+			q.CreatedAt, q.Generation, q.NoTidyAt = cur.CreatedAt, cur.Generation, cur.NoTidyAt
 		} else {
 			q.CreatedAt = now
 			if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, false, true, memoViaConsole); err != nil {

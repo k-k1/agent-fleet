@@ -287,6 +287,45 @@ Memos you accumulate and send to a session in one go (the tables are
   puts it back to `held`, a queue is not renamed, merged or deleted, and a create into a
   queue is bounded (16 KiB, no `[agent-fleet:` prefix, an identical waiting message
   answered instead, 30 a minute).
+- **Tidy** ([decisions/0137](../decisions/0137-message-queues.md) §8, step 5, slice S1): the Control Plane's core of
+  "tidying before a fire", with nothing calling it yet (no dispatcher reads `tidy`, no route applies a reply).
+  *Settings*: `PUT /api/memo-queues/{categoryId}` takes `tidy` (bool, omitted means off) and `tidyDestinations`
+  (category ids, at most 10, deduplicated, each a queue of the member's other than this one, else
+  `400 memo_queue_bad_settings`); `GET /api/memo-queues` answers `tidy`, `tidyDestinations` (ids whose queue settings are
+  gone are left out) and the read-only `noTidyAt`, which only a fire that finds an Agent that cannot tidy will set.
+  The memo answer gains `derivedFrom` (source ids), `sourceProvenance`, `tidyRunId`, `tidyFrom`
+  (`{id, repo, name}`; repo and name are empty on a single create or update answer and for a category since
+  deleted) and `releasedBy: "tidy"`. *Operations*: the model's reply is `{"operations":[merge|split|move|keep ...]}`;
+  `control-plane/internal/memotidy` is the pure validator (every bound a named constant: at most 80 operations,
+  2 to 10 merge sources, 2 to 5 split parts, texts of 1 byte to 16 KiB, a merge or the parts of a split at most
+  1 KiB longer than their sources, 10 runs a day) and refuses the whole reply on one violation. A merge or a split
+  takes plain text notes only (no file, attachment or reference) and a merge only sources of one group, the group being
+  (provenance, producer, producer origin) with a `curator` message read by its `source_provenance`. *Apply*
+  (`memoTidyApply` in `memo_tidy.go`, one `MemoTx`): every input message must still be in the queue, `pending`
+  (`pending` or `held` for the manual trigger), unsent, unclaimed, not in a flush, with the hash the run read, else
+  the run is `dropped` with reason `stale_input` and nothing changes. Sources of a merge or a split become
+  `superseded` with `sent_at` set (so the 7-day sweep collects them) and the run's id; the derived message is
+  `provenance='curator'`, `source_provenance`, the sources' producer, `derived_from`, the sources' state (`held` if any
+  source is held), the oldest `created_at`, `released_by='tidy'` and marked seen. A move reads the queue's stored
+  settings at apply time: a category that is no queue gives a plain note, a queue in `tidy_destinations` gives
+  `pending` there (a held message stays `held`), any other queue gives `held` with `tidy_from`. Whatever the outcome
+  the input is marked seen (`memo.tidy_seen_hash` = the hash the run read, so any later edit or move makes the message
+  unseen again with no write). *Run record*: `memo_tidy_run` (states `running`, `applied`, `kept`, `dropped`, `skipped`,
+  `failed`, `undone`; ids, hashes and counts, never text); a unique index allows one `running` run per member.
+  *Undo*: `POST /api/memo-tidy-runs/{runId}/undo` (Console only; not on the token face or `/mcp`) answers
+  `200 {"run", "restored":[memo], "removed":["id"]}`, or `409 memo_tidy_not_undoable` with
+  `error.blocked: [{"id","why"}]` where `why` is `claimed` (claimed, or in a flush), `sent`, `changed`, `gone`,
+  `later_run` or `duplicate_ref`; all or none, and `blocked` is empty when the run is not an applied one. Derived rows are
+  deleted, sources and moved messages return to their state (`pending` only if the kept release still matches and the
+  category is still a queue, else `held`, or a plain note), and the run becomes `undone`.
+  `GET /api/memo-queues/{categoryId}/tidy-runs` answers `{"runs":[{id, trigger, state, reason, createdAt, finishedAt,
+  undoneAt, merged, split, moved, held, sourceIds, resultIds, movedIds, undoable, blocked}], "usedToday", "dailyCap"}`,
+  the newest 20, `held` counting the moved messages that landed `held`. *Every other write path*: a superseded row stays
+  locked and never becomes `held` or `pending` except by undo (the store refuses it: `ErrMemoSuperseded`), a hand send
+  of one is refused `409 memo_locked`, a settings delete or a category delete turns it into a sent note, and a derived
+  message is edited, moved and released like any other (a move into a queue from a plain category enters it `held`).
+  The tidy switch is a guard rail, not a wall: the reply is produced inside the workspace, so code there that can answer
+  for the Agent chooses the text of a derived message inside these bounds. Migrations 0141 (SQLite) and 0126 (Postgres).
 - **Deliveries** (decisions/0137 §6, step 1c): a delivery is one fire of a queue, and
   every delivery that is not closed occupies one of the queue's `maxActive` slots and
   counts toward a member-wide limit of 4. `POST /api/memo-queues/{categoryId}/fire`
