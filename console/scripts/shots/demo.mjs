@@ -14,6 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { launchChromium } from "../lib/chromium-launch.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -27,7 +28,6 @@ const SCENARIO = arg("scenario", "day");
 const LOCALE = arg("locale", "en");
 const OUT = path.resolve(ROOT, arg("out", "docs/img"));
 const PORT = Number(arg("port", 8766));
-const CDP_PORT = Number(arg("cdp-port", 9224));
 const FPS = Number(arg("fps", 12));
 const KEEP = argv.includes("--keep-frames");
 const BASE = `http://127.0.0.1:${PORT}/`;
@@ -107,16 +107,13 @@ const stub = spawn(
   [path.join(HERE, "server.mjs"), "--port", String(PORT), "--locale", LOCALE, "--demo", SCENARIO],
   { stdio: ["ignore", "ignore", "inherit"] },
 );
-const chrome = spawn(
-  "/usr/bin/chromium",
-  [
-    "--headless=new",
-    "--no-sandbox",
+// A failed launch must not leave the stub server behind (it was started just above).
+const browser = await launchChromium({
+  args: [
     "--disable-gpu",
     "--hide-scrollbars",
     `--force-device-scale-factor=${M.dpr}`,
     "--font-render-hinting=none",
-    `--remote-debugging-port=${CDP_PORT}`,
     "--remote-allow-origins=*",
     // A desktop scenario gets a desktop pointer: headless otherwise reports a coarse one, and the
     // Console then shows the controls meant for touch screens on every row (see capture.mjs). A
@@ -125,10 +122,13 @@ const chrome = spawn(
     `--lang=${LOCALE === "ja" ? "ja-JP" : "en-US"}`,
     "about:blank",
   ],
-  { stdio: ["ignore", "ignore", "ignore"] },
-);
+}).catch((e) => {
+  stub.kill(); fs.rmSync(FRAMES, { recursive: true, force: true });
+  throw e;
+});
+const CDP_PORT = browser.port;
 const cleanup = () => {
-  try { chrome.kill(); } catch {}
+  browser.close();
   try { stub.kill(); } catch {}
   if (!KEEP) fs.rmSync(FRAMES, { recursive: true, force: true });
 };

@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { launchChromium } from "../lib/chromium-launch.mjs";
 import { DETAIL_SHA } from "./fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -25,7 +26,6 @@ const THEME = arg("theme", "dark");
 const ONLY = arg("only", "");
 const OUT = path.resolve(ROOT, arg("out", "docs/img"));
 const PORT = Number(arg("port", 8765));
-const CDP_PORT = Number(arg("cdp-port", 9223));
 const BASE = `http://127.0.0.1:${PORT}/`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -3704,16 +3704,13 @@ const stub = spawn(process.execPath, [path.join(HERE, "server.mjs"), "--port", S
   env: { ...process.env, ...stubEnv },
 });
 
-const chrome = spawn(
-  "/usr/bin/chromium",
-  [
-    "--headless=new",
-    "--no-sandbox",
+// A failed launch must not leave the stub server behind (it was started just above).
+const browser = await launchChromium({
+  args: [
     "--disable-gpu",
     "--hide-scrollbars",
     "--force-device-scale-factor=2",
     "--font-render-hinting=none",
-    `--remote-debugging-port=${CDP_PORT}`,
     "--remote-allow-origins=*",
     // Headless reports a coarse pointer, so `@media (hover: none)` applies and controls that
     // should only appear on hover appear on every row — a picture busier than the real thing
@@ -3727,11 +3724,14 @@ const chrome = spawn(
     `--lang=${LOCALE === "ja" ? "ja-JP" : "en-US"}`,
     "about:blank",
   ],
-  { stdio: ["ignore", "ignore", "ignore"] },
-);
+}).catch((e) => {
+  stub.kill();
+  throw e;
+});
+const CDP_PORT = browser.port;
 
 const cleanup = () => {
-  try { chrome.kill(); } catch {}
+  browser.close();
   try { stub.kill(); } catch {}
 };
 process.on("exit", cleanup);
