@@ -123,6 +123,10 @@ export function FilesChanges() {
   // it started under, so the previous workspace's answer never replaces the new one's list.
   const tenantRef = useRef(tenant);
   tenantRef.current = tenant;
+  // The tenant the list on screen was loaded under. A switch held while hidden leaves the old
+  // tenant's list in state until the loader runs after the show's first paint; rendering it
+  // would flash the other workspace's file names, so it shows loading instead.
+  const loadedTenantRef = useRef(tenant);
   // Something asked for a reload while the view was hidden (a turn ended, or the member came
   // back to the window). One reload on show pays all of it.
   const owed = useRef(false);
@@ -131,11 +135,12 @@ export function FilesChanges() {
   // failure is retried (isTransientErr).
   useRetryLoad(async (signal) => {
     owed.current = false; // this load is the reload anything owed asked for
+    loadedTenantRef.current = tenant;
     if (!loadRunning) return true; // nothing to load while the WS is stopped
     setChanges(null);
     let d;
     try {
-      d = await api("api/fs/changes");
+      d = await api("api/fs/changes", { signal });
     } catch {
       return false; // network drop — retry
     }
@@ -158,11 +163,14 @@ export function FilesChanges() {
   const reload = useCallback(async () => {
     if (!running || autoInFlight.current || document.hidden) return;
     autoInFlight.current = true;
-    lastAutoAt.current = Date.now();
     const started = tenantRef.current;
+    lastAutoAt.current = Date.now();
     try {
       const d = await api("api/fs/changes");
-      if (tenantRef.current !== started) return; // the previous workspace's answer
+      if (tenantRef.current !== started) {
+        lastAutoAt.current = 0; // a discarded answer must not throttle the next return to the window
+        return; // the previous workspace's answer
+      }
       if (!d || d.error || isTransientErr(d) || !Array.isArray(d.changes)) return;
       setChanges(d.changes);
     } catch {
@@ -210,7 +218,7 @@ export function FilesChanges() {
   }, [reload]);
 
   if (!running) return <EmptyState icon="debug-disconnect" title={tr("pj.ws_stopped")} />;
-  if (changes === null) return <EmptyState icon="loading" title={tr("pj.loading")} />;
+  if (changes === null || loadedTenantRef.current !== tenant) return <EmptyState icon="loading" title={tr("pj.loading")} />;
   // Working sets (docs/log/52): keep only changes in the set's working copies —
   // a worktree folder ("<base>@<slug>") resolves via its base prefix.
   const scoped = wset ? changes.filter((c) => wset.repos.includes(folderBase(c.repo))) : changes;

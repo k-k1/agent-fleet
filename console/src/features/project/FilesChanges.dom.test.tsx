@@ -404,10 +404,26 @@ describe("on a tenant switch", () => {
     served = demo("beta.ts");
     await switchTo("beta");
     expect(vi.mocked(api)).not.toHaveBeenCalled();
-    expect(names()).toEqual(["alpha.ts"]); // held until shown
-
     await renderShown(true);
     expect(vi.mocked(api)).toHaveBeenCalledTimes(1);
+    expect(names()).toEqual(["beta.ts"]);
+  });
+
+  it("never paints the previous tenant's list when a held switch is shown", async () => {
+    await renderShown(true);
+    await renderShown(false);
+    served = demo("beta.ts");
+    await switchTo("beta");
+    let open!: () => void;
+    gate = { wait: new Promise<void>((r) => (open = r)), open: () => open() };
+    await renderShown(true); // the load under beta is held: nothing of alpha may show meanwhile
+    expect(names()).toEqual([]);
+    expect(host.textContent).not.toContain("alpha.ts");
+    gate.open();
+    gate = null;
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(names()).toEqual(["beta.ts"]);
   });
 
@@ -415,13 +431,13 @@ describe("on a tenant switch", () => {
     await renderShown(true);
     let open!: () => void;
     gate = { wait: new Promise<void>((r) => (open = r)), open: () => open() };
-    await switchTo("beta"); // the load under beta starts and is held, as is the old one below
+    await switchTo("beta"); // beta's load starts and is held
     const oldGate = gate;
     gate = null;
     served = demo("beta.ts");
     await switchTo("gamma"); // fast second switch: gamma answers at once
     expect(names()).toEqual(["beta.ts"]);
-    oldGate.open(); // beta's held answer (alpha's list was served when it was asked)
+    oldGate.open(); // the held answer, asked under beta, lands after the switch to gamma
     await act(async () => {
       await Promise.resolve();
     });
