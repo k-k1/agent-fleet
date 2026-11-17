@@ -100,6 +100,9 @@ type CP interface {
 	// (Fargate units) and working disk (GiB); 0 = none. SetUserLimit rejects above them.
 	WorkspaceCeilings() (cpuUnits, diskGB int)
 	ResolveSlotClass(ctx context.Context, ws store.Workspace) (id, note string)
+	// ResolveNextStart is the box ws's next start runs on once overrides (a boost) are laid
+	// over the stored choice. ok=false where the runtime has no rungs.
+	ResolveNextStart(ctx context.Context, ws store.Workspace) (NextStart, bool)
 	EvictMembershipCache(membershipID string)
 	// RotateGitToken bumps the membership's internal git token epoch, which kills the
 	// old token at once, and pushes the new one to its running workspace (issue #1199).
@@ -230,6 +233,9 @@ type Limits struct {
 	MaxWorkspaceDiskGB           int
 	SlotClass                    string
 	AllowedSlotClasses           []string
+	BoostEnabled                 bool
+	BoostMaxMemMiB               int64
+	BoostMonthlyHours            int
 	SessionIdleTimeout           string
 	WSIdleTimeout                string
 	InteractionIdleTimeout       string
@@ -247,6 +253,17 @@ type Limits struct {
 	// allowed (ADR 0084 decision 7).
 	AllowEngineLLM   *bool
 	AllowEngineImage *bool
+}
+
+// NextStart is the roster's view of the resolver's answer (ADR 0139): the class and the rung's
+// MiB the next start lands on, and where that came from. The Console draws the box from it
+// instead of recomputing it from the stored size.
+type NextStart struct {
+	SlotClass string `json:"slot_class"`
+	MemMiB    int64  `json:"mem_mib"`
+	// Source is "stored", "boost" or (later) "auto".
+	Source string `json:"source"`
+	Until  string `json:"until,omitempty"`
 }
 
 // APIError carries an HTTP status + machine code, mirroring the CP's apiError

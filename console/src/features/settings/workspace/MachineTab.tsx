@@ -9,6 +9,7 @@ import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { Row } from "../parts/controls.tsx";
 import { PlaceLine, type Place } from "./machinePlace.tsx";
 import { emptyToolCache, loadToolCaches, type ToolCacheRow } from "./toolCaches.ts";
+import { BoostSection, useSizing } from "./BoostSection.tsx";
 import { HomeBreakdownSection } from "./HomeBreakdownSection.tsx";
 import { AfWorkAgeSection } from "./AfWorkAgeSection.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
@@ -83,6 +84,8 @@ export function MachineView({ d }: { d: WsMachine }) {
   const disk = machineDisk(d);
   const next = machineNextStart(d);
   const quota = d.measured?.cpu_quota;
+  // The CP's own answer to "which box does the next start use, and why" — never recomputed here.
+  const sizing = useSizing();
 
   const gib = (bytes: number) => fmtGiB(bytes) + " GiB";
   // The source marker qualifies the number rather than judging it: "configured" is the
@@ -151,7 +154,10 @@ export function MachineView({ d }: { d: WsMachine }) {
         <p className="muted ds-note">{own ? tr("machine.note_own_box") : tr("machine.note_shared_host")}</p>
         <p className="muted ds-note">{tr("machine.note_who_changes")}</p>
       </section>
-      {d.running && <UsageSection memMax={memLimit.value} vcpu={vcpu.value} own={own} />}
+      <BoostSection sizing={sizing} />
+      {d.running && (
+        <UsageSection memMax={memLimit.value} vcpu={vcpu.value} own={own} boostable={!!sizing.d?.boost?.available} />
+      )}
       {d.running && <HomeBreakdownSection own={own} />}
       {d.running && <DiskSection />}
       {d.running && <ToolCacheSection />}
@@ -169,7 +175,7 @@ export function MachineView({ d }: { d: WsMachine }) {
 //
 // The samples come from wsStatsFeed, which keeps its own clock — see that module for why the
 // push stream alone cannot produce a moving chart.
-function UsageSection({ memMax, vcpu, own }: { memMax: number; vcpu: number; own: boolean }) {
+function UsageSection({ memMax, vcpu, own, boostable }: { memMax: number; vcpu: number; own: boolean; boostable: boolean }) {
   const tr = useT();
   const samples = useWsStatsSeries();
   const last = samples[samples.length - 1];
@@ -221,7 +227,7 @@ function UsageSection({ memMax, vcpu, own }: { memMax: number; vcpu: number; own
         </div>
         <TrendChart points={samples.map((s) => ({ t: s.t, v: s.cpu }))} max={cpuCeil} spanMs={spanMs} />
       </div>
-      <PressureChart samples={samples} spanMs={spanMs} />
+      <PressureChart samples={samples} spanMs={spanMs} boostable={boostable} />
       {/* Disk is a level, not a rate: it moves in steps over hours, so a trend line of it
           says nothing a bar does not.
           The figure is a statfs of the filesystem home sits on. Only on a box of one's own is
@@ -250,10 +256,14 @@ function UsageSection({ memMax, vcpu, own }: { memMax: number; vcpu: number; own
   );
 }
 
+/** Provisional, like every ADR 0120 threshold: the `some` avg10 percentage from which the
+ *  pressure line suggests a boost. */
+const PRESSURE_BOOST_HINT_SOME10 = 20;
+
 // PressureChart — memory pressure (PSI) beside the Agent's own latency. Measurement only: no
 // threshold tints it, because the thresholds are exactly what the data is being collected to fix
 // (ADR 0120). An Agent that cannot measure it says so instead of drawing a calm line.
-function PressureChart({ samples, spanMs }: { samples: StatSample[]; spanMs: number }) {
+function PressureChart({ samples, spanMs, boostable }: { samples: StatSample[]; spanMs: number; boostable: boolean }) {
   const tr = useT();
   const last = samples[samples.length - 1]?.memPressure;
   if (!last) return null; // an Agent from before the axis: nothing to say
@@ -280,6 +290,12 @@ function PressureChart({ samples, spanMs }: { samples: StatSample[]; spanMs: num
         />
       )}
       <p className="muted ds-note">{tr("machine.pressure_note")}</p>
+      {/* ADR 0139 decision 5: where the warning of ADR 0120 will sit, the notice offers the boost
+          next to "close a session". That warning is not built yet (ADR 0120 phase 0 is measure
+          only), so this line stands in for it with a provisional level. */}
+      {boostable && last.available && (last.some10 ?? 0) >= PRESSURE_BOOST_HINT_SOME10 && (
+        <p className="ds-note boost-hint">{tr("boost.pressure_hint")}</p>
+      )}
     </div>
   );
 }

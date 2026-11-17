@@ -42,6 +42,7 @@ vi.mock("../../../core/api/client.ts", () => {
     getTenant: () => "default",
   };
 });
+vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 // The feed is driven directly (feed.sample()) rather than by its 4s timer.
 vi.mock("../../../core/push/events.ts", () => ({ onPush: () => () => {}, pushHealthy: () => true, pushPaused: () => false }));
 
@@ -199,6 +200,36 @@ describe("MachineView", () => {
     expect(text).toContain("full 3%");
     expect(text).toContain("Agent 応答 7 ms");
     expect(host!.querySelectorAll("svg.trend").length).toBe(3);
+  });
+
+  it("offers the boost beside the pressure only when the pressure is high and a boost is available", async () => {
+    const sizing = (available: boolean) => ({
+      supported: true,
+      runtime: "ecs-ec2",
+      restart_offered: false,
+      boost: { enabled: true, active: false, available, default_hours: 4, max_hours: 24, budget: { monthly_hours: 0, counted: false, used_hours: 0, spent: false } },
+    });
+    const press = (some: number) => {
+      feed.setLatest({ running: true, mem_used: 1, mem_max: 6979321856, cpu_pct: 5, mem_pressure: { available: true, some_avg10: some, full_avg10: 1, agent_latency_ms: 7 } });
+      feed.sample();
+      feed.sample();
+    };
+    answers.byPath["api/workspace/sizing"] = sizing(true);
+    press(40);
+    expect(await mount(ec2)).toContain("ブーストで次回起動を大きいマシンに");
+    act(() => root?.unmount());
+    host?.remove();
+
+    feed.reset();
+    press(5);
+    expect(await mount(ec2)).not.toContain("ブーストで次回起動を大きいマシンに");
+    act(() => root?.unmount());
+    host?.remove();
+
+    feed.reset();
+    answers.byPath["api/workspace/sizing"] = sizing(false);
+    press(40);
+    expect(await mount(ec2)).not.toContain("ブーストで次回起動を大きいマシンに");
   });
 
   it("draws no pressure line when the Agent cannot measure it", async () => {

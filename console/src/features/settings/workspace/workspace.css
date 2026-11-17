@@ -1150,3 +1150,20 @@ button.mv-path:focus-visible {
   border-radius: 8px;
   font-size: 11px;
 }
+
+/* Boost (ADR 0139): the action row under the next-start box. */
+.boost-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.boost-hours {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.boost-hours input {
+  width: 4.5em;
+}

@@ -92,7 +92,7 @@ The top of the tab says where things stand:
 
 - **Usable in this tenant**, with the pool, or a banner saying it is **not usable yet** because it is not granted. The budgets below stay editable either way: set them first, and they apply from the moment it is granted
 - This month, in UTC, with when it resets in your local time, and a bar of what is spent and held for calls in flight against the pool
-- A banner when your restrictions stop "Amazon Bedrock (this deployment)", naming who: members cannot use it, whatever their budget, until the restriction allows it
+- A banner when your restrictions stop "Amazon Bedrock (this deployment)", naming who, with **See restrictions →**: members cannot use it, whatever their budget, until the restriction allows it
 
 
 1. Under **Who may use them**, choose **Every member** or **Granted members only**
@@ -118,10 +118,10 @@ This rule binds Agent Fleet's own launches, not what a member runs by hand.
 
 The admin modal's **Deployment → Model access** has the restrictions above the tenants', on four tabs:
 
-- **Overview**: the **Operator setting (fixed)**, read-only, with the value the deployment was started with
+- **Overview**: **Who decides what**, one plain line each, top first: the **Operator setting (fixed)** (open **See the setting's value** for the value the deployment was started with), the **Restriction for all tenants**, and **Restrictions on each tenant**, each with a button to the tab where it is changed. Below, where the deployment pays for Bedrock, the source's name, Region and whether it is in use
 - **Restrictions for all tenants**: the **Restriction for all tenants**, which applies to every tenant
 - **Per tenant**: the **Deployment admin's restriction on this tenant**, for each tenant: choose the tenant, then edit it. That tenant's own restriction is shown below it, read-only, followed by **Hidden from members** for that tenant: each hidden agent, image provider or chat backend and who stops it
-- **Provided models**, where the deployment pays for Bedrock: the **Source (the IAM role that calls Amazon Bedrock)**, its Region and models, and **Use this source**. Switching it off keeps its spend and sessions on record
+- **Provided models**, where the deployment pays for Bedrock: the **Source (the IAM role that calls Amazon Bedrock)**, its Region and models, and **Use this source**. Switching it off keeps its spend and sessions on record. Below it, **Grants by tenant** lists each tenant's grant, monthly pool and this month; it is read when you first open the tab, twenty tenants at a time, and **Change →** on a row opens that tenant on **Per tenant**
 - On **Per tenant**, under each tenant, **Grant to this tenant and monthly pool**: **Grant to this tenant** with the **Tenant's monthly pool (dollars)**. A grant needs a pool above zero
 
 These editors mark with 🔒 what the operator setting forbids. A restriction that would still allow any of it cannot be saved, and the editor says so before you press **Save**, naming what it would allow. **Match the operator setting** narrows the fields to what the operator setting allows, so it can be saved: for example a tenant restriction that only blocks Cursor's login gets the operator setting's destinations as well. It never widens anything and does not save. On a tenant's restriction, options the restriction for all tenants stops are marked ⚠.

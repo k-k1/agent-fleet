@@ -218,6 +218,7 @@ var adminWriteRouteAudits = map[string]adminWriteRouteAudit{
 	"PUT /api/admin/tenants/{slug}/watch-sources":                 {marker: `tenant.watch_sources`},
 	"PUT /api/admin/tenants/{slug}/memo-queues":                   {marker: `tenant.memo_queues`},
 	"PUT /api/admin/tenants/{slug}/slot-class":                    {marker: `tenant.slot_class`},
+	"PUT /api/admin/tenants/{slug}/boost":                         {marker: `tenant.boost`},
 	"PUT /api/admin/tenants/{slug}/engine-access":                 {marker: `tenant.engine_access`},
 	"PUT /api/admin/tenants/{slug}/engine-access/members":         {marker: `member.engine_access`},
 	"PUT /api/admin/tenants/{slug}/branch-rules":                  {marker: `tenant.branch_rules`},

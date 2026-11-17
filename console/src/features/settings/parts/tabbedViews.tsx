@@ -1,7 +1,7 @@
 // A settings page split into views by a ViewNav, with every view kept mounted. Only the active
 // view is shown; the others are hidden, never unmounted, so a draft or a refusal in one view
 // survives a switch to another, and the tab of a view with unsaved edits carries a mark.
-import { useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
 import { DirtyScope } from "./dirtyScope.tsx";
 import { ViewNav } from "./viewNav.tsx";
@@ -14,6 +14,22 @@ export interface TabbedView {
    *  whether it exists (provided routes on a CP that does not serve them). */
   shown?: boolean;
 }
+
+// What a view may ask of the page it sits on: switch to another view (a banner that points at the
+// tab where its cause can be changed), and whether it is the one showing (a view that reads a lot
+// waits until it is first opened). Outside a TabbedViews, there is nowhere to switch to and every
+// view counts as showing.
+const TabsContext = createContext<{ show: (key: string) => void; has: (key: string) => boolean } | null>(null);
+const ActiveContext = createContext(true);
+
+/** useShowView: switch to the view `key`, or null where there is no such view to switch to. */
+export function useShowView(key: string): (() => void) | null {
+  const tabs = useContext(TabsContext);
+  return tabs && tabs.has(key) ? () => tabs.show(key) : null;
+}
+
+/** useViewActive: whether the view holding the caller is the one showing. */
+export const useViewActive = () => useContext(ActiveContext);
 
 export function TabbedViews({ label, prefix, views }: { label: string; prefix: string; views: readonly TabbedView[] }) {
   const tr = useT();
@@ -33,8 +49,28 @@ export function TabbedViews({ label, prefix, views }: { label: string; prefix: s
       ),
     [keys],
   );
+  // A switch asked for from inside a view moves the focus to the new view's tab: the button that
+  // asked is now in a hidden view, and the focus would otherwise fall back to the page.
+  const focusNext = useRef<string | null>(null);
+  useEffect(() => {
+    if (focusNext.current !== value) return;
+    focusNext.current = null;
+    document.getElementById(`${prefix}-tab-${value}`)?.focus();
+  }, [value, prefix]);
+  const tabs = useMemo(
+    () => ({
+      show: (k: string) => {
+        focusNext.current = k;
+        setPicked(k);
+      },
+      has: (k: string) => shown.some((v) => v.key === k),
+    }),
+    // shown is rebuilt each render; its keys are what matter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shown.map((v) => v.key).join("\n")],
+  );
   return (
-    <>
+    <TabsContext.Provider value={tabs}>
       <ViewNav
         label={label}
         prefix={prefix}
@@ -55,9 +91,11 @@ export function TabbedViews({ label, prefix, views }: { label: string; prefix: s
           data-view={v.key}
           className="tabbed-view"
         >
-          <DirtyScope onChange={onDirty[v.key]}>{v.node}</DirtyScope>
+          <ActiveContext.Provider value={v.key === value}>
+            <DirtyScope onChange={onDirty[v.key]}>{v.node}</DirtyScope>
+          </ActiveContext.Provider>
         </div>
       ))}
-    </>
+    </TabsContext.Provider>
   );
 }

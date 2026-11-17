@@ -83,6 +83,9 @@ export interface Member {
   slot_class_effective?: string | null;
   /** What "" (follow the tenant default) resolves to for this member, whatever is stored. */
   slot_class_default?: string | null;
+  /** The box the next start lands on with any boost laid over the stored choice, as the CP
+   *  resolved it (ADR 0139). The roster draws THIS; the stored mem_limit alone no longer says. */
+  next_start?: { slot_class: string; mem_mib: number; source: "stored" | "boost" | "auto"; until?: string };
   /** "active" | "removed". A removed member is off the roster and can no longer
    *  sign in, but stays on THIS list so the rest of the offboarding sequence
    *  (stop workspace → clean home) is still reachable (docs/log/61 §61.10.6). */

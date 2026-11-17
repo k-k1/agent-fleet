@@ -47,6 +47,14 @@ type tenantLimits struct {
 	// "smaller" version — resolveSlotClass falls back to the tenant default and SAYS
 	// so, rather than silently running the person somewhere they didn't ask for.
 	AllowedSlotClasses []string `json:"allowed_slot_classes,omitempty"`
+	// Boost is the tenant's switch and bounds for a member-pressed one-rung-up (ADR 0139
+	// decision 5). Off until a tenant_admin turns it on; inert on every runtime without
+	// slot rungs. BoostMaxMemMiB is the highest rung a boost may reach, as that rung's declared
+	// MiB (0 = the top of the class). BoostMonthlyHours is the member's monthly budget of
+	// boosted RUNNING hours (0 = no budget).
+	BoostEnabled      bool  `json:"boost_enabled,omitempty"`
+	BoostMaxMemMiB    int64 `json:"boost_max_mem_mib,omitempty"`
+	BoostMonthlyHours int   `json:"boost_monthly_hours,omitempty"`
 	// P3-9 idle-stop (docs/log/19): per-tenant, super_admin-editable.
 	SessionIdleTimeout string `json:"session_idle_timeout,omitempty"` // tier-1: idle claude -> halt
 	WSIdleTimeout      string `json:"ws_idle_timeout,omitempty"`      // tier-2: cold workspace -> docker stop

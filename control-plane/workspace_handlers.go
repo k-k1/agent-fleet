@@ -669,7 +669,13 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	}
 	// The launch is recorded before Start and its id handed to the container, so the Agent's
 	// minutes carry it (usage_history.go). Where the runtime names no box this is a no-op.
-	launchID, launchEnv := a.mgr.beginLaunch(ctx, res.ws, rt)
+	boxRT := rt
+	if fresh, drifted := a.mgr.sizeDrifted(ctx, res.ws); drifted {
+		// The memoized runtime still names a box a boost has since left (or entered): the ledger
+		// records the box this start lands on, which the rebuild below also uses.
+		boxRT = a.mgr.runtimeFor(fresh, keys, a.mgr.workspaceExtraEnv(ctx, fresh)...)
+	}
+	launchID, launchEnv := a.mgr.beginLaunch(ctx, res.ws, boxRT)
 	if launchEnv != "" {
 		extraEnv = append(append([]string(nil), extraEnv...), launchEnv)
 	}

@@ -454,6 +454,7 @@ func membershipCascade(membershipID string) []struct {
 		args []any
 	}{
 		{`DELETE FROM user_limit WHERE membership_id=?`, id},
+		{`DELETE FROM workspace_size_override WHERE membership_id=?`, id},
 		{`DELETE FROM engine_access_grant WHERE membership_id=?`, id},
 		// A provided route's grant and budget override go with the seat. Its monthly spend and
 		// reservations (provided_route_period, provided_route_call) stay, like usage_daily: that
