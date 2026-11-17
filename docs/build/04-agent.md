@@ -129,6 +129,31 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     it. The tools (`add_memo`, `update_memo`) pass the Control Plane's answer back as it came, so the
     session sees `existing` and the state; a call that sent a reference whose answer has none gets an
     error result saying the reference was not kept (an older Control Plane ignores the field).
+  - **Tidying** (ADR 0137 §8, `internal/memotidy`). `GET /sessions` carries `"queueTidy": 1`, which says
+    both that `POST /memos/tidy` exists and that a delivery may carry a `curator` item
+    (`queueTidyVersion`; the Control Plane reads it with `>=`).
+    `POST /memos/tidy` (Agent token, no Control Plane relay) takes `{run, trigger:"auto", queue:{id,label},
+    items:[{id, kind:"text"|"file", text, file, group, merge, move}], destinations:[{id, name, queue}],
+    limits:{mergeSources, splitParts, textBytes, operations}}` and answers `200 {run, operations, kind, model}`
+    where `operations` are `merge{ids,text}`, `split{id,texts}`, `move{id,to}` and `keep{id}`. It makes one
+    `chatx.OneShotDenyAll` call (usage feature `memo.tidy`, prose tier, trigger `auto`) and never falls
+    back to a call that has tools or retries. The prompt is a fixed persona and task text followed by the
+    queue, items and destinations as one line of JSON; the queue's standing instruction and the run id are
+    not in it. The request is refused with `400 bad_tidy_request` beyond 40 items, 96 KiB of text, an id that
+    repeats, a trigger other than `auto` or limits above 10 / 5 / 16 KiB / 80. The reply must be one JSON
+    object (one surrounding code fence is allowed) of at most 256 KiB, with no unknown key, nothing after it
+    and the shape and `limits` of each operation; the Control Plane validates the rules again. Codes:
+    `409 tidy_busy` (one call at a time in the workspace), `422 tidy_malformed`, `502 tidy_failed` (the call
+    failed, or the run's own output did not show the deny-all posture: the reply is discarded), `503
+    deny_all_unavailable` (only `errors.Is(err, chatx.ErrDenyAllUnavailable)`: nothing reached a model and no
+    ledger row was written), `504 tidy_timeout` (the whole handler is bounded at 120 s, probe included), and
+    the credential policy's `403 route_forbidden` / `503 policy_unconfirmed` / `403 agent_disabled` unchanged (the last only when the kind was switched off between resolving and launching), and `500 tidy_failed` if the prompt cannot be built (a guard that a validated request does not reach). No reply text is
+    returned or logged on an error.
+    A delivery item with `provenance: "curator"` carries `sourceProvenance` (`member`, `workspace` or `mcp`),
+    `derivedFrom` (the number of source notes, 1 to 100) and the sources' `producer` / `producerOrigin`; it is
+    a text note with no reference, path or attachment, and the two fields are refused on any other
+    provenance. Its origin line is written from those fields alone ("tidied by Agent Fleet from 3 notes your
+    user added in the Console"); its text stays quoted data like any item's.
   - `POST /sessions/{name}/retire` ends all of that for the session and for every session it
     started at any depth (`origin == "session"` and the `originSession` chain, the walk
     `spendDescendants` makes), cancels their booked resumes, then halts them. The answer lists

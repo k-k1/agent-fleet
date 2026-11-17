@@ -53,7 +53,7 @@
 
 | 次元 | 値 |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `memory.review` / `route.gateway` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `memory.review` / `memo.tidy` / `route.gateway` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `session` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -365,3 +365,5 @@ event が加わっても（両端に同時に加わっても）2 つ目のター
   印はターンなしに見えて、そのエージェントをもう一度畳み込む。
 
 **追記（2026-11-05）。** `feature` の行に `route.gateway` を加えた。AF のルートゲートウェイがセッションのルートのために転送したモデル呼び出し 1 回（ADR 0128 P2a）である。同じハーネスの、取り込まれた `session` の行と混ざらないよう、独立した feature にしている。
+
+**追記（2026-11-17）。** `feature` の行に `memo.tidy` を加えた。キューの tidy 実行（[ADR 0137](0137-message-queues.ja.md) §8）が、待機中のメモに対して行う「ツールを全て拒否する」一発呼び出し 1 回である。`usagex/ledger.go` の `FeatureMemoTidy` と同じコミットで入れた。`trigger` は `auto`、`ref` は空。Console の表示名はこの変更に含まれない。
