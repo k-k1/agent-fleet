@@ -28,10 +28,12 @@ let gate: { wait: Promise<void>; open: () => void } | null = null;
 
 vi.mock("../../core/api/client.ts", () => ({
   apiJSON: async () => ({}),
+  getTenant: () => "",
   api: vi.fn(async () => {
+    const answer = served; // what the workspace holds when asked, delivered when the gate opens
     if (gate) await gate.wait;
     if (failing) return { error: { code: "http_502", status: 502 } };
-    return { changes: served };
+    return { changes: answer };
   }),
   isTransientErr: (d: unknown) => {
     const err = (d as { error?: { code?: string; status?: number } } | null)?.error;
@@ -48,6 +50,7 @@ const { FilesChanges } = await import("./FilesChanges.tsx");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { useReposStore } = await import("../repos/store.ts");
 const { useFilesStore } = await import("../files/store.ts");
+const { useTenantStore } = await import("../../core/store/tenant.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -352,5 +355,96 @@ describe("while the Files view is hidden", () => {
 
     await renderShown(true);
     expect(vi.mocked(api)).toHaveBeenCalledTimes(1); // the held tick's load pays the turn end
+  });
+});
+
+// A switch between two running workspaces fires no running edge and no files tick, so the list
+// has to reload on the tenant itself (#4431).
+describe("on a tenant switch", () => {
+  const demo = (f: string): Change[] => [{ path: `repos/demo/${f}`, repo: "demo", worktree: "M", index: " " }];
+  const names = () => rows().map((r) => r.querySelector(".fs-name")?.textContent);
+  const switchTo = async (tenant: string) => {
+    await act(async () => {
+      useTenantStore.setState({ tenant });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  };
+  const renderShown = async (shown: boolean) => {
+    await act(async () => {
+      root!.render(
+        <ViewShownContext.Provider value={shown}>
+          <FilesChanges />
+        </ViewShownContext.Provider>,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  };
+
+  beforeEach(() => {
+    useTenantStore.setState({ tenant: "alpha" });
+    served = demo("alpha.ts");
+  });
+
+  it("replaces the list with the new workspace's changes", async () => {
+    await renderShown(true);
+    expect(names()).toEqual(["alpha.ts"]);
+    served = demo("beta.ts");
+    await switchTo("beta");
+    expect(names()).toEqual(["beta.ts"]);
+  });
+
+  it("reads nothing while hidden, then once on show with the new tenant's list", async () => {
+    await renderShown(true);
+    await renderShown(false);
+    vi.mocked(api).mockClear();
+    served = demo("beta.ts");
+    await switchTo("beta");
+    expect(vi.mocked(api)).not.toHaveBeenCalled();
+    expect(names()).toEqual(["alpha.ts"]); // held until shown
+
+    await renderShown(true);
+    expect(vi.mocked(api)).toHaveBeenCalledTimes(1);
+    expect(names()).toEqual(["beta.ts"]);
+  });
+
+  it("ignores the previous tenant's answer that lands after the switch", async () => {
+    await renderShown(true);
+    let open!: () => void;
+    gate = { wait: new Promise<void>((r) => (open = r)), open: () => open() };
+    await switchTo("beta"); // the load under beta starts and is held, as is the old one below
+    const oldGate = gate;
+    gate = null;
+    served = demo("beta.ts");
+    await switchTo("gamma"); // fast second switch: gamma answers at once
+    expect(names()).toEqual(["beta.ts"]);
+    oldGate.open(); // beta's held answer (alpha's list was served when it was asked)
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(names()).toEqual(["beta.ts"]);
+  });
+
+  it("ignores an auto-refresh from the previous tenant that lands after the switch", async () => {
+    await renderShown(true);
+    let open!: () => void;
+    gate = { wait: new Promise<void>((r) => (open = r)), open: () => open() };
+    served = demo("old.ts");
+    await act(async () => {
+      useFilesStore.getState().refreshUnder("repos/demo");
+    });
+    const held = gate;
+    gate = null;
+    served = demo("beta.ts");
+    await switchTo("beta");
+    expect(names()).toEqual(["beta.ts"]);
+    held.open();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(names()).toEqual(["beta.ts"]);
   });
 });

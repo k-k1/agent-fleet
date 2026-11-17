@@ -19,6 +19,7 @@ import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useFilesStore } from "../files/store.ts";
 import { REVALIDATE_GAP_MS } from "../files/refreshPolicy.ts";
 import { MiddleEllipsis } from "../files/MiddleEllipsis.tsx";
@@ -76,6 +77,7 @@ interface ChangeMenu {
 export function FilesChanges() {
   const tr = useT();
   const running = useWorkspaceStore((s) => s.state) === "running";
+  const tenant = useTenantStore((s) => s.tenant);
   const filesTick = useFilesStore((s) => s.tick);
   const repos = useReposStore((s) => s.repos);
   const wset = useActiveWorkingSet();
@@ -114,6 +116,13 @@ export function FilesChanges() {
   shownRef.current = shown;
   const loadTick = useShownValue(filesTick);
   const loadRunning = useShownValue(running);
+  // A switch between two running workspaces fires no running edge and no files tick, so the
+  // tenant is a trigger of its own, held while hidden like the other two.
+  const loadTenant = useShownValue(tenant);
+  // The tenant right now: a read that writes back after an await compares it with the tenant
+  // it started under, so the previous workspace's answer never replaces the new one's list.
+  const tenantRef = useRef(tenant);
+  tenantRef.current = tenant;
   // Something asked for a reload while the view was hidden (a turn ended, or the member came
   // back to the window). One reload on show pays all of it.
   const owed = useRef(false);
@@ -134,7 +143,7 @@ export function FilesChanges() {
     if (isTransientErr(d)) return false;
     setChanges(d.changes || []);
     return true;
-  }, [loadRunning, loadTick]);
+  }, [loadRunning, loadTick, loadTenant]);
 
   // Auto-refresh when a session goes back to waiting for input
   // (features/files/sessionRefresh.ts). The loader above is not reused because of its
@@ -150,8 +159,10 @@ export function FilesChanges() {
     if (!running || autoInFlight.current || document.hidden) return;
     autoInFlight.current = true;
     lastAutoAt.current = Date.now();
+    const started = tenantRef.current;
     try {
       const d = await api("api/fs/changes");
+      if (tenantRef.current !== started) return; // the previous workspace's answer
       if (!d || d.error || isTransientErr(d) || !Array.isArray(d.changes)) return;
       setChanges(d.changes);
     } catch {
