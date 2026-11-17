@@ -4,7 +4,7 @@
 // 3.5 s window cut every one of them off just before it completed.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { Terminal } from "@xterm/xterm";
-import { ensureTerm, attach, ensureAttached, disposeTerm, connStallWindow } from "./term.ts";
+import { ensureTerm, attach, ensureAttached, reconnect, disposeTerm, connStallWindow } from "./term.ts";
 
 let sockets: FakeWS[] = [];
 class FakeWS {
@@ -28,6 +28,10 @@ class FakeWS {
   open() {
     this.readyState = 1;
     this.onopen?.();
+  }
+  fail() {
+    this.readyState = 3;
+    this.onclose?.({ code: 1006, reason: "" });
   }
 }
 
@@ -117,6 +121,63 @@ describe("the connect-stall watchdog", () => {
     expect(last()).toBe(second);
     vi.advanceTimersByTime(2100); // past it (the watchdog itself fires at 6.5 s)
     ensureAttached("cs1", "sa");
+    expect(last()).not.toBe(second);
+  });
+
+  it("starts over at the short window after a connect that failed by itself", () => {
+    attach("cs1", "sa");
+    vi.advanceTimersByTime(3500); // one cut-off connect: the next window would be 6 s
+    last().fail(); // refused: says nothing about the window
+    reconnect("cs1");
+    const n = sockets.length;
+    vi.advanceTimersByTime(3500);
+    expect(sockets).toHaveLength(n + 1);
+  });
+
+  it("lets reconnect leave a connect inside its window alone", () => {
+    attach("cs1", "sa");
+    vi.advanceTimersByTime(3500);
+    const second = last();
+    vi.advanceTimersByTime(4000);
+    reconnect("cs1");
+    expect(last()).toBe(second);
+    vi.advanceTimersByTime(2100);
+    reconnect("cs1");
+    expect(last()).not.toBe(second);
+  });
+
+  it("never fires a replaced socket's watchdog", () => {
+    attach("cs1", "sa");
+    vi.advanceTimersByTime(3500);
+    vi.advanceTimersByTime(4000);
+    ensureAttached("cs1", "sa"); // inside the window: nothing
+    const n = sockets.length;
+    vi.advanceTimersByTime(2499); // only the current socket's watchdog may fire, at 6.5 s
+    expect(sockets).toHaveLength(n);
+    vi.advanceTimersByTime(2);
+    expect(sockets).toHaveLength(n + 1);
+  });
+
+  it("stops growing at 30 s", () => {
+    attach("cs1", "sa");
+    for (const w of [3000, 6000, 12000, 24000, 30000]) vi.advanceTimersByTime(w + 500);
+    const n = sockets.length;
+    vi.advanceTimersByTime(30_499);
+    expect(sockets).toHaveLength(n);
+    vi.advanceTimersByTime(2);
+    expect(sockets).toHaveLength(n + 1);
+  });
+
+  it("ignores a late open of a socket it already replaced", () => {
+    attach("cs1", "sa");
+    const first = last();
+    const onopen = first.onopen; // queued before the replacement
+    vi.advanceTimersByTime(3500);
+    const second = last();
+    first.readyState = 1;
+    onopen?.();
+    vi.advanceTimersByTime(6000); // the second's watchdog still fires at 6.5 s
+    vi.advanceTimersByTime(500);
     expect(last()).not.toBe(second);
   });
 });

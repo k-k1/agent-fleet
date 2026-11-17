@@ -46,8 +46,7 @@ interface Inst {
   connAt?: number; // ms when the CURRENT socket began connecting (stall watchdog — see ensureAttached)
   connWd?: ReturnType<typeof setTimeout>; // connect-stall watchdog timer (see attach)
   connStall?: number; // stall window of the CURRENT socket (see connStallWindow)
-  connTries?: number; // consecutive connects to this session that never opened
-  opened?: boolean; // the CURRENT socket reached OPEN
+  connTries?: number; // consecutive connects to this session replaced while still connecting
   cleanups?: (() => void)[]; // document-level listeners owned by this pane's terminal
   webgl?: WebglAddon | null; // live WebGL renderer addon (dropped while hidden — see hideTerm)
   canvas?: CanvasAddon | null; // 2D fallback renderer, when WebGL is unavailable/lost/over budget (see loadCanvas)
@@ -1254,14 +1253,14 @@ const HB_TIMEOUT = 45000; // no pong for this long ⇒ dead → re-attach
 // never completed the /ws/pty handshake, and CONNECTING never fires onclose/onerror.
 // Past this window we stop trusting it and re-attach (see connStalled / reconnect /
 // ensureAttached). The first window is short so that hang clears quickly, and it doubles
-// with every connect that never opened, up to CONNECT_STALL_MAX: a new socket costs a TCP
+// with every connect replaced while still connecting, up to CONNECT_STALL_MAX: a new socket costs a TCP
 // connect, a TLS handshake and the upgrade, and on a link with a ~1 s round trip that is
 // over 3 s. A fixed window cut every such connect off just before it completed, forever
 // (#4432).
 const CONNECT_STALL = 3000;
 const CONNECT_STALL_MAX = 30_000;
 
-/** The stall window for a connect after `tries` consecutive ones that never opened. */
+/** The stall window for a connect after `tries` consecutive ones replaced while still connecting. */
 export function connStallWindow(tries: number): number {
   return Math.min(CONNECT_STALL_MAX, CONNECT_STALL * 2 ** Math.min(Math.max(tries, 0), 8));
 }
@@ -1383,10 +1382,16 @@ export function attach(paneId: string, session: string, auto = false) {
   // Detach the old socket's handlers before closing it: an intentional switch
   // must not fire its onclose (which would flash "[disconnected]" over the
   // freshly-reset terminal). Only an unexpected server-side drop should show it.
-  // A connect to the same session that never opened makes the next window longer; one that
-  // opened, or a different session, starts over at the short one.
-  it.connTries = it.ws && it.session === session && !it.opened ? (it.connTries ?? 0) + 1 : 0;
+  // Only a connect to the same session that is still under way when replaced makes the next
+  // window longer: that is the one a window can have cut short. One that opened, one that
+  // failed by itself (a refused upgrade says nothing about the window), or another session
+  // starts over at the short one.
+  it.connTries =
+    it.ws && it.session === session && it.ws.readyState === WebSocket.CONNECTING
+      ? (it.connTries ?? 0) + 1
+      : 0;
   if (it.ws) {
+    it.ws.onopen = null; // a late open of a replaced socket must not stand for the new one
     it.ws.onclose = null;
     it.ws.onmessage = null;
     it.ws.onerror = null; // a late error on the old socket must not flag the new one
@@ -1405,7 +1410,6 @@ export function attach(paneId: string, session: string, auto = false) {
   const ws = new WebSocket(wsURL(session, auto));
   it.ws = ws;
   it.connAt = Date.now();
-  it.opened = false;
   it.connStall = connStallWindow(it.connTries);
   ws.binaryType = "arraybuffer";
   // Connect-stall watchdog. A PTY upgrade that never completes stays CONNECTING with
@@ -1422,8 +1426,8 @@ export function attach(paneId: string, session: string, auto = false) {
     }
   }, it.connStall + 500);
   ws.onopen = () => {
+    if (it.ws !== ws) return; // replaced while its open was queued
     clearConnWd(it); // connected → the stall watchdog is done
-    it.opened = true;
     fitInst(it); // size the grid before reporting it to the PTY (next line)
     setSoftKeyboard(it, true); // PTY connected → allow the soft keyboard for input
     ws.send(JSON.stringify({ type: "resize", cols: it.term!.cols, rows: it.term!.rows }));
@@ -1596,6 +1600,7 @@ export function detach(paneId: string) {
   clearConnWd(it);
   if (it.ws) {
     try {
+      it.ws.onopen = null;
       it.ws.onclose = null; // intentional detach — don't print "[disconnected]"
       it.ws.onerror = null;
       it.ws.close();
@@ -1630,6 +1635,7 @@ export function disposeTerm(paneId: string) {
   it.cleanups = [];
   if (it.ws) {
     try {
+      it.ws.onopen = null;
       it.ws.onclose = null;
       it.ws.onmessage = null;
       it.ws.onerror = null;
