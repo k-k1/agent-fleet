@@ -1,6 +1,9 @@
 package mcpx
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // askAssistantArgs is ask_assistant's.
 type askAssistantArgs struct {
@@ -60,7 +63,7 @@ func assistantTools() []toolSpec {
 				return ""
 			},
 			handle: handler(func(req mcpReq, p toolCallParams, a *askAssistantArgs) []byte {
-				if a.Assistant == "" || a.Prompt == "" {
+				if strings.TrimSpace(a.Assistant) == "" || a.Prompt == "" {
 					return mcpToolErr(req.ID, "assistant（相手）と prompt（相談内容）が必要です")
 				}
 				reqBody, _ := json.Marshal(map[string]string{"assistant": a.Assistant, "prompt": a.Prompt})
