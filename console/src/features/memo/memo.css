@@ -1082,3 +1082,43 @@
   box-sizing: border-box;
   resize: vertical;
 }
+
+/* Tidying before a run (ADR 0137 section 8): the marks on a message, the release card's line and
+   the tidy history under the run history. */
+.memo-qtidy-link {
+  font-size: 10px;
+}
+.memo-release-tidy {
+  font-size: 11px;
+  color: var(--muted);
+}
+.memo-q-tidy-dest {
+  border: 0;
+  margin: 0 0 0 22px;
+  padding: 0;
+  min-width: 0;
+}
+.memo-tidy {
+  margin-top: 12px;
+}
+.memo-tidy-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.memo-tidy-row {
+  flex-wrap: wrap;
+}
+.memo-tidy-row.focus {
+  box-shadow: 0 0 0 1px var(--accent);
+  border-radius: 4px;
+}
+.memo-tidy-state.s-failed,
+.memo-tidy-state.s-dropped {
+  color: var(--warn, var(--accent));
+}
+.memo-tidy-blocked {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--warn, var(--accent));
+}

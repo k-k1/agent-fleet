@@ -1,5 +1,5 @@
 // What an auto-run category says about itself beyond its settings (ADR 0137 §6): that it is paused
-// (and why, with the button that resumes it), and that its workspace cannot run it by itself yet.
+// (and why, with the button that resumes it), and that its workspace cannot run it by itself yet or cannot take the notes a tidy made.
 // Drawn on the category and at the top of its run history, from the same live settings, so the two
 // never disagree. The Control Plane's own sentence for the pause is English; the member reads the
 // catalogue line, never it.
@@ -26,8 +26,12 @@ export function MemoQueueNotices({ queue, busy, onResume }: Props) {
   // whenever the Control Plane says it (a set time or the waiting reason), enabled or not,
   // because pressing "Run now" tries again and fails the same way.
   const noRefs = queue.noRefsAt !== "" || queue.waiting?.reason === "no_references";
+  // The notes a tidy made wait while the Agent cannot take them. Said whenever the Control Plane
+  // says it, whether or not the switch is still on: they wait either way, and undoing the tidy is
+  // what frees them.
+  const noTidy = queue.noTidyAt !== "" || queue.waiting?.reason === "no_tidy";
   const why = waitingWords(queue, (iso) => fmtDateTime(iso), (kind) => kindLabel(kind));
-  if (!queue.paused && !noReport && !noRefs && !why) return null;
+  if (!queue.paused && !noReport && !noRefs && !noTidy && !why) return null;
   return (
     <div className="memo-q-notices">
       {queue.paused && (
@@ -46,6 +50,11 @@ export function MemoQueueNotices({ queue, busy, onResume }: Props) {
       {noRefs && (
         <div className="memo-q-noreport" role="status">
           {tr("memo.no_refs_notice")}
+        </div>
+      )}
+      {noTidy && (
+        <div className="memo-q-noreport" role="status">
+          {tr("memo.no_tidy_notice")}
         </div>
       )}
       {noReport && (

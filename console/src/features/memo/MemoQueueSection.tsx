@@ -52,7 +52,7 @@ import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
 import { memoReference } from "./reference.ts";
 import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
-import { isStaleRelease, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, staleIdsOf } from "./queues.ts";
+import { isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -202,6 +202,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // looks the live row up, so a poll that renames or removes it is seen by the dialog.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   const [deliveriesFor, setDeliveriesFor] = useState<string | null>(null);
+  // The tidy run the history opened for, so that its row stands out.
+  const [focusRun, setFocusRun] = useState("");
   const [releasing, setReleasing] = useState<string | null>(null); // release card key in flight
   const [changedIds, setChangedIds] = useState<ReadonlySet<string>>(new Set());
   // What the cards have shown of each held note lives in shownNotes.ts, outside this component, so
@@ -869,7 +871,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   </div>
                 )}
                 {rb.groups.map((g) => {
-                  const ids = g.memos.map((m) => m.id);
+                  // A replaced note is read-only and cannot be sent, so a select-all leaves it out.
+                  const ids = g.memos.filter((m) => !isSuperseded(m)).map((m) => m.id);
                   const allSel = ids.length > 0 && ids.every((id) => sel[id]);
                   const cat = g.catId ? cats.find((c) => c.id === g.catId) : undefined;
                   const dropKey = groupKey(rb.repo, g.category);
@@ -1090,6 +1093,14 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                               onEdit={() => setEditing(m.id)}
                               onCancelEdit={() => setEditing(null)}
                               onSave={(body, category, clearRef) => void saveEdit(m, body, category, clearRef)}
+                              onOpenTidyRuns={
+                                cat && isQueue
+                                  ? () => {
+                                      setFocusRun(m.tidyRunId ?? "");
+                                      setDeliveriesFor(cat.id);
+                                    }
+                                  : undefined
+                              }
                               onOpenMenu={(e) => openMemoMenu(e, m)}
                               onOpenKebab={(e) => openMemoMenuBtn(e, m)}
                               onDragStart={(e) => {
@@ -1149,16 +1160,21 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   </button>
                 </li>
               )}
-              <li>
-                <button type="button" className="ui-menu-item" onClick={() => runMemoMenu(() => setEditing(memoMenu.m.id))}>
-                  <Icon name="edit" /> {tr("memo.edit")}
-                </button>
-              </li>
-              <li>
-                <button type="button" className="ui-menu-item" onClick={() => runMemoMenu(() => sendGroup([memoMenu.m.id]))}>
-                  <Icon name="send" /> {tr("memo.send_one")}
-                </button>
-              </li>
+              {/* A replaced note is read-only: the Control Plane refuses an edit and a send of it. */}
+              {!isSuperseded(memoMenu.m) && (
+                <>
+                  <li>
+                    <button type="button" className="ui-menu-item" onClick={() => runMemoMenu(() => setEditing(memoMenu.m.id))}>
+                      <Icon name="edit" /> {tr("memo.edit")}
+                    </button>
+                  </li>
+                  <li>
+                    <button type="button" className="ui-menu-item" onClick={() => runMemoMenu(() => sendGroup([memoMenu.m.id]))}>
+                      <Icon name="send" /> {tr("memo.send_one")}
+                    </button>
+                  </li>
+                </>
+              )}
               {canStartFromMemo(memoMenu.m) && (
                 <li>
                   <button type="button" className="ui-menu-item" onClick={() => {
@@ -1208,6 +1224,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             categoryName={c.name}
             queue={queueByCat.get(c.id)}
             tenantEnabled={tenantEnabled}
+            destinations={queues
+              .filter((q) => q.categoryId !== c.id)
+              .map((q) => ({ id: q.categoryId, label: q.repo ? q.repo + " / " + q.category : q.category }))}
             onClose={() => setSettingsFor(null)}
             onChanged={bumpMemos}
           />
@@ -1223,8 +1242,13 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             categoryName={c.name}
             queue={queueByCat.get(c.id)}
             waiting={pendingCount(memos.filter((m) => m.repo === c.repo && m.category === c.name))}
-            onClose={() => setDeliveriesFor(null)}
+            focusRun={focusRun}
+            onClose={() => {
+              setDeliveriesFor(null);
+              setFocusRun("");
+            }}
             onFired={bumpMemos}
+            onUndone={bumpMemos}
             onResume={() => resume(c.id)}
           />
         );
@@ -1277,6 +1301,8 @@ interface MemoRowProps {
   onEdit: () => void;
   onCancelEdit: () => void;
   onSave: (body: string, category: string, clearRef: boolean) => void;
+  /** Opens the run history of this note's category; absent outside an auto-run category. */
+  onOpenTidyRuns?: () => void;
   onOpenMenu: (e: RMouseEvent) => void;
   onOpenKebab: (e: RMouseEvent) => void;
   onDragStart: (e: RDragEvent) => void;
@@ -1378,6 +1404,8 @@ function MemoRow(props: MemoRowProps) {
 
   const stateWords = memoStateWords(m.state);
   const originWords = memoOriginWords(m);
+  const marks = tidyMarks(m);
+  const replaced = isSuperseded(m);
   const isLong = (m.body || "").length > 60 || (m.body || "").includes("\n");
   return (
     <div
@@ -1410,13 +1438,13 @@ function MemoRow(props: MemoRowProps) {
       >
         <Icon name="gripper" />
       </span>
-      <input type="checkbox" checked={selected} onChange={props.onToggle} />
+      <input type="checkbox" checked={selected && !replaced} disabled={replaced} onChange={props.onToggle} />
       <div
         className="memo-body"
         onClick={(e) => {
           if ((e.target as HTMLElement).closest("code")) return;
           if (!expanded) props.onExpand();
-          else props.onEdit();
+          else if (!replaced) props.onEdit();
         }}
       >
         {m.origin && (
@@ -1443,7 +1471,7 @@ function MemoRow(props: MemoRowProps) {
             ))}
           </div>
         )}
-        {(stateWords || originWords) && (
+        {(stateWords || originWords || marks.length > 0) && (
           <div className="memo-qmeta">
             {stateWords && (
               <span className={"memo-qstate s-" + m.state} title={tr(stateWords.title)}>
@@ -1455,6 +1483,29 @@ function MemoRow(props: MemoRowProps) {
               <span className="memo-qorigin" title={tr("memo.accepted_by_setting_title")}>
                 {tr("memo.accepted_by_setting")}
               </span>
+            )}
+            {releasedByTidy(m) && (
+              <span className="memo-qorigin" title={tr("memo.released_by_tidy_title")}>
+                {tr("memo.released_by_tidy")}
+              </span>
+            )}
+            {marks.map((k) => (
+              <span key={k.key} className="memo-qorigin memo-qtidy" title={k.title ? tr(k.title) : undefined}>
+                {tr(k.key, k.params)}
+              </span>
+            ))}
+            {replaced && props.onOpenTidyRuns && (
+              <button
+                type="button"
+                className="linkish memo-qtidy-link"
+                title={tr("memo.tidy_replaced_title")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onOpenTidyRuns!();
+                }}
+              >
+                {tr("memo.tidy_replaced_link")}
+              </button>
             )}
           </div>
         )}

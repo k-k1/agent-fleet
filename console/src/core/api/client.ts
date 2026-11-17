@@ -1504,6 +1504,12 @@ export const memoQueueResume = (categoryId: string): Promise<MemoWriteResult> =>
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/resume`, "POST", {});
 export const memoQueueDeliveries = (categoryId: string): Promise<unknown> =>
   api(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries`);
+// The tidy runs of a category, newest first. Raw like the other reads: readTidyRuns normalises it.
+export const memoTidyRuns = (categoryId: string): Promise<unknown> =>
+  api(`api/memo-queues/${encodeURIComponent(categoryId)}/tidy-runs`);
+// Puts a tidy run back, all or none. 409 memo_tidy_not_undoable names the messages in the way.
+export const memoTidyUndo = (runId: string): Promise<MemoWriteResult> =>
+  apiJSON(`api/memo-tidy-runs/${encodeURIComponent(runId)}/undo`, "POST", {});
 
 // --- assistant one-shot ask (docs/log/21 memo tidy-up) ---
 // Stateless advisory turn (tools off) used to tidy up + auto-categorize memos. The

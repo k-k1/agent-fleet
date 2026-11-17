@@ -14,6 +14,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
 import { memoReference } from "./reference.ts";
+import { tidyMarks } from "./queues.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import type { Memo } from "../../types/memo.ts";
 import type { ReleaseCard } from "./queues.ts";
@@ -66,6 +67,11 @@ export function MemoReleaseCard({ card, busy, changedIds, edited, awaiting, onRe
               <div className="memo-release-body">
                 {m.kind === "file" && m.refPath && <code className="memo-release-ref">{m.refPath}</code>}
                 {ref && <MemoReferenceLink reference={ref} />}
+                {tidyMarks(m).map((k) => (
+                  <div key={k.key} className="memo-release-tidy" title={k.title ? tr(k.title) : undefined}>
+                    {tr(k.key, k.params)}
+                  </div>
+                ))}
                 {(releaseRowText(m) || (m.kind !== "file" && !ref)) && (
                   <div className="memo-release-text">{releaseRowText(m) || "—"}</div>
                 )}
@@ -99,6 +105,7 @@ export function MemoReleaseCard({ card, busy, changedIds, edited, awaiting, onRe
         <span className="memo-release-hint">
           {tr("memo.release_hint")}
           {card.items.some((m) => memoReference(m)) && " " + tr("memo.ref_card_hint")}
+          {card.items.some((m) => m.tidyFrom?.id) && " " + tr("memo.release_tidy_hint")}
         </span>
         {mustConfirm ? (
           <Button small variant="primary" disabled={busy} onClick={() => onConfirm(card.items)}>

@@ -41,6 +41,8 @@ vi.mock("./api.ts", () => ({
   memoQueueFire: (id: string) => memoQueueFire(id),
   memoQueueResume: (id: string) => memoQueueResume(id),
   memoQueueDeliveries: (id: string) => memoQueueDeliveries(id),
+  memoTidyRuns: async () => ({ runs: [], usedToday: 0, dailyCap: 10 }),
+  memoTidyUndo: async () => ({}),
 }));
 vi.mock("./share.ts", () => ({ consumeShare: async () => null, registerShareSW: () => {} }));
 const openSessionChat = vi.fn();
@@ -328,7 +330,10 @@ describe("the settings dialog", () => {
     await render();
     await openSettings();
     await click(must(dialog().querySelector<HTMLInputElement>("#memo-q-instruction"), "x")); // focus only
-    const enable = [...dialog().querySelectorAll<HTMLInputElement>("input[type=checkbox]")][2];
+    const enable = must(
+      [...dialog().querySelectorAll("label")].find((l) => l.textContent?.includes(t("memo.q_enabled")))?.querySelector<HTMLInputElement>("input[type=checkbox]"),
+      "enabled switch",
+    );
     await click(enable);
     await click(must(dialog().querySelector("button[type=submit]"), "save"));
     expect(dialog().querySelector("[data-invalid]")?.textContent).toBe(t("memo.q_err_instruction"));
@@ -358,6 +363,8 @@ describe("the settings dialog", () => {
       spendCapUsd: 0,
       worktree: true,
       acceptOwnSessions: false,
+      tidy: false,
+      tidyDestinations: [],
       maxActive: 2,
       batch: 3,
       maxTaskHours: 12,

@@ -2,7 +2,8 @@
 // and a link to the session it started, plus "Run now". A run that is still open says why (working,
 // waiting for you, ...), whether it is overdue, whether it started by itself, how its first turn
 // ended and when a person took its session over. A paused category says so on top, with the button
-// that resumes it. Read only for the category the person
+// that resumes it. Below the runs, the tidies that ran before them (what each did, how it ended, and
+// a button that undoes it while that is still possible). Read only for the category the person
 // opened, and re-read on a slow poll while the dialog is open, so it adds nothing to the memo
 // section's own poll.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -13,10 +14,21 @@ import { t, useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { openSessionChat } from "../sessions/open.ts";
-import type { MemoDelivery, MemoQueue } from "../../types/memo.ts";
-import { memoQueueDeliveries, memoQueueFire } from "./api.ts";
+import type { MemoDelivery, MemoQueue, MemoTidyBlocked, MemoTidyRunsWire } from "../../types/memo.ts";
+import { memoQueueDeliveries, memoQueueFire, memoTidyRuns, memoTidyUndo } from "./api.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
-import { deliveryStateKey, firstTurnWords, heldWords, readDeliveries } from "./queues.ts";
+import {
+  deliveryStateKey,
+  firstTurnWords,
+  heldWords,
+  readDeliveries,
+  readTidyRuns,
+  tidyBlockedGroups,
+  tidyCountMarks,
+  tidyReasonKey,
+  tidyStateKey,
+  undoRefusal,
+} from "./queues.ts";
 
 const POLL_MS = 10000;
 
@@ -30,16 +42,25 @@ interface Props {
   onClose: () => void;
   /** A fire took messages: the memo section refetches. */
   onFired: () => void;
+  /** A tidy was undone: messages came back and others went, so the memo section refetches. */
+  onUndone: () => void;
+  /** The tidy run to stand out, when the history was opened from a replaced note. */
+  focusRun?: string;
   /** Lifts the pause; resolves true when it was lifted. The caller refetches. */
   onResume: () => Promise<boolean>;
 }
 
-export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, waiting, onClose, onFired, onResume }: Props) {
+export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, waiting, onClose, onFired, onUndone, focusRun, onResume }: Props) {
   const tr = useT();
   const toast = useToast();
   const [rows, setRows] = useState<MemoDelivery[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [tidy, setTidy] = useState<MemoTidyRunsWire | null>(null);
+  const [tidyFailed, setTidyFailed] = useState(false);
+  // The run being undone, and what the Control Plane named when it refused one.
+  const [undoing, setUndoing] = useState("");
+  const [refused, setRefused] = useState<Record<string, MemoTidyBlocked[]>>({});
   const alive = useRef(true);
 
   const load = useCallback(async () => {
@@ -53,7 +74,46 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
     } catch {
       if (alive.current) setFailed(true);
     }
+    // The tidy history is read on its own, so a Control Plane without it leaves the runs above alone.
+    try {
+      const got = readTidyRuns(await memoTidyRuns(categoryId));
+      if (!alive.current) return;
+      if (got) {
+        setTidy(got);
+        setTidyFailed(false);
+      } else setTidyFailed(true);
+    } catch {
+      if (alive.current) setTidyFailed(true);
+    }
   }, [categoryId]);
+
+  const undo = async (runId: string) => {
+    if (undoing) return;
+    setUndoing(runId);
+    try {
+      const res = await memoTidyUndo(runId);
+      const blocked = undoRefusal(res);
+      if (blocked) {
+        setRefused((r) => ({ ...r, [runId]: blocked }));
+      } else if (res?.error) {
+        toast(errText(res.error) || t("memo.tidy_undo_failed"), { kind: "warn" });
+      } else {
+        setRefused((r) => {
+          const rest = { ...r };
+          delete rest[runId];
+          return rest;
+        });
+        toast(t("memo.tidy_undone"), { kind: "success" });
+        onUndone();
+      }
+      // The list says what can still be undone, after either answer.
+      void load();
+    } catch {
+      toast(t("memo.tidy_undo_failed"), { kind: "warn" });
+    } finally {
+      if (alive.current) setUndoing("");
+    }
+  };
 
   useEffect(() => {
     alive.current = true;
@@ -178,6 +238,57 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
               );
             })}
           </ul>
+        )}
+        {(queue?.tidy || (tidy && tidy.runs.length > 0)) && (
+          <section className="memo-tidy" aria-label={tr("memo.tidy_title")}>
+            <h3 className="memo-tidy-title">{tr("memo.tidy_title")}</h3>
+            {tidy && <div className="memo-d-waiting">{tr("memo.tidy_used", { used: tidy.usedToday, cap: tidy.dailyCap })}</div>}
+            {queue && !queue.tidy && <div className="ui-field-hint">{tr("memo.tidy_off")}</div>}
+            {tidy === null ? (
+              <p className={tidyFailed ? "ui-field-hint" : "muted"} role={tidyFailed ? "alert" : undefined}>
+                {tidyFailed ? tr("memo.tidy_load_failed") : tr("common.loading")}
+              </p>
+            ) : tidy.runs.length === 0 ? (
+              <p className="muted">{tidyFailed ? tr("memo.tidy_load_failed") : tr("memo.tidy_empty")}</p>
+            ) : (
+              <ul className="memo-d-list">
+                {tidy.runs.map((r) => {
+                  const state = tidyStateKey(r.state);
+                  const why = tidyReasonKey(r);
+                  const counts = r.state === "applied" || r.state === "undone" ? tidyCountMarks(r) : [];
+                  const shown = refused[r.id] ?? (r.undoable ? [] : r.blocked);
+                  const groups = tidyBlockedGroups(shown);
+                  return (
+                    <li key={r.id} className={"memo-d-row memo-tidy-row" + (focusRun === r.id ? " focus" : "")} data-tidy-run={r.id}>
+                      <span className={"memo-d-state memo-tidy-state s-" + r.state}>{state ? tr(state) : r.state}</span>
+                      <span className="memo-d-at">{fmtDateTime(r.createdAt)}</span>
+                      <span className="memo-d-tag">{tr(r.trigger === "manual" ? "memo.tidy_manual" : "memo.tidy_auto")}</span>
+                      {counts.map((c) => (
+                        <span key={c.key} className="memo-d-n">
+                          {tr(c.key, c.params)}
+                        </span>
+                      ))}
+                      {r.state === "undone" && r.undoneAt && <span className="memo-d-at">{fmtDateTime(r.undoneAt)}</span>}
+                      {why && <span className="memo-d-held">{tr(why)}</span>}
+                      {r.undoable && (
+                        <Button small variant="ghost" title={tr("memo.tidy_undo_title")} disabled={undoing !== ""} onClick={() => void undo(r.id)}>
+                          {undoing === r.id ? tr("memo.tidy_undo_busy") : tr("memo.tidy_undo")}
+                        </Button>
+                      )}
+                      {groups.length > 0 && (
+                        <div className="memo-tidy-blocked" role={refused[r.id] ? "alert" : undefined}>
+                          {tr("memo.tidy_blocked_head")}{" "}
+                          {groups.map((g) => (
+                            <span key={g.why}>{tr(g.key, { count: g.count }) + " "}</span>
+                          ))}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
         )}
       </div>
       <footer className="ui-modal-foot">
