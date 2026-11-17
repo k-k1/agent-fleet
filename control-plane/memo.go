@@ -341,6 +341,15 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 				return err
 			}
 		}
+		// Every create path files a note under a category row, so the name is a real
+		// category (with a position and room for settings) and not a memo-only leftover.
+		// The unfiled bucket has no row. This runs after every check that can reject the
+		// note, and in the same transaction, so a rejected note leaves no row behind.
+		if m.Category != "" {
+			if _, err := tx.EnsureCategory(m.Repo, m.Category); err != nil {
+				return err
+			}
+		}
 		return tx.InsertMemo(m)
 	})
 	if aerr := memoTxResult(err); aerr != nil {

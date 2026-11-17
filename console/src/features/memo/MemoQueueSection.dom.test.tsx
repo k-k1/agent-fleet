@@ -210,6 +210,20 @@ describe("category + button", () => {
     expect(memoCategoryCreate).not.toHaveBeenCalled();
   });
 
+  // The Control Plane makes the category row when a note arrives under a name it lacks, so the
+  // Console files the note and stops there.
+  it("leaves the row of a new category to the server", async () => {
+    servedCats = [];
+    servedMemos = [aMemo({ id: "m1", category: "Legacy" })];
+    await render();
+
+    await click(addBtn("Legacy"));
+    await type("hello");
+    await click(submit());
+    expect(created).toEqual([{ kind: "text", body: "hello", repo: "", category: "Legacy" }]);
+    expect(memoCategoryCreate).not.toHaveBeenCalled();
+  });
+
   it("keeps a repo bucket's memo in that repo", async () => {
     servedCats = [aCat({ id: "c3", repo: "app", name: "Bugs" })];
     await render();
