@@ -1121,6 +1121,7 @@
   flex-basis: 100%;
   font-size: 11px;
   color: var(--warn, var(--accent));
+}
 
 /* Tidy operations preview (MemoTidyOpsModal) */
 .memo-tidy-op {
