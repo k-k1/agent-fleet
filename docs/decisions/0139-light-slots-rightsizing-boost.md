@@ -8,7 +8,9 @@ English | [日本語](0139-light-slots-rightsizing-boost.ja.md)
   Pricing API reads and benchmarks (ap-northeast-1, 2026-08-22). **No price for a `medium`, a `t4g` or a
   `t3` instance was read for this record**, and no AWS call was made: every such figure below is an
   estimate from list-price proportionality and is marked as one. No decision rests on an estimate alone;
-  the ones that wait on a measurement say so. Reviewed 2026-11-16 by a separate session (codex
+  the ones that wait on a measurement say so. Open questions 1 and 2 and the candidates' prices were
+  measured on 2026-11-17 on a development deployment; the results are in the addendum, and the body keeps
+  the text as accepted. Reviewed 2026-11-16 by a separate session (codex
   `gpt-6.1-sol`): rounds 1 and 2, 11 and 3 findings, each checked against the tree and folded into
   this text.
 - Tracking: #4340.
@@ -129,11 +131,11 @@ Candidates, to be measured before any is recommended in the guide:
   MemTotal gap, so nothing more is taken off). The daemons get the box's real MemTotal − 2048 MiB, which
   on a 4 GiB box is also not measured. Whether one agent session plus the Agent fits in 2 GiB is **not
   measured**; that measurement decides whether the 4 GiB rungs are offered at all, or whether light starts
-  at 8 GiB. Lowering the reserve on small boxes is not part of this decision: it was raised to 2 GiB
+  at 8 GiB (measured in the addendum: light work fits, a large Go build does not). Lowering the reserve on small boxes is not part of this decision: it was raised to 2 GiB
   because a box thrashed with less.
 - **Burstable classes run in `unlimited` credit mode.** Neither the slot launch template
   (`40-ec2-pool.yaml`) nor the CP sets a `CreditSpecification` today, so a t-class gets the EC2 default,
-  which is documented as `unlimited` for t4g and t3 (not confirmed on this deployment, open question
+  which is documented as `unlimited` for t4g and t3 (confirmed for t4g in the addendum, open question
   2). `standard` mode would throttle a build to the baseline exactly when the member is waiting on it; `unlimited` bills surplus credits instead, which shows up in the member's
   cost line (ADR 0048) and in the history (decision 3) as sustained CPU, which is decision 4's signal to
   move them off a burstable class.
@@ -282,10 +284,50 @@ memory requirement).
 - **The CP reading prices from the Pricing API to rank rungs** — the ladder's order is the operator's
   declaration (ADR 0045 decision 21); the recommender moves by rung, not by dollars.
 
+## Addendum — measured on a development deployment (2026-11-17)
+
+Measured on a development ECS deployment (`ecs-ec2`) running main `b5ec6c91b`. The three classes of
+decision 2 were added temporarily to the ladder as separate classes and then reverted. Full report:
+#4332 (comment of 2026-11-17).
+
+- **Open question 1 — answered: 4 GiB rungs are usable for light members, not for large builds.**
+  - On m8g.medium and t4g.medium, MemTotal was 3812 / 3836 MiB, and both the workspace's `memory.max`
+    and docker's `HostConfig.Memory` were 2048 MiB, as decision 2 computed. Idle use was about 590 MiB.
+  - A real agent session with the Agent ran git clone, `go vet`, `npm ci` and `tsc` to completion.
+  - `go build ./...` of `control-plane` reached the cap (`memory.peak` 2048). The kernel OOM-killed
+    `compile` inside the memcg: 3 kills on m8g.medium and 1 on t4g.medium, with up to 1.7 GiB
+    anon RSS. The agent and the Agent were never killed and stayed responsive.
+  - Container PSI avg10 peaks were some 6.03 / full 1.93 on m8g.medium and 1.91 / 1.13 on t4g.medium.
+  - The host daemons (envoy, containerd, dockerd, ecs-agent, efs-proxy, the SSM agent, systemd units)
+    used about 600 MiB together, and host MemAvailable never fell below 1139 MiB. They fit in what the
+    box has left.
+  - So the guide may offer 4 GiB rungs, labelled for light work. A member who builds large projects
+    starts at 8 GiB.
+- **Open question 2 — answered for t4g.** A CP-launched t4g.medium slot reported `unlimited`
+  (`describe-instance-credit-specifications`). t3 was not launched, because the test home is arm64.
+  The account's default credit specification is `unlimited` for both t3 and t4g.
+- **Prices** (Pricing API, ap-northeast-1, Linux, shared tenancy, effective 2026-11-01, USD/h):
+
+  | Type | USD/h |
+  |---|---|
+  | m8g.medium | 0.05797 |
+  | m8g.large | 0.11594 |
+  | t4g.medium | 0.0432 |
+  | t4g.large | 0.0864 |
+  | t3.medium | 0.0544 |
+  | t3.large | 0.1088 |
+  | r8g.medium | 0.07106 |
+
+  The proportionality estimate in decision 2 holds: m8g.medium is exactly half of m8g.large. t4g.medium
+  costs about 37% of m8g.large, so over 160 h it saves about $11.6 against an m8g.large. That is more
+  than one retained root (~$9.6/month), as long as no surplus credits are billed.
+- **A size of 0 stays on the default class.** With no class override, a workspace landed on m8g.large,
+  the smallest rung of the default class, not on a light rung.
+
 ## Open questions
 
-1. Does one agent session plus the Agent fit in a 2 GiB cap, and do the daemons fit in what a 4 GiB box
-   has left? Decides whether 4 GiB rungs are offered (decision 2).
-2. Is `unlimited` what a t-class slot actually gets on this deployment with no `CreditSpecification`
-   set? (decision 2)
+1. ~~Does one agent session plus the Agent fit in a 2 GiB cap, and do the daemons fit in what a 4 GiB box
+   has left?~~ Answered in the addendum: yes for light work, no for large builds.
+2. ~~Is `unlimited` what a t-class slot actually gets on this deployment with no `CreditSpecification`
+   set?~~ Answered in the addendum for t4g (`unlimited`). t3 is unmeasured, but the account default is `unlimited`.
 3. The thresholds and the coverage share of decision 4, from phase 0 data.
