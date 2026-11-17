@@ -338,3 +338,59 @@ describe("tenant provided routes, status and month", () => {
     expect(summary().textContent).not.toContain("リセット");
   });
 });
+
+// #4380 P-8: the grant to the tenant and its monthly pool are the super_admin's, edited on the
+// tenant's own provided tab. A tenant administrator never gets the card (the CP refuses their
+// grant write anyway).
+describe("the super_admin's grant card", () => {
+  const mountAs = async (isSuper: boolean, view: unknown = VIEW()) => {
+    api.mockImplementation(() => Promise.resolve(view));
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<TenantProvidedRoutesView slug="acme" isSuper={isSuper} />);
+    });
+    await flush();
+  };
+  const grant = () => host!.querySelector<HTMLElement>(".prov-grant")!;
+
+  it("is not drawn for a tenant administrator", async () => {
+    await mountAs(false);
+    expect(host!.querySelector(".model-access-provided")).not.toBeNull();
+    expect(host!.querySelector(".prov-grant")).toBeNull();
+  });
+
+  it("grants with a pool as the CP's input shape, after re-reading the stored grant", async () => {
+    await mountAs(true, { ...VIEW(), granted: false, ceiling_micro: null });
+    await click(grant().querySelector<HTMLInputElement>('input[type="checkbox"]')!);
+    await type(grant().querySelector<HTMLInputElement>('input[type="text"]')!, "50");
+    await click(btn(grant(), "保存"));
+    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/grant`, "PUT", { granted: true, ceiling_micro: 50_000_000 });
+  });
+
+  it("keeps the CP's refusal and the edits", async () => {
+    apiJSON.mockResolvedValue({
+      error: {
+        code: "invalid_input",
+        message: "granting the deployment's Bedrock route needs a monthly ceiling above zero for the tenant",
+        status: 400,
+      },
+    });
+    await mountAs(true, { ...VIEW(), granted: false, ceiling_micro: null });
+    await click(grant().querySelector<HTMLInputElement>('input[type="checkbox"]')!);
+    await click(btn(grant(), "保存"));
+    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/grant`, "PUT", { granted: true, ceiling_micro: null });
+    expect(grant().querySelector("[role=alert]")!.textContent).toContain("monthly ceiling above zero");
+    expect(grant().querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(true);
+  });
+
+  it("does not save over a grant changed since the load", async () => {
+    await mountAs(true);
+    await type(grant().querySelector<HTMLInputElement>('input[type="text"]')!, "120");
+    api.mockImplementation(() => Promise.resolve({ ...VIEW(), ceiling_micro: 200_000_000 }));
+    await click(btn(grant(), "保存"));
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(grant().querySelector("[role=alert]")).not.toBeNull();
+  });
+});

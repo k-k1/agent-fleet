@@ -6,7 +6,7 @@
 // hidden item. A member's own switches live in their Workspace, out of the CP's sight (the user's
 // decision 9 on #4169), and the list says so.
 import { tMaybe, useT, type MsgKey } from "../../../lib/i18n/index.ts";
-import { ownerName } from "./routePolicyHidden.tsx";
+import { ownerName } from "./routePolicyOwners.tsx";
 import { classLabel, destLabel, layerLabel } from "./routePolicyRuleEditor.tsx";
 import {
   LAYERS,
@@ -180,7 +180,7 @@ export function layerClauses(tr: Tr, s: LayerSummary, ownHosts: boolean): string
   return out;
 }
 
-function WhoRestricts({ view, isSuper }: { view: TenantPolicyView; isSuper: boolean }) {
+function WhoRestricts({ view }: { view: TenantPolicyView }) {
   const tr = useT();
   const rules = layerRules(view);
   return (
@@ -217,20 +217,17 @@ function WhoRestricts({ view, isSuper }: { view: TenantPolicyView; isSuper: bool
           );
         })}
       </ol>
-      {/* The cap is the super_admin's, written from the admin page; showing it editable
-          here too would make two places to change one value. */}
-      {isSuper && <p className="admin-hint">{tr("tenant.model_access_cap_where")}</p>}
     </section>
   );
 }
 
-export function TenantOverview({ view, isSuper }: { view: TenantPolicyView; isSuper: boolean }) {
+export function TenantOverview({ view }: { view: TenantPolicyView }) {
   const tr = useT();
   return (
     <>
       <p className="admin-hint">{tr("tenant.model_access_note")}</p>
       <MemberUse view={view} />
-      <WhoRestricts view={view} isSuper={isSuper} />
+      <WhoRestricts view={view} />
     </>
   );
 }

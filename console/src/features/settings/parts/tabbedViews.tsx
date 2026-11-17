@@ -19,13 +19,24 @@ export interface TabbedView {
 // tab where its cause can be changed), and whether it is the one showing (a view that reads a lot
 // waits until it is first opened). Outside a TabbedViews, there is nowhere to switch to and every
 // view counts as showing.
-const TabsContext = createContext<{ show: (key: string) => void; has: (key: string) => boolean } | null>(null);
+const TabsContext = createContext<{
+  show: (key: string) => void;
+  has: (key: string) => boolean;
+  dirty: () => boolean;
+} | null>(null);
 const ActiveContext = createContext(true);
 
 /** useShowView: switch to the view `key`, or null where there is no such view to switch to. */
 export function useShowView(key: string): (() => void) | null {
   const tabs = useContext(TabsContext);
   return tabs && tabs.has(key) ? () => tabs.show(key) : null;
+}
+
+/** usePageDirty: whether any view of the page holds unsaved edits, for a view about to leave the
+ *  page (which drops them). False outside a TabbedViews. */
+export function usePageDirty(): () => boolean {
+  const tabs = useContext(TabsContext);
+  return () => !!tabs?.dirty();
 }
 
 /** useViewActive: whether the view holding the caller is the one showing. */
@@ -52,6 +63,9 @@ export function TabbedViews({ label, prefix, views }: { label: string; prefix: s
   // A switch asked for from inside a view moves the focus to the new view's tab: the button that
   // asked is now in a hidden view, and the focus would otherwise fall back to the page.
   const focusNext = useRef<string | null>(null);
+  // Read at the moment a view asks, so the context itself need not change with every edit.
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   useEffect(() => {
     if (focusNext.current !== value) return;
     focusNext.current = null;
@@ -64,6 +78,7 @@ export function TabbedViews({ label, prefix, views }: { label: string; prefix: s
         setPicked(k);
       },
       has: (k: string) => shown.some((v) => v.key === k),
+      dirty: () => Object.values(dirtyRef.current).some(Boolean),
     }),
     // shown is rebuilt each render; its keys are what matter.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,6 +1,6 @@
-// Admin > Model access (ADR 0138 M2 P8). Pinned here:
-//   1. The ceiling is read-only, with its source; the deployment rule and a tenant's cap are the
-//      two editors, each PUT to its own path.
+// Admin > Model access (ADR 0138 M2 P8; #4380 P-7, P-8). Pinned here:
+//   1. The ceiling is read-only, with its source; the restriction for all tenants is the page's one
+//      editor. A tenant's cap and grant are edited on that tenant's own page, never here.
 //   2. A rule above the ceiling is refused by the CP; the refusal is shown and the edits stay.
 //   3. A refused read draws no editor (fail closed).
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
@@ -16,6 +16,7 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 }));
 
 import { AdminModelAccessView } from "./adminModelAccess.tsx";
+import { RuleSummary } from "../tenant/routePolicyRuleEditor.tsx";
 
 const CEILING = {
   raw: "classes=-subscription",
@@ -51,6 +52,16 @@ const flush = async () => {
     await Promise.resolve();
   });
 };
+async function mountNode(node: React.ReactNode) {
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  await act(async () => {
+    root!.render(node);
+  });
+  await flush();
+  await flush();
+}
 async function mount() {
   host = document.createElement("div");
   document.body.append(host);
@@ -110,19 +121,29 @@ describe("admin model access", () => {
   });
 
   it("pairs every label in a rule summary with its value, unrestricted layers included", async () => {
-    await mount();
     // The grid lays the list out two cells per row, so one unpaired dt or dd shifts every row
-    // below it onto the wrong value (#4376). The ceiling restricts; the acme tenant's rule does not.
-    const lists = [within(".model-access-ceiling dl"), within('.mpol-cap[data-tenant="acme"] dl')];
-    for (const dl of lists) {
+    // below it onto the wrong value (#4376).
+    for (const rule of [CEILING.rule, {}]) {
+      await mountNode(<RuleSummary rule={rule} />);
+      const dl = within("dl");
       const tags = Array.from(dl.children).map((c) => c.tagName);
       expect(tags.length % 2).toBe(0);
       tags.forEach((t, i) => expect(t).toBe(i % 2 === 0 ? "DT" : "DD"));
       expect(Array.from(dl.querySelectorAll("dd")).every((dd) => dd.textContent !== "")).toBe(true);
+      const head = host!.querySelector(".mpol-summary-head");
+      if (rule === CEILING.rule) expect(head).toBeNull();
+      else expect([head?.textContent, head?.closest("dl")]).toEqual(["制限なし", null]);
+      act(() => root?.unmount());
+      host?.remove();
     }
-    const head = within('.mpol-cap[data-tenant="acme"]').querySelector(".mpol-summary-head");
-    expect(head?.textContent).toBe("制限なし");
-    expect(head?.closest("dl")).toBeNull();
+    root = null;
+    host = null;
+  });
+
+  it("names a rule summary's routes with their ids on hover", async () => {
+    await mountNode(<RuleSummary rule={{ except: ["copilot-login"] }} />);
+    const dd = Array.from(host!.querySelectorAll("dd")).find((d) => d.querySelector('[title="copilot-login"]'))!;
+    expect(dd.textContent).toBe("GitHub Copilot");
   });
 
   it("saves the deployment rule to its own path, keeping the fields not edited", async () => {
@@ -161,9 +182,9 @@ describe("admin model access", () => {
         "絞らない（今後増えるものも許す）",
       ).getAttribute("aria-checked"),
     ).toBe("true");
-    // The deployment GET, the first tenant's, and the revision check before the PUT; nothing
-    // reloaded after the refusal.
-    expect(api.mock.calls.filter((c) => String(c[0]).endsWith("/route-policy")).length).toBe(3);
+    // The deployment GET and the revision check before the PUT; nothing reloaded after the
+    // refusal (the per-tenant view reads nothing until it is opened).
+    expect(api.mock.calls.filter((c) => String(c[0]).endsWith("/route-policy")).length).toBe(2);
   });
 
   it("does not save the deployment rule over a newer revision", async () => {
@@ -182,20 +203,6 @@ describe("admin model access", () => {
     expect(d.querySelector("[role=alert]")?.textContent).toContain("ほかの人がこの規則を更新");
   });
 
-  it("does not save a cap over a newer revision", async () => {
-    await mount();
-    const cap = within('.mpol-cap[data-tenant="acme"]');
-    await click(tickIn(cap, "deny", "anthropic-api"));
-    api.mockImplementation((path: string) =>
-      Promise.resolve(
-        path === "api/admin/route-policy" ? DEPLOYMENT : { ...tenantView("acme"), cap: { rule: {}, revision: 2 } },
-      ),
-    );
-    await click(btnIn(cap, "保存"));
-    expect(apiJSON).not.toHaveBeenCalled();
-    expect(cap.querySelector("[role=alert]")?.textContent).toContain("ほかの人がこの規則を更新");
-  });
-
   it("shows the ceiling's source as the wire names it", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(
@@ -210,85 +217,6 @@ describe("admin model access", () => {
     expect(c.textContent).not.toContain("AF_MODEL_ROUTE_CEILING");
   });
 
-  it("edits the picked tenant's cap and PUTs it to the cap path", async () => {
-    await mount();
-    expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/route-policy");
-    const sel = within(".model-access-caps select") as HTMLSelectElement;
-    await act(async () => {
-      sel.value = "beta";
-      sel.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await flush();
-    await flush();
-    expect(api).toHaveBeenCalledWith("api/admin/tenants/beta/route-policy");
-    const cap = within('.mpol-cap[data-tenant="beta"]');
-    expect(Array.from(cap.querySelectorAll("[data-server]")).map((r) => r.getAttribute("data-server"))).toEqual([
-      "*.beta.example",
-    ]);
-    await click(tickIn(cap, "deny", "anthropic-api"));
-    await click(btnIn(cap, "保存"));
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/beta/route-policy/cap", "PUT", {
-      endpoints: ["*.beta.example"],
-      deny: ["anthropic-api"],
-    });
-  });
-
-  it("edits a cap's server patterns as rows and sends them as the CP's list", async () => {
-    await mount();
-    const cap = within('.mpol-cap[data-tenant="acme"]');
-    const ep = cap.querySelector<HTMLElement>('[data-field="endpoints"]')!;
-    // Loaded without endpoints: "no limit", no rows, no field to add to.
-    expect(ep.querySelector(".mpol-server-add")).toBeNull();
-    await click(btnIn(ep, "選んだものだけ許す"));
-    const input = ep.querySelector<HTMLInputElement>(".mpol-server-add input")!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "*.acme.example");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await click(btnIn(ep, "追加"));
-    expect(Array.from(ep.querySelectorAll("[data-server]")).map((r) => r.getAttribute("data-server"))).toEqual([
-      "*.acme.example",
-    ]);
-    // Patterns carry no per-host state: that is the tenant page's.
-    expect(ep.querySelector('[data-server="*.acme.example"]')!.textContent).not.toContain("まだ保存していません");
-    await click(btnIn(cap, "保存"));
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/route-policy/cap", "PUT", {
-      endpoints: ["*.acme.example"],
-    });
-  });
-
-  it("sends an empty pattern list, not none, when every pattern row is removed", async () => {
-    await mount();
-    const sel = within(".model-access-caps select") as HTMLSelectElement;
-    await act(async () => {
-      sel.value = "beta";
-      sel.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await flush();
-    await flush();
-    const cap = within('.mpol-cap[data-tenant="beta"]');
-    await click(cap.querySelector<HTMLButtonElement>('[data-server="*.beta.example"] button')!);
-    expect(cap.querySelectorAll("[data-server]").length).toBe(0);
-    await click(btnIn(cap, "保存"));
-    // "Only these" with no pattern approves no host: [] is a rule, unlike an absent list.
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/beta/route-policy/cap", "PUT", { endpoints: [] });
-  });
-
-  it("names a rule summary's routes with their ids on hover", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/route-policy") return Promise.resolve(DEPLOYMENT);
-      const slug = /tenants\/([^/]+)\/route-policy$/.exec(path)?.[1];
-      if (slug)
-        return Promise.resolve({ ...tenantView(slug), tenant: { rule: { except: ["copilot-login"] }, revision: 1 } });
-      return Promise.resolve({ error: { code: "http_404", status: 404 } });
-    });
-    await mount();
-    const dd = Array.from(within('.mpol-cap[data-tenant="acme"]').querySelectorAll("dd")).find((d) =>
-      d.querySelector('[title="copilot-login"]'),
-    )!;
-    expect(dd.textContent).toBe("GitHub Copilot");
-  });
-
   it("draws no editor when the read is refused", async () => {
     api.mockResolvedValue({ error: { code: "forbidden", message: "super_admin only", status: 403 } });
     await mount();
@@ -297,42 +225,6 @@ describe("admin model access", () => {
   });
 });
 
-// ADR 0138 M2 P9: the hidden list follows the tenant picked for the cap.
-describe("what the policy hides, per tenant", () => {
-  it("shows the picked tenant's hidden list", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/route-policy") return Promise.resolve(DEPLOYMENT);
-      const slug = /tenants\/([^/]+)\//.exec(path)?.[1] ?? "";
-      const hidden =
-        slug === "beta"
-          ? { kinds: [{ id: "cursor", routes: ["cursor-login"], forbiddenBy: ["tenant_cap"] }], chat: [], imagegen: [] }
-          : { kinds: [], chat: [], imagegen: [] };
-      return Promise.resolve({ ...tenantView(slug), hidden });
-    });
-    await mount();
-    expect(within('.mpol-cap[data-tenant="acme"] [data-testid="hidden-none"]')).not.toBeNull();
-    const sel = within(".model-access-caps select") as HTMLSelectElement;
-    await act(async () => {
-      sel.value = "beta";
-      sel.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await flush();
-    await flush();
-    const item = within('.mpol-cap[data-tenant="beta"] [data-hidden="cursor"]');
-    expect(item.textContent).toContain("配備の管理者からこのテナントへの制限");
-  });
-
-  it("shows no list when the tenant view carries none", async () => {
-    await mount();
-    // tenantView() has no `hidden`: not "nothing is hidden".
-    expect(host!.querySelector('[data-testid="hidden-none"]')).toBeNull();
-    expect(within(".model-access-hidden [role=alert]")).not.toBeNull();
-  });
-});
-
-// #4380 P-3: the page is split into views (overview, restrictions for all tenants, per tenant,
-// provided models). Pinned here: every section is reachable from a tab, D12's and D13's sentences
-// stay on screen on every view, and a draft and its refusal survive a switch.
 describe("admin model access views", () => {
   const SOURCE = {
     source: {
@@ -391,7 +283,6 @@ describe("admin model access views", () => {
       ".model-access-ceiling",
       ".model-access-deployment",
       ".model-access-caps",
-      ".model-access-provided-grant",
       ".model-access-provided-source",
     ]) {
       const panel = host!.querySelector(sel)!.closest<HTMLElement>('[role="tabpanel"]')!;
@@ -442,44 +333,20 @@ describe("admin model access views", () => {
 // #4380 P-5b, #4376 item 5: under the operator's ceiling the deployment rule and a cap lock what
 // the ceiling forbids, warn before a save the CP would refuse, and can narrow the draft to fit.
 describe("under the operator setting", () => {
-  it("locks what the ceiling forbids, and marks what the restriction for all tenants stops on a cap", async () => {
+  it("locks what the ceiling forbids on the restriction for all tenants", async () => {
     await mount();
     const d = within(".model-access-deployment");
     await click(btnIn(d.querySelector<HTMLElement>('[data-field="classes"]')!, "選んだものだけ許す"));
     const sub = tickIn(d, "classes", "サブスクリプション・ログイン").closest("label")!;
     expect(sub.querySelector(".mpol-mark.locked")!.getAttribute("aria-label")).toBe("運用者の設定が禁じています");
     expect(d.querySelector('[data-field="classes"]')!.textContent).toContain("許したままでは保存できません");
-    const cap = within('.mpol-cap[data-tenant="acme"]');
-    await click(btnIn(cap.querySelector<HTMLElement>('[data-field="destinations"]')!, "選んだものだけ許す"));
-    // The restriction for all tenants allows Anthropic and Amazon Bedrock only: the rest is marked.
-    const google = tickIn(cap, "destinations", "Google").closest("label")!;
-    expect(google.querySelector(".mpol-mark")!.getAttribute("aria-label")).toBe("止めているのは: 全テナント共通の制限");
-    expect(google.querySelector(".mpol-mark.locked")).toBeNull();
-  });
-
-  it("warns before a cap the CP would refuse, and matching it makes a save the CP accepts", async () => {
-    await mount();
-    const cap = within('.mpol-cap[data-tenant="acme"]');
-    // #4376 item 5: a cap that only blocks Cursor's login still allows every subscription the
-    // ceiling forbids, so the CP refuses it.
-    await click(tickIn(cap, "deny", "cursor-login"));
-    const warn = cap.querySelector('[data-testid="exceeds"]')!;
-    expect(warn.textContent).toContain("このままでは保存できません: 運用者の設定が");
-    expect(warn.textContent).toContain("Claude サブスク");
-    expect(apiJSON).not.toHaveBeenCalled();
-    await click(btnIn(warn as HTMLElement, "運用者の設定に合わせる"));
-    expect(cap.querySelector('[data-testid="exceeds"]')).toBeNull();
-    await click(btnIn(cap, "保存"));
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/route-policy/cap", "PUT", {
-      deny: ["cursor-login"],
-      classes: ["member-key", "member-cloud", "provided", "self-hosted"],
-    });
   });
 });
 
-// #4380 P-7: the overview says who decides what in plain lines and links to where each is changed;
-// the provided view lists every tenant's grant, read only once that view is first opened.
-describe("admin overview and grants", () => {
+// #4380 P-7, P-8: the overview says who decides what in plain lines and links to where each is
+// changed; the per-tenant view lists every tenant, read only once that view is first opened, and
+// opens each on its own Model access page.
+describe("admin overview and tenants", () => {
   const SOURCE = (active = true) => ({
     source: {
       id: "S1",
@@ -518,7 +385,7 @@ describe("admin overview and grants", () => {
   const tab = (text: string) =>
     Array.from(host!.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent?.startsWith(text))!;
   const shown = (el: Element) => el.closest("[hidden]") === null;
-  const grantReads = () => api.mock.calls.filter((c) => /tenants\/[^/]+\/provided-routes/.test(String(c[0]))).length;
+  const tenantReads = () => api.mock.calls.filter((c) => /^api\/admin\/tenants\//.test(String(c[0]))).length;
 
   it("says who decides what in plain lines and opens the view where each is changed", async () => {
     serve(SOURCE());
@@ -553,49 +420,79 @@ describe("admin overview and grants", () => {
     expect(within('[data-testid="overview-source"] [role=alert]').textContent).toContain("boom");
   });
 
-  it("reads the grants only once the provided view is opened, and opens a tenant from its row", async () => {
+  it("reads the tenants only once the per-tenant view is opened, and opens a tenant's own page", async () => {
     serve(SOURCE(false));
-    await mount();
+    const onOpen = vi.fn();
+    await mountNode(<AdminModelAccessView tenants={TENANTS} onOpenTenant={onOpen} />);
     await flush();
     expect(within('[data-testid="overview-source"]').textContent).toContain("停止中");
-    // The per-tenant view reads the first tenant's grant; the table has read nothing yet.
-    const before = grantReads();
-    expect(host!.querySelector(".prov-grants")).toBeNull();
-    await click(tab("提供モデル"));
+    expect(tenantReads()).toBe(0);
+    await click(tab("テナントごと"));
     await flush();
-    expect(grantReads()).toBe(before + 2);
-    const row = (slug: string) => within(`.prov-grants [data-tenant="${slug}"]`);
-    expect(row("acme").textContent).toContain("許可済み");
-    expect(row("acme").textContent).toContain("≈ $500.00 のうち ≈ $187.15");
-    expect(row("beta").textContent).toContain("未許可");
+    // Each row reads the tenant's policy view and, where the CP serves them, its provided view.
+    expect(tenantReads()).toBe(4);
+    const row = (slug: string) => within(`.mpol-tenants [data-tenant="${slug}"]`);
+    expect(row("acme").querySelector('[data-col="cap"]')!.textContent).toBe("制限なし");
+    expect(row("beta").querySelector('[data-col="cap"]')!.textContent).toBe(
+      "承認してよいセルフホストのサーバー: *.beta.example",
+    );
+    expect(row("acme").querySelector('[data-col="provided"]')!.textContent).toBe("≈ $500.00 のうち ≈ $187.15");
+    expect(row("beta").querySelector('[data-col="provided"]')!.textContent).toBe("未許可");
     await click(row("beta").querySelector("button")!);
-    expect(shown(within(".model-access-caps"))).toBe(true);
-    expect((within(".model-access-caps select") as HTMLSelectElement).value).toBe("beta");
+    expect(onOpen).toHaveBeenCalledWith("beta");
   });
 
-  it("keeps a tenant's unsaved cap when a grant row opens another tenant", async () => {
-    serve(SOURCE());
-    await mount();
-    await flush();
+  it("asks before a tenant's Open drops an unsaved restriction for all tenants", async () => {
+    const onOpen = vi.fn();
+    const confirm = vi.spyOn(window, "confirm");
+    await mountNode(<AdminModelAccessView tenants={TENANTS} onOpenTenant={onOpen} />);
     await click(tab("テナントごと"));
-    const acme = within('.mpol-cap[data-tenant="acme"]');
-    await click(tickIn(acme, "deny", "anthropic-api"));
-    expect(tab("テナントごと").textContent).toBe("テナントごと●");
-    await click(tab("提供モデル"));
     await flush();
-    await click(within('.prov-grants [data-tenant="beta"]').querySelector("button")!);
+    const open = () => click(within('.mpol-tenants [data-tenant="beta"]').querySelector("button")!);
+    // Nothing unsaved: no question.
+    await open();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await click(tab("全テナント共通の制限"));
+    await click(tickIn(within(".model-access-deployment"), "deny", "anthropic-api"));
+    await click(tab("テナントごと"));
+    confirm.mockReturnValueOnce(false);
+    await open();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    confirm.mockReturnValueOnce(true);
+    await open();
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    confirm.mockRestore();
+  });
+
+  it("names why a tenant's grant could not be read", async () => {
+    serve(SOURCE());
+    const base = api.getMockImplementation()!;
+    api.mockImplementation((path: string) =>
+      /tenants\/beta\/provided-routes/.test(path)
+        ? Promise.resolve({ error: { code: "internal", message: "grant read broke", status: 500 } })
+        : base(path),
+    );
+    await mountNode(<AdminModelAccessView tenants={TENANTS} onOpenTenant={() => {}} />);
+    await click(tab("テナントごと"));
     await flush();
-    expect(shown(within('.mpol-cap[data-tenant="beta"]'))).toBe(true);
-    expect(shown(acme)).toBe(false);
-    // Still unsaved, and still marked, while another tenant is shown.
-    expect(tab("テナントごと").textContent).toBe("テナントごと●");
-    const sel = within(".model-access-caps select") as HTMLSelectElement;
-    await act(async () => {
-      sel.value = "acme";
-      sel.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    expect(within('.mpol-tenants [data-tenant="beta"] [data-col="provided"]').textContent).toContain(
+      "grant read broke",
+    );
+  });
+
+  it("edits caps and grants nowhere on this page: the restriction for all tenants is its one editor", async () => {
+    serve(SOURCE());
+    await mountNode(<AdminModelAccessView tenants={TENANTS} onOpenTenant={() => {}} />);
     await flush();
-    expect(tickIn(within('.mpol-cap[data-tenant="acme"]'), "deny", "anthropic-api").checked).toBe(true);
+    for (const t of ["概要", "全テナント共通の制限", "テナントごと", "提供モデル"]) {
+      await click(tab(t));
+      await flush();
+    }
+    expect(host!.querySelectorAll(".mpol-editor").length).toBe(1);
+    expect(within(".mpol-editor").closest(".model-access-deployment")).not.toBeNull();
+    expect(host!.querySelector("[data-cap-editor], .prov-grant")).toBeNull();
   });
 
   it("moves the focus to the tab a link opens", async () => {
@@ -624,11 +521,11 @@ describe("admin overview and grants", () => {
     });
     await flush();
     await flush();
-    await click(tab("提供モデル"));
+    await click(tab("テナントごと"));
     await flush();
-    expect(host!.querySelectorAll(".prov-grants tbody tr").length).toBe(20);
-    await click(btnIn(within(".model-access-grants"), "さらに 5 件表示"));
+    expect(host!.querySelectorAll(".mpol-tenants tbody tr").length).toBe(20);
+    await click(btnIn(within(".model-access-caps"), "さらに 5 件表示"));
     await flush();
-    expect(host!.querySelectorAll(".prov-grants tbody tr").length).toBe(25);
+    expect(host!.querySelectorAll(".mpol-tenants tbody tr").length).toBe(25);
   });
 });

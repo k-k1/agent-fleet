@@ -216,9 +216,9 @@ export function AdminTab() {
       "admin.title") as Parameters<typeof tr>[0],
   );
 
-  const openTenant = (slug: string) => {
+  const openTenant = (slug: string, at = "limits") => {
     setScope(slug);
-    setScopeSection("limits");
+    setScopeSection(at);
     setMember(null);
     // Phone: opening a tenant shows that tenant's rail, since a section is picked next.
     if (mobileMatches()) setEntered(false);
@@ -259,7 +259,10 @@ export function AdminTab() {
     if (shownRootSection === "tts") return <TtsAdminView />;
     if (shownRootSection === "brand") return <BrandAdminView />;
     if (shownRootSection === "dev-idp") return <DevIdpAdminView />;
-    if (shownRootSection === "model-access" && isSuper) return <AdminModelAccessView tenants={tenants} />;
+    // A tenant's row opens Admin › Tenants › [tenant] › Model access, where its cap and grant are
+    // edited (ADR 0138 D16, note of 2026-11-17).
+    if (shownRootSection === "model-access" && isSuper)
+      return <AdminModelAccessView tenants={tenants} onOpenTenant={(slug) => openTenant(slug, "model-access")} />;
     if (shownRootSection === "engines" && hasEngines) return <EnginesAdminView />;
     if (shownRootSection === "engine-tokens" && hasEngines) return <EngineTokensAdminView />;
     if (shownRootSection === "pool" && hasPool) return <PoolView />;
