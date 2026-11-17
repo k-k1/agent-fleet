@@ -1,0 +1,59 @@
+/* The tab row of a settings page with several views (parts/viewNav.tsx): Agent memory, Memory
+ * snapshots, Skills, Model access. One row at every width; it scrolls sideways when the labels
+ * do not fit rather than wrapping, so the active tab stays in view. */
+
+.mem-viewnav-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  border-bottom: 1px solid var(--border);
+}
+
+.mem-viewnav-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  padding: 6px 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex: none;
+}
+
+.mem-viewnav-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.mem-viewnav-count {
+  display: inline-block;
+  margin-left: 6px;
+  min-width: 1.4em;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 0.8em;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* A view with edits not saved yet (Model access): the panel is only hidden, so they are kept. */
+.mem-viewnav-dirty {
+  margin-left: 4px;
+  color: var(--accent);
+}
+
+@media (max-width: 760px) {
+  .mem-viewnav-tab {
+    padding: 6px 8px;
+    min-height: 40px;
+  }
+}
+
+/* One view of a page split by the tab row (parts/tabbedViews.tsx): a gap under the row. */
+.tabbed-view {
+  margin-top: 8px;
+}

@@ -15,7 +15,7 @@ import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts
 import { Button } from "../../../ui/Button.tsx";
 import { EmptyState } from "../../../ui/EmptyState.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
-import { ViewNav, useSectionView, type ViewDef } from "./viewNav.tsx";
+import { ViewNav, useSectionView, type ViewDef } from "../parts/viewNav.tsx";
 import { AgentMemoryStatus } from "./views/AgentMemoryStatus.tsx";
 import { openMemoryView } from "../../memory/open.ts";
 import { ImportExportView } from "./views/ImportExportView.tsx";

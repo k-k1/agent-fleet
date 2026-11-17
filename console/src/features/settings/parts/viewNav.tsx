@@ -1,5 +1,5 @@
-// The view-nav shared by the two memory entries (Agent memory, Memory snapshots), and the hook
-// that decides which view is showing.
+// The view-nav shared by the settings pages with several views (Agent memory, Memory snapshots,
+// Skills, Model access), and the hook that decides which view is showing.
 //
 // A view is picked, in this order, by a deep link ("memory:changes" through openSettings), by the
 // view last left open in this entry (device-local, like the rail section), then by the entry's
@@ -17,6 +17,9 @@ export interface ViewDef {
   /** The accessible name when the count has to be part of it ("Changes, 3 proposed"); the label
    *  is used when absent. */
   ariaLabel?: string;
+  /** The view holds edits not saved yet: a mark beside the label, and dirtyLabel appended to
+   *  the accessible name. */
+  dirty?: boolean;
 }
 
 /** Which view of `section` is showing. `dflt` is the entry's default when nothing was asked or
@@ -68,13 +71,19 @@ export function ViewNav({
   value,
   onChange,
   prefix,
+  panelPerView = false,
+  dirtyLabel = "",
 }: {
   label: string;
   views: readonly ViewDef[];
   value: string;
   onChange: (view: string) => void;
-  /** Id prefix tying each tab to the panel it controls (`${prefix}-panel`). */
+  /** Id prefix tying each tab to the panel it controls: `${prefix}-panel`, or with panelPerView
+   *  `${prefix}-panel-${key}`, for a page that keeps every view mounted (TabbedViews). */
   prefix: string;
+  panelPerView?: boolean;
+  /** Appended to a dirty view's accessible name ("unsaved changes"). */
+  dirtyLabel?: string;
 }) {
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
@@ -132,11 +141,11 @@ export function ViewNav({
             role="tab"
             id={`${prefix}-tab-${v.key}`}
             aria-selected={v.key === value}
-            aria-controls={`${prefix}-panel`}
+            aria-controls={panelPerView ? `${prefix}-panel-${v.key}` : `${prefix}-panel`}
             tabIndex={v.key === value ? 0 : -1}
             className={"mem-viewnav-tab" + (v.key === value ? " active" : "")}
             onClick={() => onChange(v.key)}
-            aria-label={v.count ? v.ariaLabel : undefined}
+            aria-label={nameOf(v, dirtyLabel)}
           >
             {v.label}
             {v.count ? (
@@ -144,9 +153,21 @@ export function ViewNav({
                 {v.count}
               </span>
             ) : null}
+            {v.dirty ? (
+              <span className="mem-viewnav-dirty" aria-hidden="true">
+                ●
+              </span>
+            ) : null}
           </button>
         ))}
       </div>
     </div>
   );
+}
+
+/** The tab's accessible name when the visible text alone would not carry it; undefined keeps
+ *  the text. */
+function nameOf(v: ViewDef, dirtyLabel: string): string | undefined {
+  if (!v.dirty || !dirtyLabel) return v.count ? v.ariaLabel : undefined;
+  return `${(v.count && v.ariaLabel) || v.label}, ${dirtyLabel}`;
 }

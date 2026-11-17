@@ -18,6 +18,7 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 }));
 
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
+import { DirtyScope } from "../parts/dirtyScope.tsx";
 
 const PATH = "api/admin/tenants/acme/provided-routes/deployment";
 const VIEW = () => ({
@@ -133,6 +134,40 @@ describe("tenant provided routes", () => {
     expect(host!.textContent).toContain("≈ $1.25");
     // The grant is the super_admin's: no control for it on the tenant page.
     expect(host!.querySelector(".prov-grant")).toBeNull();
+  });
+
+  it("names every value cell by its column, for the phone's card layout (#4376)", async () => {
+    await mount();
+    const heads = Array.from(host!.querySelectorAll(".prov-members thead th")).map((th) => th.textContent);
+    for (const tr of Array.from(host!.querySelectorAll<HTMLElement>(".prov-members tbody tr"))) {
+      const cells = Array.from(tr.children);
+      expect(cells.length).toBe(heads.length);
+      cells.forEach((td, i) => {
+        // The name and the save button span the card; every other cell carries its heading,
+        // which the phone layout shows beside the value once the header row is hidden.
+        if (td.classList.contains("prov-member-name") || td.classList.contains("prov-member-save")) return;
+        expect(td.getAttribute("data-label"), `column ${i}`).toBe(heads[i]);
+      });
+    }
+  });
+
+  it("reports unsaved edits to the page holding it", async () => {
+    const seen: boolean[] = [];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <DirtyScope onChange={(d) => seen.push(d)}>
+          <TenantProvidedRoutesView slug="acme" />
+        </DirtyScope>,
+      );
+    });
+    await flush();
+    expect(seen.at(-1)).toBe(false);
+    await type(row(VIEW().members[0].user_key).querySelector<HTMLInputElement>('input[type="text"]')!, "12");
+    await flush();
+    expect(seen.at(-1)).toBe(true);
   });
 
   it("saves the policy as the CP's input shape", async () => {

@@ -1190,3 +1190,54 @@
 .mpol-hidden > li + li {
   margin-top: 6px;
 }
+
+/* The provided-route members table at phone width: one card per member, each value under its
+ * column's name (data-label), so no column is cut off past the screen's edge. */
+@media (max-width: 760px) {
+  .prov-members thead {
+    display: none;
+  }
+
+  .prov-members,
+  .prov-members tbody {
+    display: block;
+  }
+
+  .prov-members tr {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: 4px 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .prov-members td {
+    padding: 0;
+    border: 0;
+  }
+
+  .prov-members td.prov-member-name,
+  .prov-members td.prov-member-save {
+    grid-column: 1 / -1;
+  }
+
+  .prov-members td.prov-member-name {
+    font-weight: 600;
+  }
+
+  /* The cell itself steps aside: its label and its value become the row's two grid cells. */
+  .prov-members td[data-label] {
+    display: contents;
+  }
+
+  .prov-members td[data-label]::before {
+    content: attr(data-label);
+    color: var(--muted);
+  }
+
+  .prov-members input[type="text"] {
+    width: 100%;
+    max-width: 12em;
+  }
+}

@@ -20,7 +20,7 @@ import { isExternalUrl } from "../../../lib/filemeta.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { openFileMode } from "../../viewer/openFile.ts";
-import { ViewNav, useSectionView } from "../memory/viewNav.tsx";
+import { ViewNav, useSectionView } from "../parts/viewNav.tsx";
 
 export interface CatalogRoot {
   dir: string;

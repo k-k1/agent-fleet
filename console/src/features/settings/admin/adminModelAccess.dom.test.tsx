@@ -229,3 +229,112 @@ describe("what the policy hides, per tenant", () => {
     expect(within(".model-access-hidden [role=alert]")).not.toBeNull();
   });
 });
+
+// #4380 P-3: the page is split into views (overview, restrictions for all tenants, per tenant,
+// provided models). Pinned here: every section is reachable from a tab, D12's and D13's sentences
+// stay on screen on every view, and a draft and its refusal survive a switch.
+describe("admin model access views", () => {
+  const SOURCE = {
+    source: {
+      id: "S1",
+      binding: "S1#fp1",
+      name: "deployment",
+      role_arn: "arn:aws:iam::000000000000:role/route",
+      region: "us-east-1",
+      models: ["anthropic.claude-haiku"],
+      fingerprint: "fp1",
+      policy_version: 1,
+      active: true,
+      updated_at: "2026-11-16T10:00:00Z",
+    },
+  };
+  const GRANT = {
+    granted: false,
+    ceiling_micro: null,
+    members_only: false,
+    member_default_micro: 0,
+    month: "2026-11",
+    spent_micro: 0,
+    reserved_micro: 0,
+    members: [],
+    reservations: [],
+    floor_micro: 0,
+  };
+  const served = () => {
+    const base = api.getMockImplementation()!;
+    api.mockImplementation((path: string) =>
+      path === "api/admin/provided-routes/deployment"
+        ? Promise.resolve(SOURCE)
+        : path.includes("/provided-routes/")
+          ? Promise.resolve(GRANT)
+          : base(path),
+    );
+  };
+  const tab = (text: string) =>
+    Array.from(host!.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent?.startsWith(text));
+  const shown = (el: Element) => el.closest("[hidden]") === null;
+
+  it("reaches every section from a tab, with the provided tab only where the CP serves it", async () => {
+    await mount();
+    expect(Array.from(host!.querySelectorAll('[role="tab"]')).map((t) => t.textContent)).toEqual([
+      "概要",
+      "全テナント共通の制限",
+      "テナントごと",
+    ]);
+    act(() => root?.unmount());
+    host?.remove();
+    served();
+    await mount();
+    await flush();
+    expect(tab("提供モデル")).toBeDefined();
+    for (const sel of [
+      ".model-access-ceiling",
+      ".model-access-deployment",
+      ".model-access-caps",
+      ".model-access-provided-grant",
+      ".model-access-provided-source",
+    ]) {
+      const panel = host!.querySelector(sel)!.closest<HTMLElement>('[role="tabpanel"]')!;
+      const t = host!.querySelector<HTMLButtonElement>(`[role="tab"][aria-controls="${panel.id}"]`);
+      expect(t, sel).not.toBeNull();
+      await click(t!);
+      expect(shown(host!.querySelector(sel)!), sel).toBe(true);
+    }
+  });
+
+  it("keeps D12's and D13's sentences on screen on every view", async () => {
+    served();
+    await mount();
+    await flush();
+    const tabs = Array.from(host!.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    expect(tabs.length).toBe(4);
+    for (const t of tabs) {
+      await click(t);
+      for (const text of ["30 秒", "Control Plane に届かない間", "手作業でモデルにサインイン"]) {
+        const p = Array.from(host!.querySelectorAll("p")).find((x) => x.textContent?.includes(text));
+        expect(p && shown(p), `${t.textContent}: ${text}`).toBe(true);
+      }
+    }
+  });
+
+  it("keeps a draft and its refusal across a switch, and marks the unsaved tab", async () => {
+    apiJSON.mockResolvedValue({ error: { code: "route_policy_exceeds_ceiling", message: "refused for the test" } });
+    await mount();
+    await click(tab("全テナント共通の制限")!);
+    const d = within(".model-access-deployment");
+    await click(tickIn(d, "deny", "anthropic-api"));
+    expect(tab("全テナント共通の制限")!.textContent).toBe("全テナント共通の制限●");
+    await click(btnIn(d, "保存"));
+    await flush();
+    expect(d.querySelector("[role=alert]")?.textContent).toContain("refused for the test");
+
+    await click(tab("テナントごと")!);
+    expect(shown(d)).toBe(false);
+    await click(tab("全テナント共通の制限")!);
+    expect(within(".model-access-deployment [role=alert]").textContent).toContain("refused for the test");
+    expect(tickIn(within(".model-access-deployment"), "deny", "anthropic-api").checked).toBe(true);
+    expect(tab("全テナント共通の制限")!.textContent).toBe("全テナント共通の制限●");
+    // The other views hold no edits.
+    expect(tab("テナントごと")!.textContent).toBe("テナントごと");
+  });
+});

@@ -5,10 +5,11 @@
 // Drawn only where the CP serves provided routes (its plain 404 draws nothing). The source's PUT
 // takes SourceInput alone and reads an absent `active` as true, so the body always carries the
 // loaded or edited `active`: re-saving an inactive source must never switch it back on.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiJSON } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
+import { useReportDirty } from "../parts/dirtyScope.tsx";
 import {
   modelsOf,
   parseProvidedTenant,
@@ -63,6 +64,9 @@ function SourceEditor({
       body.region !== source.region ||
       body.active !== source.active ||
       !sameModels(body.models, source.models);
+  // Unsaved edits, for the tab's mark: on a first registration any field typed in counts, even
+  // before the form is complete enough to save.
+  useReportDirty(source ? dirty : name !== "" || role !== "" || region !== "" || models !== "" || !active);
   const field = (label: string, value: string, set: (v: string) => void) => (
     <label className="admin-fld">
       <span className="af-cap">{label}</span>
@@ -131,9 +135,14 @@ function SourceEditor({
 
 /** AdminProvidedSourceView is the deployment source's section; nothing where the CP has no
  *  provided routes. */
-export function AdminProvidedSourceView() {
+export function AdminProvidedSourceView({ onServed }: { onServed?: (served: boolean) => void } = {}) {
   const tr = useT();
   const { load, reload, peek } = useProvided(SOURCE_PATH, parseSource);
+  // Whether the CP serves provided routes, for a page that gives them a tab: only the plain 404
+  // is "not served"; a failed read has to stay reachable.
+  useEffect(() => {
+    if (load) onServed?.(load.state !== "off");
+  }, [load, onServed]);
   if (!load || load.state === "off") return null;
   if (load.state === "failed") {
     return (
@@ -186,6 +195,7 @@ function GrantEditor({
   const { busy, refusal, setRefusal, submit } = useGuardedSave((res) => onSaved(warningsOf(res)));
   const micro = parseUsd(ceiling);
   const dirty = granted !== view.granted || micro !== view.ceiling_micro;
+  useReportDirty(dirty);
   const save = () => {
     if (micro === undefined) {
       setRefusal(tr("admin.prov_bad_amount"));

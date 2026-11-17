@@ -39,9 +39,11 @@ A route is usable only when every layer allows it. Nothing you allow can reopen 
 
 ## Set your tenant's rule
 
+The page has a tab for each part: **Overview**, **Restrictions** and, where the deployment offers provided routes, **Provided models & budgets**. The sentences on when a change applies stay above the tabs. Switching tabs keeps what you have not saved, and a tab with unsaved changes is marked with ●.
+
 1. Open **Tenant settings → Operations → Model access**
-2. Read **What the deployment allows**: the three layers above yours, and the routes they leave to your rule
-3. Under **This tenant's rule**, set:
+2. On **Overview**, read **What the deployment allows**: the three layers above yours, and the routes they leave to your rule
+3. On **Restrictions**, under **This tenant's rule**, set:
    - **Classes of credential**: **All**, or **Only these** with the classes you allow
    - **Destinations**: **All**, or **Only these** with the destinations you allow
    - **Routes allowed as exceptions**: a route your classes or destinations would forbid, which you still allow. "No subscriptions except Copilot" is the class rule plus Copilot here
@@ -56,16 +58,16 @@ Every save is recorded in the audit log with the rule before and after ([Read th
 
 A member's own llama.cpp, or another endpoint they type in, cannot be vouched for by Agent Fleet: under any restriction it is refused unless its host is approved.
 
-1. In **Self-hosted endpoints this tenant approves**, enter one exact host per line (no wildcard, port or scheme)
+1. On **Restrictions**, in **Self-hosted endpoints this tenant approves**, enter one exact host per line (no wildcard, port or scheme)
 2. Press **Save**
 
 A host is approved only while every layer above lets it through, and a vendor's host is never approvable.
-**Approved self-hosted endpoints, in effect** lists each host you entered and, for one that is not approved, which layer keeps it out.
+**Approved self-hosted endpoints, in effect**, on **Overview**, lists each host you entered and, for one that is not approved, which layer keeps it out.
 Allowing the class and the destination **Self-hosted** is what lets members use an approved endpoint.
 
 ## Find out why members cannot see something
 
-**What the policy hides**, at the bottom of the page, lists the agents, image providers and assistant chat backends your members no longer see because none of their routes is allowed.
+**What the policy hides**, on **Overview**, lists the agents, image providers and assistant chat backends your members no longer see because none of their routes is allowed.
 Each one names the layers that hide it, and each of its routes names its own: an agent can be hidden by two layers at once, one forbidding each of its routes.
 
 | What the list shows | Means |
@@ -79,7 +81,7 @@ Members' own switches (an agent a member turned off for themselves) are not in t
 
 ## Set members' budgets for provided routes
 
-Some deployments pay for Amazon Bedrock themselves and offer it to tenants as a **provided route**. Where the deployment does not, this section is not on the page.
+Some deployments pay for Amazon Bedrock themselves and offer it to tenants as a **provided route**. Where the deployment does not, the **Provided models & budgets** tab is not on the page.
 
 The deployment administrator grants it to your tenant with a monthly ceiling. Under that, you decide who may use it and how much:
 
@@ -104,13 +106,13 @@ This rule binds Agent Fleet's own launches, not what a member runs by hand.
 
 ## For the deployment administrator
 
-The admin modal's **Deployment → Model access** has the layers above the tenants':
+The admin modal's **Deployment → Model access** has the layers above the tenants', on four tabs:
 
-- The **Deployment ceiling (operator)**, read-only, with the value the deployment was started with
-- The **Deployment rule**, for every tenant
-- The **Tenant cap** of each tenant: choose the tenant, then edit its cap. That tenant's own rule is shown below it, read-only, followed by what the policy hides from that tenant
-- The **Provided-route source**, where the deployment pays for Bedrock: the IAM role the stack created, its Region and models, and **Use this source**. Switching it off keeps its spend and sessions on record
-- Under each tenant, the **Provided-route grant**: **Grant to this tenant** with the **Tenant's monthly ceiling (dollars)**. A grant needs a ceiling above zero
+- **Overview**: the **Deployment ceiling (operator)**, read-only, with the value the deployment was started with
+- **Restrictions for all tenants**: the **Deployment rule**, for every tenant
+- **Per tenant**: the **Tenant cap** of each tenant: choose the tenant, then edit its cap. That tenant's own rule is shown below it, read-only, followed by what the policy hides from that tenant
+- **Provided models**, where the deployment pays for Bedrock: the **Provided-route source**, the IAM role the stack created, its Region and models, and **Use this source**. Switching it off keeps its spend and sessions on record
+- On **Per tenant**, under each tenant, the **Provided-route grant**: **Grant to this tenant** with the **Tenant's monthly ceiling (dollars)**. A grant needs a ceiling above zero
 
 The deployment rule and tenant cap editors refuse a rule that would allow something the ceiling forbids.
 Their endpoint list names the host patterns a tenant may approve: an exact host or `*.example.com`. **Not narrowed** leaves the layer above in charge; **Only these** with no pattern lets no host be approved.

@@ -11,6 +11,7 @@ import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { HiddenList } from "./routePolicyHidden.tsx";
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
+import { TabbedViews } from "../parts/tabbedViews.tsx";
 import { RouteName, RuleEditor, RuleSummary, layersLabel } from "./routePolicyRuleEditor.tsx";
 import { parseTenantPolicy, routeIds, routesAllowedAbove, type TenantPolicyView } from "./routePolicyRule.ts";
 
@@ -68,6 +69,11 @@ export function PolicyLimits() {
 export function TenantModelAccessView({ slug, isSuper = false }: { slug: string; isSuper?: boolean }) {
   const tr = useT();
   const { view, failed, load, peek, path } = useTenantRoutePolicy(slug);
+  // Whether the CP serves provided routes, as this tenant's view last heard: an answer for
+  // another tenant does not count, so a switch never shows the tab before its own read answers.
+  const [served, setServed] = useState<{ slug: string; on: boolean }>({ slug: "", on: false });
+  const provided = served.slug === slug && served.on;
+  const onServed = useCallback((on: boolean) => setServed({ slug, on }), [slug]);
 
   if (!view) {
     return (
@@ -81,14 +87,9 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
   }
 
   const above = routesAllowedAbove(view.routes);
-  return (
+  const overview = (
     <>
-      <section className="admin-panel model-access">
-        <h4>{tr("tenant.model_access_title")}</h4>
-        <p className="admin-hint">{tr("tenant.model_access_note")}</p>
-        <PolicyLimits />
-      </section>
-
+      <p className="admin-hint">{tr("tenant.model_access_note")}</p>
       <section className="admin-panel model-access-above">
         <h4>{tr("tenant.model_access_above")}</h4>
         <div className="mpol-layers">
@@ -121,24 +122,6 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
           </ul>
         )}
       </section>
-
-      <section className="admin-panel model-access-rule">
-        <h4>
-          {tr("tenant.model_access_rule")}
-          <span className="af-note">{tr("admin.mpol_revision", { n: view.tenant.revision })}</span>
-        </h4>
-        <RuleEditor
-          key={`${slug}:${view.tenant.revision}`}
-          base={view.tenant.rule}
-          revision={view.tenant.revision}
-          currentRevision={async () => (await peek())?.tenant.revision ?? null}
-          routeOptions={routeIds(view.routes.map((r) => r.id))}
-          endpointsMode="hosts"
-          save={(body) => apiJSON(path, "PUT", body)}
-          onSaved={load}
-        />
-      </section>
-
       <section className="admin-panel model-access-endpoints">
         <h4>{tr("tenant.model_access_endpoints")}</h4>
         {view.endpoints.length === 0 ? (
@@ -159,8 +142,51 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
         )}
       </section>
       <HiddenList view={view} />
-      {/* Provided routes (ADR 0129): absent where the CP does not serve them. */}
-      <TenantProvidedRoutesView key={`prov-${slug}`} slug={slug} />
+    </>
+  );
+  return (
+    <>
+      {/* Above the views, so D12's and D13's sentences stay on screen whichever view is open. */}
+      <section className="admin-panel model-access">
+        <h4>{tr("tenant.model_access_title")}</h4>
+        <PolicyLimits />
+      </section>
+      <TabbedViews
+        label={tr("tenant.model_access_title")}
+        prefix="tenant-mpol"
+        views={[
+          { key: "overview", label: tr("tenant.model_access_view_overview"), node: overview },
+          {
+            key: "restrictions",
+            label: tr("tenant.model_access_view_restrictions"),
+            node: (
+              <section className="admin-panel model-access-rule">
+                <h4>
+                  {tr("tenant.model_access_rule")}
+                  <span className="af-note">{tr("admin.mpol_revision", { n: view.tenant.revision })}</span>
+                </h4>
+                <RuleEditor
+                  key={`${slug}:${view.tenant.revision}`}
+                  base={view.tenant.rule}
+                  revision={view.tenant.revision}
+                  currentRevision={async () => (await peek())?.tenant.revision ?? null}
+                  routeOptions={routeIds(view.routes.map((r) => r.id))}
+                  endpointsMode="hosts"
+                  save={(body) => apiJSON(path, "PUT", body)}
+                  onSaved={load}
+                />
+              </section>
+            ),
+          },
+          {
+            key: "provided",
+            label: tr("tenant.model_access_view_provided"),
+            // Provided routes (ADR 0129): no tab where the CP does not serve them.
+            shown: provided,
+            node: <TenantProvidedRoutesView key={`prov-${slug}`} slug={slug} onServed={onServed} />,
+          },
+        ]}
+      />
     </>
   );
 }

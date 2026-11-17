@@ -17,7 +17,7 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { ViewNav, type ViewDef } from "../settings/memory/viewNav.tsx";
+import { ViewNav, type ViewDef } from "../settings/parts/viewNav.tsx";
 import { MemoriesView } from "../settings/memory/views/MemoriesView.tsx";
 import { AgentChangesPanel } from "../settings/memory/memoryChanges.tsx";
 import { ProposalsPanel } from "../settings/memory/memoryProposals.tsx";

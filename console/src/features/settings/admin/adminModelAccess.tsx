@@ -15,6 +15,7 @@ import { HiddenList } from "../tenant/routePolicyHidden.tsx";
 import { AdminProvidedGrantView, AdminProvidedSourceView } from "./adminProvidedRoutes.tsx";
 import { parseDeploymentPolicy, routeIds, type DeploymentPolicyView } from "../tenant/routePolicyRule.ts";
 import { PolicyLimits, useTenantRoutePolicy } from "../tenant/tenantModelAccess.tsx";
+import { TabbedViews } from "../parts/tabbedViews.tsx";
 
 // The variable the ceiling is read from (routepolicy.EnvCeiling), named when the wire's source is
 // "deployment", the only source the CP has; any other source is shown as the CP spells it.
@@ -91,6 +92,7 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
   const { view, failed, load } = useDeploymentRoutePolicy();
   const [slug, setSlug] = useState(tenants[0]?.slug ?? "");
   const shownSlug = tenants.some((t) => t.slug === slug) ? slug : (tenants[0]?.slug ?? "");
+  const [provided, setProvided] = useState(false);
 
   if (!view) {
     return (
@@ -103,14 +105,9 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
     );
   }
 
-  return (
+  const overview = (
     <>
-      <section className="admin-panel model-access">
-        <h4>{tr("admin.model_access_title")}</h4>
-        <p className="admin-hint">{tr("admin.model_access_note")}</p>
-        <PolicyLimits />
-      </section>
-
+      <p className="admin-hint">{tr("admin.model_access_note")}</p>
       <section className="admin-panel model-access-ceiling">
         <h4>{tr("admin.mpol_layer_ceiling")}</h4>
         <p className="admin-hint">
@@ -127,48 +124,73 @@ export function AdminModelAccessView({ tenants }: { tenants: Tenant[] }) {
         )}
         <RuleSummary rule={view.ceiling.rule} ceiling />
       </section>
-
-      <section className="admin-panel model-access-deployment">
-        <h4>
-          {tr("admin.mpol_layer_deployment")}
-          <span className="af-note">{tr("admin.mpol_revision", { n: view.deployment.revision })}</span>
-        </h4>
-        <p className="admin-hint">{tr("admin.model_access_deployment_note")}</p>
-        <RuleEditor
-          key={view.deployment.revision}
-          base={view.deployment.rule}
-          revision={view.deployment.revision}
-          currentRevision={currentDeploymentRevision}
-          routeOptions={routeIds()}
-          endpointsMode="patterns"
-          save={(body) => apiJSON(PATH, "PUT", body)}
-          onSaved={load}
-        />
+    </>
+  );
+  const deployment = (
+    <section className="admin-panel model-access-deployment">
+      <h4>
+        {tr("admin.mpol_layer_deployment")}
+        <span className="af-note">{tr("admin.mpol_revision", { n: view.deployment.revision })}</span>
+      </h4>
+      <p className="admin-hint">{tr("admin.model_access_deployment_note")}</p>
+      <RuleEditor
+        key={view.deployment.revision}
+        base={view.deployment.rule}
+        revision={view.deployment.revision}
+        currentRevision={currentDeploymentRevision}
+        routeOptions={routeIds()}
+        endpointsMode="patterns"
+        save={(body) => apiJSON(PATH, "PUT", body)}
+        onSaved={load}
+      />
+    </section>
+  );
+  const perTenant = (
+    <section className="admin-panel model-access-caps">
+      <h4>{tr("admin.mpol_layer_tenant_cap")}</h4>
+      <p className="admin-hint">{tr("admin.model_access_caps_note")}</p>
+      {tenants.length === 0 ? (
+        <p className="muted">{tr("admin.model_access_no_tenants")}</p>
+      ) : (
+        <>
+          <label className="admin-fld">
+            <span className="af-cap">{tr("admin.model_access_tenant")}</span>
+            <select value={shownSlug} onChange={(e) => setSlug(e.target.value)}>
+              {tenants.map((t) => (
+                <option key={t.slug} value={t.slug}>
+                  {t.name || t.slug}
+                </option>
+              ))}
+            </select>
+          </label>
+          <TenantCap key={shownSlug} slug={shownSlug} />
+        </>
+      )}
+    </section>
+  );
+  return (
+    <>
+      {/* Above the views, so D12's and D13's sentences stay on screen whichever view is open. */}
+      <section className="admin-panel model-access">
+        <h4>{tr("admin.model_access_title")}</h4>
+        <PolicyLimits />
       </section>
-
-      <section className="admin-panel model-access-caps">
-        <h4>{tr("admin.mpol_layer_tenant_cap")}</h4>
-        <p className="admin-hint">{tr("admin.model_access_caps_note")}</p>
-        {tenants.length === 0 ? (
-          <p className="muted">{tr("admin.model_access_no_tenants")}</p>
-        ) : (
-          <>
-            <label className="admin-fld">
-              <span className="af-cap">{tr("admin.model_access_tenant")}</span>
-              <select value={shownSlug} onChange={(e) => setSlug(e.target.value)}>
-                {tenants.map((t) => (
-                  <option key={t.slug} value={t.slug}>
-                    {t.name || t.slug}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <TenantCap key={shownSlug} slug={shownSlug} />
-          </>
-        )}
-      </section>
-      {/* The deployment's provided-route source (ADR 0129): absent where the CP does not serve it. */}
-      <AdminProvidedSourceView />
+      <TabbedViews
+        label={tr("admin.model_access_title")}
+        prefix="admin-mpol"
+        views={[
+          { key: "overview", label: tr("admin.model_access_view_overview"), node: overview },
+          { key: "deployment", label: tr("admin.model_access_view_deployment"), node: deployment },
+          { key: "tenants", label: tr("admin.model_access_view_tenants"), node: perTenant },
+          {
+            key: "provided",
+            label: tr("admin.model_access_view_provided"),
+            // The deployment's provided-route source (ADR 0129): no tab where the CP does not serve it.
+            shown: provided,
+            node: <AdminProvidedSourceView onServed={setProvided} />,
+          },
+        ]}
+      />
     </>
   );
 }
