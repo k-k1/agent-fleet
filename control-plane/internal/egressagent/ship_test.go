@@ -542,7 +542,7 @@ func TestShipCountsSplicedConnectionOnce(t *testing.T) {
 }
 
 // The skipped line's bytes are consumed and committed: a second pass sends nothing, and a
-// failed POST resends the same events once, with distinct ids.
+// failed POST resends the surviving event once.
 func TestShipSkippedLineIsCommitted(t *testing.T) {
 	f := newShipFixture(t)
 	appendFile(t, f.log,
