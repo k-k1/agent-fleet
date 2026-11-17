@@ -369,6 +369,7 @@ func (a modelRoutesAgent) ModelRoutes(model string) []string {
 // of them is allowed or none can be listed.
 func TestNamedOpencodeModelWithUnprovenPayer(t *testing.T) {
 	zenAcct := []string{routes.RouteOpencodeZen, routes.RouteOpencodeAccount}
+	goAcct := []string{routes.RouteOpencodeGo, routes.RouteOpencodeAccount}
 	for name, c := range map[string]struct {
 		allowed []string
 		cands   []string
@@ -377,6 +378,7 @@ func TestNamedOpencodeModelWithUnprovenPayer(t *testing.T) {
 		code    string
 	}{
 		"every candidate forbidden": {nil, zenAcct, "opencode/iceman-free", 403, routes.CodePolicyForbidden},
+		"go provider forbidden":     {nil, goAcct, "opencode-go/glm", 403, routes.CodePolicyForbidden},
 		"one candidate allowed":     {[]string{routes.RouteOpencodeAccount}, zenAcct, "opencode/iceman-free", 409, routes.CodePolicyRequired},
 		"no candidates (ambiguous)": {nil, nil, "mystery/model", 409, routes.CodePolicyRequired},
 		"no model named":            {nil, zenAcct, "", 409, routes.CodePolicyRequired},

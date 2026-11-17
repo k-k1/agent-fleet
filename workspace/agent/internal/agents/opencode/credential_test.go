@@ -136,7 +136,7 @@ func TestOAuthCachedIsCurrentOnly(t *testing.T) {
 func TestModelRoutes(t *testing.T) {
 	old := credentialView
 	t.Cleanup(func() { credentialView = old })
-	pref := ""
+	pref := UsageZen
 	credentialView = func() (map[string]string, string, oauthState) { return nil, pref, oauthState{} }
 	a := agentImpl{}
 	want := func(name, model string, routes ...string) {
@@ -149,6 +149,35 @@ func TestModelRoutes(t *testing.T) {
 	want("go", "opencode-go/glm", "opencode-go", "opencode-account")
 	want("other provider", "anthropic/claude-x")
 	want("no model", "")
+	pref = UsageFree
+	want("free", "opencode/iceman-free", "opencode-zen", "opencode-account")
+	pref = UsageOff
+	want("off", "opencode/iceman-free")
 	pref = UsageOwn
 	want("own keys only", "opencode/iceman-free")
+	want("go, own keys only", "opencode-go/glm")
+}
+
+// The #4280 condition itself: with the payer unprovable, the same view resolves nothing and still
+// lists the routes the model might run on, so the policy can refuse it as forbidden.
+func TestUnprovenPayerStillListsModelRoutes(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	old := credentialView
+	t.Cleanup(func() { credentialView = old })
+	for name, v := range map[string]struct {
+		keys map[string]string
+		acct oauthState
+	}{
+		"key beside a signed-in account": {map[string]string{"OPENCODE_API_KEY": "oc-1"}, oauthState{known: true, connected: true, id: "c"}},
+		"account state unknown":          {nil, oauthState{}},
+	} {
+		credentialView = func() (map[string]string, string, oauthState) { return v.keys, UsageZen, v.acct }
+		keys, pref, acct := credentialView()
+		if l := resolveModel("opencode/m", keys, pref, acct, nil); l != (routes.Launch{}) {
+			t.Errorf("%s: resolved %+v, want nothing", name, l)
+		}
+		if got := (agentImpl{}).ModelRoutes("opencode/m"); !slices.Equal(got, []string{routes.RouteOpencodeZen, routes.RouteOpencodeAccount}) {
+			t.Errorf("%s: ModelRoutes = %v", name, got)
+		}
+	}
 }

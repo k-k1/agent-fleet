@@ -93,7 +93,9 @@ func ModelLaunch(model string) routes.Launch {
 // ModelRoutes implements agents.ModelRouteLister for opencode.ai's own providers: Zen (or Go) by
 // key, or the Console account. They share one destination, so a policy that forbids all of them
 // forbids the model whichever payer would pay. A billing choice that keeps opencode.ai out gives
-// none: that launch does not run there at all.
+// none: that launch does not run there at all. Provider models (anthropic/…) stay nil: without a
+// stored key they may run on opencode's own auth-store login, which no policy route judges, so a
+// forbid-all over their single catalogued route would be unsound.
 func (agentImpl) ModelRoutes(model string) []string {
 	prov, _, ok := splitModel(model)
 	_, pref, _ := credentialView()

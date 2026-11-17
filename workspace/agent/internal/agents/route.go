@@ -83,8 +83,8 @@ type PerCallRouter interface {
 }
 
 // ModelRouteLister is an optional capability of a PerCallRouter: the routes a launch on model can
-// end up on when ResolveLaunch cannot prove which payer pays (a signed-in account beside a key, an
-// account state not yet known). The list is every route the launch might run on, empty when the
+// end up on when ResolveLaunch cannot prove which payer pays (a key beside a signed-in account, an
+// account state not known, and so on). The list is every route the launch might run on, empty when the
 // model's destination cannot be told. A restriction that forbids all of them can refuse the
 // create as forbidden without knowing the payer; one that allows any of them still needs the
 // route named.
