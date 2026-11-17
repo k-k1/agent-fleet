@@ -9,6 +9,8 @@
 #   - a fetch that failed, or a binary that yields almost no names, edits nothing
 #     (two empty sets must not compare as "same");
 #   - a bare prefix such as ANTHROPIC_FOUNDRY_ is not a name;
+#   - a name the source holds only as an export alias, or that is only in the engine's
+#     identifier table, is not a name; one the source also reads still is;
 #   - a pin that already equals routeOverridesFrom does nothing.
 # Case 1 is the positive control for the others: if it did not edit, "nothing was edited"
 # would prove nothing.
@@ -34,12 +36,19 @@ CLAUDE_CODE_USE_BEDROCK
 ANTHROPIC_BASE_URL
 CLAUDE_CODE_SKIP_BEDROCK_AUTH"
 
-# fake <version> <names…>: a binary for that version whose strings are the given names,
-# padded with bytes that are not a variable.
+# fake <version> <names…>: a binary for that version laid out like the real one: the
+# engine's identifier table (each name alone between NULs) and the bundled source, where
+# each name is read from process.env. ALIASES, when set, is appended to the source as is.
 fake() {
-  local v="$1"; shift
+  local v="$1" aliased; shift
+  aliased="$(printf '%s\n' "${ALIASES:-}" | grep -oE '[A-Z][A-Z0-9_]{5,}' || true)"
   mkdir -p "$WORK/bins"
-  { printf '\x00\x01binary-noise\x00'; printf '%s\x00' "$@"; printf 'not_a_name lowercase_api_key\x00'; } > "$WORK/bins/$v"
+  {
+    printf '\x00\x01binary-noise\x00'
+    printf '%s\x00' "$@"; [ -z "$aliased" ] || printf '%s\x00' $aliased
+    printf 'var e=process.env;'; printf 'f(e.%s);' "$@"; printf '%s\x00' "${ALIASES:-}"
+    printf 'not_a_name lowercase_api_key\x00'
+  } > "$WORK/bins/$v"
 }
 
 cat > "$WORK/fetch.sh" <<EOF
@@ -121,6 +130,22 @@ grep -qx 'route_overrides=current' "$WORK/out" || fail "5: not current"
 [ ! -s "$WORK/body.md" ] || fail "5: wrote a body section"
 unchanged 5
 echo "ok   5 an unmoved pin does nothing"
+
+# 6. Constants: a name in the identifier table and an export alias only is not a name
+#    (same; case 1's edit is the positive control); one the source also reads is (changed).
+fake 3.0.0 $BASE_NAMES
+ALIASES='export{esr as STOP_USING_API_KEY_HINT,IYt as UNUSED_API_KEY_NOTE};' fake 3.0.1 $BASE_NAMES
+setup 3.0.1 3.0.0
+run || fail "6a: exit $?"
+grep -qx 'route_overrides=same' "$WORK/out" || fail "6a: a constant read as a variable"
+rm -rf "$WORK/orig"
+ALIASES='export{q as CLAUDE_CODE_USE_ALIASED};' fake 3.0.2 $BASE_NAMES CLAUDE_CODE_USE_ALIASED
+setup 3.0.2 3.0.0
+run || fail "6b: exit $?"
+grep -qx 'route_overrides=changed' "$WORK/out" || fail "6b: an aliased variable was dropped"
+grep -q '`CLAUDE_CODE_USE_ALIASED`' "$WORK/body.md" || fail "6b: name not listed"
+unchanged 6b
+echo "ok   6 a constant is not a name; an exported variable the source reads still is"
 }
 
 echo "claude-route-overrides: all cases passed"
