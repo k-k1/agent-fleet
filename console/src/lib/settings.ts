@@ -142,6 +142,7 @@ export {
   setPrefsOwnerSource,
   subscribePrefsSync,
   uiPrefsLoaded,
+  useUIPrefsLoading,
   usePrefsSyncState,
   waitPrefsSaved,
   type PrefsSyncState,

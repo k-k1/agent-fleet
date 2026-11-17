@@ -1033,6 +1033,7 @@ export const sessions = {
   "launch.route_choose": "経路を選んでください",
   "launch.route_no_key": "認証情報がまだありません",
   "launch.route_no_key_hint": "「認証情報がまだありません」の経路は、キーかログインを追加すると選べます:",
+  "launch.route_loading": "保存済みの設定を読み込んでいます…",
   "launch.route_default_unusable": "既定の経路はいま使えません。この起動の経路を選んでください。",
   "launch.route_required_hint": "この起動の経路を選んでください。このエージェントは経路なしでは起動しません。",
   "launch.policy.route_forbidden": "そのモデルの経路は使えません。別の経路を選んでください。",

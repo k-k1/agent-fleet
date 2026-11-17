@@ -30,7 +30,7 @@ import { OwnSettingsLine } from "../settings/credentials/MemberLines.tsx";
 import { policyRefusalKey, type PolicyRefusal } from "./launchPolicy.ts";
 import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
-import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
+import { agentLaunchDefault, useSettings, useUIPrefsLoading } from "../../lib/settings.ts";
 import { useEffectiveDefaults, useUIStateStore } from "../../core/store/uiState.ts";
 import { defaultKind, ownLaunch, ownLaunchProblem, tenantBudget, tenantDriver, tenantModel, tenantSkipPerm } from "./tenantLaunchDefaults.ts";
 import { parseCap } from "../sessions/spendBudget.ts";
@@ -301,10 +301,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   };
   // The member picked kind k: that is their choice, and what depended on the old kind starts over.
   const pickKindByHand = (k: string) => {
-    mark("kind");
     // Clicking the agent already selected changes nothing: re-seeding would drop the preselected
-    // default route (and anything else picked for this kind) back to its blank state.
+    // default route (and anything else picked for this kind) back to its blank state, and pinning
+    // the kind would stop a late kinds list from moving the dialog to the member's usual agent.
     if (k === kind) return;
+    mark("kind");
     for (const f of ["perm", "driver", ...KIND_BOUND]) dirty.current.delete(f);
     setKind(k);
     seedFields(k, true);
@@ -502,6 +503,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   };
   const savedProfileGone =
     savedRoute?.route === "bedrock" && modelRouteProfiles !== null && !modelRouteProfiles.some((p) => p.id === bedrockParts(savedRoute.connection).id);
+  // Saved defaults are still on their way: a launch now would run on no route chosen by the
+  // member, and the late default could not undo it. Not for a route the member already picked, nor
+  // when the server cannot be read (loading ends once the automatic retries are used up).
+  const prefsLoading = useUIPrefsLoading() && !savedRoute && !dirty.current.has("route");
   const savedUnusable = !!savedRoute && !!live && (!defaultRouteUsable(live, savedRoute) || savedProfileGone);
   const seedRoute = (k: string) => {
     const sv = settings.agentLaunchDefaults[k]?.route;
@@ -868,7 +873,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && !!access.kinds && !routeMissing && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked;
+  const canLaunch = !!kinds.length && !!access.kinds && !routeMissing && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked && !prefsLoading;
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.
@@ -963,7 +968,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               })}
             </select>
             <span className={"ui-field-hint" + (savedUnusable || routeMissing ? " warn" : "")}>
-              {tr(savedUnusable ? "launch.route_default_unusable" : routeMissing ? "launch.route_required_hint" : "launch.route_hint")}
+              {tr(prefsLoading ? "launch.route_loading" : savedUnusable ? "launch.route_default_unusable" : routeMissing ? "launch.route_required_hint" : "launch.route_hint")}
             </span>
             {someNoKey && (
               <span className="ui-field-hint launch-route-nokey">
