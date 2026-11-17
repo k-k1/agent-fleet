@@ -760,7 +760,7 @@ the fire's transaction: after the queue may fire and before the claim, a queue w
 at reserves a run instead of claiming, and the claim is a later tick's; the job wakes the workspace, calls the Agent and
 hands the reply to apply, and every failure, skip and refusal marks the input seen, so the messages fire as they are. "Run
 now" never tidies. One run at a time per member holds across Control Plane processes (a unique index; a queue meets it as the
-waiting reason `tidying`), a run past 5 minutes is ended by the next tick (`takeover`) and its late apply writes nothing, at
+waiting reason `tidying`), a run past 10 minutes is ended by the next tick (`takeover`) and its late apply writes nothing, at
 most 2 runs are reserved per tick, and the daily cap of 10 is counted behind the member's lock. A `curator` message is
 sendable only to an Agent that shows `queueTidy`: by itself the claim leaves it pending (`no_tidy_at`, the waiting reason
 `no_tidy`), and the send checks the marker after its wake. A threshold queue is made draining by the reservation, so a merge

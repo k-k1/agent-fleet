@@ -340,8 +340,8 @@ Memos you accumulate and send to a session in one go (the tables are
   reserved in 24 hours (`memotidy.DailyCap`, counted behind the membership lock), or when the Agent cannot tidy. "Run now"
   never tidies. *One at a time*: a member has one `running` run (unique index, and `memoWaitingFor` answers `tidying` for a
   queue with `tidy` on while one is in flight, so it neither tidies nor fires). At most 2 runs are reserved per tick
-  (`memoTidyRunsPerTick`); a queue past that waits for the next tick. A run past `memoTidyTakeoverAfter` (5 minutes: the
-  150 s call, a cold wake and a margin) is ended `failed` with reason `takeover` by the next tick that meets it, its input
+  (`memoTidyRunsPerTick`); a queue past that waits for the next tick. A run past `memoTidyTakeoverAfter` (10 minutes: the
+  cold-wake wait of up to 5 minutes, the 15 s sessions read, the 150 s call and a margin) is ended `failed` with reason `takeover` by the next tick that meets it, its input
   is marked seen, and the first process's late apply gets `errMemoTidyNotRunning` and writes nothing. *The input*: the
   oldest `pending` messages, at most 40 and 96 KiB of text (`memoTidyTextBytes`); the rest are marked seen and fire as they
   are, and no run is reserved when none of the chosen is unseen. *The job* (`runTidy`): wake with the keep-alive of a send

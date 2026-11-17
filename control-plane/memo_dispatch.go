@@ -128,7 +128,12 @@ func (r *memoQueueRunner) dispatch(ctx context.Context, now time.Time, room int)
 		for _, w := range m.queues {
 			r.houseKeep(ctx, w, liveBy[m.membershipID], now)
 		}
-		r.takeOverTidy(ctx, m.membershipID, now)
+		for _, w := range m.queues {
+			if w.q.Tidy {
+				r.takeOverTidy(ctx, m.membershipID, now)
+				break
+			}
+		}
 		ready = append(ready, m)
 	}
 	var out []store.MemoDelivery

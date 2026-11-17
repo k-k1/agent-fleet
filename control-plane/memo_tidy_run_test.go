@@ -961,3 +961,26 @@ func TestMemoTidyDispatchTextBound(t *testing.T) {
 		_ = q
 	})
 }
+
+// A queue with more categories than a request may offer sends the first 100, the listed one among
+// them, and the run still goes through (the Agent refuses a request of more).
+func TestMemoTidyDispatchOffersAtMostAHundredDestinations(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		listed := e.queueWith("other", "inbox", nil)
+		for i := 0; i < 104; i++ {
+			e.category("app", fmt.Sprintf("c%03d", i))
+		}
+		agent, q, _ := e.tidyAuto(map[string]any{"tidyDestinations": []string{listed}}, 2)
+		e.tidyTick(e.runner(), time.Now())
+		if run := e.onlyRun(q); run.State != store.TidyRunKept {
+			t.Fatalf("run: %+v", run)
+		}
+		agent.mu.Lock()
+		dests := agent.tidyCalls[0]["destinations"].([]any)
+		first := dests[0].(map[string]any)["id"]
+		agent.mu.Unlock()
+		if len(dests) != 100 || first != listed {
+			t.Fatalf("%d destinations, first %v", len(dests), first)
+		}
+	})
+}

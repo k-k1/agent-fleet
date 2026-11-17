@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/memotidy"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -30,8 +31,9 @@ import (
 
 const (
 	// memoTidyTakeoverAfter is how long a run may stay running before the next tick that meets it
-	// ends it as failed: the Agent call's wait, a cold wake and a margin.
-	memoTidyTakeoverAfter = 5 * time.Minute
+	// ends it as failed. It must exceed the job's worst case: the wait for a cold Agent (the agent boot
+	// budget, 5 minutes), the sessions read (15 s) and the call (150 s), plus a margin.
+	memoTidyTakeoverAfter = 10 * time.Minute
 	// memoTidyCallWait is the Control Plane's wait for the Agent, above the Agent's own 120 s bound.
 	// agentHTTPClient cuts at two minutes, so the call uses agentLongCallClient with this deadline.
 	memoTidyCallWait = 150 * time.Second
@@ -450,7 +452,7 @@ func (r *memoQueueRunner) tidyRequest(ctx context.Context, job *memoTidyJob) (me
 
 // tidyLabelOK is the Agent's rule for a label: short, valid UTF-8, no control character.
 func tidyLabelOK(s string) bool {
-	return len(s) <= 200 && !strings.ContainsFunc(s, unicode.IsControl)
+	return len(s) <= 200 && utf8.ValidString(s) && !strings.ContainsFunc(s, unicode.IsControl)
 }
 
 // finishTidy ends a run that no apply ended and marks its whole input seen, so that the messages

@@ -271,7 +271,7 @@ Workspace を起こさない。
   Agent が整理できない、のいずれかなら run を作らず、そのまま発火する。「今すぐ実行」は整理しない。*同時に 1 つ*:
   メンバーの `running` は 1 つ（ユニークインデックス。`tidy` が on のキューは、run が動いている間 `memoWaitingFor` が
   `tidying` を返し、整理も発火もしない）。1 tick に予約するのは 2 つまで（`memoTidyRunsPerTick`）、超えたキューは次の
-  tick を待つ。`memoTidyTakeoverAfter`（5 分 = 150 秒の呼び出し + 冷たい起動 + 余裕）を過ぎた run は、それに出会った次の
+  tick を待つ。`memoTidyTakeoverAfter`（10 分 = 冷たい起動の待ち最大 5 分 + セッション読み取り 15 秒 + 150 秒の呼び出し + 余裕）を過ぎた run は、それに出会った次の
   tick が理由 `takeover` の `failed` で終え、入力を見た印にする。最初のプロセスの遅い apply は
   `errMemoTidyNotRunning` になり何も書かない。*入力*: 一番古い `pending` から最大 40 件、本文 96 KiB（`memoTidyTextBytes`）
   まで。残りは見た印をつけてそのまま発火し、選んだ中に見ていないものがなければ run は予約しない。*ジョブ*（`runTidy`）:

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -158,6 +160,10 @@ func (a *fakeQueueAgent) serveTidy(w http.ResponseWriter, r *http.Request) {
 		f, _ := m["file"].(string)
 		text += len(t) + len(f)
 	}
+	if !tidyRequestShapeOK(req) {
+		agentErr(w, http.StatusBadRequest, "bad_tidy_request")
+		return
+	}
 	lim, _ := req["limits"].(map[string]any)
 	if r.Header.Get("Content-Type") != "application/json" || req["trigger"] != "auto" || len(items) == 0 || len(items) > 40 ||
 		text > 96<<10 || lim["mergeSources"] != float64(10) || lim["splitParts"] != float64(5) ||
@@ -181,6 +187,58 @@ func (a *fakeQueueAgent) serveTidy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// tidyRequestShapeOK is the rest of the real decodeRequest (workspace/agent internal/memotidy
+// request.go): ids and labels of a bounded shape, distinct item ids, a kind, UTF-8, a group that is
+// not negative and at most 100 distinct destinations.
+func tidyRequestShapeOK(req map[string]any) bool {
+	textOK := func(v any, max int, nonEmpty bool) bool {
+		s, ok := v.(string)
+		if !ok || len(s) > max || !utf8.ValidString(s) || (nonEmpty && s == "") {
+			return false
+		}
+		for _, r := range s {
+			if unicode.IsControl(r) {
+				return false
+			}
+		}
+		return true
+	}
+	idOK := func(v any) bool {
+		s, _ := v.(string)
+		return textOK(v, 200, true) && !strings.ContainsFunc(s, unicode.IsSpace)
+	}
+	q, _ := req["queue"].(map[string]any)
+	if !idOK(req["run"]) || !idOK(q["id"]) || !textOK(q["label"], 200, false) {
+		return false
+	}
+	seen := map[string]bool{}
+	items, _ := req["items"].([]any)
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		id, _ := m["id"].(string)
+		g, _ := m["group"].(float64)
+		if !idOK(m["id"]) || seen[id] || (m["kind"] != "text" && m["kind"] != "file") || g < 0 ||
+			!textOK(m["text"], 1<<30, false) || !textOK(m["file"], 1<<30, false) {
+			return false
+		}
+		seen[id] = true
+	}
+	dests, _ := req["destinations"].([]any)
+	if len(dests) > 100 {
+		return false
+	}
+	seen = map[string]bool{}
+	for _, d := range dests {
+		m, _ := d.(map[string]any)
+		id, _ := m["id"].(string)
+		if !idOK(m["id"]) || !textOK(m["name"], 200, false) || seen[id] {
+			return false
+		}
+		seen[id] = true
+	}
+	return true
 }
 
 // tidyErrReply is an Agent's error answer for a code.
@@ -498,6 +556,9 @@ func validQueueDelivery(body map[string]any) bool {
 		switch m["provenance"] {
 		case "member", "workspace", "mcp":
 			if _, ok := m["sourceProvenance"]; ok {
+				return false
+			}
+			if n, _ := m["derivedFrom"].(float64); n != 0 {
 				return false
 			}
 		case "curator":
