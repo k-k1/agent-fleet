@@ -99,21 +99,38 @@ SSH の git やデータベースへの接続です。`GatewaySg` はワーク�
 
 既存のスタックは、この手順を踏むまで `nat-gateway` のままです。先にワークスペース用のアドレスを割り当てて、許可リストに登録してもらいます（[アドレスを 2 つ登録する](#アドレスを-2-つ登録する)）。
 
-1. `00-network` をデプロイし、`update.sh` を実行します
+切り替えは、次の順の 3 段階です。Control Plane が、ワークスペースの通信をゲートウェイに通す前に、ゲートウェイのトークンを持っている必要があるためです。トークンは `00-network` が作りますが、Control Plane が受け取るのは `update.sh` を実行したあと（新しいタスクが立ち上がるまで約 90 秒）です。それより先にゲートウェイが通信を受けると、方針の取得がすべて 401 になって閉じたままになり、log-only でもすべてのワークスペースが外へ出られなくなります。
+
+1. ワークスペースのルートを NAT ゲートウェイに残したまま、ゲートウェイを作ります
 
    ```bash
    aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
-     --capabilities CAPABILITY_IAM --parameter-overrides EgressRoute=gateway \
+     --capabilities CAPABILITY_IAM --parameter-overrides EgressRoute=gateway GatewayRouteEnabled=false \
      GatewayEipAllocationId=eipalloc-... GatewayEipAddress=<its public address>
+   ```
+
+2. Control Plane にトークンを、ゲートウェイに設定を渡します
+
+   ```bash
    ./update.sh --profile <p> --region <r>    # 20-platform（トークンの読み取り）と 30-ingress
    ```
 
-2. ゲートウェイが通信を通せるようになるまで待ちます（下の表）
-3. 動いているワークスペースは、次の起動でプロキシの変数を受け取ります。それまでは、通信はインターセプトされて通ります
+   ここまで、ワークスペースには影響しません。`GatewayRouteEnabled` が `false` のあいだ、`update.sh` は最後に `NEXT:` の行を出します。
+3. ゲートウェイが最初の方針を適用するまで待ちます。インスタンスで `journalctl -u af-egress-agent` に `policy applied` が出ます（`/var/log/af-egress-gateway.log` はインストールの手順の記録です）
+4. ワークスペースをゲートウェイに移します
+
+   ```bash
+   aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
+     --capabilities CAPABILITY_IAM --parameter-overrides GatewayRouteEnabled=true
+   ```
+
+5. 動いているワークスペースは、次の起動でプロキシの変数を受け取ります。それまでは、通信はインターセプトされて通ります
+
+`GatewayRouteEnabled` の既定は `true` で、これは従来の 1 回のデプロイで切り替える方法です。今も動きますが、上の遮断が起きます。ルートがすでにゲートウェイを向いているのに `30-ingress` にトークンが無いときは、`update.sh` が警告します。ゲートウェイを**作り直す**ときも、同じ分割が要ります。`GatewayEni` が新しくなると（`PublicSubnet0` を置き換えたとき、またはゲートウェイを一度外してまた付けたとき）、トークンの名前にインターフェースの ID が入っているため、トークンも新しくなります。そのデプロイで `GatewayRouteEnabled=false` を指定し、手順 2〜4 を行ってください。インスタンスの置き換えや新しい AMI では、インターフェースもトークンも変わらないので、何も要りません。
 
 `GatewayEip*` の 2 つのパラメータを渡さないと、スタックが自分でアドレスを割り当てます（保持もします）。その場合、アドレスがわかるのは、ワークスペースがすでにそのアドレスから外へ出始めたあとです。
 
-最初のコマンドが終わった時点で、ルートは `GatewayEni` に向きます。そのあとの流れは次のとおりです。
+手順 4 のあと、ルートは `GatewayEni` に向きます。そのあとの流れは次のとおりです。
 
 | 段階 | ワークスペースの外への通信 |
 |---|---|

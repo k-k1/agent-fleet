@@ -141,8 +141,8 @@ def run_lambda(code, steps, remaining_ms=900000, stop_error=""):
 # checked on its own below: it may name Nat only in the branch where it exists.
 NAT_ROUTED = ("Nat", "PrivateDefaultRoute")
 WS_ROUTE = "WorkspaceDefaultRoute"
-WS_ROUTE_ON = {"!Or": [{"!Condition": "GatewayOn"}, {"!Condition": "NatOn"}]}
-WS_ROUTE_NAT = {"!If": ["GatewayOn", {"!Ref": "AWS::NoValue"}, {"!Ref": "Nat"}]}
+WS_ROUTE_ON = {"!Or": [{"!Condition": "GatewayRouteOn"}, {"!Condition": "NatOn"}]}
+WS_ROUTE_NAT = {"!If": ["GatewayRouteOn", {"!Ref": "AWS::NoValue"}, {"!Ref": "Nat"}]}
 
 
 def check(net, data, pause_src):
@@ -156,7 +156,7 @@ def check(net, data, pause_src):
             f.append("00-network: %s is not behind NatOn" % rid)
     ws = res.get(WS_ROUTE, {})
     if ws.get("Condition") != "WorkspaceRouteOn" or conds.get("WorkspaceRouteOn") != WS_ROUTE_ON:
-        f.append("00-network: %s is not behind WorkspaceRouteOn = GatewayOn or NatOn" % WS_ROUTE)
+        f.append("00-network: %s is not behind WorkspaceRouteOn = GatewayRouteOn or NatOn" % WS_ROUTE)
     if (ws.get("Properties") or {}).get("NatGatewayId") != WS_ROUTE_NAT:
         f.append("00-network: %s names Nat outside the not-gateway branch" % WS_ROUTE)
     for rid, r in res.items():
@@ -297,7 +297,7 @@ def main():
     def m_ws_nat(n, d, s):
         n["Resources"]["WorkspaceDefaultRoute"]["Properties"]["NatGatewayId"] = {"!Ref": "Nat"}
     def m_ws_cond(n, d, s):
-        n["Conditions"]["WorkspaceRouteOn"] = {"!Or": [{"!Condition": "GatewayOn"}, {"!Equals": ["true", "true"]}]}
+        n["Conditions"]["WorkspaceRouteOn"] = {"!Or": [{"!Condition": "GatewayRouteOn"}, {"!Equals": ["true", "true"]}]}
     def m_eip(n, d, s):
         del n["Resources"]["NatEip"]["DeletionPolicy"]
     def m_event(n, d, s):

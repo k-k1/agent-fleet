@@ -170,8 +170,23 @@ def check(net, ingress, platform, doc_lines):
         if rt != "WorkspaceRt" and names_eni:
             f.append("%s puts route table %s through the gateway" % (rid, rt))
     ws = (res.get("WorkspaceDefaultRoute") or {}).get("Properties") or {}
-    if ws.get("NetworkInterfaceId") != {"!If": ["GatewayOn", {"!Ref": "GatewayEni"}, {"!Ref": "AWS::NoValue"}]}:
-        f.append("WorkspaceDefaultRoute does not target GatewayEni under GatewayOn")
+    # The route moves to the gateway only when GatewayRouteEnabled says so (#4399): the switch is
+    # two deploys, so the CP can take the new token (update.sh) while workspaces still use the NAT.
+    # Without that split the gateway agent is refused until the CP rolls, and its closed
+    # bootstrap mode cuts every workspace off.
+    if ws.get("NetworkInterfaceId") != {"!If": ["GatewayRouteOn", {"!Ref": "GatewayEni"}, {"!Ref": "AWS::NoValue"}]}:
+        f.append("WorkspaceDefaultRoute does not target GatewayEni under GatewayRouteOn")
+    if ws.get("NatGatewayId") != {"!If": ["GatewayRouteOn", {"!Ref": "AWS::NoValue"}, {"!Ref": "Nat"}]}:
+        f.append("WorkspaceDefaultRoute leaves the NAT under GatewayRouteOn only")
+    if conds.get("GatewayRouteOn") != {"!And": [{"!Condition": "GatewayOn"},
+                                                {"!Equals": [{"!Ref": "GatewayRouteEnabled"}, "true"]}]}:
+        f.append("GatewayRouteOn is not GatewayOn and GatewayRouteEnabled == true")
+    gr = params.get("GatewayRouteEnabled", {})
+    if gr.get("Default") != "true" or set(gr.get("AllowedValues", [])) != {"true", "false"}:
+        f.append("GatewayRouteEnabled does not default to true (or offers other values)")
+    if (res.get("GatewayEni") or {}).get("Condition") != "GatewayOn" or \
+            (res.get("EgressTokenSecret") or {}).get("Condition") != "GatewayOn":
+        f.append("the interface and the token must exist with the gateway, whatever GatewayRouteEnabled says")
 
     # Security groups.
     sg = (res.get("GatewaySg") or {}).get("Properties") or {}
@@ -718,6 +733,17 @@ def main():
         ("secret output without a condition", m(lambda t: t["Outputs"]["EgressTokenSecretArn"].pop("Condition"))),
         ("private route table through the gateway", m(private_via_gateway)),
         ("workspace route not on the gateway", m(lambda t: r(t)["WorkspaceDefaultRoute"]["Properties"].pop("NetworkInterfaceId"))),
+        ("route ignores GatewayRouteEnabled", m(lambda t: r(t)["WorkspaceDefaultRoute"]["Properties"].update(
+            NetworkInterfaceId={"!If": ["GatewayOn", {"!Ref": "GatewayEni"}, {"!Ref": "AWS::NoValue"}]}))),
+        ("NAT dropped by GatewayOn alone", m(lambda t: r(t)["WorkspaceDefaultRoute"]["Properties"].update(
+            NatGatewayId={"!If": ["GatewayOn", {"!Ref": "AWS::NoValue"}, {"!Ref": "Nat"}]}))),
+        ("GatewayRouteEnabled defaults to false", m(lambda t: t["Parameters"]["GatewayRouteEnabled"].update(Default="false"))),
+        ("GatewayRouteOn without GatewayOn", m(lambda t: t["Conditions"].update(
+            GatewayRouteOn={"!Equals": [{"!Ref": "GatewayRouteEnabled"}, "true"]}))),
+        ("GatewayRouteEnabled inverted", m(lambda t: t["Conditions"].update(GatewayRouteOn={"!And": [
+            {"!Condition": "GatewayOn"}, {"!Equals": [{"!Ref": "GatewayRouteEnabled"}, "false"]}]}))),
+        ("interface waits for the route switch", m(lambda t: r(t)["GatewayEni"].update(Condition="GatewayRouteOn"))),
+        ("token waits for the route switch", m(lambda t: r(t)["EgressTokenSecret"].update(Condition="GatewayRouteOn"))),
         ("gateway open to the VPC", m(lambda t: r(t)["GatewaySg"]["Properties"]["SecurityGroupIngress"][0].update(CidrIp="10.20.0.0/16"))),
         ("gateway open to the internet", m(lambda t: r(t)["GatewaySg"]["Properties"]["SecurityGroupIngress"].append(
             {"IpProtocol": "tcp", "FromPort": 3128, "ToPort": 3128, "CidrIp": "0.0.0.0/0"}))),

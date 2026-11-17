@@ -395,6 +395,11 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
   if [ "$slug" = 00-network ] && grep -q '^  GatewayEnabled:' "$CFN_DIR/$tpl"; then
     af_param_override GatewayEnabled true
   fi
+  # A stand-up has no workspace to cut off, so the route goes straight to the gateway even when
+  # the capture was taken between the two halves of the switch (GatewayRouteEnabled=false, #4399).
+  if [ "$slug" = 00-network ] && grep -q '^  GatewayRouteEnabled:' "$CFN_DIR/$tpl"; then
+    af_param_override GatewayRouteEnabled true
+  fi
   # A LIVE network stack older than the S3 endpoint switch (#2716) may still have workspaces in
   # its private subnets, whose own S3 the endpoint's policy would refuse: it gets "false", and
   # switching it on stays the migration's last step (README, NAT bullet). A new stack, or a

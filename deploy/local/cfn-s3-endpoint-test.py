@@ -76,8 +76,8 @@ EXPECTED = {
     "EgressArchiveList": ({"s3:ListBucket"}, {ARCHIVE}, OWNER),
 }
 WS_SUBNETS = {"WorkspaceSubnet0", "WorkspaceSubnet1"}
-NAT_UNLESS_GW = {"!If": ["GatewayOn", {"!Ref": "AWS::NoValue"}, {"!Ref": "Nat"}]}
-ENI_IF_GW = {"!If": ["GatewayOn", {"!Ref": "GatewayEni"}, {"!Ref": "AWS::NoValue"}]}
+NAT_UNLESS_GW = {"!If": ["GatewayRouteOn", {"!Ref": "AWS::NoValue"}, {"!Ref": "Nat"}]}
+ENI_IF_GW = {"!If": ["GatewayRouteOn", {"!Ref": "GatewayEni"}, {"!Ref": "AWS::NoValue"}]}
 PRIVATE_SUBNETS = {"PrivateSubnet0", "PrivateSubnet1"}
 
 

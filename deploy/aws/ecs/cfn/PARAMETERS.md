@@ -1404,6 +1404,20 @@ execution role reads `af-*-egress-token-*`, 20-platform). A deleted secret keeps
 recovery window, so a name that repeated on gateway → nat-gateway → gateway would fail the second
 create; the interface id makes it new each time the gateway is created.
 
+The CP only holds the token once 30-ingress has been updated (`update.sh`) and a new CP task has
+started. Until then `egressAPI.tokenOK` answers 401, the gateway agent never gets a first policy,
+and its bootstrap mode stays closed (ADR 0122), which cuts every workspace off that is routed
+through the gateway. So the route must not move first: `GatewayRouteEnabled=false` builds the
+gateway (interface, token, instance, address) while `WorkspaceDefaultRoute` stays on the NAT
+gateway; after `update.sh` and the agent's first policy, `GatewayRouteEnabled=true` moves it. The
+default is `true`, the single-deploy switch, and `update.sh` warns when it finds the route on the
+gateway while 30-ingress lacks the token. Closed-until-first-policy and `ip_forward=0` are
+unchanged (#4399). A gateway recreate that replaces `GatewayEni` (a new `PublicSubnet0`, or
+`EgressRoute` going away and back) makes a new token the same way, so it takes the same two
+deploys. A replaced instance keeps the interface and the token. `standup.sh` forces `true`: a
+rebuild has no workspace to cut off. 00-network is a few bytes from its size budget, so this
+prose is here and not in the template.
+
 ## Execution roles
 
 Two execution roles in 20-platform, because the secrets they read have different owners.
