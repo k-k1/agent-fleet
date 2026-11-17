@@ -1192,6 +1192,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mpol_refused": "Not saved: {reason}. Your edits are still here.",
   "admin.mpol_save_failed": "Could not save (check the connection)",
   "admin.mpol_load_failed": "Could not load the rule. It cannot be edited until it loads.",
+  "admin.mpol_vocab_missing": "This Control Plane is older than this Console and does not send the list of classes, destinations and routes a rule may name. Update the Control Plane to edit Model access.",
   "admin.mpol_approved": "Approved",
   "admin.mpol_excluded_by": "Not approved: {layers}",
   "admin.mpol_class_subscription": "Subscriptions and logins",

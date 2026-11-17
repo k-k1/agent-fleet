@@ -9,19 +9,19 @@ import { useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { useReportDirty } from "../parts/dirtyScope.tsx";
-import { PRESETS, applyPreset, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
+import { PRESET_KEYS, applyPreset, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
 import {
-  ROUTE_CLASSES,
-  ROUTE_DESTINATIONS,
   draftOf,
   endpointLines,
   isPerConnection,
   restricts,
+  routeIds,
   ruleEqual,
   ruleFromDraft,
   withExtra,
   type RouteRule,
   type RuleDraft,
+  type Vocabulary,
 } from "./routePolicyRule.ts";
 
 type Tr = ReturnType<typeof useT>;
@@ -185,11 +185,13 @@ const PRESET_KEY = {
 function Presets({
   base,
   draft,
+  vocab,
   disabled,
   onPick,
 }: {
   base: RouteRule;
   draft: RuleDraft;
+  vocab: Vocabulary;
   disabled: boolean;
   onPick: (d: RuleDraft) => void;
 }) {
@@ -199,20 +201,20 @@ function Presets({
     <div className="admin-fgroup mpol-presets" data-field="presets">
       <span className="admin-subhead">{tr("admin.mpol_presets")}</span>
       <div className="mpol-preset-row">
-        {PRESETS.map((p) => {
-          const next = applyPreset(draft, p.key);
+        {PRESET_KEYS.map((key) => {
+          const next = applyPreset(draft, key, vocab);
           const on = ruleEqual(ruleFromDraft(base, next), now);
           return (
             <button
-              key={p.key}
+              key={key}
               type="button"
               className="btn sm mpol-preset"
               aria-pressed={on}
-              data-preset={p.key}
+              data-preset={key}
               disabled={disabled}
               onClick={() => onPick(next)}
             >
-              {tr(PRESET_KEY[p.key])}
+              {tr(PRESET_KEY[key])}
               {on && " ✓"}
             </button>
           );
@@ -235,16 +237,18 @@ function namesOf(tr: Tr, ids: string[]): string {
 function Exceeds({
   body,
   ceiling,
+  vocab,
   disabled,
   onMatch,
 }: {
   body: RouteRule;
   ceiling: RouteRule;
+  vocab: Vocabulary;
   disabled: boolean;
   onMatch: () => void;
 }) {
   const tr = useT();
-  const x = exceeds(body, ceiling);
+  const x = exceeds(body, ceiling, vocab);
   if (x.routes.length + x.endpoints.length === 0) return null;
   return (
     <div className="mpol-exceeds" data-testid="exceeds">
@@ -484,7 +488,7 @@ export function RuleEditor({
   base,
   revision,
   currentRevision,
-  routeOptions,
+  vocab,
   endpointsMode,
   hostState,
   ceiling,
@@ -497,7 +501,8 @@ export function RuleEditor({
   revision: number;
   /** Reads the layer's stored revision now; null when it cannot be read. */
   currentRevision: () => Promise<number | null>;
-  routeOptions: string[];
+  /** What the CP says a rule may name; the pickers offer exactly this (plus what the rule holds). */
+  vocab: Vocabulary;
   /** patterns: the deployment rule and a cap (absent = does not narrow); hosts: the tenant
    *  rule's approved exact hosts. */
   endpointsMode: "patterns" | "hosts";
@@ -561,13 +566,13 @@ export function RuleEditor({
 
   return (
     <div className="mpol-editor">
-      <Presets base={base} draft={draft} disabled={busy} onPick={(d) => edit(d)} />
+      <Presets base={base} draft={draft} vocab={vocab} disabled={busy} onPick={(d) => edit(d)} />
       <AllOrOnly
         name="classes"
         legend={tr("admin.mpol_classes")}
         all={draft.classesAll}
         values={draft.classes}
-        options={withExtra(ROUTE_CLASSES, base.classes)}
+        options={withExtra(vocab.classes, base.classes)}
         label={(c) => classLabel(tr, c)}
         describe={(c) => classDesc(tr, c)}
         markOf={markFor("classes")}
@@ -579,7 +584,7 @@ export function RuleEditor({
         legend={tr("admin.mpol_destinations")}
         all={draft.destinationsAll}
         values={draft.destinations}
-        options={withExtra(ROUTE_DESTINATIONS, base.destinations)}
+        options={withExtra(vocab.destinations, base.destinations)}
         label={(d) => destLabel(tr, d)}
         markOf={markFor("destinations")}
         disabled={busy}
@@ -597,8 +602,8 @@ export function RuleEditor({
           legend={tr("admin.mpol_except")}
           hint={tr("admin.mpol_except_hint")}
           values={draft.except}
-          options={withExtra(routeOptions, base.except)}
-          disabledIds={isPerConnection}
+          options={withExtra(routeIds(vocab), base.except)}
+          disabledIds={(id) => !!isPerConnection(vocab, id)}
           disabled={busy}
           onChange={(except) => edit({ except })}
         />
@@ -607,7 +612,7 @@ export function RuleEditor({
           legend={tr("admin.mpol_deny")}
           hint={tr("admin.mpol_deny_hint")}
           values={draft.deny}
-          options={withExtra(routeOptions, base.deny)}
+          options={withExtra(routeIds(vocab), base.deny)}
           disabled={busy}
           onChange={(deny) => edit({ deny })}
         />
@@ -662,7 +667,13 @@ export function RuleEditor({
         )}
       </fieldset>
       {ceiling && (
-        <Exceeds body={body} ceiling={ceiling} disabled={busy} onMatch={() => edit(matchCeiling(draft, ceiling))} />
+        <Exceeds
+          body={body}
+          ceiling={ceiling}
+          vocab={vocab}
+          disabled={busy}
+          onMatch={() => edit(matchCeiling(draft, ceiling, vocab))}
+        />
       )}
       {refusal && (
         <p className="admin-hint warn" role="alert">

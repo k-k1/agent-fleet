@@ -17,10 +17,11 @@ import { summarizeLayer } from "../tenant/routePolicySummary.ts";
 import { Usage, useProvided } from "../tenant/tenantProvidedRoutes.tsx";
 import { parseProvidedTenant } from "../tenant/providedRoutes.ts";
 import {
+  isOlderPolicyAnswer,
   parseDeploymentPolicy,
-  routeIds,
   type DeploymentPolicyView,
   type RouteRule,
+  type Vocabulary,
 } from "../tenant/routePolicyRule.ts";
 import { PolicyLimits, useTenantRoutePolicy } from "../tenant/tenantModelAccess.tsx";
 import { TabbedViews, usePageDirty, useShowView, useViewActive } from "../parts/tabbedViews.tsx";
@@ -45,7 +46,11 @@ function useDeploymentRoutePolicy() {
         return;
       }
       setView(null);
-      setFailed(d?.error ? errText(d.error) : tr("admin.mpol_load_failed"));
+      setFailed(
+        d?.error
+          ? errText(d.error)
+          : tr(isOlderPolicyAnswer(d) ? "admin.mpol_vocab_missing" : "admin.mpol_load_failed"),
+      );
     } catch {
       setView(null);
       setFailed(tr("admin.mpol_load_failed"));
@@ -83,8 +88,8 @@ function TenantRow({
 }) {
   const tr = useT();
   const { view, failed } = useTenantRoutePolicy(tenant.slug);
-  const words = (rule: RouteRule) => {
-    const s = summarizeLayer(rule);
+  const words = (rule: RouteRule, vocab: Vocabulary) => {
+    const s = summarizeLayer(rule, vocab);
     return s.none ? tr("admin.mpol_unrestricted") : layerClauses(tr, s, false).join(tr("tenant.mpol_clause_sep"));
   };
   return (
@@ -97,10 +102,10 @@ function TenantRow({
       ) : (
         <>
           <td data-label={tr("admin.model_access_col_cap")} data-col="cap">
-            {words(view.cap.rule)}
+            {words(view.cap.rule, view.vocabulary)}
           </td>
           <td data-label={tr("admin.model_access_col_own")} data-col="own">
-            {words(view.tenant.rule)}
+            {words(view.tenant.rule, view.vocabulary)}
           </td>
         </>
       )}
@@ -228,7 +233,7 @@ function OverviewLink({ view, label }: { view: string; label: string }) {
 function AdminOverview({ view, source }: { view: DeploymentPolicyView; source: SourceRead }) {
   const tr = useT();
   const words = (rule: RouteRule, ceiling: boolean) =>
-    layerClauses(tr, summarizeLayer(rule, ceiling), false).join(tr("tenant.mpol_clause_sep"));
+    layerClauses(tr, summarizeLayer(rule, view.vocabulary, ceiling), false).join(tr("tenant.mpol_clause_sep"));
   return (
     <>
       <p className="admin-hint">{tr("admin.model_access_note")}</p>
@@ -344,7 +349,7 @@ export function AdminModelAccessView({
         base={view.deployment.rule}
         revision={view.deployment.revision}
         currentRevision={currentDeploymentRevision}
-        routeOptions={routeIds()}
+        vocab={view.vocabulary}
         endpointsMode="patterns"
         ceiling={view.ceiling.rule}
         save={(body) => apiJSON(PATH, "PUT", body)}

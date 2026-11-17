@@ -772,3 +772,8 @@ pi の経路は ADR 0136 の P1 が入った時点で M0 の水準で入る。�
 - 2026-11-18, D11b (#4280): 支払いを確定できない opencode のモデルを名指しした作成は、そのモデルが動きうる経路（Zen または Go と
   アカウント）がすべて禁じられている場合 `route_forbidden` で拒む。1 つでも許可されている、または経路を挙げられない場合は
   従来どおり `route_required`。既定モデル（#4227）は対象外。
+- 2026-11-18, D16 (#4364): 2 つのポリシー GET（`GET /api/admin/route-policy` と
+  `GET /api/admin/tenants/{slug}/route-policy`）が `vocabulary`（`classes`、`unclassified` を除く `destinations`、
+  class・destination・`perConnection` を持つ `routes`）を返す。`Rule.Validate` が読むのと同じ経路カタログから作る。
+  コンソールは選択肢・プリセット・要約をこれから描き、自前の一覧は持たない。`vocabulary` を送らない古い
+  Control Plane は読み込み失敗とは区別し、「Control Plane が古い」と表示して編集欄は出さない。

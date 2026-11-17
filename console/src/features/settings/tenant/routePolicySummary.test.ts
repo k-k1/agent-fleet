@@ -5,14 +5,16 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { layerRules, memberUse, summarizeLayer, type MemberUse, type OwnerRow } from "./routePolicySummary.ts";
-import type { TenantPolicyView } from "./routePolicyRule.ts";
+import type { TenantPolicyView, Vocabulary } from "./routePolicyRule.ts";
 
+const VOCAB: Vocabulary = JSON.parse(readFileSync("scripts/shots/model-access/policy-open.json", "utf8"))["deployment"]
+  .vocabulary;
 const fixture = (name: string): TenantPolicyView =>
   JSON.parse(readFileSync(`scripts/shots/model-access/policy-${name}.json`, "utf8"))["tenant/demo"];
 
 // One layer in a line: "none", or its narrowed parts.
 function line(rule: Parameters<typeof summarizeLayer>[0], ceiling: boolean): string {
-  const s = summarizeLayer(rule, ceiling);
+  const s = summarizeLayer(rule, VOCAB, ceiling);
   if (s.none) return "none";
   const parts: string[] = [];
   if (s.classes) parts.push(`classes ${s.classes.allowed.length}/${s.classes.total} -${s.classes.missing.join(",")}`);
@@ -35,7 +37,7 @@ const rows = (l: OwnerRow[]) =>
     .join(" ");
 
 const NOT_BEDROCK =
-  "anthropic,openai,google,meta,github,cursor,kiro,opencode.ai,openrouter,sakana,af-engine,self-hosted";
+  "af-engine,anthropic,cursor,github,google,kiro,meta,openai,opencode.ai,openrouter,sakana,self-hosted";
 
 describe("summarizeLayer, on the CP's answers", () => {
   it.each([
@@ -79,20 +81,23 @@ describe("summarizeLayer, on the CP's answers", () => {
   });
 
   it("counts a value the Console does not know, and an empty list as nothing allowed", () => {
-    expect(summarizeLayer({ destinations: ["anthropic", "mars"] }).destinations).toEqual({
+    expect(summarizeLayer({ destinations: ["anthropic", "mars"] }, VOCAB).destinations).toEqual({
       allowed: ["anthropic", "mars"],
       total: 14,
       missing: expect.arrayContaining(["openai", "self-hosted"]),
     });
-    const none = summarizeLayer({ classes: [] });
+    const none = summarizeLayer({ classes: [] }, VOCAB);
     expect(none.none).toBe(false);
     expect(none.classes).toEqual({
       allowed: [],
       total: 5,
-      missing: ["subscription", "member-key", "member-cloud", "provided", "self-hosted"],
+      missing: ["member-cloud", "member-key", "provided", "self-hosted", "subscription"],
     });
     // An exception alone restricts nothing, but it is still named.
-    expect(summarizeLayer({ except: ["copilot-login"] })).toMatchObject({ none: false, except: ["copilot-login"] });
+    expect(summarizeLayer({ except: ["copilot-login"] }, VOCAB)).toMatchObject({
+      none: false,
+      except: ["copilot-login"],
+    });
   });
 });
 

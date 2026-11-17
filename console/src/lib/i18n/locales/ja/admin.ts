@@ -1188,6 +1188,7 @@ export const admin = {
   "admin.mpol_refused": "保存されませんでした: {reason}。編集した内容はそのまま残っています。",
   "admin.mpol_save_failed": "保存できませんでした（接続を確認してください）",
   "admin.mpol_load_failed": "規則を読み込めませんでした。読み込めるまで編集はできません。",
+  "admin.mpol_vocab_missing": "このコントロールプレーンはこのコンソールより古く、規則に指定できる種別・宛先・ルートの一覧を送ってきません。モデルアクセスを編集するには、コントロールプレーンを更新してください。",
   "admin.mpol_approved": "承認済み",
   "admin.mpol_excluded_by": "承認されていません: {layers}",
   "admin.mpol_class_subscription": "サブスクリプション・ログイン",

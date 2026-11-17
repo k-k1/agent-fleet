@@ -7,13 +7,12 @@
 // that sends none, from a well-formed `hidden` (which says only what is hidden). Anything else is
 // "could not be read", never "everything is usable".
 import {
-  ROUTE_CLASSES,
-  ROUTE_DESTINATIONS,
   parseHidden,
   parseOwners,
   withExtra,
   type RouteRule,
   type TenantPolicyView,
+  type Vocabulary,
 } from "./routePolicyRule.ts";
 
 /** The order layers are named in, top first (routepolicysrv layerOrder). */
@@ -51,14 +50,14 @@ function listOf(known: readonly string[], held: string[] | undefined): ListSumma
 
 /** summarizeLayer is one layer's rule as the overview words it. ceiling marks the operator's layer,
  *  whose unset endpoints mean "none" once it restricts destinations (routepolicy). */
-export function summarizeLayer(rule: RouteRule, ceiling = false): LayerSummary {
+export function summarizeLayer(rule: RouteRule, vocab: Vocabulary, ceiling = false): LayerSummary {
   const except = rule.except ?? [];
   const deny = rule.deny ?? [];
   const noEndpoints = ceiling && rule.endpoints === undefined && rule.destinations !== undefined;
   const s: LayerSummary = {
     none: false,
-    classes: listOf(ROUTE_CLASSES, rule.classes),
-    destinations: listOf(ROUTE_DESTINATIONS, rule.destinations),
+    classes: listOf(vocab.classes, rule.classes),
+    destinations: listOf(vocab.destinations, rule.destinations),
     except,
     deny,
     endpoints: rule.endpoints,

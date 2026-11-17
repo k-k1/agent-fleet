@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -557,5 +560,73 @@ func TestPolicyEnvWhenThePolicyCannotBeRead(t *testing.T) {
 func TestUnknownMarkerIDsDiffer(t *testing.T) {
 	if a, b := newMarkerID(), newMarkerID(); a == b || len(a) != 24 {
 		t.Errorf("marker ids %q %q", a, b)
+	}
+}
+
+// TestRoutePolicyServesTheVocabulary pins that both policy GETs carry the vocabulary the rule
+// validation accepts, so the Console needs no copy of its own: every served class, destination and
+// route id is accepted in a rule, the one value Validate refuses (unclassified) is not offered,
+// and the two answers agree.
+func TestRoutePolicyServesTheVocabulary(t *testing.T) {
+	_, mux, _ := routePolicyFixture(t, "")
+	type vocabAnswer struct {
+		Vocabulary *vocabularyWire `json:"vocabulary"`
+	}
+	read := func(path, who string) vocabularyWire {
+		w := routeAdminDo(mux, "GET", path, who, "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s as %s: %d %s", path, who, w.Code, w.Body)
+		}
+		var a vocabAnswer
+		if err := json.Unmarshal(w.Body.Bytes(), &a); err != nil {
+			t.Fatal(err)
+		}
+		if a.Vocabulary == nil {
+			t.Fatalf("GET %s carries no vocabulary: %s", path, w.Body)
+		}
+		return *a.Vocabulary
+	}
+	dep := read("/api/admin/route-policy", "root-x")
+	ten := read("/api/admin/tenants/acme/route-policy", "boss-x")
+	if !reflect.DeepEqual(dep, ten) {
+		t.Errorf("the two GETs disagree:\n%+v\n%+v", dep, ten)
+	}
+	if len(dep.Classes) == 0 || len(dep.Destinations) == 0 || len(dep.Routes) == 0 {
+		t.Fatalf("empty vocabulary: %+v", dep)
+	}
+	if slices.Contains(dep.Destinations, routepolicy.Unclassified) {
+		t.Errorf("unclassified is offered as a destination, which Validate refuses in an allow list")
+	}
+	// Whatever is served is accepted by the validation, and the one value that is refused is not.
+	ids := []string{}
+	for _, r := range dep.Routes {
+		ids = append(ids, r.ID)
+	}
+	accepts := routepolicy.Rule{Classes: &dep.Classes, Destinations: &dep.Destinations}
+	if err := accepts.Validate(); err != nil {
+		t.Errorf("Validate refuses the served classes and destinations: %v", err)
+	}
+	for _, r := range dep.Routes {
+		if r.PerConnection {
+			continue
+		}
+		if err := (routepolicy.Rule{Deny: []string{r.ID}, Except: []string{r.ID}}).Validate(); err != nil {
+			t.Errorf("Validate refuses the served route %s: %v", r.ID, err)
+		}
+	}
+	// Every catalogued route is served, none more.
+	var want []string
+	for _, r := range agentroutes.Routes() {
+		want = append(want, r.ID)
+	}
+	if !slices.Equal(ids, want) {
+		t.Errorf("served route ids %v, catalogue %v", ids, want)
+	}
+	// A member, who cannot read the policy, cannot read the vocabulary either.
+	if w := routeAdminDo(mux, "GET", "/api/admin/tenants/acme/route-policy", "m-x", ""); w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "vocabulary") {
+		t.Errorf("a member's read: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "GET", "/api/admin/route-policy", "boss-x", ""); w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "vocabulary") {
+		t.Errorf("a tenant admin's deployment read: %d %s", w.Code, w.Body)
 	}
 }

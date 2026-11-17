@@ -156,7 +156,9 @@ type tenantPolicyWire struct {
 	// Owners is every harness, chat backend and image provider with its routes and the ones the
 	// layers allow; additive to Hidden.
 	Owners ownersWire `json:"owners"`
-	layers routepolicy.Layers
+	// Vocabulary is what a rule may name; the same value the deployment GET carries.
+	Vocabulary vocabularyWire `json:"vocabulary"`
+	layers     routepolicy.Layers
 }
 
 func layerOf(row store.RoutePolicyRow) (policyLayerWire, error) {
@@ -199,7 +201,7 @@ func TenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantP
 			return tenantPolicyWire{}, err
 		}
 	}
-	out := tenantPolicyWire{Ceiling: ceilingView(), Revision: rows.Revision()}
+	out := tenantPolicyWire{Ceiling: ceilingView(), Revision: rows.Revision(), Vocabulary: vocabulary()}
 	for _, l := range []struct {
 		row  store.RoutePolicyRow
 		into *policyLayerWire
@@ -245,7 +247,8 @@ func (a admin) getDeployment(w http.ResponseWriter, r *http.Request, _ store.Ide
 		Ceiling    ceilingWire     `json:"ceiling"`
 		Deployment policyLayerWire `json:"deployment"`
 		Revision   int64           `json:"revision"`
-	}{v.Ceiling, v.Deployment, v.Revision})
+		Vocabulary vocabularyWire  `json:"vocabulary"`
+	}{v.Ceiling, v.Deployment, v.Revision, v.Vocabulary})
 }
 
 // readRule decodes and validates a rule body. above, when set, is the layer the rule may not

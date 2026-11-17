@@ -826,3 +826,8 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
   Bedrock clause of `model`) name only the routes the caller's tenant policy allows, read per call from the tenant
   view's `owners[].allowed`; an unreadable policy names none. Enforcement is unchanged: a create naming a
   forbidden route is still refused with `route_forbidden`.
+- 2026-11-18, D16 (#4364): both policy GETs (`GET /api/admin/route-policy`, `GET /api/admin/tenants/{slug}/route-policy`)
+  carry a `vocabulary` (`classes`, `destinations` without `unclassified`, and `routes` with class, destination and
+  `perConnection`), built from the same route catalogue `Rule.Validate` reads. The Console draws its pickers, presets and
+  summaries from it and keeps no list of its own. A Control Plane that sends none is told apart from a failed read: the
+  page says the Control Plane is older and draws no editor.
