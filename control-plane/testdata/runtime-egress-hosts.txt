@@ -1,0 +1,69 @@
+# Hosts the agent CLIs and build tools reach at RUN TIME (login, inference, model
+# catalogues, dependency resolution), as opposed to the installer hosts in
+# workspace/agent/testdata/installer-egress-hosts.txt. On an enforcing egress gateway a host
+# missing from defaultEgressAllowlist breaks that kind with nothing pointing at the cause.
+#
+# Read by egress_runtime_hosts_test.go (control-plane): defaultEgressAllowlist admits every
+# plain line, admits no "!" or "-" line, and every destination tag exists in
+# internal/agentroutes/catalog.json.
+#
+# Format, whitespace separated:   [!|-]host  kinds  destination  evidence   # comment
+#   kinds        comma-separated agent kinds (catalog.json "kinds"), or "build" for build tools
+#   destination  a catalog.json destination id: the tag ADR 0138 M4 (#4171) uses to drop the
+#                host of an excluded destination; "-" = never dropped (build tooling)
+#   evidence     measured: seen on a production gateway in log-only (#4392)
+#                docs: from vendor docs or the CLI's own sources, never observed here
+# "!" = needed but deliberately left to the admin (general-purpose upload endpoint).
+# "-" = looked at and left out: telemetry or cosmetic traffic the CLI does not need.
+#
+# Hosts are exact. A vendor-wide suffix (.googleapis.com, .google.com) would admit
+# storage.googleapis.com; the one suffix in the defaults is .claude.com, matching the
+# existing .claude.ai and .anthropic.com.
+
+# Claude Code (.claude.com is a default suffix; the measured hosts are listed individually)
+platform.claude.com        claude    anthropic   measured
+claude.com                 claude    anthropic   measured
+code.claude.com            claude    anthropic   measured
+
+# codex
+chatgpt.com                codex     openai      measured   # ChatGPT sign-in backend
+auth.openai.com            codex     openai      docs       # codex login
+api.openai.com             codex,opencode openai docs       # openai-api route
+
+# agy (Antigravity): backend and Google sign-in
+daily-cloudcode-pa.googleapis.com agy google     measured
+cloudcode-pa.googleapis.com agy      google      docs       # non-daily channel
+accounts.google.com        agy       google      measured
+oauth2.googleapis.com      agy       google      measured
+www.googleapis.com         agy       google      measured
+# agy side traffic, left out: the sign-in page renders in the member's own browser, not in
+# the CLI, so static assets and the avatar are not needed; play.googleapis.com is
+# telemetry and antigravity-unleash.goog is feature flags, which a CLI fails open on.
+# Unmeasured either way: if enforce shows agy needing one, move it up with evidence.
+-www.gstatic.com           agy       google      measured
+-lh3.googleusercontent.com agy       google      measured
+-play.googleapis.com       agy       google      measured
+-antigravity-unleash.goog  agy       google      measured
+!storage.googleapis.com    agy       google      docs       # agy install/update; admin adds it
+
+# opencode
+models.dev                 opencode  opencode.ai measured   # model catalogue (third-party host)
+models.opencode.ai         opencode  opencode.ai measured
+opencode.ai                opencode  opencode.ai docs       # zen / account routes
+
+# Build tools (no agent kind, no destination)
+plugins.gradle.org         build     -           measured
+repo.maven.apache.org      build     -           measured
+services.gradle.org        build     -           docs       # Gradle wrapper download
+
+# copilot, cursor, kiro, muse: docs-only
+api.githubcopilot.com      copilot   github      docs
+api.individual.githubcopilot.com copilot github  docs
+api2.cursor.sh             cursor    cursor      docs
+authenticator.cursor.sh    cursor    cursor      docs
+authenticate.cursor.sh     cursor    cursor      docs
+app.kiro.dev               kiro      kiro        docs
+prod.us-east-1.auth.desktop.kiro.dev kiro kiro    docs
+q.us-east-1.amazonaws.com  kiro      kiro        docs       # already inside .amazonaws.com
+api.meta.ai                muse      meta        docs       # api_base_url written by muse login
+auth.meta.com              muse      meta        docs       # device-code login
