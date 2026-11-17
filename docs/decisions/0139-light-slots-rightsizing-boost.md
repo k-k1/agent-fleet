@@ -353,7 +353,7 @@ room, and what it did not do:
   measured window belongs to the day it ended in. The key is member, day, instance type, class and
   override. Quantiles are kept as fixed-bucket histograms (`usagehist`), because a quantile cannot be
   merged across pulls: a read interpolates inside a bucket (about 8% wide for memory) and is capped by the
-  exact max. A signal with no measured minute is `null`, and CPU as a share of the box, and minutes above
+  exact max where one is kept (CPU, working set, not refault). A signal with no measured minute is `null`, and CPU as a share of the box, and minutes above
   a baseline, are `null` unless the rung declares its vCPU (and its baseline: a fourth, optional field of
   `AF_ECS_EC2_SLOT_TYPES`, `type:memMiB:vcpu:baselinePct`).
 - **Warning threshold.** "Minutes above the ADR 0120 warning threshold" is counted as PSI `some` avg10

@@ -205,3 +205,27 @@ func TestWindowsSinceSpansRotation(t *testing.T) {
 		t.Fatalf("last = %+v cursor %d", last, p.Cursor)
 	}
 }
+
+func TestWindowsSinceClampsLimitAndSortsAcrossGenerations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "series.jsonl")
+	s := NewSeries(path, 0)
+	for i := 1; i <= MaxWindowsLimit+5; i++ {
+		appendJSON(t, s, map[string]any{"t": i, "lid": "A", "ws": 1})
+	}
+	p, _ := s.WindowsSince(0, 1<<30)
+	if len(p.Windows) != MaxWindowsLimit || !p.More {
+		t.Fatalf("limit not clamped: %d windows more=%v", len(p.Windows), p.More)
+	}
+	// After a clock jump the older generation holds LATER timestamps than the current one.
+	path2 := filepath.Join(t.TempDir(), "series.jsonl")
+	if err := os.WriteFile(path2+".1", []byte(`{"t":500,"lid":"A","ws":1}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path2, []byte(`{"t":300,"lid":"A","ws":1}`+"\n"+`{"t":400,"lid":"A","ws":1}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, _ = NewSeries(path2, 0).WindowsSince(0, 10)
+	if len(p.Windows) != 3 || p.Windows[0].T != 300 || p.Windows[2].T != 500 {
+		t.Fatalf("not one ascending sequence: %+v", p.Windows)
+	}
+}

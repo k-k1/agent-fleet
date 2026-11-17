@@ -95,6 +95,24 @@ type Measured struct {
 	Refault    int `json:"refault"`
 }
 
+// HoldBeforeFuture finds the first window stamped further ahead than a clock may be and returns
+// the cursor a pull may safely advance to: the last window before it. ok is false when there is no
+// such window. A pull must not move its cursor past windows Sanitize dropped for their time, or an
+// Agent whose clock ran ahead loses those minutes for good once the clock is fixed. held is false
+// when nothing precedes the first future window (the pull then folds nothing and keeps its cursor).
+func HoldBeforeFuture(in []Window, now time.Time) (to int64, held, ok bool) {
+	limit := now.Add(maxFuture).Unix()
+	for _, w := range in {
+		if w.T > limit {
+			return to, held, true
+		}
+		if w.T > to {
+			to, held = w.T, true
+		}
+	}
+	return 0, false, false
+}
+
 // Sanitize converts the Agent's windows, dropping each figure that cannot be a
 // measurement. The Agent runs next to member code, so this is input: a negative, non-finite or
 // absurd figure becomes "not measured", never a number in someone's history.

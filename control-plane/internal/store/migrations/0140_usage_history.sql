@@ -36,6 +36,8 @@ CREATE TABLE workspace_launch (
 
 CREATE INDEX idx_workspace_launch_member ON workspace_launch(membership_id, started_at);
 
+CREATE INDEX idx_workspace_launch_stopped ON workspace_launch(stopped_at);
+
 CREATE TABLE member_usage_daily (
     membership_id    TEXT NOT NULL,
     day              TEXT NOT NULL,
@@ -63,7 +65,9 @@ CREATE TABLE member_usage_daily (
 
 CREATE INDEX idx_member_usage_daily_tenant ON member_usage_daily(tenant_id, day);
 
+CREATE INDEX idx_member_usage_daily_day ON member_usage_daily(day);
+
 CREATE TABLE usage_pull_cursor (
     membership_id TEXT NOT NULL PRIMARY KEY,
     cursor_t      BIGINT NOT NULL
-)
+);

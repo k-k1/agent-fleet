@@ -219,6 +219,26 @@ func checkUsageHistory(t *testing.T, st *SQL) {
 		t.Fatalf("the gap between a vanished launch and the next start was counted: %d s", got)
 	}
 
+	// Two replicas adopting the same running workspace at once leave two open launches. Ending
+	// the membership's launch closes both, each no earlier than it was last seen.
+	for _, id := range []string{"LD1", "LD2"} {
+		if _, err := st.db.ExecContext(ctx, `INSERT INTO workspace_launch(id, workspace_id, membership_id, tenant_id, started_at, last_seen_at, ran_through, instance_type)
+			VALUES(?,?,?,?,?,?,?,?)`, id, "w", other.ID, tn.ID, at(5, 0), at(5, 10), at(5, 0), "m7i.large"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok, err := st.EndOpenLaunch(ctx, other.ID, at(5, 5)); err != nil || !ok {
+		t.Fatalf("end both: %v %v", ok, err)
+	}
+	if _, open, _ := st.OpenLaunch(ctx, other.ID); open {
+		t.Fatal("a duplicate open launch survived the end")
+	}
+	for _, id := range []string{"LD1", "LD2"} {
+		if l, _, _ := st.GetLaunch(ctx, id); l.StoppedAt != at(5, 10) {
+			t.Fatalf("%s stopped at %d, want its last-seen %d", id, l.StoppedAt, at(5, 10))
+		}
+	}
+
 	// Retention.
 	if err := st.PruneUsageHistory(ctx, "2026-11-10", at(0, 0)+1); err != nil {
 		t.Fatal(err)

@@ -202,15 +202,30 @@ func (m *manager) pullUsageHistory(ctx context.Context, membershipID string, rt 
 		if p.Cursor <= cursor {
 			return nil // nothing new (an Agent that answered a cursor behind ours is not trusted)
 		}
-		err = m.store.FoldWindows(ctx, membershipID, cursor, p.Cursor, usagehistory.Sanitize(p.Windows, time.Now()))
+		now, to, ws := time.Now(), p.Cursor, p.Windows
+		if hold, held, skewed := usagehistory.HoldBeforeFuture(ws, now); skewed {
+			// The Agent's clock ran ahead: stop before the first such window and fetch it again later.
+			if !held || hold <= cursor {
+				return nil
+			}
+			to = hold
+			kept := ws[:0:0]
+			for _, w := range ws {
+				if w.T <= to {
+					kept = append(kept, w)
+				}
+			}
+			ws = kept
+		}
+		err = m.store.FoldWindows(ctx, membershipID, cursor, to, usagehistory.Sanitize(ws, now))
 		if errors.Is(err, store.ErrUsageCursorMoved) {
 			return nil // another pull folded these minutes first
 		}
 		if err != nil {
 			return err
 		}
-		cursor = p.Cursor
-		if !p.More {
+		cursor = to
+		if !p.More || to != p.Cursor {
 			return nil
 		}
 	}
@@ -326,6 +341,10 @@ func (a adminAPI) usageHistoryFor(w http.ResponseWriter, r *http.Request, tenant
 	from, to, aerr := usageRange(r)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
+		return
+	}
+	if from > to {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "from must not be after to"})
 		return
 	}
 	rows, err := a.mgr.store.ListUsageDays(r.Context(), tenantID, membershipID, from, to)

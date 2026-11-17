@@ -188,8 +188,12 @@ func (s *SQL) EndOpenLaunch(ctx context.Context, membershipID string, at int64) 
 	if at < l.StartedAt {
 		at = l.StartedAt
 	}
+	// Every open launch of the membership is closed, not only the newest: two replicas adopting the
+	// same running workspace at once can each insert one (Postgres read committed), and the older
+	// would otherwise stay open for good. Each ends no earlier than it was last seen.
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE workspace_launch SET stopped_at=? WHERE id=? AND stopped_at IS NULL`, at, l.ID)
+		`UPDATE workspace_launch SET stopped_at = CASE WHEN last_seen_at > ? THEN last_seen_at ELSE ? END
+		 WHERE membership_id=? AND stopped_at IS NULL`, at, at, membershipID)
 	if err != nil {
 		return Launch{}, false, err
 	}

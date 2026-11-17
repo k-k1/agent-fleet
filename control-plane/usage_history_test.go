@@ -32,7 +32,10 @@ type minuteAgent struct {
 	wins  []map[string]any
 	calls int
 	block chan struct{} // non-nil: every windows request waits on it
-	srv   *httptest.Server
+	// barrier > 0: a windows request is answered only once that many have arrived, so two pulls
+	// both read the same cursor before either folds.
+	barrier int
+	srv     *httptest.Server
 }
 
 func newMinuteAgent(t *testing.T) *minuteAgent {
@@ -47,8 +50,16 @@ func newMinuteAgent(t *testing.T) *minuteAgent {
 		case "/workspace/usage-windows":
 			a.mu.Lock()
 			a.calls++
-			block := a.block
+			block, barrier := a.block, a.barrier
 			a.mu.Unlock()
+			for deadline := time.Now().Add(3 * time.Second); barrier > 0 && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+				a.mu.Lock()
+				n := a.calls
+				a.mu.Unlock()
+				if n >= barrier {
+					break
+				}
+			}
 			if block != nil {
 				select {
 				case <-block:
@@ -413,5 +424,81 @@ func TestUsageHistoryAPIScopeAndUnmeasuredIsNull(t *testing.T) {
 	}
 	if mine.Days[0]["running_minutes"].(float64) < 50 {
 		t.Errorf("running minutes = %v", mine.Days[0]["running_minutes"])
+	}
+}
+
+// A tick's pull and a Stop's pull that both start from the same cursor: one folds, the other drops
+// what it fetched, and no minute is counted twice.
+func TestConcurrentPullsCountEachMinuteOnce(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, ws, ag, rt := historyFixture(t, "running")
+	id, _ := mgr.beginLaunch(ctx, ws, rt)
+	now := time.Now().Unix()
+	for i := int64(0); i < 3; i++ {
+		ag.add(now-300+i*60, id, map[string]any{"cpu_pct": 10.0})
+	}
+	ag.mu.Lock()
+	ag.barrier = 2
+	ag.mu.Unlock()
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := mgr.pullUsageHistory(ctx, ws.MembershipID, rt); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := usageDaysOf(t, st, ws.MembershipID)["t3.large"].CPUMeasuredMin; got != 3 {
+		t.Fatalf("cpu minutes = %d, want 3 (each minute once)", got)
+	}
+}
+
+// An Agent whose clock ran ahead: the cursor stops before its future windows, so they are fetched
+// again, not lost, once the clock is right.
+func TestPullHoldsTheCursorBeforeWindowsFromTheFuture(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, ws, ag, rt := historyFixture(t, "running")
+	id, _ := mgr.beginLaunch(ctx, ws, rt)
+	now := time.Now().Unix()
+	ag.add(now-120, id, map[string]any{"cpu_pct": 10.0})
+	ag.add(now-60, id, map[string]any{"cpu_pct": 10.0})
+	ag.add(now+3600, id, map[string]any{"cpu_pct": 10.0})
+	for i := 0; i < 2; i++ {
+		if err := mgr.pullUsageHistory(ctx, ws.MembershipID, rt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if c, _ := st.UsagePullCursor(ctx, ws.MembershipID); c != now-60 {
+		t.Fatalf("cursor = %d, want %d (just before the future window)", c, now-60)
+	}
+	if got := usageDaysOf(t, st, ws.MembershipID)["t3.large"].CPUMeasuredMin; got != 2 {
+		t.Fatalf("cpu minutes = %d", got)
+	}
+}
+
+// Where the Agent is the reason for the stop, it is not asked.
+func TestStopWithoutPullDoesNotCallTheAgent(t *testing.T) {
+	ctx := context.Background()
+	_, mgr, ws, ag, rt := historyFixture(t, "running")
+	mgr.beginLaunch(ctx, ws, rt)
+	if err := mgr.stopRecorded(ctx, ws, rt, false); err != nil {
+		t.Fatal(err)
+	}
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	if ag.calls != 0 || *rt.stops != 1 {
+		t.Fatalf("agent calls %d stops %d", ag.calls, *rt.stops)
+	}
+}
+
+func TestUsageHistoryRefusesAnInvertedRange(t *testing.T) {
+	_, mgr, _, _ := cloudCostFixture(t)
+	code, _ := decodeUsageHistory(t, newAdminAPI(mgr).adminUsageHistory,
+		"/api/admin/usage/history?tenant=sales&from=2026-12-01&to=2026-01-01", "boss@acme.co.jp")
+	if code != 400 {
+		t.Fatalf("inverted range = %d", code)
 	}
 }

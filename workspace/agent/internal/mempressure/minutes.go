@@ -62,18 +62,38 @@ func (s *Series) WindowsSince(since int64, limit int) (WindowsPage, error) {
 	if limit <= 0 {
 		limit = DefaultWindowsLimit
 	}
+	if limit > MaxWindowsLimit {
+		limit = MaxWindowsLimit // a caller inside the workspace must not make it load the whole series
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	page := WindowsPage{Windows: []Window{}, Cursor: since}
+	// Both generations are read and sorted together: after a clock jump a rotation can leave the
+	// older file holding later timestamps, and sorting each alone would drop minutes at the cursor.
+	var lines []seriesLine
 	for _, p := range []string{s.path + ".1", s.path} {
-		more, err := s.scan(p, since, limit, &page)
+		l, err := readSeries(p, since)
 		if err != nil {
 			return WindowsPage{Windows: []Window{}, Cursor: since}, err
 		}
-		if more {
-			page.More = true
-			break
+		lines = append(lines, l...)
+	}
+	sort.SliceStable(lines, func(i, j int) bool { return lines[i].T < lines[j].T })
+	for _, l := range lines {
+		if l.T <= page.Cursor {
+			continue // the cursor must never go back
 		}
+		if l.LID != "" {
+			if len(page.Windows) >= limit {
+				page.More = true
+				break
+			}
+			page.Windows = append(page.Windows, Window{
+				T: l.T, LID: l.LID, CPUPct: l.CPUPct, WorkingSet: l.WS,
+				Some10Max: l.Some10Max, Full60: l.Full60, RefaultRate: l.RefaultRate,
+			})
+		}
+		page.Cursor = l.T
 	}
 	return page, nil
 }
@@ -81,13 +101,17 @@ func (s *Series) WindowsSince(since int64, limit int) (WindowsPage, error) {
 // DefaultWindowsLimit bounds one page: about a day of minutes, a few hundred KiB on the wire.
 const DefaultWindowsLimit = 1500
 
-func (s *Series) scan(path string, since int64, limit int, page *WindowsPage) (bool, error) {
+// MaxWindowsLimit is the most one page may hold, whatever the caller asks.
+const MaxWindowsLimit = 3 * DefaultWindowsLimit
+
+// readSeries returns the parsable lines of one generation with t after since.
+func readSeries(path string, since int64) ([]seriesLine, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -101,21 +125,5 @@ func (s *Series) scan(path string, since int64, limit int, page *WindowsPage) (b
 		lines = append(lines, l)
 	}
 	// A line longer than the buffer ends the scan; what was read stands.
-	sort.SliceStable(lines, func(i, j int) bool { return lines[i].T < lines[j].T })
-	for _, l := range lines {
-		if l.T <= page.Cursor {
-			continue // the two generations never overlap, but the cursor must never go back
-		}
-		if l.LID != "" {
-			if len(page.Windows) >= limit {
-				return true, nil
-			}
-			page.Windows = append(page.Windows, Window{
-				T: l.T, LID: l.LID, CPUPct: l.CPUPct, WorkingSet: l.WS,
-				Some10Max: l.Some10Max, Full60: l.Full60, RefaultRate: l.RefaultRate,
-			})
-		}
-		page.Cursor = l.T
-	}
-	return false, nil
+	return lines, nil
 }
