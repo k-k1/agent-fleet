@@ -29,6 +29,7 @@ func TestDefaultEgressAllowlistAdmitsRuntimeHosts(t *testing.T) {
 	kinds := agentroutes.ModelKinds()
 	p := newEgressPolicy(defaultEgressAllowlist)
 	n := 0
+	seen := map[string]bool{}
 	for _, line := range strings.Split(string(b), "\n") {
 		line, _, _ = strings.Cut(line, "#")
 		f := strings.Fields(line)
@@ -52,6 +53,15 @@ func TestDefaultEgressAllowlistAdmitsRuntimeHosts(t *testing.T) {
 				t.Errorf("%s: kind %q is not a catalogue kind", host, k)
 			}
 		}
+		bare := strings.TrimLeft(host, "!-")
+		if bare == "" {
+			t.Errorf("%q: empty host", line)
+			continue
+		}
+		if seen[bare] {
+			t.Errorf("%s is listed twice; one host maps to one destination", bare)
+		}
+		seen[bare] = true
 		switch {
 		case strings.HasPrefix(host, "!"), strings.HasPrefix(host, "-"):
 			if h := host[1:]; p.Allows(h) {

@@ -47,16 +47,18 @@ var defaultEgressAllowlist = []string{
 	// What the agent CLIs and build tools reach at run time, exact hosts only, kept in step
 	// with testdata/runtime-egress-hosts.txt by egress_runtime_hosts_test.go. The one
 	// suffix is .claude.com, beside .claude.ai and .anthropic.com; vendor-wide
-	// .googleapis.com / .google.com would admit storage.googleapis.com.
+	// .googleapis.com would admit storage.googleapis.com, and www.googleapis.com also serves
+	// the GCS upload API, so both stay with the admin.
 	"claude.com", ".claude.com",
 	"chatgpt.com", "auth.openai.com", "api.openai.com",
 	"daily-cloudcode-pa.googleapis.com", "cloudcode-pa.googleapis.com",
-	"accounts.google.com", "oauth2.googleapis.com", "www.googleapis.com",
-	"models.dev", "opencode.ai", "models.opencode.ai",
+	"accounts.google.com", "oauth2.googleapis.com",
+	"models.dev", "opencode.ai", "models.opencode.ai", "console.opencode.ai",
 	"plugins.gradle.org", "services.gradle.org", "repo.maven.apache.org",
 	"api.githubcopilot.com", "api.individual.githubcopilot.com",
+	"api.business.githubcopilot.com", "api.enterprise.githubcopilot.com",
 	"api2.cursor.sh", "authenticator.cursor.sh", "authenticate.cursor.sh",
-	"app.kiro.dev", "prod.us-east-1.auth.desktop.kiro.dev",
+	"app.kiro.dev", "prod.us-east-1.auth.desktop.kiro.dev", "runtime.us-east-1.kiro.dev",
 	"api.meta.ai", "auth.meta.com",
 }
 

@@ -1,41 +1,51 @@
 # Hosts the agent CLIs and build tools reach at RUN TIME (login, inference, model
 # catalogues, dependency resolution), as opposed to the installer hosts in
-# workspace/agent/testdata/installer-egress-hosts.txt. On an enforcing egress gateway a host
-# missing from defaultEgressAllowlist breaks that kind with nothing pointing at the cause.
+# workspace/agent/testdata/installer-egress-hosts.txt (storage.googleapis.com is a "!" line
+# in both; keep the two in step). On an enforcing egress gateway a host missing from
+# defaultEgressAllowlist breaks that kind with nothing pointing at the cause.
 #
 # Read by egress_runtime_hosts_test.go (control-plane): defaultEgressAllowlist admits every
-# plain line, admits no "!" or "-" line, and every destination tag exists in
-# internal/agentroutes/catalog.json.
+# plain line, admits no "!" or "-" line, no host appears twice, and every destination tag
+# exists in internal/agentroutes/catalog.json.
 #
-# Format, whitespace separated:   [!|-]host  kinds  destination  evidence   # comment
+# Format, whitespace separated:   [!|-]host  kinds  destination  evidence   # source
 #   kinds        comma-separated agent kinds (catalog.json "kinds"), or "build" for build tools
 #   destination  a catalog.json destination id: the tag ADR 0138 M4 (#4171) uses to drop the
-#                host of an excluded destination; "-" = never dropped (build tooling)
+#                host of an excluded destination; "-" = never dropped
 #   evidence     measured: seen on a production gateway in log-only (#4392)
-#                docs: from vendor docs or the CLI's own sources, never observed here
-# "!" = needed but deliberately left to the admin (general-purpose upload endpoint).
+#                docs: from vendor docs or the repo's own sources, never observed here
+# "!" = needed but deliberately left to the admin (a general-purpose upload endpoint).
 # "-" = looked at and left out: telemetry or cosmetic traffic the CLI does not need.
 #
-# Hosts are exact. A vendor-wide suffix (.googleapis.com, .google.com) would admit
-# storage.googleapis.com; the one suffix in the defaults is .claude.com, matching the
-# existing .claude.ai and .anthropic.com.
+# Scope: the vendors' own endpoints only. BYOK routes (openrouter, sakana, gemini, vertex,
+# custom APIs) and Bedrock (.amazonaws.com, already a default) are not listed here; the
+# admin adds those hosts.
+#
+# Hosts are exact. A vendor-wide suffix (.googleapis.com) would admit storage.googleapis.com
+# (.google.com would not, but opens every Google service). The one suffix in the defaults is
+# .claude.com, beside .claude.ai and .anthropic.com; for M4, excluding anthropic drops it too.
 
-# Claude Code (.claude.com is a default suffix; the measured hosts are listed individually)
+# Claude Code (the three measured hosts are covered by the default suffix .claude.com)
 platform.claude.com        claude    anthropic   measured
 claude.com                 claude    anthropic   measured
 code.claude.com            claude    anthropic   measured
 
 # codex
-chatgpt.com                codex     openai      measured   # ChatGPT sign-in backend
-auth.openai.com            codex     openai      docs       # codex login
-api.openai.com             codex,opencode openai docs       # openai-api route
+chatgpt.com                codex     openai      measured
+auth.openai.com            codex     openai      docs       # workspace/console CodexCard.dom.test.tsx:61; OpenAI community docs
+api.openai.com             codex,opencode openai docs       # workspace/agent/internal/agents/codex/auth.go:126 (openai-api route)
 
 # agy (Antigravity): backend and Google sign-in
 daily-cloudcode-pa.googleapis.com agy google     measured
-cloudcode-pa.googleapis.com agy      google      docs       # non-daily channel
+cloudcode-pa.googleapis.com agy      google      docs       # Antigravity enterprise network doc (non-daily channel)
+# accounts.google.com and oauth2.googleapis.com are shared with gcloud login
+# (workspace/agent/internal/gcpx/login_agent.go:60) and Google SDK token refresh (ADR 0107):
+# excluding google in M4 breaks those too.
 accounts.google.com        agy       google      measured
 oauth2.googleapis.com      agy       google      measured
-www.googleapis.com         agy       google      measured
+# www.googleapis.com also serves the GCS upload API (/upload/storage/v1/...), measured live:
+# admitting it would defeat the storage.googleapis.com exclusion, so it is the admin's.
+!www.googleapis.com        agy       google      measured   # agy sign-in userinfo; add it when agy is used (#4398)
 # agy side traffic, left out: the sign-in page renders in the member's own browser, not in
 # the CLI, so static assets and the avatar are not needed; play.googleapis.com is
 # telemetry and antigravity-unleash.goog is feature flags, which a CLI fails open on.
@@ -44,26 +54,34 @@ www.googleapis.com         agy       google      measured
 -lh3.googleusercontent.com agy       google      measured
 -play.googleapis.com       agy       google      measured
 -antigravity-unleash.goog  agy       google      measured
-!storage.googleapis.com    agy       google      docs       # agy install/update; admin adds it
+!storage.googleapis.com    agy       google      docs       # agy install/update (also in the installer ledger); admin adds it
 
 # opencode
-models.dev                 opencode  opencode.ai measured   # model catalogue (third-party host)
+models.dev                 opencode  -           measured   # opencode's catalogue AND the Agent's daily price table for every kind (workspace/agent model_catalog_fetch.go:9)
 models.opencode.ai         opencode  opencode.ai measured
-opencode.ai                opencode  opencode.ai docs       # zen / account routes
+opencode.ai                opencode  opencode.ai docs       # zen route: agents/opencode/errors.go:18
+console.opencode.ai        opencode  opencode.ai docs       # account device login and /api/orgs: agents/opencode/oauth_test.go:60, docs/log/54 §54.7
 
 # Build tools (no agent kind, no destination)
 plugins.gradle.org         build     -           measured
 repo.maven.apache.org      build     -           measured
-services.gradle.org        build     -           docs       # Gradle wrapper download
+services.gradle.org        build     -           docs       # Gradle wrapper download: tool_caches_gradle_test.go:13
 
 # copilot, cursor, kiro, muse: docs-only
-api.githubcopilot.com      copilot   github      docs
-api.individual.githubcopilot.com copilot github  docs
-api2.cursor.sh             cursor    cursor      docs
-authenticator.cursor.sh    cursor    cursor      docs
-authenticate.cursor.sh     cursor    cursor      docs
-app.kiro.dev               kiro      kiro        docs
-prod.us-east-1.auth.desktop.kiro.dev kiro kiro    docs
-q.us-east-1.amazonaws.com  kiro      kiro        docs       # already inside .amazonaws.com
-api.meta.ai                muse      meta        docs       # api_base_url written by muse login
-auth.meta.com              muse      meta        docs       # device-code login
+api.githubcopilot.com      copilot   github      docs       # GitHub Copilot allowlist reference
+api.individual.githubcopilot.com copilot github  docs       # same; individual plan
+api.business.githubcopilot.com copilot github    docs       # same; Business plan
+api.enterprise.githubcopilot.com copilot github  docs       # same; Enterprise plan
+# Cursor is moving sign-in to accounts.spacexsi.com and retires the old fallback on
+# 2026-11-30; its CLI doc also names *.cursorapi.com. Re-check these after the move (#4398).
+api2.cursor.sh             cursor    cursor      docs       # cursor.com enterprise network configuration
+authenticator.cursor.sh    cursor    cursor      docs       # same
+authenticate.cursor.sh     cursor    cursor      docs       # same
+app.kiro.dev               kiro      kiro        docs       # kiro.dev firewall doc
+prod.us-east-1.auth.desktop.kiro.dev kiro kiro    docs      # same
+runtime.us-east-1.kiro.dev kiro      kiro        docs       # same; current Kiro service (US region only; eu variants are the admin's)
+# Legacy inference host, already inside the default suffix .amazonaws.com, so M4 cannot
+# drop it by destination.
+q.us-east-1.amazonaws.com  kiro      kiro        docs
+api.meta.ai                muse      meta        docs       # api_base_url written by muse login: ADR 0095, muse/auth.go
+auth.meta.com              muse      meta        docs       # device-code login: muse/auth.go:180

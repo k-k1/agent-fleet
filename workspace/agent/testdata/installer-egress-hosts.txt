@@ -15,8 +15,11 @@
 # A "!" line is a host the product needs but deliberately leaves to the admin: a
 # general-purpose storage endpoint anyone can upload to, which a builtin entry would stop
 # the admin from blocking. The operator guide's egress section names these.
-# A "~" line is a host the sources name but never fetch (a JSON "$schema" URL); neither
+# A "~" line is a host the sources name but the installers never fetch (a JSON "$schema" URL); neither
 # test asks anything of it.
+#
+# The run-time ledger control-plane/testdata/runtime-egress-hosts.txt also lists
+# storage.googleapis.com as "!"; keep the two in step.
 #
 # Format: one host per line, optional "!" or "~" prefix, optional "# comment".
 
