@@ -1117,7 +1117,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mpol_outage": "While a workspace cannot reach the Control Plane, a change waits for its next successful pull, so the delay is as long as the outage. Where the member was already restricted or the deployment has a ceiling, new launches are refused after 15 minutes without a successful pull; running sessions are left alone.",
   "admin.mpol_hand_login": "A member who signs in to a model by hand from a workspace terminal cannot be stopped. This rule binds Agent Fleet's own launches, not what a member runs by hand.",
   "admin.mpol_revision": "Last saved: revision {n}",
-  "admin.mpol_classes": "Credential type",
+  "admin.mpol_classes": "Type of credential",
   "admin.mpol_destinations": "Where prompts go",
   "admin.mpol_except": "Allowed individually",
   "admin.mpol_except_hint": "Allows, here only, a route the credential types or destinations above would forbid. It cannot reopen what a restriction above forbids. Per-connection routes (your llama.cpp, custom keys) cannot be allowed individually.",

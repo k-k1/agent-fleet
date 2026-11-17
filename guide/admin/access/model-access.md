@@ -15,7 +15,7 @@ What you forbid disappears from your members' screens: the launch dialog, the ag
 A **route** is where an agent's model calls go and with which credential: a Claude subscription, an Anthropic API key, Amazon Bedrock through the member's AWS profile, and so on.
 Every route has a **credential type** and a **destination** (where its prompts go), and a restriction is written with those two:
 
-| Credential type | Means |
+| Type of credential | Means |
 |---|---|
 | Subscriptions and logins | A plan or account login (a Claude or ChatGPT subscription, Copilot, Cursor, Kiro, an opencode.ai account) |
 | Members' API keys | A metered key the member stores (Anthropic, OpenAI, Gemini, OpenRouter and so on) |
@@ -44,7 +44,7 @@ The page has a tab for each part: **Overview**, **Restrictions** and, where the 
 1. Open **Tenant settings → Operations → Model access**
 2. On **Overview**, read **Who restricts what**: one line for each of the three restrictions above yours (the operator, and your deployment's administrator for all tenants and for this tenant), then your own
 3. On **Restrictions**, under **This tenant's restriction**, set:
-   - **Credential type**: **No limit (new ones too)**, or **Only these** with the types you allow. Each type says what it covers
+   - **Type of credential**: **No limit (new ones too)**, or **Only these** with the types you allow. Each type says what it covers
    - **Where prompts go**: **No limit (new ones too)**, or **Only these** with the destinations you allow
    - Under **Individual changes** (closed until you open it), **Allowed individually**: a route your types or destinations would forbid, which you still allow. "No subscriptions except Copilot" is the type restriction plus Copilot here
    - Under **Individual changes**, **Blocked individually**: a route your types and destinations would allow, which you still forbid. A route in both lists is blocked
