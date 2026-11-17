@@ -21,16 +21,14 @@ func (f *fakeStore) lintOnly(name, body string) {
 		Reasons: []memoryx.ConsolReason{{By: "lint", Rule: "missing-path", Note: name + " mentions a missing path", Revision: 1}}})
 }
 
-// waitIdle waits for the background run to release the run lock.
+// waitIdle blocks until the background run has released the run lock. The lock is the run's
+// completion signal: Running turns false (endRun) slightly before the goroutine unlocks runMu, so
+// polling Running can return while a following Tick still finds the lock held. A run that never
+// finishes is caught by go test's own timeout, which dumps the stuck goroutine.
 func waitIdle(t *testing.T) {
 	t.Helper()
-	for i := 0; i < 500; i++ {
-		if !currentProgress().Running {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("the run did not finish")
+	runMu.Lock()
+	runMu.Unlock()
 }
 
 // manualEnv wires the trigger Deps with the fake models and makes sure no run state leaks between
