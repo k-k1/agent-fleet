@@ -590,7 +590,7 @@ func (b *goldenBaker) warn(key, format string, args ...any) {
 func (b *goldenBaker) quiet(key string) { delete(b.warned, key) }
 
 func (b *goldenBaker) stop(ctx context.Context, res *resolved) {
-	if err := res.rt.Stop(ctx); err != nil {
+	if err := b.mgr.stopRecorded(ctx, res.ws, res.rt, true); err != nil {
 		log.Printf("golden: stopping %s failed: %v", res.ws.ContainerName, err)
 		return
 	}

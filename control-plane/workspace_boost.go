@@ -574,3 +574,11 @@ func (m *manager) resolveNextStart(ctx context.Context, ws store.Workspace) next
 	class, _ := m.resolveSlotClass(ctx, ws)
 	return m.overlaySizeOverrides(ctx, ws, mem, class)
 }
+
+// sizeDrifted returns ws resolved afresh and whether that differs from the box ws was resolved to
+// when its runtime was memoized. A boost ends by the clock, with nothing to evict the memo, so a
+// start that reads the box off the memoized runtime would record (and size) the expired boost.
+func (m *manager) sizeDrifted(ctx context.Context, ws store.Workspace) (store.Workspace, bool) {
+	fresh := m.withResolvedSize(ctx, ws)
+	return fresh, fresh.MemBytes != ws.MemBytes || fresh.SlotClass != ws.SlotClass
+}

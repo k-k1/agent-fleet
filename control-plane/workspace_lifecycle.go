@@ -194,7 +194,7 @@ func (m *manager) stopWorkspaceByMembershipIf(ctx context.Context, membershipID 
 			return err
 		}
 	}
-	if err := rt.Stop(lease.Context()); err != nil {
+	if err := m.stopRecorded(lease.Context(), ws, rt, true); err != nil {
 		return err
 	}
 	if err := lease.checkpoint(ctx); err != nil {
@@ -340,7 +340,7 @@ func (m *manager) cleanHomePreamble(ctx context.Context, ws store.Workspace, rt 
 	}
 	// As in the member's clean-home: a failed Stop is tolerated only when nothing is left
 	// running, because erasing under a live workspace leaves its home inconsistent.
-	if err := rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(rt.State(ctx)) {
+	if err := m.stopRecorded(lease.Context(), ws, rt, true); err != nil && runtime.WorkspaceAlive(rt.State(ctx)) {
 		return fmt.Errorf("stop %s: %w (still running; clean home aborted)", ws.ContainerName, err)
 	}
 	return lease.checkpoint(ctx)

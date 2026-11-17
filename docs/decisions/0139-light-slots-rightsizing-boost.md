@@ -324,6 +324,47 @@ decision 2 were added temporarily to the ladder as separate classes and then rev
 - **A size of 0 stays on the default class.** With no class override, a workspace landed on m8g.large,
   the smallest rung of the default class, not on a light rung.
 
+## Addendum — phase 0 of decision 3 built (2026-11-17)
+
+The usage history of decision 3 is built (#4333). What the build settled where the decision left
+room, and what it did not do:
+
+- **Launch records.** The CP writes a row per container launch (`workspace_launch`): start, stop, the
+  box and the override. It is written **before** `Start`, so a CP that dies between `Start` and a later
+  write still knows the id the Agent stamps; a `Start` that fails closes it at its own start (zero
+  seconds). The box is the runtime's `MachineProfile()`, the same resolution placement uses, and only a
+  runtime that names a box takes part (`ecs-ec2`). A stop the CP did not issue is closed at the launch's
+  last-seen sampler tick, so the gap to the next start is not counted. A workspace found running with
+  no record (a CP crash mid-start, or one that predates the ledger) is **adopted** under the override
+  `adopted`: running minutes, none measured, because no Agent knows its id.
+- **The override column exists and is always empty** until decision 4's right-sizing and boost set it
+  (#4334, #4335); a non-empty one splits the day row.
+- **Agent.** The sampler that already writes `mempressure.Series` adds the launch id (`AF_LAUNCH_ID`),
+  the window's CPU from `usage_usec` deltas it reads itself (never through the shared Stats meter) and the
+  mean refault rate. `GET /workspace/usage-windows?since=` serves the lines after a cursor, from both
+  series generations; lines with no launch id are skipped and the cursor moves past them.
+- **CP.** The cursor is the Agent's own unix second, per member. A pull folds and moves the cursor in
+  one transaction and only if the cursor still holds the value it started from, so a tick, a Stop and
+  the next Start cannot count a minute twice; a pull that loses the race drops what it fetched. The Stop's
+  pull is bounded (3 s) and best effort, and is skipped where the Agent is the reason for the stop (the
+  silent-Agent and start-deadline stops). The pull after a Start retries for up to six minutes until the
+  new container's Agent answers.
+- **Day rows.** Days are **UTC**, like `usage_daily`: a running interval is split at UTC midnight, a
+  measured window belongs to the day it ended in. The key is member, day, instance type, class and
+  override. Quantiles are kept as fixed-bucket histograms (`usagehist`), because a quantile cannot be
+  merged across pulls: a read interpolates inside a bucket (about 8% wide for memory) and is capped by the
+  exact max where one is kept (CPU, working set, not refault). A signal with no measured minute is `null`, and CPU as a share of the box, and minutes above
+  a baseline, are `null` unless the rung declares its vCPU (and its baseline: a fourth, optional field of
+  `AF_ECS_EC2_SLOT_TYPES`, `type:memMiB:vcpu:baselinePct`).
+- **Warning threshold.** "Minutes above the ADR 0120 warning threshold" is counted as PSI `some` avg10
+  at or above 10 in the window's highest sample, the stage-1 value of ADR 0120 decision 2, which that ADR
+  calls provisional.
+- **API.** `GET /api/usage/me/history` (own), `GET /api/admin/usage/history?tenant=` (tenant admin;
+  super admin may omit the tenant) and `GET /api/admin/tenants/{slug}/members/{key}/usage-history`.
+  Retention is 90 days.
+- **Not built.** The Console view (decision 3 says "welcome but optional"), right-sizing and the boost.
+  Not verified on a real deployment.
+
 ## Open questions
 
 1. ~~Does one agent session plus the Agent fit in a 2 GiB cap, and do the daemons fit in what a 4 GiB box

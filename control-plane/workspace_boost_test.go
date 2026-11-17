@@ -508,3 +508,28 @@ func TestSizeOverrideStore(t *testing.T) {
 		t.Fatal("deleting the boost took the auto override with it")
 	}
 }
+
+func TestLaunchOverrideAndDriftFollowTheBoost(t *testing.T) {
+	ctx := context.Background()
+	e := newBoostEnv(t, onBoost)
+	if got := e.m.launchOverride(ctx, e.ws()); got != "" {
+		t.Fatalf("no boost: override %q", got)
+	}
+	e.grant(t, "standard", 16384, time.Hour)
+	if got := e.m.launchOverride(ctx, e.ws()); got != "boost" {
+		t.Fatalf("live boost: override %q, want boost", got)
+	}
+	// A runtime memoized under the boost goes stale when it ends: the start must see the drift.
+	memoized := e.m.withResolvedSize(ctx, e.ws())
+	if _, drifted := e.m.sizeDrifted(ctx, memoized); drifted {
+		t.Fatalf("nothing changed yet")
+	}
+	e.now = e.now.Add(2 * time.Hour)
+	fresh, drifted := e.m.sizeDrifted(ctx, memoized)
+	if !drifted || fresh.MemBytes != 0 {
+		t.Fatalf("after expiry: drifted=%v mem=%d, want the stored box", drifted, fresh.MemBytes)
+	}
+	if got := e.m.launchOverride(ctx, e.ws()); got != "" {
+		t.Fatalf("expired: override %q", got)
+	}
+}

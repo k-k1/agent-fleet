@@ -450,7 +450,7 @@ func (a workspaceAPI) memberHomeWipeStop(r *http.Request, res *resolved, lease *
 	// "starting" (container up, Agent not answering yet) counts as alive: it is running
 	// and can write to home. The clearing mark is dropped first, or it would read as
 	// "starting" itself.
-	if err := res.rt.Stop(lease.Context()); err != nil {
+	if err := a.mgr.stopRecorded(lease.Context(), res.ws, res.rt, true); err != nil {
 		(*unqueue)()
 		if runtime.WorkspaceAlive(res.rt.State(r.Context())) {
 			log.Printf("%s: stop failed for ws %s (still running, aborting wipe): %v", op, res.ws.ID, err)
@@ -667,6 +667,18 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		}
 		extraEnv = append(append([]string(nil), extraEnv...), homeKeyStartEnv+"="+homeStart)
 	}
+	// The launch is recorded before Start and its id handed to the container, so the Agent's
+	// minutes carry it (usage_history.go). Where the runtime names no box this is a no-op.
+	boxRT := rt
+	if fresh, drifted := a.mgr.sizeDrifted(ctx, res.ws); drifted {
+		// The memoized runtime still names a box a boost has since left (or entered): the ledger
+		// records the box this start lands on, which the rebuild below also uses.
+		boxRT = a.mgr.runtimeFor(fresh, keys, a.mgr.workspaceExtraEnv(ctx, fresh)...)
+	}
+	launchID, launchEnv := a.mgr.beginLaunch(ctx, res.ws, boxRT)
+	if launchEnv != "" {
+		extraEnv = append(append([]string(nil), extraEnv...), launchEnv)
+	}
 	if armed := a.mgr.armPreviewForStart(ctx, res, keys, extraEnv); armed != nil {
 		rt = armed
 	} else if fresh := a.mgr.refreshGitTokenForStart(ctx, res, keys, extraEnv); fresh != nil {
@@ -684,6 +696,7 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		log.Printf("clear auto-stop (ws=%s): %v", res.ws.ID, err)
 	}
 	if err := rt.Start(ctx); err != nil {
+		a.mgr.endLaunchFailed(ctx, res.ws.MembershipID, launchID)
 		if errors.Is(err, runtime.ErrHomeTaskInFlight) {
 			return &apiError{http.StatusConflict, errCodeHomeOperationInProgress, err.Error()}
 		}
@@ -695,10 +708,16 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 			_ = f.AbortUncommittedStart(abortCtx)
 			cancel()
 		}
+		a.mgr.endLaunchFailed(ctx, res.ws.MembershipID, launchID)
 		return workspaceLifecycleLeaseError(err)
 	}
 	if f, ok := rt.(runtime.StartFencer); ok {
 		f.CommitStart()
+	}
+	if launchID != "" {
+		// The previous launches' minutes are still on home: fetch them once this container's
+		// Agent answers, filed under their own launch ids.
+		go a.mgr.pullUsageAfterStart(res.ws.MembershipID, rt)
 	}
 	if home != nil {
 		go a.mgr.watchHomeDEK(rt, *home, homeStart)
@@ -752,7 +771,7 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	if err := res.rt.Stop(lease.Context()); err != nil {
+	if err := a.mgr.stopRecorded(lease.Context(), res.ws, res.rt, true); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
