@@ -222,11 +222,13 @@ type chatAskReq struct {
 }
 
 // HandleChatAsk runs ONE advisory turn with the named assistant and returns its reply
-// text; with no assistant named it runs a plain turn (no persona, no knowledge). The turn
+// text; with no assistant named it runs a plain turn (no assistant persona, no knowledge; the
+// generic chat persona and output rules still apply). The turn
 // is stateless and forced tools=none: with no tool grant the sub-turn
 // attaches no MCP, so it cannot write to sessions and cannot itself call ask_assistant —
 // recursion and privilege-escalation are ruled out by construction (single hop, advice
-// only). Reached only via the local Agent REST (mcp_stdio → localhost); not CP-exposed.
+// only). Reached from ask_assistant (mcp_stdio → localhost) and, through the Control Plane's
+// held relay, from the Console's one-shot callers.
 func HandleChatAsk(w http.ResponseWriter, r *http.Request) {
 	var req chatAskReq
 	if !httpx.DecodeJSON(w, r, &req) {
