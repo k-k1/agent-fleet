@@ -434,6 +434,14 @@ func registerWorkspaceRoutes(mux *http.ServeMux, cfg config) {
 	// deployment's configuration says it gets (workspace_machine.go). Read on demand
 	// (a settings section, the resource popover), never on the event tick.
 	mux.HandleFunc("GET /api/workspace/machine", ws.withResolved(ws.machine))
+	// The boxes the sizing resolver decides (stored, next start, running) and the member's
+	// Boost (ADR 0139 decision 5). The Console reads this instead of recomputing the box.
+	mux.HandleFunc("GET /api/workspace/sizing", ws.withResolved(ws.sizing))
+	mux.HandleFunc("POST /api/workspace/boost", ws.withResolved(ws.boost))
+	mux.HandleFunc("DELETE /api/workspace/boost", ws.withResolved(ws.cancelBoost))
+	// The tenant's boost policy: tenant_admin of that tenant (gated mid-handler).
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/boost", ws.tenantBoost)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/boost", ws.setTenantBoost)
 	// Attention beacon (docs/log/75 P3): tells the idle clock that a human is touching the
 	// Console right now. Presence judged on keystrokes alone reads someone who is only
 	// reading as absent.

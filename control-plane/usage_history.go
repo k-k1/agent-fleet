@@ -69,9 +69,14 @@ func usageHistoryRuntime(rt runtime.Runtime) (machineProfiler, bool) {
 }
 
 // launchOverride names what chose the box this start lands on, "" when nothing overrode the
-// member's own setting. ADR 0139 decision 4's right-sizing and boost are not built yet; they
-// answer here, and a value other than "" splits the day row (a boosted day has two).
-func (m *manager) launchOverride(ctx context.Context, ws store.Workspace) string { return "" }
+// member's own setting. A live boost answers "boost" (ADR 0139 decision 5), which splits the day
+// row (a boosted day has two). The right-sizing override will answer "auto" the same way.
+func (m *manager) launchOverride(ctx context.Context, ws store.Workspace) string {
+	if ns := m.resolveNextStart(ctx, ws); ns.Source != "stored" {
+		return ns.Source
+	}
+	return ""
+}
 
 func newLaunchID() string {
 	var b [12]byte

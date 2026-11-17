@@ -417,6 +417,11 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 			// answers with its fallback alone. The editor needs it to draw and warn about
 			// the "tenant default" choice, which the client cannot derive.
 			row["slot_class_default"], _ = a.cp.ResolveSlotClass(r.Context(), store.Workspace{TenantID: t.ID})
+			// The box the next start lands on with any boost laid over the stored choice
+			// (ADR 0139). The roster draws THIS instead of recomputing from mem_limit.
+			if ns, ok := a.cp.ResolveNextStart(r.Context(), store.Workspace{MembershipID: m.MembershipID, TenantID: t.ID}); ok {
+				row["next_start"] = ns
+			}
 			if ul, ok, _ := a.cp.Store().GetUserLimit(r.Context(), m.MembershipID); ok {
 				row["max_sessions"] = ul.MaxSessions
 				row["mem_limit"] = ul.MemLimit
@@ -1644,6 +1649,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 	// only the projection that carries these values across the seam. Whichever side
 	// holds the json tags has to be the only one, or a field added there would be
 	// dropped on every save from here.
+	prevLim := a.tenantLimitsFor(r, t.ID)
 	lim := Limits{
 		MaxWorkspaces:      body.MaxWorkspaces,
 		MaxSessions:        body.MaxSessions,
@@ -1656,7 +1662,12 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		// ⚠️ SlotClass is NOT in the body: this handler rewrites the whole limits blob,
 		// so leaving it out of the struct would erase the tenant_admin's default on
 		// every super_admin edit. Carried over from what is stored.
-		SlotClass:                    a.tenantLimitsFor(r, t.ID).SlotClass,
+		SlotClass: prevLim.SlotClass,
+		// Same trap for the boost policy: a tenant_admin owns it (PUT .../boost), so a
+		// super_admin's save of the quotas must not reset it.
+		BoostEnabled:                 prevLim.BoostEnabled,
+		BoostMaxMemMiB:               prevLim.BoostMaxMemMiB,
+		BoostMonthlyHours:            prevLim.BoostMonthlyHours,
 		SessionIdleTimeout:           body.SessionIdleTimeout,
 		InteractionIdleTimeout:       body.InteractionIdleTimeout,
 		BackgroundHoldMax:            body.BackgroundHoldMax,

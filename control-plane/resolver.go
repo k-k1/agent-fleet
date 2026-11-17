@@ -419,7 +419,7 @@ func (m *manager) buildResolved(ctx context.Context, ident store.Identity, mv st
 	gitEpoch := m.gitEpochOfEnv(ws.MembershipID, env)
 	rt := m.runtimeFor(ws, keys, env...)
 	m.mu.Lock()
-	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws, gitEpoch: gitEpoch}
+	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws, gitEpoch: gitEpoch, sizeUntil: m.sizeUntil(ctx, ws)}
 	m.mu.Unlock()
 	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv, gitEpoch: gitEpoch}, nil
 }
@@ -429,6 +429,10 @@ func (m *manager) cachedRTFor(membershipID string) (cachedRT, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.rts[membershipID]
+	if ok && !c.sizeUntil.IsZero() && !boostNow().Before(c.sizeUntil) {
+		delete(m.rts, membershipID)
+		return cachedRT{}, false
+	}
 	return c, ok
 }
 

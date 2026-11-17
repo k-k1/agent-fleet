@@ -8,6 +8,12 @@ export const errors = {
   // --- API エラー（core/api/client.ts の ERR_TEXT ＋ インライン fallback）---
   // Go 側の安定コード（control-plane/errcodes.go, workspace/agent/errcodes.go）と対。
   "err.not_configured": "この環境ではその機能が有効になっていません。運用者に確認してください。",
+  "err.boost_disabled": "このテナントではブーストが有効になっていません。",
+  "err.boost_class": "このマシンのクラスはテナントで許可されていないため、ブーストできません。",
+  "err.boost_top_rung": "このクラスにはこれより大きいマシンがありません。",
+  "err.boost_limit": "ひとつ上のサイズは、管理者が設定した上限を超えています。",
+  "err.boost_budget_spent": "今月のブースト時間を使い切りました。",
+  "err.boost_unsupported": "この配備にはブーストで切り替えられるマシンサイズがありません。",
   "err.no_preview_domain": "開発用 OIDC IdP にはプレビューのサブドメインが必要ですが、この環境にはプレビュー用ドメインがありません。運用者に確認してください。",
   "err.tts_engine_off":
     "この配備では読み上げエンジン（ずんだもん）が管理者によって無効化されています。有効化は管理者に依頼してください。",
