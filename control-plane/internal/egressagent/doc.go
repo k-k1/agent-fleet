@@ -55,6 +55,10 @@
 //	%#ssl::>sni       TLS SNI, URL-encoded so a hostile SNI cannot add fields
 //	%#>rd             request domain (Host header or CONNECT target), URL-encoded
 //
+// A spliced TLS connection is logged twice by Squid (the client's CONNECT as NONE_NONE
+// with bump mode splice, then the tunnel as TCP_TUNNEL); the agent ships only the tunnel
+// line. See isSpliceConnect.
+//
 // The agent tags each log file it reads with a random generation id in the extended
 // attribute user.af-egress.gen, and an event's id is "<generation>@<offset>". It therefore
 // needs write access to Squid's log files (run it as Squid's user, or in its group with the

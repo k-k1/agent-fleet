@@ -228,7 +228,8 @@ func readBatch(r *bufio.Reader, ident string, off int64, snap *snapshot) ([]Even
 }
 
 // lineConv turns one log line into an event (without its id); ok is false for a line that
-// is not in the log's format.
+// is not in the log's format. An event with Count 0 is a line that counts nothing (the
+// duplicate half of a spliced connection): it is consumed silently.
 type lineConv func(line string) (Event, bool)
 
 // squidConv reads Squid's af1 lines, attaching the verdict the policy snapshot gives.
@@ -237,6 +238,9 @@ func squidConv(snap *snapshot) lineConv {
 		l, ok := parseLine(line)
 		if !ok {
 			return Event{}, false
+		}
+		if l.duplicate {
+			return Event{}, true
 		}
 		return Event{
 			At: l.at, Source: l.source, Dest: l.dest, Host: l.host,
@@ -265,6 +269,9 @@ func readBatchWith(r *bufio.Reader, ident string, off int64, conv lineConv) ([]E
 		ev, ok := conv(strings.TrimRight(string(line.text), "\r\n"))
 		if !ok {
 			log.Printf("egress-agent: skipping a line not in the af1/af2 format at %s@%d: %.200q", ident, pos, line.text)
+			continue
+		}
+		if ev.Count == 0 {
 			continue
 		}
 		ev.ID = ident + "@" + strconv.FormatInt(pos, 10)
