@@ -23,6 +23,7 @@ type Store interface {
 	MembershipStore
 	WorkspaceStore
 	QuotaStore
+	SizeOverrideStore
 	DEKStore
 	SessionIndexStore
 	PATStore

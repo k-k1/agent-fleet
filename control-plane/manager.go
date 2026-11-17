@@ -123,6 +123,11 @@ type manager struct {
 	// per-user mem_limit on top of the per-tenant cap so no single workspace can be
 	// sized past what the shared host can bear. See resolveWorkspaceMemBytes.
 	memMaxBytes int64
+	// boostHours counts a member's boosted RUNNING hours for the monthly budget (ADR 0139
+	// decision 5). nil = nothing counts them yet, which is the case until the CP's launch
+	// records exist (#4333): boostBudgetOf then reports "not counted" and the budget is not
+	// enforced.
+	boostHours boostHoursCounter
 	// cpuMaxUnits and diskMaxGB are the deployment-wide ceilings for a per-workspace CPU
 	// request (Fargate units, 1024 = 1 vCPU) and working disk (GiB), the same shape as
 	// memMaxBytes: 0 = no ceiling, which is what a manager built without them has. main.go

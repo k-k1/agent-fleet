@@ -687,7 +687,11 @@ export function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) 
   const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
   const classID = memberClassID(m);
   const cls = (sizing.slot_classes ?? []).find((c) => c.id === (classID || sizing.default_slot_class));
-  const box = onSlots ? slotFor(ladderFor(sizing, classID), m.mem_limit ? Math.round(m.mem_limit / 1048576) : 0) : null;
+  // The CP's resolved answer wins: with a boost live the box is not the stored size's.
+  const ns = m.next_start;
+  const box = onSlots
+    ? slotFor(ladderFor(sizing, ns?.slot_class ?? classID), ns ? ns.mem_mib : m.mem_limit ? Math.round(m.mem_limit / 1048576) : 0)
+    : null;
 
   const out: ReactNode[] = [];
   if (box) {
@@ -695,6 +699,11 @@ export function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) 
       <span key="box" className="mr-size mono" title={cls ? cls.label : undefined}>
         {box.instance_type}
       </span>,
+      ns && ns.source !== "stored" ? (
+        <span key="src" className="mr-size muted" title={ns.until ? fmtDateTime(ns.until) : undefined}>
+          {tr(ns.source === "auto" ? "boost.roster_auto" : "boost.roster_boost")}
+        </span>
+      ) : null,
       <span key="spec" className="mr-size muted">
         {box.vcpu ? tr("admin.roster_spec", { n: String(box.vcpu), mem: slotMemLabel(tr, box) }) : slotMemLabel(tr, box)}
       </span>,

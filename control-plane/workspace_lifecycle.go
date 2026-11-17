@@ -749,6 +749,10 @@ func (m *manager) resolveWorkspaceSize(ctx context.Context, ws store.Workspace) 
 func (m *manager) withResolvedSize(ctx context.Context, ws store.Workspace) store.Workspace {
 	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
 	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
+	// A live boost (and later the auto override) is laid over the stored choice here, so every
+	// start and resize path sees it and the stored choice is never rewritten (ADR 0139).
+	ns := m.overlaySizeOverrides(ctx, ws, ws.MemBytes, ws.SlotClass)
+	ws.MemBytes, ws.SlotClass = ns.MemBytes, ns.SlotClass
 	return ws
 }
 

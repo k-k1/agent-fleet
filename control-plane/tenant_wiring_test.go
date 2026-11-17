@@ -80,6 +80,7 @@ var cpTenantDelegates = map[string]string{
 	"ResolveWorkspaceSize":          "resolveWorkspaceSize",
 	"WorkspaceCeilings":             "cpuMaxUnits",
 	"ResolveSlotClass":              "resolveSlotClass",
+	"ResolveNextStart":              "resolveNextStart",
 	"PoolBudget":                    "poolBudget",
 	"PoolStatus":                    "poolStatus",
 	"HasSlotPool":                   "hasSlotPool",

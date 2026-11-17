@@ -416,6 +416,16 @@ export const admin = {
   "tenant.machine_deploy_default": "配備の既定",
   "tenant.machine_member_note":
     "自分で種類を選んでいるメンバーは、ここを変えても影響を受けません。反映は各メンバーの次回起動時です。",
+  "tenant.boost_title": "ブースト",
+  "tenant.boost_note":
+    "メンバーが、同じクラスの中で次回起動を一段大きいマシンにできるようにします（期間限定）。次回起動からだけ効き、稼働中のワークスペースには効きません。",
+  "tenant.boost_enabled": "メンバーのブーストを許可する",
+  "tenant.boost_max": "ブーストで届く最大のサイズ",
+  "tenant.boost_max_top": "クラスの最上位",
+  "tenant.boost_hours": "メンバーごとの月間の枠（ブーストして実際に稼働した時間、0 = 枠なし）",
+  "tenant.boost_uncounted": "稼働時間はまだ集計されないため、枠は保存されますが強制されません。",
+  "tenant.boost_unsupported": "この配備にはブーストで切り替えられるマシンサイズがありません。",
+
   "admin.roster_spec": "{n} vCPU / {mem}",
   "admin.roster_disk": "ディスク {n}GB",
   "admin.roster_state_running": "稼働中",

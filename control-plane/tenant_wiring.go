@@ -334,6 +334,17 @@ func (d cpTenant) ResolveSlotClass(ctx context.Context, ws store.Workspace) (str
 	return d.m.resolveSlotClass(ctx, ws)
 }
 
+func (d cpTenant) ResolveNextStart(ctx context.Context, ws store.Workspace) (tenantsrv.NextStart, bool) {
+	ns := d.m.resolveNextStart(ctx, ws)
+	if len(ns.baseLadder) == 0 {
+		return tenantsrv.NextStart{}, false
+	}
+	return tenantsrv.NextStart{
+		SlotClass: ns.SlotClass, MemMiB: ns.baseLadder[rungIndex(ns.baseLadder, ns.MemBytes)].MemMiB,
+		Source: ns.Source, Until: ns.Until,
+	}, true
+}
+
 func (d cpTenant) PoolBudget(ctx context.Context, overrideTenantID string, overrideMax int) (runtime.PoolBudget, bool, error) {
 	return d.m.poolBudget(ctx, overrideTenantID, overrideMax)
 }
@@ -426,6 +437,9 @@ func tenantLimitsOut(l tenantLimits) tenantsrv.Limits {
 		MaxWorkspaceDiskGB:           l.MaxWorkspaceDiskGB,
 		SlotClass:                    l.SlotClass,
 		AllowedSlotClasses:           l.AllowedSlotClasses,
+		BoostEnabled:                 l.BoostEnabled,
+		BoostMaxMemMiB:               l.BoostMaxMemMiB,
+		BoostMonthlyHours:            l.BoostMonthlyHours,
 		SessionIdleTimeout:           l.SessionIdleTimeout,
 		WSIdleTimeout:                l.WSIdleTimeout,
 		InteractionIdleTimeout:       l.InteractionIdleTimeout,
@@ -454,6 +468,9 @@ func tenantLimitsIn(l tenantsrv.Limits) tenantLimits {
 		MaxWorkspaceDiskGB:           l.MaxWorkspaceDiskGB,
 		SlotClass:                    l.SlotClass,
 		AllowedSlotClasses:           l.AllowedSlotClasses,
+		BoostEnabled:                 l.BoostEnabled,
+		BoostMaxMemMiB:               l.BoostMaxMemMiB,
+		BoostMonthlyHours:            l.BoostMonthlyHours,
 		SessionIdleTimeout:           l.SessionIdleTimeout,
 		WSIdleTimeout:                l.WSIdleTimeout,
 		InteractionIdleTimeout:       l.InteractionIdleTimeout,

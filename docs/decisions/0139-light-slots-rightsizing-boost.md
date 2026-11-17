@@ -331,3 +331,26 @@ decision 2 were added temporarily to the ladder as separate classes and then rev
 2. ~~Is `unlimited` what a t-class slot actually gets on this deployment with no `CreditSpecification`
    set?~~ Answered in the addendum for t4g (`unlimited`). t3 is unmeasured, but the account default is `unlimited`.
 3. The thresholds and the coverage share of decision 4, from phase 0 data.
+
+## Addendum — decision 5 built, apart from the hour count (2026-11-17)
+
+#4335 built the boost, and nothing in the decisions changed. What is in the tree and how it reads the text above:
+
+- **One resolver.** `withResolvedSize` now lays `overlaySizeOverrides` over the stored choice
+  (`workspace_boost.go`). The overrides sit in `workspace_size_override`, one row per (membership, source), so a
+  `boost` and a later `auto` have their own lifetimes; only `boost` has a writer. A boost row stores the target
+  rung (class and declared MiB) computed when it was pressed and is re-checked on every start: the tenant has
+  boost on, the class is declared and allowed, it is the next-start box's class, the rung is declared and bigger
+  than the next-start box, and it is within the tenant's and the deployment's memory maximum and the tenant's
+  highest boost rung. A boost that fails is not applied and says why; it never falls to the deployment default.
+- **The sizing API is `GET /api/workspace/sizing`** (the member's own workspace): stored, next-start (with
+  `source` and `until`) and running boxes, whether a restart is offered, and the boost state. The running box
+  is read from the Agent's measurement; when it cannot be told, no restart is offered. The admin roster rows
+  carry `next_start` from the same resolver.
+- **Expiry** is inert, not a write: an expired row is never applied, so the next start lands on what the stored
+  choice says, and a running workspace is not touched.
+- **The monthly budget is stored and its check exists behind `boostHoursCounter`, but the hours are not
+  counted.** Counting them needs the CP's launch records (decision 3, #4333), which are not on `main`. Until a
+  counter is wired the budget is not enforced, and both screens say so.
+- **ADR 0120's warning does not exist yet** (phase 0 measures only), so the boost is offered next to the
+  pressure chart on the Machine tab, above a provisional `some` level of 20%, instead of inside a notice.

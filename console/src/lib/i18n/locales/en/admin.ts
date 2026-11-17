@@ -418,6 +418,16 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.machine_deploy_default": "Deployment default",
   "tenant.machine_member_note":
     "Members who chose a machine themselves are unaffected. The change reaches each member at their next workspace start.",
+  "tenant.boost_title": "Boost",
+  "tenant.boost_note":
+    "Lets a member raise their next start one machine size, in the same class, for a limited time. It applies at the next start only, never to a running workspace.",
+  "tenant.boost_enabled": "Allow members to boost",
+  "tenant.boost_max": "Highest size a boost may reach",
+  "tenant.boost_max_top": "The top of the class",
+  "tenant.boost_hours": "Monthly budget per member (boosted running hours, 0 = none)",
+  "tenant.boost_uncounted": "Running hours are not counted yet, so the budget is saved but not enforced.",
+  "tenant.boost_unsupported": "This deployment has no machine sizes to boost between.",
+
   "admin.roster_spec": "{n} vCPU / {mem}",
   "admin.roster_disk": "{n} GB disk",
   "admin.roster_state_running": "Running",

@@ -1,0 +1,510 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+)
+
+// ADR 0139 decisions 4 and 5: the boost override, its resolution in withResolvedSize and the API
+// around it.
+
+func boostSizing() runtime.WorkspaceSizing {
+	rung := func(t string, mem int64) runtime.WorkspaceSlot {
+		return runtime.WorkspaceSlot{InstanceType: t, MemMiB: mem, UsableMemMiB: mem - 2048}
+	}
+	return runtime.WorkspaceSizing{
+		Runtime: "ecs-ec2", MemMeaning: runtime.MemMeaningSlot, DefaultSlotClass: "standard",
+		SlotClasses: []runtime.WorkspaceSlotClass{
+			{ID: "standard", Label: "Standard", Arch: "x86_64",
+				Slots: []runtime.WorkspaceSlot{rung("m7i.large", 8192), rung("m7i.xlarge", 16384), rung("m7i.2xlarge", 32768)}},
+			{ID: "arm", Label: "Arm", Arch: "arm64",
+				Slots: []runtime.WorkspaceSlot{rung("m8g.large", 8192), rung("m8g.xlarge", 16384)}},
+		},
+	}
+}
+
+type boostEnv struct {
+	m        *manager
+	tenantID string
+	memID    string
+	ident    store.Identity
+	now      time.Time
+}
+
+func newBoostEnv(t *testing.T, lim tenantLimits) *boostEnv {
+	t.Helper()
+	ctx := context.Background()
+	m := p3Manager(t, p3Store(t))
+	m.rtFactory = sizingOnlyFactory{sizing: boostSizing()}
+	ten, err := m.store.CreateTenant(ctx, "acme", "Acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ident, err := m.store.UpsertIdentity(ctx, "a@example.com", "a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem, err := m.store.EnsureMembership(ctx, ident.ID, ten.ID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &boostEnv{m: m, tenantID: ten.ID, memID: mem.ID, ident: ident, now: time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)}
+	e.setLimits(t, lim)
+	old := boostNow
+	boostNow = func() time.Time { return e.now }
+	t.Cleanup(func() { boostNow = old })
+	return e
+}
+
+func (e *boostEnv) setLimits(t *testing.T, lim tenantLimits) {
+	t.Helper()
+	lj, _ := json.Marshal(lim)
+	if err := e.m.store.SetTenantLimits(context.Background(), e.tenantID, string(lj)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (e *boostEnv) ws() store.Workspace {
+	return store.Workspace{TenantID: e.tenantID, MembershipID: e.memID}
+}
+
+func (e *boostEnv) grant(t *testing.T, class string, memMiB int64, until time.Duration) {
+	t.Helper()
+	if err := e.m.store.PutSizeOverride(context.Background(), store.SizeOverride{
+		MembershipID: e.memID, Source: store.SizeOverrideBoost, SlotClass: class, MemMiB: memMiB,
+		ExpiresAt: e.now.Add(until).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (e *boostEnv) store(t *testing.T, q store.UserQuota) {
+	t.Helper()
+	if err := e.m.store.PutUserLimit(context.Background(), e.memID, q); err != nil {
+		t.Fatal(err)
+	}
+}
+
+var onBoost = tenantLimits{BoostEnabled: true}
+
+func TestBoostResolution(t *testing.T) {
+	ctx := context.Background()
+	const gib8, gib16 = 8192, 16384
+
+	t.Run("a live boost is one rung above the stored box and the stored size is untouched", func(t *testing.T) {
+		e := newBoostEnv(t, onBoost)
+		e.store(t, store.UserQuota{MemLimit: 8 * gib, SlotClass: "standard"})
+		e.grant(t, "standard", gib16, time.Hour)
+		ws := e.m.withResolvedSize(ctx, e.ws())
+		if ws.MemBytes != gib16*mib || ws.SlotClass != "standard" {
+			t.Fatalf("resolved %d MiB class %q, want 16384 standard", ws.MemBytes/mib, ws.SlotClass)
+		}
+		ul, _, _ := e.m.store.GetUserLimit(ctx, e.memID)
+		if ul.MemLimit != 8*gib {
+			t.Fatalf("the stored size was rewritten to %d", ul.MemLimit)
+		}
+	})
+
+	t.Run("a stored size of 0 is the smallest rung and a boost is the next one", func(t *testing.T) {
+		e := newBoostEnv(t, onBoost)
+		e.grant(t, "standard", gib16, time.Hour)
+		ws := e.m.withResolvedSize(ctx, e.ws())
+		if ws.MemBytes != gib16*mib {
+			t.Fatalf("resolved %d MiB, want 16384", ws.MemBytes/mib)
+		}
+		ns := e.m.resolveNextStart(ctx, e.ws())
+		if ns.Source != "boost" || ns.baseIdx != 0 {
+			t.Fatalf("source %q baseIdx %d, want boost over rung 0", ns.Source, ns.baseIdx)
+		}
+	})
+
+	t.Run("an expired boost is inert", func(t *testing.T) {
+		e := newBoostEnv(t, onBoost)
+		e.grant(t, "standard", gib16, time.Hour)
+		e.now = e.now.Add(2 * time.Hour)
+		ns := e.m.resolveNextStart(ctx, e.ws())
+		if ns.Source != "stored" || ns.MemBytes != 0 || ns.Note != "" {
+			t.Fatalf("%+v, want the stored box and no note", ns)
+		}
+	})
+
+	notApplied := map[string]func(*testing.T, *boostEnv){
+		"the tenant switched boost off": func(t *testing.T, e *boostEnv) { e.setLimits(t, tenantLimits{}) },
+		"the class is no longer allowed": func(t *testing.T, e *boostEnv) {
+			e.setLimits(t, tenantLimits{BoostEnabled: true, AllowedSlotClasses: []string{"arm"}})
+		},
+		"the member moved to another class": func(t *testing.T, e *boostEnv) {
+			e.store(t, store.UserQuota{SlotClass: "arm"})
+		},
+		"the tenant memory maximum is below the rung": func(t *testing.T, e *boostEnv) {
+			e.setLimits(t, tenantLimits{BoostEnabled: true, MaxWorkspaceMem: 8 * gib})
+		},
+		"the deployment memory maximum is below the rung": func(t *testing.T, e *boostEnv) { e.m.memMaxBytes = 8 * gib },
+		"the tenant's highest boost rung is below it": func(t *testing.T, e *boostEnv) {
+			e.setLimits(t, tenantLimits{BoostEnabled: true, BoostMaxMemMiB: 8192})
+		},
+		"the stored size already reaches the rung": func(t *testing.T, e *boostEnv) {
+			e.store(t, store.UserQuota{MemLimit: 16 * gib})
+		},
+	}
+	for name, mutate := range notApplied {
+		t.Run("not applied when "+name, func(t *testing.T) {
+			e := newBoostEnv(t, onBoost)
+			e.grant(t, "standard", gib16, time.Hour)
+			mutate(t, e)
+			ns := e.m.resolveNextStart(ctx, e.ws())
+			if ns.Source == "boost" {
+				t.Fatalf("applied anyway: %+v", ns)
+			}
+			if ns.Note == "" {
+				t.Fatalf("an override that was not applied must say why: %+v", ns)
+			}
+			// It never falls through to the deployment default class: the base is what the
+			// stored choice resolved to, whatever that is.
+			base := e.m.withResolvedSize(ctx, e.ws())
+			wantClass, _ := e.m.resolveSlotClass(ctx, e.ws())
+			if base.SlotClass != wantClass || base.MemBytes != e.m.resolveWorkspaceMemBytes(ctx, e.ws()) {
+				t.Fatalf("resolved %q/%d, want the un-boosted %q/%d", base.SlotClass, base.MemBytes, wantClass, e.m.resolveWorkspaceMemBytes(ctx, e.ws()))
+			}
+		})
+	}
+
+	t.Run("a boost for a class the tenant no longer allows does not land on the deployment default", func(t *testing.T) {
+		e := newBoostEnv(t, tenantLimits{BoostEnabled: true, SlotClass: "arm"})
+		e.grant(t, "arm", gib16, time.Hour)
+		e.setLimits(t, tenantLimits{BoostEnabled: true, SlotClass: "arm", AllowedSlotClasses: []string{"standard"}})
+		ws := e.m.withResolvedSize(ctx, e.ws())
+		if ws.MemBytes == gib16*mib && ws.SlotClass == "arm" {
+			t.Fatalf("applied a boost in a class the tenant may not use")
+		}
+	})
+
+	t.Run("no boost on a runtime with no rungs", func(t *testing.T) {
+		e := newBoostEnv(t, onBoost)
+		e.m.rtFactory = sizingOnlyFactory{sizing: runtime.WorkspaceSizing{Runtime: "ecs", MemMeaning: runtime.MemMeaningLimit}}
+		e.grant(t, "", gib16, time.Hour)
+		if ns := e.m.resolveNextStart(ctx, e.ws()); ns.Source != "stored" {
+			t.Fatalf("%+v", ns)
+		}
+	})
+}
+
+func (e *boostEnv) call(t *testing.T, method, body string) (int, workspaceSizingWire, string) {
+	t.Helper()
+	var r *http.Request
+	if body == "" {
+		r = httptest.NewRequest(method, "/api/workspace/boost", nil)
+	} else {
+		r = httptest.NewRequest(method, "/api/workspace/boost", strings.NewReader(body))
+	}
+	w := httptest.NewRecorder()
+	res := &resolved{ws: e.ws(), ident: e.ident}
+	api := newWorkspaceAPI(e.m, false)
+	if method == http.MethodDelete {
+		api.cancelBoost(w, r, res)
+	} else {
+		api.boost(w, r, res)
+	}
+	var out workspaceSizingWire
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	return w.Code, out, w.Body.String()
+}
+
+type countingBoost struct {
+	hours   float64
+	counted bool
+}
+
+func (c countingBoost) BoostedRunningHours(context.Context, string, time.Time, time.Time) (float64, bool, error) {
+	return c.hours, c.counted, nil
+}
+
+func TestBoostAPI(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("grants one rung up, applied at the next start", func(t *testing.T) {
+		e := newBoostEnv(t, tenantLimits{BoostEnabled: true, BoostMonthlyHours: 40})
+		code, out, body := e.call(t, http.MethodPost, `{"hours":6}`)
+		if code != 200 {
+			t.Fatalf("%d %s", code, body)
+		}
+		if out.NextStart.Source != "boost" || out.NextStart.Box.MemMiB != 16384 || out.Stored.MemMiB != 8192 {
+			t.Fatalf("%+v", out)
+		}
+		if want := e.now.Add(6 * time.Hour).Format(time.RFC3339); out.NextStart.Until != want {
+			t.Fatalf("until %q, want %q", out.NextStart.Until, want)
+		}
+		if out.RestartOffered {
+			t.Fatalf("nothing is running, so no restart is offered")
+		}
+		if rows := auditRowsOf(t, e.m.store, e.tenantID, "workspace.boost"); len(rows) != 1 {
+			t.Fatalf("audit rows %+v", rows)
+		}
+	})
+
+	t.Run("boosting while a boost is live extends it and does not climb", func(t *testing.T) {
+		e := newBoostEnv(t, onBoost)
+		e.call(t, http.MethodPost, `{"hours":2}`)
+		e.now = e.now.Add(time.Hour)
+		code, out, body := e.call(t, http.MethodPost, `{"hours":8}`)
+		if code != 200 || out.NextStart.Box.MemMiB != 16384 {
+			t.Fatalf("%d %s", code, body)
+		}
+		if want := e.now.Add(8 * time.Hour).Format(time.RFC3339); out.NextStart.Until != want {
+			t.Fatalf("until %q, want %q", out.NextStart.Until, want)
+		}
+		// A shorter request never shortens a live boost.
+		_, out, _ = e.call(t, http.MethodPost, `{"hours":1}`)
+		if want := e.now.Add(8 * time.Hour).Format(time.RFC3339); out.NextStart.Until != want {
+			t.Fatalf("until %q after a shorter request, want %q", out.NextStart.Until, want)
+		}
+	})
+
+	t.Run("a boost after expiry is a new boost from the next-start box", func(t *testing.T) {
+		e := newBoostEnv(t, onBoost)
+		e.call(t, http.MethodPost, `{"hours":1}`)
+		e.now = e.now.Add(3 * time.Hour)
+		code, out, _ := e.call(t, http.MethodPost, `{"hours":1}`)
+		if code != 200 || out.NextStart.Box.MemMiB != 16384 || out.Stored.MemMiB != 8192 {
+			t.Fatalf("%d %+v", code, out)
+		}
+	})
+
+	t.Run("refusals", func(t *testing.T) {
+		cases := []struct {
+			name  string
+			lim   tenantLimits
+			q     store.UserQuota
+			body  string
+			count *countingBoost
+			code  int
+			errc  string
+		}{
+			{"disabled", tenantLimits{}, store.UserQuota{}, ``, nil, 403, "boost_disabled"},
+			{"top rung", onBoost, store.UserQuota{MemLimit: 32 * gib}, ``, nil, 409, "boost_top_rung"},
+			{"tenant highest rung", tenantLimits{BoostEnabled: true, BoostMaxMemMiB: 8192}, store.UserQuota{}, ``, nil, 409, "boost_limit"},
+			{"hours too many", onBoost, store.UserQuota{}, `{"hours":99}`, nil, 400, "bad_hours"},
+			{"budget spent", tenantLimits{BoostEnabled: true, BoostMonthlyHours: 10}, store.UserQuota{}, ``, &countingBoost{hours: 10, counted: true}, 409, "boost_budget_spent"},
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				e := newBoostEnv(t, c.lim)
+				e.store(t, c.q)
+				if c.count != nil {
+					e.m.boostHours = *c.count
+				}
+				code, _, body := e.call(t, http.MethodPost, c.body)
+				if code != c.code || !strings.Contains(body, c.errc) {
+					t.Fatalf("%d %s, want %d %s", code, body, c.code, c.errc)
+				}
+				if _, ok, _ := e.m.store.GetSizeOverride(ctx, e.memID, store.SizeOverrideBoost); ok {
+					t.Fatalf("a refused boost left a row")
+				}
+			})
+		}
+	})
+
+	t.Run("the budget is not enforced while hours cannot be counted", func(t *testing.T) {
+		e := newBoostEnv(t, tenantLimits{BoostEnabled: true, BoostMonthlyHours: 1})
+		if code, _, body := e.call(t, http.MethodPost, ``); code != 200 {
+			t.Fatalf("no counter wired: %d %s", code, body)
+		}
+		e.m.boostHours = countingBoost{hours: 99, counted: false}
+		if code, _, body := e.call(t, http.MethodPost, ``); code != 200 {
+			t.Fatalf("counter says not counted: %d %s", code, body)
+		}
+	})
+
+	t.Run("a boost granted under budget is offered back as spent", func(t *testing.T) {
+		e := newBoostEnv(t, tenantLimits{BoostEnabled: true, BoostMonthlyHours: 5})
+		e.m.boostHours = countingBoost{hours: 5, counted: true}
+		sz := e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident})
+		if sz.Boost.Available || sz.Boost.Reason != "budget_spent" || !sz.Boost.Budget.Spent {
+			t.Fatalf("%+v", sz.Boost)
+		}
+	})
+
+	t.Run("cancel removes it for the next start", func(t *testing.T) {
+		e := newBoostEnv(t, onBoost)
+		e.call(t, http.MethodPost, ``)
+		code, out, _ := e.call(t, http.MethodDelete, ``)
+		if code != 200 || out.NextStart.Source != "stored" {
+			t.Fatalf("%d %+v", code, out)
+		}
+	})
+}
+
+// runningFake is a runtime whose container is up and whose Agent says it is on a given box.
+type runningFake struct {
+	runtime.Runtime
+	endpoint string
+}
+
+func (r runningFake) State(context.Context) string { return "running" }
+func (r runningFake) Endpoint() string             { return r.endpoint }
+func (r runningFake) Token() string                { return "" }
+
+func TestSizingOffersARestartOnlyIntoABiggerBox(t *testing.T) {
+	ctx := context.Background()
+	agentOn := func(instance string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"instance_type":"` + instance + `"}`))
+		}))
+	}
+	cases := []struct {
+		name    string
+		running string
+		boosted bool
+		restart bool
+		runMem  int64
+	}{
+		{"running on the small box, boost live", "m7i.large", true, true, 8192},
+		{"already on the boosted box", "m7i.xlarge", true, false, 16384},
+		{"still on the boosted box after the boost expired", "m7i.xlarge", false, false, 16384},
+		{"running on a bigger box than the next start", "m7i.2xlarge", true, false, 32768},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newBoostEnv(t, onBoost)
+			if c.boosted {
+				e.grant(t, "standard", 16384, time.Hour)
+			}
+			srv := agentOn(c.running)
+			defer srv.Close()
+			sz := e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident, rt: runningFake{endpoint: srv.URL}})
+			if sz.Running == nil || sz.Running.MemMiB != c.runMem {
+				t.Fatalf("running %+v, want %d MiB", sz.Running, c.runMem)
+			}
+			if sz.RestartOffered != c.restart {
+				t.Fatalf("restart_offered=%v, want %v (next %+v running %+v)", sz.RestartOffered, c.restart, sz.NextStart, sz.Running)
+			}
+		})
+	}
+
+	t.Run("an unknown running box offers nothing", func(t *testing.T) {
+		e := newBoostEnv(t, onBoost)
+		e.grant(t, "standard", 16384, time.Hour)
+		srv := agentOn("")
+		defer srv.Close()
+		sz := e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident, rt: runningFake{endpoint: srv.URL}})
+		if sz.Running != nil || sz.RestartOffered {
+			t.Fatalf("%+v", sz)
+		}
+	})
+}
+
+func TestTenantBoostPolicy(t *testing.T) {
+	ctx := context.Background()
+	st := p3Store(t)
+	m := p3Manager(t, st)
+	m.rtFactory = sizingOnlyFactory{sizing: boostSizing()}
+	acme, _ := st.CreateTenant(ctx, "acme", "Acme")
+	_, _ = st.CreateTenant(ctx, "other", "Other")
+	admin, _ := st.UpsertIdentity(ctx, "boss@acme.co.jp", "boss-acme-co-jp", "")
+	if _, err := st.EnsureMembership(ctx, admin.ID, acme.ID, "tenant_admin"); err != nil {
+		t.Fatal(err)
+	}
+	mem, _ := st.UpsertIdentity(ctx, "m@acme.co.jp", "m-acme-co-jp", "")
+	if _, err := st.EnsureMembership(ctx, mem.ID, acme.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	api := newWorkspaceAPI(m, false)
+	do := func(slug, email, method, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "/api/admin/tenants/"+slug+"/boost", strings.NewReader(body))
+		r.Header.Set("X-Forwarded-Email", email)
+		r.SetPathValue("slug", slug)
+		w := httptest.NewRecorder()
+		if method == http.MethodGet {
+			api.tenantBoost(w, r)
+		} else {
+			api.setTenantBoost(w, r)
+		}
+		return w
+	}
+	put := `{"enabled":true,"max_mem_mib":16384,"monthly_hours":20}`
+
+	if w := do("acme", "boss@acme.co.jp", http.MethodPut, put); w.Code != 200 {
+		t.Fatalf("tenant admin PUT = %d %s", w.Code, w.Body.String())
+	}
+	tn, _, _ := st.GetTenantBySlug(ctx, "acme")
+	if l := parseLimits(tn.Limits); !l.BoostEnabled || l.BoostMaxMemMiB != 16384 || l.BoostMonthlyHours != 20 {
+		t.Fatalf("stored %+v", l)
+	}
+	if rows := auditRowsOf(t, st, acme.ID, "tenant.boost"); len(rows) != 1 {
+		t.Fatalf("audit %+v", rows)
+	}
+	if w := do("acme", "boss@acme.co.jp", http.MethodGet, ""); !strings.Contains(w.Body.String(), `"monthly_hours":20`) || !strings.Contains(w.Body.String(), `"budget_counted":false`) {
+		t.Fatalf("GET %s", w.Body.String())
+	}
+
+	// Cross-tenant and non-admin writes change nothing.
+	if w := do("other", "boss@acme.co.jp", http.MethodPut, put); w.Code != http.StatusForbidden {
+		t.Fatalf("another tenant's admin = %d %s, want 403", w.Code, w.Body.String())
+	}
+	if w := do("acme", "m@acme.co.jp", http.MethodPut, `{"enabled":false}`); w.Code != http.StatusForbidden {
+		t.Fatalf("a member = %d, want 403", w.Code)
+	}
+	if o, _, _ := st.GetTenantBySlug(ctx, "other"); parseLimits(o.Limits).BoostEnabled {
+		t.Fatalf("the other tenant was written")
+	}
+	for _, bad := range []string{`{"enabled":true,"max_mem_mib":12345}`, `{"monthly_hours":-1}`} {
+		if w := do("acme", "boss@acme.co.jp", http.MethodPut, bad); w.Code != http.StatusBadRequest {
+			t.Fatalf("%s = %d, want 400", bad, w.Code)
+		}
+	}
+	tn, _, _ = st.GetTenantBySlug(ctx, "acme")
+	if !parseLimits(tn.Limits).BoostEnabled {
+		t.Fatalf("a rejected PUT changed the policy")
+	}
+
+	// A super_admin's whole-blob save of the quotas must not erase the tenant admin's policy.
+	if w := putLimits(m, "acme", `{"max_workspaces":4}`); w.Code != 200 {
+		t.Fatalf("limits PUT = %d %s", w.Code, w.Body.String())
+	}
+	tn, _, _ = st.GetTenantBySlug(ctx, "acme")
+	if l := parseLimits(tn.Limits); !l.BoostEnabled || l.BoostMaxMemMiB != 16384 || l.BoostMonthlyHours != 20 || l.MaxWorkspaces != 4 {
+		t.Fatalf("after the limits save: %+v", l)
+	}
+}
+
+func TestSizeOverrideStore(t *testing.T) {
+	ctx := context.Background()
+	st := p3Store(t)
+	o := store.SizeOverride{MembershipID: "M1", Source: store.SizeOverrideBoost, SlotClass: "standard", MemMiB: 16384, ExpiresAt: "2026-11-17T10:00:00Z"}
+	if err := st.PutSizeOverride(ctx, o); err != nil {
+		t.Fatal(err)
+	}
+	auto := o
+	auto.Source, auto.MemMiB = store.SizeOverrideAuto, 4096
+	if err := st.PutSizeOverride(ctx, auto); err != nil {
+		t.Fatal(err)
+	}
+	o.MemMiB = 32768
+	if err := st.PutSizeOverride(ctx, o); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, _ := st.GetSizeOverride(ctx, "M1", store.SizeOverrideBoost)
+	if !ok || got.MemMiB != 32768 {
+		t.Fatalf("%+v", got)
+	}
+	if a, _, _ := st.GetSizeOverride(ctx, "M1", store.SizeOverrideAuto); a.MemMiB != 4096 {
+		t.Fatalf("auto is stored apart from boost: %+v", a)
+	}
+	if err := st.DeleteSizeOverride(ctx, "M1", store.SizeOverrideBoost); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := st.GetSizeOverride(ctx, "M1", store.SizeOverrideBoost); ok {
+		t.Fatal("not deleted")
+	}
+	if _, ok, _ := st.GetSizeOverride(ctx, "M1", store.SizeOverrideAuto); !ok {
+		t.Fatal("deleting the boost took the auto override with it")
+	}
+}
