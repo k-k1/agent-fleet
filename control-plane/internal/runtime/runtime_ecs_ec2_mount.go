@@ -49,6 +49,18 @@ func (e *ecsEC2Runtime) umountHome(ctx context.Context, instanceID string) error
 	return e.runOnSlot(ctx, instanceID, homeUmountCommand(e.homeMountPoint(), slotMountInfo, slotSysBlock))
 }
 
+// slotCommandLabel is how a command is named in an error or a log line: its first line, and
+// how many more there are. A script sent whole (the EFS mounts) would otherwise put some
+// twenty lines into every line that mentions it; what went wrong is in the command's
+// stderr, which the caller appends.
+func slotCommandLabel(command string) string {
+	first, rest, more := strings.Cut(command, "\n")
+	if !more {
+		return command
+	}
+	return fmt.Sprintf("%s … (+%d lines)", first, strings.Count(strings.TrimRight(rest, "\n"), "\n")+1)
+}
+
 // runOnSlot sends one shell command through SSM and waits for it. SendCommand is
 // retried for a while because a freshly booted slot registers with SSM a little after
 // it registers with ECS, and an InvalidInstanceId there is a timing artifact rather
@@ -62,7 +74,7 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 	var cmdID string
 	for attempt := 1; ; attempt++ {
 		if err := g.check(); err != nil {
-			return fmt.Errorf("ssm send %q to %s: %w", command, instanceID, err)
+			return fmt.Errorf("ssm send %q to %s: %w", slotCommandLabel(command), instanceID, err)
 		}
 		out, err := e.ssmc.SendCommand(ctx, &ssm.SendCommandInput{
 			DocumentName: aws.String("AWS-RunShellScript"),
@@ -84,10 +96,10 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 		// that SSM, not ECS, was the thing that was stuck.
 		if attempt%5 == 1 {
 			log.Printf("ecs-ec2: slot %s is not answering SSM yet (attempt %d, %q): %v",
-				instanceID, attempt, command, err)
+				instanceID, attempt, slotCommandLabel(command), err)
 		}
 		if err := e.sleep(ctx, 3*time.Second); err != nil {
-			return fmt.Errorf("ssm send %q to %s: %w", command, instanceID, err)
+			return fmt.Errorf("ssm send %q to %s: %w", slotCommandLabel(command), instanceID, err)
 		}
 	}
 	// Poll on a ramp rather than a flat 2s, and ask EARLY. Measured on the production
@@ -126,7 +138,7 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 		case "Success":
 			return nil
 		case "Failed", "Cancelled", "TimedOut":
-			return fmt.Errorf("%q on %s: %s: %s", command, instanceID, inv.Status,
+			return fmt.Errorf("%q on %s: %s: %s", slotCommandLabel(command), instanceID, inv.Status,
 				strings.TrimSpace(aws.ToString(inv.StandardErrorContent)))
 		}
 	}

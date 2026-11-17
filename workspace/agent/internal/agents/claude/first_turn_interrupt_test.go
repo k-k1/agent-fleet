@@ -23,6 +23,15 @@ func tsLine(typ string, at time.Time, content any) string {
 // turn the way the hooks do: armed at create, delivering, then UserPromptSubmit's working write.
 func queueSession(t *testing.T, lines ...string) string {
 	t.Helper()
+	return queueSessionWith(t, func() []string { return lines })
+}
+
+// queueSessionWith is queueSession for a transcript that has to be stamped after the first turn
+// has started: SettleFirstTurnInterrupted ignores an interruption older than the turn's start, so
+// a timestamp taken before the start (the arguments of a call are evaluated first) loses to any
+// stall between the two.
+func queueSessionWith(t *testing.T, lines func() []string) string {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
@@ -31,16 +40,16 @@ func queueSession(t *testing.T, lines ...string) string {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	status.ArmFirstTurn(sid, false)
+	status.MarkFirstTurnDelivering(sid, "q_d1")
+	status.PersistOpen(sid, "working", "p1")
 	body := ""
-	for _, l := range lines {
+	for _, l := range lines() {
 		body += l + "\n"
 	}
 	if err := os.WriteFile(filepath.Join(dir, sid+".jsonl"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	status.ArmFirstTurn(sid, false)
-	status.MarkFirstTurnDelivering(sid, "q_d1")
-	status.PersistOpen(sid, "working", "p1")
 	return sid
 }
 
@@ -54,11 +63,13 @@ func TestInterruptedFirstTurnOfATerminalSessionIsAborted(t *testing.T) {
 		"during a tool":    "[Request interrupted by user for tool use]",
 	} {
 		t.Run(name, func(t *testing.T) {
-			sid := queueSession(t,
-				tsLine("user", start, "the queue's task"),
-				tsLine("assistant", start.Add(5*time.Second), []any{map[string]any{"type": "text", "text": "working"}}),
-				tsLine("user", time.Now().Add(time.Second), []any{map[string]any{"type": "text", "text": text}}),
-			)
+			sid := queueSessionWith(t, func() []string {
+				return []string{
+					tsLine("user", start, "the queue's task"),
+					tsLine("assistant", start.Add(5*time.Second), []any{map[string]any{"type": "text", "text": "working"}}),
+					tsLine("user", time.Now().Add(time.Second), []any{map[string]any{"type": "text", "text": text}}),
+				}
+			})
 			HealIdle(sid)
 			got, ok := status.ReadFirstTurn(sid)
 			if !ok || got.Outcome != status.TurnEndReasonAborted {

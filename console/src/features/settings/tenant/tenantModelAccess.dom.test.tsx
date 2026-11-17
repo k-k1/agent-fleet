@@ -606,6 +606,30 @@ describe("model access views", () => {
     expect(tab("提供モデルと予算")).toBeUndefined();
   });
 
+  it("says on the provided tab when the restriction stops the provided route, naming who", async () => {
+    const stopped = {
+      ...VIEW(),
+      routes: [
+        ...VIEW().routes,
+        {
+          id: "bedrock-deployment",
+          class: "provided",
+          destination: "aws-bedrock",
+          allowed: false,
+          forbiddenBy: ["tenant"],
+        },
+      ],
+    };
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : stopped),
+    );
+    await mount();
+    await flush();
+    expect(host!.querySelector('[data-testid="prov-rule-stops"]')!.textContent).toContain(
+      "止めているのは: このテナント",
+    );
+  });
+
   it("keeps D12's and D13's sentences on screen on every view", async () => {
     api.mockImplementation((path: string) => Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : VIEW()));
     await mount();
