@@ -240,6 +240,8 @@ func squidConv(snap *snapshot) lineConv {
 			return Event{}, false
 		}
 		if l.duplicate {
+			// Count 0 pairs with the skip in readBatchWith; the CP would count a
+			// shipped Count-0 event as 1 (egress.go), so it must never be sent.
 			return Event{}, true
 		}
 		return Event{
@@ -251,7 +253,7 @@ func squidConv(snap *snapshot) lineConv {
 
 func readBatchWith(r *bufio.Reader, ident string, off int64, conv lineConv) ([]Event, int64, error) {
 	var evs []Event
-	size := 0
+	size, skipped := 0, 0
 	for size < maxBatchBytes {
 		line, err := readLine(r)
 		if errors.Is(err, io.EOF) {
@@ -272,12 +274,16 @@ func readBatchWith(r *bufio.Reader, ident string, off int64, conv lineConv) ([]E
 			continue
 		}
 		if ev.Count == 0 {
+			skipped++
 			continue
 		}
 		ev.ID = ident + "@" + strconv.FormatInt(pos, 10)
 		b, _ := json.Marshal(ev)
 		size += len(b) + 1
 		evs = append(evs, ev)
+	}
+	if skipped > 0 {
+		log.Printf("egress-agent: %d duplicate splice lines skipped in %s", skipped, ident)
 	}
 	return evs, off, nil
 }

@@ -98,8 +98,14 @@ func parseLine(s string) (logLine, bool) {
 //     and was not allowed through; it shows by address, not allowed.
 //   - Plain HTTP intercept (:3129) is one TCP_MISS/TCP_DENIED line and has no bump mode.
 //
-// Remaining risk: a splice whose second CONNECT could not even be created is logged once,
-// and that one line is dropped here.
+// Visibility: the kept TCP_TUNNEL line is written when the tunnel closes, so a long-lived
+// connection is not visible (Observed, attribution, would-block audit) until then. Its
+// time is the start time, so daily counts are right. Before, the CONNECT line made it
+// visible at splice time.
+//
+// Squid creates the second CONNECT synchronously inside splice(), and it always produces a
+// line (TCP_TUNNEL, *_ABORTED or TCP_DENIED), so a lone NONE_NONE splice is not expected;
+// a crash between the two writes is the only way to lose a connection here.
 func isSpliceConnect(status, bump string) bool {
 	return status == "NONE_NONE" && bump == "splice"
 }
