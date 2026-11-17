@@ -299,6 +299,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.tidyop_out_growth": "It is much longer than the notes it replaces",
   "memo.tidyop_out_dest": "The destination is not one of the categories offered",
   "memo.tidyop_out_moved": "A note that a tidy moved cannot be moved again",
+  "memo.tidyop_out_duplicate_ref": "The destination already holds a note for the same item, or two notes for the same item are moved there together",
   "memo.tidyop_out_too_many": "Too many proposals (at most 80)",
   "memo.tidyop_malformed": "{count} proposals could not be read and were ignored.",
   "memo.tidyop_apply": "Apply {count} proposals",

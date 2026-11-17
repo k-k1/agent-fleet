@@ -1,7 +1,7 @@
 // The manual Tidy's pure logic: which selections may be operated on, the prompt, the reading of a
 // reply, and the preview's reading of each operation.
 import { describe, expect, it } from "vitest";
-import type { MemoCategory } from "../../types/memo.ts";
+import type { Memo, MemoCategory } from "../../types/memo.ts";
 import {
   TIDY_LIMITS,
   applyBody,
@@ -205,6 +205,21 @@ describe("reviewOps", () => {
     expect(why([{ op: "move", id: "a", to: "nope" }])).toEqual(["bad_destination"]);
     expect(why([{ op: "move", id: "a", to: "run" }])).toEqual(["bad_destination"]); // the category itself is never offered
     expect(why([{ op: "move", id: "m", to: "plain" }])).toEqual(["already_moved"]);
+  });
+  it("leaves out a move that would put a second open note for the same item into the destination", () => {
+    const ref = { provider: "github", key: "A/B#1", url: "u" };
+    const mine = [note("r1", { reference: ref }), note("r2", { reference: { ...ref, key: "a/b#1" } }), note("r3", { reference: { ...ref, key: "a/b#2" } })];
+    const there = (state: string, key = "a/b#1") => note("t", { category: "listed", state: state as never, reference: { ...ref, key } });
+    const why = (ops: Parameters<typeof reviewOps>[0], all: Memo[]) => reviewOps(ops, mine, dests, all).leftOut.map((l) => l.why);
+    expect(why([{ op: "move", id: "r1", to: "listed" }], [...mine, there("held")])).toEqual(["duplicate_ref"]);
+    expect(why([{ op: "move", id: "r1", to: "listed" }], [...mine, there("claimed")])).toEqual(["duplicate_ref"]);
+    expect(why([{ op: "move", id: "r1", to: "listed" }], [...mine, there("delivered")])).toEqual([]); // not open
+    expect(why([{ op: "move", id: "r1", to: "listed" }], [...mine, there("pending", "a/b#9")])).toEqual([]);
+    expect(why([{ op: "move", id: "r1", to: "other" }], [...mine, there("pending")])).toEqual([]); // another destination
+    // Two notes for one item moved together: the second is left out, and the first is kept.
+    const r = reviewOps([{ op: "move", id: "r1", to: "listed" }, { op: "move", id: "r2", to: "listed" }, { op: "move", id: "r3", to: "listed" }], mine, dests, mine);
+    expect(r.items.map((i) => (i.kind === "move" ? i.note.id : ""))).toEqual(["r1", "r3"]);
+    expect(r.leftOut.map((l) => l.why)).toEqual(["duplicate_ref"]);
   });
   it("leaves out proposals past the 80th", () => {
     const keeps = Array.from({ length: 81 }, () => ({ op: "keep" as const, id: "a" }));

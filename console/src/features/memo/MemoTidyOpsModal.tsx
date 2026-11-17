@@ -32,6 +32,8 @@ interface Props {
   memos: Memo[];
   category: MemoCategory;
   categories: MemoCategory[];
+  /** Every note the section holds: the destinations' open references are read from them. */
+  allMemos?: Memo[];
   onDone: () => void; // applied: refetch and close
   onReload: () => void; // refetch, stay open (the notes changed under the preview)
   onClose: () => void;
@@ -53,7 +55,7 @@ function readApplied(res: unknown): Applied | null {
   return { merged: n(res.run.merged), split: n(res.run.split), moved: n(res.run.moved), held: n(res.run.held) };
 }
 
-export function MemoTidyOpsModal({ memos, category, categories, onDone, onReload, onClose }: Props) {
+export function MemoTidyOpsModal({ memos, category, categories, allMemos, onDone, onReload, onClose }: Props) {
   const tr = useT();
   const [phase, setPhase] = useState<"loading" | "preview" | "failed" | "done">("loading");
   const [err, setErr] = useState("");
@@ -94,7 +96,7 @@ export function MemoTidyOpsModal({ memos, category, categories, onDone, onReload
         setPhase("failed");
         return;
       }
-      const rv = reviewOps(parsed.ops, memos as TidyMemo[], dests.current);
+      const rv = reviewOps(parsed.ops, memos as TidyMemo[], dests.current, allMemos);
       setMalformed(parsed.malformed);
       setReview(rv);
       setPick(Object.fromEntries(rv.items.map((_, i) => [i, true])));

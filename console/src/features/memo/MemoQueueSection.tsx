@@ -1233,6 +1233,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         <MemoTidyModal
           memos={tidy}
           categories={cats}
+          allMemos={memos}
           onReload={bumpMemos}
           onClose={() => setTidy(null)}
           onDone={() => {

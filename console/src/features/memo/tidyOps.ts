@@ -244,6 +244,7 @@ export type LeftOutWhy =
   | "growth"
   | "bad_destination"
   | "already_moved"
+  | "duplicate_ref"
   | "too_many";
 
 export const LEFT_OUT_WORDS: Record<LeftOutWhy, MsgKey> = {
@@ -258,6 +259,7 @@ export const LEFT_OUT_WORDS: Record<LeftOutWhy, MsgKey> = {
   growth: "memo.tidyop_out_growth",
   bad_destination: "memo.tidyop_out_dest",
   already_moved: "memo.tidyop_out_moved",
+  duplicate_ref: "memo.tidyop_out_duplicate_ref",
   too_many: "memo.tidyop_out_too_many",
 };
 
@@ -280,6 +282,20 @@ export interface Review {
   kept: Memo[];
 }
 
+const refIdent = (m: Memo): string => (m.reference?.key ? m.reference.provider + "\x00" + m.reference.key.toLowerCase() : "");
+
+/** The work items the destination's open notes (waiting, approval-pending or taken by a run) point at. */
+function openRefsIn(all: readonly Memo[], dest: TidyDest): Set<string> {
+  const refs = new Set<string>();
+  for (const m of all) {
+    if (m.repo === dest.repo && m.category === dest.category && (m.state === "pending" || m.state === "held" || m.state === "claimed")) {
+      const r = refIdent(m);
+      if (r) refs.add(r);
+    }
+  }
+  return refs;
+}
+
 function textProblem(text: string): boolean {
   const t = text.trim();
   return t === "" || utf8Len(t) > TIDY_LIMITS.textBytes || LONE_SURROGATE.test(t) || t.startsWith(ENVELOPE_PREFIX);
@@ -288,7 +304,13 @@ function textProblem(text: string): boolean {
 /** Reads each proposed operation against the notes and destinations the member is looking at. An
  *  operation the Control Plane would refuse is left out, with the reason and the notes it named,
  *  so that one bad proposal does not cost the approval of the rest. */
-export function reviewOps(ops: readonly TidyOp[], memos: readonly TidyMemo[], dests: readonly TidyDest[]): Review {
+export function reviewOps(
+  ops: readonly TidyOp[],
+  memos: readonly TidyMemo[],
+  dests: readonly TidyDest[],
+  allMemos: readonly Memo[] = [],
+): Review {
+  const movedRefs = new Map<string, Set<string>>();
   const byId = new Map(memos.map((m) => [m.id, m]));
   const destById = new Map(dests.map((d) => [d.id, d]));
   const used = new Set<string>();
@@ -370,6 +392,14 @@ export function reviewOps(ops: readonly TidyOp[], memos: readonly TidyMemo[], de
         out(op, "already_moved");
         continue;
       }
+      // A queue holds one open note per work item: the rule of step 3, which the Control Plane
+      // applies to the destination's notes and to the notes this run already moves there.
+      const ref = refIdent(notes[0]);
+      if (ref && (openRefsIn(allMemos, dest).has(ref) || movedRefs.get(dest.id)?.has(ref))) {
+        out(op, "duplicate_ref");
+        continue;
+      }
+      if (ref) movedRefs.set(dest.id, (movedRefs.get(dest.id) ?? new Set()).add(ref));
       // A held note stays held wherever it goes in a queue; a waiting one keeps waiting only
       // in a queue the category lists.
       const effect: TidyEffect = !dest.queue ? "note" : notes[0].state === "pending" && dest.listed ? "run" : "approve";

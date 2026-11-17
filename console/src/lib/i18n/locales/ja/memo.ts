@@ -296,6 +296,7 @@ export const memo = {
   "memo.tidyop_out_growth": "元のメモより大幅に長くなっています",
   "memo.tidyop_out_dest": "移動先が選べるカテゴリにありません",
   "memo.tidyop_out_moved": "整理で移したメモは、もう一度移せません",
+  "memo.tidyop_out_duplicate_ref": "移動先に、同じ項目を指すメモがすでにあるか、同じ項目のメモを同時に移そうとしています",
   "memo.tidyop_out_too_many": "提案が多すぎます（最大 80 個）",
   "memo.tidyop_malformed": "形式を読み取れなかった提案が {count} 個ありました。",
   "memo.tidyop_apply": "{count} 個の提案を反映",
@@ -322,6 +323,6 @@ export const memo = {
   "memo.tidyop_code_text_growth": "元のメモより大幅に長くなっています",
   "memo.tidyop_code_bad_destination": "移動先が、いま選べるカテゴリにありません",
   "memo.tidyop_code_move_self": "同じカテゴリへは移せません",
-  "memo.tidyop_code_duplicate_ref": "移動先に、同じ項目を指す実行待ちのメモがすでにあります",
+  "memo.tidyop_code_duplicate_ref": "移動先に、同じ項目を指すメモがすでにあります",
   "memo.tidyop_code_already_moved": "整理で移したメモは、もう一度移せません",
 };

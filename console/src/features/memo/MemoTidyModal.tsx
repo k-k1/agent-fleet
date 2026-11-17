@@ -25,12 +25,13 @@ interface TidyRow {
 interface MemoTidyModalProps {
   memos: Memo[]; // the selected memos to tidy
   categories: MemoCategory[]; // tells which category runs by itself
+  allMemos?: Memo[]; // every note shown: a move is checked against the destination's open references
   onDone: () => void; // applied → refetch
   onReload?: () => void; // refetch and stay open: the notes changed under the preview
   onClose: () => void;
 }
 
-export function MemoTidyModal({ memos, categories, onDone, onReload, onClose }: MemoTidyModalProps) {
+export function MemoTidyModal({ memos, categories, allMemos, onDone, onReload, onClose }: MemoTidyModalProps) {
   const tr = useT();
   const plan = planSelection(memos, categories);
   if (plan.mode === "ops") {
@@ -39,6 +40,7 @@ export function MemoTidyModal({ memos, categories, onDone, onReload, onClose }: 
         memos={memos}
         category={plan.category}
         categories={categories}
+        allMemos={allMemos}
         onDone={onDone}
         onReload={onReload ?? onDone}
         onClose={onClose}
