@@ -19,6 +19,7 @@ import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useFilesStore } from "../files/store.ts";
 import { REVALIDATE_GAP_MS } from "../files/refreshPolicy.ts";
 import { MiddleEllipsis } from "../files/MiddleEllipsis.tsx";
@@ -76,6 +77,7 @@ interface ChangeMenu {
 export function FilesChanges() {
   const tr = useT();
   const running = useWorkspaceStore((s) => s.state) === "running";
+  const tenant = useTenantStore((s) => s.tenant);
   const filesTick = useFilesStore((s) => s.tick);
   const repos = useReposStore((s) => s.repos);
   const wset = useActiveWorkingSet();
@@ -114,6 +116,17 @@ export function FilesChanges() {
   shownRef.current = shown;
   const loadTick = useShownValue(filesTick);
   const loadRunning = useShownValue(running);
+  // A switch between two running workspaces fires no running edge and no files tick, so the
+  // tenant is a trigger of its own, held while hidden like the other two.
+  const loadTenant = useShownValue(tenant);
+  // The tenant right now: a read that writes back after an await compares it with the tenant
+  // it started under, so the previous workspace's answer never replaces the new one's list.
+  const tenantRef = useRef(tenant);
+  tenantRef.current = tenant;
+  // The tenant the list on screen was loaded under. A switch held while hidden leaves the old
+  // tenant's list in state until the loader runs after the show's first paint; rendering it
+  // would flash the other workspace's file names, so it shows loading instead.
+  const loadedTenantRef = useRef(tenant);
   // Something asked for a reload while the view was hidden (a turn ended, or the member came
   // back to the window). One reload on show pays all of it.
   const owed = useRef(false);
@@ -122,11 +135,12 @@ export function FilesChanges() {
   // failure is retried (isTransientErr).
   useRetryLoad(async (signal) => {
     owed.current = false; // this load is the reload anything owed asked for
+    loadedTenantRef.current = tenant;
     if (!loadRunning) return true; // nothing to load while the WS is stopped
     setChanges(null);
     let d;
     try {
-      d = await api("api/fs/changes");
+      d = await api("api/fs/changes", { signal });
     } catch {
       return false; // network drop — retry
     }
@@ -134,7 +148,7 @@ export function FilesChanges() {
     if (isTransientErr(d)) return false;
     setChanges(d.changes || []);
     return true;
-  }, [loadRunning, loadTick]);
+  }, [loadRunning, loadTick, loadTenant]);
 
   // Auto-refresh when a session goes back to waiting for input
   // (features/files/sessionRefresh.ts). The loader above is not reused because of its
@@ -149,9 +163,14 @@ export function FilesChanges() {
   const reload = useCallback(async () => {
     if (!running || autoInFlight.current || document.hidden) return;
     autoInFlight.current = true;
+    const started = tenantRef.current;
     lastAutoAt.current = Date.now();
     try {
       const d = await api("api/fs/changes");
+      if (tenantRef.current !== started) {
+        lastAutoAt.current = 0; // a discarded answer must not throttle the next return to the window
+        return; // the previous workspace's answer
+      }
       if (!d || d.error || isTransientErr(d) || !Array.isArray(d.changes)) return;
       setChanges(d.changes);
     } catch {
@@ -199,7 +218,7 @@ export function FilesChanges() {
   }, [reload]);
 
   if (!running) return <EmptyState icon="debug-disconnect" title={tr("pj.ws_stopped")} />;
-  if (changes === null) return <EmptyState icon="loading" title={tr("pj.loading")} />;
+  if (changes === null || loadedTenantRef.current !== tenant) return <EmptyState icon="loading" title={tr("pj.loading")} />;
   // Working sets (docs/log/52): keep only changes in the set's working copies —
   // a worktree folder ("<base>@<slug>") resolves via its base prefix.
   const scoped = wset ? changes.filter((c) => wset.repos.includes(folderBase(c.repo))) : changes;
