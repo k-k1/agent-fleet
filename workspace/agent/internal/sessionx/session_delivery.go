@@ -198,8 +198,26 @@ func withdrawOptimisticWorking(m session.Meta, base deliverySnapshot, workingRev
 	if base.paneBusy || workingRev == "" || deliveryPaneBusy(m.Name) {
 		return
 	}
-	status.PersistIf(session.UUID(m.Dir, m.Name), "idle", workingRev, true)
+	sid := session.UUID(m.Dir, m.Name)
+	// PersistIf gives way on a lock it could not take within lockWait, or on a holder stalled past
+	// lockWait/2 (a loaded host). Neither is the record having moved on: the working this send
+	// wrote is still there, and giving up would leave it standing for an idle session. Only a
+	// record whose Rev changed (a hook's write) ends the attempts; the count bounds the rest.
+	for i := 0; i < withdrawAttempts; i++ {
+		if persistIfRev(sid, "idle", workingRev, true) {
+			return
+		}
+		if st, ok := status.Read(sid); !ok || st.Rev != workingRev {
+			return
+		}
+	}
 }
+
+// withdrawAttempts bounds the retries of a withdrawal that gave way without the record changing.
+const withdrawAttempts = 3
+
+// persistIfRev is status.PersistIf; a variable so a test can force the give-way.
+var persistIfRev = status.PersistIf
 
 // promptDraftVisible reports whether the captured pane still shows the typed prompt as
 // an unsubmitted composer draft, or claude is holding it for review. Best-effort pane
