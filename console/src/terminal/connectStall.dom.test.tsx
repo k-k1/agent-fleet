@@ -1,6 +1,6 @@
 // The connect-stall watchdog (#4432). A socket still CONNECTING past its window is torn down
 // and re-opened, which clears the session-boot hang. The window must grow while connects keep
-// failing to open: on a ~1 s round-trip link a healthy connect takes over 3 s, and a fixed
+// being replaced while still connecting: on a ~1 s round-trip link a healthy connect takes over 3 s, and a fixed
 // 3.5 s window cut every one of them off just before it completed.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { Terminal } from "@xterm/xterm";
@@ -146,7 +146,7 @@ describe("the connect-stall watchdog", () => {
     expect(last()).not.toBe(second);
   });
 
-  it("never fires a replaced socket's watchdog", () => {
+  it("fires the current socket's watchdog once, at its own window", () => {
     attach("cs1", "sa");
     vi.advanceTimersByTime(3500);
     vi.advanceTimersByTime(4000);
