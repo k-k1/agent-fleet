@@ -349,19 +349,24 @@ func TestUsageHistoryAPIScopeAndUnmeasuredIsNull(t *testing.T) {
 	other, _ := st.CreateTenant(ctx, "ops", "運用")
 	oi, _ := st.UpsertIdentity(ctx, "o@x.co.jp", "o-x-co-jp", "")
 	om, _ := st.EnsureMembership(ctx, oi.ID, other.ID, "member")
-	day := time.Now().UTC().Format("2006-01-02")
+	// Pin the launch to a fixed hour inside one UTC day (yesterday 12:00-13:00Z): a launch that
+	// starts at now-1h straddles UTC midnight for the first hour of every day and then folds into
+	// two day rows, so the test would depend on the wall-clock time of day.
+	start := time.Now().UTC().Truncate(24 * time.Hour).Add(-12 * time.Hour)
+	end := start.Add(time.Hour)
+	day := start.Format("2006-01-02")
 	seed := func(m store.Membership, tenant string, vcpu int, withWindow bool) {
 		l := store.Launch{ID: "L-" + m.ID, WorkspaceID: "w-" + m.ID, MembershipID: m.ID, TenantID: tenant,
-			StartedAt: time.Now().Add(-time.Hour).Unix(), InstanceType: "m7i.large", VCPU: vcpu}
+			StartedAt: start.Unix(), InstanceType: "m7i.large", VCPU: vcpu}
 		if err := st.BeginLaunch(ctx, l); err != nil {
 			t.Fatal(err)
 		}
-		_ = st.TouchLaunch(ctx, l.ID, time.Now().Unix())
+		_ = st.TouchLaunch(ctx, l.ID, end.Unix())
 		_ = st.FoldRunning(ctx, m.ID)
 		if withWindow {
 			ws := uint64(3 << 30)
 			c := 150.0
-			_ = st.FoldWindows(ctx, m.ID, 0, time.Now().Unix(), []store.UsageWindow{{T: time.Now().Unix(), LID: l.ID, CPUPct: &c, WorkingSet: &ws}})
+			_ = st.FoldWindows(ctx, m.ID, 0, end.Unix(), []store.UsageWindow{{T: end.Unix() - 60, LID: l.ID, CPUPct: &c, WorkingSet: &ws}})
 		}
 	}
 	seed(wmem, tn.ID, 2, true)
