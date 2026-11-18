@@ -56,9 +56,20 @@ describe("HandoffModal target kinds", () => {
   });
 
   it("says it is checking while the catalogue is out, instead of offering anything", async () => {
-    kindsAnswer = () => new Promise(() => {});
+    // Settled at the end: an in-flight catalogue request is shared by later mounts.
+    let release!: (v: unknown) => void;
+    kindsAnswer = () => new Promise((r) => (release = r));
     await render();
     expect(labels()).toEqual([]);
     expect(document.body.textContent).toContain(t("launch.agents_checking"));
+    release({ kinds: [], access: { policyConfirmed: true } });
+  });
+
+  it("says the policy cannot be confirmed, not that nothing is connected, when the catalogue fails", async () => {
+    kindsAnswer = async () => ({ error: { code: "down" } });
+    await render();
+    expect(labels()).toEqual([]);
+    expect(document.body.textContent).toContain(t("launch.policy.policy_unconfirmed"));
+    expect(document.body.textContent).not.toContain(t("launch.agents_none"));
   });
 });

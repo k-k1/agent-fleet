@@ -1,8 +1,9 @@
 // Reads the move dialog and the mirror's limit banner share: which kinds are connected, and how
 // much quota the offered kinds have left. Both are display and ordering only; the Agent's move
 // looks at neither.
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { api } from "../../core/api/client.ts";
+import { agentOf } from "../../agents/registry.ts";
 import { kindLaunchable } from "../../agents/launchAccess.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useMemberCatalog } from "../settings/credentials/memberCatalog.ts";
@@ -14,10 +15,20 @@ import type { ConnectionsStatus, SessionKind } from "../../types/session.ts";
  * The launch check the move dialog and the limit banner rely on: the connection state (warm from
  * the rail, fetched only cold) judged by the live, policy-filtered catalogue (kindLaunchable,
  * ADR 0138 D10a), so a harness the policy forbids or the member switched off is not offered.
- * Null while either has not answered yet, which callers read as "do not filter"; an answer that
- * failed or cannot be vouched for offers no model kind, as the launch dialog does.
+ * `pending` is the catalogue still being read: nothing may be chosen yet. `connected` is null
+ * while it is, and, once it has answered, judges by the catalogue alone while the connection
+ * check is still cold (the Agent's own refusals cover the rest). An answer that failed or cannot
+ * be vouched for offers no kind, as the launch dialog does. `connsKnown` is false while the
+ * connection check is cold.
  */
-export function useConnectedKinds(): ((k: SessionKind) => boolean) | null {
+export function useMoveGate(): {
+  connected: ((k: SessionKind) => boolean) | null;
+  pending: boolean;
+  connsKnown: boolean;
+  /** The kind's own login check passes (true while the connection check is cold): a kind that is
+   *  logged in yet not `connected` is hidden by the policy or the member, not unconnected. */
+  loggedIn: (k: SessionKind) => boolean;
+} {
   const running = useWorkspaceStore((s) => s.state) === "running";
   const { kinds, pending } = useMemberCatalog(running);
   const conns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
@@ -32,10 +43,19 @@ export function useConnectedKinds(): ((k: SessionKind) => boolean) | null {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once on mount; `conns` is the warm-cache guard
   }, []);
-  return useMemo(
-    () => (conns && !pending ? (k: SessionKind) => kindLaunchable(k, { conns }, kinds) : null),
+  const connected = useMemo(
+    () =>
+      pending ? null : (k: SessionKind) => (conns ? kindLaunchable(k, { conns }, kinds) : !!kinds?.has(k)),
     [conns, kinds, pending],
   );
+  const loggedIn = useCallback((k: SessionKind) => !conns || agentOf(k).available({ conns }), [conns]);
+  return { connected, pending: !!pending, connsKnown: !!conns, loggedIn };
+}
+
+/** The same check for callers that must know the connection state too (the limit banner): null until both answered. */
+export function useConnectedKinds(): ((k: SessionKind) => boolean) | null {
+  const { connected, connsKnown } = useMoveGate();
+  return connsKnown ? connected : null;
 }
 
 // useMoveUsage reads, once per mount, the usage of every offered kind the Console already has a

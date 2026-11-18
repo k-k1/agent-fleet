@@ -125,6 +125,21 @@ describe("MoveSessionModal: before the move", () => {
     };
     await render();
     expect(kindButtons()).toEqual(["opencode"]);
+    // A logged-in kind the policy hides is not named as "not connected": reconnecting would not fix it.
+    expect([...document.querySelectorAll<HTMLElement>(".move-not-offered li")].map((li) => li.dataset.kind)).not.toContain("codex");
+  });
+
+  it("offers and selects nothing, and posts nothing, while the catalogue is still out", async () => {
+    setCachedConns({ codex: { connected: true }, opencode: { connected: true } } as never);
+    // Settled at the end: an in-flight catalogue request is shared by later mounts.
+    let release!: (v: unknown) => void;
+    routes["GET api/agents/kinds"] = () => new Promise((r) => (release = r));
+    await render();
+    expect(kindButtons()).toEqual([]);
+    expect(text()).toContain(t("launch.agents_checking"));
+    await click(confirmBtn());
+    expect(calls.filter((c) => c.method === "POST")).toEqual([]);
+    release({ kinds: [], access: { policyConfirmed: true } });
   });
 
   it("keeps the Agent's order, and marks nothing, when not opened from a limit banner", async () => {

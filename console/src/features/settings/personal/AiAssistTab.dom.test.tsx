@@ -284,4 +284,19 @@ describe("AiAssistTab per-feature agent pin under the credential policy", () => 
     expect(pinOptions("title.session")).toEqual(["", "claude", "codex"]);
     expect(sel.value).toBe("codex");
   });
+
+  it("lists only auto and the current pin while the catalogue has not answered", async () => {
+    const { useWorkspaceStore } = await import("../../../core/store/workspace.ts");
+    useWorkspaceStore.setState({ state: "running" } as never);
+    // Settled at the end: an in-flight catalogue request is shared by later mounts.
+    let release!: (v: unknown) => void;
+    apiMock.mockImplementation((url: string) =>
+      url.includes("agents/kinds") ? new Promise((r) => (release = r)) : Promise.resolve({ features: [] }),
+    );
+    setSetting("aiFeatureAgents", { "title.session": "codex" });
+    await render();
+    await settle();
+    expect(pinOptions("title.session")).toEqual(["", "codex"]);
+    release({ kinds: [], access: { policyConfirmed: true } });
+  });
 });

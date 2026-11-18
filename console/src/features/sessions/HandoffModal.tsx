@@ -120,10 +120,19 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
         <div className="ui-field">
           <span className="ui-field-label">{tr("handoff.target_label")}</span>
           {targets.length === 0 && (
-            // Empty means one of two things — still checking, or nothing is connected.
-            // Same copy as the launch modal so the two pickers read identically.
+            // Empty means one of several things — still checking, a policy that cannot be
+            // confirmed, nothing the policy routes, or nothing connected. Same branches and copy as
+            // the launch modal so the two pickers read identically.
             <div className="muted launch-noagents">
-              {tr(settling ? "launch.agents_checking" : "launch.agents_none")}
+              {tr(
+                settling
+                  ? "launch.agents_checking"
+                  : running && !access.kinds
+                    ? "launch.policy.policy_unconfirmed"
+                    : access.noRoute
+                      ? "launch.no_route_line"
+                      : "launch.agents_none",
+              )}
             </div>
           )}
           <div className="ui-seg big">
