@@ -79,7 +79,7 @@ func gcpProfileName(id, label string) string {
 }
 
 // gcpNamedProfile is one row with its computed name and, when its name collides with
-// another row's, every label that maps to that name (sorted as the rows are).
+// another row's, every label that maps to that name (in byte order).
 type gcpNamedProfile struct {
 	store.GCPProfile
 	Name      string
