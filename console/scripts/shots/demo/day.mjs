@@ -411,8 +411,12 @@ export function seed() {
       activeCellId: "g1",
     },
     sections: { assistant: 0, workitems: 1, memos: 0, schedules: 0, repos: 1, files: 0 },
-    storage: { [`af.mirror-files-open.${NAME_OF.claude}`]: "1" },
-    ready: `!!document.querySelector(".wi-row")`,
+    // The left pane shows one view at a time (core/store/leftRail.ts); this story starts on the
+    // issue tracker and switches to the session tree once both sessions are launched.
+    storage: { [`af.mirror-files-open.${NAME_OF.claude}`]: "1", "af-left-view": "workitems" },
+    // A view that is not chosen stays mounted but hidden, so a bare querySelector would pass
+    // while the row cannot be clicked: wait for a row that has a box.
+    ready: `[...document.querySelectorAll(".wi-row")].some((e) => e.getClientRects().length > 0)`,
   };
 }
 
@@ -447,6 +451,11 @@ export async function script(c) {
   await c.click(find(".ui-modal .ui-btn-primary"));
   await c.waitFor(`!!${find(".ovw-card", `#${codex.number}`)}`);
   await c.sleep(2200);
+
+  // The session tree comes back to the left pane: step 3 opens the finished chat from it.
+  await c.click(`document.querySelector('.actbar-btn[data-rail-view="sessions"]')`);
+  await c.waitFor(`[...document.querySelectorAll(".sess-row")].some((e) => e.getClientRects().length > 0)`);
+  await c.sleep(900);
 
   // ---- 2. the laptop closes ----
   await c.ev(`__demo.hideCursor()`);

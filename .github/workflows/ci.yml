@@ -631,7 +631,11 @@ jobs:
       # assets could be served, not at glyph shapes, so the verdict does not change.
       - name: pdf:check (real browser)
         run: npm run pdf:check
+        env:
+          SHOTS_NO_SANDBOX: "1"
       - name: doc:check (real browser)
         run: npm run doc:check
+        env:
+          SHOTS_NO_SANDBOX: "1"
       - name: build
         run: npm run build
