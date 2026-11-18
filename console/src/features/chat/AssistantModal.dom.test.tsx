@@ -4,19 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+let kinds = [
+  { kind: "claude", chat: false },
+  { kind: "codex", chat: true },
+  { kind: "opencode", chat: true },
+];
 vi.mock("../../core/api/client.ts", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   api: async (path: string) =>
-    path.includes("agents/kinds")
-      ? {
-          kinds: [
-            { kind: "claude", chat: false },
-            { kind: "codex", chat: true },
-            { kind: "opencode", chat: true },
-          ],
-          access: { policyConfirmed: true },
-        }
-      : { error: { code: "unrouted" } },
+    path.includes("agents/kinds") ? { kinds, access: { policyConfirmed: true } } : { error: { code: "unrouted" } },
 }));
 
 const { AssistantModal } = await import("./AssistantModal.tsx");
@@ -34,7 +30,21 @@ const picks = () =>
     .filter((b) => Object.values(["claude", "codex", "opencode"]).some((k) => b.textContent === agentOf(k as never).assistantName))
     .map((b) => ({ text: b.textContent, active: b.classList.contains("active") }));
 
+const saveBtn = () => document.querySelector<HTMLButtonElement>("button[type=submit]")!;
+const typeName = async () => {
+  const input = document.querySelector<HTMLInputElement>("input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "A");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+};
+
 beforeEach(() => {
+  kinds = [
+    { kind: "claude", chat: false },
+    { kind: "codex", chat: true },
+    { kind: "opencode", chat: true },
+  ];
   useWorkspaceStore.setState({ state: "running" } as never);
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -62,5 +72,23 @@ describe("AssistantModal backend picker", () => {
       { text: agentOf("codex").assistantName, active: false },
       { text: agentOf("opencode").assistantName, active: false },
     ]);
+  });
+
+  it("saves a new assistant on an offered backend", async () => {
+    await render();
+    await typeName();
+    expect(saveBtn().disabled).toBe(false);
+  });
+
+  it("does not save a new assistant when no backend is offered", async () => {
+    kinds = [{ kind: "claude", chat: false }, { kind: "codex", chat: false }, { kind: "opencode", chat: false }];
+    await render();
+    await typeName();
+    expect(saveBtn().disabled).toBe(true);
+  });
+
+  it("still saves an edited assistant on its own, no longer offered, backend", async () => {
+    await render({ agent: "claude", name: "A" } as never);
+    expect(saveBtn().disabled).toBe(false);
   });
 });

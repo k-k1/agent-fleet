@@ -96,7 +96,9 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
   const voiceChoices: [string, string][] = [["", tr("asst.voice_auto")], ...readerVoiceChoices().slice(1)];
   if (voice && !voiceChoices.some(([v]) => v === voice)) voiceChoices.push([voice, voice]); // show a saved value from outside the pool too
 
-  const canSubmit = name.trim().length > 0 && !busy;
+  // A new assistant is saved only on a backend offered now (nothing is, until the catalogue has
+  // answered, or when it offers none); an edited one keeps its own backend unconditionally.
+  const canSubmit = name.trim().length > 0 && !busy && (!!initial || !!offered?.has(agent));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
