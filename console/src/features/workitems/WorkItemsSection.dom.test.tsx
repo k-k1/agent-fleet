@@ -1255,7 +1255,7 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     ["blocked", "wi.merge_why_blocked"],
     ["behind", "wi.merge_why_behind"],
     ["dirty", "wi.merge_why_dirty"],
-    ["unstable", "wi.merge_why_unstable"],
+    ["unstable", "wi.merge_why_other"],
     // While the panel re-reads by itself (#3012); the spent-budget wording is tested below.
     ["unknown", "wi.merge_why_checking"],
     ["something_new", "wi.merge_why_other"],
@@ -1266,6 +1266,20 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t(why, { name: "GitHub" }));
     await act(async () => mergeBtn(modal)!.click());
     expect(dialog()).toBeNull();
+  });
+
+  it.each([
+    [{ state: "pending", total: 39, failed: 0, pending: 1 }, "wi.merge_why_pending"],
+    [{ state: "failure", total: 39, failed: 1, pending: 0 }, "wi.merge_why_unstable"],
+    [{ state: "success", total: 39, failed: 0, pending: 0 }, "wi.merge_why_other"],
+    [{ state: "", total: 0, failed: 0, pending: 0 }, "wi.merge_why_other"],
+  ] as const)("words an unstable pull request from its checks (#4483): %j", async (checks, why) => {
+    workItemDetail.mockResolvedValue({ ...mergeable, mergeableState: "unstable", checks });
+    const modal = await open();
+    expect(mergeBtn(modal)?.disabled).toBe(true);
+    const note = footer(modal).querySelector(".wi-dmergewhy");
+    expect(note?.textContent).toBe(t(why, { name: "GitHub" }));
+    expect(note?.getAttribute("title")).toBe(t(why, { name: "GitHub" }));
   });
 
   it("disables Merge for a draft", async () => {

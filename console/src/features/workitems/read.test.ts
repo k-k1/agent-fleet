@@ -809,7 +809,13 @@ describe("mergeGate", () => {
     expect(mergeGate(pr({ mergeableState: "blocked" })).whyKey).toBe("wi.merge_why_blocked");
     expect(mergeGate(pr({ mergeableState: "behind" })).whyKey).toBe("wi.merge_why_behind");
     expect(mergeGate(pr({ mergeableState: "dirty" })).whyKey).toBe("wi.merge_why_dirty");
-    expect(mergeGate(pr({ mergeableState: "unstable" })).whyKey).toBe("wi.merge_why_unstable");
+    // `unstable` is worded from the checks, the same state the list row shows (#4483).
+    const checks = (state: string, failed = 0, pending = 0) => ({ state, total: 39, failed, pending });
+    expect(mergeGate(pr({ mergeableState: "unstable", checks: checks("failure", 1, 2) })).whyKey).toBe("wi.merge_why_unstable");
+    expect(mergeGate(pr({ mergeableState: "unstable", checks: checks("pending", 0, 1) })).whyKey).toBe("wi.merge_why_pending");
+    expect(mergeGate(pr({ mergeableState: "unstable", checks: checks("success") })).whyKey).toBe("wi.merge_why_other");
+    expect(mergeGate(pr({ mergeableState: "unstable", checks: checks("") })).whyKey).toBe("wi.merge_why_other");
+    expect(mergeGate(pr({ mergeableState: "unstable" })).whyKey).toBe("wi.merge_why_other");
     expect(mergeGate(pr({ mergeableState: "unknown" })).whyKey).toBe("wi.merge_why_unknown");
     expect(mergeGate(pr({ mergeableState: "newstate" })).whyKey).toBe("wi.merge_why_other");
     // A draft is a draft whatever mergeable_state says.

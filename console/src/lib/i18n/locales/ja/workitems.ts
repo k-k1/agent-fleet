@@ -165,6 +165,7 @@ export const workitems = {
   "wi.merge_why_behind": "ブランチがベースより遅れています。先に更新してください",
   "wi.merge_why_dirty": "先に競合を解消してください",
   "wi.merge_why_unstable": "失敗しているチェックがあります",
+  "wi.merge_why_pending": "チェックを実行中です",
   "wi.merge_why_unknown": "{name} がまだ判定していません。少し待ってからもう一度",
   "wi.merge_why_checking": "{name} がマージできるか確認しています",
   "wi.merge_why_other": "{name} はマージできるとは言っていません",

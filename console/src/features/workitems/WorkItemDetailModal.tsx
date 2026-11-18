@@ -913,7 +913,7 @@ export function WorkItemDetailModal({
         </StartSection>
         )}
       </div>
-      <footer className="ui-modal-foot">
+      <footer className="ui-modal-foot wi-dfoot">
         {mergeSlot.note && (
           <span
             id="wi-dmerge-why"
