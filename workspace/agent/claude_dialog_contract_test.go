@@ -47,9 +47,10 @@ const dialogWait = 4 * time.Minute
 const dialogPermissionPrompt = "Run exactly this command with the Bash tool and do nothing else: echo agent-fleet-dialog-probe"
 
 // One question, two options: the review screen only appears with several questions, which this
-// probe leaves alone.
+// probe leaves alone. The descriptions are fixed in the prompt because showsQuestionOptions waits for
+// them: left to the model they could read "First choice" and the wait would run out on a healthy dialog.
 const dialogQuestionPrompt = "Use the AskUserQuestion tool right now to ask me one question, \"Pick one\", with the " +
-	"two options A and B. Do nothing else."
+	"two options A and B, whose descriptions are exactly \"Option A\" and \"Option B\". Do nothing else."
 
 func TestClaudeDialogContractLive(t *testing.T) {
 	t.Run("permission", func(t *testing.T) {
@@ -85,8 +86,9 @@ func TestClaudeDialogContractLive(t *testing.T) {
 		if !allow || !deny {
 			t.Errorf("the dialog offers allow=%v deny=%v: the Console's permission card cannot answer it\n%+v", allow, deny, menu.Rows)
 		}
-		if _, parsed := claude.ParsePermissionMenu(tmuxx.CapturePane(tn)); !parsed {
-			t.Fatalf("the permission dialog did not stay up between two captures\nfirst:\n%s", frame)
+		again := tmuxx.CapturePane(tn)
+		if _, parsed := claude.ParsePermissionMenu(again); !parsed {
+			t.Fatalf("the permission dialog did not stay up between two captures\nfirst:\n%s\nsecond:\n%s", frame, again)
 		}
 		if !tmuxx.ModalActive(meta.Name) {
 			t.Errorf("a permission dialog is up but ModalActive=false: bare arrow keys would hit the plain composer\n%s", frame)
@@ -107,8 +109,8 @@ func TestClaudeDialogContractLive(t *testing.T) {
 			return showsQuestionOptions(f)
 		})
 		if !ok {
-			t.Fatalf("no AskUserQuestion dialog read as a modal appeared within %s (the model never asked, or ModalActive "+
-				"no longer recognises the dialog)\nModalActive=%v\npane:\n%s",
+			t.Fatalf("no AskUserQuestion dialog with the probe's options appeared within %s (the model never asked, or the dialog "+
+				"no longer draws the options this probe fixed in its prompt)\nModalActive=%v\npane:\n%s",
 				dialogWait, tmuxx.ModalActive(meta.Name), tmuxx.CapturePane(tn))
 		}
 		t.Logf("AskUserQuestion dialog:\n%s", frame)
@@ -204,9 +206,11 @@ func startDialogPane(t *testing.T, suffix string, askPermissions bool) (meta ses
 }
 
 // sendDialogPrompt types the prompt and submits it with submitPrompt, which presses Enter again when
-// the first one is dropped (copilot-contract lost a turn to that in CI). marker is a word of the
-// prompt the transcript's user turn will hold. Both go through the production tmux wrapper on the
-// contract's private socket.
+// the first one is dropped (copilot-contract lost a turn to that in CI), except once a dialog is up:
+// a second Enter there would answer the dialog's highlighted row, which this file never does blindly.
+// claude has no generic transcript (agents.NoGenericTranscript), so submitPrompt confirms the turn
+// through WireLive only and marker, a word of the prompt, is kept for the day it has one. Both go
+// through the production tmux wrapper on the contract's private socket.
 func sendDialogPrompt(t *testing.T, meta session.Meta, tn, prompt, marker string) {
 	t.Helper()
 	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "-l", prompt).CombinedOutput(); err != nil {
@@ -214,7 +218,7 @@ func sendDialogPrompt(t *testing.T, meta session.Meta, tn, prompt, marker string
 	}
 	time.Sleep(time.Second)
 	spec := tuiMirrorContractSpec{kind: session.KindClaude, agent: claude.New()}
-	submitPrompt(t, spec, meta, tn, marker)
+	submitPrompt(t, spec, meta, tn, marker, func() bool { return tmuxx.ModalActive(meta.Name) })
 }
 
 // showsQuestionOptions reports whether the frame holds the option rows of the probe's question. The
