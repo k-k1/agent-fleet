@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { figure, fmtBytes, fmtMinutes, fmtPct, fmtRate } from "./usageHistory.ts";
+import { widenForTimezone } from "./uptime.ts";
 import type { UsageHistoryDay } from "./usageHistory.ts";
 
 /** `from`/`to` (YYYY-MM-DD) follow the grid's applied range; without them the server's default
@@ -17,8 +18,16 @@ export function UsageHistoryTable({ endpoint, from, to }: { endpoint: string; fr
     setDays(null);
     setFailed(false);
     const q = new URLSearchParams();
-    if (from) q.set("from", from);
-    if (to) q.set("to", to);
+    if (from && to) {
+      // Server days are UTC: widen by a day each side so the local edge days of the grid are
+      // covered, the same as the grid's own fetch.
+      const w = widenForTimezone(from, to);
+      q.set("from", w.from);
+      q.set("to", w.to);
+    } else {
+      if (from) q.set("from", from);
+      if (to) q.set("to", to);
+    }
     api(q.size ? `${endpoint}?${q}` : endpoint)
       .then((d) => {
         if (!alive) return;

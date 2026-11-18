@@ -82,14 +82,14 @@ describe("UsageHistoryTable", () => {
     expect(rows).toEqual(["not measured", "0.5 min"]);
   });
 
-  it("passes the grid's range to the endpoint", async () => {
+  it("passes the grid's range, widened a day each side for UTC days, to the endpoint", async () => {
     api.mockResolvedValue({ days: [] });
     const host2 = document.createElement("div");
     document.body.append(host2);
     root = createRoot(host2);
     host = host2;
     await act(async () => root!.render(<UsageHistoryTable endpoint="api/usage/me/history" from="2026-11-10" to="2026-11-17" />));
-    expect(api).toHaveBeenCalledWith("api/usage/me/history?from=2026-11-10&to=2026-11-17");
+    expect(api).toHaveBeenCalledWith("api/usage/me/history?from=2026-11-09&to=2026-11-18");
   });
 
   it("requests the given endpoint, shows an error and an empty state", async () => {
