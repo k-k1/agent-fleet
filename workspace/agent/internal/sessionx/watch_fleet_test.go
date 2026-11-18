@@ -150,8 +150,6 @@ func TestFleetLimitEpisode(t *testing.T) {
 func TestFleetWatchStaleIdleDoesNotConsumeTheNextTurnEnd(t *testing.T) {
 	m, sid, turnEnded := polledTurnEndFixture(t, "copilot_fleet")
 	polledEndSettle = polledEndSettleDefault
-	now := time.Now()
-	polledEndNow = func() time.Time { return now }
 	defer func() { polledEndSettle, polledEndNow = 0, time.Now }()
 	oa, op := fleetAlive, fleetPeersOn
 	fleetAlive = func(session.Meta) bool { return true }
@@ -160,6 +158,11 @@ func TestFleetWatchStaleIdleDoesNotConsumeTheNextTurnEnd(t *testing.T) {
 
 	turnEnded()                    // turn 1 is over: the source says idle
 	status.Persist(sid, "working") // a new input; the source has not caught up
+	// The fake clock is read only after the "working" write: the record's TS is truncated to
+	// whole seconds, so a clock read before it can sit just under a second boundary and make
+	// "start + settle" fall short of the window (measured: 3 failures in 1000 runs at -cpu 1).
+	now := time.Now()
+	polledEndNow = func() time.Time { return now }
 	src := &watch.FleetSource{Fleet: watchFleet{}}
 	ctx := watch.WithOwner(watch.WithSubscriber(context.Background(), "parent1"), "parent1")
 	res, err := src.Resolve(ctx, m.Name, "")
