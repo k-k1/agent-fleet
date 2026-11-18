@@ -195,8 +195,10 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 // Confirmation goes through the production reads (WireLive / Transcript) rather than
 // pane text, so it stays agent-agnostic: the turn is under way as soon as the state
 // turns "working" or the user turn reaches the mirror. Pressing Enter again after the
-// prompt did submit is a no-op — the composer is empty by then.
-func submitPrompt(t *testing.T, spec tuiMirrorContractSpec, meta session.Meta, tn, marker string) bool {
+// prompt did submit is a no-op — the composer is empty by then. That holds only while nothing
+// else is waiting for a key: stop, when given, is checked on every poll and ends the retries
+// (without a second Enter) once it reports true, e.g. a permission dialog is up.
+func submitPrompt(t *testing.T, spec tuiMirrorContractSpec, meta session.Meta, tn, marker string, stop ...func() bool) bool {
 	t.Helper()
 	for attempt := 1; ; attempt++ {
 		if out, err := tmuxx.Cmd("send-keys", "-t", tn, "Enter").CombinedOutput(); err != nil {
@@ -209,6 +211,13 @@ func submitPrompt(t *testing.T, spec tuiMirrorContractSpec, meta session.Meta, t
 			}
 			if td, ok := spec.agent.Transcript(meta); ok && mirrorHasTurn(td.Turns, "user", marker) {
 				return false
+			}
+			// A caller whose turn can stop on a dialog says so: pressing Enter again there would
+			// answer the dialog's highlighted row, not re-submit the prompt.
+			for _, s := range stop {
+				if s() {
+					return false
+				}
 			}
 			time.Sleep(500 * time.Millisecond)
 		}

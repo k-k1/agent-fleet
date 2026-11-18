@@ -1,0 +1,21 @@
+
+ ▐▛███▛█   Claude Code v2.1.327
+▝▜██████▀  Sonnet 5.5 · Claude API
+ ▝▝   ▝▝   /tmp/TestClaudeDialogContractLivequestion889392596/001
+
+
+❯ Use the AskUserQuestion tool right now to ask me one question, "Pick one", with the two options A and B, whose descriptions are exactly "Option A" and "Option B". Do nothing else.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Pick one
+
+Pick one
+
+❯ 1. A
+     Option A
+  2. B
+     Option B
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

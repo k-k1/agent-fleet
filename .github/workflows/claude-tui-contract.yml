@@ -20,7 +20,8 @@
 # issue notification), so "an update issue arrives → trigger this job" captures most of
 # the value.
 #
-# Billing: 2 real turns (manual / bypass). One short essay each, a few hundred tokens.
+# Billing: about 8 real turns per run (the footer probe 2, plan approval 1, fork-at 3, the two
+# dialogs 2), each short: an essay, a plan, one-line answers, one tool call.
 # With E2E_CLAUDE_OAUTH_TOKEN (a `claude setup-token` token = Max/Pro subscription
 # quota) there is no extra charge. E2E_ANTHROPIC_API_KEY is pay-as-you-go.
 #
@@ -53,7 +54,9 @@ jobs:
     with:
       cli: claude
       version: ${{ inputs.cli_version }}
-      timeout_minutes: 40
+      # At least the sum of the steps' own -timeout ceilings (20 + 15 + 10 + 15), so a slow step is
+      # ended by its test and reports a verdict, not by the job's clock.
+      timeout_minutes: 60
       # Credentials go to the CLI through env (never typed or logged); the test steps drive
       # the real interactive CLI in a real tmux pane.
       tests_need_secrets: true
@@ -106,6 +109,21 @@ jobs:
         export CLAUDE_CODE_OAUTH_TOKEN="$E2E_CLAUDE_OAUTH_TOKEN" ANTHROPIC_API_KEY="$E2E_ANTHROPIC_API_KEY"
         go test -tags contract ./internal/agents/claude/ \
           -run TestContractLiveClaudeForkAt -v -timeout 10m
+
+      # The two dialogs besides plan approval that production reads off the pane: the tool
+      # permission dialog (claude.ParsePermissionMenu, tmuxx.ModalActive) and AskUserQuestion.
+      # No other contract draws them, and 2.1.327 dropped two fragments they used to carry
+      # (`Enter to select`, `Ready to submit`), so this is where a drift shows before a
+      # member's answer lands on the wrong row. Both frames are logged in full into the
+      # artifact below, which is also the capture to add under testdata/permmenu on a new
+      # pin. Two real turns, one short tool call each.
+      test_3_name: dialog contract (permission, AskUserQuestion)
+      test_3: |
+        export CLAUDE_CODE_OAUTH_TOKEN="$E2E_CLAUDE_OAUTH_TOKEN" ANTHROPIC_API_KEY="$E2E_ANTHROPIC_API_KEY"
+        set -o pipefail
+        go test -tags contract -run '^(TestClaudeDialogContractLive|TestShowsQuestionOptions)$' \
+          -count=1 -v -timeout 15m . \
+          2>&1 | tee -a /tmp/contract.log
 
       # The captured frames come from a *signed-in* TUI, so they carry the CI account's
       # identity (the "Welcome back <name>!" banner and the "<email>'s Organization"
