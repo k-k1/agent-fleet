@@ -32,7 +32,8 @@ vi.mock("./open.ts", () => ({ openSessionByName: (n: string) => opened.push(n) }
 const { MoveSessionModal } = await import("./MoveSessionModal.tsx");
 const { parseKindCatalog, setKindCatalog } = await import("../../agents/kindCatalog.ts");
 const { useSessionsStore } = await import("./store.ts");
-const { setCachedConns } = await import("../repos/connsCache.ts");
+const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
+const { setCachedConns, clearCachedConns } = await import("../repos/connsCache.ts");
 const { t } = await import("../../lib/i18n/index.ts");
 type Session = import("../../types/session.ts").Session;
 type MovePreview = import("./move.ts").MovePreview;
@@ -79,8 +80,14 @@ beforeEach(() => {
   calls.length = 0;
   opened.length = 0;
   routes = { [PREVIEW]: preview() };
+  // The live, policy-filtered catalogue the offered kinds are judged by (ADR 0138 D10a).
+  routes["GET api/agents/kinds"] = {
+    kinds: ["claude", "codex", "opencode", "muse", "cursor", "lcpp"].map((kind) => ({ kind })),
+    access: { policyConfirmed: true },
+  };
+  useWorkspaceStore.setState({ state: "running" } as never);
   // Null = the connection check has not answered: the picker then takes the Agent's word alone.
-  setCachedConns(null);
+  clearCachedConns();
   useSessionsStore.setState({ sessions: [], refresh: async () => {} } as never);
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -108,6 +115,16 @@ describe("MoveSessionModal: before the move", () => {
     expect(missing.map((li) => li.dataset.kind)).toEqual(["claude", "cursor", "lcpp"]);
     expect(missing[1].textContent).toContain(t("move.reason.not_measured"));
     expect(missing[2].textContent).toContain(t("move.reason.cannot_read_file"));
+  });
+
+  it("drops an eligible kind the live catalogue does not list (policy forbids it)", async () => {
+    setCachedConns({ codex: { connected: true }, opencode: { connected: true } } as never);
+    routes["GET api/agents/kinds"] = {
+      kinds: [{ kind: "claude" }, { kind: "opencode" }],
+      access: { policyConfirmed: true },
+    };
+    await render();
+    expect(kindButtons()).toEqual(["opencode"]);
   });
 
   it("keeps the Agent's order, and marks nothing, when not opened from a limit banner", async () => {

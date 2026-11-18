@@ -14,6 +14,9 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { api } from "../../core/api/client.ts";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
+import { kindLaunchable } from "../../agents/launchAccess.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useMemberCatalog } from "../settings/credentials/memberCatalog.ts";
 import { getCachedConns, setCachedConns, subscribeConns } from "../repos/connsCache.ts";
 import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -38,11 +41,15 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
   const [busy, setBusy] = useState(false);
 
   // Same agent set the launch modal offers: a connected, in-a-dir agent (runsInDir drops
-  // shell/ssm), in repoLaunchKinds order. Every such kind also owns a conversation, so it
-  // can be a handoff target.
+  // shell/ssm) that the credential policy allows and the member has not switched off
+  // (kindLaunchable over the live catalogue, ADR 0138 D10a), in repoLaunchKinds order. Every such
+  // kind also owns a conversation, so it can be a handoff target. Nothing is offered until the
+  // catalogue has answered, and the empty list then reads "checking".
+  const running = useWorkspaceStore((s) => s.state) === "running";
+  const access = useMemberCatalog(running);
   const targets = useMemo(
-    () => repoLaunchKinds.filter((k) => agentOf(k).caps.runsInDir && !!conns && agentOf(k).available({ conns })),
-    [conns],
+    () => repoLaunchKinds.filter((k) => agentOf(k).caps.runsInDir && !!conns && kindLaunchable(k, { conns }, access.kinds)),
+    [conns, access.kinds],
   );
 
   // Only fetch when the rail hasn't already warmed the cache — the common case is a hit,
@@ -63,11 +70,14 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on open; `conns` is the warm-cache guard
   }, []);
-  const settling = !conns && !tried;
+  const settling = (!conns && !tried) || (running && !!access.pending);
 
   // Default the target once the list settles: prefer the source session's own kind (a
   // like-for-like handoff), else the first available.
   useEffect(() => {
+    // A refreshed catalogue can drop the chosen kind: fall back to the default rather than
+    // submit one that is no longer offered.
+    if (target && !targets.includes(target)) setTarget("");
     if (target || targets.length === 0) return;
     setTarget(targets.includes(session.kind) ? session.kind : targets[0]);
   }, [targets, target, session.kind]);

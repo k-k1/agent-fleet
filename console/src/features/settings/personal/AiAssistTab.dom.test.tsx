@@ -243,3 +243,45 @@ describe("AiAssistTab backend order under the credential policy", () => {
     expect(getSettings().aiAssistOrder.slice(0, 3)).toEqual(["cursor", "codex", "claude"]);
   });
 });
+
+// ADR 0138 D10a: the per-feature agent pin offers the backends the live catalogue offers, and a
+// pin that is now forbidden stays listed as the current value.
+describe("AiAssistTab per-feature agent pin under the credential policy", () => {
+  const pinOptions = (id: string) =>
+    [...cardFor(id).querySelectorAll("select")[0].querySelectorAll("option")].map((o) => o.value);
+  const answerKinds = async () => {
+    const { useWorkspaceStore } = await import("../../../core/store/workspace.ts");
+    useWorkspaceStore.setState({ state: "running" } as never);
+    apiMock.mockImplementation(async (url: string) =>
+      url.includes("agents/kinds")
+        ? {
+            kinds: [
+              { kind: "claude", chat: true },
+              { kind: "codex", chat: false },
+            ],
+            access: { policyConfirmed: true },
+          }
+        : { features: [] },
+    );
+  };
+  const settle = async () => {
+    for (let i = 0; i < 3; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+  };
+
+  it("lists only the offered backends", async () => {
+    await answerKinds();
+    await render();
+    await settle();
+    expect(pinOptions("title.session")).toEqual(["", "claude"]);
+  });
+
+  it("keeps a pinned backend the policy now forbids as the current value", async () => {
+    await answerKinds();
+    setSetting("aiFeatureAgents", { "title.session": "codex" });
+    await render();
+    await settle();
+    const sel = cardFor("title.session").querySelectorAll("select")[0] as HTMLSelectElement;
+    expect(pinOptions("title.session")).toEqual(["", "claude", "codex"]);
+    expect(sel.value).toBe("codex");
+  });
+});

@@ -3,16 +3,23 @@
 // looks at neither.
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { api } from "../../core/api/client.ts";
-import { agentOf } from "../../agents/registry.ts";
+import { kindLaunchable } from "../../agents/launchAccess.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useMemberCatalog } from "../settings/credentials/memberCatalog.ts";
 import { getCachedConns, setCachedConns, subscribeConns } from "../repos/connsCache.ts";
 import { MOVE_USAGE_ENDPOINTS, readMoveUsage, type MoveUsage } from "./move.ts";
 import type { ConnectionsStatus, SessionKind } from "../../types/session.ts";
 
 /**
- * The connection check the handoff dialog relies on: warm from the rail, fetched only cold.
- * Null until it has answered (or when it failed), which callers read as "do not filter".
+ * The launch check the move dialog and the limit banner rely on: the connection state (warm from
+ * the rail, fetched only cold) judged by the live, policy-filtered catalogue (kindLaunchable,
+ * ADR 0138 D10a), so a harness the policy forbids or the member switched off is not offered.
+ * Null while either has not answered yet, which callers read as "do not filter"; an answer that
+ * failed or cannot be vouched for offers no model kind, as the launch dialog does.
  */
 export function useConnectedKinds(): ((k: SessionKind) => boolean) | null {
+  const running = useWorkspaceStore((s) => s.state) === "running";
+  const { kinds, pending } = useMemberCatalog(running);
   const conns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
   useEffect(() => {
     if (conns) return;
@@ -25,7 +32,10 @@ export function useConnectedKinds(): ((k: SessionKind) => boolean) | null {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once on mount; `conns` is the warm-cache guard
   }, []);
-  return useMemo(() => (conns ? (k: SessionKind) => agentOf(k).available({ conns }) : null), [conns]);
+  return useMemo(
+    () => (conns && !pending ? (k: SessionKind) => kindLaunchable(k, { conns }, kinds) : null),
+    [conns, kinds, pending],
+  );
 }
 
 // useMoveUsage reads, once per mount, the usage of every offered kind the Console already has a

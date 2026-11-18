@@ -18,6 +18,7 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 
 const { MoveLimitBanner } = await import("./MoveLimitBanner.tsx");
 const { useSessionUI } = await import("../../sessions/ui.ts");
+const { useWorkspaceStore } = await import("../../../core/store/workspace.ts");
 const { setCachedConns, clearCachedConns } = await import("../../repos/connsCache.ts");
 const { t } = await import("../../../lib/i18n/index.ts");
 type Session = import("../../../types/session.ts").Session;
@@ -49,6 +50,12 @@ const banner = () => host.querySelector(".mirror-move-limit");
 
 beforeEach(() => {
   routes = { [PREVIEW]: preview() };
+  // The live, policy-filtered catalogue the offered kinds are judged by (ADR 0138 D10a).
+  routes["GET api/agents/kinds"] = {
+    kinds: ["claude", "codex", "opencode", "cursor", "lcpp"].map((kind) => ({ kind })),
+    access: { policyConfirmed: true },
+  };
+  useWorkspaceStore.setState({ state: "running" } as never);
   setCachedConns({ codex: { connected: true }, opencode: { connected: true }, muse: { connected: true } } as never);
   useSessionUI.setState({ move: null, moveFromLimit: false });
   host = document.createElement("div");

@@ -80,14 +80,22 @@ export function AiAssistTab() {
         <h4 className="ds-title">{tr("aiassist.features")}</h4>
         <p className="muted ds-note">{tr("aiassist.note_features")}</p>
         {AI_ASSIST_FEATURES.filter((f) => !f.visible || f.visible(s)).map((f) => (
-          <AiFeatureCard key={f.id} f={f} row={resolution?.[f.id]} />
+          <AiFeatureCard key={f.id} f={f} row={resolution?.[f.id]} offered={offered} />
         ))}
       </section>
     </>
   );
 }
 
-function AiFeatureCard({ f, row }: { f: AiAssistFeatureDef; row: AiAssistResolutionRow | undefined }) {
+function AiFeatureCard({
+  f,
+  row,
+  offered,
+}: {
+  f: AiAssistFeatureDef;
+  row: AiAssistResolutionRow | undefined;
+  offered: Set<string> | null;
+}) {
   const tr = useT();
   const s = useSettings();
   // A feature with no switch of its own is on whenever its card is shown (AiAssistFeatureDef.visible).
@@ -131,7 +139,12 @@ function AiFeatureCard({ f, row }: { f: AiAssistFeatureDef; row: AiAssistResolut
               value={pin}
               options={[
                 ["", tr("aiassist.feature_agent_auto")],
-                ...ASSISTANT_AGENT_KINDS.map((k): [string, string] => [k, agentOf(k).assistantName]),
+                // The current pin stays listed even when the policy now forbids it, so it is
+                // never shown as "auto" nor dropped; nothing else is until the catalogue answers.
+                ...ASSISTANT_AGENT_KINDS.filter((k) => k === pin || !!offered?.has(k)).map((k): [string, string] => [
+                  k,
+                  agentOf(k).assistantName,
+                ]),
               ]}
               onChange={(v: string) => setSetting("aiFeatureAgents", { ...s.aiFeatureAgents, [f.id]: v })}
             />

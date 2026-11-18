@@ -32,6 +32,7 @@ export function ChatHead({
   onToggleAgentPicker,
   onSwitchAgent,
   chatConns,
+  offeredKinds,
   switching,
   showStreaming,
   compacting,
@@ -53,6 +54,8 @@ export function ChatHead({
   onToggleAgentPicker: () => void;
   onSwitchAgent: (kind: SessionKind) => void;
   chatConns: ConnectionsStatus | null;
+  /** Backends the live catalogue offers (chatOffered); null while there is no fresh answer. */
+  offeredKinds: Set<string> | null;
   switching: boolean;
   showStreaming: boolean;
   compacting: boolean;
@@ -95,7 +98,10 @@ export function ChatHead({
             createPortal(
               <div className="ui-menu chat-agent-menu" ref={agentMenuRef} role="menu" onMouseDown={(e) => e.stopPropagation()}>
                 <div className="assistant-picker-label">{tr("chat.switch_agent")}</div>
-                {CHAT_KINDS.map((k) => (
+                {/* A backend the policy forbids or the member switched off is not offered, but the
+                    conversation's current one stays listed (checked) so it is never silently
+                    dropped. With no catalogue answer only that one is listed. */}
+                {CHAT_KINDS.filter((k) => k === conv?.agent || !!offeredKinds?.has(k)).map((k) => (
                   <button
                     key={k}
                     type="button"
