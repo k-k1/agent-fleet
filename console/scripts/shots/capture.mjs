@@ -1411,6 +1411,9 @@ const SCENES = [
       await new Promise((r) => setTimeout(r, 800));
       const sec = document.querySelector(".wi-list")?.closest(".ui-section");
       if (sec) sec.id = "shot-wi-list";
+      // The rail lists every row (no "Show more" fold); keep only the top ones so the shot stays
+      // compact. The guide's alt text says the picture shows the top rows only.
+      document.querySelectorAll("#shot-wi-list .wi-row").forEach((r, i) => { if (i >= 12) r.style.display = "none"; });
     })()`,
     settle: 1200,
   },
