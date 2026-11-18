@@ -375,25 +375,44 @@ describe("repository group + button", () => {
   const repoAdd = (repo: string) =>
     must(
       [...document.querySelectorAll<HTMLElement>(".memo-repo")]
-        .find((el) => el.querySelector(".memo-repo-head")?.textContent?.includes(repo))
+        .find((el) => el.querySelector(".memo-repo-name")?.textContent === repo)
         ?.querySelector<HTMLButtonElement>(".memo-repo-add"),
       `"+" of repo "${repo}"`,
     );
 
   // A category made without the group's repo lands in the unfiled area and can never run
   // repository work, so the repo must reach the create call.
-  it("creates the category with that group's repo", async () => {
-    servedCats = [aCat({ id: "c3", repo: "app", name: "Bugs" })];
+  it("creates the category with that group's repo and opens it for rename", async () => {
+    servedCats = [aCat({ id: "c3", repo: "app", name: "Bugs" }), aCat({ id: "c4", repo: "app2", name: "Other" })];
     await render();
     await click(repoAdd("app"));
     expect(memoCategoryCreate).toHaveBeenCalledTimes(1);
     expect(memoCategoryCreate.mock.calls[0][0].repo).toBe("app");
+
+    servedCats = [...servedCats, aCat({ id: "cnew", repo: "app", name: "New category", position: 1 })];
+    await act(async () => useMemoStore.getState().bump());
+    await settle();
+    const block = must(
+      [...document.querySelectorAll<HTMLElement>(".memo-repo")].find(
+        (el) => el.querySelector(".memo-repo-name")?.textContent === "app",
+      ),
+      "app block",
+    );
+    expect(block.querySelector(".memo-cat-rename")).not.toBe(null);
+  });
+
+  it("sends each group's own repo", async () => {
+    servedCats = [aCat({ id: "c3", repo: "app", name: "Bugs" }), aCat({ id: "c4", repo: "app2", name: "Other" })];
+    await render();
+    await click(repoAdd("app2"));
+    expect(memoCategoryCreate.mock.calls[0][0].repo).toBe("app2");
   });
 
   it("keeps the bottom button for the unfiled area", async () => {
     servedCats = [aCat({ id: "c3", repo: "app", name: "Bugs" })];
     await render();
     await click(must(document.querySelector<HTMLButtonElement>(".memo-addcat"), "bottom add button"));
+    expect(memoCategoryCreate).toHaveBeenCalledTimes(1);
     expect(memoCategoryCreate.mock.calls[0][0].repo).toBe("");
   });
 });

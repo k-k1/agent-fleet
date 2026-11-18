@@ -108,14 +108,21 @@
   color: var(--muted);
   margin: 6px 0 2px;
 }
+.memo-repo-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .memo-repo-add {
-  margin-left: auto;
+  flex: none;
   display: inline-flex;
   align-items: center;
   padding: 0 4px;
   border: 0;
   background: none;
-  color: var(--muted);
+  color: var(--muted2);
   cursor: pointer;
 }
 .memo-repo-add:hover {
