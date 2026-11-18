@@ -12,7 +12,7 @@
 //
 // Two parts, one real turn each:
 //
-//	A. A Bash call in the default mode raises the permission dialog. The production parser must
+//	A. A Bash call in a launch that asks for permissions raises the permission dialog. The production parser must
 //	   read it (rows numbered from 1, a deny and an allow choice), the pane must read as a modal
 //	   and not as the idle prompt.
 //	B. AskUserQuestion draws its own dialog. The pane must read as a modal and not as idle, and
@@ -42,7 +42,7 @@ import (
 
 const dialogWait = 4 * time.Minute
 
-// The command is a harmless echo; in the default mode claude still asks before running it.
+// The command is a harmless echo; a launch that asks for permissions still asks before running it.
 const dialogPermissionPrompt = "Run exactly this command with the Bash tool and do nothing else: echo agent-fleet-dialog-probe"
 
 // One question, two options: the review screen only appears with several questions, which this
@@ -52,7 +52,7 @@ const dialogQuestionPrompt = "Use the AskUserQuestion tool right now to ask me o
 
 func TestClaudeDialogContractLive(t *testing.T) {
 	t.Run("permission", func(t *testing.T) {
-		meta, tn, stop := startDialogPane(t, "perm")
+		meta, tn, stop := startDialogPane(t, "perm", true)
 		defer stop()
 		sendDialogPrompt(t, tn, dialogPermissionPrompt)
 
@@ -96,7 +96,7 @@ func TestClaudeDialogContractLive(t *testing.T) {
 	})
 
 	t.Run("question", func(t *testing.T) {
-		meta, tn, stop := startDialogPane(t, "ask")
+		meta, tn, stop := startDialogPane(t, "ask", false)
 		defer stop()
 		sendDialogPrompt(t, tn, dialogQuestionPrompt)
 
@@ -125,8 +125,10 @@ func TestClaudeDialogContractLive(t *testing.T) {
 // waits for the composer. A startup dialog is answered by choosing its row, never by a blind Enter:
 // the highlighted row is whatever upstream decided this week ("No, exit" on 2.1.327's folder trust,
 // which is why startTUIContractSession, which leaves such a dialog alone, is not used here). stop
-// must be deferred.
-func startDialogPane(t *testing.T, suffix string) (meta session.Meta, tn string, stop func()) {
+// must be deferred. askPermissions launches without the skip-permissions flag, the only way a tool
+// call raises the permission dialog: production's default launch skips the prompts, so a Bash call
+// then runs without any dialog (measured on the first live run, the pane read "bypass permissions on").
+func startDialogPane(t *testing.T, suffix string, askPermissions bool) (meta session.Meta, tn string, stop func()) {
 	t.Helper()
 	for _, bin := range []string{"tmux", "claude"} {
 		if _, err := exec.LookPath(bin); err != nil {
@@ -147,6 +149,10 @@ func startDialogPane(t *testing.T, suffix string) (meta session.Meta, tn string,
 	}()
 
 	meta = session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
+	if askPermissions {
+		skip := false
+		meta.SkipPermissions = &skip
+	}
 	launch, err := claude.New().BuildLaunch(meta, agents.LaunchOpts{})
 	if err != nil {
 		t.Fatalf("BuildLaunch: %v", err)
