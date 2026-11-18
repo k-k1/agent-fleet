@@ -158,8 +158,8 @@ unchanged 6b
 echo "ok   6 a constant is not a name; an exported variable the source reads still is"
 
 # 7. A name added in the pin that the list holds: the version moves, the list's comments and
-#    blank lines are skipped, and the body names it. (Case 2 is the control: without the list
-#    the same kind of addition leaves everything unedited.)
+#    blank lines are skipped, and the body names it. The control is in the case: the same inputs
+#    without the list are `changed` and edit nothing.
 fake 4.0.0 $BASE_NAMES
 fake 4.0.1 $BASE_NAMES CLAUDE_CODE_USE_REVIEWED_ONE
 setup 4.0.1 4.0.0
@@ -207,7 +207,8 @@ echo "ok   9 a removed name is still a change"
 # 10. A reviewed name that routeOverrides holds is ignored: the addition stays a change. Run
 #     against the repository's real route.go (a long list, several names to a line, // comments),
 #     with the LAST name of its list, so a range that stops early would let it count as reviewed.
-last="$(awk '/^var routeOverrides = \[\]string\{/ { f = 1 } f { print } f && /^\}/ { exit }' "$ROOT/workspace/agent/internal/agents/claude/route.go" | grep -oE '"[A-Z][A-Z0-9_]+"' | tail -1 | tr -d '"')"
+last="$(awk '/^var routeOverrides = \[\]string\{/ { f = 1 } f { print } f && /^\}/ { exit }' "$ROOT/workspace/agent/internal/agents/claude/route.go" | grep -oE '"[A-Z][A-Z0-9_]+"' | tail -1 | tr -d '"')" ||
+  fail "10: could not read the last name of the real route.go"
 [ -n "$last" ] || fail "10: no last name in the real route.go"
 fake 4.0.1 $BASE_NAMES "$last"
 setup 4.0.1 4.0.0
@@ -227,7 +228,7 @@ n=0
 for bad in 'CLAUDE_CODE_USE_REVIEWED_ONE\n' 'lower_name\treason\n' 'CLAUDE_CODE_USE_REVIEWED_ONE\t\treason\n'; do
   n=$((n + 1))
   setup 4.0.1 4.0.0
-  printf "$bad" > "$WORK/reviewed"
+  printf '%b' "$bad" > "$WORK/reviewed"
   run || fail "11.$n: exit $? (a malformed list must not fail the job)"
   grep -qx 'route_overrides=unknown' "$WORK/out" || fail "11.$n: not unknown"
   grep -q 'has a malformed line' "$WORK/body.md" || fail "11.$n: body does not say so"

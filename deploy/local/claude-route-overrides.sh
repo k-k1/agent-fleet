@@ -72,8 +72,9 @@ fetch_npm() {
 
 body() { [ -z "$BODY_FILE" ] || printf '%s\n' "$@" >> "$BODY_FILE"; }
 
-# The reviewed names, sorted. A malformed line stops the run: a list that is read halfway would
-# either hide a name or turn a reviewed one back into a change.
+# The reviewed names, sorted. A malformed line makes this fail, and the caller then reports the run as
+# `unknown` without comparing anything: a list that is read halfway would either hide a name or turn a
+# reviewed one back into a change.
 reviewed_names() {
   [ -f "$REVIEWED" ] || return 0
   awk -F'\t' -v f="$REVIEWED" '
