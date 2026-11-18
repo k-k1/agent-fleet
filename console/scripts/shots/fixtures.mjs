@@ -2513,8 +2513,13 @@ export function galleryTree(p) {
 // row marked as such, then the two CLI routes.
 export function imagegenStatusLive(locale) {
   const st = imagegenStatus(locale);
+  // The Image generation page draws its provider order only from a policy-filtered answer
+  // (orderFiltered), so the fixture carries the order and the declared rows' kinds.
   return {
     ...st,
+    order: ["comfy", "agy", "codex"],
+    orderFiltered: true,
+    orderKinds: { comfy: "comfy" },
     providers: [
       ...st.providers.map((p) => ({ ...p, kind: "comfy", fleet: true })),
       { id: "codex", kind: "codex", fleet: false, models: [] },
