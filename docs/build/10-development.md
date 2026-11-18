@@ -195,7 +195,13 @@ It is not triggered by `workflow_run`: the watcher dispatches the contracts with
   compares the provider, endpoint and credential variable names. Identical: it moves
   `routeOverridesFrom` in the same commit and the PR can go green. Different, or a binary
   it could not read: it edits nothing, the test stays red, and the PR body lists the names
-  to sort into `routeOverrides` by hand. `claude-route-overrides-stub-test.sh` pins this.
+  to sort by hand. A name that does not choose a provider, endpoint or credential goes into
+  `deploy/local/claude-route-overrides.reviewed` (`NAME<TAB>reason`) in a PR to `main`; the next
+  run counts a name added in the pin that the list holds as unchanged and moves
+  `routeOverridesFrom` itself. Never put that decision on the bump branch: every other CLI that
+  passes its contract makes `cli-pin-bump.yml` rebuild the branch from `main` and force-push it.
+  A name that does choose one goes into `routeOverrides`.
+  `claude-route-overrides-stub-test.sh` pins this.
 - **The PR** carries the evidence table — each kind's `pin → latest`, a link to the
   contract run that recorded `tested` (`cli-release-state.sh` writes the run URL into the
   marker comment), and where the checksums came from. The branch is force-updated only

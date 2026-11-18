@@ -11,7 +11,11 @@
 #   - a bare prefix such as ANTHROPIC_FOUNDRY_ is not a name;
 #   - a name the source holds only as an export alias, or that is only in the engine's
 #     identifier table, is not a name; one the source also reads still is;
-#   - a pin that already equals routeOverridesFrom does nothing.
+#   - a pin that already equals routeOverridesFrom does nothing;
+#   - a name added in the pin that the reviewed list holds is not a change (the version moves),
+#     but one it does not hold, or any removed name, still is, and the body says what to add;
+#   - a reviewed name that routeOverrides also holds is ignored, and a malformed list stops the
+#     run without editing anything.
 # Case 1 is the positive control for the others: if it did not edit, "nothing was edited"
 # would prove nothing.
 set -euo pipefail
@@ -68,8 +72,10 @@ setup() {
   cp -r "$WORK/tree" "$WORK/orig"
 }
 
+# The reviewed list is the test's own, never the repository's: $WORK/reviewed, absent unless a case writes it.
 run() {
   DOCKERFILE="$WORK/tree/Dockerfile" ROUTE_GO="$WORK/tree/route.go" ROUTE_TEST="$WORK/tree/route_test.go" \
+    REVIEWED="$WORK/reviewed" \
     FETCH_CLAUDE="$WORK/fetch.sh" BODY_FILE="$WORK/body.md" GITHUB_OUTPUT="$WORK/out" \
     "$SCRIPT" > /dev/null 2> "$WORK/err"
 }
@@ -146,6 +152,67 @@ grep -qx 'route_overrides=changed' "$WORK/out" || fail "6b: an aliased variable 
 grep -q '`CLAUDE_CODE_USE_ALIASED`' "$WORK/body.md" || fail "6b: name not listed"
 unchanged 6b
 echo "ok   6 a constant is not a name; an exported variable the source reads still is"
+
+# 7. A name added in the pin that the list holds: the version moves, the list's comments and
+#    blank lines are skipped, and the body names it. (Case 2 is the control: without the list
+#    the same kind of addition leaves everything unedited.)
+fake 4.0.0 $BASE_NAMES
+fake 4.0.1 $BASE_NAMES CLAUDE_CODE_USE_REVIEWED_ONE
+setup 4.0.1 4.0.0
+printf '# a comment\n\nCLAUDE_CODE_USE_REVIEWED_ONE\tnot a selector\n' > "$WORK/reviewed"
+run || fail "7: exit $?"
+grep -qx 'route_overrides=same' "$WORK/out" || fail "7: not same"
+grep -qx 'const routeOverridesFrom = "4.0.1"' "$WORK/tree/route_test.go" || fail "7: routeOverridesFrom not moved"
+grep -q 'own lists (claude 4.0.1:' "$WORK/tree/route.go" || fail "7: route.go note not moved"
+grep -q '`CLAUDE_CODE_USE_REVIEWED_ONE`' "$WORK/body.md" || fail "7: reviewed name not in the body"
+rm -rf "$WORK/orig"
+echo "ok   7 an added name the list holds moves the version"
+
+# 8. Two names added, one reviewed: nothing edited; only the other is listed as added, the
+#    reviewed one is said to be reviewed, and the body says where to add a line.
+fake 4.0.2 $BASE_NAMES CLAUDE_CODE_USE_REVIEWED_ONE CLAUDE_CODE_USE_UNSEEN
+setup 4.0.2 4.0.0
+printf 'CLAUDE_CODE_USE_REVIEWED_ONE\tnot a selector\n' > "$WORK/reviewed"
+run || fail "8: exit $?"
+grep -qx 'route_overrides=changed' "$WORK/out" || fail "8: not changed"
+# the bullets under the "Added in 4.0.2:" heading only (the next heading, or any line starting a sentence, ends them)
+added_bullets() { awk '/^Added in 4.0.2:$/ { f = 1; next } /^[A-Za-z]/ { f = 0 } f && /^- /' "$WORK/body.md"; }
+added_bullets | grep -q 'CLAUDE_CODE_USE_UNSEEN' || fail "8: unreviewed name not listed as added"
+if added_bullets | grep -q 'CLAUDE_CODE_USE_REVIEWED_ONE'; then fail "8: a reviewed name listed as added"; fi
+grep -q 'already reviewed' "$WORK/body.md" || fail "8: reviewed name not mentioned"
+grep -q 'NAME<TAB>reason' "$WORK/body.md" || fail "8: body does not say what to add"
+unchanged 8
+echo "ok   8 one unreviewed name keeps the run red and says what to add"
+
+# 9. A removed name stays a change even when everything added is reviewed.
+fake 4.0.3 $(printf '%s\n' $BASE_NAMES | grep -vx ANTHROPIC_BASE_URL) CLAUDE_CODE_USE_REVIEWED_ONE
+setup 4.0.3 4.0.0
+printf 'CLAUDE_CODE_USE_REVIEWED_ONE\tnot a selector\n' > "$WORK/reviewed"
+run || fail "9: exit $?"
+grep -qx 'route_overrides=changed' "$WORK/out" || fail "9: not changed"
+grep -q '`ANTHROPIC_BASE_URL`' "$WORK/body.md" || fail "9: removed name not listed"
+unchanged 9
+echo "ok   9 a removed name is still a change"
+
+# 10. A reviewed name that routeOverrides holds is ignored: the addition stays a change.
+setup 4.0.1 4.0.0
+printf '// routeOverrides ... taken from the CLI'"'"'s own lists (claude 4.0.0: the provider\nvar routeOverrides = []string{\n\t"CLAUDE_CODE_USE_REVIEWED_ONE",\n}\n' > "$WORK/tree/route.go"
+rm -rf "$WORK/orig"; cp -r "$WORK/tree" "$WORK/orig"
+printf 'CLAUDE_CODE_USE_REVIEWED_ONE\tnot a selector\n' > "$WORK/reviewed"
+run || fail "10: exit $?"
+grep -qx 'route_overrides=changed' "$WORK/out" || fail "10: a name held by routeOverrides counted as reviewed"
+grep -q 'ignoring' "$WORK/err" || fail "10: no message about the ignored entry"
+unchanged 10
+echo "ok  10 a reviewed name that routeOverrides holds is ignored"
+
+# 11. A line without a reason stops the run, and nothing is edited.
+setup 4.0.1 4.0.0
+printf 'CLAUDE_CODE_USE_REVIEWED_ONE\n' > "$WORK/reviewed"
+if run; then fail "11: a list line without a reason was accepted"; fi
+grep -q 'want NAME<TAB>reason' "$WORK/err" || fail "11: no message naming the line"
+unchanged 11
+rm -f "$WORK/reviewed"
+echo "ok  11 a malformed list stops the run without editing"
 }
 
 echo "claude-route-overrides: all cases passed"

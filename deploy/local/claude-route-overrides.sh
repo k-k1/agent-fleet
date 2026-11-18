@@ -12,12 +12,22 @@
 # does it: it runs `strings` over the linux-x64 binary of the version routeOverrides was
 # taken from and of the new pin, and compares the names matching those families.
 #
-#   same     the two name sets are identical: routeOverridesFrom and route.go's provenance
-#            note move to the new pin, and the test goes green.
-#   changed  names were added or removed: nothing is edited, so the test stays red, and the
-#            names are listed in the PR body for a human to sort into routeOverrides.
+#   same     the two name sets are identical, or differ only by names added in the new pin
+#            that a person already reviewed and listed in claude-route-overrides.reviewed:
+#            routeOverridesFrom and route.go's provenance note move to the new pin, and the
+#            test goes green.
+#   changed  names were added or removed and not all of the additions are reviewed: nothing
+#            is edited, so the test stays red, and the names are listed in the PR body for a
+#            human to sort into routeOverrides or into the reviewed list.
 #   unknown  a binary could not be fetched or read: nothing is edited (the test stays red).
 #   current  the pin already equals routeOverridesFrom: nothing to do.
+#
+# claude-route-overrides.reviewed (one `NAME<TAB>reason` per line) is where a person's decision
+# that a new name is not a provider, endpoint or credential selector lives. It is data on main,
+# so it survives cli-pin-bump.yml rebuilding the bump branch from main (a commit added to that
+# branch is force-pushed away the next time another CLI passes its contract), and landing it
+# does not depend on the pin, so it never turns main red. A name that is also in routeOverrides
+# is ignored in the list: the list may only hold names that are deliberately left out.
 #
 # Compared with routeOverridesFrom, never with the previous pin: if an earlier bump was
 # merged without the re-derivation, the gap since then is what has to be checked.
@@ -31,6 +41,7 @@
 #   ROUTE_TEST   default: workspace/agent/internal/agents/claude/route_bedrock_test.go
 #   FETCH_CLAUDE command run as `$FETCH_CLAUDE <version> <dir>` that leaves the binary at
 #                <dir>/claude (default: npm pack @anthropic-ai/claude-code-linux-x64)
+#   REVIEWED     reviewed names, default: claude-route-overrides.reviewed next to this script
 #   BODY_FILE    PR body to append a section to (default: none)
 #   GITHUB_OUTPUT route_overrides=same|changed|unknown|current
 set -euo pipefail
@@ -40,6 +51,7 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 DOCKERFILE="${DOCKERFILE:-$ROOT/workspace/Dockerfile}"
 ROUTE_GO="${ROUTE_GO:-$ROOT/workspace/agent/internal/agents/claude/route.go}"
 ROUTE_TEST="${ROUTE_TEST:-$ROOT/workspace/agent/internal/agents/claude/route_bedrock_test.go}"
+REVIEWED="${REVIEWED:-$HERE/claude-route-overrides.reviewed}"
 BODY_FILE="${BODY_FILE:-}"
 OUT="${GITHUB_OUTPUT:-/dev/null}"
 
@@ -55,6 +67,23 @@ fetch_npm() {
 }
 
 body() { [ -z "$BODY_FILE" ] || printf '%s\n' "$@" >> "$BODY_FILE"; }
+
+# The reviewed names, sorted. A malformed line stops the run: a list that is read halfway would
+# either hide a name or turn a reviewed one back into a change.
+reviewed_names() {
+  [ -f "$REVIEWED" ] || return 0
+  awk -F'\t' -v f="$REVIEWED" '
+    /^[[:space:]]*(#|$)/ { next }
+    $1 !~ /^[A-Z][A-Z0-9_]+$/ || $2 ~ /^[[:space:]]*$/ { printf "%s:%d: want NAME<TAB>reason\n", f, NR > "/dev/stderr"; bad = 1; next }
+    { print $1 }
+    END { exit bad }' "$REVIEWED" | sort -u
+}
+
+# The names routeOverrides holds today, from route.go's list literal.
+route_names() {
+  awk '/^var routeOverrides = \[\]string\{/ { f = 1 } f { print } f && (/^\}/ || /\{\}$/) { exit }' "$ROUTE_GO" |
+    grep -oE '"[A-Z][A-Z0-9_]+"' | tr -d '"' | sort -u || true
+}
 
 result() {
   echo "route_overrides=$1" >> "$OUT"
@@ -115,7 +144,22 @@ done
 added="$(comm -13 "$WORK/$from.names" "$WORK/$pin.names")"
 removed="$(comm -23 "$WORK/$from.names" "$WORK/$pin.names")"
 
-if [ -n "$added$removed" ]; then
+reviewed_names > "$WORK/reviewed.all" || die "$REVIEWED is malformed (see the lines above)"
+route_names > "$WORK/route.names"
+# A name that is in routeOverrides cannot also be "left out on purpose".
+both="$(comm -12 "$WORK/reviewed.all" "$WORK/route.names")"
+if [ -n "$both" ]; then
+  echo "claude-route-overrides: ignoring in $REVIEWED, because routeOverrides holds them: $(echo "$both" | tr '\n' ' ')" >&2
+  comm -23 "$WORK/reviewed.all" "$WORK/route.names" > "$WORK/reviewed"
+else
+  cp "$WORK/reviewed.all" "$WORK/reviewed"
+fi
+: > "$WORK/added"
+for n in $added; do echo "$n" >> "$WORK/added"; done
+unreviewed="$(comm -23 "$WORK/added" "$WORK/reviewed")"
+known="$(comm -12 "$WORK/added" "$WORK/reviewed")"
+
+if [ -n "$unreviewed$removed" ]; then
   {
     echo
     echo "### claude routeOverrides"
@@ -124,8 +168,15 @@ if [ -n "$added$removed" ]; then
     echo "\`routeOverrides\` was taken from) and $pin, so \`TestRouteOverridesCoverTheCLIsLists\` stays red"
     echo "until a human sorts them into \`routeOverrides\` and moves \`routeOverridesFrom\`."
     echo
-    [ -z "$added" ] || { echo "Added in $pin:"; echo; printf -- '- `%s`\n' $added; echo; }
-    [ -z "$removed" ] || { echo "Removed in $pin:"; echo; printf -- '- `%s`\n' $removed; }
+    [ -z "$unreviewed" ] || { echo "Added in $pin:"; echo; printf -- '- `%s`\n' $unreviewed; echo; }
+    [ -z "$removed" ] || { echo "Removed in $pin:"; echo; printf -- '- `%s`\n' $removed; echo; }
+    [ -z "$known" ] || { echo "Added in $pin but already reviewed (\`$(basename "$REVIEWED")\`):"; echo; printf -- '- `%s`\n' $known; echo; }
+    if [ -n "$unreviewed" ]; then
+      echo "A name that does not choose a provider, endpoint or credential goes into"
+      echo "\`deploy/local/$(basename "$REVIEWED")\` on \`main\` as \`NAME<TAB>reason\` (a change that does not"
+      echo "depend on this pin, so it cannot turn \`main\` red); the next run then moves \`routeOverridesFrom\`"
+      echo "by itself. One that does goes into \`routeOverrides\`."
+    fi
   } > "$WORK/changed.md"
   [ -z "$BODY_FILE" ] || cat "$WORK/changed.md" >> "$BODY_FILE"
   result changed
@@ -142,7 +193,15 @@ sed "s/own lists (claude $from:/own lists (claude $pin:/" "$ROUTE_GO" > "$WORK/r
 cat "$WORK/test.go" > "$ROUTE_TEST"
 cat "$WORK/route.go" > "$ROUTE_GO"
 
-body "" "### claude routeOverrides" "" \
-  "Re-derived: the $(wc -l < "$WORK/$pin.names" | tr -d ' ') provider, endpoint and credential variable names in claude $pin" \
-  "are the same as in $from, so \`routeOverrides\` is unchanged and \`routeOverridesFrom\` moves to $pin."
+if [ -z "$known" ]; then
+  body "" "### claude routeOverrides" "" \
+    "Re-derived: the $(wc -l < "$WORK/$pin.names" | tr -d ' ') provider, endpoint and credential variable names in claude $pin" \
+    "are the same as in $from, so \`routeOverrides\` is unchanged and \`routeOverridesFrom\` moves to $pin."
+else
+  body "" "### claude routeOverrides" "" \
+    "Re-derived: the $(wc -l < "$WORK/$pin.names" | tr -d ' ') provider, endpoint and credential variable names in claude $pin" \
+    "are the same as in $from apart from names a person already reviewed and left out of \`routeOverrides\`" \
+    "(\`$(basename "$REVIEWED")\`), so \`routeOverrides\` is unchanged and \`routeOverridesFrom\` moves to $pin." ""
+  for n in $known; do body "- \`$n\`"; done
+fi
 result same
