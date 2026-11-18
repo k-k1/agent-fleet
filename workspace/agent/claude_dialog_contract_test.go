@@ -221,12 +221,49 @@ func sendDialogPrompt(t *testing.T, meta session.Meta, tn, prompt, marker string
 	submitPrompt(t, spec, meta, tn, marker, func() bool { return tmuxx.ModalActive(meta.Name) })
 }
 
-// showsQuestionOptions reports whether the frame holds the option rows of the probe's question. The
-// prompt echoed above the dialog names "Pick one" and the two letters but not the options'
-// descriptions, so only the dialog itself holds "Option A" and "Option B": any other modal (a
-// rate-limit menu, say) does not pass for it.
+// showsQuestionOptions reports whether the frame holds the option rows of the probe's question: a
+// line that is exactly "Option A" and another that is exactly "Option B", which is how the dialog
+// draws the descriptions. Whole lines, because the prompt's echo above the dialog (and the text
+// typed before it is submitted) carries both quoted inside one long line, so a bare Contains would
+// hold on the echo alone, before any dialog and for any other modal (a rate-limit menu, say).
 func showsQuestionOptions(frame string) bool {
-	return strings.Contains(frame, "Option A") && strings.Contains(frame, "Option B")
+	var a, b bool
+	for _, ln := range strings.Split(frame, "\n") {
+		switch strings.TrimSpace(ln) {
+		case "Option A":
+			a = true
+		case "Option B":
+			b = true
+		}
+	}
+	return a && b
+}
+
+// The predicate is what keeps the question subtest from passing on something that is not the
+// dialog, so it is tested on its own (run in claude-tui-contract.yml next to the live contract; it
+// needs no login).
+func TestShowsQuestionOptions(t *testing.T) {
+	echo := "❯ " + dialogQuestionPrompt + "\n"
+	rateLimit := " What do you want to do?\n ❯ 1. Stop and wait for limit to reset\n   2. Ask your admin for more usage\n\n Enter to confirm · Esc to cancel\n"
+	capture, err := os.ReadFile("internal/agents/claude/testdata/permmenu/ask_user_question_one_question_2_1_327.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct {
+		frame string
+		want  bool
+	}{
+		"the prompt echo alone":          {echo, false},
+		"the echo and a rate-limit menu": {echo + rateLimit, false},
+		"an empty pane":                  {"", false},
+		"only one of the descriptions":   {echo + "   Option A\n", false},
+		"the live 2.1.327 dialog":        {string(capture), true},
+		"the echo above the live dialog": {echo + string(capture), true},
+	} {
+		if got := showsQuestionOptions(c.frame); got != c.want {
+			t.Errorf("%s: showsQuestionOptions = %v, want %v", name, got, c.want)
+		}
+	}
 }
 
 // waitDialog polls the pane until ok(frame) holds or dialogWait passes.

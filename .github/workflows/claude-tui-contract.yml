@@ -121,7 +121,7 @@ jobs:
       test_3: |
         export CLAUDE_CODE_OAUTH_TOKEN="$E2E_CLAUDE_OAUTH_TOKEN" ANTHROPIC_API_KEY="$E2E_ANTHROPIC_API_KEY"
         set -o pipefail
-        go test -tags contract -run '^TestClaudeDialogContractLive$' \
+        go test -tags contract -run '^(TestClaudeDialogContractLive|TestShowsQuestionOptions)$' \
           -count=1 -v -timeout 15m . \
           2>&1 | tee -a /tmp/contract.log
 
