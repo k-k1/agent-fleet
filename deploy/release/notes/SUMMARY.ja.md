@@ -12,6 +12,37 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.47.0](0.47.0.ja.md) — 2026-11-18
+
+**CLI ピン** — Claude Code 2.1.327 / OpenCode 2.3.2 / Codex 0.169.1 / Copilot 1.0.113 / Antigravity 1.5.10
+
+**New / Improved**
+
+- **[モデルの利用]** モデルの利用: テナントと配備の管理者が資格情報の種類と送り先で経路を制限。各層は上を狭めるだけ、層ごとに隠したものを表示、提供される経路の出どころ・付与・予算。禁止した経路はメンバーの画面から消える ([#4169](https://github.com/k-k1/agent-fleet/issues/4169), [#4376](https://github.com/k-k1/agent-fleet/issues/4376))
+- **[設定]** 設定 ›「モデルの認証情報」を送り先ごとにまとめ「使えるエージェント」を表示。「エージェント」はエージェントごと（オン・オフ、既定の経路、実行場所）。「セッション」「画像生成」のページ ([#4169](https://github.com/k-k1/agent-fleet/issues/4169))
+- **[Console]** アクティビティバー: 左ペインは一度に一つのビュー、見ていないビューは印で知らせる
+- **[メモ]** 自動実行の整理: 実行前にモデルが待っているメモを統合・分割・移動、選んだメモを手でプレビューして整理。実行履歴に残り元に戻せる ([#4152](https://github.com/k-k1/agent-fleet/issues/4152))
+- **[メモ]** 作業項目の「自動実行に追加」。リンクが一つの実行はセッションを項目に結び付けブランチ名を付ける ([#4404](https://github.com/k-k1/agent-fleet/issues/4404))
+- **[メモ]** カテゴリごとに、自分で起動したセッションのメモを承認なしで受け付ける（初期値オフ） ([#4151](https://github.com/k-k1/agent-fleet/issues/4151))
+- **[メモ]** worktree のセッションのメモは親のリポジトリの下に入る ([#4175](https://github.com/k-k1/agent-fleet/issues/4175))
+- **[ecs-ec2]** テナントの管理者が許可すると、次の起動を期限付きで一段上のサイズにブースト（月の予算はまだ強制しない） ([#4335](https://github.com/k-k1/agent-fleet/issues/4335))
+- **[ecs-ec2]** 任意の軽い 4 GiB のスロットのクラス（m8g.medium、t4g、t3）をガイドに掲載 ([#4332](https://github.com/k-k1/agent-fleet/issues/4332))
+- **[egress]** Docker Compose の囲い: ワークスペースのネットワークに外への経路を持たせずプロキシだけを出口に（任意、実機の Docker では未確認） ([#1181](https://github.com/k-k1/agent-fleet/issues/1181))
+- **[egress]** 組み込みの許可リストがエージェント CLI の実行時のホストを通す ([#4392](https://github.com/k-k1/agent-fleet/issues/4392))
+- **[egress]** ゲートウェイにクラウド費用の専用の行、最初のポリシーまでは「closed」とログ、splice した TLS は一回と数える ([#4440](https://github.com/k-k1/agent-fleet/issues/4440), [#4394](https://github.com/k-k1/agent-fleet/issues/4394), [#4393](https://github.com/k-k1/agent-fleet/issues/4393))
+- **[Console]** Agent があきらめた最初の指示はどれもトーストで知らせる ([#4343](https://github.com/k-k1/agent-fleet/issues/4343))
+- **[Console]** 課題トラッカーのビューは 10 行で折りたたまずすべて出す
+
+**Fixed**
+
+- **[ターミナル]** 遅い回線でペインが空のまま（正常な接続が切られ再試行が終わらない） ([#4432](https://github.com/k-k1/agent-fleet/issues/4432))
+- **[エージェント]** 止まったセッションへの「準備ができたら」の入力が受け付け後に捨てられた。今は断る ([#4202](https://github.com/k-k1/agent-fleet/issues/4202))
+- **[Console]** 設定の保存で起動の既定の一部が消えた。エージェントを選び直すと経路が戻された ([#4427](https://github.com/k-k1/agent-fleet/issues/4427))
+- **[メモ]** 遅いワークスペースがほかのメンバーの実行の締めを遅らせた。新しいカテゴリ名のメモにカテゴリができなかった ([#4245](https://github.com/k-k1/agent-fleet/issues/4245), [#4411](https://github.com/k-k1/agent-fleet/issues/4411))
+- **[mcp]** `create_session` の説明がテナントのポリシーで禁止した経路を挙げていた ([#4323](https://github.com/k-k1/agent-fleet/issues/4323))
+- **[Console]** 「ファイル」の変更一覧がテナント切り替え後も前のまま。セッションのビューでリポジトリの行が折り返した ([#4431](https://github.com/k-k1/agent-fleet/issues/4431), [#4357](https://github.com/k-k1/agent-fleet/issues/4357))
+- **[ecs-ec2]** メンバーの上限を保存するたびにホームの縮小を報告していた ([#4406](https://github.com/k-k1/agent-fleet/issues/4406))
+
 ## [0.46.0](0.46.0.ja.md) — 2026-11-16
 
 **CLI ピン** — Claude Code 2.1.325 / Copilot 1.0.112 / Antigravity 1.5.9 / Kiro 3.3.0 / Muse 1.4.20-R8619.1
