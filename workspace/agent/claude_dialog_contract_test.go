@@ -26,12 +26,17 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
@@ -46,10 +51,8 @@ const dialogQuestionPrompt = "Use the AskUserQuestion tool right now to ask me o
 	"two options A and B. Do nothing else."
 
 func TestClaudeDialogContractLive(t *testing.T) {
-	spec := tuiMirrorContractSpec{kind: session.KindClaude, agent: claude.New()}
-
 	t.Run("permission", func(t *testing.T) {
-		meta, tn, stop := startTUIContractSession(t, spec, "dialog-perm", "")
+		meta, tn, stop := startDialogPane(t, "perm")
 		defer stop()
 		sendDialogPrompt(t, tn, dialogPermissionPrompt)
 
@@ -93,7 +96,7 @@ func TestClaudeDialogContractLive(t *testing.T) {
 	})
 
 	t.Run("question", func(t *testing.T) {
-		meta, tn, stop := startTUIContractSession(t, spec, "dialog-ask", "")
+		meta, tn, stop := startDialogPane(t, "ask")
 		defer stop()
 		sendDialogPrompt(t, tn, dialogQuestionPrompt)
 
@@ -116,6 +119,62 @@ func TestClaudeDialogContractLive(t *testing.T) {
 			t.Errorf("a question dialog was read as a permission menu (%+v): a digit meant for the permission card would answer it\n%s", m.Rows, frame)
 		}
 	})
+}
+
+// startDialogPane launches claude through production's BuildLaunch in a private tmux server and
+// waits for the composer. A startup dialog is answered by choosing its row, never by a blind Enter:
+// the highlighted row is whatever upstream decided this week ("No, exit" on 2.1.327's folder trust,
+// which is why startTUIContractSession, which leaves such a dialog alone, is not used here). stop
+// must be deferred.
+func startDialogPane(t *testing.T, suffix string) (meta session.Meta, tn string, stop func()) {
+	t.Helper()
+	for _, bin := range []string{"tmux", "claude"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			requireTUIContract(t, false, fmt.Sprintf("%s is not on PATH: %v", bin, err))
+		}
+	}
+	name := fmt.Sprintf("contract-dialog-%s-%d", suffix, os.Getpid())
+	t.Setenv("AF_TMUX_SOCKET", fmt.Sprintf("af-dialog-contract-%s-%d", suffix, os.Getpid()))
+	stop = func() {
+		_ = tmuxx.Cmd("kill-server").Run()
+		time.Sleep(750 * time.Millisecond)
+	}
+	started := false
+	defer func() {
+		if !started {
+			stop()
+		}
+	}()
+
+	meta = session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
+	launch, err := claude.New().BuildLaunch(meta, agents.LaunchOpts{})
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	tn = session.TmuxName(name)
+	if out, err := tmuxx.Cmd("new-session", "-d", "-s", tn, "-x", "200", "-y", "50", "-c", launch.Cwd, launch.Program).CombinedOutput(); err != nil {
+		t.Fatalf("tmux new-session: %v: %s", err, out)
+	}
+	for deadline := time.Now().Add(tuiContractReadyWait); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+		frame := tmuxx.CapturePane(tn)
+		switch {
+		case strings.Contains(frame, "Bypass Permissions mode") && strings.Contains(frame, "Yes, I accept"):
+			chooseDialogRow(t, tn, "Yes, I accept")
+			time.Sleep(2 * time.Second)
+			continue
+		case strings.Contains(frame, "trust this folder") || strings.Contains(frame, "Do you trust the files"):
+			chooseDialogRow(t, tn, "Yes, I trust")
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if sessionx.PaneMode(session.KindClaude, tn) != "" {
+			started = true
+			time.Sleep(500 * time.Millisecond) // the first footer can precede the input handler by a render tick
+			return meta, tn, stop
+		}
+	}
+	t.Fatalf("composer readiness was never detected within %s\npane:\n%s", tuiContractReadyWait, tmuxx.CapturePane(tn))
+	return meta, tn, stop
 }
 
 // sendDialogPrompt types the prompt and presses Enter, with the production tmux wrapper on the
