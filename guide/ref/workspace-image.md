@@ -54,7 +54,7 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 |---|---|---|---|
 | [Claude Code (`claude`)](https://github.com/anthropics/claude-code) | Anthropic's coding agent | `2.1.327` | [Vendor terms](https://www.anthropic.com/legal/commercial-terms) |
 | [Codex CLI (`codex`)](https://github.com/openai/codex) | OpenAI's coding agent | `0.169.1` | [Apache-2.0](https://github.com/openai/codex/blob/rust-v0.169.1/LICENSE) |
-| [opencode](https://github.com/anomalyco/opencode) | An open-source coding agent that works with many model providers | `2.3.0` | [MIT](https://github.com/anomalyco/opencode/blob/v2.3.0/LICENSE) |
+| [opencode](https://github.com/anomalyco/opencode) | An open-source coding agent that works with many model providers | `2.3.2` | [MIT](https://github.com/anomalyco/opencode/blob/v2.3.2/LICENSE) |
 | [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub's coding agent | `1.0.113` | [Vendor terms](https://github.com/github/copilot-cli/blob/v1.0.113/LICENSE.md) |
 | [Antigravity CLI (`agy`)](https://antigravity.google/) | Google's coding agent | `1.5.10` | [Vendor terms](https://antigravity.google/terms) |
 | [Cursor CLI (`cursor-agent`)](https://cursor.com/) | Cursor's coding agent | `2026.10.22-27dcf5f` | [Vendor terms](https://cursor.com/terms-of-service) |

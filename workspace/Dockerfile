@@ -410,7 +410,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # Without a pin the unchanged RUN line hits the layer cache and a rebuild keeps the old
 # version; changing the ARG is what reliably busts the cache.
 ARG CLAUDE_CODE_VERSION=2.1.327
-ARG OPENCODE_VERSION=2.3.0
+ARG OPENCODE_VERSION=2.3.2
 ARG CODEX_VERSION=0.169.1
 ARG COPILOT_VERSION=1.0.113
 # opencode is the npm package @opencode/cli (it also installs an `opencode2` bin). Only opencode 2
