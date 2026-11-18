@@ -189,11 +189,11 @@ export function CopilotBehavior({
   );
 }
 
-export function KiroBehavior({ head, running = false }: { head?: ReactNode; running?: boolean }) {
+export function KiroBehavior({ head, running = false, supported }: { head?: ReactNode; running?: boolean; supported?: boolean }) {
   return (
     <ProviderCard id="kiro" name={kindDisplayName("kiro")} status={undefined}>
       {head}
-      <CliInstall kind="kiro" running={running} />
+      <CliInstall kind="kiro" running={running} supported={supported} />
       <CardSettings>
         <LaunchDefaults kind="kiro" />
       </CardSettings>
@@ -288,11 +288,11 @@ export function LcppBehavior({ head }: { head?: ReactNode }) {
   );
 }
 
-export function MuseBehavior({ head, running = false }: { head?: ReactNode; running?: boolean }) {
+export function MuseBehavior({ head, running = false, supported }: { head?: ReactNode; running?: boolean; supported?: boolean }) {
   return (
     <ProviderCard id="muse" name={kindDisplayName("muse")} status={undefined}>
       {head}
-      <CliInstall kind="muse" running={running} />
+      <CliInstall kind="muse" running={running} supported={supported} />
       {/* The launch defaults stay reachable in every state, the same as every other card: they
           are client-side settings, so they work while the workspace is stopped and before the
           binary is installed. The model picker is empty until both are true, which is the

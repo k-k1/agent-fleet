@@ -86,7 +86,7 @@ The agent CLIs are not in the package.
 |---|---|
 | claude, codex, opencode, cursor, copilot, agy, rtk | On a workspace's first start, the versions pinned in `versions.json` go into the virtual HOME. Only this step needs the network |
 | kiro (~855 MB) | The first time a Kiro session starts |
-| Muse Code | Not until you ask for it: its connection card's "**Install Muse Code**" fetches the pinned version into your home |
+| Muse Code | Not until you ask for it: the "**Install Muse Code**" button on its card in ⚙Settings → Agents fetches the pinned version into your home |
 
 ## Data locations
 

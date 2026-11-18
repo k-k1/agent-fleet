@@ -17,8 +17,10 @@ const getInstall = { kiro: getKiroInstall, muse: getMuseInstall } as const;
 // answer instead of offering a second install.
 //
 // Nothing is drawn until the first GET answers: an unknown install state must not read as "not
-// installed" and put an install button in front of a member who has the binary.
-export function CliInstall({ kind, running }: { kind: InstallKind; running: boolean }) {
+// installed" and put an install button in front of a member who has the binary. `supported` is the
+// connections answer (false = CLI missing); it stands in when the install GET failed, so a
+// transient 502 never leaves a missing CLI with no way to install it.
+export function CliInstall({ kind, running, supported }: { kind: InstallKind; running: boolean; supported?: boolean }) {
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
@@ -68,8 +70,8 @@ export function CliInstall({ kind, running }: { kind: InstallKind; running: bool
         }
         if (p && p.state === "done") {
           polling.current = false;
+          setInst(p); // the answer already carries the new version facts: no flash of the old state
           setInstalling(null);
-          void loadInstall(); // version / updateAvailable after an upgrade
           reload(); // Model credentials now sees the binary
           return { stop: true };
         }
@@ -103,21 +105,28 @@ export function CliInstall({ kind, running }: { kind: InstallKind; running: bool
         return;
       }
       if (res.state === "done") {
+        setInst((prev) => ({ ...(prev ?? { state: "done" }), state: "done", installed: true, updateAvailable: false }));
         setInstalling(null);
         void loadInstall();
         reload();
         return;
       }
       watch();
+    } catch (e) {
+      // A network drop rejects instead of answering; without this the card stays on "installing".
+      setInstalling("error");
+      toast(tr(`agents.${kind}_install_failed`, { msg: e instanceof Error ? e.message : "" }));
     } finally {
       setBusy(false);
     }
   };
 
-  if (!running || !inst) return null;
+  if (!running) return null;
+  const known = inst ?? (supported === false ? ({ state: "idle", installed: false } as CliInstallStatus) : null);
+  if (!known) return null;
   // installed is absent only while an install runs and nothing earlier was seen: that is a first install.
-  const missing = inst.installed === false || (inst.installed === undefined && inst.state === "installing");
-  const update = inst.installed === true && !!inst.updateAvailable;
+  const missing = known.installed === false || (known.installed === undefined && known.state === "installing");
+  const update = known.installed === true && !!known.updateAvailable;
   if (!missing && !update && installing === null) return null;
 
   return (
@@ -130,7 +139,7 @@ export function CliInstall({ kind, running }: { kind: InstallKind; running: bool
             <div className="p-desc">{tr(`agents.${kind}_install_desc`)}</div>
           ) : (
             <p className="ps-note ps-note-warn">
-              {tr(`agents.${kind}_update_avail`, { cur: inst.version || "?", pin: inst.pin || "?" })}
+              {tr(`agents.${kind}_update_avail`, { cur: known.version || "?", pin: known.pin || "?" })}
             </p>
           )}
           <div className="p-opts">

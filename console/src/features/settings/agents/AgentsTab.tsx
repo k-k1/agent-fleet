@@ -131,12 +131,12 @@ export function AgentsTab() {
     ["codex", <CodexBehavior key="codex" head={head("codex")} codex={codex} updateCodex={updateCodex} agents={agents} updateAgents={updateAgents} />],
     ["cursor", <CursorBehavior key="cursor" head={head("cursor")} />],
     ["copilot", <CopilotBehavior key="copilot" head={head("copilot")} agents={agents} updateAgents={updateAgents} />],
-    ["kiro", <KiroBehavior key="kiro" head={head("kiro")} running={running} />],
+    ["kiro", <KiroBehavior key="kiro" head={head("kiro")} running={running} supported={conns?.kiro?.supported} />],
     ["agy", <AgyBehavior key="agy" head={head("agy")} agents={agents} updateAgents={updateAgents} />],
     ["opencode", <OpencodeBehavior key="opencode" head={head("opencode")} agents={agents} updateAgents={updateAgents} />],
     // llama.cpp keeps its own on/off (lcppEnabled), drawn by its card.
     ["lcpp", <LcppBehavior key="lcpp" head={head("lcpp", true)} />],
-    ["muse", <MuseBehavior key="muse" head={head("muse")} running={running} />],
+    ["muse", <MuseBehavior key="muse" head={head("muse")} running={running} supported={conns?.muse?.supported} />],
   ];
 
   // A deep link naming a harness lands on its card once the catalogue has drawn the cards.

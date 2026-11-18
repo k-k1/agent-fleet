@@ -117,6 +117,31 @@ describe.each([
     expect(buttonWith(`Update ${name}`)).toBeFalsy();
   });
 
+  // The install GET can fail once (502). The connections answer says the CLI is missing, so the
+  // install stays reachable instead of leaving the card empty.
+  it("falls back to the connections answer when the install GET fails", async () => {
+    api.mockImplementation(() => Promise.resolve({ error: { code: "http_502" } }));
+    await mount(<Behavior running supported={false} />);
+    expect(buttonWith(`Install ${name}`) || buttonWith(`${name} を導入`)).toBeTruthy();
+    unmount();
+    await mount(<Behavior running supported />);
+    expect(buttonWith(`Install ${name}`)).toBeFalsy();
+  });
+
+  // A rejected POST (network drop) must end in the error state with a retry, not stay on "installing".
+  it("shows the error and the button again when the install request rejects", async () => {
+    api.mockImplementation((path: string, opts?: { method?: string }) =>
+      opts?.method === "POST" ? Promise.reject(new Error("offline")) : Promise.resolve({ state: "idle", installed: false }),
+    );
+    await mount(<Behavior running />);
+    await act(async () => {
+      (buttonWith(`Install ${name}`) || buttonWith(`${name} を導入`))!.click();
+    });
+    expect(toast).toHaveBeenCalled();
+    expect(text()).not.toMatch(/Installing|導入中/);
+    expect(buttonWith(`Install ${name}`) || buttonWith(`${name} を導入`)).toBeTruthy();
+  });
+
   it("keeps the update wording while an update runs", async () => {
     agent(kind, () => ({ state: "idle", installed: true, version: "1.2.9", pin: "1.3.0", updateAvailable: true }));
     await mount(<Behavior running />);

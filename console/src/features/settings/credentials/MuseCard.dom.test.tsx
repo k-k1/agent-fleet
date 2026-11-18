@@ -19,6 +19,7 @@ vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(true) }));
 
 const { MuseCard } = await import("./MuseCard.tsx");
+const { KiroCard } = await import("./KiroCard.tsx");
 // The launch defaults moved to the Agents page with the rest of the behaviour (ADR 0138 D16).
 const { MuseBehavior } = await import("../agents/AgentBehaviors.tsx");
 const { useSettingsUI } = await import("../store.ts");
@@ -100,6 +101,22 @@ describe("MuseCard", () => {
     const ui = useSettingsUI.getState();
     expect(ui.settingsSection).toBe("agents");
     expect(ui.settingsTarget).toBe("muse");
+  });
+
+  it("points the Kiro card at the Agents page too", async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<KiroCard running st={{ supported: false, connected: false }} reload={() => {}} />);
+    });
+    expect(text()).toMatch(/not installed|導入されていない/);
+    const link = buttonWith("Agents page") || buttonWith("エージェントのページ");
+    await act(async () => {
+      link!.click();
+    });
+    expect(useSettingsUI.getState().settingsSection).toBe("agents");
+    expect(useSettingsUI.getState().settingsTarget).toBe("kiro");
   });
 
   it("offers both credentials once installed, sign-in first", async () => {
