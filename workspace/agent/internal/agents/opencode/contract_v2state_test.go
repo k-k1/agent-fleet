@@ -134,11 +134,16 @@ func startStubbedV2(t *testing.T) (stub *stubProvider, addr, dir string) {
 }
 
 // startStubbedV2With is startStubbedV2 with extra top-level keys in the opencode config.
+//
+// The stub model's context window must stay well above the system prompt plus the tool schemas:
+// opencode 2.3.2 compacts before the first request of a turn when that estimate does not fit, so
+// the stub then sees the compaction prompt instead of the user's TOOL / ASK / TODO marker and
+// answers "ok done" (measured: at 8000 tokens the tool, question and todo contracts all went red).
 func startStubbedV2With(t *testing.T, extra map[string]any) (stub *stubProvider, addr, dir string) {
 	t.Helper()
 	stub = &stubProvider{}
 	addr, dir = startV2Serve(t, http.HandlerFunc(stub.handler), map[string]any{"m": map[string]any{"name": "m", "tool_call": true,
-		"cost": map[string]any{"input": 1, "output": 2}, "limit": map[string]any{"context": 8000, "output": 1000}}}, extra)
+		"cost": map[string]any{"input": 1, "output": 2}, "limit": map[string]any{"context": 32000, "output": 1000}}}, extra)
 	return stub, addr, dir
 }
 
