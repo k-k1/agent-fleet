@@ -16,6 +16,7 @@ export function MemoProducerText({ k, name, link }: { k: MsgKey; name: string; l
   const live = useSessionsStore((s) => link && s.sessions.some((x) => x.name === name));
   if (!live) return <>{tr(k, { name })}</>;
   const parts = tr(k, { name: SLOT }).split(SLOT);
+  if (parts.length < 2) return <>{tr(k, { name })}</>; // a sentence without {name}: nothing to link
   const out: ReactNode[] = [];
   parts.forEach((p, i) => {
     if (i > 0) {
@@ -23,9 +24,13 @@ export function MemoProducerText({ k, name, link }: { k: MsgKey; name: string; l
         <button
           key={"b" + i}
           type="button"
-          className="linkish memo-producer-link"
+          className="linkish"
           title={tr("memo.d_open_session", { name })}
-          onClick={() => openSessionChat(name)}
+          onClick={(e) => {
+            // The row body toggles expand/edit on click; opening a session must not.
+            e.stopPropagation();
+            openSessionChat(name);
+          }}
         >
           {name}
         </button>,

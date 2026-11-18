@@ -172,7 +172,8 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
 });
-afterEach(() => {
+afterEach(async () => {
+  (await import("../sessions/store.ts")).useSessionsStore.setState({ sessions: [] });
   act(() => root?.unmount());
   root = null;
   host.remove();
@@ -216,7 +217,7 @@ describe("the list", () => {
 
   it("links a live producer session to its view and leaves other producers as plain text", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
-    useSessionsStore.setState({ sessions: [{ name: "worker-2" }, { name: "worker-1" }] as never });
+    useSessionsStore.setState({ sessions: [{ name: "worker-2" }, { name: "worker-1" }, { name: "x" }] as never });
     servedMemos = [
       aMemo({ id: "b", state: "claimed", provenance: "mcp", producer: "worker-2" }),
       aMemo({ id: "c", state: "unconfirmed", provenance: "workspace", producer: "worker-2" }),
@@ -230,11 +231,20 @@ describe("the list", () => {
     expect(origins[1]!.textContent).toBe(t("memo.origin_session", { name: "worker-2" }));
     await click(link);
     expect(openSessionChat).toHaveBeenCalledWith("worker-2");
+    expect(document.querySelector(".memo-row.exp")).toBeNull(); // the click did not expand the row
     expect(origins[2]!.querySelector("button")).toBeNull(); // deleted session
     const title = must(document.querySelector(".memo-release-title button"), "card link");
     await click(title);
     expect(openSessionChat).toHaveBeenCalledWith("worker-1");
-    useSessionsStore.setState({ sessions: [] });
+  });
+
+  it("does not link a held card whose provenance is not a session", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({ sessions: [{ name: "x" }] as never });
+    servedMemos = [held("m1", "h1", { provenance: "member", producer: "x" })];
+    await render();
+    expect(document.querySelector(".memo-release-title")).not.toBeNull();
+    expect(document.querySelector(".memo-release-title button")).toBeNull();
   });
 
   it("survives a JSON null where the settings expect an array, and a failed settings read", async () => {

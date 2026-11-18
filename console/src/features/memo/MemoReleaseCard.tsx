@@ -59,7 +59,7 @@ export function MemoReleaseCard({ card, busy, changedIds, edited, awaiting, onRe
       <div className="memo-release-head">
         <Icon name="shield" />
         <span className="memo-release-title">
-          {card.provenance !== "mcp" && card.producer ? (
+          {card.provenance === "workspace" && card.producer ? (
             <MemoProducerText k="memo.release_title_session" name={card.producer} link />
           ) : (
             title
