@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -11,6 +11,7 @@ import type { McpServer } from "../settings/mcp/mcpWire.ts";
 import { readerVoiceChoices } from "./tts.ts";
 import { loadSpeakers } from "./ttsSpeakers.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
+import { useOfferedChatKinds } from "../settings/personal/offeredChatKinds.ts";
 
 // AssistantModal creates or edits a user-defined assistant template (docs/log/19 Q2):
 // name, backend agent, optional model, a persona (system prompt), a tool grant, and
@@ -42,6 +43,17 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
   const [description, setDescription] = useState(initial?.description ?? "");
   const [icon, setIcon] = useState(initial?.icon ?? ICONS[0]);
   const [agent, setAgent] = useState<SessionKind>(initial?.agent ?? chatKinds[0] ?? "claude");
+  // Only the backends the policy allows and the member has not switched off are offered (ADR 0138
+  // D10a); the assistant's own backend stays listed when editing. A new assistant's default moves
+  // to the first offered backend once the catalogue answers, unless the member already chose.
+  const offered = useOfferedChatKinds();
+  const agentTouched = useRef(!!initial);
+  const shownKinds = chatKinds.filter((k) => k === initial?.agent || !!offered?.has(k));
+  useEffect(() => {
+    if (agentTouched.current || !offered || offered.has(agent)) return;
+    const first = chatKinds.find((k) => offered.has(k));
+    if (first) setAgent(first);
+  }, [offered, agent]);
   const [model, setModel] = useState(initial?.model ?? "");
   const [persona, setPersona] = useState(initial?.persona ?? "");
   const [tools, setTools] = useState<ToolGrant>(initial?.tools ?? "none");
@@ -84,7 +96,9 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
   const voiceChoices: [string, string][] = [["", tr("asst.voice_auto")], ...readerVoiceChoices().slice(1)];
   if (voice && !voiceChoices.some(([v]) => v === voice)) voiceChoices.push([voice, voice]); // show a saved value from outside the pool too
 
-  const canSubmit = name.trim().length > 0 && !busy;
+  // A new assistant is saved only on a backend offered now (nothing is, until the catalogue has
+  // answered, or when it offers none); an edited one keeps its own backend unconditionally.
+  const canSubmit = name.trim().length > 0 && !busy && (!!initial || !!offered?.has(agent));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -162,16 +176,19 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
           </div>
         </div>
 
-        {chatKinds.length > 1 && (
+        {shownKinds.length > 1 && (
           <div className="ui-field">
             <div className="ui-field-label">{tr("asst.agent")}</div>
             <div className="ui-seg">
-              {chatKinds.map((k) => (
+              {shownKinds.map((k) => (
                 <button
                   key={k}
                   type="button"
                   className={"seg-btn" + (agent === k ? " active" : "")}
-                  onClick={() => setAgent(k)}
+                  onClick={() => {
+                    agentTouched.current = true;
+                    setAgent(k);
+                  }}
                 >
                   {AGENTS[k].assistantName}
                 </button>

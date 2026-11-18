@@ -31,6 +31,7 @@ import {
 } from "./tts.ts";
 import { ContextBar } from "../mirror/ContextBar.tsx";
 import { ChatPlan } from "./ChatPlan.tsx";
+import { useOfferedChatKinds } from "../settings/personal/offeredChatKinds.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { buildImagePrompt } from "../../lib/pastedImages.ts";
@@ -174,6 +175,8 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
   // warm, the same way HandoffModal does it. A cold cache is null, meaning "unknown", and the
   // picker then blocks nothing.
   const chatConns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
+  // The backends the credential policy allows and the member has not switched off (ADR 0138 D10a).
+  const offeredKinds = useOfferedChatKinds();
   // Open state of the work-plan panel (docs/log/33 stage 5). Pure view state, never carried
   // across panes.
   const [planOpen, setPlanOpen] = useState(false);
@@ -1046,6 +1049,7 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
         onToggleAgentPicker={() => setAgentPickerOpen((o) => !o)}
         onSwitchAgent={(k) => void doSwitchAgent(k)}
         chatConns={chatConns}
+        offeredKinds={offeredKinds}
         switching={switching}
         showStreaming={showStreaming}
         compacting={compacting}

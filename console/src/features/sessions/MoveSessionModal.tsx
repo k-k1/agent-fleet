@@ -44,7 +44,7 @@ import {
   type MoveUsage,
 } from "./move.ts";
 import { MOVE_POLL_MS, moveCancel, moveDeliver, movePreview, moveReopen, moveRetry, moveSession } from "./moveApi.ts";
-import { useConnectedKinds, useMoveUsage } from "./moveHooks.ts";
+import { useMoveGate, useMoveUsage } from "./moveHooks.ts";
 import type { Session, SessionKind } from "../../types/session.ts";
 
 interface MoveSessionModalProps {
@@ -232,8 +232,13 @@ function MoveForm({
   onMove: (kind: SessionKind, model: string, driver: string) => void;
 }) {
   const tr = useT();
-  const connected = useConnectedKinds();
-  const offered = useMemo(() => offeredTargets(preview, connected), [preview, connected]);
+  const { connected, pending: catalogPending, loggedIn } = useMoveGate();
+  // Until the catalogue has answered nothing is offered or chosen: the dialog would otherwise
+  // default to, and could confirm, a kind the policy forbids.
+  const offered = useMemo(
+    () => (catalogPending ? [] : offeredTargets(preview, connected)),
+    [preview, connected, catalogPending],
+  );
   const usage = useMoveUsage(offered);
   // From a limit banner the kinds with quota left lead; a kind with no usage source stays
   // selectable and unmarked (only a kind with a source can be judged).
@@ -259,7 +264,14 @@ function MoveForm({
     setDriverPick(null);
   }, [kind, session.repo]);
 
-  const notOffered = preview.targets.filter((t) => !offered.includes(t.kind));
+  // A connected kind the policy forbids or the member switched off is not named here, as the launch
+  // dialog names nothing it hides (ADR 0138 D10a); it would read as "not connected" and no
+  // reconnecting fixes it. Nothing is listed while the catalogue is out.
+  const notOffered = catalogPending
+    ? []
+    : preview.targets.filter(
+        (t) => !offered.includes(t.kind) && !(t.eligible && connected && !connected(t.kind) && loggedIn(t.kind)),
+      );
   const reasonText = (k: SessionKind, reason?: string): string => {
     if (reason === "same_kind") return tr(preview.canFork ? "move.reason.same_kind_fork" : "move.reason.same_kind");
     if (reason === "cannot_read_file" || reason === "not_measured" || reason === "not_an_agent") return tr(`move.reason.${reason}` as const);
@@ -288,7 +300,9 @@ function MoveForm({
 
       <div className="ui-field">
         <span className="ui-field-label">{tr("move.target_label")}</span>
-        {offered.length === 0 && <div className="muted launch-noagents">{tr("move.no_targets")}</div>}
+        {offered.length === 0 && (
+          <div className="muted launch-noagents">{tr(catalogPending ? "launch.agents_checking" : "move.no_targets")}</div>
+        )}
         <div className="ui-seg big">
           {picks.map((k) => {
             const ag = agentOf(k);
