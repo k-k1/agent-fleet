@@ -3,6 +3,8 @@
 // Every figure the Agent may not have measured arrives as an explicit `null`. It must never be
 // shown as 0: "0 minutes above the threshold" claims a healthy box, "not measured" claims nothing.
 
+// cpu_box_*, vcpu, burst_baseline_pct and above_baseline_minutes are carried but not drawn:
+// they need the baseline comparison, which is a later view.
 export interface UsageHistoryDay {
   day: string;
   tenant?: string;
@@ -13,7 +15,7 @@ export interface UsageHistoryDay {
   override?: string;
   vcpu: number | null;
   burst_baseline_pct: number | null;
-  running_minutes: number;
+  running_minutes: number | null;
   measured_minutes: { cpu: number; working_set: number; psi: number; refault: number };
   cpu_p50: number | null;
   cpu_p95: number | null;
@@ -37,7 +39,7 @@ export function fmtPct(n: number): string {
 }
 
 export function fmtMinutes(n: number): string {
-  return Math.round(n) + " min";
+  return (n < 10 ? n.toFixed(1) : String(Math.round(n))) + " min";
 }
 
 export function fmtRate(n: number): string {

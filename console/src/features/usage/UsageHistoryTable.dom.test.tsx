@@ -59,7 +59,12 @@ describe("UsageHistoryTable", () => {
     expect(tds[5]).toContain("512 MiB");
     expect(tds[6]).toBe("not measured");
     expect(tds[7]).toContain("0.0%");
-    expect(tds[8]).toBe("0 min");
+    expect(tds[8]).toContain("0.0 min");
+    expect(tds[8]).toContain("(60 min measured)");
+    // The measured-minutes note rides on every figure of a signal, not just the first.
+    expect(tds[3]).toContain("(60 min measured)");
+    expect(tds[5]).toContain("(60 min measured)");
+    expect(tds[7]).toContain("(60 min measured)");
     expect(tds[9]).toBe("not measured");
   });
 
@@ -68,6 +73,23 @@ describe("UsageHistoryTable", () => {
     const h = await mount();
     const tds = [...h.querySelectorAll("tbody tr td")].slice(3).map((t) => t.textContent);
     expect(tds).toEqual(Array(7).fill("not measured"));
+  });
+
+  it("running minutes: null is not measured, never 0 or NaN; sub-10 keeps its decimal", async () => {
+    api.mockResolvedValue({ days: [day({ running_minutes: null }), day({ day: "2026-11-16", running_minutes: 0.5 })] });
+    const h = await mount();
+    const rows = [...h.querySelectorAll("tbody tr")].map((r) => r.children[2].textContent);
+    expect(rows).toEqual(["not measured", "0.5 min"]);
+  });
+
+  it("passes the grid's range to the endpoint", async () => {
+    api.mockResolvedValue({ days: [] });
+    const host2 = document.createElement("div");
+    document.body.append(host2);
+    root = createRoot(host2);
+    host = host2;
+    await act(async () => root!.render(<UsageHistoryTable endpoint="api/usage/me/history" from="2026-11-10" to="2026-11-17" />));
+    expect(api).toHaveBeenCalledWith("api/usage/me/history?from=2026-11-10&to=2026-11-17");
   });
 
   it("requests the given endpoint, shows an error and an empty state", async () => {

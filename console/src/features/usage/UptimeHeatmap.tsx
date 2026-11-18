@@ -547,7 +547,7 @@ export function MyUptimeView() {
         <UptimeHeatmap data={data} from={applied.from} to={applied.to} />
       </section>
       <section className="admin-panel">
-        <UsageHistoryTable endpoint="api/usage/me/history" />
+        <UsageHistoryTable endpoint="api/usage/me/history" from={applied.from} to={applied.to} />
       </section>
     </div>
   );
@@ -591,6 +591,8 @@ export function MemberUptimePanel({ slug, userKey }: { slug: string; userKey: st
       {err && <p className="form-err">{err}</p>}
       <UptimeHeatmap data={data} from={applied.from} to={applied.to} />
       <UsageHistoryTable
+        from={applied.from}
+        to={applied.to}
         endpoint={`api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(userKey)}/usage-history`}
       />
     </section>

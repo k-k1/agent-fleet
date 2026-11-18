@@ -6,7 +6,9 @@ import { useT } from "../../lib/i18n/index.ts";
 import { figure, fmtBytes, fmtMinutes, fmtPct, fmtRate } from "./usageHistory.ts";
 import type { UsageHistoryDay } from "./usageHistory.ts";
 
-export function UsageHistoryTable({ endpoint }: { endpoint: string }) {
+/** `from`/`to` (YYYY-MM-DD) follow the grid's applied range; without them the server's default
+ * window (the last 30 days) applies. */
+export function UsageHistoryTable({ endpoint, from, to }: { endpoint: string; from?: string; to?: string }) {
   const tr = useT();
   const [days, setDays] = useState<UsageHistoryDay[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -14,7 +16,10 @@ export function UsageHistoryTable({ endpoint }: { endpoint: string }) {
     let alive = true;
     setDays(null);
     setFailed(false);
-    api(endpoint)
+    const q = new URLSearchParams();
+    if (from) q.set("from", from);
+    if (to) q.set("to", to);
+    api(q.size ? `${endpoint}?${q}` : endpoint)
       .then((d) => {
         if (!alive) return;
         if (d?.error) setFailed(true);
@@ -24,7 +29,7 @@ export function UsageHistoryTable({ endpoint }: { endpoint: string }) {
     return () => {
       alive = false;
     };
-  }, [endpoint]);
+  }, [endpoint, from, to]);
 
   const none = tr("usage_history.not_measured");
   const cell = (v: number | null, fmt: (n: number) => string, measured?: number) => {
@@ -47,7 +52,7 @@ export function UsageHistoryTable({ endpoint }: { endpoint: string }) {
     // Newest day first.
     const rows = [...days].sort((a, b) => (a.day === b.day ? 0 : a.day < b.day ? 1 : -1));
     body = (
-      <table className="uh-table uh-history" data-testid="usage-history">
+      <table className="uh-table" data-testid="usage-history">
         <thead>
           <tr>
             <th>{tr("usage_history.col_day")}</th>
@@ -63,20 +68,20 @@ export function UsageHistoryTable({ endpoint }: { endpoint: string }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
-            <tr key={`${r.day}|${r.instance_type}|${r.class ?? ""}|${r.override ?? ""}|${r.user_key ?? ""}|${i}`}>
+          {rows.map((r) => (
+            <tr key={`${r.day}|${r.instance_type}|${r.class ?? ""}|${r.override ?? ""}|${r.user_key ?? ""}`}>
               <td className="mono">{r.day}</td>
               <td className="mono">
                 {r.instance_type}
                 {r.override && <span className="muted uh-sub"> {r.override}</span>}
               </td>
-              <td className="mono">{fmtMinutes(r.running_minutes)}</td>
+              {cell(r.running_minutes, fmtMinutes)}
               {cell(r.cpu_p50, fmtPct, r.measured_minutes?.cpu)}
-              {cell(r.cpu_p95, fmtPct)}
+              {cell(r.cpu_p95, fmtPct, r.measured_minutes?.cpu)}
               {cell(r.working_set_p95, fmtBytes, r.measured_minutes?.working_set)}
-              {cell(r.working_set_max, fmtBytes)}
+              {cell(r.working_set_max, fmtBytes, r.measured_minutes?.working_set)}
               {cell(r.psi_full_avg60_max, fmtPct, r.measured_minutes?.psi)}
-              {cell(r.psi_warn_minutes, fmtMinutes)}
+              {cell(r.psi_warn_minutes, fmtMinutes, r.measured_minutes?.psi)}
               {cell(r.refault_p95, fmtRate, r.measured_minutes?.refault)}
             </tr>
           ))}
