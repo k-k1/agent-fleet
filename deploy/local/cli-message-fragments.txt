@@ -16,13 +16,15 @@
 #
 claude	esc to interrupt	tmuxx.go spinnerActive: the classic busy hint
 claude	? for shortcuts	tmuxx.go atPromptFooter: the older input-box footer
-claude	Enter to select	tmuxx.go modalMarkers: a dialog is up
 claude	Esc to cancel	tmuxx.go modalMarkers: a dialog is up (folder trust, menus)
 claude	to approve	tmuxx.go modalMarkers: the plan-approval dialog at 80 columns
 claude	Do you want to	tmuxx.go modalMarkers: the permission prompt
 claude	Would you like to proceed	tmuxx.go modalMarkers: the plan-approval dialog
-claude	Ready to submit	tmuxx.go modalMarkers: the AskUserQuestion review
 claude	Enter to confirm	tmuxx.go atRateLimitModal: the usage-limit menu is still up
+# Not registered: "Enter to select" and "Ready to submit" (both in tmuxx.go modalMarkers) are no longer one
+# literal run in claude's package since 2.1.327, yet the dialogs still draw the first (a live 2.1.327
+# AskUserQuestion footer reads "Enter to select", then "to navigate", then "Esc to cancel"). The byte search
+# cannot vouch for them either way; TestClaudeDialogContractLive (claude-tui-contract.yml) draws both dialogs.
 claude	Stop and wait for limit	tmuxx.go rateLimitOptionRe: the usage-limit menu's first option
 claude	Ask your admin for more usage	tmuxx.go rateLimitOptionRe: the usage-limit menu's second option
 claude	run /login	agents/claude/errors.go authMarkers: sign-in-again wording (code lowercases the message)

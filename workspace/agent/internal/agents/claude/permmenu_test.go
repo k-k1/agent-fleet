@@ -31,6 +31,9 @@ func TestParsePermissionMenuMeasured(t *testing.T) {
 		// A live Agent Fleet session: claude runs with --name, which draws a rule under the footer.
 		{"bash_ask_rule_af_label.txt", 2, map[string]string{PermAllow: "1", PermDeny: "2"}, []string{PermAllow, PermDeny}},
 		{"write_three_options.txt", 3, map[string]string{PermAllow: "1", PermAlways: "2", PermDeny: "3"}, []string{PermAllow, PermAlways, PermDeny}},
+		// Captured from a live claude 2.1.327 by TestClaudeDialogContractLive: a project ask rule
+		// over auto mode, with the "Rule … overrides auto mode" lines between the target and the question.
+		{"bash_ask_rule_project_settings_2_1_327.txt", 2, map[string]string{PermAllow: "1", PermDeny: "2"}, []string{PermAllow, PermDeny}},
 	}
 	for _, c := range cases {
 		t.Run(c.file, func(t *testing.T) {
@@ -83,6 +86,15 @@ func TestParsePermissionMenuRefusesWhatIsNotTheLiveDialog(t *testing.T) {
 		if m, ok := ParsePermissionMenu(pane); ok {
 			t.Errorf("%s: parsed %+v", name, m.Rows)
 		}
+	}
+}
+
+// AskUserQuestion draws numbered rows and a footer that names Esc, like the permission dialog. The
+// capture is from a live claude 2.1.327 (TestClaudeDialogContractLive); read as a permission menu it
+// would be answered with a digit meant for another dialog.
+func TestParsePermissionMenuIgnoresAskUserQuestion(t *testing.T) {
+	if m, ok := ParsePermissionMenu(readPermFixture(t, "ask_user_question_one_question_2_1_327.txt")); ok {
+		t.Fatalf("an AskUserQuestion dialog parsed as a permission menu: %+v", m.Rows)
 	}
 }
 
