@@ -221,6 +221,16 @@
   margin-top: 16px;
   overflow-x: auto;
 }
+/* A tenant roll-up is members x days x boxes: scroll it inside the panel, header pinned. */
+.uh-roll {
+  max-height: 480px;
+  overflow-y: auto;
+}
+.uh-roll .uh-table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
 .uh-sub {
   font-size: 11px;
 }

@@ -8,16 +8,33 @@ import { widenForTimezone } from "./uptime.ts";
 import type { UsageHistoryDay } from "./usageHistory.ts";
 
 /** `from`/`to` (YYYY-MM-DD) follow the grid's applied range; without them the server's default
- * window (the last 30 days) applies. */
-export function UsageHistoryTable({ endpoint, from, to }: { endpoint: string; from?: string; to?: string }) {
+ * window (the last 30 days) applies. `query` adds fixed parameters (URL-encoded here, never
+ * spliced into `endpoint`). `roll` is the tenant roll-up: rows of many members, so each row names
+ * its member, and `withTenant` adds the tenant column for the deployment-wide view. */
+export function UsageHistoryTable({
+  endpoint,
+  from,
+  to,
+  query,
+  roll,
+  withTenant,
+}: {
+  endpoint: string;
+  from?: string;
+  to?: string;
+  query?: Record<string, string>;
+  roll?: boolean;
+  withTenant?: boolean;
+}) {
   const tr = useT();
   const [days, setDays] = useState<UsageHistoryDay[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const queryKey = JSON.stringify(query ?? {});
   useEffect(() => {
     let alive = true;
     setDays(null);
     setFailed(false);
-    const q = new URLSearchParams();
+    const q = new URLSearchParams(Object.entries(query ?? {}).filter(([, v]) => v !== ""));
     if (from && to) {
       // Server days are UTC: widen by a day each side so the local edge days of the grid are
       // covered, the same as the grid's own fetch.
@@ -38,7 +55,8 @@ export function UsageHistoryTable({ endpoint, from, to }: { endpoint: string; fr
     return () => {
       alive = false;
     };
-  }, [endpoint, from, to]);
+    // `query` is a fresh object each render: key the effect on its content.
+  }, [endpoint, from, to, queryKey]);
 
   const none = tr("usage_history.not_measured");
   const cell = (v: number | null, fmt: (n: number) => string, measured?: number) => {
@@ -65,6 +83,8 @@ export function UsageHistoryTable({ endpoint, from, to }: { endpoint: string; fr
         <thead>
           <tr>
             <th>{tr("usage_history.col_day")}</th>
+            {withTenant && <th>{tr("usage_history.col_tenant")}</th>}
+            {roll && <th>{tr("usage_history.col_member")}</th>}
             <th>{tr("usage_history.col_box")}</th>
             <th>{tr("usage_history.col_running")}</th>
             <th>{tr("usage_history.col_cpu_p50")}</th>
@@ -78,8 +98,14 @@ export function UsageHistoryTable({ endpoint, from, to }: { endpoint: string; fr
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={`${r.day}|${r.instance_type}|${r.class ?? ""}|${r.override ?? ""}|${r.user_key ?? ""}`}>
+            <tr key={`${r.day}|${r.instance_type}|${r.class ?? ""}|${r.override ?? ""}|${r.user_key ?? ""}|${r.tenant ?? ""}`}>
               <td className="mono">{r.day}</td>
+              {withTenant && <td className="mono">{r.tenant ?? ""}</td>}
+              {roll && (
+                <td className="mono" title={r.email || ""}>
+                  {r.user_key || tr("admin.unknown")}
+                </td>
+              )}
               <td className="mono">
                 {r.instance_type}
                 {r.override && <span className="muted uh-sub"> {r.override}</span>}
@@ -99,9 +125,9 @@ export function UsageHistoryTable({ endpoint, from, to }: { endpoint: string; fr
     );
   }
   return (
-    <div className="uh-history-wrap">
-      <h5>{tr("usage_history.title")}</h5>
-      <p className="muted uh-lede">{tr("usage_history.intro")}</p>
+    <div className={"uh-history-wrap" + (roll ? " uh-roll" : "")}>
+      <h5>{tr(roll ? "usage_history.roll_title" : "usage_history.title")}</h5>
+      <p className="muted uh-lede">{tr(roll ? "usage_history.roll_intro" : "usage_history.intro")}</p>
       {body}
     </div>
   );

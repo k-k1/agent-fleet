@@ -52,7 +52,7 @@ Below the grid, **Resource use by day and box** lists, for each UTC day and each
 
 - Each figure shows how many minutes it was measured over. **not measured** means there were no samples, which is not the same as 0
 - Only ecs-ec2 workspaces keep this history, for 90 days
-- A tenant admin sees the same table for a member on the member's detail page, next to the running-time grid
+- A tenant admin sees the same table for a member on the member's detail page, next to the running-time grid, and the whole tenant's rows are under **Operations → Running time** ([Read running time and cloud cost](../../admin/usage.md#read-resource-use-by-member-day-and-box))
 
 ## See the cloud cost
 

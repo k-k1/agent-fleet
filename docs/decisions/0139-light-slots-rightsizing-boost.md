@@ -399,3 +399,7 @@ room, and what it did not do:
 ## Addendum — the history view in the Console (2026-11-18)
 
 The optional view of decision 3 is built (#4414): a table of the day rows under the running-time grid, on the member's own page and on the admin member detail. A `null` figure reads "not measured", never 0.
+
+## Addendum — the tenant roll-up in the Console (2026-11-18)
+
+The tenant-wide `GET /api/admin/usage/history?tenant=` is shown too (#4493): under the tenant admin's running-time grid, with a member column (and a tenant column for a super admin's deployment-wide view), in the same range as the grid. A `null` figure still reads "not measured".

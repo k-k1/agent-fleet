@@ -616,6 +616,15 @@ export function UptimeAdminView({ tenant, children }: { tenant?: string; childre
       </UptimeRangeBar>
       {err && <p className="form-err">{err}</p>}
       <UptimeHeatmap data={data} from={applied.from} to={applied.to} aggregate />
+      {/* The same applied range, per member, day and box (ADR 0139 decision 3). */}
+      <UsageHistoryTable
+        endpoint="api/admin/usage/history"
+        query={tenant ? { tenant } : undefined}
+        from={applied.from}
+        to={applied.to}
+        roll
+        withTenant={!tenant}
+      />
     </section>
   );
 }
