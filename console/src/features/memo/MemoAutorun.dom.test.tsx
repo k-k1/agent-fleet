@@ -214,6 +214,29 @@ describe("the list", () => {
     expect(text[2]).toContain(t("memo.origin_session", { name: "worker-2" }));
   });
 
+  it("links a live producer session to its view and leaves other producers as plain text", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({ sessions: [{ name: "worker-2" }, { name: "worker-1" }] as never });
+    servedMemos = [
+      aMemo({ id: "b", state: "claimed", provenance: "mcp", producer: "worker-2" }),
+      aMemo({ id: "c", state: "unconfirmed", provenance: "workspace", producer: "worker-2" }),
+      aMemo({ id: "d", state: "unconfirmed", provenance: "workspace", producer: "gone" }),
+      held("h", "h1"),
+    ];
+    await render();
+    const origins = [...document.querySelectorAll(".memo-qorigin")];
+    expect(origins[0]!.querySelector("button")).toBeNull(); // an /mcp connection is not a session
+    const link = must(origins[1]!.querySelector("button"), "producer link");
+    expect(origins[1]!.textContent).toBe(t("memo.origin_session", { name: "worker-2" }));
+    await click(link);
+    expect(openSessionChat).toHaveBeenCalledWith("worker-2");
+    expect(origins[2]!.querySelector("button")).toBeNull(); // deleted session
+    const title = must(document.querySelector(".memo-release-title button"), "card link");
+    await click(title);
+    expect(openSessionChat).toHaveBeenCalledWith("worker-1");
+    useSessionsStore.setState({ sessions: [] });
+  });
+
   it("survives a JSON null where the settings expect an array, and a failed settings read", async () => {
     servedMemos = [aMemo({ id: "a" })];
     servedQueues = { tenantEnabled: true, queues: null };
