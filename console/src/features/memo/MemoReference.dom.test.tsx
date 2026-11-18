@@ -166,6 +166,7 @@ describe("a row with a reference", () => {
       aMemo({ id: "b", kind: "file", refPath: "docs/x.md", body: "file note", state: "pending" } as Partial<Memo>),
     ];
     await renderSection();
+    expect(document.querySelectorAll(".memo-row")).toHaveLength(2);
     for (const r of document.querySelectorAll<HTMLElement>(".memo-row")) {
       const html = r.innerHTML;
       expect(html.indexOf("memo-qmeta")).toBeGreaterThan(html.indexOf("memo-text"));

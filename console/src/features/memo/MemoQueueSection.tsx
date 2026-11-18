@@ -1526,7 +1526,11 @@ function MemoRow(props: MemoRowProps) {
         {m.kind === "file" ? (
           <>
             <code className="memo-ref">{m.refPath}</code>
-            {m.body && <div className="memo-comment memo-text">{m.body}</div>}
+            {m.body && (
+              <div className="memo-comment memo-text" title={isLong && !expanded ? tr("memo.expand_memo") : undefined}>
+                {m.body}
+              </div>
+            )}
           </>
         ) : (
           m.body && (
