@@ -516,9 +516,11 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   };
 
   // ---- categories --------------------------------------------------------------
-  const addCategory = async () => {
+  // `repo` is the group the "+" sits in; "" files the row in the unfiled area. A queue is keyed by
+  // (repo, category), so a row created without the repo cannot be used for repository work.
+  const addCategory = async (repo = "") => {
     try {
-      const res = await memoCategoryCreate({ repo: "", name: t("memo.new_category") });
+      const res = await memoCategoryCreate({ repo, name: t("memo.new_category") });
       bumpMemos();
       if (res && res.id) setRenameCat(res.id);
     } catch {
@@ -874,6 +876,15 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   <div className="memo-repo-head">
                     <Icon name="repo" className="memo-repo-ic" />
                     {repoLabel(rb.repo)}
+                    <button
+                      type="button"
+                      className="memo-repo-add"
+                      title={tr("memo.add_category")}
+                      aria-label={tr("memo.add_category")}
+                      onClick={() => void addCategory(rb.repo)}
+                    >
+                      <Icon name="add" />
+                    </button>
                   </div>
                 )}
                 {rb.groups.map((g) => {
