@@ -535,7 +535,9 @@ func prFeedbackTick(now time.Time) {
 // conflict left to tell, and its built-ins must go: a session still on the merged PR's branch
 // keeps reading it from the branch cache, and a live built-in counts as a watch that can wake the
 // owner, so a finished memo-queue run would be held as "waiting on a watch" for good. Retired,
-// the built-ins keep their records, so a reopen repeats nothing.
+// the built-ins keep Told and Sent, so a reopen does not tell a CI failure of a head already
+// told. A review or conflict condition that lasts through the merge can be told again: the
+// subject's cursor, shared with the PR notices, starts a new episode at the merge.
 func prFeedbackSettled(pr *branchpr.PR) bool {
 	return pr.State == "merged" || pr.State == "closed"
 }
