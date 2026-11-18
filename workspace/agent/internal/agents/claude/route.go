@@ -86,7 +86,7 @@ var loadAPIKey = func() (string, error) {
 }
 
 // routeOverrides is every variable the CLI reads to choose its model provider, its endpoint or
-// its credential, taken from the CLI's own lists (claude 2.1.326: the provider switches and their
+// its credential, taken from the CLI's own lists (claude 2.1.327: the provider switches and their
 // scoping, the credentials, the base URLs, the auth skips) plus the Unix socket it sends Anthropic
 // API calls to. Every explicit route removes all of them from the pane and pins them empty in the
 // flag layer except the ones it sets itself (overridesExcept), and refuses a settings file that
@@ -94,6 +94,10 @@ var loadAPIKey = func() (string, error) {
 // ANTHROPIC_BEDROCK_MANTLE_BASE_URL inherited by a bedrock pane sent the gateway bearer to that
 // URL over TCP, past ANTHROPIC_UNIX_SOCKET (measured by review on 2.1.318). When the pinned CLI
 // is bumped, its lists are compared again (TestRouteOverridesCoverTheCLIsLists).
+//
+// A name a person read and deliberately left out (it does not choose a provider, an endpoint or a
+// credential) is in deploy/local/claude-route-overrides.reviewed with the reason, and a bump counts
+// it as unchanged. It never goes in both places (TestReviewedRouteNamesAreLeftOut).
 var routeOverrides = []string{
 	// Provider switches, and the settings that scope a provider.
 	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS",

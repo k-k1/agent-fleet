@@ -1,0 +1,277 @@
+//go:build contract
+
+// Live TUI contract probe for the two dialogs claude draws over the composer besides plan
+// approval: the tool-permission dialog and AskUserQuestion (run from claude-tui-contract.yml).
+//
+// What it protects: ParsePermissionMenu and ModalActive read these dialogs off a captured pane by
+// text that is neither a contract nor versioned, and the goldens under
+// internal/agents/claude/testdata/permmenu only pin shapes already seen. claude 2.1.327 dropped
+// the footer text `Enter to select` and the heading `Ready to submit your answers?` from its
+// bundle, and no existing contract draws either dialog, so a drift here would have gone
+// unnoticed until a member's answer landed on the wrong row (#4484).
+//
+// Two parts, one real turn each:
+//
+//	A. A Bash call in a launch that asks for permissions raises the permission dialog. The production parser must
+//	   read it (rows numbered from 1, a deny and an allow choice), the pane must read as a modal
+//	   and not as the idle prompt.
+//	B. AskUserQuestion draws its own dialog. The pane must read as a modal and not as idle, and
+//	   the permission parser must NOT read it as a permission menu: a question misread as a
+//	   permission dialog is answered with a digit meant for another dialog.
+//
+// Both frames are logged in full, so a run on a new pin doubles as the capture to add under
+// testdata.
+//
+// Cost: two real turns, one short tool call each.
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+)
+
+const dialogWait = 4 * time.Minute
+
+// The command is a harmless echo; a launch that asks for permissions still asks before running it.
+const dialogPermissionPrompt = "Run exactly this command with the Bash tool and do nothing else: echo agent-fleet-dialog-probe"
+
+// One question, two options: the review screen only appears with several questions, which this
+// probe leaves alone. The descriptions are fixed in the prompt because showsQuestionOptions waits for
+// them: left to the model they could read "First choice" and the wait would run out on a healthy dialog.
+const dialogQuestionPrompt = "Use the AskUserQuestion tool right now to ask me one question, \"Pick one\", with the " +
+	"two options A and B, whose descriptions are exactly \"Option A\" and \"Option B\". Do nothing else."
+
+func TestClaudeDialogContractLive(t *testing.T) {
+	t.Run("permission", func(t *testing.T) {
+		meta, tn, stop := startDialogPane(t, "perm", true)
+		defer stop()
+		sendDialogPrompt(t, meta, tn, dialogPermissionPrompt, "agent-fleet-dialog-probe")
+
+		var frame string
+		var menu claude.PermissionMenu
+		ok := waitDialog(tn, func(f string) bool {
+			m, parsed := claude.ParsePermissionMenu(f)
+			frame, menu = f, m
+			return parsed
+		})
+		if !ok {
+			t.Fatalf("no permission dialog the production parser reads appeared within %s (the model never ran Bash, "+
+				"or the dialog changed shape: ParsePermissionMenu anchors on a footer line starting with \"Esc to cancel\" "+
+				"and a \"Do you want to\" question above row 1)\nModalActive=%v\npane:\n%s",
+				dialogWait, tmuxx.ModalActive(meta.Name), tmuxx.CapturePane(tn))
+		}
+		t.Logf("permission dialog:\n%s", frame)
+
+		if len(menu.Rows) < 2 {
+			t.Fatalf("the permission dialog read as %d row(s): %+v", len(menu.Rows), menu.Rows)
+		}
+		// ParsePermissionMenu answers false unless the rows run 1..n without a gap, so a parse that
+		// succeeded already carries that guarantee.
+		var allow, deny bool
+		for _, r := range menu.Rows {
+			allow = allow || r.Choice == claude.PermAllow
+			deny = deny || r.Choice == claude.PermDeny
+		}
+		if !allow || !deny {
+			t.Errorf("the dialog offers allow=%v deny=%v: the Console's permission card cannot answer it\n%+v", allow, deny, menu.Rows)
+		}
+		again := tmuxx.CapturePane(tn)
+		if _, parsed := claude.ParsePermissionMenu(again); !parsed {
+			t.Fatalf("the permission dialog did not stay up between two captures\nfirst:\n%s\nsecond:\n%s", frame, again)
+		}
+		if !tmuxx.ModalActive(meta.Name) {
+			t.Errorf("a permission dialog is up but ModalActive=false: bare arrow keys would hit the plain composer\n%s", frame)
+		}
+		if tmuxx.AtIdlePrompt(meta.Name) {
+			t.Errorf("a permission dialog is up but AtIdlePrompt=true: a turn waiting on a decision would read as finished\n%s", frame)
+		}
+	})
+
+	t.Run("question", func(t *testing.T) {
+		meta, tn, stop := startDialogPane(t, "ask", false)
+		defer stop()
+		sendDialogPrompt(t, meta, tn, dialogQuestionPrompt, "Pick one")
+
+		var frame string
+		ok := waitDialog(tn, func(f string) bool {
+			frame = f
+			return showsQuestionOptions(f)
+		})
+		if !ok {
+			t.Fatalf("no AskUserQuestion dialog with the probe's options appeared within %s (the model never asked, or the dialog "+
+				"no longer draws the options this probe fixed in its prompt)\nModalActive=%v\npane:\n%s",
+				dialogWait, tmuxx.ModalActive(meta.Name), tmuxx.CapturePane(tn))
+		}
+		t.Logf("AskUserQuestion dialog:\n%s", frame)
+
+		// ModalActive and AtIdlePrompt capture the pane themselves: show first that the dialog is
+		// still the one just logged, so their answers are about it.
+		if again := tmuxx.CapturePane(tn); !showsQuestionOptions(again) {
+			t.Fatalf("the AskUserQuestion dialog did not stay up between two captures\nfirst:\n%s\nsecond:\n%s", frame, again)
+		}
+		if !tmuxx.ModalActive(meta.Name) {
+			t.Errorf("a question is waiting but ModalActive=false: bare arrow keys would hit the plain composer\n%s", frame)
+		}
+		if tmuxx.AtIdlePrompt(meta.Name) {
+			t.Errorf("a question is waiting but AtIdlePrompt=true: the turn would read as finished\n%s", frame)
+		}
+		if m, parsed := claude.ParsePermissionMenu(frame); parsed {
+			t.Errorf("a question dialog was read as a permission menu (%+v): a digit meant for the permission card would answer it\n%s", m.Rows, frame)
+		}
+	})
+}
+
+// startDialogPane launches claude through production's BuildLaunch in a private tmux server and
+// waits for the composer. A startup dialog is answered by choosing its row, never by a blind Enter:
+// the highlighted row is whatever upstream decided this week ("No, exit" on 2.1.327's folder trust,
+// which is why startTUIContractSession, which leaves such a dialog alone, is not used here). stop
+// must be deferred. askPermissions launches without the skip-permissions flag and with an ask rule
+// for the probe's command: production's default launch skips the prompts, so a Bash call then runs
+// without any dialog (measured on the first live run, the pane read "bypass permissions on").
+func startDialogPane(t *testing.T, suffix string, askPermissions bool) (meta session.Meta, tn string, stop func()) {
+	t.Helper()
+	for _, bin := range []string{"tmux", "claude"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			requireTUIContract(t, false, fmt.Sprintf("%s is not on PATH: %v", bin, err))
+		}
+	}
+	name := fmt.Sprintf("contract-dialog-%s-%d", suffix, os.Getpid())
+	t.Setenv("AF_TMUX_SOCKET", fmt.Sprintf("af-dialog-contract-%s-%d", suffix, os.Getpid()))
+	stop = func() {
+		_ = tmuxx.Cmd("kill-server").Run()
+		time.Sleep(750 * time.Millisecond)
+	}
+	started := false
+	defer func() {
+		if !started {
+			stop()
+		}
+	}()
+
+	meta = session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
+	if askPermissions {
+		skip := false
+		meta.SkipPermissions = &skip
+		// The account's default mode may be auto mode, which runs a harmless echo without asking
+		// (measured: the pane read "auto mode on" and the dialog never came). An ask rule is what
+		// draws the dialog in every mode: testdata/permmenu/bash_ask_rule_two_options.txt shows
+		// "Ask rule Bash(echo:*) overrides auto mode for this command".
+		if err := os.MkdirAll(filepath.Join(meta.Dir, ".claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		rules := []byte(`{"permissions":{"ask":["Bash(echo:*)"]}}`)
+		if err := os.WriteFile(filepath.Join(meta.Dir, ".claude", "settings.json"), rules, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	launch, err := claude.New().BuildLaunch(meta, agents.LaunchOpts{})
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	tn = session.TmuxName(name)
+	if out, err := tmuxx.Cmd("new-session", "-d", "-s", tn, "-x", "200", "-y", "50", "-c", launch.Cwd, launch.Program).CombinedOutput(); err != nil {
+		t.Fatalf("tmux new-session: %v: %s", err, out)
+	}
+	for deadline := time.Now().Add(tuiContractReadyWait); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+		frame := tmuxx.CapturePane(tn)
+		switch {
+		case strings.Contains(frame, "Bypass Permissions mode") && strings.Contains(frame, "Yes, I accept"):
+			chooseDialogRow(t, tn, "Yes, I accept")
+			time.Sleep(2 * time.Second)
+			continue
+		case strings.Contains(frame, "trust this folder") || strings.Contains(frame, "Do you trust the files"):
+			chooseDialogRow(t, tn, "Yes, I trust")
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if sessionx.PaneMode(session.KindClaude, tn) != "" {
+			started = true
+			time.Sleep(500 * time.Millisecond) // the first footer can precede the input handler by a render tick
+			return meta, tn, stop
+		}
+	}
+	t.Fatalf("composer readiness was never detected within %s\npane:\n%s", tuiContractReadyWait, tmuxx.CapturePane(tn))
+	return meta, tn, stop
+}
+
+// sendDialogPrompt types the prompt and submits it with submitPrompt, which presses Enter again when
+// the first one is dropped (copilot-contract lost a turn to that in CI), except once a dialog is up:
+// a second Enter there would answer the dialog's highlighted row, which this file never does blindly.
+// claude has no generic transcript (agents.NoGenericTranscript), so submitPrompt confirms the turn
+// through WireLive only and marker, a word of the prompt, is kept for the day it has one. Both go
+// through the production tmux wrapper on the contract's private socket.
+func sendDialogPrompt(t *testing.T, meta session.Meta, tn, prompt, marker string) {
+	t.Helper()
+	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "-l", prompt).CombinedOutput(); err != nil {
+		t.Fatalf("send prompt: %v: %s", err, out)
+	}
+	time.Sleep(time.Second)
+	spec := tuiMirrorContractSpec{kind: session.KindClaude, agent: claude.New()}
+	submitPrompt(t, spec, meta, tn, marker, func() bool { return tmuxx.ModalActive(meta.Name) })
+}
+
+// showsQuestionOptions reports whether the frame holds the option rows of the probe's question: a
+// line that is exactly "Option A" and another that is exactly "Option B", which is how the dialog
+// draws the descriptions. Whole lines, because the prompt's echo above the dialog (and the text
+// typed before it is submitted) carries both quoted inside one long line, so a bare Contains would
+// hold on the echo alone, before any dialog and for any other modal (a rate-limit menu, say).
+func showsQuestionOptions(frame string) bool {
+	var a, b bool
+	for _, ln := range strings.Split(frame, "\n") {
+		switch strings.TrimSpace(ln) {
+		case "Option A":
+			a = true
+		case "Option B":
+			b = true
+		}
+	}
+	return a && b
+}
+
+// The predicate is what keeps the question subtest from passing on something that is not the
+// dialog, so it is tested on its own (run in claude-tui-contract.yml next to the live contract; it
+// needs no login).
+func TestShowsQuestionOptions(t *testing.T) {
+	echo := "❯ " + dialogQuestionPrompt + "\n"
+	rateLimit := " What do you want to do?\n ❯ 1. Stop and wait for limit to reset\n   2. Ask your admin for more usage\n\n Enter to confirm · Esc to cancel\n"
+	capture, err := os.ReadFile("internal/agents/claude/testdata/permmenu/ask_user_question_one_question_2_1_327.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct {
+		frame string
+		want  bool
+	}{
+		"the prompt echo alone":          {echo, false},
+		"the echo and a rate-limit menu": {echo + rateLimit, false},
+		"an empty pane":                  {"", false},
+		"only one of the descriptions":   {echo + "   Option A\n", false},
+		"the live 2.1.327 dialog":        {string(capture), true},
+		"the echo above the live dialog": {echo + string(capture), true},
+	} {
+		if got := showsQuestionOptions(c.frame); got != c.want {
+			t.Errorf("%s: showsQuestionOptions = %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+// waitDialog polls the pane until ok(frame) holds or dialogWait passes.
+func waitDialog(tn string, ok func(frame string) bool) bool {
+	for deadline := time.Now().Add(dialogWait); time.Now().Before(deadline); time.Sleep(time.Second) {
+		if ok(tmuxx.CapturePane(tn)) {
+			return true
+		}
+	}
+	return false
+}

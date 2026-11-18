@@ -173,8 +173,12 @@ contract を `GITHUB_TOKEN` で dispatch し、そうして始まった実行は
   `routeOverridesFrom` の版と新しいピンの linux-x64 バイナリに `strings` をかけ、プロバイダ・
   エンドポイント・認証情報の変数名を比べる。同じなら同じコミットで `routeOverridesFrom` を
   動かし、PR は緑になれる。違う、またはバイナリを読めなかったときは何も書き換えず、テストは
-  赤のまま、PR 本文に `routeOverrides` へ手で振り分ける名前を並べる。これを固定するのが
-  `claude-route-overrides-stub-test.sh`。
+  赤のまま、PR 本文に手で振り分ける名前を並べる。プロバイダ・エンドポイント・認証情報を選ばない
+  名前は `deploy/local/claude-route-overrides.reviewed`（`NAME<TAB>理由`）へ、`main` への PR で
+  足す。次の実行から、ピンで増えた名前がそのリストにあれば変化とみなさず、
+  `routeOverridesFrom` を自分で動かす。この判断を bump ブランチに積んではいけない。別の CLI の
+  contract が通るたびに `cli-pin-bump.yml` が `main` からブランチを作り直して force-push する。
+  選ぶ名前は `routeOverrides` へ。これを固定するのが `claude-route-overrides-stub-test.sh`。
 - **PR** には証拠表が載る — kind ごとの `ピン → latest`、`tested` を記録した contract 実行への
   リンク（`cli-release-state.sh` が実行 URL をマーカーのコメントに書く）、チェックサムの出どころ。
   ブランチの force-push は Dockerfile の書き換えが変わったときだけ。自動ではマージしない。

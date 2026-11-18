@@ -57,7 +57,9 @@ jobs:
         run: deploy/local/cli-pin-bump.sh
 
       # Only edits when the CLI's provider, endpoint and credential names are unchanged since
-      # routeOverridesFrom; otherwise the test stays red and the PR body lists the names.
+      # routeOverridesFrom, apart from names claude-route-overrides.reviewed holds (a person's
+      # decision, kept on main so a rebuilt bump branch still has it); otherwise the test stays
+      # red and the PR body lists the names.
       - name: re-derive claude's routeOverrides
         if: steps.bump.outputs.incomplete != 'true' && steps.bump.outputs.count != '0'
         env:

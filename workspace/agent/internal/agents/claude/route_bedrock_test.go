@@ -238,14 +238,15 @@ func TestBedrockIsItsOwnCredentialAndMetered(t *testing.T) {
 }
 
 // routeOverridesFrom is the CLI version routeOverrides was taken from.
-const routeOverridesFrom = "2.1.326"
+const routeOverridesFrom = "2.1.327"
 
 // The list was read off the pinned CLI's own lists of provider switches, credentials, base URLs
 // and auth skips. A bump of the pin has to look again: run `strings` on the new binary and
 // compare its arrays naming CLAUDE_CODE_USE_*, *_BASE_URL, *_API_KEY / *_AUTH_TOKEN and
 // CLAUDE_CODE_SKIP_*_AUTH with routeOverrides, then update routeOverridesFrom.
 // deploy/local/claude-route-overrides.sh does that in the bump PR when the names are the same
-// as in routeOverridesFrom; when they differ it edits nothing, so this stays red for a human.
+// as in routeOverridesFrom, apart from names deploy/local/claude-route-overrides.reviewed holds;
+// any other change it leaves alone, so this stays red for a human.
 func TestRouteOverridesCoverTheCLIsLists(t *testing.T) {
 	df, err := os.ReadFile("../../../../Dockerfile")
 	if err != nil {
@@ -265,6 +266,30 @@ func TestRouteOverridesCoverTheCLIsLists(t *testing.T) {
 	} {
 		if !slices.Contains(routeOverrides, n) {
 			t.Errorf("%s is missing from routeOverrides", n)
+		}
+	}
+}
+
+// The reviewed list is the names a person decided to leave out of routeOverrides. A line needs a
+// reason, and a name cannot be both left out and listed in routeOverrides: the script ignores it
+// then, so the contradiction would hide a reviewed-looking name that is in fact enforced.
+func TestReviewedRouteNamesAreLeftOut(t *testing.T) {
+	raw, err := os.ReadFile("../../../../../deploy/local/claude-route-overrides.reviewed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nameRe := regexp.MustCompile(`^[A-Z][A-Z0-9_]+$`)
+	for i, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		// Split on every tab, like the script's awk: NAME<TAB><TAB>reason has an empty reason.
+		f := strings.Split(line, "\t")
+		switch {
+		case len(f) < 2 || !nameRe.MatchString(f[0]) || strings.TrimSpace(f[1]) == "":
+			t.Errorf("line %d: want NAME<TAB>reason, got %q", i+1, line)
+		case slices.Contains(routeOverrides, f[0]):
+			t.Errorf("line %d: %s is in routeOverrides, so it is not left out", i+1, f[0])
 		}
 	}
 }
