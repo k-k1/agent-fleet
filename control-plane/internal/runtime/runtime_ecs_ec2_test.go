@@ -21,6 +21,7 @@ import (
 	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
+	"github.com/aws/smithy-go"
 )
 
 // --- fakes for the EC2-pool ports. They model just enough of EC2 to exercise the
@@ -954,7 +955,11 @@ func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ 
 		f.sink.mu.Unlock()
 		if inst != nil && role != ec2RoleSlot {
 			f.denied = append(f.denied, cmd)
-			return nil, fmt.Errorf("api error AccessDeniedException: not authorized to perform: ssm:SendCommand on resource: instance/%s (af-role=%s)", in.InstanceIds[0], role)
+			return nil, &smithy.GenericAPIError{
+				Code:    "AccessDeniedException",
+				Message: fmt.Sprintf("not authorized to perform: ssm:SendCommand on resource: instance/%s (af-role=%s)", in.InstanceIds[0], role),
+				Fault:   smithy.FaultClient,
+			}
 		}
 	}
 	f.scripts = append(f.scripts, script)
@@ -1251,6 +1256,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		now:          time.Now,
 		sleep:        func(context.Context, time.Duration) error { return nil },
 	}
+	stopRetryingWhenRefused(h)
 	return h
 }
 
@@ -4452,16 +4458,16 @@ func TestECSEC2QuarantinesASlotThatCannotMount(t *testing.T) {
 }
 
 // stopRetryingWhenRefused ends runOnSlot's retries at the first send the IAM fence refuses.
-// The harness sleep ignores the context, so a refused send would otherwise spin until the
-// test times out instead of failing on its assertions.
+// The harness sleep is otherwise a no-op, so a refused send would spin until the test
+// times out instead of failing on its assertions. newEC2Harness installs it.
 func stopRetryingWhenRefused(h *ec2Harness) {
-	h.rt.sleep = func(ctx context.Context, _ time.Duration) error {
+	h.rt.sleep = func(context.Context, time.Duration) error {
 		h.ssmc.mu.Lock()
 		defer h.ssmc.mu.Unlock()
 		if len(h.ssmc.denied) > 0 {
 			return errors.New("refused")
 		}
-		return ctx.Err()
+		return nil
 	}
 }
 
@@ -4471,7 +4477,6 @@ func stopRetryingWhenRefused(h *ec2Harness) {
 func TestECSEC2QuarantineUnmountsBeforeItRetagsTheSlot(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
-	stopRetryingWhenRefused(h)
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
 	h.ci.registered["i-bad"] = true
@@ -4497,6 +4502,26 @@ func TestECSEC2QuarantineUnmountsBeforeItRetagsTheSlot(t *testing.T) {
 	}
 }
 
+// A re-tag that fails leaves the box af-role=slot. Detaching the home then would make it
+// a free slot again, offered to the next Start; attached, the home keeps it out.
+func TestECSEC2QuarantineKeepsTheHomeWhenTheRetagFails(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-bad", time.Now())
+	h.ec2.createTagsErr = map[string]error{ec2TagQuarantineReason: errors.New("throttled")}
+
+	h.rt.quarantineSlot(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-bad"}, errors.New("mount failed"))
+
+	if got := ec2TagValue(h.ec2.instances["i-bad"].Tags, EC2TagRole); got != ec2RoleSlot {
+		t.Fatalf("positive control: the re-tag was meant to fail, af-role = %q", got)
+	}
+	if got := attachedInstance(h.ec2.volumes["vol-1"]); got != "i-bad" {
+		t.Errorf("the home was detached from a box still tagged af-role=slot (attached to %q)", got)
+	}
+}
+
 // ctxDetachHook fails a DetachVolume whose context has ended, as the SDK does.
 type ctxDetachHook struct {
 	ec2API
@@ -4515,7 +4540,6 @@ func (c *ctxDetachHook) DetachVolume(ctx context.Context, in *ec2.DetachVolumeIn
 func TestECSEC2QuarantineDetachOutlivesTheLockWaitBudget(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
-	stopRetryingWhenRefused(h)
 	defer func(d time.Duration) { quarantineLockBudget = d }(quarantineLockBudget)
 	quarantineLockBudget = 20 * time.Millisecond
 	h.rt.ec2 = &ctxDetachHook{ec2API: h.ec2}
