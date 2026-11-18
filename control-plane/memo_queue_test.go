@@ -1343,11 +1343,12 @@ func TestCreateCategoryConcurrentSameName(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 	e := newInboxEnvOn(t, st)
-	const n = 8
-	for round := 0; round < 5; round++ {
+	const n = 10
+	for round := 0; round < 30; round++ {
 		name := fmt.Sprintf("race-%d", round)
 		codes := make([]int, n)
 		ids := make([]string, n)
+		pos := make([]int, n)
 		start := make(chan struct{})
 		var wg sync.WaitGroup
 		for i := 0; i < n; i++ {
@@ -1360,6 +1361,7 @@ func TestCreateCategoryConcurrentSameName(t *testing.T) {
 				var dto memoCategoryDTO
 				_ = json.Unmarshal(rec.Body.Bytes(), &dto)
 				ids[i] = dto.ID
+				pos[i] = dto.Position
 			}(i)
 		}
 		close(start)
@@ -1373,8 +1375,8 @@ func TestCreateCategoryConcurrentSameName(t *testing.T) {
 			default:
 				t.Fatalf("round %d: create %d answered %d", round, i, codes[i])
 			}
-			if ids[i] == "" || ids[i] != ids[0] {
-				t.Fatalf("round %d: ids differ: %v", round, ids)
+			if pos[i] != round || ids[i] == "" || ids[i] != ids[0] {
+				t.Fatalf("round %d: ids or positions differ (want position %d): %v %v", round, round, ids, pos)
 			}
 		}
 		if created != 1 {

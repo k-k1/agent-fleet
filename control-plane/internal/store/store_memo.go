@@ -306,6 +306,8 @@ func (s *SQL) GetCategory(ctx context.Context, id string) (MemoCategory, bool, e
 	return c, err == nil, err
 }
 
+// CreateCategory inserts a row outside MemoTx and fails on a duplicate name; kept for store
+// tests. Route code uses MemoTxOps.EnsureCategory inside MemoTx, which is race-safe.
 func (s *SQL) CreateCategory(ctx context.Context, c MemoCategory) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO memo_category(id, membership_id, repo, name, position, created_at)
