@@ -27,6 +27,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { sandboxArgs } from "../lib/chromium-launch.mjs";
 import { checker, resolveChromium, serveDir, sleep, startBrowser, until } from "../lib/headless.mjs";
 
 const REPO = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -134,7 +135,7 @@ async function makeSamplePdf() {
   // --no-pdf-header-footer: by default every page gets a header with the print time and a footer
   // with the file URL (a random tmpdir), so the find checks' queries also matched those whenever
   // the clock or the path happened to contain them (measured: started at 12:18, "18" found 1/7).
-  await run(CHROMIUM, ["--headless", "--disable-gpu", "--no-sandbox", "--no-pdf-header-footer", `--print-to-pdf=${out}`, "file://" + src]);
+  await run(CHROMIUM, ["--headless", "--disable-gpu", ...sandboxArgs(), "--no-pdf-header-footer", `--print-to-pdf=${out}`, "file://" + src]);
   // Corrupt PDF: a real signature with no body. pdf.js answers with InvalidPDFException.
   fs.writeFileSync(path.join(www, "broken.pdf"), Buffer.from("%PDF-1.7\n" + "0".repeat(512)));
   return out;

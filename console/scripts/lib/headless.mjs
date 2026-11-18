@@ -12,6 +12,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { sandboxArgs } from "./chromium-launch.mjs";
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -143,7 +144,7 @@ export async function startBrowser({ chromium = "", size = "1000,760" } = {}) {
   const bin = resolveChromium(chromium);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-headless-"));
   const proc = spawn(bin, [
-    "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
+    "--headless=new", ...sandboxArgs(), "--disable-gpu", "--hide-scrollbars",
     "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
     `--user-data-dir=${dir}`, `--window-size=${size}`,
     // Headless answers "no hover, no pointer" by default. This is required when checking the
