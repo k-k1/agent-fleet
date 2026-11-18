@@ -46,6 +46,14 @@ Open **⚙ Settings → Running time**. It is a grid of 24 hours down and dates 
 
 A band of colour through the night is more often a workspace left running than work being done.
 
+## See resource use by day
+
+Below the grid, **Resource use by day and box** lists, for each UTC day and each box your workspace ran on, how long it ran and what the box measured: CPU (p50 / p95, as a share of one core), memory (p95 / max), the memory-pressure (PSI) peak, minutes above the warning threshold, and the refault rate.
+
+- Each figure shows how many minutes it was measured over. **not measured** means there were no samples, which is not the same as 0
+- Only ecs-ec2 workspaces keep this history, for 90 days
+- A tenant admin sees the same table for a member on the member's detail page, next to the running-time grid
+
 ## See the cloud cost
 
 Open **⚙ Settings → Cloud cost**. The tab exists only on deployments that run on AWS.

@@ -34,6 +34,7 @@ import {
 import type { UptimeCell, UptimeMetric, UptimeResponse } from "./uptime.ts";
 import { RangePresets } from "../../ui/RangePresets.tsx";
 import { MonthlyTrend, usageMonthRows } from "../../ui/MonthlyTrend.tsx";
+import { UsageHistoryTable } from "./UsageHistoryTable.tsx";
 import "./uptime.css";
 
 const METRICS: [UptimeMetric, MsgKey][] = [
@@ -545,6 +546,9 @@ export function MyUptimeView() {
         {monthlyErr && <p className="form-err">{tr("monthly.load_error")}</p>}
         <UptimeHeatmap data={data} from={applied.from} to={applied.to} />
       </section>
+      <section className="admin-panel">
+        <UsageHistoryTable endpoint="api/usage/me/history" />
+      </section>
     </div>
   );
 }
@@ -586,6 +590,9 @@ export function MemberUptimePanel({ slug, userKey }: { slug: string; userKey: st
       <UptimeRangeBar range={range} setRange={setRange} onApply={apply} loading={loading} />
       {err && <p className="form-err">{err}</p>}
       <UptimeHeatmap data={data} from={applied.from} to={applied.to} />
+      <UsageHistoryTable
+        endpoint={`api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(userKey)}/usage-history`}
+      />
     </section>
   );
 }

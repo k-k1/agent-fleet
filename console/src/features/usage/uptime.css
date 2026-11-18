@@ -214,3 +214,17 @@
   color: var(--muted);
   font-weight: 500;
 }
+
+/* --- Resource history table ---------------------------------------------- */
+
+.uh-history-wrap {
+  margin-top: 16px;
+  overflow-x: auto;
+}
+.uh-sub {
+  font-size: 11px;
+}
+.uh-unmeasured {
+  color: var(--muted);
+  font-style: italic;
+}
