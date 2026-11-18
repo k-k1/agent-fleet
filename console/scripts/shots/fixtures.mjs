@@ -2509,12 +2509,17 @@ export function galleryTree(p) {
   return null;
 }
 
-// The status a current Agent sends, for the Agents tab's provider order: the deployment's engine
+// The status a current Agent sends, for the Image generation page's provider order: the deployment's engine
 // row marked as such, then the two CLI routes.
 export function imagegenStatusLive(locale) {
   const st = imagegenStatus(locale);
+  // The Image generation page draws its provider order only from a policy-filtered answer
+  // (orderFiltered), so the fixture carries the order and the declared rows' kinds.
   return {
     ...st,
+    order: ["comfy", "agy", "codex"],
+    orderFiltered: true,
+    orderKinds: { comfy: "comfy" },
     providers: [
       ...st.providers.map((p) => ({ ...p, kind: "comfy", fleet: true })),
       { id: "codex", kind: "codex", fleet: false, models: [] },

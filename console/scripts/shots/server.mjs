@@ -243,7 +243,7 @@ const exact = {
   // agentMemory on: the memory scene's status header reads it, and nothing else on screen changes
   // with it (the palette gains a mode).
   // imageGeneration only for the user guide's settings shot (SHOT_IMAGE_SETTINGS): with it on, the
-  // Agents tab grows the provider order, which no other scene shows.
+  // Image generation page grows the provider order, which no other scene shows.
   // opencodeCatalog "go" only for the agent pages (SHOT_AGENTS_GUIDE): the OpenCode card then shows its
   // billing routes and keys instead of the bare off switch.
   "/api/env/ui-prefs": () => ({

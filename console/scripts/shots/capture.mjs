@@ -598,7 +598,7 @@ const SCENES = [
     settle: 1200,
   },
   {
-    // Settings › Agents › Session: peer messaging, starting sessions from a session, PR feedback
+    // Settings › Sessions: peer messaging, starting sessions from a session, PR feedback
     // and the child limit, all on (SHOT_FLEET_GUIDE).
     name: "fleet-settings",
     guide: true,
@@ -606,7 +606,7 @@ const SCENES = [
     clip: ["#shot-fleet-from", "#shot-fleet-to"],
     pad: 12,
     sections: FOCUS_TREE,
-    settings: "agents",
+    settings: "sessions",
     width: 1500,
     height: 1200,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
@@ -621,7 +621,7 @@ const SCENES = [
           el.children.length === 0 && re.test((el.textContent || "").trim()));
         return label?.closest(".ds-row") || label?.parentElement;
       };
-      const from = rowOf(/^(セッション間メッセージ|Messages between sessions|Cross-session messaging)$/);
+      const from = rowOf(/^(セッション間メッセージ|Messages between sessions)$/);
       const limit = rowOf(/^(子セッションの同時本数|Children per session)$/);
       if (from) { from.id = "shot-fleet-from"; from.scrollIntoView({ block: "start" }); }
       const note = limit?.nextElementSibling;
@@ -1013,14 +1013,16 @@ const SCENES = [
     settle: 2500,
   },
   {
-    // Settings > Agents: the image-generation switch on, with the provider order under it.
+    // Settings > Image generation: the switch on, with the provider order under it.
     name: "images-settings",
     guide: true,
     stubEnv: { SHOT_IMAGE_SETTINGS: "1" },
+    // Fails the run instead of drawing the page's "unavailable" note when the status is not trusted.
+    verify: `!!document.querySelector(".settings-content .ds-orderlist")`,
     clip: ["#shot-img-from", "#shot-img-to"],
     pad: 12,
     sections: FOCUS_TREE,
-    settings: "agents",
+    settings: "imagegen",
     width: 1500,
     height: 1000,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
@@ -1031,7 +1033,7 @@ const SCENES = [
       [...document.querySelectorAll(".acct-item")].find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
       await wait(2000);
       // The switch's row and the last note of the provider order bound the clip.
-      const label = [...document.querySelectorAll(".settings-modal *")].find((el) =>
+      const label = [...document.querySelectorAll(".settings-content .ds-group *")].find((el) =>
         el.children.length === 0 && /^(画像生成|Image generation)$/.test((el.textContent || "").trim()));
       const row = label?.closest(".ds-row") || label?.parentElement;
       if (row) { row.id = "shot-img-from"; row.scrollIntoView({ block: "start" }); }
@@ -1772,7 +1774,7 @@ const SCENES = [
     settle: 2500,
   },
   {
-    // Settings › Agents › the Claude Code card for the user guide's agent pages: connected, with the
+    // Settings › Model credentials › the Claude Code card for the user guide's agent pages: connected, with the
     // account, plan and expiry, and Re-authenticate / Disconnect. Behavior stays closed: open, the
     // card is taller than the modal.
     name: "agents-claude",
@@ -1781,7 +1783,7 @@ const SCENES = [
     clip: '.p-card[data-settings-target="claude"]',
     pad: 0,
     sections: FOCUS_TREE,
-    settings: "agents",
+    settings: "credentials",
     width: 1500,
     height: 1000,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
@@ -1860,7 +1862,7 @@ const SCENES = [
     clip: '.p-card[data-settings-target="codex"]',
     pad: 0,
     sections: FOCUS_TREE,
-    settings: "agents",
+    settings: "credentials",
     width: 1500,
     height: 2200,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
@@ -1886,7 +1888,7 @@ const SCENES = [
     clip: '.p-card[data-settings-target="copilot"]',
     pad: 0,
     sections: FOCUS_TREE,
-    settings: "agents",
+    settings: "credentials",
     width: 1500,
     height: 2200,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
@@ -1939,7 +1941,7 @@ const SCENES = [
     clip: '.p-card[data-settings-target="cursor"]',
     pad: 0,
     sections: FOCUS_TREE,
-    settings: "agents",
+    settings: "credentials",
     width: 1500,
     height: 2200,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
@@ -1991,7 +1993,7 @@ const SCENES = [
     clip: '.p-card[data-settings-target="agy"]',
     pad: 0,
     sections: FOCUS_TREE,
-    settings: "agents",
+    settings: "credentials",
     width: 1500,
     height: 2200,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
