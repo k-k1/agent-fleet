@@ -440,3 +440,14 @@ func TestWorkspaceEnvCarriesTheGCPProfilesBridgeToken(t *testing.T) {
 		t.Fatalf("injected token %q does not verify to this membership: (%q,%v)", token, mid, ok)
 	}
 }
+
+// The store orders rows by label under the database collation, which differs between
+// SQLite and Postgres; the collision list must come out in byte order either way.
+func TestGCPNameProfilesCollidersAreSorted(t *testing.T) {
+	rows := []store.GCPProfile{{ID: "a", Label: "prod"}, {ID: "b", Label: "Prod"}}
+	for _, p := range gcpNameProfiles(rows) {
+		if got := strings.Join(p.Colliders, "|"); got != "Prod|prod" {
+			t.Errorf("%s: colliders = %q, want Prod|prod", p.ID, got)
+		}
+	}
+}
