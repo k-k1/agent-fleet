@@ -23,7 +23,7 @@ The list can be read while the workspace is stopped.
 
 ## Read the list
 
-![The Issue tracker view of the left pane. The heading shows 45, with the last fetch time, "2 updated" and a "Find in this list" box under it; GitHub, Bitbucket and Jira rows carry unread dots, CI marks, a conflict mark, comment counts and 🔗, and "Show more (35 left)" is at the bottom](../../assets/sessions-issue-list-en-light.webp)
+![The Issue tracker view of the left pane. The heading shows 45, with the last fetch time, "2 updated" and a "Find in this list" box under it; the first 12 of the 45 rows are shown (the picture is clipped, the list continues below) — GitHub and Bitbucket rows carry unread dots, CI marks, a conflict mark and comment counts](../../assets/sessions-issue-list-en-light.webp)
 
 | What you see | Meaning |
 |---|---|
