@@ -3,6 +3,14 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.47.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.47.0) — 2026-11-18
+
+Tenant and deployment administrators can now choose which model routes members may use, and
+whatever they forbid disappears from members' screens. The Console's left pane becomes an activity
+bar with one view at a time, memo auto-run can tidy the waiting memos and take work items, and an
+ECS EC2 member can boost their next start one size up. On ECS, read the Upgrade notes before
+running `update.sh`: `10-data` has to be updated first.
+
 ## [0.46.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.46.0) — 2026-11-16
 
 Memo categories can now run their waiting memos as sessions, by a press or by themselves within

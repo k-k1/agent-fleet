@@ -13,6 +13,37 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.47.0](0.47.0.md) — 2026-11-18
+
+**CLI pins** — Claude Code 2.1.326 / Codex 0.169.1 / Copilot 1.0.113 / Antigravity 1.5.10
+
+**New / Improved**
+
+- **[model access]** Model access: tenant and deployment administrators restrict routes by credential type and destination; each layer only narrows the one above, hidden routes shown per layer, provided routes with source, grant and budgets; forbidden routes leave members' screens ([#4169](https://github.com/k-k1/agent-fleet/issues/4169), [#4376](https://github.com/k-k1/agent-fleet/issues/4376))
+- **[settings]** Settings › Model credentials grouped by destination with "Usable by"; Agents page per agent (on/off, default route, runs on); Sessions and Image generation pages ([#4169](https://github.com/k-k1/agent-fleet/issues/4169))
+- **[console]** Activity bar: one left-pane view at a time, marks for views not on screen
+- **[memos]** Auto-run tidy: a model merges, splits and moves waiting memos before a run, or a selection by hand with a preview; tidies in the run history and undoable ([#4152](https://github.com/k-k1/agent-fleet/issues/4152))
+- **[memos]** "Add to auto-run" on a work item; a run with one link links its session and names its branch ([#4404](https://github.com/k-k1/agent-fleet/issues/4404))
+- **[memos]** Accept memos from sessions you started without approval, per category (off by default) ([#4151](https://github.com/k-k1/agent-fleet/issues/4151))
+- **[memos]** Memos from a worktree session are filed under the parent repository ([#4175](https://github.com/k-k1/agent-fleet/issues/4175))
+- **[ecs-ec2]** Boost the next start one size up for a limited time once a tenant administrator allows it (monthly budget not enforced yet) ([#4335](https://github.com/k-k1/agent-fleet/issues/4335))
+- **[ecs-ec2]** Opt-in light 4 GiB slot classes documented (m8g.medium, t4g, t3) ([#4332](https://github.com/k-k1/agent-fleet/issues/4332))
+- **[egress]** Docker Compose fence: workspace networks without a route out, proxy as the only exit (opt-in, not yet run on a real Docker host) ([#1181](https://github.com/k-k1/agent-fleet/issues/1181))
+- **[egress]** Built-in allowlist admits the agent CLIs' run-time hosts ([#4392](https://github.com/k-k1/agent-fleet/issues/4392))
+- **[egress]** Gateway gets its own Cloud cost row, logs "closed" until its first policy, spliced TLS counted once ([#4440](https://github.com/k-k1/agent-fleet/issues/4440), [#4394](https://github.com/k-k1/agent-fleet/issues/4394), [#4393](https://github.com/k-k1/agent-fleet/issues/4393))
+- **[console]** Toast for every first instruction the Agent gives up on ([#4343](https://github.com/k-k1/agent-fleet/issues/4343))
+- **[console]** Issue tracker view lists every row instead of folding at ten
+
+**Fixed**
+
+- **[terminal]** Panes stayed blank on a slow link (healthy connect cut off and retried forever) ([#4432](https://github.com/k-k1/agent-fleet/issues/4432))
+- **[agents]** A "when ready" input to a stopped session was accepted and dropped; now refused ([#4202](https://github.com/k-k1/agent-fleet/issues/4202))
+- **[console]** Saving a setting could drop launch defaults; re-selecting the agent reset the route ([#4427](https://github.com/k-k1/agent-fleet/issues/4427))
+- **[memos]** A slow workspace delayed other members' runs settling; a note under a new category name got no category ([#4245](https://github.com/k-k1/agent-fleet/issues/4245), [#4411](https://github.com/k-k1/agent-fleet/issues/4411))
+- **[mcp]** `create_session` description named routes the tenant policy forbids ([#4323](https://github.com/k-k1/agent-fleet/issues/4323))
+- **[console]** Files change list kept the previous tenant's changes; Sessions view wrapped repository rows ([#4431](https://github.com/k-k1/agent-fleet/issues/4431), [#4357](https://github.com/k-k1/agent-fleet/issues/4357))
+- **[ecs-ec2]** Member limits reported a home shrink on every save ([#4406](https://github.com/k-k1/agent-fleet/issues/4406))
+
 ## [0.46.0](0.46.0.md) — 2026-11-16
 
 **CLI pins** — Claude Code 2.1.325 / Copilot 1.0.112 / Antigravity 1.5.9 / Kiro 3.3.0 / Muse 1.4.20-R8619.1

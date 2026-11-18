@@ -67,7 +67,9 @@ Main features:
 - **Multi-user by design**: sign-in with your company's IdP (Google, Microsoft Entra ID, Okta
   and other OIDC providers), tenants and roles
   (member / admin / operator), per-user network isolation, envelope encryption
-  for secrets at rest, and per-workspace memory quotas. Workspaces stay
+  for secrets at rest, per-workspace memory quotas, and a model access policy
+  that decides which model routes members may use (no subscriptions, Bedrock
+  only, …). Workspaces stay
   isolated, yet a conversation can be **shared with another member per session
   or per project** (view-only, or may-propose, where a proposal reaches the agent
   only after the owner approves it).
