@@ -55,7 +55,7 @@ func TestClaudeDialogContractLive(t *testing.T) {
 	t.Run("permission", func(t *testing.T) {
 		meta, tn, stop := startDialogPane(t, "perm", true)
 		defer stop()
-		sendDialogPrompt(t, tn, dialogPermissionPrompt)
+		sendDialogPrompt(t, meta, tn, dialogPermissionPrompt, "agent-fleet-dialog-probe")
 
 		var frame string
 		var menu claude.PermissionMenu
@@ -75,11 +75,8 @@ func TestClaudeDialogContractLive(t *testing.T) {
 		if len(menu.Rows) < 2 {
 			t.Fatalf("the permission dialog read as %d row(s): %+v", len(menu.Rows), menu.Rows)
 		}
-		for i, r := range menu.Rows {
-			if r.Num != i+1 {
-				t.Errorf("row %d is numbered %d: rows must run 1..n without a gap (a digit sent for a row answers another)\n%+v", i, r.Num, menu.Rows)
-			}
-		}
+		// ParsePermissionMenu answers false unless the rows run 1..n without a gap, so a parse that
+		// succeeded already carries that guarantee.
 		var allow, deny bool
 		for _, r := range menu.Rows {
 			allow = allow || r.Choice == claude.PermAllow
@@ -87,6 +84,9 @@ func TestClaudeDialogContractLive(t *testing.T) {
 		}
 		if !allow || !deny {
 			t.Errorf("the dialog offers allow=%v deny=%v: the Console's permission card cannot answer it\n%+v", allow, deny, menu.Rows)
+		}
+		if _, parsed := claude.ParsePermissionMenu(tmuxx.CapturePane(tn)); !parsed {
+			t.Fatalf("the permission dialog did not stay up between two captures\nfirst:\n%s", frame)
 		}
 		if !tmuxx.ModalActive(meta.Name) {
 			t.Errorf("a permission dialog is up but ModalActive=false: bare arrow keys would hit the plain composer\n%s", frame)
@@ -99,12 +99,12 @@ func TestClaudeDialogContractLive(t *testing.T) {
 	t.Run("question", func(t *testing.T) {
 		meta, tn, stop := startDialogPane(t, "ask", false)
 		defer stop()
-		sendDialogPrompt(t, tn, dialogQuestionPrompt)
+		sendDialogPrompt(t, meta, tn, dialogQuestionPrompt, "Pick one")
 
 		var frame string
 		ok := waitDialog(tn, func(f string) bool {
 			frame = f
-			return strings.Contains(f, "Pick one") && tmuxx.ModalActive(meta.Name)
+			return showsQuestionOptions(f)
 		})
 		if !ok {
 			t.Fatalf("no AskUserQuestion dialog read as a modal appeared within %s (the model never asked, or ModalActive "+
@@ -113,6 +113,14 @@ func TestClaudeDialogContractLive(t *testing.T) {
 		}
 		t.Logf("AskUserQuestion dialog:\n%s", frame)
 
+		// ModalActive and AtIdlePrompt capture the pane themselves: show first that the dialog is
+		// still the one just logged, so their answers are about it.
+		if again := tmuxx.CapturePane(tn); !showsQuestionOptions(again) {
+			t.Fatalf("the AskUserQuestion dialog did not stay up between two captures\nfirst:\n%s\nsecond:\n%s", frame, again)
+		}
+		if !tmuxx.ModalActive(meta.Name) {
+			t.Errorf("a question is waiting but ModalActive=false: bare arrow keys would hit the plain composer\n%s", frame)
+		}
 		if tmuxx.AtIdlePrompt(meta.Name) {
 			t.Errorf("a question is waiting but AtIdlePrompt=true: the turn would read as finished\n%s", frame)
 		}
@@ -195,17 +203,26 @@ func startDialogPane(t *testing.T, suffix string, askPermissions bool) (meta ses
 	return meta, tn, stop
 }
 
-// sendDialogPrompt types the prompt and presses Enter, with the production tmux wrapper on the
+// sendDialogPrompt types the prompt and submits it with submitPrompt, which presses Enter again when
+// the first one is dropped (copilot-contract lost a turn to that in CI). marker is a word of the
+// prompt the transcript's user turn will hold. Both go through the production tmux wrapper on the
 // contract's private socket.
-func sendDialogPrompt(t *testing.T, tn, prompt string) {
+func sendDialogPrompt(t *testing.T, meta session.Meta, tn, prompt, marker string) {
 	t.Helper()
 	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "-l", prompt).CombinedOutput(); err != nil {
 		t.Fatalf("send prompt: %v: %s", err, out)
 	}
 	time.Sleep(time.Second)
-	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "Enter").CombinedOutput(); err != nil {
-		t.Fatalf("submit prompt: %v: %s", err, out)
-	}
+	spec := tuiMirrorContractSpec{kind: session.KindClaude, agent: claude.New()}
+	submitPrompt(t, spec, meta, tn, marker)
+}
+
+// showsQuestionOptions reports whether the frame holds the option rows of the probe's question. The
+// prompt echoed above the dialog names "Pick one" and the two letters but not the options'
+// descriptions, so only the dialog itself holds "Option A" and "Option B": any other modal (a
+// rate-limit menu, say) does not pass for it.
+func showsQuestionOptions(frame string) bool {
+	return strings.Contains(frame, "Option A") && strings.Contains(frame, "Option B")
 }
 
 // waitDialog polls the pane until ok(frame) holds or dialogWait passes.

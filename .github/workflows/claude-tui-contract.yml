@@ -20,7 +20,8 @@
 # issue notification), so "an update issue arrives → trigger this job" captures most of
 # the value.
 #
-# Billing: 2 real turns (manual / bypass). One short essay each, a few hundred tokens.
+# Billing: about 8 real turns per run (the footer probe 2, plan approval 1, fork-at 3, the two
+# dialogs 2), each short: an essay, a plan, one-line answers, one tool call.
 # With E2E_CLAUDE_OAUTH_TOKEN (a `claude setup-token` token = Max/Pro subscription
 # quota) there is no extra charge. E2E_ANTHROPIC_API_KEY is pay-as-you-go.
 #
@@ -53,7 +54,9 @@ jobs:
     with:
       cli: claude
       version: ${{ inputs.cli_version }}
-      timeout_minutes: 40
+      # At least the sum of the steps' own -timeout ceilings (20 + 15 + 10 + 15), so a slow step is
+      # ended by its test and reports a verdict, not by the job's clock.
+      timeout_minutes: 60
       # Credentials go to the CLI through env (never typed or logged); the test steps drive
       # the real interactive CLI in a real tmux pane.
       tests_need_secrets: true

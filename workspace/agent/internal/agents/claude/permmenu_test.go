@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -93,8 +94,19 @@ func TestParsePermissionMenuRefusesWhatIsNotTheLiveDialog(t *testing.T) {
 // capture is from a live claude 2.1.327 (TestClaudeDialogContractLive); read as a permission menu it
 // would be answered with a digit meant for another dialog.
 func TestParsePermissionMenuIgnoresAskUserQuestion(t *testing.T) {
-	if m, ok := ParsePermissionMenu(readPermFixture(t, "ask_user_question_one_question_2_1_327.txt")); ok {
+	raw := readPermFixture(t, "ask_user_question_one_question_2_1_327.txt")
+	if m, ok := ParsePermissionMenu(raw); ok {
 		t.Fatalf("an AskUserQuestion dialog parsed as a permission menu: %+v", m.Rows)
+	}
+	// The capture has no "Do you want to" line, so the footer alone is not what rejects it. With one
+	// above row 1 only the footer rule is left, which is what this guards: a footer that began with
+	// "Esc to cancel" would turn a question into a permission menu.
+	withQuestion := strings.Replace(raw, "❯ 1. A", " Do you want to proceed?\n❯ 1. A", 1)
+	if withQuestion == raw {
+		t.Fatal("the capture no longer has the row this test inserts a question above")
+	}
+	if m, ok := ParsePermissionMenu(withQuestion); ok {
+		t.Fatalf("an AskUserQuestion dialog with a question line parsed as a permission menu: %+v", m.Rows)
 	}
 }
 
