@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -98,6 +99,9 @@ func gcpNameProfiles(rows []store.GCPProfile) []gcpNamedProfile {
 	}
 	for i := range out {
 		if ls := labels[out[i].Name]; len(ls) > 1 {
+			// The store's ORDER BY label follows the database collation (Postgres puts
+			// "prod" before "Prod", SQLite the reverse); the conflict list must not.
+			sort.Strings(ls)
 			out[i].Colliders = ls
 		}
 	}
