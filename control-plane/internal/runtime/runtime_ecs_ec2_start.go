@@ -808,14 +808,16 @@ func (e *ecsEC2Runtime) finishLaunch(ctx context.Context, p ec2Placement) {
 // Order matters and every step is best-effort: this runs when something is ALREADY wrong,
 // and the one outcome that must not happen is the box staying in the free list.
 //
-//  1. re-tag af-role → quarantined. Every slot query filters on that tag, so this single
+//  1. unmount the home and the member's EFS (best-effort, bounded) while the box is still
+//     af-role=slot, the only role the CP may send SSM commands to.
+//  2. re-tag af-role → quarantined. Every slot query filters on that tag, so this single
 //     write removes it from freeSlots, from poolSize (a replacement may be created) and
 //     from placement.
-//  2. unmount (best-effort, bounded) and detach the home. The volume is the user's; it has
-//     to be able to attach elsewhere, and a failed af-mount can have mounted it already.
-//  3. drop the claim, so the owner's next Start is immediate rather than waiting out the
+//  3. detach the home. The volume is the user's; it has to be able to attach elsewhere,
+//     and the operator's Terminate refuses a box a home is still attached to.
+//  4. drop the claim, so the owner's next Start is immediate rather than waiting out the
 //     claim TTL on a slot that will never work.
-//  4. stop the instance. It cannot run tasks, and a wedged kernel is not something the CP
+//  5. stop the instance. It cannot run tasks, and a wedged kernel is not something the CP
 //     can repair — but it bills by the hour until an operator looks. Stopping keeps the
 //     root volume (and the evidence) while ending the compute charge; terminating it is
 //     still the operator's call. ⚠️ The sweeper's own terminate stage (slotTerminateAfter)
@@ -830,50 +832,12 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 	defer cancelAll()
 	// Every step that acts on the slot or its home runs through ifOwned: a Stop and a new
 	// Start may have taken the slot since the mount failed, and the rest is theirs.
-	if !e.ifOwned(ctx, p, func(c context.Context) { e.markQuarantined(c, p.instanceID, cause) }) {
-		return
-	}
-	if p.volumeID != "" {
-		// A failed af-mount may still have mounted the home (it fails after the mount when
-		// the new filesystem cannot be written), so unmount before the detach. Bounded and
-		// best-effort: a slot that failed because SSM never answered would otherwise hold
-		// the home here for good, and the instance stop below unmounts on its way down.
-		// Without the lock the home stays attached: a detach another replica's mount could
-		// land beside is the corruption the lock exists for, and the stop below unmounts.
-		lockCtx, cancelLock := context.WithTimeout(ctx, quarantineLockBudget)
-		lctx, unlock, err := e.lockHome(lockCtx, homeLockMount)
-		if err != nil {
-			log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
-		} else {
-			owned := e.ifOwned(lctx, p, func(c context.Context) {
-				uctx, cancel := context.WithTimeout(c, quarantineUmountBudget)
-				if err := e.umountHome(uctx, p.instanceID); err != nil {
-					log.Printf("ecs-ec2: unmounting %s on the quarantined slot %s before the detach: %v", p.volumeID, p.instanceID, err)
-				}
-				cancel()
-				e.umountMemberEFS(c, p.instanceID)
-				// Both locks: the mount lock keeps releases and mounts out, the claim lock (c)
-				// is what a Stop on another replica waits on. Losing either leaves the home
-				// attached for whoever holds the operation now.
-				if err := homeGuardOf(lctx).check(); err != nil {
-					log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
-				} else if err := homeGuardOf(c).check(); err != nil {
-					log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s (claim lock): %v", p.volumeID, p.instanceID, err)
-				} else if _, err := e.ec2.DetachVolume(c, &ec2.DetachVolumeInput{
-					VolumeId:   aws.String(p.volumeID),
-					InstanceId: aws.String(p.instanceID),
-				}); err != nil {
-					log.Printf("ecs-ec2: detaching %s from the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
-				}
-			})
-			unlock()
-			if !owned {
-				cancelLock()
-				return
-			}
+	if p.volumeID == "" {
+		if !e.ifOwned(ctx, p, func(c context.Context) { e.markQuarantined(c, p.instanceID, cause) }) {
+			return
 		}
-		cancelLock()
-		e.unclaimUnlessSuperseded(ctx, p)
+	} else if !e.quarantineHome(ctx, p, cause) {
+		return
 	}
 	e.ifOwned(ctx, p, func(c context.Context) {
 		if _, err := e.ec2.StopInstances(c, &ec2.StopInstancesInput{InstanceIds: []string{p.instanceID}}); err != nil {
@@ -882,7 +846,63 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 	})
 }
 
-// markQuarantined is step 1 of both quarantine paths: the single tag write that takes a
+// quarantineHome is quarantineSlot's steps 1-4 for a slot a home was attached to. false
+// means a Stop or a newer Start owns the slot now, and nothing more is to be done to it.
+func (e *ecsEC2Runtime) quarantineHome(ctx context.Context, p ec2Placement, cause error) bool {
+	// The unmounts go out BEFORE the re-tag: the CP role may send SSM commands to
+	// af-role=slot only (SsmSlotCommandInstances in cfn/20-platform.yaml), so once the box
+	// reads quarantined every af-umount is AccessDenied. Until the detach the attached home
+	// keeps the box out of freeSlots, so the later tag still stops placement in time; it is
+	// written before the detach, after which an af-role=slot box would read as free.
+	//
+	// A failed af-mount may still have mounted the home (it fails after the mount when the
+	// new filesystem cannot be written), so unmount before the detach. Bounded and
+	// best-effort: a slot that failed because SSM never answered would otherwise hold the
+	// home here for good, and quarantineSlot's instance stop unmounts on its way down.
+	// Without the lock the home stays attached: a detach another replica's mount could land
+	// beside is the corruption the lock exists for, and the stop unmounts.
+	//
+	// lockBounded, not a deadline on lockHome's context: the work under the lock inherits
+	// that context, and the umount alone may take longer than the wait for the lock.
+	lctx, unlock, err := e.lockBounded(ctx, homeLockMount, e.base.name, quarantineLockBudget)
+	if err != nil {
+		log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
+		if !e.ifOwned(ctx, p, func(c context.Context) { e.markQuarantined(c, p.instanceID, cause) }) {
+			return false
+		}
+	} else {
+		owned := e.ifOwned(lctx, p, func(c context.Context) {
+			uctx, cancel := context.WithTimeout(c, quarantineUmountBudget)
+			if err := e.umountHome(uctx, p.instanceID); err != nil {
+				log.Printf("ecs-ec2: unmounting %s on the quarantined slot %s before the detach: %v", p.volumeID, p.instanceID, err)
+			}
+			cancel()
+			e.umountMemberEFS(c, p.instanceID)
+			e.markQuarantined(c, p.instanceID, cause)
+			// Both locks: the mount lock keeps releases and mounts out, the claim lock (c)
+			// is what a Stop on another replica waits on. Losing either leaves the home
+			// attached for whoever holds the operation now.
+			if err := homeGuardOf(lctx).check(); err != nil {
+				log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
+			} else if err := homeGuardOf(c).check(); err != nil {
+				log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s (claim lock): %v", p.volumeID, p.instanceID, err)
+			} else if _, err := e.ec2.DetachVolume(c, &ec2.DetachVolumeInput{
+				VolumeId:   aws.String(p.volumeID),
+				InstanceId: aws.String(p.instanceID),
+			}); err != nil {
+				log.Printf("ecs-ec2: detaching %s from the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
+			}
+		})
+		unlock()
+		if !owned {
+			return false
+		}
+	}
+	e.unclaimUnlessSuperseded(ctx, p)
+	return true
+}
+
+// markQuarantined is the re-tag of both quarantine paths: the single tag write that takes a
 // box out of the world, plus the owner tags that must not keep billing somebody for it.
 // Split out because abandonLostSlot has to do it in a different ORDER from the rest.
 func (e *ecsEC2Runtime) markQuarantined(ctx context.Context, instanceID string, cause error) {
