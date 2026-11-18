@@ -739,34 +739,33 @@ func (a memoAPI) createCategory(w http.ResponseWriter, r *http.Request, _ store.
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "name is required"})
 		return
 	}
-	existing, err := a.store.ListCategories(r.Context(), mv.MembershipID)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	maxPos := -1
-	for _, c := range existing {
-		if c.Repo == repo {
-			if c.Name == name {
-				queues, err := a.memoQueueIDs(r.Context(), mv.MembershipID)
-				if err != nil {
-					writeAPIErr(w, internalErr(err))
-					return
-				}
-				writeJSON(w, http.StatusOK, memoCategoryToDTO(c, queues[c.ID]))
-				return
-			}
-			if c.Position > maxPos {
-				maxPos = c.Position
-			}
+	// One MemoTx: the membership lock serialises two creates of the same name, so the second
+	// reads the first's row (200) instead of hitting ux_memo_category_name on its own insert.
+	var out memoCategoryDTO
+	status := http.StatusOK
+	err := a.store.MemoTx(r.Context(), mv.MembershipID, func(tx store.MemoTxOps) error {
+		c, found, err := tx.FindCategory(repo, name)
+		if err != nil {
+			return err
 		}
-	}
-	c := store.MemoCategory{ID: store.NewID(), MembershipID: mv.MembershipID, Repo: repo, Name: name, Position: maxPos + 1, CreatedAt: store.NowTS()}
-	if err := a.store.CreateCategory(r.Context(), c); err != nil {
-		writeAPIErr(w, internalErr(err))
+		if !found {
+			if c, err = tx.EnsureCategory(repo, name); err != nil {
+				return err
+			}
+			status = http.StatusCreated
+		}
+		_, inQueue, err := tx.GetQueue(c.ID)
+		if err != nil {
+			return err
+		}
+		out = memoCategoryToDTO(c, inQueue)
+		return nil
+	})
+	if aerr := memoTxResult(err); aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
-	writeJSON(w, http.StatusCreated, memoCategoryToDTO(c, false))
+	writeJSON(w, status, out)
 }
 
 // memoCategoryPatch carries a rename and/or reorder. Nil fields are unchanged, so a
