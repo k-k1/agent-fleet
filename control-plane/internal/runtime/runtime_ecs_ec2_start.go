@@ -868,7 +868,7 @@ func (e *ecsEC2Runtime) quarantineHome(ctx context.Context, p ec2Placement, caus
 	// that context, and the umount alone may take longer than the wait for the lock.
 	lctx, unlock, err := e.lockBounded(ctx, homeLockMount, e.base.name, quarantineLockBudget)
 	if err != nil {
-		log.Printf("ecs-ec2: no mount lock for %s, so it stays attached to %s, which is quarantined without the unmount: %v", p.volumeID, p.instanceID, err)
+		log.Printf("ecs-ec2: no mount lock for %s, so it stays attached to %s; quarantining the slot without the unmount if it is still this Start's: %v", p.volumeID, p.instanceID, err)
 		if !e.ifOwned(ctx, p, func(c context.Context) { e.markQuarantined(c, p.instanceID, cause) }) {
 			log.Printf("ecs-ec2: NOT quarantining slot %s: it is no longer this Start's (a Stop or a newer Start took over)", p.instanceID)
 			return false
@@ -989,6 +989,8 @@ func (e *ecsEC2Runtime) abandonLostSlot(ctx context.Context, p ec2Placement, cau
 	// them do not): a Stop and a new Start can land during the minutes this takes, and the
 	// new Start may be using this very slot.
 	if !e.ifOwned(ctx, p, func(c context.Context) {
+		// The result is ignored on purpose: the home has to come off a dead box even when
+		// the box cannot be marked, or the workspace never recovers.
 		e.markQuarantined(c, p.instanceID, cause)
 		e.deregisterSlot(c, p.instanceID)
 	}) {
