@@ -563,6 +563,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.bedrock_model_hint": "Required. The model ID or system inference profile ID your account serves in this Region, as Bedrock writes it: for example us.anthropic.claude-opus-4-6-v1 or anthropic.claude-sonnet-4-5-20250929-v1:0. The session uses this one model for every call, subagents included, and does not fall back to another.",
   "launch.bedrock_model_invalid": "Not an Anthropic model ID on Bedrock. Use anthropic.… or <scope>.anthropic.… (scope: us, eu, apac, jp, au, us-gov, global); aliases such as opus, claude-… IDs and ARNs are not accepted.",
   "launch.bedrock_model_needed": "Pick an Amazon Bedrock model (amazon-bedrock/…): on this route opencode runs only those.",
+  "launch.copilot_free_model": "Your Copilot plan is Free, which allows Auto only, so a session started with this model will fail with \"Model is not available\". Set the model to \"Default\"; see Troubleshooting › Agents.",
   "launch.field.permissions": "Tool permissions",
   "launch.mode_normal": "Normal",
   "launch.field.location": "Location",

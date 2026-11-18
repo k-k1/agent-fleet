@@ -36,6 +36,7 @@ import { defaultKind, ownLaunch, ownLaunchProblem, tenantBudget, tenantDriver, t
 import { parseCap } from "../sessions/spendBudget.ts";
 import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions } from "../../lib/agentModels.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
+import { CopilotFreePlanHint } from "./CopilotFreePlanHint.tsx";
 import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
 import type { LaunchSectionKey } from "./launchPrefs.ts";
 import { launchAttachKey, useLaunchPrompt } from "./launchDraft.ts";
@@ -1050,6 +1051,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               }}
             />
             {routeModelBlocked && <span className="ui-field-hint">{tr("launch.bedrock_model_needed")}</span>}
+            <CopilotFreePlanHint kind={kind} model={model} />
           </div>
         )}
 
