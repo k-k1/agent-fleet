@@ -210,9 +210,12 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
+    # Backstop for a hung Postgres-backed test; the job otherwise runs up to the 6 h default.
+    timeout-minutes: 30
     # Without a database every pgtest.Schema-gated test skips, so Postgres-only regressions
     # would only show up in local af-db runs. The superuser role is needed by the tests that
-    # create cluster-level roles; each test works in a schema of its own (pgtest.Schema).
+    # create cluster-level roles; each test works in a schema of its own (pgtest.Schema),
+    # except the password-rotation test, which takes the database itself.
     services:
       postgres:
         image: postgres:17
