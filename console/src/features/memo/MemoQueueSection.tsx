@@ -516,9 +516,16 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   };
 
   // ---- categories --------------------------------------------------------------
-  const addCategory = async () => {
+  // `repo` is the group the "+" sits in; "" files the row in the unfiled area. A queue is keyed by
+  // (repo, category), so a row created without the repo cannot be used for repository work.
+  const addCategory = async (repo = "") => {
     try {
-      const res = await memoCategoryCreate({ repo: "", name: t("memo.new_category") });
+      const res = await memoCategoryCreate({ repo, name: t("memo.new_category") });
+      // apiJSON resolves a server error as {error} rather than throwing.
+      if ((res as { error?: unknown }).error) {
+        toast(t("memo.add_failed"));
+        return;
+      }
       bumpMemos();
       if (res && res.id) setRenameCat(res.id);
     } catch {
@@ -873,7 +880,16 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                 {rb.repo && (
                   <div className="memo-repo-head">
                     <Icon name="repo" className="memo-repo-ic" />
-                    {repoLabel(rb.repo)}
+                    <span className="memo-repo-name">{repoLabel(rb.repo)}</span>
+                    <button
+                      type="button"
+                      className="memo-repo-add"
+                      title={tr("memo.add_category_to_repo", { repo: repoLabel(rb.repo) })}
+                      aria-label={tr("memo.add_category_to_repo", { repo: repoLabel(rb.repo) })}
+                      onClick={() => void addCategory(rb.repo)}
+                    >
+                      <Icon name="add" />
+                    </button>
                   </div>
                 )}
                 {rb.groups.map((g) => {

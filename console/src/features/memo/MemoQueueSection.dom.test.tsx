@@ -14,7 +14,7 @@ const memoCreate = vi.fn(async (input: MemoInput) => {
   created.push(input);
   return { id: "new", ...input } as unknown as Memo;
 });
-const memoCategoryCreate = vi.fn(async () => ({ id: "cnew" }) as unknown as MemoCategory);
+const memoCategoryCreate = vi.fn(async (_input: { repo: string; name: string }) => ({ id: "cnew" }) as unknown as MemoCategory);
 const memoUpdate = vi.fn(async (_id: string, _patch: unknown) => ({}));
 
 vi.mock("./api.ts", () => ({
@@ -23,7 +23,7 @@ vi.mock("./api.ts", () => ({
   memoCreate: (input: MemoInput) => memoCreate(input),
   memoUpdate: (id: string, patch: unknown) => memoUpdate(id, patch),
   memoDelete: async () => ({ ok: true }),
-  memoCategoryCreate: () => memoCategoryCreate(),
+  memoCategoryCreate: (input: { repo: string; name: string }) => memoCategoryCreate(input),
   memoCategoryUpdate: async () => ({}),
   memoCategoryDelete: async () => ({ ok: true }),
   memoPasteImage: async () => ({ status: 500 }),
@@ -368,5 +368,51 @@ describe("starting a session from a memo", () => {
     await openMenu();
     expect(item("Send this memo")).toBeTruthy();
     expect(item("Start with this")).toBeUndefined();
+  });
+});
+
+describe("repository group + button", () => {
+  const repoAdd = (repo: string) =>
+    must(
+      [...document.querySelectorAll<HTMLElement>(".memo-repo")]
+        .find((el) => el.querySelector(".memo-repo-name")?.textContent === repo)
+        ?.querySelector<HTMLButtonElement>(".memo-repo-add"),
+      `"+" of repo "${repo}"`,
+    );
+
+  // A category made without the group's repo lands in the unfiled area and can never run
+  // repository work, so the repo must reach the create call.
+  it("creates the category with that group's repo and opens it for rename", async () => {
+    servedCats = [aCat({ id: "c3", repo: "app", name: "Bugs" }), aCat({ id: "c4", repo: "app2", name: "Other" })];
+    await render();
+    await click(repoAdd("app"));
+    expect(memoCategoryCreate).toHaveBeenCalledTimes(1);
+    expect(memoCategoryCreate.mock.calls[0][0].repo).toBe("app");
+
+    servedCats = [...servedCats, aCat({ id: "cnew", repo: "app", name: "New category", position: 1 })];
+    await act(async () => useMemoStore.getState().bump());
+    await settle();
+    const block = must(
+      [...document.querySelectorAll<HTMLElement>(".memo-repo")].find(
+        (el) => el.querySelector(".memo-repo-name")?.textContent === "app",
+      ),
+      "app block",
+    );
+    expect(block.querySelector(".memo-cat-rename")).not.toBe(null);
+  });
+
+  it("sends each group's own repo", async () => {
+    servedCats = [aCat({ id: "c3", repo: "app", name: "Bugs" }), aCat({ id: "c4", repo: "app2", name: "Other" })];
+    await render();
+    await click(repoAdd("app2"));
+    expect(memoCategoryCreate.mock.calls[0][0].repo).toBe("app2");
+  });
+
+  it("keeps the bottom button for the unfiled area", async () => {
+    servedCats = [aCat({ id: "c3", repo: "app", name: "Bugs" })];
+    await render();
+    await click(must(document.querySelector<HTMLButtonElement>(".memo-addcat"), "bottom add button"));
+    expect(memoCategoryCreate).toHaveBeenCalledTimes(1);
+    expect(memoCategoryCreate.mock.calls[0][0].repo).toBe("");
   });
 });
