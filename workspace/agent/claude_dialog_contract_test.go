@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -125,9 +126,9 @@ func TestClaudeDialogContractLive(t *testing.T) {
 // waits for the composer. A startup dialog is answered by choosing its row, never by a blind Enter:
 // the highlighted row is whatever upstream decided this week ("No, exit" on 2.1.327's folder trust,
 // which is why startTUIContractSession, which leaves such a dialog alone, is not used here). stop
-// must be deferred. askPermissions launches without the skip-permissions flag, the only way a tool
-// call raises the permission dialog: production's default launch skips the prompts, so a Bash call
-// then runs without any dialog (measured on the first live run, the pane read "bypass permissions on").
+// must be deferred. askPermissions launches without the skip-permissions flag and with an ask rule
+// for the probe's command: production's default launch skips the prompts, so a Bash call then runs
+// without any dialog (measured on the first live run, the pane read "bypass permissions on").
 func startDialogPane(t *testing.T, suffix string, askPermissions bool) (meta session.Meta, tn string, stop func()) {
 	t.Helper()
 	for _, bin := range []string{"tmux", "claude"} {
@@ -152,6 +153,17 @@ func startDialogPane(t *testing.T, suffix string, askPermissions bool) (meta ses
 	if askPermissions {
 		skip := false
 		meta.SkipPermissions = &skip
+		// The account's default mode may be auto mode, which runs a harmless echo without asking
+		// (measured: the pane read "auto mode on" and the dialog never came). An ask rule is what
+		// draws the dialog in every mode: testdata/permmenu/bash_ask_rule_two_options.txt shows
+		// "Ask rule Bash(echo:*) overrides auto mode for this command".
+		if err := os.MkdirAll(filepath.Join(meta.Dir, ".claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		rules := []byte(`{"permissions":{"ask":["Bash(echo:*)"]}}`)
+		if err := os.WriteFile(filepath.Join(meta.Dir, ".claude", "settings.json"), rules, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	launch, err := claude.New().BuildLaunch(meta, agents.LaunchOpts{})
 	if err != nil {
