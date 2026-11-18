@@ -529,12 +529,12 @@
 .memo-row.editing {
   background: none;
 }
-/* Collapsed body clamps to 2 lines; click expands (and a second click edits). */
+/* Collapsed body clamps to 1 line; click expands (and a second click edits). */
 .memo-text {
   cursor: pointer;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1075,6 +1075,17 @@
 .memo-reflink-title {
   color: var(--fg);
   overflow-wrap: anywhere;
+}
+/* State and producer share the reference's line; they wrap below it only when the pane is narrow. */
+.memo-reflink .memo-qmeta {
+  margin-top: 0;
+}
+button.memo-reflink-key {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
 }
 .memo-ref-removing {
   display: flex;

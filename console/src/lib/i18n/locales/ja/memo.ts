@@ -46,7 +46,6 @@ export const memo = {
   "memo.reorder_memo": "ドラッグで並べ替え／別カテゴリへ移動",
   "memo.edit_hint": "Ctrl+Enter で保存 · Esc で取消",
   "memo.edit_hint_file": "Ctrl+Enter で保存 · Esc で取消 · ファイル参照へのコメントを編集中",
-  "memo.expand_hint": "…クリックで全文",
   "memo.collapse_hint": "折りたたむ",
   "memo.collapse_memo": "このメモを折りたたむ",
   "memo.edit": "編集",
@@ -241,6 +240,7 @@ export const memo = {
   // 作業項目を指すメモ: 行と承認カードのリンク、ワークスペースがそのメモを受け取れない間のお知らせ、手で送る文面の 1 行。
   "memo.flush_ref": "作業項目: {key} ({url})",
   "memo.ref_open_title": "{provider} で {key} を開く",
+  "memo.ref_modal_title": "{key} の詳細を開く",
   "memo.ref_remove": "リンクを外す",
   "memo.ref_remove_pending": "保存すると、{key} へのリンクを外します。",
   "memo.ref_keep": "リンクを残す",

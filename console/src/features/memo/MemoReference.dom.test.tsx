@@ -34,6 +34,7 @@ const { MemoQueueNotices } = await import("./MemoQueueNotices.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { useWorkItemStore } = await import("../workitems/store.ts");
+const { useWorkItemModal } = await import("../workitems/modal.ts");
 const { t } = await import("../../lib/i18n/index.ts");
 const { readMemoQueues } = await import("./queues.ts");
 
@@ -96,6 +97,7 @@ const click = async (el: Element) => {
   await settle();
 };
 const row = () => document.querySelector<HTMLElement>(".memo-row")!;
+const keyButton = () => row().querySelector<HTMLButtonElement>("button.memo-reflink-key");
 const link = () => row().querySelector<HTMLAnchorElement>("a.memo-reflink-key");
 
 beforeEach(() => {
@@ -133,9 +135,36 @@ describe("a row with a reference", () => {
     servedMemos = [aMemo({ reference: ref })];
     await renderSection();
     expect(row().querySelector(".memo-reflink-title")?.textContent).toBe("Crash when saving");
-    // The link reads as the work-item list writes the key, though the note holds it in lower case.
-    expect(link()?.textContent).toBe("Acme/App#12");
+    // The key reads as the work-item list writes it, though the note holds it in lower case.
+    expect(keyButton()?.textContent).toBe("Acme/App#12");
+    // Cached: the key is an in-app button, not an external link.
+    expect(link()).toBeNull();
+  });
+
+  it("opens the in-app work item modal from a cached item's key, without toggling the row", async () => {
+    cacheItems(cached({ key: "Acme/App#12" }));
+    servedMemos = [aMemo({ reference: ref })];
+    await renderSection();
+    const openDetail = vi.spyOn(useWorkItemModal.getState(), "openDetail").mockImplementation(() => {});
+    await click(keyButton()!);
+    expect(openDetail).toHaveBeenCalledTimes(1);
+    expect((openDetail.mock.calls[0][0] as WorkItem).key).toBe("Acme/App#12");
+    expect(row().classList.contains("exp")).toBe(false);
+    openDetail.mockRestore();
+  });
+
+  it("keeps the external link when the item is not cached", async () => {
+    servedMemos = [aMemo({ reference: ref })];
+    await renderSection();
+    expect(keyButton()).toBeNull();
     expect(link()?.getAttribute("href")).toBe(ref.url);
+  });
+
+  it("draws the state tag on the reference's line and no separate expand-hint line", async () => {
+    servedMemos = [aMemo({ reference: ref, body: "x".repeat(100), state: "pending" } as Partial<Memo>)];
+    await renderSection();
+    expect(row().querySelector(".memo-reflink .memo-qmeta")).not.toBeNull();
+    expect(row().querySelector(".memo-more")).toBeNull();
   });
 
   it("does not fold the case of a key it should not: jira keys, and another provider's item", async () => {
