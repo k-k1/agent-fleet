@@ -222,13 +222,14 @@
   overflow-x: auto;
 }
 /* A tenant roll-up is members x days x boxes: scroll it inside the panel, header pinned. */
-.uh-roll {
+.uh-roll-scroll {
   max-height: 480px;
   overflow-y: auto;
 }
 .uh-roll .uh-table th {
   position: sticky;
   top: 0;
+  z-index: 1;
   background: var(--panel);
 }
 .uh-sub {

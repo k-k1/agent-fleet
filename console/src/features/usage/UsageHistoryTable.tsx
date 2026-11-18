@@ -78,7 +78,7 @@ export function UsageHistoryTable({
   else {
     // Newest day first.
     const rows = [...days].sort((a, b) => (a.day === b.day ? 0 : a.day < b.day ? 1 : -1));
-    body = (
+    const table = (
       <table className="uh-table" data-testid="usage-history">
         <thead>
           <tr>
@@ -123,6 +123,8 @@ export function UsageHistoryTable({
         </tbody>
       </table>
     );
+    // Only the table scrolls, so the title and the intro stay in view.
+    body = roll ? <div className="uh-roll-scroll">{table}</div> : table;
   }
   return (
     <div className={"uh-history-wrap" + (roll ? " uh-roll" : "")}>
