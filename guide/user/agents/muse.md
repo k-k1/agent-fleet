@@ -20,13 +20,15 @@ It runs as Managed only, and it never asks to approve a tool.
 
 ## Install
 
-Muse Code is not in the image, so you install it once before signing in.
+Muse Code is not in the image, so you install it once before signing in. Install it on the **Muse Code** card in **⚙Settings → Agents**; the sign-in stays in **⚙Settings → Model credentials**.
 
 ![The Muse Code card before its install: the "Install Muse Code" button, which says it downloads about 299 MB into your home](../../assets/agents-muse-en-light.webp)
 
-1. Press "**Install Muse Code**" on the **Muse Code** card in **⚙Settings → Model credentials**
-2. About 299 MB downloads into your home. This takes a few minutes
-3. When it is done, the card switches to the sign-in screen by itself
+1. Press "**Install Muse Code**" on the **Muse Code** card in **⚙Settings → Agents**
+2. About 299 MB downloads into your home. This takes a few minutes. The progress stays on the card if you switch to another page meanwhile
+3. When it is done, sign in on the **Muse Code** card in **⚙Settings → Model credentials**
+
+Until it is installed, the Muse Code card in Model credentials says so and links to the Agents page instead of offering the sign-in.
 
 ## Connect
 
@@ -42,7 +44,7 @@ There are two ways to sign in, and they bill differently.
 
 ## Update
 
-When a newer pinned version exists, the card shows "**A newer version is available**" and "**Update Muse Code**".
+When a newer pinned version exists, the **Muse Code** card in **⚙Settings → Agents** shows "**A newer version is available**" and "**Update Muse Code**".
 
 - Until you press it, the installed version keeps being used
 - Running muse sessions keep the old version until they restart

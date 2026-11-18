@@ -21,6 +21,7 @@ vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Prom
 const { MuseCard } = await import("./MuseCard.tsx");
 // The launch defaults moved to the Agents page with the rest of the behaviour (ADR 0138 D16).
 const { MuseBehavior } = await import("../agents/AgentBehaviors.tsx");
+const { useSettingsUI } = await import("../store.ts");
 const { getSettings, setSettings } = await import("../../../lib/settings.ts");
 
 let root: Root | null = null;
@@ -84,14 +85,21 @@ describe("MuseCard", () => {
     expect(text()).not.toContain("**");
   });
 
-  // The binary is not in the image, so a fresh workspace has to be offered the install rather
-  // than a sign-in that cannot run.
-  it("offers the install before the sign-in when the binary is absent", async () => {
+  // The binary is not in the image. The install lives on the Agents page card (ADR 0138 D16), so
+  // this card says the CLI is missing and where to install it, and offers no sign-in that cannot run.
+  it("points to the Agents page instead of offering a sign-in when the binary is absent", async () => {
     await mount({ supported: false, connected: false });
-    expect(buttonWith("Muse Code")).toBeTruthy();
-    expect(text()).toMatch(/299MB|299MB/);
-    // The sign-in must NOT be offered yet: it needs the binary.
+    expect(text()).toMatch(/not installed|導入されていない/);
     expect(text()).not.toMatch(/Meta account|Meta アカウント/);
+    expect(text()).not.toMatch(/299MB/);
+    const link = buttonWith("Agents page") || buttonWith("エージェントのページ");
+    expect(link).toBeTruthy();
+    await act(async () => {
+      link!.click();
+    });
+    const ui = useSettingsUI.getState();
+    expect(ui.settingsSection).toBe("agents");
+    expect(ui.settingsTarget).toBe("muse");
   });
 
   it("offers both credentials once installed, sign-in first", async () => {
@@ -112,30 +120,6 @@ describe("MuseCard", () => {
     expect(host?.querySelector('input[type="password"]')).toBeTruthy();
     expect(text()).toMatch(/removes|消えます/i);
     expect(text()).not.toContain("**");
-  });
-
-  // muse is managed-only, so there is no launch guard to re-pin implicitly: this affordance is
-  // the only route to a pin bump or to repairing a self-installed shadow. It must appear only
-  // when the Agent positively reports a mismatch — an unknown version must not nag.
-  it("offers the update only when the Agent reports a version mismatch", async () => {
-    api.mockImplementation((path: string) =>
-      Promise.resolve(
-        path === "api/connections/muse/install"
-          ? { state: "idle", installed: true, version: "1.2.9-R3300.4", pin: "1.3.0-R3401.1", updateAvailable: true }
-          : {},
-      ),
-    );
-    await mount({ supported: true, connected: true, email: "m@example.com" });
-    expect(text()).toContain("1.2.9-R3300.4");
-    expect(text()).toContain("1.3.0-R3401.1");
-
-    act(() => root?.unmount());
-    host?.remove();
-    api.mockImplementation(() =>
-      Promise.resolve({ state: "idle", installed: true, version: "", pin: "1.3.0-R3401.1", updateAvailable: false }),
-    );
-    await mount({ supported: true, connected: true, email: "m@example.com" });
-    expect(text()).not.toContain("1.3.0-R3401.1");
   });
 
   // A sign-in child that exited without writing a credential is a finished failure. Reporting it

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -7,95 +7,24 @@ import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthBu
 import { useActiveFlow } from "../parts/useActiveFlow.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { ConnPaused, type DeviceFlow } from "../agents/AgentCardParts.tsx";
+import { NotInstalled } from "./NotInstalled.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
-import { getKiroInstall, isOk, type CliInstallStatus } from "../api.ts";
 
-// Kiro: on-demand install + device-flow login (docs/log/43 Track C). Kiro's ~855MB
-// bundle is NOT baked on the lean image (decision §4-2), so a fresh workspace reports
-// supported=false; the card offers an "install" button that lands the CLI in the
-// user's ~/.local (POST /connections/kiro/install runs in the background, we poll
-// GET for progress). Once installed, `kiro-cli login --license free --use-device-flow`
-// prints a verification URL (+ short confirmation code) and self-polls AWS SSO until
-// the user approves in a browser — so the UI shows both and polls
-// api/connections/kiro/poll (no pasted code, like Codex/Cursor). v1 is login-only
-// (Builder ID / free); the API-key path (KIRO_API_KEY, Pro+) is deferred to Track D.
+// Kiro: device-flow login (docs/log/43 Track C). The ~855MB CLI is not baked on the lean image,
+// so a fresh workspace reports supported=false; the install and update controls are on the Agents
+// page card (ADR 0138 D16) and this card points there. Once installed, `kiro-cli login --license
+// free --use-device-flow` prints a verification URL (+ short confirmation code) and self-polls AWS
+// SSO until the user approves in a browser, so the UI shows both and polls
+// api/connections/kiro/poll (no pasted code, like Codex/Cursor). v1 is login-only (Builder ID /
+// free); the API-key path (KIRO_API_KEY, Pro+) is deferred to Track D.
 export function KiroCard({ running, st, reload }: { running: boolean; st: ProviderConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
   const active = useActiveFlow();
   const [flow, setFlow] = useState<DeviceFlow | null>(null);
-  const [installing, setInstalling] = useState<null | "installing" | "error">(null);
   const [busy, setBusy] = useState(false);
-  // { installed, version, pin, updateAvailable } — the version facts behind the update
-  // affordance below. Kiro is the one CLI whose copy lives in the home volume with no
-  // self-updater and no boot-install, so a versions.json pin bump only reaches it when
-  // something re-installs. The launch guard does that implicitly at the next launch;
-  // this makes it EXPLICIT (you see that an update exists and press the button when a
-  // multi-minute download suits you, instead of being surprised mid-launch).
-  const [inst, setInst] = useState<CliInstallStatus | null>(null);
-  const unsupported = st?.supported === false; // CLI not installed yet (on-demand)
-
-  const loadInstall = useCallback(async () => {
-    if (!running) return;
-    try {
-      const r = await getKiroInstall();
-      setInst(isOk(r) ? r : null);
-    } catch {
-      /* stopped workspace / transient 502 — the card just shows no update notice */
-    }
-  }, [running]);
-  useEffect(() => {
-    void loadInstall();
-  }, [loadInstall, st?.supported]);
-
-  const install = async () => {
-    setBusy(true);
-    setInstalling("installing");
-    try {
-      const res = await api("api/connections/kiro/install", { method: "POST" });
-      if (!res || res.error) {
-        setInstalling("error");
-        toast(tr("agents.kiro_install_failed", { msg: res?.error ? errDetail(res.error) : "" }));
-        return;
-      }
-      if (res.state === "done") {
-        setInstalling(null);
-        void loadInstall();
-        reload();
-        return;
-      }
-      // Poll the background install until it finishes; the ~855MB download is slow.
-      poll({
-        deadlineMs: 20 * 60 * 1000,
-        firstDelayMs: 4000,
-        onExpire: () => setInstalling("error"),
-        step: async () => {
-          let p: CliInstallStatus | null;
-          try {
-            const r = await getKiroInstall();
-            p = isOk(r) ? r : null;
-          } catch {
-            p = null;
-          }
-          if (p && p.state === "done") {
-            setInstalling(null);
-            void loadInstall(); // refresh version / updateAvailable after an upgrade
-            reload();
-            return { stop: true };
-          }
-          if (p && p.state === "error") {
-            setInstalling("error");
-            toast(tr("agents.kiro_install_failed", { msg: p.error || "" }));
-            return { stop: true };
-          }
-          return { stop: false, nextMs: 4000 };
-        },
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
+  const unsupported = st?.supported === false; // the CLI is not installed yet (installed on the Agents page)
 
   const startLogin = async () => {
     setBusy(true);
@@ -191,25 +120,7 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: Provid
           <DisconnectButton disabled={busy} onClick={disconnect} />
         </div>
       ) : unsupported ? (
-        // Not installed yet — offer the on-demand install (~855MB into the home volume).
-        <>
-          <div className="p-desc">{tr("agents.kiro_install_desc")}</div>
-          <div className="p-body">
-            {installing === "installing" ? (
-              <p className="ps-note ps-note-warn">{tr("agents.kiro_installing")}</p>
-            ) : (
-              <>
-                <div className="p-opts">
-                  <button type="button" className="p-opt" disabled={busy} onClick={install}>
-                    <span className="p-opt-t">{tr("agents.kiro_install")}</span>
-                    <span className="p-opt-s">{tr("agents.kiro_install_note")}</span>
-                  </button>
-                </div>
-                {installing === "error" && <p className="ps-note ps-note-warn">{tr("agents.kiro_install_error")}</p>}
-              </>
-            )}
-          </div>
-        </>
+        <NotInstalled kind="kiro" />
       ) : (
         <>
           <div className="p-desc">{tr("agents.kiro_desc")}</div>
@@ -223,31 +134,6 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: Provid
             <Hint>{tr("agents.kiro_hint")}</Hint>
           </div>
         </>
-      )}
-      {/* Update affordance. Rendered outside the connection branches above because it
-          applies whether or not you are signed in — it is about the BINARY, not the
-          auth. Shown only when the agent positively reports a version mismatch against
-          the versions.json pin (an unreadable version or a missing pin says nothing, so
-          the user is never nagged into a 554MB download on a guess). */}
-      {running && !unsupported && inst?.updateAvailable && (
-        <div className="p-body">
-          {installing === "installing" ? (
-            <p className="ps-note ps-note-warn">{tr("agents.kiro_updating")}</p>
-          ) : (
-            <>
-              <p className="ps-note ps-note-warn">
-                {tr("agents.kiro_update_avail", { cur: inst.version || "?", pin: inst.pin || "?" })}
-              </p>
-              <div className="p-opts">
-                <button type="button" className="p-opt" disabled={busy} onClick={install}>
-                  <span className="p-opt-t">{tr("agents.kiro_update")}</span>
-                  <span className="p-opt-s">{tr("agents.kiro_update_note")}</span>
-                </button>
-              </div>
-              {installing === "error" && <p className="ps-note ps-note-warn">{tr("agents.kiro_install_error")}</p>}
-            </>
-          )}
-        </div>
       )}
     </ProviderCard>
   );
