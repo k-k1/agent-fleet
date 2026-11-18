@@ -14,13 +14,17 @@
 #   - a pin that already equals routeOverridesFrom does nothing;
 #   - a name added in the pin that the reviewed list holds is not a change (the version moves),
 #     but one it does not hold, or any removed name, still is, and the body says what to add;
-#   - a reviewed name that routeOverrides also holds is ignored, and a malformed list stops the
-#     run without editing anything.
+#   - a reviewed name that routeOverrides also holds is ignored (checked against the real route.go,
+#     so a name late in its list counts), and an unreadable or literal-less route.go stops the run
+#     instead of switching that check off;
+#   - a malformed list makes the run `unknown` and exit 0, so the other CLIs' bumps still go out;
+#   - a removed name that is still on the list is called out, so it cannot hide a later re-add.
 # Case 1 is the positive control for the others: if it did not edit, "nothing was edited"
 # would prove nothing.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/claude-route-overrides.sh"
+ROOT="$(cd "$HERE/../.." && pwd)"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -159,6 +163,11 @@ echo "ok   6 a constant is not a name; an exported variable the source reads sti
 fake 4.0.0 $BASE_NAMES
 fake 4.0.1 $BASE_NAMES CLAUDE_CODE_USE_REVIEWED_ONE
 setup 4.0.1 4.0.0
+rm -f "$WORK/reviewed"
+run || fail "7: exit $? without the list"
+grep -qx 'route_overrides=changed' "$WORK/out" || fail "7: without the list it is not changed"
+unchanged 7
+setup 4.0.1 4.0.0
 printf '# a comment\n\nCLAUDE_CODE_USE_REVIEWED_ONE\tnot a selector\n' > "$WORK/reviewed"
 run || fail "7: exit $?"
 grep -qx 'route_overrides=same' "$WORK/out" || fail "7: not same"
@@ -191,28 +200,65 @@ printf 'CLAUDE_CODE_USE_REVIEWED_ONE\tnot a selector\n' > "$WORK/reviewed"
 run || fail "9: exit $?"
 grep -qx 'route_overrides=changed' "$WORK/out" || fail "9: not changed"
 grep -q '`ANTHROPIC_BASE_URL`' "$WORK/body.md" || fail "9: removed name not listed"
+if grep -q 'still in the reviewed list' "$WORK/body.md"; then fail "9: a removed name that is not on the list was called out"; fi
 unchanged 9
 echo "ok   9 a removed name is still a change"
 
-# 10. A reviewed name that routeOverrides holds is ignored: the addition stays a change.
+# 10. A reviewed name that routeOverrides holds is ignored: the addition stays a change. Run
+#     against the repository's real route.go (a long list, several names to a line, // comments),
+#     with the LAST name of its list, so a range that stops early would let it count as reviewed.
+last="$(awk '/^var routeOverrides = \[\]string\{/ { f = 1 } f { print } f && /^\}/ { exit }' "$ROOT/workspace/agent/internal/agents/claude/route.go" | grep -oE '"[A-Z][A-Z0-9_]+"' | tail -1 | tr -d '"')"
+[ -n "$last" ] || fail "10: no last name in the real route.go"
+fake 4.0.1 $BASE_NAMES "$last"
 setup 4.0.1 4.0.0
-printf '// routeOverrides ... taken from the CLI'"'"'s own lists (claude 4.0.0: the provider\nvar routeOverrides = []string{\n\t"CLAUDE_CODE_USE_REVIEWED_ONE",\n}\n' > "$WORK/tree/route.go"
+cp "$ROOT/workspace/agent/internal/agents/claude/route.go" "$WORK/tree/route.go"
 rm -rf "$WORK/orig"; cp -r "$WORK/tree" "$WORK/orig"
-printf 'CLAUDE_CODE_USE_REVIEWED_ONE\tnot a selector\n' > "$WORK/reviewed"
+printf '%s\tnot a selector\n' "$last" > "$WORK/reviewed"
 run || fail "10: exit $?"
-grep -qx 'route_overrides=changed' "$WORK/out" || fail "10: a name held by routeOverrides counted as reviewed"
+grep -qx 'route_overrides=changed' "$WORK/out" || fail "10: a name held by routeOverrides counted as reviewed ($last)"
 grep -q 'ignoring' "$WORK/err" || fail "10: no message about the ignored entry"
 unchanged 10
-echo "ok  10 a reviewed name that routeOverrides holds is ignored"
+echo "ok  10 a reviewed name that routeOverrides holds is ignored (checked on the real route.go)"
 
-# 11. A line without a reason stops the run, and nothing is edited.
-setup 4.0.1 4.0.0
-printf 'CLAUDE_CODE_USE_REVIEWED_ONE\n' > "$WORK/reviewed"
-if run; then fail "11: a list line without a reason was accepted"; fi
-grep -q 'want NAME<TAB>reason' "$WORK/err" || fail "11: no message naming the line"
-unchanged 11
+# 11. A malformed list: unknown, exit 0 (the other CLIs' bumps must still go out), nothing edited,
+#     the body names the fix. Three ways to be malformed; the same list without the fault is
+#     case 7's, which moves the version.
+n=0
+for bad in 'CLAUDE_CODE_USE_REVIEWED_ONE\n' 'lower_name\treason\n' 'CLAUDE_CODE_USE_REVIEWED_ONE\t\treason\n'; do
+  n=$((n + 1))
+  setup 4.0.1 4.0.0
+  printf "$bad" > "$WORK/reviewed"
+  run || fail "11.$n: exit $? (a malformed list must not fail the job)"
+  grep -qx 'route_overrides=unknown' "$WORK/out" || fail "11.$n: not unknown"
+  grep -q 'has a malformed line' "$WORK/body.md" || fail "11.$n: body does not say so"
+  grep -q 'want NAME<TAB>reason' "$WORK/err" || fail "11.$n: no message naming the line"
+  unchanged "11.$n"
+done
 rm -f "$WORK/reviewed"
-echo "ok  11 a malformed list stops the run without editing"
+echo "ok  11 a malformed list is unknown, edits nothing and does not fail the job"
+
+# 12. A removed name that the list still holds is called out, whatever else changed.
+fake 4.0.4 $(printf '%s\n' $BASE_NAMES | grep -vx ANTHROPIC_BASE_URL)
+setup 4.0.4 4.0.0
+printf 'ANTHROPIC_BASE_URL\tstale\n' > "$WORK/reviewed"
+run || fail "12: exit $?"
+grep -qx 'route_overrides=changed' "$WORK/out" || fail "12: not changed"
+grep -q 'still in the reviewed list' "$WORK/body.md" || fail "12: stale list line not called out"
+unchanged 12
+echo "ok  12 a removed name still on the list is called out"
+
+# 13. A route.go that cannot be read for its list stops the run: an empty list would switch the
+#     overlap check off, and a name routeOverrides enforces would pass as reviewed.
+fake 4.0.1 $BASE_NAMES CLAUDE_CODE_USE_REVIEWED_ONE
+setup 4.0.1 4.0.0
+printf '// routeOverrides ... taken from the CLI'"'"'s own lists (claude 4.0.0: the provider\n' > "$WORK/tree/route.go"
+rm -rf "$WORK/orig"; cp -r "$WORK/tree" "$WORK/orig"
+printf 'CLAUDE_CODE_USE_REVIEWED_ONE\tnot a selector\n' > "$WORK/reviewed"
+if run; then fail "13: a route.go without the list was accepted"; fi
+grep -q 'no `var routeOverrides' "$WORK/err" || fail "13: no message naming the missing list"
+unchanged 13
+rm -f "$WORK/reviewed"
+echo "ok  13 a route.go without its list stops the run"
 }
 
 echo "claude-route-overrides: all cases passed"

@@ -5,5 +5,7 @@
 # routeOverrides (workspace/agent/internal/agents/claude/route.go). A name that does choose one
 # goes into routeOverrides instead, never here. Landing a line here does not depend on the pin,
 # and the next cli-pin-bump run then moves routeOverridesFrom without a person's commit on the bump
-# branch. Blank lines and `#` lines are ignored; a line without a reason fails the run.
+# branch. Blank lines and `#` lines are ignored. A line without a reason makes the bump report the
+# comparison as unknown (and TestReviewedRouteNamesAreLeftOut fails on main). When the CLI drops a
+# name, delete its line here too, or a later release that brings it back would pass as reviewed.
 CLAUDE_CODE_LAUNCHER_RUNS_API_KEY_HELPER	Only tells a host-managed CLI that the launcher runs the apiKeyHelper, which changes how the login is classified (launcher_credential), not where calls or the bearer go. Its siblings CLAUDE_CODE_HOST_CREDS_FILE and CLAUDE_CODE_HOST_AUTH_ENV_VAR are likewise not in routeOverrides.

@@ -19,15 +19,19 @@
 #   changed  names were added or removed and not all of the additions are reviewed: nothing
 #            is edited, so the test stays red, and the names are listed in the PR body for a
 #            human to sort into routeOverrides or into the reviewed list.
-#   unknown  a binary could not be fetched or read: nothing is edited (the test stays red).
+#   unknown  a binary could not be fetched or read, or the reviewed list is malformed: nothing is
+#            edited (the test stays red).
 #   current  the pin already equals routeOverridesFrom: nothing to do.
 #
 # claude-route-overrides.reviewed (one `NAME<TAB>reason` per line) is where a person's decision
 # that a new name is not a provider, endpoint or credential selector lives. It is data on main,
 # so it survives cli-pin-bump.yml rebuilding the bump branch from main (a commit added to that
 # branch is force-pushed away the next time another CLI passes its contract), and landing it
-# does not depend on the pin, so it never turns main red. A name that is also in routeOverrides
-# is ignored in the list: the list may only hold names that are deliberately left out.
+# does not depend on the pin, so a correct line never turns main red whatever the pin. A name that
+# is also in routeOverrides is ignored in the list (TestReviewedRouteNamesAreLeftOut turns main red
+# for it): the list may only hold names that are deliberately left out. A malformed list makes the
+# run `unknown` (nothing edited, the PR body says to fix the list) instead of failing the job, so
+# the other CLIs' bumps still go out.
 #
 # Compared with routeOverridesFrom, never with the previous pin: if an earlier bump was
 # merged without the re-derivation, the gap since then is what has to be checked.
@@ -74,16 +78,23 @@ reviewed_names() {
   [ -f "$REVIEWED" ] || return 0
   awk -F'\t' -v f="$REVIEWED" '
     /^[[:space:]]*(#|$)/ { next }
-    $1 !~ /^[A-Z][A-Z0-9_]+$/ || $2 ~ /^[[:space:]]*$/ { printf "%s:%d: want NAME<TAB>reason\n", f, NR > "/dev/stderr"; bad = 1; next }
+    $1 !~ /^[A-Z][A-Z0-9_]+$/ || $2 ~ /^[[:space:]]*$/ { printf "line %d: want NAME<TAB>reason\n", NR > "/dev/stderr"; bad = 1; next }
     { print $1 }
     END { exit bad }' "$REVIEWED" | sort -u
 }
 
-# The names routeOverrides holds today, from route.go's list literal.
+# The names routeOverrides holds today, from route.go's list literal. An unreadable file or a
+# missing literal is an error, not an empty list: an empty list would switch the overlap check off
+# and count a name that is enforced as "reviewed".
 route_names() {
-  awk '/^var routeOverrides = \[\]string\{/ { f = 1 } f { print } f && (/^\}/ || /\{\}$/) { exit }' "$ROUTE_GO" |
-    grep -oE '"[A-Z][A-Z0-9_]+"' | tr -d '"' | sort -u || true
+  local lit
+  lit="$(awk '/^var routeOverrides = \[\]string\{/ { f = 1 } f { print } f && (/^\}/ || /\{\}$/) { exit } END { exit !f }' "$ROUTE_GO")" ||
+    die "no \`var routeOverrides = []string{\` list in $ROUTE_GO"
+  printf '%s\n' "$lit" | grep -oE '"[A-Z][A-Z0-9_]+"' | tr -d '"' | sort -u || true
 }
+
+# The list's path as the PR body names it: relative to the repository when it is inside it.
+reviewed_rel() { printf '%s' "${REVIEWED#"$ROOT"/}"; }
 
 result() {
   echo "route_overrides=$1" >> "$OUT"
@@ -144,7 +155,22 @@ done
 added="$(comm -13 "$WORK/$from.names" "$WORK/$pin.names")"
 removed="$(comm -23 "$WORK/$from.names" "$WORK/$pin.names")"
 
-reviewed_names > "$WORK/reviewed.all" || die "$REVIEWED is malformed (see the lines above)"
+if ! reviewed_names > "$WORK/reviewed.all" 2> "$WORK/reviewed.err"; then
+  sed "s|^|claude-route-overrides: $REVIEWED: |" "$WORK/reviewed.err" >&2
+  {
+    echo
+    echo "### claude routeOverrides"
+    echo
+    echo "\`$(reviewed_rel)\` has a malformed line, so the comparison was not trusted and"
+    echo "\`TestRouteOverridesCoverTheCLIsLists\` stays red. Fix the list on \`main\` (one \`NAME<TAB>reason\`"
+    echo "per line, a reason on every line); the next run re-derives it. Nothing else in this PR depends on it."
+    echo
+    sed 's/^/- /' "$WORK/reviewed.err"
+  } > "$WORK/malformed.md"
+  [ -z "$BODY_FILE" ] || cat "$WORK/malformed.md" >> "$BODY_FILE"
+  result unknown
+  exit 0
+fi
 route_names > "$WORK/route.names"
 # A name that is in routeOverrides cannot also be "left out on purpose".
 both="$(comm -12 "$WORK/reviewed.all" "$WORK/route.names")"
@@ -166,16 +192,26 @@ if [ -n "$unreviewed$removed" ]; then
     echo
     echo "The provider, endpoint and credential variable names changed between claude $from (where"
     echo "\`routeOverrides\` was taken from) and $pin, so \`TestRouteOverridesCoverTheCLIsLists\` stays red"
-    echo "until a human sorts them into \`routeOverrides\` and moves \`routeOverridesFrom\`."
+    echo "until a human sorts them: into \`routeOverrides\`, or into \`$(reviewed_rel)\` on \`main\`, and"
+    echo "\`routeOverridesFrom\` moves."
     echo
     [ -z "$unreviewed" ] || { echo "Added in $pin:"; echo; printf -- '- `%s`\n' $unreviewed; echo; }
     [ -z "$removed" ] || { echo "Removed in $pin:"; echo; printf -- '- `%s`\n' $removed; echo; }
-    [ -z "$known" ] || { echo "Added in $pin but already reviewed (\`$(basename "$REVIEWED")\`):"; echo; printf -- '- `%s`\n' $known; echo; }
+    [ -z "$known" ] || { echo "Added in $pin but already reviewed (\`$(reviewed_rel)\`):"; echo; printf -- '- `%s`\n' $known; echo; }
+    # A removed name that is still listed would hide the day the CLI brings it back with another meaning.
+    gone="$(printf '%s\n' $removed | sort -u | comm -12 - "$WORK/reviewed")"
+    if [ -n "$gone" ]; then
+      echo "Removed in $pin and still in the reviewed list: delete these lines on \`main\`, or a later release that"
+      echo "adds the name back with another meaning would pass as reviewed:"
+      echo
+      printf -- '- `%s`\n' $gone
+      echo
+    fi
     if [ -n "$unreviewed" ]; then
       echo "A name that does not choose a provider, endpoint or credential goes into"
-      echo "\`deploy/local/$(basename "$REVIEWED")\` on \`main\` as \`NAME<TAB>reason\` (a change that does not"
-      echo "depend on this pin, so it cannot turn \`main\` red); the next run then moves \`routeOverridesFrom\`"
-      echo "by itself. One that does goes into \`routeOverrides\`."
+      echo "\`$(reviewed_rel)\` on \`main\` as \`NAME<TAB>reason\` (a change that does not"
+      echo "depend on this pin, so a correct line cannot turn \`main\` red); the next run then moves"
+      echo "\`routeOverridesFrom\` by itself. One that does goes into \`routeOverrides\`."
     fi
   } > "$WORK/changed.md"
   [ -z "$BODY_FILE" ] || cat "$WORK/changed.md" >> "$BODY_FILE"
@@ -201,7 +237,7 @@ else
   body "" "### claude routeOverrides" "" \
     "Re-derived: the $(wc -l < "$WORK/$pin.names" | tr -d ' ') provider, endpoint and credential variable names in claude $pin" \
     "are the same as in $from apart from names a person already reviewed and left out of \`routeOverrides\`" \
-    "(\`$(basename "$REVIEWED")\`), so \`routeOverrides\` is unchanged and \`routeOverridesFrom\` moves to $pin." ""
+    "(\`$(reviewed_rel)\`), so \`routeOverrides\` is unchanged and \`routeOverridesFrom\` moves to $pin." ""
   for n in $known; do body "- \`$n\`"; done
 fi
 result same

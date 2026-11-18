@@ -283,12 +283,13 @@ func TestReviewedRouteNamesAreLeftOut(t *testing.T) {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		name, reason, _ := strings.Cut(line, "\t")
+		// Split on every tab, like the script's awk: NAME<TAB><TAB>reason has an empty reason.
+		f := strings.Split(line, "\t")
 		switch {
-		case !nameRe.MatchString(name) || strings.TrimSpace(reason) == "":
+		case len(f) < 2 || !nameRe.MatchString(f[0]) || strings.TrimSpace(f[1]) == "":
 			t.Errorf("line %d: want NAME<TAB>reason, got %q", i+1, line)
-		case slices.Contains(routeOverrides, name):
-			t.Errorf("line %d: %s is in routeOverrides, so it is not left out", i+1, name)
+		case slices.Contains(routeOverrides, f[0]):
+			t.Errorf("line %d: %s is in routeOverrides, so it is not left out", i+1, f[0])
 		}
 	}
 }
