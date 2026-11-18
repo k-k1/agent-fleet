@@ -1,5 +1,6 @@
 // The line a note shows for the work item it points at: the provider's mark, the item's key as a
-// link to its address and, when the work-item cache has the item, its title. The title is read
+// link to its address (or, with `inApp` and a cached item, a button opening the in-app detail
+// modal) and, when the work-item cache has the item, its title. The title is read
 // from the cache at draw time and never stored with the note, so an item that is not cached shows
 // the key alone and nothing else of it.
 import { Icon } from "../../ui/Icon.tsx";
@@ -36,7 +37,7 @@ export function MemoReferenceLink({
         <button
           type="button"
           className="memo-reflink-key linkish"
-          title={tr("memo.ref_modal_title", { key: reference.key, provider })}
+          title={tr("memo.ref_modal_title", { key: reference.key })}
           onClick={(e) => {
             e.stopPropagation();
             // The row matched at draw time, not a fresh lookup by the note's key: the note may

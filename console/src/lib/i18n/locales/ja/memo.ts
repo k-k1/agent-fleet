@@ -48,6 +48,7 @@ export const memo = {
   "memo.edit_hint_file": "Ctrl+Enter で保存 · Esc で取消 · ファイル参照へのコメントを編集中",
   "memo.collapse_hint": "折りたたむ",
   "memo.collapse_memo": "このメモを折りたたむ",
+  "memo.expand_memo": "クリックで全文を表示",
   "memo.edit": "編集",
   "memo.send_one": "このメモを送信",
   "memo.start_from": "この内容で始める",

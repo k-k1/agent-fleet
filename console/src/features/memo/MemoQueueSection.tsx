@@ -1522,18 +1522,18 @@ function MemoRow(props: MemoRowProps) {
         {/* A file note shows its path instead; the server flush ignores a reference on one, and the
             Console never attaches one. The edit view and the approval card still show it, so a
             reference that reached it through the token face is never hidden where it is approved. */}
-        {ref && m.kind !== "file" ? (
-          <MemoReferenceLink reference={ref} trailing={metaNode} inApp />
-        ) : (
-          metaNode
-        )}
+        {ref && m.kind !== "file" && <MemoReferenceLink reference={ref} trailing={metaNode} inApp />}
         {m.kind === "file" ? (
           <>
             <code className="memo-ref">{m.refPath}</code>
             {m.body && <div className="memo-comment memo-text">{m.body}</div>}
           </>
         ) : (
-          m.body && <div className="memo-text">{m.body}</div>
+          m.body && (
+            <div className="memo-text" title={isLong && !expanded ? tr("memo.expand_memo") : undefined}>
+              {m.body}
+            </div>
+          )
         )}
         {m.attachments && m.attachments.length > 0 && (
           <div className="memo-row-thumbs" onClick={(e) => e.stopPropagation()}>
@@ -1542,7 +1542,9 @@ function MemoRow(props: MemoRowProps) {
             ))}
           </div>
         )}
-        {(m.sentAt || isLong) && (
+        {/* Without a reference line to ride on, state and producer stay below the body. */}
+        {!(ref && m.kind !== "file") && metaNode}
+        {((m.sentAt && !stateWords) || (isLong && expanded)) && (
           <div className="memo-meta">
             {m.sentAt && !stateWords && <span className="memo-sent-tag">{tr("memo.sent_tag")}</span>}
             {isLong &&

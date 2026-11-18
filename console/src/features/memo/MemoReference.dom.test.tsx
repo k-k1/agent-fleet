@@ -160,6 +160,29 @@ describe("a row with a reference", () => {
     expect(link()?.getAttribute("href")).toBe(ref.url);
   });
 
+  it("keeps state and producer below the body for a note without a reference, and for a file note", async () => {
+    servedMemos = [
+      aMemo({ id: "a", body: "plain note", state: "pending" } as Partial<Memo>),
+      aMemo({ id: "b", kind: "file", refPath: "docs/x.md", body: "file note", state: "pending" } as Partial<Memo>),
+    ];
+    await renderSection();
+    for (const r of document.querySelectorAll<HTMLElement>(".memo-row")) {
+      const html = r.innerHTML;
+      expect(html.indexOf("memo-qmeta")).toBeGreaterThan(html.indexOf("memo-text"));
+      expect(r.querySelector(".memo-reflink")).toBeNull();
+    }
+  });
+
+  it("leaves the external link in the edit view even when the item is cached", async () => {
+    cacheItems(cached({ key: "Acme/App#12" }));
+    servedMemos = [aMemo({ reference: ref })];
+    await renderSection();
+    await click(row().querySelector<HTMLElement>(".memo-body")!);
+    await click(row().querySelector<HTMLElement>(".memo-body")!);
+    expect(row().querySelector("button.memo-reflink-key")).toBeNull();
+    expect(row().querySelector("a.memo-reflink-key")?.getAttribute("href")).toBe(ref.url);
+  });
+
   it("draws the state tag on the reference's line and no separate expand-hint line", async () => {
     servedMemos = [aMemo({ reference: ref, body: "x".repeat(100), state: "pending" } as Partial<Memo>)];
     await renderSection();

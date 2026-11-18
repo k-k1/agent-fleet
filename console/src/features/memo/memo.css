@@ -553,10 +553,6 @@
   gap: 8px;
   margin-top: 2px;
 }
-.memo-more {
-  font-size: 10px;
-  color: var(--muted2);
-}
 /* The way back out of an expanded memo (the body's own click enters edit instead). */
 .memo-less {
   display: inline-flex;
@@ -1086,6 +1082,7 @@ button.memo-reflink-key {
   background: none;
   cursor: pointer;
   text-align: left;
+  text-decoration: underline;
 }
 .memo-ref-removing {
   display: flex;
