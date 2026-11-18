@@ -22,6 +22,7 @@ import { launchChromium } from "../lib/chromium-launch.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
+if (argv.includes("--cdp-port")) console.warn("[viewer-scroll] --cdp-port was removed and is ignored: Chromium takes a free port itself");
 const arg = (n, d) => {
   const i = argv.indexOf(`--${n}`);
   return i >= 0 && argv[i + 1] ? argv[i + 1] : d;

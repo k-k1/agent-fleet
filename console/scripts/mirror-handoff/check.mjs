@@ -25,6 +25,7 @@ import { launchChromium } from "../lib/chromium-launch.mjs";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STUB = path.join(HERE, "../mirror-scroll/stub.mjs");
 const argv = process.argv.slice(2);
+if (argv.includes("--cdp-port")) console.warn("[mirror-handoff] --cdp-port was removed and is ignored: Chromium takes a free port itself");
 const arg = (n, d) => {
   const i = argv.indexOf(`--${n}`);
   return i >= 0 && argv[i + 1] ? argv[i + 1] : d;

@@ -282,6 +282,12 @@ fs.copyFileSync(VIEWER, path.join(work, "viewer.js"));
 const srv = await serve(work, PORT);
 const base = `http://127.0.0.1:${PORT}`;
 const b = await browser();
+// A failed case throws and Ctrl-C skips the normal end: close the browser (and its profile) then too.
+process.on("exit", () => {
+  try { b.close(); } catch {}
+  fs.rmSync(work, { recursive: true, force: true });
+});
+process.on("SIGINT", () => process.exit(1));
 await b.call("Page.enable");
 // Screenshots are cut off at the default window width (780px). Make it wider than the frame.
 await b.call("Emulation.setDeviceMetricsOverride", { width: 900, height: 600, deviceScaleFactor: 1, mobile: false });
