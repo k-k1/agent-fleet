@@ -27,12 +27,12 @@
 //
 // Exit status is the check: 0 = every header puts the cluster where the floating one
 // sits, with no stray hole in the row.
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
+import { launchChromium } from "../lib/chromium-launch.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(HERE, "../../src");
@@ -41,7 +41,6 @@ const arg = (n, d) => {
   const i = argv.indexOf(`--${n}`);
   return i >= 0 && argv[i + 1] ? argv[i + 1] : d;
 };
-const CDP_PORT = Number(arg("cdp-port", 9257));
 const CHROME = arg("chrome", process.env.CHROMIUM || "/usr/bin/chromium");
 const WIDTHS = arg("widths", "480,700,1100").split(",").map(Number);
 const ONLY = arg("only", "");
@@ -287,22 +286,10 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pane-heads-"));
 const html = path.join(dir, "harness.html");
 fs.writeFileSync(html, page(list, kinds));
 
-const chrome = spawn(
-  CHROME,
-  [
-    "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
-    // The harness reads the repo's CSS off disk from a file:// page.
-    "--allow-file-access-from-files",
-    // Headless reports a coarse pointer by default, which flips the hover/pointer
-    // media queries some header controls are gated on.
-    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
-    `--remote-debugging-port=${CDP_PORT}`, "--remote-allow-origins=*", "--lang=ja-JP", "about:blank",
-  ],
-  { stdio: ["ignore", "ignore", "ignore"] },
-);
+let chrome = null; // set by launchChromium below, after the exit handlers are in
 const cleanup = () => {
   try {
-    chrome.kill();
+    chrome?.close();
   } catch {
     /* already gone */
   }
@@ -313,6 +300,20 @@ process.on("SIGINT", () => {
   cleanup();
   process.exit(1);
 });
+
+chrome = await launchChromium({
+  bin: CHROME,
+  args: [
+    "--disable-gpu", "--hide-scrollbars",
+    // The harness reads the repo's CSS off disk from a file:// page.
+    "--allow-file-access-from-files",
+    // Headless reports a coarse pointer by default, which flips the hover/pointer
+    // media queries some header controls are gated on.
+    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
+    "--remote-allow-origins=*", "--lang=ja-JP", "about:blank",
+  ],
+});
+const CDP_PORT = chrome.port;
 
 let failed = 0;
 try {

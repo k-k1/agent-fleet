@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { sandboxArgs } from "../lib/chromium-launch.mjs";
 import { expandKindTokens } from "../../src/agents/kindTable.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -116,7 +117,7 @@ fs.writeFileSync(page, html);
 
 const shot = path.join(OUT, "kind-chips.png");
 const args = [
-  "--headless", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
+  "--headless", "--disable-gpu", ...sandboxArgs(), "--hide-scrollbars",
   "--force-device-scale-factor=2",
   "--window-size=1000,470",
   `--screenshot=${shot}`,

@@ -54,6 +54,7 @@ import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
+import { launchChromium } from "../lib/chromium-launch.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, "../../..");
@@ -246,31 +247,11 @@ const stencilShots = {};
 
 // ---------------------------------------------------------------- CDP
 async function browser() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-drawio-"));
-  const proc = spawn(
-    CHROME,
-    [
-      "--headless",
-      "--disable-gpu",
-      "--no-sandbox",
-      "--hide-scrollbars",
-      "--remote-debugging-address=127.0.0.1",
-      // A fixed port risks grabbing another session's Chromium in the same container. Take 0 and
-      // read the port actually bound from DevToolsActivePort.
-      "--remote-debugging-port=0",
-      `--user-data-dir=${dir}`,
-      "about:blank",
-    ],
-    { stdio: "ignore" },
-  );
-  let port = "";
-  for (let i = 0; i < 100 && !port; i++) {
-    await sleep(100);
-    try {
-      port = fs.readFileSync(path.join(dir, "DevToolsActivePort"), "utf8").split("\n")[0];
-    } catch {}
-  }
-  if (!port) throw new Error("chromium did not report a debugging port");
+  const chrome = await launchChromium({
+    bin: CHROME,
+    args: ["--disable-gpu", "--hide-scrollbars", "about:blank"],
+  });
+  const { port } = chrome;
   const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" })).json();
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((r) => (ws.onopen = r));
@@ -290,7 +271,7 @@ async function browser() {
       pending.set(i, res);
       ws.send(JSON.stringify({ id: i, method, params }));
     });
-  return { call, events, close: () => (ws.close(), proc.kill(), fs.rmSync(dir, { recursive: true, force: true })) };
+  return { call, events, close: () => (ws.close(), chrome.close()) };
 }
 
 // ---------------------------------------------------------------- run

@@ -23,6 +23,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { launchChromium } from "../lib/chromium-launch.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STUB = path.join(HERE, "..", "mirror-scroll", "stub.mjs");
@@ -32,7 +33,6 @@ const arg = (n, d) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : d;
 };
 const PORT = Number(arg("port", 8793));
-const CDP_PORT = Number(arg("cdp-port", 9253));
 const RUNS = Number(arg("runs", 1));
 const WINDOW = Number(arg("window", 45)) * 1000; // how long to watch a session that is at rest
 const MODE = arg("mode", "idle"); // idle | typing | working
@@ -236,18 +236,16 @@ const stub = spawn(
    "--working", MODE === "working" ? "1" : "0", "--split", "0", "--asks", "1", "--longans", "1"],
   { stdio: ["ignore", "ignore", "inherit"] },
 );
-const chrome = spawn(
-  "/usr/bin/chromium",
-  ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
-   `--remote-debugging-port=${CDP_PORT}`, "--remote-allow-origins=*", "--lang=ja-JP", "about:blank"],
-  { stdio: ["ignore", "ignore", "ignore"] },
-);
+let chrome = null; // set by launchChromium below, after the exit handlers are in
 const cleanup = () => {
-  try { chrome.kill(); } catch { /* already gone */ }
+  try { chrome?.close(); } catch { /* already gone */ }
   try { stub.kill(); } catch { /* already gone */ }
 };
 process.on("exit", cleanup);
 process.on("SIGINT", () => { cleanup(); process.exit(1); });
+
+chrome = await launchChromium({ args: ["--disable-gpu", "--hide-scrollbars", "--remote-allow-origins=*", "--lang=ja-JP", "about:blank"] });
+const CDP_PORT = chrome.port;
 
 let failed = 0;
 try {
