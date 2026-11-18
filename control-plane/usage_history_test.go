@@ -349,9 +349,10 @@ func TestUsageHistoryAPIScopeAndUnmeasuredIsNull(t *testing.T) {
 	other, _ := st.CreateTenant(ctx, "ops", "運用")
 	oi, _ := st.UpsertIdentity(ctx, "o@x.co.jp", "o-x-co-jp", "")
 	om, _ := st.EnsureMembership(ctx, oi.ID, other.ID, "member")
-	// Pin the launch to a fixed hour inside one UTC day (yesterday 12:00-13:00Z): a launch that
+	// Pin the launch to a fixed hour-of-day inside one UTC day (yesterday 12:00-13:00Z): a launch that
 	// starts at now-1h straddles UTC midnight for the first hour of every day and then folds into
 	// two day rows, so the test would depend on the wall-clock time of day.
+	// Truncate(24h) aligns on UTC midnights (the zero time is a UTC midnight), whatever the local zone.
 	start := time.Now().UTC().Truncate(24 * time.Hour).Add(-12 * time.Hour)
 	end := start.Add(time.Hour)
 	day := start.Format("2006-01-02")
