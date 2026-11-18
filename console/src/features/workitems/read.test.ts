@@ -813,9 +813,9 @@ describe("mergeGate", () => {
     const checks = (state: string, failed = 0, pending = 0) => ({ state, total: 39, failed, pending });
     expect(mergeGate(pr({ mergeableState: "unstable", checks: checks("failure", 1, 2) })).whyKey).toBe("wi.merge_why_unstable");
     expect(mergeGate(pr({ mergeableState: "unstable", checks: checks("pending", 0, 1) })).whyKey).toBe("wi.merge_why_pending");
-    expect(mergeGate(pr({ mergeableState: "unstable", checks: checks("success") })).whyKey).toBe("wi.merge_why_unstable_other");
-    expect(mergeGate(pr({ mergeableState: "unstable", checks: checks("") })).whyKey).toBe("wi.merge_why_unstable_other");
-    expect(mergeGate(pr({ mergeableState: "unstable" })).whyKey).toBe("wi.merge_why_unstable_other");
+    expect(mergeGate(pr({ mergeableState: "unstable", checks: checks("success") })).whyKey).toBe("wi.merge_why_other");
+    expect(mergeGate(pr({ mergeableState: "unstable", checks: checks("") })).whyKey).toBe("wi.merge_why_other");
+    expect(mergeGate(pr({ mergeableState: "unstable" })).whyKey).toBe("wi.merge_why_other");
     expect(mergeGate(pr({ mergeableState: "unknown" })).whyKey).toBe("wi.merge_why_unknown");
     expect(mergeGate(pr({ mergeableState: "newstate" })).whyKey).toBe("wi.merge_why_other");
     // A draft is a draft whatever mergeable_state says.
