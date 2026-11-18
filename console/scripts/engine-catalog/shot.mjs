@@ -10,15 +10,16 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { launchChromium } from "../lib/chromium-launch.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
+if (argv.includes("--cdp-port")) console.warn("[engine-catalog] --cdp-port was removed and is ignored: Chromium takes a free port itself");
 const arg = (n, d) => {
   const i = argv.indexOf(`--${n}`);
   return i >= 0 && argv[i + 1] ? argv[i + 1] : d;
 };
 const PORT = Number(arg("port", 8801));
-const CDP_PORT = Number(arg("cdp-port", 9261));
 const OUT = path.resolve(arg("out", "/tmp"));
 const LOCALE = arg("locale", "ja");
 const THEME = arg("theme", "dark");
@@ -167,27 +168,29 @@ async function fetchJSON(url, init) {
 const stub = spawn(process.execPath, [path.join(HERE, "stub.mjs"), "--port", String(PORT), "--locale", LOCALE], {
   stdio: ["ignore", "inherit", "inherit"],
 });
-const chrome = spawn("/usr/bin/chromium", [
-  "--headless=new",
-  "--no-sandbox",
-  "--disable-gpu",
-  "--hide-scrollbars",
-  "--font-render-hinting=none",
-  `--remote-debugging-port=${CDP_PORT}`,
-  "--remote-allow-origins=*",
-  // 🔴 Headless reports a COARSE pointer, so `@media (hover: none)` applies and hover-only
-  // controls are drawn on every row — a picture busier than the screen anybody sees.
-  "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
-  `--lang=${LOCALE === "ja" ? "ja-JP" : "en-US"}`,
-  "about:blank",
-], { stdio: ["ignore", "ignore", "ignore"] });
+let chrome = null; // set by launchChromium below, after the exit handlers are in
 
 const cleanup = () => {
-  try { chrome.kill(); } catch { /* already gone */ }
+  try { chrome?.close(); } catch { /* already gone */ }
   try { stub.kill(); } catch { /* already gone */ }
 };
 process.on("exit", cleanup);
 process.on("SIGINT", () => { cleanup(); process.exit(1); });
+
+chrome = await launchChromium({
+  args: [
+    "--disable-gpu",
+    "--hide-scrollbars",
+    "--font-render-hinting=none",
+    "--remote-allow-origins=*",
+    // 🔴 Headless reports a COARSE pointer, so `@media (hover: none)` applies and hover-only
+    // controls are drawn on every row — a picture busier than the screen anybody sees.
+    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
+    `--lang=${LOCALE === "ja" ? "ja-JP" : "en-US"}`,
+    "about:blank",
+  ],
+});
+const CDP_PORT = chrome.port;
 
 try {
   await fetchJSON(`http://127.0.0.1:${CDP_PORT}/json/version`);

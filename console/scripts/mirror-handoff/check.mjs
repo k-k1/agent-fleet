@@ -20,16 +20,17 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { launchChromium } from "../lib/chromium-launch.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STUB = path.join(HERE, "../mirror-scroll/stub.mjs");
 const argv = process.argv.slice(2);
+if (argv.includes("--cdp-port")) console.warn("[mirror-handoff] --cdp-port was removed and is ignored: Chromium takes a free port itself");
 const arg = (n, d) => {
   const i = argv.indexOf(`--${n}`);
   return i >= 0 && argv[i + 1] ? argv[i + 1] : d;
 };
 const PORT = Number(arg("port", 8793));
-const CDP_PORT = Number(arg("cdp-port", 9253));
 const TURNS = Number(arg("turns", 24));
 const BASE = `http://127.0.0.1:${PORT}/`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -188,15 +189,10 @@ async function run(mode, { shared = false } = {}) {
   }
 }
 
-const chrome = spawn(
-  "/usr/bin/chromium",
-  ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
-   `--remote-debugging-port=${CDP_PORT}`, "--remote-allow-origins=*", "--lang=ja-JP", "about:blank"],
-  { stdio: ["ignore", "ignore", "ignore"] },
-);
+let chrome = null; // set by launchChromium below, after the exit handlers are in
 const cleanup = () => {
   try {
-    chrome.kill();
+    chrome?.close();
   } catch {
     /* already gone */
   }
@@ -206,6 +202,9 @@ process.on("SIGINT", () => {
   cleanup();
   process.exit(1);
 });
+
+chrome = await launchChromium({ args: ["--disable-gpu", "--hide-scrollbars", "--remote-allow-origins=*", "--lang=ja-JP", "about:blank"] });
+const CDP_PORT = chrome.port;
 
 let failed = 0;
 try {

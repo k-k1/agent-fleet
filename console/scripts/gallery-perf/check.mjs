@@ -11,15 +11,16 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { launchChromium } from "../lib/chromium-launch.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
+if (argv.includes("--cdp-port")) console.warn("[gallery-perf] --cdp-port was removed and is ignored: Chromium takes a free port itself");
 const arg = (n, d) => {
   const i = argv.indexOf(`--${n}`);
   return i >= 0 && argv[i + 1] ? argv[i + 1] : d;
 };
 const PORT = Number(arg("port", 8797));
-const CDP_PORT = Number(arg("cdp-port", 9257));
 const CASE = arg("case", "images"); // folders | images | scroll | nav
 // Only the `nav` case cares: it measures the round trip the folder cache removes, so the stub
 // has to have one. 150ms is a plausible Console -> CP -> Agent hop for a workspace that is not
@@ -213,18 +214,16 @@ const stub = spawn(
   [path.join(HERE, "stub.mjs"), "--port", String(PORT), "--tree-latency", String(TREE_LATENCY)],
   { stdio: ["ignore", "inherit", "inherit"] },
 );
-const chrome = spawn(
-  "/usr/bin/chromium",
-  ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
-   `--remote-debugging-port=${CDP_PORT}`, "--remote-allow-origins=*", "--lang=ja-JP", "about:blank"],
-  { stdio: ["ignore", "ignore", "ignore"] },
-);
+let chrome = null; // set by launchChromium below, after the exit handlers are in
 const cleanup = () => {
-  try { chrome.kill(); } catch { /* gone */ }
+  try { chrome?.close(); } catch { /* gone */ }
   try { stub.kill(); } catch { /* gone */ }
 };
 process.on("exit", cleanup);
 process.on("SIGINT", () => { cleanup(); process.exit(1); });
+
+chrome = await launchChromium({ args: ["--disable-gpu", "--hide-scrollbars", "--remote-allow-origins=*", "--lang=ja-JP", "about:blank"] });
+const CDP_PORT = chrome.port;
 
 try {
   await fetchJSON(`${BASE}api/whoami`);
