@@ -217,7 +217,7 @@ describe("the list", () => {
 
   it("links a live producer session to its view and leaves other producers as plain text", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
-    useSessionsStore.setState({ sessions: [{ name: "worker-2" }, { name: "worker-1" }, { name: "x" }] as never });
+    useSessionsStore.setState({ sessions: [{ name: "worker-2" }, { name: "worker-1" }] as never });
     servedMemos = [
       aMemo({ id: "b", state: "claimed", provenance: "mcp", producer: "worker-2" }),
       aMemo({ id: "c", state: "unconfirmed", provenance: "workspace", producer: "worker-2" }),
