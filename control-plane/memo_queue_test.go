@@ -1328,3 +1328,59 @@ func TestMemoQueueNoChangeRidesASendInFlight(t *testing.T) {
 		e.assertPendingReleaseMatches()
 	})
 }
+
+// TestCreateCategoryConcurrentSameName: two creates of one (repo, name) at the same time answer
+// one 201 and one 200 with the same row, and never a 500 from the unique index. The race is
+// only real on Postgres (SQLite serialises writers), so the test runs there.
+func TestCreateCategoryConcurrentSameName(t *testing.T) {
+	url, ok := pgtest.Schema(t)
+	if !ok {
+		t.Skip("set AF_TEST_DATABASE_URL to run the Postgres half")
+	}
+	st, err := store.OpenPostgres(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	e := newInboxEnvOn(t, st)
+	const n = 10
+	for round := 0; round < 30; round++ {
+		name := fmt.Sprintf("race-%d", round)
+		codes := make([]int, n)
+		ids := make([]string, n)
+		pos := make([]int, n)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				rec := e.do("a", "POST", "/api/memo-categories", map[string]any{"repo": "r", "name": name})
+				codes[i] = rec.Code
+				var dto memoCategoryDTO
+				_ = json.Unmarshal(rec.Body.Bytes(), &dto)
+				ids[i] = dto.ID
+				pos[i] = dto.Position
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		created := 0
+		for i := range codes {
+			switch codes[i] {
+			case http.StatusCreated:
+				created++
+			case http.StatusOK:
+			default:
+				t.Fatalf("round %d: create %d answered %d", round, i, codes[i])
+			}
+			if pos[i] != round || ids[i] == "" || ids[i] != ids[0] {
+				t.Fatalf("round %d: ids or positions differ (want position %d): %v %v", round, round, ids, pos)
+			}
+		}
+		if created != 1 {
+			t.Fatalf("round %d: %d creates answered 201, want 1 (%v)", round, created, codes)
+		}
+	}
+}
