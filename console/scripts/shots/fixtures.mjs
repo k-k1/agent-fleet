@@ -2509,7 +2509,7 @@ export function galleryTree(p) {
   return null;
 }
 
-// The status a current Agent sends, for the Agents tab's provider order: the deployment's engine
+// The status a current Agent sends, for the Image generation page's provider order: the deployment's engine
 // row marked as such, then the two CLI routes.
 export function imagegenStatusLive(locale) {
   const st = imagegenStatus(locale);

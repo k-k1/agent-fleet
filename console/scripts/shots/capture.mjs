@@ -621,7 +621,7 @@ const SCENES = [
           el.children.length === 0 && re.test((el.textContent || "").trim()));
         return label?.closest(".ds-row") || label?.parentElement;
       };
-      const from = rowOf(/^(セッション間メッセージ|Messages between sessions|Cross-session messaging)$/);
+      const from = rowOf(/^(セッション間メッセージ|Messages between sessions)$/);
       const limit = rowOf(/^(子セッションの同時本数|Children per session)$/);
       if (from) { from.id = "shot-fleet-from"; from.scrollIntoView({ block: "start" }); }
       const note = limit?.nextElementSibling;
@@ -1017,6 +1017,8 @@ const SCENES = [
     name: "images-settings",
     guide: true,
     stubEnv: { SHOT_IMAGE_SETTINGS: "1" },
+    // Fails the run instead of drawing the page's "unavailable" note when the status is not trusted.
+    verify: `!!document.querySelector(".settings-content .ds-orderlist")`,
     clip: ["#shot-img-from", "#shot-img-to"],
     pad: 12,
     sections: FOCUS_TREE,
@@ -1772,7 +1774,7 @@ const SCENES = [
     settle: 2500,
   },
   {
-    // Settings › Agents › the Claude Code card for the user guide's agent pages: connected, with the
+    // Settings › Model credentials › the Claude Code card for the user guide's agent pages: connected, with the
     // account, plan and expiry, and Re-authenticate / Disconnect. Behavior stays closed: open, the
     // card is taller than the modal.
     name: "agents-claude",
