@@ -95,10 +95,9 @@ var loadAPIKey = func() (string, error) {
 // URL over TCP, past ANTHROPIC_UNIX_SOCKET (measured by review on 2.1.318). When the pinned CLI
 // is bumped, its lists are compared again (TestRouteOverridesCoverTheCLIsLists).
 //
-// CLAUDE_CODE_LAUNCHER_RUNS_API_KEY_HELPER (new in 2.1.327) is deliberately absent: it only tells
-// a host-managed CLI that the launcher runs the apiKeyHelper, which changes how the login is
-// classified, not where calls or the bearer go. Its siblings CLAUDE_CODE_HOST_CREDS_FILE and
-// CLAUDE_CODE_HOST_AUTH_ENV_VAR are left out for the same reason.
+// A name a person read and deliberately left out (it does not choose a provider, an endpoint or a
+// credential) is in deploy/local/claude-route-overrides.reviewed with the reason, and a bump counts
+// it as unchanged. It never goes in both places (TestReviewedRouteNamesAreLeftOut).
 var routeOverrides = []string{
 	// Provider switches, and the settings that scope a provider.
 	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS",
