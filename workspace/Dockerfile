@@ -411,8 +411,8 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # version; changing the ARG is what reliably busts the cache.
 ARG CLAUDE_CODE_VERSION=2.1.327
 ARG OPENCODE_VERSION=2.3.2
-ARG CODEX_VERSION=0.169.1
-ARG COPILOT_VERSION=1.0.113
+ARG CODEX_VERSION=0.170.0
+ARG COPILOT_VERSION=1.0.114
 # opencode is the npm package @opencode/cli (it also installs an `opencode2` bin). Only opencode 2
 # is supported (ADR 0127): a rollback is an earlier 2.x pin, never a 1.x one (the opencode 1
 # package, opencode-ai, is another package that entrypoint.sh removes from ~/.local).
@@ -441,10 +441,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # OPENSSL_ia32cap mask the Agent applies to every spawn (0008, decision of 2026-09-07), so
 # only a non-x86 build host skips the --version check (an arm64 cross-build cannot always
 # run the binary).
-ARG AGY_VERSION=1.5.10
-ARG AGY_RELEASE_BUILD=5253791805734912
-ARG AGY_SHA256_X64=72fb2946d6f5bee3d4e8928fb8a7901104361566619e69d40ae6dc03e094917b
-ARG AGY_SHA256_ARM64=5ecb4e7763dc497a7d0157d5605a8c86ec55f24dc4efd8f597bc499d2ebca7c6
+ARG AGY_VERSION=1.5.11
+ARG AGY_RELEASE_BUILD=6132547114106880
+ARG AGY_SHA256_X64=df652c98fdf519a87c017b4e1d92f3fdb66c344de16e5e685c596637bbd28334
+ARG AGY_SHA256_ARM64=de4fea15f83f40685cb30374b58337318d58340efcc8779a2eb1461b620b69f4
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
