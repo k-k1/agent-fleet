@@ -104,6 +104,51 @@ describe("UsageHistoryTable", () => {
     expect(h.querySelector(".form-err")).not.toBeNull();
   });
 
+  it("roll-up: URL-encodes the tenant, names each member, keeps null as not measured", async () => {
+    api.mockResolvedValue({ days: [day({ user_key: "aoi", email: "a@x.test", cpu_p50: null })] });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () =>
+      root!.render(<UsageHistoryTable endpoint="api/admin/usage/history" query={{ tenant: "a&b c" }} from="2026-11-10" to="2026-11-17" roll />),
+    );
+    await act(async () => {});
+    expect(api).toHaveBeenCalledWith("api/admin/usage/history?tenant=a%26b+c&from=2026-11-09&to=2026-11-18");
+    const tds = [...host.querySelectorAll("tbody tr td")].map((t) => t.textContent);
+    expect(tds[1]).toBe("aoi");
+    expect(host.querySelectorAll("th").length).toBe(11);
+    expect(tds[5]).toBe("not measured");
+    expect(host.textContent).toContain("by member, day and box");
+  });
+
+  it("roll-up: omits an empty tenant and adds the tenant column when withTenant", async () => {
+    api.mockResolvedValue({ days: [day({ tenant: "sales", user_key: "aoi" })] });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<UsageHistoryTable endpoint="api/admin/usage/history" query={{ tenant: "" }} roll withTenant />));
+    await act(async () => {});
+    expect(api).toHaveBeenCalledWith("api/admin/usage/history");
+    const tds = [...host.querySelectorAll("tbody tr td")].map((t) => t.textContent);
+    expect(tds.slice(1, 3)).toEqual(["sales", "aoi"]);
+  });
+
+  it("roll-up: a stale response for the previous tenant is dropped", async () => {
+    let resolveA: (v: unknown) => void = () => {};
+    api.mockImplementationOnce(() => new Promise((r) => (resolveA = r)));
+    api.mockResolvedValueOnce({ days: [day({ user_key: "bob" })] });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const el = (t: string) => <UsageHistoryTable endpoint="api/admin/usage/history" query={{ tenant: t }} roll />;
+    await act(async () => root!.render(el("a")));
+    await act(async () => root!.render(el("b")));
+    await act(async () => {});
+    await act(async () => resolveA({ days: [day({ user_key: "alice" })] }));
+    expect(host.textContent).toContain("bob");
+    expect(host.textContent).not.toContain("alice");
+  });
+
   it("says 未計測 in Japanese, not 0", async () => {
     setLocale("ja");
     api.mockResolvedValue({ days: [day({ cpu_p50: 0 })] });

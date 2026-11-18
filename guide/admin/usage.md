@@ -43,6 +43,14 @@ Separately from the period you picked, the last six months are shown.
 - "**Running hours by member and month**": a table of six months per member. Choose the order under **Sort by**: "**Total**", "**Latest month**", "**Change vs previous month**" or "**Name**"
 - With many members only the top 50 appear, with "Showing the top 50 of N members."
 
+## Read resource use by member, day and box
+
+Below the hours-by-hour grid, **Resource use by member, day and box** lists every member's UTC days and the box each ran on: running time, CPU (p50 / p95, as a share of one core), memory (p95 / max), the memory-pressure (PSI) peak, minutes above the warning threshold, and the refault rate. It follows the same period as the grid and the tenant you picked.
+
+- **not measured** means there were no samples, which is not the same as 0
+- Only ecs-ec2 workspaces keep this history, for 90 days
+- The list scrolls inside the panel; a member's own rows also appear on the member's detail page
+
 ## Read cloud cost
 
 Open **Operations** → "**Cloud cost**" in Tenant settings. It is the AWS bill, assigned to members through cost allocation tags, and it exists on deployments that run on AWS only.
