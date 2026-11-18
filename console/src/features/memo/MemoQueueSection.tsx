@@ -46,6 +46,7 @@ import { useSettings } from "../../lib/settings.ts";
 import type { Memo, MemoCategory, MemoAttachment, MemoQueue } from "../../types/memo.ts";
 import { errText } from "../../core/api/client.ts";
 import { MemoQueueSettingsModal } from "./MemoQueueSettingsModal.tsx";
+import { MemoProducerText } from "./MemoProducerText.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
 import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
@@ -1486,7 +1487,11 @@ function MemoRow(props: MemoRowProps) {
                 {tr(stateWords.label)}
               </span>
             )}
-            {originWords && <span className="memo-qorigin">{tr(originWords.key, { name: originWords.name ?? "" })}</span>}
+            {originWords && (
+              <span className="memo-qorigin">
+                <MemoProducerText k={originWords.key} name={originWords.name ?? ""} link={m.provenance === "workspace" && !!originWords.name} />
+              </span>
+            )}
             {m.state === "pending" && m.releasedBy === "setting" && (
               <span className="memo-qorigin" title={tr("memo.accepted_by_setting_title")}>
                 {tr("memo.accepted_by_setting")}

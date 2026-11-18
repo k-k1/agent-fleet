@@ -2,13 +2,14 @@
 // one auto-run category. One press approves them, each with the content hash the row showed,
 // so a message that changed after the card was drawn is refused rather than approved unseen.
 //
-// The card draws only what it is given and sends exactly that. It reads no store of its own:
+// The card draws only what it is given and sends exactly that. It reads no memo store of its own:
 // the memo section re-renders it from the live list on every poll, so an edit made from
 // inside the workspace shows up here with its new hash. Because the text then changes under a
 // person who may be about to press, the section also says which notes changed after the card first
 // showed them (`edited`), and which of those the person has still to confirm (`awaiting`): while
 // any is awaiting, the button confirms instead of approving. A card that never changed approves
 // in one press.
+import { MemoProducerText } from "./MemoProducerText.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -57,7 +58,13 @@ export function MemoReleaseCard({ card, busy, changedIds, edited, awaiting, onRe
     <div className={"memo-release" + (anyChanged ? " changed" : "")} role="group" aria-label={title}>
       <div className="memo-release-head">
         <Icon name="shield" />
-        <span className="memo-release-title">{title}</span>
+        <span className="memo-release-title">
+          {card.provenance === "workspace" && card.producer ? (
+            <MemoProducerText k="memo.release_title_session" name={card.producer} link />
+          ) : (
+            title
+          )}
+        </span>
       </div>
       <ul className="memo-release-items">
         {card.items.map((m) => {
