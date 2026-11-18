@@ -74,6 +74,18 @@ A cut-off that time will cure is resumed from where it stopped by these settings
 A cut-off caused by the request itself, an exhausted balance or an over-long prompt fails again if repeated, so nothing resumes it.
 Read the notification or the error, fix the cause, then send again.
 
+## "The first prompt for … was not sent"
+
+A session started with a first instruction (from the launch dialog, an issue, a schedule or another session) can come up without receiving it. A toast says so once, with the reason when there is one.
+
+| The toast says | What to do |
+|---|---|
+| "…this workspace's Claude login has expired" (or another agent's) | Re-authenticate that agent ([Fix an agent's login](agents.md#the-agent-stopped-saying-its-login-has-expired)), then send the task again |
+| "…the session did not become ready in time" | Wait until the session is running, then send the task again |
+| "…was not sent. Send the task again." | Send the task again in the session |
+
+The session itself keeps running; only the instruction is missing.
+
 ## A session cannot be moved to another agent
 
 A session that is working, or that has a question, plan or approval waiting for you, cannot be moved. Let the turn end or stop it, and answer first.

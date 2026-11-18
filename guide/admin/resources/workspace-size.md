@@ -16,6 +16,7 @@ When someone says their home is full, some deployments let you grow it on the sp
 | Set the size under **Size and limits** in the member detail | The workspace has that size from its next start |
 | Make the home disk bigger | On some deployments the home grows on the spot, while it runs |
 | Choose the machine | From the next start, the workspace lands on that kind of instance |
+| Allow boost | Members can raise their own next start one size up for a while |
 
 ## Change the size
 
@@ -120,6 +121,23 @@ Choosing a machine of a different CPU family, such as Intel and Arm, shows a war
 - The home is kept. What in it was built for one family is reinstalled automatically at start: the agent CLIs, Chromium, the selected JDK and node, and what the member installed (`pip install --user`, `uv tool`, `npm i -g`) as far as it is detected, normally at the same versions
 - Not restored automatically: `node_modules` / `target` / `.venv` under `~/repos` (kept, but reinstall them with `npm ci` and the like) and binaries placed straight in `~/.local/bin`. A notification names the ones it detects; detection has limits. A failed reinstall is retried at up to 3 later starts and named in the notification only after that ([af-arch-repair](../../ref/cli/af-arch-repair.md))
 - JDK and node versions that are not selected are not restored either. The member reinstalls them from [Toolchains](../../user/workspace/toolchains.md) if needed
+
+## Let members boost
+
+On a deployment where each workspace gets a whole instance, you can let members raise their own next start one size up, in the same class, for a limited time (1 to 24 hours at a press), instead of asking you. Their side is in [Boost the next start](../../user/workspace/machine.md#boost-the-next-start).
+
+Open **Tenant settings → Limits & idle**; the **Boost** card is under the default machine.
+
+| Field | Meaning |
+|---|---|
+| **Allow members to boost** | Off to begin with. Nothing can be boosted while it is off |
+| **Highest size a boost may reach** | The largest size a boost can land on. **The top of the class** puts no cap below the class's largest |
+| **Monthly budget per member** | Boosted running hours per month, 0 for none. Running hours are not counted yet, so the budget is saved but not enforced |
+
+- A boost applies at the member's next start only. A running workspace is never restarted or shrunk by it
+- It is checked again at every start; when it no longer fits (the tenant switched it off, the class changed, the size is above a ceiling), it is not applied and the member's usual size is used
+- The roster card shows **boosted** next to the size a member's next start uses
+- On a deployment with no machine sizes to boost between, the card says so and there is nothing to set
 
 ## Related
 
