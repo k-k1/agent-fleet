@@ -340,6 +340,8 @@ export type MergeWhyKey =
   | "wi.merge_why_behind"
   | "wi.merge_why_dirty"
   | "wi.merge_why_unstable"
+  | "wi.merge_why_pending"
+  | "wi.merge_why_unstable_other"
   | "wi.merge_why_unknown"
   | "wi.merge_why_other";
 
@@ -347,7 +349,6 @@ const MERGE_WHY: Record<string, MergeWhyKey> = {
   blocked: "wi.merge_why_blocked",
   behind: "wi.merge_why_behind",
   dirty: "wi.merge_why_dirty",
-  unstable: "wi.merge_why_unstable",
   unknown: "wi.merge_why_unknown",
   "": "wi.merge_why_unknown",
 };
@@ -361,6 +362,19 @@ export function mergeGate(d: WorkItemDetail | null): MergeGate {
   if (!d.canMerge || !d.headSha || d.mergeMethods.length === 0) return none;
   if (d.draft) return { show: true, enabled: false, whyKey: "wi.merge_why_draft" };
   if (MERGEABLE_STATES.includes(d.mergeableState)) return { show: true, enabled: true, whyKey: "" };
+  // `unstable` is GitHub's "head status is not success", which running checks satisfy as well as
+  // failing ones. Word it from the same `checks.state` the list row and the Checks line read, so
+  // the three never disagree; a state that says neither (none, neutral-only, unreadable) gets the
+  // non-committal wording rather than a claim of failure.
+  if (d.mergeableState === "unstable") {
+    const whyKey: MergeWhyKey =
+      d.checks.state === "failure"
+        ? "wi.merge_why_unstable"
+        : d.checks.state === "pending"
+          ? "wi.merge_why_pending"
+          : "wi.merge_why_unstable_other";
+    return { show: true, enabled: false, whyKey };
+  }
   const whyKey = MERGE_WHY[d.mergeableState] ?? "wi.merge_why_other";
   return { show: true, enabled: false, whyKey };
 }

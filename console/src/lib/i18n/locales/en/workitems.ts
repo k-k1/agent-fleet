@@ -167,6 +167,8 @@ export const workitems: Record<keyof typeof jaWorkitems, string> = {
   "wi.merge_why_behind": "The branch is behind its base and must be updated first",
   "wi.merge_why_dirty": "Conflicts must be resolved first",
   "wi.merge_why_unstable": "Some checks are failing",
+  "wi.merge_why_pending": "Checks are still running",
+  "wi.merge_why_unstable_other": "Not all checks have passed",
   "wi.merge_why_unknown": "{name} has not decided yet; try again in a moment",
   "wi.merge_why_checking": "{name} is checking whether this can merge",
   "wi.merge_why_other": "{name} does not say this can be merged",

@@ -220,6 +220,8 @@ The reason is shown beside it.
 | The branch is behind its base | Update the branch first |
 | Conflicts must be resolved first | Resolve the conflicts |
 | Some checks are failing | Fix the checks |
+| Checks are still running | Wait for them to finish, then open it again |
+| Not all checks have passed | Open the pull request on GitHub and look at the checks |
 | A draft cannot be merged | Mark the pull request ready for review |
 | GitHub has not decided yet / Bitbucket has not decided yet | Wait a moment and open it again |
 
