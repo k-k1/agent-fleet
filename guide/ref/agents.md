@@ -99,10 +99,10 @@ Each sign-in below is done on the agent's card in ⚙Settings → "Model credent
 | opencode | Two controls. **"Use opencode"** (off by default; while off, stored keys and sign-ins are ignored) and **"opencode.ai billing"** (None (my own keys) / Free models only / Go (subscription) / Zen (metered)). The latter decides how opencode.ai is used only — the providers you connect yourself stay in the list on every choice. Keys are the API key of whichever LLM provider you want, stored as an environment variable (presets fill the name in; several at once). |
 | copilot | None of its own — connecting GitHub as a git provider connects it, and disconnecting GitHub disconnects it. The account needs a Copilot subscription, including the Free plan. |
 | cursor | Open the authorize link and approve in your browser. There is no code to paste. A Cursor account is required; API keys are not accepted. |
-| kiro | Device flow: open the link with the confirmation code and approve (Builder ID, Google, GitHub…). API keys are not accepted. The CLI is large and is installed on demand the first time unless the deployment bakes it in. |
+| kiro | Device flow: open the link with the confirmation code and approve (Builder ID, Google, GitHub…). API keys are not accepted. The CLI is large and is installed on demand the first time ("Install Kiro" on its card in ⚙Settings → "Agents") unless the deployment bakes it in. |
 | agy | Sign in from its card in Model credentials. |
 | lcpp | None — the deployment's engine needs no sign-in. Its card in ⚙Settings → "Agents" has **"Use llama.cpp"** (the switch; Off removes it from the launch menus and refuses a launch by any route), and its card in Model credentials has **"Your own connection"** (URL, optional API key, **"Check connection"**), which points sessions at a llama-server on your own network instead of the deployment's engine. |
-| muse | **"Install Muse Code"** once (about 299 MB into your home), then **"Sign in with your Meta account"** (approve in the browser — no code to paste; the subscription route) or **"Use an API key"** (per-use billing; saving a key removes a stored account sign-in). |
+| muse | **"Install Muse Code"** once on its card in ⚙Settings → "Agents" (about 299 MB into your home), then, in Model credentials, **"Sign in with your Meta account"** (approve in the browser — no code to paste; the subscription route) or **"Use an API key"** (per-use billing; saving a key removes a stored account sign-in). |
 | shell | Not applicable. |
 | ssm | Uses the workspace's AWS SSM connection. |
 
@@ -419,7 +419,7 @@ expect the Console to tell you less than Muse Code itself would.
 
 ¹¹ Two things have to be true before muse appears in the launch menu, and equally in the
 assistant's choice of agent: Muse Code is proprietary and not included in the image, so it has
-to be installed on demand (the Muse Code connection card offers it, ~299MB into your home), and
+to be installed on demand (the Muse Code card in ⚙Settings → Agents offers it, ~299MB into your home), and
 you have to be signed in: an unauthenticated session would accept work and then fail every
 turn. As the assistant, muse answers one prompt per turn as its own headless run, and it
 remembers the conversation: ask a follow-up and it has the earlier turns. It answers rather than

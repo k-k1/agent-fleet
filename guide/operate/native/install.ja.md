@@ -86,7 +86,7 @@ cd agent-fleet-native-<v>-linux-<arch>
 |---|---|
 | claude・codex・opencode・cursor・copilot・agy・rtk | ワークスペースの初回の起動で、`versions.json` で決まったバージョンを仮想の HOME に入れます。ネットワークが要るのはこのときだけです |
 | kiro（約 855 MB） | 初めて Kiro のセッションを起動したとき |
-| Muse Code | 頼むまで入りません。接続のカードの「**Muse Code を導入**」で、決められたバージョンをホームディレクトリに入れます |
+| Muse Code | 頼むまで入りません。⚙設定 →「エージェント」のカードの「**Muse Code を導入**」で、決められたバージョンをホームディレクトリに入れます |
 
 ## データの置き場所
 

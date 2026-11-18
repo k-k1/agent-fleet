@@ -15,7 +15,7 @@ With a Builder ID it is free.
 | What you do | What happens |
 |---|---|
 | Press "Install Kiro" once, the first time | The Kiro CLI is downloaded into your home |
-| Sign in on the Kiro card and approve in the browser | kiro appears among the kinds of a new session |
+| Sign in on the Kiro card in Model credentials and approve in the browser | kiro appears among the kinds of a new session |
 | Press "Update Kiro" when a new version is out | Sessions started afterwards use the new version |
 
 ## Install
@@ -24,22 +24,24 @@ The Kiro CLI is large (about 855 MB), so most deployments do not bake it into th
 
 ![The Kiro card before its install: the "Install Kiro" button, which says it downloads about 855 MB into your home](../../assets/agents-kiro-en-light.webp)
 
-1. Press "**Install Kiro**" on the **Kiro** card in **⚙Settings → Model credentials**
-2. It downloads into your home. This takes a few minutes
-3. When it is done, the card switches to the sign-in screen by itself
+1. Press "**Install Kiro**" on the **Kiro** card in **⚙Settings → Agents**
+2. It downloads into your home. This takes a few minutes. The progress stays on the card if you switch to another page meanwhile
+3. When it is done, sign in on the **Kiro** card in **⚙Settings → Model credentials**
+
+Until it is installed, the Kiro card in Model credentials says so and links to the Agents page instead of offering the sign-in.
 
 A deployment that bakes Kiro into its image skips this step.
 
 ## Connect
 
-1. Press "**Sign in to Kiro**" on the card. An authorization link and a code appear
+1. Press "**Sign in to Kiro**" on the **Kiro** card in **⚙Settings → Model credentials**. An authorization link and a code appear
 2. Open the link in the browser, check the code and approve (Builder ID, Google, GitHub and so on)
 
 The card shows the account's email and "**Connected**". An API key cannot connect it.
 
 ## Update
 
-When a newer pinned version exists, the card shows "**A newer version is available**" and "**Update Kiro**".
+When a newer pinned version exists, the **Kiro** card in **⚙Settings → Agents** shows "**A newer version is available**" and "**Update Kiro**".
 
 - Until you press it, the installed version is used
 - Running Kiro sessions keep going during the update. The new version applies from their next start

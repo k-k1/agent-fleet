@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -7,13 +7,13 @@ import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthBu
 import { useActiveFlow } from "../parts/useActiveFlow.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { ConnPaused, type DeviceFlow } from "../agents/AgentCardParts.tsx";
+import { NotInstalled } from "./NotInstalled.tsx";
 import type { ProviderConn } from "../../../types/session.ts";
-import { getMuseInstall, isOk, type CliInstallStatus } from "../api.ts";
 
 // Muse Code (ADR 0095). Three states, and the order matters because each is a precondition of
-// the next: the proprietary binary is not in the image, so a fresh workspace offers an install
-// (~299MB into the member's home); once installed it offers the device-code sign-in; once signed
-// in it shows who, on which credential, and the disconnect.
+// the next: the proprietary binary is not in the image, so a fresh workspace points to the install
+// on the Agents page card (ADR 0138 D16); once installed it offers the device-code sign-in; once
+// signed in it shows who, on which credential, and the disconnect.
 //
 // 🔴 What makes this card different from every other agent card is that "connected" is not the
 // whole truth. Three facts the Agent reports have to reach the screen or the member is misled
@@ -59,7 +59,6 @@ export function MuseCard({
   const poll = usePolling();
   const active = useActiveFlow();
   const [flow, setFlow] = useState<DeviceFlow | null>(null);
-  const [installing, setInstalling] = useState<null | "installing" | "error">(null);
   const [mode, setMode] = useState<"idle" | "key">("idle");
   const [key, setKey] = useState("");
   // The key form was opened by re-authentication, so it may show over a status that still reads
@@ -67,71 +66,7 @@ export function MuseCard({
   // ordinary key form is open would be hidden behind the form.
   const [keyReauth, setKeyReauth] = useState(false);
   const [busy, setBusy] = useState(false);
-  // { installed, version, pin, updateAvailable } — the version facts behind the update
-  // affordance. muse is managed-only, so unlike kiro there is no launch guard to re-pin
-  // implicitly: this card is the ONLY place a pin bump or a self-installed shadow gets repaired.
-  const [inst, setInst] = useState<CliInstallStatus | null>(null);
-  const unsupported = st?.supported === false; // the binary is not installed yet
-
-  const loadInstall = useCallback(async () => {
-    if (!running) return;
-    try {
-      const r = await getMuseInstall();
-      setInst(isOk(r) ? r : null);
-    } catch {
-      /* stopped workspace / transient 502 — the card just shows no update notice */
-    }
-  }, [running]);
-  useEffect(() => {
-    void loadInstall();
-  }, [loadInstall, st?.supported]);
-
-  const install = async () => {
-    setBusy(true);
-    setInstalling("installing");
-    try {
-      const res = await api("api/connections/muse/install", { method: "POST" });
-      if (!res || res.error) {
-        setInstalling("error");
-        toast(tr("agents.muse_install_failed", { msg: res?.error ? errDetail(res.error) : "" }));
-        return;
-      }
-      if (res.state === "done") {
-        setInstalling(null);
-        void loadInstall();
-        reload();
-        return;
-      }
-      poll({
-        deadlineMs: 20 * 60 * 1000,
-        firstDelayMs: 4000,
-        onExpire: () => setInstalling("error"),
-        step: async () => {
-          let p: CliInstallStatus | null;
-          try {
-            const r = await getMuseInstall();
-            p = isOk(r) ? r : null;
-          } catch {
-            p = null;
-          }
-          if (p && p.state === "done") {
-            setInstalling(null);
-            void loadInstall();
-            reload();
-            return { stop: true };
-          }
-          if (p && p.state === "error") {
-            setInstalling("error");
-            toast(tr("agents.muse_install_failed", { msg: p.error || "" }));
-            return { stop: true };
-          }
-          return { stop: false, nextMs: 4000 };
-        },
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
+  const unsupported = st?.supported === false; // the CLI is not installed yet (installed on the Agents page)
 
   const startLogin = async () => {
     setBusy(true);
@@ -295,24 +230,7 @@ export function MuseCard({
           {st.env_key && <p className="ps-note ps-note-warn p-card-note">{tr("agents.muse_env_key")}</p>}
         </>
       ) : unsupported ? (
-        <>
-          <div className="p-desc">{tr("agents.muse_install_desc")}</div>
-          <div className="p-body">
-            {installing === "installing" ? (
-              <p className="ps-note ps-note-warn">{tr("agents.muse_installing")}</p>
-            ) : (
-              <>
-                <div className="p-opts">
-                  <button type="button" className="p-opt" disabled={busy} onClick={install}>
-                    <span className="p-opt-t">{tr("agents.muse_install")}</span>
-                    <span className="p-opt-s">{tr("agents.muse_install_note")}</span>
-                  </button>
-                </div>
-                {installing === "error" && <p className="ps-note ps-note-warn">{tr("agents.muse_install_error")}</p>}
-              </>
-            )}
-          </div>
-        </>
+        <NotInstalled kind="muse" />
       ) : (
         <>
           <div className="p-desc">{tr(loginAllowed ? "agents.muse_desc" : "cred.muse_desc_key_only")}</div>
@@ -336,32 +254,6 @@ export function MuseCard({
             <Hint>{tr("agents.muse_hint")}</Hint>
           </div>
         </>
-      )}
-      {/* The update / shadow-repair affordance. Outside the branches above because it is about the
-          BINARY, not the credential — and shown only when the Agent positively reports a version
-          mismatch, so an unreadable version or a missing pin never nags the member into a 299MB
-          download on a guess. It also covers the case decision 8 calls the shadow: a member who
-          ran the vendor's own installer has an unmanaged, self-updating build at the same path,
-          which shows up here as a version that differs from the pin. */}
-      {running && !unsupported && inst?.updateAvailable && (
-        <div className="p-body">
-          {installing === "installing" ? (
-            <p className="ps-note ps-note-warn">{tr("agents.muse_updating")}</p>
-          ) : (
-            <>
-              <p className="ps-note ps-note-warn">
-                {tr("agents.muse_update_avail", { cur: inst.version || "?", pin: inst.pin || "?" })}
-              </p>
-              <div className="p-opts">
-                <button type="button" className="p-opt" disabled={busy} onClick={install}>
-                  <span className="p-opt-t">{tr("agents.muse_update")}</span>
-                  <span className="p-opt-s">{tr("agents.muse_update_note")}</span>
-                </button>
-              </div>
-              {installing === "error" && <p className="ps-note ps-note-warn">{tr("agents.muse_install_error")}</p>}
-            </>
-          )}
-        </div>
       )}
     </ProviderCard>
   );
