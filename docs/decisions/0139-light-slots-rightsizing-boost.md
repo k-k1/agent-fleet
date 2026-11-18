@@ -395,3 +395,7 @@ room, and what it did not do:
   counter is wired the budget is not enforced, and both screens say so.
 - **ADR 0120's warning does not exist yet** (phase 0 measures only), so the boost is offered next to the
   pressure chart on the Machine tab, above a provisional `some` level of 20%, instead of inside a notice.
+
+## Addendum — the history view in the Console (2026-11-18)
+
+The optional view of decision 3 is built (#4414): a table of the day rows under the running-time grid, on the member's own page and on the admin member detail. A `null` figure reads "not measured", never 0.
