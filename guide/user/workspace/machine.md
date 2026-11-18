@@ -16,6 +16,7 @@ administrator decides the size, so when it is not enough you ask them. Disk spac
 |---|---|
 | Open the **Machine** tab | The instance type, vCPUs, memory and home disk appear, with their usage |
 | Ask an administrator for a bigger machine | Once they change it, the new size applies from the next start of the workspace |
+| Press **Boost** (where the tenant allows it) | The next start uses the next size up, for the hours you chose |
 | Press **Measure**, **Empty** or **Delete** | Space on the home disk is freed |
 
 ## See your machine
@@ -46,11 +47,30 @@ Open **⚙ Settings → Machine**. **Machine and usage** under **Resources** in 
 
 ## Get the size changed
 
-A tenant administrator decides the size and the kind of machine. When it is not enough, ask them.
+A tenant administrator decides the size and the kind of machine. When it is not enough, ask them, or [boost it yourself](#boost-the-next-start) for a while where the tenant allows it.
 
 - A change applies **from the next start of the workspace**
 - Until you restart after a change, the tab says something like **The settings have changed. The next start will use m7g.2xlarge.**
 - To apply it, stop and start the workspace from the workspace bar
+
+### Boost the next start
+
+On a deployment where each workspace gets a whole instance, a tenant administrator can let members raise their next start one size up, in the same class, for a limited time. The **Machine size for the next start** part of the **Machine** tab shows it.
+
+1. Choose the **Hours** (1 to 24, 4 to begin with)
+2. Press **Boost to …** (the size it would use)
+3. The workspace keeps its machine while it runs. To move now, press **Restart into the bigger machine** and confirm; the sessions running in it end
+
+| Row | Meaning |
+|---|---|
+| **Next start** | The size the next start uses, and **boost until …** while a boost is on |
+| **Running now** | The size the workspace runs on now |
+
+- **Extend boost** sets a new end time; **End boost** goes back to your usual size at the next start
+- When a boost ends while the workspace runs, it is not shrunk. The usual size comes back at the next start
+- Where the tenant has not enabled it, there is no **Boost** button. When it is greyed out, the line under it says why: there is no bigger machine in the class, the next size is above a limit, the class is not allowed for the tenant, or this month's hours are used up
+- The tenant can set monthly hours per member. They are not counted yet, so that budget is not enforced
+- When memory stays tight, the memory pressure part points at Boost too
 
 ## See the usage
 
