@@ -146,6 +146,24 @@
 .actbar-gap {
   flex: 1;
 }
+/* Screen-reader announcement of the view a swipe landed on; out of the flow so it takes no
+   flex slot (and no gap) in the column. */
+.actbar-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* A column that fits and is steered by swiping (hook-maintained data-fits, phone width only)
+   takes horizontal pans only, so the browser's pull-to-refresh and rubber-banding do not
+   fight a vertical swipe. An overflowing column never gets the attribute and scrolls. */
+@media (max-width: 760px) {
+  .actbar[data-fits] {
+    touch-action: pan-x;
+  }
+}
 .app-rail {
   width: 320px; /* the project tree nests (repo → sessions/files) and indentation eats the
                    name column; with the icon column beside it the two take 368px */
