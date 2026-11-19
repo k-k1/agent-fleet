@@ -9,6 +9,7 @@
 //   - the send button (「送信…」) opens SendMemoModal to edit the concatenated text and
 //     pick a destination.
 import { useFold } from "../../lib/useFold.ts";
+import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -878,19 +879,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             {blocks.map((rb) => (
               <div key={rb.repo} className="memo-repo">
                 {rb.repo && (
-                  <div className="memo-repo-head">
-                    <Icon name="repo" className="memo-repo-ic" />
-                    <span className="memo-repo-name">{repoLabel(rb.repo)}</span>
-                    <button
-                      type="button"
-                      className="memo-repo-add"
-                      title={tr("memo.add_category_to_repo", { repo: repoLabel(rb.repo) })}
-                      aria-label={tr("memo.add_category_to_repo", { repo: repoLabel(rb.repo) })}
-                      onClick={() => void addCategory(rb.repo)}
-                    >
-                      <Icon name="add" />
-                    </button>
-                  </div>
+                  <MemoRepoHead repo={rb.repo} label={repoLabel(rb.repo)} onAdd={() => void addCategory(rb.repo)} />
                 )}
                 {rb.groups.map((g) => {
                   // A replaced note is read-only and cannot be sent, so a select-all leaves it out.
@@ -1302,6 +1291,29 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     </>
   );
 });
+
+/** Repo row of the queue. Publishes its height on `.memo-repo` as `--memo-repo-head-h` so the
+ *  pinned category rows (memo.css) sit directly below it, wrapped or not. Rendered only for a
+ *  named repo; without it the variable stays unset and the offset falls back to 0. */
+function MemoRepoHead({ repo, label, onAdd }: { repo: string; label: string; onAdd: () => void }) {
+  const tr = useT();
+  const ref = usePublishedHeight<HTMLDivElement>("--memo-repo-head-h");
+  return (
+    <div className="memo-repo-head" ref={ref}>
+      <Icon name="repo" className="memo-repo-ic" />
+      <span className="memo-repo-name">{label}</span>
+      <button
+        type="button"
+        className="memo-repo-add"
+        title={tr("memo.add_category_to_repo", { repo: label })}
+        aria-label={tr("memo.add_category_to_repo", { repo: label })}
+        onClick={onAdd}
+      >
+        <Icon name="add" />
+      </button>
+    </div>
+  );
+}
 
 function dedupeGroups(groups: { repo: string; category: string }[]): { repo: string; category: string }[] {
   const seen = new Set<string>();
