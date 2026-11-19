@@ -431,7 +431,8 @@ function readHeldWakers(v: unknown): MemoDelivery["heldWakers"] {
   if (!Array.isArray(v)) return [];
   const out: MemoDelivery["heldWakers"] = [];
   for (const h of v) {
-    if (isObj(h) && typeof h.id === "string" && h.id !== "") out.push({ id: h.id, source: str(h.source), timer: h.timer === true });
+    const id = isObj(h) ? str(h.id).trim() : "";
+    if (isObj(h) && id !== "") out.push({ id, source: str(h.source).trim(), timer: h.timer === true, builtin: h.builtin === true });
   }
   return out;
 }

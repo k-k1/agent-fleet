@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -1038,4 +1039,57 @@ func TestMemoHeldWakersToleratesNoDetail(t *testing.T) {
 			t.Fatalf("%+v: %s", c, b)
 		}
 	}
+}
+
+// treeHeldDetail keeps names only while wakers is the winning hold, skips blank ids, and bounds
+// the count and the length of what it keeps (by rune, so Japanese text stays valid UTF-8).
+func TestTreeHeldDetailBounds(t *testing.T) {
+	now := time.Now()
+	long := strings.Repeat("あ", 200)
+	holders := []sessionWakerHolder{{ID: "", Source: "x"}, {ID: "   ", Source: "x"}, {ID: " " + long + " ", Source: " s "}}
+	for i := 0; i < 8; i++ {
+		holders = append(holders, sessionWakerHolder{ID: "w" + string(rune('0'+i)), Source: "github"})
+	}
+	row := &sessionWire{Name: "s", Alive: true, State: "idle", Wakers: &sessionWakers{Watches: 11, Holders: holders}}
+	if got := sessionHold(*row, now); got != store.HeldWakers {
+		t.Fatalf("setup: hold %q", got)
+	}
+	var out []memoHeldWakerDTO
+	raw := treeHeldDetail([]*sessionWire{row}, store.HeldWakers, now)
+	if !utf8.ValidString(raw) || json.Unmarshal([]byte(raw), &out) != nil {
+		t.Fatalf("not valid JSON/UTF-8: %q", raw)
+	}
+	if len(out) != memoHeldDetailMax {
+		t.Fatalf("want %d entries, got %d: %+v", memoHeldDetailMax, len(out), out)
+	}
+	if n := utf8.RuneCountInString(out[0].ID); n != memoHeldDetailFieldN || out[0].Source != "s" {
+		t.Fatalf("first entry not clipped and trimmed: %d runes, source %q", n, out[0].Source)
+	}
+	for _, h := range out {
+		if strings.TrimSpace(h.ID) == "" {
+			t.Fatalf("blank id kept: %+v", out)
+		}
+	}
+	// A stronger hold elsewhere in the tree: nothing is kept.
+	if got := treeHeldDetail([]*sessionWire{row}, store.HeldMachine, now); got != "" {
+		t.Fatalf("kept under another hold: %q", got)
+	}
+}
+
+// With a watch still on the row, a stronger hold that takes over clears the stored names.
+func TestMemoOccupancyStrongerHoldClearsTheNames(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		wk := map[string]any{"watches": 1, "timers": 0, "holders": []any{map[string]any{"id": "w_42", "source": "github"}}}
+		agent.setRow(d.Session, map[string]any{"wakers": wk})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.HeldBy != store.HeldWakers || got.HeldDetail == "" {
+			t.Fatalf("setup: %+v", got)
+		}
+		agent.setRow(d.Session, map[string]any{"wakers": wk, "carriedLive": "question"})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.HeldBy != store.HeldPerson || got.HeldDetail != "" {
+			t.Fatalf("names kept under a stronger hold: %+v", got)
+		}
+	})
 }

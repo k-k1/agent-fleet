@@ -970,15 +970,21 @@ func treeHeldDetail(tree []*sessionWire, why string, now time.Time) string {
 		return ""
 	}
 	var out []memoHeldWakerDTO
+collect:
 	for _, s := range tree {
 		if s.Archived || s.Wakers == nil || sessionHold(*s, now) != store.HeldWakers {
 			continue
 		}
 		for _, h := range s.Wakers.Holders {
 			if len(out) == memoHeldDetailMax {
-				break
+				break collect
 			}
-			out = append(out, memoHeldWakerDTO{ID: clipRunes(h.ID, memoHeldDetailFieldN), Source: clipRunes(h.Source, memoHeldDetailFieldN), Builtin: h.Builtin, Timer: h.Timer})
+			// A blank id is no name: it must not use up one of the few places.
+			id := strings.TrimSpace(h.ID)
+			if id == "" {
+				continue
+			}
+			out = append(out, memoHeldWakerDTO{ID: clipRunes(id, memoHeldDetailFieldN), Source: clipRunes(strings.TrimSpace(h.Source), memoHeldDetailFieldN), Builtin: h.Builtin, Timer: h.Timer})
 		}
 	}
 	if len(out) == 0 {

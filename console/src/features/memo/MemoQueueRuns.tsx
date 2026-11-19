@@ -100,6 +100,7 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
       {shown.map((d) => {
         const k = deliveryStateKey(d);
         const why = heldWords(d);
+        const heldText = why ? (heldNames(d) ? tr("memo.d_held_wakers_named", { names: heldNames(d) }) : tr(why)) : "";
         const turn = firstTurnWords(d);
         const openable = !!d.session;
         const open = () => openSessionChat(d.session);
@@ -129,7 +130,7 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
             </span>
             <span className="memo-run-time">{fmtDateTime(d.createdAt)}</span>
             <span className="memo-d-tag">{tr(d.auto ? "memo.d_auto_short" : "memo.d_manual_short")}</span>
-            {why && <span className="memo-run-held">{heldNames(d) ? tr("memo.d_held_wakers_named", { names: heldNames(d) }) : tr(why)}</span>}
+            {why && <span className="memo-run-held" title={heldText}>{heldText}</span>}
             {d.state === "open" && openable && (
               <button
                 type="button"

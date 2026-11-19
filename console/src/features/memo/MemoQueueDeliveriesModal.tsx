@@ -193,13 +193,14 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                 <ul className="memo-d-list">
                   {holders.map((d) => {
                     const why = heldWords(d);
+                    const names = heldNames(d);
                     // Only an open run has a reported hold; before that the state itself is the answer.
                     const stateWord = !why && d.state !== "open" ? deliveryStateKey(d) : null;
                     return (
                       <li key={d.id}>
                         {tr("memo.d_slots_holder", {
                           name: d.session || tr("memo.d_no_session"),
-                          why: tr(why ?? stateWord ?? "memo.d_slots_no_reason"),
+                          why: names ? tr("memo.d_held_wakers_named", { names }) : tr(why ?? stateWord ?? "memo.d_slots_no_reason"),
                         })}
                       </li>
                     );
@@ -220,6 +221,7 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
             {rows.map((d) => {
               const k = deliveryStateKey(d);
               const why = heldWords(d);
+              const names = heldNames(d);
               const turn = firstTurnWords(d);
               const at = (iso: string) => fmtDateTime(iso);
               const openSession = (name: string) => {
@@ -259,7 +261,7 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                   <span className="memo-d-tag">{tr(d.auto ? "memo.d_auto" : "memo.d_manual")}</span>
                   {why && (
                     <span className="memo-d-held" title={d.heldSeenAt ? tr("memo.d_held_seen", { at: at(d.heldSeenAt) }) : undefined}>
-                      {tr("memo.d_held", { why: heldNames(d) ? tr("memo.d_held_wakers_named", { names: heldNames(d) }) : tr(why) })}
+                      {tr("memo.d_held", { why: names ? tr("memo.d_held_wakers_named", { names }) : tr(why) })}
                     </span>
                   )}
                   {why && d.heldSession && d.heldSession !== d.session && (

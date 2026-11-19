@@ -529,8 +529,8 @@ describe("deliveries and Run now", () => {
         ),
       );
     const noSlot = { error: { code: "memo_queue_no_slot", message: "every slot of this queue is taken (2 of 2)" } };
-    const run = (id: string, state: string, session: string, heldBy = "") => ({
-      id, state, outcome: state === "closed" ? "clean" : "", session, messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "", heldBy,
+    const run = (id: string, state: string, session: string, heldBy = "", heldWakers: unknown[] = []) => ({
+      id, state, outcome: state === "closed" ? "clean" : "", session, messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "", heldBy, heldWakers,
     });
 
     it("names the runs holding the slots and why, and drops the notice on the next press", async () => {
@@ -540,6 +540,7 @@ describe("deliveries and Run now", () => {
         run("d2", "open", "run-2"),
         run("d4", "claimed", ""),
         run("d3", "closed", "run-0"),
+        run("d5", "open", "run-5", "wakers", [{ id: "w_7", source: "github" }]),
       ];
       memoQueueFire.mockResolvedValueOnce(noSlot);
       await render();
@@ -553,6 +554,7 @@ describe("deliveries and Run now", () => {
       expect(note.textContent).toContain(t("memo.d_slots_holder", { name: "run-1", why: t("memo.d_held_person") }));
       expect(note.textContent).toContain(t("memo.d_slots_holder", { name: "run-2", why: t("memo.d_slots_no_reason") }));
       expect(note.textContent).toContain(t("memo.d_slots_holder", { name: t("memo.d_no_session"), why: t("memo.d_state_starting") }));
+      expect(note.textContent).toContain(t("memo.d_slots_holder", { name: "run-5", why: t("memo.d_held_wakers_named", { names: "w_7 (github)" }) }));
       expect(note.textContent).not.toContain("run-0");
       await pressFire(); // the default mock now succeeds
       expect(dialog().querySelector(".memo-d-slots-full")).toBeNull();
@@ -1196,7 +1198,7 @@ describe("inline run list under a category", () => {
   });
 
   it("reads nothing while collapsed, then lists the runs on expand and collapses again", async () => {
-    servedDeliveries = [run("d1"), run("d2", { state: "open", outcome: "", heldBy: "wakers", session: "" })];
+    servedDeliveries = [run("d1"), run("d2", { state: "open", outcome: "", heldBy: "wakers", session: "", heldWakers: [{ id: "w_9", source: "slack" }] })];
     await render();
     expect(memoQueueDeliveries).not.toHaveBeenCalled();
     expect(document.querySelector(".memo-runs")).toBeNull();
@@ -1207,7 +1209,8 @@ describe("inline run list under a category", () => {
     expect(rows[0].textContent).toContain(t("memo.d_state_clean"));
     expect(rows[0].textContent).toContain(t("memo.d_auto_short"));
     expect(rows[1].textContent).toContain(t("memo.d_state_running"));
-    expect(rows[1].textContent).toContain(t("memo.d_held_wakers"));
+    expect(rows[1].textContent).toContain(t("memo.d_held_wakers_named", { names: "w_9 (slack)" }));
+    expect(rows[1].querySelector<HTMLElement>(".memo-run-held")?.title).toBe(t("memo.d_held_wakers_named", { names: "w_9 (slack)" }));
     expect(document.querySelector(".ui-modal")).toBeNull();
     await click(toggle());
     expect(document.querySelector(".memo-runs")).toBeNull();
