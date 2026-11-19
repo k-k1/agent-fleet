@@ -105,6 +105,7 @@ Some deployments pay for Amazon Bedrock themselves and offer it to tenants as a 
 The deployment administrator grants it to your tenant with a **tenant's monthly pool**. Within it, you decide who may use it and how much. The top of the tab says where things stand:
 
 - **Usable in this tenant**, with the pool, or a banner saying it is **not usable yet** because it is not granted. The budgets below stay editable either way: set them first, and they apply from the moment it is granted
+- A banner saying the deployment's Bedrock source is **switched off** or **not registered yet**, shown in place of the status above and with no models listed as usable. There is nothing to do from the tenant side: the deployment's administrator has to enable the source. The grant and budgets are kept and apply once it is on. A page that cannot read this state (an older Control Plane, or a failed read) shows no such banner
 - This month, in UTC, with when it resets in your local time, and a bar of what is spent and held for calls in flight against the pool
 - A banner when your restrictions stop "Amazon Bedrock (this deployment)", naming who, with **See restrictions →**: members cannot use it, whatever their budget, until the restriction allows it
 

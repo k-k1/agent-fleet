@@ -680,3 +680,4 @@ None of these was exercised against AWS; each is also linked at the claim it sup
   moved digest; a hidden view, or one holding unsaved edits, owes one read and pays it when shown or when the edits
   are gone. Left: a super_admin looking at another tenant's page, the admin tenant table's grant cells (`GrantCell`)
   and the deployment-source PUT do not follow the stream (it carries the subscriber's own tenant only). Unverified against a live deployment.
+- 2026-11-20, source state in the tenant view (#4403): `TenantView` carries `source_registered` and `source_active`, the only facts about the deployment source a tenant is told (never the role, account or Region). Both false/off means no grant is usable, and the tenant Model access page says so (nothing the tenant can do; the operator must enable the source) instead of listing the route as usable. A failed read is an error, never "off"; an older CP without the fields draws as before.

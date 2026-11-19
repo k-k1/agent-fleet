@@ -32,6 +32,12 @@ func (g *Gateway) reservations(ctx context.Context) (rows []ModelReservation, fl
 	if err != nil || !found {
 		return nil, 0, false, err
 	}
+	rows, floor, ok = reservationsOf(src)
+	return rows, floor, ok, nil
+}
+
+// reservationsOf is reservations for an already loaded source.
+func reservationsOf(src store.ProvidedRouteSource) (rows []ModelReservation, floor int64, ok bool) {
 	for _, id := range src.AllowList {
 		m, priced := routeprice.Lookup(id)
 		if !priced {
@@ -47,7 +53,7 @@ func (g *Gateway) reservations(ctx context.Context) (rows []ModelReservation, fl
 			floor, ok = low, true
 		}
 	}
-	return rows, floor, ok, nil
+	return rows, floor, ok
 }
 
 // belowFloor holds a positive amount to the reservations (D4's full-fit admission admits a call
@@ -171,6 +177,12 @@ type TenantView struct {
 	// FloorMicro the smallest of them: a budget or ceiling above zero and below it is refused.
 	Reservations []ModelReservation `json:"reservations"`
 	FloorMicro   int64              `json:"floor_micro"`
+	// SourceRegistered and SourceActive say whether the deployment source exists and is switched
+	// on. Both false means no tenant can use the route whatever its grant says. They are the only
+	// source facts a tenant is told: never the role, the account or the Region of the operator's
+	// AWS side (TestTenantViewCarriesNoOperatorIdentifiers holds that line).
+	SourceRegistered bool `json:"source_registered"`
+	SourceActive     bool `json:"source_active"`
 }
 
 // MemberView is one member's grant, effective budget and spend this month.
@@ -201,11 +213,16 @@ func (g *Gateway) View(ctx context.Context, tenantID string, members []store.Mem
 	v := TenantView{Granted: grant.Granted, CeilingMicro: grant.CeilingMicro, MembersOnly: grant.MembersOnly,
 		MemberDefaultMicro: grant.MemberDefaultMicro, Month: month, SpentMicro: tp.SpentMicro, ReservedMicro: tp.ReservedMicro,
 		Members: make([]MemberView, 0, len(members))}
-	rows, floor, _, err := g.reservations(ctx)
+	// A failed read is an error, never "not registered": the caller answers 500 and the Console
+	// keeps what it drew rather than announcing a switched-off source.
+	src, found, err := g.DeploymentSource(ctx)
 	if err != nil {
 		return TenantView{}, err
 	}
-	v.Reservations, v.FloorMicro = rows, floor
+	v.SourceRegistered, v.SourceActive = found, found && src.Active
+	if found {
+		v.Reservations, v.FloorMicro, _ = reservationsOf(src)
+	}
 	if v.Reservations == nil {
 		v.Reservations = []ModelReservation{}
 	}
