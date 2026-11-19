@@ -70,8 +70,8 @@ agent unchanged (§5.3). "CP" means the CP answers it itself, usually from its d
 
 - **`GET /api/events`** is one SSE connection per tab. It replaces the Console's permanent
   polls. Every 4 s it frames only the streams whose JSON changed:
-  `data: {"stream": <name>, "data": <the matching REST body>}`, except `provided_routes`, whose data is only `{"rev": <opaque digest>}` for the subscriber's own tenant, sent to that tenant's admins alone: a changed digest tells the Console to read the REST view again ([ADR 0129](../decisions/0129-provided-model-routes.md) D3). The streams are `workspace`,
-  `stats`, `sessions`, `notifications`, `workitems`, `engines` and `provided_routes`, and a comment ping goes
+  `data: {"stream": <name>, "data": <the matching REST body>}`, except `provided_routes`, whose data is only `{"rev": <opaque digest>}` for the subscriber's own tenant, sent to that tenant's admins alone (and `provided_routes_admin`, a digest over every tenant and the deployment source, sent to super_admins alone): a changed digest tells the Console to read the REST view again ([ADR 0129](../decisions/0129-provided-model-routes.md) D3). The streams are `workspace`,
+  `stats`, `sessions`, `notifications`, `workitems`, `engines`, `provided_routes` and `provided_routes_admin`, and a comment ping goes
   out after 20 s of silence. A CP without the route answers 404, and the Console falls back
   to polling the REST equivalents. The stream never counts as activity for idle-stop.
 - **Long operations answer at once and are polled.** Workspace start returns and the

@@ -10,7 +10,7 @@ import { useState } from "react";
 import { apiJSON } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
-import { useReportDirty } from "../parts/dirtyScope.tsx";
+import { DirtyScope, useReportDirty } from "../parts/dirtyScope.tsx";
 import { modelsOf, parseSource, sameModels, type SourceInput, type SourceView } from "../tenant/providedRoutes.ts";
 import { Refusal, useGuardedSave, useProvided } from "../tenant/tenantProvidedRoutes.tsx";
 
@@ -126,8 +126,16 @@ function SourceEditor({
 
 export type SourceRead = ReturnType<typeof useSourceRead>;
 
-/** useSourceRead reads the deployment source once, for every part of a page that shows it. */
-export const useSourceRead = () => useProvided(SOURCE_PATH, parseSource);
+/** useSourceRead reads the deployment source once, for every part of a page that shows it. It
+ *  reads again on the events stream, except while the source editor holds unsaved edits (held):
+ *  the editor is keyed on the loaded values and would start over from them, dropping the draft.
+ *  The read it owes is paid when the edits are gone. */
+export function useSourceRead() {
+  const [held, setHeld] = useState(false);
+  // Not reported to a DirtyScope here: this hook may run outside the page's tabs. The card passes
+  // the flag on from inside its own view, so the tab's unsaved mark still shows.
+  return { ...useProvided(SOURCE_PATH, parseSource, true, held), held, setHeld };
+}
 
 /** AdminProvidedSourceView is the deployment source's section, reading it itself; nothing where
  *  the CP has no provided routes. */
@@ -139,7 +147,10 @@ export function AdminProvidedSourceView() {
  *  parts showing the source share the one request. */
 export function AdminProvidedSourceCard({ read }: { read: SourceRead }) {
   const tr = useT();
-  const { load, reload, peek } = read;
+  const { load, reload, peek, held, setHeld } = read;
+  // The editor reports into the scope below, which holds the live read; this passes the same flag
+  // on to the scope the card sits in (the page's tab), where the inner scope would cut it off.
+  useReportDirty(held);
   if (!load || load.state === "off") return null;
   if (load.state === "failed") {
     return (
@@ -170,12 +181,14 @@ export function AdminProvidedSourceCard({ read }: { read: SourceRead }) {
       ) : (
         <p className="muted">{tr("admin.prov_source_none")}</p>
       )}
-      <SourceEditor
-        key={src ? `${src.updated_at}:${src.fingerprint}:${src.active}` : "new"}
-        source={src}
-        peek={peek}
-        onSaved={reload}
-      />
+      <DirtyScope onChange={setHeld}>
+        <SourceEditor
+          key={src ? `${src.updated_at}:${src.fingerprint}:${src.active}` : "new"}
+          source={src}
+          peek={peek}
+          onSaved={reload}
+        />
+      </DirtyScope>
     </section>
   );
 }

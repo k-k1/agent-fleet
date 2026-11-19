@@ -18,6 +18,7 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 }));
 
 import { AdminProvidedSourceView } from "./adminProvidedRoutes.tsx";
+import { noteProvidedAdminRev, resetProvidedRev } from "../tenant/providedRevision.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 
 const SOURCE_PATH = "api/admin/provided-routes/deployment";
@@ -195,5 +196,52 @@ describe("admin provided-route source", () => {
     await click(save());
     expect(apiJSON).not.toHaveBeenCalled();
     expect(host!.querySelector("[role=alert]")!.textContent).toContain("ほかの人がこの規則を更新");
+  });
+
+  it("reads the source again when the super_admin's digest moves (#4371)", async () => {
+    resetProvidedRev();
+    await mount(<AdminProvidedSourceView />);
+    const reads = () => api.mock.calls.filter((c: unknown[]) => c[0] === SOURCE_PATH).length;
+    expect(reads()).toBe(1);
+    const frame = async (rev: string) => {
+      await act(async () => {
+        noteProvidedAdminRev({ rev });
+      });
+      await flush();
+      await flush();
+    };
+    await frame("a1"); // baseline
+    await frame("a1");
+    expect(reads()).toBe(1);
+    await frame("a2");
+    expect(reads()).toBe(2);
+    resetProvidedRev();
+  });
+
+  it("keeps an unsaved draft when the super_admin's digest moves, and reads once the edits are gone", async () => {
+    resetProvidedRev();
+    await mount(<AdminProvidedSourceView />);
+    const reads = () => api.mock.calls.filter((c: unknown[]) => c[0] === SOURCE_PATH).length;
+    const frame = async (rev: string) => {
+      await act(async () => {
+        noteProvidedAdminRev({ rev });
+      });
+      await flush();
+      await flush();
+    };
+    await frame("a1"); // baseline
+    await type(inputs()[0], "my draft");
+    // Someone else updates the source: the editor's key would change and drop the draft.
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path === SOURCE_PATH ? { source: { ...SOURCE(), updated_at: "2026-11-16T12:00:00Z" } } : TENANT()),
+    );
+    await frame("a2");
+    expect(inputs()[0].value).toBe("my draft");
+    expect(reads()).toBe(1);
+    // The edits go away: the owed read is paid.
+    await type(inputs()[0], SOURCE().name);
+    await flush();
+    expect(reads()).toBe(2);
+    resetProvidedRev();
   });
 });

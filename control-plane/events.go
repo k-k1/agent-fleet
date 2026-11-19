@@ -188,6 +188,11 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 		if p, ok := providedRoutesPayload(ctx, a.mgr, res.ident, res.mv.TenantID); ok {
 			wrote = emit("provided_routes", p) || wrote
 		}
+		// The super_admin's own digest over every tenant and the source (#4371); a member and a
+		// tenant_admin get no such frame.
+		if p, ok := providedRoutesAdminPayload(ctx, a.mgr, res.ident); ok {
+			wrote = emit("provided_routes_admin", p) || wrote
+		}
 		if wrote {
 			lastWrite = time.Now()
 		} else if time.Since(lastWrite) >= a.ping {

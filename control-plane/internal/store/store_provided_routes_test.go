@@ -531,3 +531,53 @@ func TestProvidedRouteCascade(t *testing.T) {
 		}
 	})
 }
+
+// The two digests the events stream diffs move exactly when a value the screens read moves: the
+// tenant's one on its own rows and on the source's tenant-visible state only, the super_admin's
+// on every tenant and on the operator-side registration too. A write of the same values moves
+// neither.
+func TestProvidedRouteRevisions(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		tn, ms := limitMembers(t, st, "a")
+		other, err := st.CreateTenant(ctx, "other", "Other")
+		mustDo(t, err)
+		const src = providedroutes.SourceDeployment
+		rev := func(tenantID string) (string, string) {
+			t.Helper()
+			tr, err := st.ProvidedRouteRevision(ctx, tenantID, src)
+			mustDo(t, err)
+			ar, err := st.ProvidedRouteAdminRevision(ctx, src)
+			mustDo(t, err)
+			return tr, ar
+		}
+		moved := func(what, wantTenant, wantAdmin string, t0, a0 string) (string, string) {
+			t.Helper()
+			t1, a1 := rev(tn.ID)
+			if (t1 != t0) != (wantTenant == "moves") || (a1 != a0) != (wantAdmin == "moves") {
+				t.Fatalf("%s: tenant digest moved=%v (want %s), super_admin digest moved=%v (want %s)",
+					what, t1 != t0, wantTenant, a1 != a0, wantAdmin)
+			}
+			return t1, a1
+		}
+		t0, a0 := rev(tn.ID)
+
+		dep := providedRouteDeployment(t, st)
+		t1, a1 := moved("registering the source", "moves", "moves", t0, a0)
+		mustDo(t, st.SetProvidedRouteGrant(ctx, tn.ID, src, true, i64(50_000_000)))
+		t2, a2 := moved("granting the tenant", "moves", "moves", t1, a1)
+		mustDo(t, st.SetProvidedRouteGrant(ctx, tn.ID, src, true, i64(50_000_000)))
+		t3, a3 := moved("the same grant again", "holds", "holds", t2, a2)
+		mustDo(t, st.SetProvidedRouteMember(ctx, tn.ID, ms[0].ID, src, true, i64(9_000_000)))
+		t4, a4 := moved("a member override", "moves", "moves", t3, a3)
+		mustDo(t, st.SetProvidedRouteGrant(ctx, other.ID, src, true, i64(10_000_000)))
+		t5, a5 := moved("another tenant's grant", "holds", "moves", t4, a4)
+		mustDo(t, st.SetProvidedRouteSourceActive(ctx, dep.ID, dep.Fingerprint, false))
+		t6, a6 := moved("switching the source off", "moves", "moves", t5, a5)
+		// A new role changes the operator's registration, not what a tenant's view says of it.
+		_, err = st.PutProvidedRouteSource(ctx, ProvidedRouteSourceInput{ID: dep.ID, Source: src,
+			RoleARN: "arn:aws:iam::123456789012:role/af-model-route/other", Regions: []string{"us-east-1"}, AllowList: []string{prModel}})
+		mustDo(t, err)
+		moved("an operator-side-only edit", "holds", "moves", t6, a6)
+	})
+}
