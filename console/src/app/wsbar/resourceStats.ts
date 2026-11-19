@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../core/api/client.ts";
+import { wsDiskTile, wsLoadTile, type WsStats } from "./wsTiles.ts";
 import { onPush, pushHealthy } from "../../core/push/events.ts";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
@@ -7,24 +8,13 @@ const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 interface WsHistPoint {
   cpu: number | null;
   mem: number | null;
+  load: number | null; // normalized to cores; null where the workspace reports no load
 }
 interface HostHistPoint {
   load: number | null;
   mem: number;
 }
 
-// Partial type covering only the fields the WS bar displays from the api/workspace/stats
-// and api/admin/host responses; the Agent/CP side owns the full shape, and unknown fields
-// pass through.
-interface WsStats {
-  running?: boolean;
-  mem_used?: number | null;
-  mem_max?: number | null;
-  cpu_pct?: number | null;
-  oom_recent?: boolean;
-  oom_killed?: boolean;
-  exit_code?: number | null;
-}
 interface HostStats {
   mem_total: number;
   mem_used: number;
@@ -62,14 +52,19 @@ export function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
       // OOM flags are part of the key so a fresh in-container OOM (oom_recent) or a
       // stopped-from-OOM container (oom_killed) repaints even at a steady mem/cpu.
       const oom = `${d.oom_recent ? 1 : 0}|${d.oom_killed ? 1 : 0}|${d.exit_code ?? ""}`;
-      const key = ok ? `${!!(d && d.running)}|${memPct}|${cpuPct}|${oom}` : "off";
+      // The new tiles' displayed values join the key (load at 2dp, disk as whole %) so a
+      // steady workspace still produces one key.
+      const ld = ok ? wsLoadTile(d) : null;
+      const dk = ok ? wsDiskTile(d) : null;
+      const extra = `${ld ? ld.load1.toFixed(2) + "/" + ld.ncpu : ""}|${dk ? Math.round(dk.ratio * 100) + (dk.leveled ? "o" : "") : ""}`;
+      const key = ok ? `${!!(d && d.running)}|${memPct}|${cpuPct}|${oom}|${extra}` : "off";
       if (key === wsKey.current) return;
       wsKey.current = key;
       setWsStats(ok ? d : null);
       if (running) {
         const mem = d.mem_max ? d.mem_used / d.mem_max : null;
         const cpu = typeof d.cpu_pct === "number" ? d.cpu_pct : null;
-        setWsHist((h) => [...h, { cpu, mem }].slice(-HIST_N));
+        setWsHist((h) => [...h, { cpu, mem, load: ld ? ld.norm : null }].slice(-HIST_N));
       } else {
         setWsHist([]); // stopped / unreachable → drop the stale trend
       }

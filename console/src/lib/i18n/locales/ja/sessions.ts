@@ -196,6 +196,10 @@ export const sessions = {
   "wsbar.tile.ws_cpu": "ワークスペースの CPU 使用率（1 コア = 100%）",
   "wsbar.tile.host_load": "ホスト ロードアベレージ(1 分): {load} / {ncpu}コア（管理者のみ）",
   "wsbar.tile.host_mem": "ホスト メモリ: {mem}G（管理者のみ）",
+  "wsbar.tile.ws_load": "ワークスペースが動くマシンのロードアベレージ(1 分): {load} / {ncpu}コア",
+  "wsbar.tile.ws_disk": "ワークスペースのホームディスク: {disk}G",
+  "wsbar.tile.cp_host_label": "CP ホスト",
+  "wsbar.tile.cp_host_note": "CP ホストの数値（管理者のみ）— ワークスペースが動くマシンのものではありません",
   // 確認ダイアログ（起動 / 停止）
   "wsbar.confirm.start.title": "ワークスペースを起動してはじめる",
   "wsbar.confirm.start.body": "ワークスペースが停止中です。起動して、準備ができたら「はじめる」を開きます。",

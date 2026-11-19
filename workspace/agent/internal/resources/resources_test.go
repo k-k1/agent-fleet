@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -245,5 +246,47 @@ func TestV2WinsWhenBothLayoutsExist(t *testing.T) {
 	s := Read()
 	if s.MemUsed == nil || *s.MemUsed != 111 {
 		t.Errorf("mem_used = %v, want 111 (the v2 value)", s.MemUsed)
+	}
+}
+
+func TestReadLoad1(t *testing.T) {
+	old := procLoadavg
+	t.Cleanup(func() { procLoadavg = old })
+	dir := t.TempDir()
+	cases := []struct {
+		name, body string
+		want       float64
+		ok         bool
+	}{
+		{"normal", "0.52 0.40 0.30 1/200 999\n", 0.52, true},
+		{"real zero load", "0.00 0.00 0.00 1/200 999\n", 0, true},
+		{"empty", "", 0, false},
+		{"garbage", "garbage", 0, false},
+		{"negative", "-1.00 0 0", 0, false},
+		{"NaN", "NaN 0 0", 0, false},
+		{"Inf", "+Inf 0 0", 0, false},
+	}
+	for _, c := range cases {
+		p := filepath.Join(dir, "loadavg-"+c.name)
+		if err := os.WriteFile(p, []byte(c.body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		procLoadavg = p
+		if got, ok := readLoad1(); ok != c.ok || got != c.want {
+			t.Errorf("%s: readLoad1 = %v,%v want %v,%v", c.name, got, ok, c.want, c.ok)
+		}
+	}
+	procLoadavg = filepath.Join(dir, "missing")
+	if _, ok := readLoad1(); ok {
+		t.Error("missing file must report not-ok")
+	}
+}
+
+// A real zero load must survive omitempty (pointer), and the body must always marshal.
+func TestStatsKeepsZeroLoad(t *testing.T) {
+	z, n := 0.0, 2
+	b, err := json.Marshal(Stats{Load1: &z, Ncpu: &n})
+	if err != nil || !strings.Contains(string(b), `"load1":0`) {
+		t.Fatalf("got %s, %v", b, err)
 	}
 }

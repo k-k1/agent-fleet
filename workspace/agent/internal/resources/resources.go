@@ -18,7 +18,9 @@
 package resources
 
 import (
+	"math"
 	"os"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,6 +55,12 @@ type Stats struct {
 	// walk like du, so it is cheap enough to call every time.
 	DiskUsed  *uint64 `json:"disk_used,omitempty"`
 	DiskTotal *uint64 `json:"disk_total,omitempty"`
+	// Load1 / Ncpu are the 1-minute load average and the vCPU count of the machine this
+	// container runs on (/proc/loadavg is host-wide inside a container). On a shared host they
+	// describe other tenants' activity, so the CP forwards them only for a Dedicated runtime
+	// and drops them everywhere else; the Agent cannot tell which it is, so it always reports.
+	Load1 *float64 `json:"load1,omitempty"`
+	Ncpu  *int     `json:"ncpu,omitempty"`
 	// BootInstallFailed maps each CLI whose install failed on this start to the reason
 	// (no_space, network, checksum, other), or "skipped_no_space" for an upgrade skipped for
 	// lack of space whose installed copy still runs. It is filled by the caller, not by Read: the
@@ -81,7 +89,31 @@ func Read() Stats {
 	if used, total, ok := homeUsage(); ok {
 		s.DiskUsed, s.DiskTotal = &used, &total
 	}
+	if l, ok := readLoad1(); ok {
+		n := goruntime.NumCPU()
+		s.Load1, s.Ncpu = &l, &n
+	}
 	return s
+}
+
+// procLoadavg is overridable for tests.
+var procLoadavg = "/proc/loadavg"
+
+func readLoad1() (float64, bool) {
+	b, err := os.ReadFile(procLoadavg)
+	if err != nil {
+		return 0, false
+	}
+	f := strings.Fields(string(b))
+	if len(f) == 0 {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(f[0], 64)
+	// NaN / Inf parse without error but cannot be JSON-encoded, which would fail the whole body.
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return 0, false
+	}
+	return v, true
 }
 
 // --- cgroup v2 and v1, both supported ---

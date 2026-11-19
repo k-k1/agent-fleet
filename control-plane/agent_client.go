@@ -133,6 +133,8 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 		OOMKillTotal *uint64  `json:"oom_kill_total"`
 		DiskUsed     *uint64  `json:"disk_used"`
 		DiskTotal    *uint64  `json:"disk_total"`
+		Load1        *float64 `json:"load1"`
+		Ncpu         *int     `json:"ncpu"`
 		// Only failures, tool to reason; absent when none or unknown (Agent boot_install_status.go).
 		BootInstallFailed map[string]string `json:"boot_install_failed"`
 		MemPressure       *memPressure      `json:"mem_pressure"`
@@ -161,6 +163,13 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 	}
 	if body.DiskTotal != nil {
 		out["disk_total"] = *body.DiskTotal
+	}
+	// load1 / ncpu describe the machine the workspace runs on. Only a Dedicated box is the
+	// member's own; on a shared host they would show other tenants' activity, so they are
+	// dropped here, at the one place every caller of the Agent's stats goes through.
+	if body.Load1 != nil && *body.Load1 >= 0 && body.Ncpu != nil && *body.Ncpu > 0 && runtimeIsDedicated(rt) {
+		out["load1"] = *body.Load1
+		out["ncpu"] = *body.Ncpu
 	}
 	// An Agent from before the sampler sends none; one that cannot measure sends available=false.
 	// Either way the Console is told only what the Agent said, never a filled-in zero.
