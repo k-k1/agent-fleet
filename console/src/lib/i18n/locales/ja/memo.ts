@@ -106,6 +106,7 @@ export const memo = {
   "memo.state_claimed_title": "実行のためにセッションを起動しています。",
   "memo.state_delivered_title": "セッションで開始しました。",
   "memo.state_unconfirmed_title": "セッションを起動できたか確認できませんでした。実行履歴を確認してください。",
+  "memo.sent_fold": "開始済み・置き換え済み（{count}）",
   "memo.state_superseded_title": "整理によって別のメモに置き換えられました。",
   "memo.origin_member": "あなた",
   "memo.origin_session": "セッション {name}",

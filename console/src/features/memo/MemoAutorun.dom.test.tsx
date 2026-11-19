@@ -215,6 +215,35 @@ describe("the list", () => {
     expect(text[2]).toContain(t("memo.origin_session", { name: "worker-2" }));
   });
 
+  it("folds started and replaced messages into one line that opens on click", async () => {
+    servedMemos = [
+      aMemo({ id: "a", body: "waiting-a", state: "pending", provenance: "member" }),
+      aMemo({ id: "b", body: "started-b", state: "delivered", provenance: "member" }),
+      aMemo({ id: "c", body: "replaced-c", state: "superseded", provenance: "member" }),
+      aMemo({ id: "d", body: "look-d", state: "unconfirmed", provenance: "member" }),
+    ];
+    await render();
+    const body = () => document.querySelector(".memo-cat-items")!.textContent ?? "";
+    expect(body()).toContain("waiting-a");
+    expect(body()).toContain("look-d"); // needs a decision, so it is never folded
+    expect(body()).not.toContain("started-b");
+    expect(body()).not.toContain("replaced-c");
+    const fold = document.querySelector<HTMLButtonElement>(".memo-sent-fold")!;
+    expect(fold.textContent).toContain(t("memo.sent_fold", { count: 2 }));
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => fold.click());
+    expect(body()).toContain("started-b");
+    expect(body()).toContain("replaced-c");
+    await act(async () => document.querySelector<HTMLButtonElement>(".memo-sent-fold")!.click());
+    expect(body()).not.toContain("started-b");
+  });
+
+  it("shows no fold line when nothing was started", async () => {
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+    await render();
+    expect(document.querySelector(".memo-sent-fold")).toBeNull();
+  });
+
   it("links a live producer session to its view and leaves other producers as plain text", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
     useSessionsStore.setState({ sessions: [{ name: "worker-2" }, { name: "worker-1" }] as never });

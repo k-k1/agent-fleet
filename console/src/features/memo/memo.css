@@ -1187,3 +1187,21 @@ button.memo-reflink-key {
 .memo-tidy-done p {
   margin: 0 0 6px;
 }
+
+/* The folded line for started / replaced memos of a queue category. */
+.memo-sent-fold {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.memo-sent-fold:hover {
+  color: var(--fg);
+}

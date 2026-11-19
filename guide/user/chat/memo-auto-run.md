@@ -264,6 +264,8 @@ The states of a memo show on its row in the category:
 
 A memo that is "Starting" cannot be changed.
 
+In a category with auto-run on, the "Started" and "Replaced" memos are folded into one line at the bottom of the list, "Started or replaced (N)", so the memos still waiting come first. Click it to show them, and click again to fold them. "Needs a look" memos stay in the list. The fold closes again when you reload the screen.
+
 ### How long a run stays open
 
 A run stays open until its session has nothing left to wait for. While any of these holds, the run stays open with a "Not finished" reason.
