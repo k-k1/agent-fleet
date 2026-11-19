@@ -16,6 +16,9 @@ import type { RailView } from "../core/store/leftRail.ts";
 import { BAR_STEP_DIST, BAR_SWIPE_UP_IS_NEXT } from "./barSwipe.ts";
 import { LONG_PRESS_MS } from "./swipeGestures.ts";
 
+// Past the 400ms click-swallow window.
+const CLICK_WAIT = 500;
+
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 g.IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | null = null;
@@ -40,15 +43,18 @@ async function swipe(from: Element, next: boolean, dx = 0) {
   });
 }
 
-async function mount(props: Partial<Parameters<typeof ActivityBar>[0]> = {}) {
+type BarProps = Partial<Parameters<typeof ActivityBar>[0]>;
+const Shell = (props: BarProps) => {
+  const view = useLeftRail((s) => s.view);
+  return <ActivityBar view={view} shown foldable={false} schedulerEnabled {...props} />;
+};
+// Re-render the same Shell (same element type), so the bar and its listeners stay mounted.
+const rerender = (props: BarProps) => act(async () => root!.render(<Shell {...props} />));
+async function mount(props: BarProps = {}) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  const Shell = () => {
-    const view = useLeftRail((s) => s.view);
-    return <ActivityBar view={view} shown foldable={false} schedulerEnabled {...props} />;
-  };
-  await act(async () => root!.render(<Shell />));
+  await rerender(props);
 }
 
 beforeEach(() => {
@@ -190,5 +196,94 @@ describe("activity bar swipe", () => {
     expect(bar().hasAttribute("data-fits")).toBe(true);
     await swipe(bar(), true);
     expect(host!.querySelector(".actbar-live")!.textContent).not.toBe("");
+  });
+
+  it("does not swallow a mouse click that lands after a committed swipe", async () => {
+    await mount();
+    await swipe(btn("files"), true);
+    const ev = new MouseEvent("click", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "pointerType", { value: "mouse" });
+    await act(async () => btn("memo").dispatchEvent(ev));
+    expect(useLeftRail.getState().view).toBe("memo");
+  });
+
+  it("does not swallow a click once the gesture is off (width grew past a phone)", async () => {
+    await mount();
+    await swipe(btn("files"), true);
+    await rerender({ foldable: true });
+    await act(async () => btn("memo").click());
+    expect(useLeftRail.getState().view).toBe("memo");
+  });
+
+  it("releases the suppression when the swipe's start button is removed mid-gesture", async () => {
+    vi.useFakeTimers();
+    await mount({ schedulerEnabled: true });
+    const sched = btn("schedules");
+    await act(async () => {
+      touch("touchstart", sched, 20, 300);
+      touch("touchmove", sched, 20, 300 + toward(true));
+    });
+    await rerender({ schedulerEnabled: false });
+    expect(sched.isConnected).toBe(false);
+    // The detached button's touchend does not bubble to the bar.
+    await act(async () => touch("touchend", sched, 0, 0));
+    vi.advanceTimersByTime(CLICK_WAIT);
+    await act(async () => btn("memo").click());
+    expect(useLeftRail.getState().view).toBe("memo");
+  });
+
+  it("releases the suppression on touchcancel", async () => {
+    await mount();
+    await act(async () => {
+      touch("touchstart", bar(), 20, 300);
+      touch("touchmove", bar(), 20, 300 + toward(true));
+      touch("touchcancel", bar(), 0, 0);
+    });
+    await act(async () => btn("memo").click());
+    expect(useLeftRail.getState().view).toBe("memo");
+  });
+
+  it("does nothing while the page is pinch-zoomed", async () => {
+    await mount();
+    const vv = { width: window.innerWidth / 2 } as VisualViewport;
+    Object.defineProperty(window, "visualViewport", { value: vv, configurable: true });
+    await swipe(bar(), true);
+    delete (window as { visualViewport?: unknown }).visualViewport;
+    expect(useLeftRail.getState().view).toBe("assistant");
+  });
+
+  it("only marks the column for touch-action while the gesture is live and the column fits", async () => {
+    await mount({ foldable: true });
+    expect(bar().hasAttribute("data-fits")).toBe(false);
+    await act(async () => root!.unmount());
+    host!.remove();
+    root = host = null;
+    await mount({ shown: false });
+    expect(bar().hasAttribute("data-fits")).toBe(false);
+    await act(async () => root!.unmount());
+    host!.remove();
+    root = host = null;
+    await mount();
+    expect(bar().hasAttribute("data-fits")).toBe(true);
+    Object.defineProperty(bar(), "scrollHeight", { value: 500, configurable: true });
+    Object.defineProperty(bar(), "clientHeight", { value: 300, configurable: true });
+    await act(async () => window.dispatchEvent(new Event("resize")));
+    expect(bar().hasAttribute("data-fits")).toBe(false);
+  });
+
+  it("re-announces a repeat swipe to the same view and clears the text afterwards", async () => {
+    vi.useFakeTimers();
+    await mount();
+    const live = () => host!.querySelector(".actbar-live")!.textContent;
+    await swipe(bar(), true);
+    expect(live()).not.toBe("");
+    await act(async () => vi.advanceTimersByTime(1100));
+    expect(live()).toBe("");
+    await act(async () => btn("sessions").click());
+    await swipe(bar(), true);
+    expect(live()).not.toBe("");
+    await act(async () => vi.advanceTimersByTime(CLICK_WAIT));
+    await act(async () => btn("files").click());
+    expect(live()).toBe("");
   });
 });

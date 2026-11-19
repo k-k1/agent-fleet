@@ -36,6 +36,10 @@ describe("stepView", () => {
   it("starts from the first entry when the current view is not listed", () => {
     expect(stepView(ids, "schedules", 1)).toBe("sessions");
   });
+  it("never moves in a single-entry list", () => {
+    expect(stepView(["sessions"], "sessions", 1)).toBeNull();
+    expect(stepView(["sessions"], "sessions", -1)).toBeNull();
+  });
   it("does nothing for an empty list or no delta", () => {
     expect(stepView([], "x", 1)).toBeNull();
     expect(stepView(ids, "memo", 0)).toBeNull();

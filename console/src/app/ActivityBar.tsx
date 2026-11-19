@@ -85,6 +85,14 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
     },
     [views, view, showView, tr],
   );
+  // The announcement is for the moment of the swipe only. Cleared afterwards, a repeat swipe
+  // to the same view changes the text again (and is read again), and no stale name lingers
+  // at the end of the toolbar.
+  useEffect(() => {
+    if (!announced) return;
+    const id = window.setTimeout(() => setAnnounced(""), 1000);
+    return () => window.clearTimeout(id);
+  }, [announced]);
   useBarSwipe(barRef, { enabled: !foldable && shown, step }, [views.length, imagegenAvailable]);
 
   return (
@@ -104,7 +112,11 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
             aria-pressed={active}
             aria-label={name}
             title={badge ? `${name} — ${badgeText(badge, tr)}` : name}
-            onClick={() => (foldable ? pickView(v.id) : showView(v.id))}
+            onClick={() => {
+              setAnnounced("");
+              if (foldable) pickView(v.id);
+              else showView(v.id);
+            }}
           >
             <Icon name={v.icon} />
             {v.mark && <Icon name={v.mark} className="actbar-mark" />}

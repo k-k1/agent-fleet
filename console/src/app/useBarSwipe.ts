@@ -62,7 +62,16 @@ export function useBarSwipe(ref: RefObject<HTMLElement | null>, opts: BarSwipeOp
       sy = 0,
       armed = false,
       timer: number | null = null,
-      swallowUntil = 0;
+      swallowUntil = 0,
+      // The element the finger went down on. Touch events keep targeting it, and if it is
+      // removed mid-gesture (a conditional button) its touchend no longer bubbles to the bar.
+      startTarget: EventTarget | null = null;
+
+    const unwatchTarget = () => {
+      startTarget?.removeEventListener("touchend", onEnd);
+      startTarget?.removeEventListener("touchcancel", onCancel);
+      startTarget = null;
+    };
 
     const disarm = () => {
       armed = false;
@@ -73,6 +82,7 @@ export function useBarSwipe(ref: RefObject<HTMLElement | null>, opts: BarSwipeOp
     };
     const onStart = (e: TouchEvent) => {
       disarm();
+      unwatchTarget();
       // A new touch ends any earlier suppression: the next tap must always work.
       swallowUntil = 0;
       if (!optsRef.current.enabled || e.touches.length !== 1) return;
@@ -102,21 +112,37 @@ export function useBarSwipe(ref: RefObject<HTMLElement | null>, opts: BarSwipeOp
       // One step per gesture: disarm before stepping so a long drag cannot repeat.
       disarm();
       swallowUntil = Number.POSITIVE_INFINITY; // until touchend arms the timer
+      if (e.target && e.target !== el) {
+        startTarget = e.target;
+        startTarget.addEventListener("touchend", onEnd, { passive: true });
+        startTarget.addEventListener("touchcancel", onCancel, { passive: true });
+      }
       if (!optsRef.current.step(delta)) {
         // At the end of the list: a short buzz where the device has one.
         if (typeof navigator.vibrate === "function") navigator.vibrate(10);
       }
     };
-    const onEnd = () => {
+    function onEnd() {
+      unwatchTarget();
       if (swallowUntil === Number.POSITIVE_INFINITY) swallowUntil = Date.now() + CLICK_SWALLOW_MS;
       disarm();
-    };
-    const onCancel = () => {
+    }
+    function onCancel() {
+      unwatchTarget();
       swallowUntil = 0;
       disarm();
-    };
+    }
     // Capture phase: runs before React's click handlers on the buttons.
     const onClick = (e: MouseEvent) => {
+      // Only the click a finger lifts into is swallowed. Keyboard / assistive-technology
+      // activations (trusted, detail 0), mouse clicks, and any click once the gesture is off
+      // (rotated past phone width) are real and must go through.
+      const pt = (e as PointerEvent).pointerType;
+      const notTouch = (pt !== undefined && pt !== "" && pt !== "touch") || (e.isTrusted && e.detail === 0);
+      if (!optsRef.current.enabled || notTouch) {
+        swallowUntil = 0;
+        return;
+      }
       if (Date.now() > swallowUntil) return;
       swallowUntil = 0;
       e.preventDefault();
@@ -134,6 +160,7 @@ export function useBarSwipe(ref: RefObject<HTMLElement | null>, opts: BarSwipeOp
       el.removeEventListener("touchend", onEnd);
       el.removeEventListener("touchcancel", onCancel);
       el.removeEventListener("click", onClick, true);
+      unwatchTarget();
       disarm();
     };
   }, [ref]);
