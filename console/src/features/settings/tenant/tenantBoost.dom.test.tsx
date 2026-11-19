@@ -71,6 +71,18 @@ describe("TenantBoostView", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/boost", "PUT", { enabled: true, max_mem_mib: 16384, monthly_hours: 20 });
   });
 
+  it("shows which size is currently set, in text and in aria-pressed", async () => {
+    const h = await mount(policy({ max_mem_mib: 16384 }));
+    expect(h.querySelector(".boost-current")?.textContent).toContain("16 GiB");
+    const pressed = [...h.querySelectorAll("button.chip")].filter((b) => b.getAttribute("aria-pressed") === "true");
+    expect(pressed.map((b) => b.textContent)).toEqual([expect.stringContaining("16 GiB")]);
+  });
+
+  it("names the class top when no cap is set", async () => {
+    const h = await mount(policy({ max_mem_mib: 0 }));
+    expect(h.querySelector(".boost-current")?.textContent).toContain("クラスの最上位");
+  });
+
   it("hides the bounds while boost is off", async () => {
     const h = await mount(policy({ enabled: false }));
     expect(h.querySelectorAll("button.chip").length).toBe(0);
