@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -132,6 +133,12 @@ func (failingSourceStore) PutProvidedRouteSource(context.Context, store.Provided
 // source, and a tenant with a tenant_admin, a member and a super_admin.
 func providedRouteTenantFixture(t *testing.T) (st *store.SQL, mux *http.ServeMux, tn store.Tenant, member string) {
 	t.Helper()
+	return providedRouteTenantFixtureWith(t, true)
+}
+
+// providedRouteTenantFixtureWith is the fixture with the deployment source registered or not.
+func providedRouteTenantFixtureWith(t *testing.T, register bool) (st *store.SQL, mux *http.ServeMux, tn store.Tenant, member string) {
+	t.Helper()
 	ctx := context.Background()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -168,9 +175,11 @@ func providedRouteTenantFixture(t *testing.T) (st *store.SQL, mux *http.ServeMux
 	g := routegateway.New(providedRouteDeps(mgr, nil, routegateway.Config{MaxInFlight: 4}))
 	mux = http.NewServeMux()
 	providedRouteRoutes(mux, mgr, g)
-	if _, err := g.PutDeploymentSource(ctx, routegateway.SourceInput{RoleARN: "arn:aws:iam::123456789012:role/af-model-route/bedrock",
-		Region: "us-east-1", Models: []string{"us.anthropic.claude-opus-5-5"}}); err != nil {
-		t.Fatal(err)
+	if register {
+		if _, err := g.PutDeploymentSource(ctx, routegateway.SourceInput{RoleARN: "arn:aws:iam::123456789012:role/af-model-route/bedrock",
+			Region: "us-east-1", Models: []string{"us.anthropic.claude-opus-5-5"}}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return st, mux, tn, member
 }
@@ -253,6 +262,95 @@ func TestProvidedRouteTenantAdmin(t *testing.T) {
 	}
 	if len(logs) != 3 {
 		t.Errorf("refused writes left audit rows: %+v", logs)
+	}
+}
+
+// The tenant's view says whether the deployment source is registered and on, and nothing of the
+// operator's side: a tenant (and a member) must not learn the role, the account or the Region.
+func TestTenantViewSourceState(t *testing.T) {
+	const secretARN = "arn:aws:iam::123456789012:role/af-model-route/bedrock"
+	for _, c := range []struct {
+		name                string
+		register            bool
+		active              bool
+		wantReg, wantActive bool
+	}{
+		{"registered and active", true, true, true, true},
+		{"registered and off", true, false, true, false},
+		{"never registered", false, false, false, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, mux, tn, _ := providedRouteTenantFixtureWith(t, c.register)
+			base := "/api/admin/tenants/" + tn.Slug + "/provided-routes/deployment"
+			// Operator-side values that must never reach the tenant: the source's own id, binding,
+			// fingerprint and a non-default name, read back from the super_admin's view.
+			var operator []string
+			if c.register {
+				put := `{"name":"OperatorProdBedrock","role_arn":"` + secretARN + `","region":"us-east-1","models":["us.anthropic.claude-opus-5-5"],"active":` + strconv.FormatBool(c.active) + `}`
+				w := routeAdminDo(mux, "PUT", "/api/admin/provided-routes/deployment", "root@x", put)
+				if w.Code != 200 {
+					t.Fatalf("register: %d %s", w.Code, w.Body)
+				}
+				var out struct{ Source routegateway.SourceView }
+				if json.Unmarshal(w.Body.Bytes(), &out) != nil || out.Source.ID == "" || out.Source.Fingerprint == "" || out.Source.Binding == "" {
+					t.Fatalf("source view: %s", w.Body)
+				}
+				operator = []string{out.Source.ID, out.Source.Fingerprint, out.Source.Binding, "OperatorProdBedrock"}
+			}
+			if w := routeAdminDo(mux, "PUT", base+"/grant", "root@x", `{"granted":true,"ceiling_micro":50000000}`); w.Code != 200 {
+				t.Fatalf("grant: %d %s", w.Code, w.Body)
+			}
+			for _, who := range []string{"boss@x", "m@x"} {
+				w := routeAdminDo(mux, "GET", base, who, "")
+				if who == "m@x" {
+					if w.Code != http.StatusForbidden {
+						t.Fatalf("a member read the view: %d %s", w.Code, w.Body)
+					}
+					continue
+				}
+				var v routegateway.TenantView
+				if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil {
+					t.Fatalf("view: %d %s", w.Code, w.Body)
+				}
+				if v.SourceRegistered != c.wantReg || v.SourceActive != c.wantActive || !v.Granted {
+					t.Errorf("registered=%v active=%v granted=%v, want %v %v true", v.SourceRegistered, v.SourceActive, v.Granted, c.wantReg, c.wantActive)
+				}
+				if !c.wantReg && len(v.Reservations) != 0 {
+					t.Errorf("reservations without a source: %+v", v.Reservations)
+				}
+				for _, leak := range operator {
+					if strings.Contains(w.Body.String(), leak) {
+						t.Errorf("tenant view carries the operator's %q: %s", leak, w.Body)
+					}
+				}
+				for _, leak := range []string{"123456789012", "arn:aws", "af-model-route", "us-east-1", "role_arn", "fingerprint", "region", "binding"} {
+					if strings.Contains(w.Body.String(), leak) {
+						t.Errorf("tenant view carries %q: %s", leak, w.Body)
+					}
+				}
+			}
+		})
+	}
+}
+
+type failingListStore struct{ routegateway.Store }
+
+func (failingListStore) ListProvidedRouteSources(context.Context, string) ([]store.ProvidedRouteSource, error) {
+	return nil, errors.New("database is locked")
+}
+
+// A failed read of the deployment source is the server's failure (500), never a 200 saying the
+// source is not registered: the Console must not tell a tenant "switched off" over a blip.
+func TestTenantViewSourceReadFailureIs500(t *testing.T) {
+	st, _, tn, _ := providedRouteTenantFixture(t)
+	mgr := p3Manager(t, st)
+	deps := providedRouteDeps(mgr, nil, routegateway.Config{})
+	deps.Store = failingListStore{deps.Store}
+	mux := http.NewServeMux()
+	providedRouteRoutes(mux, mgr, routegateway.New(deps))
+	w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/provided-routes/deployment", "boss@x", "")
+	if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "source_registered") {
+		t.Fatalf("a source read failure answered %d %s", w.Code, w.Body)
 	}
 }
 
