@@ -150,3 +150,50 @@ func TestStaleGenerationIsReplacedUnderARestriction(t *testing.T) {
 	}
 	t.Error("the stale daemon was not stopped")
 }
+
+// The reconcile a security restart starts must not be refused by the restart's own securing
+// flag: Ensure refuses while securing is set, and a managed session whose reconcile was refused
+// stays stopped until its next resume. The invariant is that the moment the stopped daemon is
+// recorded gone (stopping cleared), securing is already clear, so any Ensure that can start the
+// replacement is admitted. A watcher spins on the lock and checks Ensure's admission the first
+// instant stopping drops.
+func TestSecurityRestartClearsSecuringWhenTheDaemonIsGone(t *testing.T) {
+	isolatedHome(t)
+	t.Setenv("AF_SECRET_KEY", "")
+	dead := httptest.NewServer(http.NotFoundHandler())
+	t.Setenv(serveAddrEnv, dead.URL)
+	dead.Close() // nothing listens: stopProcess does not wait, healthy() is false
+	useIsolationPolicy(t, anthropicOnly)
+	prev := managedKind.AfterReconcile
+	managedKind.AfterReconcile = func(string) {}
+	t.Cleanup(func() { reconcileInflight.Wait(); managedKind.AfterReconcile = prev })
+
+	for i := 0; i < 20; i++ {
+		cmd := exec.Command("sleep", "60")
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		s := &Supervisor{up: true, cmd: cmd, credGen: "stale"}
+		done := make(chan bool)
+		go func() { done <- s.SecurityRestart("test") }()
+		var err error
+		for {
+			s.mu.Lock()
+			if !s.stopping && !s.up {
+				err = s.policyAdmitLocked(serveAddr())
+				s.mu.Unlock()
+				break
+			}
+			s.mu.Unlock()
+		}
+		if !<-done {
+			t.Fatal("SecurityRestart stopped no process")
+		}
+		if err != nil {
+			t.Fatalf("round %d: Ensure was refused after the daemon was gone: %v", i, err)
+		}
+		reconcileInflight.Wait()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}
+}

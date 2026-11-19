@@ -664,6 +664,11 @@ func (s *Supervisor) Restart(reason string) (replaced bool) {
 func (s *Supervisor) finishTeardown(cmd *exec.Cmd) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.finishTeardownLocked(cmd)
+}
+
+// finishTeardownLocked is finishTeardown with s.mu held.
+func (s *Supervisor) finishTeardownLocked(cmd *exec.Cmd) {
 	s.stopping = false
 	if s.cmd != cmd {
 		return // somebody already installed a replacement; it is theirs, not ours to forget
