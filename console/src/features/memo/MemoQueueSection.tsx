@@ -181,6 +181,18 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     });
   // Categories whose folded "Sent N" line is open. Session-only: a fold that reopened by itself would defeat it.
   const [sentOpenCats, setSentOpenCats] = useState<Record<string, boolean>>({});
+  // Drop the open flag of a category with nothing left to fold, or a later started note would arrive already open.
+  useEffect(() => {
+    setSentOpenCats((o) => {
+      const live = new Set<string>();
+      for (const m of memos) if (m.state === "delivered" || m.state === "superseded") live.add(groupKey(m.repo, m.category));
+      const keys = Object.keys(o).filter((k) => !live.has(k));
+      if (keys.length === 0) return o;
+      const n = { ...o };
+      for (const k of keys) delete n[k];
+      return n;
+    });
+  }, [memos]);
   const [editing, setEditing] = useState<string | null>(null);
   const [renameCat, setRenameCat] = useState<string | null>(null); // category id being renamed
   const [composerOpen, setComposerOpen] = useState(false);
@@ -884,9 +896,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   <MemoRepoHead repo={rb.repo} label={repoLabel(rb.repo)} onAdd={() => void addCategory(rb.repo)} />
                 )}
                 {rb.groups.map((g) => {
-                  // A replaced note is read-only and cannot be sent, so a select-all leaves it out.
-                  const ids = g.memos.filter((m) => !isSuperseded(m)).map((m) => m.id);
-                  const allSel = ids.length > 0 && ids.every((id) => sel[id]);
                   const cat = g.catId ? cats.find((c) => c.id === g.catId) : undefined;
                   const dropKey = groupKey(rb.repo, g.category);
                   const collapsed = !!collapsedCats[dropKey];
@@ -894,9 +903,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   const isQueue = !!queue || !!cat?.queue;
                   // Delivered and replaced notes are history, not work: a queue folds them into one line so the
                   // waiting ones lead. "Needs a look" (unconfirmed) stays in the list because it wants a decision.
-                  const folded = isQueue ? g.memos.filter((m) => m.state === "delivered" || isSuperseded(m)) : [];
-                  const shown = folded.length > 0 ? g.memos.filter((m) => !folded.includes(m)) : g.memos;
+                  // A note being edited stays visible: folding it would unmount the draft.
+                  const folded = isQueue ? g.memos.filter((m) => (m.state === "delivered" || isSuperseded(m)) && m.id !== editing) : [];
+                  const foldedIds = new Set(folded.map((m) => m.id));
+                  const shown = folded.length > 0 ? g.memos.filter((m) => !foldedIds.has(m.id)) : g.memos;
                   const sentOpen = !!sentOpenCats[dropKey];
+                  // Open, the list keeps the server order so drag-and-drop matches what is on screen.
+                  const visible = sentOpen ? g.memos : shown;
+                  // A replaced note is read-only and cannot be sent, and a folded one is not on screen,
+                  // so a select-all covers neither.
+                  const ids = visible.filter((m) => !isSuperseded(m)).map((m) => m.id);
+                  const allSel = ids.length > 0 && ids.every((id) => sel[id]);
                   const renderRow = (m: Memo) => (
                     <MemoRow
                       key={m.id}
@@ -1136,7 +1153,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
 
                       {!collapsed && (
                         <div className="memo-cat-items">
-                          {shown.map(renderRow)}
+                          {visible.map(renderRow)}
                           {folded.length > 0 && (
                             <button
                               type="button"
@@ -1147,7 +1164,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                               <Icon name={sentOpen ? "chevron-down" : "chevron-right"} /> {tr("memo.sent_fold", { count: folded.length })}
                             </button>
                           )}
-                          {sentOpen && folded.map(renderRow)}
                         </div>
                       )}
                     </div>
