@@ -505,6 +505,7 @@ export const errors = {
   "err.invalid_route_policy": "制限に Control Plane が受け付けない値があります。",
   "err.route_policy_exceeds_ceiling": "運用者の設定が禁じているものを許す内容になっています。その下の制限は狭めることしかできません。",
   "err.route_policy_endpoint_not_approvable": "そのホストはセルフホストのサーバーとして承認できません。上の制限が通していないか、ベンダーのホストです。",
+  "err.route_policy_stale": "読み込んだ後に、ほかの人がこの規則を更新しています。保存していません。編集した内容は残っています。最新の規則を見るには、ページを開き直してください。",
   // ADR 0138 M2 P10: the provided-route admin refusals.
   "err.invalid_source": "送り元の登録内容を Control Plane が受け付けませんでした。",
   "err.invalid_input": "その金額や設定を Control Plane が受け付けませんでした。",

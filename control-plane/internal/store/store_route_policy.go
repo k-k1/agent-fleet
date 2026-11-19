@@ -45,7 +45,16 @@ type RoutePolicyStore interface {
 	// builds the audit row from the two, inserted in the same transaction: the write and its
 	// record commit together or not at all (D15).
 	PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor string, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error)
+	// PutRoutePolicyIf is PutRoutePolicy that writes only while the row is still at revision
+	// *expect (0 = never written); a nil expect writes unconditionally. When the row has moved it
+	// writes nothing, records nothing, takes no revision, and returns ErrRoutePolicyStale with
+	// before set to the row as it is. The check and the write are one transaction.
+	PutRoutePolicyIf(ctx context.Context, scope, tenantID, rule, actor string, expect *int64, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error)
 }
+
+// ErrRoutePolicyStale: a conditional PutRoutePolicyIf found the row at another revision than the
+// caller loaded.
+var ErrRoutePolicyStale = errors.New("route policy: the row changed after the revision the write was based on")
 
 // RoutePolicyLayers is one consistent read of a tenant's layers.
 type RoutePolicyLayers struct {
@@ -90,11 +99,17 @@ func (s *SQL) GetRoutePolicy(ctx context.Context, scope, tenantID string) (Route
 	return getRoutePolicy(ctx, s.db, scope, tenantID)
 }
 
-// PutRoutePolicy takes the next revision by updating route_policy_seq inside the write's
+func (s *SQL) PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor string, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error) {
+	return s.PutRoutePolicyIf(ctx, scope, tenantID, rule, actor, nil, audit)
+}
+
+// PutRoutePolicyIf takes the next revision by updating route_policy_seq inside the write's
 // transaction: on Postgres the update holds the row lock until commit, so two writes are
 // serialised and commit in revision order, and a reader never sees a later revision committed
-// before an earlier one.
-func (s *SQL) PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor string, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error) {
+// before an earlier one. The same lock is what makes the precondition atomic: the row is read
+// only after it is held, so a competing write has either committed (and is seen) or waits behind
+// this one; two writes based on the same revision cannot both pass.
+func (s *SQL) PutRoutePolicyIf(ctx context.Context, scope, tenantID, rule, actor string, expect *int64, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error) {
 	if err := validRoutePolicyScope(scope, tenantID); err != nil {
 		return before, after, err
 	}
@@ -115,6 +130,9 @@ func (s *SQL) PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor s
 	}
 	if before, err = getRoutePolicy(ctx, tx, scope, tenantID); err != nil {
 		return before, after, err
+	}
+	if expect != nil && before.Revision != *expect {
+		return before, RoutePolicyRow{}, ErrRoutePolicyStale
 	}
 	after = RoutePolicyRow{Scope: scope, TenantID: tenantID, Rule: rule, Revision: rev, UpdatedBy: actor, UpdatedAt: NowTS()}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO route_policy(scope, tenant_id, rule, revision, updated_by, updated_at)

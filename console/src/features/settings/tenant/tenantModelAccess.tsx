@@ -7,12 +7,12 @@
 // (TenantAdminFor); a refused or unreadable GET draws no editor, so nothing on this page can
 // write a rule built from an answer it did not get.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { api, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { TenantOverview, byList } from "./routePolicyOverview.tsx";
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
 import { TabbedViews } from "../parts/tabbedViews.tsx";
-import { RuleEditor } from "./routePolicyRuleEditor.tsx";
+import { RuleEditor, putRule } from "./routePolicyRuleEditor.tsx";
 import { isOlderPolicyAnswer, parseTenantPolicy, type TenantPolicyView } from "./routePolicyRule.ts";
 
 export function useTenantRoutePolicy(slug: string) {
@@ -45,16 +45,7 @@ export function useTenantRoutePolicy(slug: string) {
   useEffect(() => {
     load();
   }, [load]);
-  // The stored view as it is now, without touching the drawn one: what an editor checks its
-  // revision against right before it saves.
-  const peek = useCallback(async () => {
-    try {
-      return parseTenantPolicy(await api(path));
-    } catch {
-      return null;
-    }
-  }, [path]);
-  return { view, failed, load, peek, path };
+  return { view, failed, load, path };
 }
 
 /** The sentences D12 (the delay, and the window while the CP is unreachable) and D13 require
@@ -72,7 +63,7 @@ export function PolicyLimits() {
 
 export function TenantModelAccessView({ slug, isSuper = false }: { slug: string; isSuper?: boolean }) {
   const tr = useT();
-  const { view, failed, load, peek, path } = useTenantRoutePolicy(slug);
+  const { view, failed, load, path } = useTenantRoutePolicy(slug);
   // Whether the CP serves provided routes, as this tenant's view last heard: an answer for
   // another tenant does not count, so a switch never shows the tab before its own read answers.
   const [served, setServed] = useState<{ slug: string; on: boolean }>({ slug: "", on: false });
@@ -125,12 +116,11 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                       key={`${slug}:cap:${view.cap.revision}`}
                       base={view.cap.rule}
                       revision={view.cap.revision}
-                      currentRevision={async () => (await peek())?.cap.revision ?? null}
                       vocab={view.vocabulary}
                       endpointsMode="patterns"
                       ceiling={view.ceiling.rule}
                       above={[{ layer: "deployment", rule: view.deployment.rule }]}
-                      save={(body) => apiJSON(`${path}/cap`, "PUT", body)}
+                      save={(body, rev) => putRule(`${path}/cap`, body, rev)}
                       onSaved={load}
                     />
                   </section>
@@ -144,7 +134,6 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                     key={`${slug}:${view.tenant.revision}`}
                     base={view.tenant.rule}
                     revision={view.tenant.revision}
-                    currentRevision={async () => (await peek())?.tenant.revision ?? null}
                     vocab={view.vocabulary}
                     endpointsMode="hosts"
                     hostState={(h) => view.endpoints.find((e) => e.host === h)}
@@ -155,7 +144,7 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                       { layer: "deployment", rule: view.deployment.rule },
                       { layer: "tenant_cap", rule: view.cap.rule },
                     ]}
-                    save={(body) => apiJSON(path, "PUT", body)}
+                    save={(body, rev) => putRule(path, body, rev)}
                     onSaved={load}
                   />
                 </section>

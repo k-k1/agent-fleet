@@ -6,7 +6,7 @@
 // can read why and fix the one value rather than start again. A toast would vanish, and a reload
 // would throw the edits away.
 import { useState } from "react";
-import { errDetail } from "../../../core/api/client.ts";
+import { apiJSON, errDetail } from "../../../core/api/client.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { useReportDirty } from "../parts/dirtyScope.tsx";
 import { PRESET_KEYS, applyPreset, presetAvailable, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
@@ -481,13 +481,17 @@ function ServerRows({
   );
 }
 
+/** putRule saves one layer's rule on the revision it was loaded at: the CP's PUT answers 409
+ *  route_policy_stale when the layer has moved since (If-Match, the layer's own revision). */
+export const putRule = (path: string, body: RouteRule, revision: number): Promise<unknown> =>
+  apiJSON(path, "PUT", body, { "If-Match": `"${revision}"` });
+
 /** RuleEditor edits one layer's rule. save sends the body and answers the API result; a result
  *  with an error is shown and the edits kept. Re-key it on the loaded revision so a fresh load
  *  replaces the draft. */
 export function RuleEditor({
   base,
   revision,
-  currentRevision,
   vocab,
   endpointsMode,
   hostState,
@@ -497,10 +501,8 @@ export function RuleEditor({
   onSaved,
 }: {
   base: RouteRule;
-  /** The layer's revision base was loaded at. */
+  /** The layer's revision base was loaded at; save sends it back as the PUT's precondition. */
   revision: number;
-  /** Reads the layer's stored revision now; null when it cannot be read. */
-  currentRevision: () => Promise<number | null>;
   /** What the CP says a rule may name; the pickers offer exactly this (plus what the rule holds). */
   vocab: Vocabulary;
   /** patterns: the deployment rule and a cap (absent = does not narrow); hosts: the tenant
@@ -513,8 +515,10 @@ export function RuleEditor({
   ceiling?: RouteRule;
   /** The layers above whose narrowing stops an option without refusing the save, top first. */
   above?: readonly { layer: string; rule: RouteRule }[];
-  save: (body: RouteRule) => Promise<unknown>;
-  onSaved: () => void;
+  save: (body: RouteRule, revision: number) => Promise<unknown>;
+  /** Called after a save landed; the editor stays busy until what it returns settles, so the next
+   *  save cannot go out on the old revision while the reload that brings the new one is running. */
+  onSaved: () => void | Promise<unknown>;
 }) {
   const tr = useT();
   const [draft, setDraft] = useState<RuleDraft>(() => draftOf(base));
@@ -532,25 +536,18 @@ export function RuleEditor({
     setBusy(true);
     setRefusal(null);
     try {
-      // The PUT replaces the whole layer and carries no revision, so a save made over another
-      // administrator's newer one would silently undo it. Re-read first and refuse on a moved
-      // (or unreadable) revision; the edits stay. A save in the gap between the two requests can
-      // still race, which only a conditional PUT on the CP would close.
-      const now = await currentRevision();
-      if (now === null) {
-        setRefusal(tr("admin.mpol_load_failed"));
-        return;
-      }
-      if (now !== revision) {
-        setRefusal(tr("admin.mpol_stale"));
-        return;
-      }
-      const res = (await save(body)) as { error?: Parameters<typeof errDetail>[0] } | null | undefined;
+      // The PUT replaces the whole layer, so it carries the revision this draft was loaded at
+      // (If-Match) and the CP refuses it, in the same transaction as the write, when another
+      // administrator saved since: no save can land over a newer one, however close.
+      const res = (await save(body, revision)) as
+        | { error?: Parameters<typeof errDetail>[0] & { code?: string } }
+        | null
+        | undefined;
       if (res?.error) {
-        setRefusal(errDetail(res.error));
+        setRefusal(res.error.code === "route_policy_stale" ? tr("admin.mpol_stale") : errDetail(res.error));
         return;
       }
-      onSaved();
+      await Promise.resolve(onSaved()).catch(() => {});
     } catch {
       setRefusal(tr("admin.mpol_save_failed"));
     } finally {

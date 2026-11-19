@@ -7,10 +7,10 @@
 // approved at all, the deployment rule and a cap narrow that, and a tenant's own rule approves
 // exact hosts inside what is left (on the tenant page).
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { api, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import type { Tenant } from "../parts/adminShared.ts";
-import { RuleEditor, RuleSummary } from "../tenant/routePolicyRuleEditor.tsx";
+import { RuleEditor, RuleSummary, putRule } from "../tenant/routePolicyRuleEditor.tsx";
 import { AdminProvidedSourceCard, useSourceRead, type SourceRead } from "./adminProvidedRoutes.tsx";
 import { layerClauses } from "../tenant/routePolicyOverview.tsx";
 import { summarizeLayer } from "../tenant/routePolicySummary.ts";
@@ -60,14 +60,6 @@ function useDeploymentRoutePolicy() {
     load();
   }, [load]);
   return { view, failed, load };
-}
-
-async function currentDeploymentRevision(): Promise<number | null> {
-  try {
-    return parseDeploymentPolicy(await api(PATH))?.deployment.revision ?? null;
-  } catch {
-    return null;
-  }
 }
 
 // The tenant table reads each tenant's policy view (and its provided view) per row: the CP has no
@@ -349,11 +341,10 @@ export function AdminModelAccessView({
         key={view.deployment.revision}
         base={view.deployment.rule}
         revision={view.deployment.revision}
-        currentRevision={currentDeploymentRevision}
         vocab={view.vocabulary}
         endpointsMode="patterns"
         ceiling={view.ceiling.rule}
-        save={(body) => apiJSON(PATH, "PUT", body)}
+        save={(body, rev) => putRule(PATH, body, rev)}
         onSaved={load}
       />
     </section>

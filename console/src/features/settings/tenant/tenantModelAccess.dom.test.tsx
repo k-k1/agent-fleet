@@ -77,6 +77,8 @@ async function mount(isSuper = false) {
   });
 }
 
+const IF_MATCH_5 = { "If-Match": '"5"' };
+const IF_MATCH_2 = { "If-Match": '"2"' };
 const policyReads = () => api.mock.calls.filter((c) => c[0] === PATH).length;
 const flush = async () => {
   await act(async () => {
@@ -163,14 +165,15 @@ describe("tenant model access", () => {
     await click(tickIn("classes", "メンバーの API キー"));
     await click(button("保存")!);
     expect(apiJSON).toHaveBeenCalledTimes(1);
-    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", {
-      classes: ["member-key"],
-      endpoints: ["llm.corp.example"],
-      except: ["copilot-login"],
-      future: "kept",
-    });
-    // One read to check the revision before the PUT, and the saved state read back after it.
-    expect(policyReads()).toBe(3);
+    // The PUT carries the revision the editor was loaded at, and nothing is read before it.
+    expect(apiJSON).toHaveBeenCalledWith(
+      PATH,
+      "PUT",
+      { classes: ["member-key"], endpoints: ["llm.corp.example"], except: ["copilot-login"], future: "kept" },
+      IF_MATCH_5,
+    );
+    // The load, and the saved state read back after the PUT.
+    expect(policyReads()).toBe(2);
   });
 
   it("shows a refusal with its reason and keeps the edits", async () => {
@@ -187,34 +190,53 @@ describe("tenant model access", () => {
       PATH,
       "PUT",
       expect.objectContaining({ endpoints: ["llm.corp.example", "gpu.corp.example"] }),
+      IF_MATCH_5,
     );
     const alert = host!.querySelector(".model-access-rule [role=alert]")!;
     expect(alert.textContent).toContain("セルフホストのサーバーとして承認できません");
     expect(alert.textContent).toContain("gpu.corp.example");
     expect(servers()).toEqual(["llm.corp.example", "gpu.corp.example"]);
-    // Not reloaded after the refusal (the second read is the revision check before the PUT): a
-    // reload would replace the edits with the stored rule.
-    expect(policyReads()).toBe(2);
+    // Not reloaded after the refusal: a reload would replace the edits with the stored rule.
+    expect(policyReads()).toBe(1);
   });
 
-  it("does not save over a revision someone else stored after the load", async () => {
+  it("stays busy until the reload after a save lands, then saves again on the new revision", async () => {
     await mount();
     await click(tickIn("deny", "anthropic-api"));
-    // Another administrator saved in the meantime: the stored tenant rule is now at revision 6.
-    api.mockImplementation(() => Promise.resolve({ ...VIEW(), tenant: { rule: {}, revision: 6 } }));
+    // The reload that follows the save is held back.
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    api.mockImplementation((path: string) =>
+      path.includes("/provided-routes/")
+        ? Promise.resolve({ error: { code: "http_404", status: 404 } })
+        : held.then(() => ({ ...VIEW(), tenant: { rule: { deny: ["anthropic-api"] }, revision: 6 } })),
+    );
     await click(button("保存")!);
-    expect(apiJSON).not.toHaveBeenCalled();
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(button("保存")!.disabled).toBe(true);
+    await click(button("保存")!);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    await act(async () => release());
+    await flush();
+    // Re-keyed on the new revision: clean again; one more edit saves with revision 6.
+    await click(tickIn("deny", "openai-api"));
+    await click(button("保存")!);
+    expect(apiJSON).toHaveBeenCalledTimes(2);
+    expect(apiJSON).toHaveBeenLastCalledWith(PATH, "PUT", expect.anything(), { "If-Match": '"6"' });
+  });
+
+  it("shows the concurrent-edit message on a 409 and keeps the edits (the CP refused a stale revision)", async () => {
+    apiJSON.mockResolvedValue({
+      error: { code: "route_policy_stale", message: "the rule is at revision 6 now", status: 409 },
+    });
+    await mount();
+    await click(tickIn("deny", "anthropic-api"));
+    await click(button("保存")!);
+    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", expect.anything(), IF_MATCH_5);
     expect(host!.querySelector(".model-access-rule [role=alert]")?.textContent).toContain("ほかの人がこの規則を更新");
     expect(tickIn("deny", "anthropic-api").checked).toBe(true);
-  });
-
-  it("does not save when the revision cannot be re-read", async () => {
-    await mount();
-    await click(tickIn("deny", "anthropic-api"));
-    api.mockRejectedValue(new Error("offline"));
-    await click(button("保存")!);
-    expect(apiJSON).not.toHaveBeenCalled();
-    expect(host!.querySelector(".model-access-rule [role=alert]")?.textContent).toContain("読み込めませんでした");
+    // Not reloaded: the edits are what the person decides about.
+    expect(policyReads()).toBe(1);
   });
 
   it("draws no editor when the CP refuses the read", async () => {
@@ -290,11 +312,12 @@ describe("restrictions editor", () => {
     await click(rowsBtn("llm.corp.example"));
     expect(servers()).toEqual(["gpu.corp.example"]);
     await click(button("保存")!);
-    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", {
-      endpoints: ["gpu.corp.example"],
-      except: ["copilot-login"],
-      future: "kept",
-    });
+    expect(apiJSON).toHaveBeenCalledWith(
+      PATH,
+      "PUT",
+      { endpoints: ["gpu.corp.example"], except: ["copilot-login"], future: "kept" },
+      IF_MATCH_5,
+    );
   });
 
   it("keeps a rule without endpoints without them after a server is added and removed", async () => {
@@ -314,7 +337,7 @@ describe("restrictions editor", () => {
     expect(button("保存")!.disabled).toBe(true);
     await click(tickIn("deny", "openai-api"));
     await click(button("保存")!);
-    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", { deny: ["gemini-api", "openai-api"] });
+    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", { deny: ["gemini-api", "openai-api"] }, IF_MATCH_5);
   });
 
   it("draws a repeated stored host once, and keeps a repeat that adds nothing in the field", async () => {
@@ -399,7 +422,7 @@ describe("restrictions help", () => {
         "sakana",
         "self-hosted",
       ],
-    });
+    }, IF_MATCH_5);
   });
 
   it("marks what the layers above stop, and locks nothing on the tenant's own rule", async () => {
@@ -763,22 +786,17 @@ describe("the super_admin's cards", () => {
     expect(host!.querySelectorAll(".prov-grant").length).toBe(1);
   });
 
-  it("saves the cap to its own path after re-reading its revision, and refuses over a newer one", async () => {
+  it("saves the cap to its own path with the revision it loaded", async () => {
     served({ ...VIEW(), ceiling: { raw: "", rule: {}, source: "deployment" } });
     await mount(true);
     await click(capTick("deny", "anthropic-api"));
     await click(btnIn(cap(), "保存"));
-    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/cap`, "PUT", { deny: ["openrouter-api", "anthropic-api"] });
-    apiJSON.mockClear();
-    act(() => root?.unmount());
-    host?.remove();
-    served({ ...VIEW(), ceiling: { raw: "", rule: {}, source: "deployment" } });
-    await mount(true);
-    await click(capTick("deny", "anthropic-api"));
-    api.mockImplementation(() => Promise.resolve({ ...VIEW(), cap: { rule: {}, revision: 3 } }));
-    await click(btnIn(cap(), "保存"));
-    expect(apiJSON).not.toHaveBeenCalled();
-    expect(cap().querySelector("[role=alert]")?.textContent).toContain("ほかの人がこの規則を更新");
+    expect(apiJSON).toHaveBeenCalledWith(
+      `${PATH}/cap`,
+      "PUT",
+      { deny: ["openrouter-api", "anthropic-api"] },
+      IF_MATCH_2,
+    );
   });
 
   it("warns before a cap the CP would refuse, and matching it makes a save the CP accepts (#4376)", async () => {
@@ -794,7 +812,7 @@ describe("the super_admin's cards", () => {
     expect(apiJSON).toHaveBeenCalledWith(`${PATH}/cap`, "PUT", {
       deny: ["openrouter-api"],
       classes: ["member-key", "member-cloud", "provided", "self-hosted"],
-    });
+    }, IF_MATCH_2);
   });
 
   it("locks what the ceiling forbids on the cap, and marks what the restriction for all tenants stops", async () => {

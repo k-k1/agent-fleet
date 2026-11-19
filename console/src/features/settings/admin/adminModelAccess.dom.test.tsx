@@ -156,10 +156,12 @@ describe("admin model access", () => {
     const d = within(".model-access-deployment");
     await click(tickIn(d, "deny", "anthropic-api"));
     await click(btnIn(d, "保存"));
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/route-policy", "PUT", {
-      destinations: ["anthropic", "aws-bedrock"],
-      deny: ["anthropic-api"],
-    });
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/route-policy",
+      "PUT",
+      { destinations: ["anthropic", "aws-bedrock"], deny: ["anthropic-api"] },
+      { "If-Match": '"3"' },
+    );
   });
 
   it("shows the ceiling refusal and keeps the edits", async () => {
@@ -176,7 +178,7 @@ describe("admin model access", () => {
       btnIn(within('.model-access-deployment [data-field="destinations"]'), "絞らない（今後増えるものも許す）"),
     );
     await click(btnIn(d, "保存"));
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/route-policy", "PUT", {});
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/route-policy", "PUT", {}, { "If-Match": '"3"' });
     const alert = d.querySelector("[role=alert]")!;
     expect(alert.textContent).toContain("運用者の設定が禁じているものを許す内容");
     expect(alert.textContent).toContain("anthropic-subscription");
@@ -187,25 +189,19 @@ describe("admin model access", () => {
         "絞らない（今後増えるものも許す）",
       ).getAttribute("aria-checked"),
     ).toBe("true");
-    // The deployment GET and the revision check before the PUT; nothing reloaded after the
-    // refusal (the per-tenant view reads nothing until it is opened).
-    expect(api.mock.calls.filter((c) => String(c[0]).endsWith("/route-policy")).length).toBe(2);
+    // Only the deployment GET: nothing reloaded after the refusal (the per-tenant view reads
+    // nothing until it is opened).
+    expect(api.mock.calls.filter((c) => String(c[0]).endsWith("/route-policy")).length).toBe(1);
   });
 
-  it("does not save the deployment rule over a newer revision", async () => {
+  it("shows the concurrent-edit message when the CP answers 409 to a stale revision", async () => {
+    apiJSON.mockResolvedValue({ error: { code: "route_policy_stale", message: "at revision 4 now", status: 409 } });
     await mount();
     const d = within(".model-access-deployment");
     await click(tickIn(d, "deny", "anthropic-api"));
-    api.mockImplementation((path: string) =>
-      Promise.resolve(
-        path === "api/admin/route-policy"
-          ? { ...DEPLOYMENT, deployment: { rule: {}, revision: 4 } }
-          : tenantView("acme"),
-      ),
-    );
     await click(btnIn(d, "保存"));
-    expect(apiJSON).not.toHaveBeenCalled();
     expect(d.querySelector("[role=alert]")?.textContent).toContain("ほかの人がこの規則を更新");
+    expect(tickIn(d, "deny", "anthropic-api").checked).toBe(true);
   });
 
   it("shows the ceiling's source as the wire names it", async () => {

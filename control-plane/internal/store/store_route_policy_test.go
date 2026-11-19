@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -150,6 +152,91 @@ func TestRoutePolicyLayersRead(t *testing.T) {
 		mustDo(t, err)
 		if dep.Tenant.Revision != 0 || dep.Revision() != d.Revision {
 			t.Errorf("the deployment-only read = %+v", dep)
+		}
+	})
+}
+
+// A conditional write passes only at the revision the caller loaded (0 for a row never written),
+// and a refused one leaves the row, the audit log and the revision sequence untouched.
+func TestPutRoutePolicyIfPrecondition(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		zero := int64(0)
+		_, first, err := st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", `{"deny":["a"]}`, "su", &zero, nil)
+		mustDo(t, err)
+		// Loaded at 0 again: the row is now at first.Revision.
+		before, _, err := st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", `{"deny":["b"]}`, "su", &zero, nil)
+		if !errors.Is(err, ErrRoutePolicyStale) || before.Revision != first.Revision {
+			t.Fatalf("stale write = before %+v, %v; want ErrRoutePolicyStale reporting the current row", before, err)
+		}
+		if got, _ := st.GetRoutePolicy(ctx, RoutePolicyDeployment, ""); got.Rule != `{"deny":["a"]}` || got.Revision != first.Revision {
+			t.Fatalf("a refused write changed the row: %+v", got)
+		}
+		audited := false
+		_, _, err = st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", `{"deny":["b"]}`, "su", &zero,
+			func(_, _ RoutePolicyRow) AuditLog { audited = true; return AuditLog{} })
+		if !errors.Is(err, ErrRoutePolicyStale) || audited {
+			t.Fatalf("a refused write must not build or insert an audit row (err %v, audited %v)", err, audited)
+		}
+		// The refusal took no revision: the next write is the one right after first.
+		cur := first.Revision
+		_, next, err := st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", `{"deny":["c"]}`, "su", &cur, nil)
+		mustDo(t, err)
+		if next.Revision != first.Revision+1 {
+			t.Fatalf("revision after a refused write = %d, want %d", next.Revision, first.Revision+1)
+		}
+		// nil is today's unconditional write.
+		_, _, err = st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", `{}`, "su", nil, nil)
+		mustDo(t, err)
+	})
+}
+
+// Writers that all loaded the same revision race, each with its own rule: exactly one wins, the
+// others are told the row moved, none is turned into another error by lock contention (there is
+// no retry here, any other error fails), and the row holds the winner's rule at base+1.
+func TestPutRoutePolicyIfConcurrentWriters(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		for round := 0; round < 5; round++ {
+			row, err := st.GetRoutePolicy(ctx, RoutePolicyDeployment, "")
+			mustDo(t, err)
+			base := row.Revision
+			const writers = 8
+			var wg sync.WaitGroup
+			start := make(chan struct{})
+			errs := make([]error, writers)
+			afters := make([]RoutePolicyRow, writers)
+			for i := 0; i < writers; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					<-start
+					_, afters[i], errs[i] = st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", fmt.Sprintf(`{"deny":["w%d"]}`, i), "su", &base, nil)
+				}(i)
+			}
+			close(start)
+			wg.Wait()
+			winner := -1
+			for i, err := range errs {
+				switch {
+				case err == nil:
+					if winner >= 0 {
+						t.Fatalf("round %d: two writers won (%d and %d)", round, winner, i)
+					}
+					winner = i
+				case errors.Is(err, ErrRoutePolicyStale):
+				default:
+					t.Fatalf("round %d: writer %d failed with %v, want a win or ErrRoutePolicyStale", round, i, err)
+				}
+			}
+			if winner < 0 {
+				t.Fatalf("round %d: nobody won: %v", round, errs)
+			}
+			got, err := st.GetRoutePolicy(ctx, RoutePolicyDeployment, "")
+			mustDo(t, err)
+			if want := fmt.Sprintf(`{"deny":["w%d"]}`, winner); got.Rule != want || got.Revision != base+1 || afters[winner].Revision != base+1 {
+				t.Fatalf("round %d: stored %+v, want %s at revision %d", round, got, want, base+1)
+			}
 		}
 	})
 }
