@@ -561,7 +561,7 @@ disables.
   later clears it). The slot then goes by the ordinary rule once the report says nothing
   holds the tree; a session waiting for a person stays occupied by design. The first
   turn of the delivery's session (`queueTurn`) is copied onto the delivery when it first
-  appears. The delivery DTO carries `heldBy`, `heldSession`, `heldSeenAt`, `overdue`,
+  appears. The delivery DTO carries `heldBy`, `heldSession`, `heldSeenAt`, `heldWakers` (id and source of the watches behind a wakers hold, kept in `memo_delivery.held_detail`), `overdue`,
   `overdueAt` and `firstTurn`.
 
   **Fairness of the passes.** `settle` closes stale claims and collects the sends first (no

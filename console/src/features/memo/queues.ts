@@ -150,6 +150,7 @@ export function readDeliveries(raw: unknown): MemoDelivery[] | null {
       heldBy: str(d.heldBy),
       heldSession: str(d.heldSession),
       heldSeenAt: str(d.heldSeenAt),
+      heldWakers: readHeldWakers(d.heldWakers),
       overdue: d.overdue === true,
       overdueAt: str(d.overdueAt),
       auto: d.auto === true,
@@ -423,6 +424,23 @@ const HELD_KEYS: Record<string, MsgKey> = {
 export function heldWords(d: Pick<MemoDelivery, "state" | "heldBy">): MsgKey | null {
   if (d.state !== "open" || !d.heldBy) return null;
   return HELD_KEYS[d.heldBy] ?? "memo.d_held_unknown";
+}
+
+/** The watches named in a wakers hold, tolerating a missing or malformed field. */
+function readHeldWakers(v: unknown): MemoDelivery["heldWakers"] {
+  if (!Array.isArray(v)) return [];
+  const out: MemoDelivery["heldWakers"] = [];
+  for (const h of v) {
+    const id = isObj(h) ? str(h.id).trim() : "";
+    if (isObj(h) && id !== "") out.push({ id, source: str(h.source).trim(), timer: h.timer === true, builtin: h.builtin === true });
+  }
+  return out;
+}
+
+/** "id (source), …" for a run held by a watch; "" when it is not, or none was named. */
+export function heldNames(d: Pick<MemoDelivery, "state" | "heldBy" | "heldWakers">): string {
+  if (d.state !== "open" || d.heldBy !== "wakers" || !Array.isArray(d.heldWakers)) return "";
+  return d.heldWakers.map((h) => (h.source ? `${h.id} (${h.source})` : h.id)).join(", ");
 }
 
 const TURN_KEYS: Record<string, MsgKey> = {

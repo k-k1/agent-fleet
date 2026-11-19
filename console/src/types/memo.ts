@@ -232,6 +232,9 @@ export interface MemoDelivery {
   /** The session of the tree that holds it, and when that was read. */
   heldSession: string;
   heldSeenAt: string;
+  /** The watches and timers behind a "wakers" hold (id and source only). Empty from an older
+   *  Agent or Control Plane, and for an old row. */
+  heldWakers: { id: string; source: string; timer: boolean; builtin: boolean }[];
   overdue: boolean;
   overdueAt: string;
   /** Started by the Control Plane itself rather than by "Run now". */
