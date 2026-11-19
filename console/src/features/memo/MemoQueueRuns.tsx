@@ -20,17 +20,20 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
   const [rows, setRows] = useState<MemoDelivery[] | null>(null);
   const [failed, setFailed] = useState(false);
   const alive = useRef(true);
+  // Only the newest read may land: a slow earlier one must not overwrite a later answer.
+  const seq = useRef(0);
 
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     try {
       const got = readDeliveries(await memoQueueDeliveries(categoryId));
-      if (!alive.current) return;
+      if (!alive.current || mine !== seq.current) return;
       if (got) {
         setRows(got);
         setFailed(false);
       } else setFailed(true);
     } catch {
-      if (alive.current) setFailed(true);
+      if (alive.current && mine === seq.current) setFailed(true);
     }
   }, [categoryId]);
 
@@ -78,6 +81,7 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
             role={openable ? "button" : undefined}
             tabIndex={openable ? 0 : undefined}
             title={tip || undefined}
+            aria-label={openable ? [k ? tr(k) : d.state, fmtDateTime(d.createdAt), tr("memo.d_open_session", { name: d.session })].join(", ") : undefined}
             onClick={openable ? open : undefined}
             onKeyDown={
               openable
@@ -101,7 +105,7 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
         );
       })}
       {rows.length > SHOWN && (
-        <button type="button" className="linkish sm memo-runs-all" onClick={onShowAll}>
+        <button type="button" className="linkish memo-runs-all" onClick={onShowAll}>
           {tr("memo.d_runs_all", { count: rows.length })}
         </button>
       )}

@@ -1236,6 +1236,7 @@ button.memo-reflink-key {
   color: var(--muted);
 }
 .memo-runs-err {
+  font-size: 10.5px;
   color: var(--warn, var(--accent));
 }
 .memo-run {
@@ -1277,5 +1278,13 @@ button.memo-reflink-key {
   color: var(--muted);
 }
 .memo-runs-all {
+  font-size: 10.5px;
   align-self: flex-start;
+}
+/* The row is one line: only the hold reason ellipsizes, the chips keep their width. */
+.memo-run > .memo-d-state,
+.memo-run > .memo-d-tag,
+.memo-run-time {
+  flex: none;
+  white-space: nowrap;
 }

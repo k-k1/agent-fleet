@@ -1213,6 +1213,11 @@ describe("inline run list under a category", () => {
     });
     expect(openSessionChat).toHaveBeenCalledWith("s-d1");
     openSessionChat.mockClear();
+    await act(async () => {
+      rows[0].dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+    });
+    expect(openSessionChat).toHaveBeenCalledWith("s-d1");
+    openSessionChat.mockClear();
     expect(rows[1].getAttribute("role")).toBeNull();
     await click(rows[1]);
     expect(openSessionChat).not.toHaveBeenCalled();
@@ -1227,6 +1232,27 @@ describe("inline run list under a category", () => {
     servedDeliveries = { error: { code: "x", message: "boom" } };
     await click(toggle());
     expect(document.querySelector(".memo-runs [role=alert]")?.textContent).toContain(t("memo.d_load_failed"));
+  });
+
+  it("keeps the last good rows when a later poll fails, and clears the alert when it recovers", async () => {
+    servedDeliveries = [run("d1")];
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await render();
+      await click(toggle());
+      expect(document.querySelectorAll(".memo-run")).toHaveLength(1);
+      servedDeliveries = { error: { code: "x", message: "boom" } };
+      await act(async () => void vi.advanceTimersByTime(30000));
+      await settle();
+      expect(document.querySelectorAll(".memo-run")).toHaveLength(1);
+      expect(document.querySelector(".memo-runs [role=alert]")).not.toBeNull();
+      servedDeliveries = [run("d1")];
+      await act(async () => void vi.advanceTimersByTime(30000));
+      await settle();
+      expect(document.querySelector(".memo-runs [role=alert]")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("caps the list at five and sends \"show all\" to the full dialog", async () => {
