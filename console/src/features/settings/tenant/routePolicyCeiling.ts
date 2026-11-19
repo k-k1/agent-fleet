@@ -24,14 +24,52 @@ export function allows(r: RouteRule, id: string, vocab: Vocabulary): boolean {
 }
 
 // The CP compares patterns as it stores them (routepolicy.NormalizePattern): lower case, no
-// trailing dot. Without this, "LLM.Corp.Example." reads as outside "*.corp.example" and match would
-// drop a row the CP accepts. (Its punycode step is left out: the Console sends what was typed.)
-const norm = (s: string) => s.trim().toLowerCase().replace(/\.$/, "");
+// trailing dot, an internationalised name in its punycode form. Without this, "LLM.Corp.Example."
+// reads as outside "*.corp.example", and "bücher.example" outside "*.xn--bcher-kva.example".
+//
+// The punycode step is the platform's URL parser (UTS 46 ToASCII), which is more lenient than the
+// CP's idna.Lookup profile (STD3 rules, hyphen checks). So its output is re-checked label by label
+// against the strict subset, and whatever the CP might refuse yields null: a null never matches
+// anything, so the check answers "exceeds" and is never more permissive than the CP.
+function asciiHost(s: string): string | null {
+  if (s === "" || /[\s/:@?#[\]%*\\]/.test(s)) return null;
+  let h: string;
+  try {
+    h = new URL(`http://${s}/`).hostname;
+  } catch {
+    return null;
+  }
+  const labels = h.split(".");
+  // A numeric last label is an IPv4 address to the URL parser ("0x7f.1" becomes 127.0.0.1) but a
+  // plain name to the CP, so only the canonical dotted quad is accepted as one.
+  if (/^(0x[0-9a-f]*|\d+)$/.test(labels[labels.length - 1]) && h !== s) return null;
+  for (const l of labels) {
+    if (!/^[a-z0-9-]+$/.test(l) || l.startsWith("-") || l.endsWith("-")) return null;
+    if (l.slice(2, 4) === "--" && !l.startsWith("xn--")) return null;
+  }
+  return h;
+}
+
+// normPattern is the CP's canonical spelling of one pattern, or null when it might refuse it.
+function normPattern(raw: string): string | null {
+  let s = raw.trim().toLowerCase();
+  const wild = s.startsWith("*.");
+  if (wild) s = s.slice(2);
+  if (s.startsWith("[") && s.endsWith("]")) s = s.slice(1, -1);
+  // An IP literal stays as typed (the CP's canonical text is the same for what an administrator
+  // types); a wildcard over one is refused by the CP.
+  if (s.includes(":") || /^\d+\.\d+\.\d+\.\d+$/.test(s)) return wild ? null : s;
+  s = s.replace(/\.$/, "");
+  const h = asciiHost(s);
+  return h === null ? null : (wild ? "*." : "") + h;
+}
 
 // covers mirrors routepolicy's covers: an exact host or a "*." pattern holding another pattern.
+// A pattern the CP might refuse is covered by nothing.
 function covers(outer: string, inner: string): boolean {
-  const o = norm(outer);
-  const i = norm(inner);
+  const o = normPattern(outer);
+  const i = normPattern(inner);
+  if (o === null || i === null) return false;
   if (i.startsWith("*.")) {
     return o.startsWith("*.") && (i.slice(2) === o.slice(2) || i.slice(2).endsWith("." + o.slice(2)));
   }
