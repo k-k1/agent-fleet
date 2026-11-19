@@ -429,15 +429,16 @@ func (a memoAPI) endDelivery(w http.ResponseWriter, r *http.Request, _ store.Ide
 			return memoTxFail(&apiError{http.StatusConflict, "delivery_not_open", "the run has not started a session yet"})
 		}
 		won, err := tx.MoveDelivery(id, store.DeliveryOpen, store.DeliveryClosed, "", store.DeliveryEnded, store.DeliveryTS(time.Now()))
-		if err != nil || !won {
+		if err != nil {
 			return err
 		}
-		if err := tx.SetDeliveryRetirePending(id); err != nil {
-			return err
+		// SetDeliveryRetireForced also marks the retire pending, so no separate pending write.
+		if won {
+			if err := tx.SetDeliveryRetireForced(id); err != nil {
+				return err
+			}
 		}
-		if err := tx.SetDeliveryRetireForced(id); err != nil {
-			return err
-		}
+		// Re-read: a lost move (the tick closed it first) must answer the row as it is now.
 		out, _, err = tx.GetDelivery(id)
 		return err
 	})

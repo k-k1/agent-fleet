@@ -609,7 +609,7 @@ describe("deliveries and Run now", () => {
 
 describe("every delivery state and outcome has a member's word", () => {
   const states = ["claimed", "sending", "open"];
-  const outcomes = ["clean", "failed", "aborted", "unknown", "not_sent"];
+  const outcomes = ["clean", "failed", "aborted", "unknown", "not_sent", "ended"];
   it("maps each open state and each closed outcome to a catalogue key whose text is not the identifier", () => {
     const all = [...states.map((state) => ({ state, outcome: "" })), ...outcomes.map((outcome) => ({ state: "closed", outcome }))];
     for (const d of all) {
