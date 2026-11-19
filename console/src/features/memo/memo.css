@@ -1205,3 +1205,86 @@ button.memo-reflink-key {
 .memo-sent-fold:hover {
   color: var(--fg);
 }
+
+/* Inline run list under an auto-run category (same look as the schedule run rows). */
+.memo-runs-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 1px 4px;
+  margin: 2px 0 0 18px;
+  font-size: 10.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.memo-runs-toggle:hover {
+  color: var(--fg);
+}
+.memo-runs {
+  margin: 3px 0 4px 21px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.memo-runs-note {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.memo-runs-err {
+  font-size: 10.5px;
+  color: var(--warn, var(--accent));
+}
+.memo-run {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  padding: 1px 4px;
+  margin: 0 -4px;
+  border-radius: 4px;
+  min-width: 0;
+}
+.memo-run.is-openable {
+  cursor: pointer;
+}
+.memo-run.is-openable:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.1));
+}
+.memo-run.is-openable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.memo-run-time {
+  color: var(--fg);
+  flex: 0 0 auto;
+}
+.memo-run-held {
+  color: var(--muted);
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memo-run-open {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.memo-runs-all {
+  font-size: 10.5px;
+  align-self: flex-start;
+}
+/* The row is one line: only the hold reason ellipsizes, the chips keep their width. */
+.memo-run > .memo-d-state,
+.memo-run > .memo-d-tag,
+.memo-run-time {
+  flex: none;
+  white-space: nowrap;
+}
