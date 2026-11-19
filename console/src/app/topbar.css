@@ -424,7 +424,7 @@
   border-radius: 999px;
   font-size: 10px;
   font-weight: 600;
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent, #6b9fff);
 }
 .acct-update .codicon {

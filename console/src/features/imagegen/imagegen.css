@@ -1296,7 +1296,7 @@
   line-height: 1;
   padding: 2px 5px;
   border-radius: 8px;
-  color: var(--bg);
+  color: var(--on-accent);
   background: var(--accent);
 }
 
