@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SURFACE_COLORS } from "./options.ts";
-import { ON_ACCENT_DARK, ON_ACCENT_LIGHT, contrastRatio, onAccentColor, relativeLuminance } from "./onAccent.ts";
+import { ON_ACCENT_DARK, ON_ACCENT_LIGHT, contrastRatio, hoverFillColor, onAccentColor, relativeLuminance } from "./onAccent.ts";
 
 const L = ON_ACCENT_LIGHT;
 const D = ON_ACCENT_DARK;
@@ -31,7 +31,7 @@ describe("onAccentColor", () => {
   });
 
   it("returns null for input it cannot read, so the CSS falls back", () => {
-    for (const bad of ["", null, undefined, "transparent", "hsl(150 60% 45%)", "rgb(1,2,3)", "#12", "#12345", "#gggggg", "green"]) {
+    for (const bad of ["", null, undefined, "transparent", "hsl(150 60% 45%)", "rgb(1,2,3)", "#12", "#12345", "#2fb872ff", "   ", "#gggggg", "green"]) {
       expect(onAccentColor(bad as string | null | undefined)).toBeNull();
     }
   });
@@ -49,5 +49,14 @@ describe("onAccentColor", () => {
       const on = onAccentColor(c.accent)!;
       expect(contrastRatio(c.accent, on), c.id).toBeGreaterThanOrEqual(4.5);
     }
+  });
+});
+
+describe("hoverFillColor", () => {
+  it("moves away from the text colour and is null for unreadable input", () => {
+    expect(hoverFillColor("#3b82f6")).toBe("color-mix(in srgb, #3b82f6 85%, #ffffff)");
+    expect(hoverFillColor("#1d4ed8")).toBe("color-mix(in srgb, #1d4ed8 85%, #000000)");
+    expect(hoverFillColor("hsl(1 2% 3%)")).toBeNull();
+    expect(hoverFillColor(null)).toBeNull();
   });
 });

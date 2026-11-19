@@ -37,7 +37,7 @@
   color: var(--on-topbar-accent, var(--on-accent));
 }
 .ui-btn-primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--topbar-accent) 85%, var(--fg));
+  background: var(--topbar-accent-hover, color-mix(in srgb, var(--topbar-accent) 85%, var(--fg)));
 }
 .ui-btn-ghost {
   background: transparent;

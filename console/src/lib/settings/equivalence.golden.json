@@ -12847,13 +12847,13 @@
   "light": {
    "theme": "light",
    "lang": "ja",
-   "style": "--lp-active-bg: #d8ccc0; --lp-hover-bg: #e7dacd; --topbar-bg: #dbe7fb; --topbar-accent: #3b82f6; --on-topbar-accent: #05070a; --leftpane-bg: #f6e8da; --lp-accent: #e0964a; --on-lp-accent: #05070a; --viewer-bg: #fceef8; --viewer-accent: #d872c8;",
+   "style": "--lp-active-bg: #d8ccc0; --lp-hover-bg: #e7dacd; --topbar-bg: #dbe7fb; --topbar-accent: #3b82f6; --on-topbar-accent: #05070a; --topbar-accent-hover: color-mix(in srgb, #3b82f6 85%, #ffffff); --leftpane-bg: #f6e8da; --lp-accent: #e0964a; --on-lp-accent: #05070a; --lp-accent-hover: color-mix(in srgb, #e0964a 85%, #ffffff); --viewer-bg: #fceef8; --viewer-accent: #d872c8;",
    "cjk": "@font-face{font-family:\"AF CJK Ambiguous\";src:local(\"Meiryo\"), local(\"Noto Sans Mono CJK JP\"), local(\"Noto Sans CJK JP\"), local(\"Hiragino Kaku Gothic ProN\"), local(\"Yu Gothic\"), local(\"Meiryo\"), local(\"MS Gothic\");unicode-range:U+2160-217F, U+2460-24FF, U+3200-32FF;}@font-face{font-family:\"AF CJK Ambiguous Prose\";src:local(\"Meiryo\"), local(\"Noto Sans Mono CJK JP\"), local(\"Noto Sans CJK JP\"), local(\"Hiragino Kaku Gothic ProN\"), local(\"Yu Gothic\"), local(\"Meiryo\"), local(\"MS Gothic\");unicode-range:U+2160-217F, U+2460-24FF, U+3200-32FF, U+25A0-25FF, U+2600-26FF;}"
   },
   "dark": {
    "theme": "dark",
    "lang": "en",
-   "style": "--lp-active-bg: #20303a; --lp-hover-bg: #1b2730; --topbar-bg: #16263f; --topbar-accent: #3b82f6; --on-topbar-accent: #05070a; --viewer-bg: #1d111a; --viewer-accent: #d872c8;",
+   "style": "--lp-active-bg: #20303a; --lp-hover-bg: #1b2730; --topbar-bg: #16263f; --topbar-accent: #3b82f6; --on-topbar-accent: #05070a; --topbar-accent-hover: color-mix(in srgb, #3b82f6 85%, #ffffff); --viewer-bg: #1d111a; --viewer-accent: #d872c8;",
    "cjk": null
   },
   "helpers": {

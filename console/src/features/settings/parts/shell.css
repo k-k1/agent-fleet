@@ -1112,3 +1112,11 @@ label.idp-flag {
 .admin-scopes code {
   font-family: var(--mono);
 }
+
+/* These sit on --accent, which .settings-modal rebinds to the user's top-bar accent; the theme's
+   --on-accent was not chosen for it. */
+.settings-modal .limit-edit .le-presets .chip.on,
+.settings-modal .machine-picker .le-presets .chip.on,
+.settings-modal .boost-policy .le-presets .chip.on {
+  color: var(--on-topbar-accent, var(--on-accent));
+}

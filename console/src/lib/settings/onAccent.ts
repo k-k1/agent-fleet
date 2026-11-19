@@ -37,6 +37,15 @@ export function contrastRatio(a: string, b: string): number | null {
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }
 
+// Hover fill: nudge the fill away from the text colour (toward white under dark text, toward
+// black under white text), so hovering never lowers the contrast the on-colour was picked for.
+// Mixing toward the theme's --fg did the opposite for dark text in the light theme.
+export function hoverFillColor(fill: string | null | undefined): string | null {
+  const on = onAccentColor(fill);
+  if (!fill || !on) return null;
+  return `color-mix(in srgb, ${fill.trim()} 85%, ${on === ON_ACCENT_DARK ? "#ffffff" : "#000000"})`;
+}
+
 // The foreground with the higher contrast against `fill`; null when `fill` is not a hex colour
 // (or is null — no colour chosen). A tie goes to the dark text.
 export function onAccentColor(fill: string | null | undefined): string | null {

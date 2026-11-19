@@ -12,7 +12,7 @@ import {
   CJK_UNICODE_RANGE_PROSE,
   SURFACE_COLORS,
 } from "./options.ts";
-import { onAccentColor } from "./onAccent.ts";
+import { hoverFillColor, onAccentColor } from "./onAccent.ts";
 import type { Settings } from "./prefs.ts";
 
 // Generic CJK chain always appended after the chosen font, so someone who picks "Meiryo" on a
@@ -175,6 +175,7 @@ export function applyTheme(s: Settings): void {
   const topAccent = surfaceAccent(s.topbarColor);
   setVar("--topbar-accent", topAccent);
   setVar("--on-topbar-accent", onAccentColor(topAccent));
+  setVar("--topbar-accent-hover", hoverFillColor(topAccent));
   const lp = surfaceValue(s.leftpaneColor, theme);
   setVar("--leftpane-bg", lp);
   // Make the left-pane row highlight follow the chosen surface color (sessions /
@@ -195,6 +196,7 @@ export function applyTheme(s: Settings): void {
   const lpAccent = surfaceAccent(s.leftpaneColor);
   setVar("--lp-accent", lpAccent);
   setVar("--on-lp-accent", onAccentColor(lpAccent));
+  setVar("--lp-accent-hover", hoverFillColor(lpAccent));
   // File viewer background, derived from the chosen surface: lighter than the
   // surfaces in light theme (toward white), darker in dark theme (toward black).
   // Unset => theme --bg.

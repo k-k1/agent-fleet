@@ -527,7 +527,7 @@
 .memo-add .ui-btn-primary:hover:not(:disabled),
 .memo-edit-row .ui-btn-primary:hover:not(:disabled),
 .memo-selbar .ui-btn-primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--lp-accent, var(--accent)) 85%, var(--fg));
+  background: var(--lp-accent-hover, color-mix(in srgb, var(--lp-accent, var(--accent)) 85%, var(--fg)));
 }
 /* "clear selection" as a quiet ghost, not a loud accent link. */
 .memo-selbar-clear {
