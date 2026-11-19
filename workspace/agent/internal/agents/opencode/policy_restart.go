@@ -103,10 +103,18 @@ func (s *Supervisor) SecurityRestart(reason string) bool {
 	s.stopping = true
 	s.askedStop = cmd
 	s.mu.Unlock()
+	// securing is cleared in the same critical section that records the daemon gone, never after
+	// the reconcile is started: the reconcile's Ensure would otherwise be refused by this
+	// restart's own flag and, for a managed session, leave it stopped until its next resume. The
+	// flag stays up for every other caller for as long as the process is being stopped. A deferred
+	// clear would be a second, late write that could wipe the flag of a later restart.
+	cleared := false
 	defer func() {
-		s.mu.Lock()
-		s.securing = false
-		s.mu.Unlock()
+		if !cleared {
+			s.mu.Lock()
+			s.securing = false
+			s.mu.Unlock()
+		}
 	}()
 
 	log.Printf("opencode serve: security restart (%s) — aborting every turn", reason)
@@ -115,14 +123,26 @@ func (s *Supervisor) SecurityRestart(reason string) bool {
 	if cmd == nil {
 		s.mu.Lock()
 		s.stopping = false
+		s.securing = false
+		cleared = true
 		s.mu.Unlock()
 		return false
 	}
 	stopProcess(cmd, exited, addr)
-	s.finishTeardown(cmd)
-	goReconcile("security restart: " + reason)
+	// One critical section with finishTeardown's own: clearing securing before up/cmd are reset
+	// would let an Ensure see the stale daemon and start a second security restart on it.
+	s.mu.Lock()
+	s.securing = false
+	cleared = true
+	s.finishTeardownLocked(cmd)
+	s.mu.Unlock()
+	startReconcile("security restart: " + reason)
 	return true
 }
+
+// startReconcile starts the reconcile that follows a security restart; a var so a test can run
+// it synchronously and see the supervisor's state at the instant it starts.
+var startReconcile = goReconcile
 
 // goSecurityRestart runs SecurityRestart in the background, tracked by reconcileInflight like the
 // reconcile it starts, so a test that triggered it can wait for both.

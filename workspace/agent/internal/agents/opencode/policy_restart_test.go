@@ -101,6 +101,12 @@ func TestTighterPolicyRestartsTheServeWithoutADrain(t *testing.T) {
 	if d := time.Since(start); d > 10*time.Second {
 		t.Errorf("the security restart waited %v, as a drain would", d)
 	}
+	// The adopted daemon (no process handle) path must not leave the restart flags set.
+	s.mu.Lock()
+	if s.securing || s.stopping {
+		t.Errorf("flags left set after an adopted-daemon restart: securing=%v stopping=%v", s.securing, s.stopping)
+	}
+	s.mu.Unlock()
 
 	// A daemon of the current generation, owned by this supervisor, while a replacement runs.
 	cmd := exec.Command("sleep", "60")
@@ -149,4 +155,46 @@ func TestStaleGenerationIsReplacedUnderARestriction(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Error("the stale daemon was not stopped")
+}
+
+// The reconcile a security restart starts must not be refused by the restart's own securing
+// flag: Ensure refuses while securing is set, and a managed session whose reconcile was refused
+// stays stopped until its next resume. startReconcile is stubbed to run synchronously, so the
+// supervisor is inspected at the exact instant the reconcile would start, before SecurityRestart
+// returns.
+func TestSecurityRestartClearsSecuringBeforeTheReconcileStarts(t *testing.T) {
+	isolatedHome(t)
+	t.Setenv("AF_SECRET_KEY", "")
+	dead := httptest.NewServer(http.NotFoundHandler())
+	t.Setenv(serveAddrEnv, dead.URL)
+	dead.Close() // nothing listens: stopProcess does not wait, healthy() is false
+	useIsolationPolicy(t, anthropicOnly)
+	cmd := exec.Command("sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+
+	s := &Supervisor{up: true, cmd: cmd, credGen: "stale"}
+	started := false
+	prev := startReconcile
+	startReconcile = func(string) {
+		started = true
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.securing || s.stopping || s.up || s.cmd != nil {
+			t.Errorf("at reconcile start: securing=%v stopping=%v up=%v cmd=%v", s.securing, s.stopping, s.up, s.cmd)
+		}
+		if err := s.policyAdmitLocked(serveAddr()); err != nil {
+			t.Errorf("the follow-up reconcile's Ensure was refused: %v", err)
+		}
+	}
+	t.Cleanup(func() { startReconcile = prev })
+
+	if !s.SecurityRestart("test") {
+		t.Fatal("SecurityRestart stopped no process")
+	}
+	if !started {
+		t.Fatal("no reconcile was started")
+	}
 }
