@@ -3261,3 +3261,14 @@ phase, so this changes no rendering.
 
 Sessions recorded by a host that did not yet put commentary on the wire keep their wire items but
 lose the commentary the log reader used to splice in.
+
+### Note 2026-11-20 — the bundle moves to 1.4.24-R9131.1 (#4436)
+
+`muse-contract.yml` went red on 1.4.24-R9131.1 at "the binary's schema is compatible with the
+generated types". The checked-in bundle predates that export. Four additions, none of them a
+type the client decodes: `ApprovalCuaBrowser` (new type), `ApprovalCuaCardFacts.browser`,
+`Item.terminalRowBeforeItemId` and `SchemaInfo.compatibilityEpoch` (all optional). The test's
+`break: compatibilityEpoch: changed` line was the new property showing up on the binary's
+side only; it clears once the bundle is re-exported (measured with `AF_MUSE_BIN` on the new
+binary). The manifest's `fingerprint` again comes from the release manifest, since the export
+omits it. The additions are generated but unused; the pin bump is cli-pin-bump's.

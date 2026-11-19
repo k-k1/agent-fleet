@@ -2962,3 +2962,13 @@ commentary はその位置に普通の回答テキストとして出る。
 
 commentary をまだワイヤに載せていなかったホストで記録されたセッションは、ワイヤの item は残るが、
 ログリーダーが差し込んでいた commentary は表示されなくなる。
+
+### 注記 2026-11-20 — バンドルを 1.4.24-R9131.1 へ更新（#4436）
+
+`muse-contract.yml` が 1.4.24-R9131.1 の「バイナリのスキーマが生成型と互換」ステップで赤になった。
+チェックイン済みのバンドルがこの export より古いため。追加は 4 件で、いずれもクライアントが decode する型ではない:
+`ApprovalCuaBrowser`（新規型）、`ApprovalCuaCardFacts.browser`、`Item.terminalRowBeforeItemId`、
+`SchemaInfo.compatibilityEpoch`（いずれも optional）。テストの `break: compatibilityEpoch: changed` は、
+新しいプロパティがバイナリ側にだけある状態の表れで、バンドルを再 export すれば消える（新バイナリを
+`AF_MUSE_BIN` に指定して実測）。manifest の `fingerprint` は export に含まれないので今回もリリース manifest から取る。
+追加分は生成されるが未使用。ピンの更新は cli-pin-bump の仕事。

@@ -8,7 +8,7 @@ import "encoding/json"
 // rendered from. A different fingerprint only says the bundle is behind the host;
 // whether these types can still speak to it is schemagen.Compare's question, asked of
 // the installed binary by fingerprint_test.go.
-const SchemaFingerprint = "sha256:283b1b125dcc9172928fb5d6711a92a353796d030a7c186988ed527a13cf07f0"
+const SchemaFingerprint = "sha256:b7fb9137267aa35c92424df37a5ac56287006a0e546b197bf0930d593fecbdb1"
 
 // SchemaVersion is MSP's own version, carried in `initialize`.
 const SchemaVersion = 1
@@ -349,9 +349,25 @@ var ApprovalChoiceScopeValues = []ApprovalChoiceScope{
 	ApprovalChoiceScopeLocalPersistent,
 }
 
+// ApprovalCuaBrowser A browser card's notices: the first time Computer Use uses a browser on this Mac, and
+// the session's consent before it opens its own window in a browser that comes to the
+// front when it does. A client words each flag itself.
+type ApprovalCuaBrowser struct {
+	// Show the first-use notice: Computer Use hasn't used this browser on this Mac before and
+	// will act signed in as the person.
+	FirstUse *bool `json:"firstUse,omitempty"`
+	// The browser's display name.
+	Name string `json:"name"`
+	// Show the window consent line: Computer Use will open its own window in this browser and
+	// bring the browser to the front, once per session.
+	WindowConsent *bool `json:"windowConsent,omitempty"`
+}
+
 // ApprovalCuaCardFacts One Computer Use card's facts. Empty collections and absent rows are omitted, never
 // `null`.
 type ApprovalCuaCardFacts struct {
+	// For a browser card, the notices it carries; absent unless at least one shows.
+	Browser *ApprovalCuaBrowser `json:"browser,omitempty"`
 	// The data the call would send that the card must name; a card with any offers only
 	// one-shot choices.
 	Data []ApprovalCuaDataFact `json:"data,omitempty"`
@@ -2636,9 +2652,13 @@ type Item struct {
 	// `reminderChild`: the linked task id. Unresolved `bodyCompletion` items also set it
 	// (FR-87062-1: the diagnostic names the task whose join did not hold).
 	TaskID *string `json:"taskId,omitempty"`
-	// Terminal `toolCall`, or a `subagent` whose result drained (#70249): the item after whose
-	// rows the terminal row renders (tdd SS4.5.21, ADR 56496 D2/D3).
+	// Terminal monitor `toolCall`, drained `subagent`, `backgroundTerminalCompletion`, or
+	// Finished-row `toolCall`: render after the target's logical rows (tdd SS4.5.21, ADR 56496
+	// D2/D3, OD #738).
 	TerminalRowAfterItemID *string `json:"terminalRowAfterItemId,omitempty"`
+	// `backgroundTerminalCompletion`, or a terminal `toolCall` that already shows a Finished
+	// row: render before the target's whole coalesced region (tdd SS4.5.21, ADR 50041 D6).
+	TerminalRowBeforeItemID *string `json:"terminalRowBeforeItemId,omitempty"`
 	// `userMessage`: the prompt text as submitted. `agentMessage`: the accumulated reply,
 	// streamed via `item/delta` field `"text"`. `reasoning`: raw committed reasoning text
 	// where the provider exposes it (never streamed in v1, tdd SS4.5.4).
@@ -4352,6 +4372,13 @@ var SandboxUnavailableReasonValues = []SandboxUnavailableReason{
 // raw-log `schema_version`, and the 0.x/1.0 stability posture, which is not on the wire at
 // all (INV-006a).
 type SchemaInfo struct {
+	// The host's declared compatibility epoch (spec 206 amendment #22936 FR-22936-2, ADR 22936
+	// D2): the count of declared non-additive advances of the stable surface. A client reads a
+	// `fingerprint` mismatch by comparing this with its own pin: equal, every difference is
+	// additive; different, a declared non-additive advance lies between. Additive-optional: a
+	// host that predates the member omits it, and the reader treats absence as unknown, never
+	// a guessed value (SS1.5.4).
+	CompatibilityEpoch *int64 `json:"compatibilityEpoch,omitempty"`
 	// `sha256:<64 lower hex>` content hash of this server binary's experimental-surface bundle
 	// (ADR 97527 D5). Additive-optional: a host that predates the member omits it, and the
 	// reader treats absence as unknown — never a guessed value (SS1.5.4).
@@ -5392,8 +5419,7 @@ type SessionSideChatParams struct {
 // the **new** side session, whose `session.sideFrom` carries the provenance. The side
 // opens empty.
 type SessionSideChatResult struct {
-	// The served history (inline; SS2.5.7's empty-items half is #49416 — inherited turns
-	// surface until the boundary-aware fold lands).
+	// The served history: inline, with empty items, since the side opens empty (SS2.5.7).
 	History SessionHistory `json:"history"`
 	// The late-joiner pointer set.
 	PendingRequests []PendingRequestPointer `json:"pendingRequests"`
