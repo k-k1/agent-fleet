@@ -52,6 +52,9 @@ var workspaceRoutes = map[string]bool{
 	"POST /internal/memos/flush":    true,
 	"PATCH /internal/memos/{id}":    true,
 	"DELETE /internal/memos/{id}":   true,
+	// A queue run's hand-back, relayed by the Agent's POST /memos/defer (ADR 0137, addendum
+	// 2026-11-19, part B).
+	"POST /internal/memo-deliveries/{id}/defer": true,
 	// Schedules (AF_SCHEDULE_TOKEN).
 	"GET /internal/schedules":               true,
 	"POST /internal/schedules":              true,
