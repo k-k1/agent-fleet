@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 573
+# count: 581
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -97,6 +97,10 @@ agentCatalogWire.sessions[].subdir string,omitempty
 agentCatalogWire.sessions[].title string,omitempty
 agentCatalogWire.sessions[].titleSetBy string,omitempty
 agentCatalogWire.sessions[].tokenSpends [number],omitempty
+agentCatalogWire.sessions[].wakers.holders[].builtin bool,omitempty
+agentCatalogWire.sessions[].wakers.holders[].id string
+agentCatalogWire.sessions[].wakers.holders[].source string
+agentCatalogWire.sessions[].wakers.holders[].timer bool,omitempty
 agentCatalogWire.sessions[].wakers.listed number,omitempty
 agentCatalogWire.sessions[].wakers.timers number
 agentCatalogWire.sessions[].wakers.watches number
@@ -485,6 +489,10 @@ sessionWire.subdir string,omitempty
 sessionWire.title string,omitempty
 sessionWire.titleSetBy string,omitempty
 sessionWire.tokenSpends [number],omitempty
+sessionWire.wakers.holders[].builtin bool,omitempty
+sessionWire.wakers.holders[].id string
+sessionWire.wakers.holders[].source string
+sessionWire.wakers.holders[].timer bool,omitempty
 sessionWire.wakers.listed number,omitempty
 sessionWire.wakers.timers number
 sessionWire.wakers.watches number
