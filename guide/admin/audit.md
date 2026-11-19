@@ -56,7 +56,7 @@ Only operations that change state are recorded.
 | `membership.*`, `member.*` | Members added and removed, roles, limits |
 | `tenant.*`, `limit_board.set` | Tenant settings changes (`tenant.external_memory`, `tenant.watch_sources` and so on) |
 | `pat.*` | Tokens issued in this tenant, created and revoked |
-| `workspace.*` | Workspaces stopped, cleaned and destroyed; an Agent that stopped answering, came back, or was stopped by the auto-stop; a stopped workspace that auto-run asked to start only to settle a run (the request is recorded; the start itself may still fail) (`workspace.queue_settle_wake`, actor `system`, detail: the category and the runs that needed it) |
+| `workspace.*` | Workspaces stopped, cleaned and destroyed; an Agent that stopped answering, came back, or was stopped by the auto-stop; a stopped workspace that auto-run asked to start only to settle a run (the request is recorded; the start itself may still fail) (`workspace.queue_settle_wake`, actor `system`, detail: the category and the runs that needed it); a stopped workspace that auto-run asked to start only to read the pull requests a waiting memo depends on (`workspace.queue_pr_wake`, actor `system`, detail: the category and the runs whose pull requests are read) |
 
 - **No secret value is written.** A credential row's target is only the Git host, the variable name or the MCP server ID
 - A write the workspace answered with an error leaves no row

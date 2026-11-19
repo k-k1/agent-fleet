@@ -12,24 +12,26 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/branchpr"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // snapshotFixture fakes the provider caches and the origin of every working copy.
 type snapshotFixture struct {
-	prs    map[branchpr.Key]*branchpr.PR // answered keys; a nil value answers "no PR"
-	err    error
-	asked  []branchpr.Key
-	since  []time.Time
-	origin originRepo
+	prs      map[branchpr.Key]*branchpr.PR // answered keys; a nil value answers "no PR"
+	err      error
+	asked    []branchpr.Key
+	since    []time.Time
+	origin   originRepo
+	originOK bool
 }
 
 func newSnapshotFixture(t *testing.T) *snapshotFixture {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
-	f := &snapshotFixture{prs: map[branchpr.Key]*branchpr.PR{}, origin: originRepo{"github", "o/r"}}
-	of, oo := prSnapshotFetch, originOf
+	f := &snapshotFixture{prs: map[branchpr.Key]*branchpr.PR{}, origin: originRepo{"github", "o/r"}, originOK: true}
+	of, oo := prSnapshotFetch, prSnapshotOrigin
 	prSnapshotFetch = func(_ context.Context, _ string, keys []branchpr.Key, since time.Time) (map[branchpr.Key]*branchpr.PR, error) {
 		f.asked = append(f.asked, keys...)
 		f.since = append(f.since, since)
@@ -44,8 +46,8 @@ func newSnapshotFixture(t *testing.T) *snapshotFixture {
 		}
 		return out, nil
 	}
-	originOf = func(string, time.Time) originRepo { return f.origin }
-	t.Cleanup(func() { prSnapshotFetch, originOf = of, oo })
+	prSnapshotOrigin = func(string) (originRepo, bool) { return f.origin, f.originOK }
+	t.Cleanup(func() { prSnapshotFetch, prSnapshotOrigin = of, oo })
 	return f
 }
 
@@ -162,5 +164,66 @@ func TestPRSnapshotLaterReadsAskByNumber(t *testing.T) {
 	}
 	if rec, _, code := postSnapshot(t, PRSnapshotRequest{Since: snapshotSince, PRs: []PRSnapshotKey{{"gitlab", "o/r#4"}}}); rec.Code != http.StatusBadRequest || code != prSnapshotBadRequest {
 		t.Fatalf("another provider: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The branch the session started on is asked beside the one the copy is on now: a session that
+// opened its PR and then left the branch, or detached HEAD, still has that PR.
+func TestPRSnapshotAsksTheStartBranchToo(t *testing.T) {
+	f := newSnapshotFixture(t)
+	dir := t.TempDir()
+	if _, err := gitx.Run(dir, "init", "-q", "-b", "main"); err != nil {
+		t.Skip("no git: ", err)
+	}
+	if _, err := gitx.Run(dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := gitx.GitDirInfo(dir); b != "main" {
+		t.Fatalf("the copy is on %q, want main", b)
+	}
+	session.WriteMeta(session.Meta{Name: "s", Kind: session.KindClaude, Dir: dir, Branch: "feature/4540"})
+	f.prs[branchpr.Key{Repo: "o/r", Branch: "feature/4540"}] = ghPR(11, "open")
+	f.prs[branchpr.Key{Repo: "o/r", Branch: "main"}] = nil // a default branch: no PR
+	rec, out, _ := postSnapshot(t, PRSnapshotRequest{Session: "s", Since: snapshotSince})
+	if rec.Code != http.StatusOK || len(out.PRs) != 1 || out.PRs[0].Key != "o/r#11" {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// An origin that could not be read, and a PR the provider returned that this Agent cannot name,
+// are errors: neither may read as "no PR".
+func TestPRSnapshotUnreadableOriginIsNotNoPR(t *testing.T) {
+	f := newSnapshotFixture(t)
+	session.WriteMeta(session.Meta{Name: "s", Kind: session.KindClaude, Dir: t.TempDir(), Branch: "feat"})
+	f.originOK = false
+	if rec, _, code := postSnapshot(t, PRSnapshotRequest{Session: "s", Since: snapshotSince}); rec.Code != http.StatusServiceUnavailable || code != prSnapshotUnreadable {
+		t.Fatalf("unreadable origin: %d %s", rec.Code, rec.Body.String())
+	}
+	f.originOK = true
+	f.prs[branchpr.Key{Repo: "o/r", Branch: "feat"}] = &branchpr.PR{Number: 4, State: "open", URL: "not a url"}
+	if rec, _, code := postSnapshot(t, PRSnapshotRequest{Session: "s", Since: snapshotSince}); rec.Code != http.StatusServiceUnavailable || code != prSnapshotUnanswered {
+		t.Fatalf("unnamed PR: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// prSnapshotOrigin tells a copy with no origin from one whose origin could not be read.
+func TestPRSnapshotOriginOfAWorkingTree(t *testing.T) {
+	plain := t.TempDir()
+	if o, ok := prSnapshotOrigin(plain); !ok || o.repo != "" {
+		t.Fatalf("not a working tree: %+v %v", o, ok)
+	}
+	repo := t.TempDir()
+	if _, err := gitx.Run(repo, "init", "-q"); err != nil {
+		t.Skip("no git: ", err)
+	}
+	if o, ok := prSnapshotOrigin(repo); !ok || o.repo != "" {
+		t.Fatalf("no origin: %+v %v", o, ok)
+	}
+	// A remote that is not origin is still no origin.
+	if _, err := gitx.Run(repo, "remote", "add", "upstream", "https://example.invalid/o/r.git"); err != nil {
+		t.Fatal(err)
+	}
+	if o, ok := prSnapshotOrigin(repo); !ok || o.repo != "" {
+		t.Fatalf("no origin beside another remote: %+v %v", o, ok)
 	}
 }

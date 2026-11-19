@@ -264,6 +264,14 @@ func TestMemoPRSnapshotWakes(t *testing.T) {
 		if got := e.prWakeAudits(); got != 1 {
 			t.Fatalf("%d audit entries", got)
 		}
+		// The workspace the wake started is read at once: nothing was stamped while it was stopped.
+		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("open") })
+		e.setRuntime(agent, "running")
+		e.autoTick(now.Add(time.Minute))
+		if n := len(agent.prCallsSoFar()); n != 1 {
+			t.Fatalf("%d reads right after the wake, want 1", n)
+		}
+		e.setRuntime(agent, "stopped")
 		if _, wakes := e.autoTick(now.Add(30 * time.Minute)); len(wakes) != 0 {
 			t.Fatal("woken twice within the hour")
 		}
@@ -271,7 +279,7 @@ func TestMemoPRSnapshotWakes(t *testing.T) {
 			t.Fatal("not woken again after the hour")
 		}
 		// 24 hours without a change: no wake, and the member is told once.
-		late := now.Add(25 * time.Hour)
+		late := now.Add(time.Minute + 25*time.Hour)
 		if _, wakes := e.autoTick(late); len(wakes) != 0 {
 			t.Fatal("woken for a snapshot unchanged for a day")
 		}
@@ -281,7 +289,7 @@ func TestMemoPRSnapshotWakes(t *testing.T) {
 		}
 		// A change starts the count again.
 		at := store.DeliveryTS(late)
-		if _, err := e.st.RecordPRSnapshot(context.Background(), da.ID, `[{"provider":"github","key":"o/r#7","state":"open"}]`, store.PRStateWaiting, at); err != nil {
+		if _, err := e.st.RecordPRSnapshot(context.Background(), da.ID, `[{"provider":"github","key":"o/r#7","state":"draft"}]`, store.PRStateWaiting, at); err != nil {
 			t.Fatal(err)
 		}
 		if _, wakes := e.autoTick(late.Add(3 * time.Hour)); len(wakes) != 1 {
@@ -320,4 +328,36 @@ func (e *deliveryEnv) prWakeAudits() int {
 		}
 	}
 	return n
+}
+
+// A message that began to wait a day after its prerequisite closed has not waited a day: its
+// snapshot still wakes the workspace, and nothing is told.
+func TestMemoPRSnapshotStaleCountsFromTheWait(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, _, _ := e.prChain("clean", now.Add(-25*time.Hour))
+		e.setRuntime(agent, "stopped")
+		if _, wakes := e.autoTick(now); len(wakes) != 1 {
+			t.Fatalf("%d wakes for a message that has just begun to wait", len(wakes))
+		}
+		if n := e.notificationsOf(memoPRStaleKind); n != 0 {
+			t.Fatalf("%d stale notices", n)
+		}
+	})
+}
+
+// A queue whose Agent was found without the queue report is not woken: it could not fire the
+// message once the PRs merged.
+func TestMemoPRSnapshotNoWakeWithoutTheReport(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, _, _ := e.prChain("clean", now.Add(-time.Minute))
+		if err := e.st.SetMemoQueueNoReport(context.Background(), q, store.DeliveryTS(now)); err != nil {
+			t.Fatal(err)
+		}
+		e.setRuntime(agent, "stopped")
+		if _, wakes := e.autoTick(now); len(wakes) != 0 || e.prWakes(now.Add(-time.Hour)) != 0 {
+			t.Fatalf("%d wakes for an Agent without the report", len(wakes))
+		}
+	})
 }

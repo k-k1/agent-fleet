@@ -150,9 +150,16 @@ const (
 )
 
 type entry struct {
-	pr      *PR
-	fetched time.Time // zero: never answered
-	asked   time.Time // last time a list wanted this key
+	pr *PR
+	// fetched is when the call that answered was sent (zero: never answered): an answer can only
+	// say what the provider knew when it was asked, never when it arrived.
+	fetched time.Time
+	// direct is when this key itself was last asked, by the same rule. fetched also moves when
+	// another key's answer names the same PR (storeLocked); direct does not, so a branch entry
+	// handed an old PR's answer by a read of that PR's number is not taken as a fresh read of the
+	// branch (FetchSince).
+	direct time.Time
+	asked  time.Time // last time a list wanted this key
 }
 
 func (e *entry) fresh(now time.Time, open time.Duration) bool {
@@ -295,7 +302,7 @@ func (c *Cache) refresh(due []Key) {
 		c.mu.Lock()
 		for _, e := range c.entries {
 			e.pr = nil
-			e.fetched = time.Time{}
+			e.fetched, e.direct = time.Time{}, time.Time{}
 		}
 		c.mu.Unlock()
 		return
@@ -304,10 +311,12 @@ func (c *Cache) refresh(due []Key) {
 		n := min(len(due), c.batch)
 		batch := due[:n]
 		due = due[n:]
+		started := time.Now()
 		got, failed, wait, err := c.fetch(token, batch)
 		if errors.Is(err, errUnauthorized) && c.Renew != nil {
 			if nt, rerr := c.Renew(token); rerr == nil && nt != "" && nt != token {
 				token = nt
+				started = time.Now()
 				got, failed, wait, err = c.fetch(token, batch)
 			}
 		}
@@ -318,14 +327,13 @@ func (c *Cache) refresh(due []Key) {
 		if len(failed) > 0 {
 			hold = failBackoff
 		}
-		now := time.Now()
 		c.mu.Lock()
 		for _, k := range batch {
 			if failed[k] {
 				continue // keeps its last answer, and stays due
 			}
 			if e := c.entries[k]; e != nil {
-				c.storeLocked(k, e, got[k], now)
+				c.storeLocked(k, e, got[k], started)
 			}
 		}
 		c.mu.Unlock()
@@ -336,9 +344,9 @@ func (c *Cache) refresh(due []Key) {
 // so a PR asked by number (a watch) and by branch (a session row) is one answer: whichever read
 // it last keeps the other fresh, and a Lookup does not ask GitHub again within its TTL. A branch
 // entry is matched by the PR it last held, so a branch that moved to another PR keeps its old
-// answer for one TTL more at worst.
-func (c *Cache) storeLocked(k Key, e *entry, pr *PR, now time.Time) {
-	e.pr, e.fetched = pr, now
+// answer for one TTL more at worst. sent is when the call that answered was sent.
+func (c *Cache) storeLocked(k Key, e *entry, pr *PR, sent time.Time) {
+	e.pr, e.fetched, e.direct = pr, sent, sent
 	if pr == nil || pr.Number <= 0 {
 		return
 	}
@@ -348,7 +356,7 @@ func (c *Cache) storeLocked(k Key, e *entry, pr *PR, now time.Time) {
 		}
 		same := ok.Number == pr.Number || (ok.Number == 0 && oe.pr != nil && oe.pr.Number == pr.Number)
 		if same {
-			oe.pr, oe.fetched = pr, now
+			oe.pr, oe.fetched = pr, sent
 		}
 	}
 }
@@ -362,7 +370,7 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 }
 
 // FetchSince is Fetch for a caller that may use only answers the provider gave after since: a
-// cached entry fetched before it is asked again however fresh it is. A queue's PR snapshot needs
+// cached entry whose own last call was sent before it is asked again however fresh it is. A queue's PR snapshot needs
 // this (ADR 0137, addendum 2026-11-19): a "no PR" cached before the delivery closed stays fresh for
 // settledTTL and would otherwise hide a PR opened just before the close.
 func (c *Cache) FetchSince(ctx context.Context, keys []Key, since time.Time) (map[Key]*PR, error) {
@@ -390,7 +398,7 @@ func (c *Cache) FetchSince(ctx context.Context, keys []Key, since time.Time) (ma
 	cached, allFresh := map[Key]*PR{}, true
 	for _, k := range keys {
 		e := c.entries[k]
-		if e == nil || !e.fresh(now, c.openTTL) || e.fetched.Before(since) {
+		if e == nil || !e.fresh(now, c.openTTL) || (!since.IsZero() && e.direct.Before(since)) {
 			allFresh = false
 			break
 		}
@@ -415,9 +423,11 @@ func (c *Cache) FetchSince(ctx context.Context, keys []Key, since time.Time) (ma
 	if token == "" {
 		return nil, errNotConnected
 	}
+	started := time.Now()
 	got, failed, _, err := c.fetch(token, keys)
 	if errors.Is(err, errUnauthorized) && c.Renew != nil {
 		if nt, rerr := c.Renew(token); rerr == nil && nt != "" && nt != token {
+			started = time.Now()
 			got, failed, _, err = c.fetch(nt, keys)
 		}
 	}
@@ -445,7 +455,7 @@ func (c *Cache) FetchSince(ctx context.Context, keys []Key, since time.Time) (ma
 			c.entries[k] = e
 		}
 		e.asked = now
-		c.storeLocked(k, e, got[k], now)
+		c.storeLocked(k, e, got[k], started)
 		out[k] = got[k]
 	}
 	return out, nil

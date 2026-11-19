@@ -1132,13 +1132,17 @@ func memoQueueWaiting(tx store.MemoWaitOps, q store.MemoQueue, tenantOn bool, pe
 
 const (
 	// memoPRSnapshotBudget bounds the pass that reads the snapshots, apart from the settle pass's
-	// own budget, and memoPRSnapshotsPerTick how many deliveries it reaches in a tick.
+	// own budget, and memoPRSnapshotsPerTick how many it reads in a tick. memoPRSnapshotsListed is
+	// how many due ones it looks at: those of a stopped workspace are passed over without a read,
+	// and must not use up the tick's reads.
 	memoPRSnapshotBudget   = 20 * time.Second
 	memoPRSnapshotsPerTick = 20
+	memoPRSnapshotsListed  = 200
 	// memoPRSnapshotEvery is the least time between two reads of one delivery's snapshot.
 	memoPRSnapshotEvery = 10 * time.Minute
-	// memoPRCallWait is the wait for the Agent, above its own 30 s bound on the provider.
-	memoPRCallWait = 40 * time.Second
+	// memoPRCallWait is the wait for the Agent, above its own 15 s bound on the provider and
+	// within the pass's budget.
+	memoPRCallWait = 18 * time.Second
 	// memoPRWakeEvery and memoPRWakesPerDay bound the wakes made only to read a snapshot, per
 	// member (provisional, ADR 0137 addendum 2026-11-19).
 	memoPRWakeEvery   = time.Hour
@@ -1179,27 +1183,31 @@ func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[stri
 	if ctx.Err() != nil {
 		return
 	}
-	ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, store.DeliveryTS(now.Add(-memoPRSnapshotEvery)), memoPRSnapshotsPerTick)
+	ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, store.DeliveryTS(now.Add(-memoPRSnapshotEvery)), memoPRSnapshotsListed)
 	if err != nil {
 		log.Printf("memo queue: list PR snapshots due: %v", err)
 		return
 	}
+	read := 0
 	for _, d := range ds {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
 			return
 		}
-		// Stamped before it is tried, as the first-turn pass stamps: the next tick goes on with
-		// the ones this one did not reach.
-		sctx, cancel := memoProgressCtx(ctx)
-		err := r.mgr.store.MarkPRTried(sctx, d.ID, store.DeliveryTS(time.Now()))
-		cancel()
-		if err != nil {
-			log.Printf("memo queue: delivery %s: stamp the PR snapshot tried: %v", d.ID, err)
-		}
+		// Only a read that is made is stamped: a stamp on a stopped workspace's snapshot would keep
+		// the wake made for it from being read for 10 minutes after the start.
 		v := r.view(ctx, views, d.MembershipID)
 		if v == nil || !v.liveOK || !v.prs {
 			continue
 		}
+		// Stamped before it is tried, as the first-turn pass stamps: the next tick goes on with
+		// the ones this one did not reach.
+		sctx, cancel := memoProgressCtx(ctx)
+		err := r.mgr.store.MarkPRTried(sctx, d.ID, store.DeliveryTS(now))
+		cancel()
+		if err != nil {
+			log.Printf("memo queue: delivery %s: stamp the PR snapshot tried: %v", d.ID, err)
+		}
+		read++
 		r.readPRSnapshot(ctx, v.res, d)
 	}
 }
@@ -1293,24 +1301,56 @@ func memoPRURL(u string) string {
 	return ""
 }
 
-// memoPRWaitStale reports whether a snapshot has gone memoPRStaleAfter without a change, counted
-// from its last change, else from the delivery's close. A stamp that cannot be read is stale: no
-// wake is made on a doubt.
-func memoPRWaitStale(d store.MemoDelivery, now time.Time) (bool, string) {
-	base := d.PRChangedAt
+// memoPRWaitStale reports whether a snapshot has gone memoPRStaleAfter without a change while a
+// message waited for it, counted from the latest of its last change (else the delivery's close)
+// and waitSince, when the longest-waiting message that waits for it began to wait: a dependent
+// added a day after its prerequisite closed has not waited a day. A stamp that cannot be read is
+// stale: no wake is made on a doubt. base names the occurrence.
+func memoPRWaitStale(d store.MemoDelivery, waitSince string, now time.Time) (stale bool, base string) {
+	base = d.PRChangedAt
 	if base == "" {
 		base = d.ClosedAt
 	}
-	t, err := time.Parse("2006-01-02T15:04:05.000000Z", base)
-	return err != nil || now.Sub(t) > memoPRStaleAfter, base
+	t, err := time.Parse(time.RFC3339Nano, base)
+	if err != nil {
+		return true, base
+	}
+	if w, werr := time.Parse(time.RFC3339Nano, waitSince); werr == nil && w.After(t) {
+		t, base = w, store.DeliveryTS(w)
+	}
+	return now.Sub(t) > memoPRStaleAfter, base
+}
+
+// memoWaitStart is when a pending message began to wait: its release, else its creation.
+func memoWaitStart(m store.Memo) string {
+	if m.ReleasedAt != "" {
+		return m.ReleasedAt
+	}
+	return m.CreatedAt
+}
+
+// earlierTS is the earlier of two stamps, either of which may be "".
+func earlierTS(a, b string) string {
+	ta, ea := time.Parse(time.RFC3339Nano, a)
+	tb, eb := time.Parse(time.RFC3339Nano, b)
+	switch {
+	case ea != nil:
+		return b
+	case eb != nil || ta.Before(tb):
+		return a
+	}
+	return b
 }
 
 // memoPRWaits is the deliveries the pending messages of rows wait for, when every one of them
 // waits on PR snapshots alone: no message is eligible or failed, and every prerequisite that is
 // not satisfied waits with reason pr. ok is false otherwise, and nothing would be gained by a read.
-func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []store.MemoDelivery, ok bool, err error) {
+//
+// since is, per delivery, when the longest-waiting of those messages began to wait.
+func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []store.MemoDelivery, since map[string]string, ok bool, err error) {
 	lk := memoafter.TxLookup(tx, rows, now)
 	seen := map[string]bool{}
+	since = map[string]string{}
 	waiting := false
 	for _, m := range rows {
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
@@ -1319,31 +1359,32 @@ func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []sto
 		waiting = true
 		items, err := memoafter.Status(m, lk)
 		if err != nil {
-			return nil, false, err
+			return nil, nil, false, err
 		}
 		eligible, failed := memoafter.Verdict(items)
 		if eligible || failed != nil {
-			return nil, false, nil
+			return nil, nil, false, nil
 		}
 		for _, it := range items {
 			if it.State == memoafter.Satisfied {
 				continue
 			}
 			if it.Reason != memoafter.WhyPR || it.Delivery == "" {
-				return nil, false, nil
+				return nil, nil, false, nil
 			}
+			since[it.Delivery] = earlierTS(since[it.Delivery], memoWaitStart(m))
 			if seen[it.Delivery] {
 				continue
 			}
 			seen[it.Delivery] = true
 			d, found, err := lk.Delivery(it.Delivery)
 			if err != nil || !found {
-				return nil, false, err
+				return nil, nil, false, err
 			}
 			ds = append(ds, d)
 		}
 	}
-	return ds, waiting && len(ds) > 0, nil
+	return ds, since, waiting && len(ds) > 0, nil
 }
 
 // prWake wakes the stopped workspace of an open queue whose pending messages all wait on PR
@@ -1352,7 +1393,8 @@ func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []sto
 // fires of the day nor the settle wakes see it.
 func (r *memoQueueRunner) prWake(ctx context.Context, views map[string]*memoMemberView, w *memoQueueWork, now time.Time) bool {
 	q := w.q
-	if q.Paused || !q.Enabled || w.pending.Count == 0 || w.pending.Eligible > 0 {
+	// An Agent found without the queue report could not fire the message once its PRs merged.
+	if q.Paused || !q.Enabled || q.NoReportAt != "" || w.pending.Count == 0 || w.pending.Eligible > 0 {
 		return false
 	}
 	if open, _ := openState(q, w.pending, now); !open {
@@ -1370,7 +1412,7 @@ func (r *memoQueueRunner) prWake(ctx context.Context, views map[string]*memoMemb
 			return err
 		}
 		cur, ok, err := tx.GetQueue(q.CategoryID)
-		if err != nil || !ok || !cur.Enabled || cur.Paused {
+		if err != nil || !ok || !cur.Enabled || cur.Paused || cur.NoReportAt != "" {
 			return err
 		}
 		c, ok, err := tx.GetCategory(q.CategoryID)
@@ -1385,13 +1427,13 @@ func (r *memoQueueRunner) prWake(ctx context.Context, views map[string]*memoMemb
 		if open, _ := openState(cur, pending, now); !open || pending.Count == 0 || pending.Eligible > 0 {
 			return nil
 		}
-		ds, ok, err := memoPRWaits(tx, rows, now)
+		ds, since, ok, err := memoPRWaits(tx, rows, now)
 		if err != nil || !ok {
 			return err
 		}
 		var fresh []string
 		for _, d := range ds {
-			if stale, _ := memoPRWaitStale(d, now); !stale {
+			if stale, _ := memoPRWaitStale(d, since[d.ID], now); !stale {
 				fresh = append(fresh, d.ID)
 			}
 		}
@@ -1453,6 +1495,16 @@ func (r *memoQueueRunner) prWake(ctx context.Context, views map[string]*memoMemb
 // without a change while a message waits for it: its wakes have stopped, and a person may have to
 // merge, close or step in. Told once per delivery and last change.
 func (r *memoQueueRunner) notifyPRStale(ctx context.Context, q store.MemoQueue, blocked []memoafter.Blocked, now time.Time) {
+	// The longest wait of any message for each delivery first: a message added later does not make
+	// a wait younger.
+	since := map[string]string{}
+	for _, b := range blocked {
+		for _, it := range b.Items {
+			if it.Reason == memoafter.WhyPR && it.Delivery != "" {
+				since[it.Delivery] = earlierTS(since[it.Delivery], memoWaitStart(b.Memo))
+			}
+		}
+	}
 	told := map[string]bool{}
 	for _, b := range blocked {
 		for _, it := range b.Items {
@@ -1463,7 +1515,7 @@ func (r *memoQueueRunner) notifyPRStale(ctx context.Context, q store.MemoQueue, 
 			if err != nil || !ok || d.MembershipID != q.MembershipID {
 				continue
 			}
-			stale, base := memoPRWaitStale(d, now)
+			stale, base := memoPRWaitStale(d, since[it.Delivery], now)
 			if !stale {
 				continue
 			}

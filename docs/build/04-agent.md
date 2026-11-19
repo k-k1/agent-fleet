@@ -154,6 +154,17 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     a text note with no reference, path or attachment, and the two fields are refused on any other
     provenance. Its origin line is written from those fields alone ("tidied by Agent Fleet from 3 notes your
     user added in the Console"); its text stays quoted data like any item's.
+  - **PR snapshot** (ADR 0137, addendum 2026-11-19, part A step 2, `internal/sessionx/queue_pr_snapshot.go`).
+    `GET /sessions` carries `"queuePRs": 1` (`queuePRsVersion`, read with `>=`). `POST /memos/pr-snapshot`
+    (Agent token, no Control Plane relay) takes `{session, since}` for a first read, and answers the PR of the
+    branch the session's working copy is on and of the branch it started on, plus its PR links held as
+    `started`, `created` or `working`; later reads take `{since, prs:[{provider,key}]}` and answer those PRs
+    by number, with no session needed. It answers `200 {prs:[{provider,key,state,url}], readAt}`, `[]` meaning
+    no PR, built only from provider answers whose call was sent after `since` (`branchpr.Cache.FetchSince`).
+    A key the provider did not answer, a provider error, a PR it cannot name, an unreadable meta, working copy or
+    origin are `503` (`pr_snapshot_unanswered` / `pr_snapshot_unreadable`); an absent meta is
+    `404 pr_snapshot_no_session`; a bad body is `400 bad_pr_snapshot_request`. Every answer carries
+    `X-AF-PR-Snapshot: 1`.
   - `POST /sessions/{name}/retire` ends all of that for the session and for every session it
     started at any depth (`origin == "session"` and the `originSession` chain, the walk
     `spendDescendants` makes), cancels their booked resumes, then halts them. The answer lists

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,8 +22,8 @@ import (
 // Plane's step 2 of "a prerequisite is satisfied" (ADR 0137, addendum 2026-11-19, part A).
 //
 // The dispatcher asks it after the delivery closed, and again until the snapshot is final. The
-// first read names the session: the PR of the branch its working copy is on, and the PR links it
-// holds as started, created or working. Every later read names the PRs the first one found and no
+// first read names the session: the PRs of the branch its working copy is on and of the branch it
+// started on, and the PR links it holds as started, created or working. Every later read names the PRs the first one found and no
 // session, so the session may be archived or deleted in between.
 //
 // The answer is only ever made of provider answers given after `since` (the delivery's close):
@@ -45,7 +47,7 @@ const (
 	prSnapshotUnanswered  = "pr_snapshot_unanswered"
 	prSnapshotUnreadable  = "pr_snapshot_unreadable"
 	prSnapshotTooMany     = "pr_snapshot_too_many"
-	prSnapshotCallTimeout = 30 * time.Second
+	prSnapshotCallTimeout = 15 * time.Second
 )
 
 // PRSnapshotKey names one PR: provider "github" or "bitbucket", key "owner/repo#N".
@@ -140,7 +142,7 @@ func HandleQueuePRSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		meta = m
 		var ok bool
-		if asks, ok = prSnapshotSessionAsks(m, time.Now()); !ok {
+		if asks, ok = prSnapshotSessionAsks(m); !ok {
 			httpx.WriteErr(w, http.StatusServiceUnavailable, prSnapshotUnreadable, "the session's working copy could not be read")
 			return
 		}
@@ -159,23 +161,34 @@ func HandleQueuePRSnapshot(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, PRSnapshotResponse{PRs: prs, ReadAt: time.Now().UTC().Format(time.RFC3339Nano)})
 }
 
-// prSnapshotSessionAsks is what a first read asks about: the branch of the session's working copy
-// and its held PR links. ok is false when the working copy exists in the meta but cannot be read:
-// its branch PR is then unknown, which must not read as none.
-func prSnapshotSessionAsks(m session.Meta, now time.Time) ([]prSnapshotAsk, bool) {
+// prSnapshotSessionAsks is what a first read asks about: the branches of the session's working
+// copy and its held PR links. ok is false when the working copy exists in the meta but cannot be
+// read: its branch PR is then unknown, which must not read as none.
+//
+// Both the branch the copy is on now and the branch the session started on are asked: a session
+// that opened its PR and then checked out another branch, or detached HEAD, still has that PR. A
+// default branch asked this way has no PR, as the provider ignores it.
+func prSnapshotSessionAsks(m session.Meta) ([]prSnapshotAsk, bool) {
 	var asks []prSnapshotAsk
 	if m.Dir != "" {
 		if _, err := os.Stat(m.Dir); err != nil {
 			return nil, false
 		}
-		branch, _ := gitx.GitDirInfo(m.Dir)
-		if branch == "" {
-			branch = m.Branch
+		o, ok := prSnapshotOrigin(m.Dir)
+		if !ok {
+			return nil, false
 		}
-		// A detached HEAD is on no branch, and a copy that is not on github.com or bitbucket.org
-		// has no PR this Agent can read: neither adds a branch key.
-		if o := originOf(m.Dir, now); branch != "" && branch != "(detached)" && o.repo != "" {
-			asks = append(asks, prSnapshotAsk{provider: o.provider, key: branchpr.Key{Repo: o.repo, Branch: branch}})
+		// A copy that is not on github.com or bitbucket.org has no PR this Agent can read.
+		if o.repo != "" {
+			cur, _ := gitx.GitDirInfo(m.Dir)
+			seen := map[string]bool{}
+			for _, b := range []string{cur, m.Branch} {
+				if b == "" || b == "(detached)" || seen[b] {
+					continue
+				}
+				seen[b] = true
+				asks = append(asks, prSnapshotAsk{provider: o.provider, key: branchpr.Key{Repo: o.repo, Branch: b}})
+			}
 		}
 	}
 	seen := map[string]bool{}
@@ -192,6 +205,36 @@ func prSnapshotSessionAsks(m session.Meta, now time.Time) ([]prSnapshotAsk, bool
 		asks = append(asks, prSnapshotAsk{provider: l.Provider, link: l.Key, key: k})
 	}
 	return asks, true
+}
+
+// prSnapshotOrigin is the working copy's repository on github.com or bitbucket.org, zero for a
+// copy that is not a git working tree, has no origin, or has one on another host. ok is false
+// when the copy is a git working tree and its origin could not be read: the session list's
+// cached origin (originOf) cannot tell that from "no origin", and a snapshot must. Replaced in
+// tests.
+var prSnapshotOrigin = func(dir string) (originRepo, bool) {
+	if origin, ok := gitx.GitOriginURL(dir); ok {
+		if r := gitx.GitHubRepoOf(origin); r != "" {
+			return originRepo{"github", r}, true
+		}
+		if r := gitx.BitbucketRepoOf(origin); r != "" {
+			return originRepo{"bitbucket", r}, true
+		}
+		return originRepo{}, true
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); errors.Is(err, fs.ErrNotExist) {
+		return originRepo{}, true // not a working tree
+	}
+	out, err := gitx.Run(dir, "remote")
+	if err != nil {
+		return originRepo{}, false
+	}
+	for _, name := range strings.Fields(out) {
+		if name == "origin" {
+			return originRepo{}, false // it has one, and reading it failed
+		}
+	}
+	return originRepo{}, true
 }
 
 // prSnapshotRead asks every key, per provider, and builds the answer. ok is false when any key
@@ -230,7 +273,10 @@ func prSnapshotRead(ctx context.Context, asks []prSnapshotAsk, since time.Time, 
 				continue
 			}
 			p, k, ok := prLinkKey(pr)
-			if !ok || p != a.provider || (first && session.IsUnlinked(m, p, k)) {
+			if !ok || p != a.provider {
+				return nil, false // a PR this Agent cannot name is not "no PR"
+			}
+			if first && session.IsUnlinked(m, p, k) {
 				continue // a PR the member unlinked by hand is no longer the session's
 			}
 			add(PRSnapshotPR{Provider: p, Key: k, State: prLinkState(pr), URL: linkURL(pr.URL)})

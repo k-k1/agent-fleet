@@ -657,3 +657,58 @@ func TestFetchSinceAsksAgainForAnEntryOlderThanTheBound(t *testing.T) {
 		t.Fatalf("an answer after the bound was asked again: calls=%d err=%v", calls.Load(), err)
 	}
 }
+
+// An answer counts from when its call was sent: a "no PR" whose call was in flight when the
+// bound passed is asked again, however late it arrived.
+func TestFetchSinceCountsFromTheCallNotTheAnswer(t *testing.T) {
+	c := newTestCache("http://unused", "tok")
+	k := Key{Repo: "o/r", Branch: "a"}
+	var closed time.Time
+	calls := 0
+	c.fetch = func(_ string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error) {
+		calls++
+		if calls == 1 {
+			time.Sleep(2 * time.Millisecond)
+			closed = time.Now() // the delivery closes while the call is in flight
+			time.Sleep(2 * time.Millisecond)
+			return map[Key]*PR{}, nil, 0, nil
+		}
+		return map[Key]*PR{k: {Number: 3, State: "open"}}, nil, 0, nil
+	}
+	c.Lookup([]Key{k}, time.Now())
+	got, err := c.FetchSince(context.Background(), []Key{k}, closed)
+	if err != nil || calls != 2 || got[k] == nil {
+		t.Fatalf("FetchSince = %+v, %v, calls=%d: an answer sent before the bound was used", got[k], err, calls)
+	}
+}
+
+// A branch entry handed a PR's answer by a read of that PR's number is not a fresh read of the
+// branch: the branch may have a newer PR.
+func TestFetchSinceAsksTheBranchItselfAgain(t *testing.T) {
+	c := newTestCache("http://unused", "tok")
+	branch, old := Key{Repo: "o/r", Branch: "a"}, Key{Repo: "o/r", Number: 10}
+	calls := 0
+	c.fetch = func(_ string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error) {
+		calls++
+		out := map[Key]*PR{}
+		for _, k := range keys {
+			if k == branch && calls > 2 {
+				out[k] = &PR{Number: 11, State: "open"}
+			} else {
+				out[k] = &PR{Number: 10, State: "merged"}
+			}
+		}
+		return out, nil, 0, nil
+	}
+	c.Lookup([]Key{branch}, time.Now()) // the branch's entry holds #10
+	time.Sleep(2 * time.Millisecond)
+	closed := time.Now()
+	time.Sleep(2 * time.Millisecond)
+	if _, err := c.Fetch(context.Background(), []Key{old}); err != nil { // a watch reads #10 by number
+		t.Fatal(err)
+	}
+	got, err := c.FetchSince(context.Background(), []Key{branch}, closed)
+	if err != nil || calls != 3 || got[branch] == nil || got[branch].Number != 11 {
+		t.Fatalf("FetchSince = %+v, %v, calls=%d: the branch was answered by another key's read", got[branch], err, calls)
+	}
+}
