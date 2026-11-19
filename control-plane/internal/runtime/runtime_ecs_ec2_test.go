@@ -21,6 +21,7 @@ import (
 	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
+	"github.com/aws/smithy-go"
 )
 
 // --- fakes for the EC2-pool ports. They model just enough of EC2 to exercise the
@@ -860,6 +861,8 @@ type fakeSSMCmd struct {
 	pageSize int
 	// listCalls counts ListCommands calls that reached the list.
 	listCalls int
+	// denied are the commands SendCommand refused because the box was not af-role=slot.
+	denied []string
 }
 
 func (f *fakeSSMCmd) ListCommands(_ context.Context, in *ssm.ListCommandsInput, _ ...func(*ssm.Options)) (*ssm.ListCommandsOutput, error) {
@@ -939,6 +942,26 @@ func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ 
 	defer f.mu.Unlock()
 	script := in.Parameters["commands"][0]
 	cmd := ssmHelperLine(script)
+	// The CP role's SsmSlotCommandInstances (cfn/20-platform.yaml) allows SendCommand only
+	// on af-role=slot. Without this a step that re-tags a box and then commands it passes
+	// here and is AccessDenied on every real deployment.
+	if f.sink != nil && len(in.InstanceIds) == 1 {
+		f.sink.mu.Lock()
+		inst := f.sink.instances[in.InstanceIds[0]]
+		role := ""
+		if inst != nil {
+			role = ec2TagValue(inst.Tags, EC2TagRole)
+		}
+		f.sink.mu.Unlock()
+		if inst != nil && role != ec2RoleSlot {
+			f.denied = append(f.denied, cmd)
+			return nil, &smithy.GenericAPIError{
+				Code:    "AccessDeniedException",
+				Message: fmt.Sprintf("not authorized to perform: ssm:SendCommand on resource: instance/%s (af-role=%s)", in.InstanceIds[0], role),
+				Fault:   smithy.FaultClient,
+			}
+		}
+	}
 	f.scripts = append(f.scripts, script)
 	f.commands = append(f.commands, cmd)
 	if f.sink != nil {
@@ -1233,6 +1256,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		now:          time.Now,
 		sleep:        func(context.Context, time.Duration) error { return nil },
 	}
+	stopRetryingWhenRefused(h)
 	return h
 }
 
@@ -4430,6 +4454,111 @@ func TestECSEC2QuarantinesASlotThatCannotMount(t *testing.T) {
 	}
 	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim) != "" {
 		t.Error("the claim survived the failure, so the owner would wait out the claim TTL before retrying")
+	}
+}
+
+// stopRetryingWhenRefused ends runOnSlot's retries at the first send the IAM fence refuses.
+// The harness sleep is otherwise a no-op, so a refused send would spin until the test
+// times out instead of failing on its assertions. newEC2Harness installs it.
+func stopRetryingWhenRefused(h *ec2Harness) {
+	h.rt.sleep = func(context.Context, time.Duration) error {
+		h.ssmc.mu.Lock()
+		defer h.ssmc.mu.Unlock()
+		if len(h.ssmc.denied) > 0 {
+			return errors.New("refused")
+		}
+		return nil
+	}
+}
+
+// The unmount is an SSM command, and the CP role may send those to af-role=slot only: a
+// quarantine that re-tags the box first has every af-umount refused, and the home it was
+// meant to free stays attached, so the operator's Terminate is refused too (#4510).
+func TestECSEC2QuarantineUnmountsBeforeItRetagsTheSlot(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-bad"] = true
+	h.ssmc.fail["af-mount"] = true
+
+	if err := h.rt.Start(ctx); err == nil {
+		t.Fatal("Start returned nil although the home could not be mounted")
+	}
+	if len(h.ssmc.denied) > 0 {
+		t.Fatalf("SSM commands sent to a box that was no longer af-role=slot: %q", h.ssmc.denied)
+	}
+	if !slices.ContainsFunc(h.ssmc.commands, func(c string) bool { return strings.HasPrefix(c, "af-umount ") }) {
+		t.Fatalf("positive control: no af-umount reached the slot: %q", h.ssmc.commands)
+	}
+	if got := ec2TagValue(h.ec2.instances["i-bad"].Tags, EC2TagRole); got != ec2RoleQuarantined {
+		t.Errorf("slot af-role = %q, want %q", got, ec2RoleQuarantined)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "" {
+		t.Errorf("the home is still attached to %s", inst)
+	}
+	if _, err := h.factory().TerminateQuarantinedSlot(ctx, "i-bad"); err != nil {
+		t.Errorf("TerminateQuarantinedSlot right after the quarantine: %v", err)
+	}
+}
+
+// A re-tag that fails leaves the box af-role=slot. Detaching the home then would make it
+// a free slot again, offered to the next Start; attached, the home keeps it out.
+func TestECSEC2QuarantineKeepsTheHomeWhenTheRetagFails(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-bad", time.Now())
+	h.ec2.createTagsErr = map[string]error{ec2TagQuarantineReason: errors.New("throttled")}
+
+	h.rt.quarantineSlot(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-bad"}, errors.New("mount failed"))
+
+	if got := ec2TagValue(h.ec2.instances["i-bad"].Tags, EC2TagRole); got != ec2RoleSlot {
+		t.Fatalf("positive control: the re-tag was meant to fail, af-role = %q", got)
+	}
+	if got := attachedInstance(h.ec2.volumes["vol-1"]); got != "i-bad" {
+		t.Errorf("the home was detached from a box still tagged af-role=slot (attached to %q)", got)
+	}
+}
+
+// ctxDetachHook fails a DetachVolume whose context has ended, as the SDK does.
+type ctxDetachHook struct {
+	ec2API
+}
+
+func (c *ctxDetachHook) DetachVolume(ctx context.Context, in *ec2.DetachVolumeInput, opts ...func(*ec2.Options)) (*ec2.DetachVolumeOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return c.ec2API.DetachVolume(ctx, in, opts...)
+}
+
+// quarantineLockBudget bounds the wait for the mount lock, not the work under it: an
+// umount that takes longer than that wait (45s budget against 30s) must not take the
+// detach after it down with it.
+func TestECSEC2QuarantineDetachOutlivesTheLockWaitBudget(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	defer func(d time.Duration) { quarantineLockBudget = d }(quarantineLockBudget)
+	quarantineLockBudget = 20 * time.Millisecond
+	h.rt.ec2 = &ctxDetachHook{ec2API: h.ec2}
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-bad", time.Now())
+	h.ssmc.onSend = func(cmd string) {
+		if strings.HasPrefix(cmd, "af-umount ") {
+			time.Sleep(4 * quarantineLockBudget)
+		}
+	}
+
+	h.rt.quarantineSlot(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-bad"}, errors.New("mount failed"))
+
+	if !slices.ContainsFunc(h.ssmc.commands, func(c string) bool { return strings.HasPrefix(c, "af-umount ") }) {
+		t.Fatalf("positive control: no af-umount reached the slot: %q", h.ssmc.commands)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "" {
+		t.Errorf("a slow umount left the home attached to %s: %q", inst, ec2Calls(h))
 	}
 }
 
