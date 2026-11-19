@@ -99,6 +99,71 @@ describe("allows and exceeds, against the CP fixtures", () => {
   });
 });
 
+// Endpoint patterns are compared in the CP's canonical spelling (routepolicy.NormalizePattern):
+// lower case, no trailing dot, punycode. Each row: [ceiling pattern, rule pattern, covered]. The
+// expectations are what routepolicy covers() answers once both sides are normalised; the CP's own
+// refusals (idna.Lookup: STD3 rules, hyphen checks) are rows that must come out as "exceeds".
+describe("endpoint patterns with internationalised host names", () => {
+  const ceilingWith = (p: string): RouteRule => ({ destinations: ["anthropic"], endpoints: [p] });
+  const covered = (outer: string, inner: string) =>
+    exceeds({ destinations: ["anthropic"], endpoints: [inner] }, ceilingWith(outer), VOCAB).endpoints.length === 0;
+
+  it.each([
+    // ASCII, case, trailing dot.
+    ["llm.corp.example", "llm.corp.example", true],
+    ["llm.corp.example", "LLM.Corp.Example.", true],
+    ["*.corp.example", "a.b.corp.example", true],
+    ["*.corp.example", "corp.example", false],
+    // A unicode host and its punycode spelling are one host, whichever side is which.
+    ["xn--bcher-kva.example", "bücher.example", true],
+    ["bücher.example", "xn--bcher-kva.example", true],
+    ["bücher.example", "BÜCHER.example.", true],
+    ["xn--bcher-kva.example", "xn--bcher-kva.example", true],
+    // Wildcards with an IDN suffix, in both spellings.
+    ["*.bücher.example", "llm.xn--bcher-kva.example", true],
+    ["*.xn--bcher-kva.example", "llm.bücher.example", true],
+    ["*.bücher.example", "*.shop.bücher.example", true],
+    ["*.bücher.example", "*.xn--bcher-kva.example", true],
+    ["*.bücher.example", "bücher.example", false],
+    ["*.bücher.example", "llm.buecher.example", false],
+    // Different hosts stay different.
+    ["bücher.example", "bucher.example", false],
+    ["*.corp.example", "x.bücher.example", false],
+    // What the CP refuses is never read as covered: a bad label, a port, an empty label, a bare
+    // wildcard, a non-canonical IPv4, a wildcard over an IP, a scheme or userinfo. (An empty label
+    // and "*.0.0.5" the CP lets through as host names; the Console answers "exceeds" for them,
+    // the safe side.)
+    ["*.corp.example", "a_b.corp.example", false],
+    ["*.corp.example", "-a.corp.example", false],
+    ["*.corp.example", "ab--c.corp.example", false],
+    ["*.corp.example", "a..corp.example", false],
+    ["*.corp.example", "a.corp.example:8080", false],
+    ["*.corp.example", "a.*.corp.example", false],
+    ["10.0.0.5", "10.0.0.5", true],
+    ["10.0.0.5", "0xa.0.0.5", false],
+    ["*.0.0.5", "*.0.0.5", false],
+    ["*.10.0.0.5", "*.10.0.0.5", false],
+    ["[2001:db8::1]", "2001:DB8::1", true],
+    ["*.corp.example", "xn--a.corp.example", false],
+    ["*.corp.example", "xn--0.corp.example", false],
+    ["*.corp.example", "xn---a.corp.example", false],
+    ["*.corp.example", "xn--invalid-punycode-zzzzzzzzz.corp.example", false],
+    ["*.corp.example", "xn--bcher-kva.corp.example", true],
+    ["*.corp.example", "ab--ü.corp.example", false],
+    ["*.corp.example", "xn--ab---3ra.corp.example", false],
+    ["*.corp.example", "ü--a.corp.example", false],
+    ["*.corp.example", "http://a.corp.example", false],
+    ["*.corp.example", "https://evil.com/a.corp.example", false],
+    ["*.corp.example", "user:pass@a.corp.example", false],
+    ["*.corp.example", "a:b.corp.example", false],
+    ["10.0.0.5", "10.0.0.5.", false],
+    ["[2001:db8::1]", "2001:0db8::1", true],
+    ["[2001:db8::1]", "[2001:db8::2]", false],
+  ] as const)("ceiling %s, pattern %s: covered %s", (outer, inner, want) => {
+    expect(covered(outer, inner)).toBe(want);
+  });
+});
+
 describe("stoppedBy", () => {
   it("names each layer above that narrows the field without the value", () => {
     const above = [

@@ -24,14 +24,124 @@ export function allows(r: RouteRule, id: string, vocab: Vocabulary): boolean {
 }
 
 // The CP compares patterns as it stores them (routepolicy.NormalizePattern): lower case, no
-// trailing dot. Without this, "LLM.Corp.Example." reads as outside "*.corp.example" and match would
-// drop a row the CP accepts. (Its punycode step is left out: the Console sends what was typed.)
-const norm = (s: string) => s.trim().toLowerCase().replace(/\.$/, "");
+// trailing dot, an internationalised name in its punycode form. Without this, "LLM.Corp.Example."
+// reads as outside "*.corp.example", and "bücher.example" outside "*.xn--bcher-kva.example".
+//
+// The punycode step is the platform's URL parser (UTS 46 ToASCII), which is more lenient than the
+// CP's idna.Lookup profile (STD3 rules, hyphen checks). So its output is re-checked label by label
+// against the strict subset, and whatever the CP might refuse yields null: a null never matches
+// anything, so the check answers "exceeds" and is never more permissive than the CP.
+function asciiHost(s: string): string | null {
+  if (s === "" || /[\s/:@?#[\]%*\\]/.test(s)) return null;
+  let h: string;
+  try {
+    h = new URL(`http://${s}/`).hostname;
+  } catch {
+    return null;
+  }
+  const labels = h.split(".");
+  // A numeric last label is an IPv4 address to the URL parser ("0x7f.1" becomes 127.0.0.1) but a
+  // plain name to the CP, so only the canonical dotted quad is accepted as one.
+  if (/^(0x[0-9a-f]*|\d+)$/.test(labels[labels.length - 1]) && h !== s) return null;
+  for (const l of labels) {
+    if (!/^[a-z0-9-]+$/.test(l) || l.startsWith("-") || l.endsWith("-")) return null;
+    if (l.slice(2, 4) === "--" && !(l.startsWith("xn--") && validPunycodeLabel(l))) return null;
+  }
+  return h;
+}
+
+// punycodeDecode is RFC 3492 decoding of the part after "xn--"; null when it is malformed.
+function punycodeDecode(input: string): string | null {
+  const base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700;
+  const out: number[] = [];
+  const d = input.lastIndexOf("-");
+  for (let j = 0; j < Math.max(d, 0); j++) {
+    const c = input.charCodeAt(j);
+    if (c >= 0x80) return null;
+    out.push(c);
+  }
+  let n = 128, bias = 72, i = 0;
+  for (let k = d > 0 ? d + 1 : 0; k < input.length; ) {
+    const oldi = i;
+    for (let w = 1, kk = base; ; kk += base) {
+      if (k >= input.length) return null;
+      const c = input.charCodeAt(k++);
+      const digit = c >= 48 && c <= 57 ? c - 22 : c >= 97 && c <= 122 ? c - 97 : base;
+      if (digit >= base) return null;
+      i += digit * w;
+      const t = kk <= bias ? tMin : kk >= bias + tMax ? tMax : kk - bias;
+      if (digit < t) break;
+      w *= base - t;
+      if (i > 0x7fffffff || w > 0x7fffffff) return null;
+    }
+    const len = out.length + 1;
+    let delta = oldi === 0 ? Math.floor((i - oldi) / damp) : Math.floor((i - oldi) / 2);
+    delta += Math.floor(delta / len);
+    let kk = 0;
+    while (delta > ((base - tMin) * tMax) >> 1) {
+      delta = Math.floor(delta / (base - tMin));
+      kk += base;
+    }
+    bias = kk + Math.floor(((base - tMin + 1) * delta) / (delta + skew));
+    n += Math.floor(i / len);
+    i %= len;
+    if (n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff)) return null;
+    out.splice(i++, 0, n);
+  }
+  return String.fromCodePoint(...out);
+}
+
+// validPunycodeLabel: an "xn--" label the CP's idna.Lookup would accept. Chromium's URL parser
+// passes "xn--a" through unchanged where Node's refuses it, so the label is decoded here and
+// must re-encode, through the URL parser, to exactly itself (no non-minimal form, no invalid
+// character, the same answer in every engine).
+function validPunycodeLabel(l: string): boolean {
+  const u = punycodeDecode(l.slice(4));
+  if (u === null || u === "" || /^[\x00-\x7f]*$/.test(u) || u.startsWith("-") || u.endsWith("-")) return false;
+  // idna's hyphen check runs on the decoded label's UTF-8 bytes: "--" at positions 3-4 is refused.
+  const b = new TextEncoder().encode(u);
+  if (b.length > 4 && b[2] === 45 && b[3] === 45) return false;
+  try {
+    return new URL(`http://${u}.invalid/`).hostname === `${l}.invalid`;
+  } catch {
+    return false;
+  }
+}
+
+// normPattern is the CP's canonical spelling of one pattern, or null when it might refuse it.
+function normPattern(raw: string): string | null {
+  let s = raw.trim().toLowerCase();
+  const wild = s.startsWith("*.");
+  if (wild) s = s.slice(2);
+  if (s.startsWith("[") && s.endsWith("]")) s = s.slice(1, -1);
+  // A colon makes it an IPv6 literal, and nothing else: it must parse as one. A wildcard over an
+  // IP is refused by the CP, and so is a scheme, port, path or userinfo (the CP's host check).
+  if (s.includes(":")) {
+    if (wild || /[\s/@?#[\]%*\\]/.test(s)) return null;
+    try {
+      const h = new URL(`http://[${s}]/`).hostname;
+      return h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : null;
+    } catch {
+      return null;
+    }
+  }
+  const dotted = /^\d+\.\d+\.\d+\.\d+$/;
+  // An IPv4 address stays as typed; with a trailing dot the CP no longer reads it as one and refuses it.
+  if (dotted.test(s)) return wild ? null : s;
+  if (s.endsWith(".")) {
+    s = s.slice(0, -1);
+    if (dotted.test(s)) return null;
+  }
+  const h = asciiHost(s);
+  return h === null ? null : (wild ? "*." : "") + h;
+}
 
 // covers mirrors routepolicy's covers: an exact host or a "*." pattern holding another pattern.
+// A pattern the CP might refuse is covered by nothing.
 function covers(outer: string, inner: string): boolean {
-  const o = norm(outer);
-  const i = norm(inner);
+  const o = normPattern(outer);
+  const i = normPattern(inner);
+  if (o === null || i === null) return false;
   if (i.startsWith("*.")) {
     return o.startsWith("*.") && (i.slice(2) === o.slice(2) || i.slice(2).endsWith("." + o.slice(2)));
   }
