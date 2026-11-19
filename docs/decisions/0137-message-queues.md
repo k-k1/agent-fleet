@@ -847,15 +847,17 @@ while the first is `delivered`.
      or a session gone before the collection window of 24 hours ended (`memoClosedTurnWindow`,
      `control-plane/memo_dispatch.go:46`). Then step 1 cannot show a success, and step 2 has to: "no PR" does not
      satisfy it, only a snapshot with at least one PR, all merged. A snapshot with no PR sends the dependent to `held`.
+     The snapshot is taken from the clean close on, alongside the collection of the first turn, so a merged PR
+     satisfies this without waiting out the 24 hours.
   2. Then also: every PR of that delivery's session is merged. The PR set is a **snapshot kept on the prerequisite's
      delivery**, not read from the session mirror. The dispatcher asks the running Agent for it: the PR of the session's
      branch and the PR links the session holds as `started`, `created` or `working` (not a reviewer child's), read
      from an answer the provider gave after the delivery closed. `branchpr.Cache.Fetch` (`branchpr.go:360`) cannot
      give that today: it answers from the cache whenever every entry is fresh (`:383-399`), and a "no PR" stays
      fresh for 10 minutes. It gains a lower bound on the fetch time, so that an entry fetched before the close is
-     asked again, and a cached "no PR" from before the close never counts. The Agent answers from the session's meta and working copy, which an
-     archived session keeps. "No PR" counts only from such an answer; a PR whose state is unknown or empty, a session
-     the Agent no longer has, or no answer yet keeps the dependent waiting. Once every PR in the snapshot is merged, the
+     asked again, and a cached "no PR" from before the close never counts. The Agent answers from the session's
+     meta and working copy, which an archived session keeps. "No PR" counts only from such an answer; a PR whose
+     state is unknown or empty, or no answer yet, keeps the dependent waiting. Once every PR in the snapshot is merged, the
      snapshot is final and is never asked again. Once the snapshot names PRs, later reads ask by PR number, so the
      session may be archived or deleted meanwhile. A session the Agent no longer has before any snapshot was taken
      can never give one: the dependent goes to `held` at once.
@@ -904,8 +906,10 @@ two cases: the session's defer and the person's "return to queue".
 - **When it takes effect.** The call only records the request on the delivery. It is applied only by a clean close
   made on a running Agent's report (`closeIfDoneReported`, `control-plane/memo_delivery.go:887`). The close from the
   kept report while the workspace is stopped (`closeIfDoneKept`, `:958`) reads the mirror only, which can tell neither a
-  later turn nor a PR, so it leaves a delivery with a request open until a running Agent reports. Then the outcome is `deferred` instead of clean, the message returns as above
-  with `not_before`, and the close requests the retire of the session as a clean close does
+  later turn nor a PR, so it leaves a delivery with a request open until a running Agent reports. When such
+  deliveries hold every slot of an open queue that has pending messages, the dispatcher wakes the workspace to settle
+  them, as it does for a sending or an overdue delivery (`settleWake`, `control-plane/memo_dispatch.go:732`). Then the
+  outcome is `deferred` instead of clean, the message returns as above with `not_before`, and the close requests the retire of the session as a clean close does
   (`control-plane/memo_delivery.go:183`, `store_memo_delivery.go:465`). An aborted or unknown close ignores the request.
   One message is never held by two runs at once.
 - **What withdraws it.** A later call replaces the request, and a call with `cancel` withdraws it. It is also dropped,
