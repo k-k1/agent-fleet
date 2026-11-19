@@ -258,6 +258,8 @@ func TestProvidedRoutesFramesFollowSourceAndOtherTenants(t *testing.T) {
 // The super_admin's stream gets the digest once, stays silent while it holds and frames again
 // after any tenant's change.
 func TestEventsStreamProvidedRoutesAdminFrame(t *testing.T) {
+	// The digest caches are process-wide and the default tenant's id is the same in every test.
+	invalidateAllProvidedRevisions()
 	stub := newEventsStub(`{"sessions":[]}`)
 	a, res := eventsTestEnv(t, stub)
 	res.mv.TenantID = res.ws.TenantID
@@ -296,5 +298,103 @@ func TestEventsStreamProvidedRoutesAdminFrame(t *testing.T) {
 	}
 	if got := len(frames["provided_routes"]); got != 1 {
 		t.Fatalf("another tenant's change moved this tenant's frame: %d frames", got)
+	}
+}
+
+// A demoted super_admin's open stream stops getting the super_admin frame once the role re-check's
+// cache lapses: the role the stream opened with is not enough.
+func TestProvidedRoutesAdminPayloadStopsAfterDemotion(t *testing.T) {
+	ctx := context.Background()
+	st, _, _, _ := providedRouteTenantFixture(t)
+	mgr := &manager{store: st}
+	admin, err := st.UpsertIdentity(ctx, "root@x", "root-x", "super_admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := providedRoutesAdminPayload(ctx, mgr, admin); !ok {
+		t.Fatal("no frame for a super_admin")
+	}
+	if _, err := st.DemoteSuperAdmins(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	providedSuperAdminCache.Delete(admin.ID) // the TTL, lapsed
+	if _, ok := providedRoutesAdminPayload(ctx, mgr, admin); ok {
+		t.Fatal("a demoted identity still got the super_admin frame on its old stream")
+	}
+	if _, ok := providedRoutesAdminPayload(ctx, mgr, store.Identity{ID: "nobody", Role: "super_admin"}); ok {
+		t.Fatal("an identity the store does not know got the frame")
+	}
+}
+
+// On the stream, a tenant_admin follows its own tenant's frame, which a source switch-off moves,
+// and is never sent the super_admin frame, whatever another tenant or the operator's side does.
+func TestEventsStreamProvidedRoutesTenantAdmin(t *testing.T) {
+	// The digest caches are process-wide and the default tenant's id is the same in every test.
+	invalidateAllProvidedRevisions()
+	stub := newEventsStub(`{"sessions":[]}`)
+	a, res := eventsTestEnv(t, stub)
+	ctx0 := context.Background()
+	res.mv.TenantID = res.ws.TenantID
+	boss, err := a.mgr.store.UpsertIdentity(ctx0, "boss-events@example.com", "boss-events", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.mgr.store.EnsureMembership(ctx0, boss.ID, res.ws.TenantID, "tenant_admin"); err != nil {
+		t.Fatal(err)
+	}
+	res.ident = boss
+	other, err := a.mgr.store.CreateTenant(ctx0, "other", "Other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const src = providedroutes.SourceDeployment
+	dep, err := a.mgr.store.PutProvidedRouteSource(ctx0, store.ProvidedRouteSourceInput{Source: src, RoleARN: "arn:aws:iam::123456789012:role/af-model-route/bedrock",
+		Regions: []string{"us-east-1"}, AllowList: []string{"us.anthropic.claude-opus-5-5"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ceiling := int64(10_000_000)
+	rec := &syncRecorder{}
+	frames, _ := runStreamUntil(t, a, res, rec, func(ctx context.Context) error {
+		if !waitFramesCtx(ctx, rec, "provided_routes", 1) {
+			return errors.New("no provided_routes snapshot frame")
+		}
+		if err := stub.waitSubscriberTicks(ctx, rec, 1, 2); err != nil {
+			return err
+		}
+		// Another tenant's grant and an operator-side-only edit: nothing for a tenant_admin.
+		if err := a.mgr.store.SetProvidedRouteGrant(ctx, other.ID, src, true, &ceiling); err != nil {
+			return err
+		}
+		if _, err := a.mgr.store.PutProvidedRouteSource(ctx, store.ProvidedRouteSourceInput{ID: dep.ID, Source: src,
+			RoleARN: "arn:aws:iam::123456789012:role/af-model-route/other", Regions: []string{"us-east-1"}, AllowList: dep.AllowList}); err != nil {
+			return err
+		}
+		invalidateAllProvidedRevisions()
+		if err := stub.waitSubscriberTicks(ctx, rec, 3, 2); err != nil {
+			return err
+		}
+		if n := len(rec.frames()["provided_routes"]); n != 1 {
+			return fmt.Errorf("another tenant or operator-side change produced %d own-tenant frames: %s", n-1, rec.frames()["provided_routes"])
+		}
+		// The source switched on moves this tenant's frame.
+		cur, err := a.mgr.store.ListProvidedRouteSources(ctx, "")
+		if err != nil || len(cur) == 0 {
+			return fmt.Errorf("no source: %v", err)
+		}
+		if err := a.mgr.store.SetProvidedRouteSourceActive(ctx, cur[0].ID, cur[0].Fingerprint, true); err != nil {
+			return err
+		}
+		invalidateAllProvidedRevisions()
+		if !waitFramesCtx(ctx, rec, "provided_routes", 2) {
+			return errors.New("the source switch never reached the tenant_admin")
+		}
+		return stub.waitSubscriberTicks(ctx, rec, 5, 2)
+	})
+	if n := len(frames["provided_routes_admin"]); n != 0 {
+		t.Fatalf("a tenant_admin was sent %d provided_routes_admin frames", n)
+	}
+	if n := len(frames["provided_routes"]); n != 2 {
+		t.Fatalf("provided_routes frames = %d, want 2", n)
 	}
 }

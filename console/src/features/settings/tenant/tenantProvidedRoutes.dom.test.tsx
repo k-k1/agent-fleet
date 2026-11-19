@@ -451,6 +451,22 @@ describe("tenant provided routes follow the events stream", () => {
   };
   beforeEach(() => resetProvidedRev());
 
+  it("reads once when both frames of one change arrive together", async () => {
+    await mount();
+    await frame("r0");
+    await act(async () => {
+      noteProvidedAdminRev({ rev: "a0" });
+    });
+    expect(seenCalls()).toBe(1);
+    await act(async () => {
+      noteProvidedRev({ rev: "r1" });
+      noteProvidedAdminRev({ rev: "a1" });
+    });
+    await flush();
+    await flush();
+    expect(seenCalls()).toBe(2);
+  });
+
   it("reads again on the super_admin's digest, on its own baseline", async () => {
     const admin = async (rev: string) => {
       await act(async () => {

@@ -17,6 +17,7 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 }));
 
 import { AdminModelAccessView } from "./adminModelAccess.tsx";
+import { noteProvidedAdminRev, resetProvidedRev } from "../tenant/providedRevision.ts";
 import { RuleSummary } from "../tenant/routePolicyRuleEditor.tsx";
 
 const CEILING = {
@@ -514,6 +515,29 @@ describe("admin overview and tenants", () => {
     await open();
     expect(onOpen).toHaveBeenCalledTimes(2);
     confirm.mockRestore();
+  });
+
+  it("reads each grant cell again when the super_admin's digest moves (#4371)", async () => {
+    resetProvidedRev();
+    serve(SOURCE(false));
+    await mountNode(<AdminModelAccessView tenants={TENANTS} onOpenTenant={() => {}} />);
+    await click(tab("テナントごと"));
+    await flush();
+    const acmeProvided = () =>
+      api.mock.calls.filter((c) => c[0] === "api/admin/tenants/acme/provided-routes/deployment").length;
+    const before = acmeProvided();
+    const frame = async (rev: string) => {
+      await act(async () => {
+        noteProvidedAdminRev({ rev });
+      });
+      await flush();
+      await flush();
+    };
+    await frame("a1"); // baseline
+    expect(acmeProvided()).toBe(before);
+    await frame("a2");
+    expect(acmeProvided()).toBe(before + 1);
+    resetProvidedRev();
   });
 
   it("names why a tenant's grant could not be read", async () => {

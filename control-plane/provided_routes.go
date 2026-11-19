@@ -517,8 +517,30 @@ func dropProvidedAdminRevs() {
 // The cache is keyed by the store, so two stores in one process (the tests) never share a digest.
 var providedAdminRevCache sync.Map // store.Store -> *providedRevisionEntry
 
+// providedSuperAdminTTL bounds the role re-check. The stream's identity was resolved when it
+// opened, so a demotion (another replica's DemoteSuperAdmins, a DB edit) would otherwise leave the
+// frame flowing; unknown or an error answers false.
+const providedSuperAdminTTL = 3 * time.Second
+
+var providedSuperAdminCache sync.Map // identity id -> providedAdminEntry
+
+func providedSuperAdminNow(ctx context.Context, mgr *manager, ident store.Identity) bool {
+	if ident.ID == "" || ident.Role != "super_admin" {
+		return false
+	}
+	if v, ok := providedSuperAdminCache.Load(ident.ID); ok {
+		if e := v.(providedAdminEntry); time.Since(e.at) < providedSuperAdminTTL {
+			return e.ok
+		}
+	}
+	cur, found, err := mgr.store.GetIdentityByID(ctx, ident.ID)
+	ok := err == nil && found && cur.Role == "super_admin"
+	providedSuperAdminCache.Store(ident.ID, providedAdminEntry{at: time.Now(), ok: ok})
+	return ok
+}
+
 func providedRoutesAdminPayload(ctx context.Context, mgr *manager, ident store.Identity) (map[string]any, bool) {
-	if ident.Role != "super_admin" || mgr == nil || mgr.store == nil {
+	if mgr == nil || mgr.store == nil || !providedSuperAdminNow(ctx, mgr, ident) {
 		return nil, false
 	}
 	v, _ := providedAdminRevCache.LoadOrStore(mgr.store, &providedRevisionEntry{})
