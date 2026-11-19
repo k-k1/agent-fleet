@@ -196,3 +196,118 @@ func TestCIDRRuleNormalizeAndCeiling(t *testing.T) {
 		}
 	}
 }
+
+// An exact IP that is a metadata or link-local address is refused in every spelling the
+// normaliser reads as an IP; a numeric host name that a resolver would read as IPv4 is refused
+// too. Loopback and private addresses stay approvable.
+func TestExactIPRefusals(t *testing.T) {
+	for in, why := range map[string]string{
+		"169.254.169.254":          "link-local",
+		"169.254.170.2":            "link-local",
+		"169.254.0.1":              "link-local",
+		"::ffff:169.254.169.254":   "link-local",
+		"[::ffff:a9fe:a9fe]":       "link-local",
+		"fe80::1":                  "link-local",
+		"FE80::ABCD":               "link-local",
+		"febf::1":                  "link-local",
+		"100.100.100.200":          "metadata",
+		"::ffff:100.100.100.200":   "metadata",
+		"fd00:ec2::254":            "metadata",
+		"FD00:EC2:0:0:0:0:0:254":   "metadata",
+		"fd00:ec2::23":             "metadata",
+		"fd20:ce::254":             "metadata",
+		"[fd20:ce::254]":           "metadata",
+		"2852039166":               "ambiguous",
+		"0xa9fea9fe":               "ambiguous",
+		"0xa9.254.169.254":         "ambiguous",
+		"169.254.169.254.":         "",
+		"0251.0376.0251.0376":      "ambiguous",
+		"*.0.0.5":                  "ambiguous",
+		"169.254.169.254..":        "empty label",
+		"2852039166..":             "empty label",
+		"169。254。169。254。":         "",
+		"169。254。169。254":          "ambiguous",
+		"169.254.43518":            "ambiguous",
+		"foo.123":                  "ambiguous",
+		"foo.0x1":                  "ambiguous",
+		"*.123":                    "ambiguous",
+		"192.0.0.192":              "metadata",
+		"::ffff:192.0.0.192":       "metadata",
+		"168.63.129.16":            "metadata",
+		"64:ff9b::169.254.169.254": "link-local",
+		"64:ff9b::a9fe:a9fe":       "link-local",
+		"64:ff9b::100.100.100.200": "metadata",
+		"64:ff9b::192.0.0.192":     "metadata",
+		"::169.254.169.254":        "link-local",
+		"::100.100.100.200":        "metadata",
+		"2002:a9fe:a9fe::1":        "link-local",
+		"fe80::1%eth0":             "",
+	} {
+		got, err := NormalizePattern(in, false)
+		if err == nil || (why != "" && !strings.Contains(err.Error(), why)) {
+			t.Errorf("NormalizePattern(%q) = %q, %v; want a refusal saying %q", in, got, err, why)
+		}
+		if _, err := NormalizePattern(in, true); err == nil {
+			t.Errorf("exact NormalizePattern(%q) accepted", in)
+		}
+	}
+	for _, in := range []string{"127.0.0.1", "::1", "10.20.5.7", "192.168.1.5", "fd12:3456::5", "169.253.1.1", "fec0::1", "gpu1", "llm.corp.example", "a1.lab", "10.20.30.40.example", "0x.example", "64:ff9b::10.20.5.7", "::1", "2002:0a14:0507::1"} {
+		if _, err := NormalizePattern(in, false); err != nil {
+			t.Errorf("NormalizePattern(%q): %v", in, err)
+		}
+	}
+	for _, bad := range []string{"endpoints=169.254.169.254", "endpoints=10.0.0.0/8,fd20:ce::254"} {
+		if _, err := ParseCeiling(bad); err == nil {
+			t.Errorf("%q started", bad)
+		}
+	}
+	// A stored host that predates the refusal is never approved, whatever the layers above say, and
+	// is named so a screen can show it.
+	l := Layers{Tenant: Rule{Endpoints: list("169.254.169.254", "127.0.0.1")}}
+	if got := l.ApprovedEndpoints(); !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Errorf("approved = %v", got)
+	}
+	if by := l.EndpointExcludedBy("169.254.169.254"); !slices.Equal(by, []string{ExcludedAddress}) {
+		t.Errorf("excluded by %v", by)
+	}
+	// Loopback is held by the layers above like any host: a ceiling that narrows endpoints without
+	// listing it keeps a tenant from approving it.
+	l = Layers{Ceiling: Rule{Destinations: list(SelfHosted), Endpoints: list("10.0.0.0/8", "llm.corp.example")},
+		Tenant: Rule{Endpoints: list("127.0.0.1", "::1")}}
+	if got := l.ApprovedEndpoints(); len(got) != 0 {
+		t.Errorf("loopback approved under a ceiling that does not list it: %v", got)
+	}
+	l.Ceiling.Endpoints = list("127.0.0.1")
+	if got := l.ApprovedEndpoints(); !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Errorf("loopback the ceiling lists: %v", got)
+	}
+}
+
+// A stored host that predates the refusal (the old normaliser accepted numeric spellings as host
+// names) is excluded and so never sent to the Agent.
+func TestStoredAmbiguousHostsAreExcluded(t *testing.T) {
+	stored := []string{"2852039166", "0xa9fea9fe", "169.254.43518", "0251.0376.0251.0376", "169.254.169.254.", "2852039166.", "foo.123"}
+	l := Layers{Tenant: Rule{Endpoints: &stored}}
+	if got := l.ApprovedEndpoints(); len(got) != 0 {
+		t.Errorf("approved %v", got)
+	}
+	for _, h := range stored {
+		if by := l.EndpointExcludedBy(h); !slices.Contains(by, ExcludedAddress) {
+			t.Errorf("%q excluded by %v", h, by)
+		}
+	}
+	ok := Layers{Tenant: Rule{Endpoints: list("10.20.5.7", "10.20.30.40.example", "0x.example", "llm.corp.example")}}
+	if len(ok.ApprovedEndpoints()) != 4 {
+		t.Errorf("valid hosts excluded: %v", ok.ApprovedEndpoints())
+	}
+	// Normalising twice never changes a spelling that was accepted.
+	for _, in := range []string{"LLM.Corp.Example.", "10.20.30.40.example", "a.b"} {
+		a, err := NormalizePattern(in, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b, err := NormalizePattern(a, false); err != nil || b != a {
+			t.Errorf("%q: %q then %q, %v", in, a, b, err)
+		}
+	}
+}

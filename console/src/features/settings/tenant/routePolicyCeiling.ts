@@ -40,9 +40,10 @@ function asciiHost(s: string): string | null {
     return null;
   }
   const labels = h.split(".");
-  // A numeric last label is an IPv4 address to the URL parser ("0x7f.1" becomes 127.0.0.1) but a
-  // plain name to the CP, so only the canonical dotted quad is accepted as one.
-  if (/^(0x[0-9a-f]*|\d+)$/.test(labels[labels.length - 1]) && h !== s) return null;
+  // A name whose last label is all digits or 0x hex is an IPv4 spelling to a resolver and the URL
+  // parser ("0x7f.1" is 127.0.0.1); the CP refuses it too (numericLastLabel), and the canonical
+  // dotted quad never reaches here.
+  if (/^(0x[0-9a-f]*|\d+)$/.test(labels[labels.length - 1])) return null;
   for (const l of labels) {
     if (!/^[a-z0-9-]+$/.test(l) || l.startsWith("-") || l.endsWith("-")) return null;
     if (l.slice(2, 4) === "--" && !(l.startsWith("xn--") && validPunycodeLabel(l))) return null;
@@ -120,14 +121,20 @@ function normPattern(raw: string): string | null {
     if (wild || /[\s/@?#[\]%*\\]/.test(s)) return null;
     try {
       const h = new URL(`http://[${s}]/`).hostname;
-      return h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : null;
+      if (!h.startsWith("[") || !h.endsWith("]")) return null;
+      // An IPv4-mapped address reads as null here (the CP judges it as its IPv4 address): "exceeds".
+      const ip = parseIp(h.slice(1, -1));
+      return ip === null || refusedIp(ip) ? null : h.slice(1, -1);
     } catch {
       return null;
     }
   }
   const dotted = /^\d+\.\d+\.\d+\.\d+$/;
   // An IPv4 address stays as typed; with a trailing dot the CP no longer reads it as one and refuses it.
-  if (dotted.test(s)) return wild ? null : s;
+  if (dotted.test(s)) {
+    const ip = parseIp(s);
+    return wild || ip === null || refusedIp(ip) ? null : s;
+  }
   if (s.endsWith(".")) {
     s = s.slice(0, -1);
     if (dotted.test(s)) return null;
@@ -147,7 +154,7 @@ interface Cidr {
 }
 
 const PRIVATE_SPACE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"];
-const METADATA = ["100.100.100.200", "fd00:ec2::254", "fd00:ec2::23", "fd20:ce::254"];
+const METADATA = ["192.0.0.192", "168.63.129.16", "100.100.100.200", "fd00:ec2::254", "fd00:ec2::23", "fd20:ce::254"];
 
 // parseIp reads an IPv4 dotted quad (no leading zeros) or an IPv6 address; an IPv4-mapped one is
 // not read (null): the CP unmaps it to the IPv4 address, and the Console answers "exceeds".
@@ -182,6 +189,23 @@ function parseIp(s: string): { v: 4 | 6; n: bigint } | null {
     n = (n << 8n) | BigInt(o);
   }
   return { v: 4, n };
+}
+
+// refusedIp mirrors routepolicy refusedAddr: link-local and instance-metadata addresses are never
+// an approvable exact host.
+function refusedIp(ip: { v: 4 | 6; n: bigint }): boolean {
+  // An IPv4 address carried in an IPv6 one (NAT64 64:ff9b::/96, IPv4-compatible ::/96, 6to4
+  // 2002::/16) is judged as itself.
+  if (ip.v === 6) {
+    const low = ip.n & 0xffffffffn;
+    if (ip.n >> 32n === 0x0064ff9b0000000000000000n || ip.n >> 32n === 0n) return refusedIp({ v: 4, n: low });
+    if (ip.n >> 112n === 0x2002n) return refusedIp({ v: 4, n: (ip.n >> 80n) & 0xffffffffn });
+  }
+  if (ip.v === 4 ? ip.n >> 16n === 0xa9fen : ip.n >> 118n === 0x3fan) return true; // 169.254/16, fe80::/10
+  return METADATA.some((m) => {
+    const a = parseIp(m)!;
+    return a.v === ip.v && a.n === ip.n;
+  });
 }
 
 const width = (v: 4 | 6) => (v === 4 ? 32 : 128);

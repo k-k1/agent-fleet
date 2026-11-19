@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Endpoint approval through the REST (ADR 0138 §2, §8 M1): the tenant_admin approves exact hosts
@@ -123,5 +125,56 @@ func TestEndpointsUnderNoRestriction(t *testing.T) {
 	}
 	if p.Restricted || len(p.Endpoints) != 0 || len(p.EndpointRoutes) != 0 {
 		t.Errorf("unrestricted member policy: %+v", p)
+	}
+}
+
+// An exact IP that is a metadata or link-local address cannot be approved at any layer, even where
+// no layer above narrows endpoints; loopback can, but only where the layers above let it through.
+// A host stored before the refusal stays in the view, named, and never reaches the Agent.
+func TestEndpointApprovalRefusesMetadataAddresses(t *testing.T) {
+	st, mux, tn := routePolicyFixture(t, "classes=-subscription")
+	tenantPath := "/api/admin/tenants/" + tn.Slug + "/route-policy"
+	for _, h := range []string{"169.254.169.254", "::ffff:169.254.169.254", "fe80::1", "fd00:ec2::254", "fd20:ce::254", "2852039166"} {
+		for _, c := range []struct{ path, who, body string }{
+			{tenantPath, "boss-x", `{"endpoints":["` + h + `"]}`},
+			{tenantPath + "/cap", "root-x", `{"endpoints":["` + h + `"]}`},
+			{"/api/admin/route-policy", "root-x", `{"endpoints":["` + h + `"]}`},
+		} {
+			if w := routeAdminDo(mux, "PUT", c.path, c.who, c.body); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_route_policy") {
+				t.Errorf("PUT %s %s: %d %s, want 400 invalid_route_policy", c.path, c.body, w.Code, w.Body)
+			}
+		}
+	}
+	if w := routeAdminDo(mux, "PUT", tenantPath, "boss-x", `{"endpoints":["127.0.0.1","::1"]}`); w.Code != 200 {
+		t.Fatalf("loopback with no layer narrowing endpoints: %d %s", w.Code, w.Body)
+	}
+
+	// A stored host that predates the refusal: named in the view, not approved, not sent.
+	ctx := context.Background()
+	if _, _, err := st.PutRoutePolicy(ctx, store.RoutePolicyTenant, tn.ID, `{"endpoints":["169.254.169.254","2852039166","127.0.0.1"]}`, "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	v := decodePolicy(t, routeAdminDo(mux, "GET", tenantPath, "boss-x", "").Body.String())
+	if len(v.Endpoints) != 3 || v.Endpoints[0].Host != "169.254.169.254" || v.Endpoints[0].Approved ||
+		!slices.Equal(v.Endpoints[0].ExcludedBy, []string{"address"}) || v.Endpoints[1].Approved ||
+		!slices.Equal(v.Endpoints[1].ExcludedBy, []string{"address"}) || !v.Endpoints[2].Approved {
+		t.Errorf("tenant view: %+v", v.Endpoints)
+	}
+	if p, _ := MemberPolicyOf(ctx, st, tn.ID); !slices.Equal(p.Endpoints, []string{"127.0.0.1"}) {
+		t.Errorf("member policy endpoints = %v, want only 127.0.0.1", p.Endpoints)
+	}
+	// Saving the same list again is refused, saying why.
+	if w := routeAdminDo(mux, "PUT", tenantPath, "boss-x", `{"endpoints":["169.254.169.254","127.0.0.1"]}`); w.Code != 400 ||
+		!strings.Contains(w.Body.String(), "link-local") {
+		t.Errorf("re-saving the stored list: %d %s", w.Code, w.Body)
+	}
+}
+
+// Loopback is held by the layers above like any host.
+func TestLoopbackNeedsTheCeilingToListIt(t *testing.T) {
+	_, mux, tn := routePolicyFixture(t, "destinations=aws-bedrock,self-hosted;endpoints=10.0.0.0/8")
+	w := routeAdminDo(mux, "PUT", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", `{"endpoints":["127.0.0.1"]}`)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "route_policy_endpoint_not_approvable") {
+		t.Errorf("loopback under a ceiling that does not list it: %d %s", w.Code, w.Body)
 	}
 }
