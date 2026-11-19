@@ -181,19 +181,19 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     });
   // Categories whose folded "Sent N" line is open. Session-only: a fold that reopened by itself would defeat it.
   const [sentOpenCats, setSentOpenCats] = useState<Record<string, boolean>>({});
+  const [editing, setEditing] = useState<string | null>(null);
   // Drop the open flag of a category with nothing left to fold, or a later started note would arrive already open.
   useEffect(() => {
     setSentOpenCats((o) => {
       const live = new Set<string>();
-      for (const m of memos) if (m.state === "delivered" || m.state === "superseded") live.add(groupKey(m.repo, m.category));
+      for (const m of memos) if ((m.state === "delivered" || m.state === "superseded") && m.id !== editing) live.add(groupKey(m.repo, m.category));
       const keys = Object.keys(o).filter((k) => !live.has(k));
       if (keys.length === 0) return o;
       const n = { ...o };
       for (const k of keys) delete n[k];
       return n;
     });
-  }, [memos]);
-  const [editing, setEditing] = useState<string | null>(null);
+  }, [memos, editing]);
   const [renameCat, setRenameCat] = useState<string | null>(null); // category id being renamed
   const [composerOpen, setComposerOpen] = useState(false);
   // Where the composer writes. null = the section-top composer, whose free-form category
@@ -1019,7 +1019,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           onChange={() =>
                             setSel((s) => {
                               const n = { ...s };
-                              for (const id of ids) n[id] = !allSel;
+                              // Clearing also drops folded rows that were selected while the fold was open.
+                              const target = allSel ? g.memos.filter((m) => !isSuperseded(m)).map((m) => m.id) : ids;
+                              for (const id of target) n[id] = !allSel;
                               return n;
                             })
                           }

@@ -252,6 +252,21 @@ describe("the list", () => {
     expect(bodies.findIndex((x) => x?.includes("started-b"))).toBeLessThan(bodies.findIndex((x) => x?.includes("waiting-a")));
   });
 
+  it("clears a folded memo's selection when select-all is turned off with the fold closed", async () => {
+    servedMemos = [
+      aMemo({ id: "b", body: "started-b", state: "delivered", provenance: "member", position: 0 }),
+      aMemo({ id: "a", body: "waiting-a", state: "pending", provenance: "member", position: 1 }),
+    ];
+    await render();
+    const fold = () => document.querySelector<HTMLButtonElement>(".memo-sent-fold")!;
+    await act(async () => fold().click());
+    await act(async () => document.querySelector<HTMLInputElement>(".memo-cat-check")!.click());
+    expect(document.querySelector(".memo-selbar-n")?.textContent).toContain(t("memo.selected_n", { count: 2 }));
+    await act(async () => fold().click());
+    await act(async () => document.querySelector<HTMLInputElement>(".memo-cat-check")!.click());
+    expect(document.querySelector(".memo-selbar")).toBeNull();
+  });
+
   it("does not fold a plain category's started memos", async () => {
     servedCats = [aCat({ queue: true }), aCat({ id: "c2", name: "plain", position: 1 })];
     servedMemos = [aMemo({ id: "b", category: "plain", state: "delivered", provenance: "member" })];
