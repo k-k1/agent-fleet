@@ -164,6 +164,90 @@ describe("endpoint patterns with internationalised host names", () => {
   });
 });
 
+// CIDR ranges. Each row is [ceiling pattern, rule pattern, covered] and is also written to
+// endpoint-cases.json, which routepolicysrv TestEndpointCoverCases replays through the CP's PUT
+// handlers: a row the Console calls covered must be accepted there (the Console is never more
+// permissive), and one it calls uncovered must be refused. Every ceiling pattern is one the CP
+// accepts. Rows with an IPv4-mapped host are "uncovered" here although the CP unmaps and covers
+// them: the safe side.
+const ENDPOINT_ROWS: [string, string, boolean][] = [
+  ["10.20.0.0/16", "10.20.5.7", true],
+  ["10.20.0.0/16", "10.20.0.0", true],
+  ["10.20.0.0/16", "10.20.255.255", true],
+  ["10.20.0.0/16", "10.21.0.1", false],
+  ["10.20.0.0/16", "10.20.0.0/16", true],
+  ["10.20.0.0/16", "10.20.8.0/24", true],
+  ["10.20.8.0/24", "10.20.0.0/16", false],
+  ["10.20.0.0/16", "10.21.0.0/24", false],
+  ["10.0.0.0/8", "10.20.0.0/16", true],
+  ["10.20.0.0/16", "*.corp.example", false],
+  ["10.20.0.0/16", "llm.corp.example", false],
+  ["10.20.0.0/16", "10.20.5.7.nip.io", false],
+  ["*.corp.example", "10.20.0.0/16", false],
+  ["10.20.5.7", "10.20.0.0/16", false],
+  ["10.20.5.7", "10.20.5.7", true],
+  ["fd12:3456::/32", "fd12:3456::5", true],
+  ["fd12:3456::/32", "FD12:3456:0::5", true],
+  ["fd12:3456::/32", "[fd12:3456::5]", true],
+  ["fd12:3456::/32", "fd12:3457::5", false],
+  ["fd12:3456::/32", "fd12:3456:1::/48", true],
+  ["fd12:3456:1::/48", "fd12:3456::/32", false],
+  ["fd12:3456::/32", "10.20.5.7", false],
+  ["10.20.0.0/16", "fd12:3456::5", false],
+  ["10.20.0.0/16", "::ffff:10.20.5.7", false],
+  ["10.20.0.0/16", "::ffff:10.21.5.7", false],
+  ["10.20.0.0/16", "fe80::1%eth0", false],
+  // What the CP refuses is never covered, whatever the ceiling holds.
+  ["10.0.0.0/8", "10.20.5.7/16", false],
+  ["10.0.0.0/8", "10.20.5.7/32", false],
+  ["10.0.0.0/8", "0.0.0.0/0", false],
+  ["10.0.0.0/8", "10.0.0.0/7", false],
+  ["fd12::/16", "fd20::/20", false],
+  ["fd12::/16", "fd20:ce::/32", false],
+  ["fd12::/16", "fd00:ec2::/120", false],
+  ["fd12::/16", "fd12:3456::%eth0/32", false],
+  ["fd12::/16", "::10.20.0.0/112", false],
+  ["fd12::/16", "64:ff9b::/96", false],
+  ["fd12::/16", "2002::/16", false],
+  ["fd12::/16", "2001::/32", false],
+  ["10.0.0.0/8", "192.0.0.0/24", false],
+  ["10.0.0.0/8", "168.63.129.0/24", false],
+  ["10.0.0.0/8", "010.20.5.7", false],
+  ["10.0.0.0/8", "0xa.20.5.7", false],
+  ["10.0.0.0/8", "10.20.0.0/016", false],
+  ["10.0.0.0/8", "010.20.0.0/16", false],
+  ["10.0.0.0/8", "10.20.0.0/33", false],
+  ["10.0.0.0/8", "10.20.0.0/255.255.0.0", false],
+  ["10.0.0.0/8", "*.10.20.0.0/16", false],
+  ["10.0.0.0/8", "169.254.0.0/16", false],
+  ["10.0.0.0/8", "127.0.0.0/8", false],
+  ["10.0.0.0/8", "::ffff:10.20.0.0/112", false],
+  ["10.0.0.0/8", "10.20.0.0/16:80", false],
+  ["fc00::/8", "fd00::/8", false],
+  ["fd12::/16", "fd12:3456::/32", true],
+  ["fd12::/16", "fd12::/15", false],
+  ["fd12::/16", "fd12:0:0:0:0:0:0:5/128", false],
+  ["fd12::/16", "fe80::/10", false],
+  ["100.64.0.0/11", "100.64.1.0/24", true],
+  ["100.64.0.0/11", "100.100.100.200", false],
+];
+
+describe("endpoint patterns with CIDR ranges", () => {
+  const covered = (outer: string, inner: string) =>
+    exceeds({ endpoints: [inner] }, { endpoints: [outer] }, VOCAB).endpoints.length === 0;
+
+  it.each(ENDPOINT_ROWS)("ceiling %s, pattern %s: covered %s", (outer, inner, want) => {
+    expect(covered(outer, inner)).toBe(want);
+  });
+
+  it("matches the golden the CP replays (endpoint-cases.json)", () => {
+    const path = `${DIR}/endpoint-cases.json`;
+    const text = JSON.stringify({ cases: ENDPOINT_ROWS.map(([ceiling, pattern, covered]) => ({ ceiling, pattern, covered })) }, null, 1) + "\n";
+    if (process.env.AF_UPDATE_MATCH_CASES === "1") writeFileSync(path, text);
+    expect(readFileSync(path, "utf8")).toBe(text);
+  });
+});
+
 describe("stoppedBy", () => {
   it("names each layer above that narrows the field without the value", () => {
     const above = [
@@ -190,6 +274,11 @@ const CEILINGS: { raw: string; rule: RouteRule }[] = [
     raw: "classes=-subscription;deny=openrouter-api",
     rule: { classes: ["member-cloud", "member-key", "provided", "self-hosted"], deny: ["openrouter-api"] },
   },
+  // Ranges: the draft's patterns are cut to what a range, or a suffix, holds.
+  {
+    raw: "destinations=self-hosted;endpoints=10.20.0.0/16,fd12:3456::/32,*.corp.example",
+    rule: { destinations: ["self-hosted"], endpoints: ["*.corp.example", "10.20.0.0/16", "fd12:3456::/32"] },
+  },
   {
     raw: "destinations=anthropic,aws-bedrock;except=copilot-login",
     rule: { destinations: ["anthropic", "aws-bedrock"], except: ["copilot-login"] },
@@ -205,6 +294,7 @@ const RULES: RouteRule[] = [
   // As typed: the CP lower-cases and drops a trailing dot before it compares, so the first stays.
   { destinations: ["anthropic"], endpoints: ["LLM.Corp.Example.", "x.other.example"] },
   { except: ["openrouter-api", "copilot-login"] },
+  { endpoints: ["10.20.8.0/24", "10.21.0.0/24", "10.20.5.7", "10.0.0.0/8", "llm.other.example", "fd12:3456:1::/48", "fd99::5"] },
   // No key the Console does not know: the CP refuses one (the presets pin that it is carried).
   { endpoints: ["llm.corp.example"] },
 ];

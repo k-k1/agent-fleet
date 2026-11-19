@@ -21,7 +21,7 @@ const EnvCeiling = "AF_MODEL_ROUTE_CEILING"
 // classes and destinations name either the values allowed ("destinations=aws-bedrock") or, every
 // item prefixed with "-", the values removed from all ("classes=-subscription"); a list mixing
 // the two forms is refused. except and deny are route ids (D1d). endpoints are the host patterns
-// that may be approved as self-hosted endpoints at all (an exact host or "*.suffix"; unset under
+// that may be approved as self-hosted endpoints at all (an exact host, "*.suffix" or a private CIDR range; unset under
 // a ceiling that restricts destinations, none may). Anything unparsable, unknown, a per-connection
 // route in except or a pattern on a vendor's hosts is an error, never "allow all": the caller
 // refuses to start.

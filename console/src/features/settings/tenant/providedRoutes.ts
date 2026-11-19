@@ -68,6 +68,18 @@ export interface ProvidedTenantView {
   members: ProvidedMember[];
   reservations: ModelReservation[];
   floor_micro: number;
+  /** Whether the deployment source exists and is switched on. Absent on a CP from before the
+   *  fields: the source state is then unknown and the page draws as it always did. Never says
+   *  anything of the operator's AWS side. */
+  source_registered?: boolean;
+  source_active?: boolean;
+}
+
+/** sourceState reads the tenant view's source fields: "unknown" (an older CP) is not "off". */
+export function sourceState(v: ProvidedTenantView): "unknown" | "on" | "off" | "unregistered" {
+  if (typeof v.source_registered !== "boolean" || typeof v.source_active !== "boolean") return "unknown";
+  if (!v.source_registered) return "unregistered";
+  return v.source_active ? "on" : "off";
 }
 
 export interface GrantInput {
@@ -147,7 +159,9 @@ export function parseProvidedTenant(d: unknown): ProvidedTenantView | null {
     !d.members.every(isMember) ||
     !Array.isArray(d.reservations) ||
     !d.reservations.every(isReservation) ||
-    !num(d.floor_micro)
+    !num(d.floor_micro) ||
+    (d.source_registered !== undefined && typeof d.source_registered !== "boolean") ||
+    (d.source_active !== undefined && typeof d.source_active !== "boolean")
   )
     return null;
   return d as unknown as ProvidedTenantView;

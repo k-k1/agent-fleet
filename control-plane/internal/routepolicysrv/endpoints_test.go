@@ -67,6 +67,50 @@ func TestEndpointApprovalThroughTheLayers(t *testing.T) {
 	}
 }
 
+// Under a ceiling with a CIDR range the tenant_admin still approves exact IPs only: one inside the
+// range is approved and reaches the Agent, one outside it, a host name and a range are refused,
+// and a cap that narrows to a smaller range later excludes the stored IP.
+func TestEndpointApprovalUnderCIDR(t *testing.T) {
+	st, mux, tn := routePolicyFixture(t, "destinations=aws-bedrock,self-hosted;endpoints=10.20.0.0/16")
+	tenantPath := "/api/admin/tenants/" + tn.Slug + "/route-policy"
+	refused := func(body, code string) {
+		t.Helper()
+		w := routeAdminDo(mux, "PUT", tenantPath, "boss-x", body)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), code) {
+			t.Errorf("PUT %s: %d %s, want 400 %s", body, w.Code, w.Body, code)
+		}
+	}
+	refused(`{"endpoints":["10.20.0.0/16"]}`, "invalid_route_policy")
+	refused(`{"endpoints":["10.20.8.0/24"]}`, "invalid_route_policy")
+	refused(`{"endpoints":["10.21.0.1"]}`, "route_policy_endpoint_not_approvable")
+	refused(`{"endpoints":["llm.corp.example"]}`, "route_policy_endpoint_not_approvable")
+	refused(`{"endpoints":["10.20.5.7","fd12::5"]}`, "route_policy_endpoint_not_approvable")
+
+	if w := routeAdminDo(mux, "PUT", tenantPath, "boss-x", `{"endpoints":["10.20.5.7","::ffff:10.20.9.9"]}`); w.Code != 200 {
+		t.Fatalf("approving IPs inside the range: %d %s", w.Code, w.Body)
+	}
+	ctx := context.Background()
+	p, err := MemberPolicyOf(ctx, st, tn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(p.Endpoints, []string{"10.20.5.7", "10.20.9.9"}) {
+		t.Errorf("member policy endpoints = %v", p.Endpoints)
+	}
+
+	// A cap range narrower than the ceiling's holds the stored IPs to itself; a cap wider than the
+	// ceiling's is refused.
+	if w := routeAdminDo(mux, "PUT", tenantPath+"/cap", "root-x", `{"destinations":["aws-bedrock","self-hosted"],"endpoints":["10.0.0.0/8"]}`); w.Code != 400 {
+		t.Errorf("a cap wider than the ceiling: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "PUT", tenantPath+"/cap", "root-x", `{"destinations":["aws-bedrock","self-hosted"],"endpoints":["10.20.5.0/24"]}`); w.Code != 200 {
+		t.Fatalf("a narrower cap: %d %s", w.Code, w.Body)
+	}
+	if p, _ := MemberPolicyOf(ctx, st, tn.ID); !slices.Equal(p.Endpoints, []string{"10.20.5.7"}) {
+		t.Errorf("after the cap: endpoints = %v, want only 10.20.5.7", p.Endpoints)
+	}
+}
+
 // With no restriction the Agent receives no endpoint: every route is allowed anyway.
 func TestEndpointsUnderNoRestriction(t *testing.T) {
 	st, mux, tn := routePolicyFixture(t, "")

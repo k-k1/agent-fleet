@@ -282,6 +282,49 @@ describe("tenant provided routes, status and month", () => {
     expect(row("bob").querySelector('[data-label="今月の使用 / 予算"]')!.textContent).toBe("—");
   });
 
+  it("says the source is switched off or not registered, and lists nothing as usable", async () => {
+    for (const [registered, state, text] of [
+      [true, "source-off", "停止されている"],
+      [false, "source-unregistered", "登録されていない"],
+    ] as const) {
+      await mountWith({ ...VIEW(), source_registered: registered, source_active: false });
+      const banner = summary().querySelector(`[data-state="${state}"]`)!;
+      expect(banner.textContent).toContain(text);
+      expect(banner.textContent).toContain("配備の管理者がソースを有効にする必要があります");
+      expect(summary().querySelector('[data-state="granted"]')).toBeNull();
+      expect(summary().querySelector(".prov-tenant-use")).toBeNull();
+      expect(summary().querySelector(".prov-reservations")).toBeNull();
+      expect(row("alice").querySelector('[data-label="今月の使用 / 予算"]')!.textContent).toBe("≈ $1.00");
+      act(() => root?.unmount());
+      host?.remove();
+    }
+  });
+
+  it("says a source that is off also needs the grant when the tenant is not granted", async () => {
+    await mountWith({ ...VIEW(), granted: false, ceiling_micro: null, source_registered: true, source_active: false });
+    const banner = summary().querySelector('[data-state="source-off"]')!;
+    expect(banner.textContent).toContain("このテナントに許可する必要があります");
+    expect(banner.textContent).not.toContain("有効になったときから");
+  });
+
+  it("draws a registered, active source as usable", async () => {
+    await mountWith({ ...VIEW(), source_registered: true, source_active: true });
+    expect(summary().querySelector('[data-state="granted"]')).not.toBeNull();
+    expect(summary().querySelector(".prov-reservations")).not.toBeNull();
+  });
+
+  it("draws as before from a CP that does not send the source fields", async () => {
+    await mountWith(VIEW());
+    expect(summary().querySelector('[data-state="granted"]')).not.toBeNull();
+    expect(summary().querySelector('[data-state^="source-"]')).toBeNull();
+  });
+
+  it("does not read a failed fetch as a switched-off source", async () => {
+    await mountWith({ error: { code: "internal", message: "boom", status: 500 } });
+    expect(host!.querySelector('[data-state^="source-"]')).toBeNull();
+    expect(host!.querySelector("[role=alert]")).not.toBeNull();
+  });
+
   it("says why a member whose budget is zero cannot use it", async () => {
     const v = VIEW();
     v.member_default_micro = 0;

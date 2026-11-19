@@ -20,6 +20,7 @@ import {
   parseProvidedTenant,
   parseUsd,
   resetOf,
+  sourceState,
   usd,
   usdInput,
   type Load,
@@ -236,10 +237,22 @@ export function Usage({ used, of, spent }: { used: number; of: number | null; sp
 function TenantProvidedSummary({ view }: { view: ProvidedTenantView }) {
   const tr = useT();
   const reset = resetOf(view.month);
-  const pool = view.granted ? view.ceiling_micro : null;
+  const src = sourceState(view);
+  const sourceDown = src === "off" || src === "unregistered";
+  // Without a working source the pool means nothing: no one can use the route whatever the grant.
+  const pool = view.granted && !sourceDown ? view.ceiling_micro : null;
   return (
     <div className="prov-summary" data-testid="prov-grant">
-      {view.granted ? (
+      {sourceDown ? (
+        <div
+          className="admin-hint warn prov-banner"
+          role="status"
+          data-state={src === "off" ? "source-off" : "source-unregistered"}
+        >
+          <p>{tr(src === "off" ? "tenant.prov_source_off" : "tenant.prov_source_unregistered")}</p>
+          <p>{tr(view.granted ? "tenant.prov_source_hint" : "tenant.prov_source_hint_ungranted")}</p>
+        </div>
+      ) : view.granted ? (
         <p className="mpol-ok" data-state="granted">
           {tr("tenant.prov_status_on")}
           {view.ceiling_micro !== null && (
@@ -269,7 +282,7 @@ function TenantProvidedSummary({ view }: { view: ProvidedTenantView }) {
       {view.reserved_micro > 0 && (
         <p className="admin-hint">{tr("tenant.prov_held", { held: approx(view.reserved_micro) })}</p>
       )}
-      <Reservations view={view} />
+      {!sourceDown && <Reservations view={view} />}
     </div>
   );
 }
@@ -572,6 +585,7 @@ function TenantProvidedRoutesBody({ slug, onServed, ruleStops, isSuper = false, 
     );
   }
   const view = load.value;
+  const sourceDown = ["off", "unregistered"].includes(sourceState(view));
   const saved = (w: string[]) => {
     setWarnings(w);
     reload();
@@ -629,7 +643,7 @@ function TenantProvidedRoutesBody({ slug, onServed, ruleStops, isSuper = false, 
                 path={path}
                 member={m}
                 // MayUse on the CP, under the tenant's grant: not granted, no member's budget applies.
-                canUse={view.granted && (m.granted || !view.members_only)}
+                canUse={view.granted && !sourceDown && (m.granted || !view.members_only)}
                 peek={peek}
                 onSaved={saved}
               />

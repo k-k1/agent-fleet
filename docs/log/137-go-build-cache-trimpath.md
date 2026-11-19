@@ -48,3 +48,5 @@ Already shipped (`HomeLowNotice`, `ReclaimModal`, #3880). It raises at >90% used
 which on a 466 GB home is about 47 GB of headroom, so the threshold was not changed. The list put
 working copies before tool caches in survey order, so a 160 GB go-build cache could sit last; the
 list is now sorted by size, largest first.
+
+2026-11-20: for the `native` runtime (rootfs mode gets the image ENV via `image-env.json`; the host-agent mode does not, so it needs `WS_ENV=GOFLAGS=-trimpath`), see "Sharing Go build-cache entries between worktrees" in `guide/operate/native/install.md`.

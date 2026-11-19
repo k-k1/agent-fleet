@@ -107,6 +107,7 @@ Some deployments pay for Amazon Bedrock themselves and offer it to tenants as a 
 The deployment administrator grants it to your tenant with a **tenant's monthly pool**. Within it, you decide who may use it and how much. The top of the tab says where things stand:
 
 - **Usable in this tenant**, with the pool, or a banner saying it is **not usable yet** because it is not granted. The budgets below stay editable either way: set them first, and they apply from the moment it is granted
+- A banner saying the deployment's Bedrock source is **switched off** or **not registered yet**, shown in place of the status above and with no models listed as usable. There is nothing to do from the tenant side: the deployment's administrator has to enable the source. The grant and budgets are kept and apply once it is on (a tenant that is not granted also needs the grant). A page that cannot read this state (an older Control Plane, or a failed read) shows no such banner
 - This month, in UTC, with when it resets in your local time, and a bar of what is spent and held for calls in flight against the pool
 - A banner when your restrictions stop "Amazon Bedrock (this deployment)", naming who, with **See restrictions →**: members cannot use it, whatever their budget, until the restriction allows it
 
@@ -152,7 +153,7 @@ The operator setting cannot be changed here: it is the deployment's configuratio
 **Restrictions for all tenants** has the same editor as a tenant's, with the same **Common choices**. It applies to every tenant.
 
 What the operator setting forbids is marked 🔒. A restriction that would still allow any of it cannot be saved, and the editor says so before you press **Save**, naming what it would allow. **Match the operator setting** narrows the fields to what the operator setting allows, so it can be saved: for example a restriction that only blocks Cursor's login gets the operator setting's destinations as well. It never widens anything and does not save.
-Its **Self-hosted servers that may be approved** name the host patterns a tenant may approve, one row each: an exact host or `*.example.com`. **No limit** leaves the restriction above in charge; **Only these** with no pattern lets no host be approved.
+Its **Self-hosted servers that may be approved** name the host patterns a tenant may approve, one row each: an exact host, `*.example.com`, or a private IP range such as `10.20.0.0/16` or `fd12:3456::/32`. A range matches IP addresses only, never host names, even ones that resolve into it; it must lie inside private address space (a range holding a cloud metadata address such as `fd00::/8` is refused), and host bits must be zero (`10.20.5.7/16` is refused, write `10.20.0.0/16`). A tenant still approves exact hosts one by one. **No limit** leaves the restriction above in charge; **Only these** with no pattern lets no host be approved.
 
 ### Restrict one tenant further, or grant it Amazon Bedrock
 

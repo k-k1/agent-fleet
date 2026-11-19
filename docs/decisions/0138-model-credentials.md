@@ -833,6 +833,28 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
   page says the Control Plane is older and draws no editor. A Console that reads a Control Plane
   without it shows that alert alone, read-only views included: the two ship together, and a page drawn from half an answer
   is worse than one that says why it is empty.
+
+- 2026-11-20, §2 (#4268): the patterns of the layers above the tenant (the ceiling's `endpoints=`, the deployment rule,
+  a tenant's cap) may also be a CIDR range of IP literals, e.g. `10.20.0.0/16` or `fd12:3456::/32`. The tenant rule
+  still approves exact hosts only, so the Agent, which receives that list, compares text and has no range logic.
+  - **Matching.** A range matches IP literals only. A host name never falls under one, even when it resolves into the
+    range, because approval compares the connection's host as written and nothing resolves it. An IPv4-mapped IPv6 host
+    is read as its IPv4 address (as exact hosts already were), so `::ffff:10.20.5.7` is judged by `10.20.0.0/16`.
+  - **Covering.** A range covers an IP literal inside it and a range inside it (prefix length at least as long); it never
+    covers a host name or a `*.suffix`, and nothing but a range covers a range. Families never mix.
+  - **Accepted.** Only a range wholly inside private address space (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+    `100.64.0.0/10`, `fc00::/7`) that holds no instance-metadata address (`100.100.100.200`, `fd00:ec2::254`, `fd00:ec2::23`, `fd20:ce::254`). That one
+    rule refuses `/0`, public ranges, loopback, link-local (so `169.254.169.254`), multicast and "this network".
+    Consequently `fd00::/8`, `fc00::/7`, `fd20::/20` and `100.64.0.0/10` are refused (they hold a metadata address); write the
+    narrower range you own. Exact IP hosts are unchanged: they are not held to private space.
+  - **Canonical form.** Masked, lower-case, no zone, `netip` text, so normalising twice changes nothing. Refused rather than
+    rewritten: host bits set (`10.20.5.7/16` is probably a mistake, and silently widening it to the /16 would approve more
+    than was typed), an IPv4-mapped IPv6 range, a one-address range (`/32`, `/128`: write the address), a zone, a
+    wildcard over a range, and a range in the tenant rule.
+  - **Console.** The ceiling check mirrors these rules and answers "exceeds" whenever it is unsure. Both sides are held by
+    `endpoint-cases.json` (written by `routePolicyCeiling.test.ts`, replayed by `routepolicysrv` `TestEndpointCoverCases`).
+  - Not verified against a real self-hosted endpoint; hostname resolution policy and custom-api on approved endpoints are
+    separate (#4271).
 - 2026-11-20, D16 (#4367): the three route-policy PUTs (`PUT /api/admin/route-policy`, `PUT /api/admin/tenants/{slug}/route-policy`
   and `.../route-policy/cap`) take the revision the editor loaded as an `If-Match` header: the layer's own `revision`
   from the GET, quoted or bare. A stale one answers 409 `route_policy_stale` and writes, records and takes nothing; a
