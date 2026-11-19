@@ -842,19 +842,30 @@ while the first is `delivered`.
   1. The prerequisite is `delivered` by a delivery (not by a hand send) that closed as clean, whose first turn is
      recorded and was not bad (`turnBad`, `control-plane/memo_dispatch.go:309`), and that was not retired as overdue.
      The Control Plane decides this alone, also while the workspace is stopped. A first turn not yet collected
-     (`collectClosedTurns`) keeps the dependent waiting.
+     (`collectClosedTurns`) keeps the dependent waiting. Some first turns are never recorded: a kind whose ledger
+     cannot record one (opencode), a ledger the Agent marked void (`workspace/agent/internal/status/first_turn.go:57-59`),
+     or a session gone before the collection window of 24 hours ended (`memoClosedTurnWindow`,
+     `control-plane/memo_dispatch.go:46`). Then step 1 cannot show a success, and step 2 has to: "no PR" does not
+     satisfy it, only a snapshot with at least one PR, all merged. A snapshot with no PR sends the dependent to `held`.
   2. Then also: every PR of that delivery's session is merged. The PR set is a **snapshot kept on the prerequisite's
      delivery**, not read from the session mirror. The dispatcher asks the running Agent for it: the PR of the session's
-     branch and the PR links the session holds as `started`, `created` or `working` (not a reviewer child's), read with
-     `branchpr.Cache.Fetch` (`branchpr.go:360`) from an answer the provider gave after the delivery closed, so a cached
-     "no PR" from before the close does not count. The Agent answers from the session's meta and working copy, which an
+     branch and the PR links the session holds as `started`, `created` or `working` (not a reviewer child's), read
+     from an answer the provider gave after the delivery closed. `branchpr.Cache.Fetch` (`branchpr.go:360`) cannot
+     give that today: it answers from the cache whenever every entry is fresh (`:383-399`), and a "no PR" stays
+     fresh for 10 minutes. It gains a lower bound on the fetch time, so that an entry fetched before the close is
+     asked again, and a cached "no PR" from before the close never counts. The Agent answers from the session's meta and working copy, which an
      archived session keeps. "No PR" counts only from such an answer; a PR whose state is unknown or empty, a session
      the Agent no longer has, or no answer yet keeps the dependent waiting. Once every PR in the snapshot is merged, the
-     snapshot is final and is never asked again.
+     snapshot is final and is never asked again. Once the snapshot names PRs, later reads ask by PR number, so the
+     session may be archived or deleted meanwhile. A session the Agent no longer has before any snapshot was taken
+     can never give one: the dependent goes to `held` at once.
 - **Refreshing step 2.** The snapshot is asked again at most every 10 minutes while the workspace runs and a dependent
   waits on it. When every pending message of an open queue waits on a snapshot and a slot is free, the dispatcher may
-  wake the workspace for it at most once an hour. Those wakes count against the member's wake budget, not the queue's
-  daily fire cap, and stop after 24 hours without a change in the snapshot, when the member is notified once.
+  wake the workspace for it at most once an hour. Those wakes are a new count of their own, per member, at most 24 a
+  day (provisional): they are not deliveries, so `CountDeliveriesCreatedSince`
+  (`control-plane/internal/store/store_memo_delivery.go:342`) and the queue's daily fire cap do not see them, and the
+  existing settle wakes (`CountMemberWakesSince`, `:304`) are not touched. They stop after 24 hours without a change in
+  the snapshot, and the member is notified once.
 - **Not satisfiable.** The prerequisite's delivery closed aborted or unknown, or as clean with a bad first turn or an
   overdue retire; the message became `unconfirmed`, was deleted, was moved out of the queue, or was sent by hand; a PR
   of its snapshot was closed unmerged. Each dependent goes to `held` with the reason, for the person. A dependent is
@@ -880,7 +891,8 @@ two cases: the session's defer and the person's "return to queue".
 
 - **The return.** A new transition, not `ReturnDeliveryMessages`: a message of the delivery (`memo.delivery_id` is the
   delivery, state `delivered` or `unconfirmed`) becomes `pending` with `sent_at` and `delivery_id` cleared and the release
-  copy rewritten, under the membership lock. When another message of the queue already holds the same reference in
+  copy rewritten, under the membership lock. The third defer's move to `held` is the same transition with the release
+  cleared instead, as any return to `held` clears it. When another message of the queue already holds the same reference in
   `held`, `pending` or `claimed`, the returned message stays where it is and the run history says which message took
   its place; nothing fails, so a close is never blocked by it.
 - **The tool.** `defer_queue_item(reason, not_before, cancel)`, offered only to a session that has a queue delivery, for
@@ -889,18 +901,22 @@ two cases: the session's defer and the person's "return to queue".
   names that session. Fact 1 still holds: anything in the workspace that can use the queue token can make the call, so
   the session rule is a guard rail. What a forged call can do is bounded below: delay a released message and, after
   three, send it back to the person.
-- **When it takes effect.** The call only records the request on the delivery. It is applied by the clean close, on
-  whichever path makes it (a report, `closeIfDoneReported`, `control-plane/memo_delivery.go:887`; or the kept report
-  while the workspace is stopped, `:958-1003`): the outcome is `deferred` instead of clean, the message returns as above
+- **When it takes effect.** The call only records the request on the delivery. It is applied only by a clean close
+  made on a running Agent's report (`closeIfDoneReported`, `control-plane/memo_delivery.go:887`). The close from the
+  kept report while the workspace is stopped (`closeIfDoneKept`, `:958`) reads the mirror only, which can tell neither a
+  later turn nor a PR, so it leaves a delivery with a request open until a running Agent reports. Then the outcome is `deferred` instead of clean, the message returns as above
   with `not_before`, and the close requests the retire of the session as a clean close does
   (`control-plane/memo_delivery.go:183`, `store_memo_delivery.go:465`). An aborted or unknown close ignores the request.
   One message is never held by two runs at once.
 - **What withdraws it.** A later call replaces the request, and a call with `cancel` withdraws it. It is also dropped,
   and the close is clean, when a turn of the delivery's session tree starts after the call, or when the session holds
-  a PR that is open or merged at the close: a run that went on to do the work is not handed back.
+  a PR that is open or merged at the close: a run that went on to do the work is not handed back. Both are read the
+  way step 2 of A reads: the Agent's report gains the time of the last turn start in the tree, and the PR is read from
+  a provider answer newer than the call.
 - **Re-fire.** The content and the release are unchanged, so the message fires again by itself once `not_before` has
   passed, in its old place (it is still the oldest). `not_before` is between 10 minutes and 7 days ahead (default 1
-  hour). The third defer of one message puts it to `held` instead, with the reasons. Every re-fire is a new delivery,
+  hour). The third defer of one message puts it to `held` instead, with the reasons. A person's release of such a
+  message, and the person's "return to queue", clear `not_before` and set its count of defers back to zero. Every re-fire is a new delivery,
   so it counts against the daily cap.
 - **What the person sees, and what the next run does not.** The reason (at most 1 KiB) is shown in the run history and
   on the message. It never enters a later prompt: that would carry a session's text into an unattended prompt, which
