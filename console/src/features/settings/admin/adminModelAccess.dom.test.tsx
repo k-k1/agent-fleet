@@ -540,6 +540,21 @@ describe("admin overview and tenants", () => {
     resetProvidedRev();
   });
 
+  it("marks the provided tab unsaved while the source editor holds edits", async () => {
+    serve(SOURCE(false));
+    await mountNode(<AdminModelAccessView tenants={TENANTS} onOpenTenant={() => {}} />);
+    await click(tab("提供モデル"));
+    await flush();
+    expect(tab("提供モデル")!.textContent).toBe("提供モデル");
+    const ta = host!.querySelector<HTMLTextAreaElement>(".model-access-provided-source textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "anthropic.claude-draft");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+    expect(tab("提供モデル")!.textContent).toBe("提供モデル●");
+  });
+
   it("names why a tenant's grant could not be read", async () => {
     serve(SOURCE());
     const base = api.getMockImplementation()!;

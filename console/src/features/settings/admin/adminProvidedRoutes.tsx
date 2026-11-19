@@ -132,10 +132,9 @@ export type SourceRead = ReturnType<typeof useSourceRead>;
  *  The read it owes is paid when the edits are gone. */
 export function useSourceRead() {
   const [held, setHeld] = useState(false);
-  // The editor reports into the card's own scope below; this passes the same flag on to the
-  // page's scope, so the tab's unsaved mark still shows.
-  useReportDirty(held);
-  return { ...useProvided(SOURCE_PATH, parseSource, true, held), setHeld };
+  // Not reported to a DirtyScope here: this hook may run outside the page's tabs. The card passes
+  // the flag on from inside its own view, so the tab's unsaved mark still shows.
+  return { ...useProvided(SOURCE_PATH, parseSource, true, held), held, setHeld };
 }
 
 /** AdminProvidedSourceView is the deployment source's section, reading it itself; nothing where
@@ -148,7 +147,10 @@ export function AdminProvidedSourceView() {
  *  parts showing the source share the one request. */
 export function AdminProvidedSourceCard({ read }: { read: SourceRead }) {
   const tr = useT();
-  const { load, reload, peek, setHeld } = read;
+  const { load, reload, peek, held, setHeld } = read;
+  // The editor reports into the scope below, which holds the live read; this passes the same flag
+  // on to the scope the card sits in (the page's tab), where the inner scope would cut it off.
+  useReportDirty(held);
   if (!load || load.state === "off") return null;
   if (load.state === "failed") {
     return (
