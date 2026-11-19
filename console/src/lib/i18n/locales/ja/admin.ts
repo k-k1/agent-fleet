@@ -1215,6 +1215,7 @@ export const admin = {
   "admin.mpol_layer_tenant_cap": "配備の管理者からこのテナントへの制限",
   "admin.mpol_layer_tenant": "このテナントの制限",
   "admin.mpol_layer_vendor": "ベンダーのホスト",
+  "admin.mpol_layer_address": "承認できないアドレス（リンクローカルまたはインスタンスメタデータ）。削除してください",
   "admin.mpol_stale": "読み込んだ後に、ほかの人がこの規則を更新しています。保存していません。編集した内容は残っています。最新の規則を見るには、ページを開き直してください。",
   "admin.model_access_ceiling_source_other": "運用者の設定の出どころ: {source}。ここからは変更できません。",
   // ADR 0138 M2 P9: what the policy hides, and from which layer, on both Model access pages.

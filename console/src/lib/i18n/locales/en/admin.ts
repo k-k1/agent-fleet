@@ -1219,6 +1219,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mpol_layer_tenant_cap": "Deployment admin's restriction on this tenant",
   "admin.mpol_layer_tenant": "This tenant's restriction",
   "admin.mpol_layer_vendor": "A vendor's host",
+  "admin.mpol_layer_address": "An address that cannot be approved (link-local or instance metadata); remove it",
   "admin.mpol_stale": "Someone else changed this rule after it was loaded, so nothing was saved. Your edits are still here; reopen the page to see the current rule.",
   "admin.model_access_ceiling_source_other": "Operator setting source: {source}. It cannot be changed here.",
   // ADR 0138 M2 P9: what the policy hides, and from which layer, on both Model access pages.

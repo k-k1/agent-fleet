@@ -861,3 +861,20 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
   malformed one is 400 `bad_request`; no header is the unconditional write older callers make. The store compares it
   inside the write's own transaction, after the revision sequence's lock is held (`PutRoutePolicyIf`), so two saves
   based on one revision cannot both land. The Console sends it and no longer re-reads the layer before saving.
+
+- 2026-11-20, §2 (#4577): an exact IP host is refused when it is link-local (`169.254.0.0/16`, `fe80::/10`) or one of
+  the instance-metadata addresses of the 2026-11-20 note, in every layer (the ceiling, the deployment rule, a tenant
+  cap, the tenant rule), including IPv4-mapped spellings. A host name whose last label is all digits or `0x` hex
+  (`2852039166`, `0xa9fea9fe`) is refused as an ambiguous IPv4 spelling the canonical-IP check cannot see; so is an
+  empty label (`169.254.169.254..`, full-width stops). The metadata set also holds `192.0.0.192` (Oracle) and
+  `168.63.129.16` (Azure WireServer), which matter to exact IPs only (a range outside private space is refused anyway),
+  and an IPv4 address carried in an IPv6 one (NAT64 `64:ff9b::/96`, IPv4-compatible `::/96`, 6to4 `2002::/16`) is judged
+  as that IPv4 address.
+  - **Loopback** (`127.0.0.0/8`, `::1`) stays approvable: a member's own llama.cpp is what the approval is for. The
+    existing intersection already holds it like any host, so a tenant_admin cannot approve it where a layer above lists
+    endpoints without it; only where no layer above narrows endpoints can they. An operator who does not want that sets
+    `endpoints=` on the ceiling.
+  - **Stored policies.** A host saved before this stays in the tenant view, now excluded by `address` (shown as not
+    approved, with the reason), and is never sent to the Agent; saving the same list again is refused naming the
+    address. Nothing is dropped silently. A ceiling that names such an address no longer starts (the existing rule for
+    an invalid pattern).

@@ -202,6 +202,37 @@ const ENDPOINT_ROWS: [string, string, boolean][] = [
   ["10.0.0.0/8", "10.20.5.7/32", false],
   ["10.0.0.0/8", "0.0.0.0/0", false],
   ["10.0.0.0/8", "10.0.0.0/7", false],
+  // An exact IP that is link-local or an instance-metadata address is never covered. Loopback is
+  // approvable, and covered only by a layer that lists it.
+  ["10.0.0.0/8", "169.254.169.254", false],
+  ["10.0.0.0/8", "169.254.0.1", false],
+  ["10.0.0.0/8", "::ffff:169.254.169.254", false],
+  ["10.0.0.0/8", "fe80::1", false],
+  ["10.0.0.0/8", "febf::1", false],
+  ["10.0.0.0/8", "100.100.100.200", false],
+  ["fd12::/16", "fd00:ec2::254", false],
+  ["fd12::/16", "fd00:ec2::23", false],
+  ["fd12::/16", "[fd20:ce::254]", false],
+  ["10.0.0.0/8", "2852039166", false],
+  ["10.0.0.0/8", "169.253.1.1", false],
+  ["*.corp.example", "127.0.0.1", false],
+  ["10.0.0.0/8", "192.0.0.192", false],
+  ["10.0.0.0/8", "168.63.129.16", false],
+  ["fd12::/16", "64:ff9b::169.254.169.254", false],
+  ["fd12::/16", "::169.254.169.254", false],
+  ["fd12::/16", "2002:a9fe:a9fe::1", false],
+  ["10.0.0.0/8", "169.254.169.254..", false],
+  ["10.0.0.0/8", "169。254。169。254。", false],
+  ["10.0.0.0/8", "169.254.43518", false],
+  ["*.corp.example", "foo.123", false],
+  ["*.corp.example", "foo.0x1", false],
+  ["*.corp.example", "10.20.30.40.corp.example", true],
+  ["*.corp.example", "0x.corp.example", true],
+  ["*.corp.example", "10.20.30.40.example", false],
+  ["10.20.30.40.example", "10.20.30.40.example", true],
+  ["0x.example", "0x.example", true],
+  ["127.0.0.1", "127.0.0.1", true],
+  ["::1", "::1", true],
   ["fd12::/16", "fd20::/20", false],
   ["fd12::/16", "fd20:ce::/32", false],
   ["fd12::/16", "fd00:ec2::/120", false],
@@ -231,6 +262,21 @@ const ENDPOINT_ROWS: [string, string, boolean][] = [
   ["100.64.0.0/11", "100.64.1.0/24", true],
   ["100.64.0.0/11", "100.100.100.200", false],
 ];
+
+// A ceiling naming a refused address never starts on the CP, so these cannot be replayed there:
+// the check is that the Console never covers such an address, even by an identical ceiling.
+describe("exact IPs the CP refuses are never covered", () => {
+  it.each([
+    "169.254.169.254", "169.254.0.1", "fe80::1", "[fe80::1]", "100.100.100.200", "192.0.0.192", "168.63.129.16",
+    "fd00:ec2::254", "fd00:ec2::23", "fd20:ce::254", "64:ff9b::169.254.169.254", "::169.254.169.254", "64:ff9b::192.0.0.192",
+    "2002:a9fe:a9fe::1", "2852039166", "0xa9fea9fe", "foo.123", "foo.0x1", "*.123",
+  ])("%s", (ip) => {
+    expect(exceeds({ endpoints: [ip] }, { endpoints: [ip] }, VOCAB).endpoints).toEqual([ip]);
+  });
+  it.each(["127.0.0.1", "::1", "10.20.5.7", "fd12::5", "64:ff9b::10.20.5.7", "10.20.30.40.example"])("%s stays approvable", (ip) => {
+    expect(exceeds({ endpoints: [ip] }, { endpoints: [ip] }, VOCAB).endpoints).toEqual([]);
+  });
+});
 
 describe("endpoint patterns with CIDR ranges", () => {
   const covered = (outer: string, inner: string) =>

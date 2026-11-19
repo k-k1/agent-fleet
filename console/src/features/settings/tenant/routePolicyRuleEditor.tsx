@@ -56,6 +56,7 @@ const LAYER_KEY = {
   tenant_cap: "admin.mpol_layer_tenant_cap",
   tenant: "admin.mpol_layer_tenant",
   vendor: "admin.mpol_layer_vendor",
+  address: "admin.mpol_layer_address",
 } as const;
 
 // A value the Console has no label for (a newer CP's) is shown as its id rather than dropped.

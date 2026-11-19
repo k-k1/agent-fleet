@@ -95,7 +95,7 @@ A member's own llama.cpp, or another server they type in, cannot be vouched for 
 1. On **Restrictions**, under **Self-hosted servers (host names)**, type an exact host (no wildcard, port or scheme) and press **Add**. Each host is a row: its state, and × to remove it
 2. Press **Save**
 
-A host is approved only while every restriction above lets it through, and a vendor's host is never approvable.
+A host is approved only while every restriction above lets it through, and a vendor's host is never approvable. Neither is a link-local address (`169.254.0.0/16`, `fe80::/10`) or an instance-metadata address such as `fd00:ec2::254`: it is refused when typed, and one saved earlier is shown as **Not approved** and is never sent to Workspaces until you remove it. A loopback address (`127.0.0.1`, `::1`) can be approved, but not where a restriction above lists endpoints without it.
 Allowing the type of credential and the destination **Self-hosted** is what lets members use an approved server.
 
 ## Give the team Amazon Bedrock with budgets
