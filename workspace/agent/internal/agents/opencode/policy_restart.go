@@ -98,7 +98,7 @@ func (s *Supervisor) SecurityRestart(reason string) bool {
 		return false
 	}
 	addr := serveAddr()
-	cmd := s.cmd
+	cmd, exited := s.cmd, s.exited
 	s.securing = true
 	s.stopping = true
 	s.askedStop = cmd
@@ -118,7 +118,7 @@ func (s *Supervisor) SecurityRestart(reason string) bool {
 		s.mu.Unlock()
 		return false
 	}
-	stopProcess(cmd, addr)
+	stopProcess(cmd, exited, addr)
 	s.finishTeardown(cmd)
 	goReconcile("security restart: " + reason)
 	return true

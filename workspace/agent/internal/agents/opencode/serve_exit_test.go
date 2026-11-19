@@ -30,7 +30,7 @@ func daemonExit(t *testing.T, script string) status.ExitInfo {
 	s.mu.Lock()
 	s.up, s.cmd = true, cmd
 	s.mu.Unlock()
-	s.waitDaemon(cmd, nil, 1)
+	s.waitDaemon(cmd, nil, 1, nil)
 	ex, ok := status.ReadExit(name)
 	if !ok {
 		t.Fatal("no exit record")
