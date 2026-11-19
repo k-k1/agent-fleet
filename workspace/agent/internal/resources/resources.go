@@ -18,6 +18,7 @@
 package resources
 
 import (
+	"math"
 	"os"
 	goruntime "runtime"
 	"strconv"
@@ -108,7 +109,8 @@ func readLoad1() (float64, bool) {
 		return 0, false
 	}
 	v, err := strconv.ParseFloat(f[0], 64)
-	if err != nil || v < 0 {
+	// NaN / Inf parse without error but cannot be JSON-encoded, which would fail the whole body.
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
 		return 0, false
 	}
 	return v, true

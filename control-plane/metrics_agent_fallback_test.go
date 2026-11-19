@@ -304,13 +304,34 @@ func TestWorkspaceStatsForwardsLoadOnlyForADedicatedBox(t *testing.T) {
 	}
 	for _, c := range cases {
 		out := workspaceStats(context.Background(), mgr, c.rt, running)
+		if out["mem_used"] != uint64(1) {
+			t.Errorf("%s: mem_used = %v, the agent path did not run", c.name, out["mem_used"])
+		}
 		_, l := out["load1"]
 		_, n := out["ncpu"]
 		if l != c.want || n != c.want {
 			t.Errorf("%s: load1 present=%v ncpu present=%v, want %v", c.name, l, n, c.want)
 		}
-		if c.want && out["load1"] != 1.5 {
-			t.Errorf("%s: load1 = %v, want 1.5", c.name, out["load1"])
+		if c.want && (out["load1"] != 1.5 || out["ncpu"] != 2) {
+			t.Errorf("%s: load1 = %v ncpu = %v, want 1.5 / 2", c.name, out["load1"], out["ncpu"])
+		}
+	}
+}
+
+// A real zero load is a reading, not an absence; a negative or missing one is dropped.
+func TestWorkspaceStatsLoadEdgeValues(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"mem_used":1,"load1":0,"ncpu":2}`:  true,
+		`{"mem_used":1,"load1":-1,"ncpu":2}`: false,
+		`{"mem_used":1,"load1":1}`:           false,
+		`{"mem_used":1,"load1":1,"ncpu":0}`:  false,
+	} {
+		srv := statsAgent(t, http.StatusOK, body)
+		_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+		rt := dedicatedStatsRuntime{agentStatsRuntime{stubRuntime: stubRuntime{endpoint: srv.URL}, state: "running"}, true}
+		out := workspaceStats(context.Background(), mgr, rt, func() string { return "running" })
+		if _, got := out["load1"]; got != want {
+			t.Errorf("%s: load1 present=%v, want %v", body, got, want)
 		}
 	}
 }

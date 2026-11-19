@@ -37,3 +37,14 @@ describe("wsDiskTile", () => {
     expect(wsDiskTile({ disk_used: 0, disk_total: 10 })?.ratio).toBe(0);
   });
 });
+
+describe("non-finite and negative readings render nothing", () => {
+  it("load", () => {
+    for (const bad of [NaN, Infinity, -1]) expect(wsLoadTile({ load1: bad, ncpu: 2 })).toBeNull();
+    for (const bad of [NaN, Infinity, -2]) expect(wsLoadTile({ load1: 1, ncpu: bad })).toBeNull();
+  });
+  it("disk", () => {
+    for (const bad of [NaN, Infinity, -5]) expect(wsDiskTile({ disk_used: bad, disk_total: 10 })).toBeNull();
+    for (const bad of [NaN, Infinity]) expect(wsDiskTile({ disk_used: 1, disk_total: bad })).toBeNull();
+  });
+});

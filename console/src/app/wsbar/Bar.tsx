@@ -230,7 +230,8 @@ export function WsBar() {
       {diskTile &&
         tile({
           k: "dsk",
-          series: [],
+          // Two equal points draw the current fill as a flat line; an empty series would read as "not measured".
+          series: [diskTile.ratio, diskTile.ratio],
           max: 1,
           track: true,
           value: `${Math.round(diskTile.ratio * 100)}%`,
@@ -279,7 +280,7 @@ export function WsBar() {
       {containerTiles}
       {containerTiles && hostTiles && <span className="ws-graph-sep" />}
       {hostTiles && hostLabel && (
-        <span className="ws-graph-k" title={tr(hostLabel)}>
+        <span className="ws-graph-grp" title={tr(hostLabel)}>
           {tr("wsbar.tile.cp_host_label")}
         </span>
       )}

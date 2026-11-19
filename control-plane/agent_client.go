@@ -167,7 +167,7 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 	// load1 / ncpu describe the machine the workspace runs on. Only a Dedicated box is the
 	// member's own; on a shared host they would show other tenants' activity, so they are
 	// dropped here, at the one place every caller of the Agent's stats goes through.
-	if body.Load1 != nil && body.Ncpu != nil && *body.Ncpu > 0 && runtimeIsDedicated(rt) {
+	if body.Load1 != nil && *body.Load1 >= 0 && body.Ncpu != nil && *body.Ncpu > 0 && runtimeIsDedicated(rt) {
 		out["load1"] = *body.Load1
 		out["ncpu"] = *body.Ncpu
 	}

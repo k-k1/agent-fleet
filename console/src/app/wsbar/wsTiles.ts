@@ -37,8 +37,10 @@ export interface WsLoadTile {
 
 // Pure readers for the optional tiles: null means "render nothing", so a missing or
 // nonsensical field never produces a broken tile.
+const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
 export function wsDiskTile(d: WsStats | null): WsDiskTile | null {
-  if (!d || d.disk_used == null || !d.disk_total || d.disk_total <= 0) return null;
+  if (!d || !num(d.disk_used) || !num(d.disk_total) || d.disk_used < 0 || d.disk_total <= 0) return null;
   return {
     ratio: Math.min(1, d.disk_used / d.disk_total),
     used: d.disk_used,
@@ -47,6 +49,6 @@ export function wsDiskTile(d: WsStats | null): WsDiskTile | null {
   };
 }
 export function wsLoadTile(d: WsStats | null): WsLoadTile | null {
-  if (!d || typeof d.load1 !== "number" || !d.ncpu || d.ncpu <= 0) return null;
+  if (!d || !num(d.load1) || !num(d.ncpu) || d.load1 < 0 || d.ncpu <= 0) return null;
   return { load1: d.load1, ncpu: d.ncpu, norm: d.load1 / d.ncpu };
 }
