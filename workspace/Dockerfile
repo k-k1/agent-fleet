@@ -553,9 +553,9 @@ ARG KIRO_SHA256_ARM64=0218b5440cbdb11418887ad3f7a7cf00054effd47979fd6b0ca37cfc5d
 # The version string is `Muse Code 1.3.0 (1.3.0-R3401.1)`: the build id in parentheses is what
 # is matched against the pin. agy's `tr -dc '0-9.'` approach would drop `-R3401.1` and never
 # match (agents/muse/install.go).
-ARG MUSE_VERSION=1.4.20-R8619.1
-ARG MUSE_SHA256_X64=3685b023d45a1a07c8c559da00088bdf59564920b13a85adad11e13ad6f4d181
-ARG MUSE_SHA256_ARM64=7159d6431fc5ff4c9dea32c62d0b771f5089d14389ec672ae903755bd39374dc
+ARG MUSE_VERSION=1.4.24-R9131.1
+ARG MUSE_SHA256_X64=d752c45dce079ee29e118804b091d81ac2b1b89b67f317b4a162fa1af1206465
+ARG MUSE_SHA256_ARM64=31d4c1fdf382e6711b1c8854d976a6095fe4743eb17b2a8f9a5bb43aef5bad63
 # Postgres supply pin (ADR 0086 P0 supply lane): hash of the Zonky embedded-postgres 17.11.0 jar,
 # checked with `curl -sfL <jar-url> | sha256sum`.
 # For the other majors (16/17/18) install-postgres fetches Maven Central's .sha256 sidecar at run time.
