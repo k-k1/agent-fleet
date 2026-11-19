@@ -452,6 +452,11 @@ type Session struct {
 	// "the turn ended" apart from "an idle we cannot explain" (status.SessionStatus.TurnEnd,
 	// docs/log/51), and a fabricated time would be read as evidence of completion.
 	LastTurnEndAt string `json:"lastTurnEndAt,omitempty"`
+	// LastTurnStartAt is when this session's newest turn STARTED (RFC 3339, this host's clock),
+	// "" when none was seen (status.TurnStart). It survives a stop. The Control Plane drops a
+	// queue run's hand-back (defer_queue_item) when a turn of the run's tree started after the
+	// call.
+	LastTurnStartAt string `json:"lastTurnStartAt,omitempty"`
 	// InputNotDelivered is true while the session reads idle because the last input never reached
 	// the CLI (hook-less kinds: the new user line did not show up in the kind's source within its
 	// window). It is not a turn end: LastTurnEndAt is not set and no idle watch version exists.

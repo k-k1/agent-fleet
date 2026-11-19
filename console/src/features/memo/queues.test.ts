@@ -3,6 +3,10 @@
 import { describe, expect, it } from "vitest";
 import type { Memo, MemoQueue } from "../../types/memo.ts";
 import {
+  runOpenPRs,
+  canReturnRun,
+  deferWords,
+  deferredUntil,
   afterChoices,
   afterItemMessage,
   afterItemWords,
@@ -370,5 +374,78 @@ describe("notes that wait for others", () => {
       params: { needed: 3, count: 1, blocked: 2 },
     });
     expect(waitingWords(read({ reason: "below_threshold", detail: { needed: 3, waiting: 1 } }), at, kind)?.key).toBe("memo.waiting_below_threshold");
+  });
+});
+
+describe("a run that hands its memo back (ADR 0137, addendum 2026-11-19, part B)", () => {
+  it("reads the hand-back, the blocked memos and the return, tolerating junk", () => {
+    const [d] = readDeliveries([
+      { id: "d1", state: "closed", outcome: "deferred", defer: { reason: "r", notBefore: "n", at: "a", result: "applied" },
+        returnBlocked: [{ id: "m1", by: "m2" }, { by: "x" }, "junk"], returnedAt: "t" },
+    ])!;
+    expect(d.defer).toEqual({ reason: "r", notBefore: "n", at: "a", result: "applied" });
+    expect(d.returnBlocked).toEqual([{ id: "m1", by: "m2" }]);
+    expect(d.returnedAt).toBe("t");
+    expect(deliveryStateKey(d)).toBe("memo.d_state_deferred");
+    const [old] = readDeliveries([{ id: "d2", state: "closed", outcome: "clean" }])!;
+    expect(old.defer).toBeNull();
+    expect(old.returnBlocked).toEqual([]);
+  });
+
+  it("words what became of the request", () => {
+    const req = { reason: "r", notBefore: "n", at: "a", result: "" };
+    expect(deferWords({ state: "closed", defer: null })).toBeNull();
+    expect(deferWords({ state: "open", defer: req })).toBe("memo.d_defer_asked");
+    expect(deferWords({ state: "closed", defer: { ...req, result: "applied" } })).toBe("memo.d_defer_applied");
+    expect(deferWords({ state: "closed", defer: { ...req, result: "turn" } })).toBe("memo.d_defer_dropped_turn");
+    expect(deferWords({ state: "closed", defer: req })).toBe("memo.d_defer_not_applied");
+  });
+
+  it("offers the return on a closed run with memos that was not returned yet", () => {
+    const d = { state: "closed", outcome: "clean", returnedAt: "", messageIds: ["a"] };
+    expect(canReturnRun(d)).toBe(true);
+    expect(canReturnRun({ ...d, state: "open" })).toBe(false);
+    expect(canReturnRun({ ...d, outcome: "wake" })).toBe(false);
+    expect(canReturnRun({ ...d, outcome: "not_sent" })).toBe(false);
+    expect(canReturnRun({ ...d, returnedAt: "t" })).toBe(false);
+    expect(canReturnRun({ ...d, messageIds: [] })).toBe(false);
+  });
+
+  it("says until when a handed-back memo waits, only while that is ahead", () => {
+    const now = Date.parse("2026-11-20T10:00:00Z");
+    expect(deferredUntil({ state: "pending", notBefore: "2026-11-20T11:00:00.000000Z" }, now)).toBe("2026-11-20T11:00:00.000000Z");
+    expect(deferredUntil({ state: "pending", notBefore: "2026-11-20T09:00:00.000000Z" }, now)).toBeNull();
+    expect(deferredUntil({ state: "held", notBefore: "2026-11-20T11:00:00.000000Z" }, now)).toBeNull();
+    expect(deferredUntil({ state: "pending" }, now)).toBeNull();
+  });
+
+  it("names why every waiting memo waits for its time", () => {
+    const at = (iso: string) => "@" + iso;
+    expect(waitingWords({ waiting: { reason: "deferred", until: "2026-11-20T11:00:00Z", detail: { deferred: 2 } } }, at, (k) => k)).toEqual({
+      key: "memo.waiting_deferred_at",
+      params: { at: "@2026-11-20T11:00:00Z", count: 2 },
+    });
+    expect(readMemoQueues({ queues: [{ categoryId: "c", waiting: { reason: "deferred", detail: { deferred: 1 } } }] })!.queues[0].waiting?.detail?.deferred).toBe(1);
+    expect(
+      waitingWords({ waiting: { reason: "prerequisites", detail: { blocked: 1, deferred: 2 } } }, at, (k) => k)?.key,
+    ).toBe("memo.waiting_prerequisites_deferred");
+  });
+});
+
+describe("runOpenPRs", () => {
+  it("names the open and merged pull requests of the run's session, once each", () => {
+    expect(runOpenPRs(undefined)).toEqual([]);
+    expect(runOpenPRs({ pr: { number: 12, state: "closed", url: "u" } })).toEqual([]);
+    expect(
+      runOpenPRs({
+        pr: { number: 12, state: "open", url: "u" },
+        links: [
+          { provider: "github", key: "o/r#12", role: "created", state: "open" },
+          { provider: "github", key: "o/r#13", role: "created", state: "merged" },
+          { provider: "github", key: "o/r#14", role: "created", state: "closed" },
+          { provider: "github", key: "o/r#15", role: "started" },
+        ],
+      }),
+    ).toEqual(["#12", "o/r#13"]);
   });
 });

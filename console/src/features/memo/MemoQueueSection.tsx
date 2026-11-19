@@ -56,7 +56,8 @@ import { memoReference } from "./reference.ts";
 import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import { tidySelection } from "./tidyOps.ts";
-import { afterChoices, afterItemMessage, afterItemWords, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
+import { fmtDateTime } from "../../lib/intl.ts";
+import { afterChoices, afterItemMessage, afterItemWords, deferredUntil, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -1675,7 +1676,23 @@ function MemoRow(props: MemoRowProps) {
         )}
         {/* Without a reference line to ride on, state and producer stay below the body. */}
         {!(ref && m.kind !== "file") && metaNode}
-        {m.state === "held" && m.heldReason && (
+        {m.state === "held" && m.heldReason?.reason === "deferred" && (
+          <div className="memo-after-held memo-deferred" title={(m.deferReasons ?? []).map((r) => r.reason).join("\n") || undefined}>
+            {tr("memo.defer_held", { count: m.deferCount ?? 0 })}
+            {(m.deferReasons ?? []).map((r, i) => (
+              <span key={i} className="memo-deferred-reason">
+                {r.reason}
+              </span>
+            ))}
+          </div>
+        )}
+        {deferredUntil(m) && (
+          <div className="memo-deferred" title={(m.deferReasons ?? []).at(-1)?.reason || undefined}>
+            {tr("memo.defer_until", { at: fmtDateTime(deferredUntil(m)!) })}
+            {(m.deferReasons ?? []).length > 0 && <span className="memo-deferred-reason">{(m.deferReasons ?? []).at(-1)!.reason}</span>}
+          </div>
+        )}
+        {m.state === "held" && m.heldReason && m.heldReason.reason !== "deferred" && (
           <div className="memo-after-held">
             {tr("memo.after_held", {
               label: m.afterStatus?.find((a) => a.id === m.heldReason!.after)?.label || m.heldReason.after,

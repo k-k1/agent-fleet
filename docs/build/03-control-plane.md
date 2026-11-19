@@ -415,6 +415,34 @@ Memos you accumulate and send to a session in one go (the tables are
   retire pass stops the session tree. It answers the delivery (200); a delivery already closed is
   answered unchanged, so a second press or a race with the tick writes nothing; a delivery of another
   member or queue is `404 not_found`, one still `claimed` / `sending` is `409 delivery_not_open`.
+  **Hand-back** ([decisions/0137](../decisions/0137-message-queues.md), addendum 2026-11-19, part B, `memo_defer.go`,
+  `store_memo_defer.go`, migration 0146 / pg 0131). `POST /internal/memo-deliveries/{id}/defer` (token face, relayed by
+  the Agent's `POST /memos/defer`) takes `{session, reason, notBefore, cancel, at}` and only records the request on
+  the delivery (`defer_reason`, `defer_not_before`, `defer_at` by the Agent's clock): `409 delivery_not_open` unless
+  the delivery is `open`, `409 delivery_not_yours` unless it names `session`, `409 defer_needs_batch_1` unless the
+  queue's batch is 1, `400 bad_defer` for no reason, one over 1 KiB, a `notBefore` outside 10 minutes to 7 days ahead
+  (default 1 hour; within a minute of a bound it is moved onto it) or an `at` more than 10 minutes from this clock. A
+  later call replaces it, `cancel` withdraws it. Only a clean close made on a running Agent's report applies it
+  (`memoCloseClean`), read outside the lock on the tick before the close: the request is dropped
+  (`defer_result` `turn`, `pr` or `unread`, and the close is `clean`) when a session of the tree reports a
+  `lastTurnStartAt` after `defer_at`, when `POST /memos/pr-snapshot` `{session, since: defer_at}` names a PR that is
+  not `closed`, or when the Agent lacks `queueDefer` / `queuePRs` or gives no answer. Otherwise the outcome is
+  `deferred`, the retire is requested as for `clean`, and the return transition (`ReturnDelivered`) moves every
+  message whose `delivery_id` is the delivery and whose state is `delivered` or `unconfirmed` to `pending` with
+  `sent_at` and `delivery_id` cleared, the release copy rewritten and `not_before` set; the third hand-back since the
+  last release goes to `held` (`held_reason` `deferred`, release cleared). A message whose reference another message
+  of the queue holds in `held` / `pending` / `claimed` stays where it is and is listed in `return_blocked`. The close
+  from the kept report while the workspace is stopped leaves such a delivery `open`, and the settle wake counts it as
+  one only a running Agent can settle. The breaker (`RecentTurnDeliveries`) skips `deferred` deliveries. A message
+  is eligible only once `not_before` has passed (`memoafter.Deferred`, `store.memoNotBeforeSQL`), the queue's waiting
+  reason is `deferred` with `until` when every pending message waits for it, and a tidy run keeps such a message
+  only. A release (and a Console write that takes `held` to `pending`) clears `not_before`, `defer_count` and
+  `defer_reasons`. `POST /api/memo-queues/{categoryId}/deliveries/{id}/return` (Console only) is the person's
+  "return to queue" of a closed delivery by the same transition with `not_before` and the count cleared: `409
+  delivery_not_closed`, `409 memo_ref_taken` naming the message that holds a reference (nothing is returned), `409
+  nothing_to_return`; it stamps `returned_at`. A memo carries `notBefore` and `deferCount`, and `deferReasons` only
+  on `GET /api/memos` (never the token face or `/mcp`, so a session's reason reaches no later session); a delivery
+  carries `defer {reason, notBefore, at, result}`, `returnBlocked` and `returnedAt`.
 
 - **Typed references** ([decisions/0137](../decisions/0137-message-queues.md) §4, step 3, Control Plane half). A message
   may carry a pointer to a work item, never a copy of it. This is the contract the Agent (step 3b, built) and the Console

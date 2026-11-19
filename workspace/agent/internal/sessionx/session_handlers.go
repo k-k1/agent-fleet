@@ -296,6 +296,10 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		// queuePRs says POST /memos/pr-snapshot exists. Without it the Control Plane never asks,
 		// and a message that waits for a delivery's PRs keeps waiting.
 		"queuePRs": queuePRsVersion,
+		// queueDefer says every row carries lastTurnStartAt and POST /memos/defer exists (ADR 0137,
+		// addendum 2026-11-19, part B). The Control Plane applies a queue run's hand-back only on a
+		// list that says so: without the turn starts it cannot tell a run that went on working.
+		"queueDefer": queueDeferVersion,
 	}
 	// actMark orders this answer against the acts of a person that follow it: a retire sent with
 	// ifNoActSince = this value leaves a session such an act touched. Omitted when it could not be
@@ -325,6 +329,9 @@ const queueTidyVersion = 1
 
 // queuePRsVersion is the value of the list envelope's queuePRs marker.
 const queuePRsVersion = 1
+
+// queueDeferVersion is the value of the list envelope's queueDefer marker.
+const queueDeferVersion = 1
 
 // HandleSessionCatalog is the sharing inventory. Unlike the ordinary list it
 // includes archived rows, but only kinds with a structured transcript. With ?since= it

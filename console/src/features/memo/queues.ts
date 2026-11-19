@@ -6,6 +6,7 @@
 // ADR 0105). Every working term lives in one catalogue key (memo.state_*, memo.autorun*, ...),
 // so the owner can change a word with one line.
 import type { MsgKey } from "../../lib/i18n/index.ts";
+import type { Session } from "../../types/session.ts";
 import { browserTimeZone, isValidTimeZone } from "../../lib/intl.ts";
 import type {
   Memo,
@@ -59,6 +60,7 @@ const WAITING_REASONS: readonly string[] = [
   "tidying",
   "no_tidy",
   "prerequisites",
+  "deferred",
 ] satisfies MemoWaitingReason[];
 
 /** The `waiting` of a queue: absent from an older Control Plane, and a reason this Console does
@@ -75,6 +77,7 @@ function readWaiting(v: unknown): MemoQueueWaiting | undefined {
       agentKind: str(d.agentKind),
       by: d.by === "member" ? "member" : "category",
       blocked: num(d.blocked, 0),
+      deferred: num(d.deferred, 0),
     },
   };
 }
@@ -159,6 +162,11 @@ export function readDeliveries(raw: unknown): MemoDelivery[] | null {
       auto: d.auto === true,
       retire: str(d.retire),
       firstTurn: isObj(d.firstTurn) ? { outcome: str(d.firstTurn.outcome), ms: num(d.firstTurn.ms, 0), endedAt: str(d.firstTurn.endedAt) } : null,
+      defer: isObj(d.defer) ? { reason: str(d.defer.reason), notBefore: str(d.defer.notBefore), at: str(d.defer.at), result: str(d.defer.result) } : null,
+      returnBlocked: Array.isArray(d.returnBlocked)
+        ? d.returnBlocked.filter(isObj).map((b) => ({ id: str(b.id), by: str(b.by) })).filter((b) => b.id !== "")
+        : [],
+      returnedAt: str(d.returnedAt),
     });
   }
   return out;
@@ -202,7 +210,13 @@ export function waitingWords(
     case "tidying":
       return { key: "memo.waiting_tidying" };
     case "prerequisites":
-      return { key: "memo.waiting_prerequisites", params: { count: w.detail?.blocked ?? 0 } };
+      return w.detail?.deferred
+        ? { key: "memo.waiting_prerequisites_deferred", params: { count: w.detail?.blocked ?? 0, deferred: w.detail.deferred } }
+        : { key: "memo.waiting_prerequisites", params: { count: w.detail?.blocked ?? 0 } };
+    case "deferred":
+      return when
+        ? { key: "memo.waiting_deferred_at", params: { ...when, count: w.detail?.deferred ?? 0 } }
+        : { key: "memo.waiting_deferred", params: { count: w.detail?.deferred ?? 0 } };
   }
 }
 
@@ -808,6 +822,8 @@ export function deliveryStateKey(d: Pick<MemoDelivery, "state" | "outcome">): Ms
       switch (d.outcome) {
         case "clean":
           return "memo.d_state_clean";
+        case "deferred":
+          return "memo.d_state_deferred";
         case "failed":
           return "memo.d_state_failed";
         case "aborted":
@@ -826,3 +842,47 @@ export function deliveryStateKey(d: Pick<MemoDelivery, "state" | "outcome">): Ms
 
 /** Waiting to run, for the fire button: the messages a fire could take. */
 export const pendingCount = (memos: Memo[]): number => memos.filter((m) => m.state === "pending" && !m.sentAt).length;
+
+// ---- a run that hands its note back (ADR 0137, addendum 2026-11-19, part B) ----------------
+
+const DEFER_RESULT_KEYS: Record<string, MsgKey> = {
+  applied: "memo.d_defer_applied",
+  turn: "memo.d_defer_dropped_turn",
+  pr: "memo.d_defer_dropped_pr",
+  unread: "memo.d_defer_dropped_unread",
+};
+
+/** What became of a run's hand-back request: asked (open run), applied, or why it was dropped.
+ *  null for a run with none. A closed run with no result was closed in a way that does not read one
+ *  (ended, aborted, ...): the request did not apply. */
+export function deferWords(d: Pick<MemoDelivery, "state" | "defer">): MsgKey | null {
+  if (!d.defer) return null;
+  if (d.state !== "closed") return "memo.d_defer_asked";
+  return DEFER_RESULT_KEYS[d.defer.result] ?? "memo.d_defer_not_applied";
+}
+
+/** Whether "return to queue" is offered on a run: closed, not a wake, not returned already, with
+ *  notes. The Control Plane decides what can return; this only hides the button where nothing can. */
+export function canReturnRun(d: Pick<MemoDelivery, "state" | "outcome" | "returnedAt" | "messageIds">): boolean {
+  return d.state === "closed" && d.outcome !== "wake" && d.outcome !== "not_sent" && !d.returnedAt && d.messageIds.length > 0;
+}
+
+/** "waiting until <time>" for a note its run handed back, while that time is still ahead. */
+export function deferredUntil(m: Pick<Memo, "state" | "notBefore">, now: number = Date.now()): string | null {
+  if (m.state !== "pending" || !m.notBefore) return null;
+  const t = Date.parse(m.notBefore);
+  return Number.isNaN(t) || t <= now ? null : m.notBefore;
+}
+
+/** The pull requests of a run's session that are open or merged, as "#12" / "owner/repo#12", from
+ *  the session list the Console holds. Empty when the session is not listed (archived, or the list
+ *  is not loaded): the Control Plane does not refuse on it, so this is a warning and nothing more. */
+export function runOpenPRs(session: Pick<Session, "pr" | "links"> | undefined): string[] {
+  if (!session) return [];
+  const out: string[] = [];
+  if (session.pr && (session.pr.state === "open" || session.pr.state === "merged")) out.push("#" + session.pr.number);
+  for (const l of session.links ?? []) {
+    if ((l.state === "open" || l.state === "draft" || l.state === "merged") && l.key && !out.some((k) => l.key.endsWith(k))) out.push(l.key);
+  }
+  return out;
+}

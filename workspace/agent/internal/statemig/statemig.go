@@ -61,6 +61,9 @@ var Entries = []string{
 	"session-turn-mark",
 	// A queue delivery's first turn (status.FirstTurn). Introduced directly under AgentStateDir.
 	"session-first-turn",
+	// Every session's latest turn start (status.TurnStart). Introduced directly under
+	// AgentStateDir.
+	"session-turn-start",
 	// A retire in progress, for the start-up recovery (sessionx session_retire.go).
 	"session-retire-intent",
 	// The Agent-wide act mark's reserved ceiling (sessionx session_actmark.go). Introduced

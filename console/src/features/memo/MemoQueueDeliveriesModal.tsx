@@ -10,6 +10,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
+import { useSessionsStore } from "../sessions/store.ts";
+import { confirmReturnRun } from "./runReturn.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
@@ -18,6 +21,8 @@ import type { MemoDelivery, MemoQueue, MemoTidyBlocked, MemoTidyRunsWire } from 
 import { memoQueueDeliveries, memoQueueFire, memoTidyRuns, memoTidyUndo } from "./api.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import {
+  canReturnRun,
+  deferWords,
   deliveryStateKey,
   firstTurnWords,
   heldNames,
@@ -54,6 +59,10 @@ interface Props {
 export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, waiting, onClose, onFired, onUndone, focusRun, onResume }: Props) {
   const tr = useT();
   const toast = useToast();
+  const askConfirm = useConfirm();
+  const sessions = useSessionsStore((s) => s.sessions);
+  // The run whose notes are being returned to the queue.
+  const [returning, setReturning] = useState("");
   const [rows, setRows] = useState<MemoDelivery[] | null>(null);
   const [failed, setFailed] = useState(false);
   // Set when the last "Run now" was refused because every slot of the category is taken; the
@@ -155,6 +164,18 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
       toast(t("memo.d_fire_failed"), { kind: "warn" });
     } finally {
       if (alive.current) setBusy(false);
+    }
+  };
+
+  const returnRun = async (d: MemoDelivery) => {
+    if (returning) return;
+    setReturning(d.id);
+    try {
+      const done = await confirmReturnRun({ categoryId, d, session: sessions.find((x) => x.name === d.session), askConfirm, toast, tr });
+      if (done) onFired();
+    } finally {
+      if (alive.current) setReturning("");
+      void load();
     }
   };
 
@@ -276,6 +297,24 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                   )}
                   {turn && <span className={"memo-d-turn" + (d.firstTurn?.outcome === "clean" ? "" : " bad")}>{tr(turn)}</span>}
                   {d.retire === "released" && <span className="memo-d-tag">{tr("memo.d_taken_over")}</span>}
+                  {d.defer && (
+                    <span className={"memo-d-defer" + (d.state === "closed" && d.defer.result !== "applied" ? " dropped" : "")}>
+                      {tr(deferWords(d)!)}
+                      {d.defer.result === "applied" || d.state !== "closed"
+                        ? " " + tr("memo.d_defer_until", { at: at(d.defer.notBefore) })
+                        : ""}
+                      <span className="memo-deferred-reason">{d.defer.reason}</span>
+                    </span>
+                  )}
+                  {d.returnBlocked.length > 0 && (
+                    <span className="memo-d-held">{tr("memo.d_return_blocked", { ids: d.returnBlocked.map((b) => b.by).join(", ") })}</span>
+                  )}
+                  {d.returnedAt && <span className="memo-d-tag">{tr("memo.d_returned", { at: at(d.returnedAt) })}</span>}
+                  {canReturnRun(d) && (
+                    <Button small variant="ghost" title={tr("memo.d_return_hint")} disabled={returning !== ""} onClick={() => void returnRun(d)}>
+                      {tr("memo.d_return")}
+                    </Button>
+                  )}
                 </li>
               );
             })}

@@ -335,6 +335,31 @@ Workspace を起こさない。
   retire のパスがセッションの木を止める。答えは配信（200）。すでに closed の配信はそのまま答えるので、
   2 回目の押下や tick との競合は何も書かない。別メンバー・別キューの配信は `404 not_found`、
   まだ `claimed` / `sending` のものは `409 delivery_not_open`。
+  **差し戻し**（[decisions/0137](../decisions/0137-message-queues.ja.md) 2026-11-19 追記の B、`memo_defer.go`、
+  `store_memo_defer.go`、migration 0146 / pg 0131）。`POST /internal/memo-deliveries/{id}/defer`（token の面。Agent の
+  `POST /memos/defer` が中継する）は `{session, reason, notBefore, cancel, at}` を受け、依頼を配信に記録するだけ
+  （`defer_reason`・`defer_not_before`・`defer_at` は Agent の時計）。配信が `open` でなければ `409 delivery_not_open`、
+  `session` を指していなければ `409 delivery_not_yours`、キューの batch が 1 でなければ `409 defer_needs_batch_1`、
+  理由なし・1 KiB 超・`notBefore` が 10 分後から 7 日後の外（既定 1 時間後。境界から 1 分以内は境界へ寄せる）・`at` が
+  この時計から 10 分超ずれていれば `400 bad_defer`。後の呼び出しが置き換え、`cancel` が取り下げる。適用するのは、動いて
+  いる Agent の報告での clean な閉じ（`memoCloseClean`）だけで、閉じる前の tick でロックの外で読む。木のセッションの
+  `lastTurnStartAt` が `defer_at` より後、`POST /memos/pr-snapshot` `{session, since: defer_at}` が `closed` 以外の PR を
+  返す、Agent に `queueDefer` / `queuePRs` が無いか答えが無い、のどれかなら依頼は捨てられ（`defer_result` は `turn`・
+  `pr`・`unread`）、閉じは `clean`。そうでなければ outcome は `deferred` で、`clean` と同じく retire を求め、戻す遷移
+  （`ReturnDelivered`）が `delivery_id` がその配信で状態が `delivered` か `unconfirmed` のメッセージを `pending` に戻す
+  （`sent_at`・`delivery_id` を消し、解放のコピーを書き直し、`not_before` を設定）。前回の解放から 3 回目の差し戻しは
+  `held`（`held_reason` は `deferred`、解放は消える）。キューの別のメッセージが同じ参照を `held` / `pending` /
+  `claimed` で持っていれば、そのメッセージは動かさず `return_blocked` に載せる。ワークスペース停止中の保持報告からの
+  閉じはそうした配信を `open` のまま残し、settle の起動は動いている Agent にしか片付けられない配信として数える。
+  breaker（`RecentTurnDeliveries`）は `deferred` を飛ばす。メッセージは `not_before` を過ぎてから適格
+  （`memoafter.Deferred`、`store.memoNotBeforeSQL`）で、待っているメッセージがすべてそれを待つときキューの待ち理由は
+  `until` 付きの `deferred`。整理はそうしたメッセージを残すだけ。解放（と、`held` を `pending` にする Console の書き込み）
+  は `not_before`・`defer_count`・`defer_reasons` を消す。`POST /api/memo-queues/{categoryId}/deliveries/{id}/return`
+  （Console だけ）は閉じた配信の「キューに戻す」で、同じ遷移で `not_before` と回数を消す。`409 delivery_not_closed`、
+  参照を持つメッセージを示す `409 memo_ref_taken`（何も戻さない）、`409 nothing_to_return`。`returned_at` を記録する。
+  メモは `notBefore` と `deferCount` を持ち、`deferReasons` は `GET /api/memos` にだけ載る（token の面と `/mcp` には
+  載せない。セッションの理由が後のセッションに届かないように）。配信は `defer {reason, notBefore, at, result}`・
+  `returnBlocked`・`returnedAt` を持つ。
 
 - **型付きの参照**（[decisions/0137](../decisions/0137-message-queues.ja.md) §4、step 3 の Control Plane 側）。
   メッセージは作業項目への指し先を持てる。本文は写さない。Agent（step 3b、実装済み）と Console（step 3c）はこの契約の上に作る。

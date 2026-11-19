@@ -1350,3 +1350,24 @@ button.memo-reflink-key {
   flex: none;
   white-space: nowrap;
 }
+
+/* A note its run handed back (ADR 0137, addendum 2026-11-19, part B): when it may run again, and
+   the session's reason, which the person reads and no later run ever does. */
+.memo-deferred {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.memo-deferred-reason {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-style: italic;
+}
+.memo-d-defer {
+  flex-basis: 100%;
+  font-size: 12px;
+}
+.memo-d-defer.dropped {
+  color: var(--muted);
+}

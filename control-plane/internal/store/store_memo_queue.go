@@ -173,7 +173,7 @@ type MemoTxOps interface {
 	// LiveQueueDeliveries returns the deliveries of a queue that are not closed.
 	LiveQueueDeliveries(queueID string) ([]MemoDelivery, error)
 	// RecentTurnDeliveries returns a queue's deliveries created after the given time whose
-	// first turn was recorded, newest first, at most limit.
+	// first turn was recorded, newest first, at most limit. Deferred ones are left out.
 	RecentTurnDeliveries(queueID, after string, limit int) ([]MemoDelivery, error)
 	// PauseQueue pauses a queue that is not paused. False means it already was.
 	PauseQueue(categoryID, at, reason string) (bool, error)
@@ -184,6 +184,7 @@ type MemoTxOps interface {
 	MemoTidyTxOps
 	MemoWaitOps
 	MemoPRWakeTxOps
+	MemoDeferTxOps
 }
 
 // MemoWaitOps are the reads behind "may this queue fire now", the ones the dispatcher makes
@@ -308,6 +309,7 @@ func (t memoTx) DeleteMemo(id string) error {
 func (t memoTx) ReleaseMemo(seen Memo, hash, at string) (bool, error) {
 	return affected(t.q.ExecContext(t.ctx,
 		`UPDATE memo SET state=?, release_hash=?, released_at=?, released_by='', held_reason='',
+		   not_before='', defer_count=0, defer_reasons='',
 		   release_repo=repo, release_category=category, release_kind=kind, release_body=body,
 		   release_ref_path=ref_path, release_attachments=attachments,
 		   release_ref_provider=ref_provider, release_ref_key=ref_key, release_ref_url=ref_url,
@@ -485,6 +487,10 @@ type QueuePending struct {
 	// derived: compared with Eligible they say that what a claim could take is all held back.
 	Refs, Curators int
 	Oldest, Latest string
+	// Deferred is how many of them wait for their not_before (a hand-back), and NextAt the
+	// earliest such time ("" when none waits).
+	Deferred int
+	NextAt   string
 }
 
 func (s *SQL) ListEnabledMemoQueues(ctx context.Context) ([]MemoQueue, error) {
@@ -513,13 +519,17 @@ func (s *SQL) ListMemberQueuePendingStats(ctx context.Context, membershipID stri
 }
 
 func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (map[string]QueuePending, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN `+memoEligibleSQL+` THEN 1 ELSE 0 END),
-		  SUM(CASE WHEN m.ref_key<>'' AND `+memoEligibleSQL+` THEN 1 ELSE 0 END),
-		  SUM(CASE WHEN m.provenance='curator' AND `+memoEligibleSQL+` THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at)
+	now := DeliveryTS(time.Now())
+	eligible := memoNotBeforeSQL + ` AND ` + memoEligibleSQL
+	head := []any{now, now, now, now, now}
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN `+eligible+` THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN m.ref_key<>'' AND `+eligible+` THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN m.provenance='curator' AND `+eligible+` THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at),
+		  SUM(CASE WHEN m.not_before>? THEN 1 ELSE 0 END), COALESCE(MIN(CASE WHEN m.not_before>? THEN m.not_before END), '')
 		FROM memo m
 		JOIN memo_category c ON c.membership_id=m.membership_id AND c.repo=m.repo AND c.name=m.category
 		JOIN memo_queue q ON q.category_id=c.id
-		WHERE `+cond+` AND m.state=? GROUP BY c.id`, append(args, MemoStatePending)...)
+		WHERE `+cond+` AND m.state=? GROUP BY c.id`, append(append(head, args...), MemoStatePending)...)
 	if err != nil {
 		return nil, err
 	}
@@ -529,7 +539,7 @@ func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (
 		var id string
 		var p QueuePending
 		var maxCreated, maxReleased string
-		if err := rows.Scan(&id, &p.Count, &p.Eligible, &p.Refs, &p.Curators, &p.Oldest, &maxCreated, &maxReleased); err != nil {
+		if err := rows.Scan(&id, &p.Count, &p.Eligible, &p.Refs, &p.Curators, &p.Oldest, &maxCreated, &maxReleased, &p.Deferred, &p.NextAt); err != nil {
 			return nil, err
 		}
 		p.Latest = maxCreated

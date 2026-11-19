@@ -60,3 +60,9 @@ const memoPrereqSatisfiedSQL = `p.state='delivered' AND p.delivery_id<>'' AND EX
 const memoEligibleSQL = `(m.after_ids='' OR (SELECT COUNT(*) FROM memo p WHERE p.membership_id=m.membership_id
 	  AND p.repo=m.repo AND p.category=m.category AND m.after_ids LIKE '%"' || p.id || '"%' AND ` + memoPrereqSatisfiedSQL + `)
 	  = LENGTH(m.after_ids) - LENGTH(REPLACE(m.after_ids, ',', '')) + 1)`
+
+// memoNotBeforeSQL holds for a row m that waits for no not_before at ? (a DeliveryTS): a message
+// handed back (ADR 0137, addendum 2026-11-19, part B) is eligible only once its time has passed.
+// memoafter.Deferred says the same in Go. not_before is written in DeliveryTS's fixed width, so
+// the text order is the time order.
+const memoNotBeforeSQL = `(m.not_before='' OR m.not_before<=?)`

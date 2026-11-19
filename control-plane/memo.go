@@ -87,6 +87,14 @@ type memoDTO struct {
 	// HeldReason is set on a message the dispatcher put back to held because a prerequisite can no
 	// longer be satisfied.
 	HeldReason *memoafter.HeldReason `json:"heldReason,omitempty"`
+	// NotBefore is when a message its run handed back may be claimed again (fixed-width UTC),
+	// absent for none; DeferCount how many times it was handed back since a person last released
+	// or returned it. DeferReasons are those hand-backs with the sessions' reasons: the Console's
+	// list only (memoListWith), so a session's text never reaches another
+	// session through list_memos (ADR 0137, addendum 2026-11-19, part B).
+	NotBefore    string                 `json:"notBefore,omitempty"`
+	DeferCount   int                    `json:"deferCount,omitempty"`
+	DeferReasons []store.MemoDeferEntry `json:"deferReasons,omitempty"`
 	// Existing is set on the answer of a create into a queue that found the same reference
 	// already waiting there: the message returned is that one, and nothing was added.
 	Existing bool `json:"existing,omitempty"`
@@ -126,6 +134,10 @@ func memoToDTO(m store.Memo) memoDTO {
 	if m.State == store.MemoStateHeld {
 		d.HeldReason = memoafter.ParseHeldReason(m.HeldReason)
 	}
+	if m.State == store.MemoStatePending {
+		d.NotBefore = m.NotBefore
+	}
+	d.DeferCount = m.DeferCount
 	if m.TidyFrom != "" {
 		d.TidyFrom = &memoTidyFrom{ID: m.TidyFrom}
 	}
@@ -191,6 +203,12 @@ func newMemoAPI(m *manager) memoAPI { return memoAPI{memberAuth{m}, m.store} }
 // expired sent rows first. The membership-scoped core shared by the three faces: the
 // session HTTP handler, the internal operator-token bridge, and the CP MCP tools.
 func memoListFor(ctx context.Context, st store.MemoStore, membershipID string) ([]memoDTO, error) {
+	return memoListWith(ctx, st, membershipID, false)
+}
+
+// memoListWith is memoListFor; reasons adds the hand-backs' reasons, for the Console only: a
+// reason is a session's text, and it must not reach a later session through list_memos.
+func memoListWith(ctx context.Context, st store.MemoStore, membershipID string, reasons bool) ([]memoDTO, error) {
 	cutoff := memoRetainBefore()
 	// Lazy sweep: drop expired sent memos before listing (best-effort; a failed
 	// sweep still lets the list run, the cutoff filter hides expired rows anyway).
@@ -218,6 +236,9 @@ func memoListFor(ctx context.Context, st store.MemoStore, membershipID string) (
 	lk := memoafter.ListLookup(ctx, st, membershipID, rows)
 	for _, m := range rows {
 		d := memoToDTO(m)
+		if reasons {
+			d.DeferReasons = store.ParseDeferReasons(m.DeferReasons)
+		}
 		if m.AfterIDs != "" && (m.State == store.MemoStateHeld || m.State == store.MemoStatePending) {
 			if d.AfterStatus, err = memoafter.Status(m, lk); err != nil {
 				return nil, err
@@ -245,7 +266,16 @@ func memoListFor(ctx context.Context, st store.MemoStore, membershipID string) (
 }
 
 func (a memoAPI) list(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-	out, err := memoListFor(r.Context(), a.store, mv.MembershipID)
+	a.listWith(w, r, mv, false)
+}
+
+// listConsole is list for the Console, the one face that shows the hand-backs' reasons.
+func (a memoAPI) listConsole(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	a.listWith(w, r, mv, true)
+}
+
+func (a memoAPI) listWith(w http.ResponseWriter, r *http.Request, mv store.MembershipView, reasons bool) {
+	out, err := memoListWith(r.Context(), a.store, mv.MembershipID, reasons)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return

@@ -59,6 +59,14 @@ type Memo struct {
 	// to. HeldReason is why the dispatcher put the message back to held because a prerequisite can
 	// no longer be satisfied, "" otherwise: a write that leaves held clears it.
 	AfterIDs, HeldReason string
+	// NotBefore, DeferCount and DeferReasons are the hand-back of ADR 0137, addendum 2026-11-19,
+	// part B: the earliest time a returned message may be claimed again ("" for none), how many
+	// times it was handed back since a person last released or returned it, and the JSON array of
+	// those hand-backs (MemoDeferEntry). Only the return transition (ReturnDelivered) sets them,
+	// and a release clears them: no insert or edit writes them.
+	NotBefore    string
+	DeferCount   int
+	DeferReasons string
 }
 
 // MemoCategory persists a memo category as a first-class row (docs/log/21 UI overhaul), so a
@@ -105,7 +113,8 @@ const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path
 	origin_item_id, origin_sender_membership_id, origin_sender_key,
 	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at, delivery_id,
 	ref_provider, ref_key, ref_url, released_by,
-	derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id, after_ids, held_reason FROM memo`
+	derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id, after_ids, held_reason,
+	not_before, defer_count, defer_reasons FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
@@ -114,7 +123,8 @@ func scanMemo(row scanner) (Memo, error) {
 		&m.OriginItemID, &m.OriginSenderMembershipID, &m.OriginSenderKey,
 		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt, &m.DeliveryID,
 		&m.RefProvider, &m.RefKey, &m.RefURL, &m.ReleasedBy,
-		&m.DerivedFrom, &m.SourceProvenance, &m.TidyFrom, &m.TidySeenHash, &m.TidyRunID, &m.AfterIDs, &m.HeldReason)
+		&m.DerivedFrom, &m.SourceProvenance, &m.TidyFrom, &m.TidySeenHash, &m.TidyRunID, &m.AfterIDs, &m.HeldReason,
+		&m.NotBefore, &m.DeferCount, &m.DeferReasons)
 	return m, err
 }
 
@@ -227,6 +237,10 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy,
 		m.AfterIDs, rel[9], heldReasonOf(m)}
 	args = append(args, tidyArgs...)
+	// A write that takes a held message to pending is a person's release (the Console's own
+	// write in a queue): it clears the hand-backs as ReleaseMemo does. The CASE reads the row's
+	// state before this write.
+	args = append(args, m.State, m.State, m.State)
 	args = append(args, m.ID, m.MembershipID)
 	if !restore {
 		args = append(args, m.State)
@@ -238,7 +252,10 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 		   ref_provider=?, ref_key=?, ref_url=?,
 		   release_repo=?, release_category=?, release_kind=?, release_body=?, release_ref_path=?, release_attachments=?,
 		   release_ref_provider=?, release_ref_key=?, release_ref_url=?, released_by=?,
-		   after_ids=?, release_after_ids=?, held_reason=?`+tidyCols+`
+		   after_ids=?, release_after_ids=?, held_reason=?`+tidyCols+`,
+		   not_before=CASE WHEN state='held' AND CAST(? AS TEXT)='pending' THEN '' ELSE not_before END,
+		   defer_count=CASE WHEN state='held' AND CAST(? AS TEXT)='pending' THEN 0 ELSE defer_count END,
+		   defer_reasons=CASE WHEN state='held' AND CAST(? AS TEXT)='pending' THEN '' ELSE defer_reasons END
 		   WHERE id=? AND membership_id=?`+guard, args...)
 	if err != nil {
 		return err
