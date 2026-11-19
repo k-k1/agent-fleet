@@ -946,3 +946,9 @@ reviews of one change, and nothing enforces the merge order).
 and the Console's display. (2) The snapshot of step 2, with its refresh and wakes. (3) The return transition, the defer
 tool, the `deferred` outcome and the person's "return to queue". (4) The implementer's and the enqueuer's skills move
 from waiting inside the run to `after` and the defer tool.
+
+Added 2026-11-19 (step 1 of part A built as #4556): until step 2 exists, a prerequisite whose first turn is never
+recorded goes to `held` (`no_first_turn`) once the 24-hour collection window after its close has passed. A press of
+"fire now" also takes eligible messages only. A list holds at most 10 prerequisites, a cycle is refused (a reorder of
+positions could otherwise put a prerequisite behind its dependent), and a message with prerequisites is not moved to
+another category until they are cleared. The hold to `held` runs in the dispatcher's tick for enabled queues.
