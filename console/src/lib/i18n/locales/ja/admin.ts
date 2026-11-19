@@ -422,6 +422,7 @@ export const admin = {
   "tenant.boost_enabled": "メンバーのブーストを許可する",
   "tenant.boost_max": "ブーストで届く最大のサイズ",
   "tenant.boost_max_top": "クラスの最上位",
+  "tenant.boost_current": "現在の設定: {size}",
   "tenant.boost_hours": "メンバーごとの月間の枠（ブーストして実際に稼働した時間、0 = 枠なし）",
   "tenant.boost_uncounted": "稼働時間はまだ集計されないため、枠は保存されますが強制されません。",
   "tenant.boost_unsupported": "この配備にはブーストで切り替えられるマシンサイズがありません。",
