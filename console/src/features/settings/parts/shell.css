@@ -95,6 +95,11 @@
   /* Retint accents (buttons, active tabs, …) to the top-bar surface, like the admin
      modal — --topbar-accent is concrete so rebinding --accent here can't cycle. */
   --accent: var(--topbar-accent);
+  /* Everything in the modal that paints --accent (primary button, preset chips, count badges)
+     reads --on-accent; the theme's value was not chosen for the user's accent. Unset → the
+     theme's own, via --on-accent-theme (a self-reference would be invalid). Outside the modal
+     --accent is the theme's, so --on-accent stays as is. */
+  --on-accent: var(--on-topbar-accent, var(--on-accent-theme));
   /* The light theme's active seg-tab uses --active-bg (a fixed blue) for its fill, not
      --accent, so it wouldn't follow the top bar. Retint it to a soft tint of the accent
      (theme-adaptive via --bg); at the default blue it matches the prior look. */
@@ -1111,12 +1116,4 @@ label.idp-flag {
 }
 .admin-scopes code {
   font-family: var(--mono);
-}
-
-/* These sit on --accent, which .settings-modal rebinds to the user's top-bar accent; the theme's
-   --on-accent was not chosen for it. */
-.settings-modal .limit-edit .le-presets .chip.on,
-.settings-modal .machine-picker .le-presets .chip.on,
-.settings-modal .boost-policy .le-presets .chip.on {
-  color: var(--on-topbar-accent, var(--on-accent));
 }

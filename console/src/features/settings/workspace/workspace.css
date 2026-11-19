@@ -1167,7 +1167,3 @@ button.mv-path:focus-visible {
 .boost-hours input {
   width: 4.5em;
 }
-
-.settings-modal .db-url-mode.is-active {
-  color: var(--on-topbar-accent, var(--on-accent));
-}

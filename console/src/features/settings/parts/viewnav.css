@@ -57,9 +57,3 @@
 .tabbed-view {
   margin-top: 8px;
 }
-
-/* MemoryView also uses this count outside the modal, where --accent is the theme's; only inside
-   .settings-modal is the fill the user's top-bar accent. */
-.settings-modal .mem-viewnav-count {
-  color: var(--on-topbar-accent, var(--on-accent));
-}
