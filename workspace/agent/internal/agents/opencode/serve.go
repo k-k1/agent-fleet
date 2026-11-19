@@ -816,6 +816,11 @@ func stopProcess(cmd *exec.Cmd, exited <-chan struct{}, addr string) {
 		_ = cmd.Process.Kill()
 		return
 	}
+	select {
+	case <-exited:
+		return // already reaped: nothing to signal, nothing worth logging
+	default:
+	}
 	began := time.Now()
 	ok, killed := awaitStop(func() { _ = cmd.Process.Signal(syscall.SIGTERM) },
 		func() { _ = cmd.Process.Kill() }, exited, stopTermWait, stopKillWait)

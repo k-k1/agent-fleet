@@ -105,8 +105,14 @@ func TestStopProcessKillsATermIgnoringChild(t *testing.T) {
 func TestStopProcessAlreadyExitedReturnsAtOnce(t *testing.T) {
 	cmd, exited := startFake(t, "echo ready")
 	<-exited
-	srv := httptest.NewServer(http.NotFoundHandler())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"2.0.28"}`))
+	}))
 	defer srv.Close()
+	if !healthy(srv.URL) {
+		t.Fatal("control: the fake server must look healthy, or the health-poll path would return at once too")
+	}
 	oldT := stopTermWait
 	stopTermWait = 5 * time.Second
 	t.Cleanup(func() { stopTermWait = oldT })
