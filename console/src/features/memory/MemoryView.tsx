@@ -9,7 +9,6 @@
 //
 // While the workspace is stopped only the Agent could answer, so every view offers Start.
 import type { ReactNode } from "react";
-import { useState } from "react";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { Button } from "../../ui/Button.tsx";
@@ -20,26 +19,29 @@ import { useT } from "../../lib/i18n/index.ts";
 import { ViewNav, type ViewDef } from "../settings/parts/viewNav.tsx";
 import { MemoriesView } from "../settings/memory/views/MemoriesView.tsx";
 import { AgentChangesPanel } from "../settings/memory/memoryChanges.tsx";
-import { ProposalsPanel } from "../settings/memory/memoryProposals.tsx";
+import { ProposalDetail, ProposalsPanel } from "../settings/memory/memoryProposals.tsx";
 import { useSettingsUI } from "../settings/store.ts";
 import { MEMORY_VIEW_KEYS, type MemoryViewKey } from "./open.ts";
+import { useMemoryStore } from "./store.ts";
 
 interface MemoryViewProps {
   paneId: string;
   view?: MemoryViewKey;
+  /** One proposal, shown alone at full width (proposals only). */
+  proposalId?: string;
   headerActions?: ReactNode;
 }
 
-export function MemoryView({ paneId, view, headerActions }: MemoryViewProps) {
+export function MemoryView({ paneId, view, proposalId, headerActions }: MemoryViewProps) {
   const tr = useT();
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
   const setPaneTarget = useLayoutStore((s) => s.setPaneTarget);
   const openSettings = useSettingsUI((s) => s.openSettings);
   const running = wsState === "running";
-  // Bumped by any view that changed memory, so the lists re-read.
-  const [reload, setReload] = useState(0);
-  const bump = () => setReload((n) => n + 1);
+  // Bumped by any write to memory, here or in the left pane's Memory view, so both re-read.
+  const reload = useMemoryStore((s) => s.version);
+  const bump = useMemoryStore((s) => s.bump);
   const current: MemoryViewKey = view && MEMORY_VIEW_KEYS.includes(view) ? view : "memories";
   const pick = (v: string) => setPaneTarget(paneId, { content: { kind: "memory", memoryView: v as MemoryViewKey } });
 
@@ -70,6 +72,15 @@ export function MemoryView({ paneId, view, headerActions }: MemoryViewProps) {
             </EmptyState>
           ) : current === "changes" ? (
             <AgentChangesPanel reload={reload} onChanged={bump} />
+          ) : current === "proposals" && proposalId ? (
+            <div className="mem-changes mem-cs mview-one">
+              <button type="button" className="linklike mview-back" onClick={() => pick("proposals")}>
+                {tr("mem.mv_all_proposals")}
+              </button>
+              <div className="mem-diff">
+                <ProposalDetail id={proposalId} version={reload} onDecided={bump} />
+              </div>
+            </div>
           ) : current === "proposals" ? (
             <ProposalsPanel reload={reload} onChanged={bump} />
           ) : (

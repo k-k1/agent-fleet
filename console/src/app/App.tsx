@@ -55,6 +55,7 @@ import { MOBILE_QUERY, coarsePointer, useIsMobile } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { ActivityBar } from "./ActivityBar.tsx";
 import { RailView } from "./RailView.tsx";
+import { MemoryRailSection } from "../features/memory/MemoryRailSection.tsx";
 import { wireRailReveals } from "./activity/reveals.ts";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
@@ -647,6 +648,13 @@ export function App() {
             <RailView id="memo" active={railView} shown={railShown}>
               <SoloSection>
                 <MemoQueueSection />
+              </SoloSection>
+            </RailView>
+            {/* Mounted on first show, like Files: the memory list is a read of the Agent. The
+                activity bar's proposal badge does not wait for it (features/memory/store.ts). */}
+            <RailView id="memory" active={railView} shown={railShown} lazy>
+              <SoloSection>
+                {workspaceRunning ? <MemoryRailSection /> : <StoppedRailSection id="memory" title={tr("rail.view.memory")} icon="archive" />}
               </SoloSection>
             </RailView>
             {schedulerEnabled && (

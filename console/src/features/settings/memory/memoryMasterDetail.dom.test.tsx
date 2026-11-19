@@ -1086,6 +1086,16 @@ describe("MemoriesMasterDetail settings target", () => {
     expect(useSettingsUI.getState().settingsTarget).toBeNull();
   });
 
+  it("picks a forgotten memory from the forgotten list of every scope (ADR 0141)", async () => {
+    await setValue(select(), "user");
+    await act(async () => useSettingsUI.setState({ settingsTarget: memoryTarget({ scope: "project", project, name: "old-note" }, true) }));
+    await flush();
+    expect(select().value).toBe("all");
+    expect(text(t("mem.md_f_forgotten"))?.getAttribute("aria-pressed")).toBe("true");
+    expect(picked()?.textContent).toContain("old-note");
+    expect(useSettingsUI.getState().settingsTarget).toBeNull();
+  });
+
   it("leaves a target that names something else for its owner", async () => {
     await act(async () => useSettingsUI.setState({ settingsTarget: "codex" }));
     await flush();

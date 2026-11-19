@@ -17,10 +17,15 @@ export interface OpenMemoryViewOptions {
   /** A memory to pick on arrival, as memoryTarget() spells it. Handed over through the settings
    *  store's one-shot target, which the memory viewer already consumes once its list has landed. */
   target?: string;
+  /** The one proposal to show alone (proposals only), as the left pane's Memory view opens it. */
+  proposalId?: string;
 }
 
 export function openMemoryView(view: MemoryViewKey = "memories", opts: OpenMemoryViewOptions = {}): void {
-  const content: PaneContent = { kind: "memory", memoryView: view };
+  const content: PaneContent =
+    view === "proposals" && opts.proposalId
+      ? { kind: "memory", memoryView: view, proposalId: opts.proposalId }
+      : { kind: "memory", memoryView: view };
   // Settings is a modal over the layout: left open it would hide the pane this call opens. Closed
   // first, because closing also drops a pending target.
   useSettingsUI.getState().closeSettings();

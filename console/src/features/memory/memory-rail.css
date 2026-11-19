@@ -1,0 +1,162 @@
+/* The Memory view of the left pane (ADR 0141). Dense rows in the rail idiom of the memo queue and
+   schedules: the name on one line, one muted line under it, ellipsis rather than wrapping, since the
+   pane is 320px wide. */
+
+.memrail {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+
+.memrail-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 8px 8px;
+}
+.memrail-filter input[type="search"],
+.memrail-filter select {
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+}
+.memrail-selects {
+  display: flex;
+  gap: 6px;
+}
+.memrail-selects > select {
+  flex: 1 1 0;
+}
+
+.memrail-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.memrail-chip,
+.memrail-toggle {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.memrail-chip.active {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.memrail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.memrail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.memrail-row:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.08));
+}
+.memrail-row.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.memrail-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.memrail-row.gone .memrail-name {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.memrail-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+.memrail-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memrail-pin {
+  flex: none;
+  color: var(--accent);
+  font-size: 12px;
+}
+.memrail-type {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.memrail-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memrail-group-head {
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memrail-note {
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  list-style: none;
+}
+.memrail-note.warn {
+  color: var(--warn);
+}
+
+.memrail-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 10px 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+.memrail-link:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* One proposal opened from the view: the detail takes the pane's whole width. */
+.mview-back {
+  align-self: flex-start;
+  margin-bottom: 8px;
+}

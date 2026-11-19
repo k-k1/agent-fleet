@@ -59,7 +59,7 @@ If sessions are busy all day, the automatic run may never come. Start one yourse
 
 ## Review the suggestions
 
-Suggestions are listed in the **Suggestions** tab of the [Memory view](overview.md#open-the-memory-view). Filter with **Pending**, **Decided**, **Expired** and **All**.
+Suggestions are listed in the **Suggestions** tab of the [Memory view](overview.md#open-the-memory-view). Filter with **Pending**, **Decided**, **Expired** and **All**. The pending ones are also listed in the **Memory** view of the left pane, and the activity bar's Memory icon counts them; click one to open it on its own.
 A suggestion is titled by the name of the memory it creates or changes. The topic memory it was grouped under is in the smaller line below.
 
 Open one and **If you approve** appears before the Approve button.

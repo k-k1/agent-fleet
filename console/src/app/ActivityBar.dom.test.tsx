@@ -21,6 +21,8 @@ import { useWorkItemStore } from "../features/workitems/store.ts";
 import { useSeenStore } from "../features/workitems/seen.ts";
 import { useSchedulesStore } from "../features/schedules/store.ts";
 import { useLayoutStore } from "../layout/store.ts";
+import { useWorkspaceStore } from "../core/store/workspace.ts";
+import { useMemoryStore } from "../features/memory/store.ts";
 import { selectedView } from "../layout/ops.ts";
 import type { Session } from "../types/session.ts";
 
@@ -60,6 +62,8 @@ beforeEach(() => {
   useSeenStore.setState({ map: {} });
   useSchedulesStore.setState({ failed: [], failedAll: null });
   useRailAck.setState({ acked: {} });
+  useMemoryStore.getState().reset();
+  api.mockImplementation(() => Promise.resolve({}));
 });
 afterEach(async () => {
   if (root) await act(async () => root!.unmount());
@@ -218,6 +222,32 @@ describe("ActivityBar badges", () => {
     useRailAck.setState({ acked: { workitems: ["k"] } });
     await mount();
     expect(useRailAck.getState().acked.workitems).toEqual(["k"]);
+  });
+
+  it("counts the memory proposals waiting for a decision, even while the view is on screen (ADR 0141)", async () => {
+    const prop = (id: string, status: string) => ({ id, status, memory: "m-" + id, items: [], created: "", expires: "" });
+    api.mockImplementation((url: unknown) =>
+      Promise.resolve(
+        String(url) === "api/agents/memory-consolidation/proposals"
+          ? { proposals: [prop("a", "pending"), prop("b", "pending"), prop("c", "approved")] }
+          : {},
+      ),
+    );
+    useWorkspaceStore.setState({ state: "running" });
+    useLeftRail.setState({ view: "memory" });
+    await mount();
+    await act(async () => {});
+    expect(badge("memory")?.dataset.badge).toBe("waiting");
+    expect(badge("memory")?.textContent).toBe("2");
+    expect(btn("memory").title).toContain("2");
+    expect(btn("memory").title).not.toBe(btn("memory").getAttribute("aria-label"));
+  });
+
+  it("reads no proposals while the workspace is stopped", async () => {
+    useWorkspaceStore.setState({ state: "stopped" });
+    await mount();
+    expect(api.mock.calls.some((c) => String(c[0]).includes("memory-consolidation"))).toBe(false);
+    expect(badge("memory")).toBeNull();
   });
 
   it("never badges the memo queue or the files view", async () => {

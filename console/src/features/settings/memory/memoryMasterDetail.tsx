@@ -31,17 +31,15 @@ import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { PurgeHistoryDialog, type PurgeTarget } from "./memoryPurge.tsx";
 import { MemoryHistory, useAllChanges } from "./memoryHistory.tsx";
 import { useSettingsUI } from "../store.ts";
+import { ALL_SCOPES, useMemoryBodySearch } from "../../memory/bodySearch.ts";
 import { hasEveryWord, keyOf, matchMemoriesDetail, parseMemoryTarget, scopeKey } from "./memorySearch.ts";
-import type { MemoryBody, MemoryChange, MemoryListed, MemorySearchHit, SecretFinding } from "./memoryTypes.ts";
+import type { MemoryBody, MemoryChange, MemoryListed, SecretFinding } from "./memoryTypes.ts";
 
 const TYPES = ["user", "feedback", "project", "reference"] as const;
 const projectQuery = (project?: string) => (project ? "?project=" + encodeURIComponent(project) : "");
 
-/** Pause after the last keystroke before the body search is asked. */
-const SEARCH_DELAY_MS = 300;
-
 // The default selection: every scope at once (list, field filter and body search).
-const ALL = "all";
+const ALL = ALL_SCOPES;
 
 type Filter = "all" | "pinned" | "forgotten";
 const FILTERS = [
@@ -130,11 +128,6 @@ export function MemoriesMasterDetail({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [findings, setFindings] = useState<SecretFinding[]>([]);
   const [formErr, setFormErr] = useState("");
-  const [hits, setHits] = useState<MemorySearchHit[]>([]);
-  // "any": no memory held every word, so the hits hold only some of them (member-search).
-  const [fallback, setFallback] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [searchErr, setSearchErr] = useState(false);
   const [busy, setBusy] = useState(false);
   // Bumped by this view's own writes: the list, the forgotten list, the body and the history are
   // read again (the parent's `reload` does the same for the status header and the other views).
@@ -256,42 +249,8 @@ export function MemoriesMasterDetail({
   }, [scopes, scope, rows, goneLoaded]);
 
   const q = query.trim().toLowerCase();
-  // Body search: asked after a pause, for the scope on screen. "All" sends no scope param, which makes the
-  // Agent search the user scope and every project. A newer question or a scope change
-  // drops the answer of an older one.
-  const searchSeq = useRef(0);
-  useEffect(() => {
-    const seq = ++searchSeq.current;
-    setHits([]);
-    setFallback("");
-    setSearchErr(false);
-    if (!q) {
-      setSearching(false);
-      return;
-    }
-    setSearching(true);
-    const [kind, projectId = ""] = scope.split(":");
-    const timer = setTimeout(() => {
-      const scopeQ =
-        kind === ALL ? "" : kind === "user" ? "scope=user&" : `scope=project&project=${encodeURIComponent(projectId)}&`;
-      api(`api/agents/memory/entries/member-search?${scopeQ}limit=50&q=${encodeURIComponent(q)}`)
-        .then((res) => {
-          if (seq !== searchSeq.current) return;
-          if (res?.error) setSearchErr(true);
-          else {
-            setHits(res?.hits ?? []);
-            setFallback(res?.fallback ?? "");
-          }
-        })
-        .catch(() => {
-          if (seq === searchSeq.current) setSearchErr(true);
-        })
-        .finally(() => {
-          if (seq === searchSeq.current) setSearching(false);
-        });
-    }, SEARCH_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [q, scope]);
+  // Body search: asked after a pause, for the scope on screen.
+  const { hits, fallback, searching, failed: searchErr } = useMemoryBodySearch(q, scope);
 
   // The rows of the scope that match by a listed field (instant) or by a body hit; a body hit
   // brings its matching lines. Order: listed matches as listed, then body-only hits in rank order.
@@ -390,7 +349,23 @@ export function MemoriesMasterDetail({
   const clearAsked = useSettingsUI((st) => st.clearSettingsTarget);
   useEffect(() => {
     const want = parseMemoryTarget(asked);
-    if (!want || rows === null) return;
+    if (!want) return;
+    // A forgotten one is picked from the forgotten list of every scope. Its answer is not awaited
+    // here: the pick's own check drops it once that list has landed without it.
+    if (want.gone) {
+      clearAsked();
+      // The list on screen is for another scope; until the one for all scopes lands it says nothing.
+      if (scope !== ALL) setGoneLoaded(false);
+      focusPane.current = true;
+      setDraft(null);
+      setMenuOpen(false);
+      setQuery("");
+      setScope(ALL);
+      setFilter("forgotten");
+      setSel({ scope: want.scope, project: want.project, name: want.name, gone: true });
+      return;
+    }
+    if (rows === null) return;
     clearAsked();
     const m = rows.find((r) => keyOf(r) === keyOf({ scope: want.scope, project: { id: want.project }, name: want.name }));
     if (!m) return;
@@ -401,7 +376,7 @@ export function MemoriesMasterDetail({
     setScope(ALL);
     setFilter("all");
     setSel(selFrom(m, false));
-  }, [asked, rows, clearAsked]);
+  }, [asked, rows, clearAsked, scope]);
   const back = () => {
     if (paneKey) focusRow.current = key;
     setDraft(null);
