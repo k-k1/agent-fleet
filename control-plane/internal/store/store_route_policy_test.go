@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -150,6 +153,83 @@ func TestRoutePolicyLayersRead(t *testing.T) {
 		mustDo(t, err)
 		if dep.Tenant.Revision != 0 || dep.Revision() != d.Revision {
 			t.Errorf("the deployment-only read = %+v", dep)
+		}
+	})
+}
+
+// A conditional write passes only at the revision the caller loaded (0 for a row never written),
+// and a refused one leaves the row, the audit log and the revision sequence untouched.
+func TestPutRoutePolicyIfPrecondition(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		zero := int64(0)
+		_, first, err := st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", `{"deny":["a"]}`, "su", &zero, nil)
+		mustDo(t, err)
+		// Loaded at 0 again: the row is now at first.Revision.
+		before, _, err := st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", `{"deny":["b"]}`, "su", &zero, nil)
+		if !errors.Is(err, ErrRoutePolicyStale) || before.Revision != first.Revision {
+			t.Fatalf("stale write = before %+v, %v; want ErrRoutePolicyStale reporting the current row", before, err)
+		}
+		if got, _ := st.GetRoutePolicy(ctx, RoutePolicyDeployment, ""); got.Rule != `{"deny":["a"]}` || got.Revision != first.Revision {
+			t.Fatalf("a refused write changed the row: %+v", got)
+		}
+		audited := false
+		_, _, err = st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", `{"deny":["b"]}`, "su", &zero,
+			func(_, _ RoutePolicyRow) AuditLog { audited = true; return AuditLog{} })
+		if !errors.Is(err, ErrRoutePolicyStale) || audited {
+			t.Fatalf("a refused write must not build or insert an audit row (err %v, audited %v)", err, audited)
+		}
+		// The refusal took no revision: the next write is the one right after first.
+		cur := first.Revision
+		_, next, err := st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", `{"deny":["c"]}`, "su", &cur, nil)
+		mustDo(t, err)
+		if next.Revision != first.Revision+1 {
+			t.Fatalf("revision after a refused write = %d, want %d", next.Revision, first.Revision+1)
+		}
+		// nil is today's unconditional write.
+		_, _, err = st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", `{}`, "su", nil, nil)
+		mustDo(t, err)
+	})
+}
+
+// Writers that all loaded the same revision race: exactly one wins, the others are told the row
+// moved, and none of them is turned into an error by lock contention.
+func TestPutRoutePolicyIfConcurrentWriters(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		for round := 0; round < 5; round++ {
+			row, err := st.GetRoutePolicy(ctx, RoutePolicyDeployment, "")
+			mustDo(t, err)
+			base := row.Revision
+			const writers = 8
+			var wins, stale atomic.Int32
+			var wg sync.WaitGroup
+			start := make(chan struct{})
+			for i := 0; i < writers; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					<-start
+					for try := 0; try < 50; try++ {
+						_, _, err := st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", fmt.Sprintf(`{"deny":["w%d"]}`, i), "su", &base, nil)
+						switch {
+						case err == nil:
+							wins.Add(1)
+						case errors.Is(err, ErrRoutePolicyStale):
+							stale.Add(1)
+						default:
+							continue // lock contention on the engine's side: retry the same attempt
+						}
+						return
+					}
+					t.Errorf("writer %d never got an answer", i)
+				}(i)
+			}
+			close(start)
+			wg.Wait()
+			if wins.Load() != 1 || stale.Load() != writers-1 {
+				t.Fatalf("round %d: %d writers won and %d were refused, want 1 and %d", round, wins.Load(), stale.Load(), writers-1)
+			}
 		}
 	})
 }

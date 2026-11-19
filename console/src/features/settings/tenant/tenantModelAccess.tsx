@@ -7,13 +7,17 @@
 // (TenantAdminFor); a refused or unreadable GET draws no editor, so nothing on this page can
 // write a rule built from an answer it did not get.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { api, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { TenantOverview, byList } from "./routePolicyOverview.tsx";
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
 import { TabbedViews } from "../parts/tabbedViews.tsx";
-import { RuleEditor } from "./routePolicyRuleEditor.tsx";
-import { isOlderPolicyAnswer, parseTenantPolicy, type TenantPolicyView } from "./routePolicyRule.ts";
+import { RuleEditor, putRule } from "./routePolicyRuleEditor.tsx";
+import {
+  isOlderPolicyAnswer,
+  parseTenantPolicy,
+  type TenantPolicyView,
+} from "./routePolicyRule.ts";
 
 export function useTenantRoutePolicy(slug: string) {
   const tr = useT();
@@ -35,7 +39,11 @@ export function useTenantRoutePolicy(slug: string) {
       setFailed(
         d?.error
           ? errText(d.error)
-          : tr(isOlderPolicyAnswer(d, true) ? "admin.mpol_vocab_missing" : "admin.mpol_load_failed"),
+          : tr(
+              isOlderPolicyAnswer(d, true)
+                ? "admin.mpol_vocab_missing"
+                : "admin.mpol_load_failed",
+            ),
       );
     } catch {
       setView(null);
@@ -45,16 +53,7 @@ export function useTenantRoutePolicy(slug: string) {
   useEffect(() => {
     load();
   }, [load]);
-  // The stored view as it is now, without touching the drawn one: what an editor checks its
-  // revision against right before it saves.
-  const peek = useCallback(async () => {
-    try {
-      return parseTenantPolicy(await api(path));
-    } catch {
-      return null;
-    }
-  }, [path]);
-  return { view, failed, load, peek, path };
+  return { view, failed, load, path };
 }
 
 /** The sentences D12 (the delay, and the window while the CP is unreachable) and D13 require
@@ -70,20 +69,35 @@ export function PolicyLimits() {
   );
 }
 
-export function TenantModelAccessView({ slug, isSuper = false }: { slug: string; isSuper?: boolean }) {
+export function TenantModelAccessView({
+  slug,
+  isSuper = false,
+}: {
+  slug: string;
+  isSuper?: boolean;
+}) {
   const tr = useT();
-  const { view, failed, load, peek, path } = useTenantRoutePolicy(slug);
+  const { view, failed, load, path } = useTenantRoutePolicy(slug);
   // Whether the CP serves provided routes, as this tenant's view last heard: an answer for
   // another tenant does not count, so a switch never shows the tab before its own read answers.
-  const [served, setServed] = useState<{ slug: string; on: boolean }>({ slug: "", on: false });
+  const [served, setServed] = useState<{ slug: string; on: boolean }>({
+    slug: "",
+    on: false,
+  });
   const provided = served.slug === slug && served.on;
-  const onServed = useCallback((on: boolean) => setServed({ slug, on }), [slug]);
+  const onServed = useCallback(
+    (on: boolean) => setServed({ slug, on }),
+    [slug],
+  );
 
   if (!view) {
     return (
       <section className="admin-panel model-access">
         <h4>{tr("tenant.model_access_title")}</h4>
-        <p className={failed ? "admin-hint warn" : "muted"} role={failed ? "alert" : undefined}>
+        <p
+          className={failed ? "admin-hint warn" : "muted"}
+          role={failed ? "alert" : undefined}
+        >
           {failed ?? tr("common.loading")}
         </p>
       </section>
@@ -93,7 +107,10 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
   const overview = <TenantOverview view={view} />;
   // The deployment's provided route as the layers decide it: a budget cannot reopen what they stop.
   const provRoute = view.routes.find((r) => r.id === "bedrock-deployment");
-  const providedStops = provRoute && !provRoute.allowed ? byList(tr, provRoute.forbiddenBy ?? []) : undefined;
+  const providedStops =
+    provRoute && !provRoute.allowed
+      ? byList(tr, provRoute.forbiddenBy ?? [])
+      : undefined;
   return (
     <>
       {/* Above the views, so D12's and D13's sentences stay on screen whichever view is open. */}
@@ -105,7 +122,11 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
         label={tr("tenant.model_access_title")}
         prefix="tenant-mpol"
         views={[
-          { key: "overview", label: tr("tenant.model_access_view_overview"), node: overview },
+          {
+            key: "overview",
+            label: tr("tenant.model_access_view_overview"),
+            node: overview,
+          },
           {
             key: "restrictions",
             label: tr("tenant.model_access_view_restrictions"),
@@ -115,22 +136,30 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                     here (ADR 0138 D16, note of 2026-11-17). A tenant administrator never sees it,
                     and the CP refuses their cap write. */}
                 {isSuper && (
-                  <section className="admin-panel model-access-cap" data-cap-editor={slug}>
+                  <section
+                    className="admin-panel model-access-cap"
+                    data-cap-editor={slug}
+                  >
                     <h4>
                       {tr("admin.mpol_layer_tenant_cap")}
-                      <span className="af-note">{tr("admin.mpol_revision", { n: view.cap.revision })}</span>
+                      <span className="af-note">
+                        {tr("admin.mpol_revision", { n: view.cap.revision })}
+                      </span>
                     </h4>
-                    <p className="admin-hint">{tr("admin.model_access_caps_note")}</p>
+                    <p className="admin-hint">
+                      {tr("admin.model_access_caps_note")}
+                    </p>
                     <RuleEditor
                       key={`${slug}:cap:${view.cap.revision}`}
                       base={view.cap.rule}
                       revision={view.cap.revision}
-                      currentRevision={async () => (await peek())?.cap.revision ?? null}
                       vocab={view.vocabulary}
                       endpointsMode="patterns"
                       ceiling={view.ceiling.rule}
-                      above={[{ layer: "deployment", rule: view.deployment.rule }]}
-                      save={(body) => apiJSON(`${path}/cap`, "PUT", body)}
+                      above={[
+                        { layer: "deployment", rule: view.deployment.rule },
+                      ]}
+                      save={(body, rev) => putRule(`${path}/cap`, body, rev)}
                       onSaved={load}
                     />
                   </section>
@@ -138,13 +167,14 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                 <section className="admin-panel model-access-rule">
                   <h4>
                     {tr("tenant.model_access_rule")}
-                    <span className="af-note">{tr("admin.mpol_revision", { n: view.tenant.revision })}</span>
+                    <span className="af-note">
+                      {tr("admin.mpol_revision", { n: view.tenant.revision })}
+                    </span>
                   </h4>
                   <RuleEditor
                     key={`${slug}:${view.tenant.revision}`}
                     base={view.tenant.rule}
                     revision={view.tenant.revision}
-                    currentRevision={async () => (await peek())?.tenant.revision ?? null}
                     vocab={view.vocabulary}
                     endpointsMode="hosts"
                     hostState={(h) => view.endpoints.find((e) => e.host === h)}
@@ -155,7 +185,7 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                       { layer: "deployment", rule: view.deployment.rule },
                       { layer: "tenant_cap", rule: view.cap.rule },
                     ]}
-                    save={(body) => apiJSON(path, "PUT", body)}
+                    save={(body, rev) => putRule(path, body, rev)}
                     onSaved={load}
                   />
                 </section>

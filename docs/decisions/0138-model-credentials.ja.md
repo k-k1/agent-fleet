@@ -779,3 +779,9 @@ pi の経路は ADR 0136 の P1 が入った時点で M0 の水準で入る。�
   Control Plane は読み込み失敗とは区別し、「Control Plane が古い」と表示して編集欄は出さない。
   `vocabulary` を送らない Control Plane を読んだコンソールは、読み取り専用の表示も含めてこの警告だけを出す。2 つは同時に配備する前提で、
   半端な答えから描いたページより、理由を言う空のページのほうがよい。
+- 2026-11-20, D16（#4367）: 経路ポリシーの 3 つの PUT（`PUT /api/admin/route-policy`、`PUT /api/admin/tenants/{slug}/route-policy`、
+  `.../route-policy/cap`）は、編集欄が読み込んだ revision を `If-Match` ヘッダで受け取る。値は GET が返す層ごとの
+  `revision`（引用符つきでも数字のみでも可）。古ければ 409 `route_policy_stale` を返し、書き込み・監査記録・revision の
+  採番はしない。不正な値は 400 `bad_request`。ヘッダなしは従来どおりの無条件の書き込み。比較はストアが書き込みと同じ
+  トランザクションの中で、revision 採番の行ロックを取ってから行う（`PutRoutePolicyIf`）ので、同じ revision に基づく
+  2 つの保存が両方とも通ることはない。コンソールはこれを送り、保存前に層を読み直さなくなった。

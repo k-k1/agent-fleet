@@ -833,3 +833,9 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
   page says the Control Plane is older and draws no editor. A Console that reads a Control Plane
   without it shows that alert alone, read-only views included: the two ship together, and a page drawn from half an answer
   is worse than one that says why it is empty.
+- 2026-11-20, D16 (#4367): the three route-policy PUTs (`PUT /api/admin/route-policy`, `PUT /api/admin/tenants/{slug}/route-policy`
+  and `.../route-policy/cap`) take the revision the editor loaded as an `If-Match` header: the layer's own `revision`
+  from the GET, quoted or bare. A stale one answers 409 `route_policy_stale` and writes, records and takes nothing; a
+  malformed one is 400 `bad_request`; no header is the unconditional write older callers make. The store compares it
+  inside the write's own transaction, after the revision sequence's lock is held (`PutRoutePolicyIf`), so two saves
+  based on one revision cannot both land. The Console sends it and no longer re-reads the layer before saving.

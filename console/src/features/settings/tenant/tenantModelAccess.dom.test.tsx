@@ -25,21 +25,37 @@ import { TenantModelAccessView } from "./tenantModelAccess.tsx";
 const PATH = "api/admin/tenants/acme/route-policy";
 
 // The vocabulary the CP serves, as the real handlers wrote it (routepolicysrv TestShotFixturesPolicy).
-const VOCAB = JSON.parse(readFileSync("scripts/shots/model-access/policy-open.json", "utf8"))["deployment"].vocabulary;
+const VOCAB = JSON.parse(
+  readFileSync("scripts/shots/model-access/policy-open.json", "utf8"),
+)["deployment"].vocabulary;
 
 const VIEW = () => ({
   ceiling: {
     raw: "classes=-subscription",
-    rule: { classes: ["member-key", "member-cloud", "provided", "self-hosted"] },
+    rule: {
+      classes: ["member-key", "member-cloud", "provided", "self-hosted"],
+    },
     source: "deployment",
   },
   deployment: { rule: {}, revision: 0 },
   cap: { rule: { deny: ["openrouter-api"] }, revision: 2 },
-  tenant: { rule: { endpoints: ["llm.corp.example"], except: ["copilot-login"], future: "kept" }, revision: 5 },
+  tenant: {
+    rule: {
+      endpoints: ["llm.corp.example"],
+      except: ["copilot-login"],
+      future: "kept",
+    },
+    revision: 5,
+  },
   restricted: true,
   revision: 9,
   routes: [
-    { id: "anthropic-api", class: "member-key", destination: "anthropic", allowed: true },
+    {
+      id: "anthropic-api",
+      class: "member-key",
+      destination: "anthropic",
+      allowed: true,
+    },
     {
       id: "anthropic-subscription",
       class: "subscription",
@@ -54,9 +70,17 @@ const VIEW = () => ({
       allowed: false,
       forbiddenBy: ["tenant_cap"],
     },
-    { id: "gemini-api", class: "member-key", destination: "google", allowed: false, forbiddenBy: ["tenant"] },
+    {
+      id: "gemini-api",
+      class: "member-key",
+      destination: "google",
+      allowed: false,
+      forbiddenBy: ["tenant"],
+    },
   ],
-  endpoints: [{ host: "llm.corp.example", approved: false, excludedBy: ["ceiling"] }],
+  endpoints: [
+    { host: "llm.corp.example", approved: false, excludedBy: ["ceiling"] },
+  ],
   endpointRoutes: [],
   hidden: { kinds: [], chat: [], imagegen: [] },
   vocabulary: VOCAB,
@@ -77,37 +101,59 @@ async function mount(isSuper = false) {
   });
 }
 
+const IF_MATCH_5 = { "If-Match": '"5"' };
+const IF_MATCH_2 = { "If-Match": '"2"' };
 const policyReads = () => api.mock.calls.filter((c) => c[0] === PATH).length;
 const flush = async () => {
   await act(async () => {
     await Promise.resolve();
   });
 };
-const field = (name: string) => host!.querySelector<HTMLElement>(`.model-access-rule [data-field="${name}"]`)!;
+const field = (name: string) =>
+  host!.querySelector<HTMLElement>(
+    `.model-access-rule [data-field="${name}"]`,
+  )!;
 const segBtn = (name: string, text: string) =>
-  Array.from(field(name).querySelectorAll<HTMLButtonElement>(".seg-btn")).find((b) => b.textContent === text)!;
+  Array.from(field(name).querySelectorAll<HTMLButtonElement>(".seg-btn")).find(
+    (b) => b.textContent === text,
+  )!;
 // A route tick shows the route's name; its input's accessible name carries the id.
 const tickIn = (name: string, text: string) =>
   Array.from(field(name).querySelectorAll<HTMLLabelElement>("label"))
     .find(
       (l) =>
-        l.textContent?.includes(text) || l.querySelector("input")?.getAttribute("aria-label")?.endsWith(`: ${text}`),
+        l.textContent?.includes(text) ||
+        l
+          .querySelector("input")
+          ?.getAttribute("aria-label")
+          ?.endsWith(`: ${text}`),
     )!
     .querySelector("input")!;
 const servers = () =>
-  Array.from(field("endpoints").querySelectorAll("[data-server]")).map((r) => r.getAttribute("data-server"));
+  Array.from(field("endpoints").querySelectorAll("[data-server]")).map((r) =>
+    r.getAttribute("data-server"),
+  );
 const addServer = async (host: string) => {
-  const input = field("endpoints").querySelector<HTMLInputElement>(".mpol-server-add input")!;
+  const input = field("endpoints").querySelector<HTMLInputElement>(
+    ".mpol-server-add input",
+  )!;
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, host);
+    Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!.call(input, host);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
   await click(
-    Array.from(field("endpoints").querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === "追加")!,
+    Array.from(
+      field("endpoints").querySelectorAll<HTMLButtonElement>("button"),
+    ).find((b) => b.textContent === "追加")!,
   );
 };
 const button = (text: string) =>
-  Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === text);
+  Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find(
+    (b) => b.textContent === text,
+  );
 const click = async (el: HTMLElement) => {
   await act(async () => {
     el.click();
@@ -119,7 +165,11 @@ beforeEach(() => {
   // The provided-route paths answer as on a CP without them (a plain 404): their section is
   // pinned in tenantProvidedRoutes.dom.test.tsx.
   api.mockImplementation((path: string) =>
-    Promise.resolve(path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : VIEW()),
+    Promise.resolve(
+      path.includes("/provided-routes/")
+        ? { error: { code: "http_404", status: 404 } }
+        : VIEW(),
+    ),
   );
   apiJSON.mockResolvedValue({ rule: {}, revision: 6 });
 });
@@ -138,7 +188,12 @@ describe("tenant model access", () => {
     expect(api).toHaveBeenCalledWith(PATH);
     const who = host!.querySelector(".model-access-who")!;
     const lines = Array.from(who.querySelectorAll<HTMLElement>("[data-layer]"));
-    expect(lines.map((l) => l.dataset.layer)).toEqual(["ceiling", "deployment", "tenant_cap", "tenant"]);
+    expect(lines.map((l) => l.dataset.layer)).toEqual([
+      "ceiling",
+      "deployment",
+      "tenant_cap",
+      "tenant",
+    ]);
     // No control here: the layers above belong to the operator and the super_admin, and the
     // tenant's own is edited on the Restrictions tab.
     expect(who.querySelectorAll("input, textarea, button").length).toBe(0);
@@ -148,7 +203,9 @@ describe("tenant model access", () => {
     expect(lines[1].textContent).toContain("制限なし");
     expect(lines[2].textContent).toContain("個別に禁止: OpenRouter");
     // The tenant's own hosts, each with its state and who keeps it out.
-    expect(host!.querySelector('[data-host="llm.corp.example"]')?.textContent).toContain("止めているのは: 運用者");
+    expect(
+      host!.querySelector('[data-host="llm.corp.example"]')?.textContent,
+    ).toContain("止めているのは: 運用者");
     // The sentences the policy page states: D12's delay and its window while the CP is
     // unreachable, and D13's.
     expect(host!.textContent).toContain("30 秒");
@@ -163,21 +220,28 @@ describe("tenant model access", () => {
     await click(tickIn("classes", "メンバーの API キー"));
     await click(button("保存")!);
     expect(apiJSON).toHaveBeenCalledTimes(1);
-    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", {
-      classes: ["member-key"],
-      endpoints: ["llm.corp.example"],
-      except: ["copilot-login"],
-      future: "kept",
-    });
-    // One read to check the revision before the PUT, and the saved state read back after it.
-    expect(policyReads()).toBe(3);
+    // The PUT carries the revision the editor was loaded at, and nothing is read before it.
+    expect(apiJSON).toHaveBeenCalledWith(
+      PATH,
+      "PUT",
+      {
+        classes: ["member-key"],
+        endpoints: ["llm.corp.example"],
+        except: ["copilot-login"],
+        future: "kept",
+      },
+      IF_MATCH_5,
+    );
+    // The load, and the saved state read back after the PUT.
+    expect(policyReads()).toBe(2);
   });
 
   it("shows a refusal with its reason and keeps the edits", async () => {
     apiJSON.mockResolvedValue({
       error: {
         code: "route_policy_endpoint_not_approvable",
-        message: "gpu.corp.example cannot be approved as a self-hosted endpoint: excluded by [ceiling]",
+        message:
+          "gpu.corp.example cannot be approved as a self-hosted endpoint: excluded by [ceiling]",
       },
     });
     await mount();
@@ -186,41 +250,58 @@ describe("tenant model access", () => {
     expect(apiJSON).toHaveBeenCalledWith(
       PATH,
       "PUT",
-      expect.objectContaining({ endpoints: ["llm.corp.example", "gpu.corp.example"] }),
+      expect.objectContaining({
+        endpoints: ["llm.corp.example", "gpu.corp.example"],
+      }),
+      IF_MATCH_5,
     );
     const alert = host!.querySelector(".model-access-rule [role=alert]")!;
-    expect(alert.textContent).toContain("セルフホストのサーバーとして承認できません");
+    expect(alert.textContent).toContain(
+      "セルフホストのサーバーとして承認できません",
+    );
     expect(alert.textContent).toContain("gpu.corp.example");
     expect(servers()).toEqual(["llm.corp.example", "gpu.corp.example"]);
-    // Not reloaded after the refusal (the second read is the revision check before the PUT): a
-    // reload would replace the edits with the stored rule.
-    expect(policyReads()).toBe(2);
+    // Not reloaded after the refusal: a reload would replace the edits with the stored rule.
+    expect(policyReads()).toBe(1);
   });
 
-  it("does not save over a revision someone else stored after the load", async () => {
+  it("shows the concurrent-edit message on a 409 and keeps the edits (the CP refused a stale revision)", async () => {
+    apiJSON.mockResolvedValue({
+      error: {
+        code: "route_policy_stale",
+        message: "the rule is at revision 6 now",
+        status: 409,
+      },
+    });
     await mount();
     await click(tickIn("deny", "anthropic-api"));
-    // Another administrator saved in the meantime: the stored tenant rule is now at revision 6.
-    api.mockImplementation(() => Promise.resolve({ ...VIEW(), tenant: { rule: {}, revision: 6 } }));
     await click(button("保存")!);
-    expect(apiJSON).not.toHaveBeenCalled();
-    expect(host!.querySelector(".model-access-rule [role=alert]")?.textContent).toContain("ほかの人がこの規則を更新");
+    expect(apiJSON).toHaveBeenCalledWith(
+      PATH,
+      "PUT",
+      expect.anything(),
+      IF_MATCH_5,
+    );
+    expect(
+      host!.querySelector(".model-access-rule [role=alert]")?.textContent,
+    ).toContain("ほかの人がこの規則を更新");
     expect(tickIn("deny", "anthropic-api").checked).toBe(true);
-  });
-
-  it("does not save when the revision cannot be re-read", async () => {
-    await mount();
-    await click(tickIn("deny", "anthropic-api"));
-    api.mockRejectedValue(new Error("offline"));
-    await click(button("保存")!);
-    expect(apiJSON).not.toHaveBeenCalled();
-    expect(host!.querySelector(".model-access-rule [role=alert]")?.textContent).toContain("読み込めませんでした");
+    // Not reloaded: the edits are what the person decides about.
+    expect(policyReads()).toBe(1);
   });
 
   it("draws no editor when the CP refuses the read", async () => {
-    api.mockResolvedValue({ error: { code: "forbidden", message: "tenant administrators only", status: 403 } });
+    api.mockResolvedValue({
+      error: {
+        code: "forbidden",
+        message: "tenant administrators only",
+        status: 403,
+      },
+    });
     await mount();
-    expect(host!.querySelector("[role=alert]")?.textContent).toContain("tenant administrators only");
+    expect(host!.querySelector("[role=alert]")?.textContent).toContain(
+      "tenant administrators only",
+    );
     expect(host!.querySelectorAll("input, textarea, button").length).toBe(0);
   });
 
@@ -233,9 +314,14 @@ describe("tenant model access", () => {
   });
 
   it("draws no editor when the vocabulary is empty", async () => {
-    api.mockResolvedValue({ ...VIEW(), vocabulary: { classes: [], destinations: [], routes: [] } });
+    api.mockResolvedValue({
+      ...VIEW(),
+      vocabulary: { classes: [], destinations: [], routes: [] },
+    });
     await mount();
-    expect(host!.querySelector("[role=alert]")?.textContent).toContain("読み込めませんでした");
+    expect(host!.querySelector("[role=alert]")?.textContent).toContain(
+      "読み込めませんでした",
+    );
     expect(host!.querySelectorAll("input, textarea, button").length).toBe(0);
   });
 
@@ -245,7 +331,13 @@ describe("tenant model access", () => {
       vocabulary: {
         classes: ["subscription", "brand-new-class"],
         destinations: ["anthropic", "brand-new-dest"],
-        routes: [{ id: "brand-new-route", class: "brand-new-class", destination: "brand-new-dest" }],
+        routes: [
+          {
+            id: "brand-new-route",
+            class: "brand-new-class",
+            destination: "brand-new-dest",
+          },
+        ],
       },
     });
     await mount();
@@ -262,7 +354,9 @@ describe("tenant model access", () => {
   it("draws no editor when the read fails or answers a partial shape", async () => {
     api.mockRejectedValue(new Error("offline"));
     await mount();
-    expect(host!.querySelector("[role=alert]")?.textContent).toContain("読み込めませんでした");
+    expect(host!.querySelector("[role=alert]")?.textContent).toContain(
+      "読み込めませんでした",
+    );
     expect(host!.querySelectorAll("input, textarea, button").length).toBe(0);
 
     act(() => root?.unmount());
@@ -280,7 +374,9 @@ describe("tenant model access", () => {
 // it covers. What a save sends is unchanged: the loaded rule with only the edited fields over it.
 describe("restrictions editor", () => {
   const rowsBtn = (host_: string) =>
-    field("endpoints").querySelector<HTMLButtonElement>(`[data-server="${host_}"] button`)!;
+    field("endpoints").querySelector<HTMLButtonElement>(
+      `[data-server="${host_}"] button`,
+    )!;
 
   it("edits the servers as rows and sends only the endpoints changed", async () => {
     await mount();
@@ -290,11 +386,16 @@ describe("restrictions editor", () => {
     await click(rowsBtn("llm.corp.example"));
     expect(servers()).toEqual(["gpu.corp.example"]);
     await click(button("保存")!);
-    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", {
-      endpoints: ["gpu.corp.example"],
-      except: ["copilot-login"],
-      future: "kept",
-    });
+    expect(apiJSON).toHaveBeenCalledWith(
+      PATH,
+      "PUT",
+      {
+        endpoints: ["gpu.corp.example"],
+        except: ["copilot-login"],
+        future: "kept",
+      },
+      IF_MATCH_5,
+    );
   });
 
   it("keeps a rule without endpoints without them after a server is added and removed", async () => {
@@ -302,7 +403,10 @@ describe("restrictions editor", () => {
       Promise.resolve(
         path.includes("/provided-routes/")
           ? { error: { code: "http_404", status: 404 } }
-          : { ...VIEW(), tenant: { rule: { deny: ["gemini-api"] }, revision: 5 } },
+          : {
+              ...VIEW(),
+              tenant: { rule: { deny: ["gemini-api"] }, revision: 5 },
+            },
       ),
     );
     await mount();
@@ -314,7 +418,12 @@ describe("restrictions editor", () => {
     expect(button("保存")!.disabled).toBe(true);
     await click(tickIn("deny", "openai-api"));
     await click(button("保存")!);
-    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", { deny: ["gemini-api", "openai-api"] });
+    expect(apiJSON).toHaveBeenCalledWith(
+      PATH,
+      "PUT",
+      { deny: ["gemini-api", "openai-api"] },
+      IF_MATCH_5,
+    );
   });
 
   it("draws a repeated stored host once, and keeps a repeat that adds nothing in the field", async () => {
@@ -322,29 +431,42 @@ describe("restrictions editor", () => {
       Promise.resolve(
         path.includes("/provided-routes/")
           ? { error: { code: "http_404", status: 404 } }
-          : { ...VIEW(), tenant: { rule: { endpoints: ["llm.corp.example", "llm.corp.example"] }, revision: 5 } },
+          : {
+              ...VIEW(),
+              tenant: {
+                rule: { endpoints: ["llm.corp.example", "llm.corp.example"] },
+                revision: 5,
+              },
+            },
       ),
     );
     await mount();
     expect(servers()).toEqual(["llm.corp.example"]);
     await addServer("llm.corp.example");
     expect(servers()).toEqual(["llm.corp.example"]);
-    expect(field("endpoints").querySelector<HTMLInputElement>(".mpol-server-add input")!.value).toBe(
-      "llm.corp.example",
-    );
+    expect(
+      field("endpoints").querySelector<HTMLInputElement>(
+        ".mpol-server-add input",
+      )!.value,
+    ).toBe("llm.corp.example");
   });
 
   it("shows each stored server's state and marks a new one as not saved", async () => {
     await mount();
     await addServer("gpu.corp.example");
-    const row = (h: string) => field("endpoints").querySelector(`[data-server="${h}"]`)!.textContent;
-    expect(row("llm.corp.example")).toContain("承認されていません: 運用者の設定（変更不可）");
+    const row = (h: string) =>
+      field("endpoints").querySelector(`[data-server="${h}"]`)!.textContent;
+    expect(row("llm.corp.example")).toContain(
+      "承認されていません: 運用者の設定（変更不可）",
+    );
     expect(row("gpu.corp.example")).toContain("まだ保存していません");
   });
 
   it("folds the individual changes into one row that counts them", async () => {
     await mount();
-    const fold = host!.querySelector<HTMLDetailsElement>('.model-access-rule [data-field="individual"]')!;
+    const fold = host!.querySelector<HTMLDetailsElement>(
+      '.model-access-rule [data-field="individual"]',
+    )!;
     expect(fold.tagName).toBe("DETAILS");
     expect(fold.open).toBe(false);
     expect(fold.querySelector("summary")!.textContent).toBe("個別の変更: 1 件");
@@ -357,62 +479,85 @@ describe("restrictions editor", () => {
     const label = tickIn("except", "copilot-login").closest("label")!;
     expect(label.textContent).toContain("GitHub Copilot");
     expect(label.textContent).not.toContain("copilot-login");
-    expect(label.querySelector("[title]")!.getAttribute("title")).toBe("copilot-login");
-    await click(segBtn("classes", "選んだものだけ許す"));
-    expect(tickIn("classes", "サブスクリプション・ログイン").closest("label")!.textContent).toContain(
-      "Copilot、Cursor、Kiro",
+    expect(label.querySelector("[title]")!.getAttribute("title")).toBe(
+      "copilot-login",
     );
+    await click(segBtn("classes", "選んだものだけ許す"));
+    expect(
+      tickIn("classes", "サブスクリプション・ログイン").closest("label")!
+        .textContent,
+    ).toContain("Copilot、Cursor、Kiro");
   });
 });
 
 // #4380 P-5b: presets fill in the draft, and options the layers above stop are marked. The
 // tenant's own write is not checked against the ceiling, so nothing is locked here.
 describe("restrictions help", () => {
-  const preset = (key: string) => host!.querySelector<HTMLButtonElement>(`.model-access-rule [data-preset="${key}"]`)!;
+  const preset = (key: string) =>
+    host!.querySelector<HTMLButtonElement>(
+      `.model-access-rule [data-preset="${key}"]`,
+    )!;
 
   it("fills in the draft from a preset and marks it as the current one", async () => {
     await mount();
     expect(preset("none").getAttribute("aria-pressed")).toBe("false");
     await click(preset("no_subscriptions"));
-    expect(preset("no_subscriptions").getAttribute("aria-pressed")).toBe("true");
+    expect(preset("no_subscriptions").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
     expect(preset("no_plan_logins").getAttribute("aria-pressed")).toBe("false");
-    expect(tickIn("classes", "サブスクリプション・ログイン").checked).toBe(false);
+    expect(tickIn("classes", "サブスクリプション・ログイン").checked).toBe(
+      false,
+    );
     expect(tickIn("destinations", "opencode.ai").checked).toBe(false);
     // Nothing is sent until Save.
     expect(apiJSON).not.toHaveBeenCalled();
     await click(button("保存")!);
-    expect(apiJSON).toHaveBeenCalledWith(PATH, "PUT", {
-      endpoints: ["llm.corp.example"],
-      future: "kept",
-      classes: ["member-cloud", "member-key", "provided", "self-hosted"],
-      destinations: [
-        "af-engine",
-        "anthropic",
-        "aws-bedrock",
-        "cursor",
-        "github",
-        "google",
-        "kiro",
-        "meta",
-        "openai",
-        "openrouter",
-        "sakana",
-        "self-hosted",
-      ],
-    });
+    expect(apiJSON).toHaveBeenCalledWith(
+      PATH,
+      "PUT",
+      {
+        endpoints: ["llm.corp.example"],
+        future: "kept",
+        classes: ["member-cloud", "member-key", "provided", "self-hosted"],
+        destinations: [
+          "af-engine",
+          "anthropic",
+          "aws-bedrock",
+          "cursor",
+          "github",
+          "google",
+          "kiro",
+          "meta",
+          "openai",
+          "openrouter",
+          "sakana",
+          "self-hosted",
+        ],
+      },
+      IF_MATCH_5,
+    );
   });
 
   it("marks what the layers above stop, and locks nothing on the tenant's own rule", async () => {
     await mount();
     await click(segBtn("classes", "選んだものだけ許す"));
-    const sub = tickIn("classes", "サブスクリプション・ログイン").closest("label")!;
+    const sub = tickIn("classes", "サブスクリプション・ログイン").closest(
+      "label",
+    )!;
     expect(sub.querySelector(".mpol-mark")!.getAttribute("aria-label")).toBe(
       "止めているのは: 運用者の設定（変更不可）",
     );
     expect(sub.querySelector(".mpol-mark.locked")).toBeNull();
-    expect(tickIn("classes", "メンバーの API キー").closest("label")!.querySelector(".mpol-mark")).toBeNull();
+    expect(
+      tickIn("classes", "メンバーの API キー")
+        .closest("label")!
+        .querySelector(".mpol-mark"),
+    ).toBeNull();
     expect(field("classes").textContent).toContain("上の制限が止めています");
-    expect(host!.querySelector('.model-access-rule [data-testid="exceeds"]')).toBeNull();
+    expect(
+      host!.querySelector('.model-access-rule [data-testid="exceeds"]'),
+    ).toBeNull();
   });
 });
 
@@ -422,14 +567,34 @@ describe("restrictions help", () => {
 describe("what members can use, from hidden alone", () => {
   const section = () => host!.querySelector(".model-access-use")!;
   const withHidden = (hidden: unknown, routes = VIEW().routes) =>
-    api.mockImplementation(() => Promise.resolve({ ...VIEW(), hidden, routes }));
+    api.mockImplementation(() =>
+      Promise.resolve({ ...VIEW(), hidden, routes }),
+    );
 
   it("lists each hidden item with its routes and every layer that hides it", async () => {
     withHidden(
       {
-        kinds: [{ id: "agy", routes: ["agy-login"], forbiddenBy: ["ceiling", "tenant"] }],
-        imagegen: [{ id: "comfy", routes: ["af-engine-image"], forbiddenBy: ["deployment"] }],
-        chat: [{ id: "codex", routes: ["chatgpt-subscription", "openai-api"], forbiddenBy: ["ceiling", "tenant_cap"] }],
+        kinds: [
+          {
+            id: "agy",
+            routes: ["agy-login"],
+            forbiddenBy: ["ceiling", "tenant"],
+          },
+        ],
+        imagegen: [
+          {
+            id: "comfy",
+            routes: ["af-engine-image"],
+            forbiddenBy: ["deployment"],
+          },
+        ],
+        chat: [
+          {
+            id: "codex",
+            routes: ["chatgpt-subscription", "openai-api"],
+            forbiddenBy: ["ceiling", "tenant_cap"],
+          },
+        ],
       },
       [
         ...VIEW().routes,
@@ -447,23 +612,41 @@ describe("what members can use, from hidden alone", () => {
           allowed: false,
           forbiddenBy: ["ceiling"],
         },
-        { id: "openai-api", class: "member-key", destination: "openai", allowed: false, forbiddenBy: ["tenant_cap"] },
+        {
+          id: "openai-api",
+          class: "member-key",
+          destination: "openai",
+          allowed: false,
+          forbiddenBy: ["tenant_cap"],
+        },
       ],
     );
     await mount();
     const agy = section().querySelector('[data-hidden="agy"]')!;
     // Hidden by two layers: both are named.
     expect(agy.textContent).toContain("止めているのは: 運用者・このテナント");
-    expect(section().querySelector('[data-hidden="comfy"]')!.textContent).toContain("この配備のエンジン（ComfyUI）");
-    expect(section().querySelector('[data-hidden="comfy"]')!.textContent).toContain("配備の管理者（全テナント共通）");
+    expect(
+      section().querySelector('[data-hidden="comfy"]')!.textContent,
+    ).toContain("この配備のエンジン（ComfyUI）");
+    expect(
+      section().querySelector('[data-hidden="comfy"]')!.textContent,
+    ).toContain("配備の管理者（全テナント共通）");
     // Each route carries its own layers, not only the item's union.
     const codex = section().querySelector('[data-hidden="codex"]')!;
-    expect(codex.querySelector('[data-route="chatgpt-subscription"]')!.textContent).toContain("止めているのは: 運用者");
-    expect(codex.querySelector('[data-route="chatgpt-subscription"]')!.textContent).not.toContain("このテナント向け");
-    expect(codex.querySelector('[data-route="openai-api"]')!.textContent).toContain("配備の管理者（このテナント向け）");
+    expect(
+      codex.querySelector('[data-route="chatgpt-subscription"]')!.textContent,
+    ).toContain("止めているのは: 運用者");
+    expect(
+      codex.querySelector('[data-route="chatgpt-subscription"]')!.textContent,
+    ).not.toContain("このテナント向け");
+    expect(
+      codex.querySelector('[data-route="openai-api"]')!.textContent,
+    ).toContain("配備の管理者（このテナント向け）");
     expect(section().querySelector('[data-testid="hidden-none"]')).toBeNull();
     // codex is hidden as a chat backend here, so its row sits in the chat list.
-    expect(section().querySelector('[data-group="chat"] [data-hidden="codex"]')).not.toBeNull();
+    expect(
+      section().querySelector('[data-group="chat"] [data-hidden="codex"]'),
+    ).not.toBeNull();
     // Only the hidden items can be named, and the page says why.
     expect(section().textContent).toContain("隠れているものだけ");
     // Decision 9: the members' own switches are not covered, and the page says so.
@@ -472,27 +655,39 @@ describe("what members can use, from hidden alone", () => {
 
   it("shows an id outside the registry as itself, inherited object keys included", async () => {
     withHidden({
-      kinds: [{ id: "toString", routes: ["agy-login"], forbiddenBy: ["ceiling"] }],
+      kinds: [
+        { id: "toString", routes: ["agy-login"], forbiddenBy: ["ceiling"] },
+      ],
       chat: [],
       imagegen: [],
     });
     await mount();
-    expect(section().querySelector('[data-hidden="toString"] strong')!.textContent).toBe("toString");
+    expect(
+      section().querySelector('[data-hidden="toString"] strong')!.textContent,
+    ).toBe("toString");
   });
 
   it("says nothing is hidden only when the list is present and empty", async () => {
     await mount();
-    expect(section().querySelector('[data-testid="hidden-none"]')).not.toBeNull();
+    expect(
+      section().querySelector('[data-testid="hidden-none"]'),
+    ).not.toBeNull();
     expect(section().querySelector("[role=alert]")).toBeNull();
   });
 
   it("shows no list when hidden is missing or partial", async () => {
-    for (const hidden of [undefined, { kinds: [] }, { kinds: [{ id: "agy" }], chat: [], imagegen: [] }]) {
+    for (const hidden of [
+      undefined,
+      { kinds: [] },
+      { kinds: [{ id: "agy" }], chat: [], imagegen: [] },
+    ]) {
       withHidden(hidden);
       await mount();
       expect(section().querySelector('[data-testid="hidden-none"]')).toBeNull();
       expect(section().querySelector("[data-hidden]")).toBeNull();
-      expect(section().querySelector("[role=alert]")?.textContent).toContain("読めませんでした");
+      expect(section().querySelector("[role=alert]")?.textContent).toContain(
+        "読めませんでした",
+      );
       act(() => root?.unmount());
       host?.remove();
       root = null;
@@ -506,27 +701,37 @@ describe("what members can use, from hidden alone", () => {
 // name with the id on hover, and who stops each one.
 describe("what members can use", () => {
   const fx = (name: string) =>
-    JSON.parse(readFileSync(`scripts/shots/model-access/policy-${name}.json`, "utf8"))["tenant/demo"];
+    JSON.parse(
+      readFileSync(`scripts/shots/model-access/policy-${name}.json`, "utf8"),
+    )["tenant/demo"];
   const section = () => host!.querySelector(".model-access-use")!;
   const row = (group: string, id: string) =>
-    section().querySelector<HTMLElement>(`[data-group="${group}"] [data-owner="${id}"]`)!;
+    section().querySelector<HTMLElement>(
+      `[data-group="${group}"] [data-owner="${id}"]`,
+    )!;
 
   it("marks each agent usable or not, and names its routes and who stops them", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(
-        path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : fx("restricted"),
+        path.includes("/provided-routes/")
+          ? { error: { code: "http_404", status: 404 } }
+          : fx("restricted"),
       ),
     );
     await mount();
     const claude = row("kinds", "claude");
     expect(claude.dataset.usable).toBe("true");
-    expect(claude.querySelector("summary")!.textContent).toContain("4 の経路のうち 3 つで使えます");
+    expect(claude.querySelector("summary")!.textContent).toContain(
+      "4 の経路のうち 3 つで使えます",
+    );
     const sub = claude.querySelector('[data-route="anthropic-subscription"]')!;
     expect(sub.textContent).toContain("Claude サブスク");
     expect(sub.textContent).toContain("止めているのは: このテナント");
     // The route's id is on hover, not in the text.
     expect(sub.textContent).not.toContain("anthropic-subscription");
-    expect(sub.querySelector("[title]")!.getAttribute("title")).toBe("anthropic-subscription");
+    expect(sub.querySelector("[title]")!.getAttribute("title")).toBe(
+      "anthropic-subscription",
+    );
     const cursor = row("kinds", "cursor");
     expect(cursor.dataset.usable).toBe("false");
     expect(cursor.querySelector("summary")!.textContent).toContain(
@@ -542,22 +747,36 @@ describe("what members can use", () => {
   it("says a per-connection route lacks an approved server rather than blaming the layers", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(
-        path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : fx("unapproved"),
+        path.includes("/provided-routes/")
+          ? { error: { code: "http_404", status: 404 } }
+          : fx("unapproved"),
       ),
     );
     await mount();
-    const route = row("kinds", "lcpp").querySelector('[data-route="member-llamacpp"]')!;
-    expect(route.textContent).toContain("承認したセルフホストのサーバーがありません");
+    const route = row("kinds", "lcpp").querySelector(
+      '[data-route="member-llamacpp"]',
+    )!;
+    expect(route.textContent).toContain(
+      "承認したセルフホストのサーバーがありません",
+    );
     expect(route.textContent).not.toContain("止めているのは");
-    expect(row("kinds", "lcpp").querySelector("summary")!.textContent).toContain("2 の経路のうち 1 つで使えます");
+    expect(
+      row("kinds", "lcpp").querySelector("summary")!.textContent,
+    ).toContain("2 の経路のうち 1 つで使えます");
   });
 
   it("lists everything as usable only from a well-formed owners", async () => {
     api.mockImplementation((path: string) =>
-      Promise.resolve(path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : fx("open")),
+      Promise.resolve(
+        path.includes("/provided-routes/")
+          ? { error: { code: "http_404", status: 404 } }
+          : fx("open"),
+      ),
     );
     await mount();
-    const rows = Array.from(section().querySelectorAll<HTMLElement>("[data-owner]"));
+    const rows = Array.from(
+      section().querySelectorAll<HTMLElement>("[data-owner]"),
+    );
     expect(rows.length).toBe(20);
     expect(rows.every((r) => r.dataset.usable === "true")).toBe(true);
   });
@@ -566,17 +785,26 @@ describe("what members can use", () => {
     const v = fx("open");
     for (const owners of [
       { ...v.owners, chat: undefined },
-      { ...v.owners, kinds: [{ id: "claude", routes: ["anthropic-api"], allowed: ["bedrock"] }] },
+      {
+        ...v.owners,
+        kinds: [
+          { id: "claude", routes: ["anthropic-api"], allowed: ["bedrock"] },
+        ],
+      },
     ]) {
       api.mockImplementation((path: string) =>
         Promise.resolve(
-          path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : { ...v, owners },
+          path.includes("/provided-routes/")
+            ? { error: { code: "http_404", status: 404 } }
+            : { ...v, owners },
         ),
       );
       await mount();
       expect(section().querySelector("[data-owner]")).toBeNull();
       expect(section().querySelector('[data-testid="hidden-none"]')).toBeNull();
-      expect(section().querySelector("[role=alert]")?.textContent).toContain("読めませんでした");
+      expect(section().querySelector("[role=alert]")?.textContent).toContain(
+        "読めませんでした",
+      );
       act(() => root?.unmount());
       host?.remove();
       root = null;
@@ -602,15 +830,29 @@ describe("model access views", () => {
     floor_micro: 0,
   });
   const tab = (text: string) =>
-    Array.from(host!.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent?.startsWith(text));
+    Array.from(host!.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
+      (t) => t.textContent?.startsWith(text),
+    );
   const shown = (el: Element) => el.closest("[hidden]") === null;
 
   it("reaches every section from a tab, and has no provided tab where the CP has none", async () => {
     await mount();
-    expect(Array.from(host!.querySelectorAll('[role="tab"]')).map((t) => t.textContent)).toEqual(["概要", "制限"]);
-    for (const sel of [".model-access-use", ".model-access-who", ".model-access-rule"]) {
-      const panel = host!.querySelector(sel)!.closest<HTMLElement>('[role="tabpanel"]')!;
-      const t = host!.querySelector<HTMLButtonElement>(`[role="tab"][aria-controls="${panel.id}"]`);
+    expect(
+      Array.from(host!.querySelectorAll('[role="tab"]')).map(
+        (t) => t.textContent,
+      ),
+    ).toEqual(["概要", "制限"]);
+    for (const sel of [
+      ".model-access-use",
+      ".model-access-who",
+      ".model-access-rule",
+    ]) {
+      const panel = host!
+        .querySelector(sel)!
+        .closest<HTMLElement>('[role="tabpanel"]')!;
+      const t = host!.querySelector<HTMLButtonElement>(
+        `[role="tab"][aria-controls="${panel.id}"]`,
+      );
       expect(t, sel).not.toBeNull();
       await click(t!);
       expect(shown(host!.querySelector(sel)!), sel).toBe(true);
@@ -618,7 +860,9 @@ describe("model access views", () => {
   });
 
   it("gives provided routes their own tab where the CP serves them", async () => {
-    api.mockImplementation((path: string) => Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : VIEW()));
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : VIEW()),
+    );
     await mount();
     await flush();
     const t = tab("提供モデルと予算")!;
@@ -629,13 +873,17 @@ describe("model access views", () => {
   });
 
   it("does not carry one tenant's provided tab to the next before its own read answers", async () => {
-    api.mockImplementation((path: string) => Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : VIEW()));
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : VIEW()),
+    );
     await mount();
     await flush();
     expect(tab("提供モデルと予算")).toBeDefined();
     // The next tenant's provided read never answers here.
     api.mockImplementation((path: string) =>
-      path.includes("/provided-routes/") ? new Promise(() => {}) : Promise.resolve(VIEW()),
+      path.includes("/provided-routes/")
+        ? new Promise(() => {})
+        : Promise.resolve(VIEW()),
     );
     await act(async () => {
       root!.render(<TenantModelAccessView slug="beta" />);
@@ -660,29 +908,45 @@ describe("model access views", () => {
       ],
     };
     api.mockImplementation((path: string) =>
-      Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : stopped),
+      Promise.resolve(
+        path.includes("/provided-routes/") ? PROVIDED() : stopped,
+      ),
     );
     await mount();
     await flush();
-    expect(host!.querySelector('[data-testid="prov-rule-stops"]')!.textContent).toContain(
-      "止めているのは: このテナント",
-    );
+    expect(
+      host!.querySelector('[data-testid="prov-rule-stops"]')!.textContent,
+    ).toContain("止めているのは: このテナント");
     // And opens the Restrictions view, where it is changed.
     await click(tab("提供モデルと予算")!);
-    await click(host!.querySelector<HTMLButtonElement>('[data-testid="prov-rule-stops"] button')!);
+    await click(
+      host!.querySelector<HTMLButtonElement>(
+        '[data-testid="prov-rule-stops"] button',
+      )!,
+    );
     expect(shown(host!.querySelector(".model-access-rule")!)).toBe(true);
   });
 
   it("keeps D12's and D13's sentences on screen on every view", async () => {
-    api.mockImplementation((path: string) => Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : VIEW()));
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : VIEW()),
+    );
     await mount();
     await flush();
-    const tabs = Array.from(host!.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    const tabs = Array.from(
+      host!.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    );
     expect(tabs.length).toBe(3);
     for (const t of tabs) {
       await click(t);
-      for (const text of ["30 秒", "Control Plane に届かない間", "手作業でモデルにサインイン"]) {
-        const p = Array.from(host!.querySelectorAll("p")).find((x) => x.textContent?.includes(text));
+      for (const text of [
+        "30 秒",
+        "Control Plane に届かない間",
+        "手作業でモデルにサインイン",
+      ]) {
+        const p = Array.from(host!.querySelectorAll("p")).find((x) =>
+          x.textContent?.includes(text),
+        );
         expect(p && shown(p), `${t.textContent}: ${text}`).toBe(true);
       }
     }
@@ -690,7 +954,10 @@ describe("model access views", () => {
 
   it("keeps a draft and its refusal across a switch, and marks the unsaved tab", async () => {
     apiJSON.mockResolvedValue({
-      error: { code: "route_policy_endpoint_not_approvable", message: "refused for the test" },
+      error: {
+        code: "route_policy_endpoint_not_approvable",
+        message: "refused for the test",
+      },
     });
     await mount();
     await click(tab("制限")!);
@@ -698,10 +965,13 @@ describe("model access views", () => {
     await click(segBtn("classes", "選んだものだけ許す"));
     await click(tickIn("classes", "メンバーの API キー"));
     expect(tab("制限")!.textContent).toBe("制限●");
-    expect(tab("制限")!.getAttribute("aria-label")).toBe("制限, 未保存の変更あり");
+    expect(tab("制限")!.getAttribute("aria-label")).toBe(
+      "制限, 未保存の変更あり",
+    );
     await click(button("保存")!);
     await flush();
-    const refusal = () => host!.querySelector(".model-access-rule [role=alert]")?.textContent ?? "";
+    const refusal = () =>
+      host!.querySelector(".model-access-rule [role=alert]")?.textContent ?? "";
     expect(refusal()).toContain("refused for the test");
 
     await click(tab("概要")!);
@@ -730,24 +1000,36 @@ describe("the super_admin's cards", () => {
     floor_micro: 0,
   });
   const served = (view: unknown = VIEW()) =>
-    api.mockImplementation((path: string) => Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : view));
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path.includes("/provided-routes/") ? PROVIDED() : view),
+    );
   const cap = () => host!.querySelector<HTMLElement>("[data-cap-editor]")!;
   const capTick = (name: string, text: string) =>
-    Array.from(cap().querySelectorAll<HTMLLabelElement>(`[data-field="${name}"] label`))
+    Array.from(
+      cap().querySelectorAll<HTMLLabelElement>(`[data-field="${name}"] label`),
+    )
       .find(
         (l) =>
-          l.textContent?.includes(text) || l.querySelector("input")?.getAttribute("aria-label")?.endsWith(`: ${text}`),
+          l.textContent?.includes(text) ||
+          l
+            .querySelector("input")
+            ?.getAttribute("aria-label")
+            ?.endsWith(`: ${text}`),
       )!
       .querySelector("input")!;
   const btnIn = (scope: Element, text: string) =>
-    Array.from(scope.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === text)!;
+    Array.from(scope.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent === text,
+    )!;
 
   it("shows a tenant administrator neither the cap nor the grant", async () => {
     served();
     await mount(false);
     await flush();
     expect(host!.querySelector("[data-cap-editor]")).toBeNull();
-    expect(host!.querySelectorAll(".model-access-rule .mpol-editor").length).toBe(1);
+    expect(
+      host!.querySelectorAll(".model-access-rule .mpol-editor").length,
+    ).toBe(1);
     expect(host!.querySelector(".model-access-provided")).not.toBeNull();
     expect(host!.querySelector(".prov-grant")).toBeNull();
   });
@@ -763,22 +1045,17 @@ describe("the super_admin's cards", () => {
     expect(host!.querySelectorAll(".prov-grant").length).toBe(1);
   });
 
-  it("saves the cap to its own path after re-reading its revision, and refuses over a newer one", async () => {
+  it("saves the cap to its own path with the revision it loaded", async () => {
     served({ ...VIEW(), ceiling: { raw: "", rule: {}, source: "deployment" } });
     await mount(true);
     await click(capTick("deny", "anthropic-api"));
     await click(btnIn(cap(), "保存"));
-    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/cap`, "PUT", { deny: ["openrouter-api", "anthropic-api"] });
-    apiJSON.mockClear();
-    act(() => root?.unmount());
-    host?.remove();
-    served({ ...VIEW(), ceiling: { raw: "", rule: {}, source: "deployment" } });
-    await mount(true);
-    await click(capTick("deny", "anthropic-api"));
-    api.mockImplementation(() => Promise.resolve({ ...VIEW(), cap: { rule: {}, revision: 3 } }));
-    await click(btnIn(cap(), "保存"));
-    expect(apiJSON).not.toHaveBeenCalled();
-    expect(cap().querySelector("[role=alert]")?.textContent).toContain("ほかの人がこの規則を更新");
+    expect(apiJSON).toHaveBeenCalledWith(
+      `${PATH}/cap`,
+      "PUT",
+      { deny: ["openrouter-api", "anthropic-api"] },
+      IF_MATCH_2,
+    );
   });
 
   it("warns before a cap the CP would refuse, and matching it makes a save the CP accepts (#4376)", async () => {
@@ -787,26 +1064,53 @@ describe("the super_admin's cards", () => {
     served();
     await mount(true);
     const warn = cap().querySelector('[data-testid="exceeds"]')!;
-    expect(warn.textContent).toContain("このままでは保存できません: 運用者の設定が");
+    expect(warn.textContent).toContain(
+      "このままでは保存できません: 運用者の設定が",
+    );
     await click(btnIn(warn, "運用者の設定に合わせる"));
     expect(cap().querySelector('[data-testid="exceeds"]')).toBeNull();
     await click(btnIn(cap(), "保存"));
-    expect(apiJSON).toHaveBeenCalledWith(`${PATH}/cap`, "PUT", {
-      deny: ["openrouter-api"],
-      classes: ["member-key", "member-cloud", "provided", "self-hosted"],
-    });
+    expect(apiJSON).toHaveBeenCalledWith(
+      `${PATH}/cap`,
+      "PUT",
+      {
+        deny: ["openrouter-api"],
+        classes: ["member-key", "member-cloud", "provided", "self-hosted"],
+      },
+      IF_MATCH_2,
+    );
   });
 
   it("locks what the ceiling forbids on the cap, and marks what the restriction for all tenants stops", async () => {
-    served({ ...VIEW(), deployment: { rule: { destinations: ["anthropic", "aws-bedrock"] }, revision: 3 } });
+    served({
+      ...VIEW(),
+      deployment: {
+        rule: { destinations: ["anthropic", "aws-bedrock"] },
+        revision: 3,
+      },
+    });
     await mount(true);
-    await click(btnIn(cap().querySelector('[data-field="classes"]')!, "選んだものだけ許す"));
+    await click(
+      btnIn(
+        cap().querySelector('[data-field="classes"]')!,
+        "選んだものだけ許す",
+      ),
+    );
     expect(
-      capTick("classes", "サブスクリプション・ログイン").closest("label")!.querySelector(".mpol-mark.locked"),
+      capTick("classes", "サブスクリプション・ログイン")
+        .closest("label")!
+        .querySelector(".mpol-mark.locked"),
     ).not.toBeNull();
-    await click(btnIn(cap().querySelector('[data-field="destinations"]')!, "選んだものだけ許す"));
+    await click(
+      btnIn(
+        cap().querySelector('[data-field="destinations"]')!,
+        "選んだものだけ許す",
+      ),
+    );
     const google = capTick("destinations", "Google").closest("label")!;
-    expect(google.querySelector(".mpol-mark")!.getAttribute("aria-label")).toBe("止めているのは: 全テナント共通の制限");
+    expect(google.querySelector(".mpol-mark")!.getAttribute("aria-label")).toBe(
+      "止めているのは: 全テナント共通の制限",
+    );
     expect(google.querySelector(".mpol-mark.locked")).toBeNull();
   });
 });

@@ -7,11 +7,19 @@
 // approved at all, the deployment rule and a cap narrow that, and a tenant's own rule approves
 // exact hosts inside what is left (on the tenant page).
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { api, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import type { Tenant } from "../parts/adminShared.ts";
-import { RuleEditor, RuleSummary } from "../tenant/routePolicyRuleEditor.tsx";
-import { AdminProvidedSourceCard, useSourceRead, type SourceRead } from "./adminProvidedRoutes.tsx";
+import {
+  RuleEditor,
+  RuleSummary,
+  putRule,
+} from "../tenant/routePolicyRuleEditor.tsx";
+import {
+  AdminProvidedSourceCard,
+  useSourceRead,
+  type SourceRead,
+} from "./adminProvidedRoutes.tsx";
 import { layerClauses } from "../tenant/routePolicyOverview.tsx";
 import { summarizeLayer } from "../tenant/routePolicySummary.ts";
 import { Usage, useProvided } from "../tenant/tenantProvidedRoutes.tsx";
@@ -23,8 +31,16 @@ import {
   type RouteRule,
   type Vocabulary,
 } from "../tenant/routePolicyRule.ts";
-import { PolicyLimits, useTenantRoutePolicy } from "../tenant/tenantModelAccess.tsx";
-import { TabbedViews, usePageDirty, useShowView, useViewActive } from "../parts/tabbedViews.tsx";
+import {
+  PolicyLimits,
+  useTenantRoutePolicy,
+} from "../tenant/tenantModelAccess.tsx";
+import {
+  TabbedViews,
+  usePageDirty,
+  useShowView,
+  useViewActive,
+} from "../parts/tabbedViews.tsx";
 import { askConfirm } from "../../../ui/confirmBridge.ts";
 
 // The variable the ceiling is read from (routepolicy.EnvCeiling), named when the wire's source is
@@ -49,7 +65,11 @@ function useDeploymentRoutePolicy() {
       setFailed(
         d?.error
           ? errText(d.error)
-          : tr(isOlderPolicyAnswer(d) ? "admin.mpol_vocab_missing" : "admin.mpol_load_failed"),
+          : tr(
+              isOlderPolicyAnswer(d)
+                ? "admin.mpol_vocab_missing"
+                : "admin.mpol_load_failed",
+            ),
       );
     } catch {
       setView(null);
@@ -60,14 +80,6 @@ function useDeploymentRoutePolicy() {
     load();
   }, [load]);
   return { view, failed, load };
-}
-
-async function currentDeploymentRevision(): Promise<number | null> {
-  try {
-    return parseDeploymentPolicy(await api(PATH))?.deployment.revision ?? null;
-  } catch {
-    return null;
-  }
 }
 
 // The tenant table reads each tenant's policy view (and its provided view) per row: the CP has no
@@ -90,7 +102,9 @@ function TenantRow({
   const { view, failed } = useTenantRoutePolicy(tenant.slug);
   const words = (rule: RouteRule, vocab: Vocabulary) => {
     const s = summarizeLayer(rule, vocab);
-    return s.none ? tr("admin.mpol_unrestricted") : layerClauses(tr, s, false).join(tr("tenant.mpol_clause_sep"));
+    return s.none
+      ? tr("admin.mpol_unrestricted")
+      : layerClauses(tr, s, false).join(tr("tenant.mpol_clause_sep"));
   };
   return (
     <tr data-tenant={tenant.slug}>
@@ -110,13 +124,20 @@ function TenantRow({
         </>
       )}
       {provided && (
-        <td data-label={tr("admin.model_access_view_provided")} data-col="provided">
+        <td
+          data-label={tr("admin.model_access_view_provided")}
+          data-col="provided"
+        >
           <GrantCell slug={tenant.slug} />
         </td>
       )}
       <td className="prov-member-save">
         {onOpen && (
-          <button type="button" className="btn xs" onClick={() => onOpen(tenant.slug)}>
+          <button
+            type="button"
+            className="btn xs"
+            onClick={() => onOpen(tenant.slug)}
+          >
             {tr("admin.model_access_go_open")}
           </button>
         )}
@@ -136,12 +157,20 @@ function GrantCell({ slug }: { slug: string }) {
   if (load.state !== "ok")
     return (
       <span className="admin-hint warn">
-        {(load.state === "failed" && load.reason) || tr("admin.prov_load_failed")}
+        {(load.state === "failed" && load.reason) ||
+          tr("admin.prov_load_failed")}
       </span>
     );
   const v = load.value;
-  if (!v.granted) return <span className="muted">{tr("admin.prov_grant_off")}</span>;
-  return <Usage used={v.spent_micro + v.reserved_micro} of={v.ceiling_micro} spent={v.spent_micro} />;
+  if (!v.granted)
+    return <span className="muted">{tr("admin.prov_grant_off")}</span>;
+  return (
+    <Usage
+      used={v.spent_micro + v.reserved_micro}
+      of={v.ceiling_micro}
+      spent={v.spent_micro}
+    />
+  );
 }
 
 /** AdminTenantsTable: every tenant's restrictions and grant on the per-tenant view, opened from
@@ -194,19 +223,32 @@ function AdminTenantsTable({
                   <th>{tr("admin.model_access_tenant")}</th>
                   <th>{tr("admin.model_access_col_cap")}</th>
                   <th>{tr("admin.model_access_col_own")}</th>
-                  {provided && <th>{tr("admin.model_access_view_provided")}</th>}
+                  {provided && (
+                    <th>{tr("admin.model_access_view_provided")}</th>
+                  )}
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {tenants.slice(0, shown).map((t) => (
-                  <TenantRow key={t.slug} tenant={t} provided={provided} onOpen={open} />
+                  <TenantRow
+                    key={t.slug}
+                    tenant={t}
+                    provided={provided}
+                    onOpen={open}
+                  />
                 ))}
               </tbody>
             </table>
             {tenants.length > shown && (
-              <button type="button" className="btn sm" onClick={() => setShown((n) => n + TENANT_PAGE)}>
-                {tr("admin.prov_grants_more", { n: Math.min(TENANT_PAGE, tenants.length - shown) })}
+              <button
+                type="button"
+                className="btn sm"
+                onClick={() => setShown((n) => n + TENANT_PAGE)}
+              >
+                {tr("admin.prov_grants_more", {
+                  n: Math.min(TENANT_PAGE, tenants.length - shown),
+                })}
               </button>
             )}
           </>
@@ -230,10 +272,20 @@ function OverviewLink({ view, label }: { view: string; label: string }) {
 /** AdminOverview: who decides what across the deployment, top first, in plain lines (#4380 P-7):
  *  the operator setting, the restriction for all tenants, the per-tenant restrictions, and the
  *  provided-route source. Each points at the view where it is changed. */
-function AdminOverview({ view, source }: { view: DeploymentPolicyView; source: SourceRead }) {
+function AdminOverview({
+  view,
+  source,
+}: {
+  view: DeploymentPolicyView;
+  source: SourceRead;
+}) {
   const tr = useT();
   const words = (rule: RouteRule, ceiling: boolean) =>
-    layerClauses(tr, summarizeLayer(rule, view.vocabulary, ceiling), false).join(tr("tenant.mpol_clause_sep"));
+    layerClauses(
+      tr,
+      summarizeLayer(rule, view.vocabulary, ceiling),
+      false,
+    ).join(tr("tenant.mpol_clause_sep"));
   return (
     <>
       <p className="admin-hint">{tr("admin.model_access_note")}</p>
@@ -242,11 +294,17 @@ function AdminOverview({ view, source }: { view: DeploymentPolicyView; source: S
         <ol className="mpol-who">
           <li data-layer="ceiling">
             <strong>{tr("admin.mpol_layer_ceiling")}</strong>{" "}
-            <span>{view.ceiling.raw ? words(view.ceiling.rule, true) : tr("admin.model_access_ceiling_none")}</span>
+            <span>
+              {view.ceiling.raw
+                ? words(view.ceiling.rule, true)
+                : tr("admin.model_access_ceiling_none")}
+            </span>
             <p className="admin-hint">
               {view.ceiling.source === "deployment"
                 ? tr("admin.model_access_ceiling_source", { env: CEILING_ENV })
-                : tr("admin.model_access_ceiling_source_other", { source: view.ceiling.source })}
+                : tr("admin.model_access_ceiling_source_other", {
+                    source: view.ceiling.source,
+                  })}
             </p>
             {view.ceiling.raw && (
               <details className="mpol-raw-fold">
@@ -257,12 +315,20 @@ function AdminOverview({ view, source }: { view: DeploymentPolicyView; source: S
             )}
           </li>
           <li data-layer="deployment">
-            <strong>{tr("admin.mpol_layer_deployment")}</strong> <span>{words(view.deployment.rule, false)}</span>{" "}
-            <OverviewLink view="deployment" label={tr("admin.model_access_go_change")} />
+            <strong>{tr("admin.mpol_layer_deployment")}</strong>{" "}
+            <span>{words(view.deployment.rule, false)}</span>{" "}
+            <OverviewLink
+              view="deployment"
+              label={tr("admin.model_access_go_change")}
+            />
           </li>
           <li data-layer="tenant_cap">
-            <strong>{tr("admin.model_access_who_caps")}</strong> <span>{tr("admin.model_access_who_caps_note")}</span>{" "}
-            <OverviewLink view="tenants" label={tr("admin.model_access_go_tenants")} />
+            <strong>{tr("admin.model_access_who_caps")}</strong>{" "}
+            <span>{tr("admin.model_access_who_caps_note")}</span>{" "}
+            <OverviewLink
+              view="tenants"
+              label={tr("admin.model_access_go_tenants")}
+            />
           </li>
         </ol>
       </section>
@@ -280,7 +346,10 @@ function ProvidedSourceLine({ read }: { read: SourceRead }) {
   if (!load) {
     // Held in place while the source is read, so the overview does not shift under the reader.
     return (
-      <section className="admin-panel model-access-provided-line" data-testid="overview-source">
+      <section
+        className="admin-panel model-access-provided-line"
+        data-testid="overview-source"
+      >
         <h4>{tr("admin.model_access_view_provided")}</h4>
         <p className="muted">{tr("common.loading")}</p>
       </section>
@@ -288,7 +357,10 @@ function ProvidedSourceLine({ read }: { read: SourceRead }) {
   }
   const src = load.state === "ok" ? load.value.source : undefined;
   return (
-    <section className="admin-panel model-access-provided-line" data-testid="overview-source">
+    <section
+      className="admin-panel model-access-provided-line"
+      data-testid="overview-source"
+    >
       <h4>{tr("admin.model_access_view_provided")}</h4>
       <p>
         {load.state === "failed" ? (
@@ -299,13 +371,21 @@ function ProvidedSourceLine({ read }: { read: SourceRead }) {
           <span className="muted">{tr("admin.prov_source_none")}</span>
         ) : (
           <span>
-            {tr("admin.model_access_source_line", { name: src!.name, region: src!.region })}{" "}
+            {tr("admin.model_access_source_line", {
+              name: src!.name,
+              region: src!.region,
+            })}{" "}
             <span className={src!.active ? "mpol-ok" : "mpol-no"}>
-              {tr(src!.active ? "admin.prov_source_on" : "admin.prov_source_off")}
+              {tr(
+                src!.active ? "admin.prov_source_on" : "admin.prov_source_off",
+              )}
             </span>
           </span>
         )}{" "}
-        <OverviewLink view="provided" label={tr("admin.model_access_go_open")} />
+        <OverviewLink
+          view="provided"
+          label={tr("admin.model_access_go_open")}
+        />
       </p>
     </section>
   );
@@ -329,7 +409,10 @@ export function AdminModelAccessView({
     return (
       <section className="admin-panel model-access">
         <h4>{tr("admin.model_access_title")}</h4>
-        <p className={failed ? "admin-hint warn" : "muted"} role={failed ? "alert" : undefined}>
+        <p
+          className={failed ? "admin-hint warn" : "muted"}
+          role={failed ? "alert" : undefined}
+        >
           {failed ?? tr("common.loading")}
         </p>
       </section>
@@ -341,23 +424,30 @@ export function AdminModelAccessView({
     <section className="admin-panel model-access-deployment">
       <h4>
         {tr("admin.mpol_layer_deployment")}
-        <span className="af-note">{tr("admin.mpol_revision", { n: view.deployment.revision })}</span>
+        <span className="af-note">
+          {tr("admin.mpol_revision", { n: view.deployment.revision })}
+        </span>
       </h4>
       <p className="admin-hint">{tr("admin.model_access_deployment_note")}</p>
       <RuleEditor
         key={view.deployment.revision}
         base={view.deployment.rule}
         revision={view.deployment.revision}
-        currentRevision={currentDeploymentRevision}
         vocab={view.vocabulary}
         endpointsMode="patterns"
         ceiling={view.ceiling.rule}
-        save={(body) => apiJSON(PATH, "PUT", body)}
+        save={(body, rev) => putRule(PATH, body, rev)}
         onSaved={load}
       />
     </section>
   );
-  const perTenant = <AdminTenantsTable tenants={tenants} provided={provided} onOpen={onOpenTenant} />;
+  const perTenant = (
+    <AdminTenantsTable
+      tenants={tenants}
+      provided={provided}
+      onOpen={onOpenTenant}
+    />
+  );
   return (
     <>
       {/* Above the views, so D12's and D13's sentences stay on screen whichever view is open. */}
@@ -369,9 +459,21 @@ export function AdminModelAccessView({
         label={tr("admin.model_access_title")}
         prefix="admin-mpol"
         views={[
-          { key: "overview", label: tr("admin.model_access_view_overview"), node: overview },
-          { key: "deployment", label: tr("admin.model_access_view_deployment"), node: deployment },
-          { key: "tenants", label: tr("admin.model_access_view_tenants"), node: perTenant },
+          {
+            key: "overview",
+            label: tr("admin.model_access_view_overview"),
+            node: overview,
+          },
+          {
+            key: "deployment",
+            label: tr("admin.model_access_view_deployment"),
+            node: deployment,
+          },
+          {
+            key: "tenants",
+            label: tr("admin.model_access_view_tenants"),
+            node: perTenant,
+          },
           {
             key: "provided",
             label: tr("admin.model_access_view_provided"),

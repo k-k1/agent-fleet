@@ -48,6 +48,7 @@ func TestRoutePolicyErrCodesMatchRootConstants(t *testing.T) {
 		{"errCodeInvalidRoutePolicy", "codeInvalidRoutePolicy"},
 		{"errCodeRoutePolicyExceedsCeiling", "codeRoutePolicyExceedsCeiling"},
 		{"errCodeRoutePolicyEndpointNotApprovable", "codeRoutePolicyEndpointNotApprovable"},
+		{"errCodeRoutePolicyStale", "codeRoutePolicyStale"},
 	}
 	for _, p := range pairs {
 		r, rok := root[p[0]]
