@@ -19,8 +19,8 @@ import (
 var privateSpace = mustPrefixes("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7")
 
 // metadataAddrs are instance-metadata and platform-service endpoints. 169.254.169.254 and the ECS
-// task endpoint are link-local, covered by refusedAddr. The first four lie inside privateSpace, so
-// a range holding one is refused by normalizeCIDR; the last two lie outside it and matter only to
+// task endpoint are link-local, covered by refusedAddr. The last four lie inside privateSpace, so
+// a range holding one is refused by normalizeCIDR; the first two lie outside it and matter only to
 // exact IPs.
 var metadataAddrs = []netip.Addr{
 	netip.MustParseAddr("192.0.0.192"),     // Oracle Cloud
