@@ -716,6 +716,8 @@ export function deliveryStateKey(d: Pick<MemoDelivery, "state" | "outcome">): Ms
           return "memo.d_state_failed";
         case "aborted":
           return "memo.d_state_aborted";
+        case "ended":
+          return "memo.d_state_ended";
         case "unknown":
           return "memo.d_state_unknown";
         case "not_sent":

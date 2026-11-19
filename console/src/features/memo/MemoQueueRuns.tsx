@@ -8,8 +8,11 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { openSessionChat } from "../sessions/open.ts";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
+import { useToast } from "../../ui/ToastProvider.tsx";
+import { errText } from "../../core/api/client.ts";
 import type { MemoDelivery } from "../../types/memo.ts";
-import { memoQueueDeliveries } from "./api.ts";
+import { memoQueueDeliveries, memoQueueDeliveryEnd } from "./api.ts";
 import { deliveryStateKey, firstTurnWords, heldWords, readDeliveries } from "./queues.ts";
 
 const POLL_MS = 30000;
@@ -17,6 +20,9 @@ const SHOWN = 5;
 
 export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; onShowAll: () => void }) {
   const tr = useT();
+  const askConfirm = useConfirm();
+  const toast = useToast();
+  const [ending, setEnding] = useState<string | null>(null);
   const [rows, setRows] = useState<MemoDelivery[] | null>(null);
   const [failed, setFailed] = useState(false);
   const alive = useRef(true);
@@ -48,6 +54,30 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
       clearInterval(id);
     };
   }, [load]);
+
+  // Ends an open run after a confirmation (it stops the run's session). The server is idempotent,
+  // so a second press or a run the tick already closed answers the same; the list is re-read after.
+  const end = async (d: MemoDelivery) => {
+    if (ending) return;
+    const ok = await askConfirm({
+      title: tr("memo.d_end_title"),
+      body: tr("memo.d_end_body", { name: d.session }),
+      confirmLabel: tr("memo.d_end_confirm"),
+      danger: true,
+    });
+    if (!ok) return;
+    setEnding(d.id);
+    try {
+      const res = await memoQueueDeliveryEnd(categoryId, d.id);
+      if (res?.error) toast(errText(res.error) || tr("memo.d_end_failed"), { kind: "warn" });
+      else toast(tr("memo.d_end_done"), { kind: "success" });
+    } catch {
+      toast(tr("memo.d_end_failed"), { kind: "warn" });
+    } finally {
+      if (alive.current) setEnding(null);
+      void load();
+    }
+  };
 
   if (rows === null) {
     return (
@@ -100,6 +130,20 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
             <span className="memo-run-time">{fmtDateTime(d.createdAt)}</span>
             <span className="memo-d-tag">{tr(d.auto ? "memo.d_auto_short" : "memo.d_manual_short")}</span>
             {why && <span className="memo-run-held">{tr(why)}</span>}
+            {d.state === "open" && openable && (
+              <button
+                type="button"
+                className="linkish memo-run-end"
+                disabled={ending === d.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void end(d);
+                }}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                {tr("memo.d_end")}
+              </button>
+            )}
             {openable && <Icon name="link-external" className="memo-run-open" />}
           </div>
         );

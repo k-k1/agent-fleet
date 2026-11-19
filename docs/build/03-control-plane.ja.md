@@ -329,6 +329,12 @@ Workspace を起こさない。
   持たない答え（Agent による本文の拒否や、プロキシのエラー）は、その場で下の abandon の答えで決める。
   `GET /api/memo-queues/{categoryId}/deliveries` は新しい順に 50 件。セッションの行は
   `queueDelivery` を、メモは自分を確保した配信（`deliveryId`）を運ぶ。
+  `POST /api/memo-queues/{categoryId}/deliveries/{id}/end`（Console だけ、メンバーシップで絞る）は、
+  open の配信を人の言葉で終える。1 つの `MemoTx` で `open` から `closed` へ、outcome は `ended`
+  （`aborted` ではない。セッションはアーカイブしない）に動かし、act mark なしで retire を待ち状態にするので、
+  retire のパスがセッションの木を止める。答えは配信（200）。すでに closed の配信はそのまま答えるので、
+  2 回目の押下や tick との競合は何も書かない。別メンバー・別キューの配信は `404 not_found`、
+  まだ `claimed` / `sending` のものは `409 delivery_not_open`。
 
 - **型付きの参照**（[decisions/0137](../decisions/0137-message-queues.ja.md) §4、step 3 の Control Plane 側）。
   メッセージは作業項目への指し先を持てる。本文は写さない。Agent（step 3b、実装済み）と Console（step 3c）はこの契約の上に作る。

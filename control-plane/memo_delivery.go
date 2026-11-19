@@ -401,6 +401,53 @@ func (a memoAPI) listDeliveries(w http.ResponseWriter, r *http.Request, _ store.
 	writeJSON(w, http.StatusOK, out)
 }
 
+// endDelivery (POST /api/memo-queues/{categoryId}/deliveries/{id}/end) finishes an open run by a
+// person's word: the delivery closes as "ended" (which frees its slot, the slot being any
+// delivery not closed) and its session tree is retired by the durable retire pass, unconditionally.
+// The session is stopped, never archived, so the run is not recorded as an abort. One conditional
+// write on the delivery's own row decides it, so a second press, or a press after the tick closed
+// the run, changes nothing and answers the run as it is. A run that has no session yet (claimed,
+// sending) is refused: the tick settles those by itself. Scoped by the membership lock, so a run of
+// another member or queue is not found. Console only.
+func (a memoAPI) endDelivery(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	queueID, id := r.PathValue("categoryId"), r.PathValue("id")
+	var out store.MemoDelivery
+	err := a.store.MemoTx(r.Context(), mv.MembershipID, func(tx store.MemoTxOps) error {
+		cur, ok, err := tx.GetDelivery(id)
+		if err != nil {
+			return err
+		}
+		if !ok || cur.QueueID != queueID {
+			return memoTxFail(&apiError{http.StatusNotFound, "not_found", "run not found"})
+		}
+		out = cur
+		switch cur.State {
+		case store.DeliveryClosed:
+			return nil
+		case store.DeliveryOpen:
+		default:
+			return memoTxFail(&apiError{http.StatusConflict, "delivery_not_open", "the run has not started a session yet"})
+		}
+		won, err := tx.MoveDelivery(id, store.DeliveryOpen, store.DeliveryClosed, "", store.DeliveryEnded, store.DeliveryTS(time.Now()))
+		if err != nil || !won {
+			return err
+		}
+		if err := tx.SetDeliveryRetirePending(id); err != nil {
+			return err
+		}
+		if err := tx.SetDeliveryRetireForced(id); err != nil {
+			return err
+		}
+		out, _, err = tx.GetDelivery(id)
+		return err
+	})
+	if aerr := memoTxResult(err); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, memoDeliveryToDTO(out))
+}
+
 // --- The tick: send, reconcile, close ------------------------------------------------------
 
 // memoQueueTick is the queue work of a scheduler tick. settle runs first: it reconciles and

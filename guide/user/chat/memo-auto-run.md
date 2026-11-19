@@ -248,6 +248,7 @@ The states of a run:
 | Running | The session is running and the run is not over |
 | Done | The run is over |
 | Stopped | The session was archived or deleted while the run was open |
+| Ended by you | You pressed "**End**" on the run ([End a run yourself](#end-a-run-yourself)) |
 | Needs a look | Whether the session started could not be confirmed. Its memos become "Needs a look" too |
 | Not sent | The session could not be started. The memos go back to waiting to run |
 
@@ -302,6 +303,19 @@ The session of a run that is "Done" is stopped. So are the sessions it started, 
 - Archiving or deleting the session ends the run too, as "Stopped"
 
 In the conversation, the turn auto-run handed over carries an "**Auto-run**" mark, so it is not mixed up with what you typed.
+
+### End a run yourself
+
+A run that is still open (a child that keeps working, a watch you no longer need, a hold with no reason shown) keeps using one of the "Sessions at the same time". Archiving or deleting its session frees the place, but records the run as "Stopped". To free it without that, end the run.
+
+1. Open the category's run list and find the open run (state "Running")
+2. Press "**End**" on its row and confirm "**End run**"
+
+- The run becomes "**Ended by you**", the place is freed, and the session and everything it started are stopped. The session is not archived: it stays in the list and you can resume it
+- Only that run's place is freed. Other runs of the category keep theirs
+- Pressing it again, or pressing it for a run that has just ended by itself, changes nothing
+- It is not offered while the run has no session yet ("Starting"). Those settle by themselves
+- A session you act on after pressing is still stopped: ending the run is your word that it is over. Stopping happens within about a minute, and only while the workspace is running. A stopped workspace has nothing to stop. If the workspace does not report the run's state (an older version), the place is freed but the session is not stopped; stop it yourself
 
 ### What the session is given
 
@@ -412,6 +426,8 @@ Read "Not finished" in the run history.
 - "waiting on a watch or a timer": while a later restart is set, the run does not end. Stop the watch or the timer in the session if you do not need it
 - "waiting for a usage limit": it waits for the limit to lift, and carries on by itself afterwards
 - "working": the session or one of its children is running. When the "A run is overdue" notification comes, the run has passed the time you set. After an hour without a sign of work, it is stopped by itself
+
+- Anything else, or you simply do not want to wait: end the run yourself ([End a run yourself](#end-a-run-yourself))
 
 ### A session was stopped
 

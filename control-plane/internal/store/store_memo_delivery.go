@@ -31,6 +31,9 @@ const (
 	DeliveryAborted = "aborted"
 	DeliveryUnknown = "unknown"
 	DeliveryNotSent = "not_sent"
+	// DeliveryEnded is a delivery a person ended from the run history: the slot is freed and the
+	// session is retired, but the session is not archived, so the run is not an abort.
+	DeliveryEnded = "ended"
 	// DeliveryWake is a closed row with no messages and no session: a wake made only to settle
 	// the deliveries of a stopped workspace (ADR 0137 section 6), kept so that it counts as a
 	// fire of the day.
@@ -224,6 +227,10 @@ type MemoDeliveryTxOps interface {
 	// SetDeliveryRetirePending marks a closed delivery as awaiting the Agent's confirmed retire.
 	// Called in the transaction of the clean close, so the close and the mark are one write.
 	SetDeliveryRetirePending(id string) error
+	// SetDeliveryRetireForced makes the pending retire of a closed delivery unconditional: it
+	// drops the act mark the retire would send, so a person's own later activity in the session
+	// does not turn the retire into "released". For a person's explicit end only.
+	SetDeliveryRetireForced(id string) error
 }
 
 const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, session, message_ids, idle_ticks,
@@ -476,6 +483,12 @@ func (s *SQL) FinishDeliveryRetire(ctx context.Context, id, at, result string) (
 
 func (t memoTx) SetDeliveryRetirePending(id string) error {
 	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET retire_pending=1, retire_act_mark=act_mark, retire_act_incarnation=act_incarnation WHERE id=? AND membership_id=? AND state=?`,
+		id, t.mid, DeliveryClosed)
+	return err
+}
+
+func (t memoTx) SetDeliveryRetireForced(id string) error {
+	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET retire_pending=1, retire_act_mark=0, retire_act_incarnation='' WHERE id=? AND membership_id=? AND state=?`,
 		id, t.mid, DeliveryClosed)
 	return err
 }

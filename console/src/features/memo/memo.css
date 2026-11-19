@@ -1277,6 +1277,14 @@ button.memo-reflink-key {
   font-size: 11px;
   color: var(--muted);
 }
+.memo-run-end {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  margin-left: auto;
+}
+.memo-run-end + .memo-run-open {
+  margin-left: 0;
+}
 .memo-runs-all {
   font-size: 10.5px;
   align-self: flex-start;

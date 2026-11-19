@@ -17,6 +17,7 @@ const memoQueuePut = vi.fn();
 const memoQueueDelete = vi.fn();
 const memoQueueFire = vi.fn();
 const memoQueueResume = vi.fn();
+const memoQueueDeliveryEnd = vi.fn();
 const memoQueueDeliveries = vi.fn(async (_id: string) => servedDeliveries);
 const memoQueueList = vi.fn(async () => {
   if (queuesFail) throw new Error("down");
@@ -41,6 +42,7 @@ vi.mock("./api.ts", () => ({
   memoQueueFire: (id: string) => memoQueueFire(id),
   memoQueueResume: (id: string) => memoQueueResume(id),
   memoQueueDeliveries: (id: string) => memoQueueDeliveries(id),
+  memoQueueDeliveryEnd: (id: string, did: string) => memoQueueDeliveryEnd(id, did),
   memoTidyRuns: async () => ({ runs: [], usedToday: 0, dailyCap: 10 }),
   memoTidyUndo: async () => ({}),
 }));
@@ -162,12 +164,13 @@ beforeEach(() => {
   servedQueues = { tenantEnabled: true, queues: [aQueue()] };
   queuesFail = false;
   servedDeliveries = [];
-  for (const m of [memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueResume, memoQueueDeliveries, memoQueueList, openSessionChat]) m.mockClear();
+  for (const m of [memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueResume, memoQueueDeliveries, memoQueueDeliveryEnd, memoQueueList, openSessionChat]) m.mockClear();
   memoRelease.mockResolvedValue({ released: [], stale: [] });
   memoQueuePut.mockResolvedValue(aQueue());
   memoQueueDelete.mockResolvedValue({ ok: true });
   memoQueueFire.mockResolvedValue({ id: "d1" });
   memoQueueResume.mockResolvedValue({});
+  memoQueueDeliveryEnd.mockResolvedValue({});
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -1221,6 +1224,47 @@ describe("inline run list under a category", () => {
     expect(rows[1].getAttribute("role")).toBeNull();
     await click(rows[1]);
     expect(openSessionChat).not.toHaveBeenCalled();
+  });
+
+  describe("ending an open run", () => {
+    const openRun = () => run("d2", { state: "open", outcome: "", heldBy: "wakers", session: "s-d2" });
+    const endBtn = () => document.querySelector<HTMLElement>(".memo-run-end");
+    const confirmBtns = () => [...document.querySelectorAll<HTMLElement>(".ui-confirm-actions button")];
+
+    it("offers it on an open run only, and asks first without opening the session", async () => {
+      servedDeliveries = [run("d1"), openRun()];
+      await render();
+      await click(toggle());
+      expect(document.querySelectorAll(".memo-run-end")).toHaveLength(1);
+      await click(must(endBtn(), "end button"));
+      expect(openSessionChat).not.toHaveBeenCalled();
+      expect(memoQueueDeliveryEnd).not.toHaveBeenCalled();
+      expect(document.querySelector(".ui-confirm")?.textContent).toContain(t("memo.d_end_body", { name: "s-d2" }));
+      await click(confirmBtns()[0]); // cancel
+      expect(memoQueueDeliveryEnd).not.toHaveBeenCalled();
+    });
+
+    it("ends the run on confirm, then re-reads the list", async () => {
+      servedDeliveries = [openRun()];
+      await render();
+      await click(toggle());
+      memoQueueDeliveries.mockClear();
+      await click(must(endBtn(), "end button"));
+      await click(must(confirmBtns().find((b) => b.textContent === t("memo.d_end_confirm")), "confirm"));
+      expect(memoQueueDeliveryEnd).toHaveBeenCalledWith("c1", "d2");
+      expect(memoQueueDeliveries).toHaveBeenCalledWith("c1");
+    });
+
+    it("says so when the Control Plane refuses", async () => {
+      servedDeliveries = [openRun()];
+      memoQueueDeliveryEnd.mockResolvedValueOnce({ error: { code: "delivery_not_open", message: "nope" } });
+      await render();
+      await click(toggle());
+      await click(must(endBtn(), "end button"));
+      await click(must(confirmBtns().find((b) => b.textContent === t("memo.d_end_confirm")), "confirm"));
+      expect(memoQueueDeliveryEnd).toHaveBeenCalledTimes(1);
+      expect(document.body.textContent).toContain("nope");
+    });
   });
 
   it("shows the empty and failed states", async () => {
