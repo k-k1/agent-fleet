@@ -136,9 +136,13 @@ func (s *Supervisor) SecurityRestart(reason string) bool {
 	cleared = true
 	s.finishTeardownLocked(cmd)
 	s.mu.Unlock()
-	goReconcile("security restart: " + reason)
+	startReconcile("security restart: " + reason)
 	return true
 }
+
+// startReconcile starts the reconcile that follows a security restart; a var so a test can run
+// it synchronously and see the supervisor's state at the instant it starts.
+var startReconcile = goReconcile
 
 // goSecurityRestart runs SecurityRestart in the background, tracked by reconcileInflight like the
 // reconcile it starts, so a test that triggered it can wait for both.

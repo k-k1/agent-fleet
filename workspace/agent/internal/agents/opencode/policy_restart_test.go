@@ -101,6 +101,12 @@ func TestTighterPolicyRestartsTheServeWithoutADrain(t *testing.T) {
 	if d := time.Since(start); d > 10*time.Second {
 		t.Errorf("the security restart waited %v, as a drain would", d)
 	}
+	// The adopted daemon (no process handle) path must not leave the restart flags set.
+	s.mu.Lock()
+	if s.securing || s.stopping {
+		t.Errorf("flags left set after an adopted-daemon restart: securing=%v stopping=%v", s.securing, s.stopping)
+	}
+	s.mu.Unlock()
 
 	// A daemon of the current generation, owned by this supervisor, while a replacement runs.
 	cmd := exec.Command("sleep", "60")
@@ -153,47 +159,42 @@ func TestStaleGenerationIsReplacedUnderARestriction(t *testing.T) {
 
 // The reconcile a security restart starts must not be refused by the restart's own securing
 // flag: Ensure refuses while securing is set, and a managed session whose reconcile was refused
-// stays stopped until its next resume. The invariant is that the moment the stopped daemon is
-// recorded gone (stopping cleared), securing is already clear, so any Ensure that can start the
-// replacement is admitted. A watcher spins on the lock and checks Ensure's admission the first
-// instant stopping drops.
-func TestSecurityRestartClearsSecuringWhenTheDaemonIsGone(t *testing.T) {
+// stays stopped until its next resume. startReconcile is stubbed to run synchronously, so the
+// supervisor is inspected at the exact instant the reconcile would start, before SecurityRestart
+// returns.
+func TestSecurityRestartClearsSecuringBeforeTheReconcileStarts(t *testing.T) {
 	isolatedHome(t)
 	t.Setenv("AF_SECRET_KEY", "")
 	dead := httptest.NewServer(http.NotFoundHandler())
 	t.Setenv(serveAddrEnv, dead.URL)
 	dead.Close() // nothing listens: stopProcess does not wait, healthy() is false
 	useIsolationPolicy(t, anthropicOnly)
-	prev := managedKind.AfterReconcile
-	managedKind.AfterReconcile = func(string) {}
-	t.Cleanup(func() { reconcileInflight.Wait(); managedKind.AfterReconcile = prev })
+	cmd := exec.Command("sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
 
-	for i := 0; i < 20; i++ {
-		cmd := exec.Command("sleep", "60")
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
+	s := &Supervisor{up: true, cmd: cmd, credGen: "stale"}
+	started := false
+	prev := startReconcile
+	startReconcile = func(string) {
+		started = true
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.securing || s.stopping || s.up || s.cmd != nil {
+			t.Errorf("at reconcile start: securing=%v stopping=%v up=%v cmd=%v", s.securing, s.stopping, s.up, s.cmd)
 		}
-		s := &Supervisor{up: true, cmd: cmd, credGen: "stale"}
-		done := make(chan bool)
-		go func() { done <- s.SecurityRestart("test") }()
-		var err error
-		for {
-			s.mu.Lock()
-			if !s.stopping && !s.up {
-				err = s.policyAdmitLocked(serveAddr())
-				s.mu.Unlock()
-				break
-			}
-			s.mu.Unlock()
+		if err := s.policyAdmitLocked(serveAddr()); err != nil {
+			t.Errorf("the follow-up reconcile's Ensure was refused: %v", err)
 		}
-		if !<-done {
-			t.Fatal("SecurityRestart stopped no process")
-		}
-		if err != nil {
-			t.Fatalf("round %d: Ensure was refused after the daemon was gone: %v", i, err)
-		}
-		reconcileInflight.Wait()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+	}
+	t.Cleanup(func() { startReconcile = prev })
+
+	if !s.SecurityRestart("test") {
+		t.Fatal("SecurityRestart stopped no process")
+	}
+	if !started {
+		t.Fatal("no reconcile was started")
 	}
 }
