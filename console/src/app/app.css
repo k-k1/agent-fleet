@@ -114,11 +114,12 @@
   line-height: 16px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-  color: #111;
+  color: var(--on-accent);
   pointer-events: none;
 }
 .actbar-badge.tone-waiting {
   background: var(--warn);
+  color: var(--on-warn);
 }
 .actbar-badge.tone-news {
   background: var(--accent);
