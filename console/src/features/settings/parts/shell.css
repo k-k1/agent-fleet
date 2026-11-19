@@ -47,7 +47,8 @@
 
 :where(.settings-modal) button.primary {
   background: var(--accent);
-  color: var(--on-accent);
+  /* --accent is the user's top-bar accent here; the theme's --on-accent is not chosen for it. */
+  color: var(--on-topbar-accent, var(--on-accent));
   border-color: var(--accent);
   font-weight: 600;
 }
