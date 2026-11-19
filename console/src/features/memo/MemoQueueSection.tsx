@@ -48,6 +48,7 @@ import type { Memo, MemoCategory, MemoAttachment, MemoQueue } from "../../types/
 import { errText } from "../../core/api/client.ts";
 import { MemoQueueSettingsModal } from "./MemoQueueSettingsModal.tsx";
 import { MemoProducerText } from "./MemoProducerText.tsx";
+import { MemoQueueRuns } from "./MemoQueueRuns.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
 import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
@@ -219,6 +220,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // looks the live row up, so a poll that renames or removes it is seen by the dialog.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   const [deliveriesFor, setDeliveriesFor] = useState<string | null>(null);
+  // Categories whose inline run list is expanded. Not persisted: it reads the Control Plane on
+  // open, so a reload starts quiet.
+  const [runsOpen, setRunsOpen] = useState<Record<string, boolean>>({});
   // The tidy run the history opened for, so that its row stands out.
   const [focusRun, setFocusRun] = useState("");
   const [releasing, setReleasing] = useState<string | null>(null); // release card key in flight
@@ -1137,6 +1141,21 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       </div>
 
                       {queue && <MemoQueueNotices queue={queue} busy={resuming} onResume={() => void resume(queue.categoryId)} />}
+
+                      {cat && isQueue && !collapsed && (
+                        <>
+                          <button
+                            type="button"
+                            className="memo-runs-toggle"
+                            aria-expanded={!!runsOpen[cat.id]}
+                            onClick={() => setRunsOpen((o) => ({ ...o, [cat.id]: !o[cat.id] }))}
+                          >
+                            <Icon name={runsOpen[cat.id] ? "chevron-down" : "chevron-right"} />
+                            {tr("memo.d_runs_toggle")}
+                          </button>
+                          {runsOpen[cat.id] && <MemoQueueRuns categoryId={cat.id} onShowAll={() => setDeliveriesFor(cat.id)} />}
+                        </>
+                      )}
 
                       {targetKey === dropKey && composer}
 

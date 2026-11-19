@@ -1175,3 +1175,66 @@ describe("a notification asks to show a category", () => {
     localStorage.removeItem("af-section-memos");
   });
 });
+
+describe("inline run list under a category", () => {
+  const toggle = () => must([...document.querySelectorAll<HTMLElement>(".memo-runs-toggle")][0], "runs toggle");
+  const run = (id: string, over: Record<string, unknown> = {}) => ({
+    id, state: "closed", outcome: "clean", session: "s-" + id, messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "", auto: true, ...over,
+  });
+
+  it("reads nothing while collapsed, then lists the runs on expand and collapses again", async () => {
+    servedDeliveries = [run("d1"), run("d2", { state: "open", outcome: "", heldBy: "wakers", session: "" })];
+    await render();
+    expect(memoQueueDeliveries).not.toHaveBeenCalled();
+    expect(document.querySelector(".memo-runs")).toBeNull();
+    await click(toggle());
+    expect(memoQueueDeliveries).toHaveBeenCalledWith("c1");
+    const rows = document.querySelectorAll(".memo-run");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain(t("memo.d_state_clean"));
+    expect(rows[0].textContent).toContain(t("memo.d_auto_short"));
+    expect(rows[1].textContent).toContain(t("memo.d_state_running"));
+    expect(rows[1].textContent).toContain(t("memo.d_held_wakers"));
+    expect(document.querySelector(".ui-modal")).toBeNull();
+    await click(toggle());
+    expect(document.querySelector(".memo-runs")).toBeNull();
+  });
+
+  it("opens a run's session from its row, by click and by Enter, and leaves a sessionless run inert", async () => {
+    servedDeliveries = [run("d1"), run("d2", { session: "", outcome: "failed" })];
+    await render();
+    await click(toggle());
+    const rows = document.querySelectorAll<HTMLElement>(".memo-run");
+    await click(rows[0]);
+    expect(openSessionChat).toHaveBeenCalledWith("s-d1");
+    openSessionChat.mockClear();
+    await act(async () => {
+      rows[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    expect(openSessionChat).toHaveBeenCalledWith("s-d1");
+    openSessionChat.mockClear();
+    expect(rows[1].getAttribute("role")).toBeNull();
+    await click(rows[1]);
+    expect(openSessionChat).not.toHaveBeenCalled();
+  });
+
+  it("shows the empty and failed states", async () => {
+    servedDeliveries = [];
+    await render();
+    await click(toggle());
+    expect(document.querySelector(".memo-runs")?.textContent).toContain(t("memo.d_empty"));
+    await click(toggle());
+    servedDeliveries = { error: { code: "x", message: "boom" } };
+    await click(toggle());
+    expect(document.querySelector(".memo-runs [role=alert]")?.textContent).toContain(t("memo.d_load_failed"));
+  });
+
+  it("caps the list at five and sends \"show all\" to the full dialog", async () => {
+    servedDeliveries = ["1", "2", "3", "4", "5", "6", "7"].map((n) => run("d" + n));
+    await render();
+    await click(toggle());
+    expect(document.querySelectorAll(".memo-run")).toHaveLength(5);
+    await click(must(document.querySelector(".memo-runs-all"), "show all"));
+    expect(dialog().querySelectorAll(".memo-d-row")).toHaveLength(7);
+  });
+});
