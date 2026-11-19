@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"testing"
 )
 
@@ -192,8 +191,9 @@ func TestPutRoutePolicyIfPrecondition(t *testing.T) {
 	})
 }
 
-// Writers that all loaded the same revision race: exactly one wins, the others are told the row
-// moved, and none of them is turned into an error by lock contention.
+// Writers that all loaded the same revision race, each with its own rule: exactly one wins, the
+// others are told the row moved, none is turned into another error by lock contention (there is
+// no retry here, any other error fails), and the row holds the winner's rule at base+1.
 func TestPutRoutePolicyIfConcurrentWriters(t *testing.T) {
 	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
 		ctx := context.Background()
@@ -202,33 +202,40 @@ func TestPutRoutePolicyIfConcurrentWriters(t *testing.T) {
 			mustDo(t, err)
 			base := row.Revision
 			const writers = 8
-			var wins, stale atomic.Int32
 			var wg sync.WaitGroup
 			start := make(chan struct{})
+			errs := make([]error, writers)
+			afters := make([]RoutePolicyRow, writers)
 			for i := 0; i < writers; i++ {
 				wg.Add(1)
 				go func(i int) {
 					defer wg.Done()
 					<-start
-					for try := 0; try < 50; try++ {
-						_, _, err := st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", fmt.Sprintf(`{"deny":["w%d"]}`, i), "su", &base, nil)
-						switch {
-						case err == nil:
-							wins.Add(1)
-						case errors.Is(err, ErrRoutePolicyStale):
-							stale.Add(1)
-						default:
-							continue // lock contention on the engine's side: retry the same attempt
-						}
-						return
-					}
-					t.Errorf("writer %d never got an answer", i)
+					_, afters[i], errs[i] = st.PutRoutePolicyIf(ctx, RoutePolicyDeployment, "", fmt.Sprintf(`{"deny":["w%d"]}`, i), "su", &base, nil)
 				}(i)
 			}
 			close(start)
 			wg.Wait()
-			if wins.Load() != 1 || stale.Load() != writers-1 {
-				t.Fatalf("round %d: %d writers won and %d were refused, want 1 and %d", round, wins.Load(), stale.Load(), writers-1)
+			winner := -1
+			for i, err := range errs {
+				switch {
+				case err == nil:
+					if winner >= 0 {
+						t.Fatalf("round %d: two writers won (%d and %d)", round, winner, i)
+					}
+					winner = i
+				case errors.Is(err, ErrRoutePolicyStale):
+				default:
+					t.Fatalf("round %d: writer %d failed with %v, want a win or ErrRoutePolicyStale", round, i, err)
+				}
+			}
+			if winner < 0 {
+				t.Fatalf("round %d: nobody won: %v", round, errs)
+			}
+			got, err := st.GetRoutePolicy(ctx, RoutePolicyDeployment, "")
+			mustDo(t, err)
+			if want := fmt.Sprintf(`{"deny":["w%d"]}`, winner); got.Rule != want || got.Revision != base+1 || afters[winner].Revision != base+1 {
+				t.Fatalf("round %d: stored %+v, want %s at revision %d", round, got, want, base+1)
 			}
 		}
 	})

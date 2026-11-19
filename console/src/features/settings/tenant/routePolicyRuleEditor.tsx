@@ -516,7 +516,9 @@ export function RuleEditor({
   /** The layers above whose narrowing stops an option without refusing the save, top first. */
   above?: readonly { layer: string; rule: RouteRule }[];
   save: (body: RouteRule, revision: number) => Promise<unknown>;
-  onSaved: () => void;
+  /** Called after a save landed; the editor stays busy until what it returns settles, so the next
+   *  save cannot go out on the old revision while the reload that brings the new one is running. */
+  onSaved: () => void | Promise<unknown>;
 }) {
   const tr = useT();
   const [draft, setDraft] = useState<RuleDraft>(() => draftOf(base));
@@ -545,7 +547,7 @@ export function RuleEditor({
         setRefusal(res.error.code === "route_policy_stale" ? tr("admin.mpol_stale") : errDetail(res.error));
         return;
       }
-      onSaved();
+      await Promise.resolve(onSaved()).catch(() => {});
     } catch {
       setRefusal(tr("admin.mpol_save_failed"));
     } finally {

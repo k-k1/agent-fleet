@@ -1,6 +1,7 @@
 package routepolicysrv
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // routeAdminDoIfMatch is routeAdminDo with an If-Match header (none when ifMatch is "-").
@@ -72,8 +75,14 @@ func TestRoutePolicyPutsAreConditional(t *testing.T) {
 			if w.Code != http.StatusConflict || errCodeOf(t, w.Body.String()) != codeRoutePolicyStale {
 				t.Fatalf("stale save: %d %s, want 409 %s", w.Code, w.Body, codeRoutePolicyStale)
 			}
-			// Nothing changed: the same revision still saves.
-			w = routeAdminDoIfMatch(mux, "PUT", c.path, c.who, `{"deny":["x-not-a-route"]}`, strconv.FormatInt(rev2, 10))
+			// The refusal changed nothing and took no revision: rev2 still saves, as the very next one.
+			w = routeAdminDoIfMatch(mux, "PUT", c.path, c.who, `{"deny":["anthropic-api"]}`, strconv.FormatInt(rev2, 10))
+			if w.Code != 200 || layerRevision(t, w.Body.String()) != rev2+1 {
+				t.Fatalf("save at the current revision after a 409: %d %s, want 200 at revision %d", w.Code, w.Body, rev2+1)
+			}
+			rev3 := rev2 + 1
+			// An invalid rule at the current revision is its own 400, not a 409.
+			w = routeAdminDoIfMatch(mux, "PUT", c.path, c.who, `{"deny":["x-not-a-route"]}`, strconv.FormatInt(rev3, 10))
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("an invalid rule at the current revision is still its own 400: %d %s", w.Code, w.Body)
 			}
@@ -84,8 +93,8 @@ func TestRoutePolicyPutsAreConditional(t *testing.T) {
 		})
 	}
 	// A refused write recorded nothing: one audit row per landed write.
-	if rows := auditRowsOf(t, st, tn.ID, "route_policy.tenant.put"); len(rows) != 3 {
-		t.Errorf("tenant audit rows = %d, want 3 (two conditional saves and one unconditional)", len(rows))
+	if rows := auditRowsOf(t, st, tn.ID, "route_policy.tenant.put"); len(rows) != 4 {
+		t.Errorf("tenant audit rows = %d, want 4 (three conditional saves and one unconditional)", len(rows))
 	}
 }
 
@@ -98,7 +107,7 @@ func TestRoutePolicyPutRefusesMalformedIfMatch(t *testing.T) {
 		{"/api/admin/tenants/" + tn.Slug + "/route-policy/cap", "root-x"},
 		{"/api/admin/tenants/" + tn.Slug + "/route-policy", "boss-x"},
 	} {
-		for _, bad := range []string{"abc", `"1`, "*", `W/"1"`, "-1", "1.5", "", "01", "1, 2", "99999999999999999999"} {
+		for _, bad := range []string{"abc", `"1`, "*", `W/"1"`, "-1", "1.5", "", "01", "1, 2", "99999999999999999999", `1"`, `""`, "+1", "-0"} {
 			w := routeAdminDoIfMatch(mux, "PUT", path.p, path.who, `{}`, bad)
 			if w.Code != http.StatusBadRequest || errCodeOf(t, w.Body.String()) != "bad_request" {
 				t.Errorf("%s If-Match %q: %d %s, want 400", path.p, bad, w.Code, w.Body)
@@ -107,44 +116,62 @@ func TestRoutePolicyPutRefusesMalformedIfMatch(t *testing.T) {
 	}
 }
 
-// Two saves of the same loaded revision, sent at once to the real handler over a real store: one
-// lands, the other is a 409, and the stored rule is the winner's.
+// A repeated If-Match header is as malformed as an unparsable one.
+func TestRoutePolicyPutRefusesRepeatedIfMatch(t *testing.T) {
+	_, mux, _ := routePolicyFixture(t, "")
+	r := httptest.NewRequest("PUT", "/api/admin/route-policy", strings.NewReader(`{}`))
+	r.Header.Set("X-Who", "root-x")
+	r.Header.Add("If-Match", `"0"`)
+	r.Header.Add("If-Match", `"0"`)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest || errCodeOf(t, w.Body.String()) != "bad_request" {
+		t.Fatalf("two If-Match headers: %d %s, want 400", w.Code, w.Body)
+	}
+}
+
+// Saves of the same loaded revision, each with its own rule, sent at once to the real handler over
+// a real store: one lands at base+1, the rest are 409, and the stored rule is the winner's. No
+// retry: any other status is a failure.
 func TestRoutePolicyConcurrentSavesOnOneRevision(t *testing.T) {
-	_, mux, tn := routePolicyFixture(t, "")
+	st, mux, tn := routePolicyFixture(t, "")
 	path := "/api/admin/tenants/" + tn.Slug + "/route-policy"
+	routes := []string{"openai-api", "anthropic-api", "gemini-api", "openrouter-api", "copilot-login", "anthropic-subscription"}
 	for round := 0; round < 5; round++ {
 		g := routeAdminDo(mux, "GET", path, "boss-x", "")
 		base := decodePolicy(t, g.Body.String()).Tenant.Revision
 		var wg sync.WaitGroup
-		codes := make([]int, 6)
+		codes := make([]int, len(routes))
 		start := make(chan struct{})
-		for i := range codes {
+		for i, id := range routes {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				<-start
-				for try := 0; try < 50; try++ {
-					w := routeAdminDoIfMatch(mux, "PUT", path, "boss-x", `{"deny":["openai-api"]}`, strconv.FormatInt(base, 10))
-					if w.Code != http.StatusInternalServerError { // engine lock contention: retry
-						codes[i] = w.Code
-						return
-					}
-				}
+				codes[i] = routeAdminDoIfMatch(mux, "PUT", path, "boss-x", `{"deny":["`+id+`"]}`, strconv.FormatInt(base, 10)).Code
 			}()
 		}
 		close(start)
 		wg.Wait()
-		ok, conflict := 0, 0
-		for _, c := range codes {
+		winner := -1
+		for i, c := range codes {
 			switch c {
 			case 200:
-				ok++
+				if winner >= 0 {
+					t.Fatalf("round %d: two saves landed: %v", round, codes)
+				}
+				winner = i
 			case http.StatusConflict:
-				conflict++
+			default:
+				t.Fatalf("round %d: statuses %v, want one 200 and the rest 409", round, codes)
 			}
 		}
-		if ok != 1 || conflict != len(codes)-1 {
-			t.Fatalf("round %d: statuses %v, want one 200 and the rest 409", round, codes)
+		if winner < 0 {
+			t.Fatalf("round %d: no save landed: %v", round, codes)
+		}
+		row, err := st.GetRoutePolicy(context.Background(), store.RoutePolicyTenant, tn.ID)
+		if err != nil || row.Revision != base+1 || !strings.Contains(row.Rule, routes[winner]) {
+			t.Fatalf("round %d: stored %+v (%v), want the winner's rule %q at revision %d", round, row, err, routes[winner], base+1)
 		}
 	}
 }

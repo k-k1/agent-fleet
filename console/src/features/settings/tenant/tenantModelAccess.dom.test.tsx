@@ -200,6 +200,31 @@ describe("tenant model access", () => {
     expect(policyReads()).toBe(1);
   });
 
+  it("stays busy until the reload after a save lands, then saves again on the new revision", async () => {
+    await mount();
+    await click(tickIn("deny", "anthropic-api"));
+    // The reload that follows the save is held back.
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    api.mockImplementation((path: string) =>
+      path.includes("/provided-routes/")
+        ? Promise.resolve({ error: { code: "http_404", status: 404 } })
+        : held.then(() => ({ ...VIEW(), tenant: { rule: { deny: ["anthropic-api"] }, revision: 6 } })),
+    );
+    await click(button("保存")!);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(button("保存")!.disabled).toBe(true);
+    await click(button("保存")!);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    await act(async () => release());
+    await flush();
+    // Re-keyed on the new revision: clean again; one more edit saves with revision 6.
+    await click(tickIn("deny", "openai-api"));
+    await click(button("保存")!);
+    expect(apiJSON).toHaveBeenCalledTimes(2);
+    expect(apiJSON).toHaveBeenLastCalledWith(PATH, "PUT", expect.anything(), { "If-Match": '"6"' });
+  });
+
   it("shows the concurrent-edit message on a 409 and keeps the edits (the CP refused a stale revision)", async () => {
     apiJSON.mockResolvedValue({
       error: { code: "route_policy_stale", message: "the rule is at revision 6 now", status: 409 },
