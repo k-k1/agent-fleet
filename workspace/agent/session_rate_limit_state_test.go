@@ -14,6 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"os"
 	"os/exec"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -47,14 +48,34 @@ func paneShowing(t *testing.T, name, frame string) session.Meta {
 	}
 	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
 	session.WriteMeta(m)
-	// Wait for cat to finish drawing into the pane (capture-pane reads the drawn screen).
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if tmuxx.CapturePane(tn) != "" {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
+	// Wait until the frame's last non-blank line is on screen. "The capture is non-empty" is no
+	// signal: capture-pane of a pane that has drawn nothing yet returns the blank screen (50
+	// newlines), so that wait returned at once and DriveState read an unpainted pane (working
+	// instead of blocked). cat writes in order, so the last line being visible means the whole
+	// frame is.
+	raw, err := os.ReadFile(frame)
+	if err != nil {
+		t.Fatalf("read frame %s: %v", frame, err)
 	}
+	want := ""
+	for _, ln := range strings.Split(string(raw), "\n") {
+		if s := strings.TrimSpace(ln); s != "" {
+			want = s
+		}
+	}
+	if want == "" {
+		t.Fatalf("frame %s has no non-blank line to wait for", frame)
+	}
+	var got string
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		got = tmuxx.CapturePane(tn)
+		if strings.Contains(got, want) {
+			return m
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("pane %s never showed the last line of %s within 15s\nwanted: %q\ncaptured:\n%s", tn, frame, want, got)
 	return m
 }
 
