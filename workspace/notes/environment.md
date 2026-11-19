@@ -119,6 +119,10 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   a module-relative path); walk up from the working directory instead. An exported `GOFLAGS`
   replaces the default (append `-trimpath` yourself); one set with `go env -w GOFLAGS=…` is
   shadowed by it, so `go env GOFLAGS` shows what a build really uses.
+  To get real paths back (a debugger, a stack trace you need to open), run that command with
+  `GOFLAGS=` or add `-trimpath=false`. Entries already in `~/.cache/go-build` from before this
+  default were built untrimmed and stay until Go's own 5-day trim or a manual `go clean -cache`
+  (Settings > Machine > Tool caches); only new builds share.
 - N worktrees means N copies of every per-project dependency tree unless the ecosystem shares one
   (Go, Gradle/Maven and Cargo do; **npm does not** — 300 MB+ per worktree). Sharing a
   `node_modules` between worktrees has its own hazards: `/usr/local/share/agent-fleet/notes/worktrees.md`.

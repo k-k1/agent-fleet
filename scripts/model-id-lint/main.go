@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
 // scanDirs are the product Go modules, relative to the repository root.
@@ -68,12 +67,21 @@ func main() {
 	}
 }
 
-// defaultRoot is the repository root as seen from this source file, so `go run .` works from
-// any working directory.
+// defaultRoot is the repository root, found by walking up from the working directory to the
+// directory that holds this tool's patterns file, so `go run .` works from the tool's directory
+// or anywhere beneath the root. Not runtime.Caller: under -trimpath (the workspace default) it
+// names no file on disk. Falls back to "." when nothing is found.
 func defaultRoot() string {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
+	dir, err := os.Getwd()
+	if err != nil {
 		return "."
 	}
-	return filepath.Join(filepath.Dir(file), "..", "..")
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "scripts", "model-id-lint", "patterns.txt")); err == nil {
+			return d
+		}
+		if filepath.Dir(d) == d {
+			return "."
+		}
+	}
 }

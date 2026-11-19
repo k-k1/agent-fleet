@@ -28,8 +28,11 @@ Test results and test binaries are shared too. It does not shrink growth across 
 
 `internal/ingresstest` located `deploy/aws/ecs/cfn/30-ingress.yaml` with `runtime.Caller(0)`, which
 under `-trimpath` is a module-relative path, so `TestSyncSuggestBudgetStaysUnderTheIngressIdleTimeout`
-failed with "no such file". It now walks up from the working directory. No other `runtime.Caller` or
-embedded source path exists in either module. With `GOFLAGS=-trimpath`, `go test -count=1` of the `workspace/agent` root and every
+failed with "no such file". Review of the PR found two more, in modules the first sweep (which only
+grepped `workspace/` and `control-plane/`) did not cover: `scripts/model-id-lint` (`defaultRoot()`, so
+`go run .` failed, and its tests bypass it) and `e2e/fleet_test.go` (`repoRoot`). All three now walk up
+from the working directory, and no `runtime.Caller` is left in the repository. With
+`GOFLAGS=-trimpath`, `go test -count=1` of the `workspace/agent` root and every
 `workspace/agent/internal/...` package except `memoryx` passed, and `-race` built and passed for
 `internal/gitx`.
 
