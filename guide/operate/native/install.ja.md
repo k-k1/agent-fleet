@@ -131,6 +131,20 @@ WS_ENV=AF_CHROMIUM_NO_SANDBOX=1 af start
 - この変数は `WS_ENV`（カンマ区切りの `KEY=VAL` の並び）でワークスペースに渡します。`af start` にそのまま付けると、Control Plane にしか届きません
 - ブラウザペインは localhost にしかつながないので、この用途なら許容できるトレードオフです。信頼できないサイトを見るのには使わないでください
 
+### worktree 間で Go のビルドキャッシュを共有する
+
+ワークスペースのイメージには `GOFLAGS=-trimpath` が設定されており、パスの違う worktree でも `~/.cache/go-build` のエントリを共有できます（worktree ごとにコピーが増えません）。この設定がネイティブのワークスペースに届くかどうかは、Control Plane がワークスペースをどう起動するかで変わります。
+
+- **rootfs あり**（`AF_NATIVE_ROOTFS`。`af start` は常にこちら）: セッションはイメージの環境変数を引き継いで起動します。この設定を含むリリースへ[更新](update.ja.md)して Control Plane を再起動し、動いていたワークスペースを停止してから起動し直すと反映されます。更新前に有効にしたい場合は `WS_ENV` で渡せます
+- **rootfs なし**（`deploy/local/run-dev.sh native` など、ホストの `workspace-agent` とホストの Go を使う形）: イメージの環境変数は使われず、ワークスペースの環境変数は一から組み立てられます。Control Plane を起動するシェルで `GOFLAGS` を export してもセッションには届かないので、`WS_ENV` で渡してください
+
+```bash
+WS_ENV=GOFLAGS=-trimpath af start                          # rootfs あり: 更新前に有効にする／上書きする場合
+WS_ENV=GOFLAGS=-trimpath deploy/local/run-dev.sh native    # rootfs なし
+```
+
+どちらの形でも `WS_ENV` が優先されます（rootfs ありではイメージの値を上書きします）。`~/.cache/go-build` にすでにあるエントリは `-trimpath` なしで作られたものなので新しいビルドとは共有されず、Go 自身の掃除（5 日間使われなかったものの削除）まで残ります。ホストのシェルから直接動かすビルドはこの仕組みの影響を受けず、ワークスペースとは別のホスト自身の `~/.cache/go-build` を使います。ホスト側の worktree どうしで共有したいときは、そちらでも `GOFLAGS=-trimpath` を export してください。
+
 ## 任意で足せるもの
 
 | やりたいこと | ページ |

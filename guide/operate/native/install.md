@@ -131,6 +131,20 @@ WS_ENV=AF_CHROMIUM_NO_SANDBOX=1 af start
 - The variable reaches the workspace through `WS_ENV` (a comma-separated `KEY=VAL` list). Set bare on `af start`, it only reaches the Control Plane
 - An acceptable trade-off for the browser pane, which only connects to localhost. Do not use it to browse untrusted sites
 
+### Sharing Go build-cache entries between worktrees
+
+The workspace image sets `GOFLAGS=-trimpath` so worktrees at different paths share `~/.cache/go-build` entries instead of each adding its own copy. Whether a native workspace gets it depends on how the Control Plane launches workspaces:
+
+- **With a rootfs** (`AF_NATIVE_ROOTFS`; `af start` always uses one): sessions start from the image's own environment. The setting arrives once you [update](update.md) to a release whose rootfs includes it, restart the Control Plane, and stop and start any running workspace. To turn it on before that, pass it through `WS_ENV`
+- **Without one** (for example `deploy/local/run-dev.sh native`, which uses the host's `workspace-agent` and Go): the image's environment is not used and the workspace's environment is built from scratch, so a `GOFLAGS` exported in the shell that starts the Control Plane does not reach sessions. Pass it through `WS_ENV`
+
+```bash
+WS_ENV=GOFLAGS=-trimpath af start                          # with a rootfs: before updating, or to override
+WS_ENV=GOFLAGS=-trimpath deploy/local/run-dev.sh native    # without a rootfs
+```
+
+In either mode `WS_ENV` takes precedence (with a rootfs it overrides the image's value). Entries already in `~/.cache/go-build` were built without `-trimpath`, so new builds do not share them; they stay until Go trims them (5 days unused). Builds you run directly in a host shell are not affected by any of this and use the host's own `~/.cache/go-build`, separate from the workspace's: export `GOFLAGS=-trimpath` there if you want the host's worktrees to share entries.
+
 ## What you can add
 
 | What you want | Page |
