@@ -122,8 +122,9 @@ export function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
 // went unnoticed for hours.
 export function UsageRow({ label, w }: { label: string; w: { pct: number; until: string; when: string; stale?: boolean } }) {
   // No reset instant (agy prints "Quota available" for an unused pool): omit the line rather
-  // than render the template with empty placeholders.
-  const hasReset = !!(w.until || w.when);
+  // than render the template with empty placeholders. Both halves must be non-blank: an
+  // unparseable instant yields until "" but a pass-through when, which would print "Resets  (—)".
+  const hasReset = !!(w.until.trim() && w.when.trim());
   const level = w.stale ? "" : w.pct >= 95 ? " crit" : w.pct >= 80 ? " warn" : "";
   return (
     <div className="wu-row">

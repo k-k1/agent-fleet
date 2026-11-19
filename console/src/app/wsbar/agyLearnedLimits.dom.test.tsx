@@ -94,6 +94,17 @@ describe("agy usage row without a reset instant", () => {
 
   it("still renders the reset line for a pool that has one", async () => {
     const text = await popover({ ok: true, authed: true, groups });
-    expect(text).toMatch(/Resets 4 days left \(/);
+    expect(text).toMatch(/Resets 4 days left \([^)]+\)/);
+  });
+
+  it("omits the reset line when resetsAt cannot be parsed", async () => {
+    for (const bad of [" ", "—", "not-a-date"]) {
+      const text = await popover({ ok: true, authed: true, groups: [{ label: "Gemini", remainingPct: 50, resetsAt: bad }] });
+      expect(text).toContain("Gemini (weekly)");
+      expect(text).not.toContain("Resets");
+      if (root) act(() => root!.unmount());
+      host?.remove();
+      root = host = null;
+    }
   });
 });
