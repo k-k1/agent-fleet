@@ -953,3 +953,12 @@ passed. A press of
 "fire now" also takes eligible messages only. A list holds at most 10 prerequisites, a cycle is refused (a reorder of
 positions could otherwise put a prerequisite behind its dependent), and a message with prerequisites is not moved to
 another category until they are cleared. The hold to `held` runs in the dispatcher's tick for enabled queues.
+
+Added 2026-11-19 (step 2 of part A built, PR for #4540): the snapshot lives on the delivery (`pr_snapshot`, `pr_state`,
+migration 0145 / pg 0130) and is read by the settle pass through the Agent's `POST /memos/pr-snapshot`, which an Agent
+announces with `queuePRs` in its session list; an Agent without it is never asked, so its dependents wait. The
+interim hold of step 1 (`no_first_turn` after 24 hours) is replaced: without a recorded first turn a snapshot with
+no PR holds the dependent (`no_pr`) once the 24-hour window has passed, and a merged one satisfies at once. Only the
+wakes stop after 24 hours without a change; the read goes on whenever the workspace runs. The wakes are kept in a
+table of their own (`memo_pr_wake`), and a wake is made only when the message could fire once the PRs read merged:
+a free slot, the day's fires not used up, no back-off and no usage limit.

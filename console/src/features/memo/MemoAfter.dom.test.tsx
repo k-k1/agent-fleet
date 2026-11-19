@@ -114,6 +114,31 @@ describe("a note that waits for other notes", () => {
     expect(line.textContent).toContain("acme/app#7: " + t("memo.after_r_first_turn"));
   });
 
+  it("says which pull request it waits for to merge", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({
+        id: "d1",
+        body: "second job",
+        state: "pending",
+        after: ["p1"],
+        afterStatus: [
+          {
+            id: "p1",
+            label: "acme/app#7",
+            state: "waiting",
+            reason: "pr",
+            prs: [{ provider: "github", key: "acme/app#12", state: "open", url: "https://github.com/acme/app/pull/12" }],
+          },
+        ],
+      }),
+    ];
+    await renderSection();
+    expect(rowOf("second job").querySelector(".memo-after")!.textContent).toContain(
+      "acme/app#7: " + t("memo.after_r_pr_merge", { prs: "#12" }),
+    );
+  });
+
   it("says why it came back for approval", async () => {
     servedCats = [queueCat];
     servedMemos = [

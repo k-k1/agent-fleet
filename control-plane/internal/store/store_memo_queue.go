@@ -121,6 +121,7 @@ type MemoQueueStore interface {
 	// rolls the transaction back and is returned as is.
 	MemoTx(ctx context.Context, membershipID string, f func(MemoTxOps) error) error
 	MemoDeliveryStore
+	MemoPRSnapshotStore
 	MemoTidyStore
 }
 
@@ -182,6 +183,7 @@ type MemoTxOps interface {
 	MemoDeliveryTxOps
 	MemoTidyTxOps
 	MemoWaitOps
+	MemoPRWakeTxOps
 }
 
 // MemoWaitOps are the reads behind "may this queue fire now", the ones the dispatcher makes

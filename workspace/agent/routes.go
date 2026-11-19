@@ -266,6 +266,9 @@ func buildMux() *http.ServeMux {
 	// A queue's tidy run (ADR 0137 §8): the one deny-all model call over the pending notes. The
 	// Control Plane's dispatcher calls it directly; no browser relay exists for it.
 	mux.HandleFunc("POST /memos/tidy", memotidy.HandleTidy)
+	// A queue delivery's PR snapshot (ADR 0137, addendum 2026-11-19, part A step 2): the dispatcher
+	// asks it, after the delivery closed, before it fires a message that waits for that delivery.
+	mux.HandleFunc("POST /memos/pr-snapshot", sessionx.HandleQueuePRSnapshot)
 	mux.HandleFunc("GET /sessions/{name}/status", sessionx.HandleSessionStatus)
 	mux.HandleFunc("GET /sessions/{name}/output", sessionx.HandleSessionOutput)
 	mux.HandleFunc("GET /sessions/{name}/ssm-login", sessionx.HandleSSMLoginStatus)

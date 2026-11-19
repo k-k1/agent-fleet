@@ -224,6 +224,10 @@ const AFTER_REASONS = [
   "bad_first_turn",
   "overdue",
   "no_first_turn",
+  "pr",
+  "pr_closed",
+  "no_pr",
+  "session_gone",
 ] as const;
 
 /** The words for how a note another waits for stands. A reason this Console does not know (a newer
@@ -232,6 +236,26 @@ export function afterItemWords(it: Pick<MemoAfterItem, "state" | "reason">): Msg
   if (it.state === "satisfied") return "memo.after_r_done";
   if (it.reason && (AFTER_REASONS as readonly string[]).includes(it.reason)) return `memo.after_r_${it.reason}` as MsgKey;
   return it.state === "failed" ? "memo.after_r_failed" : "memo.after_r_waiting";
+}
+
+/** The PR number of a key "owner/repo#N", with its # ("#N"), else the key. */
+const prNumberOf = (key: string) => {
+  const i = key.lastIndexOf("#");
+  return i >= 0 ? key.slice(i) : key;
+};
+
+/** The words for how a note another waits for stands, with the PRs it waits for when its run's PRs
+ *  are not all merged yet ("waiting for PR #12 to merge"). */
+export function afterItemMessage(it: Pick<MemoAfterItem, "state" | "reason" | "prs">): { key: MsgKey; params?: Record<string, string | number> } {
+  if (it.state === "waiting" && it.reason === "pr") {
+    const open = (it.prs ?? []).filter((p) => p.state !== "merged");
+    if (open.length > 0) return { key: "memo.after_r_pr_merge", params: { prs: open.map((p) => prNumberOf(p.key)).join(", ") } };
+  }
+  if (it.state === "failed" && it.reason === "pr_closed") {
+    const closed = (it.prs ?? []).filter((p) => p.state === "closed");
+    if (closed.length > 0) return { key: "memo.after_r_pr_closed_named", params: { prs: closed.map((p) => prNumberOf(p.key)).join(", ") } };
+  }
+  return { key: afterItemWords(it) };
 }
 
 /** A short name for a note: its work-item key, else the first line of its text. */

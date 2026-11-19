@@ -125,6 +125,43 @@ type fakeQueueAgent struct {
 	tidyTypes []string
 	tidyReply func(req map[string]any) (int, any)
 	tidyDelay time.Duration
+	// prs makes GET /sessions send the envelope's queuePRs marker, and makes the Agent answer POST
+	// /memos/pr-snapshot (an Agent of the addendum's step 2). prCalls is every body; prReply
+	// answers one (nil: 503 unanswered). Without prs the route is absent, as on an older Agent.
+	prs     bool
+	prCalls []memoPRSnapshotRequest
+	prReply func(req memoPRSnapshotRequest) (int, any)
+}
+
+// setPRs makes the Agent have the PR snapshot route, answering each read with reply.
+func (a *fakeQueueAgent) setPRs(on bool, reply func(req memoPRSnapshotRequest) (int, any)) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.prs, a.prReply = on, reply
+}
+
+// prCallsSoFar is a copy of the PR snapshot reads answered or begun.
+func (a *fakeQueueAgent) prCallsSoFar() []memoPRSnapshotRequest {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]memoPRSnapshotRequest(nil), a.prCalls...)
+}
+
+// servePRSnapshot answers POST /memos/pr-snapshot with the route's mark, as the Agent's
+// HandleQueuePRSnapshot does on every answer. The caller holds a.mu.
+func (a *fakeQueueAgent) servePRSnapshot(w http.ResponseWriter, r *http.Request) {
+	var req memoPRSnapshotRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	a.prCalls = append(a.prCalls, req)
+	w.Header().Set(agentPRSnapshotHeader, "1")
+	if a.prReply == nil {
+		agentErr(w, http.StatusServiceUnavailable, "pr_snapshot_unanswered")
+		return
+	}
+	status, body := a.prReply(req)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // setTidy makes the list answers carry the queueTidy marker, or not.
@@ -331,6 +368,9 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		if a.tidy {
 			env["queueTidy"] = 1
 		}
+		if a.prs {
+			env["queuePRs"] = 1
+		}
 		if a.actMark != 0 {
 			env["actMark"] = a.actMark
 			if a.actIncarnation != "" {
@@ -388,6 +428,8 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	case r.Method == "POST" && path == "/memos/tidy":
 		a.serveTidy(w, r)
+	case r.Method == "POST" && path == "/memos/pr-snapshot" && a.prs:
+		a.servePRSnapshot(w, r)
 	case r.Method == "POST" && path == "/sessions":
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)

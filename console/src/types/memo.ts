@@ -81,6 +81,18 @@ export interface MemoAfterItem {
   label?: string;
   state: "satisfied" | "waiting" | "failed";
   reason?: string;
+  /** The PRs of its run, as last read from the workspace, for reason "pr" (waiting for them to
+   *  merge) and "pr_closed". Absent while none was read. */
+  prs?: MemoAfterPR[];
+}
+
+/** One PR of a run a note waits for. key is "owner/repo#N"; state is open, draft, merged, closed,
+ *  or "" when the provider could not show it. */
+export interface MemoAfterPR {
+  provider: string;
+  key: string;
+  state: string;
+  url?: string;
 }
 
 /** A message's state in a queue; "" is a note outside any queue. */

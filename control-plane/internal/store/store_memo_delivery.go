@@ -97,6 +97,11 @@ type MemoDelivery struct {
 	// the two fields beside it are written once.
 	TurnOutcome, TurnEndedAt string
 	TurnMs                   int64
+	// The PR snapshot of the delivery's session (ADR 0137, addendum 2026-11-19, part A, step 2):
+	// PRSnapshot is the JSON array of its PRs and their states, PRState what they sum up to (the
+	// PRState* values, "" until a read answered). PRReadAt is the last read that answered,
+	// PRTriedAt the last read begun, PRChangedAt when the snapshot last changed.
+	PRSnapshot, PRState, PRReadAt, PRTriedAt, PRChangedAt string
 }
 
 // What holds an open delivery (memo_delivery.held_by).
@@ -242,7 +247,8 @@ type MemoDeliveryTxOps interface {
 const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, session, message_ids, idle_ticks,
 	created_at, sent_at, opened_at, closed_at, updated_at,
 	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at, retire_result,
-	turn_outcome, turn_ms, turn_ended_at, auto, limit_kinds, drain, act_mark, retire_act_mark, retire_gen, act_incarnation, retire_act_incarnation, held_detail FROM memo_delivery`
+	turn_outcome, turn_ms, turn_ended_at, auto, limit_kinds, drain, act_mark, retire_act_mark, retire_gen, act_incarnation, retire_act_incarnation, held_detail,
+	pr_snapshot, pr_state, pr_read_at, pr_tried_at, pr_changed_at FROM memo_delivery`
 
 func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	var d MemoDelivery
@@ -251,7 +257,8 @@ func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	err := row.Scan(&d.ID, &d.MembershipID, &d.QueueID, &d.State, &d.Outcome, &d.Session, &ids, &d.IdleTicks,
 		&d.CreatedAt, &d.SentAt, &d.OpenedAt, &d.ClosedAt, &d.UpdatedAt,
 		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt, &d.RetireResult,
-		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto, &d.LimitKinds, &drain, &d.ActMark, &d.RetireActMark, &d.RetireGen, &d.ActIncarnation, &d.RetireActIncarnation, &d.HeldDetail)
+		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto, &d.LimitKinds, &drain, &d.ActMark, &d.RetireActMark, &d.RetireGen, &d.ActIncarnation, &d.RetireActIncarnation, &d.HeldDetail,
+		&d.PRSnapshot, &d.PRState, &d.PRReadAt, &d.PRTriedAt, &d.PRChangedAt)
 	d.Reported, d.RetirePending, d.Auto, d.Drain = reported != 0, retire != 0, auto != 0, drain != 0
 	d.MessageIDs = []string{}
 	if err == nil && ids != "" {

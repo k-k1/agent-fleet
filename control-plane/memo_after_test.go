@@ -181,6 +181,27 @@ func (e *deliveryEnv) closeDeliveryAs(id, outcome, turn string, ms int64, closed
 	}
 }
 
+// closeWithPRs is closeDeliveryAs with a PR snapshot that sums up to prState.
+func (e *deliveryEnv) closeWithPRs(id, turn string, ms int64, closedAt time.Time, prState string) {
+	e.t.Helper()
+	e.closeDeliveryAs(id, store.DeliveryClean, turn, ms, closedAt)
+	e.setPRs(id, prState)
+}
+
+// setPRs writes a delivery's PR snapshot as a read of the Agent would leave it.
+func (e *deliveryEnv) setPRs(id, prState string) {
+	e.t.Helper()
+	snap := map[string]string{store.PRStateNone: "[]", store.PRStateGone: "",
+		store.PRStateMerged:  `[{"provider":"github","key":"o/r#7","state":"merged"}]`,
+		store.PRStateWaiting: `[{"provider":"github","key":"o/r#7","state":"open"}]`,
+		store.PRStateClosed:  `[{"provider":"github","key":"o/r#7","state":"closed"}]`}[prState]
+	at := store.DeliveryTS(time.Now())
+	if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET pr_state=?, pr_snapshot=?, pr_read_at=?, pr_changed_at=? WHERE id=?`,
+		prState, snap, at, at, id); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
 // statsOf is the dispatcher's SQL statistics and pendingOf for one queue.
 func (e *deliveryEnv) statsOf(queueID string) (sql, goSide store.QueuePending) {
 	e.t.Helper()
@@ -223,8 +244,17 @@ func TestMemoAfterSQLAgreesWithGo(t *testing.T) {
 				e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET state='open' WHERE id=?`, d.ID)
 				e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state='delivered', sent_at=? WHERE id=?`, store.NowTS(), p.ID)
 			}, false},
-			{"clean, clean turn", func(_ memoDTO, q string) { e.closeDeliveryAs(e.fired(q).ID, "clean", "clean", 5_000, now) }, true},
-			{"clean, quiet kind, long turn", func(_ memoDTO, q string) { e.closeDeliveryAs(e.fired(q).ID, "clean", "none", 120_000, now) }, true},
+			{"clean, clean turn, no PR", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "clean", 5_000, now, store.PRStateNone) }, true},
+			{"clean, clean turn, merged", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "clean", 5_000, now, store.PRStateMerged) }, true},
+			// Step 2: a snapshot not taken, a PR open, closed unmerged or a session gone.
+			{"clean, clean turn, no snapshot", func(_ memoDTO, q string) { e.closeDeliveryAs(e.fired(q).ID, "clean", "clean", 5_000, now) }, false},
+			{"clean, clean turn, PR open", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "clean", 5_000, now, store.PRStateWaiting) }, false},
+			{"clean, clean turn, PR closed", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "clean", 5_000, now, store.PRStateClosed) }, false},
+			{"clean, clean turn, session gone", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "clean", 5_000, now, store.PRStateGone) }, false},
+			// A first turn not recorded: only a merged PR shows a success.
+			{"clean, no turn, merged", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "", 0, now, store.PRStateMerged) }, true},
+			{"clean, no turn, no PR", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "", 0, now, store.PRStateNone) }, false},
+			{"clean, quiet kind, long turn", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "none", 120_000, now, store.PRStateNone) }, true},
 			{"clean, quiet kind, quick turn", func(_ memoDTO, q string) { e.closeDeliveryAs(e.fired(q).ID, "clean", "none", 30_000, now) }, false},
 			{"clean, failed turn", func(_ memoDTO, q string) { e.closeDeliveryAs(e.fired(q).ID, "clean", "turn-failed", 120_000, now) }, false},
 			// The duration alone never stands in for a first turn that was not recorded.
@@ -311,8 +341,15 @@ func TestMemoAfterDispatch(t *testing.T) {
 		if got := e.memoRow(b.ID); got.State != store.MemoStatePending {
 			t.Fatalf("b is %s while a's first turn is not collected", got.State)
 		}
-		// Once the first turn is recorded and good, b is claimed.
+		// Once the first turn is recorded and good, and the session's PRs read as merged, b is claimed.
 		e.closeDeliveryAs(da.ID, store.DeliveryClean, "clean", 90_000, time.Now())
+		if rec := e.fire(q); rec.Code != http.StatusConflict {
+			t.Fatalf("b fired before a's PRs were read: %d %s", rec.Code, rec.Body.String())
+		}
+		if st := e.listed(b.ID).AfterStatus; len(st) != 1 || st[0].Reason != memoafter.WhyPR {
+			t.Fatalf("after status %+v, want waiting for the PRs", st)
+		}
+		e.setPRs(da.ID, store.PRStateMerged)
 		if db := e.fired(q); !sameIDs(db.MessageIDs, b.ID) {
 			t.Fatalf("claimed %v, want b", db.MessageIDs)
 		}

@@ -479,15 +479,30 @@ Memos you accumulate and send to a session in one go (the tables are
   before the message in `(created_at, position, id)` and no cycle may form; anything else, a message outside a
   queue, and a move to another category while the list is not empty are `400 memo_after_invalid`. The list is part
   of `memoContentHash`, appended only when it is not empty, and of the release copy (`release_after_ids` under a
-  CHECK). *Satisfied* is step 1 only: `delivered` by a delivery (not by hand) closed `clean`, first turn recorded
-  and not bad, not retired as overdue. The dispatcher's `ListQueuePendingStats` counts `Eligible` beside `Count`
+  CHECK). *Satisfied* is `delivered` by a delivery (not by hand) closed `clean`, not retired as overdue, and
+  then either a first turn recorded and not bad with a PR snapshot of `none` or `merged`, or no first turn recorded
+  and a snapshot of `merged` (`store.AfterDeliverySatisfies`). The **PR snapshot** is kept on the delivery
+  (`pr_snapshot`, `pr_state` = `""`/`waiting`/`none`/`merged`/`closed`/`gone`, `pr_read_at`, `pr_tried_at`,
+  `pr_changed_at`, migration 0145 / pg 0130): the settle pass asks a running Agent that sends `queuePRs` with
+  `POST /memos/pr-snapshot` (`{session, since: closed_at}` the first time, then `{since, prs: [{provider,key}]}` by
+  number), at most every 10 minutes per delivery a pending message waits for (`ListPRSnapshotsDue`). The Agent
+  answers from the session's branch PR and its `started`/`created`/`working` PR links, from provider answers given
+  after `since` (`branchpr.Cache.FetchSince`); every answer carries `X-AF-PR-Snapshot: 1`. `[]` is "no PR"; an error,
+  a missing marker or an answer without the header decides nothing; `404 pr_snapshot_no_session` before any
+  snapshot is `gone`. `none`, `merged`, `closed` and `gone` are final, and a `none` or `gone` lands only on a delivery
+  with no answer yet. When every pending message of an open queue waits on snapshots alone, a slot is free and the
+  workspace is stopped, the dispatcher may wake it (`memo_pr_wake`, per member at most once an hour and 24 a day,
+  never for a snapshot unchanged for 24 hours, audit `workspace.queue_pr_wake`); those wakes are not deliveries, so
+  neither the day's fires nor `CountMemberWakesSince` see them. A snapshot unchanged for 24 hours while a message
+  waits for it is notified once (`memo-queue-pr-stale`). The dispatcher's `ListQueuePendingStats` counts `Eligible` beside `Count`
   with the same rule in SQL (`store.memoEligibleSQL`): `Eligible` opens a threshold and is what a claim takes,
   `Count` keeps a drain going. A blocked message holds no slot and is skipped by the claim, a press included. Each
   tick, a pending message whose prerequisite can no longer be satisfied (closed aborted, unknown or another non-clean
-  outcome, a bad first turn, an overdue retire, no first turn 24 hours after the close, `unconfirmed`, deleted,
+  outcome, a bad first turn, an overdue retire, a PR closed unmerged (`pr_closed`), the session gone before any
+  snapshot (`session_gone`), no first turn and no PR 24 hours after the close (`no_pr`), `unconfirmed`, deleted,
   moved, superseded, sent by hand) goes to `held` with `memo.held_reason` (`{"after","reason","at"}`, cleared by any
   write that leaves `held`); one blocked longer than `max_task_hours` since it became pending is notified once
-  (`memo-queue-blocked`). The list answers `afterStatus` (`[{id,label,state,reason}]`) on held and pending
+  (`memo-queue-blocked`). The list answers `afterStatus` (`[{id,label,state,reason,prs}]`, `prs` for reasons `pr` and `pr_closed`) on held and pending
   messages, and `heldReason`. The queue's `waiting` gains `prerequisites` (`detail.blocked`) and `below_threshold`
   gains `detail.blocked`. The sweep keeps a `delivered` message that a held or pending message of its queue names.
   A tidy run only keeps a message that has or is a prerequisite (`keep_only`).

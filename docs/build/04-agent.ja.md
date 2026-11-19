@@ -135,6 +135,16 @@ source_of_truth: "コード（本書は地図と設計意図）"
     （元のメモの数、1〜100）、元の `producer` / `producerOrigin` を持つ。参照・パス・添付の無いテキストのメモで、
     この 2 項目は他の provenance では断る。出所の行はこの項目だけから作る（「tidied by Agent Fleet from 3 notes
     your user added in the Console」）。本文は他の item と同じく引用されたデータのまま。
+  - **PR スナップショット**（ADR 0137 追記 2026-11-19 の A の段 2、`internal/sessionx/queue_pr_snapshot.go`）。
+    `GET /sessions` は `"queuePRs": 1` を載せる（`queuePRsVersion`、`>=` で読む）。`POST /memos/pr-snapshot`
+    （Agent token。Control Plane の中継なし）は初回は `{session, since}` を取り、セッションの作業コピーが今いる
+    ブランチと開始時のブランチの PR、および `started`・`created`・`working` で持つ PR リンクを返す。以後は
+    `{since, prs:[{provider,key}]}` を取り、それらの PR を番号で返す（セッションは要らない）。答えは
+    `200 {prs:[{provider,key,state,url}], readAt}` で、`[]` は PR なし。`since` より後に送った問い合わせへの
+    プロバイダの答えだけで作る（`branchpr.Cache.FetchSince`）。プロバイダが答えなかったキー、プロバイダのエラー、
+    名前を付けられない PR、meta・作業コピー・origin を読めないときは `503`（`pr_snapshot_unanswered` /
+    `pr_snapshot_unreadable`）、meta が無いときは `404 pr_snapshot_no_session`、不正な body は
+    `400 bad_pr_snapshot_request`。どの答えにも `X-AF-PR-Snapshot: 1` が付く。
   - `POST /sessions/{name}/retire` は、そのセッションと、それが始めた全セッション（深さを問わない。
     `origin == "session"` と `originSession` の連鎖で、`spendDescendants` と同じ辿り方）について、
     上のものを全部終わらせ、予約済みの再開を取り消し、halt する。答えは、セッションの一覧、それぞれで
