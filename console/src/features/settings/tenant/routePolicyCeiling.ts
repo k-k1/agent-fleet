@@ -45,9 +45,64 @@ function asciiHost(s: string): string | null {
   if (/^(0x[0-9a-f]*|\d+)$/.test(labels[labels.length - 1]) && h !== s) return null;
   for (const l of labels) {
     if (!/^[a-z0-9-]+$/.test(l) || l.startsWith("-") || l.endsWith("-")) return null;
-    if (l.slice(2, 4) === "--" && !l.startsWith("xn--")) return null;
+    if (l.slice(2, 4) === "--" && !(l.startsWith("xn--") && validPunycodeLabel(l))) return null;
   }
   return h;
+}
+
+// punycodeDecode is RFC 3492 decoding of the part after "xn--"; null when it is malformed.
+function punycodeDecode(input: string): string | null {
+  const base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700;
+  const out: number[] = [];
+  const d = input.lastIndexOf("-");
+  for (let j = 0; j < Math.max(d, 0); j++) {
+    const c = input.charCodeAt(j);
+    if (c >= 0x80) return null;
+    out.push(c);
+  }
+  let n = 128, bias = 72, i = 0;
+  for (let k = d > 0 ? d + 1 : 0; k < input.length; ) {
+    const oldi = i;
+    for (let w = 1, kk = base; ; kk += base) {
+      if (k >= input.length) return null;
+      const c = input.charCodeAt(k++);
+      const digit = c >= 48 && c <= 57 ? c - 22 : c >= 97 && c <= 122 ? c - 97 : base;
+      if (digit >= base) return null;
+      i += digit * w;
+      const t = kk <= bias ? tMin : kk >= bias + tMax ? tMax : kk - bias;
+      if (digit < t) break;
+      w *= base - t;
+      if (i > 0x7fffffff || w > 0x7fffffff) return null;
+    }
+    const len = out.length + 1;
+    let delta = oldi === 0 ? Math.floor((i - oldi) / damp) : Math.floor((i - oldi) / 2);
+    delta += Math.floor(delta / len);
+    let kk = 0;
+    while (delta > ((base - tMin) * tMax) >> 1) {
+      delta = Math.floor(delta / (base - tMin));
+      kk += base;
+    }
+    bias = kk + Math.floor(((base - tMin + 1) * delta) / (delta + skew));
+    n += Math.floor(i / len);
+    i %= len;
+    if (n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff)) return null;
+    out.splice(i++, 0, n);
+  }
+  return String.fromCodePoint(...out);
+}
+
+// validPunycodeLabel: an "xn--" label the CP's idna.Lookup would accept. Chromium's URL parser
+// passes "xn--a" through unchanged where Node's refuses it, so the label is decoded here and
+// must re-encode, through the URL parser, to exactly itself (no non-minimal form, no invalid
+// character, the same answer in every engine).
+function validPunycodeLabel(l: string): boolean {
+  const u = punycodeDecode(l.slice(4));
+  if (u === null || u === "" || /^[\x00-\x7f]*$/.test(u) || u.startsWith("-") || u.endsWith("-")) return false;
+  try {
+    return new URL(`http://${u}.invalid/`).hostname === `${l}.invalid`;
+  } catch {
+    return false;
+  }
 }
 
 // normPattern is the CP's canonical spelling of one pattern, or null when it might refuse it.
@@ -56,10 +111,24 @@ function normPattern(raw: string): string | null {
   const wild = s.startsWith("*.");
   if (wild) s = s.slice(2);
   if (s.startsWith("[") && s.endsWith("]")) s = s.slice(1, -1);
-  // An IP literal stays as typed (the CP's canonical text is the same for what an administrator
-  // types); a wildcard over one is refused by the CP.
-  if (s.includes(":") || /^\d+\.\d+\.\d+\.\d+$/.test(s)) return wild ? null : s;
-  s = s.replace(/\.$/, "");
+  // A colon makes it an IPv6 literal, and nothing else: it must parse as one. A wildcard over an
+  // IP is refused by the CP, and so is a scheme, port, path or userinfo (the CP's host check).
+  if (s.includes(":")) {
+    if (wild || /[\s/@?#[\]%*\\]/.test(s)) return null;
+    try {
+      const h = new URL(`http://[${s}]/`).hostname;
+      return h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : null;
+    } catch {
+      return null;
+    }
+  }
+  const dotted = /^\d+\.\d+\.\d+\.\d+$/;
+  // An IPv4 address stays as typed; with a trailing dot the CP no longer reads it as one and refuses it.
+  if (dotted.test(s)) return wild ? null : s;
+  if (s.endsWith(".")) {
+    s = s.slice(0, -1);
+    if (dotted.test(s)) return null;
+  }
   const h = asciiHost(s);
   return h === null ? null : (wild ? "*." : "") + h;
 }

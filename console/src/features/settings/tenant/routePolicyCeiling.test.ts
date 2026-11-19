@@ -130,8 +130,9 @@ describe("endpoint patterns with internationalised host names", () => {
     ["bücher.example", "bucher.example", false],
     ["*.corp.example", "x.bücher.example", false],
     // What the CP refuses is never read as covered: a bad label, a port, an empty label, a bare
-    // wildcard, a non-canonical IPv4, a wildcard over an IP. (An empty label the CP lets through;
-    // the Console answers "exceeds" for it, the safe side.)
+    // wildcard, a non-canonical IPv4, a wildcard over an IP, a scheme or userinfo. (An empty label
+    // and "*.0.0.5" the CP lets through as host names; the Console answers "exceeds" for them,
+    // the safe side.)
     ["*.corp.example", "a_b.corp.example", false],
     ["*.corp.example", "-a.corp.example", false],
     ["*.corp.example", "ab--c.corp.example", false],
@@ -144,6 +145,17 @@ describe("endpoint patterns with internationalised host names", () => {
     ["*.10.0.0.5", "*.10.0.0.5", false],
     ["[2001:db8::1]", "2001:DB8::1", true],
     ["*.corp.example", "xn--a.corp.example", false],
+    ["*.corp.example", "xn--0.corp.example", false],
+    ["*.corp.example", "xn---a.corp.example", false],
+    ["*.corp.example", "xn--invalid-punycode-zzzzzzzzz.corp.example", false],
+    ["*.corp.example", "xn--bcher-kva.corp.example", true],
+    ["*.corp.example", "http://a.corp.example", false],
+    ["*.corp.example", "https://evil.com/a.corp.example", false],
+    ["*.corp.example", "user:pass@a.corp.example", false],
+    ["*.corp.example", "a:b.corp.example", false],
+    ["10.0.0.5", "10.0.0.5.", false],
+    ["[2001:db8::1]", "2001:0db8::1", true],
+    ["[2001:db8::1]", "[2001:db8::2]", false],
   ] as const)("ceiling %s, pattern %s: covered %s", (outer, inner, want) => {
     expect(covered(outer, inner)).toBe(want);
   });
