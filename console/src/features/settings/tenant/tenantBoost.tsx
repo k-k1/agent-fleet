@@ -80,15 +80,18 @@ export function TenantBoostView({ slug }: { slug: string }) {
         <>
           <div className="le-presets">
             <span className="admin-hint">{tr("tenant.boost_max")}</span>
-            <button className={view.max_mem_mib === 0 ? "chip on" : "chip"} disabled={busy} onClick={() => save({ max_mem_mib: 0 })}>
+            <button className={view.max_mem_mib === 0 ? "chip on" : "chip"} aria-pressed={view.max_mem_mib === 0} disabled={busy} onClick={() => save({ max_mem_mib: 0 })}>
               {tr("tenant.boost_max_top")}
             </button>
             {rungs.map((r) => (
-              <button key={r} className={view.max_mem_mib === r ? "chip on" : "chip"} disabled={busy} onClick={() => save({ max_mem_mib: r })}>
+              <button key={r} className={view.max_mem_mib === r ? "chip on" : "chip"} aria-pressed={view.max_mem_mib === r} disabled={busy} onClick={() => save({ max_mem_mib: r })}>
                 {fmtGbHint(r)}
               </button>
             ))}
           </div>
+          <p className="admin-hint boost-current">
+            {tr("tenant.boost_current", { size: view.max_mem_mib === 0 ? tr("tenant.boost_max_top") : fmtGbHint(view.max_mem_mib) })}
+          </p>
           <label className="admin-field">
             <span className="admin-hint">{tr("tenant.boost_hours")}</span>
             <input

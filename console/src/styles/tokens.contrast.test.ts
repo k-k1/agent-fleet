@@ -108,3 +108,27 @@ describe("text contrast tokens", () => {
     }
   });
 });
+
+// The activity bar badge paints --on-accent / --on-warn over --accent / --warn. The light theme's
+// fills are dark, so a fixed dark text colour there reads as a smudge.
+describe("activity bar badge text", () => {
+  for (const theme of THEMES) {
+    for (const [on, fill] of [["--on-accent", "--accent"], ["--on-warn", "--warn"]] as const) {
+      it(`${theme}: ${on} on ${fill} clears 4.5:1`, () => {
+        const base = baseBlock(theme);
+        const pick = (n: string) => decl(base.body, n)!;
+        expect(ratio(pick(on), pick(fill))).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+  }
+});
+
+// The pair test above proves the tokens; this proves the badge actually uses them.
+describe("activity bar badge wiring", () => {
+  const appCss = readFileSync(path.resolve(__dirname, "../app/app.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = (sel: string) => appCss.match(new RegExp(`${sel.replace(/[.]/g, "\\.")}\\s*\\{([^}]*)\\}`))![1];
+  it("base badge text is --on-accent, tone-waiting text is --on-warn", () => {
+    expect(rule(".actbar-badge")).toMatch(/color:\s*var\(--on-accent\)/);
+    expect(rule(".actbar-badge.tone-waiting")).toMatch(/color:\s*var\(--on-warn\)/);
+  });
+});
