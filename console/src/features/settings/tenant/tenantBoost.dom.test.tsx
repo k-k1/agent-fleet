@@ -71,6 +71,35 @@ describe("TenantBoostView", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/boost", "PUT", { enabled: true, max_mem_mib: 16384, monthly_hours: 20 });
   });
 
+  // Selected = highlighted (`.on`) AND exposed (`aria-pressed`): the two are separate expressions, so
+  // each is asserted on its own.
+  const selected = (h: HTMLElement) => ({
+    on: [...h.querySelectorAll("button.chip.on")].map((b) => b.textContent),
+    pressed: [...h.querySelectorAll("button.chip")].filter((b) => b.getAttribute("aria-pressed") === "true").map((b) => b.textContent),
+  });
+
+  it("shows which size is currently set, in text, highlight and aria-pressed", async () => {
+    const h = await mount(policy({ max_mem_mib: 16384 }));
+    expect(h.querySelector(".boost-current")?.textContent).toContain("16 GiB");
+    const sel = selected(h);
+    expect(sel.on).toEqual([expect.stringContaining("16 GiB")]);
+    expect(sel.pressed).toEqual(sel.on);
+  });
+
+  it("marks the class-top chip when no cap is set", async () => {
+    const h = await mount(policy({ max_mem_mib: 0 }));
+    expect(h.querySelector(".boost-current")?.textContent).toContain("クラスの最上位");
+    const sel = selected(h);
+    expect(sel.on).toEqual(["クラスの最上位"]);
+    expect(sel.pressed).toEqual(sel.on);
+  });
+
+  it("states the saved value even when it is no longer a declared rung", async () => {
+    const h = await mount(policy({ max_mem_mib: 32768 }));
+    expect(h.querySelector(".boost-current")?.textContent).toContain("32 GiB");
+    expect(selected(h)).toEqual({ on: [], pressed: [] });
+  });
+
   it("hides the bounds while boost is off", async () => {
     const h = await mount(policy({ enabled: false }));
     expect(h.querySelectorAll("button.chip").length).toBe(0);
