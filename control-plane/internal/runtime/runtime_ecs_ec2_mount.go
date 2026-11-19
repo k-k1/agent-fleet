@@ -2,12 +2,15 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
@@ -28,19 +31,122 @@ func (e *ecsEC2Runtime) homeMountPoint() string {
 // would either wait out af-mount's device search and fail, or — had the release not yet
 // detached — mount a filesystem the release is about to pull (see homeMountLocks).
 func (e *ecsEC2Runtime) mountHome(ctx context.Context, p ec2Placement) error {
+	// The wait is outside the lock on purpose: a Stop's release needs homeLockMount to
+	// unmount and detach, and must not queue behind a slow attach. mountHomeLocked
+	// re-checks that the home is still on the slot once the lock is held.
+	if err := e.waitHomeAttached(ctx, p); err != nil {
+		return err
+	}
+	var err error
+	for attempt := 0; ; attempt++ {
+		err = e.mountHomeOnce(ctx, p)
+		// The attachment read `attached` but the guest has not enumerated the device yet
+		// (af-mount gave up after 30s): not a broken slot until it has happened a few
+		// times in a row. The lock is dropped between attempts.
+		if !errors.Is(err, errDeviceNotFound) || attempt >= homeDeviceRetries {
+			return err
+		}
+		log.Printf("ecs-ec2: %s: device for %s not visible on %s yet, retrying the mount", e.base.name, p.volumeID, p.instanceID)
+		if serr := e.sleep(ctx, homeAttachPoll); serr != nil {
+			return serr
+		}
+	}
+}
+
+func (e *ecsEC2Runtime) mountHomeOnce(ctx context.Context, p ec2Placement) error {
 	lctx, unlock, err := e.lockHome(ctx, homeLockMount)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	return homeGuardOf(lctx).outcome(e.mountHomeLocked(lctx, p))
+	err = e.mountHomeLocked(lctx, p)
+	if err != nil && strings.Contains(err.Error(), "device for "+p.volumeID+" not found") {
+		err = fmt.Errorf("%w: %w", errDeviceNotFound, err)
+	}
+	return homeGuardOf(lctx).outcome(err)
 }
 
 func (e *ecsEC2Runtime) mountHomeLocked(ctx context.Context, p ec2Placement) error {
 	if !e.homeStillOn(ctx, p) {
 		return fmt.Errorf("%s on %s: %w", p.volumeID, p.instanceID, errHomeLeftSlot)
 	}
+	// No attachment wait here: release.go re-mounts a home that was already attached and
+	// mounted, and the wait belongs outside the lock (see mountHome).
 	return e.runOnSlot(ctx, p.instanceID, homeMountCommand(p.volumeID, e.homeMountPoint(), slotMountInfo, slotSysBlock))
+}
+
+// homeAttachBudget bounds how long a mount waits for the home's attachment to leave
+// `attaching`. AttachVolume answers while the attachment is still `attaching`, and the
+// guest only sees the NVMe device once it is `attached`; af-mount itself gives up after
+// 30s, so sending it early turns a slow attach into a quarantined healthy slot. A
+// var only so a test can shorten it.
+var homeAttachBudget = 3 * time.Minute
+
+const (
+	homeAttachPoll = 2 * time.Second
+	// homeDeviceRetries is how many more times a mount is sent after af-mount reports the
+	// device missing although the attachment is `attached`.
+	homeDeviceRetries = 2
+)
+
+// errHomeAttachUnknown is a wait that ran out while DescribeVolumes could not be read: no
+// evidence about the slot, so the caller must not quarantine for it.
+var errHomeAttachUnknown = errors.New("the home's attachment state could not be read")
+
+// errDeviceNotFound marks af-mount's "device for vol-... not found".
+var errDeviceNotFound = errors.New("af-mount did not find the home's device")
+
+// waitHomeAttached returns once the home's attachment to p.instanceID reads `attached`.
+// It ends with the Start's context (that error is returned as is), and with
+// homeAttachBudget. Still `attaching` at the end is a broken slot and a plain error (the
+// caller quarantines); an unreadable API at the end is errHomeAttachUnknown (it does not).
+// A read error is retried like `attaching`, backing off, because a slow EBS is when
+// DescribeVolumes throttles. A missing volume or attachment is errHomeLeftSlot.
+func (e *ecsEC2Runtime) waitHomeAttached(ctx context.Context, p ec2Placement) error {
+	var elapsed time.Duration
+	readErrs := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		delay := homeAttachPoll
+		out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{p.volumeID}})
+		unreadable := err != nil
+		if unreadable {
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			readErrs++
+			delay = homeAttachPoll << min(readErrs, 3)
+		} else {
+			readErrs = 0
+			if len(out.Volumes) == 0 {
+				return fmt.Errorf("%s on %s: %w", p.volumeID, p.instanceID, errHomeLeftSlot)
+			}
+			state, found := ec2types.VolumeAttachmentState(""), false
+			for _, a := range out.Volumes[0].Attachments {
+				if aws.ToString(a.InstanceId) == p.instanceID {
+					state, found = a.State, true
+				}
+			}
+			switch {
+			case !found || state == ec2types.VolumeAttachmentStateDetaching || state == ec2types.VolumeAttachmentStateDetached:
+				return fmt.Errorf("%s on %s: %w", p.volumeID, p.instanceID, errHomeLeftSlot)
+			case state != ec2types.VolumeAttachmentStateAttaching:
+				return nil
+			}
+		}
+		if elapsed >= homeAttachBudget {
+			if unreadable {
+				return fmt.Errorf("%s on %s: %w: %v", p.volumeID, p.instanceID, errHomeAttachUnknown, err)
+			}
+			return fmt.Errorf("volume %s still attaching to %s after %s", p.volumeID, p.instanceID, homeAttachBudget)
+		}
+		if err := e.sleep(ctx, delay); err != nil {
+			return err
+		}
+		elapsed += delay
+	}
 }
 
 // umountHome succeeds only when nothing is left mounted at the home's mountpoint

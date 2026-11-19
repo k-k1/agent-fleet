@@ -836,6 +836,8 @@ type fakeSSMCmd struct {
 	commands []string
 	scripts  []string
 	fail     map[string]bool // substring of the command -> fail it
+	// statusErr, when set, is the stderr a failed command reports instead of "boom".
+	statusErr string
 	// sink shares the EC2 fake's call log so a test can assert the ORDER of an SSM
 	// command against an EC2 call — "umount before detach" spans both.
 	sink *fakeEC2
@@ -998,7 +1000,11 @@ func (f *fakeSSMCmd) GetCommandInvocation(_ context.Context, in *ssm.GetCommandI
 	}
 	for sub := range f.fail {
 		if strings.Contains(cmd, sub) {
-			return &ssm.GetCommandInvocationOutput{Status: "Failed", StandardErrorContent: aws.String("boom")}, nil
+			msg := "boom"
+			if f.statusErr != "" {
+				msg = f.statusErr
+			}
+			return &ssm.GetCommandInvocationOutput{Status: "Failed", StandardErrorContent: aws.String(msg)}, nil
 		}
 	}
 	return &ssm.GetCommandInvocationOutput{Status: "Success"}, nil
