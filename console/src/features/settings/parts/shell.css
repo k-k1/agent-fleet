@@ -875,7 +875,7 @@
 .machine-picker .le-presets .chip.on {
   border-color: var(--accent);
   background: var(--accent);
-  color: var(--accent-fg, #fff);
+  color: var(--on-accent);
 }
 
 /* The one-line spec under each machine chip: what the class actually buys. Monospace
