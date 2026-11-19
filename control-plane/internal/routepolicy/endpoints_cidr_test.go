@@ -196,3 +196,71 @@ func TestCIDRRuleNormalizeAndCeiling(t *testing.T) {
 		}
 	}
 }
+
+// An exact IP that is a metadata or link-local address is refused in every spelling the
+// normaliser reads as an IP; a numeric host name that a resolver would read as IPv4 is refused
+// too. Loopback and private addresses stay approvable.
+func TestExactIPRefusals(t *testing.T) {
+	for in, why := range map[string]string{
+		"169.254.169.254":        "link-local",
+		"169.254.170.2":          "link-local",
+		"169.254.0.1":            "link-local",
+		"::ffff:169.254.169.254": "link-local",
+		"[::ffff:a9fe:a9fe]":     "link-local",
+		"fe80::1":                "link-local",
+		"FE80::ABCD":             "link-local",
+		"febf::1":                "link-local",
+		"100.100.100.200":        "metadata",
+		"::ffff:100.100.100.200": "metadata",
+		"fd00:ec2::254":          "metadata",
+		"FD00:EC2:0:0:0:0:0:254": "metadata",
+		"fd00:ec2::23":           "metadata",
+		"fd20:ce::254":           "metadata",
+		"[fd20:ce::254]":         "metadata",
+		"2852039166":             "ambiguous",
+		"0xa9fea9fe":             "ambiguous",
+		"0xa9.254.169.254":       "ambiguous",
+		"169.254.169.254.":       "",
+		"0251.0376.0251.0376":    "ambiguous",
+		"*.0.0.5":                "ambiguous",
+		"fe80::1%eth0":           "",
+	} {
+		got, err := NormalizePattern(in, false)
+		if err == nil || (why != "" && !strings.Contains(err.Error(), why)) {
+			t.Errorf("NormalizePattern(%q) = %q, %v; want a refusal saying %q", in, got, err, why)
+		}
+		if _, err := NormalizePattern(in, true); err == nil {
+			t.Errorf("exact NormalizePattern(%q) accepted", in)
+		}
+	}
+	for _, in := range []string{"127.0.0.1", "::1", "10.20.5.7", "192.168.1.5", "fd12:3456::5", "169.253.1.1", "fec0::1", "gpu1", "llm.corp.example", "a1.lab"} {
+		if _, err := NormalizePattern(in, false); err != nil {
+			t.Errorf("NormalizePattern(%q): %v", in, err)
+		}
+	}
+	for _, bad := range []string{"endpoints=169.254.169.254", "endpoints=10.0.0.0/8,fd20:ce::254"} {
+		if _, err := ParseCeiling(bad); err == nil {
+			t.Errorf("%q started", bad)
+		}
+	}
+	// A stored host that predates the refusal is never approved, whatever the layers above say, and
+	// is named so a screen can show it.
+	l := Layers{Tenant: Rule{Endpoints: list("169.254.169.254", "127.0.0.1")}}
+	if got := l.ApprovedEndpoints(); !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Errorf("approved = %v", got)
+	}
+	if by := l.EndpointExcludedBy("169.254.169.254"); !slices.Equal(by, []string{ExcludedAddress}) {
+		t.Errorf("excluded by %v", by)
+	}
+	// Loopback is held by the layers above like any host: a ceiling that narrows endpoints without
+	// listing it keeps a tenant from approving it.
+	l = Layers{Ceiling: Rule{Destinations: list(SelfHosted), Endpoints: list("10.0.0.0/8", "llm.corp.example")},
+		Tenant: Rule{Endpoints: list("127.0.0.1", "::1")}}
+	if got := l.ApprovedEndpoints(); len(got) != 0 {
+		t.Errorf("loopback approved under a ceiling that does not list it: %v", got)
+	}
+	l.Ceiling.Endpoints = list("127.0.0.1")
+	if got := l.ApprovedEndpoints(); !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Errorf("loopback the ceiling lists: %v", got)
+	}
+}

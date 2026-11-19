@@ -3,6 +3,7 @@ package routepolicy
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 )
 
@@ -24,6 +25,35 @@ var metadataAddrs = []netip.Addr{
 	netip.MustParseAddr("fd00:ec2::254"),   // AWS, IPv6
 	netip.MustParseAddr("fd00:ec2::23"),    // AWS EKS Pod Identity Agent, IPv6
 	netip.MustParseAddr("fd20:ce::254"),    // GCP Compute Engine metadata server, IPv6
+}
+
+// refusedAddr says why an exact IP can never be an approved endpoint, "" when it can: an
+// instance-metadata address, or a link-local one (169.254.0.0/16 holds the common metadata and
+// task-credential endpoints, fe80::/10 the IPv6 equivalent). Loopback is deliberately not here: a
+// member's own llama.cpp is what an approval exists for, and it is approvable only where no layer
+// above narrows endpoints without listing it (passes). An IPv4-mapped address is judged as its
+// IPv4 address.
+func refusedAddr(a netip.Addr) string {
+	a = a.Unmap()
+	if a.Is4() && a.As4()[0] == 169 && a.As4()[1] == 254 || a.Is6() && a.IsLinkLocalUnicast() {
+		return "a link-local address"
+	}
+	if slices.Contains(metadataAddrs, a) {
+		return "an instance-metadata address"
+	}
+	return ""
+}
+
+// numericLastLabel reports whether a host name ends in an all-digit or 0x-hex label. No top-level
+// domain looks like that, and resolvers read such a name ("2852039166", "0xa9.254.169.254") as an
+// IPv4 address in a spelling the canonical-IP check does not see.
+func numericLastLabel(h string) bool {
+	l := h[strings.LastIndex(h, ".")+1:]
+	if rest, ok := strings.CutPrefix(l, "0x"); ok {
+		l = rest
+		return l == "" || strings.Trim(l, "0123456789abcdef") == ""
+	}
+	return l != "" && strings.Trim(l, "0123456789") == ""
 }
 
 func mustPrefixes(s ...string) []netip.Prefix {

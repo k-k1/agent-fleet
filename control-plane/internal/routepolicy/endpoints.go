@@ -32,6 +32,9 @@ const (
 	ClassSelfHosted = "self-hosted"
 )
 
+// ExcludedAddress names, in EndpointExcludedBy, an IP that cannot be approved at all (refusedAddr).
+const ExcludedAddress = "address"
+
 // NormalizePattern checks one host pattern and returns its canonical spelling: lowercase, without
 // a trailing dot, an internationalised name in its ASCII (punycode) form, an IP address in its
 // canonical text, a CIDR range masked. exact refuses a wildcard or a range (the tenant rule
@@ -77,7 +80,13 @@ func NormalizePattern(s string, exact bool) (string, error) {
 		if wild {
 			return "", fmt.Errorf("%q: a wildcard over an IP address", s)
 		}
+		if why := refusedAddr(netip.MustParseAddr(h)); why != "" {
+			return "", fmt.Errorf("%q is %s, which cannot be approved", s, why)
+		}
 		return h, nil
+	}
+	if numericLastLabel(h) {
+		return "", fmt.Errorf("%q: a numeric host other than a dotted IPv4 address or an IPv6 address is ambiguous", s)
 	}
 	if publicSuffix(h) {
 		return "", fmt.Errorf("%q is on the public suffix %q, whose names belong to unrelated owners", s, h)
@@ -241,6 +250,10 @@ func (r Rule) allowsSelfHosted(routeID string) bool {
 // the layers above let it through.
 func (l Layers) EndpointExcludedBy(host string) []string {
 	var out []string
+	// A stored host that is no longer approvable (it predates the refusal) stays visible, named.
+	if a, err := netip.ParseAddr(host); err == nil && refusedAddr(a) != "" {
+		out = append(out, ExcludedAddress)
+	}
 	if vendorOf(host) != "" {
 		out = append(out, "vendor")
 	}

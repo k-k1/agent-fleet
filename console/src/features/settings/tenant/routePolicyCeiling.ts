@@ -120,14 +120,20 @@ function normPattern(raw: string): string | null {
     if (wild || /[\s/@?#[\]%*\\]/.test(s)) return null;
     try {
       const h = new URL(`http://[${s}]/`).hostname;
-      return h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : null;
+      if (!h.startsWith("[") || !h.endsWith("]")) return null;
+      // An IPv4-mapped address reads as null here (the CP judges it as its IPv4 address): "exceeds".
+      const ip = parseIp(h.slice(1, -1));
+      return ip === null || refusedIp(ip) ? null : h.slice(1, -1);
     } catch {
       return null;
     }
   }
   const dotted = /^\d+\.\d+\.\d+\.\d+$/;
   // An IPv4 address stays as typed; with a trailing dot the CP no longer reads it as one and refuses it.
-  if (dotted.test(s)) return wild ? null : s;
+  if (dotted.test(s)) {
+    const ip = parseIp(s);
+    return wild || ip === null || refusedIp(ip) ? null : s;
+  }
   if (s.endsWith(".")) {
     s = s.slice(0, -1);
     if (dotted.test(s)) return null;
@@ -182,6 +188,16 @@ function parseIp(s: string): { v: 4 | 6; n: bigint } | null {
     n = (n << 8n) | BigInt(o);
   }
   return { v: 4, n };
+}
+
+// refusedIp mirrors routepolicy refusedAddr: link-local and instance-metadata addresses are never
+// an approvable exact host.
+function refusedIp(ip: { v: 4 | 6; n: bigint }): boolean {
+  if (ip.v === 4 ? ip.n >> 16n === 0xa9fen : ip.n >> 118n === 0x3fan) return true; // 169.254/16, fe80::/10
+  return METADATA.some((m) => {
+    const a = parseIp(m)!;
+    return a.v === ip.v && a.n === ip.n;
+  });
 }
 
 const width = (v: 4 | 6) => (v === 4 ? 32 : 128);
