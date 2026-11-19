@@ -795,3 +795,90 @@ preview and a held note stays held. A change since the preview is a 409 `memo_ti
 by the daily cap and no longer uses up the automatic run's 10: the cap bounds model calls and this path makes none. The
 selection that cannot be operated on (several categories, an ordinary category) keeps the one-by-one rewrite by `PATCH`.
 The route and its codes are in docs/build/03-control-plane.md.
+
+Added 2026-11-19 (#4540, #4541, the owner's decision; nothing is built; every `file:line` was read on `4533b623f`):
+**dependencies between messages, and a run that hands its message back.**
+
+*Why.* A queue fires its oldest `pending` messages while slots are free (`memoReserveAndClaim`,
+`control-plane/memo_delivery.go:261`), so the order of enqueueing is a priority and not an ordering. In the first
+unattended round five issues were queued in dependency order, with the dependency written in the text ("do after #4533
+is merged"). The two dependents started while their prerequisites' PRs were still open, found them unmerged, and
+ended without doing anything. Each run closed as clean, its message stayed `delivered`, and nothing would have started
+it again: the work was lost from the queue until a person prompted each session by hand. A prerequisite's run that
+closes has not necessarily merged its PR either: a run may leave the PR ready for a person to check live, and the
+issue may stay open because the PR says `Refs`. Waiting inside the dependent's run (what the implementer's skill does
+until this is built) works, but holds a slot and a session for hours, and depends on #4532.
+
+**A. Dependencies (#4540).** §1 gains a field, §6 a rule.
+
+- **What may be a prerequisite.** A message may name prerequisites (`after`): other messages of the same queue, each
+  older than itself, so a cycle cannot form. A reference key (`owner/repo#4533`) given as a prerequisite resolves, at
+  write time, to the message of that queue that holds the reference; none or more than one is refused. A work item
+  outside the queue cannot be a prerequisite: the Control Plane cannot see a tracker while the workspace is stopped,
+  and a message of another queue runs under another instruction and budget.
+- **Who sets it.** The person in the Console; a session through `add_memo` and `update_memo` (a new `after`
+  argument), whose message enters `held` as before (§3). The list is part of what a release binds:
+  `memoContentHash` (`control-plane/memo_queue.go:92`) gains the list, appended only when it is not empty as
+  `memoRefHashParts` (`:914`) does, so no release made before this changes its hash. Changing the list of a released
+  message returns it to `held`, as any edit does, and the copy kept under the release constraint gains the column.
+- **Satisfied, in two steps.**
+  1. The prerequisite is `delivered` and its last delivery is closed as clean. The Control Plane decides this alone,
+     also while the workspace is stopped.
+  2. Then also: every PR that delivery's session opened is merged. The PR comes from the session's work-item links,
+     which already carry a PR's last seen state (`open`, `draft`, `merged`, `closed`;
+     `workspace/agent/internal/session/links.go:56-59`), recorded by `recordBranchPRs`
+     (`workspace/agent/internal/sessionx/session_work_links.go:181`) and kept by the Control Plane in
+     `session_work_link`, so a stopped workspace's last answer stands. Only the links the session holds as starter,
+     creator or worker count; a reviewer child's do not. A session that opened no PR satisfies step 2 by step 1.
+     The state is refreshed only while the workspace runs. When every pending message of an open queue waits on a
+     PR state and a slot is free, the dispatcher may wake the workspace to refresh it at most once an hour, and the
+     wake counts against the queue's daily cap.
+- **Not satisfiable.** A prerequisite whose delivery closed failed, aborted or unknown, that became `unconfirmed`, was
+  deleted, or whose PR was closed unmerged: each dependent goes to `held` with the reason, for the person. A
+  dependent is never fired over a prerequisite that went wrong.
+- **Dispatch.** The claim loop skips a message whose prerequisites are not satisfied and takes the next eligible one,
+  so one blocked message does not stop the queue. A blocked message holds no slot and does not count towards a
+  threshold of K pending (`pendingOf`, `control-plane/memo_dispatch.go:634`). A batch may carry a dependent only
+  together with every prerequisite it still waits for, placed before it. When everything pending is blocked, the
+  queue's waiting reason says so, and the Console shows on each message what it waits for. A message blocked for
+  longer than the queue's `max_task_hours` notifies the member once, as an overdue delivery does.
+- **Tidying (§8).** In the first version a message that has or is a prerequisite is only kept: never merged, split or
+  moved.
+
+**B. A run that hands its message back (#4541).** This amends the sentence of §1 "From `claimed` on a message cannot be
+changed" in one case.
+
+- **The tool.** `defer_queue_item(reason, not_before)`, offered only to a session that has a queue delivery, for that
+  delivery. The Agent relays it with the session's name; the Control Plane accepts it only while the delivery is
+  `open` and names that session. Fact 1 still holds: anything in the workspace that can use the queue token can make
+  the call, so the session rule is a guard rail. What a forged call can do is bounded below: delay a released message
+  and, after three, send it back to the person.
+- **When it takes effect.** The call only records the request on the delivery. The delivery closes by the ordinary
+  rule of §6 (nothing holds it on two reads, `closeIfDoneReported`, `control-plane/memo_delivery.go:887`), and only
+  that close applies it: the outcome is `deferred` instead of clean, and the messages return to `pending` with
+  `not_before` (the way `closeNotSent` returns them, `ReturnDeliveryMessages`,
+  `control-plane/internal/store/store_memo_delivery.go:556`). One message is never held by two runs at once. A later
+  call replaces the request, and a call with `cancel` withdraws it.
+- **Re-fire.** The content and the release are unchanged, so the message fires again by itself once `not_before` has
+  passed, in its old place (it is still the oldest). `not_before` is between 10 minutes and 7 days ahead (default 1
+  hour). The third defer of one message puts it to `held` instead, with the reasons. Every re-fire is a new delivery,
+  so it counts against the daily cap.
+- **What the person sees, and what the next run does not.** The reason (at most 1 KiB) is shown in the run history and
+  on the message. It never enters a later prompt: that would carry a session's text into an unattended prompt,
+  which §5 and the 2026-10-03 addendum of ADR 0021 keep out.
+- **Breaker (§7).** A delivery closed as `deferred` is not counted as a bad first turn.
+- **Wait condition.** Time only. Waiting for a PR is A's work: a message has no session to own a watch (ADR 0133),
+  and this record already rejected the watch engine as the host.
+- **The person's action.** The run history gains "return to queue" on a closed delivery: its messages that are
+  `delivered` or `unconfirmed` go back to `pending`, as the person's own press (Console session only, never the token
+  face). It is how the person recovers a run that ended without doing the work, whether or not the session deferred.
+
+**Rejected.** Treating a closed issue as done (a PR that says `Refs` leaves it open, and the tracker is not visible
+while the workspace is stopped). A deferred message returning to `held` every time (it stops every unattended chain at
+night; the cap of three bounds the loop instead). A watch condition on a deferred message (no owner session; see
+above). Stacking the dependent's branch on the prerequisite's (two reviews of one change, and nothing enforces the
+merge order).
+
+**Steps.** (1) `after` with the first satisfaction step, the dispatch rules and the Console's display. (2) The PR step,
+with the refresh wake. (3) The defer tool, the `deferred` outcome and the person's "return to queue". (4) The
+implementer's and the enqueuer's skills move from waiting inside the run to `after` and the defer tool.
