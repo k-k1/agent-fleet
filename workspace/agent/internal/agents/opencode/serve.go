@@ -381,7 +381,8 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		return "", 0, fmt.Errorf("opencode serve の起動に失敗しました / failed to start opencode serve: %w", err)
 	}
 	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
-	deadline := time.Now().Add(serveStartTimeout)
+	began := time.Now()
+	deadline := began.Add(serveStartTimeout)
 	for time.Now().Before(deadline) {
 		time.Sleep(200 * time.Millisecond)
 		if healthy(addr) {
@@ -399,13 +400,16 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			s.credGen = credGen
 			gen := s.gen
 			s.armIdleWatchLocked()
+			watchExit(cmd)
 			go s.waitDaemon(cmd, tail, gen)
 			go s.monitorEvents(addr, gen)
-			log.Printf("opencode serve: started (gen %d, pid %d, %s)", gen, cmd.Process.Pid, addr)
+			log.Printf("opencode serve: started (gen %d, pid %d, %s) in %v, %s", gen, cmd.Process.Pid, addr,
+				time.Since(began).Round(time.Millisecond), sinceOldExit())
 			recordLifecycle("started", gen, fmt.Sprintf("pid %d", cmd.Process.Pid))
 			return addr, gen, nil
 		}
 	}
+	log.Printf("opencode serve: start attempt gave up after %v (pid %d, %s)", time.Since(began).Round(time.Millisecond), cmd.Process.Pid, sinceOldExit())
 	err = tail.Wrap(errors.New("opencode serve が時間内に起動しませんでした / opencode serve did not start in time")) // before the kill adds noise
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait() // reap: waitDaemon is only started on success — Kill alone leaves a zombie
@@ -530,6 +534,7 @@ func splitServeAddr(addr string) (host, port string, err error) {
 // surviving sessions.
 func (s *Supervisor) waitDaemon(cmd *exec.Cmd, tail *agents.StderrTail, gen int) {
 	err := cmd.Wait()
+	noteExited(cmd)
 	tail.Release()
 	s.mu.Lock()
 	// Deliberate means WE asked THIS process to end. Comparing gen alone would misread a
@@ -746,23 +751,112 @@ func busyManaged(addr string) []*threadHandle {
 
 func abortSession(addr, ses string) { _ = serveAbort(addr, ses) }
 
-// stopProcess terminates the owned daemon (SIGTERM → SIGKILL). For an adopted
-// daemon (cmd == nil) there is no handle to signal — best-effort skip.
+// Process exit is observable through a channel closed by waitDaemon, the only caller of Wait on
+// an owned daemon (cmd.ProcessState would race with it). A listener that stopped answering is
+// not an exit: the old process can still be flushing or holding its database while the next
+// start is already under way, which is what a security restart must not do.
+var exits struct {
+	mu       sync.Mutex
+	ch       map[*exec.Cmd]chan struct{}
+	lastExit time.Time
+}
+
+// watchExit registers cmd before its waitDaemon starts.
+func watchExit(cmd *exec.Cmd) {
+	exits.mu.Lock()
+	defer exits.mu.Unlock()
+	if exits.ch == nil {
+		exits.ch = map[*exec.Cmd]chan struct{}{}
+	}
+	exits.ch[cmd] = make(chan struct{})
+}
+
+// noteExited is called once cmd has been reaped.
+func noteExited(cmd *exec.Cmd) {
+	exits.mu.Lock()
+	defer exits.mu.Unlock()
+	exits.lastExit = time.Now()
+	if ch, ok := exits.ch[cmd]; ok {
+		close(ch)
+		delete(exits.ch, cmd)
+	}
+}
+
+// exitSignal returns a channel closed once cmd is reaped, or nil when cmd is not watched.
+func exitSignal(cmd *exec.Cmd) <-chan struct{} {
+	exits.mu.Lock()
+	defer exits.mu.Unlock()
+	return exits.ch[cmd]
+}
+
+// sinceOldExit is a log fragment only: how long ago an owned daemon last exited.
+func sinceOldExit() string {
+	exits.mu.Lock()
+	defer exits.mu.Unlock()
+	if exits.lastExit.IsZero() {
+		return "no earlier exit seen"
+	}
+	return "previous daemon exited " + time.Since(exits.lastExit).Round(time.Millisecond).String() + " earlier"
+}
+
+// Bounds of the wait for an owned daemon to be gone: SIGTERM, then SIGKILL.
+var (
+	stopTermWait = 6 * time.Second
+	stopKillWait = 3 * time.Second
+)
+
+// stopProcess terminates the owned daemon (SIGTERM → SIGKILL) and returns once the process has
+// exited, so a replacement never starts beside it. Both waits are bounded; a process that
+// survives SIGKILL is logged and left, never waited on forever. For an adopted daemon
+// (cmd == nil) there is no handle to signal — best-effort skip.
 func stopProcess(cmd *exec.Cmd, addr string) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
-	_ = cmd.Process.Signal(syscall.SIGTERM)
-	// Poll health only (same shape as codex): cmd.ProcessState would data-race with
-	// waitDaemon's cmd.Wait(), so it is left alone. Reaping is waitDaemon's job.
-	deadline := time.Now().Add(6 * time.Second)
-	for time.Now().Before(deadline) {
-		if !healthy(addr) {
-			return
+	exited := exitSignal(cmd)
+	if exited == nil {
+		// Not watched (not started by Ensure): the listener is the only signal there is.
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		deadline := time.Now().Add(stopTermWait)
+		for time.Now().Before(deadline) {
+			if !healthy(addr) {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		time.Sleep(100 * time.Millisecond)
+		_ = cmd.Process.Kill()
+		return
 	}
-	_ = cmd.Process.Kill()
+	began := time.Now()
+	ok, killed := awaitStop(func() { _ = cmd.Process.Signal(syscall.SIGTERM) },
+		func() { _ = cmd.Process.Kill() }, exited, stopTermWait, stopKillWait)
+	if !ok {
+		log.Printf("opencode serve: pid %d still alive %v after SIGKILL; not waiting further", cmd.Process.Pid, time.Since(began).Round(time.Millisecond))
+		return
+	}
+	log.Printf("opencode serve: pid %d exited %v after SIGTERM (killed=%v)", cmd.Process.Pid, time.Since(began).Round(time.Millisecond), killed)
+}
+
+// awaitStop sends term, waits termWait for exited, then sends kill and waits killWait more.
+// ok: the process exited; killed: it took a kill to get there.
+func awaitStop(term, kill func(), exited <-chan struct{}, termWait, killWait time.Duration) (ok, killed bool) {
+	term()
+	t := time.NewTimer(termWait)
+	defer t.Stop()
+	select {
+	case <-exited:
+		return true, false
+	case <-t.C:
+	}
+	kill()
+	k := time.NewTimer(killWait)
+	defer k.Stop()
+	select {
+	case <-exited:
+		return true, true
+	case <-k.C:
+		return false, true
+	}
 }
 
 // --- SSE event monitor ------------------------------------------------------
