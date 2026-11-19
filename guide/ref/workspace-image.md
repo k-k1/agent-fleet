@@ -59,7 +59,7 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 | [Antigravity CLI (`agy`)](https://antigravity.google/) | Google's coding agent | `1.5.12` | [Vendor terms](https://antigravity.google/terms) |
 | [Cursor CLI (`cursor-agent`)](https://cursor.com/) | Cursor's coding agent | `2026.10.22-27dcf5f` | [Vendor terms](https://cursor.com/terms-of-service) |
 | [Kiro CLI (`kiro-cli`)](https://kiro.dev/cli/) | Kiro's coding agent, from AWS | `3.3.0` | [Vendor terms](https://kiro.dev/license/) |
-| [Muse Code (`muse`)](https://dev.meta.ai/) | Meta's coding agent | `1.4.20-R8619.1` | [Vendor terms](https://dev.meta.ai/legal) |
+| [Muse Code (`muse`)](https://dev.meta.ai/) | Meta's coding agent | `1.4.24-R9131.1` | [Vendor terms](https://dev.meta.ai/legal) |
 
 ## Utilities
 
