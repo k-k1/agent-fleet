@@ -16,7 +16,6 @@ var normalizeCIDRAccepted = map[string]string{
 	"fd12:3456:789a::/48": "fd12:3456:789a::/48",
 	"FD12:3456:789A::/48": "fd12:3456:789a::/48",
 	"fd12:0:0:0::/32":     "fd12::/32",
-	"fc00::/7":            "", // contains fd00:ec2::254: refused below
 }
 
 func TestNormalizePatternCIDR(t *testing.T) {
@@ -50,6 +49,17 @@ func TestNormalizePatternCIDR(t *testing.T) {
 		"fc00::/7":            "metadata",
 		"fd00:ec2::/32":       "metadata",
 		"100.64.0.0/10":       "metadata", // holds 100.100.100.200
+		"fd20::/20":           "metadata", // GCP internal ULA band, holds fd20:ce::254
+		"fd20:ce::/32":        "metadata",
+		"fd00:ec2::/120":      "metadata", // holds the EKS Pod Identity address fd00:ec2::23
+		"fd00:ec2::/64":       "metadata",
+		"fd12:3456::%eth0/32": "",
+		"::10.20.0.0/112":     "private", // IPv4-compatible
+		"64:ff9b::/96":        "private", // NAT64
+		"2002::/16":           "private", // 6to4
+		"2001::/32":           "private", // Teredo
+		"192.0.0.0/24":        "private",
+		"168.63.129.0/24":     "private", // Azure wire server
 		"10.20.5.7/16":        "host bits",
 		"fd00:1::5/32":        "host bits",
 		"10.0.0.5/32":         "one address",
@@ -114,6 +124,11 @@ func TestCIDRMatchesAndCovers(t *testing.T) {
 		{"10.20.0.0/16", "::ffff:10.20.5.7", true}, // an IPv4-mapped host is the IPv4 address
 		{"10.20.0.0/16", "::ffff:10.21.5.7", false},
 		{"10.20.0.0/16", "fe80::1%eth0", false},
+		{"fd12:3456::/32", "fd12:3456::1%eth0", false},
+		{"10.20.0.0/16", "010.20.5.7", false},
+		{"10.20.0.0/16", "0xa.20.5.7", false},
+		{"10.20.0.0/16", "169084167", false},
+		{"::ffff:10.20.0.0/112", "::ffff:10.20.0.0/120", false},
 		// Non-canonical patterns match nothing rather than something wider.
 		{"10.20.5.7/16", "10.20.5.8", false},
 		{"10.20.0.0/16", "10.20.5.7/16", false},

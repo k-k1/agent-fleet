@@ -151,6 +151,66 @@
    "covered": false
   },
   {
+   "ceiling": "fd12::/16",
+   "pattern": "fd20::/20",
+   "covered": false
+  },
+  {
+   "ceiling": "fd12::/16",
+   "pattern": "fd20:ce::/32",
+   "covered": false
+  },
+  {
+   "ceiling": "fd12::/16",
+   "pattern": "fd00:ec2::/120",
+   "covered": false
+  },
+  {
+   "ceiling": "fd12::/16",
+   "pattern": "fd12:3456::%eth0/32",
+   "covered": false
+  },
+  {
+   "ceiling": "fd12::/16",
+   "pattern": "::10.20.0.0/112",
+   "covered": false
+  },
+  {
+   "ceiling": "fd12::/16",
+   "pattern": "64:ff9b::/96",
+   "covered": false
+  },
+  {
+   "ceiling": "fd12::/16",
+   "pattern": "2002::/16",
+   "covered": false
+  },
+  {
+   "ceiling": "fd12::/16",
+   "pattern": "2001::/32",
+   "covered": false
+  },
+  {
+   "ceiling": "10.0.0.0/8",
+   "pattern": "192.0.0.0/24",
+   "covered": false
+  },
+  {
+   "ceiling": "10.0.0.0/8",
+   "pattern": "168.63.129.0/24",
+   "covered": false
+  },
+  {
+   "ceiling": "10.0.0.0/8",
+   "pattern": "010.20.5.7",
+   "covered": false
+  },
+  {
+   "ceiling": "10.0.0.0/8",
+   "pattern": "0xa.20.5.7",
+   "covered": false
+  },
+  {
    "ceiling": "10.0.0.0/8",
    "pattern": "10.20.0.0/016",
    "covered": false

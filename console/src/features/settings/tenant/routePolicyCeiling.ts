@@ -147,7 +147,7 @@ interface Cidr {
 }
 
 const PRIVATE_SPACE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"];
-const METADATA = ["100.100.100.200", "fd00:ec2::254"];
+const METADATA = ["100.100.100.200", "fd00:ec2::254", "fd00:ec2::23", "fd20:ce::254"];
 
 // parseIp reads an IPv4 dotted quad (no leading zeros) or an IPv6 address; an IPv4-mapped one is
 // not read (null): the CP unmaps it to the IPv4 address, and the Console answers "exceeds".

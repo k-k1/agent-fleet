@@ -843,9 +843,9 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
   - **Covering.** A range covers an IP literal inside it and a range inside it (prefix length at least as long); it never
     covers a host name or a `*.suffix`, and nothing but a range covers a range. Families never mix.
   - **Accepted.** Only a range wholly inside private address space (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
-    `100.64.0.0/10`, `fc00::/7`) that holds no instance-metadata address (`100.100.100.200`, `fd00:ec2::254`). That one
+    `100.64.0.0/10`, `fc00::/7`) that holds no instance-metadata address (`100.100.100.200`, `fd00:ec2::254`, `fd00:ec2::23`, `fd20:ce::254`). That one
     rule refuses `/0`, public ranges, loopback, link-local (so `169.254.169.254`), multicast and "this network".
-    Consequently `fd00::/8`, `fc00::/7` and `100.64.0.0/10` are refused (they hold a metadata address); write the
+    Consequently `fd00::/8`, `fc00::/7`, `fd20::/20` and `100.64.0.0/10` are refused (they hold a metadata address); write the
     narrower range you own. Exact IP hosts are unchanged: they are not held to private space.
   - **Canonical form.** Masked, lower-case, no zone, `netip` text, so normalising twice changes nothing. Refused rather than
     rewritten: host bits set (`10.20.5.7/16` is probably a mistake, and silently widening it to the /16 would approve more

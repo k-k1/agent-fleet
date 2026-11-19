@@ -22,6 +22,8 @@ var privateSpace = mustPrefixes("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
 var metadataAddrs = []netip.Addr{
 	netip.MustParseAddr("100.100.100.200"), // Alibaba Cloud
 	netip.MustParseAddr("fd00:ec2::254"),   // AWS, IPv6
+	netip.MustParseAddr("fd00:ec2::23"),    // AWS EKS Pod Identity Agent, IPv6
+	netip.MustParseAddr("fd20:ce::254"),    // GCP Compute Engine metadata server, IPv6
 }
 
 func mustPrefixes(s ...string) []netip.Prefix {
@@ -39,7 +41,7 @@ func cidrOf(s string) (netip.Prefix, bool) {
 		return netip.Prefix{}, false
 	}
 	p, err := netip.ParsePrefix(s)
-	if err != nil || p != p.Masked() || p.String() != s {
+	if err != nil || p.Addr().Is4In6() || p != p.Masked() || p.String() != s {
 		return netip.Prefix{}, false
 	}
 	return p, true
