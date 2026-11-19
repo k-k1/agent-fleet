@@ -467,6 +467,13 @@
       "description": "メモキューに1件追加する。kind=text は body（メモ本文）、kind=file は refPath（~/repos/... パス）が必須で body は任意コメント。repo（''=共通/未分類）と category（サブプロジェクトの自由ラベル）で仕分ける。チャット中に出た TODO・依頼・後で渡したい対象を溜めておく時に呼ぶ。キュー（queue=true）のカテゴリに入れたメモはセッションへの仕事になり、利用者が解放するまで待つ。作業項目（GitHub / Jira / Bitbucket）を指すだけなら reference を渡す（その場合 body は空でもよい。項目の中身は写されず、受け取るセッションが自分で読む）。自動実行カテゴリに同じ項目の待機中メモが既にあれば、追加せずそのメモを返す（existing）。",
       "inputSchema": {
         "properties": {
+          "after": {
+            "description": "このメモが待つ、同じ自動実行カテゴリのメモ。各要素はメモ id（list_memos）か、作業項目のキー（owner/repo#12。その項目を持つカテゴリ内の最新のメモを指す）。どれもこのメモより前にあるものに限る。すべてが実行されてきれいに終わってから、このメモが始まる。どれかがうまくいかなければ、このメモは利用者の確認待ちに戻る。",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "body": {
             "description": "メモ本文（kind=text）またはコメント（kind=file）",
             "type": "string"
@@ -518,6 +525,13 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "after": {
+            "description": "The notes of the same auto-run category (queue=true) this note waits for: each a memo id from list_memos, or a work-item key such as owner/repo#12, which names the newest note of the category holding that item. Each must come before this note in the category. The note is started only after every one of them was run and its run ended cleanly; if one went wrong, the note goes back to wait for your user.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "body": {
             "description": "The note (kind=text), or a comment on the file (kind=file)",
             "type": "string"
@@ -2766,6 +2780,13 @@
       "description": "既存メモ（id 指定）を編集する。渡したフィールドだけ変わり、省略した項目はそのまま。文言の整形・カテゴリ変更・並び替え(position)に使う。id は list_memos で得る。解放済みのキューのメッセージを編集すると解放待ちに戻る。reference は省略で据え置き、{} で外し、3 項目そろえた object で付け替える。",
       "inputSchema": {
         "properties": {
+          "after": {
+            "description": "このメモが待つ、同じ自動実行カテゴリのメモ。各要素はメモ id（list_memos）か、作業項目のキー（owner/repo#12。その項目を持つカテゴリ内の最新のメモを指す）。どれもこのメモより前にあるものに限る。すべてが実行されてきれいに終わってから、このメモが始まる。どれかがうまくいかなければ、このメモは利用者の確認待ちに戻る。省略で据え置き、[] で外す。",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "body": {
             "description": "新しい本文（任意）",
             "type": "string"
@@ -2821,6 +2842,13 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "after": {
+            "description": "The notes of the same auto-run category (queue=true) this note waits for: each a memo id from list_memos, or a work-item key such as owner/repo#12, which names the newest note of the category holding that item. Each must come before this note in the category. The note is started only after every one of them was run and its run ended cleanly; if one went wrong, the note goes back to wait for your user. Omit to keep them; [] removes them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "body": {
             "description": "Replacement note text (optional)",
             "type": "string"

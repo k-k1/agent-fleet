@@ -47,6 +47,9 @@ type Fields struct {
 	// Reference points at a work item, never at a copy of it. Nil is none; the Control Plane
 	// validates a given one.
 	Reference *Reference `json:"reference,omitempty"`
+	// After is the messages of the same queue this one waits for, memo ids or reference keys.
+	// The Control Plane resolves and checks them.
+	After []string `json:"after,omitempty"`
 }
 
 // Reference is the typed pointer {provider, key, url} a queue message may carry. The fields are
@@ -83,6 +86,9 @@ type Patch struct {
 	// Reference has the Control Plane's three meanings: nil (absent, and a JSON null) leaves the
 	// reference as it is, an empty object clears it, a full one sets it.
 	Reference *Reference `json:"reference,omitempty"`
+	// After is the prerequisites: nil leaves them, an empty list clears them (it survives the
+	// encoding as []), a list replaces them.
+	After *[]string `json:"after,omitempty"`
 }
 
 // ListResponse is GET /memos: the memos (each with its state) and the categories (each with

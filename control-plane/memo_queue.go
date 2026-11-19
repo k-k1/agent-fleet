@@ -21,6 +21,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
+	"github.com/k-k1/agent-fleet/control-plane/internal/memoafter"
 	"github.com/k-k1/agent-fleet/control-plane/internal/memoref"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -87,10 +88,11 @@ func (v memoVia) provenance() string {
 func (v memoVia) fromWorkspace() bool { return v.face != memoFaceConsole }
 
 // memoContentHash is what a release is bound to: the body, the kind, the ref path, the
-// attachments, the reference, the repo and the category. The category is its name, so a rename changes the
+// attachments, the reference, the prerequisites, the repo and the category. The category is its name, so a rename changes the
 // hash and a pending message's release is re-recorded in the same transaction.
 func memoContentHash(m store.Memo) string {
-	b, _ := json.Marshal(append([]string{"memo-content/v1", m.Kind, m.Body, m.RefPath, m.Attachments, m.Repo, m.Category}, memoRefHashParts(m)...))
+	parts := append([]string{"memo-content/v1", m.Kind, m.Body, m.RefPath, m.Attachments, m.Repo, m.Category}, memoRefHashParts(m)...)
+	b, _ := json.Marshal(append(parts, memoafter.HashParts(m)...))
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
@@ -916,6 +918,15 @@ func memoRefHashParts(m store.Memo) []string {
 		return nil
 	}
 	return []string{"ref", m.RefProvider, m.RefKey, m.RefURL}
+}
+
+// memoAfterResolve is memoafter.Resolve with its refusal as the API's answer (400 memo_after_invalid).
+func memoAfterResolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (string, *apiError) {
+	out, inv := memoafter.Resolve(self, rows, in, inQueue)
+	if inv != nil {
+		return "", &apiError{http.StatusBadRequest, errCodeMemoAfterInvalid, inv.Msg}
+	}
+	return out, nil
 }
 
 func derefRef(r *memoRefWire) memoRefWire {

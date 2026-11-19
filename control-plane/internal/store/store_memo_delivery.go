@@ -542,10 +542,10 @@ func (t memoTx) ClaimMemo(seen Memo, delivery string) (bool, error) {
 	return affected(t.q.ExecContext(t.ctx, `UPDATE memo SET state=?, delivery_id=?
 		WHERE id=? AND membership_id=? AND state=? AND sent_at='' AND send_token='' AND delivery_id='' AND release_hash=?
 		  AND repo=? AND category=? AND kind=? AND body=? AND ref_path=? AND attachments=?
-		  AND ref_provider=? AND ref_key=? AND ref_url=?`,
+		  AND ref_provider=? AND ref_key=? AND ref_url=? AND after_ids=?`,
 		MemoStateClaimed, delivery, seen.ID, t.mid, MemoStatePending, seen.ReleaseHash,
 		seen.Repo, seen.Category, seen.Kind, seen.Body, seen.RefPath, seen.Attachments,
-		seen.RefProvider, seen.RefKey, seen.RefURL))
+		seen.RefProvider, seen.RefKey, seen.RefURL, seen.AfterIDs))
 }
 
 // MoveDelivery's guard is the state of the row it writes, never a read before it: the read
@@ -576,7 +576,8 @@ func (t memoTx) ReturnDeliveryMessages(delivery string) error {
 	_, err := t.q.ExecContext(t.ctx, `UPDATE memo SET state=?, delivery_id='',
 		  release_repo=repo, release_category=category, release_kind=kind, release_body=body,
 		  release_ref_path=ref_path, release_attachments=attachments,
-		  release_ref_provider=ref_provider, release_ref_key=ref_key, release_ref_url=ref_url
+		  release_ref_provider=ref_provider, release_ref_key=ref_key, release_ref_url=ref_url,
+		  release_after_ids=after_ids
 		WHERE membership_id=? AND delivery_id=? AND state=?`,
 		MemoStatePending, t.mid, delivery, MemoStateClaimed)
 	if err != nil {

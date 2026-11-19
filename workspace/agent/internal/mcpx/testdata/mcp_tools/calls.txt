@@ -85,6 +85,15 @@
 ## add_memo not-object [1]
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for add_memo: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
+## add_memo badtype-after {"after":[[{}]]}
+[assistant-read assistant-read-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  -> POST /memos {"from":"","memo":{"after":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /memos {"from":"slot01","memo":{"after":[[{}]]}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## add_memo badtype-body {"body":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -139,15 +148,15 @@
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   -> POST /memos {"from":"slot01","memo":{"repo":[[{}]]}}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
-## add_memo full {"body":"v","category":"v","kind":"v","refPath":"v","reference":{},"repo":"v"}
+## add_memo full {"after":["v"],"body":"v","category":"v","kind":"v","refPath":"v","reference":{},"repo":"v"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
-  -> POST /memos {"from":"","memo":{"body":"v","category":"v","kind":"v","refPath":"v","reference":{},"repo":"v"}}
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+  -> POST /memos {"from":"","memo":{"after":["v"],"body":"v","category":"v","kind":"v","refPath":"v","reference":{},"repo":"v"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"The note was saved, but its prerequisites (after) were NOT kept: this Control Plane does not support them yet, so nothing makes the note wait. Do not report them as stored; tell your user. The Control Plane answered: {}","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  -> POST /memos {"from":"slot01","memo":{"body":"v","category":"v","kind":"v","refPath":"v","reference":{},"repo":"v"}}
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+  -> POST /memos {"from":"slot01","memo":{"after":["v"],"body":"v","category":"v","kind":"v","refPath":"v","reference":{},"repo":"v"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"The note was saved, but its prerequisites (after) were NOT kept: this Control Plane does not support them yet, so nothing makes the note wait. Do not report them as stored; tell your user. The Control Plane answered: {}","type":"text"}],"isError":true,"resultType":"complete"}}
 ## add_memo kind= {"kind":""}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -4157,6 +4166,11 @@
 ## update_memo not-object [1]
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for update_memo: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
+## update_memo badtype-after {"after":[[{}]]}
+[assistant-read assistant-read-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（メモ id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 ## update_memo badtype-body {"body":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -4194,12 +4208,12 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（メモ id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
-## update_memo full {"body":"v","category":"v","id":"v","position":2,"refPath":"v","reference":{},"repo":"v"}
+## update_memo full {"after":["v"],"body":"v","category":"v","id":"v","position":2,"refPath":"v","reference":{},"repo":"v"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
-  -> PATCH /memos/v {"body":"v","category":"v","id":"v","position":2,"refPath":"v","reference":{},"repo":"v"}
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+  -> PATCH /memos/v {"after":["v"],"body":"v","category":"v","id":"v","position":2,"refPath":"v","reference":{},"repo":"v"}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"The note was saved, but its prerequisites (after) were NOT kept: this Control Plane does not support them yet, so nothing makes the note wait. Do not report them as stored; tell your user. The Control Plane answered: {}","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"position\" for update_memo","type":"text"}],"isError":true,"resultType":"complete"}}
 ## update_schedule absent

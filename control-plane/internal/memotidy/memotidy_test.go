@@ -125,3 +125,25 @@ func TestParseIsStrict(t *testing.T) {
 		}
 	}
 }
+
+// A message that has or is a prerequisite is only kept: a merge, a split or a move of it refuses
+// the whole reply, and a keep of it passes.
+func TestValidateKeepOnly(t *testing.T) {
+	r := req()
+	r.Items = append(r.Items, Item{ID: "k", Group: Group{Provenance: "member", Producer: "p", ProducerOrigin: "user"}, Mergeable: true, Bytes: 10, KeepOnly: true})
+	for name, op := range map[string]Op{
+		"merge": {Op: OpMerge, IDs: []string{"a", "k"}, Text: "a and k"},
+		"split": {Op: OpSplit, ID: "k", Texts: []string{"one", "two"}},
+		"move":  {Op: OpMove, ID: "k", To: "q1"},
+	} {
+		rr := r
+		rr.Ops = []Op{op}
+		if got := code(Validate(rr)); got != CodeKeepOnly {
+			t.Fatalf("%s of a keep-only message: %q, want %q", name, got, CodeKeepOnly)
+		}
+	}
+	r.Ops = []Op{{Op: OpKeep, ID: "k"}, {Op: OpMerge, IDs: []string{"a", "b"}, Text: "a and b"}}
+	if got := code(Validate(r)); got != "" {
+		t.Fatalf("keep of a keep-only message: %q", got)
+	}
+}

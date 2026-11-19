@@ -309,3 +309,29 @@ func TestCreateAnswersExistingAsItCame(t *testing.T) {
 		t.Fatalf("answered %d %q, want the Control Plane's answer as it came", rec.Code, rec.Body.String())
 	}
 }
+
+// The prerequisites ride a create as the model wrote them, and an update keeps three meanings:
+// absent leaves them, [] clears them, a list replaces them.
+func TestAfterIsForwarded(t *testing.T) {
+	cp := newFakeCP(t)
+	cp.answer("POST /internal/memos", http.StatusCreated, `{"id":"m2"}`)
+	serve(HandleCreate, http.MethodPost, "/memos", `{"from":"kid01","memo":{"kind":"text","body":"x","category":"impl","after":["m1","acme/app#12"]}}`)
+	if got := decode(t, cp.bodies[0]); !reflect.DeepEqual(got["after"], []any{"m1", "acme/app#12"}) {
+		t.Fatalf("CP got after %v (body %s)", got["after"], cp.bodies[0])
+	}
+	serve(HandleCreate, http.MethodPost, "/memos", `{"from":"kid01","memo":{"kind":"text","body":"x"}}`)
+	if strings.Contains(cp.bodies[1], "after") {
+		t.Errorf("a create without prerequisites sent some: %s", cp.bodies[1])
+	}
+	for _, c := range []struct{ name, in, want string }{
+		{"absent", `{"body":"b"}`, `{"body":"b"}`},
+		{"empty list clears", `{"after":[]}`, `{"after":[]}`},
+		{"list replaces", `{"after":["m1"]}`, `{"after":["m1"]}`},
+	} {
+		cp.bodies = nil
+		rec := serve(HandleUpdate, http.MethodPatch, "/memos/m2", c.in)
+		if rec.Code != http.StatusOK || len(cp.bodies) != 1 || cp.bodies[0] != c.want {
+			t.Errorf("%s: %d, CP got %v, want %s", c.name, rec.Code, cp.bodies, c.want)
+		}
+	}
+}

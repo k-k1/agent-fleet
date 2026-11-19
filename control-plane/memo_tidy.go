@@ -19,6 +19,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/memoafter"
 	"github.com/k-k1/agent-fleet/control-plane/internal/memotidy"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -237,9 +238,16 @@ func memoTidyApplyTx(tx store.MemoTxOps, in memoTidyApplyIn, out *memoTidyApplyO
 		}
 		dests = append(dests, d)
 	}
+	bucket, err := tx.ListMemosIn(cat.Repo, cat.Name)
+	if err != nil {
+		return err
+	}
+	linked := memoafter.Linked(bucket)
 	items := make([]memotidy.Item, 0, len(in.Input))
 	for _, it := range in.Input {
-		items = append(items, memoTidyItemOf(rows[it.ID]))
+		item := memoTidyItemOf(rows[it.ID])
+		item.KeepOnly = linked[it.ID]
+		items = append(items, item)
 	}
 	if r := memotidy.Validate(memotidy.Request{Self: in.QueueID, Items: items, Destinations: dests, Ops: in.Ops}); r != nil {
 		return finish(store.TidyRunDropped, r.Code, nil)

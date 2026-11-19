@@ -847,6 +847,7 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 					"repo":      map[string]any{"type": "string", "description": "repo bucket, '' = 共通/未分類 (optional)"},
 					"category":  map[string]any{"type": "string", "description": "sub-project label (optional)"},
 					"reference": memoRefSchema(false),
+					"after":     memoAfterSchema(false),
 				},
 				"required": []string{"kind"},
 			},
@@ -855,9 +856,17 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 				if err != nil {
 					return "", err
 				}
+				after, err := argMemoAfter(args)
+				if err != nil {
+					return "", err
+				}
+				var afterList []string
+				if after != nil {
+					afterList = *after
+				}
 				dto, err := a.cp.MemoCreate(ctx, res.MV, mcpCallFrom(ctx).patID,
 					argStr(args, "repo"), argStr(args, "category"),
-					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"), ref)
+					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"), ref, afterList)
 				if err != nil {
 					return "", err
 				}
@@ -877,6 +886,7 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 					"refPath":   map[string]any{"type": "string", "description": "new ref path (optional)"},
 					"position":  map[string]any{"type": "integer", "description": "new position within its group (optional)"},
 					"reference": memoRefSchema(true),
+					"after":     memoAfterSchema(true),
 				},
 				"required": []string{"id"},
 			},
@@ -885,10 +895,14 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 				if err != nil {
 					return "", err
 				}
+				after, err := argMemoAfter(args)
+				if err != nil {
+					return "", err
+				}
 				dto, err := a.cp.MemoUpdate(ctx, res.MV.MembershipID, argStr(args, "id"),
 					argStrPtr(args, "repo"), argStrPtr(args, "category"),
 					argStrPtr(args, "body"), argStrPtr(args, "refPath"),
-					argIntPtr(args, "position"), ref)
+					argIntPtr(args, "position"), ref, after)
 				if err != nil {
 					return "", err
 				}
@@ -1141,6 +1155,42 @@ func memoRefSchema(update bool) map[string]any {
 			"url":      map[string]any{"type": "string", "description": "http(s) address of the item"},
 		},
 	}
+}
+
+// memoAfterSchema is the `after` argument of add_memo and update_memo.
+func memoAfterSchema(update bool) map[string]any {
+	desc := "Optional: the notes of the same auto-run category this one waits for, each a memo id (from list_memos) or a work-item key such as owner/repo#12 (it names the newest note of the category holding that item). " +
+		"Each must come before this note in the category. A note with prerequisites is started only after every one of them was run and its run ended cleanly; if one went wrong the note goes back to wait for the user."
+	if update {
+		desc += " Omit to leave them as they are; [] clears them. Changing them on a released note sends it back to wait for release."
+	}
+	return map[string]any{
+		"type":        "array",
+		"description": desc,
+		"items":       map[string]any{"type": "string"},
+	}
+}
+
+// argMemoAfter reads the `after` argument: absent or null is nil (leave it), an array of strings is
+// the list (empty means clear), anything else is refused.
+func argMemoAfter(a map[string]any) (*[]string, error) {
+	v, ok := a["after"]
+	if !ok || v == nil {
+		return nil, nil
+	}
+	raw, ok := v.([]any)
+	if !ok {
+		return nil, errors.New("after must be an array of memo ids or work-item keys")
+	}
+	out := make([]string, 0, len(raw))
+	for _, x := range raw {
+		s, ok := x.(string)
+		if !ok {
+			return nil, errors.New("after must be an array of strings")
+		}
+		out = append(out, s)
+	}
+	return &out, nil
 }
 
 // argMemoRef reads the `reference` argument: absent or null is nil (leave it), an object is a

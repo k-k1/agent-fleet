@@ -21,8 +21,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/memoafter"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
+
+// memoQueueBlockedKind is the notification of a message blocked by its prerequisites for longer
+// than its queue's max_task_hours, counted from when it became pending.
+const memoQueueBlockedKind = "memo-queue-blocked"
 
 const (
 	// memoDispatchBudget bounds one tick's dispatch pass, as memoSettleBudget bounds the settle pass.
@@ -33,7 +38,7 @@ const (
 	// memoBreakerRun is how many deliveries in a row must end badly to pause a queue, and
 	// memoQuickTurn what counts as "within a minute".
 	memoBreakerRun = 2
-	memoQuickTurn  = time.Minute
+	memoQuickTurn  = store.MemoQuickTurnMs * time.Millisecond
 	// memoSettleWakeEvery is the least time between two wakes of one queue made only to settle:
 	// the workspace needs its time to start, and every wake counts against the day.
 	memoSettleWakeEvery = 10 * time.Minute
@@ -43,7 +48,7 @@ const (
 	memoWakesPerTick = 2
 	// memoClosedTurnWindow is how long after its close a delivery is still read for the first turn
 	// of its session, and memoClosedTurnsPerTick how many are read in a tick.
-	memoClosedTurnWindow   = 24 * time.Hour
+	memoClosedTurnWindow   = memoafter.ClosedTurnWindow
 	memoClosedTurnsPerTick = 50
 )
 
@@ -301,20 +306,50 @@ func (r *memoQueueRunner) houseKeep(ctx context.Context, w *memoQueueWork, live 
 		r.checkBreaker(ctx, q, now)
 	}
 	r.checkWaiting(ctx, q, live)
+	if w.pending.Count > w.pending.Eligible {
+		r.checkAfter(ctx, q, now)
+	}
+}
+
+// checkAfter puts to held every pending message of a queue that waits for a prerequisite that can
+// no longer be satisfied, with the reason, and tells the member once about each message that has
+// waited for its prerequisites longer than the queue's max_task_hours since it became pending
+// (ADR 0137, addendum 2026-11-19). It runs behind the membership lock, from the rows as they are.
+func (r *memoQueueRunner) checkAfter(ctx context.Context, q store.MemoQueue, now time.Time) {
+	var late []memoafter.Blocked
+	err := r.mgr.store.MemoTx(ctx, q.MembershipID, func(tx store.MemoTxOps) error {
+		late = nil
+		c, ok, err := tx.GetCategory(q.CategoryID)
+		if err != nil || !ok {
+			return err
+		}
+		cur, ok, err := tx.GetQueue(q.CategoryID)
+		if err != nil || !ok {
+			return err
+		}
+		rows, err := tx.ListMemosIn(c.Repo, c.Name)
+		if err != nil {
+			return err
+		}
+		late, err = memoafter.HoldUnsatisfiable(tx, rows, now, now.Add(-time.Duration(memoQueueTaskHours(cur))*time.Hour))
+		return err
+	})
+	if err != nil {
+		log.Printf("memo queue: queue %s: prerequisites: %v", q.CategoryID, err)
+		return
+	}
+	for _, b := range late {
+		// Told once per occurrence: the message and the release it waits under.
+		r.notifyQueueRow(ctx, q, memoQueueBlockedKind, "memo-blocked-"+b.Memo.ID+"-"+b.Memo.ReleasedAt,
+			map[string]any{"memo_id": b.Memo.ID, "memo_label": memoafter.Label(b.Memo), "after": b.Items,
+				"max_task_hours": memoQueueTaskHours(q)})
+	}
 }
 
 // turnBad reports whether a delivery's first turn counts against the queue: it failed or was
 // aborted, or it ended within a minute without a clean end. A turn with no recorded outcome (a
 // kind that records none) counts by the minute alone.
-func turnBad(d store.MemoDelivery) bool {
-	switch d.TurnOutcome {
-	case "turn-failed", "turn-aborted":
-		return true
-	case "clean":
-		return false
-	}
-	return time.Duration(d.TurnMs)*time.Millisecond < memoQuickTurn
-}
+func turnBad(d store.MemoDelivery) bool { return store.TurnBad(d) }
 
 // checkBreaker pauses a queue whose last two deliveries with a recorded first turn, created
 // since it was last resumed, both ended badly, and tells the member once. The decision is made
@@ -454,9 +489,11 @@ func openCheck(q store.MemoQueue, pending store.QueuePending, now time.Time) (op
 		if q.Draining {
 			return true, false, nil
 		}
-		if pending.Count < q.OpenAfter {
+		// Only the messages a claim may take count towards the threshold: one blocked by its
+		// prerequisites holds no place in it (ADR 0137, addendum 2026-11-19).
+		if pending.Eligible < q.OpenAfter {
 			return false, false, &memoWaiting{Reason: waitBelowThreshold,
-				Detail: &memoWaitingDetail{Needed: q.OpenAfter, Waiting: pending.Count}}
+				Detail: &memoWaitingDetail{Needed: q.OpenAfter, Waiting: pending.Eligible, Blocked: pending.Count - pending.Eligible}}
 		}
 		if !quietSince(pending.Latest, now) {
 			w := &memoWaiting{Reason: waitQuietMinute}
@@ -484,7 +521,7 @@ func (r *memoQueueRunner) fireOneOf(ctx context.Context, views map[string]*memoM
 	live []store.MemoDelivery, now time.Time) (store.MemoDelivery, bool) {
 	cands := make([]*memoQueueWork, 0, len(m.queues))
 	for _, w := range m.queues {
-		if w.pending.Count > 0 {
+		if w.pending.Eligible > 0 {
 			cands = append(cands, w)
 		}
 	}
@@ -577,7 +614,10 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 					return store.QueuePending{}, err
 				}
 				rows, err := tx.ListMemosIn(c.Repo, c.Name)
-				return pendingOf(rows), err
+				if err != nil {
+					return store.QueuePending{}, err
+				}
+				return pendingOf(rows, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now))), nil
 			}})
 		if err != nil || why != nil {
 			return err
@@ -631,13 +671,18 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 }
 
 // pendingOf summarizes the pending messages of a bucket the way ListQueuePendingStats does.
-func pendingOf(rows []store.Memo) store.QueuePending {
+// eligible says whether a message's prerequisites are satisfied (memoafter.EligibleIn), the Go side of
+// the statistics' SQL.
+func pendingOf(rows []store.Memo, eligible func(store.Memo) bool) store.QueuePending {
 	var p store.QueuePending
 	for _, m := range rows {
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
 			continue
 		}
 		p.Count++
+		if eligible(m) {
+			p.Eligible++
+		}
 		if m.RefKey != "" {
 			p.Refs++
 		}
@@ -774,7 +819,7 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 		if err != nil {
 			return err
 		}
-		pending := pendingOf(rows)
+		pending := pendingOf(rows, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now)))
 		if open, _ := openState(cur, pending, now); !open || pending.Count == 0 {
 			return nil
 		}
@@ -894,6 +939,8 @@ const (
 	waitTidying = "tidying"
 	// waitNoTidy: every message waiting is one a tidy run derived and the Agent cannot take it.
 	waitNoTidy = "no_tidy"
+	// waitPrerequisites: every message waiting waits for a prerequisite that is not satisfied yet.
+	waitPrerequisites = "prerequisites"
 )
 
 // memoWaiting is "waiting" on the wire: why a queue with notes waiting starts nothing now.
@@ -911,6 +958,9 @@ type memoWaitingDetail struct {
 	Waiting   int    `json:"waiting,omitempty"`
 	AgentKind string `json:"agentKind,omitempty"`
 	By        string `json:"by,omitempty"`
+	// Blocked is how many pending messages wait for their prerequisites, for below_threshold and
+	// prerequisites.
+	Blocked int `json:"blocked,omitempty"`
 }
 
 // untilOf rounds a part of a second up: "until" is never earlier than the moment the dispatcher acts.
@@ -1034,6 +1084,9 @@ func memoQueueWaiting(tx store.MemoWaitOps, q store.MemoQueue, tenantOn bool, pe
 		pending: func() (store.QueuePending, error) { return pending, nil }})
 	if err != nil || w != nil {
 		return w, err
+	}
+	if pending.Eligible == 0 {
+		return &memoWaiting{Reason: waitPrerequisites, Detail: &memoWaitingDetail{Blocked: pending.Count}}, nil
 	}
 	if q.NoRefsAt != "" && pending.Refs == pending.Count {
 		return &memoWaiting{Reason: waitNoRefs}, nil

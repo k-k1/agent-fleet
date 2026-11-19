@@ -123,9 +123,11 @@ type CP interface {
 	MemoList(ctx context.Context, membershipID string) (any, error)
 	// MemoCreate's connection is the authenticated connection id, recorded as the producer.
 	// ref is the typed reference of a create (nil for none). An update's ref is three-way: nil
-	// leaves the reference, an empty MemoRef clears it, a full one sets it.
-	MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *MemoRef) (any, error)
-	MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int, ref *MemoRef) (any, error)
+	// leaves the reference, an empty MemoRef clears it, a full one sets it. after is the
+	// prerequisites (ids or reference keys of the same queue); on an update nil leaves them and an
+	// empty list clears them.
+	MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *MemoRef, after []string) (any, error)
+	MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int, ref *MemoRef, after *[]string) (any, error)
 	MemoFlush(ctx context.Context, rt runtime.Runtime, membershipID, sessionName string, ids []string) (map[string]any, error)
 	// MemoDelete is delete_memo through the shared core, which refuses a message in a queue.
 	MemoDelete(ctx context.Context, membershipID, id string) error

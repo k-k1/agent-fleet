@@ -64,6 +64,7 @@ const (
 	CodeMoveSelf       = "move_self"
 	CodeDuplicateRef   = "duplicate_ref"
 	CodeAlreadyMoved   = "already_moved"
+	CodeKeepOnly       = "keep_only"
 )
 
 // Op is one operation, as the model writes it. Only the fields of its kind may be set.
@@ -92,6 +93,9 @@ type Item struct {
 	Bytes int
 	// Moved is a message a run already moved: no run moves it again.
 	Moved bool
+	// KeepOnly is a message that has or is a prerequisite of another (ADR 0137, addendum
+	// 2026-11-19): a run may only keep it, never merge, split or move it.
+	KeepOnly bool
 	// Ref is the identity of its reference (memoref.Ident), empty for none.
 	Ref string
 }
@@ -187,6 +191,9 @@ func Validate(req Request) *Refusal {
 					return r
 				}
 				it := items[id]
+				if it.KeepOnly {
+					return refuse(CodeKeepOnly, "a source has or is a prerequisite")
+				}
 				if !it.Mergeable {
 					return refuse(CodeNotMergeable, "a source is not a plain text note")
 				}
@@ -212,6 +219,9 @@ func Validate(req Request) *Refusal {
 				return r
 			}
 			src := items[op.ID]
+			if src.KeepOnly {
+				return refuse(CodeKeepOnly, "the source has or is a prerequisite")
+			}
 			if !src.Mergeable {
 				return refuse(CodeNotMergeable, "the source is not a plain text note")
 			}
@@ -240,6 +250,9 @@ func Validate(req Request) *Refusal {
 			}
 			if it.Moved {
 				return refuse(CodeAlreadyMoved, "a message a run already moved")
+			}
+			if it.KeepOnly {
+				return refuse(CodeKeepOnly, "a message that has or is a prerequisite")
 			}
 			if it.Ref != "" {
 				if d.OpenRefs[it.Ref] || moved[d.ID][it.Ref] {
