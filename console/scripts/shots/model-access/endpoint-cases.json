@@ -211,6 +211,81 @@
    "covered": false
   },
   {
+   "ceiling": "10.0.0.0/8",
+   "pattern": "192.0.0.192",
+   "covered": false
+  },
+  {
+   "ceiling": "10.0.0.0/8",
+   "pattern": "168.63.129.16",
+   "covered": false
+  },
+  {
+   "ceiling": "fd12::/16",
+   "pattern": "64:ff9b::169.254.169.254",
+   "covered": false
+  },
+  {
+   "ceiling": "fd12::/16",
+   "pattern": "::169.254.169.254",
+   "covered": false
+  },
+  {
+   "ceiling": "fd12::/16",
+   "pattern": "2002:a9fe:a9fe::1",
+   "covered": false
+  },
+  {
+   "ceiling": "10.0.0.0/8",
+   "pattern": "169.254.169.254..",
+   "covered": false
+  },
+  {
+   "ceiling": "10.0.0.0/8",
+   "pattern": "169。254。169。254。",
+   "covered": false
+  },
+  {
+   "ceiling": "10.0.0.0/8",
+   "pattern": "169.254.43518",
+   "covered": false
+  },
+  {
+   "ceiling": "*.corp.example",
+   "pattern": "foo.123",
+   "covered": false
+  },
+  {
+   "ceiling": "*.corp.example",
+   "pattern": "foo.0x1",
+   "covered": false
+  },
+  {
+   "ceiling": "*.corp.example",
+   "pattern": "10.20.30.40.corp.example",
+   "covered": true
+  },
+  {
+   "ceiling": "*.corp.example",
+   "pattern": "0x.corp.example",
+   "covered": true
+  },
+  {
+   "ceiling": "*.corp.example",
+   "pattern": "10.20.30.40.example",
+   "covered": false
+  },
+  {
+   "ceiling": "10.20.30.40.example",
+   "pattern": "10.20.30.40.example",
+   "covered": true
+  },
+  {
+   "ceiling": "0x.example",
+   "pattern": "0x.example",
+   "covered": true
+  },
+  {
    "ceiling": "127.0.0.1",
    "pattern": "127.0.0.1",
    "covered": true

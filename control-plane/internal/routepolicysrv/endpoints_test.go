@@ -151,12 +151,13 @@ func TestEndpointApprovalRefusesMetadataAddresses(t *testing.T) {
 
 	// A stored host that predates the refusal: named in the view, not approved, not sent.
 	ctx := context.Background()
-	if _, _, err := st.PutRoutePolicy(ctx, store.RoutePolicyTenant, tn.ID, `{"endpoints":["169.254.169.254","127.0.0.1"]}`, "test", nil); err != nil {
+	if _, _, err := st.PutRoutePolicy(ctx, store.RoutePolicyTenant, tn.ID, `{"endpoints":["169.254.169.254","2852039166","127.0.0.1"]}`, "test", nil); err != nil {
 		t.Fatal(err)
 	}
 	v := decodePolicy(t, routeAdminDo(mux, "GET", tenantPath, "boss-x", "").Body.String())
-	if len(v.Endpoints) != 2 || v.Endpoints[0].Host != "169.254.169.254" || v.Endpoints[0].Approved ||
-		!slices.Equal(v.Endpoints[0].ExcludedBy, []string{"address"}) || !v.Endpoints[1].Approved {
+	if len(v.Endpoints) != 3 || v.Endpoints[0].Host != "169.254.169.254" || v.Endpoints[0].Approved ||
+		!slices.Equal(v.Endpoints[0].ExcludedBy, []string{"address"}) || v.Endpoints[1].Approved ||
+		!slices.Equal(v.Endpoints[1].ExcludedBy, []string{"address"}) || !v.Endpoints[2].Approved {
 		t.Errorf("tenant view: %+v", v.Endpoints)
 	}
 	if p, _ := MemberPolicyOf(ctx, st, tn.ID); !slices.Equal(p.Endpoints, []string{"127.0.0.1"}) {

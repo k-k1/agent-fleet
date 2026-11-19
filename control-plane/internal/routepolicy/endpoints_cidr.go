@@ -18,9 +18,13 @@ import (
 // mistyped prefix there would approve hosts of unrelated owners or the node's own services.
 var privateSpace = mustPrefixes("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7")
 
-// metadataAddrs are instance-metadata endpoints inside privateSpace. 169.254.169.254 and the ECS
-// task endpoint are link-local and already outside it.
+// metadataAddrs are instance-metadata and platform-service endpoints. 169.254.169.254 and the ECS
+// task endpoint are link-local, covered by refusedAddr. The first four lie inside privateSpace, so
+// a range holding one is refused by normalizeCIDR; the last two lie outside it and matter only to
+// exact IPs.
 var metadataAddrs = []netip.Addr{
+	netip.MustParseAddr("192.0.0.192"),     // Oracle Cloud
+	netip.MustParseAddr("168.63.129.16"),   // Azure WireServer
 	netip.MustParseAddr("100.100.100.200"), // Alibaba Cloud
 	netip.MustParseAddr("fd00:ec2::254"),   // AWS, IPv6
 	netip.MustParseAddr("fd00:ec2::23"),    // AWS EKS Pod Identity Agent, IPv6
@@ -35,6 +39,19 @@ var metadataAddrs = []netip.Addr{
 // IPv4 address.
 func refusedAddr(a netip.Addr) string {
 	a = a.Unmap()
+	// An IPv4 address carried inside an IPv6 one is judged as itself: NAT64 (64:ff9b::/96) and
+	// IPv4-compatible (::/96) addresses are translated or routed to it, and 6to4 (2002::/16) too.
+	if a.Is6() {
+		b := a.As16()
+		switch {
+		case netip.MustParsePrefix("64:ff9b::/96").Contains(a):
+			return refusedAddr(netip.AddrFrom4([4]byte(b[12:])))
+		case slices.Equal(b[:12], make([]byte, 12)):
+			return refusedAddr(netip.AddrFrom4([4]byte(b[12:])))
+		case b[0] == 0x20 && b[1] == 0x02:
+			return refusedAddr(netip.AddrFrom4([4]byte(b[2:6])))
+		}
+	}
 	if a.Is4() && a.As4()[0] == 169 && a.As4()[1] == 254 || a.Is6() && a.IsLinkLocalUnicast() {
 		return "a link-local address"
 	}
@@ -48,6 +65,7 @@ func refusedAddr(a netip.Addr) string {
 // domain looks like that, and resolvers read such a name ("2852039166", "0xa9.254.169.254") as an
 // IPv4 address in a spelling the canonical-IP check does not see.
 func numericLastLabel(h string) bool {
+	h = strings.TrimRight(h, ".")
 	l := h[strings.LastIndex(h, ".")+1:]
 	if rest, ok := strings.CutPrefix(l, "0x"); ok {
 		l = rest

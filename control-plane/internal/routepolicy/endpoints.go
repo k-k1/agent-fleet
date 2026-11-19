@@ -116,6 +116,11 @@ func normalizeHost(s string) (string, bool, error) {
 	if err != nil || a == "" {
 		return "", false, fmt.Errorf("not a valid host name: %v", err)
 	}
+	// ToASCII lets an empty label through and turns a full-width stop into ".", so a second
+	// trailing dot or "169。254。169。254。" would survive as "169.254.169.254.".
+	if strings.HasPrefix(a, ".") || strings.HasSuffix(a, ".") || strings.Contains(a, "..") {
+		return "", false, errors.New("not a valid host name: an empty label")
+	}
 	return a, false, nil
 }
 
@@ -251,7 +256,7 @@ func (r Rule) allowsSelfHosted(routeID string) bool {
 func (l Layers) EndpointExcludedBy(host string) []string {
 	var out []string
 	// A stored host that is no longer approvable (it predates the refusal) stays visible, named.
-	if a, err := netip.ParseAddr(host); err == nil && refusedAddr(a) != "" {
+	if a, err := netip.ParseAddr(host); err == nil && refusedAddr(a) != "" || err != nil && numericLastLabel(host) {
 		out = append(out, ExcludedAddress)
 	}
 	if vendorOf(host) != "" {
