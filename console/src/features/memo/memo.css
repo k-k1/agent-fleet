@@ -106,7 +106,13 @@
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--muted);
-  margin: 6px 0 2px;
+  /* Pinned under the section header (z-index 3), over the category rows (1). Opaque, and
+     padding rather than margin, so scrolled notes never show through the band. */
+  position: sticky;
+  top: var(--sec-head-h, 34px);
+  z-index: 2;
+  padding: 6px 0 2px;
+  background: var(--leftpane-bg, var(--panel));
 }
 .memo-repo-name {
   flex: 1;
@@ -132,7 +138,7 @@
   font-size: 12px;
 }
 .memo-cat {
-  margin-left: 2px;
+  margin: 5px 0 0 2px;
 }
 /* Category header reads as a distinct bar so it's never mistaken for a memo — the
    uncategorized (未分類) and named categories share the same treatment and left edge, and
@@ -143,8 +149,16 @@
   align-items: center;
   gap: 0;
   padding: 3px 5px;
-  margin: 5px 0 2px;
-  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  margin: 0 0 2px;
+  /* Tint over an opaque base: pinned, a translucent bar would show the notes beneath. */
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--muted) 12%, transparent),
+    color-mix(in srgb, var(--muted) 12%, transparent)
+  );
+  background-color: var(--leftpane-bg, var(--panel));
+  position: sticky;
+  top: calc(var(--sec-head-h, 34px) + var(--memo-repo-head-h, 0px));
+  z-index: 1;
   border-radius: 5px;
   cursor: pointer;
   user-select: none;
