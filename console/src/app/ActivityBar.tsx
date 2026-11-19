@@ -2,7 +2,7 @@
 // the left pane shows; Home above it and the group at the foot open a pane and leave the left
 // pane alone. Keeping those two apart is the point of the column: an icon either changes the
 // left pane or the main area, never both.
-import { memo, useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import type { RailView } from "../core/store/leftRail.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -23,6 +23,8 @@ import { tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
 import { hasUnreadConversation, hasUnreadSession, pendingNews, useRailAck, waitingSessions, workItemNewsKeys } from "./activity/badges.ts";
 import type { RailBadge } from "./activity/badges.ts";
+import { stepView } from "./barSwipe.ts";
+import { useBarSwipe } from "./useBarSwipe.ts";
 
 interface ViewDef {
   id: RailView;
@@ -62,9 +64,39 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
   const imagegenAvailable = useImagegenAvailable();
   const badges = useRailBadges(shown ? view : null);
 
-  const views = schedulerEnabled ? VIEWS : VIEWS.filter((v) => v.id !== "schedules");
+  const views = useMemo(() => (schedulerEnabled ? VIEWS : VIEWS.filter((v) => v.id !== "schedules")), [schedulerEnabled]);
+
+  // Phone only (a tablet's docked column keeps taps), and only while the drawer is out.
+  // The list is the one rendered above, so a toggled scheduler is never stale.
+  const barRef = useRef<HTMLDivElement>(null);
+  const [announced, setAnnounced] = useState("");
+  const step = useCallback(
+    (delta: 1 | -1) => {
+      const next = stepView(
+        views.map((v) => v.id),
+        view,
+        delta,
+      );
+      if (next === null) return false;
+      showView(next);
+      const def = views.find((v) => v.id === next);
+      if (def) setAnnounced(tr(def.label));
+      return true;
+    },
+    [views, view, showView, tr],
+  );
+  // The announcement is for the moment of the swipe only. Cleared afterwards, a repeat swipe
+  // to the same view changes the text again (and is read again), and no stale name lingers
+  // at the end of the toolbar.
+  useEffect(() => {
+    if (!announced) return;
+    const id = window.setTimeout(() => setAnnounced(""), 1000);
+    return () => window.clearTimeout(id);
+  }, [announced]);
+  useBarSwipe(barRef, { enabled: !foldable && shown, step }, [views.length, imagegenAvailable]);
+
   return (
-    <div className="actbar" role="toolbar" aria-orientation="vertical" aria-label={tr("rail.bar_aria")}>
+    <div ref={barRef} className="actbar" role="toolbar" aria-orientation="vertical" aria-label={tr("rail.bar_aria")}>
       <LaunchButton id="home" icon="home" label={tr("wsbar.home_title") + hintSuffix("open.home")} name={tr("wsbar.home")} onClick={() => openHome()} />
       <span className="actbar-rule" />
       {views.map((v) => {
@@ -80,7 +112,11 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
             aria-pressed={active}
             aria-label={name}
             title={badge ? `${name} — ${badgeText(badge, tr)}` : name}
-            onClick={() => (foldable ? pickView(v.id) : showView(v.id))}
+            onClick={() => {
+              setAnnounced("");
+              if (foldable) pickView(v.id);
+              else showView(v.id);
+            }}
           >
             <Icon name={v.icon} />
             {v.mark && <Icon name={v.mark} className="actbar-mark" />}
@@ -121,6 +157,9 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
         name={tr("pane.open_generated")}
         onClick={() => openGeneratedGallery()}
       />
+      <span className="actbar-live" role="status" aria-live="polite">
+        {announced}
+      </span>
     </div>
   );
 });

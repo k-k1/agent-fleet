@@ -91,3 +91,13 @@ memo queue, repositories, other sessions, shared sessions, files. Three things f
   open there. The keys are left in place.
 - The acknowledged news is kept per browser (`af-rail-acked`), like the work-item baselines it
   builds on. Losing it shows one badge again, never a wrong one.
+
+## Note, 2026-11-19: vertical swipe on a phone (#4557)
+
+On a phone with the drawer out, a vertical swipe that starts on the column steps the left pane to
+the previous / next entry of the visible views (swipe up = next; one constant, `BAR_SWIPE_UP_IS_NEXT`
+in `console/src/app/barSwipe.ts`). It clamps at the ends, takes one step per gesture, goes through
+`showView` (so it persists and nothing unmounts), and is live only while the column fits: an
+overflowing column keeps native scrolling. It lives in its own hook (`useBarSwipe`), not in
+`installSwipeGestures`, whose horizontal gestures are unchanged. Home and the foot launchers are never
+targets. Tablet and desktop keep taps only. Direction and clamp-vs-wrap still need a check on a phone.
