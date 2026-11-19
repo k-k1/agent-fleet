@@ -12,8 +12,9 @@ package main
 // are not: a removed version is downloaded again only with access to services.gradle.org, so
 // they are manual-only and not a candidate for any automatic policy (gradlecache).
 //
-// Manual only, never on a timer (docs/log/116): neither Go nor npm can evict by age, so the
-// only cleanup is "all of it", and when that happens is the person's call.
+// Manual only, never on a timer (docs/log/116): the only cleanup offered is "all of it", and
+// when that happens is the person's call. (npm cannot evict by age; Go can by mtime, which is
+// the open question of #4560, docs/log/137.)
 //
 // The walk touches hundreds of thousands of files, so it runs only when the Console asks
 // (a button, not on opening the tab) and the answer is held briefly.

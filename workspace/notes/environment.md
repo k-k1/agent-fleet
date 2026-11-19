@@ -113,6 +113,12 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   `ps -eo pid,args` for `go build`/`go test`/`npm ci` first, since they share these caches.
   The user can do the same from Settings > Machine > Tool caches, which refuses while a
   build is running.
+- **Go builds run with `GOFLAGS=-trimpath`** (set in the image), so worktrees at different paths
+  share `~/.cache/go-build` entries instead of each adding its own copy. Anything that needs a
+  source file's real path at run time must not use `runtime.Caller` (under `-trimpath` it returns
+  a module-relative path); walk up from the working directory instead. An exported `GOFLAGS`
+  replaces the default (append `-trimpath` yourself); one set with `go env -w GOFLAGS=…` is
+  shadowed by it, so `go env GOFLAGS` shows what a build really uses.
 - N worktrees means N copies of every per-project dependency tree unless the ecosystem shares one
   (Go, Gradle/Maven and Cargo do; **npm does not** — 300 MB+ per worktree). Sharing a
   `node_modules` between worktrees has its own hazards: `/usr/local/share/agent-fleet/notes/worktrees.md`.

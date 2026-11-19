@@ -78,6 +78,10 @@ export function ReclaimModal({ onClose, onChanged }: { onClose: () => void; onCh
         missed = true;
       }
       if (!alive.current) return;
+      // Largest first: when the disk is nearly full the person wants the biggest win on top, and a
+      // single tool cache (go-build reached 162 GB once) can outweigh every working copy. The sort
+      // is stable, so equal sizes keep the survey order.
+      found.sort((x, y) => y.bytes - x.bytes);
       setItems(found);
       setPartial(missed);
       setPhase(found.length === 0 && missed ? "failed" : "ready");

@@ -107,7 +107,8 @@ describe("ReclaimModal", () => {
   it("lists exactly the removable items and deletes nothing on open", () => {
     const ids = [...document.body.querySelectorAll("[data-testid=reclaim-items] > li")].map((l) => l.getAttribute("data-id"));
     // a, c (candidates, from dry runs), go-build only: busy, skipped and empty rows are out.
-    expect(ids).toEqual(["wt:a", "wt:c", "cache:go-build"]);
+    // Largest first, so the 4 GiB go-build cache leads the 2 GiB and 1 GiB working copies.
+    expect(ids).toEqual(["cache:go-build", "wt:a", "wt:c"]);
     expect(document.body.textContent).toContain("node_modules");
     expect(real()).toEqual([]);
     expect(confirmBtn().textContent).toContain("7.0 GB");
@@ -119,9 +120,9 @@ describe("ReclaimModal", () => {
     await act(async () => confirmBtn().click());
     await flush();
     expect(real().map((c) => c.method + " " + decodeURIComponent(c.url).replace(/^.*cleanup\//, ""))).toEqual([
+      "DELETE tool-caches/go-build",
       "POST worktree-output?worktree=a",
       "POST worktree-output?worktree=c",
-      "DELETE tool-caches/go-build",
     ]);
     expect(store.reclaimEstimate()).toBeNull();
     expect(onChanged).toHaveBeenCalled();
