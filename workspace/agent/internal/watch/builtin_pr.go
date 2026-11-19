@@ -25,6 +25,10 @@ type PRCursor struct {
 	// ClosedAt the close time first seen for it: the version of pr.merged / pr.closed. Bitbucket
 	// has no close time and reports its last update instead, which a comment on a merged PR
 	// moves; pinned here, one close is one event.
+	// ChecksPending is whether the last observation of the open PR saw checks still running: a
+	// CI notice is on its way then, which is what keeps an idle owner waiting (Engine.holdsOwner).
+	ChecksPending bool `json:"checks_pending,omitempty"`
+
 	Closed   string `json:"closed,omitempty"`
 	ClosedAt string `json:"closed_at,omitempty"`
 }
@@ -88,6 +92,7 @@ func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now t
 		cur.Closed, cur.ClosedAt = "", ""
 	}
 
+	cur.ChecksPending = open && pr.ChecksPending
 	source := sourceOf(subject)
 	ev := func(typ, version, summary string, data []DataItem) {
 		events = append(events, Event{Source: source, Subject: subject, Type: typ, Version: version, Summary: summary, Data: data, At: now.UTC()})

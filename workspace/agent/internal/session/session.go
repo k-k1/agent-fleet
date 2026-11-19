@@ -229,6 +229,17 @@ type Wakers struct {
 	// included, built-in and claimed notices not), the number the Console prints as "N watches".
 	// Always sent by this Agent, so a row without it comes from an older one.
 	Listed int `json:"listed"`
+	// Holders names what is counted in Watches and Timers (id and source), so "waiting on a watch"
+	// can say which one. Omitted from an older Agent.
+	Holders []WakerHolder `json:"holders,omitempty"`
+}
+
+// WakerHolder is one subscription counted in Wakers.
+type WakerHolder struct {
+	ID      string `json:"id"`
+	Source  string `json:"source"`
+	Builtin bool   `json:"builtin,omitempty"`
+	Timer   bool   `json:"timer,omitempty"`
 }
 
 // Session is the wire representation of a Claude session (one tmux session).

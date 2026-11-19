@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"time"
@@ -36,6 +37,32 @@ func (e *Engine) wakesOwner(s Subscription, now time.Time) bool {
 	return now.Before(s.Expires)
 }
 
+// holdsOwner is wakesOwner narrowed to what a session that has gone idle can still be waiting
+// for. A built-in is the PR feedback feature's standing offer to tell a session about its PR;
+// with nothing pending and no check of the PR still running it can only fire after somebody
+// pushes, reviews or merges, and the session does not wait for that. Counting it kept a finished
+// memo-queue run open for good, with no watch to be seen in the member's list. EndOwner keeps
+// the wider rule: a retire still ends every built-in.
+func (e *Engine) holdsOwner(s Subscription, now time.Time) bool {
+	if !e.wakesOwner(s, now) {
+		return false
+	}
+	if s.Builtin == "" || s.Done || e.inflight[s.ID] > 0 || len(s.Pending) > 0 {
+		return true
+	}
+	return e.checksRunning(s)
+}
+
+// checksRunning reports whether s tells about a CI result of a PR whose checks the last
+// observation saw still running: that result is on its way and the session is waiting for it.
+func (e *Engine) checksRunning(s Subscription) bool {
+	if !slices.ContainsFunc(s.Types, func(t string) bool { return t == typeChecksFailed || t == typeChecksFailing }) {
+		return false
+	}
+	var cur PRCursor
+	return json.Unmarshal(e.state.Cursors[s.Subject], &cur) == nil && cur.ChecksPending
+}
+
 // Wakers counts owner's subscriptions that can still start it: timers (the ones with a due time)
 // and watches (the rest, built-in ones included). ok is false when the engine could not read its
 // state, and the counts mean nothing then.
@@ -63,7 +90,7 @@ func (e *Engine) WakersListed(owner string) (watches, timers, listed int, ok boo
 		if isListed(s) {
 			listed++
 		}
-		if !e.wakesOwner(s, now) {
+		if !e.holdsOwner(s, now) {
 			continue
 		}
 		if !s.Due.IsZero() {
@@ -73,6 +100,30 @@ func (e *Engine) WakersListed(owner string) (watches, timers, listed int, ok boo
 		}
 	}
 	return watches, timers, listed, true
+}
+
+// Holder names one subscription that Wakers counts, so a person can tell whether the watch that
+// holds a session is real.
+type Holder struct {
+	ID      string `json:"id"`
+	Source  string `json:"source"`
+	Builtin bool   `json:"builtin,omitempty"`
+	Timer   bool   `json:"timer,omitempty"`
+}
+
+// Holders lists what Wakers counts for owner, oldest first.
+func (e *Engine) Holders(owner string) []Holder {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.load()
+	now := e.now()
+	var out []Holder
+	for _, s := range e.state.Subs {
+		if s.Owner == owner && e.holdsOwner(s, now) {
+			out = append(out, Holder{ID: s.ID, Source: s.Source, Builtin: s.Builtin != "", Timer: !s.Due.IsZero()})
+		}
+	}
+	return out
 }
 
 // Ended is what EndOwner removed.

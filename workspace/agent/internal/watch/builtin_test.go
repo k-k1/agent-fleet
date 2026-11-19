@@ -683,3 +683,24 @@ func TestASessionBuiltinLeavingTheSetOwesNothingMore(t *testing.T) {
 		t.Fatalf("a session no longer holding the PR was told %v", sink.told)
 	}
 }
+
+// The cursor remembers whether the open PR's checks still run, which is what keeps an idle owner
+// waiting for the CI notice; a merged PR or finished checks clear it.
+func TestPRConditionsRecordRunningChecks(t *testing.T) {
+	now := time.Now()
+	pending := func(raw json.RawMessage, pr branchpr.PR) bool {
+		_, next, _ := PRConditions("github:o/r#1", &pr, raw, now)
+		var c PRCursor
+		_ = json.Unmarshal(next, &c)
+		return c.ChecksPending
+	}
+	if !pending(nil, branchpr.PR{State: "open", Head: "h", Checks: "pending", ChecksPending: true}) {
+		t.Fatal("running checks were not recorded")
+	}
+	if pending(nil, branchpr.PR{State: "open", Head: "h", Checks: "failure"}) {
+		t.Fatal("finished checks are recorded as running")
+	}
+	if pending(nil, branchpr.PR{State: "merged", ChecksPending: true}) {
+		t.Fatal("a merged PR is recorded as having running checks")
+	}
+}

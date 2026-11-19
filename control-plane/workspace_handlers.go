@@ -1088,6 +1088,16 @@ type sessionWakers struct {
 	Timers  int `json:"timers"`
 	// Listed is the Agent's count of what the member's watch list shows; nil from an older Agent.
 	Listed *int `json:"listed,omitempty"`
+	// Holders names the subscriptions counted above; nil from an older Agent.
+	Holders []sessionWakerHolder `json:"holders,omitempty"`
+}
+
+// sessionWakerHolder is one subscription counted in sessionWakers (id and source).
+type sessionWakerHolder struct {
+	ID      string `json:"id"`
+	Source  string `json:"source"`
+	Builtin bool   `json:"builtin,omitempty"`
+	Timer   bool   `json:"timer,omitempty"`
 }
 
 // sessionQueueTurn is the end of a queue delivery's first turn. Outcome is clean, turn-failed or

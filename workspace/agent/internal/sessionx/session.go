@@ -12,6 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/watch"
 )
 
 // recordFleetGraphBirth appends the fleet graph's birth line for a session that was just
@@ -370,6 +371,9 @@ var watchWakers = func(name string) (watches, timers, listed int, ok bool) {
 	return watchEngine().WakersListed(name)
 }
 
+// watchHolders names what watchWakers counted, replaceable the same way.
+var watchHolders = func(name string) []watch.Holder { return watchEngine().Holders(name) }
+
 // fillWakers sets what would start the session again, on live and stopped rows alike (ADR 0137
 // §6). Nothing is sent when it holds nothing; when the engine's state could not be read the row
 // says so instead, because a zero it is not sure of would let the Control Plane close a
@@ -381,6 +385,9 @@ func fillWakers(s *session.Session, m session.Meta) {
 		s.WakersUnknown = true
 	case watches > 0 || timers > 0 || listed > 0:
 		s.Wakers = &session.Wakers{Watches: watches, Timers: timers, Listed: listed}
+		for _, h := range watchHolders(m.Name) {
+			s.Wakers.Holders = append(s.Wakers.Holders, session.WakerHolder(h))
+		}
 	}
 }
 
