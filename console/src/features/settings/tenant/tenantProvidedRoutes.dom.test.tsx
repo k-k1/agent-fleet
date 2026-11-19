@@ -300,6 +300,13 @@ describe("tenant provided routes, status and month", () => {
     }
   });
 
+  it("says a source that is off also needs the grant when the tenant is not granted", async () => {
+    await mountWith({ ...VIEW(), granted: false, ceiling_micro: null, source_registered: true, source_active: false });
+    const banner = summary().querySelector('[data-state="source-off"]')!;
+    expect(banner.textContent).toContain("このテナントに許可する必要があります");
+    expect(banner.textContent).not.toContain("有効になったときから");
+  });
+
   it("draws a registered, active source as usable", async () => {
     await mountWith({ ...VIEW(), source_registered: true, source_active: true });
     expect(summary().querySelector('[data-state="granted"]')).not.toBeNull();

@@ -1256,6 +1256,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.prov_source_off": "✖ Not usable: the deployment's Bedrock source is switched off, so nothing is available to this tenant right now.",
   "tenant.prov_source_unregistered": "✖ Not usable: the deployment has no Bedrock source registered yet, so nothing is available to this tenant.",
   "tenant.prov_source_hint": "There is nothing you can do from here; the deployment's administrator has to enable the source. The grant and budgets below are kept and apply once it is on.",
+  "tenant.prov_source_hint_ungranted": "There is nothing you can do from here; the deployment's administrator has to enable the source and also grant it to this tenant. The budgets below are kept and apply once both are done.",
   "tenant.prov_month": "This month ({month}, UTC), resets {reset}",
   "tenant.prov_month_noreset": "This month ({month}, UTC)",
   "tenant.prov_use_of": "{used} of {of}",

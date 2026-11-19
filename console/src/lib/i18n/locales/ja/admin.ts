@@ -1252,6 +1252,7 @@ export const admin = {
   "tenant.prov_source_off": "✖ 使えません ― この配備の Bedrock ソースが停止されているため、いまこのテナントで使えるモデルはありません。",
   "tenant.prov_source_unregistered": "✖ 使えません ― この配備にはまだ Bedrock ソースが登録されていないため、このテナントで使えるモデルはありません。",
   "tenant.prov_source_hint": "こちらでできることはありません。配備の管理者がソースを有効にする必要があります。下の許可と予算はそのまま残り、有効になったときから効きます。",
+  "tenant.prov_source_hint_ungranted": "こちらでできることはありません。配備の管理者がソースを有効にし、さらにこのテナントに許可する必要があります。下の予算はそのまま残り、両方そろったときから効きます。",
   "tenant.prov_month": "今月（{month}・UTC。{reset} にリセット）",
   "tenant.prov_month_noreset": "今月（{month}・UTC）",
   "tenant.prov_use_of": "{of} のうち {used}",

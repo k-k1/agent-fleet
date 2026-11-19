@@ -178,9 +178,9 @@ type TenantView struct {
 	Reservations []ModelReservation `json:"reservations"`
 	FloorMicro   int64              `json:"floor_micro"`
 	// SourceRegistered and SourceActive say whether the deployment source exists and is switched
-	// on. Both false means no tenant can use the route whatever its grant says. They are the only
+	// on. Unregistered or switched off (either flag false), no tenant can use the route whatever its grant says. They are the only
 	// source facts a tenant is told: never the role, the account or the Region of the operator's
-	// AWS side (TestTenantViewCarriesNoOperatorIdentifiers holds that line).
+	// AWS side (TestTenantViewSourceState holds that line).
 	SourceRegistered bool `json:"source_registered"`
 	SourceActive     bool `json:"source_active"`
 }

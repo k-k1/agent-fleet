@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -281,11 +282,20 @@ func TestTenantViewSourceState(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			_, mux, tn, _ := providedRouteTenantFixtureWith(t, c.register)
 			base := "/api/admin/tenants/" + tn.Slug + "/provided-routes/deployment"
-			if c.register && !c.active {
-				put := `{"role_arn":"` + secretARN + `","region":"us-east-1","models":["us.anthropic.claude-opus-5-5"],"active":false}`
-				if w := routeAdminDo(mux, "PUT", "/api/admin/provided-routes/deployment", "root@x", put); w.Code != 200 {
-					t.Fatalf("switch off: %d %s", w.Code, w.Body)
+			// Operator-side values that must never reach the tenant: the source's own id, binding,
+			// fingerprint and a non-default name, read back from the super_admin's view.
+			var operator []string
+			if c.register {
+				put := `{"name":"OperatorProdBedrock","role_arn":"` + secretARN + `","region":"us-east-1","models":["us.anthropic.claude-opus-5-5"],"active":` + strconv.FormatBool(c.active) + `}`
+				w := routeAdminDo(mux, "PUT", "/api/admin/provided-routes/deployment", "root@x", put)
+				if w.Code != 200 {
+					t.Fatalf("register: %d %s", w.Code, w.Body)
 				}
+				var out struct{ Source routegateway.SourceView }
+				if json.Unmarshal(w.Body.Bytes(), &out) != nil || out.Source.ID == "" || out.Source.Fingerprint == "" || out.Source.Binding == "" {
+					t.Fatalf("source view: %s", w.Body)
+				}
+				operator = []string{out.Source.ID, out.Source.Fingerprint, out.Source.Binding, "OperatorProdBedrock"}
 			}
 			if w := routeAdminDo(mux, "PUT", base+"/grant", "root@x", `{"granted":true,"ceiling_micro":50000000}`); w.Code != 200 {
 				t.Fatalf("grant: %d %s", w.Code, w.Body)
@@ -308,13 +318,39 @@ func TestTenantViewSourceState(t *testing.T) {
 				if !c.wantReg && len(v.Reservations) != 0 {
 					t.Errorf("reservations without a source: %+v", v.Reservations)
 				}
-				for _, leak := range []string{"123456789012", "arn:aws", "af-model-route", "us-east-1", "role_arn", "fingerprint", "region"} {
+				for _, leak := range operator {
+					if strings.Contains(w.Body.String(), leak) {
+						t.Errorf("tenant view carries the operator's %q: %s", leak, w.Body)
+					}
+				}
+				for _, leak := range []string{"123456789012", "arn:aws", "af-model-route", "us-east-1", "role_arn", "fingerprint", "region", "binding"} {
 					if strings.Contains(w.Body.String(), leak) {
 						t.Errorf("tenant view carries %q: %s", leak, w.Body)
 					}
 				}
 			}
 		})
+	}
+}
+
+type failingListStore struct{ routegateway.Store }
+
+func (failingListStore) ListProvidedRouteSources(context.Context, string) ([]store.ProvidedRouteSource, error) {
+	return nil, errors.New("database is locked")
+}
+
+// A failed read of the deployment source is the server's failure (500), never a 200 saying the
+// source is not registered: the Console must not tell a tenant "switched off" over a blip.
+func TestTenantViewSourceReadFailureIs500(t *testing.T) {
+	st, _, tn, _ := providedRouteTenantFixture(t)
+	mgr := p3Manager(t, st)
+	deps := providedRouteDeps(mgr, nil, routegateway.Config{})
+	deps.Store = failingListStore{deps.Store}
+	mux := http.NewServeMux()
+	providedRouteRoutes(mux, mgr, routegateway.New(deps))
+	w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/provided-routes/deployment", "boss@x", "")
+	if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "source_registered") {
+		t.Fatalf("a source read failure answered %d %s", w.Code, w.Body)
 	}
 }
 

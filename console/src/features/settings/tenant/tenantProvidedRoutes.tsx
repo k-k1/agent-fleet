@@ -244,9 +244,13 @@ function TenantProvidedSummary({ view }: { view: ProvidedTenantView }) {
   return (
     <div className="prov-summary" data-testid="prov-grant">
       {sourceDown ? (
-        <div className="admin-hint warn prov-banner" data-state={src === "off" ? "source-off" : "source-unregistered"}>
+        <div
+          className="admin-hint warn prov-banner"
+          role="status"
+          data-state={src === "off" ? "source-off" : "source-unregistered"}
+        >
           <p>{tr(src === "off" ? "tenant.prov_source_off" : "tenant.prov_source_unregistered")}</p>
-          <p>{tr("tenant.prov_source_hint")}</p>
+          <p>{tr(view.granted ? "tenant.prov_source_hint" : "tenant.prov_source_hint_ungranted")}</p>
         </div>
       ) : view.granted ? (
         <p className="mpol-ok" data-state="granted">
@@ -581,6 +585,7 @@ function TenantProvidedRoutesBody({ slug, onServed, ruleStops, isSuper = false, 
     );
   }
   const view = load.value;
+  const sourceDown = ["off", "unregistered"].includes(sourceState(view));
   const saved = (w: string[]) => {
     setWarnings(w);
     reload();
@@ -638,12 +643,7 @@ function TenantProvidedRoutesBody({ slug, onServed, ruleStops, isSuper = false, 
                 path={path}
                 member={m}
                 // MayUse on the CP, under the tenant's grant: not granted, no member's budget applies.
-                canUse={
-                  view.granted &&
-                  sourceState(view) !== "off" &&
-                  sourceState(view) !== "unregistered" &&
-                  (m.granted || !view.members_only)
-                }
+                canUse={view.granted && !sourceDown && (m.granted || !view.members_only)}
                 peek={peek}
                 onSaved={saved}
               />
