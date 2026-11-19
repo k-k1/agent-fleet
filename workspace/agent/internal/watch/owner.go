@@ -60,11 +60,12 @@ func (e *Engine) checksRunning(s Subscription) bool {
 		return false
 	}
 	var cur PRCursor
-	return json.Unmarshal(e.state.Cursors[s.Subject], &cur) == nil && cur.ChecksPending
+	return json.Unmarshal(e.state.Cursors[s.Subject], &cur) == nil && cur.ChecksPending &&
+		e.now().Sub(cur.ChecksAt) < checksPendingTTL
 }
 
 // Wakers counts owner's subscriptions that can still start it: timers (the ones with a due time)
-// and watches (the rest, built-in ones included). ok is false when the engine could not read its
+// and watches (the rest; a built-in only while holdsOwner says the session waits for it). ok is false when the engine could not read its
 // state, and the counts mean nothing then.
 func (e *Engine) Wakers(owner string) (watches, timers int, ok bool) {
 	watches, timers, _, ok = e.WakersListed(owner)
@@ -76,30 +77,8 @@ func (e *Engine) Wakers(owner string) (watches, timers int, ok bool) {
 // built-in subscriptions and notices being delivered, which List leaves out, and List shows an
 // expired one that is not yet pruned, which Wakers does not.
 func (e *Engine) WakersListed(owner string) (watches, timers, listed int, ok bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.load()
-	if e.loadFailed {
-		return 0, 0, 0, false
-	}
-	now := e.now()
-	for _, s := range e.state.Subs {
-		if s.Owner != owner {
-			continue
-		}
-		if isListed(s) {
-			listed++
-		}
-		if !e.holdsOwner(s, now) {
-			continue
-		}
-		if !s.Due.IsZero() {
-			timers++
-		} else {
-			watches++
-		}
-	}
-	return watches, timers, listed, true
+	snap, ok := e.WakersSnapshot(owner)
+	return snap.Watches, snap.Timers, snap.Listed, ok
 }
 
 // Holder names one subscription that Wakers counts, so a person can tell whether the watch that
@@ -111,19 +90,41 @@ type Holder struct {
 	Timer   bool   `json:"timer,omitempty"`
 }
 
-// Holders lists what Wakers counts for owner, oldest first.
-func (e *Engine) Holders(owner string) []Holder {
+// WakersSnapshot is the counts of WakersListed and the holders behind them, read under one lock
+// so they never disagree.
+type WakersSnapshot struct {
+	Watches, Timers, Listed int
+	Holders                 []Holder
+}
+
+// WakersSnapshot reads WakersListed's counts together with who holds them. ok is false when the
+// engine could not read its state.
+func (e *Engine) WakersSnapshot(owner string) (snap WakersSnapshot, ok bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.load()
-	now := e.now()
-	var out []Holder
-	for _, s := range e.state.Subs {
-		if s.Owner == owner && e.holdsOwner(s, now) {
-			out = append(out, Holder{ID: s.ID, Source: s.Source, Builtin: s.Builtin != "", Timer: !s.Due.IsZero()})
-		}
+	if e.loadFailed {
+		return WakersSnapshot{}, false
 	}
-	return out
+	now := e.now()
+	for _, s := range e.state.Subs {
+		if s.Owner != owner {
+			continue
+		}
+		if isListed(s) {
+			snap.Listed++
+		}
+		if !e.holdsOwner(s, now) {
+			continue
+		}
+		if !s.Due.IsZero() {
+			snap.Timers++
+		} else {
+			snap.Watches++
+		}
+		snap.Holders = append(snap.Holders, Holder{ID: s.ID, Source: s.Source, Builtin: s.Builtin != "", Timer: !s.Due.IsZero()})
+	}
+	return snap, true
 }
 
 // Ended is what EndOwner removed.
@@ -133,7 +134,7 @@ type Ended struct {
 	Builtins int `json:"builtins"`
 }
 
-// EndOwner ends every subscription owner holds that can start it (Wakers' rule), pending notices
+// EndOwner ends every subscription owner holds that can start it (wakesOwner's rule, wider than the holdsOwner one Wakers counts by), pending notices
 // and claimed ones included, and cancels the wake bookings they held. unended names what could
 // not be ended: a booking the Control Plane did not confirm gone (it is asked again by every
 // tick), which would still start the workspace but find no session to tell. err is set only when

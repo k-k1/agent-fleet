@@ -26,7 +26,8 @@ func subscribe(t *testing.T, e *Engine, owner, ref string, types ...string) Subs
 func checksRunningOn(e *Engine) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.state.Cursors[bSubject] = json.RawMessage(`{"checks_pending":true}`)
+	raw, _ := json.Marshal(PRCursor{ChecksPending: true, ChecksAt: e.now()})
+	e.state.Cursors[bSubject] = raw
 }
 
 func TestWakersCountsWhatCanStartTheOwner(t *testing.T) {

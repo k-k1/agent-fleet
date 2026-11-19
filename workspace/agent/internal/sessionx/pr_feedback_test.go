@@ -916,6 +916,7 @@ func TestPRFeedbackRunningChecksHoldTheSession(t *testing.T) {
 	f := newFeedbackFixture(t)
 	f.session("a")
 	bk := branchpr.Key{Repo: "o/r", Branch: "feature/x"}
+	f.now = time.Now() // the engine judges how fresh the observation is by its own, real, clock
 	pr := &branchpr.PR{Number: 9, State: "open", URL: "https://github.com/o/r/pull/9", Head: "h9", NodeID: "PR_9", Checks: "pending", ChecksPending: true}
 	f.prs[bk] = pr
 	rememberBranchAsk("a", "github", bk)

@@ -704,3 +704,38 @@ func TestPRConditionsRecordRunningChecks(t *testing.T) {
 		t.Fatal("a merged PR is recorded as having running checks")
 	}
 }
+
+// A push whose checks do not exist yet must not read as settled (the owner would be let go before
+// the result), only finished checks of the same head release a running state, and a state that
+// is not refreshed stops holding after checksPendingTTL.
+func TestChecksRunningStateAcrossAPush(t *testing.T) {
+	now := time.Now()
+	step := func(raw json.RawMessage, pr branchpr.PR, at time.Time) (bool, json.RawMessage) {
+		_, next, _ := PRConditions("github:o/r#1", &pr, raw, at)
+		var c PRCursor
+		_ = json.Unmarshal(next, &c)
+		return c.ChecksPending, next
+	}
+	_, cur := step(nil, branchpr.PR{State: "open", Head: "h1", Checks: "success"}, now)
+	if on, c2 := step(cur, branchpr.PR{State: "open", Head: "h2"}, now); !on {
+		t.Fatal("a new head with no checks reported yet is not held")
+	} else if on, c3 := step(c2, branchpr.PR{State: "open", Head: "h2"}, now.Add(time.Minute)); !on {
+		t.Fatal("the running state dropped while the same head still reports nothing")
+	} else if on, _ := step(c3, branchpr.PR{State: "open", Head: "h2", Checks: "success"}, now.Add(2*time.Minute)); on {
+		t.Fatal("finished checks of the same head did not release it")
+	}
+	// An unrefreshed observation is not held forever.
+	e, _, c := newTestEngine(&fakeSource{}, &fakeSink{answer: Wait})
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	_, raw := step(nil, branchpr.PR{State: "open", Head: "h", Checks: "pending", ChecksPending: true}, c.now())
+	e.mu.Lock()
+	e.state.Cursors[bSubject] = raw
+	e.mu.Unlock()
+	if w, _, _ := e.Wakers("a"); w != 1 {
+		t.Fatalf("fresh running state not held: %d", w)
+	}
+	c.add(checksPendingTTL + time.Minute)
+	if w, _, _ := e.Wakers("a"); w != 0 {
+		t.Fatalf("a stale running state still holds: %d", w)
+	}
+}

@@ -27,7 +27,12 @@ type PRCursor struct {
 	// moves; pinned here, one close is one event.
 	// ChecksPending is whether the last observation of the open PR saw checks still running: a
 	// CI notice is on its way then, which is what keeps an idle owner waiting (Engine.holdsOwner).
-	ChecksPending bool `json:"checks_pending,omitempty"`
+	// Head is the head commit that observation was about and ChecksAt when it last saw the
+	// checks running; a silent cache leaves them as they were, and holdsOwner stops waiting on a
+	// running state older than checksPendingTTL.
+	ChecksPending bool      `json:"checks_pending,omitempty"`
+	Head          string    `json:"head,omitempty"`
+	ChecksAt      time.Time `json:"checks_at,omitempty"`
 
 	Closed   string `json:"closed,omitempty"`
 	ClosedAt string `json:"closed_at,omitempty"`
@@ -92,7 +97,8 @@ func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now t
 		cur.Closed, cur.ClosedAt = "", ""
 	}
 
-	cur.ChecksPending = open && pr.ChecksPending
+	cur.ChecksPending, cur.ChecksAt = checksRunning(cur, pr, open, now)
+	cur.Head = pr.Head
 	source := sourceOf(subject)
 	ev := func(typ, version, summary string, data []DataItem) {
 		events = append(events, Event{Source: source, Subject: subject, Type: typ, Version: version, Summary: summary, Data: data, At: now.UTC()})
@@ -138,4 +144,30 @@ func shortHead(sha string) string {
 		return sha[:12]
 	}
 	return sha
+}
+
+// checksPendingTTL bounds how long an unrefreshed "checks running" holds an idle owner.
+const checksPendingTTL = 30 * time.Minute
+
+// checksRunning decides whether a result is still on its way for the open PR. Running checks
+// say so. A head not seen before with no check reported yet is taken as running too: a push
+// whose checks are not created yet must not read as settled, or the owner is let go and the
+// result then has nobody to tell. Once running, only finished checks of the same head clear it.
+// The caller's cursor keeps ChecksAt for a minute-by-minute observation so the state is not
+// rewritten on every sweep.
+func checksRunning(cur PRCursor, pr *branchpr.PR, open bool, now time.Time) (bool, time.Time) {
+	if !open {
+		return false, time.Time{}
+	}
+	running := pr.ChecksPending
+	if !running && pr.Head != "" && pr.Checks == "" {
+		running = pr.Head != cur.Head || cur.ChecksPending
+	}
+	if !running {
+		return false, time.Time{}
+	}
+	if cur.ChecksPending && now.Sub(cur.ChecksAt) < checksPendingTTL/6 {
+		return true, cur.ChecksAt
+	}
+	return true, now.UTC()
 }

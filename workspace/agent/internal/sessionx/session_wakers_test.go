@@ -9,11 +9,10 @@ import (
 
 // The row names what it counts, so "waiting on a watch" can say which watch it is.
 func TestFillWakersNamesTheHolders(t *testing.T) {
-	oldW, oldH := watchWakers, watchHolders
-	defer func() { watchWakers, watchHolders = oldW, oldH }()
-	watchWakers = func(string) (int, int, int, bool) { return 1, 0, 0, true }
-	watchHolders = func(string) []watch.Holder {
-		return []watch.Holder{{ID: "b:ci:github:o/r#1", Source: "github", Builtin: true}}
+	old := watchWakers
+	defer func() { watchWakers = old }()
+	watchWakers = func(string) (watch.WakersSnapshot, bool) {
+		return watch.WakersSnapshot{Watches: 1, Holders: []watch.Holder{{ID: "b:ci:github:o/r#1", Source: "github", Builtin: true}}}, true
 	}
 	var s session.Session
 	fillWakers(&s, session.Meta{Name: "x"})

@@ -365,27 +365,24 @@ func forkTitle(src session.Meta) string {
 
 // shellQuote lives in internal/session as session.ShellQuote.
 
-// watchWakers is the engine's answer to "what does this session hold that could start it?",
-// replaceable by tests that must not build the Agent's engine.
-var watchWakers = func(name string) (watches, timers, listed int, ok bool) {
-	return watchEngine().WakersListed(name)
+// watchWakers is the engine's answer to "what does this session hold that could start it?", with
+// who holds it, read in one go. Replaceable by tests that must not build the Agent's engine.
+var watchWakers = func(name string) (watch.WakersSnapshot, bool) {
+	return watchEngine().WakersSnapshot(name)
 }
-
-// watchHolders names what watchWakers counted, replaceable the same way.
-var watchHolders = func(name string) []watch.Holder { return watchEngine().Holders(name) }
 
 // fillWakers sets what would start the session again, on live and stopped rows alike (ADR 0137
 // §6). Nothing is sent when it holds nothing; when the engine's state could not be read the row
 // says so instead, because a zero it is not sure of would let the Control Plane close a
 // delivery whose session a watch can still wake.
 func fillWakers(s *session.Session, m session.Meta) {
-	watches, timers, listed, ok := watchWakers(m.Name)
+	snap, ok := watchWakers(m.Name)
 	switch {
 	case !ok:
 		s.WakersUnknown = true
-	case watches > 0 || timers > 0 || listed > 0:
-		s.Wakers = &session.Wakers{Watches: watches, Timers: timers, Listed: listed}
-		for _, h := range watchHolders(m.Name) {
+	case snap.Watches > 0 || snap.Timers > 0 || snap.Listed > 0:
+		s.Wakers = &session.Wakers{Watches: snap.Watches, Timers: snap.Timers, Listed: snap.Listed}
+		for _, h := range snap.Holders {
 			s.Wakers.Holders = append(s.Wakers.Holders, session.WakerHolder(h))
 		}
 	}
