@@ -424,6 +424,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.boost_enabled": "Allow members to boost",
   "tenant.boost_max": "Highest size a boost may reach",
   "tenant.boost_max_top": "The top of the class",
+  "tenant.boost_current": "Current setting: {size}",
   "tenant.boost_hours": "Monthly budget per member (boosted running hours, 0 = none)",
   "tenant.boost_uncounted": "Running hours are not counted yet, so the budget is saved but not enforced.",
   "tenant.boost_unsupported": "This deployment has no machine sizes to boost between.",

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -327,19 +328,20 @@ func TestStalePIDFile(t *testing.T) {
 	t.Run("our own server is left alone", func(t *testing.T) {
 		// Stand in for the server with a real process whose command line carries
 		// both the exe name and the datadir.
-		// A long-lived process whose real command line carries both needles: a
-		// link to sleep, named "postgres", living in the datadir. (No `exec -a`
-		// here — /bin/sh is dash, which has no such builtin.)
+		// A long-lived shell whose real command line carries both needles: a script named
+		// "postgres" in the datadir, run as `sh <script>`. Not a link to /bin/sleep: a multi-call
+		// sleep (uutils coreutils) dispatches on argv[0] and exits at once under another name.
 		standIn := filepath.Join(datadir, "postgres")
-		if err := os.Symlink("/bin/sleep", standIn); err != nil {
+		if err := os.WriteFile(standIn, []byte("#!/bin/sh\nsleep 30\n"), 0o700); err != nil {
 			t.Skipf("cannot place the stand-in: %v", err)
 		}
-		cmd := exec.Command(standIn, "30")
+		cmd := exec.Command("/bin/sh", standIn)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // so cleanup also takes the sleep child
 		if err := cmd.Start(); err != nil {
 			t.Skipf("cannot spawn the stand-in: %v", err)
 		}
 		defer func() {
-			_ = cmd.Process.Kill()
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			_, _ = cmd.Process.Wait()
 		}()
 		// /proc/<pid>/cmdline is empty for the moment the process spends in exec,

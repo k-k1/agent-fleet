@@ -686,7 +686,7 @@ button.mv-path:focus-visible {
 
 .db-url-mode.is-active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .db-url-text {

@@ -32,7 +32,7 @@ Auto-run is not a [schedule](../fleet/schedules.md). A schedule runs a fixed pro
 
 - Only a category with a name can have it. "**Uncategorized**" cannot
 - "**Run by itself**" starts off. Save it off and nothing starts by itself. If you turn it on in the first save and memos are already waiting to run, they start. "Run now" works whether it is on or off
-- Once the settings exist, the memos already in the category take these states: the memos you wrote are "Waiting to run", the others "Waits for approval", and the ones you already sent "Sent"
+- Once the settings exist, the memos already in the category take these states: the memos you wrote are "Waiting to run", the others "Waits for approval", and the ones you already started "Started"
 - A memo taken in from the inbox cannot go into an auto-run category
 - Until a tenant administrator allows it, new settings cannot be made, and the screen says so ([Allow memo auto-run](../../admin/defaults/memo-auto-run.md))
 
@@ -258,7 +258,7 @@ The states of a memo show on its row in the category:
 | Waits for approval | A memo a session or similar added. It does not run until you approve it |
 | Waiting to run | Approved, and waiting for the next run. "Accepted without approval" beside it means no approval was asked, because of "Accept notes from sessions I started without approval" |
 | Starting | A session is being started to run it |
-| Sent | Sent to a session |
+| Started | Started in a session |
 | Needs a look | Whether the session started could not be confirmed. Check the run history. It is not run again by itself |
 | Replaced | A tidy replaced it with other memos ([Tidy the memos before a run](#tidy-the-memos-before-a-run)). Read-only, and kept for 7 days |
 

@@ -37,6 +37,9 @@ const stubSummary = "## Objective\n- o\n\n## Requirements\n- (none)\n\n## Decisi
 type stubProvider struct {
 	mu   sync.Mutex
 	seen int
+	// log is one line per request: the last user text (clipped) and whether a tool result followed,
+	// so a red run can say which branch of the handler answered each request.
+	log []string
 }
 
 func (s *stubProvider) handler(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +60,9 @@ func (s *stubProvider) handler(w http.ResponseWriter, r *http.Request) {
 		}
 		afterTool = m.Role == "tool"
 	}
+	s.mu.Lock()
+	s.log = append(s.log, fmt.Sprintf("user=%.60q afterTool=%v", text, afterTool))
+	s.mu.Unlock()
 	if strings.Contains(text, "RETRY") {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -371,7 +377,7 @@ func TestContractV2Todo(t *testing.T) {
 				t.Fatalf("the turn failed: %+v", e)
 			}
 			stub.mu.Lock()
-			seen := stub.seen
+			seen, reqLog := stub.seen, strings.Join(stub.log, "\n  ")
 			stub.mu.Unlock()
 			if seen < 2 {
 				t.Fatalf("the stub provider saw %d requests; the turn did not reach it", seen)
@@ -415,7 +421,7 @@ func TestContractV2Todo(t *testing.T) {
 				return
 			}
 			if status != "completed" {
-				t.Fatalf("experimental.todo: todowrite part status %q (%s); the flag did not enable the tool", status, errText)
+				t.Fatalf("experimental.todo: todowrite part status %q (%s); the flag did not enable the tool\nstub saw %d requests:\n  %s\nmessages: %s", status, errText, seen, reqLog, raw)
 			}
 			want := [][2]string{{"write the probe", "completed"}, {"read the result", "in_progress"}, {"report", "pending"}}
 			if len(td.Tasks) != len(want) {
