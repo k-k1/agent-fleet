@@ -715,9 +715,11 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	}
 	e.setPhase("home: mounting")
 	if err := e.mountHome(ctx, p); err != nil {
-		if errors.Is(err, errHomeLeftSlot) || errors.Is(err, errHomeLockLost) {
-			// A release took the home off while this launch was on its way, or the home's
-			// lock could not be held. The slot did nothing wrong; this launch's claim goes,
+		if errors.Is(err, errHomeLeftSlot) || errors.Is(err, errHomeLockLost) || errors.Is(err, errHomeAttachUnknown) ||
+			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			// The Start ran out of time, the attachment could not be read, a release took
+			// the home off while this launch was on its way, or the home's lock could not
+			// be held. None of that is evidence against the slot; this launch's claim goes,
 			// so the workspace reads stopped and the next Start places it again instead of
 			// waiting out the claim TTL.
 			e.unclaimIfOurs(ctx, p)
