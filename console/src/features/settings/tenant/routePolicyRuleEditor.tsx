@@ -9,14 +9,7 @@ import { useState } from "react";
 import { apiJSON, errDetail } from "../../../core/api/client.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { useReportDirty } from "../parts/dirtyScope.tsx";
-import {
-  PRESET_KEYS,
-  applyPreset,
-  presetAvailable,
-  exceeds,
-  matchCeiling,
-  stoppedBy,
-} from "./routePolicyCeiling.ts";
+import { PRESET_KEYS, applyPreset, presetAvailable, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
 import {
   draftOf,
   endpointLines,
@@ -72,8 +65,7 @@ export const destLabel = (tr: Tr, d: string) =>
   Object.hasOwn(DEST_KEY, d) ? tr(DEST_KEY[d as keyof typeof DEST_KEY]) : d;
 export const layerLabel = (tr: Tr, l: string) =>
   Object.hasOwn(LAYER_KEY, l) ? tr(LAYER_KEY[l as keyof typeof LAYER_KEY]) : l;
-export const layersLabel = (tr: Tr, ls: string[] | undefined) =>
-  (ls ?? []).map((l) => layerLabel(tr, l)).join(", ");
+export const layersLabel = (tr: Tr, ls: string[] | undefined) => (ls ?? []).map((l) => layerLabel(tr, l)).join(", ");
 
 /** RouteName: the member-facing route name. The id the policy and the CP's refusals use is on
  *  hover; a route the Console has no name for is shown as its id. */
@@ -110,26 +102,14 @@ const CLASS_DESC = {
   "self-hosted": "admin.mpol_class_desc_self_hosted",
 } as const;
 const classDesc = (tr: Tr, c: string) =>
-  Object.hasOwn(CLASS_DESC, c)
-    ? tr(CLASS_DESC[c as keyof typeof CLASS_DESC])
-    : undefined;
+  Object.hasOwn(CLASS_DESC, c) ? tr(CLASS_DESC[c as keyof typeof CLASS_DESC]) : undefined;
 
 /** RuleSummary draws one layer's rule read-only. ceiling marks the operator's layer, whose unset
  *  endpoint list means "none" once it restricts destinations (ADR 0138 §2). */
-export function RuleSummary({
-  rule,
-  ceiling = false,
-}: {
-  rule: RouteRule;
-  ceiling?: boolean;
-}) {
+export function RuleSummary({ rule, ceiling = false }: { rule: RouteRule; ceiling?: boolean }) {
   const tr = useT();
   const list = (l: string[] | undefined, label: (v: string) => string) =>
-    l === undefined
-      ? tr("admin.mpol_all")
-      : l.length === 0
-        ? tr("admin.mpol_none")
-        : l.map(label).join(", ");
+    l === undefined ? tr("admin.mpol_all") : l.length === 0 ? tr("admin.mpol_none") : l.map(label).join(", ");
   const endpoints =
     rule.endpoints !== undefined
       ? rule.endpoints.length
@@ -142,9 +122,7 @@ export function RuleSummary({
   // next row's label cell and pair every label below with the wrong value.
   return (
     <>
-      {!restricts(rule) && (
-        <p className="mpol-summary-head">{tr("admin.mpol_unrestricted")}</p>
-      )}
+      {!restricts(rule) && <p className="mpol-summary-head">{tr("admin.mpol_unrestricted")}</p>}
       <dl className="mpol-summary">
         <dt>{tr("admin.mpol_classes")}</dt>
         <dd>{list(rule.classes, (c) => classLabel(tr, c))}</dd>
@@ -186,16 +164,9 @@ interface Mark {
 function MarkIcon({ mark }: { mark: Mark | undefined }) {
   const tr = useT();
   if (!mark) return null;
-  const text = mark.locked
-    ? tr("admin.mpol_locked")
-    : tr("admin.mpol_hidden_by", { layers: layersLabel(tr, mark.by) });
+  const text = mark.locked ? tr("admin.mpol_locked") : tr("admin.mpol_hidden_by", { layers: layersLabel(tr, mark.by) });
   return (
-    <span
-      className={"mpol-mark" + (mark.locked ? " locked" : "")}
-      role="img"
-      aria-label={text}
-      title={text}
-    >
+    <span className={"mpol-mark" + (mark.locked ? " locked" : "")} role="img" aria-label={text} title={text}>
       {mark.locked ? " 🔒" : " ⚠"}
     </span>
   );
@@ -258,9 +229,7 @@ function Presets({
 function namesOf(tr: Tr, ids: string[]): string {
   const shown = ids.slice(0, 4).map((id) => tMaybe("cred.route." + id) ?? id);
   const sep = tr("tenant.mpol_list_sep");
-  return ids.length > 4
-    ? tr("admin.mpol_and_more", { list: shown.join(sep), n: ids.length - 4 })
-    : shown.join(sep);
+  return ids.length > 4 ? tr("admin.mpol_and_more", { list: shown.join(sep), n: ids.length - 4 }) : shown.join(sep);
 }
 
 /** Exceeds warns, before a save, that the CP would refuse the draft under the operator's ceiling
@@ -284,23 +253,14 @@ function Exceeds({
   return (
     <div className="mpol-exceeds" data-testid="exceeds">
       {x.routes.length > 0 && (
-        <p className="admin-hint warn">
-          {tr("admin.mpol_exceeds_routes", { list: namesOf(tr, x.routes) })}
-        </p>
+        <p className="admin-hint warn">{tr("admin.mpol_exceeds_routes", { list: namesOf(tr, x.routes) })}</p>
       )}
       {x.endpoints.length > 0 && (
         <p className="admin-hint warn">
-          {tr("admin.mpol_exceeds_endpoints", {
-            list: x.endpoints.join(tr("tenant.mpol_list_sep")),
-          })}
+          {tr("admin.mpol_exceeds_endpoints", { list: x.endpoints.join(tr("tenant.mpol_list_sep")) })}
         </p>
       )}
-      <button
-        type="button"
-        className="btn"
-        disabled={disabled}
-        onClick={onMatch}
-      >
+      <button type="button" className="btn" disabled={disabled} onClick={onMatch}>
         {tr("admin.mpol_match")}
       </button>
       <p className="admin-hint">{tr("admin.mpol_match_hint")}</p>
@@ -371,27 +331,19 @@ function AllOrOnly({
                 type="checkbox"
                 checked={values.includes(o)}
                 disabled={disabled}
-                onChange={(e) =>
-                  onChange(false, toggle(values, o, e.target.checked))
-                }
+                onChange={(e) => onChange(false, toggle(values, o, e.target.checked))}
               />
               <span>
                 {label(o)}
                 <MarkIcon mark={marks[i]} />
-                {describe?.(o) && (
-                  <span className="mpol-desc">{describe(o)}</span>
-                )}
+                {describe?.(o) && <span className="mpol-desc">{describe(o)}</span>}
               </span>
             </label>
           ))}
         </div>
       )}
-      {!all && marks.some((m) => m?.locked) && (
-        <p className="admin-hint">{tr("admin.mpol_locked_note")}</p>
-      )}
-      {!all && marks.some((m) => m && !m.locked) && (
-        <p className="admin-hint">{tr("admin.mpol_stopped_note")}</p>
-      )}
+      {!all && marks.some((m) => m?.locked) && <p className="admin-hint">{tr("admin.mpol_locked_note")}</p>}
+      {!all && marks.some((m) => m && !m.locked) && <p className="admin-hint">{tr("admin.mpol_stopped_note")}</p>}
     </fieldset>
   );
 }
@@ -428,9 +380,7 @@ function RouteTicks({
               checked={values.includes(id)}
               // A value already stored stays untickable so it can be removed, even where it could
               // not be added.
-              disabled={
-                disabled || (!values.includes(id) && !!disabledIds?.(id))
-              }
+              disabled={disabled || (!values.includes(id) && !!disabledIds?.(id))}
               onChange={(e) => onChange(toggle(values, id, e.target.checked))}
             />
             <RouteName id={id} />
@@ -467,9 +417,7 @@ function ServerRows({
   // One row per distinct entry: a stored list with a repeat reads, and saves, as a set anyway.
   const rows = [...new Set(endpointLines(text))];
   const add = () => {
-    const more = [...new Set(endpointLines(adding))].filter(
-      (h) => !rows.includes(h),
-    );
+    const more = [...new Set(endpointLines(adding))].filter((h) => !rows.includes(h));
     // Nothing new (a repeat, or only spaces) keeps what was typed, so it does not look accepted.
     if (more.length === 0) return;
     onChange([...rows, ...more].join("\n"));
@@ -488,16 +436,12 @@ function ServerRows({
                 <code>{h}</code>
                 {stateOf &&
                   (st === undefined ? (
-                    <span className="muted">
-                      {tr("admin.mpol_server_unsaved")}
-                    </span>
+                    <span className="muted">{tr("admin.mpol_server_unsaved")}</span>
                   ) : st.approved ? (
                     <span className="mpol-ok">{tr("admin.mpol_approved")}</span>
                   ) : (
                     <span className="mpol-no">
-                      {tr("admin.mpol_excluded_by", {
-                        layers: layersLabel(tr, st.excludedBy),
-                      })}
+                      {tr("admin.mpol_excluded_by", { layers: layersLabel(tr, st.excludedBy) })}
                     </span>
                   ))}
                 <button
@@ -505,9 +449,7 @@ function ServerRows({
                   className="btn xs"
                   aria-label={tr("admin.mpol_server_remove", { host: h })}
                   disabled={disabled}
-                  onClick={() =>
-                    onChange(rows.filter((x) => x !== h).join("\n"))
-                  }
+                  onClick={() => onChange(rows.filter((x) => x !== h).join("\n"))}
                 >
                   ×
                 </button>
@@ -531,12 +473,7 @@ function ServerRows({
             }
           }}
         />
-        <button
-          type="button"
-          className="btn"
-          disabled={disabled || endpointLines(adding).length === 0}
-          onClick={add}
-        >
+        <button type="button" className="btn" disabled={disabled || endpointLines(adding).length === 0} onClick={add}>
           {tr("admin.mpol_server_add")}
         </button>
       </div>
@@ -546,11 +483,7 @@ function ServerRows({
 
 /** putRule saves one layer's rule on the revision it was loaded at: the CP's PUT answers 409
  *  route_policy_stale when the layer has moved since (If-Match, the layer's own revision). */
-export const putRule = (
-  path: string,
-  body: RouteRule,
-  revision: number,
-): Promise<unknown> =>
+export const putRule = (path: string, body: RouteRule, revision: number): Promise<unknown> =>
   apiJSON(path, "PUT", body, { "If-Match": `"${revision}"` });
 
 /** RuleEditor edits one layer's rule. save sends the body and answers the API result; a result
@@ -609,11 +542,7 @@ export function RuleEditor({
         | null
         | undefined;
       if (res?.error) {
-        setRefusal(
-          res.error.code === "route_policy_stale"
-            ? tr("admin.mpol_stale")
-            : errDetail(res.error),
-        );
+        setRefusal(res.error.code === "route_policy_stale" ? tr("admin.mpol_stale") : errDetail(res.error));
         return;
       }
       onSaved();
@@ -625,21 +554,14 @@ export function RuleEditor({
   };
 
   const markFor = (field: "classes" | "destinations") => (v: string) => {
-    if (ceiling?.[field] !== undefined && !ceiling[field]!.includes(v))
-      return { locked: true, by: ["ceiling"] };
+    if (ceiling?.[field] !== undefined && !ceiling[field]!.includes(v)) return { locked: true, by: ["ceiling"] };
     const by = stoppedBy(above, field, v);
     return by.length > 0 ? { locked: false, by } : undefined;
   };
 
   return (
     <div className="mpol-editor">
-      <Presets
-        base={base}
-        draft={draft}
-        vocab={vocab}
-        disabled={busy}
-        onPick={(d) => edit(d)}
-      />
+      <Presets base={base} draft={draft} vocab={vocab} disabled={busy} onPick={(d) => edit(d)} />
       <AllOrOnly
         name="classes"
         legend={tr("admin.mpol_classes")}
@@ -661,18 +583,14 @@ export function RuleEditor({
         label={(d) => destLabel(tr, d)}
         markOf={markFor("destinations")}
         disabled={busy}
-        onChange={(all, destinations) =>
-          edit({ destinationsAll: all, destinations })
-        }
+        onChange={(all, destinations) => edit({ destinationsAll: all, destinations })}
       />
       {/* Folded: forty-odd ticks are rarely what an administrator came to change. */}
       <details className="admin-fgroup mpol-individual" data-field="individual">
         <summary>
           {draft.except.length + draft.deny.length === 0
             ? tr("admin.mpol_individual_none")
-            : tr("admin.mpol_individual", {
-                n: draft.except.length + draft.deny.length,
-              })}
+            : tr("admin.mpol_individual", { n: draft.except.length + draft.deny.length })}
         </summary>
         <RouteTicks
           name="except"
@@ -696,25 +614,13 @@ export function RuleEditor({
       </details>
       <fieldset className="admin-fgroup mpol-field" data-field="endpoints">
         <legend className="admin-subhead">
-          {tr(
-            endpointsMode === "hosts"
-              ? "admin.mpol_endpoints_hosts"
-              : "admin.mpol_endpoints_patterns",
-          )}
+          {tr(endpointsMode === "hosts" ? "admin.mpol_endpoints_hosts" : "admin.mpol_endpoints_patterns")}
         </legend>
         <p className="admin-hint">
-          {tr(
-            endpointsMode === "hosts"
-              ? "admin.mpol_endpoints_hosts_hint"
-              : "admin.mpol_endpoints_patterns_hint",
-          )}
+          {tr(endpointsMode === "hosts" ? "admin.mpol_endpoints_hosts_hint" : "admin.mpol_endpoints_patterns_hint")}
         </p>
         {endpointsMode === "patterns" && (
-          <span
-            className="seg sm"
-            role="radiogroup"
-            aria-label={tr("admin.mpol_endpoints_patterns")}
-          >
+          <span className="seg sm" role="radiogroup" aria-label={tr("admin.mpol_endpoints_patterns")}>
             <button
               type="button"
               role="radio"
@@ -739,11 +645,7 @@ export function RuleEditor({
         )}
         {(endpointsMode === "hosts" || !draft.endpointsAll) && (
           <ServerRows
-            label={tr(
-              endpointsMode === "hosts"
-                ? "admin.mpol_endpoints_hosts"
-                : "admin.mpol_endpoints_patterns",
-            )}
+            label={tr(endpointsMode === "hosts" ? "admin.mpol_endpoints_hosts" : "admin.mpol_endpoints_patterns")}
             text={draft.endpoints}
             stateOf={endpointsMode === "hosts" ? hostState : undefined}
             disabled={busy}
@@ -752,11 +654,7 @@ export function RuleEditor({
               // rule loaded without one stays without one until a host is added.
               edit(
                 endpointsMode === "hosts"
-                  ? {
-                      endpoints: text,
-                      endpointsAll:
-                        base.endpoints === undefined && text.trim() === "",
-                    }
+                  ? { endpoints: text, endpointsAll: base.endpoints === undefined && text.trim() === "" }
                   : { endpoints: text },
               )
             }
@@ -778,12 +676,7 @@ export function RuleEditor({
         </p>
       )}
       <div className="admin-actions">
-        <button
-          type="button"
-          className="btn primary"
-          disabled={busy || !dirty}
-          onClick={submit}
-        >
+        <button type="button" className="btn primary" disabled={busy || !dirty} onClick={submit}>
           {tr("admin.mpol_save")}
         </button>
         <button

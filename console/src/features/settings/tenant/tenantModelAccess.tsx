@@ -13,11 +13,7 @@ import { TenantOverview, byList } from "./routePolicyOverview.tsx";
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
 import { TabbedViews } from "../parts/tabbedViews.tsx";
 import { RuleEditor, putRule } from "./routePolicyRuleEditor.tsx";
-import {
-  isOlderPolicyAnswer,
-  parseTenantPolicy,
-  type TenantPolicyView,
-} from "./routePolicyRule.ts";
+import { isOlderPolicyAnswer, parseTenantPolicy, type TenantPolicyView } from "./routePolicyRule.ts";
 
 export function useTenantRoutePolicy(slug: string) {
   const tr = useT();
@@ -39,11 +35,7 @@ export function useTenantRoutePolicy(slug: string) {
       setFailed(
         d?.error
           ? errText(d.error)
-          : tr(
-              isOlderPolicyAnswer(d, true)
-                ? "admin.mpol_vocab_missing"
-                : "admin.mpol_load_failed",
-            ),
+          : tr(isOlderPolicyAnswer(d, true) ? "admin.mpol_vocab_missing" : "admin.mpol_load_failed"),
       );
     } catch {
       setView(null);
@@ -69,35 +61,20 @@ export function PolicyLimits() {
   );
 }
 
-export function TenantModelAccessView({
-  slug,
-  isSuper = false,
-}: {
-  slug: string;
-  isSuper?: boolean;
-}) {
+export function TenantModelAccessView({ slug, isSuper = false }: { slug: string; isSuper?: boolean }) {
   const tr = useT();
   const { view, failed, load, path } = useTenantRoutePolicy(slug);
   // Whether the CP serves provided routes, as this tenant's view last heard: an answer for
   // another tenant does not count, so a switch never shows the tab before its own read answers.
-  const [served, setServed] = useState<{ slug: string; on: boolean }>({
-    slug: "",
-    on: false,
-  });
+  const [served, setServed] = useState<{ slug: string; on: boolean }>({ slug: "", on: false });
   const provided = served.slug === slug && served.on;
-  const onServed = useCallback(
-    (on: boolean) => setServed({ slug, on }),
-    [slug],
-  );
+  const onServed = useCallback((on: boolean) => setServed({ slug, on }), [slug]);
 
   if (!view) {
     return (
       <section className="admin-panel model-access">
         <h4>{tr("tenant.model_access_title")}</h4>
-        <p
-          className={failed ? "admin-hint warn" : "muted"}
-          role={failed ? "alert" : undefined}
-        >
+        <p className={failed ? "admin-hint warn" : "muted"} role={failed ? "alert" : undefined}>
           {failed ?? tr("common.loading")}
         </p>
       </section>
@@ -107,10 +84,7 @@ export function TenantModelAccessView({
   const overview = <TenantOverview view={view} />;
   // The deployment's provided route as the layers decide it: a budget cannot reopen what they stop.
   const provRoute = view.routes.find((r) => r.id === "bedrock-deployment");
-  const providedStops =
-    provRoute && !provRoute.allowed
-      ? byList(tr, provRoute.forbiddenBy ?? [])
-      : undefined;
+  const providedStops = provRoute && !provRoute.allowed ? byList(tr, provRoute.forbiddenBy ?? []) : undefined;
   return (
     <>
       {/* Above the views, so D12's and D13's sentences stay on screen whichever view is open. */}
@@ -122,11 +96,7 @@ export function TenantModelAccessView({
         label={tr("tenant.model_access_title")}
         prefix="tenant-mpol"
         views={[
-          {
-            key: "overview",
-            label: tr("tenant.model_access_view_overview"),
-            node: overview,
-          },
+          { key: "overview", label: tr("tenant.model_access_view_overview"), node: overview },
           {
             key: "restrictions",
             label: tr("tenant.model_access_view_restrictions"),
@@ -136,19 +106,12 @@ export function TenantModelAccessView({
                     here (ADR 0138 D16, note of 2026-11-17). A tenant administrator never sees it,
                     and the CP refuses their cap write. */}
                 {isSuper && (
-                  <section
-                    className="admin-panel model-access-cap"
-                    data-cap-editor={slug}
-                  >
+                  <section className="admin-panel model-access-cap" data-cap-editor={slug}>
                     <h4>
                       {tr("admin.mpol_layer_tenant_cap")}
-                      <span className="af-note">
-                        {tr("admin.mpol_revision", { n: view.cap.revision })}
-                      </span>
+                      <span className="af-note">{tr("admin.mpol_revision", { n: view.cap.revision })}</span>
                     </h4>
-                    <p className="admin-hint">
-                      {tr("admin.model_access_caps_note")}
-                    </p>
+                    <p className="admin-hint">{tr("admin.model_access_caps_note")}</p>
                     <RuleEditor
                       key={`${slug}:cap:${view.cap.revision}`}
                       base={view.cap.rule}
@@ -156,9 +119,7 @@ export function TenantModelAccessView({
                       vocab={view.vocabulary}
                       endpointsMode="patterns"
                       ceiling={view.ceiling.rule}
-                      above={[
-                        { layer: "deployment", rule: view.deployment.rule },
-                      ]}
+                      above={[{ layer: "deployment", rule: view.deployment.rule }]}
                       save={(body, rev) => putRule(`${path}/cap`, body, rev)}
                       onSaved={load}
                     />
@@ -167,9 +128,7 @@ export function TenantModelAccessView({
                 <section className="admin-panel model-access-rule">
                   <h4>
                     {tr("tenant.model_access_rule")}
-                    <span className="af-note">
-                      {tr("admin.mpol_revision", { n: view.tenant.revision })}
-                    </span>
+                    <span className="af-note">{tr("admin.mpol_revision", { n: view.tenant.revision })}</span>
                   </h4>
                   <RuleEditor
                     key={`${slug}:${view.tenant.revision}`}

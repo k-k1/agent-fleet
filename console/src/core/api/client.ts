@@ -13,8 +13,7 @@ import type { FleetGraphPage } from "../../types/fleetgraph.ts";
 // Resolve URLs relative to where the Console is mounted, so it works both at the
 // host root (http://localhost:8099/) and behind a path-stripping proxy (Tailscale
 // Funnel + Caddy at /agent-fleet/). Uses the trailing-slash baseURI.
-export const rel = (p: string): string =>
-  new URL(p, document.baseURI).toString();
+export const rel = (p: string): string => new URL(p, document.baseURI).toString();
 
 // --- tenant selection (P3-2) ---
 // The active tenant is sent on every request as X-AF-Tenant so the Control Plane
@@ -36,8 +35,7 @@ const initialTabTenant = ((): string => {
   }
 })();
 let tenantPinned = !!initialTabTenant;
-let selectedTenant =
-  initialTabTenant || localStorage.getItem("af-tenant") || "";
+let selectedTenant = initialTabTenant || localStorage.getItem("af-tenant") || "";
 setFoldScope({ tenant: selectedTenant });
 
 export const getTenant = (): string => selectedTenant;
@@ -105,10 +103,7 @@ const _fetch = window.fetch.bind(window);
 // the expiry so the app surfaces a re-login dialog (AuthExpiredModal) that reassures
 // the user their running sessions keep working and offers an explicit re-login. The
 // latch is idempotent, so firing it on every subsequent 401 is harmless.
-window.fetch = (
-  input: RequestInfo | URL,
-  init: RequestInit = {},
-): Promise<Response> => {
+window.fetch = (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
   if (selectedTenant) {
     const h = new Headers(init.headers || {});
     if (!h.has("X-AF-Tenant")) h.set("X-AF-Tenant", selectedTenant);
@@ -159,18 +154,14 @@ export type FsResult = { status: number } & Record<string, unknown>;
 // stay terminal. A thrown fetch (network drop) is transient too, but that surfaces as a
 // rejected promise and is handled at the call site's .catch.
 export const isTransientErr = (d: unknown): boolean => {
-  const err = (
-    d as { error?: { code?: string; status?: number } } | null | undefined
-  )?.error;
+  const err = (d as { error?: { code?: string; status?: number } } | null | undefined)?.error;
   if (!err || typeof err !== "object") return false;
   if (typeof err.status === "number" && err.status >= 500) return true;
   return typeof err.code === "string" && /^http_5\d\d$/.test(err.code);
 };
 
 // errText turns a `res.error` ({code, message}) into a user-facing string.
-export const errText = (
-  error: ApiError | string | null | undefined,
-): string => {
+export const errText = (error: ApiError | string | null | undefined): string => {
   if (error && typeof error === "object") {
     const localized = error.code ? tMaybe("err." + error.code) : undefined;
     // String() on an object without a message yields "[object Object]" — use the generic text.
@@ -210,35 +201,18 @@ const MODEL_NOT_AVAILABLE_RE = /Model "[^"]+" is not available/;
 // `*_failed` can only say WHAT failed; WHY it failed lives only in the message, and a failure
 // that reproduces on the user's machine alone (agent-memory import, say) loses its only clue
 // if this is dropped. Not appended when it repeats the same text.
-export const errDetail = (
-  error: ApiError | string | null | undefined,
-): string => {
+export const errDetail = (error: ApiError | string | null | undefined): string => {
   const head = errText(error);
   // The cli_install_* wording already says what and why; the server's English sentence would
   // only repeat it in the wrong language.
-  if (
-    error &&
-    typeof error === "object" &&
-    error.code?.startsWith("cli_install_")
-  )
-    return head;
+  if (error && typeof error === "object" && error.code?.startsWith("cli_install_")) return head;
   // These refusals' messages are ja / en pairs for the logs; the catalogue line already says it in
   // the member's language.
-  if (
-    error &&
-    typeof error === "object" &&
-    error.code &&
-    BILINGUAL_MESSAGE_CODES.has(error.code)
-  )
-    return head;
-  const detail =
-    error && typeof error === "object" ? (error.message ?? "").trim() : "";
+  if (error && typeof error === "object" && error.code && BILINGUAL_MESSAGE_CODES.has(error.code)) return head;
+  const detail = error && typeof error === "object" ? (error.message ?? "").trim() : "";
   const out = detail && detail !== head ? head + ": " + detail : head;
-  const generic =
-    error && typeof error === "object" && error.code === "runtime_failed";
-  return generic && MODEL_NOT_AVAILABLE_RE.test(detail)
-    ? out + " " + t("err.model_not_available_hint")
-    : out;
+  const generic = error && typeof error === "object" && error.code === "runtime_failed";
+  return generic && MODEL_NOT_AVAILABLE_RE.test(detail) ? out + " " + t("err.model_not_available_hint") : out;
 };
 
 // api() resolves the path against baseURI and parses JSON. Mirrors the legacy
@@ -297,12 +271,7 @@ export const api = (path: string, opts?: RequestInit): Promise<any> => {
 // apiResult turns a finished answer — HTTP status and raw body — into what api() resolves
 // with. onParsedOK sees a parsed 2xx body, the only kind that may be cached.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function apiResult(
-  status: number,
-  statusText: string,
-  text: string,
-  onParsedOK?: (parsed: unknown) => void,
-): any {
+function apiResult(status: number, statusText: string, text: string, onParsedOK?: (parsed: unknown) => void): any {
   const ok = status >= 200 && status < 300;
   if (text) {
     try {
@@ -317,8 +286,7 @@ function apiResult(
       // Keep the HTTP status with the payload: the code alone cannot say whether a
       // failure is the backend's (retry) or the request's (stop) — see isTransientErr.
       // Only error bodies are stamped, and those are never ETag-cached (2xx only).
-      if (!ok && parsed?.error && typeof parsed.error === "object")
-        parsed.error.status = status;
+      if (!ok && parsed?.error && typeof parsed.error === "object") parsed.error.status = status;
       if (ok) onParsedOK?.(parsed);
       return parsed;
     } catch {
@@ -327,12 +295,7 @@ function apiResult(
     }
   }
   if (ok) return {};
-  return {
-    error: {
-      code: "http_" + status,
-      message: text.trim() || status + " " + statusText,
-    },
-  };
+  return { error: { code: "http_" + status, message: text.trim() || status + " " + statusText } };
 }
 
 // HeldAnswer is the final status and raw body of a held route (see fetchHeld).
@@ -349,17 +312,11 @@ export interface HeldAnswer {
 // `data: {"status":…,"body":…}` frame carrying what it would have answered as plain JSON.
 // A plain JSON answer (errors the CP writes itself, an Agent from before the change) is
 // read as it is. A stream that ends without its final frame reads as a 502.
-export async function fetchHeld(
-  path: string,
-  init: RequestInit,
-): Promise<HeldAnswer> {
+export async function fetchHeld(path: string, init: RequestInit): Promise<HeldAnswer> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "text/event-stream");
   const r = await fetch(rel(path), { ...init, headers });
-  if (
-    !(r.headers.get("Content-Type") ?? "").startsWith("text/event-stream") ||
-    !r.body
-  ) {
+  if (!(r.headers.get("Content-Type") ?? "").startsWith("text/event-stream") || !r.body) {
     return { status: r.status, statusText: r.statusText, text: await r.text() };
   }
   const reader = r.body.getReader();
@@ -374,10 +331,7 @@ export async function fetchHeld(
       buf = buf.slice(idx + 2);
       if (!frame.startsWith("data:")) continue; // a ": keepalive" comment
       try {
-        const final = JSON.parse(frame.slice(5)) as {
-          status?: unknown;
-          body?: unknown;
-        };
+        const final = JSON.parse(frame.slice(5)) as { status?: unknown; body?: unknown };
         if (typeof final.status !== "number") continue;
         void reader.cancel();
         const text = final.body === undefined ? "" : JSON.stringify(final.body);
@@ -386,22 +340,13 @@ export async function fetchHeld(
         continue;
       }
     }
-    if (done)
-      return {
-        status: 502,
-        statusText: "held answer ended without its final frame",
-        text: "",
-      };
+    if (done) return { status: 502, statusText: "held answer ended without its final frame", text: "" };
   }
 }
 
 // apiHeld is apiJSON for a held route: same body, same resolved shapes.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const apiHeld = (
-  path: string,
-  method: string,
-  body?: unknown,
-): Promise<any> =>
+export const apiHeld = (path: string, method: string, body?: unknown): Promise<any> =>
   fetchHeld(path, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -410,12 +355,7 @@ export const apiHeld = (
 
 // apiJSON is a convenience for the common "POST/PUT JSON body" shape.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const apiJSON = (
-  path: string,
-  method: string,
-  body?: unknown,
-  headers?: Record<string, string>,
-): Promise<any> =>
+export const apiJSON = (path: string, method: string, body?: unknown, headers?: Record<string, string>): Promise<any> =>
   api(path, {
     method,
     headers: { "Content-Type": "application/json", ...headers },
@@ -423,13 +363,8 @@ export const apiJSON = (
   });
 
 // raw() returns the Response (not parsed) for callers that need r.ok / status.
-export const raw = (path: string, opts?: RequestInit): Promise<Response> =>
-  fetch(rel(path), opts);
-export const rawJSON = (
-  path: string,
-  method: string,
-  body?: unknown,
-): Promise<Response> =>
+export const raw = (path: string, opts?: RequestInit): Promise<Response> => fetch(rel(path), opts);
+export const rawJSON = (path: string, method: string, body?: unknown): Promise<Response> =>
   raw(path, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -443,11 +378,7 @@ export const rawJSON = (
 export function previewURL(port: string | number, path = "/"): string {
   const base = new URL(rel(`preview/${encodeURIComponent(port)}/`));
   let u = base;
-  if (
-    path.startsWith("/") &&
-    !path.startsWith("//") &&
-    !path.startsWith("/\\")
-  ) {
+  if (path.startsWith("/") && !path.startsWith("//") && !path.startsWith("/\\")) {
     const target = new URL(path, "http://127.0.0.1/");
     // Prefixing the normalized pathname with "." keeps it under /preview/{port}/
     // even when the target path itself resembles a scheme or contains dot segments.
@@ -466,12 +397,7 @@ export function previewURL(port: string | number, path = "/"): string {
 export function previewOwnOpenURL(port: string | number, path = "/"): string {
   const u = new URL(rel("preview-open-own"));
   u.searchParams.set("port", String(port));
-  if (
-    path.startsWith("/") &&
-    !path.startsWith("//") &&
-    !path.startsWith("/\\") &&
-    path !== "/"
-  ) {
+  if (path.startsWith("/") && !path.startsWith("//") && !path.startsWith("/\\") && path !== "/") {
     u.searchParams.set("next", path);
   }
   if (selectedTenant) u.searchParams.set("tenant", selectedTenant);
@@ -487,11 +413,7 @@ export function previewOwnOpenURL(port: string | number, path = "/"): string {
 // an Agent too old to know the parameter — answers with the original, so a caller never
 // has to check first. Only ever pass it for an <img> that displays small: a viewer, a
 // lightbox and the download button all want the real file.
-export function downloadURL(
-  path: string,
-  thumb?: number,
-  version?: number,
-): string {
+export function downloadURL(path: string, thumb?: number, version?: number): string {
   const u = new URL(rel("api/fs/download"));
   u.searchParams.set("path", path);
   if (thumb) u.searchParams.set("thumb", String(thumb));
@@ -533,9 +455,7 @@ export type FsZipCheck = {
 
 // fetch-based on purpose: unlike the download anchor it surfaces 401 (session expiry), 413,
 // 503 and a stopped workspace as {error} for the caller to show.
-export const fsZipCheck = (
-  path: string,
-): Promise<(FsZipCheck & { error?: undefined }) | { error: ApiError }> =>
+export const fsZipCheck = (path: string): Promise<(FsZipCheck & { error?: undefined }) | { error: ApiError }> =>
   api(`api/fs/download-zip?path=${encodeURIComponent(path)}&check=1`);
 
 /**
@@ -549,11 +469,7 @@ export const fsZipCheck = (
  * the behaviour this replaces. Never use it where the real bytes are the point (the download
  * button, the file viewer's own copy).
  */
-export function displayURL(
-  path: string,
-  edge: number,
-  version?: number,
-): string {
+export function displayURL(path: string, edge: number, version?: number): string {
   const u = new URL(rel("api/fs/download"));
   u.searchParams.set("path", path);
   u.searchParams.set("preview", String(edge));
@@ -590,10 +506,7 @@ export function uploadFiles(
   for (const f of files) fd.append("file", f, f.name);
   const qs = new URLSearchParams({ path: dir });
   if (overwrite) qs.set("overwrite", "1");
-  return statusJSON(`api/fs/upload?${qs.toString()}`, {
-    method: "POST",
-    body: fd,
-  });
+  return statusJSON(`api/fs/upload?${qs.toString()}`, { method: "POST", body: fd });
 }
 
 // --- semantic session turn ops (docs/log/27 P1.5) ---
@@ -602,8 +515,7 @@ export function uploadFiles(
 // managed = the turn/start, turn/steer, turn/interrupt RPCs (P2/P3). Returns ok.
 // Falls back to the legacy /input body when the Agent predates /turn — the lag in
 // rebuilding the fleet really does leave a new Console talking to an old Agent.
-export type TurnOp =
-  "start" | "steer" | "interrupt" | "remove" | "dismiss_discard";
+export type TurnOp = "start" | "steer" | "interrupt" | "remove" | "dismiss_discard";
 
 // --- two-stage stop (ADR 0105; wire frozen in workspace/agent/testdata/stop-queue-wire.json) ---
 
@@ -650,11 +562,7 @@ export async function sessionDropPendingPeer(
   const err = r?.error as ApiError | undefined;
   if (!err) return { ok: true };
   const code = typeof err.code === "string" ? err.code : "";
-  return {
-    ok: false,
-    message: errText(err) || t("err.send_failed"),
-    ...(code ? { code } : {}),
-  };
+  return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
 }
 
 /** A background shell a claude session left running after its turn (#3279): a
@@ -676,29 +584,16 @@ export interface BackgroundShell {
 export async function sessionStopBackgroundShell(
   session: string,
   shell: Pick<BackgroundShell, "pid" | "start">,
-): Promise<{
-  ok: boolean;
-  leftover?: number;
-  code?: string;
-  message?: string;
-}> {
+): Promise<{ ok: boolean; leftover?: number; code?: string; message?: string }> {
   const r = await apiJSON(
     `api/sessions/${encodeURIComponent(session)}/background-stop`,
     "POST",
     { pid: shell.pid, start: shell.start },
   ).catch(() => ({ error: { message: t("err.network") } }));
   const err = r?.error as ApiError | undefined;
-  if (!err)
-    return {
-      ok: true,
-      leftover: typeof r?.leftover === "number" ? r.leftover : 0,
-    };
+  if (!err) return { ok: true, leftover: typeof r?.leftover === "number" ? r.leftover : 0 };
   const code = typeof err.code === "string" ? err.code : "";
-  return {
-    ok: false,
-    message: errText(err) || t("err.send_failed"),
-    ...(code ? { code } : {}),
-  };
+  return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
 }
 
 /** One live watch of a session (#3947), as the transcript poll's `watches` lists it. `ref` and
@@ -732,11 +627,7 @@ export async function sessionEndWatch(
   const err = r?.error as ApiError | undefined;
   if (!err) return { ok: true };
   const code = typeof err.code === "string" ? err.code : "";
-  return {
-    ok: false,
-    message: errText(err) || t("err.send_failed"),
-    ...(code ? { code } : {}),
-  };
+  return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
 }
 
 /** What one second stop (or stop-and-discard) threw away, kept by the driver until a tab
@@ -755,8 +646,7 @@ export type StopKind = "first" | "second" | "discard";
 // The member's own input (decisions 2 and 4): what a person typed as this session's user.
 // An empty or unknown kind is not, so an input of unclear origin is never put into the draft.
 const MEMBER_ORIGINS = new Set(["member", "discord", "slack"]);
-export const isMemberOrigin = (o: TurnOrigin | undefined): boolean =>
-  !!o && MEMBER_ORIGINS.has(o.kind);
+export const isMemberOrigin = (o: TurnOrigin | undefined): boolean => !!o && MEMBER_ORIGINS.has(o.kind);
 
 const strOr = (v: unknown): string => (typeof v === "string" ? v : "");
 
@@ -776,15 +666,12 @@ function parseQueueItem(v: unknown): QueueItem | null {
   if (!id) return null; // an entry without an id cannot be acted on, nor keyed
   const item: QueueItem = { id, text: strOr(o.text) };
   if (Array.isArray(o.attachments)) {
-    const att = o.attachments.filter(
-      (a): a is string => typeof a === "string" && a !== "",
-    );
+    const att = o.attachments.filter((a): a is string => typeof a === "string" && a !== "");
     if (att.length) item.attachments = att;
   }
   const origin = parseOrigin(o.origin);
   if (origin) item.origin = origin;
-  if (o.state === "queued" || o.state === "committed" || o.state === "sent")
-    item.state = o.state;
+  if (o.state === "queued" || o.state === "committed" || o.state === "sent") item.state = o.state;
   return item;
 }
 
@@ -802,13 +689,10 @@ export function parseDiscard(v: unknown): Discard | null {
   const id = strOr(o.id);
   if (!id) return null;
   const items = Array.isArray(o.items)
-    ? o.items
-        .map(parseQueueItem)
-        .filter((x): x is QueueItem => x !== null)
-        .map((it) => {
-          delete it.state; // a discarded entry has no queue state left
-          return it;
-        })
+    ? o.items.map(parseQueueItem).filter((x): x is QueueItem => x !== null).map((it) => {
+        delete it.state; // a discarded entry has no queue state left
+        return it;
+      })
     : [];
   return { id, at: strOr(o.at), reason: strOr(o.reason), items };
 }
@@ -859,11 +743,7 @@ export async function sessionTurn(
   const fail = (e: unknown): TurnResult => {
     const err = e as ApiError;
     const code = typeof err?.code === "string" ? err.code : "";
-    return {
-      ok: false,
-      message: errText(err) || t("err.send_failed"),
-      ...(code ? { code } : {}),
-    };
+    return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
   };
   const body: Record<string, unknown> = { op };
   if (op === "start" || op === "steer") {
@@ -882,32 +762,21 @@ export async function sessionTurn(
   const err = r?.error as ApiError | undefined;
   if (!err) {
     const out: TurnResult = { ok: true };
-    if (r?.stop === "first" || r?.stop === "second" || r?.stop === "discard")
-      out.stop = r.stop;
+    if (r?.stop === "first" || r?.stop === "second" || r?.stop === "discard") out.stop = r.stop;
     if (r && "discard" in r) out.discard = parseDiscard(r.discard);
     if (op === "remove") out.removed = parseQueueItem(r?.removed) ?? undefined;
     if (typeof r?.dismissed === "boolean") out.dismissed = r.dismissed;
-    if (
-      op === "interrupt" &&
-      typeof r?.restored === "string" &&
-      r.restored.trim()
-    )
-      out.restored = r.restored;
+    if (op === "interrupt" && typeof r?.restored === "string" && r.restored.trim()) out.restored = r.restored;
     return out;
   }
   const code = String(err.code || "");
   // The legacy /input body exists only for the three original ops: an Agent without /turn
   // has no queue to edit and no discards to dismiss.
-  if (
-    (code === "http_404" || code === "http_405") &&
-    (op === "start" || op === "steer" || op === "interrupt")
-  ) {
+  if ((code === "http_404" || code === "http_405") && (op === "start" || op === "steer" || op === "interrupt")) {
     const legacy = op === "interrupt" ? { keys: ["Escape"] } : { prompt };
-    const r2 = await apiJSON(
-      `api/sessions/${encodeURIComponent(session)}/input`,
-      "POST",
-      legacy,
-    ).catch(() => ({ error: { message: t("err.network") } }));
+    const r2 = await apiJSON(`api/sessions/${encodeURIComponent(session)}/input`, "POST", legacy).catch(
+      () => ({ error: { message: t("err.network") } }),
+    );
     return r2?.error ? fail(r2.error) : { ok: true };
   }
   return fail(err);
@@ -915,33 +784,18 @@ export async function sessionTurn(
 
 /** sessionInterrupt is the chat's stop: a plain stop, or with discardQueue the emergency
  *  brake that also throws away everything still queued (ADR 0105 decisions 2 and 3). */
-export const sessionInterrupt = (
-  session: string,
-  discardQueue = false,
-): Promise<TurnResult> =>
-  sessionTurn(
-    session,
-    "interrupt",
-    undefined,
-    undefined,
-    discardQueue ? { discardQueue } : undefined,
-  );
+export const sessionInterrupt = (session: string, discardQueue = false): Promise<TurnResult> =>
+  sessionTurn(session, "interrupt", undefined, undefined, discardQueue ? { discardQueue } : undefined);
 
 /** sessionRemoveQueued takes one still-queued entry out of a Managed session's queue
  *  (decision 5). code "already_started" means it was committed first; "not_queued" that it
  *  is gone (run, removed or discarded by another tab). */
-export const sessionRemoveQueued = (
-  session: string,
-  id: string,
-): Promise<TurnResult> =>
+export const sessionRemoveQueued = (session: string, id: string): Promise<TurnResult> =>
   sessionTurn(session, "remove", undefined, undefined, { id });
 
 /** sessionDismissDiscard tells the driver to drop a kept discard, so other tabs stop offering
  *  it at their next poll (decision 4). Idempotent. */
-export const sessionDismissDiscard = (
-  session: string,
-  id: string,
-): Promise<TurnResult> =>
+export const sessionDismissDiscard = (session: string, id: string): Promise<TurnResult> =>
   sessionTurn(session, "dismiss_discard", undefined, undefined, { id });
 
 // sessionPlanRespond decides a pending ExitPlanMode approval (claude TUI).
@@ -963,27 +817,14 @@ export async function sessionPlanRespond(
   decision: "approve" | "reject",
   feedback?: string,
 ): Promise<PlanRespondResult> {
-  const r = await apiJSON(
-    `api/sessions/${encodeURIComponent(session)}/plan-respond`,
-    "POST",
-    {
-      decision,
-      ...(feedback ? { feedback } : {}),
-    },
-  ).catch(() => ({ error: { message: t("err.network") } }));
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/plan-respond`, "POST", {
+    decision,
+    ...(feedback ? { feedback } : {}),
+  }).catch(() => ({ error: { message: t("err.network") } }));
   const err = r?.error as ApiError | undefined;
-  if (err)
-    return {
-      ok: false,
-      message: errText(err) || t("err.send_failed"),
-      code: String(err.code || ""),
-    };
+  if (err) return { ok: false, message: errText(err) || t("err.send_failed"), code: String(err.code || "") };
   // No feedback asked for ⇒ nothing to deliver, so report delivered.
-  return {
-    ok: true,
-    delivered: feedback ? r?.feedback_delivered === true : true,
-    message: r?.hint,
-  };
+  return { ok: true, delivered: feedback ? r?.feedback_delivered === true : true, message: r?.hint };
 }
 
 // sessionPlanFile asks WHERE the pending plan lives, so a launch can hand the path to a
@@ -1002,28 +843,14 @@ export interface PlanFileResult {
   message?: string;
   code?: string;
 }
-export async function sessionPlanFile(
-  session: string,
-): Promise<PlanFileResult> {
-  const r = await apiJSON(
-    `api/sessions/${encodeURIComponent(session)}/plan-file`,
-    "GET",
-  ).catch(() => ({
+export async function sessionPlanFile(session: string): Promise<PlanFileResult> {
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/plan-file`, "GET").catch(() => ({
     error: { message: t("err.network") },
   }));
   const err = r?.error as ApiError | undefined;
-  if (err)
-    return {
-      ok: false,
-      message: errText(err) || t("err.send_failed"),
-      code: String(err.code || ""),
-    };
+  if (err) return { ok: false, message: errText(err) || t("err.send_failed"), code: String(err.code || "") };
   if (!r?.path) return { ok: false, message: t("err.send_failed") };
-  return {
-    ok: true,
-    path: String(r.path),
-    source: r.source === "claude" ? "claude" : "snapshot",
-  };
+  return { ok: true, path: String(r.path), source: r.source === "claude" ? "claude" : "snapshot" };
 }
 
 // A carried-over interaction (docs/log/75) — the question / plan / permission that was on
@@ -1058,18 +885,11 @@ export async function sessionCarriedAnswer(
     feedback?: string;
   },
 ): Promise<{ ok: boolean; message?: string; code?: string }> {
-  const r = await apiJSON(
-    `api/sessions/${encodeURIComponent(session)}/carried-answer`,
-    "POST",
-    body,
-  ).catch(() => ({ error: { message: t("err.network") } }));
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/carried-answer`, "POST", body).catch(
+    () => ({ error: { message: t("err.network") } }),
+  );
   const err = r?.error as ApiError | undefined;
-  if (err)
-    return {
-      ok: false,
-      message: errText(err) || t("err.send_failed"),
-      ...(err.code ? { code: err.code } : {}),
-    };
+  if (err) return { ok: false, message: errText(err) || t("err.send_failed"), ...(err.code ? { code: err.code } : {}) };
   return { ok: true };
 }
 
@@ -1095,58 +915,34 @@ export const sessionRespond = (
     id,
     decision: "answer",
     answers,
-  }).then((r) =>
-    r?.error
-      ? { ok: false, message: errText(r.error as ApiError) }
-      : { ok: true },
-  );
+  }).then((r) => (r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true }));
 
 // sessionCancelInteraction declines a MANAGED session's pending question by id. It is the
 // question card's Cancel on Managed, never a stop: ADR 0105 decision 7 lets only codex follow
 // the stop rules there (its driver turns the cancel into an Interrupt); every other driver
 // answers with the runtime's own rejection, which leaves the queue alone. A /turn interrupt
 // here would instead be a second stop inside an episode and discard the queue.
-export const sessionCancelInteraction = (
-  session: string,
-  id: string,
-): Promise<TurnResult> =>
-  apiJSON(`api/sessions/${encodeURIComponent(session)}/respond`, "POST", {
-    id,
-    decision: "cancel",
-  }).then((r) =>
-    r?.error
-      ? { ok: false, message: errText(r.error as ApiError) }
-      : { ok: true },
+export const sessionCancelInteraction = (session: string, id: string): Promise<TurnResult> =>
+  apiJSON(`api/sessions/${encodeURIComponent(session)}/respond`, "POST", { id, decision: "cancel" }).then((r) =>
+    r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true },
   );
 
 // sessionApprove answers a MANAGED session's pending tool approval by interaction id.
 // It is deliberately separate from sessionRespond: an approval takes allow/deny, not an
 // answer, and a TUI session's permission dialog is driven by keystrokes instead — the Agent
 // answers respond_unsupported for those.
-export const sessionApprove = (
-  session: string,
-  id: string,
-  allow: boolean,
-): Promise<TurnResult> =>
+export const sessionApprove = (session: string, id: string, allow: boolean): Promise<TurnResult> =>
   apiJSON(`api/sessions/${encodeURIComponent(session)}/respond`, "POST", {
     id,
     decision: allow ? "allow" : "deny",
-  }).then((r) =>
-    r?.error
-      ? { ok: false, message: errText(r.error as ApiError) }
-      : { ok: true },
-  );
+  }).then((r) => (r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true }));
 
 // --- Terminal (CLI) tool-permission answers (#3354) ---
 
 /** What the permission card offers. Named by meaning: Claude Code's menu rows differ per prompt
  *  (two rows for an ask rule, four for Bash), so a position says nothing. */
 export type PermissionChoice = "allow" | "always" | "deny";
-const PERMISSION_CHOICES: readonly PermissionChoice[] = [
-  "allow",
-  "always",
-  "deny",
-];
+const PERMISSION_CHOICES: readonly PermissionChoice[] = ["allow", "always", "deny"];
 
 /** parsePermissionChoices reads the poll's `pendingPermissionChoices`. null = not reported
  *  (an older Agent, or a dialog not drawn yet), which the card treats as "always is not on offer". */
@@ -1156,18 +952,9 @@ export function parsePermissionChoices(v: unknown): PermissionChoice[] | null {
 }
 
 /** samePermChoices keeps the previous array when nothing changed, so a poll does not re-render the card. */
-export function samePermChoices(
-  prev: PermissionChoice[] | null,
-  next: PermissionChoice[] | null,
-): PermissionChoice[] | null {
+export function samePermChoices(prev: PermissionChoice[] | null, next: PermissionChoice[] | null): PermissionChoice[] | null {
   if (prev === next) return prev;
-  if (
-    !prev ||
-    !next ||
-    prev.length !== next.length ||
-    prev.some((c, i) => c !== next[i])
-  )
-    return next;
+  if (!prev || !next || prev.length !== next.length || prev.some((c, i) => c !== next[i])) return next;
   return prev;
 }
 
@@ -1188,27 +975,19 @@ export async function sessionPermissionRespond(
   const fail = (e: unknown): TurnResult => {
     const err = e as ApiError;
     const code = typeof err?.code === "string" ? err.code : "";
-    return {
-      ok: false,
-      message: errText(err) || t("err.send_failed"),
-      ...(code ? { code } : {}),
-    };
+    return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
   };
-  const r = await apiJSON(
-    `api/sessions/${encodeURIComponent(session)}/permission-respond`,
-    "POST",
-    { choice, expect },
-  ).catch(() => ({ error: { message: t("err.network") } }));
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/permission-respond`, "POST", { choice, expect }).catch(
+    () => ({ error: { message: t("err.network") } }),
+  );
   const err = r?.error as ApiError | undefined;
   if (!err) return { ok: true };
   const code = String(err.code || "");
   if ((code === "http_404" || code === "http_405") && choice !== "always") {
     const keys = choice === "deny" ? ["Escape"] : ["Enter"];
-    const r2 = await apiJSON(
-      `api/sessions/${encodeURIComponent(session)}/input`,
-      "POST",
-      { keys },
-    ).catch(() => ({ error: { message: t("err.network") } }));
+    const r2 = await apiJSON(`api/sessions/${encodeURIComponent(session)}/input`, "POST", { keys }).catch(
+      () => ({ error: { message: t("err.network") } }),
+    );
     return r2?.error ? fail(r2.error) : { ok: true };
   }
   return fail(err);
@@ -1226,9 +1005,7 @@ export interface ManagedThreadSettings {
   dynamicMode?: boolean;
 }
 
-export const sessionSettingsGet = (
-  session: string,
-): Promise<ManagedThreadSettings & { error?: ApiError }> =>
+export const sessionSettingsGet = (session: string): Promise<ManagedThreadSettings & { error?: ApiError }> =>
   api(`api/sessions/${encodeURIComponent(session)}/settings`);
 
 export interface SettingsResult {
@@ -1247,18 +1024,10 @@ export const sessionSettings = async (
     clearEffort?: boolean;
   },
 ): Promise<SettingsResult> => {
-  const r = await apiJSON(
-    `api/sessions/${encodeURIComponent(session)}/settings`,
-    "POST",
-    s,
-  ).catch(() => ({
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/settings`, "POST", s).catch(() => ({
     error: { message: t("err.network") },
   }));
-  if (r?.error)
-    return {
-      ok: false,
-      message: errText(r.error) || t("err.settings_change_failed"),
-    };
+  if (r?.error) return { ok: false, message: errText(r.error) || t("err.settings_change_failed") };
   return {
     ok: true,
     settings: {
@@ -1293,37 +1062,27 @@ export function chatPasteImage(
 ): Promise<{ status: number; path?: string; name?: string; error?: unknown }> {
   const fd = new FormData();
   fd.append("file", file, file.name || "pasted.png");
-  return statusJSON(
-    `api/chat/conversations/${encodeURIComponent(convId)}/paste-image`,
-    {
-      method: "POST",
-      body: fd,
-    },
-  );
+  return statusJSON(`api/chat/conversations/${encodeURIComponent(convId)}/paste-image`, {
+    method: "POST",
+    body: fd,
+  });
 }
 
 // File-management ops (create / rename / delete). Each returns {status, …json}
 // so callers can branch on 409 (exists) etc. The fetch wrapper adds X-AF-Tenant.
-const fsWrite = (path: string, opts: RequestInit): Promise<FsResult> =>
-  statusJSON(path, opts);
+const fsWrite = (path: string, opts: RequestInit): Promise<FsResult> => statusJSON(path, opts);
 const q = encodeURIComponent;
-export const fsMkdir = (path: string) =>
-  fsWrite(`api/fs/mkdir?path=${q(path)}`, { method: "POST" });
-export const fsNewFile = (path: string) =>
-  fsWrite(`api/fs/newfile?path=${q(path)}`, { method: "POST" });
+export const fsMkdir = (path: string) => fsWrite(`api/fs/mkdir?path=${q(path)}`, { method: "POST" });
+export const fsNewFile = (path: string) => fsWrite(`api/fs/newfile?path=${q(path)}`, { method: "POST" });
 export const fsRename = (from: string, to: string) =>
   fsWrite(`api/fs/rename?from=${q(from)}&to=${q(to)}`, { method: "POST" });
-export const fsDelete = (path: string) =>
-  fsWrite(`api/fs/delete?path=${q(path)}`, { method: "DELETE" });
+export const fsDelete = (path: string) => fsWrite(`api/fs/delete?path=${q(path)}`, { method: "DELETE" });
 
 // Recursive filename search under a home-relative root (rg-backed). Returns
 // home-relative file paths whose path (relative to root) matches the query,
 // plus `truncated` when the result cap was hit. Never rejects — a proxy/agent
 // error folds into an empty result so the tree filter degrades gracefully.
-export const fsSearch = (
-  root: string,
-  query: string,
-): Promise<{ results: string[]; truncated: boolean }> =>
+export const fsSearch = (root: string, query: string): Promise<{ results: string[]; truncated: boolean }> =>
   api(`api/fs/search?path=${q(root)}&q=${q(query)}`).then((r) => ({
     results: Array.isArray(r?.results) ? (r.results as string[]) : [],
     truncated: !!r?.truncated,
@@ -1332,11 +1091,7 @@ export const fsSearch = (
 // --- assistant chat (docs/log/19) ---
 // Headless-CLI LLM chat/translation. Thin wrappers over the /api/chat/* endpoints;
 // callers own the response shape (Conversation / ConversationMeta in types/chat).
-import type {
-  Conversation,
-  ConversationMeta,
-  ChatStep,
-} from "../../types/chat.ts";
+import type { Conversation, ConversationMeta, ChatStep } from "../../types/chat.ts";
 import type { SessionKind } from "../../types/session.ts";
 import type { Assistant, AssistantInput } from "../../types/assistant.ts";
 
@@ -1365,80 +1120,47 @@ export const chatGet = (id: string): Promise<Conversation> =>
   api(`api/chat/conversations/${encodeURIComponent(id)}`);
 // Rename a conversation's display title (docs/log/19).
 export const chatRename = (id: string, title: string): Promise<Conversation> =>
-  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}`, "PATCH", {
-    title,
-  });
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}`, "PATCH", { title });
 // Switch the backend CLI of an existing conversation (docs/log/19). The agent-priority setting
 // only applies to NEW conversations, so this is the way to move a thread in progress: the
 // backend re-pins the conversation, re-resolves the model from that CLI's row in settings,
 // and replays the history the new backend hasn't seen with the next message. 409
 // (conversation_busy) while a turn is running — stop it first.
-export const chatSetAgent = (
-  id: string,
-  agent: string,
-): Promise<Conversation & { error?: ApiError }> =>
-  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}`, "PATCH", {
-    agent,
-  });
+export const chatSetAgent = (id: string, agent: string): Promise<Conversation & { error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}`, "PATCH", { agent });
 // Preview-only AI title suggestion (mirrors the session /title/suggest endpoint): never
 // writes the conversation's title, just returns a candidate for the rename dialog.
-export const chatSuggestTitle = (
-  id: string,
-): Promise<{ suggestedTitle?: string; error?: ApiError }> =>
-  apiJSON(
-    `api/chat/conversations/${encodeURIComponent(id)}/title/suggest`,
-    "POST",
-  );
+export const chatSuggestTitle = (id: string): Promise<{ suggestedTitle?: string; error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/title/suggest`, "POST");
 // Preview-only LLM reply suggestions v2 (chat_suggest_reply.go): context-aware short
 // reply candidates for the composer's ✨ button. Never writes anything.
-export const chatSuggestReplies = (
-  id: string,
-): Promise<{ suggestions?: string[]; error?: ApiError }> =>
-  apiJSON(
-    `api/chat/conversations/${encodeURIComponent(id)}/suggest-replies`,
-    "POST",
-  );
+export const chatSuggestReplies = (id: string): Promise<{ suggestions?: string[]; error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/suggest-replies`, "POST");
 export const chatDelete = (id: string): Promise<Response> =>
   raw(`api/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
 // Stop an in-flight assistant turn. The streaming turn is detached from its request
 // connection (survives a reload), so aborting the fetch no longer cancels it — this does.
 export const chatStop = (id: string): Promise<Response> =>
-  raw(`api/chat/conversations/${encodeURIComponent(id)}/stop`, {
-    method: "POST",
-  });
+  raw(`api/chat/conversations/${encodeURIComponent(id)}/stop`, { method: "POST" });
 // Compact the conversation's context (docs/log/33 stage 2): the backend summarizes the current
 // provider session, resets the resume handles, and carries only the summary into a fresh
 // session on the next turn. Returns the updated conversation (or {error}).
-export const chatCompact = (
-  id: string,
-): Promise<Conversation & { error?: ApiError }> =>
+export const chatCompact = (id: string): Promise<Conversation & { error?: ApiError }> =>
   apiHeld(`api/chat/conversations/${encodeURIComponent(id)}/compact`, "POST");
 // Work plan (docs/log/33 stage 5): a slot carried verbatim across compaction. `set` is a
 // manual edit (an empty string clears it); `refresh` re-derives the plan from the recent
 // conversation in a one-shot headless run — it does not use the conversation's provider
 // session, so refreshing adds no context. Both return the updated conversation.
-export const chatSetPlan = (
-  id: string,
-  plan: string,
-): Promise<Conversation & { error?: ApiError }> =>
-  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/plan`, "PUT", {
-    plan,
-  });
-export const chatRefreshPlan = (
-  id: string,
-): Promise<Conversation & { error?: ApiError }> =>
-  apiHeld(
-    `api/chat/conversations/${encodeURIComponent(id)}/plan/refresh`,
-    "POST",
-  );
+export const chatSetPlan = (id: string, plan: string): Promise<Conversation & { error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/plan`, "PUT", { plan });
+export const chatRefreshPlan = (id: string): Promise<Conversation & { error?: ApiError }> =>
+  apiHeld(`api/chat/conversations/${encodeURIComponent(id)}/plan/refresh`, "POST");
 // Send returns the assistant message + the updated conversation, or {error} on failure.
 export const chatSend = (
   id: string,
   content: string,
 ): Promise<{ conversation?: Conversation; error?: ApiError }> =>
-  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/messages`, "POST", {
-    content,
-  });
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/messages`, "POST", { content });
 
 // Streaming send (Phase B): POST the message and read a Server-Sent Events stream
 // of token deltas. Frames are `data: {json}` separated by blank lines; json is one
@@ -1465,19 +1187,12 @@ export async function chatStream(
 ): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(
-      rel(`api/chat/conversations/${encodeURIComponent(id)}/stream`),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content,
-          ...(source ? { source } : {}),
-          ...(retry ? { retry: true } : {}),
-        }),
-        signal,
-      },
-    );
+    res = await fetch(rel(`api/chat/conversations/${encodeURIComponent(id)}/stream`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content, ...(source ? { source } : {}), ...(retry ? { retry: true } : {}) }),
+      signal,
+    });
   } catch {
     if (signal?.aborted) return; // user stopped the turn — not an error
     h.onError?.(t("err.send_failed"));
@@ -1502,9 +1217,7 @@ export async function chatStream(
     while ((idx = buf.indexOf("\n\n")) >= 0) {
       const frame = buf.slice(0, idx);
       buf = buf.slice(idx + 2);
-      const line = frame.startsWith("data:")
-        ? frame.slice(5).trim()
-        : frame.trim();
+      const line = frame.startsWith("data:") ? frame.slice(5).trim() : frame.trim();
       if (!line) continue;
       let obj: {
         agent?: SessionKind;
@@ -1522,8 +1235,7 @@ export async function chatStream(
       if (obj.agent) h.onAgent?.(obj.agent);
       else if (typeof obj.delta === "string") h.onDelta?.(obj.delta);
       else if (obj.step) h.onStep?.(obj.step);
-      else if (obj.error != null)
-        h.onError?.(errText(obj.error as ApiError) || String(obj.error));
+      else if (obj.error != null) h.onError?.(errText(obj.error as ApiError) || String(obj.error));
       else if (obj.done) h.onDone?.(obj.conversation);
     }
   };
@@ -1548,10 +1260,7 @@ export async function chatStream(
 // never pass through here (the operator's MCP tools, the bridge) are stopped by the same 403
 // locked. The UI only disables the delete item when locked — the server is always the
 // authority.
-export const sessionSetLock = (
-  name: string,
-  locked: boolean,
-): Promise<{ locked?: boolean; error?: ApiError }> =>
+export const sessionSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/sessions/${encodeURIComponent(name)}/lock`, "POST", { locked });
 // Delete a session: the Agent moves it to the cleanup trash, where it can be restored
 // (ADR 0101). stop = stop it first if it is running (otherwise a running one answers 409).
@@ -1561,10 +1270,7 @@ export const sessionSetLock = (
 //     stop the session is halted and the delete tried once more. A current Agent halts it
 //     itself and never answers session_running to stop=1 (a session resumed mid-delete is
 //     session_resumed, which is NOT retried: that would stop someone's resumed session).
-export const sessionDelete = async (
-  name: string,
-  opts: { stop?: boolean } = {},
-): Promise<Response> => {
+export const sessionDelete = async (name: string, opts: { stop?: boolean } = {}): Promise<Response> => {
   const url = `api/sessions/${encodeURIComponent(name)}?reclaim=1${opts.stop ? "&stop=1" : ""}`;
   const res = await raw(url, { method: "DELETE" });
   if (!opts.stop || res.status !== 409) return res;
@@ -1574,9 +1280,7 @@ export const sessionDelete = async (
     .catch(() => null);
   const code = typeof j?.error === "object" ? j?.error?.code : j?.error;
   if (code !== "session_running") return res;
-  const halted = await raw(`api/sessions/${encodeURIComponent(name)}/halt`, {
-    method: "POST",
-  });
+  const halted = await raw(`api/sessions/${encodeURIComponent(name)}/halt`, { method: "POST" });
   if (!halted.ok) return res;
   return raw(url, { method: "DELETE" });
 };
@@ -1595,9 +1299,7 @@ export const sessionKeepAwake = (
   name: string,
   hours: number,
 ): Promise<{ keepAwakeUntil?: string; error?: ApiError }> =>
-  apiJSON(`api/sessions/${encodeURIComponent(name)}/keep-awake`, "POST", {
-    hours,
-  });
+  apiJSON(`api/sessions/${encodeURIComponent(name)}/keep-awake`, "POST", { hours });
 
 // Work item link removal (#3166): drops the session's link to one item. The Agent refuses to
 // drop the item a session was launched for, and remembers a removed PR so the branch-PR
@@ -1607,11 +1309,7 @@ export const sessionUnlinkItem = (
   provider: string,
   key: string,
 ): Promise<{ changed?: boolean; error?: ApiError }> =>
-  apiJSON(`api/sessions/${encodeURIComponent(name)}/links`, "POST", {
-    provider,
-    key,
-    remove: true,
-  });
+  apiJSON(`api/sessions/${encodeURIComponent(name)}/links`, "POST", { provider, key, remove: true });
 
 // Stop-after-turn arm (docs/log/85): the pin's mirror image — stop this session once the turn
 // it is running ends. The stop is resumable, and a new instruction releases the arm.
@@ -1619,9 +1317,7 @@ export const sessionStopAfterTurn = (
   name: string,
   on: boolean,
 ): Promise<{ stopAfterTurnAt?: string; error?: ApiError }> =>
-  apiJSON(`api/sessions/${encodeURIComponent(name)}/stop-after-turn`, "POST", {
-    on,
-  });
+  apiJSON(`api/sessions/${encodeURIComponent(name)}/stop-after-turn`, "POST", { on });
 
 // Spend budget (#1054). The spend is an estimate at list price (the CLI's own reported cost
 // where it gives one); a cap at or under it pauses the session after its turn, and past
@@ -1647,34 +1343,17 @@ export interface SessionSpend {
   children: SessionSpendChild[];
   childrenUsd: number;
 }
-export const sessionSpend = (
-  name: string,
-): Promise<SessionSpend & { error?: ApiError }> =>
+export const sessionSpend = (name: string): Promise<SessionSpend & { error?: ApiError }> =>
   api(`api/sessions/${encodeURIComponent(name)}/spend`);
 export const sessionSetSpendCap = (
   name: string,
   usd: number,
-): Promise<{
-  spendCapUsd?: number;
-  spendCapHitAt?: string;
-  spendUsd?: number;
-  error?: ApiError;
-}> =>
-  apiJSON(`api/sessions/${encodeURIComponent(name)}/spend-cap`, "POST", {
-    usd,
-  });
-export const repoSetLock = (
-  name: string,
-  locked: boolean,
-): Promise<{ locked?: boolean; error?: ApiError }> =>
+): Promise<{ spendCapUsd?: number; spendCapHitAt?: string; spendUsd?: number; error?: ApiError }> =>
+  apiJSON(`api/sessions/${encodeURIComponent(name)}/spend-cap`, "POST", { usd });
+export const repoSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/repos/${encodeURIComponent(name)}/lock`, "POST", { locked });
-export const chatSetLock = (
-  id: string,
-  locked: boolean,
-): Promise<{ locked?: boolean; error?: ApiError }> =>
-  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/lock`, "POST", {
-    locked,
-  });
+export const chatSetLock = (id: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/lock`, "POST", { locked });
 
 // --- assistant templates (docs/log/19 Q2) ---
 // Configurable chat personas. Builtins are code-injected on the Agent (not editable);
@@ -1685,10 +1364,7 @@ export const assistantGet = (id: string): Promise<Assistant> =>
   api(`api/assistants/${encodeURIComponent(id)}`);
 export const assistantCreate = (input: AssistantInput): Promise<Assistant> =>
   apiJSON("api/assistants", "POST", input);
-export const assistantUpdate = (
-  id: string,
-  input: AssistantInput,
-): Promise<Assistant> =>
+export const assistantUpdate = (id: string, input: AssistantInput): Promise<Assistant> =>
   apiJSON(`api/assistants/${encodeURIComponent(id)}`, "PUT", input);
 export const assistantDelete = (id: string): Promise<Response> =>
   raw(`api/assistants/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -1707,9 +1383,7 @@ export interface PromptTemplateGroup {
   label: string;
   items: PromptTemplateItem[];
 }
-export const repoPromptTemplates = (
-  name: string,
-): Promise<{ groups: PromptTemplateGroup[] }> =>
+export const repoPromptTemplates = (name: string): Promise<{ groups: PromptTemplateGroup[] }> =>
   api(`api/repos/${encodeURIComponent(name)}/prompt-templates`);
 
 // --- session skills (mirror skill picker, docs/log/50 / ADR0034) ---
@@ -1731,21 +1405,13 @@ export interface SessionSkill {
   path?: string; // SKILL.md path: repo-relative, or absolute for a tree outside the CWD (a user root, an ancestor)
   origin?: string; // convention dir (".claude" | ".codex" | ".agents" | ".muse") — shown as a badge
 }
-export const sessionSkills = (
-  session: string,
-): Promise<{ skills: SessionSkill[] }> =>
+export const sessionSkills = (session: string): Promise<{ skills: SessionSkill[] }> =>
   api(`api/sessions/${encodeURIComponent(session)}/skills`);
 // The same list for a session not started yet (the launch modal): what `kind` would see in
 // the working copy, or in `subdir` beneath it. A worktree launch is answered from this
 // working copy's tree, since the worktree does not exist until the launch creates it.
-export const repoSkills = (
-  repo: string,
-  kind: string,
-  subdir: string,
-): Promise<{ skills: SessionSkill[] }> =>
-  api(
-    `api/repos/${encodeURIComponent(repo)}/skills?${new URLSearchParams({ kind, subdir })}`,
-  );
+export const repoSkills = (repo: string, kind: string, subdir: string): Promise<{ skills: SessionSkill[] }> =>
+  api(`api/repos/${encodeURIComponent(repo)}/skills?${new URLSearchParams({ kind, subdir })}`);
 
 // --- memo queue (docs/log/21) ---
 // Per-membership notes accumulated across devices, then flushed to a session as one
@@ -1802,29 +1468,15 @@ export const memoFlush = (
   sessionName: string,
   ids: string[],
   text?: string,
-): Promise<{
-  sent?: number;
-  sentAt?: string;
-  ids?: string[];
-  error?: ApiError;
-}> =>
-  apiJSON("api/memos/flush", "POST", {
-    sessionName,
-    ids,
-    ...(text ? { text } : {}),
-  });
+): Promise<{ sent?: number; sentAt?: string; ids?: string[]; error?: ApiError }> =>
+  apiJSON("api/memos/flush", "POST", { sessionName, ids, ...(text ? { text } : {}) });
 
 // First-class categories (docs/log/21 UI overhaul): add empty, rename (cascades onto memos),
 // reorder by drag. Membership-scoped like the memos.
-export const memoCategoryList = (): Promise<MemoCategory[]> =>
-  api("api/memo-categories");
-export const memoCategoryCreate = (
-  input: MemoCategoryInput,
-): Promise<MemoCategory> => apiJSON("api/memo-categories", "POST", input);
-export const memoCategoryUpdate = (
-  id: string,
-  patch: MemoCategoryPatch,
-): Promise<MemoCategory> =>
+export const memoCategoryList = (): Promise<MemoCategory[]> => api("api/memo-categories");
+export const memoCategoryCreate = (input: MemoCategoryInput): Promise<MemoCategory> =>
+  apiJSON("api/memo-categories", "POST", input);
+export const memoCategoryUpdate = (id: string, patch: MemoCategoryPatch): Promise<MemoCategory> =>
   apiJSON(`api/memo-categories/${encodeURIComponent(id)}`, "PATCH", patch);
 export const memoCategoryDelete = (id: string): Promise<Response> =>
   raw(`api/memo-categories/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -1836,46 +1488,28 @@ export type MemoWriteResult = { error?: ApiError } & Record<string, unknown>;
 // normalises it (features/memo/queues.ts), because the CP can answer a JSON null where an array
 // is expected and nothing above the memo section would catch the throw.
 export const memoQueueList = (): Promise<unknown> => api("api/memo-queues");
-export const memoQueuePut = (
-  categoryId: string,
-  body: MemoQueueInput,
-): Promise<MemoWriteResult> =>
+export const memoQueuePut = (categoryId: string, body: MemoQueueInput): Promise<MemoWriteResult> =>
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}`, "PUT", body);
 export const memoQueueDelete = (categoryId: string): Promise<Response> =>
-  raw(`api/memo-queues/${encodeURIComponent(categoryId)}`, {
-    method: "DELETE",
-  });
+  raw(`api/memo-queues/${encodeURIComponent(categoryId)}`, { method: "DELETE" });
 // Release held messages, each with the content hash its card showed. All or none: a changed
 // message answers 409 memo_release_stale with error.stale.
-export const memoRelease = (
-  items: { id: string; contentHash: string }[],
-): Promise<MemoWriteResult> => apiJSON("api/memos/release", "POST", { items });
+export const memoRelease = (items: { id: string; contentHash: string }[]): Promise<MemoWriteResult> =>
+  apiJSON("api/memos/release", "POST", { items });
 // The manual Tidy's apply (ADR 0137 section 8): the operations the member approved, as one run.
 // 409 memo_tidy_stale (error.stale names the changed notes) and 400 memo_tidy_invalid
 // (error.tidyCode is the validator's code) both change nothing.
-export const memoTidyApply = (body: unknown): Promise<MemoWriteResult> =>
-  apiJSON("api/memo-tidy/apply", "POST", body);
+export const memoTidyApply = (body: unknown): Promise<MemoWriteResult> => apiJSON("api/memo-tidy/apply", "POST", body);
 export const memoQueueFire = (categoryId: string): Promise<MemoWriteResult> =>
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/fire`, "POST", {});
 // Lifts a pause: the Control Plane stopped starting runs by itself after two in a row failed at
 // their first turn. 204 without a body on success.
 export const memoQueueResume = (categoryId: string): Promise<MemoWriteResult> =>
-  apiJSON(
-    `api/memo-queues/${encodeURIComponent(categoryId)}/resume`,
-    "POST",
-    {},
-  );
+  apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/resume`, "POST", {});
 // Ends an open run from the history: it closes as "ended", frees its slot and its session is
 // stopped (not archived). Idempotent; 409 delivery_not_open for a run with no session yet.
-export const memoQueueDeliveryEnd = (
-  categoryId: string,
-  deliveryId: string,
-): Promise<MemoWriteResult> =>
-  apiJSON(
-    `api/memo-queues/${encodeURIComponent(categoryId)}/deliveries/${encodeURIComponent(deliveryId)}/end`,
-    "POST",
-    {},
-  );
+export const memoQueueDeliveryEnd = (categoryId: string, deliveryId: string): Promise<MemoWriteResult> =>
+  apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries/${encodeURIComponent(deliveryId)}/end`, "POST", {});
 export const memoQueueDeliveries = (categoryId: string): Promise<unknown> =>
   api(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries`);
 // The tidy runs of a category, newest first. Raw like the other reads: readTidyRuns normalises it.
@@ -1898,10 +1532,7 @@ export const askAssistant = (
 // `until` are unix millis (the DTO's own units — never the ledger's RFC3339, which never
 // reaches the browser). Errors resolve as { error } like every other api() call rather than
 // throwing, so the view's retry loop (useRetryLoad) sees a normal transient/terminal result.
-export const fetchFleetGraph = (
-  since: number,
-  until: number,
-): Promise<FleetGraphPage | { error: ApiError }> =>
+export const fetchFleetGraph = (since: number, until: number): Promise<FleetGraphPage | { error: ApiError }> =>
   api(`api/fleet-graph?since=${since}&until=${until}`);
 
 // Build the terminal WebSocket URL for a session under the current mount, with
@@ -1929,22 +1560,13 @@ export async function sessionPeerSend(
   intent: "request" | "question" | "answer" | "notice",
   message: string,
 ): Promise<{ ok: boolean; queued?: boolean; message?: string; code?: string }> {
-  const r = await apiJSON(
-    `api/sessions/${encodeURIComponent(to)}/input`,
-    "POST",
-    {
-      prompt: message,
-      peer_from: from,
-      peer_intent: intent,
-    },
-  ).catch(() => ({ error: { message: t("err.network") } }));
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(to)}/input`, "POST", {
+    prompt: message,
+    peer_from: from,
+    peer_intent: intent,
+  }).catch(() => ({ error: { message: t("err.network") } }));
   const err = r?.error as ApiError | undefined;
-  if (err)
-    return {
-      ok: false,
-      message: errText(err) || t("err.send_failed"),
-      code: String(err.code || ""),
-    };
+  if (err) return { ok: false, message: errText(err) || t("err.send_failed"), code: String(err.code || "") };
   return { ok: true, queued: !!r?.queued };
 }
 
@@ -1952,16 +1574,8 @@ export async function sessionPeerSend(
  *  reviewed the plan file `path` of `planner`, on the Agent, so every device offers "Review
  *  again" (features/mirror/reviewAgain.ts). false = not stored (an old Agent has no such route,
  *  or the call failed); the caller keeps its local copy either way. */
-export async function sessionPlanReviewerSet(
-  planner: string,
-  path: string,
-  reviewer: string,
-): Promise<boolean> {
-  const r = await apiJSON(
-    `api/sessions/${encodeURIComponent(planner)}/plan-reviewer`,
-    "POST",
-    { path, reviewer },
-  ).catch(() => null);
+export async function sessionPlanReviewerSet(planner: string, path: string, reviewer: string): Promise<boolean> {
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(planner)}/plan-reviewer`, "POST", { path, reviewer }).catch(() => null);
   return !!r && !r.error;
 }
 
@@ -1975,35 +1589,21 @@ export async function sessionPlanAutoSet(
   reviewer: string,
   auto: { enabled: boolean; max: number; prompt: string },
 ): Promise<string> {
-  const r = await apiJSON(
-    `api/sessions/${encodeURIComponent(planner)}/plan-reviewer`,
-    "POST",
-    { path, reviewer, auto },
-  ).catch(() => null);
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(planner)}/plan-reviewer`, "POST", { path, reviewer, auto }).catch(() => null);
   if (r && !r.error) return "";
-  return (
-    (r && typeof r.error === "object"
-      ? (r.error as { code?: string }).code
-      : "") || "failed"
-  );
+  return (r && typeof r.error === "object" ? (r.error as { code?: string }).code : "") || "failed";
 }
 
 /** sessionAlive reads whether the session is running NOW (null = the read failed). The session
  *  list lags by seconds and a held Session snapshot lags by as long as a card sits on screen. */
 export async function sessionAlive(session: string): Promise<boolean | null> {
-  const r = await apiJSON(
-    `api/sessions/${encodeURIComponent(session)}/status`,
-    "GET",
-  ).catch(() => null);
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/status`, "GET").catch(() => null);
   return !r || r.error ? null : !!r.alive;
 }
 
 /** sessionReady reports whether a session's agent can take input right now (alive and its
  *  composer is up). A failed read is "not ready", so polling callers simply try again. */
 export async function sessionReady(session: string): Promise<boolean> {
-  const r = await apiJSON(
-    `api/sessions/${encodeURIComponent(session)}/status`,
-    "GET",
-  ).catch(() => null);
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/status`, "GET").catch(() => null);
   return !!r && !r.error && !!r.alive && !!r.ready;
 }
