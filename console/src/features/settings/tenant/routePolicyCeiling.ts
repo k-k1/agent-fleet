@@ -98,6 +98,9 @@ function punycodeDecode(input: string): string | null {
 function validPunycodeLabel(l: string): boolean {
   const u = punycodeDecode(l.slice(4));
   if (u === null || u === "" || /^[\x00-\x7f]*$/.test(u) || u.startsWith("-") || u.endsWith("-")) return false;
+  // idna's hyphen check runs on the decoded label's UTF-8 bytes: "--" at positions 3-4 is refused.
+  const b = new TextEncoder().encode(u);
+  if (b.length > 4 && b[2] === 45 && b[3] === 45) return false;
   try {
     return new URL(`http://${u}.invalid/`).hostname === `${l}.invalid`;
   } catch {
