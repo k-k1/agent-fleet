@@ -509,6 +509,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.invalid_route_policy": "The restriction has a value the Control Plane does not accept.",
   "err.route_policy_exceeds_ceiling": "The restriction would allow something the operator setting forbids. A restriction below it can only narrow it.",
   "err.route_policy_endpoint_not_approvable": "That host cannot be approved as a self-hosted server: a restriction above does not let it through, or it is a vendor's host.",
+  "err.route_policy_stale": "Someone else changed this rule after it was loaded, so nothing was saved. Your edits are still here; reopen the page to see the current rule.",
   // ADR 0138 M2 P10: the provided-route admin refusals.
   "err.invalid_source": "The Control Plane did not accept the source's registration.",
   "err.invalid_input": "The Control Plane did not accept that amount or setting.",
