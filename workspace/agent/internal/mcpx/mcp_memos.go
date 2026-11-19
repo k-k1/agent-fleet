@@ -63,6 +63,7 @@ func memoTools() []toolSpec {
 							"repo":      map[string]any{"type": "string", "description": "レポのバケツ。''=共通/未分類（任意）。worktree のフォルダ（repo@slug）を渡しても元のレポ（repo）に入る"},
 							"category":  map[string]any{"type": "string", "description": "サブプロジェクトのラベル（任意）"},
 							"reference": memoRefSchemaJA(false),
+							"after":     memoAfterSchemaJA(false),
 						},
 						"required": []string{"kind"},
 					},
@@ -99,6 +100,7 @@ func memoTools() []toolSpec {
 							"repo":      map[string]any{"type": "string", "description": "Which repo bucket it belongs to (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
 							"category":  map[string]any{"type": "string", "description": "Free-form sub-project label (optional; reuse one from list_memos)"},
 							"reference": memoRefSchema(false),
+							"after":     memoAfterSchema(false),
 						},
 						"required": []string{"kind"},
 					},
@@ -150,6 +152,7 @@ func memoTools() []toolSpec {
 							"refPath":   map[string]any{"type": "string", "description": "新しい参照パス（任意）"},
 							"position":  map[string]any{"type": "integer", "description": "グループ内の新しい並び順（任意）"},
 							"reference": memoRefSchemaJA(true),
+							"after":     memoAfterSchemaJA(true),
 						},
 						"required": []string{"id"},
 					},
@@ -179,6 +182,7 @@ func memoTools() []toolSpec {
 							"repo":      map[string]any{"type": "string", "description": "Move it to another repo bucket (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
 							"category":  map[string]any{"type": "string", "description": "Change the sub-project label (optional)"},
 							"reference": memoRefSchema(true),
+							"after":     memoAfterSchema(true),
 						},
 						"required": []string{"id"},
 					},
@@ -307,6 +311,30 @@ func memoRefSchemaJA(update bool) map[string]any {
 	}
 }
 
+// memoAfterSchema is the after argument of the session's add_memo and update_memo: the notes of
+// the same queue this one waits for. The Control Plane resolves and checks it (ADR 0137, addendum
+// 2026-11-19); the relay forwards it as it is.
+func memoAfterSchema(update bool) map[string]any {
+	desc := "The notes of the same auto-run category (queue=true) this note waits for: each a memo id from list_memos, " +
+		"or a work-item key such as owner/repo#12, which names the newest note of the category holding that item. " +
+		"Each must come before this note in the category. The note is started only after every one of them was run " +
+		"and its run ended cleanly; if one went wrong, the note goes back to wait for your user."
+	if update {
+		desc += " Omit to keep them; [] removes them."
+	}
+	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
+}
+
+// memoAfterSchemaJA is memoAfterSchema for the operator assistant's Japanese tool texts.
+func memoAfterSchemaJA(update bool) map[string]any {
+	desc := "このメモが待つ、同じ自動実行カテゴリのメモ。各要素はメモ id（list_memos）か、作業項目のキー（owner/repo#12。その項目を持つカテゴリ内の最新のメモを指す）。" +
+		"どれもこのメモより前にあるものに限る。すべてが実行されてきれいに終わってから、このメモが始まる。どれかがうまくいかなければ、このメモは利用者の確認待ちに戻る。"
+	if update {
+		desc += "省略で据え置き、[] で外す。"
+	}
+	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
+}
+
 // memoWriteResult is the tool result of an add_memo or update_memo that the Control Plane
 // accepted. The answer goes back as it came, so the session sees `existing` and the state. A
 // reference that was sent but is missing from the answer means the Control Plane ignored it (an
@@ -316,6 +344,13 @@ func memoWriteResult(id json.RawMessage, args json.RawMessage, answer string) []
 		return mcpToolErr(id, "The note was saved, but its reference was NOT kept: this Control Plane does not support "+
 			"references yet. Do not report the reference as stored; tell your user, or put the item's key and URL "+
 			"in the note's body instead. The Control Plane answered: "+answer)
+	}
+	// An answer with existing: true is a note already holding the same item: nothing was written,
+	// so a missing list there says nothing about the Control Plane, and the answer goes back as it came.
+	if memoAfterSent(args) && !memoAfterAnswered(answer) && !memoExistingAnswer(answer) {
+		return mcpToolErr(id, "The note was saved, but its prerequisites (after) were NOT kept: this Control Plane does not "+
+			"support them yet, so nothing makes the note wait. Do not report them as stored; tell your user. "+
+			"The Control Plane answered: "+answer)
 	}
 	return mcpTextResult(id, answer)
 }
@@ -336,6 +371,31 @@ func memoRefSent(args json.RawMessage) bool {
 	}
 	r := in.Reference
 	return r.Provider != "" || r.Key != "" || r.URL != ""
+}
+
+// memoAfterSent reports whether the call asks for prerequisites to be kept: a non-empty after list.
+// [] (clear) and an absent one ask for none.
+func memoAfterSent(args json.RawMessage) bool {
+	var in struct {
+		After []string `json:"after"`
+	}
+	return json.Unmarshal(args, &in) == nil && len(in.After) > 0
+}
+
+// memoExistingAnswer reports whether the answer is a note already in the queue (existing: true).
+func memoExistingAnswer(answer string) bool {
+	var out struct {
+		Existing bool `json:"existing"`
+	}
+	return json.Unmarshal([]byte(answer), &out) == nil && out.Existing
+}
+
+// memoAfterAnswered reports whether the Control Plane's answer carries prerequisites.
+func memoAfterAnswered(answer string) bool {
+	var out struct {
+		After []string `json:"after"`
+	}
+	return json.Unmarshal([]byte(answer), &out) == nil && len(out.After) > 0
 }
 
 // memoRefAnswered reports whether the Control Plane's answer carries a reference.

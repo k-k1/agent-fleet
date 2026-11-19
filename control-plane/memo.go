@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/memoafter"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -77,6 +79,14 @@ type memoDTO struct {
 	// absent for none. A create or an update may set it, and an update with all three fields
 	// empty clears it.
 	Reference *memoRefWire `json:"reference,omitempty"`
+	// After is the messages of the same queue this one waits for, by id (memo_after.go), absent for
+	// none. A create may also name one by its reference key, which resolves to an id at the write.
+	After []string `json:"after,omitempty"`
+	// AfterStatus is how each prerequisite stands, on a held or pending message of the list only.
+	AfterStatus []memoafter.Item `json:"afterStatus,omitempty"`
+	// HeldReason is set on a message the dispatcher put back to held because a prerequisite can no
+	// longer be satisfied.
+	HeldReason *memoafter.HeldReason `json:"heldReason,omitempty"`
 	// Existing is set on the answer of a create into a queue that found the same reference
 	// already waiting there: the message returned is that one, and nothing was added.
 	Existing bool `json:"existing,omitempty"`
@@ -111,7 +121,11 @@ func memoToDTO(m store.Memo) memoDTO {
 		State: m.State, Provenance: memoEffectiveProvenance(m), ReleasedAt: m.ReleasedAt, ReleasedBy: m.ReleasedBy,
 		ContentHash: memoContentHash(m), Producer: m.Producer, ProducerOrigin: m.ProducerOrigin,
 		DeliveryID: m.DeliveryID, Reference: memoRefToWire(m),
-		DerivedFrom: decodeIDs(m.DerivedFrom), SourceProvenance: m.SourceProvenance, TidyRunID: m.TidyRunID}
+		DerivedFrom: decodeIDs(m.DerivedFrom), SourceProvenance: m.SourceProvenance, TidyRunID: m.TidyRunID,
+		After: memoafter.IDs(m)}
+	if m.State == store.MemoStateHeld {
+		d.HeldReason = memoafter.ParseHeldReason(m.HeldReason)
+	}
 	if m.TidyFrom != "" {
 		d.TidyFrom = &memoTidyFrom{ID: m.TidyFrom}
 	}
@@ -201,8 +215,14 @@ func memoListFor(ctx context.Context, st store.MemoStore, membershipID string) (
 	}
 	out := make([]memoDTO, 0, len(rows))
 	var cats map[string]store.MemoCategory
+	lk := memoafter.ListLookup(ctx, st, membershipID, rows)
 	for _, m := range rows {
 		d := memoToDTO(m)
+		if m.AfterIDs != "" && (m.State == store.MemoStateHeld || m.State == store.MemoStatePending) {
+			if d.AfterStatus, err = memoafter.Status(m, lk); err != nil {
+				return nil, err
+			}
+		}
 		if d.TidyFrom != nil {
 			// A moved message names the category it came from, so that nobody asks for it.
 			if cats == nil {
@@ -310,11 +330,24 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		if err != nil {
 			return err
 		}
-		if inQ && m.RefKey != "" {
-			rows, err := tx.ListMemosIn(m.Repo, m.Category)
-			if err != nil {
-				return err
+		// One read of the bucket and one clock reading serve the whole create: the time the
+		// prerequisites are ordered against is the time the row is stamped with.
+		rows, err := tx.ListMemosIn(m.Repo, m.Category)
+		if err != nil {
+			return err
+		}
+		now := store.NowTS()
+		if len(in.After) > 0 {
+			// A new message joins the end of the queue: every message already there comes before it.
+			self := m
+			self.ID, self.CreatedAt, self.Position = "", now, math.MaxInt
+			after, aerr := memoAfterResolve(self, rows, in.After, inQ)
+			if aerr != nil {
+				return memoTxFail(aerr)
 			}
+			m.AfterIDs = after
+		}
+		if inQ && m.RefKey != "" {
 			if dup, ok := memoOpenRefIn(rows, m); ok {
 				m, created = dup, false
 				return nil
@@ -336,17 +369,13 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		// New memos always join the end of their own repo/category group.  Clients do
 		// not need to coordinate a position (and an omitted JSON position otherwise
 		// becomes zero, which used to put every new memo at the top of the group).
-		rows, err := tx.ListMemosIn(m.Repo, m.Category)
-		if err != nil {
-			return err
-		}
 		for _, row := range rows {
 			if row.Position >= m.Position {
 				m.Position = row.Position + 1
 			}
 		}
 		m.ID = store.NewID()
-		m.CreatedAt = store.NowTS()
+		m.CreatedAt = now
 		if m, aerr = memoQueueMove(m, m, false, inQ, accept, via); aerr != nil {
 			return memoTxFail(aerr)
 		}
@@ -404,6 +433,9 @@ type memoPatch struct {
 	// Reference absent leaves the reference as it is, a full reference sets it, and one with all
 	// three fields empty clears it (a JSON null reads as absent).
 	Reference *memoRefWire `json:"reference"`
+	// After absent leaves the prerequisites as they are, a list replaces them (ids or reference
+	// keys, as on a create), and an empty list clears them.
+	After *[]string `json:"after"`
 }
 
 // memoUpdateFor applies a partial edit to an owned memo (ownership by membership).
@@ -433,6 +465,25 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 		inNext, accept, err := memoQueueSwitch(tx, next.Repo, next.Category)
 		if err != nil {
 			return err
+		}
+		moved := next.Repo != cur.Repo || next.Category != cur.Category
+		switch {
+		case in.After != nil:
+			rows, err := tx.ListMemosIn(next.Repo, next.Category)
+			if err != nil {
+				return err
+			}
+			if next.AfterIDs, aerr = memoAfterResolve(next, rows, *in.After, inNext); aerr != nil {
+				return memoTxFail(aerr)
+			}
+		case moved && next.AfterIDs != "":
+			// The prerequisites are messages of the queue it leaves: they cannot follow it.
+			return memoTxFail(&apiError{http.StatusBadRequest, errCodeMemoAfterInvalid, "clear this message's prerequisites before moving it to another category"})
+		}
+		// The reason a message came back for names one prerequisite: once the list changes it may
+		// name one the message no longer waits for.
+		if next.AfterIDs != cur.AfterIDs {
+			next.HeldReason = ""
 		}
 		if next, aerr = memoQueueMove(cur, next, inPrev, inNext, accept, via); aerr != nil {
 			return memoTxFail(aerr)

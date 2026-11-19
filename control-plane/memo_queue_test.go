@@ -108,11 +108,34 @@ func mcpStatus(err error) int {
 	return http.StatusConflict
 }
 
+// mcpAfterOf is a test's `after` as the /mcp face takes it on a create.
+func mcpAfterOf(v any) []string {
+	if p := mcpAfterPtrOf(v); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// mcpAfterPtrOf is a test's `after` as the /mcp face takes it on an update: absent is nil.
+func mcpAfterPtrOf(v any) *[]string {
+	switch x := v.(type) {
+	case []string:
+		return &x
+	case []any:
+		out := []string{}
+		for _, e := range x {
+			out = append(out, e.(string))
+		}
+		return &out
+	}
+	return nil
+}
+
 func (c memoFaceClient) create(body map[string]any) (int, memoDTO) {
 	c.e.t.Helper()
 	if c.name == "mcp" {
 		s := func(k string) string { v, _ := body[k].(string); return v }
-		out, err := cpDeps{c.e.mgr}.MemoCreate(context.Background(), c.mv(), "conn-1", s("repo"), s("category"), s("kind"), s("body"), s("refPath"), mcpRefOf(body["reference"]))
+		out, err := cpDeps{c.e.mgr}.MemoCreate(context.Background(), c.mv(), "conn-1", s("repo"), s("category"), s("kind"), s("body"), s("refPath"), mcpRefOf(body["reference"]), mcpAfterOf(body["after"]))
 		if err != nil {
 			return mcpStatus(err), memoDTO{}
 		}
@@ -140,7 +163,7 @@ func (c memoFaceClient) update(id string, patch map[string]any) (int, memoDTO) {
 		if v, ok := patch["position"].(int); ok {
 			pos = &v
 		}
-		out, err := cpDeps{c.e.mgr}.MemoUpdate(context.Background(), c.e.members["a"], id, sp("repo"), sp("category"), sp("body"), sp("refPath"), pos, mcpRefOf(patch["reference"]))
+		out, err := cpDeps{c.e.mgr}.MemoUpdate(context.Background(), c.e.members["a"], id, sp("repo"), sp("category"), sp("body"), sp("refPath"), pos, mcpRefOf(patch["reference"]), mcpAfterPtrOf(patch["after"]))
 		if err != nil {
 			return mcpStatus(err), memoDTO{}
 		}

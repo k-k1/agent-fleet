@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
+	"github.com/k-k1/agent-fleet/control-plane/internal/memoafter"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -337,11 +338,18 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 	// Pick the batch and check every message of it before anything is claimed: a refusal
 	// commits (the holds below stay), so a claim made before it would be left with no delivery.
 	var batch []store.Memo
+	eligible := memoafter.EligibleIn(memoafter.TxLookup(tx, rows, time.Now()))
 	for _, m := range rows {
 		if len(batch) >= q.Batch {
 			break
 		}
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
+			continue
+		}
+		// A message whose prerequisites are not all satisfied is skipped, a press included: it holds
+		// no slot and does not stop the messages behind it. A prerequisite in this same batch is
+		// pending, so not satisfied, and a dependent never rides with it.
+		if !eligible(m) {
 			continue
 		}
 		// A fire by itself leaves a reference where it is while the Agent cannot show one: the

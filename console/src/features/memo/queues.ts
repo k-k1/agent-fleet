@@ -9,6 +9,7 @@ import type { MsgKey } from "../../lib/i18n/index.ts";
 import { browserTimeZone, isValidTimeZone } from "../../lib/intl.ts";
 import type {
   Memo,
+  MemoAfterItem,
   MemoDelivery,
   MemoQueue,
   MemoQueueInput,
@@ -57,6 +58,7 @@ const WAITING_REASONS: readonly string[] = [
   "no_place",
   "tidying",
   "no_tidy",
+  "prerequisites",
 ] satisfies MemoWaitingReason[];
 
 /** The `waiting` of a queue: absent from an older Control Plane, and a reason this Console does
@@ -72,6 +74,7 @@ function readWaiting(v: unknown): MemoQueueWaiting | undefined {
       waiting: num(d.waiting, 0),
       agentKind: str(d.agentKind),
       by: d.by === "member" ? "member" : "category",
+      blocked: num(d.blocked, 0),
     },
   };
 }
@@ -183,7 +186,9 @@ export function waitingWords(
     case "window_closed":
       return when ? { key: "memo.waiting_window_closed_at", params: when } : { key: "memo.waiting_window_closed" };
     case "below_threshold":
-      return { key: "memo.waiting_below_threshold", params: { needed: w.detail?.needed ?? 0, count: w.detail?.waiting ?? 0 } };
+      return w.detail?.blocked
+        ? { key: "memo.waiting_below_threshold_blocked", params: { needed: w.detail?.needed ?? 0, count: w.detail?.waiting ?? 0, blocked: w.detail.blocked } }
+        : { key: "memo.waiting_below_threshold", params: { needed: w.detail?.needed ?? 0, count: w.detail?.waiting ?? 0 } };
     case "quiet_minute":
       return when ? { key: "memo.waiting_quiet_at", params: when } : { key: "memo.waiting_quiet" };
     case "daily_cap":
@@ -196,7 +201,55 @@ export function waitingWords(
       return { key: w.detail?.by === "member" ? "memo.waiting_no_place_member" : "memo.waiting_no_place" };
     case "tidying":
       return { key: "memo.waiting_tidying" };
+    case "prerequisites":
+      return { key: "memo.waiting_prerequisites", params: { count: w.detail?.blocked ?? 0 } };
   }
+}
+
+// ---- notes that wait for other notes (ADR 0137, addendum 2026-11-19) -------------------------
+
+const AFTER_REASONS = [
+  "held",
+  "pending",
+  "running",
+  "first_turn",
+  "deleted",
+  "moved",
+  "unconfirmed",
+  "superseded",
+  "hand_sent",
+  "aborted",
+  "unknown",
+  "not_clean",
+  "bad_first_turn",
+  "overdue",
+  "no_first_turn",
+] as const;
+
+/** The words for how a note another waits for stands. A reason this Console does not know (a newer
+ *  Control Plane) falls back to the state alone. */
+export function afterItemWords(it: Pick<MemoAfterItem, "state" | "reason">): MsgKey {
+  if (it.state === "satisfied") return "memo.after_r_done";
+  if (it.reason && (AFTER_REASONS as readonly string[]).includes(it.reason)) return `memo.after_r_${it.reason}` as MsgKey;
+  return it.state === "failed" ? "memo.after_r_failed" : "memo.after_r_waiting";
+}
+
+/** A short name for a note: its work-item key, else the first line of its text. */
+export function afterLabelOf(m: Pick<Memo, "reference" | "body" | "refPath">): string {
+  if (m.reference?.key) return m.reference.key;
+  const line = (m.body || m.refPath || "").trim().split("\n")[0];
+  return line.length > 60 ? line.slice(0, 60) + "…" : line;
+}
+
+/** The notes of m's category that m may wait for: those before it in the category's order (created
+ *  time, then position, then id, as the Control Plane runs them) and not replaced by a tidy. */
+export function afterChoices(memos: Memo[], m: Memo): { id: string; label: string }[] {
+  const before = (a: Memo, b: Memo) =>
+    a.createdAt !== b.createdAt ? a.createdAt < b.createdAt : a.position !== b.position ? a.position < b.position : a.id < b.id;
+  return memos
+    .filter((o) => o.id !== m.id && o.repo === m.repo && o.category === m.category && o.state && o.state !== "superseded" && before(o, m))
+    .sort((a, b) => (before(a, b) ? -1 : 1))
+    .map((o) => ({ id: o.id, label: afterLabelOf(o) || o.id }));
 }
 
 // ---- message state and origin ------------------------------------------------------------
@@ -668,6 +721,7 @@ const TIDY_REFUSED: readonly string[] = [
   "move_self",
   "duplicate_ref",
   "already_moved",
+  "keep_only",
 ];
 
 /** Why a run that changed nothing ended, in words; null when it has no reason or one this Console

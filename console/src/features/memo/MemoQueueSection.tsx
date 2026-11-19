@@ -19,7 +19,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { copyText } from "../../lib/clipboard.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { t, useT } from "../../lib/i18n/index.ts";
+import { t, useT, type MsgKey } from "../../lib/i18n/index.ts";
 import {
   memoList,
   memoCreate,
@@ -56,7 +56,7 @@ import { memoReference } from "./reference.ts";
 import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import { tidySelection } from "./tidyOps.ts";
-import { isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
+import { afterChoices, afterItemWords, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -488,11 +488,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   }, []);
 
   // ---- memo edit / delete ------------------------------------------------------
-  const saveEdit = async (m: Memo, body: string, category: string, clearRef: boolean) => {
+  const saveEdit = async (m: Memo, body: string, category: string, clearRef: boolean, after?: string[]) => {
     setEditing(null);
     try {
-      // The reference is left out unless the member removed it: absent keeps it, `{}` clears it.
-      const res = await memoUpdate(m.id, { body: body.trim(), category: category.trim(), ...(clearRef ? { reference: {} } : {}) });
+      // The reference is left out unless the member removed it: absent keeps it, `{}` clears it. The
+      // notes it waits for are sent only when the member changed them: absent keeps them, [] clears.
+      const res = await memoUpdate(m.id, {
+        body: body.trim(),
+        category: category.trim(),
+        ...(clearRef ? { reference: {} } : {}),
+        ...(after ? { after } : {}),
+      });
       // apiJSON resolves a server error as {error} rather than throwing, so check it or a
       // false success toast is shown.
       if ((res as { error?: unknown }).error) {
@@ -931,7 +937,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       onCollapse={() => setExpanded((s) => ({ ...s, [m.id]: false }))}
                       onEdit={() => setEditing(m.id)}
                       onCancelEdit={() => setEditing(null)}
-                      onSave={(body, category, clearRef) => void saveEdit(m, body, category, clearRef)}
+                      onSave={(body, category, clearRef, after) => void saveEdit(m, body, category, clearRef, after)}
+                      afterChoices={isQueue && (m.state === "held" || m.state === "pending") ? afterChoices(g.memos, m) : undefined}
                       onOpenTidyRuns={
                         cat && isQueue
                           ? () => {
@@ -1393,7 +1400,10 @@ interface MemoRowProps {
   onCollapse: () => void;
   onEdit: () => void;
   onCancelEdit: () => void;
-  onSave: (body: string, category: string, clearRef: boolean) => void;
+  /** after is the notes it waits for when the member changed them, absent otherwise. */
+  onSave: (body: string, category: string, clearRef: boolean, after?: string[]) => void;
+  /** The notes of its auto-run category it may wait for; absent outside one, or once it has run. */
+  afterChoices?: { id: string; label: string }[];
   /** Opens the run history of this note's category; absent outside an auto-run category. */
   onOpenTidyRuns?: () => void;
   onOpenMenu: (e: RMouseEvent) => void;
@@ -1412,7 +1422,24 @@ function MemoRow(props: MemoRowProps) {
   const [cat, setCat] = useState(currentCat);
   // The member asked to drop the note's reference; it is sent with the save, not before.
   const [clearRef, setClearRef] = useState(false);
+  const [after, setAfter] = useState<string[]>(m.after ?? []);
   const ref = memoReference(m);
+  // The earlier notes on offer, then any it already waits for that are no longer on offer (deleted,
+  // moved, replaced, or kept past the list's window): those must stay visible so they can be removed.
+  const afterOptions = props.afterChoices && [
+    ...props.afterChoices.map((c) => ({ ...c, why: undefined as MsgKey | undefined })),
+    ...(m.after ?? [])
+      .filter((id) => !props.afterChoices!.some((c) => c.id === id))
+      .map((id) => {
+        const st = m.afterStatus?.find((a) => a.id === id);
+        return { id, label: st?.label || id, why: st ? afterItemWords(st) : undefined };
+      }),
+  ];
+  // Sent only when it differs from what is stored, so a plain text edit never touches it.
+  const afterChanged = (): string[] | undefined => {
+    const was = m.after ?? [];
+    return after.length === was.length && after.every((id, i) => id === was[i]) ? undefined : after;
+  };
   const taRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextarea(taRef, body);
 
@@ -1421,6 +1448,7 @@ function MemoRow(props: MemoRowProps) {
       setBody(m.body);
       setCat(currentCat);
       setClearRef(false);
+      setAfter(m.after ?? []);
       requestAnimationFrame(() => {
         const ta = taRef.current;
         if (ta) {
@@ -1470,7 +1498,7 @@ function MemoRow(props: MemoRowProps) {
               const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
               if (submitWithKey) {
                 e.preventDefault();
-                props.onSave(body, cat, clearRef);
+                props.onSave(body, cat, clearRef, afterChanged());
               }
             }}
           />
@@ -1482,13 +1510,44 @@ function MemoRow(props: MemoRowProps) {
               placeholder={tr("memo.category_ph")}
               onChange={(e) => setCat(e.target.value)}
             />
-            <Button small variant="primary" onClick={() => props.onSave(body, cat, clearRef)}>
+            <Button small variant="primary" onClick={() => props.onSave(body, cat, clearRef, afterChanged())}>
               {tr("memo.save")}
             </Button>
             <Button small variant="ghost" onClick={props.onCancelEdit}>
               {tr("common.cancel")}
             </Button>
           </div>
+          {afterOptions && (
+            <fieldset className="memo-edit-after">
+              <legend>{tr("memo.after_edit_label")}</legend>
+              {afterOptions.length === 0 ? (
+                <div className="memo-edit-hint">{tr("memo.after_edit_none")}</div>
+              ) : (
+                <>
+                  {afterOptions.map((c) => (
+                    <label key={c.id} className="memo-edit-after-item">
+                      <input
+                        type="checkbox"
+                        checked={after.includes(c.id)}
+                        onChange={(e) =>
+                          // Kept in the order shown, whatever order they were ticked in; a ticked one
+                          // that is not offered any more stays until it is unticked.
+                          setAfter((cur) =>
+                            e.target.checked
+                              ? afterOptions.map((x) => x.id).filter((id) => id === c.id || cur.includes(id))
+                              : cur.filter((id) => id !== c.id),
+                          )
+                        }
+                      />
+                      <span>{c.label}</span>
+                      {c.why && <span className="memo-edit-after-why">{tr(c.why)}</span>}
+                    </label>
+                  ))}
+                  <div className="memo-edit-hint">{tr("memo.after_edit_hint")}</div>
+                </>
+              )}
+            </fieldset>
+          )}
           <div className="memo-edit-hint">{m.kind === "file" ? tr("memo.edit_hint_file") : tr("memo.edit_hint")}</div>
         </div>
       </div>
@@ -1616,6 +1675,24 @@ function MemoRow(props: MemoRowProps) {
         )}
         {/* Without a reference line to ride on, state and producer stay below the body. */}
         {!(ref && m.kind !== "file") && metaNode}
+        {m.state === "held" && m.heldReason && (
+          <div className="memo-after-held">
+            {tr("memo.after_held", {
+              label: m.afterStatus?.find((a) => a.id === m.heldReason!.after)?.label || m.heldReason.after,
+              reason: tr(afterItemWords({ state: "failed", reason: m.heldReason.reason })),
+            })}
+          </div>
+        )}
+        {m.afterStatus && m.afterStatus.length > 0 && (
+          <div className="memo-after" title={tr("memo.after_title")}>
+            <span className="memo-after-head">{tr("memo.after_label")}</span>
+            {m.afterStatus.map((a) => (
+              <span key={a.id} className={"memo-after-item a-" + a.state}>
+                {a.label || a.id}: {tr(afterItemWords(a))}
+              </span>
+            ))}
+          </div>
+        )}
         {((m.sentAt && !stateWords) || (isLong && expanded)) && (
           <div className="memo-meta">
             {m.sentAt && !stateWords && <span className="memo-sent-tag">{tr("memo.sent_tag")}</span>}

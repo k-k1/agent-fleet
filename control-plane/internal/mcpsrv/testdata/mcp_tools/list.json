@@ -653,6 +653,13 @@
       "description": "Add a note to your memo queue - what the user means by \"memo\" (メモ) here, not your own agent memory or notes file. kind=text needs `body`; kind=file needs `refPath` (a ~/repos/... path) with `body` as an optional comment. `repo` ('' = 共通/未分類) and `category` (free label) group it. Capture TODOs/ideas here to flush together later. To point at a work item (GitHub, Jira, Bitbucket) instead of describing it, pass `reference`; `body` may then be empty.",
       "inputSchema": {
         "properties": {
+          "after": {
+            "description": "Optional: the notes of the same auto-run category this one waits for, each a memo id (from list_memos) or a work-item key such as owner/repo#12 (it names the newest note of the category holding that item). Each must come before this note in the category. A note with prerequisites is started only after every one of them was run and its run ended cleanly; if one went wrong the note goes back to wait for the user.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "body": {
             "description": "note text (kind=text) or comment (kind=file)",
             "type": "string"
@@ -1569,6 +1576,13 @@
       "description": "Edit an existing memo (by `id`). Only the fields you pass change; omit the rest. Use to tidy wording, re-categorize, or reorder (position).",
       "inputSchema": {
         "properties": {
+          "after": {
+            "description": "Optional: the notes of the same auto-run category this one waits for, each a memo id (from list_memos) or a work-item key such as owner/repo#12 (it names the newest note of the category holding that item). Each must come before this note in the category. A note with prerequisites is started only after every one of them was run and its run ended cleanly; if one went wrong the note goes back to wait for the user. Omit to leave them as they are; [] clears them. Changing them on a released note sends it back to wait for release.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "body": {
             "description": "new body (optional)",
             "type": "string"

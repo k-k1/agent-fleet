@@ -64,6 +64,23 @@ export interface Memo {
   /** The category a tidy run moved the message from. repo and name are empty when the Control
    *  Plane could not name it: a single create or update answer, or a category since deleted. */
   tidyFrom?: { id: string; repo: string; name: string };
+  /** The notes of the same auto-run category this one waits for, by id (ADR 0137, addendum
+   *  2026-11-19). Absent for none. */
+  after?: string[];
+  /** How each of them stands, on a waiting or held note of the list only. */
+  afterStatus?: MemoAfterItem[];
+  /** Set on a note the Control Plane sent back for approval because one of the notes it waits for
+   *  can no longer finish well. */
+  heldReason?: { after: string; reason: string; at?: string };
+}
+
+/** One note another waits for, and how it stands: satisfied, waiting (with why) or failed (with
+ *  why). label is its work-item key, else the start of its text. */
+export interface MemoAfterItem {
+  id: string;
+  label?: string;
+  state: "satisfied" | "waiting" | "failed";
+  reason?: string;
 }
 
 /** A message's state in a queue; "" is a note outside any queue. */
@@ -80,6 +97,8 @@ export interface MemoInput {
   /** A work item to point at. At most one open note per item in an auto-run category: adding
    *  one that is already there answers the existing note (`existing: true`). */
   reference?: MemoReference;
+  /** Notes of the same auto-run category this one waits for: ids, or work-item keys. */
+  after?: string[];
   position?: number;
 }
 
@@ -96,6 +115,8 @@ export interface MemoPatch {
   /** Three meanings, told apart by the key alone: absent leaves the reference as it is, `{}`
    *  clears it, a full object sets it. Never send `null`: the Control Plane reads it as absent. */
   reference?: MemoReference | Record<string, never>;
+  /** Absent leaves the notes it waits for as they are, a list replaces them, [] clears them. */
+  after?: string[];
   position?: number;
 }
 
@@ -177,13 +198,14 @@ export type MemoWaitingReason =
   | "usage_limit"
   | "no_place"
   | "tidying"
-  | "no_tidy";
+  | "no_tidy"
+  | "prerequisites";
 
 export interface MemoQueueWaiting {
   reason: MemoWaitingReason;
   /** RFC 3339: when the Control Plane will act, only when it is known. */
   until?: string;
-  detail?: { needed?: number; waiting?: number; agentKind?: string; by?: "category" | "member" };
+  detail?: { needed?: number; waiting?: number; agentKind?: string; by?: "category" | "member"; blocked?: number };
 }
 
 /** The PUT body: a PUT replaces the whole row, so every setting is sent, and nothing read-only. */

@@ -52,6 +52,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "memo-delivery-overdue": "noti.kind_memo_delivery_overdue",
   "memo-queue-paused": "noti.kind_memo_queue_paused",
   "memo-queue-waiting": "noti.kind_memo_queue_waiting",
+  "memo-queue-blocked": "noti.kind_memo_queue_blocked",
   "memo-delivery-unconfirmed": "noti.kind_memo_delivery_unconfirmed",
 };
 
@@ -90,7 +91,11 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
 // The auto-run kinds (ADR 0137): target type memo-queue, target id the category, display name the
 // repository and category as "repo/category" ("/category" for the common bucket).
 export const isMemoQueueKind = (kind: string) =>
-  kind === "memo-delivery-overdue" || kind === "memo-queue-paused" || kind === "memo-queue-waiting" || kind === "memo-delivery-unconfirmed";
+  kind === "memo-delivery-overdue" ||
+  kind === "memo-queue-paused" ||
+  kind === "memo-queue-waiting" ||
+  kind === "memo-queue-blocked" ||
+  kind === "memo-delivery-unconfirmed";
 
 const memoQueueLabel = (displayName: string) => displayName.replace(/^\/+/, "");
 
@@ -181,7 +186,15 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     // Words for a category, not a session: the name is the category, and the click opens it.
     const label = memoQueueLabel(n.displayName) || t("memo.uncategorized");
     const which =
-      n.kind === "memo-delivery-overdue" ? "overdue" : n.kind === "memo-queue-paused" ? "paused" : n.kind === "memo-queue-waiting" ? "waiting" : "unconfirmed";
+      n.kind === "memo-delivery-overdue"
+        ? "overdue"
+        : n.kind === "memo-queue-paused"
+          ? "paused"
+          : n.kind === "memo-queue-waiting"
+            ? "waiting"
+            : n.kind === "memo-queue-blocked"
+              ? "blocked"
+              : "unconfirmed";
     return {
       title: t(`notif.memo_${which}.title`),
       body: t(`notif.memo_${which}.body`, { name: label }),

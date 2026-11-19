@@ -471,6 +471,26 @@ Memos you accumulate and send to a session in one go (the tables are
     `noReportAt`. A refused send backs the queue off like any not sent delivery.
   - *Hand-sent text.* A reference in a message sent by hand is written as a line `作業項目: <key> (<url>)` by
     `buildFlushMessage`. The Console's own composer (`composeMemoMessage`) is step 3c's to match.
+- **Prerequisites (`after`)** (ADR 0137, addendum 2026-11-19, part A, step 1; `internal/memoafter`). A message's
+  `after` is the JSON array of the ids of messages of its own queue it waits for (`memo.after_ids`, `""` for none,
+  at most 10). A create takes ids or reference keys (a key resolves at the write to the newest message of the queue
+  holding it that is not `superseded`), an update takes the same with absent = keep and `[]` = clear, on every face
+  (Console, token face through the Agent's relay, `/mcp` `add_memo` / `update_memo`). Every prerequisite must come
+  before the message in `(created_at, position, id)` and no cycle may form; anything else, a message outside a
+  queue, and a move to another category while the list is not empty are `400 memo_after_invalid`. The list is part
+  of `memoContentHash`, appended only when it is not empty, and of the release copy (`release_after_ids` under a
+  CHECK). *Satisfied* is step 1 only: `delivered` by a delivery (not by hand) closed `clean`, first turn recorded
+  and not bad, not retired as overdue. The dispatcher's `ListQueuePendingStats` counts `Eligible` beside `Count`
+  with the same rule in SQL (`store.memoEligibleSQL`): `Eligible` opens a threshold and is what a claim takes,
+  `Count` keeps a drain going. A blocked message holds no slot and is skipped by the claim, a press included. Each
+  tick, a pending message whose prerequisite can no longer be satisfied (closed aborted, unknown or another non-clean
+  outcome, a bad first turn, an overdue retire, no first turn 24 hours after the close, `unconfirmed`, deleted,
+  moved, superseded, sent by hand) goes to `held` with `memo.held_reason` (`{"after","reason","at"}`, cleared by any
+  write that leaves `held`); one blocked longer than `max_task_hours` since it became pending is notified once
+  (`memo-queue-blocked`). The list answers `afterStatus` (`[{id,label,state,reason}]`) on held and pending
+  messages, and `heldReason`. The queue's `waiting` gains `prerequisites` (`detail.blocked`) and `below_threshold`
+  gains `detail.blocked`. The sweep keeps a `delivered` message that a held or pending message of its queue names.
+  A tidy run only keeps a message that has or is a prerequisite (`keep_only`).
 
 ## 3.7 Background jobs
 

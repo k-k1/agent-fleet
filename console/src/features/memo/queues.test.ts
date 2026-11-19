@@ -3,6 +3,8 @@
 import { describe, expect, it } from "vitest";
 import type { Memo, MemoQueue } from "../../types/memo.ts";
 import {
+  afterChoices,
+  afterItemWords,
   deliveryStateKey,
   draftBody,
   draftErrors,
@@ -310,5 +312,47 @@ describe("waiting (why nothing starts)", () => {
     });
     expect(waitingWords(read({ reason: "daily_cap", until: "garbage" }), at, kind)?.key).toBe("memo.waiting_cap");
     expect(waitingWords(read({ reason: "usage_limit", detail: { agentKind: "codex" } }), at, kind)?.params).toEqual({ agent: "kind:codex" });
+  });
+});
+
+describe("notes that wait for others", () => {
+  const m = (id: string, over: Partial<Memo> = {}): Memo => ({
+    id, repo: "app", category: "run", kind: "text", body: "job " + id, refPath: "", position: 0, createdAt: "2026-11-19T00:00:00Z", sentAt: "",
+    state: "pending", ...over,
+  });
+  it("offers the notes before it in the category's order, never itself, a later one or a replaced one", () => {
+    const memos = [
+      m("c", { position: 2 }),
+      m("a", { position: 0, reference: { provider: "github", key: "acme/app#1", url: "u" } }),
+      m("b", { position: 1, state: "superseded" }),
+      m("self", { position: 3 }),
+      m("later", { position: 1, createdAt: "2026-11-19T00:00:01Z" }),
+      m("other", { position: 0, category: "elsewhere" }),
+      m("plain", { position: 0, state: "" }),
+    ];
+    expect(afterChoices(memos, memos.find((x) => x.id === "self")!)).toEqual([
+      { id: "a", label: "acme/app#1" },
+      { id: "c", label: "job c" },
+    ]);
+  });
+  it("words each standing, and falls back to the state for a reason it does not know", () => {
+    expect(afterItemWords({ state: "satisfied" })).toBe("memo.after_r_done");
+    expect(afterItemWords({ state: "waiting", reason: "first_turn" })).toBe("memo.after_r_first_turn");
+    expect(afterItemWords({ state: "failed", reason: "from_the_future" })).toBe("memo.after_r_failed");
+    expect(afterItemWords({ state: "waiting", reason: "from_the_future" })).toBe("memo.after_r_waiting");
+  });
+  it("says why nothing starts when every waiting note waits for another, and counts them in a threshold", () => {
+    const at = (s: string) => s;
+    const kind = (k: string) => k;
+    const read = (waiting: unknown) => readMemoQueues({ tenantEnabled: true, queues: [{ categoryId: "c", waiting }] })!.queues[0];
+    expect(waitingWords(read({ reason: "prerequisites", detail: { blocked: 3 } }), at, kind)).toEqual({
+      key: "memo.waiting_prerequisites",
+      params: { count: 3 },
+    });
+    expect(waitingWords(read({ reason: "below_threshold", detail: { needed: 3, waiting: 1, blocked: 2 } }), at, kind)).toEqual({
+      key: "memo.waiting_below_threshold_blocked",
+      params: { needed: 3, count: 1, blocked: 2 },
+    });
+    expect(waitingWords(read({ reason: "below_threshold", detail: { needed: 3, waiting: 1 } }), at, kind)?.key).toBe("memo.waiting_below_threshold");
   });
 });

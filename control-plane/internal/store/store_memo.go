@@ -54,6 +54,11 @@ type Memo struct {
 	// id a run moved the row from, TidyRunID the run that made, moved or superseded it, and
 	// TidySeenHash the content hash a run last looked at.
 	DerivedFrom, SourceProvenance, TidyFrom, TidySeenHash, TidyRunID string
+	// AfterIDs is the JSON array of the ids of the messages of the same queue this one waits for
+	// (ADR 0137, addendum 2026-11-19, part A), "" for none. It is part of what a release is bound
+	// to. HeldReason is why the dispatcher put the message back to held because a prerequisite can
+	// no longer be satisfied, "" otherwise: a write that leaves held clears it.
+	AfterIDs, HeldReason string
 }
 
 // MemoCategory persists a memo category as a first-class row (docs/log/21 UI overhaul), so a
@@ -100,7 +105,7 @@ const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path
 	origin_item_id, origin_sender_membership_id, origin_sender_key,
 	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at, delivery_id,
 	ref_provider, ref_key, ref_url, released_by,
-	derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id FROM memo`
+	derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id, after_ids, held_reason FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
@@ -109,7 +114,7 @@ func scanMemo(row scanner) (Memo, error) {
 		&m.OriginItemID, &m.OriginSenderMembershipID, &m.OriginSenderKey,
 		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt, &m.DeliveryID,
 		&m.RefProvider, &m.RefKey, &m.RefURL, &m.ReleasedBy,
-		&m.DerivedFrom, &m.SourceProvenance, &m.TidyFrom, &m.TidySeenHash, &m.TidyRunID)
+		&m.DerivedFrom, &m.SourceProvenance, &m.TidyFrom, &m.TidySeenHash, &m.TidyRunID, &m.AfterIDs, &m.HeldReason)
 	return m, err
 }
 
@@ -157,23 +162,33 @@ func insertMemo(ctx context.Context, q memoQuerier, m Memo) error {
 		   ref_provider, ref_key, ref_url,
 		   release_repo, release_category, release_kind, release_body, release_ref_path, release_attachments,
 		   release_ref_provider, release_ref_key, release_ref_url, released_by,
-		   derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id,
+		   after_ids, release_after_ids, held_reason)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.CreatedAt, m.SentAt,
 		m.State, m.Provenance, m.Producer, m.ProducerOrigin, m.ReleaseHash, m.ReleasedAt,
 		m.RefProvider, m.RefKey, m.RefURL,
 		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy,
-		m.DerivedFrom, m.SourceProvenance, m.TidyFrom, m.TidySeenHash, m.TidyRunID)
+		m.DerivedFrom, m.SourceProvenance, m.TidyFrom, m.TidySeenHash, m.TidyRunID,
+		m.AfterIDs, rel[9], heldReasonOf(m))
 	return err
 }
 
-// releasedContent is what the release_* columns hold: the content of a pending message, and
-// nothing otherwise. The CHECK of migration 0131 requires it for every pending row.
-func releasedContent(m Memo) [9]string {
-	if m.State != MemoStatePending {
-		return [9]string{}
+// heldReasonOf is what held_reason holds: the reason of a held message, nothing otherwise.
+func heldReasonOf(m Memo) string {
+	if m.State != MemoStateHeld {
+		return ""
 	}
-	return [9]string{m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.RefProvider, m.RefKey, m.RefURL}
+	return m.HeldReason
+}
+
+// releasedContent is what the release_* columns hold: the content of a pending message, and
+// nothing otherwise. The CHECKs of migrations 0131, 0138 and 0144 require it for every pending row.
+func releasedContent(m Memo) [10]string {
+	if m.State != MemoStatePending {
+		return [10]string{}
+	}
+	return [10]string{m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.RefProvider, m.RefKey, m.RefURL, m.AfterIDs}
 }
 
 // UpdateMemo writes the editable columns, sent_at and the message state of an owned row.
@@ -209,7 +224,8 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 	args := []any{m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.SentAt,
 		m.State, m.ReleaseHash, m.ReleasedAt, m.SendToken, m.SendStartedAt,
 		m.RefProvider, m.RefKey, m.RefURL,
-		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy}
+		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy,
+		m.AfterIDs, rel[9], heldReasonOf(m)}
 	args = append(args, tidyArgs...)
 	args = append(args, m.ID, m.MembershipID)
 	if !restore {
@@ -221,7 +237,8 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 		   state=?, release_hash=?, released_at=?, send_token=?, send_started_at=?,
 		   ref_provider=?, ref_key=?, ref_url=?,
 		   release_repo=?, release_category=?, release_kind=?, release_body=?, release_ref_path=?, release_attachments=?,
-		   release_ref_provider=?, release_ref_key=?, release_ref_url=?, released_by=?`+tidyCols+`
+		   release_ref_provider=?, release_ref_key=?, release_ref_url=?, released_by=?,
+		   after_ids=?, release_after_ids=?, held_reason=?`+tidyCols+`
 		   WHERE id=? AND membership_id=?`+guard, args...)
 	if err != nil {
 		return err
@@ -261,10 +278,15 @@ func (s *SQL) MarkMemosSent(ctx context.Context, membershipID string, ids []stri
 	return err
 }
 
-// SweepSentMemos deletes sent memos whose sent_at is before the retention cutoff.
+// SweepSentMemos deletes sent memos whose sent_at is before the retention cutoff, except a
+// delivered message that a held, pending or claimed message of its queue still names as a
+// prerequisite (a claimed one may yet return to pending when its delivery is not sent):
+// deleting it would turn a satisfied prerequisite into a deleted one and hold the dependent.
 func (s *SQL) SweepSentMemos(ctx context.Context, retainBefore string) error {
 	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM memo WHERE sent_at!='' AND sent_at<?`, retainBefore)
+		`DELETE FROM memo WHERE sent_at!='' AND sent_at<? AND NOT EXISTS (
+		   SELECT 1 FROM memo w WHERE w.membership_id=memo.membership_id AND w.repo=memo.repo AND w.category=memo.category
+		     AND w.state IN (?,?,?) AND w.after_ids LIKE '%"' || memo.id || '"%')`, retainBefore, MemoStateHeld, MemoStatePending, MemoStateClaimed)
 	return err
 }
 

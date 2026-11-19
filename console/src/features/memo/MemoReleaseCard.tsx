@@ -82,6 +82,12 @@ export function MemoReleaseCard({ card, busy, changedIds, edited, awaiting, onRe
                 {(releaseRowText(m) || (m.kind !== "file" && !ref)) && (
                   <div className="memo-release-text">{releaseRowText(m) || "—"}</div>
                 )}
+                {/* What it waits for is part of what an approval covers, so the card shows it. */}
+                {(m.after?.length ?? 0) > 0 && (
+                  <div className="memo-release-after">
+                    {tr("memo.after_label")}: {m.after!.map((id) => m.afterStatus?.find((a) => a.id === id)?.label || id).join(", ")}
+                  </div>
+                )}
                 {(m.attachments?.length ?? 0) > 0 && (
                   <div className="memo-release-atts">
                     {m.attachments!.map((a) => (

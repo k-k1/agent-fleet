@@ -113,6 +113,38 @@ On an issue, a ticket or a pull request, you can add a link to it, with a note o
 - When one run holds exactly one link, the session is linked to that item, as when you start from it. With none, or two or more, no link is made
 - In that case, when the category runs each time in a new worktree, the branch is named by the repository's [branch naming rules](../sessions/from-issues.md#branch-names), as for a session started from the item (by default `feature/<number>`). When a branch of that name already exists, the session works on it instead of creating a new one. When another working copy holds that branch, or the rules give no name, the session gets a temporary branch
 
+### Make a memo wait for another
+
+A memo can wait for other memos of the same auto-run category: it runs only after each of them has run and that run ended well. Use it for work that builds on other work, such as an issue that needs another issue's change first.
+
+1. Click the memo to open its edit view
+2. Under "**Waits for (memos of this category that come before it)**", tick the memos it waits for, then press "Save"
+
+- Only memos that come before it in the category can be chosen, so two memos never wait for each other. A session sets the same with `add_memo` and `update_memo` (`after`), naming a memo by its id or by its work item's key (`owner/repo#12`), which means the newest memo of the category that points at that item
+- Changing what a memo waits for counts as changing the memo: when a session does it to a memo you approved, the memo goes back to "Waits for approval"
+- A memo that waits takes no place among "Sessions at the same time", and memos behind it still run. It does not count towards "Notes waiting to run" until what it waits for has ended well
+- It never runs in the same session as a memo it waits for
+- The row says what it waits for and how each stands, for example "Waits for acme/app#12: running"
+
+A memo it waits for has **ended well** when it was run by auto-run (not sent by hand), the run ended as "Done", the run's first turn finished, and the run was not stopped for being overdue. Until the first turn is known, the memo keeps waiting.
+
+When a memo it waits for can no longer end well, the memo goes back to "**Waits for approval**", and its row says which memo and why:
+
+| Why | What happened to the memo it waits for |
+|---|---|
+| its run was cut off, how its run ended is unknown, its run did not end cleanly | The run ended as "Stopped", "Needs a look" or "Ended by you" |
+| its run's first turn failed | The first turn failed or was stopped, or ended within a minute without finishing |
+| its run went overdue and was stopped | The run was stopped for being overdue |
+| no record of how its first turn went | The session never recorded its first turn (some agents cannot), and a day has passed since the run ended |
+| was deleted, was moved out of this category, was replaced by a tidy, may or may not have started | The memo is gone from the category, or "Needs a look" |
+| was sent by hand | You sent it yourself, so nothing shows how it ended |
+
+Check the memo it waited for, then approve the memo again (it waits once more) or change what it waits for. A memo it waits for that is waiting for approval or waiting to run only makes it wait longer.
+
+- A memo that waits, or that another waits for, is kept as it is by a tidy: it is never merged, split or moved
+- A memo another waits for is kept past the 7 days after it was sent, until nothing waits for it any more
+- When a memo has waited longer than "Overdue after (hours)" since it became "Waiting to run", you are notified once
+
 ### Approve
 
 Memos waiting for approval gather in a card for each session (or `/mcp` connection) that added them.
@@ -353,6 +385,7 @@ They arrive in the notification center. In **⚙ Settings → "Notifications"**,
 | Auto-run paused | The first turns of the last two runs failed | Fix the cause and press "Resume" |
 | Auto-run is waiting for you | Every one of the runs the category may have open is a session waiting for you | Answer the questions and permissions of those sessions. No new run starts until you do |
 | A run could not be confirmed | Whether the session started could not be confirmed | Check in the run history whether the session exists. Its memos are not run again by themselves |
+| An auto-run memo has waited long | A memo has waited for the memos it depends on longer than "Overdue after (hours)" | Check the memos it waits for ([Make a memo wait for another](#make-a-memo-wait-for-another)) |
 
 ## Use it more safely
 
@@ -385,6 +418,8 @@ When memos are waiting to run and nothing starts, a line or a notice under the c
 | Auto-run is off for this category. The memos wait until you press “Run now”. | "Run by itself" is off. To start by itself, turn it on in the settings and save |
 | It is outside the time set for auto-run, so nothing starts by itself.<br>It is outside the time set for auto-run. The next run can start at *time*. | Wait for the time window to begin. It is set by the start (cron expression), the length and the time zone in the settings. To go sooner, press "Run now" |
 | Waiting for more memos: *n* of *m* so far. Runs start once *m* are waiting. | The number of memos waiting to run has not reached "Notes waiting to run". Add memos, or press "Run now" |
+| Waiting for more memos: *n* of *m* ready so far, and *k* more waiting for the memos they depend on. … | As above. Memos that wait for other memos do not count until those have ended well ([Make a memo wait for another](#make-a-memo-wait-for-another)) |
+| Every waiting memo (*n*) waits for other memos of this category to finish first. | Every memo waiting to run waits for another memo. It runs once those have ended well |
 | A memo was just added. Runs start once nothing new has come in for a minute.<br>A memo was just added. Runs start once nothing new has come in for a minute, at *time*. | Wait. While memos keep coming, the minute starts again |
 | The number of runs allowed per day has been reached, so nothing starts by itself.<br>The number of runs allowed per day has been reached. The next run can start at *time*. | The runs of the last 24 hours have reached "Runs per day". Wait for the time, or raise the number. "Run now" still works |
 | The last run could not be sent, so auto-run is waiting a while before it tries again.<br>The last run could not be sent, so auto-run is waiting until *time* before it tries again. | Wait, and it tries again by itself. The wait begins at 5 minutes, doubles with each failure in a row, and is at most 4 hours. If it goes on, check the run history for the run that ended as "Not sent" |

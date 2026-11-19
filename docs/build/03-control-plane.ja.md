@@ -381,6 +381,23 @@ Workspace を起こさない。
     他の not sent と同じくキューを back-off させる。
   - *手動送信の文面。* 手動で送るメッセージの参照は `buildFlushMessage` が `作業項目: <key> (<url>)` の行にする。Console 自身の
     組み立て（`composeMemoMessage`）をそろえるのは step 3c。
+- **前提（`after`）**（ADR 0137 の 2026-11-19 追記 A の step 1、`internal/memoafter`）。メッセージの `after` は、待つ相手となる
+  同じキューのメッセージの id の JSON 配列（`memo.after_ids`、なしは `""`、最大 10）。作成は id か参照のキーを受け取り（キーは
+  書き込みの時点で、そのキューでその参照を持つ `superseded` でない最新のメッセージに解決する）、更新も同じで、なし = 据え置き、
+  `[]` = 外す。全経路（Console、Agent の中継経由のトークン面、`/mcp` の `add_memo` / `update_memo`）で同じ。前提は
+  `(created_at, position, id)` でそのメッセージより前にあり、循環しないこと。それ以外、キューの外のメッセージ、リストを持ったままの
+  別カテゴリへの移動は `400 memo_after_invalid`。リストは `memoContentHash` の一部（空でないときだけ足すので既存の解放は変わらない）で、
+  解放の写し（CHECK 付きの `release_after_ids`）にも入る。*満たされた* は step 1 だけ: 配信（手動送信でなく）で `delivered` になり、
+  その配信が `clean` で閉じ、最初のターンが記録されて悪くなく、期限超過で retire されていない。dispatcher の
+  `ListQueuePendingStats` は同じ規則を SQL で書いて（`store.memoEligibleSQL`）`Count` の横に `Eligible` を数える。`Eligible` が
+  しきい値を開き claim が取る数で、`Count` は drain を続ける。待っているメッセージは枠を使わず、claim（押した場合も）は飛ばす。
+  毎 tick、前提がもう満たされえない pending のメッセージ（aborted・unknown などの clean でない閉じ方、悪い最初のターン、期限超過の
+  retire、閉じてから 24 時間たっても最初のターンがない、`unconfirmed`、削除、移動、superseded、手動送信）は `held` に戻り、
+  `memo.held_reason`（`{"after","reason","at"}`、`held` を出る書き込みで消える）を持つ。pending になってから `max_task_hours` を
+  超えて待っているものは 1 回通知する（`memo-queue-blocked`）。一覧は held と pending のメッセージに `afterStatus`
+  （`[{id,label,state,reason}]`）と `heldReason` を返す。キューの `waiting` に `prerequisites`（`detail.blocked`）が加わり、
+  `below_threshold` にも `detail.blocked` が付く。sweep は、同じキューの held か pending のメッセージが指す `delivered` を消さない。
+  整理は、前提を持つ・前提になっているメッセージを残すだけ（`keep_only`）。
 
 ## 3.7 バックグラウンドジョブ
 

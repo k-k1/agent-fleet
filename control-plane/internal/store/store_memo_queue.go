@@ -305,16 +305,17 @@ func (t memoTx) DeleteMemo(id string) error {
 
 func (t memoTx) ReleaseMemo(seen Memo, hash, at string) (bool, error) {
 	return affected(t.q.ExecContext(t.ctx,
-		`UPDATE memo SET state=?, release_hash=?, released_at=?, released_by='',
+		`UPDATE memo SET state=?, release_hash=?, released_at=?, released_by='', held_reason='',
 		   release_repo=repo, release_category=category, release_kind=kind, release_body=body,
 		   release_ref_path=ref_path, release_attachments=attachments,
-		   release_ref_provider=ref_provider, release_ref_key=ref_key, release_ref_url=ref_url
+		   release_ref_provider=ref_provider, release_ref_key=ref_key, release_ref_url=ref_url,
+		   release_after_ids=after_ids
 		   WHERE id=? AND membership_id=? AND state=?
 		     AND repo=? AND category=? AND kind=? AND body=? AND ref_path=? AND attachments=?
-		     AND ref_provider=? AND ref_key=? AND ref_url=?`,
+		     AND ref_provider=? AND ref_key=? AND ref_url=? AND after_ids=?`,
 		MemoStatePending, hash, at, seen.ID, t.mid, MemoStateHeld,
 		seen.Repo, seen.Category, seen.Kind, seen.Body, seen.RefPath, seen.Attachments,
-		seen.RefProvider, seen.RefKey, seen.RefURL))
+		seen.RefProvider, seen.RefKey, seen.RefURL, seen.AfterIDs))
 }
 
 func (t memoTx) CountQueueIntakeSince(since string) (int, error) {
@@ -474,7 +475,12 @@ func (s *SQL) ListMemoQueues(ctx context.Context, membershipID string) ([]MemoQu
 // oldest, and the latest time any of them was created or released.
 type QueuePending struct {
 	Count int
-	// Refs is how many of them carry a reference, Curators how many a tidy run derived.
+	// Eligible is how many of them may be claimed now: no prerequisite, or every prerequisite
+	// satisfied (MemoAfterSatisfiedSQL). Count, blocked ones included, keeps a drain going, and
+	// Eligible opens a threshold and is what a claim takes.
+	Eligible int
+	// Refs is how many of the eligible ones carry a reference, Curators how many a tidy run
+	// derived: compared with Eligible they say that what a claim could take is all held back.
 	Refs, Curators int
 	Oldest, Latest string
 }
@@ -505,7 +511,9 @@ func (s *SQL) ListMemberQueuePendingStats(ctx context.Context, membershipID stri
 }
 
 func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (map[string]QueuePending, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN m.ref_key<>'' THEN 1 ELSE 0 END), SUM(CASE WHEN m.provenance='curator' THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN `+memoEligibleSQL+` THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN m.ref_key<>'' AND `+memoEligibleSQL+` THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN m.provenance='curator' AND `+memoEligibleSQL+` THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at)
 		FROM memo m
 		JOIN memo_category c ON c.membership_id=m.membership_id AND c.repo=m.repo AND c.name=m.category
 		JOIN memo_queue q ON q.category_id=c.id
@@ -519,7 +527,7 @@ func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (
 		var id string
 		var p QueuePending
 		var maxCreated, maxReleased string
-		if err := rows.Scan(&id, &p.Count, &p.Refs, &p.Curators, &p.Oldest, &maxCreated, &maxReleased); err != nil {
+		if err := rows.Scan(&id, &p.Count, &p.Eligible, &p.Refs, &p.Curators, &p.Oldest, &maxCreated, &maxReleased); err != nil {
 			return nil, err
 		}
 		p.Latest = maxCreated
