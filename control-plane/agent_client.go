@@ -340,6 +340,10 @@ type agentSessionsEnvelope struct {
 	// delivery (ADR 0137 section 8). Read with >=, as QueueRefs is: an older Agent sends none, and
 	// would refuse the item.
 	QueueTidy int `json:"queueTidy,omitempty"`
+	// QueuePRs is the marker of an Agent that has POST /memos/pr-snapshot (ADR 0137, addendum
+	// 2026-11-19, part A, step 2). Read with >=. An older Agent sends none and is never asked, so a
+	// message that waits for a delivery's PRs keeps waiting: no answer is never "no PR".
+	QueuePRs int `json:"queuePRs,omitempty"`
 	// ActMark orders this answer against the acts of a person that follow it (the Agent's
 	// session act mark): a retire sent with it as ifNoActSince leaves a session a person started or
 	// typed into after this read. 0 when the Agent sends none, and no condition is sent then.
@@ -372,6 +376,12 @@ const queueTidyVersion = 1
 
 // showsTidy says the Agent that sent this envelope can tidy and takes a curator item.
 func (e agentSessionsEnvelope) showsTidy() bool { return e.QueueTidy >= queueTidyVersion }
+
+// queuePRsVersion is the version of the PR snapshot endpoint this Control Plane speaks.
+const queuePRsVersion = 1
+
+// readsPRs says the Agent that sent this envelope answers the PR snapshot of a delivery.
+func (e agentSessionsEnvelope) readsPRs() bool { return e.QueuePRs >= queuePRsVersion }
 
 // jobsRunning reports whether session-less work is in flight in the workspace.
 func (e agentSessionsEnvelope) jobsRunning() bool { return e.RepoJobs > 0 || e.ImageJobs > 0 }

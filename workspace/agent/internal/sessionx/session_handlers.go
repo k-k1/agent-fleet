@@ -293,6 +293,9 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		// curator item (a message a tidy run derived). The Control Plane sends neither to an
 		// Agent that does not say so, and reads the marker with >=.
 		"queueTidy": queueTidyVersion,
+		// queuePRs says POST /memos/pr-snapshot exists. Without it the Control Plane never asks,
+		// and a message that waits for a delivery's PRs keeps waiting.
+		"queuePRs": queuePRsVersion,
 	}
 	// actMark orders this answer against the acts of a person that follow it: a retire sent with
 	// ifNoActSince = this value leaves a session such an act touched. Omitted when it could not be
@@ -319,6 +322,9 @@ const queueRefsVersion = 1
 
 // queueTidyVersion is the value of the list envelope's queueTidy marker.
 const queueTidyVersion = 1
+
+// queuePRsVersion is the value of the list envelope's queuePRs marker.
+const queuePRsVersion = 1
 
 // HandleSessionCatalog is the sharing inventory. Unlike the ordinary list it
 // includes archived rows, but only kinds with a structured transcript. With ?since= it

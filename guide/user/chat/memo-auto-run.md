@@ -64,7 +64,7 @@ Choose one of three under "**When it runs**".
 | In a time window | Runs only from "Window starts (cron)", for "Window length (minutes)", 1 to 1,440 minutes. An empty "Time zone" means UTC, and it starts as this browser's time zone |
 | Once notes are waiting | Starts once "Notes waiting to run" (1 to 100) is reached and no new memo has come for a minute. It keeps going until none is left |
 
-- "Runs per day" counts the runs created in the last 24 hours. A run started with "Run now" is counted too, but "Run now" itself is never stopped by this number
+- "Runs per day" counts the runs created in the last 24 hours. A start of the workspace only to check the pull requests a memo waits for is not counted. A run started with "Run now" is counted too, but "Run now" itself is never stopped by this number
 - A value that cannot be saved shows its range under the field
 
 ### Remove the settings
@@ -115,7 +115,7 @@ On an issue, a ticket or a pull request, you can add a link to it, with a note o
 
 ### Make a memo wait for another
 
-A memo can wait for other memos of the same auto-run category: it runs only after each of them has run and that run ended well. Use it for work that builds on other work, such as an issue that needs another issue's change first.
+A memo can wait for other memos of the same auto-run category: it runs only after each of them has run, that run ended well, and every pull request that run opened is merged. Use it for work that builds on other work, such as an issue that needs another issue's change first.
 
 1. Click the memo to open its edit view
 2. Under "**Waits for (memos of this category that come before it)**", tick the memos it waits for, then press "Save"
@@ -128,6 +128,13 @@ A memo can wait for other memos of the same auto-run category: it runs only afte
 
 A memo it waits for has **ended well** when it was run by auto-run (not sent by hand), the run ended as "Done", the run's first turn finished, and the run was not stopped for being overdue. Until the first turn is known, the memo keeps waiting.
 
+Then its **pull requests** are checked: the pull request of the branch the run's session worked on, and the pull requests the session opened or worked on (not those of a reviewer it started). Auto-run reads them from the workspace after the run ended, every 10 minutes while the workspace runs, until every one is merged. A run that opened none counts as done. The row says what it waits for, for example "Waits for acme/app#12: waiting for PR #57 to merge".
+
+- Some agents never record how their first turn went. A run of such a session counts as done once it has opened at least one pull request and every one is merged, without the first turn
+- While the workspace is stopped and every memo waiting to run waits only for pull requests, auto-run starts the workspace to check them at most once an hour (at most 24 times a day). Those starts are not runs, so they do not count towards "Runs per day"
+- After a day without any change in those pull requests, auto-run stops starting the workspace for them and notifies you once. The memo keeps waiting, and the check goes on whenever the workspace runs
+- An older workspace that cannot report pull requests leaves the memo waiting: restart the workspace to update it
+
 When a memo it waits for can no longer end well, the memo goes back to "**Waits for approval**", and its row says which memo and why:
 
 | Why | What happened to the memo it waits for |
@@ -135,7 +142,10 @@ When a memo it waits for can no longer end well, the memo goes back to "**Waits 
 | its run was cut off, how its run ended is unknown, its run did not end cleanly | The run ended as "Stopped", "Needs a look" or "Ended by you" |
 | its run's first turn failed | The first turn failed or was stopped, or ended within a minute without finishing |
 | its run went overdue and was stopped | The run was stopped for being overdue |
-| no record of how its first turn went | The session never recorded its first turn (some agents cannot), and a day has passed since the run ended |
+| a pull request of its run was closed without merging | A pull request of the run was closed without being merged |
+| its run's session was deleted before its pull requests could be read | The session was deleted before auto-run could read its pull requests |
+| its run opened no pull request, and nothing records how its first turn went | The session never recorded its first turn (some agents cannot), it opened no pull request, and a day has passed since the run ended |
+| no record of how its first turn went | Shown on a memo that came back for this reason before pull requests were checked |
 | was deleted, was moved out of this category, was replaced by a tidy, may or may not have started | The memo is gone from the category, or "Needs a look" |
 | was sent by hand | You sent it yourself, so nothing shows how it ended |
 

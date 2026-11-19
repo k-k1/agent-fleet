@@ -1,14 +1,15 @@
-// Package memoafter is the dependencies between messages of a queue (ADR 0137, addendum
-// 2026-11-19, part A, step 1 of its Steps): a message may name the messages of its queue it waits
-// for (`after`), and the dispatcher claims it only once every one of them is satisfied.
+// Package memoafter is the dependencies between messages of a queue (ADR 0137, addendum 2026-11-19,
+// part A): a message may name the messages of its queue it waits for (`after`), and the dispatcher
+// claims it only once every one of them is satisfied.
 //
-// Satisfied is step 1 of the addendum only: the prerequisite was delivered by a delivery (not sent
-// by hand) that closed as clean, whose first turn is recorded and was not bad, and that was not
-// retired as overdue (store.AfterDeliverySatisfies, which the dispatcher's SQL statistics mirror).
-// Step 2, the snapshot of the PRs of the prerequisite's session, is not built: until it is, a first
-// turn that is never recorded (a kind whose ledger records none, a void ledger, a session gone
-// before the collection window ended) cannot show a success, and the dependent goes to held once
-// the window is over. A dependent is never fired over a prerequisite that went wrong.
+// Satisfied is both steps of the addendum (store.AfterDeliverySatisfies, which the dispatcher's
+// SQL statistics mirror): the prerequisite was delivered by a delivery (not sent by hand) that
+// closed as clean and was not retired as overdue, and the PR snapshot of its session, read from
+// the running Agent after the close, is final with every PR merged, or with no PR when the first
+// turn is recorded and was not bad. A first turn that is never recorded (a kind whose ledger
+// records none, a void ledger, a session gone before the collection window ended) cannot show a
+// success, so only a merged PR satisfies then. A dependent is never fired over a prerequisite
+// that went wrong.
 package memoafter
 
 import (
@@ -52,9 +53,62 @@ const (
 	WhyUnknown      = "unknown"     // its delivery closed unknown, or is gone
 	WhyNotClean     = "not_clean"   // its delivery closed some other way than clean
 	WhyBadFirstTurn = "bad_first_turn"
-	WhyOverdue      = "overdue"       // retired as overdue
-	WhyNoFirstTurn  = "no_first_turn" // no first turn was recorded before the window ended
+	WhyOverdue      = "overdue" // retired as overdue
+	// WhyNoFirstTurn is a hold made before the PR snapshot existed: no first turn was recorded
+	// before the window ended. Nothing writes it any more, and a held row may still carry it.
+	WhyNoFirstTurn = "no_first_turn"
+
+	WhyPR          = "pr"           // waiting: its session's PRs are not read yet, or not all merged
+	WhyPRClosed    = "pr_closed"    // a PR of its session was closed unmerged
+	WhyNoPR        = "no_pr"        // no first turn was recorded, and its session opened no PR
+	WhySessionGone = "session_gone" // the Agent no longer had its session before its PRs were read
 )
+
+// PR is one PR of a delivery's snapshot, as memo_delivery.pr_snapshot keeps it and as the list
+// shows it. State is "open", "draft", "merged", "closed", or "" for one the provider could not
+// show.
+type PR struct {
+	Provider string `json:"provider"`
+	Key      string `json:"key"`
+	State    string `json:"state"`
+	URL      string `json:"url,omitempty"`
+}
+
+// ParseSnapshot reads memo_delivery.pr_snapshot, nil for none or one that does not parse.
+func ParseSnapshot(raw string) []PR {
+	var out []PR
+	if raw == "" || json.Unmarshal([]byte(raw), &out) != nil {
+		return nil
+	}
+	return out
+}
+
+// EncodeSnapshot is what memo_delivery.pr_snapshot holds for prs: "[]" for no PR.
+func EncodeSnapshot(prs []PR) string {
+	b, _ := json.Marshal(append([]PR{}, prs...))
+	return string(b)
+}
+
+// SnapshotState sums a snapshot up as memo_delivery.pr_state: no PR, one closed unmerged, every
+// one merged, or waiting (an open one, or one whose state is unknown).
+func SnapshotState(prs []PR) string {
+	if len(prs) == 0 {
+		return store.PRStateNone
+	}
+	merged := 0
+	for _, p := range prs {
+		switch p.State {
+		case "closed":
+			return store.PRStateClosed
+		case "merged":
+			merged++
+		}
+	}
+	if merged == len(prs) {
+		return store.PRStateMerged
+	}
+	return store.PRStateWaiting
+}
 
 // Item is one prerequisite on the wire: its id, what the Console names it by (its reference key,
 // else the start of its text), and how it stands.
@@ -63,6 +117,11 @@ type Item struct {
 	Label  string `json:"label,omitempty"`
 	State  string `json:"state"`
 	Reason string `json:"reason,omitempty"`
+	// PRs is the snapshot behind a reason of pr or pr_closed: the PRs it waits for, or the one
+	// closed unmerged among them. Empty while no read answered.
+	PRs []PR `json:"prs,omitempty"`
+	// Delivery is the prerequisite's delivery, for the dispatcher's wakes. Never on the wire.
+	Delivery string `json:"-"`
 }
 
 // HeldReason is memo.held_reason: the prerequisite that can no longer be satisfied, and why.
@@ -322,7 +381,11 @@ func prereq(m store.Memo, id string, lk Lookup) (Item, error) {
 		if err != nil {
 			return it, err
 		}
+		it.Delivery = p.DeliveryID
 		it.State, it.Reason = DeliveryState(d, ok, lk.Now)
+		if it.Reason == WhyPR || it.Reason == WhyPRClosed {
+			it.PRs = ParseSnapshot(d.PRSnapshot)
+		}
 	default:
 		// A plain note: the queue's settings were removed, or it was moved out and back.
 		it.State, it.Reason = Failed, WhyMoved
@@ -330,7 +393,8 @@ func prereq(m store.Memo, id string, lk Lookup) (Item, error) {
 	return it, nil
 }
 
-// DeliveryState is step 1 of the addendum for the delivery that delivered a prerequisite.
+// DeliveryState is "satisfied" for the delivery that delivered a prerequisite, with the reason it
+// waits or fails.
 func DeliveryState(d store.MemoDelivery, found bool, now time.Time) (state, reason string) {
 	switch {
 	case !found:
@@ -345,14 +409,28 @@ func DeliveryState(d store.MemoDelivery, found bool, now time.Time) (state, reas
 		return Failed, WhyNotClean
 	case store.RetiredOverdue(d):
 		return Failed, WhyOverdue
-	case d.TurnEndedAt == "":
-		closed, err := time.Parse("2006-01-02T15:04:05.000000Z", d.ClosedAt)
-		if err == nil && now.Sub(closed) > ClosedTurnWindow {
-			return Failed, WhyNoFirstTurn
-		}
-		return Waiting, WhyFirstTurn
-	case store.TurnBad(d):
+	case d.TurnEndedAt != "" && store.TurnBad(d):
 		return Failed, WhyBadFirstTurn
+	}
+	switch d.PRState {
+	case store.PRStateGone:
+		return Failed, WhySessionGone
+	case store.PRStateClosed:
+		return Failed, WhyPRClosed
+	case store.PRStateMerged:
+	case store.PRStateNone:
+		if d.TurnEndedAt == "" {
+			// No PR cannot stand in for a first turn: it satisfies only once the turn is recorded,
+			// and never when the window closes without one.
+			closed, err := time.Parse("2006-01-02T15:04:05.000000Z", d.ClosedAt)
+			if err == nil && now.Sub(closed) > ClosedTurnWindow {
+				return Failed, WhyNoPR
+			}
+			return Waiting, WhyFirstTurn
+		}
+	default:
+		// Not read yet, or a PR is open or of unknown state.
+		return Waiting, WhyPR
 	}
 	if !store.AfterDeliverySatisfies(d) {
 		// Unreachable while the cases above mirror it; a dependent is never fired on a doubt.
@@ -454,12 +532,11 @@ type Blocked struct {
 }
 
 // HoldUnsatisfiable puts to held every pending message of rows that waits for a prerequisite that
-// can no longer be satisfied, with the reason, and answers the messages that have waited longer
-// than since (when they became pending, else when they were created). Call it in the MemoTx that
-// read rows.
-func HoldUnsatisfiable(tx store.MemoTxOps, rows []store.Memo, now, since time.Time) ([]Blocked, error) {
+// can no longer be satisfied, with the reason. It answers the messages that have waited longer
+// than since (when they became pending, else when they were created), and every message that still
+// waits. Call it in the MemoTx that read rows.
+func HoldUnsatisfiable(tx store.MemoTxOps, rows []store.Memo, now, since time.Time) (late, blocked []Blocked, err error) {
 	lk := TxLookup(tx, rows, now)
-	var late []Blocked
 	for _, m := range rows {
 		// A row in a hand send keeps its state until the send settles, and one with a sent stamp or a
 		// delivery is not waiting: the same rows pendingOf and the claim leave out.
@@ -468,20 +545,21 @@ func HoldUnsatisfiable(tx store.MemoTxOps, rows []store.Memo, now, since time.Ti
 		}
 		items, err := Status(m, lk)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		ok, failed := Verdict(items)
 		if failed != nil {
 			reason, _ := json.Marshal(HeldReason{After: failed.ID, Reason: failed.Reason, At: store.DeliveryTS(now)})
 			m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy, m.HeldReason = store.MemoStateHeld, "", "", "", string(reason)
 			if err := tx.WriteMemo(m); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			continue
 		}
 		if ok {
 			continue
 		}
+		blocked = append(blocked, Blocked{m, items})
 		at := m.ReleasedAt
 		if at == "" {
 			at = m.CreatedAt
@@ -490,5 +568,5 @@ func HoldUnsatisfiable(tx store.MemoTxOps, rows []store.Memo, now, since time.Ti
 			late = append(late, Blocked{m, items})
 		}
 	}
-	return late, nil
+	return late, blocked, nil
 }

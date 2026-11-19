@@ -358,6 +358,14 @@ func (c *Cache) storeLocked(k Key, e *entry, pr *PR, now time.Time) {
 // answers are stored as a background refresh would store them. A key GitHub could not answer
 // is absent from the result; a PR that does not exist answers nil.
 func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
+	return c.FetchSince(ctx, keys, time.Time{})
+}
+
+// FetchSince is Fetch for a caller that may use only answers the provider gave after since: a
+// cached entry fetched before it is asked again however fresh it is. A queue's PR snapshot needs
+// this (ADR 0137, addendum 2026-11-19): a "no PR" cached before the delivery closed stays fresh for
+// settledTTL and would otherwise hide a PR opened just before the close.
+func (c *Cache) FetchSince(ctx context.Context, keys []Key, since time.Time) (map[Key]*PR, error) {
 	if len(keys) == 0 {
 		return map[Key]*PR{}, nil
 	}
@@ -382,7 +390,7 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 	cached, allFresh := map[Key]*PR{}, true
 	for _, k := range keys {
 		e := c.entries[k]
-		if e == nil || !e.fresh(now, c.openTTL) {
+		if e == nil || !e.fresh(now, c.openTTL) || e.fetched.Before(since) {
 			allFresh = false
 			break
 		}

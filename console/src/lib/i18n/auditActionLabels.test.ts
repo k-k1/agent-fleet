@@ -8,6 +8,7 @@ describe("audit action labels", () => {
     ...["detected", "rescued", "blocked", "quarantined"].map((a) => "pool.slot_dark_" + a),
     ...["detected", "released", "blocked"].map((a) => "pool.slot_wedged_" + a),
     "workspace.queue_settle_wake",
+    "workspace.queue_pr_wake",
   ];
   for (const locale of ["en", "ja"]) {
     it("has a label for each action in " + locale, () => {

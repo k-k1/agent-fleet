@@ -1,6 +1,6 @@
 package store
 
-// Dependencies between messages (ADR 0137, addendum 2026-11-19, part A, step 1). A message names
+// Dependencies between messages (ADR 0137, addendum 2026-11-19, part A, steps 1 and 2). A message names
 // the messages of its queue it waits for (memo.after_ids), and it may be claimed only once every
 // one of them is satisfied. The rule is written twice, once in SQL for the dispatcher's
 // statistics (memoEligibleSQL) and once in Go for the claim, the hold and the display
@@ -29,20 +29,29 @@ func TurnBad(d MemoDelivery) bool {
 // (progress clears retire_gen). A clean close's own retire never sets retire_gen.
 func RetiredOverdue(d MemoDelivery) bool { return d.OverdueAt != "" && d.RetireGen != 0 }
 
-// AfterDeliverySatisfies is step 1 of "satisfied": the delivery that delivered a prerequisite
-// closed as clean, its first turn is recorded and was not bad, and it was not retired as overdue.
-// The prerequisite itself must be delivered by that delivery (not sent by hand), which the caller
-// checks.
+// AfterDeliverySatisfies is "satisfied" for the delivery that delivered a prerequisite: it closed
+// as clean and was not retired as overdue, and then either its first turn is recorded and was not
+// bad and its PR snapshot is final with no PR or every PR merged (steps 1 and 2), or its first turn
+// is not recorded and the snapshot names at least one PR, all merged (a merged PR is the success a
+// first turn that is never recorded cannot show). The prerequisite itself must be delivered by
+// that delivery (not sent by hand), which the caller checks.
 func AfterDeliverySatisfies(d MemoDelivery) bool {
-	return d.State == DeliveryClosed && d.Outcome == DeliveryClean && d.TurnEndedAt != "" && !TurnBad(d) && !RetiredOverdue(d)
+	if d.State != DeliveryClosed || d.Outcome != DeliveryClean || RetiredOverdue(d) {
+		return false
+	}
+	if d.TurnEndedAt == "" {
+		return d.PRState == PRStateMerged
+	}
+	return !TurnBad(d) && (d.PRState == PRStateNone || d.PRState == PRStateMerged)
 }
 
 // memoPrereqSatisfiedSQL is AfterDeliverySatisfies, plus "delivered by a delivery", for a
 // prerequisite row p.
 const memoPrereqSatisfiedSQL = `p.state='delivered' AND p.delivery_id<>'' AND EXISTS (SELECT 1 FROM memo_delivery d
-	  WHERE d.id=p.delivery_id AND d.state='closed' AND d.outcome='clean' AND d.turn_ended_at<>''
-	    AND d.turn_outcome NOT IN ('turn-failed','turn-aborted') AND (d.turn_outcome='clean' OR d.turn_ms>=60000)
-	    AND NOT (d.overdue_at<>'' AND d.retire_gen<>0))`
+	  WHERE d.id=p.delivery_id AND d.state='closed' AND d.outcome='clean' AND NOT (d.overdue_at<>'' AND d.retire_gen<>0)
+	    AND ((d.turn_ended_at='' AND d.pr_state='merged')
+	      OR (d.turn_ended_at<>'' AND d.turn_outcome NOT IN ('turn-failed','turn-aborted') AND (d.turn_outcome='clean' OR d.turn_ms>=60000)
+	        AND d.pr_state IN ('none','merged'))))`
 
 // memoEligibleSQL holds for a pending row m whose prerequisites are all satisfied. after_ids is a
 // JSON array of hex ids with no duplicate (the API refuses one), so its element count is its

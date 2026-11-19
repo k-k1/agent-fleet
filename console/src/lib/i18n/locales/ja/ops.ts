@@ -165,6 +165,7 @@ export const ops = {
   "pool.rung_releasing": "home を解放中",
   "pool.rung_release_blocked": "解放が停止中",
   "pool.rung_released": "home を解放済み",
+  "audit.action.workspace.queue_pr_wake": "自動実行が、待機中のメモが依存するプルリクエストの状態を読むために、メンバーの停止中のワークスペースの起動を要求しました",
   "audit.action.workspace.queue_settle_wake": "自動実行が、カテゴリの「同時に動かすセッション数」に数えられている実行を片付けるために、メンバーの停止中のワークスペースの起動を要求しました",
   "audit.action.pool.slot_wedged_released": "固着したスロットの home を解放しました（アンマウントしてデタッチ。スロットはプールに残ります）",
   "audit.action.pool.slot_wedged_blocked": "固着したスロットの解放が止まり、運用者の対応待ちです（SSM がオフライン、またはアンマウントが終わらないなど）",

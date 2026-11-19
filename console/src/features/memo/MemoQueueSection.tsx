@@ -56,7 +56,7 @@ import { memoReference } from "./reference.ts";
 import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import { tidySelection } from "./tidyOps.ts";
-import { afterChoices, afterItemWords, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
+import { afterChoices, afterItemMessage, afterItemWords, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -1688,7 +1688,7 @@ function MemoRow(props: MemoRowProps) {
             <span className="memo-after-head">{tr("memo.after_label")}</span>
             {m.afterStatus.map((a) => (
               <span key={a.id} className={"memo-after-item a-" + a.state}>
-                {a.label || a.id}: {tr(afterItemWords(a))}
+                {a.label || a.id}: {tr(afterItemMessage(a).key, afterItemMessage(a).params)}
               </span>
             ))}
           </div>

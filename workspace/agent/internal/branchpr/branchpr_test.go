@@ -629,3 +629,31 @@ func TestFetchAnswersFromFreshEntriesAndRespectsTheHold(t *testing.T) {
 		t.Fatalf("Fetch ignored the hold: calls=%d err=%v", calls.Load(), err)
 	}
 }
+
+// A "no PR" cached before the lower bound is asked again however fresh it is, and the answer after
+// it is the one returned: a queue's PR snapshot never counts a "no PR" read before the close.
+func TestFetchSinceAsksAgainForAnEntryOlderThanTheBound(t *testing.T) {
+	var calls atomic.Int32
+	srv := server(t, &calls, http.StatusOK, nil)
+	c := newTestCache(srv.URL, "tok")
+	k := Key{Repo: "o/r", Branch: "a"}
+	t.Setenv("BRANCHPR_TEST_BODY", `{"data":{`+answer("r0", "o", "main", "")+`}}`)
+	c.Lookup([]Key{k}, time.Now()) // the row's entry learns "no PR", fresh for settledTTL
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d", calls.Load())
+	}
+	closed := time.Now().Add(time.Millisecond)
+	time.Sleep(2 * time.Millisecond)
+	if got, err := c.FetchSince(context.Background(), []Key{k}, time.Time{}); err != nil || got[k] != nil || calls.Load() != 1 {
+		t.Fatalf("without a bound the fresh entry answers: %+v %v calls=%d", got, err, calls.Load())
+	}
+	t.Setenv("BRANCHPR_TEST_BODY", `{"data":{`+answer("r0", "o", "main", prNode(7, "OPEN", false, "o", ""))+`}}`)
+	got, err := c.FetchSince(context.Background(), []Key{k}, closed)
+	if err != nil || calls.Load() != 2 || got[k] == nil || got[k].Number != 7 {
+		t.Fatalf("FetchSince = %+v, %v, calls=%d: a no-PR from before the bound was used", got[k], err, calls.Load())
+	}
+	// The new answer is after the bound: a second read is served from the cache.
+	if _, err := c.FetchSince(context.Background(), []Key{k}, closed); err != nil || calls.Load() != 2 {
+		t.Fatalf("an answer after the bound was asked again: calls=%d err=%v", calls.Load(), err)
+	}
+}

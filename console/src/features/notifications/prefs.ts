@@ -89,6 +89,7 @@ const KIND_ROW: Record<string, NotifyRow> = {
   "memo-queue-paused": "auto-run",
   "memo-queue-waiting": "auto-run",
   "memo-queue-blocked": "auto-run",
+  "memo-queue-pr-stale": "auto-run",
   "memo-delivery-unconfirmed": "auto-run",
 };
 

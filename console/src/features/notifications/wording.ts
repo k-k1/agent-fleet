@@ -53,6 +53,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "memo-queue-paused": "noti.kind_memo_queue_paused",
   "memo-queue-waiting": "noti.kind_memo_queue_waiting",
   "memo-queue-blocked": "noti.kind_memo_queue_blocked",
+  "memo-queue-pr-stale": "noti.kind_memo_queue_pr_stale",
   "memo-delivery-unconfirmed": "noti.kind_memo_delivery_unconfirmed",
 };
 
@@ -95,6 +96,7 @@ export const isMemoQueueKind = (kind: string) =>
   kind === "memo-queue-paused" ||
   kind === "memo-queue-waiting" ||
   kind === "memo-queue-blocked" ||
+  kind === "memo-queue-pr-stale" ||
   kind === "memo-delivery-unconfirmed";
 
 const memoQueueLabel = (displayName: string) => displayName.replace(/^\/+/, "");
@@ -194,7 +196,9 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
             ? "waiting"
             : n.kind === "memo-queue-blocked"
               ? "blocked"
-              : "unconfirmed";
+              : n.kind === "memo-queue-pr-stale"
+                ? "pr_stale"
+                : "unconfirmed";
     return {
       title: t(`notif.memo_${which}.title`),
       body: t(`notif.memo_${which}.body`, { name: label }),

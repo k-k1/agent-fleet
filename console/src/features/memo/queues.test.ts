@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { Memo, MemoQueue } from "../../types/memo.ts";
 import {
   afterChoices,
+  afterItemMessage,
   afterItemWords,
   deliveryStateKey,
   draftBody,
@@ -340,6 +341,21 @@ describe("notes that wait for others", () => {
     expect(afterItemWords({ state: "waiting", reason: "first_turn" })).toBe("memo.after_r_first_turn");
     expect(afterItemWords({ state: "failed", reason: "from_the_future" })).toBe("memo.after_r_failed");
     expect(afterItemWords({ state: "waiting", reason: "from_the_future" })).toBe("memo.after_r_waiting");
+  });
+  it("names the pull requests a note waits for, and only the ones not merged yet", () => {
+    const pr = (key: string, state: string) => ({ provider: "github", key, state });
+    expect(afterItemMessage({ state: "waiting", reason: "pr", prs: [pr("o/r#7", "merged"), pr("o/r#12", "open"), pr("o/r#13", "")] })).toEqual({
+      key: "memo.after_r_pr_merge",
+      params: { prs: "#12, #13" },
+    });
+    // Not read yet: no PR to name.
+    expect(afterItemMessage({ state: "waiting", reason: "pr" })).toEqual({ key: "memo.after_r_pr" });
+    expect(afterItemMessage({ state: "failed", reason: "pr_closed", prs: [pr("o/r#7", "merged"), pr("o/r#9", "closed")] })).toEqual({
+      key: "memo.after_r_pr_closed_named",
+      params: { prs: "#9" },
+    });
+    expect(afterItemMessage({ state: "failed", reason: "session_gone" })).toEqual({ key: "memo.after_r_session_gone" });
+    expect(afterItemMessage({ state: "failed", reason: "no_pr" })).toEqual({ key: "memo.after_r_no_pr" });
   });
   it("says why nothing starts when every waiting note waits for another, and counts them in a threshold", () => {
     const at = (s: string) => s;

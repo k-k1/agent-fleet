@@ -543,7 +543,9 @@ type memoMemberView struct {
 	// refs is set when the Agent that answered can show an item that carries a reference.
 	refs bool
 	// tidy is set when the Agent that answered has the tidy endpoint and takes a derived message.
-	tidy   bool
+	tidy bool
+	// prs is set when the Agent that answered has the PR snapshot endpoint (queuePRs).
+	prs    bool
 	readAt string
 	// actMark is the envelope's actMark of that read, 0 when the Agent sent none.
 	actMark int64
@@ -628,6 +630,10 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 	tctx, tcancel := context.WithTimeout(tick, memoClosedTurnBudget)
 	r.collectClosedTurns(tctx, views, now)
 	tcancel()
+	// The PR snapshots have a budget of their own too: a dependent waits on them.
+	pctx, pcancel := context.WithTimeout(tick, memoPRSnapshotBudget)
+	r.collectPRSnapshots(pctx, views, now)
+	pcancel()
 	return sends
 }
 
@@ -666,6 +672,7 @@ func (r *memoQueueRunner) view(ctx context.Context, views map[string]*memoMember
 		v.live, v.liveOK, v.report = env.Sessions, err == nil, err == nil && env.reportsQueue()
 		v.refs = err == nil && env.showsReferences()
 		v.tidy = err == nil && env.showsTidy()
+		v.prs = err == nil && env.readsPRs()
 		if v.liveOK {
 			v.actMark = env.ActMark
 			if env.ActMark > 0 {
