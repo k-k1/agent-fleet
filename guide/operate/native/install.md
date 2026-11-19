@@ -131,6 +131,19 @@ WS_ENV=AF_CHROMIUM_NO_SANDBOX=1 af start
 - The variable reaches the workspace through `WS_ENV` (a comma-separated `KEY=VAL` list). Set bare on `af start`, it only reaches the Control Plane
 - An acceptable trade-off for the browser pane, which only connects to localhost. Do not use it to browse untrusted sites
 
+### Sharing Go build-cache entries between worktrees
+
+The workspace image sets `GOFLAGS=-trimpath` so worktrees at different paths share `~/.cache/go-build` entries instead of each adding its own copy. Whether a native workspace gets it depends on how it launches:
+
+- **With a rootfs** (`AF_NATIVE_ROOTFS`, the shipped package): sessions start from the image's own environment, so the setting arrives once you update to a release whose rootfs includes it and stop and start the workspace
+- **Without one** (the host's `workspace-agent` and Go): the image's environment is not used, and the workspace's environment is built from scratch, so a `GOFLAGS` exported in the shell that runs `af start` does not reach sessions. Pass it through `WS_ENV`. Builds you run in your own host shell are unaffected by any of this: export `GOFLAGS=-trimpath` there yourself
+
+```bash
+WS_ENV=GOFLAGS=-trimpath af start
+```
+
+`WS_ENV` wins over the image's value in either mode. Entries already in `~/.cache/go-build` keep their old paths until Go trims them (5 days unused).
+
 ## What you can add
 
 | What you want | Page |
