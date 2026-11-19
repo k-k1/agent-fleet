@@ -519,7 +519,15 @@
 .memo-edit-row .ui-btn-primary,
 .memo-selbar .ui-btn-primary {
   background: var(--lp-accent, var(--accent));
+  color: var(--on-lp-accent, var(--on-accent));
   border-color: transparent;
+}
+/* The shared hover rule tints the top-bar accent; keep the hover fill on the same accent the
+   idle fill and its on-colour were chosen for. */
+.memo-add .ui-btn-primary:hover:not(:disabled),
+.memo-edit-row .ui-btn-primary:hover:not(:disabled),
+.memo-selbar .ui-btn-primary:hover:not(:disabled) {
+  background: var(--lp-accent-hover, color-mix(in srgb, var(--lp-accent, var(--accent)) 85%, var(--fg)));
 }
 /* "clear selection" as a quiet ghost, not a loud accent link. */
 .memo-selbar-clear {

@@ -12,6 +12,7 @@ import {
   CJK_UNICODE_RANGE_PROSE,
   SURFACE_COLORS,
 } from "./options.ts";
+import { hoverFillColor, onAccentColor } from "./onAccent.ts";
 import type { Settings } from "./prefs.ts";
 
 // Generic CJK chain always appended after the chosen font, so someone who picks "Meiryo" on a
@@ -169,7 +170,12 @@ export function applyTheme(s: Settings): void {
   setVar("--topbar-bg", surfaceValue(s.topbarColor, theme));
   // Admin modal accent follows the chosen top-bar surface (buttons/tabs/bars retint via
   // .admin-surface). Null (no color chosen) → falls back to the CSS :root default blue.
-  setVar("--topbar-accent", surfaceAccent(s.topbarColor));
+  // The on-colour is set in the same pass as the fill, and removed with it, so a reset to the
+  // default restores the theme's --on-accent and the first paint never shows the old pair.
+  const topAccent = surfaceAccent(s.topbarColor);
+  setVar("--topbar-accent", topAccent);
+  setVar("--on-topbar-accent", onAccentColor(topAccent));
+  setVar("--topbar-accent-hover", hoverFillColor(topAccent));
   const lp = surfaceValue(s.leftpaneColor, theme);
   setVar("--leftpane-bg", lp);
   // Make the left-pane row highlight follow the chosen surface color (sessions /
@@ -187,7 +193,10 @@ export function applyTheme(s: Settings): void {
   // Left-pane accent = the chosen surface's matching accent, so the rail's focus
   // bar (active session / repo) and the worktree spine follow the palette instead
   // of the fixed app blue. Null (no surface chosen) → CSS falls back to --accent.
-  setVar("--lp-accent", surfaceAccent(s.leftpaneColor));
+  const lpAccent = surfaceAccent(s.leftpaneColor);
+  setVar("--lp-accent", lpAccent);
+  setVar("--on-lp-accent", onAccentColor(lpAccent));
+  setVar("--lp-accent-hover", hoverFillColor(lpAccent));
   // File viewer background, derived from the chosen surface: lighter than the
   // surfaces in light theme (toward white), darker in dark theme (toward black).
   // Unset => theme --bg.
