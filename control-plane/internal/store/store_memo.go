@@ -279,13 +279,14 @@ func (s *SQL) MarkMemosSent(ctx context.Context, membershipID string, ids []stri
 }
 
 // SweepSentMemos deletes sent memos whose sent_at is before the retention cutoff, except a
-// delivered message that a held or pending message of its queue still names as a prerequisite:
+// delivered message that a held, pending or claimed message of its queue still names as a
+// prerequisite (a claimed one may yet return to pending when its delivery is not sent):
 // deleting it would turn a satisfied prerequisite into a deleted one and hold the dependent.
 func (s *SQL) SweepSentMemos(ctx context.Context, retainBefore string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM memo WHERE sent_at!='' AND sent_at<? AND NOT EXISTS (
 		   SELECT 1 FROM memo w WHERE w.membership_id=memo.membership_id AND w.repo=memo.repo AND w.category=memo.category
-		     AND w.state IN (?,?) AND w.after_ids LIKE '%"' || memo.id || '"%')`, retainBefore, MemoStateHeld, MemoStatePending)
+		     AND w.state IN (?,?,?) AND w.after_ids LIKE '%"' || memo.id || '"%')`, retainBefore, MemoStateHeld, MemoStatePending, MemoStateClaimed)
 	return err
 }
 

@@ -930,6 +930,9 @@
   padding: 0 4px;
   color: var(--muted);
 }
+.memo-edit-after-why {
+  color: var(--warn, var(--accent));
+}
 .memo-edit-after-item {
   display: flex;
   gap: 6px;

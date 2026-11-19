@@ -330,14 +330,17 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		if err != nil {
 			return err
 		}
+		// One read of the bucket and one clock reading serve the whole create: the time the
+		// prerequisites are ordered against is the time the row is stamped with.
+		rows, err := tx.ListMemosIn(m.Repo, m.Category)
+		if err != nil {
+			return err
+		}
+		now := store.NowTS()
 		if len(in.After) > 0 {
-			rows, err := tx.ListMemosIn(m.Repo, m.Category)
-			if err != nil {
-				return err
-			}
 			// A new message joins the end of the queue: every message already there comes before it.
 			self := m
-			self.ID, self.CreatedAt, self.Position = "", store.NowTS(), math.MaxInt
+			self.ID, self.CreatedAt, self.Position = "", now, math.MaxInt
 			after, aerr := memoAfterResolve(self, rows, in.After, inQ)
 			if aerr != nil {
 				return memoTxFail(aerr)
@@ -345,10 +348,6 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 			m.AfterIDs = after
 		}
 		if inQ && m.RefKey != "" {
-			rows, err := tx.ListMemosIn(m.Repo, m.Category)
-			if err != nil {
-				return err
-			}
 			if dup, ok := memoOpenRefIn(rows, m); ok {
 				m, created = dup, false
 				return nil
@@ -370,17 +369,13 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		// New memos always join the end of their own repo/category group.  Clients do
 		// not need to coordinate a position (and an omitted JSON position otherwise
 		// becomes zero, which used to put every new memo at the top of the group).
-		rows, err := tx.ListMemosIn(m.Repo, m.Category)
-		if err != nil {
-			return err
-		}
 		for _, row := range rows {
 			if row.Position >= m.Position {
 				m.Position = row.Position + 1
 			}
 		}
 		m.ID = store.NewID()
-		m.CreatedAt = store.NowTS()
+		m.CreatedAt = now
 		if m, aerr = memoQueueMove(m, m, false, inQ, accept, via); aerr != nil {
 			return memoTxFail(aerr)
 		}
@@ -484,6 +479,11 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 		case moved && next.AfterIDs != "":
 			// The prerequisites are messages of the queue it leaves: they cannot follow it.
 			return memoTxFail(&apiError{http.StatusBadRequest, errCodeMemoAfterInvalid, "clear this message's prerequisites before moving it to another category"})
+		}
+		// The reason a message came back for names one prerequisite: once the list changes it may
+		// name one the message no longer waits for.
+		if next.AfterIDs != cur.AfterIDs {
+			next.HeldReason = ""
 		}
 		if next, aerr = memoQueueMove(cur, next, inPrev, inNext, accept, via); aerr != nil {
 			return memoTxFail(aerr)

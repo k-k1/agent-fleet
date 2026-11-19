@@ -475,3 +475,109 @@ func TestMemoAfterTidyKeepsLinkedMessages(t *testing.T) {
 		}
 	})
 }
+
+// A message that leaves every queue (its settings removed, its category deleted or merged into a
+// plain one) waits for nothing: the list is dropped with the state, so the note can still move.
+func TestMemoAfterLeavingTheQueueDropsTheList(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.category("r", "q")
+		e.queue(q)
+		e.category("r", "notes")
+		console := memoFaceClient{"console", e}
+		_, p := console.create(textMemo("r", "q", "prerequisite"))
+		_, d := console.create(afterMemo("r", "q", "dependent", p.ID))
+		if rec := e.do("a", "DELETE", "/api/memo-queues/"+q, nil); rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+			t.Fatalf("delete settings: %d %s", rec.Code, rec.Body.String())
+		}
+		if got := e.memoRow(d.ID); got.State != "" || got.AfterIDs != "" || got.HeldReason != "" {
+			t.Fatalf("a plain note kept %+v", got)
+		}
+		if code, _ := console.update(d.ID, map[string]any{"category": "notes"}); code != http.StatusOK {
+			t.Fatalf("moving the plain note: %d", code)
+		}
+	})
+}
+
+// Changing what a held message waits for drops the reason it came back for, which named the old list.
+func TestMemoAfterEditClearsTheHeldReason(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		console := memoFaceClient{"console", e}
+		_, p := console.create(textMemo("r", "q", "prerequisite"))
+		_, d := console.create(afterMemo("r", "q", "dependent", p.ID))
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state='held', release_hash='', released_at='',
+			held_reason=? WHERE id=?`, `{"after":"`+p.ID+`","reason":"aborted"}`, d.ID); err != nil {
+			t.Fatal(err)
+		}
+		if code, _ := console.update(d.ID, map[string]any{"body": "dependent, edited"}); code != http.StatusOK || e.memoRow(d.ID).HeldReason == "" {
+			t.Fatalf("a text edit dropped the reason: %d", code)
+		}
+		if code, up := console.update(d.ID, map[string]any{"after": []string{}}); code != http.StatusOK || up.HeldReason != nil || e.memoRow(d.ID).HeldReason != "" {
+			t.Fatalf("the reason outlived the list: %d %+v", code, up)
+		}
+	})
+}
+
+// A claimed message keeps its prerequisite from the sweep: its delivery may not be sent, and the
+// message then waits again.
+func TestMemoAfterSweepKeepsAPrerequisiteOfAClaim(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		console := memoFaceClient{"console", e}
+		_, p := console.create(textMemo("r", "q", "prerequisite"))
+		_, d := console.create(afterMemo("r", "q", "dependent", p.ID))
+		old := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+		db := e.st.DB()
+		if _, err := db.ExecContext(context.Background(), `UPDATE memo SET state='delivered', sent_at=? WHERE id=?`, old, p.ID); err != nil {
+			t.Fatal(err)
+		}
+		e.setStateKeepingRelease(d.ID, store.MemoStateClaimed)
+		if err := e.st.SweepSentMemos(context.Background(), memoRetainBefore()); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, _ := e.st.GetMemo(context.Background(), p.ID); !ok {
+			t.Fatal("the sweep deleted a prerequisite of a claimed message")
+		}
+	})
+}
+
+// With an Agent that cannot show a reference, a queue whose only eligible message carries one and
+// whose other message waits for it says why nothing starts.
+func TestMemoAfterWaitingReasonsCountEligibleOnly(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, q := e.autoQueue("app", "impl", nil, 0)
+		rec := e.do("a", "POST", "/api/memos", refMemo("app", "impl", "with a reference", ghRef("5")))
+		m1 := decode[memoDTO](t, rec)
+		e.do("a", "POST", "/api/memos", afterMemo("app", "impl", "waits for it", m1.ID))
+		if err := e.st.SetMemoQueueNoRefs(context.Background(), q, store.DeliveryTS(time.Now())); err != nil {
+			t.Fatal(err)
+		}
+		if w := e.queueWaiting(q); w == nil || w.Reason != waitNoRefs {
+			t.Fatalf("waiting %+v, want %s", w, waitNoRefs)
+		}
+		if s, g := e.statsOf(q); s.Refs != 1 || g.Refs != 1 || s.Eligible != 1 || g.Eligible != 1 {
+			t.Fatalf("stats SQL %+v / Go %+v", s, g)
+		}
+	})
+}
+
+// The hold pass leaves a row in a hand send alone, whatever its prerequisites say.
+func TestMemoAfterHoldSkipsAHandSend(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, q := e.autoQueue("app", "impl", nil, 0)
+		p := e.pending("app", "impl", "p")
+		d := decode[memoDTO](t, e.do("a", "POST", "/api/memos", afterMemo("app", "impl", "d", p.ID)))
+		db := e.st.DB()
+		if _, err := db.ExecContext(context.Background(), `DELETE FROM memo WHERE id=?`, p.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(context.Background(), `UPDATE memo SET send_token='tok', send_started_at=? WHERE id=?`,
+			time.Now().UTC().Format(time.RFC3339), d.ID); err != nil {
+			t.Fatal(err)
+		}
+		e.runner().checkAfter(context.Background(), e.queueRow(q), time.Now())
+		if got := e.memoRow(d.ID); got.State != store.MemoStatePending || got.SendToken != "tok" {
+			t.Fatalf("a row in a hand send became %+v", got)
+		}
+	})
+}

@@ -345,7 +345,9 @@ func memoWriteResult(id json.RawMessage, args json.RawMessage, answer string) []
 			"references yet. Do not report the reference as stored; tell your user, or put the item's key and URL "+
 			"in the note's body instead. The Control Plane answered: "+answer)
 	}
-	if memoAfterSent(args) && !memoAfterAnswered(answer) {
+	// An answer with existing: true is a note already holding the same item: nothing was written,
+	// so a missing list there says nothing about the Control Plane, and the answer goes back as it came.
+	if memoAfterSent(args) && !memoAfterAnswered(answer) && !memoExistingAnswer(answer) {
 		return mcpToolErr(id, "The note was saved, but its prerequisites (after) were NOT kept: this Control Plane does not "+
 			"support them yet, so nothing makes the note wait. Do not report them as stored; tell your user. "+
 			"The Control Plane answered: "+answer)
@@ -378,6 +380,14 @@ func memoAfterSent(args json.RawMessage) bool {
 		After []string `json:"after"`
 	}
 	return json.Unmarshal(args, &in) == nil && len(in.After) > 0
+}
+
+// memoExistingAnswer reports whether the answer is a note already in the queue (existing: true).
+func memoExistingAnswer(answer string) bool {
+	var out struct {
+		Existing bool `json:"existing"`
+	}
+	return json.Unmarshal([]byte(answer), &out) == nil && out.Existing
 }
 
 // memoAfterAnswered reports whether the Control Plane's answer carries prerequisites.

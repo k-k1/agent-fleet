@@ -161,6 +161,35 @@ describe("a note that waits for other notes", () => {
     expect(memoUpdate).toHaveBeenLastCalledWith("d1", { body: "third job", category: "inbox", after: [] });
   });
 
+  it("keeps a prerequisite that is no longer on offer visible, so it can be removed, and keeps it while others change", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({ id: "p1", body: "first job", state: "pending", position: 0 }),
+      aMemo({
+        id: "d1",
+        body: "second job",
+        state: "held",
+        position: 1,
+        createdAt: "2026-09-09T00:00:01Z",
+        after: ["gone1"],
+        afterStatus: [{ id: "gone1", label: "acme/app#3", state: "failed", reason: "deleted" }],
+        heldReason: { after: "gone1", reason: "deleted" },
+      }),
+    ];
+    await renderSection();
+    await openEditor("second job");
+    const items = () => [...editRow().querySelectorAll<HTMLLabelElement>(".memo-edit-after-item")];
+    expect(items().map((c) => c.querySelector("span")!.textContent)).toEqual(["first job", "acme/app#3"]);
+    expect(items()[1].textContent).toContain(t("memo.after_r_deleted"));
+    // Ticking another keeps the one already there.
+    await click(items()[0].querySelector("input")!);
+    expect(items().map((c) => c.querySelector("input")!.checked)).toEqual([true, true]);
+    // Unticking it removes it.
+    await click(items()[1].querySelector("input")!);
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("d1", { body: "second job", category: "inbox", after: ["p1"] });
+  });
+
   it("offers nothing outside an auto-run category", async () => {
     servedCats = [aCat({ id: "c1", name: "inbox" })];
     servedMemos = [aMemo({ id: "p1", body: "first job" }), aMemo({ id: "d1", body: "second job", position: 1 })];

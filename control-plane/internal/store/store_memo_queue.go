@@ -479,7 +479,8 @@ type QueuePending struct {
 	// satisfied (MemoAfterSatisfiedSQL). Count, blocked ones included, keeps a drain going, and
 	// Eligible opens a threshold and is what a claim takes.
 	Eligible int
-	// Refs is how many of them carry a reference, Curators how many a tidy run derived.
+	// Refs is how many of the eligible ones carry a reference, Curators how many a tidy run
+	// derived: compared with Eligible they say that what a claim could take is all held back.
 	Refs, Curators int
 	Oldest, Latest string
 }
@@ -511,7 +512,8 @@ func (s *SQL) ListMemberQueuePendingStats(ctx context.Context, membershipID stri
 
 func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (map[string]QueuePending, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN `+memoEligibleSQL+` THEN 1 ELSE 0 END),
-		  SUM(CASE WHEN m.ref_key<>'' THEN 1 ELSE 0 END), SUM(CASE WHEN m.provenance='curator' THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at)
+		  SUM(CASE WHEN m.ref_key<>'' AND `+memoEligibleSQL+` THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN m.provenance='curator' AND `+memoEligibleSQL+` THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at)
 		FROM memo m
 		JOIN memo_category c ON c.membership_id=m.membership_id AND c.repo=m.repo AND c.name=m.category
 		JOIN memo_queue q ON q.category_id=c.id

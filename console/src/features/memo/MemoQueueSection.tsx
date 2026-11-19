@@ -19,7 +19,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { copyText } from "../../lib/clipboard.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { t, useT } from "../../lib/i18n/index.ts";
+import { t, useT, type MsgKey } from "../../lib/i18n/index.ts";
 import {
   memoList,
   memoCreate,
@@ -1424,6 +1424,17 @@ function MemoRow(props: MemoRowProps) {
   const [clearRef, setClearRef] = useState(false);
   const [after, setAfter] = useState<string[]>(m.after ?? []);
   const ref = memoReference(m);
+  // The earlier notes on offer, then any it already waits for that are no longer on offer (deleted,
+  // moved, replaced, or kept past the list's window): those must stay visible so they can be removed.
+  const afterOptions = props.afterChoices && [
+    ...props.afterChoices.map((c) => ({ ...c, why: undefined as MsgKey | undefined })),
+    ...(m.after ?? [])
+      .filter((id) => !props.afterChoices!.some((c) => c.id === id))
+      .map((id) => {
+        const st = m.afterStatus?.find((a) => a.id === id);
+        return { id, label: st?.label || id, why: st ? afterItemWords(st) : undefined };
+      }),
+  ];
   // Sent only when it differs from what is stored, so a plain text edit never touches it.
   const afterChanged = (): string[] | undefined => {
     const was = m.after ?? [];
@@ -1506,28 +1517,30 @@ function MemoRow(props: MemoRowProps) {
               {tr("common.cancel")}
             </Button>
           </div>
-          {props.afterChoices && (
+          {afterOptions && (
             <fieldset className="memo-edit-after">
               <legend>{tr("memo.after_edit_label")}</legend>
-              {props.afterChoices.length === 0 && after.length === 0 ? (
+              {afterOptions.length === 0 ? (
                 <div className="memo-edit-hint">{tr("memo.after_edit_none")}</div>
               ) : (
                 <>
-                  {props.afterChoices.map((c) => (
+                  {afterOptions.map((c) => (
                     <label key={c.id} className="memo-edit-after-item">
                       <input
                         type="checkbox"
                         checked={after.includes(c.id)}
                         onChange={(e) =>
-                          // Kept in the category's order, whatever order they were ticked in.
+                          // Kept in the order shown, whatever order they were ticked in; a ticked one
+                          // that is not offered any more stays until it is unticked.
                           setAfter((cur) =>
                             e.target.checked
-                              ? props.afterChoices!.map((x) => x.id).filter((id) => id === c.id || cur.includes(id))
+                              ? afterOptions.map((x) => x.id).filter((id) => id === c.id || cur.includes(id))
                               : cur.filter((id) => id !== c.id),
                           )
                         }
                       />
                       <span>{c.label}</span>
+                      {c.why && <span className="memo-edit-after-why">{tr(c.why)}</span>}
                     </label>
                   ))}
                   <div className="memo-edit-hint">{tr("memo.after_edit_hint")}</div>

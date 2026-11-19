@@ -177,7 +177,10 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext, accept bool, via memoV
 		return next, &apiError{http.StatusConflict, errCodeMemoSending, "this message is being sent"}
 	}
 	if !inNext {
+		// A plain note waits for nothing: a list left behind would block its every later move,
+		// and come back if the category became a queue again.
 		next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = "", "", "", ""
+		next.AfterIDs, next.HeldReason = "", ""
 		return next, nil
 	}
 	// A superseded message was replaced by a tidy run and comes back only by undoing it: whatever

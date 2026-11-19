@@ -461,7 +461,9 @@ func HoldUnsatisfiable(tx store.MemoTxOps, rows []store.Memo, now, since time.Ti
 	lk := TxLookup(tx, rows, now)
 	var late []Blocked
 	for _, m := range rows {
-		if m.State != store.MemoStatePending || m.AfterIDs == "" {
+		// A row in a hand send keeps its state until the send settles, and one with a sent stamp or a
+		// delivery is not waiting: the same rows pendingOf and the claim leave out.
+		if m.State != store.MemoStatePending || m.AfterIDs == "" || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
 			continue
 		}
 		items, err := Status(m, lk)

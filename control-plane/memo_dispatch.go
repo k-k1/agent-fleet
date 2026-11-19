@@ -317,6 +317,7 @@ func (r *memoQueueRunner) houseKeep(ctx context.Context, w *memoQueueWork, live 
 // (ADR 0137, addendum 2026-11-19). It runs behind the membership lock, from the rows as they are.
 func (r *memoQueueRunner) checkAfter(ctx context.Context, q store.MemoQueue, now time.Time) {
 	var late []memoafter.Blocked
+	hours := memoQueueTaskHours(q)
 	err := r.mgr.store.MemoTx(ctx, q.MembershipID, func(tx store.MemoTxOps) error {
 		late = nil
 		c, ok, err := tx.GetCategory(q.CategoryID)
@@ -331,7 +332,8 @@ func (r *memoQueueRunner) checkAfter(ctx context.Context, q store.MemoQueue, now
 		if err != nil {
 			return err
 		}
-		late, err = memoafter.HoldUnsatisfiable(tx, rows, now, now.Add(-time.Duration(memoQueueTaskHours(cur))*time.Hour))
+		hours = memoQueueTaskHours(cur)
+		late, err = memoafter.HoldUnsatisfiable(tx, rows, now, now.Add(-time.Duration(hours)*time.Hour))
 		return err
 	})
 	if err != nil {
@@ -342,7 +344,7 @@ func (r *memoQueueRunner) checkAfter(ctx context.Context, q store.MemoQueue, now
 		// Told once per occurrence: the message and the release it waits under.
 		r.notifyQueueRow(ctx, q, memoQueueBlockedKind, "memo-blocked-"+b.Memo.ID+"-"+b.Memo.ReleasedAt,
 			map[string]any{"memo_id": b.Memo.ID, "memo_label": memoafter.Label(b.Memo), "after": b.Items,
-				"max_task_hours": memoQueueTaskHours(q)})
+				"max_task_hours": hours})
 	}
 }
 
@@ -680,14 +682,15 @@ func pendingOf(rows []store.Memo, eligible func(store.Memo) bool) store.QueuePen
 			continue
 		}
 		p.Count++
+		// Refs and Curators count only what a claim could take, as the statistics' SQL does.
 		if eligible(m) {
 			p.Eligible++
-		}
-		if m.RefKey != "" {
-			p.Refs++
-		}
-		if m.Provenance == store.MemoProvenanceCurator {
-			p.Curators++
+			if m.RefKey != "" {
+				p.Refs++
+			}
+			if m.Provenance == store.MemoProvenanceCurator {
+				p.Curators++
+			}
 		}
 		if p.Oldest == "" || m.CreatedAt < p.Oldest {
 			p.Oldest = m.CreatedAt
@@ -1088,10 +1091,10 @@ func memoQueueWaiting(tx store.MemoWaitOps, q store.MemoQueue, tenantOn bool, pe
 	if pending.Eligible == 0 {
 		return &memoWaiting{Reason: waitPrerequisites, Detail: &memoWaitingDetail{Blocked: pending.Count}}, nil
 	}
-	if q.NoRefsAt != "" && pending.Refs == pending.Count {
+	if q.NoRefsAt != "" && pending.Refs == pending.Eligible {
 		return &memoWaiting{Reason: waitNoRefs}, nil
 	}
-	if q.NoTidyAt != "" && pending.Curators == pending.Count {
+	if q.NoTidyAt != "" && pending.Curators == pending.Eligible {
 		return &memoWaiting{Reason: waitNoTidy}, nil
 	}
 	inQueue, inMember, err := tx.CountLiveDeliveries(q.CategoryID)
