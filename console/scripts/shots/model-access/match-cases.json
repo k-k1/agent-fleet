@@ -349,6 +349,54 @@
    },
    "rule": {
     "endpoints": [
+     "10.20.8.0/24",
+     "10.21.0.0/24",
+     "10.20.5.7",
+     "10.0.0.0/8",
+     "llm.other.example",
+     "fd12:3456:1::/48",
+     "fd99::5"
+    ]
+   },
+   "matched": {
+    "endpoints": [],
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=-openrouter,-sakana;endpoints=*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "af-engine",
+     "anthropic",
+     "aws-bedrock",
+     "cursor",
+     "github",
+     "google",
+     "kiro",
+     "meta",
+     "openai",
+     "opencode.ai",
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example"
+    ]
+   },
+   "rule": {
+    "endpoints": [
      "llm.corp.example"
     ]
    },
@@ -526,6 +574,31 @@
     ]
    },
    "matched": {
+    "destinations": [
+     "aws-bedrock"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=aws-bedrock",
+   "ceiling": {
+    "destinations": [
+     "aws-bedrock"
+    ]
+   },
+   "rule": {
+    "endpoints": [
+     "10.20.8.0/24",
+     "10.21.0.0/24",
+     "10.20.5.7",
+     "10.0.0.0/8",
+     "llm.other.example",
+     "fd12:3456:1::/48",
+     "fd99::5"
+    ]
+   },
+   "matched": {
+    "endpoints": [],
     "destinations": [
      "aws-bedrock"
     ]
@@ -758,6 +831,45 @@
    },
    "rule": {
     "endpoints": [
+     "10.20.8.0/24",
+     "10.21.0.0/24",
+     "10.20.5.7",
+     "10.0.0.0/8",
+     "llm.other.example",
+     "fd12:3456:1::/48",
+     "fd99::5"
+    ]
+   },
+   "matched": {
+    "endpoints": [
+     "10.20.8.0/24",
+     "10.21.0.0/24",
+     "10.20.5.7",
+     "10.0.0.0/8",
+     "llm.other.example",
+     "fd12:3456:1::/48",
+     "fd99::5"
+    ],
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=-subscription",
+   "ceiling": {
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ]
+   },
+   "rule": {
+    "endpoints": [
      "llm.corp.example"
     ]
    },
@@ -939,6 +1051,39 @@
     ]
    },
    "matched": {
+    "classes": [
+     "provided"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=provided",
+   "ceiling": {
+    "classes": [
+     "provided"
+    ]
+   },
+   "rule": {
+    "endpoints": [
+     "10.20.8.0/24",
+     "10.21.0.0/24",
+     "10.20.5.7",
+     "10.0.0.0/8",
+     "llm.other.example",
+     "fd12:3456:1::/48",
+     "fd99::5"
+    ]
+   },
+   "matched": {
+    "endpoints": [
+     "10.20.8.0/24",
+     "10.21.0.0/24",
+     "10.20.5.7",
+     "10.0.0.0/8",
+     "llm.other.example",
+     "fd12:3456:1::/48",
+     "fd99::5"
+    ],
     "classes": [
      "provided"
     ]
@@ -1243,6 +1388,51 @@
    },
    "rule": {
     "endpoints": [
+     "10.20.8.0/24",
+     "10.21.0.0/24",
+     "10.20.5.7",
+     "10.0.0.0/8",
+     "llm.other.example",
+     "fd12:3456:1::/48",
+     "fd99::5"
+    ]
+   },
+   "matched": {
+    "endpoints": [
+     "10.20.8.0/24",
+     "10.21.0.0/24",
+     "10.20.5.7",
+     "10.0.0.0/8",
+     "llm.other.example",
+     "fd12:3456:1::/48",
+     "fd99::5"
+    ],
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ],
+    "deny": [
+     "openrouter-api"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "classes=-subscription;deny=openrouter-api",
+   "ceiling": {
+    "classes": [
+     "member-cloud",
+     "member-key",
+     "provided",
+     "self-hosted"
+    ],
+    "deny": [
+     "openrouter-api"
+    ]
+   },
+   "rule": {
+    "endpoints": [
      "llm.corp.example"
     ]
    },
@@ -1258,6 +1448,270 @@
     ],
     "deny": [
      "openrouter-api"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=self-hosted;endpoints=10.20.0.0/16,fd12:3456::/32,*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "10.20.0.0/16",
+     "fd12:3456::/32"
+    ]
+   },
+   "rule": {},
+   "matched": {
+    "destinations": [
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=self-hosted;endpoints=10.20.0.0/16,fd12:3456::/32,*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "10.20.0.0/16",
+     "fd12:3456::/32"
+    ]
+   },
+   "rule": {
+    "deny": [
+     "cursor-login"
+    ]
+   },
+   "matched": {
+    "deny": [
+     "cursor-login"
+    ],
+    "destinations": [
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=self-hosted;endpoints=10.20.0.0/16,fd12:3456::/32,*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "10.20.0.0/16",
+     "fd12:3456::/32"
+    ]
+   },
+   "rule": {
+    "classes": [
+     "member-key"
+    ],
+    "except": [
+     "openrouter-api"
+    ]
+   },
+   "matched": {
+    "classes": [
+     "member-key"
+    ],
+    "destinations": [
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=self-hosted;endpoints=10.20.0.0/16,fd12:3456::/32,*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "10.20.0.0/16",
+     "fd12:3456::/32"
+    ]
+   },
+   "rule": {
+    "classes": [
+     "subscription",
+     "member-key"
+    ]
+   },
+   "matched": {
+    "classes": [
+     "subscription",
+     "member-key"
+    ],
+    "destinations": [
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=self-hosted;endpoints=10.20.0.0/16,fd12:3456::/32,*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "10.20.0.0/16",
+     "fd12:3456::/32"
+    ]
+   },
+   "rule": {
+    "destinations": [
+     "openrouter",
+     "anthropic"
+    ]
+   },
+   "matched": {
+    "destinations": []
+   }
+  },
+  {
+   "ceilingRaw": "destinations=self-hosted;endpoints=10.20.0.0/16,fd12:3456::/32,*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "10.20.0.0/16",
+     "fd12:3456::/32"
+    ]
+   },
+   "rule": {
+    "destinations": [
+     "anthropic"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "*.other.example"
+    ]
+   },
+   "matched": {
+    "destinations": [],
+    "endpoints": [
+     "*.corp.example"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=self-hosted;endpoints=10.20.0.0/16,fd12:3456::/32,*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "10.20.0.0/16",
+     "fd12:3456::/32"
+    ]
+   },
+   "rule": {
+    "destinations": [
+     "anthropic"
+    ],
+    "endpoints": [
+     "LLM.Corp.Example.",
+     "x.other.example"
+    ]
+   },
+   "matched": {
+    "destinations": [],
+    "endpoints": [
+     "LLM.Corp.Example."
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=self-hosted;endpoints=10.20.0.0/16,fd12:3456::/32,*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "10.20.0.0/16",
+     "fd12:3456::/32"
+    ]
+   },
+   "rule": {
+    "except": [
+     "openrouter-api",
+     "copilot-login"
+    ]
+   },
+   "matched": {
+    "destinations": [
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=self-hosted;endpoints=10.20.0.0/16,fd12:3456::/32,*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "10.20.0.0/16",
+     "fd12:3456::/32"
+    ]
+   },
+   "rule": {
+    "endpoints": [
+     "10.20.8.0/24",
+     "10.21.0.0/24",
+     "10.20.5.7",
+     "10.0.0.0/8",
+     "llm.other.example",
+     "fd12:3456:1::/48",
+     "fd99::5"
+    ]
+   },
+   "matched": {
+    "endpoints": [
+     "10.20.8.0/24",
+     "10.20.5.7",
+     "fd12:3456:1::/48"
+    ],
+    "destinations": [
+     "self-hosted"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=self-hosted;endpoints=10.20.0.0/16,fd12:3456::/32,*.corp.example",
+   "ceiling": {
+    "destinations": [
+     "self-hosted"
+    ],
+    "endpoints": [
+     "*.corp.example",
+     "10.20.0.0/16",
+     "fd12:3456::/32"
+    ]
+   },
+   "rule": {
+    "endpoints": [
+     "llm.corp.example"
+    ]
+   },
+   "matched": {
+    "endpoints": [
+     "llm.corp.example"
+    ],
+    "destinations": [
+     "self-hosted"
     ]
    }
   },
@@ -1461,6 +1915,36 @@
     "except": [
      "copilot-login"
     ],
+    "destinations": [
+     "anthropic",
+     "aws-bedrock"
+    ]
+   }
+  },
+  {
+   "ceilingRaw": "destinations=anthropic,aws-bedrock;except=copilot-login",
+   "ceiling": {
+    "destinations": [
+     "anthropic",
+     "aws-bedrock"
+    ],
+    "except": [
+     "copilot-login"
+    ]
+   },
+   "rule": {
+    "endpoints": [
+     "10.20.8.0/24",
+     "10.21.0.0/24",
+     "10.20.5.7",
+     "10.0.0.0/8",
+     "llm.other.example",
+     "fd12:3456:1::/48",
+     "fd99::5"
+    ]
+   },
+   "matched": {
+    "endpoints": [],
     "destinations": [
      "anthropic",
      "aws-bedrock"

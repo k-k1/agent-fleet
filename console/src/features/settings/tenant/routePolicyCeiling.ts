@@ -136,9 +136,94 @@ function normPattern(raw: string): string | null {
   return h === null ? null : (wild ? "*." : "") + h;
 }
 
-// covers mirrors routepolicy's covers: an exact host or a "*." pattern holding another pattern.
-// A pattern the CP might refuse is covered by nothing.
+// CIDR ranges (routepolicy endpoints_cidr.go). A range holds IP literals only; a host name never
+// falls under one. The checks mirror the CP's refusals (a range must lie inside private address
+// space, hold no metadata address, have no host bits and not be a single address), and any doubt
+// yields null: a null range covers nothing and is covered by nothing, so the check says "exceeds".
+interface Cidr {
+  v: 4 | 6;
+  n: bigint; // the address
+  bits: number;
+}
+
+const PRIVATE_SPACE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"];
+const METADATA = ["100.100.100.200", "fd00:ec2::254"];
+
+// parseIp reads an IPv4 dotted quad (no leading zeros) or an IPv6 address; an IPv4-mapped one is
+// not read (null): the CP unmaps it to the IPv4 address, and the Console answers "exceeds".
+function parseIp(s: string): { v: 4 | 6; n: bigint } | null {
+  if (s.includes(":")) {
+    if (/[\s/@?#[\]%*\\]/.test(s)) return null;
+    let h: string;
+    try {
+      h = new URL(`http://[${s}]/`).hostname;
+    } catch {
+      return null;
+    }
+    if (!h.startsWith("[") || !h.endsWith("]")) return null;
+    const [head, tail, extra] = h.slice(1, -1).split("::");
+    if (extra !== undefined) return null;
+    const groups = (x: string) => (x === "" ? [] : x.split(":"));
+    const hs = groups(head);
+    const ts = tail === undefined ? [] : groups(tail);
+    const fill = tail === undefined ? 0 : 8 - hs.length - ts.length;
+    if (fill < 0 || (tail === undefined && hs.length !== 8)) return null;
+    const all = [...hs, ...Array<string>(fill).fill("0"), ...ts];
+    if (all.length !== 8 || !all.every((g) => /^[0-9a-f]{1,4}$/.test(g))) return null;
+    const n = all.reduce((acc, g) => (acc << 16n) | BigInt(parseInt(g, 16)), 0n);
+    if (n >> 32n === 0xffffn) return null; // ::ffff:0:0/96, IPv4-mapped
+    return { v: 6, n };
+  }
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+  if (!m) return null;
+  let n = 0n;
+  for (const o of m.slice(1)) {
+    if ((o.length > 1 && o.startsWith("0")) || Number(o) > 255) return null;
+    n = (n << 8n) | BigInt(o);
+  }
+  return { v: 4, n };
+}
+
+const width = (v: 4 | 6) => (v === 4 ? 32 : 128);
+const inRange = (outer: Cidr, v: 4 | 6, n: bigint) =>
+  outer.v === v && n >> BigInt(width(v) - outer.bits) === outer.n >> BigInt(width(v) - outer.bits);
+
+function rawCidr(s: string): Cidr | null {
+  const m = /^([0-9a-f:.]+)\/(0|[1-9]\d{0,2})$/.exec(s.trim().toLowerCase());
+  if (!m) return null;
+  const a = parseIp(m[1]);
+  const bits = Number(m[2]);
+  if (a === null || bits > width(a.v)) return null;
+  return { v: a.v, n: a.n, bits };
+}
+
+const PRIVATE = PRIVATE_SPACE.map((s) => rawCidr(s)!);
+
+function parseCidr(s: string): Cidr | null {
+  const c = rawCidr(s);
+  if (c === null || c.bits === width(c.v)) return null;
+  const hostBits = BigInt(width(c.v) - c.bits);
+  if ((c.n >> hostBits) << hostBits !== c.n) return null;
+  if (!PRIVATE.some((p) => p.v === c.v && p.bits <= c.bits && inRange(p, c.v, c.n))) return null;
+  for (const m of METADATA) {
+    const a = parseIp(m)!;
+    if (inRange(c, a.v, a.n)) return null;
+  }
+  return c;
+}
+
+// covers mirrors routepolicy's covers: an exact host or a "*." pattern holding another pattern,
+// and a range holding an IP literal or a narrower range. A pattern the CP might refuse is covered
+// by nothing.
 function covers(outer: string, inner: string): boolean {
+  const oc = parseCidr(outer);
+  const ic = parseCidr(inner);
+  if (ic !== null) return oc !== null && oc.v === ic.v && oc.bits <= ic.bits && inRange(oc, ic.v, ic.n);
+  if (oc !== null) {
+    const i = normPattern(inner);
+    const ip = i === null ? null : parseIp(i);
+    return ip !== null && inRange(oc, ip.v, ip.n);
+  }
   const o = normPattern(outer);
   const i = normPattern(inner);
   if (o === null || i === null) return false;

@@ -1175,7 +1175,7 @@ export const admin = {
   "admin.mpol_servers_none": "まだありません。",
   "admin.mpol_endpoints_short": "セルフホストのサーバー",
   "admin.mpol_endpoints_patterns": "承認してよいセルフホストのサーバー",
-  "admin.mpol_endpoints_patterns_hint": "ホスト名そのもの、または *.example.com の形。ポートやスキームは書きません。ベンダーのホストは指定できません。",
+  "admin.mpol_endpoints_patterns_hint": "ホスト名そのもの、*.example.com の形、またはプライベート IP の範囲（10.20.0.0/16 など。IP アドレスだけに一致し、ホスト名には一致しません）。ポートやスキームは書きません。ベンダーのホストは指定できません。",
   "admin.mpol_endpoints_hosts": "セルフホストのサーバー（ホスト名）",
   "admin.mpol_endpoints_hosts_hint": "ホスト名そのもの（ワイルドカード・ポート・スキームは不可）。上のすべての制限が通す間だけ承認され、ベンダーのホストは承認できません。",
   "admin.mpol_endpoints_all": "絞らない",
