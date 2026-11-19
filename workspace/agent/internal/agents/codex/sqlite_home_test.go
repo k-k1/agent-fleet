@@ -2,6 +2,7 @@ package codex
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -438,24 +439,40 @@ func TestSQLiteHomeProbes(t *testing.T) {
 	if statfsIsNFS(t.TempDir()) {
 		t.Skip("TMPDIR is on NFS here")
 	}
-	fake := filepath.Join(t.TempDir(), "codex")
-	b, err := os.ReadFile("/bin/sleep")
-	if err != nil {
-		t.Skip("no /bin/sleep")
+	// A shell script, not a copy of /bin/sleep: a multi-call sleep (uutils coreutils) dispatches on
+	// argv[0] and exits at once when it is named "codex", so the process never outlives the exec.
+	// The shell stays alive, and its argv[1] is the script, whose base name is "codex".
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh")
 	}
-	writeFile(t, fake, string(b))
+	fake := filepath.Join(t.TempDir(), "codex")
+	writeFile(t, fake, "#!/bin/sh\nsleep 30\n")
 	if err := os.Chmod(fake, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(fake, "30")
+	cmd := exec.Command("/bin/sh", fake)
 	if err := cmd.Start(); err != nil {
-		t.Skip("cannot exec from TMPDIR: ", err)
+		t.Skip("cannot start a shell: ", err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	for _, pid := range codexPIDs() {
-		if pid == cmd.Process.Pid {
-			return
+	// Between fork and exec the child still carries the parent's command line, so the scan can
+	// miss it for a moment; give it a window instead of a single look.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		for _, pid := range codexPIDs() {
+			if pid == cmd.Process.Pid {
+				return
+			}
 		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("the codex binary this test started (pid %d) was not seen", cmd.Process.Pid)
+	t.Fatalf("the codex binary this test started (pid %d) was not seen (cmdline %q)", cmd.Process.Pid, procCmdlineForTest(cmd.Process.Pid))
+}
+
+func procCmdlineForTest(pid int) string {
+	b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	return strings.ReplaceAll(string(b), "\x00", " ")
 }
