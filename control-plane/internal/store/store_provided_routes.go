@@ -50,6 +50,10 @@ type ProvidedRouteStore interface {
 	// for a source: it changes exactly when one of those values does, and a write that stores the
 	// same values leaves it as it was. The events stream diffs it (ADR 0129 D3 gate 4).
 	ProvidedRouteRevision(ctx context.Context, tenantID, source string) (string, error)
+	// ProvidedRouteAdminRevision is the same kind of digest over every tenant's grant, policy and
+	// member rows and the whole deployment source registration. Only the super_admin's frame
+	// carries it (it is a signal about values only a super_admin may read).
+	ProvidedRouteAdminRevision(ctx context.Context, source string) (string, error)
 
 	AdmitProvidedRouteCall(ctx context.Context, c ProvidedRouteCall, lim ProvidedRouteLimits) (ProvidedRouteAdmission, error)
 	SettleProvidedRouteCall(ctx context.Context, callID string, finalMicro int64) (bool, error)
@@ -460,6 +464,78 @@ func (s *SQL) ProvidedRouteRevision(ctx context.Context, tenantID, source string
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
+	}
+	// What the tenant's own view says of the source (registered, on, the model list behind its
+	// reservations): a source PUT moves every tenant's view, so it moves this digest too. Nothing
+	// of the operator's side (role, Region, fingerprint) is in it, though it is only hashed.
+	srcs, err := s.ListProvidedRouteSources(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprint(h, "source:none;")
+	for _, src := range srcs {
+		if src.Source == source {
+			fmt.Fprintf(h, "\nsource:%t,%q;", src.Active, src.AllowList)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)[:8]), nil
+}
+
+// ProvidedRouteAdminRevision digests every value the super_admin's Model access screens read: all
+// tenants' grants, policies and member overrides, and the deployment source row. Values, not
+// updated_at, for the reason ProvidedRouteRevision gives.
+func (s *SQL) ProvidedRouteAdminRevision(ctx context.Context, source string) (string, error) {
+	h := sha256.New()
+	rows, err := s.db.QueryContext(ctx, `SELECT tenant_id, granted, ceiling_micro, members_only, member_default_micro
+		FROM provided_route_grant WHERE source=? ORDER BY tenant_id`, source)
+	if err != nil {
+		return "", err
+	}
+	for rows.Next() {
+		var tid string
+		var granted, membersOnly int
+		var ceiling sql.NullInt64
+		var def int64
+		if err := rows.Scan(&tid, &granted, &ceiling, &membersOnly, &def); err != nil {
+			rows.Close()
+			return "", err
+		}
+		fmt.Fprintf(h, "grant:%s,%d,%d,%t,%d,%d;", tid, granted, ceiling.Int64, ceiling.Valid, membersOnly, def)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return "", err
+	}
+	rows, err = s.db.QueryContext(ctx, `SELECT tenant_id, membership_id, granted, budget_micro FROM provided_route_member
+		WHERE source=? ORDER BY tenant_id, membership_id`, source)
+	if err != nil {
+		return "", err
+	}
+	for rows.Next() {
+		var tid, id string
+		var g int
+		var b sql.NullInt64
+		if err := rows.Scan(&tid, &id, &g, &b); err != nil {
+			rows.Close()
+			return "", err
+		}
+		fmt.Fprintf(h, "member:%s,%s,%d,%d,%t;", tid, id, g, b.Int64, b.Valid)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return "", err
+	}
+	srcs, err := s.ListProvidedRouteSources(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprint(h, "source:none;")
+	for _, src := range srcs {
+		if src.Source == source {
+			fmt.Fprintf(h, "\nsource:%s,%q,%q,%q,%q,%d,%t;", src.ID, src.Name, src.RoleARN, src.Regions, src.AllowList, src.PolicyVersion, src.Active)
+		}
 	}
 	return hex.EncodeToString(h.Sum(nil)[:8]), nil
 }

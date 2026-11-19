@@ -131,6 +131,7 @@ function GrantCell({ slug }: { slug: string }) {
   const { load } = useProvided(
     `api/admin/tenants/${encodeURIComponent(slug)}/provided-routes/deployment`,
     parseProvidedTenant,
+    true,
   );
   if (!load) return <span className="muted">{tr("common.loading")}</span>;
   if (load.state !== "ok")

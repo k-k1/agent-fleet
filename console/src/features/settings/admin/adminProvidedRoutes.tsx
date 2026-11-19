@@ -127,7 +127,7 @@ function SourceEditor({
 export type SourceRead = ReturnType<typeof useSourceRead>;
 
 /** useSourceRead reads the deployment source once, for every part of a page that shows it. */
-export const useSourceRead = () => useProvided(SOURCE_PATH, parseSource);
+export const useSourceRead = () => useProvided(SOURCE_PATH, parseSource, true);
 
 /** AdminProvidedSourceView is the deployment source's section, reading it itself; nothing where
  *  the CP has no provided routes. */

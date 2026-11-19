@@ -20,7 +20,7 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
 import { DirtyScope } from "../parts/dirtyScope.tsx";
 import { TabbedViews } from "../parts/tabbedViews.tsx";
-import { noteProvidedRev, resetProvidedRev } from "./providedRevision.ts";
+import { noteProvidedAdminRev, noteProvidedRev, resetProvidedRev } from "./providedRevision.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 
 const PATH = "api/admin/tenants/acme/provided-routes/deployment";
@@ -450,6 +450,25 @@ describe("tenant provided routes follow the events stream", () => {
     await flush();
   };
   beforeEach(() => resetProvidedRev());
+
+  it("reads again on the super_admin's digest, on its own baseline", async () => {
+    const admin = async (rev: string) => {
+      await act(async () => {
+        noteProvidedAdminRev({ rev });
+      });
+      await flush();
+      await flush();
+    };
+    await mount();
+    expect(seenCalls()).toBe(1);
+    await admin("a1"); // baseline
+    await frame("r1"); // the tenant frame's baseline is separate
+    expect(seenCalls()).toBe(1);
+    await admin("a1");
+    expect(seenCalls()).toBe(1);
+    await admin("a2");
+    expect(seenCalls()).toBe(2);
+  });
 
   it("reads again when the revision moves, not on the baseline or a repeat", async () => {
     await mount();

@@ -152,6 +152,8 @@ func (a providedRouteAdmin) put(w http.ResponseWriter, r *http.Request, ident st
 		return
 	}
 	src, err := a.g.PutDeploymentSource(r.Context(), in)
+	// Even a failed PUT can have stored the registration before the activation step failed.
+	invalidateAllProvidedRevisions()
 	var invalid *routegateway.InvalidInputError
 	if errors.As(err, &invalid) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "invalid_source", err.Error()})
@@ -487,8 +489,48 @@ func providedRoutesPayload(ctx context.Context, mgr *manager, ident store.Identi
 	return map[string]any{"rev": e.rev}, true
 }
 
-// invalidateProvidedRevision drops one tenant's cached revision after a committed write, so the
-// next tick reads the stored values instead of waiting out providedRevisionTTL.
+// invalidateProvidedRevision drops one tenant's cached revision, and the super_admin's, after a
+// committed write, so the next tick reads the stored values instead of waiting out
+// providedRevisionTTL.
 func invalidateProvidedRevision(tenantID string) {
 	providedRevisionCache.Delete(tenantID)
+	dropProvidedAdminRevs()
+}
+
+// invalidateAllProvidedRevisions is for a write every tenant's view depends on: the deployment
+// source (registered, on, its model list).
+func invalidateAllProvidedRevisions() {
+	providedRevisionCache.Range(func(k, _ any) bool { providedRevisionCache.Delete(k); return true })
+	dropProvidedAdminRevs()
+}
+
+func dropProvidedAdminRevs() {
+	providedAdminRevCache.Range(func(k, _ any) bool { providedAdminRevCache.Delete(k); return true })
+}
+
+// The super_admin's frame, "provided_routes_admin" (ADR 0129 D3 gate 4, #4371): one opaque digest
+// over every tenant's grant, policy and member overrides and the deployment source, so a page of
+// another tenant, the tenant table's grant cells and the source editor read again when any of it
+// moves. `{"rev":"<digest>"}` and nothing else, sent to super_admins only: they can read all of
+// it through the REST views, and nobody else may learn even when it changed.
+//
+// The cache is keyed by the store, so two stores in one process (the tests) never share a digest.
+var providedAdminRevCache sync.Map // store.Store -> *providedRevisionEntry
+
+func providedRoutesAdminPayload(ctx context.Context, mgr *manager, ident store.Identity) (map[string]any, bool) {
+	if ident.Role != "super_admin" || mgr == nil || mgr.store == nil {
+		return nil, false
+	}
+	v, _ := providedAdminRevCache.LoadOrStore(mgr.store, &providedRevisionEntry{})
+	e := v.(*providedRevisionEntry)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.rev == "" || time.Since(e.at) >= providedRevisionTTL {
+		rev, err := mgr.store.ProvidedRouteAdminRevision(ctx, providedroutes.SourceDeployment)
+		if err != nil {
+			return nil, false
+		}
+		e.rev, e.at = rev, time.Now()
+	}
+	return map[string]any{"rev": e.rev}, true
 }

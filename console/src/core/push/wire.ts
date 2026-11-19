@@ -13,7 +13,7 @@ import { useSessionsStore } from "../../features/sessions/store.ts";
 import { applyPushedNotifications } from "../../features/notifications/store.ts";
 import { useWorkItemStore } from "../../features/workitems/store.ts";
 import { useEnginesStore } from "../../features/engines/store.ts";
-import { noteProvidedRev } from "../../features/settings/tenant/providedRevision.ts";
+import { noteProvidedAdminRev, noteProvidedRev } from "../../features/settings/tenant/providedRevision.ts";
 
 /** A live session whose state the user would watch change: mid-turn, or idle by hook with a
  * background task still running. Waiting-on-a-human states are deliberately not counted —
@@ -44,6 +44,8 @@ export function wirePushApply(): () => void {
     onPush("engines", (d) => useEnginesStore.getState().applyPush(d)),
     // Provided routes (ADR 0129 D3 gate 4): a revision only; the Model access pages read again.
     onPush("provided_routes", noteProvidedRev),
+    // The super_admin's digest over every tenant and the source (#4371).
+    onPush("provided_routes_admin", noteProvidedAdminRev),
     // A reconnect signals "the CP may have restarted" — re-read whoami (deployment
     // capabilities included), which no frame carries. Throttled on the callee side.
     onPushConnect(() => void useTenantStore.getState().refreshWhoami()),

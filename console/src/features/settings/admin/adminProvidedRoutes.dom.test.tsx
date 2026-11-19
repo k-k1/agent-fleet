@@ -18,6 +18,7 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 }));
 
 import { AdminProvidedSourceView } from "./adminProvidedRoutes.tsx";
+import { noteProvidedAdminRev, resetProvidedRev } from "../tenant/providedRevision.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 
 const SOURCE_PATH = "api/admin/provided-routes/deployment";
@@ -195,5 +196,25 @@ describe("admin provided-route source", () => {
     await click(save());
     expect(apiJSON).not.toHaveBeenCalled();
     expect(host!.querySelector("[role=alert]")!.textContent).toContain("ほかの人がこの規則を更新");
+  });
+
+  it("reads the source again when the super_admin's digest moves (#4371)", async () => {
+    resetProvidedRev();
+    await mount(<AdminProvidedSourceView />);
+    const reads = () => api.mock.calls.filter((c: unknown[]) => c[0] === SOURCE_PATH).length;
+    expect(reads()).toBe(1);
+    const frame = async (rev: string) => {
+      await act(async () => {
+        noteProvidedAdminRev({ rev });
+      });
+      await flush();
+      await flush();
+    };
+    await frame("a1"); // baseline
+    await frame("a1");
+    expect(reads()).toBe(1);
+    await frame("a2");
+    expect(reads()).toBe(2);
+    resetProvidedRev();
   });
 });

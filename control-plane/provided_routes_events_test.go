@@ -162,7 +162,139 @@ func TestEventsStreamProvidedRoutesNoFrameForMember(t *testing.T) {
 	if n := len(frames["provided_routes"]); n != 0 {
 		t.Fatalf("a member was sent %d provided_routes frames", n)
 	}
+	if n := len(frames["provided_routes_admin"]); n != 0 {
+		t.Fatalf("a member was sent %d provided_routes_admin frames", n)
+	}
 	if len(frames["sessions"]) == 0 {
 		t.Fatal("the stream sent nothing at all: the test proves nothing")
+	}
+}
+
+// The source PUT moves the tenant's own frame (its view says registered / on) and the super_admin's;
+// a write on another tenant moves only the super_admin's; refused and no-op writes move neither.
+// A tenant_admin and a member are sent no super_admin frame (#4371).
+func TestProvidedRoutesFramesFollowSourceAndOtherTenants(t *testing.T) {
+	ctx := context.Background()
+	st, mux, tn, _ := providedRouteTenantFixture(t)
+	other, err := st.CreateTenant(ctx, "other", "Other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := &manager{store: st}
+	admin, err := st.UpsertIdentity(ctx, "root@x", "root-x", "super_admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	boss, err := st.UpsertIdentity(ctx, "boss@x", "boss-x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantRev := func() string {
+		t.Helper()
+		p, ok := providedRoutesPayload(ctx, mgr, admin, tn.ID)
+		if !ok {
+			t.Fatal("no tenant frame")
+		}
+		return p["rev"].(string)
+	}
+	adminRev := func() string {
+		t.Helper()
+		p, ok := providedRoutesAdminPayload(ctx, mgr, admin)
+		if !ok || len(p) != 1 {
+			t.Fatalf("super_admin frame = %v, %v", p, ok)
+		}
+		return p["rev"].(string)
+	}
+	if _, ok := providedRoutesAdminPayload(ctx, mgr, boss); ok {
+		t.Fatal("a non-super_admin got the super_admin frame")
+	}
+	if _, ok := providedRoutesAdminPayload(ctx, mgr, store.Identity{}); ok {
+		t.Fatal("an anonymous subscriber got the super_admin frame")
+	}
+	putSource := func(body string) {
+		t.Helper()
+		if w := routeAdminDo(mux, "PUT", "/api/admin/provided-routes/deployment", "root@x", body); w.Code != 200 {
+			t.Fatalf("source PUT: %d %s", w.Code, w.Body)
+		}
+	}
+	const src = `{"role_arn":"arn:aws:iam::123456789012:role/af-model-route/bedrock","region":"us-east-1","models":["us.anthropic.claude-opus-5-5"]`
+	t0, a0 := tenantRev(), adminRev()
+
+	// A no-op PUT of the registered source changes nothing.
+	putSource(src + `}`)
+	if tenantRev() != t0 || adminRev() != a0 {
+		t.Fatalf("a no-op source PUT moved a frame: tenant %v admin %v", tenantRev() != t0, adminRev() != a0)
+	}
+	// Switching it off moves both, at once.
+	putSource(src + `,"active":false}`)
+	t1, a1 := tenantRev(), adminRev()
+	if t1 == t0 || a1 == a0 {
+		t.Fatalf("switching the source off: tenant moved=%v admin moved=%v", t1 != t0, a1 != a0)
+	}
+	// A change only the operator sees (the role's name) moves the super_admin's frame alone.
+	putSource(`{"role_arn":"arn:aws:iam::123456789012:role/af-model-route/bedrock2","region":"us-east-1","models":["us.anthropic.claude-opus-5-5"],"active":false}`)
+	if tenantRev() != t1 || adminRev() == a1 {
+		t.Fatal("an operator-side-only change must move the super_admin frame and not the tenant's")
+	}
+	a2 := adminRev()
+	// Another tenant's grant moves the super_admin's frame and not this tenant's.
+	if w := routeAdminDo(mux, "PUT", "/api/admin/tenants/"+other.Slug+"/provided-routes/deployment/grant", "root@x", `{"granted":true,"ceiling_micro":50000000}`); w.Code != 200 {
+		t.Fatalf("grant: %d %s", w.Code, w.Body)
+	}
+	if tenantRev() != t1 || adminRev() == a2 {
+		t.Fatal("another tenant's grant: the tenant's frame must hold and the super_admin's move")
+	}
+	a3 := adminRev()
+	// A refused write moves nothing.
+	if w := routeAdminDo(mux, "PUT", "/api/admin/tenants/"+other.Slug+"/provided-routes/deployment/grant", "root@x", `{"granted":true}`); w.Code != 400 {
+		t.Fatalf("refused grant: %d", w.Code)
+	}
+	invalidateAllProvidedRevisions()
+	if adminRev() != a3 {
+		t.Fatal("a refused write moved the super_admin frame")
+	}
+}
+
+// The super_admin's stream gets the digest once, stays silent while it holds and frames again
+// after any tenant's change.
+func TestEventsStreamProvidedRoutesAdminFrame(t *testing.T) {
+	stub := newEventsStub(`{"sessions":[]}`)
+	a, res := eventsTestEnv(t, stub)
+	res.mv.TenantID = res.ws.TenantID
+	admin, err := a.mgr.store.UpsertIdentity(context.Background(), "root@x", "root-x", "super_admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.ident = admin
+	other, err := a.mgr.store.CreateTenant(context.Background(), "other", "Other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ceiling := int64(10_000_000)
+	rec := &syncRecorder{}
+	frames, _ := runStreamUntil(t, a, res, rec, func(ctx context.Context) error {
+		if !waitFramesCtx(ctx, rec, "provided_routes_admin", 1) {
+			return errors.New("no provided_routes_admin snapshot frame")
+		}
+		if err := stub.waitSubscriberTicks(ctx, rec, 1, 2); err != nil {
+			return err
+		}
+		if n := len(rec.frames()["provided_routes_admin"]); n != 1 {
+			return fmt.Errorf("the digest framed again with nothing changed: %d frames", n)
+		}
+		if err := a.mgr.store.SetProvidedRouteGrant(ctx, other.ID, providedroutes.SourceDeployment, true, &ceiling); err != nil {
+			return err
+		}
+		invalidateProvidedRevision(other.ID)
+		if !waitFramesCtx(ctx, rec, "provided_routes_admin", 2) {
+			return errors.New("another tenant's change never reached the super_admin")
+		}
+		return stub.waitSubscriberTicks(ctx, rec, 3, 2)
+	})
+	if got := len(frames["provided_routes_admin"]); got != 2 {
+		t.Fatalf("provided_routes_admin frames = %d, want 2", got)
+	}
+	if got := len(frames["provided_routes"]); got != 1 {
+		t.Fatalf("another tenant's change moved this tenant's frame: %d frames", got)
 	}
 }
