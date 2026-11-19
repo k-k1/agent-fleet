@@ -50,12 +50,12 @@ func (e *Engine) holdsOwner(s Subscription, now time.Time) bool {
 	if s.Builtin == "" || s.Done || e.inflight[s.ID] > 0 || len(s.Pending) > 0 {
 		return true
 	}
-	return e.checksRunning(s)
+	return e.pendingChecksOf(s)
 }
 
-// checksRunning reports whether s tells about a CI result of a PR whose checks the last
+// pendingChecksOf reports whether s tells about a CI result of a PR whose checks the last
 // observation saw still running: that result is on its way and the session is waiting for it.
-func (e *Engine) checksRunning(s Subscription) bool {
+func (e *Engine) pendingChecksOf(s Subscription) bool {
 	if !slices.ContainsFunc(s.Types, func(t string) bool { return t == typeChecksFailed || t == typeChecksFailing }) {
 		return false
 	}

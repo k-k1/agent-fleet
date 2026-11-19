@@ -30,9 +30,12 @@ type PRCursor struct {
 	// Head is the head commit that observation was about and ChecksAt when it last saw the
 	// checks running; a silent cache leaves them as they were, and holdsOwner stops waiting on a
 	// running state older than checksPendingTTL.
-	ChecksPending bool      `json:"checks_pending,omitempty"`
-	Head          string    `json:"head,omitempty"`
-	ChecksAt      time.Time `json:"checks_at,omitempty"`
+	ChecksPending bool   `json:"checks_pending,omitempty"`
+	Head          string `json:"head,omitempty"`
+	// HeadAt is when Head was first seen: the optimistic hold of a head with no check reported
+	// lasts checksUnreportedGrace from it, so a repository without CI is let go.
+	HeadAt   time.Time `json:"head_at,omitempty"`
+	ChecksAt time.Time `json:"checks_at,omitempty"`
 
 	Closed   string `json:"closed,omitempty"`
 	ClosedAt string `json:"closed_at,omitempty"`
@@ -97,8 +100,11 @@ func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now t
 		cur.Closed, cur.ClosedAt = "", ""
 	}
 
-	cur.ChecksPending, cur.ChecksAt = checksRunning(cur, pr, open, now)
+	if pr.Head != "" && pr.Head != cur.Head {
+		cur.HeadAt = now.UTC()
+	}
 	cur.Head = pr.Head
+	cur.ChecksPending, cur.ChecksAt = cursorChecksRunning(cur, pr, open, now)
 	source := sourceOf(subject)
 	ev := func(typ, version, summary string, data []DataItem) {
 		events = append(events, Event{Source: source, Subject: subject, Type: typ, Version: version, Summary: summary, Data: data, At: now.UTC()})
@@ -146,27 +152,35 @@ func shortHead(sha string) string {
 	return sha
 }
 
-// checksPendingTTL bounds how long an unrefreshed "checks running" holds an idle owner.
-const checksPendingTTL = 30 * time.Minute
+const (
+	// checksPendingTTL bounds how long an unrefreshed "checks running" holds an idle owner.
+	checksPendingTTL = 30 * time.Minute
+	// checksRunningRefresh is how often an unchanged running state is re-stamped: a stamp per
+	// one-minute sweep would rewrite the state file every sweep, and the slowest PR cache
+	// answers every five minutes.
+	checksRunningRefresh = 5 * time.Minute
+	// checksUnreportedGrace is how long a head with no check reported yet is taken as running:
+	// the slowest cache (5 minutes) plus the Control Plane's two closing reads. GitHub reports no
+	// checks at all for a commit of a repository without CI, which must not hold for ever.
+	checksUnreportedGrace = 15 * time.Minute
+)
 
-// checksRunning decides whether a result is still on its way for the open PR. Running checks
-// say so. A head not seen before with no check reported yet is taken as running too: a push
-// whose checks are not created yet must not read as settled, or the owner is let go and the
-// result then has nobody to tell. Once running, only finished checks of the same head clear it.
-// The caller's cursor keeps ChecksAt for a minute-by-minute observation so the state is not
-// rewritten on every sweep.
-func checksRunning(cur PRCursor, pr *branchpr.PR, open bool, now time.Time) (bool, time.Time) {
+// cursorChecksRunning decides whether a result is still on its way for the open PR. Running
+// checks say so. A head first seen less than checksUnreportedGrace ago with no check reported
+// counts too: a push whose checks are not created yet must not read as settled, or the owner is
+// let go before the result and nobody is left to tell. Known limits, kept on purpose: a stale
+// cache still showing the old head as finished cannot be told from a settled PR, and a
+// provider-confirmed running head whose read goes empty is released after the grace.
+func cursorChecksRunning(cur PRCursor, pr *branchpr.PR, open bool, now time.Time) (bool, time.Time) {
 	if !open {
 		return false, time.Time{}
 	}
-	running := pr.ChecksPending
-	if !running && pr.Head != "" && pr.Checks == "" {
-		running = pr.Head != cur.Head || cur.ChecksPending
-	}
+	running := pr.ChecksPending ||
+		(pr.Head != "" && pr.Checks == "" && now.Sub(cur.HeadAt) < checksUnreportedGrace)
 	if !running {
 		return false, time.Time{}
 	}
-	if cur.ChecksPending && now.Sub(cur.ChecksAt) < checksPendingTTL/6 {
+	if cur.ChecksPending && now.Sub(cur.ChecksAt) < checksRunningRefresh {
 		return true, cur.ChecksAt
 	}
 	return true, now.UTC()

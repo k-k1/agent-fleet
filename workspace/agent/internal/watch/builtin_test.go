@@ -724,6 +724,14 @@ func TestChecksRunningStateAcrossAPush(t *testing.T) {
 	} else if on, _ := step(c3, branchpr.PR{State: "open", Head: "h2", Checks: "success"}, now.Add(2*time.Minute)); on {
 		t.Fatal("finished checks of the same head did not release it")
 	}
+	// A repository without CI reports no check for ever: held while the head is new, let go after.
+	_, cur = step(nil, branchpr.PR{State: "open", Head: "h3"}, now)
+	if on, _ := step(cur, branchpr.PR{State: "open", Head: "h3"}, now.Add(checksUnreportedGrace-time.Minute)); !on {
+		t.Fatal("released inside the grace")
+	}
+	if on, _ := step(cur, branchpr.PR{State: "open", Head: "h3"}, now.Add(checksUnreportedGrace+time.Minute)); on {
+		t.Fatal("a head that never reports a check is held for ever")
+	}
 	// An unrefreshed observation is not held forever.
 	e, _, c := newTestEngine(&fakeSource{}, &fakeSink{answer: Wait})
 	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
