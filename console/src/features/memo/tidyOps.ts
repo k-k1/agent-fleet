@@ -251,6 +251,7 @@ export type LeftOutWhy =
   | "bad_destination"
   | "already_moved"
   | "duplicate_ref"
+  | "keep_only"
   | "too_many";
 
 export const LEFT_OUT_WORDS: Record<LeftOutWhy, MsgKey> = {
@@ -266,6 +267,7 @@ export const LEFT_OUT_WORDS: Record<LeftOutWhy, MsgKey> = {
   bad_destination: "memo.tidyop_out_dest",
   already_moved: "memo.tidyop_out_moved",
   duplicate_ref: "memo.tidyop_out_duplicate_ref",
+  keep_only: "memo.tidyop_out_keep_only",
   too_many: "memo.tidyop_out_too_many",
 };
 
@@ -323,6 +325,14 @@ export function reviewOps(
   const items: PreviewItem[] = [];
   const leftOut: LeftOut[] = [];
   const named = (op: TidyOp): string[] => (op.op === "merge" ? op.ids : [op.id]);
+  // A note that waits for another, or that another waits for, is only kept (ADR 0137, addendum
+  // 2026-11-19): the Control Plane refuses a merge, a split or a move of it.
+  const linked = new Set<string>();
+  for (const m of [...memos, ...allMemos]) {
+    if (!m.after?.length) continue;
+    linked.add(m.id);
+    m.after.forEach((id) => linked.add(id));
+  }
   const out = (op: TidyOp, why: LeftOutWhy) =>
     leftOut.push({ op, why, notes: named(op).map((id) => byId.get(id)).filter((m): m is Memo => !!m) });
 
@@ -343,6 +353,10 @@ export function reviewOps(
       continue;
     }
     const notes = ids.map((id) => byId.get(id)!);
+    if (op.op !== "keep" && ids.some((id) => linked.has(id))) {
+      out(op, "keep_only");
+      continue;
+    }
     const resultEffect = (): "run" | "approve" => (notes.every((n) => n.state === "pending") ? "run" : "approve");
     if (op.op === "merge") {
       if (op.ids.length < TIDY_LIMITS.mergeMin || op.ids.length > TIDY_LIMITS.mergeMax) {
@@ -450,4 +464,5 @@ export const REFUSAL_WORDS: Record<string, MsgKey> = {
   move_self: "memo.tidyop_code_move_self",
   duplicate_ref: "memo.tidyop_code_duplicate_ref",
   already_moved: "memo.tidyop_code_already_moved",
+  keep_only: "memo.tidyop_code_keep_only",
 };

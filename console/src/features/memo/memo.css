@@ -892,6 +892,49 @@
 .memo-qorigin {
   color: var(--muted);
 }
+/* What a note waits for (ADR 0137, addendum 2026-11-19), and why it came back for approval. */
+.memo-after {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.memo-after-head {
+  font-weight: 600;
+}
+.memo-after-item.a-satisfied {
+  color: var(--ok, var(--muted));
+}
+.memo-after-item.a-failed,
+.memo-after-held {
+  color: var(--warn, var(--accent));
+}
+.memo-after-held {
+  margin-top: 2px;
+  font-size: 11px;
+}
+.memo-release-after {
+  font-size: 11px;
+  color: var(--muted);
+}
+.memo-edit-after {
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin: 0;
+  font-size: 11px;
+}
+.memo-edit-after legend {
+  padding: 0 4px;
+  color: var(--muted);
+}
+.memo-edit-after-item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
 .memo-release {
   margin: 4px 6px;
   padding: 6px 8px;

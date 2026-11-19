@@ -255,3 +255,19 @@ describe("applyBody", () => {
     expect(b).toEqual({ repo: "app", category: "run", items: [{ id: "a", contentHash: "h-a" }, { id: "b", contentHash: "h-b" }], operations: [{ op: "keep", id: "a" }] });
   });
 });
+
+describe("reviewOps and notes that wait for others", () => {
+  it("leaves out a merge, a split or a move of a note that has or is a prerequisite, and keeps a keep", () => {
+    const mine = [note("p"), note("d", { after: ["p"] }), note("x"), note("y")];
+    const why = (ops: Parameters<typeof reviewOps>[0]) => reviewOps(ops, mine, dests, mine).leftOut.map((l) => l.why);
+    expect(why([{ op: "merge", ids: ["p", "x"], text: "p and x" }])).toEqual(["keep_only"]);
+    expect(why([{ op: "split", id: "d", texts: ["one", "two"] }])).toEqual(["keep_only"]);
+    expect(why([{ op: "move", id: "p", to: "listed" }])).toEqual(["keep_only"]);
+    expect(why([{ op: "keep", id: "d" }, { op: "merge", ids: ["x", "y"], text: "x and y" }])).toEqual([]);
+  });
+  it("sees a dependent outside the selection", () => {
+    const mine = [note("p"), note("x")];
+    const all = [...mine, note("d", { after: ["p"] })];
+    expect(reviewOps([{ op: "merge", ids: ["p", "x"], text: "p and x" }], mine, dests, all).leftOut.map((l) => l.why)).toEqual(["keep_only"]);
+  });
+});
