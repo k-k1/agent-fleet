@@ -83,3 +83,17 @@ describe("agy learned limits", () => {
     expect(AGY_USAGE.learned?.({ learned: [{ model: "a", resetsAt: at(1) }] }, NOW)).toEqual([{ id: "a", label: undefined, resetsAt: at(1) }]);
   });
 });
+
+describe("agy usage row without a reset instant", () => {
+  it("omits the reset line for a pool with no resetsAt", async () => {
+    const text = await popover({ ok: true, authed: true, groups: [{ label: "Claude and GPT models", remainingPct: 100 }] });
+    expect(text).toContain("Claude and GPT models (weekly)");
+    expect(text).not.toContain("Resets");
+    expect(text).not.toContain("()");
+  });
+
+  it("still renders the reset line for a pool that has one", async () => {
+    const text = await popover({ ok: true, authed: true, groups });
+    expect(text).toMatch(/Resets 4 days left \(/);
+  });
+});
