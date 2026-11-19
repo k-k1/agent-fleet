@@ -179,7 +179,21 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       }
       return n;
     });
+  // Categories whose folded "Sent N" line is open. Session-only: a fold that reopened by itself would defeat it.
+  const [sentOpenCats, setSentOpenCats] = useState<Record<string, boolean>>({});
   const [editing, setEditing] = useState<string | null>(null);
+  // Drop the open flag of a category with nothing left to fold, or a later started note would arrive already open.
+  useEffect(() => {
+    setSentOpenCats((o) => {
+      const live = new Set<string>();
+      for (const m of memos) if ((m.state === "delivered" || m.state === "superseded") && m.id !== editing) live.add(groupKey(m.repo, m.category));
+      const keys = Object.keys(o).filter((k) => !live.has(k));
+      if (keys.length === 0) return o;
+      const n = { ...o };
+      for (const k of keys) delete n[k];
+      return n;
+    });
+  }, [memos, editing]);
   const [renameCat, setRenameCat] = useState<string | null>(null); // category id being renamed
   const [composerOpen, setComposerOpen] = useState(false);
   // Where the composer writes. null = the section-top composer, whose free-form category
@@ -882,14 +896,63 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   <MemoRepoHead repo={rb.repo} label={repoLabel(rb.repo)} onAdd={() => void addCategory(rb.repo)} />
                 )}
                 {rb.groups.map((g) => {
-                  // A replaced note is read-only and cannot be sent, so a select-all leaves it out.
-                  const ids = g.memos.filter((m) => !isSuperseded(m)).map((m) => m.id);
-                  const allSel = ids.length > 0 && ids.every((id) => sel[id]);
                   const cat = g.catId ? cats.find((c) => c.id === g.catId) : undefined;
                   const dropKey = groupKey(rb.repo, g.category);
                   const collapsed = !!collapsedCats[dropKey];
                   const queue = cat ? queueByCat.get(cat.id) : undefined;
                   const isQueue = !!queue || !!cat?.queue;
+                  // Delivered and replaced notes are history, not work: a queue folds them into one line so the
+                  // waiting ones lead. "Needs a look" (unconfirmed) stays in the list because it wants a decision.
+                  // A note being edited stays visible: folding it would unmount the draft.
+                  const folded = isQueue ? g.memos.filter((m) => (m.state === "delivered" || isSuperseded(m)) && m.id !== editing) : [];
+                  const foldedIds = new Set(folded.map((m) => m.id));
+                  const shown = folded.length > 0 ? g.memos.filter((m) => !foldedIds.has(m.id)) : g.memos;
+                  const sentOpen = !!sentOpenCats[dropKey];
+                  // Open, the list keeps the server order so drag-and-drop matches what is on screen.
+                  const visible = sentOpen ? g.memos : shown;
+                  // A replaced note is read-only and cannot be sent, and a folded one is not on screen,
+                  // so a select-all covers neither.
+                  const ids = visible.filter((m) => !isSuperseded(m)).map((m) => m.id);
+                  const allSel = ids.length > 0 && ids.every((id) => sel[id]);
+                  const renderRow = (m: Memo) => (
+                    <MemoRow
+                      key={m.id}
+                      memo={m}
+                      selected={!!sel[m.id]}
+                      expanded={!!expanded[m.id]}
+                      editing={editing === m.id}
+                      currentCat={g.category}
+                      onToggle={() => toggle(m.id)}
+                      onExpand={() => setExpanded((s) => ({ ...s, [m.id]: true }))}
+                      onCollapse={() => setExpanded((s) => ({ ...s, [m.id]: false }))}
+                      onEdit={() => setEditing(m.id)}
+                      onCancelEdit={() => setEditing(null)}
+                      onSave={(body, category, clearRef) => void saveEdit(m, body, category, clearRef)}
+                      onOpenTidyRuns={
+                        cat && isQueue
+                          ? () => {
+                              setFocusRun(m.tidyRunId ?? "");
+                              setDeliveriesFor(cat.id);
+                            }
+                          : undefined
+                      }
+                      onOpenMenu={(e) => openMemoMenu(e, m)}
+                      onOpenKebab={(e) => openMemoMenuBtn(e, m)}
+                      onDragStart={(e) => {
+                        dragMemo.current = m.id;
+                        // Also carry the memo's text so a drop onto a session composer
+                        // inserts it (a copy — the memo stays queued).
+                        setMemoDragData(e.dataTransfer, m);
+                      }}
+                      onDragEnd={() => {
+                        dragMemo.current = null;
+                        setDropCat(null);
+                      }}
+                      onDropBefore={() => {
+                        if (dragMemo.current) dropMemoOnMemo(dragMemo.current, m.id);
+                      }}
+                    />
+                  );
                   const cards = releaseCards(g.memos);
                   return (
                     <div
@@ -956,7 +1019,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           onChange={() =>
                             setSel((s) => {
                               const n = { ...s };
-                              for (const id of ids) n[id] = !allSel;
+                              // Clearing also drops folded rows that were selected while the fold was open.
+                              const target = allSel ? g.memos.filter((m) => !isSuperseded(m)).map((m) => m.id) : ids;
+                              for (const id of target) n[id] = !allSel;
                               return n;
                             })
                           }
@@ -1090,45 +1155,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
 
                       {!collapsed && (
                         <div className="memo-cat-items">
-                          {g.memos.map((m) => (
-                            <MemoRow
-                              key={m.id}
-                              memo={m}
-                              selected={!!sel[m.id]}
-                              expanded={!!expanded[m.id]}
-                              editing={editing === m.id}
-                              currentCat={g.category}
-                              onToggle={() => toggle(m.id)}
-                              onExpand={() => setExpanded((s) => ({ ...s, [m.id]: true }))}
-                              onCollapse={() => setExpanded((s) => ({ ...s, [m.id]: false }))}
-                              onEdit={() => setEditing(m.id)}
-                              onCancelEdit={() => setEditing(null)}
-                              onSave={(body, category, clearRef) => void saveEdit(m, body, category, clearRef)}
-                              onOpenTidyRuns={
-                                cat && isQueue
-                                  ? () => {
-                                      setFocusRun(m.tidyRunId ?? "");
-                                      setDeliveriesFor(cat.id);
-                                    }
-                                  : undefined
-                              }
-                              onOpenMenu={(e) => openMemoMenu(e, m)}
-                              onOpenKebab={(e) => openMemoMenuBtn(e, m)}
-                              onDragStart={(e) => {
-                                dragMemo.current = m.id;
-                                // Also carry the memo's text so a drop onto a session composer
-                                // inserts it (a copy — the memo stays queued).
-                                setMemoDragData(e.dataTransfer, m);
-                              }}
-                              onDragEnd={() => {
-                                dragMemo.current = null;
-                                setDropCat(null);
-                              }}
-                              onDropBefore={() => {
-                                if (dragMemo.current) dropMemoOnMemo(dragMemo.current, m.id);
-                              }}
-                            />
-                          ))}
+                          {visible.map(renderRow)}
+                          {folded.length > 0 && (
+                            <button
+                              type="button"
+                              className="memo-sent-fold"
+                              aria-expanded={sentOpen}
+                              onClick={() => setSentOpenCats((s) => ({ ...s, [dropKey]: !s[dropKey] }))}
+                            >
+                              <Icon name={sentOpen ? "chevron-down" : "chevron-right"} /> {tr("memo.sent_fold", { count: folded.length })}
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

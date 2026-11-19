@@ -213,6 +213,9 @@ describe("the notices of a tidy", () => {
   });
 });
 
+// Replaced notes sit behind the category's folded line; open it so their rows exist.
+const openFold = async () => click(must(document.querySelector<HTMLElement>(".memo-sent-fold"), "fold line"));
+
 describe("the marks on the memo list", () => {
   it("marks a derived message with its count and origin, and one a tidy moved with where it came from", async () => {
     servedMemos = [
@@ -237,6 +240,7 @@ describe("the marks on the memo list", () => {
     servedMemos = [aMemo({ id: "s", state: "superseded", sentAt: "2026-11-17T01:00:00Z", tidyRunId: "run1", body: "old" })];
     servedRuns = { runs: [aRun()], usedToday: 1, dailyCap: 10 };
     await render();
+    await openFold();
     const row = must(document.querySelector<HTMLElement>(".memo-row"), "row");
     expect(row.textContent).toContain(t("memo.state_superseded"));
     expect(must(row.querySelector<HTMLInputElement>("input[type=checkbox]"), "check").disabled).toBe(true);
@@ -259,6 +263,7 @@ describe("a replaced note", () => {
       aMemo({ id: "p", state: "pending", provenance: "member", position: 1, body: "live" }),
     ];
     await render();
+    await openFold();
     const grip = (text: string) =>
       must([...document.querySelectorAll<HTMLElement>(".memo-row")].find((r) => r.textContent?.includes(text))?.querySelector<HTMLElement>(".memo-grip"), text);
     expect(grip("old").draggable).toBe(false);
@@ -270,6 +275,7 @@ describe("a replaced note", () => {
       aMemo({ id: "p", state: "pending", provenance: "member", position: 1, body: "live" }),
     ];
     await render();
+    await openFold();
     const body = (text: string) => must([...document.querySelectorAll<HTMLElement>(".memo-body")].find((b) => b.textContent?.includes(text)), text);
     await click(body("old"));
     await click(body("old"));

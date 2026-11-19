@@ -215,6 +215,71 @@ describe("the list", () => {
     expect(text[2]).toContain(t("memo.origin_session", { name: "worker-2" }));
   });
 
+  it("folds started and replaced messages into one line that opens on click", async () => {
+    servedMemos = [
+      aMemo({ id: "a", body: "waiting-a", state: "pending", provenance: "member" }),
+      aMemo({ id: "b", body: "started-b", state: "delivered", provenance: "member" }),
+      aMemo({ id: "c", body: "replaced-c", state: "superseded", provenance: "member" }),
+      aMemo({ id: "d", body: "look-d", state: "unconfirmed", provenance: "member" }),
+    ];
+    await render();
+    const body = () => document.querySelector(".memo-cat-items")!.textContent ?? "";
+    expect(body()).toContain("waiting-a");
+    expect(body()).toContain("look-d"); // needs a decision, so it is never folded
+    expect(body()).not.toContain("started-b");
+    expect(body()).not.toContain("replaced-c");
+    const fold = document.querySelector<HTMLButtonElement>(".memo-sent-fold")!;
+    expect(fold.textContent).toContain(t("memo.sent_fold", { count: 2 }));
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => fold.click());
+    expect(body()).toContain("started-b");
+    expect(body()).toContain("replaced-c");
+    await act(async () => document.querySelector<HTMLButtonElement>(".memo-sent-fold")!.click());
+    expect(body()).not.toContain("started-b");
+  });
+
+  it("leaves a folded memo out of select-all, and keeps the open list in server order", async () => {
+    servedMemos = [
+      aMemo({ id: "b", body: "started-b", state: "delivered", provenance: "member", position: 0 }),
+      aMemo({ id: "a", body: "waiting-a", state: "pending", provenance: "member", position: 1 }),
+    ];
+    await render();
+    await act(async () => document.querySelector<HTMLInputElement>(".memo-cat-check")!.click());
+    expect(document.querySelector(".memo-selbar-n")?.textContent).toContain(t("memo.selected_n", { count: 1 }));
+    await act(async () => document.querySelector<HTMLButtonElement>(".memo-sent-fold")!.click());
+    expect(document.querySelector(".memo-sent-fold")!.getAttribute("aria-expanded")).toBe("true");
+    const bodies = [...document.querySelectorAll(".memo-cat-items .memo-body")].map((e) => e.textContent);
+    expect(bodies.findIndex((x) => x?.includes("started-b"))).toBeLessThan(bodies.findIndex((x) => x?.includes("waiting-a")));
+  });
+
+  it("clears a folded memo's selection when select-all is turned off with the fold closed", async () => {
+    servedMemos = [
+      aMemo({ id: "b", body: "started-b", state: "delivered", provenance: "member", position: 0 }),
+      aMemo({ id: "a", body: "waiting-a", state: "pending", provenance: "member", position: 1 }),
+    ];
+    await render();
+    const fold = () => document.querySelector<HTMLButtonElement>(".memo-sent-fold")!;
+    await act(async () => fold().click());
+    await act(async () => document.querySelector<HTMLInputElement>(".memo-cat-check")!.click());
+    expect(document.querySelector(".memo-selbar-n")?.textContent).toContain(t("memo.selected_n", { count: 2 }));
+    await act(async () => fold().click());
+    await act(async () => document.querySelector<HTMLInputElement>(".memo-cat-check")!.click());
+    expect(document.querySelector(".memo-selbar")).toBeNull();
+  });
+
+  it("does not fold a plain category's started memos", async () => {
+    servedCats = [aCat({ queue: true }), aCat({ id: "c2", name: "plain", position: 1 })];
+    servedMemos = [aMemo({ id: "b", category: "plain", state: "delivered", provenance: "member" })];
+    await render();
+    expect(document.querySelector(".memo-sent-fold")).toBeNull();
+  });
+
+  it("shows no fold line when nothing was started", async () => {
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+    await render();
+    expect(document.querySelector(".memo-sent-fold")).toBeNull();
+  });
+
   it("links a live producer session to its view and leaves other producers as plain text", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
     useSessionsStore.setState({ sessions: [{ name: "worker-2" }, { name: "worker-1" }] as never });

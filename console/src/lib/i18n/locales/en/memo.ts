@@ -108,6 +108,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.state_claimed_title": "A session is being started to run it.",
   "memo.state_delivered_title": "Started in a session.",
   "memo.state_unconfirmed_title": "We could not confirm whether the session started. Check the run history.",
+  "memo.sent_fold": "Started or replaced ({count})",
   "memo.state_superseded_title": "Replaced by another memo during tidying.",
   "memo.origin_member": "You",
   "memo.origin_session": "Session {name}",
