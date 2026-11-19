@@ -25,7 +25,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -316,13 +315,22 @@ func requireDockerAndImage(t *testing.T, image string) {
 	}
 }
 
+// repoRoot walks up from the test's working directory (e2e/ under `go test`) to the directory
+// holding control-plane/go.mod. Not runtime.Caller: under -trimpath it names no file on disk.
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
 	}
-	return filepath.Dir(filepath.Dir(file)) // the parent of e2e/ is the repository root
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "control-plane", "go.mod")); err == nil {
+			return d
+		}
+		if filepath.Dir(d) == d {
+			t.Fatalf("repository root not found above %s", dir)
+		}
+	}
 }
 
 // cpBuild is the one CP binary every test of this run starts: scenarios run in parallel,

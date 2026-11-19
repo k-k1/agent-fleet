@@ -162,3 +162,10 @@ copilot の `package.json` が見つからないとき、動いている copilot
 実機（この Workspace）で試走した（数えるだけで消していない）。chromium 1,551 個・8,488 MiB（`du` では 7.3G。
 walkSize は見かけのサイズを数える）、af-work 1 個（Issue の 53 個はすでに手で片付けてあった。残る 68 個のうち
 65 個はセッションがある）、node は v22.23.1 と v22.23.2（alias/lts を除く修正の後。v22.23.3 が残る）、kiro は 2.14.1 と `.lock` が対象になった。
+
+## Correction (2026-11-19)
+
+The premise that "neither Go nor npm can evict by age" is wrong for Go: `cmd/go/internal/cache`
+refreshes an entry's mtime on use (at most hourly) and deletes entries unused for 5 days. The
+manual-only decision for go-build stands for now, but an age-based trim by mtime is possible; see
+[137](137-go-build-cache-trimpath.md) and #4560.

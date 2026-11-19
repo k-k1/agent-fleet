@@ -784,6 +784,11 @@ RUN usermod -l dev -d /home/dev -m node && groupmod -n dev node
 # (non-login shells, the Agent). Go prepends /usr/local/go/bin (go itself) and ~/go/bin
 # (`go install` target).
 ENV PATH="/home/dev/.local/bin:/home/dev/go/bin:/usr/local/go/bin:${PATH}"
+# Go builds in a session share cache entries across worktrees only when the checkout path stays
+# out of the action IDs; -trimpath does that (measured: a second checkout adds ~0 instead of
+# +27..38%, docs/log/137). A GOFLAGS the member exports still wins over this ENV, but one set
+# with `go env -w` does not: the environment variable shadows the go env file.
+ENV GOFLAGS=-trimpath
 # A login shell (bash -l) overwrites PATH in /etc/profile, so prepend in profile.d too, or a
 # terminal may not find claude / go.
 RUN echo 'export PATH="$HOME/.local/bin:$HOME/go/bin:/usr/local/go/bin:$PATH"' > /etc/profile.d/claude-path.sh

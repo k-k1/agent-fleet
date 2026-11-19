@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,15 +17,27 @@ import (
 const HopMargin = 10 * time.Second
 
 // IdleTimeout reads the ALB's idle timeout from the template itself, so raising a budget or
-// lowering the ingress value both turn the caller red. The path is taken from this source
-// file, not the working directory, so every package's tests find the same template.
+// lowering the ingress value both turn the caller red. The template is found by walking up from
+// the test's working directory (the package directory under `go test`), so every package's tests
+// find the same one. Not runtime.Caller: under -trimpath (the workspace default) it returns a
+// module-relative path that names no file on disk.
 func IdleTimeout(t *testing.T) time.Duration {
 	t.Helper()
-	_, self, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate ingresstest source")
+	const rel = "deploy/aws/ecs/cfn/30-ingress.yaml"
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
 	}
-	path := filepath.Join(filepath.Dir(self), "../../../../deploy/aws/ecs/cfn/30-ingress.yaml")
+	path := ""
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, rel)); err == nil {
+			path = filepath.Join(d, rel)
+			break
+		}
+		if filepath.Dir(d) == d {
+			t.Fatalf("%s not found above %s", rel, dir)
+		}
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

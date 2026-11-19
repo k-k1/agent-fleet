@@ -173,3 +173,14 @@ var version = "x"
 		}
 	}
 }
+
+// defaultRoot must find the repository without runtime.Caller, which is useless under -trimpath.
+func TestDefaultRootFindsTheRepositoryFromTheWorkingDirectory(t *testing.T) {
+	want, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultRoot(); got != want {
+		t.Fatalf("defaultRoot() = %q, want %q", got, want)
+	}
+}
