@@ -66,6 +66,8 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
   const [refused, setRefused] = useState<Record<string, MemoTidyBlocked[]>>({});
   const alive = useRef(true);
 
+  const holders = (rows ?? []).filter((d) => d.state === "claimed" || d.state === "sending" || d.state === "open");
+
   const load = useCallback(async () => {
     try {
       const got = readDeliveries(await memoQueueDeliveries(categoryId));
@@ -137,7 +139,11 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
     try {
       const res = await memoQueueFire(categoryId);
       if (res?.error) {
-        if (res.error.code === "memo_queue_no_slot") setSlotsFull(true);
+        if (res.error.code === "memo_queue_no_slot") {
+          setSlotsFull(true);
+          // Show who holds the slots now, not as of the last poll (it pauses while the tab is hidden).
+          void load();
+        }
         toast(errText(res.error) || t("memo.d_fire_failed"), { kind: "warn" });
         return;
       }
@@ -175,22 +181,31 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
           </Button>
         </div>
         {slotsFull && (
-          <div className="ui-field-hint memo-d-slots-full" role="alert">
-            <p>{tr("memo.d_slots_full")}</p>
-            <ul>
-              {(rows ?? [])
-                .filter((d) => d.state === "claimed" || d.state === "sending" || d.state === "open")
-                .map((d) => {
-                  const why = heldWords(d);
-                  return (
-                    <li key={d.id}>
-                      {tr("memo.d_slots_holder", { name: d.session || tr("memo.d_no_session") })}
-                      {": "}
-                      {why ? tr(why) : tr("memo.d_slots_no_reason")}
-                    </li>
-                  );
-                })}
-            </ul>
+          <div className="ui-field-hint memo-d-slots-full">
+            {rows === null ? (
+              <p role="alert">{failed ? tr("memo.d_load_failed") : tr("common.loading")}</p>
+            ) : holders.length === 0 ? (
+              <p role="alert">{tr("memo.d_slots_cleared")}</p>
+            ) : (
+              <>
+                <p role="alert">{tr("memo.d_slots_full")}</p>
+                <ul className="memo-d-list">
+                  {holders.map((d) => {
+                    const why = heldWords(d);
+                    // Only an open run has a reported hold; before that the state itself is the answer.
+                    const stateWord = !why && d.state !== "open" ? deliveryStateKey(d) : null;
+                    return (
+                      <li key={d.id}>
+                        {tr("memo.d_slots_holder", {
+                          name: d.session || tr("memo.d_no_session"),
+                          why: tr(why ?? stateWord ?? "memo.d_slots_no_reason"),
+                        })}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            )}
           </div>
         )}
         {rows === null ? (
