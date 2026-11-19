@@ -452,6 +452,78 @@ describe("deliveries and Run now", () => {
     expect(memoQueueFire).toHaveBeenCalledWith("c1");
   });
 
+  describe("when Run now is refused", () => {
+    const pressFire = async () =>
+      click(
+        must(
+          [...dialog().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(t("memo.d_fire"))),
+          "fire",
+        ),
+      );
+    const noSlot = { error: { code: "memo_queue_no_slot", message: "every slot of this queue is taken (2 of 2)" } };
+    const run = (id: string, state: string, session: string, heldBy = "") => ({
+      id, state, outcome: state === "closed" ? "clean" : "", session, messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "", heldBy,
+    });
+
+    it("names the runs holding the slots and why, and drops the notice on the next press", async () => {
+      servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+      servedDeliveries = [
+        run("d1", "open", "run-1", "person"),
+        run("d2", "open", "run-2"),
+        run("d4", "claimed", ""),
+        run("d3", "closed", "run-0"),
+      ];
+      memoQueueFire.mockResolvedValueOnce(noSlot);
+      await render();
+      await openDeliveries();
+      expect(dialog().querySelector(".memo-d-slots-full")).toBeNull();
+      const reads = memoQueueDeliveries.mock.calls.length;
+      await pressFire();
+      expect(memoQueueDeliveries.mock.calls.length).toBeGreaterThan(reads); // re-read, not the last poll
+      const note = must(dialog().querySelector<HTMLElement>(".memo-d-slots-full"), "slots-full notice");
+      expect(note.textContent).toContain(t("memo.d_slots_full"));
+      expect(note.textContent).toContain(t("memo.d_slots_holder", { name: "run-1", why: t("memo.d_held_person") }));
+      expect(note.textContent).toContain(t("memo.d_slots_holder", { name: "run-2", why: t("memo.d_slots_no_reason") }));
+      expect(note.textContent).toContain(t("memo.d_slots_holder", { name: t("memo.d_no_session"), why: t("memo.d_state_starting") }));
+      expect(note.textContent).not.toContain("run-0");
+      await pressFire(); // the default mock now succeeds
+      expect(dialog().querySelector(".memo-d-slots-full")).toBeNull();
+    });
+
+    it("says the runs have finished when none holds a slot any more", async () => {
+      servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+      servedDeliveries = [run("d3", "closed", "run-0")];
+      memoQueueFire.mockResolvedValueOnce(noSlot);
+      await render();
+      await openDeliveries();
+      await pressFire();
+      const note = must(dialog().querySelector<HTMLElement>(".memo-d-slots-full"), "notice");
+      expect(note.textContent).toBe(t("memo.d_slots_cleared"));
+    });
+
+    it("says the history could not be read instead of an empty list", async () => {
+      servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+      servedDeliveries = { error: { code: "x" } };
+      memoQueueFire.mockResolvedValueOnce(noSlot);
+      await render();
+      await openDeliveries();
+      await pressFire();
+      const note = must(dialog().querySelector<HTMLElement>(".memo-d-slots-full"), "notice");
+      expect(note.textContent).toBe(t("memo.d_load_failed"));
+      expect(note.querySelector("ul")).toBeNull();
+    });
+
+    it("shows no slot notice for another refusal", async () => {
+      servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+      servedDeliveries = [run("d1", "open", "run-1")];
+      memoQueueFire.mockResolvedValueOnce({ error: { code: "memo_queue_member_limit", message: "x" } });
+      await render();
+      await openDeliveries();
+      await pressFire();
+      expect(dialog().querySelector(".memo-d-slots-full")).toBeNull();
+    });
+  });
+
   it("disables Run now with nothing waiting", async () => {
     await render();
     await openDeliveries();
