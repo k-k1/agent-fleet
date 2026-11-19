@@ -48,9 +48,9 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.reorder_memo": "Drag to reorder / move to another category",
   "memo.edit_hint": "Ctrl+Enter to save · Esc to cancel",
   "memo.edit_hint_file": "Ctrl+Enter to save · Esc to cancel · editing the comment on a file reference",
-  "memo.expand_hint": "…click to expand",
   "memo.collapse_hint": "Collapse",
   "memo.collapse_memo": "Collapse this memo",
+  "memo.expand_memo": "Click to expand",
   "memo.edit": "Edit",
   "memo.send_one": "Send this memo",
   "memo.start_from": "Start with this",
@@ -244,6 +244,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   // while the workspace cannot take such notes, and the line a hand-sent message gets.
   "memo.flush_ref": "Work item: {key} ({url})",
   "memo.ref_open_title": "Open {key} in {provider}",
+  "memo.ref_modal_title": "Open {key} in the detail view",
   "memo.ref_remove": "Remove the link",
   "memo.ref_remove_pending": "The link to {key} is removed when you save.",
   "memo.ref_keep": "Keep the link",

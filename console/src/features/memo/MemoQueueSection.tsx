@@ -1313,7 +1313,7 @@ function dedupeGroups(groups: { repo: string; category: string }[]): { repo: str
   });
 }
 
-// One memo row: collapsed to 2 lines, click to expand full text, click again to edit.
+// One memo row: collapsed to 1 line, click to expand full text, click again to edit.
 interface MemoRowProps {
   memo: Memo;
   selected: boolean;
@@ -1432,6 +1432,48 @@ function MemoRow(props: MemoRowProps) {
   const marks = tidyMarks(m);
   const replaced = isSuperseded(m);
   const isLong = (m.body || "").length > 60 || (m.body || "").includes("\n");
+  const metaNode = (stateWords || originWords || marks.length > 0) && (
+    <div className="memo-qmeta">
+      {stateWords && (
+        <span className={"memo-qstate s-" + m.state} title={tr(stateWords.title)}>
+          {tr(stateWords.label)}
+        </span>
+      )}
+      {originWords && (
+        <span className="memo-qorigin">
+          <MemoProducerText k={originWords.key} name={originWords.name ?? ""} link={m.provenance === "workspace" && !!originWords.name} />
+        </span>
+      )}
+      {m.state === "pending" && m.releasedBy === "setting" && (
+        <span className="memo-qorigin" title={tr("memo.accepted_by_setting_title")}>
+          {tr("memo.accepted_by_setting")}
+        </span>
+      )}
+      {releasedByTidy(m) && (
+        <span className="memo-qorigin" title={tr("memo.released_by_tidy_title")}>
+          {tr("memo.released_by_tidy")}
+        </span>
+      )}
+      {marks.map((k) => (
+        <span key={k.key} className="memo-qorigin memo-qtidy" title={k.title ? tr(k.title) : undefined}>
+          {tr(k.key, k.params)}
+        </span>
+      ))}
+      {replaced && props.onOpenTidyRuns && (
+        <button
+          type="button"
+          className="linkish memo-qtidy-link"
+          title={tr("memo.tidy_replaced_title")}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onOpenTidyRuns!();
+          }}
+        >
+          {tr("memo.tidy_replaced_link")}
+        </button>
+      )}
+    </div>
+  );
   return (
     <div
       className={
@@ -1480,14 +1522,22 @@ function MemoRow(props: MemoRowProps) {
         {/* A file note shows its path instead; the server flush ignores a reference on one, and the
             Console never attaches one. The edit view and the approval card still show it, so a
             reference that reached it through the token face is never hidden where it is approved. */}
-        {ref && m.kind !== "file" && <MemoReferenceLink reference={ref} />}
+        {ref && m.kind !== "file" && <MemoReferenceLink reference={ref} trailing={metaNode} inApp />}
         {m.kind === "file" ? (
           <>
             <code className="memo-ref">{m.refPath}</code>
-            {m.body && <div className="memo-comment memo-text">{m.body}</div>}
+            {m.body && (
+              <div className="memo-comment memo-text" title={isLong && !expanded ? tr("memo.expand_memo") : undefined}>
+                {m.body}
+              </div>
+            )}
           </>
         ) : (
-          m.body && <div className="memo-text">{m.body}</div>
+          m.body && (
+            <div className="memo-text" title={isLong && !expanded ? tr("memo.expand_memo") : undefined}>
+              {m.body}
+            </div>
+          )
         )}
         {m.attachments && m.attachments.length > 0 && (
           <div className="memo-row-thumbs" onClick={(e) => e.stopPropagation()}>
@@ -1496,49 +1546,9 @@ function MemoRow(props: MemoRowProps) {
             ))}
           </div>
         )}
-        {(stateWords || originWords || marks.length > 0) && (
-          <div className="memo-qmeta">
-            {stateWords && (
-              <span className={"memo-qstate s-" + m.state} title={tr(stateWords.title)}>
-                {tr(stateWords.label)}
-              </span>
-            )}
-            {originWords && (
-              <span className="memo-qorigin">
-                <MemoProducerText k={originWords.key} name={originWords.name ?? ""} link={m.provenance === "workspace" && !!originWords.name} />
-              </span>
-            )}
-            {m.state === "pending" && m.releasedBy === "setting" && (
-              <span className="memo-qorigin" title={tr("memo.accepted_by_setting_title")}>
-                {tr("memo.accepted_by_setting")}
-              </span>
-            )}
-            {releasedByTidy(m) && (
-              <span className="memo-qorigin" title={tr("memo.released_by_tidy_title")}>
-                {tr("memo.released_by_tidy")}
-              </span>
-            )}
-            {marks.map((k) => (
-              <span key={k.key} className="memo-qorigin memo-qtidy" title={k.title ? tr(k.title) : undefined}>
-                {tr(k.key, k.params)}
-              </span>
-            ))}
-            {replaced && props.onOpenTidyRuns && (
-              <button
-                type="button"
-                className="linkish memo-qtidy-link"
-                title={tr("memo.tidy_replaced_title")}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  props.onOpenTidyRuns!();
-                }}
-              >
-                {tr("memo.tidy_replaced_link")}
-              </button>
-            )}
-          </div>
-        )}
-        {(m.sentAt || isLong) && (
+        {/* Without a reference line to ride on, state and producer stay below the body. */}
+        {!(ref && m.kind !== "file") && metaNode}
+        {((m.sentAt && !stateWords) || (isLong && expanded)) && (
           <div className="memo-meta">
             {m.sentAt && !stateWords && <span className="memo-sent-tag">{tr("memo.sent_tag")}</span>}
             {isLong &&
@@ -1556,9 +1566,7 @@ function MemoRow(props: MemoRowProps) {
                 >
                   <Icon name="fold" /> {tr("memo.collapse_hint")}
                 </button>
-              ) : (
-                <span className="memo-more">{tr("memo.expand_hint")}</span>
-              ))}
+              ) : null)}
           </div>
         )}
       </div>
