@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -335,11 +336,12 @@ func TestStalePIDFile(t *testing.T) {
 			t.Skipf("cannot place the stand-in: %v", err)
 		}
 		cmd := exec.Command("/bin/sh", standIn)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // so cleanup also takes the sleep child
 		if err := cmd.Start(); err != nil {
 			t.Skipf("cannot spawn the stand-in: %v", err)
 		}
 		defer func() {
-			_ = cmd.Process.Kill()
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			_, _ = cmd.Process.Wait()
 		}()
 		// /proc/<pid>/cmdline is empty for the moment the process spends in exec,

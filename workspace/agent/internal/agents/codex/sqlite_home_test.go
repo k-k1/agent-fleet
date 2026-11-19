@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -451,10 +452,12 @@ func TestSQLiteHomeProbes(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("/bin/sh", fake)
+	// Own process group, so cleanup takes the script's sleep child down with the shell.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Skip("cannot start a shell: ", err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); _ = cmd.Wait() })
 	// Between fork and exec the child still carries the parent's command line, so the scan can
 	// miss it for a moment; give it a window instead of a single look.
 	deadline := time.Now().Add(5 * time.Second)
@@ -475,4 +478,25 @@ func TestSQLiteHomeProbes(t *testing.T) {
 func procCmdlineForTest(pid int) string {
 	b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	return strings.ReplaceAll(string(b), "\x00", " ")
+}
+
+// The exe-link branch of isCodexProcess on its own: a native binary whose argv[0] does not say
+// "codex" is still found through /proc/<pid>/exe.
+func TestIsCodexProcessExeBranch(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink("/opt/x/codex", filepath.Join(dir, "exe")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "cmdline"), "worker\x00--flag\x00")
+	if !isCodexProcess(dir) {
+		t.Error("exe -> .../codex with an unrelated cmdline must count as codex")
+	}
+	other := t.TempDir()
+	if err := os.Symlink("/opt/x/other", filepath.Join(other, "exe")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(other, "cmdline"), "worker\x00--flag\x00")
+	if isCodexProcess(other) {
+		t.Error("an unrelated exe and cmdline must not count as codex")
+	}
 }
