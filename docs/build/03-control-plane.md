@@ -409,6 +409,12 @@ Memos you accumulate and send to a session in one go (the tables are
   answer below. `GET
   /api/memo-queues/{categoryId}/deliveries` lists the newest 50. The session row carries
   `queueDelivery`, and a memo the delivery that claimed it (`deliveryId`).
+  `POST /api/memo-queues/{categoryId}/deliveries/{id}/end` (Console only, membership-scoped) ends an
+  open delivery by a person's word: one `MemoTx` moves it `open` to `closed` with outcome `ended`
+  (not `aborted`: the session is not archived) and marks the retire pending with no act mark, so the
+  retire pass stops the session tree. It answers the delivery (200); a delivery already closed is
+  answered unchanged, so a second press or a race with the tick writes nothing; a delivery of another
+  member or queue is `404 not_found`, one still `claimed` / `sending` is `409 delivery_not_open`.
 
 - **Typed references** ([decisions/0137](../decisions/0137-message-queues.md) §4, step 3, Control Plane half). A message
   may carry a pointer to a work item, never a copy of it. This is the contract the Agent (step 3b, built) and the Console

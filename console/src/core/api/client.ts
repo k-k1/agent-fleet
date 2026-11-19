@@ -1506,6 +1506,10 @@ export const memoQueueFire = (categoryId: string): Promise<MemoWriteResult> =>
 // their first turn. 204 without a body on success.
 export const memoQueueResume = (categoryId: string): Promise<MemoWriteResult> =>
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/resume`, "POST", {});
+// Ends an open run from the history: it closes as "ended", frees its slot and its session is
+// stopped (not archived). Idempotent; 409 delivery_not_open for a run with no session yet.
+export const memoQueueDeliveryEnd = (categoryId: string, deliveryId: string): Promise<MemoWriteResult> =>
+  apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries/${encodeURIComponent(deliveryId)}/end`, "POST", {});
 export const memoQueueDeliveries = (categoryId: string): Promise<unknown> =>
   api(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries`);
 // The tidy runs of a category, newest first. Raw like the other reads: readTidyRuns normalises it.
