@@ -3515,7 +3515,10 @@ const LIVE_ROUTES = {
   copilot: { fixedRoutes: ["copilot-login"], usableRoutes: [], chat: true },
   kiro: { fixedRoutes: ["kiro-login"], usableRoutes: [] },
   agy: { fixedRoutes: ["agy-login"], usableRoutes: [] },
-  opencode: { routes: ["bedrock"], usableRoutes: ["opencode-zen"], chat: true },
+  // The opencode.ai billing routes and the member's own llama-server route: the Model credentials
+  // page draws these two cards only when the policy allows one of their routes.
+  opencode: { routes: ["bedrock", "anthropic-api", "opencode-account", "opencode-go", "opencode-zen"], usableRoutes: ["opencode-zen"], chat: true },
+  lcpp: { fixedRoutes: ["member-llamacpp"], usableRoutes: ["member-llamacpp"], chat: true },
 };
 export function liveKinds(snapshot, policy) {
   const access = { noRouteAvailable: false, allOffByOwnSettings: false, someOffByOwnSettings: false, policyConfirmed: true };
