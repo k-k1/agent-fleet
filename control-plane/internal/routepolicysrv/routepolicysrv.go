@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync/atomic"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
@@ -28,6 +30,7 @@ const (
 	codeInvalidRoutePolicy               = "invalid_route_policy"
 	codeRoutePolicyExceedsCeiling        = "route_policy_exceeds_ceiling"
 	codeRoutePolicyEndpointNotApprovable = "route_policy_endpoint_not_approvable"
+	codeRoutePolicyStale                 = "route_policy_stale"
 )
 
 // ceilingState is the operator ceiling this CP started with.
@@ -283,20 +286,56 @@ func readRule(w http.ResponseWriter, r *http.Request, above *routepolicy.Rule) (
 	return in, string(b), true
 }
 
+// ifMatch reads the precondition of a PUT: the layer's own revision as the GET answered it
+// (policyLayerWire.Revision, 0 for a layer never written), written as an If-Match entity tag,
+// quoted or bare. An absent header is no precondition (nil), the unconditional write older
+// callers rely on; anything else that is not a non-negative integer is a 400 rather than a
+// silent downgrade to unconditional, because a caller that sent a precondition meant it.
+func ifMatch(w http.ResponseWriter, r *http.Request) (*int64, bool) {
+	vals := r.Header.Values("If-Match")
+	if len(vals) == 0 {
+		return nil, true
+	}
+	raw := ""
+	if len(vals) == 1 {
+		raw = strings.TrimSpace(vals[0])
+		if q, ok := strings.CutPrefix(raw, `"`); ok {
+			raw, ok = strings.CutSuffix(q, `"`)
+			if !ok {
+				raw = ""
+			}
+		}
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n < 0 || raw != strconv.FormatInt(n, 10) {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request",
+			`invalid If-Match: want one revision as the GET answered it, e.g. "12"`})
+		return nil, false
+	}
+	return &n, true
+}
+
 // putLayer writes one layer and its audit row (D15: before and after) in one transaction: when
-// the record cannot be written, neither is the rule.
-func (a admin) putLayer(w http.ResponseWriter, r *http.Request, ident store.Identity, scope string, t store.Tenant, rule string) {
+// the record cannot be written, neither is the rule. expect, when set, is the revision the editor
+// loaded: the store refuses the write inside its transaction when the row has moved, so two saves
+// based on one revision cannot both land.
+func (a admin) putLayer(w http.ResponseWriter, r *http.Request, ident store.Identity, scope string, t store.Tenant, rule string, expect *int64) {
 	target := t.Slug
 	if scope == store.RoutePolicyDeployment {
 		target = "deployment"
 	}
-	_, after, err := a.cp.Store().PutRoutePolicy(r.Context(), scope, t.ID, rule, ident.ID,
+	cur, after, err := a.cp.Store().PutRoutePolicyIf(r.Context(), scope, t.ID, rule, ident.ID, expect,
 		func(before, after store.RoutePolicyRow) store.AuditLog {
 			return store.AuditLog{ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
 				Action: "route_policy." + scope + ".put", Target: target,
 				Detail:     fmt.Sprintf("before=%s after=%s revision=%d", before.Rule, after.Rule, after.Revision),
 				HTTPStatus: http.StatusOK, At: store.NowTS()}
 		})
+	if errors.Is(err, store.ErrRoutePolicyStale) {
+		writeAPIErr(w, &APIError{http.StatusConflict, codeRoutePolicyStale,
+			fmt.Sprintf("the rule is at revision %d now, not the revision %d it was loaded at; nothing was saved", cur.Revision, *expect)})
+		return
+	}
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -310,9 +349,13 @@ func (a admin) putLayer(w http.ResponseWriter, r *http.Request, ident store.Iden
 }
 
 func (a admin) putDeployment(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	expect, ok := ifMatch(w, r)
+	if !ok {
+		return
+	}
 	c := currentCeiling()
 	if _, rule, ok := readRule(w, r, &c.rule); ok {
-		a.putLayer(w, r, ident, store.RoutePolicyDeployment, store.Tenant{}, rule)
+		a.putLayer(w, r, ident, store.RoutePolicyDeployment, store.Tenant{}, rule, expect)
 	}
 }
 
@@ -331,9 +374,13 @@ func (a admin) putCap(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &APIError{http.StatusNotFound, "no_tenant", "unknown tenant"})
 		return
 	}
+	expect, ok := ifMatch(w, r)
+	if !ok {
+		return
+	}
 	c := currentCeiling()
 	if _, rule, ok := readRule(w, r, &c.rule); ok {
-		a.putLayer(w, r, ident, store.RoutePolicyTenantCap, t, rule)
+		a.putLayer(w, r, ident, store.RoutePolicyTenantCap, t, rule, expect)
 	}
 }
 
@@ -344,6 +391,10 @@ func (a admin) putCap(w http.ResponseWriter, r *http.Request) {
 // the host stored but no longer approved.
 func (a admin) putTenant(w http.ResponseWriter, r *http.Request) {
 	ident, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	expect, ok := ifMatch(w, r)
 	if !ok {
 		return
 	}
@@ -369,7 +420,7 @@ func (a admin) putTenant(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	a.putLayer(w, r, ident, store.RoutePolicyTenant, t, rule)
+	a.putLayer(w, r, ident, store.RoutePolicyTenant, t, rule, expect)
 }
 
 func (a admin) getTenant(w http.ResponseWriter, r *http.Request) {

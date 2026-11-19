@@ -261,4 +261,5 @@ const (
 	errCodeInvalidRoutePolicy               = "invalid_route_policy"
 	errCodeRoutePolicyExceedsCeiling        = "route_policy_exceeds_ceiling"
 	errCodeRoutePolicyEndpointNotApprovable = "route_policy_endpoint_not_approvable"
+	errCodeRoutePolicyStale                 = "route_policy_stale"
 )

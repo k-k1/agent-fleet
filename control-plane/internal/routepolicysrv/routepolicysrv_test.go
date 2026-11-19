@@ -281,9 +281,9 @@ type auditDupStore struct {
 	inner *store.SQL
 }
 
-func (s auditDupStore) PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor string,
+func (s auditDupStore) PutRoutePolicyIf(ctx context.Context, scope, tenantID, rule, actor string, expect *int64,
 	audit func(before, after store.RoutePolicyRow) store.AuditLog) (store.RoutePolicyRow, store.RoutePolicyRow, error) {
-	return s.inner.PutRoutePolicy(ctx, scope, tenantID, rule, actor, func(b, a store.RoutePolicyRow) store.AuditLog {
+	return s.inner.PutRoutePolicyIf(ctx, scope, tenantID, rule, actor, expect, func(b, a store.RoutePolicyRow) store.AuditLog {
 		l := audit(b, a)
 		l.ID = "taken"
 		return l

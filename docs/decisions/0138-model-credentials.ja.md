@@ -800,3 +800,9 @@ pi の経路は ADR 0136 の P1 が入った時点で M0 の水準で入る。�
   - **コンソール。** 上限の確認は同じ規則を写し、迷ったら「超える」と答える。2 つは `endpoint-cases.json`
     （`routePolicyCeiling.test.ts` が書き、`routepolicysrv` の `TestEndpointCoverCases` が再生する）でそろえる。
   - 実在のセルフホストのエンドポイントでは未確認。名前解決の方針と、承認済みエンドポイントでの custom-api は別件（#4271）。
+- 2026-11-20, D16（#4367）: 経路ポリシーの 3 つの PUT（`PUT /api/admin/route-policy`、`PUT /api/admin/tenants/{slug}/route-policy`、
+  `.../route-policy/cap`）は、編集欄が読み込んだ revision を `If-Match` ヘッダで受け取る。値は GET が返す層ごとの
+  `revision`（引用符つきでも数字のみでも可）。古ければ 409 `route_policy_stale` を返し、書き込み・監査記録・revision の
+  採番はしない。不正な値は 400 `bad_request`。ヘッダなしは従来どおりの無条件の書き込み。比較はストアが書き込みと同じ
+  トランザクションの中で、revision 採番の行ロックを取ってから行う（`PutRoutePolicyIf`）ので、同じ revision に基づく
+  2 つの保存が両方とも通ることはない。コンソールはこれを送り、保存前に層を読み直さなくなった。

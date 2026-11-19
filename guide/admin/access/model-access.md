@@ -86,6 +86,8 @@ Routes are shown by name; hover one for the id the Control Plane's refusals use.
 When the Control Plane refuses a restriction, the reason is shown above the button and your edits stay, so you can correct the one value.
 Every save is recorded in the audit log with the restriction before and after ([Read the audit log](../audit.md)).
 
+If someone else saved the same restriction after you opened the page, your save is refused with "Someone else changed this rule after it was loaded", nothing is saved, and your edits stay on screen. Reopen the page to see their version, then redo your change.
+
 ## Let members use your own servers
 
 A member's own llama.cpp, or another server they type in, cannot be vouched for by Agent Fleet: under any restriction it is refused unless its host is approved.
