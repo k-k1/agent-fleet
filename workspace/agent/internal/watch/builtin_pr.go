@@ -25,6 +25,18 @@ type PRCursor struct {
 	// ClosedAt the close time first seen for it: the version of pr.merged / pr.closed. Bitbucket
 	// has no close time and reports its last update instead, which a comment on a merged PR
 	// moves; pinned here, one close is one event.
+	// ChecksPending is whether the last observation of the open PR saw checks still running: a
+	// CI notice is on its way then, which is what keeps an idle owner waiting (Engine.holdsOwner).
+	// Head is the head commit that observation was about and ChecksAt when it last saw the
+	// checks running; a silent cache leaves them as they were, and holdsOwner stops waiting on a
+	// running state older than checksPendingTTL.
+	ChecksPending bool   `json:"checks_pending,omitempty"`
+	Head          string `json:"head,omitempty"`
+	// HeadAt is when Head was first seen: the optimistic hold of a head with no check reported
+	// lasts checksUnreportedGrace from it, so a repository without CI is let go.
+	HeadAt   time.Time `json:"head_at,omitempty"`
+	ChecksAt time.Time `json:"checks_at,omitempty"`
+
 	Closed   string `json:"closed,omitempty"`
 	ClosedAt string `json:"closed_at,omitempty"`
 }
@@ -88,6 +100,11 @@ func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now t
 		cur.Closed, cur.ClosedAt = "", ""
 	}
 
+	if pr.Head != "" && pr.Head != cur.Head {
+		cur.HeadAt = now.UTC()
+	}
+	cur.Head = pr.Head
+	cur.ChecksPending, cur.ChecksAt = cursorChecksRunning(cur, pr, open, now)
 	source := sourceOf(subject)
 	ev := func(typ, version, summary string, data []DataItem) {
 		events = append(events, Event{Source: source, Subject: subject, Type: typ, Version: version, Summary: summary, Data: data, At: now.UTC()})
@@ -133,4 +150,38 @@ func shortHead(sha string) string {
 		return sha[:12]
 	}
 	return sha
+}
+
+const (
+	// checksPendingTTL bounds how long an unrefreshed "checks running" holds an idle owner.
+	checksPendingTTL = 30 * time.Minute
+	// checksRunningRefresh is how often an unchanged running state is re-stamped: a stamp per
+	// one-minute sweep would rewrite the state file every sweep, and the slowest PR cache
+	// answers every five minutes.
+	checksRunningRefresh = 5 * time.Minute
+	// checksUnreportedGrace is how long a head with no check reported yet is taken as running:
+	// the slowest cache (5 minutes) plus the Control Plane's two closing reads. GitHub reports no
+	// checks at all for a commit of a repository without CI, which must not hold for ever.
+	checksUnreportedGrace = 15 * time.Minute
+)
+
+// cursorChecksRunning decides whether a result is still on its way for the open PR. Running
+// checks say so. A head first seen less than checksUnreportedGrace ago with no check reported
+// counts too: a push whose checks are not created yet must not read as settled, or the owner is
+// let go before the result and nobody is left to tell. Known limits, kept on purpose: a stale
+// cache still showing the old head as finished cannot be told from a settled PR, and a
+// provider-confirmed running head whose read goes empty is released after the grace.
+func cursorChecksRunning(cur PRCursor, pr *branchpr.PR, open bool, now time.Time) (bool, time.Time) {
+	if !open {
+		return false, time.Time{}
+	}
+	running := pr.ChecksPending ||
+		(pr.Head != "" && pr.Checks == "" && now.Sub(cur.HeadAt) < checksUnreportedGrace)
+	if !running {
+		return false, time.Time{}
+	}
+	if cur.ChecksPending && now.Sub(cur.ChecksAt) < checksRunningRefresh {
+		return true, cur.ChecksAt
+	}
+	return true, now.UTC()
 }

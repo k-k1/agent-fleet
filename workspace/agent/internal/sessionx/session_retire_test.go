@@ -386,7 +386,7 @@ func TestRowReportsWakersLiveStoppedAndAcrossARestart(t *testing.T) {
 		}
 	}
 	b, err := json.Marshal(wireSession(m, false))
-	if err != nil || !strings.Contains(string(b), `"wakers":{"watches":1,"timers":1,"listed":2}`) || strings.Contains(string(b), "wakersUnknown") {
+	if err != nil || !strings.Contains(string(b), `"wakers":{"watches":1,"timers":1,"listed":2,"holders":[{"id":"`) || !strings.Contains(string(b), `"source":"time","timer":true}]}`) || strings.Contains(string(b), "wakersUnknown") {
 		t.Fatalf("wire = %s %v", b, err)
 	}
 

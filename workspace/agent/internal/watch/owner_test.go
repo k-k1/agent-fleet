@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -21,11 +22,20 @@ func subscribe(t *testing.T, e *Engine, owner, ref string, types ...string) Subs
 	return sub
 }
 
+// checksRunningOn is what the PR observation leaves for a PR whose checks still run.
+func checksRunningOn(e *Engine) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	raw, _ := json.Marshal(PRCursor{ChecksPending: true, ChecksAt: e.now()})
+	e.state.Cursors[bSubject] = raw
+}
+
 func TestWakersCountsWhatCanStartTheOwner(t *testing.T) {
 	sink := &fakeSink{answer: Wait}
 	e, _, c := newTestEngine(&fakeSource{}, sink)
 	subscribe(t, e, "a", "o/r#1", "pr.merged")
 	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	checksRunningOn(e)
 	// A built-in told to the member never puts input into the session.
 	member := ciSpec("a")
 	member.Subject, member.Notify = "fake:o/r#2", NotifyMember
@@ -204,6 +214,7 @@ func TestBarredOwnerGetsNoNewSubscriptionAndNoBuiltin(t *testing.T) {
 	}
 	barred["a"] = false
 	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	checksRunningOn(e)
 	if w, _, _ := e.Wakers("a"); w != 1 {
 		t.Fatalf("a session that is no longer barred gets its built-in again: %d", w)
 	}
@@ -239,6 +250,7 @@ func TestWakersCountsAClaimedCappedBuiltinWhileItIsDelivered(t *testing.T) {
 func TestWakersListedMatchesTheMemberList(t *testing.T) {
 	e, _, _ := newTestEngine(&fakeSource{}, &fakeSink{answer: Wait})
 	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	checksRunningOn(e)
 	check := func(step string, wantListed int) {
 		t.Helper()
 		w, tm, listed, ok := e.WakersListed("a")
@@ -265,4 +277,34 @@ func TestWakersListedMatchesTheMemberList(t *testing.T) {
 		t.Fatalf("a claimed notice is not counted as a waker: %d", w)
 	}
 	check("notice being delivered", 0)
+}
+
+// A built-in with nothing pending and no check running is the feature's standing offer, not
+// something an idle session waits for: it is not counted (the run of a memo queue closes), yet a
+// retire still ends it. Checks still running, or a notice waiting, hold the owner.
+func TestIdleBuiltinIsNotAWakerButRunningChecksAre(t *testing.T) {
+	e, _, _ := newTestEngine(&fakeSource{}, &fakeSink{answer: Wait})
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	count := func() int { w, _, _ := e.Wakers("a"); return w }
+	if n := count(); n != 0 {
+		t.Fatalf("an idle built-in is counted: %d", n)
+	}
+	checksRunningOn(e)
+	if n := count(); n != 1 {
+		t.Fatalf("a built-in of a PR whose checks run is not counted: %d", n)
+	}
+	e.mu.Lock()
+	delete(e.state.Cursors, bSubject)
+	e.mu.Unlock()
+	observe(e, ev("pr.checks.failed", "h1"))
+	if n := count(); n != 1 {
+		t.Fatalf("a built-in with a notice waiting is not counted: %d", n)
+	}
+	e.state.Subs[0].Pending = nil
+	if n := count(); n != 0 {
+		t.Fatalf("settled again: %d", n)
+	}
+	if ended, _, err := e.EndOwner(context.Background(), "a"); err != nil || ended.Builtins != 1 {
+		t.Fatalf("a retire no longer ends the idle built-in: %+v %v", ended, err)
+	}
 }
