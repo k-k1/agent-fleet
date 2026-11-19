@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
@@ -40,7 +42,51 @@ func (e *ecsEC2Runtime) mountHomeLocked(ctx context.Context, p ec2Placement) err
 	if !e.homeStillOn(ctx, p) {
 		return fmt.Errorf("%s on %s: %w", p.volumeID, p.instanceID, errHomeLeftSlot)
 	}
+	if err := e.waitHomeAttached(ctx, p); err != nil {
+		return err
+	}
 	return e.runOnSlot(ctx, p.instanceID, homeMountCommand(p.volumeID, e.homeMountPoint(), slotMountInfo, slotSysBlock))
+}
+
+// homeAttachBudget bounds how long a mount waits for the home's attachment to leave
+// `attaching`. AttachVolume answers while the attachment is still `attaching`, and the
+// guest only sees the NVMe device once it is `attached`; af-mount itself gives up after
+// 30s, so sending it early turns a slow attach into a quarantined healthy slot. A
+// var only so a test can shorten it.
+var homeAttachBudget = 3 * time.Minute
+
+const homeAttachPoll = 2 * time.Second
+
+// waitHomeAttached returns once the home's attachment to p.instanceID reads `attached`.
+// It ends with the Start's context, and with homeAttachBudget: an attachment stuck in
+// `attaching` that long is a broken slot and is reported as a mount failure (the caller
+// quarantines it). A DescribeVolumes failure is not evidence either way, so the mount
+// goes ahead and af-mount decides. An attachment that vanished is errHomeLeftSlot.
+func (e *ecsEC2Runtime) waitHomeAttached(ctx context.Context, p ec2Placement) error {
+	for polls := 0; ; polls++ {
+		out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{p.volumeID}})
+		if err != nil || len(out.Volumes) == 0 {
+			return nil
+		}
+		state, found := ec2types.VolumeAttachmentState(""), false
+		for _, a := range out.Volumes[0].Attachments {
+			if aws.ToString(a.InstanceId) == p.instanceID {
+				state, found = a.State, true
+			}
+		}
+		switch {
+		case !found || state == ec2types.VolumeAttachmentStateDetaching || state == ec2types.VolumeAttachmentStateDetached:
+			return fmt.Errorf("%s on %s: %w", p.volumeID, p.instanceID, errHomeLeftSlot)
+		case state != ec2types.VolumeAttachmentStateAttaching:
+			return nil
+		}
+		if time.Duration(polls)*homeAttachPoll >= homeAttachBudget {
+			return fmt.Errorf("volume %s still attaching to %s after %s", p.volumeID, p.instanceID, homeAttachBudget)
+		}
+		if err := e.sleep(ctx, homeAttachPoll); err != nil {
+			return err
+		}
+	}
 }
 
 // umountHome succeeds only when nothing is left mounted at the home's mountpoint
