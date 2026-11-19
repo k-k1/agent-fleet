@@ -247,3 +247,29 @@ func TestV2WinsWhenBothLayoutsExist(t *testing.T) {
 		t.Errorf("mem_used = %v, want 111 (the v2 value)", s.MemUsed)
 	}
 }
+
+func TestReadLoad1(t *testing.T) {
+	old := procLoadavg
+	t.Cleanup(func() { procLoadavg = old })
+	dir := t.TempDir()
+	for body, want := range map[string]float64{"0.52 0.40 0.30 1/200 999\n": 0.52} {
+		p := filepath.Join(dir, "loadavg")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		procLoadavg = p
+		if got, ok := readLoad1(); !ok || got != want {
+			t.Errorf("readLoad1(%q) = %v,%v want %v", body, got, ok, want)
+		}
+	}
+	procLoadavg = filepath.Join(dir, "missing")
+	if _, ok := readLoad1(); ok {
+		t.Error("missing file must report not-ok")
+	}
+	p := filepath.Join(dir, "bad")
+	_ = os.WriteFile(p, []byte("garbage"), 0o600)
+	procLoadavg = p
+	if _, ok := readLoad1(); ok {
+		t.Error("garbage must report not-ok")
+	}
+}

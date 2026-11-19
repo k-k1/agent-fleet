@@ -283,3 +283,34 @@ func TestMemPressurePassesThroughAsSent(t *testing.T) {
 		t.Errorf("old Agent: mem_pressure = %v, want absent", v)
 	}
 }
+
+// load1 / ncpu are the machine's load; only a Dedicated box is the member's own. Every other
+// runtime must not carry them to the Console, even though the Agent always reports them.
+func TestWorkspaceStatsForwardsLoadOnlyForADedicatedBox(t *testing.T) {
+	srv := statsAgent(t, http.StatusOK, `{"mem_used":1,"load1":1.5,"ncpu":2}`)
+	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	base := agentStatsRuntime{stubRuntime: stubRuntime{endpoint: srv.URL}, state: "running"}
+	running := func() string { return "running" }
+
+	cases := []struct {
+		name string
+		rt   runtime.Runtime
+		want bool
+	}{
+		{"dedicated ec2 box", dedicatedStatsRuntime{base, true}, true},
+		{"profile without a dedicated box", dedicatedStatsRuntime{base, false}, false},
+		{"no machine profile (docker / fargate)", base, false},
+		{"per-user volume on a shared box (kubernetes)", ownHomeStatsRuntime{base}, false},
+	}
+	for _, c := range cases {
+		out := workspaceStats(context.Background(), mgr, c.rt, running)
+		_, l := out["load1"]
+		_, n := out["ncpu"]
+		if l != c.want || n != c.want {
+			t.Errorf("%s: load1 present=%v ncpu present=%v, want %v", c.name, l, n, c.want)
+		}
+		if c.want && out["load1"] != 1.5 {
+			t.Errorf("%s: load1 = %v, want 1.5", c.name, out["load1"])
+		}
+	}
+}

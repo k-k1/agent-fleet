@@ -32,6 +32,7 @@ import { useLayoutButtons } from "./useLayoutButtons.tsx";
 import { usePortPreview } from "./usePortPreview.tsx";
 import { useWsPower } from "./useWsPower.ts";
 import { useWsResourceChips } from "./resourceStats.ts";
+import { wsDiskTile, wsLoadTile } from "./wsTiles.ts";
 import { UsageChipFold } from "./usageFold.tsx";
 import { REMAINING_SOURCES, USAGE_SOURCES } from "./usageSources.ts";
 
@@ -192,6 +193,8 @@ export function WsBar() {
   // container itself survived). Flag the memory tile crit so it's noticed even after
   // usage falls back — a build/agent likely just died. (metrics.go oom_recent.)
   const oomRecent = !!(hasWs && wsStats.oom_recent);
+  const ldTile = hasWs ? wsLoadTile(wsStats) : null;
+  const diskTile = hasWs ? wsDiskTile(wsStats) : null;
   const containerTiles = hasWs && (
     <>
       {tile({
@@ -214,10 +217,33 @@ export function WsBar() {
         level: lvl(wsStats.cpu_pct ?? null, 60, 90),
         title: tr("wsbar.tile.ws_cpu"),
       })}
+      {ldTile &&
+        tile({
+          k: "ld",
+          series: wsHist.map((p) => p.load),
+          max: 1,
+          track: true,
+          value: ldTile.load1.toFixed(2),
+          level: lvl(ldTile.norm, 0.7, 1),
+          title: tr("wsbar.tile.ws_load", { load: ldTile.load1.toFixed(2), ncpu: ldTile.ncpu }),
+        })}
+      {diskTile &&
+        tile({
+          k: "dsk",
+          series: [],
+          max: 1,
+          track: true,
+          value: `${Math.round(diskTile.ratio * 100)}%`,
+          level: diskTile.leveled ? lvl(diskTile.ratio, 0.8, 0.92) : 0,
+          title: tr("wsbar.tile.ws_disk", { disk: `${fg(diskTile.used)}/${fg(diskTile.total)}` }),
+        })}
     </>
   );
 
   // Host (super_admin only): load average (normalized to cores) + total memory fill.
+  // When the workspace reports its own load, the host tiles are the CP host's, not the box
+  // the workspace runs on: label them so an admin cannot mistake one for the other.
+  const hostLabel = ldTile ? "wsbar.tile.cp_host_note" : null;
   const hasHost = hostStats && hostStats.mem_total != null;
   const loadNorm = hasHost && hostStats.ncpu ? hostStats.load1 / hostStats.ncpu : null;
   const hostMemRatio = hasHost ? hostStats.mem_used / hostStats.mem_total : null;
@@ -230,7 +256,9 @@ export function WsBar() {
         track: true,
         value: Number(hostStats.load1).toFixed(2),
         level: lvl(loadNorm, 0.7, 1),
-        title: tr("wsbar.tile.host_load", { load: Number(hostStats.load1).toFixed(2), ncpu: hostStats.ncpu ?? "?" }),
+        title:
+          tr("wsbar.tile.host_load", { load: Number(hostStats.load1).toFixed(2), ncpu: hostStats.ncpu ?? "?" }) +
+          (hostLabel ? "\n" + tr(hostLabel) : ""),
       })}
       {tile({
         k: "mem",
@@ -239,7 +267,9 @@ export function WsBar() {
         track: true,
         value: hostMemRatio != null ? `${Math.round(hostMemRatio * 100)}%` : "",
         level: lvl(hostMemRatio, 0.8, 0.92),
-        title: tr("wsbar.tile.host_mem", { mem: `${fg(hostStats.mem_used)}/${fg(hostStats.mem_total)}` }),
+        title:
+          tr("wsbar.tile.host_mem", { mem: `${fg(hostStats.mem_used)}/${fg(hostStats.mem_total)}` }) +
+          (hostLabel ? "\n" + tr(hostLabel) : ""),
       })}
     </>
   );
@@ -248,6 +278,11 @@ export function WsBar() {
     <>
       {containerTiles}
       {containerTiles && hostTiles && <span className="ws-graph-sep" />}
+      {hostTiles && hostLabel && (
+        <span className="ws-graph-k" title={tr(hostLabel)}>
+          {tr("wsbar.tile.cp_host_label")}
+        </span>
+      )}
       {hostTiles}
     </>
   );

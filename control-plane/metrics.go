@@ -408,8 +408,14 @@ type ownHomeVolumer interface {
 	OwnHomeVolume() bool
 }
 
+// runtimeIsDedicated reports that the box under this workspace belongs to one member.
+func runtimeIsDedicated(rt runtime.Runtime) bool {
+	mp, ok := rt.(machineProfiler)
+	return ok && mp.MachineProfile().Dedicated
+}
+
 func homeIsOwnVolume(rt runtime.Runtime) bool {
-	if mp, ok := rt.(machineProfiler); ok && mp.MachineProfile().Dedicated {
+	if runtimeIsDedicated(rt) {
 		return true
 	}
 	oh, ok := rt.(ownHomeVolumer)
