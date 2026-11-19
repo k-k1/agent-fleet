@@ -164,7 +164,7 @@ func TestUnexpectedDeathIsRecordedEvenAfterEnsureReplacedTheProcess(t *testing.T
 	s.mu.Unlock()
 
 	gen := uniqueGen()
-	s.waitDaemon(cmd, nil, gen)
+	s.waitDaemon(cmd, nil, gen, nil)
 
 	ev := lifecycleFor(gen)
 	if len(ev) != 1 || ev[0].Event != "died" {
@@ -185,7 +185,7 @@ func TestDeliberateStopIsNotRecordedAsDeath(t *testing.T) {
 	s.mu.Unlock()
 
 	gen := uniqueGen()
-	s.waitDaemon(cmd, nil, gen)
+	s.waitDaemon(cmd, nil, gen, nil)
 
 	if ev := lifecycleFor(gen); len(ev) != 0 {
 		t.Fatalf("a teardown we asked for must not be filed as a death, got %+v", ev)

@@ -37,6 +37,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -89,6 +90,11 @@ type Supervisor struct {
 	// turn is admitted to it meanwhile (policy_restart.go).
 	credGen  string
 	securing bool
+	// exited is closed by waitDaemon once the process in cmd is reaped. It stays set after cmd
+	// is cleared, so a stop that began earlier can still be told apart from a live process.
+	exited chan struct{}
+	// lastExit is the unix-nano time of the last owned daemon's exit (log context only).
+	lastExit atomic.Int64
 }
 
 var supervisor = &Supervisor{}
@@ -357,6 +363,16 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	if err := PrepareStart(spec); err != nil {
 		return "", 0, err
 	}
+	// A process this supervisor asked to stop may still be exiting although its listener is
+	// already gone; a replacement must not start beside it. Bounded, and waitDaemon closes
+	// exited before it needs this lock.
+	if s.askedStop != nil && s.exited != nil {
+		select {
+		case <-s.exited:
+		case <-time.After(stopTermWait + stopKillWait):
+			log.Printf("opencode serve: starting while the previous daemon is still exiting")
+		}
+	}
 	cmd := exec.Command(spec.Bin, "serve", "--hostname", host, "--port", port)
 	// Provider keys are env-injected (auth.go) — the same set a TUI launch gets, so
 	// managed turns authenticate identically. Re-keying requires a Restart (§7). The
@@ -400,16 +416,17 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			s.credGen = credGen
 			gen := s.gen
 			s.armIdleWatchLocked()
-			watchExit(cmd)
-			go s.waitDaemon(cmd, tail, gen)
+			exited := make(chan struct{})
+			s.exited = exited
+			go s.waitDaemon(cmd, tail, gen, exited)
 			go s.monitorEvents(addr, gen)
 			log.Printf("opencode serve: started (gen %d, pid %d, %s) in %v, %s", gen, cmd.Process.Pid, addr,
-				time.Since(began).Round(time.Millisecond), sinceOldExit())
+				time.Since(began).Round(time.Millisecond), s.sinceOldExit())
 			recordLifecycle("started", gen, fmt.Sprintf("pid %d", cmd.Process.Pid))
 			return addr, gen, nil
 		}
 	}
-	log.Printf("opencode serve: start attempt gave up after %v (pid %d, %s)", time.Since(began).Round(time.Millisecond), cmd.Process.Pid, sinceOldExit())
+	log.Printf("opencode serve: start attempt gave up after %v (pid %d, %s)", time.Since(began).Round(time.Millisecond), cmd.Process.Pid, s.sinceOldExit())
 	err = tail.Wrap(errors.New("opencode serve が時間内に起動しませんでした / opencode serve did not start in time")) // before the kill adds noise
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait() // reap: waitDaemon is only started on success — Kill alone leaves a zombie
@@ -481,7 +498,7 @@ func (s *Supervisor) stopIfIdle() bool {
 		return false
 	}
 	addr := serveAddr()
-	cmd := s.cmd
+	cmd, exited := s.cmd, s.exited
 	gen := s.gen // read under the lock: the ledger write below runs without it
 	s.stopping, s.up, s.watching = true, false, false
 	s.askedStop = cmd
@@ -493,12 +510,14 @@ func (s *Supervisor) stopIfIdle() bool {
 		log.Printf("opencode serve: zero demand, but this daemon was adopted and cannot be stopped")
 	} else {
 		// Zero demand means no managed turn is running, so no drain is needed.
-		stopProcess(cmd, addr)
+		stopProcess(cmd, exited, addr)
 		log.Printf("opencode serve: stopped (zero demand)")
 		recordLifecycle("stopped", gen, "zero demand")
 	}
 	s.mu.Lock()
-	s.cmd = nil
+	if s.cmd == cmd { // a concurrent Ensure may have installed a replacement meanwhile
+		s.cmd = nil
+	}
 	s.mu.Unlock()
 	// stopping is deliberately NOT cleared, so a late SSE disconnect (monitorEvents) is
 	// not misread as an unintended loss. The next successful Ensure resets it to false.
@@ -532,9 +551,13 @@ func splitServeAddr(addr string) (host, port string, err error) {
 // waitDaemon records WHY the owned daemon exited (§10.2-2: exit recording moved from the
 // pane wrapper's record-exit into the supervisor) and kicks reconciliation for the
 // surviving sessions.
-func (s *Supervisor) waitDaemon(cmd *exec.Cmd, tail *agents.StderrTail, gen int) {
+func (s *Supervisor) waitDaemon(cmd *exec.Cmd, tail *agents.StderrTail, gen int, exited chan struct{}) {
 	err := cmd.Wait()
-	noteExited(cmd)
+	// Before s.mu: an Ensure holding it may be waiting for exactly this.
+	s.lastExit.Store(time.Now().UnixNano())
+	if exited != nil {
+		close(exited)
+	}
 	tail.Release()
 	s.mu.Lock()
 	// Deliberate means WE asked THIS process to end. Comparing gen alone would misread a
@@ -605,7 +628,7 @@ func (s *Supervisor) Restart(reason string) (replaced bool) {
 		return true
 	}
 	addr := serveAddr()
-	cmd := s.cmd
+	cmd, exited := s.cmd, s.exited
 	s.stopping = true
 	s.askedStop = cmd
 	s.mu.Unlock()
@@ -622,7 +645,7 @@ func (s *Supervisor) Restart(reason string) (replaced bool) {
 		s.mu.Unlock()
 		return false
 	}
-	stopProcess(cmd, addr)
+	stopProcess(cmd, exited, addr)
 	s.finishTeardown(cmd)
 	goReconcile("restart: " + reason)
 	ClearPendingRestart()
@@ -657,14 +680,14 @@ func (s *Supervisor) Shutdown() {
 		return
 	}
 	addr := serveAddr()
-	cmd := s.cmd
+	cmd, exited := s.cmd, s.exited
 	s.stopping = true
 	s.up = false
 	s.watching = false
 	s.askedStop = cmd
 	s.mu.Unlock()
 	s.drain(addr)
-	stopProcess(cmd, addr)
+	stopProcess(cmd, exited, addr)
 }
 
 // drainTimeout bounds how long a drain waits for running turns to finish before
@@ -751,52 +774,18 @@ func busyManaged(addr string) []*threadHandle {
 
 func abortSession(addr, ses string) { _ = serveAbort(addr, ses) }
 
-// Process exit is observable through a channel closed by waitDaemon, the only caller of Wait on
-// an owned daemon (cmd.ProcessState would race with it). A listener that stopped answering is
-// not an exit: the old process can still be flushing or holding its database while the next
-// start is already under way, which is what a security restart must not do.
-var exits struct {
-	mu       sync.Mutex
-	ch       map[*exec.Cmd]chan struct{}
-	lastExit time.Time
-}
-
-// watchExit registers cmd before its waitDaemon starts.
-func watchExit(cmd *exec.Cmd) {
-	exits.mu.Lock()
-	defer exits.mu.Unlock()
-	if exits.ch == nil {
-		exits.ch = map[*exec.Cmd]chan struct{}{}
-	}
-	exits.ch[cmd] = make(chan struct{})
-}
-
-// noteExited is called once cmd has been reaped.
-func noteExited(cmd *exec.Cmd) {
-	exits.mu.Lock()
-	defer exits.mu.Unlock()
-	exits.lastExit = time.Now()
-	if ch, ok := exits.ch[cmd]; ok {
-		close(ch)
-		delete(exits.ch, cmd)
-	}
-}
-
-// exitSignal returns a channel closed once cmd is reaped, or nil when cmd is not watched.
-func exitSignal(cmd *exec.Cmd) <-chan struct{} {
-	exits.mu.Lock()
-	defer exits.mu.Unlock()
-	return exits.ch[cmd]
-}
+// Process exit is observable through Supervisor.exited, closed by waitDaemon, the only caller of
+// Wait on an owned daemon (cmd.ProcessState would race with it). A listener that stopped
+// answering is not an exit: the old process can still be flushing or holding its database while
+// the next start is already under way, which a security restart must not allow.
 
 // sinceOldExit is a log fragment only: how long ago an owned daemon last exited.
-func sinceOldExit() string {
-	exits.mu.Lock()
-	defer exits.mu.Unlock()
-	if exits.lastExit.IsZero() {
+func (s *Supervisor) sinceOldExit() string {
+	ns := s.lastExit.Load()
+	if ns == 0 {
 		return "no earlier exit seen"
 	}
-	return "previous daemon exited " + time.Since(exits.lastExit).Round(time.Millisecond).String() + " earlier"
+	return "previous daemon exited " + time.Since(time.Unix(0, ns)).Round(time.Millisecond).String() + " earlier"
 }
 
 // Bounds of the wait for an owned daemon to be gone: SIGTERM, then SIGKILL.
@@ -806,16 +795,16 @@ var (
 )
 
 // stopProcess terminates the owned daemon (SIGTERM → SIGKILL) and returns once the process has
-// exited, so a replacement never starts beside it. Both waits are bounded; a process that
+// exited (exited is the channel waitDaemon closes; callers read it with cmd under s.mu).
+// Ensure also waits for a process in the middle of such a stop before it spawns. Both waits are bounded; a process that
 // survives SIGKILL is logged and left, never waited on forever. For an adopted daemon
 // (cmd == nil) there is no handle to signal — best-effort skip.
-func stopProcess(cmd *exec.Cmd, addr string) {
+func stopProcess(cmd *exec.Cmd, exited <-chan struct{}, addr string) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
-	exited := exitSignal(cmd)
 	if exited == nil {
-		// Not watched (not started by Ensure): the listener is the only signal there is.
+		// No exit channel (not started by Ensure): the listener is the only signal there is.
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 		deadline := time.Now().Add(stopTermWait)
 		for time.Now().Before(deadline) {
@@ -831,7 +820,7 @@ func stopProcess(cmd *exec.Cmd, addr string) {
 	ok, killed := awaitStop(func() { _ = cmd.Process.Signal(syscall.SIGTERM) },
 		func() { _ = cmd.Process.Kill() }, exited, stopTermWait, stopKillWait)
 	if !ok {
-		log.Printf("opencode serve: pid %d still alive %v after SIGKILL; not waiting further", cmd.Process.Pid, time.Since(began).Round(time.Millisecond))
+		log.Printf("opencode serve: pid %d still alive %v after SIGTERM and SIGKILL; not waiting further", cmd.Process.Pid, time.Since(began).Round(time.Millisecond))
 		return
 	}
 	log.Printf("opencode serve: pid %d exited %v after SIGTERM (killed=%v)", cmd.Process.Pid, time.Since(began).Round(time.Millisecond), killed)
@@ -840,6 +829,11 @@ func stopProcess(cmd *exec.Cmd, addr string) {
 // awaitStop sends term, waits termWait for exited, then sends kill and waits killWait more.
 // ok: the process exited; killed: it took a kill to get there.
 func awaitStop(term, kill func(), exited <-chan struct{}, termWait, killWait time.Duration) (ok, killed bool) {
+	select {
+	case <-exited:
+		return true, false // already reaped: nothing to signal
+	default:
+	}
 	term()
 	t := time.NewTimer(termWait)
 	defer t.Stop()
