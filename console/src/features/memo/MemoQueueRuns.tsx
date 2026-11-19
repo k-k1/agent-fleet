@@ -13,7 +13,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { errText } from "../../core/api/client.ts";
 import type { MemoDelivery } from "../../types/memo.ts";
 import { memoQueueDeliveries, memoQueueDeliveryEnd } from "./api.ts";
-import { deliveryStateKey, firstTurnWords, heldWords, readDeliveries } from "./queues.ts";
+import { deliveryStateKey, firstTurnWords, heldNames, heldWords, readDeliveries } from "./queues.ts";
 
 const POLL_MS = 30000;
 const SHOWN = 5;
@@ -129,7 +129,7 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
             </span>
             <span className="memo-run-time">{fmtDateTime(d.createdAt)}</span>
             <span className="memo-d-tag">{tr(d.auto ? "memo.d_auto_short" : "memo.d_manual_short")}</span>
-            {why && <span className="memo-run-held">{tr(why)}</span>}
+            {why && <span className="memo-run-held">{heldNames(d) ? tr("memo.d_held_wakers_named", { names: heldNames(d) }) : tr(why)}</span>}
             {d.state === "open" && openable && (
               <button
                 type="button"

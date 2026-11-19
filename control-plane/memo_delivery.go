@@ -148,6 +148,9 @@ type memoDeliveryDTO struct {
 	HeldBy      string `json:"heldBy"`
 	HeldSession string `json:"heldSession"`
 	HeldSeenAt  string `json:"heldSeenAt"`
+	// HeldWakers names the watches and timers behind a heldBy of wakers (id and source), never
+	// null, empty when none was listed (an older Agent or Control Plane row).
+	HeldWakers []memoHeldWakerDTO `json:"heldWakers"`
 	// Overdue is set once the delivery passed its queue's maxTaskHours, OverdueAt when.
 	Overdue   bool   `json:"overdue"`
 	OverdueAt string `json:"overdueAt"`
@@ -178,6 +181,12 @@ func memoDeliveryToDTO(d store.MemoDelivery) memoDeliveryDTO {
 		CreatedAt: d.CreatedAt, SentAt: d.SentAt, ClosedAt: d.ClosedAt, Overdue: d.OverdueAt != "", OverdueAt: d.OverdueAt, Auto: d.Auto}
 	if d.State == store.DeliveryOpen && d.Reported {
 		out.HeldBy, out.HeldSession, out.HeldSeenAt = d.HeldBy, d.HeldSession, d.HeldSeenAt
+		if d.HeldBy == store.HeldWakers {
+			out.HeldWakers = heldWakersOf(d.HeldDetail)
+		}
+	}
+	if out.HeldWakers == nil {
+		out.HeldWakers = []memoHeldWakerDTO{}
 	}
 	out.Retire = d.RetireResult
 	if d.RetirePending || (d.State == store.DeliveryClosed && d.Outcome == store.DeliveryClean && d.Reported && d.RetireResult == "") {
@@ -930,6 +939,70 @@ func treeHold(tree []*sessionWire, now time.Time) (why, session string, progress
 	return why, session, progress
 }
 
+// Bounds on what a delivery keeps of the watches behind a wakers hold: a run's reason names a
+// few of them, and a source or id longer than this is not a name.
+const (
+	memoHeldDetailMax    = 5
+	memoHeldDetailFieldN = 80
+)
+
+// memoHeldWakerDTO is one watch or timer behind a wakers hold, as the delivery keeps it and the
+// Console shows it. Id and source only: never a watch's payload or subject.
+type memoHeldWakerDTO struct {
+	ID      string `json:"id"`
+	Source  string `json:"source"`
+	Builtin bool   `json:"builtin,omitempty"`
+	Timer   bool   `json:"timer,omitempty"`
+}
+
+func clipRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
+
+// treeHeldDetail is the JSON the delivery keeps for a hold: the holders of the sessions of the
+// tree that are held by wakers, only when wakers is the tree's strongest hold, "" otherwise (and
+// for an Agent that lists none). Another hold outranking wakers must not leave a stale name behind.
+func treeHeldDetail(tree []*sessionWire, why string, now time.Time) string {
+	if why != store.HeldWakers {
+		return ""
+	}
+	var out []memoHeldWakerDTO
+	for _, s := range tree {
+		if s.Archived || s.Wakers == nil || sessionHold(*s, now) != store.HeldWakers {
+			continue
+		}
+		for _, h := range s.Wakers.Holders {
+			if len(out) == memoHeldDetailMax {
+				break
+			}
+			out = append(out, memoHeldWakerDTO{ID: clipRunes(h.ID, memoHeldDetailFieldN), Source: clipRunes(h.Source, memoHeldDetailFieldN), Builtin: h.Builtin, Timer: h.Timer})
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// heldWakersOf reads a stored HeldDetail. Anything that does not parse (an old row, a newer
+// shape) is no names.
+func heldWakersOf(detail string) []memoHeldWakerDTO {
+	out := []memoHeldWakerDTO{}
+	if detail != "" {
+		if err := json.Unmarshal([]byte(detail), &out); err != nil || out == nil {
+			return []memoHeldWakerDTO{}
+		}
+	}
+	return out
+}
+
 // closeIfDoneReported is the rule for an Agent that reports. It keeps what it read with the
 // delivery first, then closes the delivery when nothing has held it on two reads in a row.
 func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMemberView, d store.MemoDelivery, now time.Time) {
@@ -952,7 +1025,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		r.markIdle(ctx, d, 0)
 		return
 	}
-	o := store.DeliveryObservation{Gen: gen, At: v.readAt, HeldBy: why, HeldSession: who, Progress: progress,
+	o := store.DeliveryObservation{Gen: gen, At: v.readAt, HeldBy: why, HeldSession: who, HeldDetail: treeHeldDetail(tree, why, now), Progress: progress,
 		ProgressAt: store.DeliveryTS(now), LimitKinds: treeLimitKinds(tree), ActMark: v.actMark, ActIncarnation: v.actIncarnation}
 	if t := tree[0].QueueTurn; t != nil && t.EndedAt != "" {
 		o.TurnOutcome, o.TurnMs, o.TurnEndedAt = t.Outcome, t.Ms, t.EndedAt

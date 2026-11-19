@@ -902,7 +902,7 @@ describe("why nothing starts", () => {
 describe("the run history of a run that is still open", () => {
   const open = (over: Record<string, unknown>) => ({
     id: "d1", state: "open", outcome: "", session: "run-1", messageIds: ["a"], createdAt: "2026-11-15T01:49:03.708526Z",
-    sentAt: "", closedAt: "", heldBy: "", heldSession: "", heldSeenAt: "", overdue: false, overdueAt: "", auto: false, retire: "",
+    sentAt: "", closedAt: "", heldBy: "", heldSession: "", heldSeenAt: "", heldWakers: [], overdue: false, overdueAt: "", auto: false, retire: "",
     firstTurn: null, ...over,
   });
   const rowText = async (d: Record<string, unknown>) => {
@@ -923,6 +923,16 @@ describe("the run history of a run that is still open", () => {
     const row = await rowText({ heldBy });
     expect(row.querySelector(".memo-d-held")?.textContent).toBe(t("memo.d_held", { why: t(key) }));
     expect(row.textContent).not.toContain(heldBy === "a-reason-from-a-newer-cp" ? heldBy : "\u0000");
+  });
+
+  it("names the watch that holds a run", async () => {
+    const named = await rowText({ heldBy: "wakers", heldWakers: [{ id: "w_42", source: "github" }, { id: "t_1", source: "timer", timer: true }] });
+    expect(named.querySelector(".memo-d-held")?.textContent).toBe(t("memo.d_held", { why: t("memo.d_held_wakers_named", { names: "w_42 (github), t_1 (timer)" }) }));
+  });
+
+  it.each([[undefined], [null], ["x"], [[{ nope: 1 }]], [[]]])("reads a missing or malformed detail (%j) as no names", async (heldWakers) => {
+    const row = await rowText({ heldBy: "wakers", heldWakers });
+    expect(row.querySelector(".memo-d-held")?.textContent).toBe(t("memo.d_held", { why: t("memo.d_held_wakers") }));
   });
 
   it("says nothing of a reason when the Agent has not reported", async () => {

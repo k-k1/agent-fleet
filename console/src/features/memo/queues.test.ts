@@ -9,6 +9,7 @@ import {
   draftOf,
   confirmShown,
   firstTurnWords,
+  heldNames,
   heldWords,
   memoOriginWords,
   memoStateWords,
@@ -205,6 +206,9 @@ describe("why a run is still open and how it went", () => {
     expect(heldWords({ state: "open", heldBy: "from-the-future" })).toBe("memo.d_held_unknown");
     expect(heldWords({ state: "open", heldBy: "" })).toBeNull();
     expect(heldWords({ state: "closed", heldBy: "machine" })).toBeNull();
+    expect(heldNames({ state: "open", heldBy: "wakers", heldWakers: [{ id: "w1", source: "github", timer: false }, { id: "t1", source: "", timer: true }] })).toBe("w1 (github), t1");
+    expect(heldNames({ state: "open", heldBy: "person", heldWakers: [{ id: "w1", source: "x", timer: false }] })).toBe("");
+    expect(heldNames({ state: "closed", heldBy: "wakers", heldWakers: [{ id: "w1", source: "x", timer: false }] })).toBe("");
   });
   it("words the end of the first turn", () => {
     expect(firstTurnWords({ firstTurn: null })).toBeNull();

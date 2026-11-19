@@ -20,6 +20,7 @@ import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import {
   deliveryStateKey,
   firstTurnWords,
+  heldNames,
   heldWords,
   readDeliveries,
   readTidyRuns,
@@ -258,7 +259,7 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                   <span className="memo-d-tag">{tr(d.auto ? "memo.d_auto" : "memo.d_manual")}</span>
                   {why && (
                     <span className="memo-d-held" title={d.heldSeenAt ? tr("memo.d_held_seen", { at: at(d.heldSeenAt) }) : undefined}>
-                      {tr("memo.d_held", { why: tr(why) })}
+                      {tr("memo.d_held", { why: heldNames(d) ? tr("memo.d_held_wakers_named", { names: heldNames(d) }) : tr(why) })}
                     </span>
                   )}
                   {why && d.heldSession && d.heldSession !== d.session && (

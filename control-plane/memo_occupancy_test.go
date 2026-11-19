@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -994,4 +995,47 @@ func TestMemoOccupancyUnreportedAgentLiveCarriedIsNotIdle(t *testing.T) {
 			t.Fatalf("unreported, carried gone: %+v", got)
 		}
 	})
+}
+
+// A run held by a watch keeps the id and source of what holds it, and drops them when the hold
+// ends. The reason names the watch only: nothing but id and source reaches the delivery.
+func TestMemoOccupancyWatchHoldNamesTheWatch(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.setRow(d.Session, map[string]any{"wakers": map[string]any{"watches": 1, "timers": 0, "holders": []any{
+			map[string]any{"id": "w_42", "source": "github", "payload": "secret-token"},
+		}}})
+		e.settleNow(time.Now())
+		got := e.delivery(d.ID)
+		if got.HeldBy != store.HeldWakers {
+			t.Fatalf("held: %+v", got)
+		}
+		dto := memoDeliveryToDTO(got)
+		if len(dto.HeldWakers) != 1 || dto.HeldWakers[0].ID != "w_42" || dto.HeldWakers[0].Source != "github" {
+			t.Fatalf("heldWakers: %+v", dto.HeldWakers)
+		}
+		if strings.Contains(got.HeldDetail, "secret") {
+			t.Fatalf("a payload reached the delivery: %q", got.HeldDetail)
+		}
+		agent.setRow(d.Session, map[string]any{"wakers": nil})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.HeldDetail != "" || len(memoDeliveryToDTO(got).HeldWakers) != 0 {
+			t.Fatalf("name kept after the hold ended: %+v", got)
+		}
+	})
+}
+
+// An old row (empty detail), a garbled one and a hold other than wakers all read as no names,
+// and the field is an empty array, never null.
+func TestMemoHeldWakersToleratesNoDetail(t *testing.T) {
+	for _, c := range []struct{ by, detail string }{
+		{store.HeldWakers, ""}, {store.HeldWakers, "not json"}, {store.HeldWakers, "null"},
+		{store.HeldMachine, `[{"id":"a","source":"b"}]`},
+	} {
+		dto := memoDeliveryToDTO(store.MemoDelivery{State: store.DeliveryOpen, Reported: true, HeldBy: c.by, HeldDetail: c.detail})
+		b, _ := json.Marshal(dto)
+		if dto.HeldWakers == nil || len(dto.HeldWakers) != 0 || !strings.Contains(string(b), `"heldWakers":[]`) {
+			t.Fatalf("%+v: %s", c, b)
+		}
+	}
 }
