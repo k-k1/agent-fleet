@@ -151,7 +151,7 @@ The operator setting cannot be changed here: it is the deployment's configuratio
 **Restrictions for all tenants** has the same editor as a tenant's, with the same **Common choices**. It applies to every tenant.
 
 What the operator setting forbids is marked 🔒. A restriction that would still allow any of it cannot be saved, and the editor says so before you press **Save**, naming what it would allow. **Match the operator setting** narrows the fields to what the operator setting allows, so it can be saved: for example a restriction that only blocks Cursor's login gets the operator setting's destinations as well. It never widens anything and does not save.
-Its **Self-hosted servers that may be approved** name the host patterns a tenant may approve, one row each: an exact host or `*.example.com`. **No limit** leaves the restriction above in charge; **Only these** with no pattern lets no host be approved.
+Its **Self-hosted servers that may be approved** name the host patterns a tenant may approve, one row each: an exact host, `*.example.com`, or a private IP range such as `10.20.0.0/16` or `fd12:3456::/32`. A range matches IP addresses only, never host names, even ones that resolve into it; it must lie inside private address space (a range holding a cloud metadata address such as `fd00::/8` is refused), and host bits must be zero (`10.20.5.7/16` is refused, write `10.20.0.0/16`). A tenant still approves exact hosts one by one. **No limit** leaves the restriction above in charge; **Only these** with no pattern lets no host be approved.
 
 ### Restrict one tenant further, or grant it Amazon Bedrock
 

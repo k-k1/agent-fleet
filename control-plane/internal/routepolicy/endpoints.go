@@ -19,8 +19,8 @@ import (
 // class and destination sets like any route, and its binding pins the host.
 //
 // Approval is an intersection like the policy (D7). Every layer's Endpoints is a list of host
-// patterns: an exact host (an IPv4 or IPv6 literal counts as one) or "*.suffix" for every host
-// under it. The ceiling, the deployment rule and a tenant's cap name the patterns that may be
+// patterns: an exact host (an IPv4 or IPv6 literal counts as one), "*.suffix" for every host
+// under it, or, above the tenant only, a CIDR range of IP literals (endpoints_cidr.go). The ceiling, the deployment rule and a tenant's cap name the patterns that may be
 // approved (nil: this layer does not narrow; the ceiling's nil is "none" when it restricts
 // destinations); the tenant rule names the exact hosts the tenant_admin approves. A host is
 // approved when the tenant rule names it and every layer above lets it through. A host under a
@@ -34,7 +34,8 @@ const (
 
 // NormalizePattern checks one host pattern and returns its canonical spelling: lowercase, without
 // a trailing dot, an internationalised name in its ASCII (punycode) form, an IP address in its
-// canonical text. exact refuses a wildcard (the tenant rule approves hosts, not patterns).
+// canonical text, a CIDR range masked. exact refuses a wildcard or a range (the tenant rule
+// approves hosts, not patterns).
 // Refused: a scheme, port or path; a bare "*" or a "*" anywhere but a leading "*."; a wildcard
 // over an IP address; and a pattern on a public suffix ("*.com", "co.uk", "*.github.io"), which
 // would approve hosts of unrelated owners.
@@ -52,6 +53,21 @@ func NormalizePattern(s string, exact bool) (string, error) {
 	}
 	if strings.Contains(rest, "*") {
 		return "", fmt.Errorf("%q: only a leading \"*.\" is a wildcard", s)
+	}
+	if strings.Contains(rest, "/") {
+		if p, err := netip.ParsePrefix(rest); err == nil {
+			switch {
+			case wild:
+				return "", fmt.Errorf("%q: a wildcard over an IP range", s)
+			case exact:
+				return "", fmt.Errorf("%q is a range; approve exact hosts", s)
+			}
+			n, err := normalizeCIDR(p)
+			if err != nil {
+				return "", fmt.Errorf("%q: %w", s, err)
+			}
+			return n, nil
+		}
 	}
 	h, ip, err := normalizeHost(rest)
 	if err != nil {
@@ -102,16 +118,26 @@ func publicSuffix(h string) bool {
 	return ps == h && (icann || strings.Contains(ps, "."))
 }
 
-// matches reports whether a host is under a pattern. Both are canonical.
+// matches reports whether a host is under a pattern. Both are canonical. A range holds IP
+// literals only.
 func matches(pattern, host string) bool {
+	if p, ok := cidrOf(pattern); ok {
+		a, err := netip.ParseAddr(host)
+		return err == nil && p.Contains(a.Unmap())
+	}
 	if sfx, ok := strings.CutPrefix(pattern, "*."); ok {
 		return strings.HasSuffix(host, "."+sfx)
 	}
 	return pattern == host
 }
 
-// covers reports whether every host under inner is under outer.
+// covers reports whether every host under inner is under outer. A range covers an IP literal or a
+// range inside it, never a host name or a "*." pattern; nothing but a range covers a range.
 func covers(outer, inner string) bool {
+	if ip, ok := cidrOf(inner); ok {
+		op, ok := cidrOf(outer)
+		return ok && op.Bits() <= ip.Bits() && op.Contains(ip.Addr())
+	}
 	if i, ok := strings.CutPrefix(inner, "*."); ok {
 		o, wild := strings.CutPrefix(outer, "*.")
 		return wild && (i == o || strings.HasSuffix(i, "."+o))

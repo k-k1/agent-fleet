@@ -1179,7 +1179,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mpol_servers_none": "None yet.",
   "admin.mpol_endpoints_short": "Self-hosted servers",
   "admin.mpol_endpoints_patterns": "Self-hosted servers that may be approved",
-  "admin.mpol_endpoints_patterns_hint": "An exact host or *.example.com. No port or scheme. A vendor's hosts cannot be named.",
+  "admin.mpol_endpoints_patterns_hint": "An exact host, *.example.com, or a private IP range such as 10.20.0.0/16 (it matches IP addresses, never host names). No port or scheme. A vendor's hosts cannot be named.",
   "admin.mpol_endpoints_hosts": "Self-hosted servers (host names)",
   "admin.mpol_endpoints_hosts_hint": "Exact host names, no wildcard, port or scheme. A host is approved only while every restriction above lets it through, and a vendor's host never is.",
   "admin.mpol_endpoints_all": "No limit",

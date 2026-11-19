@@ -74,3 +74,51 @@ func TestMatchCases(t *testing.T) {
 		}
 	}
 }
+
+// TestEndpointCoverCases holds the Console's endpoint-pattern coverage check to the CP
+// (endpoint-cases.json, written by routePolicyCeiling.test.ts): under a ceiling naming one
+// pattern, a pattern the Console calls covered is accepted on the deployment rule and on a tenant
+// cap, and one it calls uncovered is refused. The Console must never be more permissive than
+// this, and where the CP refuses a pattern as malformed the Console must say "exceeds" too.
+func TestEndpointCoverCases(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(shotFixtureDir, "endpoint-cases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Cases []struct {
+			Ceiling, Pattern string
+			Covered          bool
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(b, &file); err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Cases) == 0 {
+		t.Fatal("endpoint-cases.json has no case")
+	}
+	byCeiling := map[string][]int{}
+	for i, c := range file.Cases {
+		byCeiling[c.Ceiling] = append(byCeiling[c.Ceiling], i)
+	}
+	for ceiling, idx := range byCeiling {
+		_, mux, tn := routePolicyFixture(t, "endpoints="+ceiling)
+		for _, i := range idx {
+			c := file.Cases[i]
+			body, _ := json.Marshal(map[string][]string{"endpoints": {c.Pattern}})
+			for _, path := range []string{"/api/admin/route-policy", "/api/admin/tenants/" + tn.Slug + "/route-policy/cap"} {
+				w := routeAdminDo(mux, "PUT", path, "root-x", string(body))
+				if c.Covered && w.Code != http.StatusOK {
+					t.Errorf("%s: %q under %q: Console says covered, CP answers %d %s", path, c.Pattern, ceiling, w.Code, w.Body)
+				}
+				if !c.Covered && w.Code == http.StatusOK && !mappedHost(c.Pattern) {
+					t.Errorf("%s: %q under %q: Console says exceeds, CP accepts it", path, c.Pattern, ceiling)
+				}
+			}
+		}
+	}
+}
+
+// mappedHost: the CP unmaps an IPv4-mapped IPv6 host to its IPv4 address and so covers what the
+// Console, on the safe side, calls uncovered.
+func mappedHost(p string) bool { return strings.Contains(strings.ToLower(p), "::ffff:") }
