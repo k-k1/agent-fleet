@@ -122,3 +122,13 @@ describe("activity bar badge text", () => {
     }
   }
 });
+
+// The pair test above proves the tokens; this proves the badge actually uses them.
+describe("activity bar badge wiring", () => {
+  const appCss = readFileSync(path.resolve(__dirname, "../app/app.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = (sel: string) => appCss.match(new RegExp(`${sel.replace(/[.]/g, "\\.")}\\s*\\{([^}]*)\\}`))![1];
+  it("base badge text is --on-accent, tone-waiting text is --on-warn", () => {
+    expect(rule(".actbar-badge")).toMatch(/color:\s*var\(--on-accent\)/);
+    expect(rule(".actbar-badge.tone-waiting")).toMatch(/color:\s*var\(--on-warn\)/);
+  });
+});
