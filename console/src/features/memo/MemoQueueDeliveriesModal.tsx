@@ -55,6 +55,9 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
   const toast = useToast();
   const [rows, setRows] = useState<MemoDelivery[] | null>(null);
   const [failed, setFailed] = useState(false);
+  // Set when the last "Run now" was refused because every slot of the category is taken; the
+  // runs holding them are named from the list below (a toast alone is gone before it is read).
+  const [slotsFull, setSlotsFull] = useState(false);
   const [busy, setBusy] = useState(false);
   const [tidy, setTidy] = useState<MemoTidyRunsWire | null>(null);
   const [tidyFailed, setTidyFailed] = useState(false);
@@ -130,9 +133,11 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
   const fire = async () => {
     if (busy || waiting === 0) return;
     setBusy(true);
+    setSlotsFull(false);
     try {
       const res = await memoQueueFire(categoryId);
       if (res?.error) {
+        if (res.error.code === "memo_queue_no_slot") setSlotsFull(true);
         toast(errText(res.error) || t("memo.d_fire_failed"), { kind: "warn" });
         return;
       }
@@ -169,6 +174,25 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
             {tr("memo.d_fire")}
           </Button>
         </div>
+        {slotsFull && (
+          <div className="ui-field-hint memo-d-slots-full" role="alert">
+            <p>{tr("memo.d_slots_full")}</p>
+            <ul>
+              {(rows ?? [])
+                .filter((d) => d.state === "claimed" || d.state === "sending" || d.state === "open")
+                .map((d) => {
+                  const why = heldWords(d);
+                  return (
+                    <li key={d.id}>
+                      {tr("memo.d_slots_holder", { name: d.session || tr("memo.d_no_session") })}
+                      {": "}
+                      {why ? tr(why) : tr("memo.d_slots_no_reason")}
+                    </li>
+                  );
+                })}
+            </ul>
+          </div>
+        )}
         {rows === null ? (
           <p className={failed ? "ui-field-hint" : "muted"} role={failed ? "alert" : undefined}>
             {failed ? tr("memo.d_load_failed") : tr("common.loading")}

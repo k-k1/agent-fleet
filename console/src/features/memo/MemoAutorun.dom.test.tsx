@@ -452,6 +452,30 @@ describe("deliveries and Run now", () => {
     expect(memoQueueFire).toHaveBeenCalledWith("c1");
   });
 
+  it("says on screen why Run now did nothing when the slots are full, naming the holders and their reasons", async () => {
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+    servedDeliveries = [
+      { id: "d1", state: "open", outcome: "", session: "run-1", messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "", heldBy: "person" },
+      { id: "d2", state: "open", outcome: "", session: "run-2", messageIds: ["b"], createdAt: "t2", sentAt: "", closedAt: "", heldBy: "" },
+      { id: "d3", state: "closed", outcome: "clean", session: "run-0", messageIds: ["c"], createdAt: "t0", sentAt: "", closedAt: "t0", heldBy: "" },
+    ];
+    memoQueueFire.mockResolvedValueOnce({ error: { code: "memo_queue_no_slot", message: "every slot of this queue is taken (2 of 2)" } });
+    await render();
+    await openDeliveries();
+    expect(dialog().querySelector(".memo-d-slots-full")).toBeNull();
+    await click(
+      must(
+        [...dialog().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(t("memo.d_fire"))),
+        "fire",
+      ),
+    );
+    const note = must(dialog().querySelector<HTMLElement>(".memo-d-slots-full"), "slots-full notice");
+    expect(note.textContent).toContain(t("memo.d_slots_full"));
+    expect(note.textContent).toContain(t("memo.d_slots_holder", { name: "run-1" }) + ": " + t("memo.d_held_person"));
+    expect(note.textContent).toContain(t("memo.d_slots_holder", { name: "run-2" }) + ": " + t("memo.d_slots_no_reason"));
+    expect(note.textContent).not.toContain("run-0");
+  });
+
   it("disables Run now with nothing waiting", async () => {
     await render();
     await openDeliveries();
