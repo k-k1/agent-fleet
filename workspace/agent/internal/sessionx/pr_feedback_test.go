@@ -863,3 +863,36 @@ func TestPRFeedbackMoreThreadsThanTheOldRecordAtFirstSightIsNews(t *testing.T) {
 		t.Fatalf("sent %v, want the rise since the old record told", f.sent)
 	}
 }
+
+func TestPRFeedbackDropsTheBuiltinsOfAMergedBranchPR(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a")
+	bk := branchpr.Key{Repo: "o/r", Branch: "feature/x"}
+	pr := &branchpr.PR{Number: 9, State: "open", URL: "https://github.com/o/r/pull/9", Head: "h9", NodeID: "PR_9"}
+	failing(pr, "unit")
+	f.prs[bk] = pr
+	rememberBranchAsk("a", "github", bk)
+	f.ticks(3)
+	if len(f.sent) != 1 {
+		t.Fatalf("sent %v, want the CI failure of h9 told once", f.sent)
+	}
+	if w, _, ok := f.e.Wakers("a"); !ok || w == 0 {
+		t.Fatalf("wakers = %d (ok %v): an open PR's CI and review built-ins can start the session", w, ok)
+	}
+	// Merged, and the session stays on the PR's branch, which the branch cache still answers.
+	pr.State, pr.ClosedAt = "merged", "2026-11-04T09:30:00Z"
+	f.tick()
+	if w, tm, ok := f.e.Wakers("a"); !ok || w != 0 || tm != 0 {
+		t.Fatalf("wakers = %d watches, %d timers (ok %v): a merged PR holds a finished task open", w, tm, ok)
+	}
+	// Reopened: the built-ins come back from their retired records.
+	pr.State, pr.ClosedAt = "open", ""
+	f.tick()
+	f.ticks(3)
+	if w, _, ok := f.e.Wakers("a"); !ok || w == 0 {
+		t.Fatalf("wakers = %d (ok %v) after a reopen", w, ok)
+	}
+	if len(f.sent) != 1 {
+		t.Fatalf("sent %v: the reopen told h9's CI failure again", f.sent)
+	}
+}

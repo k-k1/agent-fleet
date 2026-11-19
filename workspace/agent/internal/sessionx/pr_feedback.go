@@ -512,6 +512,9 @@ func prFeedbackTick(now time.Time) {
 	legacy := prLegacy()
 	var ci, review, conflict []watch.BuiltinSpec
 	for _, w := range watched {
+		if prFeedbackSettled(w.pr) {
+			continue
+		}
 		c, r, k := prFeedbackSpecs(w, w.owner().name, legacy, now)
 		ci, review, conflict = append(ci, c), append(review, r), append(conflict, k)
 	}
@@ -526,6 +529,18 @@ func prFeedbackTick(now time.Time) {
 		})
 	}
 	recordWatchedLinkStates(watched)
+}
+
+// prFeedbackSettled reports whether pr is merged or closed. Such a PR has no CI, review or
+// conflict left to tell, and its built-ins must go: a session still on the merged PR's branch
+// keeps reading it from the branch cache, and a live built-in counts as a watch that can wake the
+// owner, so a finished memo-queue run would be held as "waiting on a watch" for good. Retired,
+// the built-ins keep Told and Sent, so a reopen does not tell a CI failure of a head already
+// told. A review or conflict condition that lasts through the merge can be told again: the
+// merge ends the episode on the subject's cursor, which the PR notices share, so a condition
+// still true at the reopen starts a new one.
+func prFeedbackSettled(pr *branchpr.PR) bool {
+	return pr.State == "merged" || pr.State == "closed"
 }
 
 // prFeedbackMemberNotice tells the member what an owner that cannot take a prompt would have been
