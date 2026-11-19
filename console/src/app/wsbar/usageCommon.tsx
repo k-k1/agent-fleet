@@ -121,6 +121,10 @@ export function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
 // reset time is indistinguishable from a real one, which is exactly how a dead capture
 // went unnoticed for hours.
 export function UsageRow({ label, w }: { label: string; w: { pct: number; until: string; when: string; stale?: boolean } }) {
+  // No reset instant (agy prints "Quota available" for an unused pool): omit the line rather
+  // than render the template with empty placeholders. Both halves must be non-blank: an
+  // unparseable instant yields until "" but a pass-through when, which would print "Resets  (—)".
+  const hasReset = !!(w.until.trim() && w.when.trim());
   const level = w.stale ? "" : w.pct >= 95 ? " crit" : w.pct >= 80 ? " warn" : "";
   return (
     <div className="wu-row">
@@ -133,7 +137,7 @@ export function UsageRow({ label, w }: { label: string; w: { pct: number; until:
       <div className="wu-bar">
         <span className={"wu-bar-fill" + level} style={{ width: (w.stale ? 0 : Math.min(100, w.pct)) + "%" }} />
       </div>
-      <div className="wu-reset muted">{t("wsbar.usage.reset_at", { until: w.until, when: w.when })}</div>
+      {hasReset && <div className="wu-reset muted">{t("wsbar.usage.reset_at", { until: w.until, when: w.when })}</div>}
       {w.stale && <div className="wu-note muted">{t("wsbar.usage.stale_note")}</div>}
     </div>
   );
