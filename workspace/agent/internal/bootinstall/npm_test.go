@@ -469,8 +469,13 @@ func TestNPMRepairNoSpaceAfterInstall(t *testing.T) {
 		if rc != ExitNoSpace {
 			t.Fatalf("baked=%v: rc=%d out=%s", baked, rc, f.out)
 		}
-		if strings.Count(f.npmLog(), "install") > 1 {
-			t.Fatalf("baked=%v: the repair ran without space: %q", baked, f.npmLog())
+		// Without a baked copy only the first install ran; with one, no npm run at all.
+		wantRuns := 1
+		if baked {
+			wantRuns = 0
+		}
+		if n := strings.Count(f.npmLog(), "install"); n != wantRuns {
+			t.Fatalf("baked=%v: %d npm runs, want %d: %q", baked, n, wantRuns, f.npmLog())
 		}
 		if _, err := os.Lstat(f.bin("codex")); err == nil {
 			t.Fatalf("baked=%v: broken link kept", baked)

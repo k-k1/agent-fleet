@@ -74,6 +74,8 @@ case "$*" in
   *"view "*) echo 9.9.9; exit 0 ;;
 esac
 echo "$*" >>"$STUB_DIR/npm.calls"
+# One log in call order with the recording Agent's, so a test can pin who ran first.
+echo "npm $*" >>"$STUB_DIR/rec.calls"
 if [ -n "${STUB_NPM_FAIL:-}" ]; then echo "npm error ENOSPC: no space left on device, write" >&2; exit 1; fi
 [ -z "${STUB_NPM_SHRINK:-}" ] || echo 50 >"$STUB_DIR/free"
 case "$*" in *@latest*) if [ -n "${STUB_NPM_RMFAIL:-}" ]; then rm -f "$HOME/.local/bin/codex"; echo "npm error ENOENT" >&2; exit 1; fi ;; esac
@@ -255,10 +257,16 @@ grep -qx 'boot-install npm' "$T/rec.calls" || fail "npm: the lean start did not 
 reset; rm -f "$T/rec.calls"; run_block BI_AGENT_BIN="$T/bin/rec-agent" STUB_FREE_MB=100
 [ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "npm: no every-start verify on a nearly full home: $(cat "$T/rec.calls")"
 reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"; rm -f "$T/rec.calls"
-# shellcheck disable=SC2086
-run_block BI_AGENT_BIN="$T/bin/rec-agent" $ON
-grep -qx 'boot-install npm-verify claude opencode codex copilot' "$T/rec.calls" || fail "npm: no explicit verify after the self-update: $(cat "$T/rec.calls")"
-[ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "npm: the every-start verify did not follow the self-update: $(cat "$T/rec.calls")"
+# The self-update's order is the update, then the explicit verify (it repairs what the update
+# broke, and the update failing is no reason to skip it), then the every-start pass.
+for failing in "" 1; do
+  reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"; rm -f "$T/rec.calls"
+  # shellcheck disable=SC2086
+  run_block BI_AGENT_BIN="$T/bin/rec-agent" STUB_NPM_FAIL=$failing $ON
+  order="$(grep -n 'npm install -g .*@latest\|^boot-install npm-verify' "$T/rec.calls" | sed 's/^[0-9]*://' | tr '\n' '|')"
+  [ "$order" = 'npm install -g --prefix '"$T"'/home/.local @anthropic-ai/claude-code@latest @opencode/cli@latest @openai/codex@latest @github/copilot@latest|boot-install npm-verify claude opencode codex copilot|boot-install npm-verify --present|' ] \
+    || fail "npm: self-update order wrong (failing=${failing:-no}): $order"
+done
 
 # 5. The prune runs before the installs, once.
 reset; run_block
