@@ -14,7 +14,9 @@ type StopBackgroundBusyer interface {
 // LocalTranscriptKeeper is an optional Agent capability: the kind's conversation lives in
 // transcript files the Agent owns (and so the session trash must bundle and remove), rather
 // than in the provider's own store, which the trash never takes. A kind without it keeps
-// none. Resolved by exact registry key; callers normalize an unknown kind to claude first.
+// none. Resolved by exact registry key on the kind as stored, with no claude fallback: an empty
+// or unknown kind keeps none, and normalizing it would make the trash take transcripts it
+// never took.
 type LocalTranscriptKeeper interface {
 	KeepsLocalTranscript() bool
 }
