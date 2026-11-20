@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,7 +63,8 @@ type sessEvent struct {
 	Up    int64  `json:"up,omitempty"`
 	Reg   bool   `json:"reg,omitempty"`   // the wall clock was set around this event
 	Floor int64  `json:"floor,omitempty"` // on Reg: the latest time the earlier clock can have shown
-	Carry int64  `json:"carry,omitempty"` // the newest time of the lines a trim dropped before this one
+	Carry int64  `json:"carry,omitempty"` // the largest Floor of the Reg events a trim dropped before this one
+	Touch int64  `json:"touch,omitempty"` // the newest time of the account events a trim dropped before this one
 }
 
 var (
@@ -76,12 +78,29 @@ var (
 
 func bindSessionsPath() string { return filepath.Join(paths.AgentConfigDir(), bindSessionsFile) }
 
+func bumpSessSeen(v int64) {
+	for {
+		cur := sessSeenMax.Load()
+		if v <= cur || sessSeenMax.CompareAndSwap(cur, v) {
+			return
+		}
+	}
+}
+
+// sessGapBound is the bound of a gap taken because the file cannot be read: every row known to
+// this process, and the current time; when nothing is known, no row is proven at all.
+func sessGapBound(at int64) int64 {
+	seen := sessSeenMax.Load()
+	if seen == 0 {
+		return math.MaxInt64
+	}
+	return max(at, seen, time.Now().UnixMilli())
+}
+
 func readSessEvents() (evs []sessEvent, ok bool) {
 	defer func() {
 		for _, e := range evs {
-			if e.At > sessSeenMax.Load() {
-				sessSeenMax.Store(e.At)
-			}
+			bumpSessSeen(e.At)
 		}
 	}()
 	f, err := os.Open(bindSessionsPath())
@@ -156,10 +175,7 @@ func appendSessEvent(e sessEvent, check func(evs []sessEvent, e *sessEvent) bool
 	evs, ok := readSessEvents()
 	if !ok {
 		log.Printf("opencode: session launch evidence unreadable; session bindings stay unproven")
-		noteSessGap(max(e.At, sessSeenMax.Load(), time.Now().UnixMilli()))
-		return
-	}
-	if check != nil && !check(evs, &e) {
+		noteSessGap(sessGapBound(e.At))
 		return
 	}
 	if e.Boot == "" {
@@ -174,12 +190,16 @@ func appendSessEvent(e sessEvent, check func(evs []sessEvent, e *sessEvent) bool
 			}
 		}
 	}
-	for _, o := range evs { // an event stamped at or after e shows the clock going back
-		if o.At >= e.At {
+	for _, o := range evs { // an event stamped after e shows the clock going back
+		if o.At > e.At {
 			e.Reg = true
 			e.Floor = max(e.Floor, o.At)
 		}
 	}
+	if check != nil && !check(evs, &e) {
+		return
+	}
+	bumpSessSeen(e.At)
 	line, _ := json.Marshal(e)
 	line = append(line, '\n')
 	p := bindSessionsPath()
@@ -207,26 +227,47 @@ func appendSessEvent(e sessEvent, check func(evs []sessEvent, e *sessEvent) bool
 				newest[ev.Session] = i
 			}
 		}
+		// A session whose newest row is a month old has no process worth proving; and a hard cap
+		// keeps the file bounded however many sessions came and went.
+		old := time.Now().Add(-30 * 24 * time.Hour).UnixMilli()
+		var rows []int
 		for _, i := range newest {
+			if evs[i].At >= old {
+				rows = append(rows, i)
+			}
+		}
+		sort.Ints(rows)
+		if len(rows) > bindSessionsKeep {
+			rows = rows[len(rows)-bindSessionsKeep:]
+		}
+		for _, i := range rows {
 			keepIdx[i] = true
 		}
 		for i := len(evs) - bindSessionsKeep/2; i < len(evs); i++ {
 			keepIdx[i] = true
 		}
 		var kept []sessEvent
-		carry := int64(0)
+		carry, touch := int64(0), int64(0)
 		for i, ev := range evs {
 			if keepIdx[i] {
 				kept = append(kept, ev)
 				continue
 			}
-			carry = max(carry, ev.Carry, ev.At)
+			carry = max(carry, ev.Carry)
+			touch = max(touch, ev.Touch)
 			if ev.Reg {
 				carry = max(carry, ev.Floor)
 			}
+			if ev.Kind == evSessAcct {
+				touch = max(touch, ev.At)
+				if ev.Reg {
+					touch = max(touch, ev.Floor)
+				}
+			}
 		}
-		if carry > 0 && len(kept) > 0 {
+		if len(kept) > 0 {
 			kept[0].Carry = max(kept[0].Carry, carry)
+			kept[0].Touch = max(kept[0].Touch, touch)
 		}
 		evs = kept
 		cut := 0
@@ -276,6 +317,11 @@ func noteSessionAccount(at time.Time) {
 	appendSessEvent(e, nil)
 }
 
+// oauthFlowHold is how long before an observation a sign-in flow may have been started and still
+// complete on its own: the user approves on the Console, and opencode saves the credential without
+// any call from the Agent. An observation of "signed out" that close behind a touch proves nothing.
+const oauthFlowHold = 30 * time.Minute
+
 func stampedSessEvent(at time.Time) sessEvent {
 	boot, up, _ := clockStamp()
 	return sessEvent{At: at.UnixMilli(), Boot: boot, Up: up}
@@ -310,7 +356,7 @@ func recordSessionProcess(at time.Time, name, proc string, env []string, st oaut
 	appendSessEvent(e, func(evs []sessEvent, e *sessEvent) bool {
 		gaps, gok := readSessGapsLocked()
 		if !gok {
-			noteSessGap(max(e.At, sessSeenMax.Load(), time.Now().UnixMilli()))
+			noteSessGap(sessGapBound(e.At))
 			return false
 		}
 		if proc != procPane {
@@ -323,7 +369,7 @@ func recordSessionProcess(at time.Time, name, proc string, env []string, st oaut
 							same = false
 						}
 					}
-					return !same
+					return !same || e.Reg // a clock anomaly is a boundary of its own
 				}
 			}
 			return true
@@ -338,7 +384,8 @@ func recordSessionProcess(at time.Time, name, proc string, env []string, st oaut
 			}
 		}
 		for _, o := range evs {
-			if o.Carry >= readAt.UnixMilli() || o.Kind == evSessAcct && (o.Reg || o.At >= readAt.UnixMilli()) {
+			if o.Touch > 0 && o.Touch >= readAt.UnixMilli()-oauthFlowHold.Milliseconds() ||
+				o.Kind == evSessAcct && (o.Reg || o.At >= readAt.UnixMilli()-oauthFlowHold.Milliseconds()) {
 				out = false
 			}
 		}
@@ -436,7 +483,7 @@ func paneBinding(evs []sessEvent, idx int, route string, lo, hi int64) string {
 		return ""
 	}
 	for _, e := range evs {
-		if ev.At <= e.Carry {
+		if ev.At <= e.Touch {
 			return "" // an account touch after this launch may have been dropped
 		}
 	}

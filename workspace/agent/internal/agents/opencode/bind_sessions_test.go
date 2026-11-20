@@ -245,10 +245,11 @@ func TestSharedResumeAfterGapIsABoundary(t *testing.T) {
 // The trim keeps a running pane's only row, and what it dropped is carried as a floor.
 func TestSessionTrimKeepsNewestRowPerSession(t *testing.T) {
 	bindT(t)
-	onPane("old", 1000, "k", 500)
+	base := time.Now().UnixMilli() - 3_600_000 // within the month a row stays worth keeping
+	onPane("old", base, "k", base-500)
 	for i := 0; i < bindSessionsKeep+10; i++ {
-		onShared("s", int64(2000+i*10))
-		recordSessionProcess(atMs(int64(2005+i*10)), "s", procRoute, nil, oauthState{}, time.Time{})
+		onShared("s", base+2000+int64(i*10))
+		recordSessionProcess(atMs(base+2005+int64(i*10)), "s", procRoute, nil, oauthState{}, time.Time{})
 	}
 	evs, _ := readSessEvents()
 	found := false
@@ -261,8 +262,74 @@ func TestSessionTrimKeepsNewestRowPerSession(t *testing.T) {
 	if len(evs) > bindSessionsKeep+1 {
 		t.Errorf("file holds %d rows", len(evs))
 	}
-	// The kept pane row predates what was dropped: a touch among it could be gone, so it proves nothing.
-	if got := zen(bindFor("old"), true, 1500); got != "" {
-		t.Errorf("pane call after a trim = %q, want none", got)
+	// No account touch was dropped, so the kept pane row still proves what it did.
+	if got := zen(bindFor("old"), true, base+1500); got == "" {
+		t.Errorf("a kept pane row lost its binding to a trim that dropped no touch")
+	}
+}
+
+// A flow started before the observation may complete on its own after it (the user approves on the
+// Console while the Agent polls nothing): an observation shortly after a touch proves nothing, one
+// long after it does.
+func TestPaneObservationNeedsQuietSinceTouch(t *testing.T) {
+	bindT(t)
+	hold := oauthFlowHold.Milliseconds()
+	stampUp = 1000
+	noteSessionAccount(atMs(1000))
+	onPane("a", 2000+hold, "k", 1500)
+	if got := zen(bindFor("a"), true, 3000+hold); got != "" {
+		t.Errorf("observed soon after a flow started = %q, want none", got)
+	}
+	onPane("b", 2000+2*hold, "k", 1500+2*hold)
+	if got := zen(bindFor("b"), true, 3000+2*hold); got == "" {
+		t.Error("an observation long after the last touch proves the account out")
+	}
+}
+
+// Two unrelated launches in the same millisecond are not a clock change: earlier calls of other
+// sessions stay bound.
+func TestSessionSameMillisecondIsNotAClockChange(t *testing.T) {
+	bindT(t)
+	start(500, 1, "K")
+	acct(600, acctOut, 1)
+	onShared("s", 1000)
+	onShared("x", 5000)
+	onShared("y", 5000)
+	if got, want := zen(bindFor("s"), true, 2000), credbind.Key(opencodeKeyEnv, "K"); got != want {
+		t.Errorf("call = %q, want %q", got, want)
+	}
+}
+
+// The watermark follows appended rows, so a gap taken after the clock went back still reaches them.
+func TestSessionGapReachesAppendedRows(t *testing.T) {
+	bindT(t)
+	onShared("s", 7000)
+	if got := sessSeenMax.Load(); got < 7000 {
+		t.Fatalf("watermark = %d after appending a row at 7000", got)
+	}
+	sessSeenMax.Store(0) // a restart: nothing known, and the file unreadable
+	if err := os.WriteFile(bindSessionsPath(), []byte("{bad\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	onShared("t", 3000)
+	gaps, _ := readSessGaps()
+	if len(gaps) == 0 || gaps[len(gaps)-1] < 7000 {
+		t.Errorf("gaps = %v, want a bound reaching every earlier row", gaps)
+	}
+}
+
+// A shared restart of one session stamped before another session's row is a clock anomaly even
+// though its own newest row has the same kind: it is written, not dropped as a duplicate.
+func TestSharedDuplicateStillChecksTheClock(t *testing.T) {
+	bindT(t)
+	start(500, 1, "K")
+	acct(600, acctOut, 1)
+	onShared("x", 1000)
+	onShared("s", 2000)
+	onPane("s", 7000, "k", 6500)
+	stampUp = 7100
+	recordSessionProcess(atMs(4000), "x", procShared, nil, oauthState{}, time.Time{})
+	if got := zen(bindFor("s"), true, 5000); got != "" {
+		t.Errorf("call = %q, want none", got)
 	}
 }
