@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behaviour of entrypoint.sh's lean boot-install blocks (agy, cursor; rtk is workspace-agent's, see below) when a step fails
+# Behaviour of entrypoint.sh's lean boot-install blocks (agy, cursor; rtk and the npm CLIs are workspace-agent's, see below) when a step fails
 # part-way, e.g. ENOSPC on a full home. Only the section from `VJ=` to the Kiro comment is sliced
 # out and run, against stub curl / tar / install / sha256sum / dpkg and a fake home.
 #
@@ -17,15 +17,13 @@ mkdir -p "$T/bin" "$T/home/.local/bin" "$T/tmp"
 
 BLOCK="$T/block.sh"
 awk '/^VJ=\/usr/{on=1} /^# Kiro CLI \(kind/{on=0} on' "$ENTRY" | sed "s#^VJ=.*#VJ=$T/versions.json#" > "$BLOCK"
-for needle in 'AGY_NEED' 'CUR_NEED' 'boot-install rtk'; do
+for needle in 'AGY_NEED' 'CUR_NEED' 'boot-install rtk' 'npm_wa'; do
   grep -q -- "$needle" "$BLOCK" || { echo "FAIL: slice lacks $needle; fix the awk range" >&2; exit 1; }
 done
 
 cat >"$T/versions.json" <<'J'
-{"claude":"1.0.0","rtk":"1.2.3","agy":"9.9.9","agy_build":"b1","agy_sha256":"x","cursor":"2026.1.1-abc","cursor_sha256":"y"}
+{"claude":"1.0.0","opencode":"2.0.0","rtk":"1.2.3","agy":"9.9.9","agy_build":"b1","agy_sha256":"x","cursor":"2026.1.1-abc","cursor_sha256":"y"}
 J
-# claude present so the npm path stays quiet.
-printf '#!/bin/sh\necho 1.0.0\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"
 
 cat >"$T/bin/dpkg" <<'S'
 #!/bin/sh
@@ -75,6 +73,8 @@ S
 cat >"$T/bin/workspace-agent" <<'S'
 #!/bin/sh
 echo "workspace-agent $*" >>"$STUB_WA_LOG"
+# STUB_WA_RC_NPM answers only the npm steps, so a test can tell the two mappings apart.
+case "$2" in npm|npm-verify) exit "${STUB_WA_RC_NPM:-${STUB_WA_RC:-0}}" ;; esac
 exit "${STUB_WA_RC:-0}"
 S
 chmod +x "$T"/bin/*
@@ -183,6 +183,58 @@ reset; run_block
 # The shell no longer carries an rtk install of its own.
 grep -q 'boot-install rtk \$(vj_pin' "$BLOCK" && fail "rtk: shell install block still present"
 [ -e "$T/home/.local/bin/rtk" ] && fail "rtk: shell installed rtk itself"
+
+# npm CLIs: the lean block hands over to `workspace-agent boot-install npm`, with --repin only
+# when the start repins; the verify passes are the Agent's too (internal/bootinstall has the Go
+# tests, including that an integrity failure fails the install).
+reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=1
+grep -qx 'workspace-agent boot-install npm' "$STUB_WA_LOG" || fail "npm: not handed to workspace-agent ($(cat "$STUB_WA_LOG"))"
+grep -qx 'workspace-agent boot-install npm-verify --present' "$STUB_WA_LOG" && fail "npm: the lean block ran the every-start pass"
+reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=0
+grep -qx 'workspace-agent boot-install npm --repin' "$STUB_WA_LOG" || fail "npm: --repin not passed on a repin start"
+reset; run_block STUB_WA_RC_NPM=3 STUB_WA_RC=0 || fail "npm: exit 3 aborted the entrypoint"
+has 'BI_LOW_SPACE=1' || fail "npm: exit 3 did not set BI_LOW_SPACE"
+reset; run_block STUB_WA_RC_NPM=1 STUB_WA_RC=0 || fail "npm: exit 1 aborted the entrypoint"
+has 'BI_LOW_SPACE=0' || fail "npm: exit 1 set BI_LOW_SPACE"
+reset; run_block STUB_WA_RC_NPM=126 STUB_WA_RC=0
+has 'WARN: npm boot-install npm exited 126' || fail "npm: no WARN for an exit outside the contract"
+grep -qP '^claude\tfailed\tother' "$T/bidir/install.tsv" || fail "npm: no failed status for an exit outside the contract"
+reset; run_block BI_AGENT_BIN="$T/none"
+has 'Agent binary is missing; npm boot-install' || fail "npm: no WARN without the Agent"
+grep -qP '^claude\tfailed\tother' "$T/bidir/install.tsv" || fail "npm: no failed status without the Agent"
+reset; mkdir -p "$T/home/.local/bin"; printf '#!/bin/sh\necho 1.0.0\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"
+run_block BI_AGENT_BIN="$T/none"
+grep -qP '^claude\tskipped' "$T/bidir/install.tsv" || fail "npm: a working copy was not recorded skipped without the Agent"
+# Without the Agent, the verify passes cannot repair, but a broken ~/.local copy must not stay
+# on PATH where it hides a baked one, and nothing here may end the start (set -e).
+fb() { # fb <usable: 0|1> <npm_wa args...> — the fallback of npm_wa, run under set -e
+  local usable="$1"; shift
+  ( set -e; HOME="$T/home"; BI_STATUS="$T/fb.tsv"; VJ="$T/versions.json"
+    bi_note() { printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >>"$BI_STATUS"; }
+    cli_usable() { [ "$usable" = 1 ]; }; vj_pin() { :; }
+    NPM_CLIS="claude opencode codex copilot"; BI_AGENT_BIN=/nonexistent
+    . "$T/npm_wa.sh"; npm_wa "$@"; echo STARTED ) >"$T/fb.out" 2>&1
+}
+awk '/^npm_wa\(\)/{on=1} on{print} on&&/^}/{exit}' "$BLOCK" >"$T/npm_wa.sh"
+reset; rm -f "$T/fb.tsv"; mkdir -p "$T/home/.local/bin"; printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/codex"; chmod +x "$T/home/.local/bin/codex"
+fb 0 npm-verify --present
+grep -q STARTED "$T/fb.out" || fail "npm: the fallback ended the start"
+[ -e "$T/home/.local/bin/codex" ] && fail "npm: a broken copy stayed on PATH without the Agent"
+grep -qP '^codex\tfailed' "$T/fb.tsv" || fail "npm: no failed status for the broken copy without the Agent"
+# --present is limited to the copies there are; an explicit list answers for a missing one too.
+reset; rm -f "$T/fb.tsv"; fb 0 npm-verify --present
+[ -s "$T/fb.tsv" ] && fail "npm: --present recorded something for CLIs with no copy"
+fb 0 npm-verify codex
+grep -qP '^codex\tfailed' "$T/fb.tsv" || fail "npm: an explicit verify of a missing CLI left no status"
+grep -qP '^claude' "$T/fb.tsv" && fail "npm: an explicit verify touched a CLI it was not asked about"
+# A copy that cannot be removed (a directory here) is reported, and the start goes on.
+reset; rm -f "$T/fb.tsv"; mkdir -p "$T/home/.local/bin/codex/sub"
+fb 0 npm-verify --present
+grep -q STARTED "$T/fb.out" || fail "npm: an unremovable copy ended the start"
+grep -qP '^codex\tfailed' "$T/fb.tsv" || fail "npm: an unremovable copy left no status"
+# The shell no longer carries an npm install or a verify of its own.
+grep -q 'npm install -g' "$BLOCK" && fail "npm: shell install block still present"
+grep -q 'npm_clis_verify' "$BLOCK" && fail "npm: shell verify still present"
 
 # mktemp / download failures stop the block before anything is written outside a temp dir.
 for what in STUB_MKTEMP_FAIL STUB_CURL_FAIL; do

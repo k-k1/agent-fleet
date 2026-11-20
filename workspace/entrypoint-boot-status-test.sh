@@ -3,8 +3,10 @@
 # it behaves on a nearly full home: the per-CLI status file with its reason class, the free-space
 # check before the installs, and the prune that runs ahead of them. Only the section from `VJ=`
 # to the Kiro comment is sliced out and run, against stub curl / tar / install / npm / df.
-# rtk is installed and recorded by the Agent (`workspace-agent boot-install rtk`), so its status
-# lines are tested in Go (internal/bootinstall) and its hand-off in entrypoint-boot-install-test.sh.
+# rtk and the npm CLIs are installed, verified and recorded by the Agent (`workspace-agent
+# boot-install rtk|npm|npm-verify`), so their status lines are tested in Go (internal/bootinstall)
+# and their hand-off in entrypoint-boot-install-test.sh. What is left here for npm is the
+# self-update opt-in's own install.
 #
 #   workspace/entrypoint-boot-status-test.sh
 set -u
@@ -16,7 +18,7 @@ mkdir -p "$T/bin" "$T/home/.local/bin" "$T/cwd" "$T/tmp"
 
 BLOCK="$T/block.sh"
 awk '/^VJ=\/usr/{on=1} /^# Seed the default settings.json/{on=0} on' "$ENTRY" | sed "s#^VJ=.*#VJ=$T/versions.json#" > "$BLOCK"
-for needle in 'AGY_NEED' 'CUR_NEED' 'NPM_BOOT'; do
+for needle in 'AGY_NEED' 'CUR_NEED' 'npm_wa'; do
   grep -q -- "$needle" "$BLOCK" || { echo "FAIL: slice lacks $needle; fix the awk range" >&2; exit 1; }
 done
 
@@ -72,6 +74,8 @@ case "$*" in
   *"view "*) echo 9.9.9; exit 0 ;;
 esac
 echo "$*" >>"$STUB_DIR/npm.calls"
+# One log in call order with the recording Agent's, so a test can pin who ran first.
+echo "npm $*" >>"$STUB_DIR/rec.calls"
 if [ -n "${STUB_NPM_FAIL:-}" ]; then echo "npm error ENOSPC: no space left on device, write" >&2; exit 1; fi
 [ -z "${STUB_NPM_SHRINK:-}" ] || echo 50 >"$STUB_DIR/free"
 case "$*" in *@latest*) if [ -n "${STUB_NPM_RMFAIL:-}" ]; then rm -f "$HOME/.local/bin/codex"; echo "npm error ENOENT" >&2; exit 1; fi ;; esac
@@ -106,7 +110,7 @@ fail() { echo "FAIL: $1" >&2; echo "--- output ---" >&2; cat "$T/out" >&2; echo 
 # run_block [VAR=val ...] — one start; SKIP=1 so only absence triggers an install.
 run_block() {
   cd "$T/cwd" && env -i PATH="$T/bin:/usr/bin:/bin:$(dirname "$(command -v node)")" HOME="$T/home" TMPDIR="$T/tmp" STUB_DIR="$T" \
-    BI_DIR="${BI_DIR_OVERRIDE:-$T/bidir}" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
+    BI_DIR="${BI_DIR_OVERRIDE:-$T/bidir}" BI_AGENT_BIN="$T/no-agent" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
     bash -c 'set -e; export PATH="$HOME/.local/bin:$PATH"; source "$1"; echo "AF_BOOT_INSTALL_STATUS=${AF_BOOT_INSTALL_STATUS-unset}"' _ "$BLOCK" >"$T/out" 2>&1
 }
 reset() { rm -rf "$T/bidir" "$T/home/.local/bin/"{agy,.agy.version,rtk,cursor-agent,claude,codex} "$T/home/.local/share" "$T/npm.calls" "$T/agent.calls" "$T/curl.calls" "$T/broke" "$T/free"; }
@@ -115,11 +119,11 @@ st() { grep -P "^$1\t" "$T/bidir/install.tsv" 2>/dev/null | tail -1 | tr '\t' ' 
 
 # 1. Healthy start: everything installed, status ok.
 reset; run_block
-for n in claude agy cursor; do [ "$(st $n)" = "$n ok " ] || fail "healthy: $n status is '$(st $n)'"; done
+for n in agy cursor; do [ "$(st $n)" = "$n ok " ] || fail "healthy: $n status is '$(st $n)'"; done
 
 # 2. A second start finds them present: skipped.
 run_block
-for n in claude agy; do [ "$(st $n)" = "$n skipped " ] || fail "present: $n status is '$(st $n)'"; done
+for n in agy; do [ "$(st $n)" = "$n skipped " ] || fail "present: $n status is '$(st $n)'"; done
 
 # 3. Reason classes.
 reset; run_block STUB_INSTALL_FAIL=1
@@ -129,16 +133,12 @@ reset; run_block STUB_CURL_FAIL=1
 [ "$(st cursor)" = "cursor failed network" ] || fail "curl failure: cursor is '$(st cursor)'"
 reset; run_block STUB_SHA_FAIL=1
 [ "$(st agy)" = "agy failed checksum" ] || fail "sha mismatch: agy is '$(st agy)'"
-reset; run_block STUB_NPM_FAIL=1
-[ "$(st claude)" = "claude failed no_space" ] || fail "npm ENOSPC: claude is '$(st claude)'"
-has 'WARN: npm boot-install failed' || fail "npm failure: no WARN"
 
 # 4. Low free space: nothing is attempted, what is installed stays, the reason is no_space.
 reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/rtk"; chmod +x "$T/home/.local/bin/rtk"
 run_block STUB_FREE_MB=100
 [ ! -e "$T/npm.calls" ] || fail "low space: npm was still run"
 [ ! -e "$T/home/.local/bin/agy" ] || fail "low space: agy was still installed"
-[ "$(st claude)" = "claude failed no_space" ] || fail "low space: claude is '$(st claude)'"
 [ "$(st agy)" = "agy failed no_space" ] || fail "low space: agy is '$(st agy)'"
 has 'only 100 MiB free' || fail "low space: no WARN naming the free space"
 has 'agy already present' && fail "low space: reported agy as already present"
@@ -180,6 +180,8 @@ has 'self-update: skipped for this boot (home is nearly full)' || fail "low spac
 # 4e. Every CLI already installed, little space, self-update opt-in ON: the update must not run
 # either (the boot-install had nothing to do, so only its own space check can stop it).
 reset; run_block
+# The Agent installs claude in a real start; here it is put in place by hand.
+printf '#!/bin/sh\necho 1.0.0\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"
 rm -f "$T/curl.calls" "$T/npm.calls"
 run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1
 [ ! -e "$T/curl.calls" ] && [ ! -e "$T/npm.calls" ] || fail "installed + low space + opt-in: an update still ran: $(cat "$T/curl.calls" "$T/npm.calls" 2>/dev/null)"
@@ -222,126 +224,49 @@ run_block STUB_FREE_MB=399 AF_AGENT_SELF_UPDATE_SKIP=0
 reset; mkdir -p "$T/bidir"; echo keep >"$T/victim"; ln -s "$T/victim" "$T/bidir/install.tsv"; ln -s "$T/victim" "$T/bidir/install.err"
 run_block
 [ "$(cat "$T/victim")" = keep ] || fail "a planted symlink was followed and its target changed"
-[ "$(st claude)" = "claude ok " ] || fail "status not recorded beside a planted symlink: '$(st claude)'"
-reset; mkdir -p "$T/bidir"; echo "claude\tfailed\tno_space" >"$T/bidir/install.tsv"
+[ "$(st agy)" = "agy ok " ] || fail "status not recorded beside a planted symlink: '$(st agy)'"
+reset; mkdir -p "$T/bidir"; printf 'claude\tfailed\tno_space\n' >"$T/bidir/install.tsv"
 run_block STUB_FREE_MB=9000
-[ "$(st claude)" != "claude failed no_space" ] || fail "the previous start's result was served"
+grep -qP '^claude\tfailed\tno_space' "$T/bidir/install.tsv" && fail "the previous start's result was served"
 reset; mkdir -p "$T/real"; chmod 0755 "$T/real"; ln -s "$T/real" "$T/linkdir"
 BI_DIR_OVERRIDE="$T/linkdir" run_block
 [ -z "$(ls -A "$T/real")" ] || fail "a symlinked status directory was used"
 [ "$(stat -c %a "$T/real")" = 755 ] || fail "a refused symlinked directory had its target chmod'ed"
 has 'boot-install agy' || fail "a rejected status directory broke the install"
 
-# 6. npm exits 0 but leaves a CLI that cannot run (a skipped optional dependency). It is
-# reinstalled at the pin and recorded failed only when that does not help.
+# 6. The self-update opt-in's own npm install (the pinned install and the repair pass are the
+# Agent's, tested in Go): its npm errors reach the log instead of /dev/null.
 ON="AF_AGENT_SELF_UPDATE_SKIP=0 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1"
-reset; run_block STUB_NPM_BREAK=once
-"$T/home/.local/bin/codex" >/dev/null || fail "boot-install, codex broken once: not repaired"
-grep -q '@openai/codex@0.1.0' "$T/npm.calls" && [ "$(grep -c codex "$T/npm.calls")" = 2 ] || fail "boot-install, codex broken once: no reinstall at the pin: $(cat "$T/npm.calls")"
-[ "$(st codex)" = "codex ok " ] || fail "boot-install, codex repaired: status is '$(st codex)'"
-reset; run_block
-rm -f "$T/npm.calls"
-# shellcheck disable=SC2086
-run_block STUB_NPM_BREAK=once $ON
-grep -q '@openai/codex@latest' "$T/npm.calls" || fail "self-update: @latest was not installed: $(cat "$T/npm.calls")"
-grep -q '@openai/codex@0.1.0' "$T/npm.calls" || fail "self-update, codex broken: no reinstall at the pin: $(cat "$T/npm.calls")"
-"$T/home/.local/bin/codex" >/dev/null || fail "self-update, codex broken once: not repaired"
-has 'codex repaired at the pin 0.1.0' || fail "self-update, codex repaired: not logged"
-st codex | grep -q failed && fail "self-update, codex repaired: recorded failed"
-"$T/home/.local/bin/claude" >/dev/null || fail "self-update: a healthy CLI was broken"
-grep -q '@anthropic-ai/claude-code@1.0.0' "$T/npm.calls" && fail "self-update: a healthy CLI was reinstalled at the pin"
-reset; run_block
-# shellcheck disable=SC2086
-run_block STUB_NPM_BREAK=always $ON
-[ "$(st codex)" = "codex failed other" ] || fail "self-update, codex stays broken: status is '$(st codex)'"
-has 'WARN: codex does not run' || fail "self-update, codex stays broken: no WARN"
-# A CLI left broken loses its link, so the next start (unattended or not) reinstalls it.
-[ ! -e "$T/home/.local/bin/codex" ] || fail "codex left broken: its link was kept"
-rm -f "$T/npm.calls"; run_block
-grep -q '@openai/codex@0.1.0' "$T/npm.calls" || fail "next start: a known-broken codex was not reinstalled"
-"$T/home/.local/bin/codex" >/dev/null || fail "next start: codex still broken"
-[ "$(st codex)" = "codex ok " ] || fail "next start, codex repaired: status is '$(st codex)'"
-rm -f "$T/npm.calls"; run_block
-grep -q codex "$T/npm.calls" 2>/dev/null && fail "a healthy codex was reinstalled again"
-# A failed self-update that removed codex outright: reinstalled at the pin (nothing is baked).
-reset; run_block
-# shellcheck disable=SC2086
-run_block STUB_NPM_RMFAIL=1 $ON
-"$T/home/.local/bin/codex" >/dev/null || fail "self-update removed codex: not reinstalled"
-# The pin is broken but @latest works in the same start: the later ok wins over the failed.
-reset
-# shellcheck disable=SC2086
-run_block STUB_NPM_BREAK=pin $ON
-"$T/home/.local/bin/codex" >/dev/null || fail "pin broken, latest fine: codex does not run"
-[ "$(st codex)" = "codex ok " ] || fail "pin broken, latest fine: status is '$(st codex)'"
-# The repair download honours the free-space check made after the first install.
-reset; run_block STUB_NPM_BREAK=always STUB_NPM_SHRINK=1
-[ "$(grep -c codex "$T/npm.calls")" = 1 ] || fail "low space after install: repair still ran: $(cat "$T/npm.calls")"
-[ "$(st codex)" = "codex failed no_space" ] || fail "low space after install: status is '$(st codex)'"
-[ ! -e "$T/home/.local/bin/codex" ] || fail "low space after install: the broken link was kept"
-rm -f "$T/free" "$T/npm.calls"; run_block
-"$T/home/.local/bin/codex" >/dev/null || fail "low space after install: not reinstalled once space is back"
-# The self-update's npm errors reach the log instead of /dev/null.
 reset; run_block
 # shellcheck disable=SC2086
 run_block STUB_NPM_FAIL=1 $ON
 has 'npm error ENOSPC' || fail "self-update failure: npm's error was discarded"
 has 'WARN: agent CLI update failed' || fail "self-update failure: no WARN"
 
-# 7. Baked image (/usr/local holds working copies): a ~/.local shadow that stays broken is
-# removed so PATH falls back at once, with space or without.
-BAKED="$T/block-baked.sh"
-sed "s#/usr/local/bin#$T/ul/bin#g" "$BLOCK" >"$BAKED"
-mkdir -p "$T/ul/bin"
-for b in claude codex opencode copilot; do printf '#!/bin/sh\necho baked\n' >"$T/ul/bin/$b"; chmod +x "$T/ul/bin/$b"; done
-run_baked() { BLOCK_SAVE="$BLOCK"; BLOCK="$BAKED"; run_block "$@"; BLOCK="$BLOCK_SAVE"; }
-reset
-# shellcheck disable=SC2086
-run_baked STUB_NPM_BREAK=always $ON
-[ ! -e "$T/home/.local/bin/codex" ] || fail "baked, shadow stays broken: the shadow was kept"
-st codex | grep -q failed || fail "baked, shadow stays broken: status is '$(st codex)'"
-reset
-# shellcheck disable=SC2086
-run_baked STUB_NPM_BREAK=always STUB_NPM_SHRINK=1 $ON
-[ ! -e "$T/home/.local/bin/codex" ] || fail "baked, low space: the broken shadow was kept"
-[ "$(st codex)" = "codex skipped no_space" ] || fail "baked, low space: status is '$(st codex)'"
-# A shadow broken by an earlier start while its version is already latest: the self-update
-# installs nothing, and the shadow is still checked and dropped.
-reset; printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/codex"; chmod +x "$T/home/.local/bin/codex"
-# shellcheck disable=SC2086
-run_baked STUB_NPM_LATEST=1 STUB_NPM_BREAK=always $ON
-has 'already latest; skip' || fail "baked, already latest: the update was not skipped"
-[ ! -e "$T/home/.local/bin/codex" ] || fail "baked, already latest: a broken shadow was kept"
-# The same broken shadow on a start where the self-update does not run at all: unattended, or
-# home nearly full. It is still dropped so the baked copy takes over.
-for mode in "AF_AGENT_SELF_UPDATE_SKIP=1" "STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1"; do
-  reset; printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/codex"; chmod +x "$T/home/.local/bin/codex"
+# 6b. The entrypoint's own calls into the Agent for the npm CLIs, in the real start slice: the
+# pinned install first, the every-start verify last, and the explicit verify after a self-update,
+# whatever the update did and however little space there is.
+cat >"$T/bin/rec-agent" <<'S'
+#!/bin/sh
+echo "$*" >>"$STUB_DIR/rec.calls"
+S
+chmod +x "$T/bin/rec-agent"
+reset; rm -f "$T/rec.calls"; run_block BI_AGENT_BIN="$T/bin/rec-agent"
+grep -qx 'boot-install npm' "$T/rec.calls" || fail "npm: the lean start did not call 'boot-install npm': $(cat "$T/rec.calls")"
+[ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "npm: the every-start verify is not the last call: $(cat "$T/rec.calls")"
+reset; rm -f "$T/rec.calls"; run_block BI_AGENT_BIN="$T/bin/rec-agent" STUB_FREE_MB=100
+[ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "npm: no every-start verify on a nearly full home: $(cat "$T/rec.calls")"
+reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"; rm -f "$T/rec.calls"
+# The self-update's order is the update, then the explicit verify (it repairs what the update
+# broke, and the update failing is no reason to skip it), then the every-start pass.
+for failing in "" 1; do
+  reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"; rm -f "$T/rec.calls"
   # shellcheck disable=SC2086
-  run_baked STUB_NPM_BREAK=always $mode
-  [ ! -e "$T/home/.local/bin/codex" ] || fail "baked, no update ($mode): a broken shadow was kept"
+  run_block BI_AGENT_BIN="$T/bin/rec-agent" STUB_NPM_FAIL=$failing $ON
+  order="$(grep -n 'npm install -g .*@latest\|^boot-install npm-verify' "$T/rec.calls" | sed 's/^[0-9]*://' | tr '\n' '|')"
+  [ "$order" = 'npm install -g --prefix '"$T"'/home/.local @anthropic-ai/claude-code@latest @opencode/cli@latest @openai/codex@latest @github/copilot@latest|boot-install npm-verify claude opencode codex copilot|boot-install npm-verify --present|' ] \
+    || fail "npm: self-update order wrong (failing=${failing:-no}): $order"
 done
-# A self-update that installed a working @latest records ok, in baked and in lean.
-reset
-# shellcheck disable=SC2086
-run_baked $ON
-[ "$(st codex)" = "codex ok " ] || fail "baked, self-update installed: codex is '$(st codex)'"
-reset; rm -rf "$T/ul"
-
-# 8. A CLI broken by an earlier start, with nothing to install on this one (present, unattended
-# start, so no repin): it is still checked and reinstalled at the pin. Healthy ones stay skipped.
-reset; run_block
-printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/codex"; chmod +x "$T/home/.local/bin/codex"
-rm -f "$T/npm.calls"; run_block
-has 'already present in ~/.local (skip)' || fail "present + broken: something was installed first"
-grep -q '@openai/codex@0.1.0' "$T/npm.calls" 2>/dev/null || fail "present + broken: codex was not reinstalled: $(cat "$T/npm.calls" 2>/dev/null)"
-"$T/home/.local/bin/codex" >/dev/null || fail "present + broken: codex still broken"
-[ "$(st claude)" = "claude skipped " ] || fail "present + broken: healthy claude is '$(st claude)'"
-[ "$(st codex)" = "codex ok " ] || fail "present + broken: repaired codex is '$(st codex)'"
-rm -f "$T/npm.calls"; run_block
-[ ! -e "$T/npm.calls" ] || fail "all healthy: npm was run: $(cat "$T/npm.calls")"
-# shellcheck disable=SC2086
-run_block $ON
-[ "$(st codex)" = "codex ok " ] || fail "lean, self-update installed: codex is '$(st codex)'"
 
 # 5. The prune runs before the installs, once.
 reset; run_block

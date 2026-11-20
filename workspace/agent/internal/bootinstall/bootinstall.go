@@ -66,6 +66,8 @@ type Env struct {
 	RTKBaseURL string                         // https://github.com/rtk-ai/rtk/releases/download (tests: a local server)
 	FreeMiB    func(dir string) (int64, bool) // false when unknown
 	Client     *http.Client
+	NPM        string // the npm executable; empty = "npm" from PATH
+	BakedBin   string // where the image bakes its CLIs; empty = /usr/local/bin
 	Stdout     io.Writer
 	Stderr     io.Writer
 	RunTimeout time.Duration // --version probe bound
@@ -95,6 +97,13 @@ func freeMiB(dir string) (int64, bool) {
 		return 0, false
 	}
 	return int64(st.Bavail) * int64(st.Bsize) >> 20, true
+}
+
+func (e Env) bakedBin() string {
+	if e.BakedBin != "" {
+		return e.BakedBin
+	}
+	return "/usr/local/bin"
 }
 
 func (e Env) localBin() string { return filepath.Join(e.Home, ".local", "bin") }
@@ -179,7 +188,7 @@ func usable(p string) bool {
 
 // cliPresent: a copy exists in /usr/local/bin (baked) or ~/.local/bin.
 func (e Env) cliPresent(name string) bool {
-	if usable("/usr/local/bin/" + name) {
+	if usable(filepath.Join(e.bakedBin(), name)) {
 		return true
 	}
 	_, err := os.Stat(filepath.Join(e.localBin(), name)) // follows links: a dangling one is absent, like `[ -e ]`
@@ -188,7 +197,7 @@ func (e Env) cliPresent(name string) bool {
 
 // cliUsable: a copy that can run now, in either place.
 func (e Env) cliUsable(name string) bool {
-	for _, p := range []string{"/usr/local/bin/" + name, filepath.Join(e.localBin(), name)} {
+	for _, p := range []string{filepath.Join(e.bakedBin(), name), filepath.Join(e.localBin(), name)} {
 		if usable(p) && e.runs(p) {
 			return true
 		}
