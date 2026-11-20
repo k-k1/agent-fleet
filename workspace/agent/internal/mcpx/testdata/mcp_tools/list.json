@@ -348,6 +348,23 @@
       "unwatch#1",
       "list_watches#1"
     ],
+    "session-queue-run": [
+      "propose_session_handoff#1",
+      "af_report#1",
+      "af_stop_after_turn#1",
+      "get_session_status#2",
+      "get_session_usage#2",
+      "list_memos#2",
+      "add_memo#2",
+      "update_memo#2",
+      "defer_queue_item#1",
+      "branch_name#1",
+      "link_work_item#1",
+      "skill_restore#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1"
+    ],
     "session-search": [
       "propose_session_handoff#1",
       "af_report#1",
@@ -1065,6 +1082,29 @@
         "type": "object"
       },
       "name": "create_session"
+    },
+    "defer_queue_item#1": {
+      "description": "Agent Fleet: hand the queue message that started this session back to its queue, to be run again later by a new session. Call it only when the work cannot be done now and nothing was changed for it - e.g. a prerequisite is not merged yet, or a service it needs is down - and then end your turn without doing the work. It takes effect only when this run ends: if you (or a session you started) take another turn afterwards, or this session holds an open or merged pull request, the request is dropped and the message is treated as done. reason (at most 1 KiB) is shown to your user, never to the next session. not_before is when the message may run again (RFC 3339, 10 minutes to 7 days ahead, default 1 hour). A later call replaces the request; cancel=true withdraws it. The third hand-back of one message sends it back to your user instead.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cancel": {
+            "description": "true withdraws an earlier request",
+            "type": "boolean"
+          },
+          "not_before": {
+            "description": "RFC 3339 time the message may run again (optional; default 1 hour from now)",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the work cannot be done now, for your user",
+            "maxLength": 1024,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "defer_queue_item"
     },
     "delete_branch#1": {
       "description": "マージ済みのローカルブランチを削除する（worktree を消した後に残る temp/* 等の掃除）。マージ済み（親に取り込み済み）のみ削除でき、未マージのブランチは固有コミットを失わないよう拒否される（push/マージするか Console で対応するよう案内）。消す前にブランチ名と SHA を gz アーカイブへ退避するので復元可能。list_cleanup_candidates で action=delete_branch の候補（repo=id, branch）を片付ける時に使う。実行前に対象を明示して利用者へ確認すること。",

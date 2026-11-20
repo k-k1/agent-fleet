@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // walkAdvertisedToolVariants calls visit with the tool list the server advertises in every
@@ -59,6 +61,7 @@ func walkAdvertisedToolVariants(t *testing.T, visit func(t *testing.T, tools []m
 		studio                      bool
 		agentMemory                 bool
 		sessionSearch               bool
+		queueRun                    bool
 	}{
 		{name: "assistant-read"},
 		{name: "assistant-write", write: true},
@@ -78,6 +81,9 @@ func walkAdvertisedToolVariants(t *testing.T, visit func(t *testing.T, tools []m
 		{name: "session-agent-memory", selfReport: true, agentMemory: true},
 		// search_sessions appears only under --self-report --session-search (ADR 0110).
 		{name: "session-search", selfReport: true, sessionSearch: true},
+		// defer_queue_item is offered only to a session a queue run started (its meta names the
+		// delivery).
+		{name: "session-queue-run", selfReport: true, queueRun: true},
 	}
 
 	for _, variant := range variants {
@@ -91,6 +97,12 @@ func walkAdvertisedToolVariants(t *testing.T, visit func(t *testing.T, tools []m
 			if variant.studio {
 				bindStudioForTest(t, "slot01", true)
 			}
+			if variant.queueRun {
+				home := t.TempDir()
+				t.Setenv("HOME", home)
+				t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+				session.WriteMeta(session.Meta{Name: "slot01", Kind: session.KindClaude, QueueDelivery: "d1"})
+			}
 			visit(t, mcpStdioToolList())
 		})
 	}
@@ -101,7 +113,7 @@ func walkAdvertisedToolVariants(t *testing.T, visit func(t *testing.T, tools []m
 // hand-written approximation would have accepted enum:null, which Anthropic rejects
 // before starting the Claude turn.
 func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
-	const expectedAdvertisedToolCount = 76
+	const expectedAdvertisedToolCount = 77
 
 	advertised := make(map[string]struct{})
 	walkAdvertisedToolVariants(t, func(t *testing.T, tools []map[string]any) {

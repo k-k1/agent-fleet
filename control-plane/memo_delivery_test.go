@@ -131,6 +131,9 @@ type fakeQueueAgent struct {
 	prs     bool
 	prCalls []memoPRSnapshotRequest
 	prReply func(req memoPRSnapshotRequest) (int, any)
+	// defers makes GET /sessions send the envelope's queueDefer marker (an Agent that reports the
+	// turn starts a hand-back is checked against).
+	defers bool
 }
 
 // setPRs makes the Agent have the PR snapshot route, answering each read with reply.
@@ -370,6 +373,9 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if a.prs {
 			env["queuePRs"] = 1
+		}
+		if a.defers {
+			env["queueDefer"] = 1
 		}
 		if a.actMark != 0 {
 			env["actMark"] = a.actMark

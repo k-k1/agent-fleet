@@ -503,7 +503,7 @@ func openCheck(q store.MemoQueue, pending store.QueuePending, now time.Time) (op
 		// prerequisites holds no place in it (ADR 0137, addendum 2026-11-19).
 		if pending.Eligible < q.OpenAfter {
 			return false, false, &memoWaiting{Reason: waitBelowThreshold,
-				Detail: &memoWaitingDetail{Needed: q.OpenAfter, Waiting: pending.Eligible, Blocked: pending.Count - pending.Eligible}}
+				Detail: &memoWaitingDetail{Needed: q.OpenAfter, Waiting: pending.Eligible, Blocked: pending.Count - pending.Eligible - pending.Deferred, Deferred: pending.Deferred}}
 		}
 		if !quietSince(pending.Latest, now) {
 			w := &memoWaiting{Reason: waitQuietMinute}
@@ -627,7 +627,7 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 				if err != nil {
 					return store.QueuePending{}, err
 				}
-				return pendingOf(rows, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now))), nil
+				return pendingOf(rows, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now)), now), nil
 			}})
 		if err != nil || why != nil {
 			return err
@@ -683,13 +683,19 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 // pendingOf summarizes the pending messages of a bucket the way ListQueuePendingStats does.
 // eligible says whether a message's prerequisites are satisfied (memoafter.EligibleIn), the Go side of
 // the statistics' SQL.
-func pendingOf(rows []store.Memo, eligible func(store.Memo) bool) store.QueuePending {
+func pendingOf(rows []store.Memo, eligible func(store.Memo) bool, now time.Time) store.QueuePending {
 	var p store.QueuePending
 	for _, m := range rows {
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
 			continue
 		}
 		p.Count++
+		if memoafter.Deferred(m, now) {
+			p.Deferred++
+			if p.NextAt == "" || m.NotBefore < p.NextAt {
+				p.NextAt = m.NotBefore
+			}
+		}
 		// Refs and Curators count only what a claim could take, as the statistics' SQL does.
 		if eligible(m) {
 			p.Eligible++
@@ -782,8 +788,7 @@ func (r *memoQueueRunner) autoAgentReports(ctx context.Context, res *resolved, d
 // --- Wakes made only to settle ---------------------------------------------------------------------
 
 // settleWake wakes a stopped workspace when the deliveries that hold every slot of an open queue
-// with pending messages are ones only a running Agent can settle: a `sending` one, or an overdue
-// one that waits for its retire. It reports whether the queue is held by them (so no fire is
+// with pending messages are ones only a running Agent can settle (settleNeedsAgent). It reports whether the queue is held by them (so no fire is
 // tried this tick), and counts the wake as a fire of the day by a closed row with outcome wake.
 func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live []store.MemoDelivery, now time.Time) bool {
 	q := w.q
@@ -797,9 +802,7 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 		return false
 	}
 	for _, d := range mine {
-		sending := d.State == store.DeliverySending
-		overdue := d.State == store.DeliveryOpen && d.OverdueAt != "" && d.RetiredAt == ""
-		if !sending && !overdue {
+		if !settleNeedsAgent(d) {
 			return false
 		}
 	}
@@ -830,7 +833,7 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 		if err != nil {
 			return err
 		}
-		pending := pendingOf(rows, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now)))
+		pending := pendingOf(rows, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now)), now)
 		if open, _ := openState(cur, pending, now); !open || pending.Count == 0 {
 			return nil
 		}
@@ -842,7 +845,7 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 			return err
 		}
 		for _, d := range liveNow {
-			if d.State != store.DeliverySending && !(d.State == store.DeliveryOpen && d.OverdueAt != "" && d.RetiredAt == "") {
+			if !settleNeedsAgent(d) {
 				return nil
 			}
 		}
@@ -880,6 +883,24 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 	return true
 }
 
+// settleNeedsAgent reports whether a live delivery is one only a running Agent can settle: a
+// sending one, an overdue one that waits for its retire, or one with a hand-back request that the
+// last report saw nothing holding, or that no report was read for (the closes from the mirror
+// leave it open: tickKept, closeIfDoneUnreported).
+func settleNeedsAgent(d store.MemoDelivery) bool {
+	switch {
+	case d.State == store.DeliverySending:
+		return true
+	case d.State != store.DeliveryOpen:
+		return false
+	case d.OverdueAt != "" && d.RetiredAt == "":
+		return true
+	}
+	// A request on a delivery that was never reported (the workspace stopped before the first read)
+	// needs the running Agent too: closeIfDoneUnreported leaves it open.
+	return d.DeferAt != "" && (!d.Reported || d.HeldBy == "")
+}
+
 // auditSettleWake writes the system's entry for a wake that was recorded (a request to start
 // the workspace: the start itself runs later and may fail). It hangs on the
 // recorded outcome, never on the attempt, so two Control Planes reaching the same queue write one
@@ -899,8 +920,11 @@ func settleWakeDetail(queueID string, held []store.MemoDelivery) string {
 	runs := make([]string, 0, len(held))
 	for _, d := range held {
 		why := "overdue and not yet retired"
-		if d.State == store.DeliverySending {
+		switch {
+		case d.State == store.DeliverySending:
 			why = "sending"
+		case d.OverdueAt == "" && d.DeferAt != "":
+			why = "a hand-back to settle"
 		}
 		runs = append(runs, d.ID+" ("+why+")")
 	}
@@ -952,6 +976,8 @@ const (
 	waitNoTidy = "no_tidy"
 	// waitPrerequisites: every message waiting waits for a prerequisite that is not satisfied yet.
 	waitPrerequisites = "prerequisites"
+	// waitDeferred: every message waiting was handed back by its run and waits for its not_before.
+	waitDeferred = "deferred"
 )
 
 // memoWaiting is "waiting" on the wire: why a queue with notes waiting starts nothing now.
@@ -972,6 +998,9 @@ type memoWaitingDetail struct {
 	// Blocked is how many pending messages wait for their prerequisites, for below_threshold and
 	// prerequisites.
 	Blocked int `json:"blocked,omitempty"`
+	// Deferred is how many pending messages wait for the time their run handed them back to, for
+	// below_threshold, prerequisites and deferred.
+	Deferred int `json:"deferred,omitempty"`
 }
 
 // untilOf rounds a part of a second up: "until" is never earlier than the moment the dispatcher acts.
@@ -1097,7 +1126,16 @@ func memoQueueWaiting(tx store.MemoWaitOps, q store.MemoQueue, tenantOn bool, pe
 		return w, err
 	}
 	if pending.Eligible == 0 {
-		return &memoWaiting{Reason: waitPrerequisites, Detail: &memoWaitingDetail{Blocked: pending.Count}}, nil
+		// Every message waiting was handed back and waits for its time: the earliest is when the
+		// dispatcher acts. Otherwise some wait for prerequisites, and the detail counts both.
+		if pending.Deferred == pending.Count {
+			w := &memoWaiting{Reason: waitDeferred, Detail: &memoWaitingDetail{Deferred: pending.Deferred}}
+			if t, err := time.Parse("2006-01-02T15:04:05.000000Z", pending.NextAt); err == nil {
+				w.Until = untilOf(t)
+			}
+			return w, nil
+		}
+		return &memoWaiting{Reason: waitPrerequisites, Detail: &memoWaitingDetail{Blocked: pending.Count - pending.Deferred, Deferred: pending.Deferred}}, nil
 	}
 	if q.NoRefsAt != "" && pending.Refs == pending.Eligible {
 		return &memoWaiting{Reason: waitNoRefs}, nil
@@ -1356,6 +1394,11 @@ func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []sto
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
 			continue
 		}
+		// A message handed back waits for its time, not for a PR: it neither asks for a wake nor
+		// keeps one from the messages that do.
+		if memoafter.Deferred(m, now) {
+			continue
+		}
 		waiting = true
 		items, err := memoafter.Status(m, lk)
 		if err != nil {
@@ -1423,7 +1466,7 @@ func (r *memoQueueRunner) prWake(ctx context.Context, views map[string]*memoMemb
 		if err != nil {
 			return err
 		}
-		pending := pendingOf(rows, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now)))
+		pending := pendingOf(rows, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now)), now)
 		if open, _ := openState(cur, pending, now); !open || pending.Count == 0 || pending.Eligible > 0 {
 			return nil
 		}

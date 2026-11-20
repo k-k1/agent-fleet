@@ -25,6 +25,7 @@ peek_session_output	peer	Read another session's recent output, read-only	ほか�
 list_memos	memo	List your memo queue	利用者のメモキューを一覧します
 add_memo	memo	Add one memo to your memo queue; in an auto-run category it waits for your approval; an optional `reference` points at a work item without copying it	利用者のメモキューにメモを 1 件追加します。自動実行のカテゴリでは、利用者の承認を待ちます。任意の `reference` は作業項目を写さずに指します
 update_memo	memo	Edit a memo; only the fields passed change (`reference`: leave out to keep it, `{}` to remove it). Editing an approved auto-run memo sends it back for approval	既存のメモを編集します。渡した項目だけが変わります（`reference` は省略で据え置き、`{}` で外す）。承認ずみの自動実行のメモを編集すると、承認待ちに戻ります
+defer_queue_item	memo	Hand the auto-run memo that started this session back to its queue, to run again later; applied only when the run ends, and dropped when the session worked on or has an open or merged pull request	このセッションを起動した自動実行のメモをキューに差し戻し、あとでもう一度実行させます。実行が終わるときにだけ行われ、セッションが作業を続けたときや、作成中かマージ済みの PR があるときは取り消されます
 delete_memo	memo	Delete a memo by its id; refused in an auto-run category	メモを id で削除します。自動実行のカテゴリでは断られます
 flush_memos	memo	Send the chosen memos to a session as one message; refused in an auto-run category	選んだメモを 1 通にまとめてセッションへ送ります。自動実行のカテゴリでは断られます
 list_schedules	schedule	List the schedules	定時実行のスケジュールを一覧します

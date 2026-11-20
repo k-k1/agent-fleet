@@ -1079,6 +1079,10 @@ type sessionWire struct {
 	// session that has QueueDelivery. The delivery keeps a copy when it first appears. No
 	// DB-mirror column: the copy on the delivery is what survives a stop.
 	QueueTurn *sessionQueueTurn `json:"queueTurn,omitempty"`
+	// LastTurnStartAt is when the session's latest turn started (RFC 3339, the Agent's clock), ""
+	// when none was seen. A hand-back (defer_queue_item) is dropped when a turn of the delivery's
+	// tree started after the call. No DB-mirror column: only a running Agent's report applies one.
+	LastTurnStartAt string `json:"lastTurnStartAt,omitempty"`
 }
 
 // sessionWakers is the Agent's count of the subscriptions a session owns that can start it: the

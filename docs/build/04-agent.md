@@ -165,6 +165,16 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     origin are `503` (`pr_snapshot_unanswered` / `pr_snapshot_unreadable`); an absent meta is
     `404 pr_snapshot_no_session`; a bad body is `400 bad_pr_snapshot_request`. Every answer carries
     `X-AF-PR-Snapshot: 1`.
+  - **Hand-back** (ADR 0137, addendum 2026-11-19, part B). `GET /sessions` carries `"queueDefer": 1`
+    (`queueDeferVersion`, read with `>=`) and every row `lastTurnStartAt`: when the session's latest turn started,
+    by this host's clock (`status.TurnStart`, file `session-turn-start/<sid>.json`, written under the per-sid lock
+    by the first-turn ledger's start rule, kept across a stop, swept with the first-turn orphans). The MCP tool
+    `defer_queue_item(reason, not_before, cancel)` is advertised only to a session whose meta carries
+    `queueDelivery`; it calls `POST /memos/defer` (`memorelay.HandleDefer`) with the session's own name, which
+    relays `{session, reason, notBefore, cancel, at}` to the Control Plane's
+    `POST /internal/memo-deliveries/{delivery}/defer` for the delivery that meta names, `at` being this host's time
+    of the call. A session with no delivery is `409 no_queue_delivery`; the Control Plane's answer is relayed as it
+    came.
   - `POST /sessions/{name}/retire` ends all of that for the session and for every session it
     started at any depth (`origin == "session"` and the `originSession` chain, the walk
     `spendDescendants` makes), cancels their booked resumes, then halts them. The answer lists

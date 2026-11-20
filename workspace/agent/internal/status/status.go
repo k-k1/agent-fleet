@@ -400,6 +400,7 @@ func persistLocked(sid string, s SessionStatus) string {
 	s.TS = time.Now().Format(time.RFC3339)
 	s.Rev = newRev()
 	noteFirstTurnWrite(sid, s)
+	noteTurnStart(sid, s)
 	write(sid, s)
 	return s.Rev
 }

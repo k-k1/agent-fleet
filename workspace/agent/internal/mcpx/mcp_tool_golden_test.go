@@ -39,6 +39,9 @@ type toolAudience struct {
 	name   string
 	args   []string
 	studio bool
+	// queueRun makes the owning session one a queue run started, which is what offers
+	// defer_queue_item.
+	queueRun bool
 }
 
 var sessionAllFlags = []string{"--self-report", "--chromium-attach", "--peer-messaging", "--image-gen",
@@ -63,6 +66,7 @@ var toolAudiences = []toolAudience{
 	{name: "session-spawn", args: []string{"--self-report", "--fleet-spawn"}},
 	{name: "session-imagegen", args: []string{"--self-report", "--image-gen"}},
 	{name: "session-studio", args: []string{"--self-report", "--image-gen"}, studio: true},
+	{name: "session-queue-run", args: []string{"--self-report"}, queueRun: true},
 	{name: "session-all", args: sessionAllFlags},
 	{name: "session-all-write", args: append([]string{"--write"}, sessionAllFlags...)},
 }
@@ -128,6 +132,9 @@ func startToolAudience(t *testing.T, aud toolAudience) *goldenFake {
 	self := session.Meta{Name: goldenSelf, Dir: home, Kind: "claude", Origin: session.OriginUser}
 	if aud.studio {
 		self.Studio = "st-1"
+	}
+	if aud.queueRun {
+		self.QueueDelivery = "dlv-1"
 	}
 	session.WriteMeta(self)
 	session.WriteMeta(session.Meta{Name: goldenChild, Dir: home, Kind: "codex",

@@ -1310,7 +1310,7 @@ class McpCatalogueTests(unittest.TestCase):
         "assistant-read", "assistant-read-nobrowser", "assistant-session-flags", "assistant-write",
         "assistant-write-nobrowser", "session", "session-all", "session-all-write", "session-chromium",
         "session-chromium-nobrowser", "session-imagegen", "session-memory", "session-peer",
-        "session-search", "session-spawn", "session-studio", "session-write",
+        "session-search", "session-spawn", "session-studio", "session-queue-run", "session-write",
     )
 
     def setUp(self):

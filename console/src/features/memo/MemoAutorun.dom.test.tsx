@@ -18,6 +18,7 @@ const memoQueueDelete = vi.fn();
 const memoQueueFire = vi.fn();
 const memoQueueResume = vi.fn();
 const memoQueueDeliveryEnd = vi.fn();
+const memoQueueDeliveryReturn = vi.fn();
 const memoQueueDeliveries = vi.fn(async (_id: string) => servedDeliveries);
 const memoQueueList = vi.fn(async () => {
   if (queuesFail) throw new Error("down");
@@ -43,6 +44,7 @@ vi.mock("./api.ts", () => ({
   memoQueueResume: (id: string) => memoQueueResume(id),
   memoQueueDeliveries: (id: string) => memoQueueDeliveries(id),
   memoQueueDeliveryEnd: (id: string, did: string) => memoQueueDeliveryEnd(id, did),
+  memoQueueDeliveryReturn: (id: string, did: string) => memoQueueDeliveryReturn(id, did),
   memoTidyRuns: async () => ({ runs: [], usedToday: 0, dailyCap: 10 }),
   memoTidyUndo: async () => ({}),
 }));
@@ -164,13 +166,14 @@ beforeEach(() => {
   servedQueues = { tenantEnabled: true, queues: [aQueue()] };
   queuesFail = false;
   servedDeliveries = [];
-  for (const m of [memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueResume, memoQueueDeliveries, memoQueueDeliveryEnd, memoQueueList, openSessionChat]) m.mockClear();
+  for (const m of [memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueResume, memoQueueDeliveries, memoQueueDeliveryEnd, memoQueueDeliveryReturn, memoQueueList, openSessionChat]) m.mockClear();
   memoRelease.mockResolvedValue({ released: [], stale: [] });
   memoQueuePut.mockResolvedValue(aQueue());
   memoQueueDelete.mockResolvedValue({ ok: true });
   memoQueueFire.mockResolvedValue({ id: "d1" });
   memoQueueResume.mockResolvedValue({});
   memoQueueDeliveryEnd.mockResolvedValue({});
+  memoQueueDeliveryReturn.mockResolvedValue({});
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -518,6 +521,58 @@ describe("deliveries and Run now", () => {
     expect(fire.disabled).toBe(false);
     await click(fire);
     expect(memoQueueFire).toHaveBeenCalledWith("c1");
+  });
+
+  describe("a run that handed its memo back (ADR 0137, addendum 2026-11-19, part B)", () => {
+    const base = { session: "run-1", messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "t2" };
+    const confirmBtns = () => [...document.querySelectorAll<HTMLElement>(".ui-confirm-actions button")];
+    const returnBtn = (row: Element) => [...row.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === t("memo.d_return"));
+
+    it("shows the hand-back with its reason and time, and what a dropped one was dropped for", async () => {
+      servedDeliveries = [
+        { ...base, id: "d1", state: "closed", outcome: "deferred", defer: { reason: "waiting for #12", notBefore: "2026-11-20T12:00:00Z", at: "x", result: "applied" } },
+        { ...base, id: "d2", state: "closed", outcome: "clean", defer: { reason: "later", notBefore: "2026-11-20T12:00:00Z", at: "x", result: "pr" } },
+        { ...base, id: "d3", state: "closed", outcome: "clean", returnedAt: "2026-11-20T10:00:00Z" },
+      ];
+      await render();
+      await openDeliveries();
+      const rows = dialog().querySelectorAll(".memo-d-row");
+      expect(rows[0].textContent).toContain(t("memo.d_state_deferred"));
+      expect(rows[0].textContent).toContain(t("memo.d_defer_applied"));
+      expect(rows[0].textContent).toContain("waiting for #12");
+      expect(rows[1].textContent).toContain(t("memo.d_defer_dropped_pr"));
+      // A run already returned offers no second press.
+      expect(returnBtn(rows[2])).toBeUndefined();
+      expect(returnBtn(rows[1])).toBeTruthy();
+    });
+
+    it("asks first, warns about an open pull request, and returns the run's memos on confirm", async () => {
+      servedDeliveries = [{ ...base, id: "d1", state: "closed", outcome: "clean" }];
+      const { useSessionsStore } = await import("../sessions/store.ts");
+      useSessionsStore.setState({
+        sessions: [{ name: "run-1", pr: { number: 12, state: "open", url: "https://github.com/o/r/pull/12" } } as never],
+      });
+      await render();
+      await openDeliveries();
+      const row = must(dialog().querySelector(".memo-d-row"), "row");
+      await click(must(returnBtn(row), "return"));
+      expect(memoQueueDeliveryReturn).not.toHaveBeenCalled();
+      expect(document.querySelector(".ui-confirm")?.textContent).toContain(t("memo.d_return_body_pr", { name: "run-1", prs: "#12" }));
+      await click(must(confirmBtns().find((b) => b.textContent === t("memo.d_return_confirm")), "confirm"));
+      expect(memoQueueDeliveryReturn).toHaveBeenCalledWith("c1", "d1");
+      useSessionsStore.setState({ sessions: [] });
+    });
+
+    it("says so when the Control Plane refuses", async () => {
+      servedDeliveries = [{ ...base, id: "d1", state: "closed", outcome: "clean" }];
+      memoQueueDeliveryReturn.mockResolvedValueOnce({ error: { code: "memo_ref_taken", message: "message m2 already holds o/r#12" } });
+      await render();
+      await openDeliveries();
+      await click(must(returnBtn(must(dialog().querySelector(".memo-d-row"), "row")), "return"));
+      expect(document.querySelector(".ui-confirm")?.textContent).toContain(t("memo.d_return_body"));
+      await click(must(confirmBtns().find((b) => b.textContent === t("memo.d_return_confirm")), "confirm"));
+      expect(document.body.textContent).toContain("message m2 already holds o/r#12");
+    });
   });
 
   describe("when Run now is refused", () => {
