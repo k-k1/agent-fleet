@@ -313,6 +313,9 @@ type usageTurnRow struct {
 	Route, Billing, Connection string
 	routeSet                   bool // a call has been noted
 	routeMixed                 bool // the noted calls disagreed
+	// connMixed: the calls agree on route and billing and differ only in their connection (one
+	// proven, one not, or two keys). The route is still proven, so only the connection is dropped.
+	connMixed bool
 	// segs are the row's contributions in order, adjacent ones with the same evidence merged. A
 	// mixed row keeps them (settleRoute) only when every contribution proves its billing, which
 	// is what makes the boundary between two of them provable; usageRecordsOf then writes one
@@ -376,8 +379,11 @@ func (r *usageTurnRow) noteRoute(route, billing, connection string) {
 		r.Route, r.Billing, r.Connection, r.routeSet = route, billing, connection, true
 		return
 	}
-	if r.Route != route || r.Billing != billing || r.Connection != connection {
+	switch {
+	case r.Route != route || r.Billing != billing:
 		r.routeMixed = true
+	case r.Connection != connection:
+		r.connMixed = true
 	}
 }
 
@@ -389,6 +395,7 @@ func (r *usageTurnRow) absorbRoute(p usageTurnRow) {
 	}
 	r.noteRoute(p.Route, p.Billing, p.Connection)
 	r.routeMixed = r.routeMixed || p.routeMixed
+	r.connMixed = r.connMixed || p.connMixed
 }
 
 // settleRoute clears a mixed row's route and billing before it leaves the fold.
@@ -399,7 +406,24 @@ func (r *usageTurnRow) absorbRoute(p usageTurnRow) {
 // began cannot be told.
 func (r *usageTurnRow) settleRoute() {
 	if !r.routeMixed {
-		r.segs = nil
+		if !r.connMixed {
+			r.segs = nil
+			return
+		}
+		// Only the connection differs. With every contribution's billing proven the boundary
+		// between them is proven and the segments stay (a self-hosted engine on two connections);
+		// otherwise the route stands and the connection is dropped. opencode.ai's bindings come from
+		// interval evidence that can change between two folds of the same turn, and a row's split
+		// must not depend on it (a retry would number the rows differently and count a cost twice),
+		// so they never split a row.
+		stable := r.Route != usagex.RouteOpencodeZen && r.Route != usagex.RouteOpencodeGo
+		for _, s := range r.segs {
+			if s.Billing == "" || !stable {
+				r.segs = nil
+				r.Connection = ""
+				return
+			}
+		}
 		return
 	}
 	r.Route, r.Billing, r.Connection = "", "", ""
@@ -452,6 +476,13 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			if p := pending[i]; p.CostUSD > 0 {
 				p.Orphan = true
 				p.settleRoute()
+				if len(p.segs) > 1 {
+					for _, sg := range p.segs[1:] {
+						if sg.Connection != p.segs[0].Connection {
+							p.Connection = "" // one row holds several connections' cost
+						}
+					}
+				}
 				p.segs = nil           // an orphan is one keyed row
 				if p.OrphanKey == "" { // no message id: the best stable stand-in there is
 					p.OrphanKey = fmt.Sprintf("ts:%s#%d", p.TS, p.LastIdx)
@@ -1047,7 +1078,7 @@ func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
 	if rec.TS == "" {
 		rec.TS = time.Now().UTC().Format(time.RFC3339)
 	}
-	if !r.routeMixed {
+	if !r.routeMixed && !r.connMixed {
 		// A turn whose calls disagreed is not a gap: its cleared or split evidence stands.
 		stampLaunch(m, &rec)
 	}

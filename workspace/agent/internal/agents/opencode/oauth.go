@@ -63,7 +63,13 @@ const (
 // counts it as demand, and auto-stop reclaims the daemon once the flow ends.
 var oauthDaemon = func() (string, error) {
 	oauthTouch()
-	addr, _, err := Serve().ensure(true)
+	addr, gen, err := Serve().ensure(true)
+	if err == nil {
+		// Every Agent flow that can sign the account in or out comes through here (the sign-in,
+		// the disconnect, the stored-credential writes): the ledger stops binding this daemon's
+		// calls to its key from here on (bind_intervals.go).
+		noteAccount(time.Now(), acctTouch, gen)
+	}
 	return addr, err
 }
 
@@ -259,6 +265,7 @@ func oauthStatus() oauthState {
 	if !up {
 		return oauthCache // stale-if-error: a stopped daemon must not clear the display
 	}
+	genBefore := int(genSnap.Load())
 	var env envelope[integrationInfo]
 	if err := daemonJSON("GET", addr, "/api/integration/"+oauthIntegrationID, nil, &env); err != nil {
 		return oauthCache
@@ -282,6 +289,14 @@ func oauthStatus() oauthState {
 	}
 	oauthCache = st
 	oauthAt = time.Now()
+	// The reading belongs to the daemon life it came from only when no daemon was replaced meanwhile.
+	if int(genSnap.Load()) == genBefore {
+		if st.connected {
+			noteAccount(oauthAt, acctIn, genBefore)
+		} else {
+			noteAccount(oauthAt, acctOut, genBefore)
+		}
+	}
 	return st
 }
 
