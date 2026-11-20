@@ -101,8 +101,21 @@ describe("memoryEntryIO", () => {
 
   it("reads a memory the Agent sent without type, description or body", async () => {
     const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
-    api.mockResolvedValue({ name: "n", scope: "user", revision: 2 });
+    api.mockResolvedValue({ name: "n", scope: "user", description: "", revision: 2 });
     const file = await io.load("k");
     expect(decodeEntry(file.content)).toEqual({ description: "", type: "feedback", body: "" });
+  });
+
+  it("still adopts the remote's counter after the adapter was rebuilt (a tab switch) between the conflict and the read", async () => {
+    const target = { key: "k", scope: "user", project: "", name: "n" };
+    const file = entryFile("k", body);
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_conflict", message: "x" } });
+    await memoryEntryIO(target, () => {}).save("k", file.content, file.revision);
+    const rebuilt = memoryEntryIO(target, () => {});
+    api.mockResolvedValue({ ...body, revision: 5 });
+    await rebuilt.load("k");
+    apiJSON.mockResolvedValue({ revision: 6 });
+    await rebuilt.save("k", file.content, file.revision);
+    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 5 });
   });
 });

@@ -67,6 +67,7 @@ interface Known {
 // a dirty buffer's guard saves after its pane has unmounted. Bounded per memory.
 const known = new Map<string, Map<string, Known>>();
 const KEEP = 16;
+const adoptNext = new Set<string>();
 
 function remember(key: string, sha: string, entry: Known, overwrite: boolean) {
   let byHash = known.get(key);
@@ -82,10 +83,11 @@ function remember(key: string, sha: string, entry: Known, overwrite: boolean) {
 /** Test hook. */
 export function resetMemoryRevisions() {
   known.clear();
+  adoptNext.clear();
 }
 
 export function entryFile(key: string, body: MemoryBody, overwrite = false): EditableFile {
-  const content = encodeEntry({ description: body.description ?? "", type: body.type || "feedback", body: body.body ?? "" });
+  const content = encodeEntry({ description: body.description, type: body.type || "feedback", body: body.body ?? "" });
   const revision = revisionOf(content);
   remember(key, revision, { revision: body.revision, kinds: body.kinds ?? [] }, overwrite);
   return { path: key, content, size: content.length, binary: false, truncated: false, editable: true, editabilityReason: null, revision };
@@ -97,7 +99,7 @@ const validRevision = (v: unknown): v is number => typeof v === "number" && Numb
 const optionalString = (v: unknown) => v === undefined || typeof v === "string";
 export function isMemoryBody(res: unknown, scope: string, name: string): res is MemoryBody {
   const b = res as Partial<MemoryBody> | null;
-  return !!b && b.name === name && b.scope === scope && optionalString(b.body) && optionalString(b.description) && optionalString(b.type) && validRevision(b.revision);
+  return !!b && b.name === name && b.scope === scope && optionalString(b.body) && typeof b.description === "string" && optionalString(b.type) && (b.kinds === undefined || (Array.isArray(b.kinds) && b.kinds.every((k) => typeof k === "string"))) && validRevision(b.revision);
 }
 
 const projectQuery = (project: string) => (project ? "?project=" + encodeURIComponent(project) : "");
@@ -109,8 +111,8 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
   const tenant = useTenantStore.getState().tenant;
   const sameTenant = () => useTenantStore.getState().tenant === tenant;
   // After a save lost to a conflict, the next read is the remote the member is about to adopt: it
-  // replaces the counter and kinds of text it shares with the base. Any other read must not.
-  let adoptNextRead = false;
+  // replaces the counter and kinds of text it shares with the base. Any other read must not. Kept
+  // per memory outside the adapter, which a tab switch rebuilds.
   return {
     async load() {
       if (!sameTenant()) throw new Error("tenant_changed");
@@ -121,8 +123,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (!isMemoryBody(res, scope, name)) throw new Error("load_failed");
       // Not overwriting: a GET the buffer does not adopt (typing won the race) must not move the
       // counter the edit started from.
-      const file = entryFile(key, res as MemoryBody, adoptNextRead);
-      adoptNextRead = false;
+      const file = entryFile(key, res as MemoryBody, adoptNext.delete(key));
       return file;
     },
     async save(_path, content, baseRevision): Promise<PutFileResult> {
@@ -130,7 +131,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (!sameTenant()) return { ok: false, status: 400, error: { code: "tenant_changed", message: "the workspace changed since this text was read" } };
       const base = known.get(key)?.get(baseRevision);
       // A base this pane never read cannot be saved over safely: let the hook re-read.
-      if (!base) adoptNextRead = true;
+      if (!base) adoptNext.add(key);
       if (!base) return { ok: false, status: 409, error: { code: "revision_conflict", message: "unknown base" } };
       const fields = decodeEntry(content);
       // The project id also goes in the query: the CP audit ledger reads the URL only.
@@ -148,7 +149,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         let code: string = res.error.code || "save_failed";
         // The commit may have landed before the snapshot failed: the outcome is unknown.
         if (code === "memory_snapshot_failed" || (res.error.status ?? 0) >= 500) code = "write_state_unknown";
-        if (code === "memory_conflict") adoptNextRead = true;
+        if (code === "memory_conflict") adoptNext.add(key);
         if (code === "memory_conflict") return { ok: false, status: 409, error: { code: "revision_conflict", message: errDetail(res.error) } };
         onRefused({ code, text: errDetail(res.error), findings: code === "memory_secret_detected" ? (res.findings ?? []) : [] });
         return { ok: false, status: 422, error: { code, message: errDetail(res.error) } };
