@@ -2,7 +2,7 @@
 
 English | [日本語](0141-memory-activity-view.ja.md)
 
-- Status: **proposed** (2026-11-20). Layout and edit form chosen with the owner; not built yet.
+- Status: **accepted** (2026-11-20). Layout and edit form chosen with the owner. Phase 1 (decisions 1–3, 5, 7) built, except the run state and run button in the Proposals head; those and the memory pane (decisions 4, 6, 8) follow in #4568.
 - Tracking: #4567 (view and proposals), #4568 (memory pane). Follow-ups: #4569.
 - Related: [0140](0140-console-activity-bar.md) (the activity bar this adds a view to) /
   [0108](0108-af-owned-agent-memory.md) (the AF-owned store) /

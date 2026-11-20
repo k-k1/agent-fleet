@@ -1,6 +1,6 @@
 ---
 audience: "anyone who wants to check or correct what agents remember"
-source_of_truth: "the Console's Memory view (Settings > Agent memory > Open memory view)"
+source_of_truth: "the Console's Memory view of the left pane (the Memory icon on the activity bar) and the Memory pane (Settings > Agent memory > Open memory view)"
 ---
 
 # Read and correct agent memory
@@ -26,8 +26,12 @@ How it differs from instruction files and the agent's own memory is in [Choose w
 
 ## Open the Memory view
 
-Open **⚙ Settings → Agent memory** and press **Open memory view** at the top. The Memory view opens in a pane of its own (the
-**Memory** tab), with three tabs: **Memories**, **Changes** and **Suggestions**.
+Press the **Memory** icon on the activity bar. The left pane lists the tidy-up's pending suggestions and your memories by
+scope, with a search box, the scope and type, and the **All**, **Pinned** and **Forgotten** chips. Click a memory or a
+suggestion to open it in the Memory view: a pane of its own (the **Memory** tab), with three tabs: **Memories**, **Changes**
+and **Suggestions**. **Change history** at the foot of the left pane opens the Changes tab.
+
+- **⚙ Settings → Agent memory → Open memory view** opens the same pane
 
 - You can also search in the command palette's **Memory** scope and use **Open in Agent memory** ([Use the keyboard and the command palette](../start/shortcuts.md#find-and-open-with-the-command-palette))
 - There is one Memory view per workspace. Opening it again moves you to the one already open

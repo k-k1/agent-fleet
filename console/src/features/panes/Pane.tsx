@@ -864,7 +864,7 @@ function PopulatedPane({
       )}
       {pane.content.kind === "home" && <HomeView headerActions={tabHeaderActions} />}
       {pane.content.kind === "memory" && (
-        <MemoryView paneId={pane.id} view={pane.content.memoryView} headerActions={tabHeaderActions} />
+        <MemoryView paneId={pane.id} view={pane.content.memoryView} proposalId={pane.content.proposalId} headerActions={tabHeaderActions} />
       )}
       {pane.content.kind === "fleetgraph" && (
         <FleetGraphView

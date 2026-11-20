@@ -78,6 +78,7 @@ describe("memory target", () => {
     });
   });
   it("is not taken for another section's target, nor for a broken one", () => {
+    expect(parseMemoryTarget(memoryTarget(mem("x"), true))).toEqual({ scope: "user", project: "", name: "x", gone: true });
     expect(parseMemoryTarget("codex")).toBeNull();
     expect(parseMemoryTarget(null)).toBeNull();
     expect(parseMemoryTarget("memory-entry:{")).toBeNull();

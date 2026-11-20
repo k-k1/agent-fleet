@@ -55,14 +55,17 @@ export interface MemoryTarget {
   /** Project id; "" for the user scope. */
   project: string;
   name: string;
+  /** A forgotten memory: the viewer picks it from its forgotten list. */
+  gone?: boolean;
 }
 const TARGET_PREFIX = "memory-entry:";
-export const memoryTarget = (m: { scope: string; project?: { id: string }; name: string }): string =>
+export const memoryTarget = (m: { scope: string; project?: { id: string }; name: string }, gone = false): string =>
   TARGET_PREFIX +
   JSON.stringify({
     scope: m.scope === "user" ? "user" : "project",
     project: m.scope === "user" ? "" : (m.project?.id ?? ""),
     name: m.name,
+    ...(gone ? { gone: true } : {}),
   } satisfies MemoryTarget);
 /** The memory a settings target names; null when it names something else (an agent kind, say). */
 export function parseMemoryTarget(target: string | null): MemoryTarget | null {
@@ -70,7 +73,7 @@ export function parseMemoryTarget(target: string | null): MemoryTarget | null {
   try {
     const t = JSON.parse(target.slice(TARGET_PREFIX.length));
     const ok = (t?.scope === "user" || t?.scope === "project") && typeof t.project === "string" && typeof t.name === "string";
-    return ok ? (t as MemoryTarget) : null;
+    return ok ? { scope: t.scope, project: t.project, name: t.name, ...(t.gone === true ? { gone: true } : {}) } : null;
   } catch {
     return null;
   }

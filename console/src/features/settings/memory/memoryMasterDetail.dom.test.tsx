@@ -1086,6 +1086,64 @@ describe("MemoriesMasterDetail settings target", () => {
     expect(useSettingsUI.getState().settingsTarget).toBeNull();
   });
 
+  it("picks a forgotten memory from the forgotten list of every scope (ADR 0141)", async () => {
+    await setValue(select(), "user");
+    await act(async () => useSettingsUI.setState({ settingsTarget: memoryTarget({ scope: "project", project, name: "old-note" }, true) }));
+    await flush();
+    expect(select().value).toBe("all");
+    expect(text(t("mem.md_f_forgotten"))?.getAttribute("aria-pressed")).toBe("true");
+    expect(picked()?.textContent).toContain("old-note");
+    expect(useSettingsUI.getState().settingsTarget).toBeNull();
+  });
+
+  it("reads the forgotten list again for a target, even when it already shows all scopes", async () => {
+    await chip("mem.md_f_forgotten");
+    const before = calls0("api/agents/memory/entries/member-forgotten").length;
+    await act(async () => useSettingsUI.setState({ settingsTarget: memoryTarget({ scope: "project", project, name: "old-note" }, true) }));
+    await flush();
+    expect(calls0("api/agents/memory/entries/member-forgotten").length).toBeGreaterThan(before);
+    expect(picked()?.textContent).toContain("old-note");
+  });
+
+  it("pages on until a forgotten target turns up", async () => {
+    const page2 = { ...changes.find((c) => c.name === "old-note")!, commit: "p2", name: "older-note" };
+    const base = api.getMockImplementation()!;
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/member-forgotten")) {
+        if (url.includes("before=")) return { forgotten: [page2] };
+        const first = await base(url);
+        return { ...first, next: "cur1" };
+      }
+      return base(url);
+    });
+    await act(async () => useSettingsUI.setState({ settingsTarget: memoryTarget({ scope: "project", project, name: "older-note" }, true) }));
+    await flush();
+    await flush();
+    expect(calls0("api/agents/memory/entries/member-forgotten").some((c) => String(c[0]).includes("before=cur1"))).toBe(true);
+    expect(picked()?.textContent).toContain("older-note");
+  });
+
+  it("keeps a forgotten target after a failed page, and finds it on the member's own retry", async () => {
+    const page2 = { ...changes.find((c) => c.name === "old-note")!, commit: "p2", name: "older-note" };
+    const base = api.getMockImplementation()!;
+    let failPage = true;
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/member-forgotten")) {
+        if (url.includes("before=")) return failPage ? { error: { code: "boom", message: "x" } } : { forgotten: [page2] };
+        return { ...(await base(url)), next: "cur1" };
+      }
+      return base(url);
+    });
+    await act(async () => useSettingsUI.setState({ settingsTarget: memoryTarget({ scope: "project", project, name: "older-note" }, true) }));
+    await flush();
+    await flush();
+    expect(text(t("mem.br_forgotten_more"))).toBeTruthy();
+    failPage = false;
+    await click(text(t("mem.br_forgotten_more")));
+    await flush();
+    expect(picked()?.textContent).toContain("older-note");
+  });
+
   it("leaves a target that names something else for its owner", async () => {
     await act(async () => useSettingsUI.setState({ settingsTarget: "codex" }));
     await flush();

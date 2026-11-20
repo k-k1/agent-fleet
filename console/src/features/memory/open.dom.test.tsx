@@ -43,6 +43,13 @@ describe("openMemoryView", () => {
     expect(useSettingsUI.getState().settingsTarget).toBe("user::notes");
   });
 
+  it("opens one proposal alone, and drops it when the pane goes back to a tab (ADR 0141)", () => {
+    openMemoryView("proposals", { proposalId: "0123456789abcdef0123" });
+    expect(panes().map((p) => p.content)).toEqual([{ kind: "memory", memoryView: "proposals", proposalId: "0123456789abcdef0123" }]);
+    openMemoryView("changes", { proposalId: "0123456789abcdef0123" });
+    expect(panes().map((p) => p.content)).toEqual([{ kind: "memory", memoryView: "changes" }]);
+  });
+
   it("titles the tab Memory", () => {
     openMemoryView();
     expect(paneTitle(panes()[0], null)).toBe("Memory");
@@ -51,5 +58,11 @@ describe("openMemoryView", () => {
   it("keeps a stored Memory pane and drops an unknown view name", () => {
     expect(validateStoredContent({ kind: "memory", memoryView: "proposals" })).toEqual({ kind: "memory", memoryView: "proposals" });
     expect(validateStoredContent({ kind: "memory", memoryView: "../etc" })).toEqual({ kind: "memory" });
+    const id = "0123456789abcdef0123";
+    expect(validateStoredContent({ kind: "memory", memoryView: "proposals", proposalId: id })).toEqual({ kind: "memory", memoryView: "proposals", proposalId: id });
+    // The id reaches an API query: anything not shaped like the Agent's is dropped, and so is one
+    // on a view that does not show a single proposal.
+    expect(validateStoredContent({ kind: "memory", memoryView: "proposals", proposalId: "../x" })).toEqual({ kind: "memory", memoryView: "proposals" });
+    expect(validateStoredContent({ kind: "memory", memoryView: "changes", proposalId: id })).toEqual({ kind: "memory", memoryView: "changes" });
   });
 });
