@@ -41,3 +41,27 @@ func TestPreInvocationReopensATurnNoInputAnnounced(t *testing.T) {
 		t.Fatalf("the input's turn mark was lost: %q ok=%v", mark, ok)
 	}
 }
+
+// An input route that writes its "working" between the hook's read and its write keeps it: the
+// Rev its delivery check withdraws by, and the turn mark EndedAfter pairs the end with.
+func TestPreInvocationLosesTheRaceToAnInputRoute(t *testing.T) {
+	_, sid := hookFixture(t, "slot-race")
+	recordGen("slot-race", "SessionStart", hookInput{ConversationID: "c1"}, time.Now())
+	status.Persist(sid, "working")
+	status.PersistTurnEnd(sid, "idle")
+
+	var rev string
+	prev := reopenGap
+	reopenGap = func() {
+		rev = status.PersistRev(sid, "working")
+		status.RecordTurnMark(sid, rev, "41")
+	}
+	t.Cleanup(func() { reopenGap = prev })
+	recordGen("slot-race", "PreInvocation", hookInput{ConversationID: "c1"}, time.Now())
+	if st, _ := status.Read(sid); st.Rev != rev || st.State != "working" {
+		t.Fatalf("the hook overwrote the input route's write: %+v, want rev %q", st, rev)
+	}
+	if mark, ok := status.TurnMarkOf(sid); !ok || mark != "41" {
+		t.Fatalf("the input's turn mark was lost: %q ok=%v", mark, ok)
+	}
+}

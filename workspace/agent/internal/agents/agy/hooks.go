@@ -195,12 +195,21 @@ func recordHook(name, gen, event string, in hookInput, now time.Time) {
 // record, so the Stop that closes this turn captures this write's Rev (newInputSince). No turn
 // mark: agy's EndedAfter pairs an end with a user step, and a self-started turn has none, so the
 // settle window decides instead.
+//
+// Compare-and-set (status.PersistIf): this hook is another process than the Agent, and an input
+// route that typed a prompt a moment ago may write its own "working" (with the turn mark and the
+// Rev its delivery check withdraws by) between the read and the write here. That write wins.
 func reopenTurn(slotSid string) {
-	if st, ok := status.Read(slotSid); ok && st.State == "working" {
+	st, ok := status.Read(slotSid)
+	if ok && st.State == "working" {
 		return
 	}
-	status.Persist(slotSid, "working")
+	reopenGap()
+	status.PersistIf(slotSid, "working", st.Rev, ok)
 }
+
+// reopenGap runs between reopenTurn's read and its write; tests put a racing input route there.
+var reopenGap = func() {}
 
 // idleGrace is how long after a Stop the conversation DB may still be landing the turn's own
 // last steps; a Stop is not contradicted by the DB before it has passed.

@@ -191,13 +191,22 @@ func backgroundWakeObserve(m session.Meta, s bgWakeLive, now time.Time) {
 		}
 		bgWakeMu.Lock()
 		p := bgWakePeriods[m.Name]
-		if p == nil || p.done || s.turnEnd != p.turnEnd || (ok && (p.mark == "" || mark != p.mark)) {
+		switch {
+		case p == nil || p.done || (ok && p.mark != "" && mark != p.mark):
 			// A new period, or the one we track turned out to belong to a later turn (agy ran a
-			// turn of its own and backgrounded work again), or its mark was not written yet when
-			// the work was first seen. A read that fails now (a DB busy with agy's own write) says
-			// nothing about the turn, so it never wipes a mark already taken.
+			// turn of its own and backgrounded work again): that turn's work starts its own
+			// clock.
 			bgWakePeriods[m.Name] = &bgWakePeriod{mark: mark, turnEnd: s.turnEnd, since: now}
-		} else {
+		default:
+			// The same turn, read more fully: a mark that was not written yet when the work was
+			// first seen, or a turn end stamped since (by the list once the hold's bound ran
+			// out, turn_end_defer.go). The period keeps its start, or a late stamp would restart
+			// the hold's bound. A read that fails now (a DB busy with agy's own write) says
+			// nothing about the turn, so it never wipes a mark already taken.
+			if ok && p.mark == "" {
+				p.mark = mark
+			}
+			p.turnEnd = s.turnEnd
 			p.quietSince, p.endedAt = time.Time{}, time.Time{}
 		}
 		bgWakeMu.Unlock()
@@ -216,7 +225,10 @@ func backgroundWakeObserve(m session.Meta, s bgWakeLive, now time.Time) {
 	if now.Sub(p.endedAt) >= backgroundWakeGiveUp {
 		p.done = true
 		bgWakeMu.Unlock()
-		log.Printf("background-wake: %s: not nudging (no chance to deliver within %s)", m.Name, backgroundWakeGiveUp)
+		if s.state != "working" {
+			// Working is agy's own follow-up turn, long but under way: nothing was missed.
+			log.Printf("background-wake: %s: not nudging (no chance to deliver within %s)", m.Name, backgroundWakeGiveUp)
+		}
 		return
 	}
 	if s.state != "idle" {

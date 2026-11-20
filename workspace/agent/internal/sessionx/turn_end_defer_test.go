@@ -170,3 +170,43 @@ func TestTurnEndHeld_ListDoesNotStampTheInterimEnd(t *testing.T) {
 		t.Fatal("control: with no tool and no open period the end is stamped")
 	}
 }
+
+// The list stamps the end once the bound ran out (recordPolledTurnEnd alone, nobody opened the
+// session); the watch's next busy tick must not take that stamp for a new turn and restart the
+// bound, or the completion is held for another two hours.
+func TestTurnEndHeld_LateStampDoesNotRestartTheBound(t *testing.T) {
+	m, sid, _, _ := interimFixture(t, "agy_hold_restamp")
+	start := time.Now()
+	backgroundWakeObserve(m, bgWakeLive{state: "idle", busy: true}, start)
+	turnEndNow = func() time.Time { return start.Add(turnEndHoldMax) }
+	t.Cleanup(func() { turnEndNow = time.Now })
+	recordPolledTurnEnd(m, "idle")
+	stamped := lastTurnEndAt(m)
+	if stamped == "" {
+		t.Fatal("control: the list stamps the end past the bound")
+	}
+	backgroundWakeObserve(m, bgWakeLive{state: "idle", busy: true, turnEnd: stamped}, start.Add(turnEndHoldMax+15*time.Second))
+	turnEndNow = func() time.Time { return start.Add(turnEndHoldMax + 20*time.Second) }
+	DriveState(m, true, false)
+	if st, _ := status.Read(sid); st.State != "idle" || !st.TurnEnd {
+		t.Fatalf("the late stamp restarted the hold: %+v", st)
+	}
+}
+
+// A retired session's period is gone; its leftover pane and tool must not hold the end for ever,
+// nor read as awaiting a turn.
+func TestTurnEndHeld_RetiredIsNeverHeld(t *testing.T) {
+	m, sid, _, toolAlive := interimFixture(t, "agy_hold_retired")
+	backgroundWakeObserve(m, bgWakeLive{state: "idle", busy: true}, time.Now())
+	*toolAlive = false
+	backgroundWakeObserve(m, bgWakeLive{state: "idle"}, time.Now())
+	*toolAlive = true
+	m, _ = UpdateSessionMeta(m.Name, func(cur *session.Meta) bool { cur.RetiredAt = "2026-11-20T02:00:00Z"; return true })
+	if busy, _ := withAwaitedTurn(m, false, ""); busy {
+		t.Fatal("a retired session reads as awaiting a turn")
+	}
+	DriveState(m, true, false)
+	if st, _ := status.Read(sid); st.State != "idle" || !st.TurnEnd {
+		t.Fatalf("a retired session's end was held: %+v", st)
+	}
+}

@@ -37,7 +37,9 @@ var turnEndNow = time.Now
 // turnEndHeld reports whether an idle just read off m's source is an interim end to hold back.
 // Callers ask only once the cheap gates have passed (a turn in flight, its state idle).
 func turnEndHeld(m session.Meta) bool {
-	if !backgroundWakeOptedIn(m.Kind) {
+	// A retired or archived session's period is dropped by the watch; without this a pane left
+	// behind by a failed halt would hold its end with no bound at all.
+	if m.Archived || isRetired(m) || !backgroundWakeOptedIn(m.Kind) {
 		return false
 	}
 	mark, since, open := backgroundWakePending(m.Name)
@@ -62,7 +64,7 @@ func nudgeStillAhead(m session.Meta, mark string) bool {
 // backgroundWakeAwaiting is the wire's reading of the second case: the work is over, the
 // follow-up turn is not here yet. Only asked of a live idle row with no background work.
 func backgroundWakeAwaiting(m session.Meta) bool {
-	if !backgroundWakeOptedIn(m.Kind) {
+	if m.Archived || isRetired(m) || !backgroundWakeOptedIn(m.Kind) {
 		return false
 	}
 	mark, _, open := backgroundWakePending(m.Name)
