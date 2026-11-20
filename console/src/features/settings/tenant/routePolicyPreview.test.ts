@@ -81,6 +81,24 @@ describe("previewTenantRule against the CP's table", () => {
     expect(predict("restricted-add-host").unsavedMayRescue).toBe(false);
   });
 
+  it("raises no rescue caveat for an owner that was already hidden", () => {
+    const c = cases["host-only-lcpp-drop-host"];
+    const v = view(c);
+    // lcpp is already hidden before this edit; the draft hides others and adds an unjudged host.
+    const owners = v.owners as OwnersView;
+    const hiddenAlready = {
+      ...owners,
+      kinds: owners.kinds.map((o) => (o.id === "lcpp" ? { ...o, allowed: [] } : o)),
+      chat: owners.chat.map((o) => (o.id === "lcpp" ? { ...o, allowed: [] } : o)),
+    };
+    const draft = { classes: ["self-hosted"], deny: ["af-engine-llm", "custom-api"], endpoints: ["x.corp.example"] };
+    const p = previewTenantRule({ ...v, owners: hiddenAlready }, draft)!;
+    expect(p.unsavedHosts).toBe(true);
+    expect(p.hides.kinds.length).toBeGreaterThan(0);
+    expect(p.hides.kinds).not.toContain("lcpp");
+    expect(p.unsavedMayRescue).toBe(false);
+  });
+
   it("does not count a host the CP lists as not approved, and raises no unsaved flag for it", () => {
     const c = cases["host-only-lcpp-swap-host"];
     const v = view(c);

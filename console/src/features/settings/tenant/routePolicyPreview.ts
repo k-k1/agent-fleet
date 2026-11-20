@@ -87,9 +87,10 @@ export function previewTenantRule(v: TenantPolicyView, draft: RouteRule): Previe
     for (const it of owners[g]) {
       const now = it.routes.filter(ok);
       allowed[g][it.id] = now;
-      if (now.length > 0) continue;
+      // Only an owner this save would newly hide is a caveat's subject.
+      if (now.length > 0 || it.allowed.length === 0) continue;
+      hides[g].push(it.id);
       if (unsavedHosts && it.routes.some((r) => onHost.has(r))) unsavedMayRescue = true;
-      if (it.allowed.length > 0) hides[g].push(it.id);
     }
   }
   return { allowed, hides, unsavedHosts, unsavedMayRescue };
