@@ -42,7 +42,7 @@ func RTK(ctx context.Context, e Env) int {
 		// One bounded probe answers both "does it run" and "which version".
 		if _, err := os.Stat(bin); err != nil {
 			need = !e.cliPresent("rtk")
-		} else if out, err := e.probe(bin); err != nil {
+		} else if out, _, err := e.probe(bin); err != nil {
 			need = true // present but does not answer --version: counts as not present
 		} else if cur := rtkVersion(out); e.Repin && cur != "" && cur != pin {
 			need = true

@@ -209,9 +209,13 @@ func TestRTKCandidateNameIsNotPredictable(t *testing.T) {
 	f := newRTK(t, "#!/bin/sh\nexit 1\n", "")
 	os.MkdirAll(filepath.Dir(f.bin()), 0o755)
 	os.WriteFile(f.bin(), []byte("#!/bin/sh\necho rtk 0.0.1\n"), 0o755)
-	os.Symlink(f.bin(), fmt.Sprintf("%s.af-new.%d", f.bin(), os.Getpid()))
+	if err := os.Symlink(f.bin(), fmt.Sprintf("%s.af-new.%d", f.bin(), os.Getpid())); err != nil {
+		t.Fatal(err)
+	}
 	f.env.Repin = true
-	RTK(t.Context(), f.env)
+	if rc := RTK(t.Context(), f.env); rc != ExitFailed { // the candidate was really tried and refused
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
 	if b, _ := os.ReadFile(f.bin()); !strings.Contains(string(b), "0.0.1") {
 		t.Fatalf("current copy overwritten through a planted link: %q", b)
 	}
@@ -291,5 +295,49 @@ func TestRTKRepinSkippedForNoSpaceKeepsOldCopy(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(f.bin()); string(b) != old {
 		t.Fatal("old copy changed")
+	}
+}
+
+// A wrapper whose child keeps our output pipes open must not stall the probe past its deadline.
+func TestProbeBoundedWhenChildHoldsPipes(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rtk")
+	os.WriteFile(p, []byte("#!/bin/sh\nsleep 30 &\necho rtk 1.2.3\nsleep 30\n"), 0o755)
+	e := Env{RunTimeout: 500 * time.Millisecond}
+	start := time.Now()
+	e.probe(p)
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("probe took %v", d)
+	}
+}
+
+// A linker warning on stderr must not be mistaken for the version line.
+func TestRTKRepinReadsVersionFromStdoutOnly(t *testing.T) {
+	f := newRTK(t, goodRTK, strings.Repeat("0", 64)) // an install attempt would fail
+	os.MkdirAll(filepath.Dir(f.bin()), 0o755)
+	os.WriteFile(f.bin(), []byte("#!/bin/sh\necho 'ERROR: ld.so: object x cannot be preloaded' >&2\necho rtk 1.2.3\n"), 0o755)
+	f.env.Repin = true
+	if rc := RTK(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if got := f.statusText(); got != "rtk\tskipped\t\n" {
+		t.Fatalf("status %q", got)
+	}
+}
+
+func TestRTKLocalWriteFailureIsNotNetwork(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory modes")
+	}
+	f := newRTK(t, goodRTK, "")
+	bin := filepath.Dir(f.bin())
+	os.MkdirAll(bin, 0o755)
+	os.Chmod(bin, 0o555)
+	t.Cleanup(func() { os.Chmod(bin, 0o755) })
+	if rc := RTK(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if got := f.statusText(); got != "rtk\tfailed\tother\n" {
+		t.Fatalf("status %q", got)
 	}
 }

@@ -728,9 +728,11 @@ if [ "$LEAN_CLIS" = 1 ]; then
          echo "[entrypoint] WARN: rtk boot-install exited $rtk_rc (retrying next start)"
          if cli_usable rtk; then bi_note rtk skipped; else bi_note rtk failed other; fi ;;
     esac
+  elif cli_usable rtk; then
+    bi_note rtk skipped
   elif [ -n "$(vj_pin rtk)" ]; then
     echo "[entrypoint] WARN: the Agent binary is missing; rtk boot-install skipped"
-    if cli_usable rtk; then bi_note rtk skipped; else bi_note rtk failed other; fi
+    bi_note rtk failed other
   fi
   # agy: the pinned immutable GCS object named by the official installer manifest, fetched
   # and verified via versions.json's agy + agy_build + agy_sha256 (same path as the Dockerfile

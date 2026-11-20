@@ -10,6 +10,7 @@ package bootinstall
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/hex"
@@ -17,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -112,18 +112,27 @@ func (e Env) note(tool, status, reason string) {
 	fmt.Fprintf(f, "%s\t%s\t%s\n", tool, status, reason)
 }
 
-// probe runs `p --version` once under the deadline and returns its combined output, so a caller
-// gets both the verdict and the reason (a dynamic-linker complaint, say) from a single run.
-func (e Env) probe(p string) (string, error) {
+// probe runs `p --version` once under the deadline and returns its stdout and stderr apart:
+// the answer is read from stdout (as the shell read it), stderr is for the diagnosis (a
+// dynamic-linker complaint, say). The wrapper script of an installed rtk may leave a child
+// holding our pipes, so the whole process group is killed at the deadline and WaitDelay stops
+// us waiting for descriptors a straggler keeps open.
+func (e Env) probe(p string) (stdout, stderr string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), e.RunTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, p, "--version").CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+	cmd := exec.CommandContext(ctx, p, "--version")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = time.Second
+	var so, se bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &so, &se
+	err = cmd.Run()
+	return strings.TrimSpace(so.String()), strings.TrimSpace(se.String()), err
 }
 
 // runs reports whether the binary at p answers --version in time.
 func (e Env) runs(p string) bool {
-	_, err := e.probe(p)
+	_, _, err := e.probe(p)
 	return err == nil
 }
 
@@ -167,11 +176,6 @@ func classify(err error) string {
 	case errors.Is(err, ErrNetwork):
 		return ReasonNetwork
 	}
-	var ue *url.Error
-	var ne interface{ Timeout() bool }
-	if errors.As(err, &ue) || errors.As(err, &ne) || strings.Contains(msg, "http ") {
-		return ReasonNetwork
-	}
 	return ReasonOther
 }
 
@@ -190,6 +194,10 @@ func (e Env) get(ctx context.Context, u, dest string) error {
 		if last == nil {
 			return nil
 		}
+		var le localError
+		if errors.As(last, &le) {
+			return last // a local write failure will not heal by asking again, and is not the network's
+		}
 		last = fmt.Errorf("%w: %w", ErrNetwork, last)
 		var hs httpStatusError
 		if errors.As(last, &hs) && hs >= 400 && hs < 500 && hs != 429 && hs != 408 {
@@ -198,6 +206,11 @@ func (e Env) get(ctx context.Context, u, dest string) error {
 	}
 	return last
 }
+
+// localError marks a failure on our side of a download (creating the destination file).
+type localError struct{ error }
+
+func (l localError) Unwrap() error { return l.error }
 
 type httpStatusError int
 
@@ -218,13 +231,19 @@ func (e Env) getOnce(ctx context.Context, u, dest string) error {
 	}
 	f, err := os.Create(dest)
 	if err != nil {
-		return err
+		return localError{err}
 	}
 	if _, err := io.Copy(f, resp.Body); err != nil {
 		f.Close()
+		if errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT) {
+			return localError{err}
+		}
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		return localError{err}
+	}
+	return nil
 }
 
 // checksumFor returns the digest listed for asset in a sha256sum-style file. Every line naming
@@ -328,7 +347,7 @@ func (e Env) installAtomic(src, dest string) error {
 		os.Remove(tmp)
 		return err
 	}
-	if msg, err := e.probe(tmp); err != nil {
+	if _, msg, err := e.probe(tmp); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("%s does not run in this environment, keeping the current copy: %v: %s", filepath.Base(dest), err, msg)
 	}
