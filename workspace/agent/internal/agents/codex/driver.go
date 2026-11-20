@@ -212,12 +212,6 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if tid == "" {
 		tid = sids.Read(slotSid)
 	}
-	fresh := tid == "" && m.ForkFrom == ""
-	if fresh {
-		if err := prepareFreshLaunch(); err != nil {
-			return nil, err
-		}
-	}
 	var st threadSnapshotWire
 	if tid != "" {
 		st, err = threadResume(cl, tid, cwd, m.Name)
@@ -236,6 +230,9 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 		if m.ForkFrom != "" {
 			st, err = threadFork(cl, m.ForkFrom, cwd, m.ForkAt, m.Name)
 		} else {
+			if err := prepareFreshLaunch(); err != nil {
+				return nil, err
+			}
 			st, err = threadStart(cl, cwd, firstNonEmpty(h.settings.Model, m.Model), m.Name)
 		}
 		if err != nil {

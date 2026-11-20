@@ -54,7 +54,10 @@ func MemoriesFlag() (val, found bool) {
 func SetMemoriesFlag(on bool) error {
 	paths.CodexConfigMu.Lock()
 	defer paths.CodexConfigMu.Unlock()
-	path := codexConfigPath()
+	path, err := paths.CodexConfigWritePath()
+	if err != nil {
+		return err
+	}
 	b, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err

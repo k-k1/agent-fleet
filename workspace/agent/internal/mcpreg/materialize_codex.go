@@ -43,7 +43,10 @@ func codexConfigPath() string {
 func materializeCodex(defs []ServerDef, prev []string) (written, removed []string, changed bool, err error) {
 	paths.CodexConfigMu.Lock()
 	defer paths.CodexConfigMu.Unlock()
-	path := codexConfigPath()
+	path, err := paths.CodexConfigWritePath()
+	if err != nil {
+		return nil, nil, false, err
+	}
 	src := ""
 	b, rerr := os.ReadFile(path)
 	switch {

@@ -123,7 +123,7 @@ export function CodexBehavior({
         <LaunchDefaults kind="codex" />
         <ThinkingRow kind="codex" />
         <SettingRow label={tr("agents.codex_remember_defaults")}>
-          <OnOff value={s.codexRememberDefaults} onChange={(v) => setSetting("codexRememberDefaults", v)} />
+          {prefsLoading ? "…" : <OnOff value={s.codexRememberDefaults} onChange={(v) => setSetting("codexRememberDefaults", v)} />}
         </SettingRow>
         <p className="ps-note">{tr("agents.note_codex_remember_defaults")}</p>
         <SettingRow label={tr("agents.rate_limit_resume")}>

@@ -79,6 +79,18 @@ describe("Settings > Agents", () => {
     expect(host!.textContent).not.toContain(t("cred.own_settings_line"));
   });
 
+  it("lets the user turn off Codex's saved launch defaults", async () => {
+    await mount();
+    const codex = card("codex")!;
+    const behavior = codex.querySelector<HTMLButtonElement>(".ps-disclosure")!;
+    await act(async () => behavior.click());
+    const row = [...codex.querySelectorAll(".ps-row")].find((r) => r.querySelector(".ps-label")?.textContent === t("agents.codex_remember_defaults"))!;
+    expect(row.querySelector("button.active")?.textContent).toBe(t("common.on"));
+    const off = [...row.querySelectorAll("button")].find((b) => b.textContent === t("common.off"))!;
+    await act(async () => off.click());
+    expect(getSettings().codexRememberDefaults).toBe(false);
+  });
+
   it("restricted: draws no card for a harness the catalogue leaves out", async () => {
     kinds = { kinds: [{ kind: "codex" }, { kind: "opencode" }], access: { policyConfirmed: true } };
     await mount();

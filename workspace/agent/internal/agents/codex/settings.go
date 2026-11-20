@@ -155,7 +155,11 @@ func HandleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	paths.CodexConfigMu.Lock()
 	defer paths.CodexConfigMu.Unlock()
-	path := codexConfigPath()
+	path, err := paths.CodexConfigWritePath()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "read_failed", err.Error())
+		return
+	}
 	b, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "read_failed", err.Error())

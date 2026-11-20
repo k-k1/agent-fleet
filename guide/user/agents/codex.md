@@ -50,9 +50,11 @@ Press "**Connect with an API key**", paste your OpenAI API key and connect.
 |---|---|
 | Auto-resume after a usage limit resets | Whether a Managed codex turn stopped by a usage limit gets one "carry on" when the limit lifts. On by default |
 | Model-switch nudge at usage limits | Whether Codex shows its suggestion to switch to a lighter model as a usage limit nears. On by default |
+| Remember Codex's own model and reasoning level | When off, starting a new Managed or Terminal (CLI) session clears these two saved values from Codex's main user configuration. On by default |
 
 - **Auto-resume** applies to Managed Codex sessions
 - With the **nudge** on, following it may switch you to a lighter model. Turn it off if you do not want the model to change
+- With **remember** off, the change also affects Terminal launches that share the user configuration. Project and profile settings still apply
 - **RTK** only asks for rtk through `AGENTS.md`, best effort ([Check prices and usage](usage.md#save-tokens-with-rtk))
 
 ## Good to know

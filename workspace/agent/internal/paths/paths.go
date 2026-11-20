@@ -89,6 +89,18 @@ func CodexHome() string {
 // shared Codex user config across launch, settings and MCP materialization.
 var CodexConfigMu sync.Mutex
 
+// CodexConfigWritePath resolves existing links before an atomic rename. A
+// dangling config symlink must remain a link even when its target is missing.
+func CodexConfigWritePath() (string, error) {
+	path := filepath.Join(CodexHome(), "config.toml")
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		return path, nil
+	} else if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(path)
+}
+
 // OpencodeConfigDir is opencode's global config root (opencode.jsonc, plugin/,
 // AGENTS.md). opencode itself resolves it through XDG_CONFIG_HOME, but the workspace
 // never sets that variable and every other af writer into this tree (the rtk plugin,
