@@ -133,6 +133,16 @@ function releaseIfIdle(slot: EditorSlot): void {
   slot.unregister = null;
 }
 
+/** The unsaved buffer a pane holds for `path`, shaped as the file it rests on. A caller that can
+ *  lose its fetched file (a failed re-read, a retarget) passes this to the hook instead of
+ *  `null`: a hook that leaves a slot with unsaved work and no older mount behind it leaves the
+ *  close / reload guards with nothing that can save or discard it. The revision is the buffer's
+ *  base, so the hook sees no external change in it. */
+export function heldEditorBuffer(paneId: string, path: string): InitialEditableFile | null {
+  const model = slots.get(slotKey(paneId, path))?.model.current;
+  return model?.dirty ? { path, content: model.content, revision: model.baseDiskRevision } : null;
+}
+
 /** Test hook. */
 export function clearEditorSlotsForTests(): void {
   for (const slot of slots.values()) slot.unregister?.();

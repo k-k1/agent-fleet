@@ -30,7 +30,7 @@ import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { CodeEditor } from "../editor/CodeEditor.tsx";
-import { useFileEditor } from "../editor/useFileEditor.ts";
+import { heldEditorBuffer, useFileEditor } from "../editor/useFileEditor.ts";
 import { dirtyPaneIds } from "../editor/dirtyRegistry.ts";
 import { EditorResolutionPanel } from "../viewer/parts/EditorResolutionPanel.tsx";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
@@ -42,7 +42,7 @@ import type { PaneContent } from "../../layout/types.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { openMemoryView } from "./open.ts";
 import { useMemoryStore } from "./store.ts";
-import { decodeEntry, encodeEntry, entryFile, isMemoryBody, memoryEntryIO, type EntryRefusal } from "./memoryEntryIO.ts";
+import { clearPending, clearRefusal, decodeEntry, encodeEntry, entryFile, isMemoryBody, memoryEntryIO, refusalOf, subscribeRefusal, type EntryRefusal } from "./memoryEntryIO.ts";
 
 type EntryContent = Extract<PaneContent, { kind: "memoryEntry" }>;
 
@@ -111,24 +111,37 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const [findings, setFindings] = useState<SecretFinding[]>([]);
   const [editing, setEditing] = useState(false);
   const [resolutionOpen, setResolutionOpen] = useState(true);
+  const [refusal, setRefusalState] = useState<EntryRefusal | null>(null);
   const onRefused = useCallback((r: EntryRefusal | null) => {
+    setRefusalState(r);
     setFindings(r?.findings ?? []);
     setFormErr(r ? (r.code === "memory_secret_detected" ? trRef.current("mem.br_secret") : r.text) : "");
   }, []);
-  const io = useMemo(() => memoryEntryIO({ key, scope, project, name }, onRefused), [key, scope, project, name, onRefused]);
+  // A refusal reaches the pane through the subscription below, not through the adapter: the adapter
+  // of memory A can answer after this view was reused for memory B.
+  const io = useMemo(() => memoryEntryIO({ key, scope, project, name }, () => {}), [key, scope, project, name]);
   // A body the editor cannot hold (a CR, a NUL) is read-only here, not a render error.
   // The body is the one read for `key`: after a retarget the first render still holds the old
   // target's body, which must not be registered under the new key.
   const { file, fileErr } = useMemo(() => {
-    if (!body || bodyKey !== key || isNew || gone) return { file: null, fileErr: "" };
+    // Unsaved work outlives the body it was made on: a failed re-read, or the memory forgotten
+    // elsewhere, must not hand the hook no file, which would leave the buffer's guards with nothing
+    // that can save or discard it.
+    const held = () => (isNew ? null : heldEditorBuffer(paneId, key));
+    if (!body || bodyKey !== key || isNew || gone) return { file: held(), fileErr: "" };
     try {
       // Text a dirty buffer rests on keeps its counter; a clean pane takes the one just read.
       return { file: entryFile(key, body, !dirtyPaneIds().includes(paneId)), fileErr: "" };
     } catch (e) {
-      return { file: null, fileErr: e instanceof Error ? e.message : "" };
+      return { file: held(), fileErr: e instanceof Error ? e.message : "" };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, bodyKey, key, isNew, gone]);
+  }, [body, bodyKey, key, isNew, gone, paneId]);
+  // Why the body cannot be opened in the editor, when the buffer validator is what refused it.
+  const readOnlyWhy =
+    fileErr === "too_large" || fileErr === "binary_not_supported" || fileErr === "unsupported_newline" || fileErr === "invalid_unicode"
+      ? validationErrText(tr, fileErr)
+      : "";
   const editor = useFileEditor(paneId, file, io);
   // A buffer is shown only for the memory this pane is on.
   const model = isNew || editor.model?.path === key ? editor.model : null;
@@ -158,14 +171,17 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   // was read for the old target must not be shown, edited or written back for the new one.
   useEffect(() => {
     setDraftState(initialDraft(key, isNew, !!gone));
-    setFormErr("");
-    setFindings([]);
+    // A save refused while this pane was away (its view unmounted) left its reason with the
+    // buffer, which is still dirty: show it again rather than a form that says nothing.
+    onRefused(!isNew && dirtyPaneIds().includes(paneId) ? refusalOf(key) : null);
     setBody(null);
     setChange(null);
     setLoadErr("");
     setEditing(false);
     setResolutionOpen(true);
   }, [key, isNew, gone]);
+  // The save that was refused may have been asked for by a view that is gone by now.
+  useEffect(() => (isNew ? undefined : subscribeRefusal(key, onRefused)), [key, isNew, onRefused]);
   useEffect(() => {
     setShowHistory(false);
     setPurging(null);
@@ -201,6 +217,16 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   );
   // The tenant is another workspace: the reset above clears what was read, so it is read again.
   useRetryLoad(load, [load, version, tenant]);
+
+  // A refusal is about the text that was sent: once the buffer reads otherwise (edited since, or
+  // the save was refused after the member went on typing), it is no longer shown nor kept.
+  const bufferText = model?.content;
+  useEffect(() => {
+    if (refusal && bufferText !== undefined && bufferText !== refusal.content) {
+      onRefused(null);
+      clearRefusal(key);
+    }
+  }, [refusal, bufferText, key, onRefused]);
 
   const retarget = (next: Partial<EntryContent>) => setPaneTarget(paneId, { content: { ...content, ...next } });
 
@@ -299,9 +325,10 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     if (!body) return;
     setFormErr("");
     setFindings([]);
+    if (!model?.dirty) clearPending(key);
     if (!model) {
       // entryFile refused the text (see `file`): say why instead of opening an editor on it.
-      setFormErr(fileErr === "too_large" || fileErr === "binary_not_supported" || fileErr === "unsupported_newline" || fileErr === "invalid_unicode" ? validationErrText(tr, fileErr) : tr("mem.af_failed"));
+      setFormErr(readOnlyWhy || tr("mem.af_failed"));
       return;
     }
     setEditing(true);
@@ -311,7 +338,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   };
 
   // What the form shows and edits: the new memory's draft, or the hook's buffer of an existing one.
-  const fields = isNew ? draft : editing || model?.dirty ? (model ? { ...decodeEntry(model.content), name } : null) : null;
+  const fields = isNew ? draft : !gone && (editing || model?.dirty) ? (model ? { ...decodeEntry(model.content), name } : null) : null;
   const setField = (patch: Partial<Pick<Draft, "description" | "type" | "body">>) => {
     if (isNew) {
       if (draft) setDraft({ ...draft, ...patch });
@@ -387,6 +414,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setFindings([]);
     if (!isNew) {
       if (await editor.discard()) {
+        clearPending(key);
         setEditing(false);
         // A remote text adopted during a conflict is newer than the body this pane last read.
         bump();
@@ -464,6 +492,22 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
         {body?.pinned && !fields && <span className="mem-badge">{tr("mem.br_pinned")}</span>}
       </ViewHead>
       <div className="mentry-body">
+        {gone && model?.dirty && (
+          // Offered whether or not the last change could be read: it is the member's only way to
+          // keep unsaved text of a memory that can no longer be edited here. A manual merge in
+          // progress holds the member's own draft apart from the merge text being edited, so
+          // each has its button.
+          <div className="mentry-copy">
+            <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(editor.mergeMine ?? model.content)}>
+              {tr("editor.copy_mine")}
+            </Button>
+            {editor.mergeMine !== null && editor.mergeMine !== model.content && (
+              <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(model.content)}>
+                {tr("mem.br_copy_current")}
+              </Button>
+            )}
+          </div>
+        )}
         {!fields && formErr && (
           <p className="mem-warn pad" role="alert">
             {formErr}
@@ -570,6 +614,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
               <dt>{tr("mem.md_m_uses")}</dt>
               <dd>{body.uses ?? 0}</dd>
             </dl>
+            {readOnlyWhy && <p className="muted mentry-readonly-why">{readOnlyWhy}</p>}
             {body.description && <p className="mentry-desc-read">{body.description}</p>}
             <div className="mentry-md">
               <MarkdownView source={body.body} />
@@ -593,7 +638,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           </div>
         )}
       </div>
-      {!isNew && model && alert && (
+      {!isNew && !gone && model && alert && (
         <EditorResolutionPanel
           model={model}
           open={resolutionOpen}

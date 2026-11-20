@@ -150,6 +150,7 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.br_f_type": "Type",
   "mem.br_f_body": "Body",
   "mem.br_save": "Save",
+  "mem.br_copy_current": "Copy current text",
   "mem.br_cancel": "Cancel",
   "mem.br_saved": "Saved {name}.",
   "mem.br_secret": "The text looks like it contains a secret, so it was not saved. Remove it and save again.",

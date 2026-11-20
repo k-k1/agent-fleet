@@ -8,8 +8,9 @@ vi.mock("../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...a: unknown[]) => apiJSON(...a),
 }));
 
-import { decodeEntry, encodeEntry, entryFile, memoryEntryIO, resetMemoryRevisions } from "./memoryEntryIO.ts";
+import { decodeEntry, encodeEntry, entryFile, memoryEntryIO, resetMemoryRevisions, storedForm } from "./memoryEntryIO.ts";
 import type { MemoryBody } from "../settings/memory/memoryTypes.ts";
+import { revisionOf } from "../editor/buffer.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 
 const body: MemoryBody = { name: "n", scope: "user" as const, description: "d", type: "user", updated: "", pinned: false, uses: 0, revision: 3, authorKind: "member", authorSession: "", kinds: ["claude"], body: "text" } as MemoryBody;
@@ -131,5 +132,71 @@ describe("memoryEntryIO", () => {
     apiJSON.mockResolvedValue({ revision: 7 });
     await io.save("k", file.content, file.revision);
     expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 6, kinds: ["codex"] });
+  });
+
+  const spaced = (b: string) => encodeEntry({ description: "d", type: "user", body: b });
+  const target = { key: "k", scope: "user", project: "", name: "n" };
+
+  async function lostAnswer(read: Partial<MemoryBody>) {
+    const io = memoryEntryIO(target, () => {});
+    const file = entryFile("k", { ...body, body: "x" });
+    const sentText = spaced("x  \n");
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_snapshot_failed", message: "x" } });
+    await io.save("k", sentText, file.revision);
+    api.mockResolvedValue({ ...body, body: "x", ...read });
+    return { io, file, sentText, read: await io.load("k") };
+  }
+
+  it("matches the text sent when the Agent's trimmed copy is read at the counter the save would have made", async () => {
+    const { io, sentText, read } = await lostAnswer({ revision: 4 });
+    expect(read.content).toBe(sentText);
+    expect(read.revision).toBe(revisionOf(sentText));
+    apiJSON.mockResolvedValue({ revision: 5 });
+    await io.save("k", sentText, read.revision);
+    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 4, kinds: ["claude"] });
+  });
+
+  it("matches a hand-written memory whose kinds repeat, as the Agent saves them deduplicated", async () => {
+    const io = memoryEntryIO(target, () => {});
+    const file = entryFile("k", { ...body, body: "x", kinds: ["claude", "claude"] });
+    const sentText = spaced("x \n");
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_snapshot_failed", message: "x" } });
+    await io.save("k", sentText, file.revision);
+    api.mockResolvedValue({ ...body, body: "x", revision: 4, kinds: ["claude"] });
+    expect((await io.load("k")).content).toBe(sentText);
+  });
+
+  it("matches kinds the Agent trimmed on save", async () => {
+    const io = memoryEntryIO(target, () => {});
+    const file = entryFile("k", { ...body, body: "x", kinds: [" claude "] });
+    const sentText = spaced("x \n");
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_snapshot_failed", message: "x" } });
+    await io.save("k", sentText, file.revision);
+    api.mockResolvedValue({ ...body, body: "x", revision: 4, kinds: ["claude"] });
+    expect((await io.load("k")).content).toBe(sentText);
+  });
+
+  it("does not take the unchanged memory, or another writer's update, for the save that was sent", async () => {
+    // The save never landed: the memory is still at the counter it was sent from.
+    const old = await lostAnswer({ revision: 3 });
+    expect(old.read.content).toBe(spaced("x"));
+    // Someone else wrote the same text at the next counter, with other kinds.
+    const other = await lostAnswer({ revision: 4, kinds: ["codex"] });
+    expect(other.read.content).toBe(spaced("x"));
+  });
+
+  it("does not take a read for the text sent once the save is known to have been refused as a conflict", async () => {
+    const io = memoryEntryIO(target, () => {});
+    const file = entryFile("k", { ...body, body: "x" });
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_conflict", message: "x" } });
+    await io.save("k", spaced("x \n"), file.revision);
+    api.mockResolvedValue({ ...body, body: "x", revision: 6, kinds: ["codex"] });
+    const read = await io.load("k");
+    expect(read.content).toBe(spaced("x"));
+  });
+
+  it("trims the way the Agent does: U+0085 goes, U+FEFF stays", () => {
+    expect(storedForm(spaced("a\u0085 "))).toBe(spaced("a"));
+    expect(storedForm(spaced("\ufeffa"))).toBe(spaced("\ufeffa"));
   });
 });
