@@ -1,10 +1,12 @@
 package opencode
 
 import (
+	"os"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -62,16 +64,13 @@ func TestPaneBindsByItsLaunchEnvironment(t *testing.T) {
 	}
 }
 
-// A keyless pane with no payer gets the free binding for an unpriced Zen call, none when paid.
-func TestPaneKeylessFree(t *testing.T) {
+// A pane whose handed environment has no key may still inherit one from the tmux server, so its
+// calls are not bound as free.
+func TestPaneKeylessIsNotProvenFree(t *testing.T) {
 	bindT(t)
 	onPane("t", 2000, "", 1500)
-	b := bindFor("t")
-	if got := zen(b, false, 3000); got != FreeBinding {
-		t.Errorf("free call = %q, want %q", got, FreeBinding)
-	}
-	if got := zen(b, true, 3000); got != "" {
-		t.Errorf("a priced keyless call = %q, want none", got)
+	if got := zen(bindFor("t"), false, 3000); got != "" {
+		t.Errorf("keyless pane call = %q, want none", got)
 	}
 }
 
@@ -189,5 +188,81 @@ func TestSessionClockSetBack(t *testing.T) {
 	recordSessionProcess(atMs(2000), "t", procPane, []string{opencodeKeyEnv + "=k2"}, oauthState{known: true}, atMs(1500))
 	if got := zen(bindFor("t"), true, 2500); got != "" {
 		t.Errorf("a call at a time the earlier clock also showed = %q, want none", got)
+	}
+}
+
+// Two touches before a launch: the second one, after the account observation, still counts (no
+// touch is hidden behind an earlier one).
+func TestPaneSeesEveryTouch(t *testing.T) {
+	bindT(t)
+	stampUp = 1000
+	noteSessionAccount(atMs(1000))
+	stampUp = 1800
+	noteSessionAccount(atMs(1800)) // the credential save, after the observation at 1500
+	onPane("a", 2000, "k", 1500)
+	if got := zen(bindFor("a"), true, 3000); got != "" {
+		t.Errorf("account saved after the observation = %q, want none", got)
+	}
+}
+
+// A write lost between the account observation and the launch may have been the touch.
+func TestPaneGapSinceObservation(t *testing.T) {
+	bindT(t)
+	_ = os.MkdirAll(paths.AgentConfigDir(), 0o700)
+	noteSessGap(1800)
+	onPane("a", 2000, "k", 1500)
+	if got := zen(bindFor("a"), true, 3000); got != "" {
+		t.Errorf("gap after the observation = %q, want none", got)
+	}
+}
+
+// shared -> pane -> clock set back -> another session's launch stamped earlier: the pane's call
+// is not placed on the old shared row.
+func TestSessionClockChangeOfAnotherSession(t *testing.T) {
+	bindT(t)
+	start(500, 1, "K")
+	acct(600, acctOut, 1)
+	onShared("s", 1000)
+	onPane("s", 7000, "k", 6500)
+	stampUp = 7100
+	recordSessionProcess(atMs(4000), "other", procShared, nil, oauthState{}, time.Time{})
+	if got := zen(bindFor("s"), true, 5000); got != "" {
+		t.Errorf("call at a time the earlier clock also showed = %q, want none", got)
+	}
+}
+
+// A shared launch after a lost row is a boundary even though the newest recorded row is shared.
+func TestSharedResumeAfterGapIsABoundary(t *testing.T) {
+	bindT(t)
+	onShared("s", 1000)
+	noteSessGap(2000) // a pane launch at 2000 was lost
+	onShared("s", 3000)
+	if n := len(func() []sessEvent { e, _ := readSessEvents(); return e }()); n != 2 {
+		t.Errorf("events = %d, want 2", n)
+	}
+}
+
+// The trim keeps a running pane's only row, and what it dropped is carried as a floor.
+func TestSessionTrimKeepsNewestRowPerSession(t *testing.T) {
+	bindT(t)
+	onPane("old", 1000, "k", 500)
+	for i := 0; i < bindSessionsKeep+10; i++ {
+		onShared("s", int64(2000+i*10))
+		recordSessionProcess(atMs(int64(2005+i*10)), "s", procRoute, nil, oauthState{}, time.Time{})
+	}
+	evs, _ := readSessEvents()
+	found := false
+	for _, e := range evs {
+		found = found || e.Session == "old"
+	}
+	if !found {
+		t.Fatal("the trim dropped a session's newest row")
+	}
+	if len(evs) > bindSessionsKeep+1 {
+		t.Errorf("file holds %d rows", len(evs))
+	}
+	// The kept pane row predates what was dropped: a touch among it could be gone, so it proves nothing.
+	if got := zen(bindFor("old"), true, 1500); got != "" {
+		t.Errorf("pane call after a trim = %q, want none", got)
 	}
 }

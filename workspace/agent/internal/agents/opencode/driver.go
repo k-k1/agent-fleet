@@ -114,11 +114,6 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if err != nil {
 		return nil, err
 	}
-	if m.Route != nil {
-		noteSessionProcess(m.Name, procRoute, nil)
-	} else {
-		noteSessionProcess(m.Name, procShared, nil)
-	}
 	ocSid := session.UUID(m.Dir, m.Name) // identity: the working copy, never the subdir
 	cwd := m.CWD()                       // where the session runs (Dir, or a chosen subdir)
 	handlesMu.Lock()
@@ -181,6 +176,13 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 			stopRouteServeGen(m.Name, gen, "stopped while resuming")
 		}
 		return nil, fmt.Errorf("opencode: session %s was stopped while it was resuming", m.Name)
+	}
+	// Recorded only now: a resume that lost to a stop (or to a Terminal launch that followed it)
+	// must not leave a row saying the daemon serves the session.
+	if m.Route != nil {
+		noteSessionProcess(m.Name, procRoute, nil)
+	} else {
+		noteSessionProcess(m.Name, procShared, nil)
 	}
 	h.addr, h.gen, h.ses, h.alive = addr, gen, ses, true
 	// Revive a queue left behind when a daemon death ended the pump (§31): without this

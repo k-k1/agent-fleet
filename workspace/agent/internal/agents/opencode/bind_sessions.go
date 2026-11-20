@@ -62,18 +62,28 @@ type sessEvent struct {
 	Up    int64  `json:"up,omitempty"`
 	Reg   bool   `json:"reg,omitempty"`   // the wall clock was set around this event
 	Floor int64  `json:"floor,omitempty"` // on Reg: the latest time the earlier clock can have shown
-	Carry int64  `json:"carry,omitempty"` // the largest Floor of the Reg events a trim dropped
+	Carry int64  `json:"carry,omitempty"` // the newest time of the lines a trim dropped before this one
 }
 
 var (
 	bindSessionsMu sync.Mutex
 	sessGapsMem    []int64
 	sessOff        atomic.Bool
+	// sessSeenMax is the newest event time this process has read, so a gap taken while the file is
+	// unreadable, or after the clock was set back, still reaches every row known before.
+	sessSeenMax atomic.Int64
 )
 
 func bindSessionsPath() string { return filepath.Join(paths.AgentConfigDir(), bindSessionsFile) }
 
 func readSessEvents() (evs []sessEvent, ok bool) {
+	defer func() {
+		for _, e := range evs {
+			if e.At > sessSeenMax.Load() {
+				sessSeenMax.Store(e.At)
+			}
+		}
+	}()
 	f, err := os.Open(bindSessionsPath())
 	if os.IsNotExist(err) {
 		return nil, true
@@ -115,8 +125,12 @@ func noteSessGap(bound int64) {
 
 func readSessGaps() (gaps []int64, ok bool) {
 	bindSessionsMu.Lock()
+	defer bindSessionsMu.Unlock()
+	return readSessGapsLocked()
+}
+
+func readSessGapsLocked() (gaps []int64, ok bool) {
 	gaps = append(gaps, sessGapsMem...)
-	bindSessionsMu.Unlock()
 	b, err := os.ReadFile(filepath.Join(paths.AgentConfigDir(), bindSessionsGapsFile))
 	if os.IsNotExist(err) {
 		return gaps, true
@@ -142,7 +156,7 @@ func appendSessEvent(e sessEvent, check func(evs []sessEvent, e *sessEvent) bool
 	evs, ok := readSessEvents()
 	if !ok {
 		log.Printf("opencode: session launch evidence unreadable; session bindings stay unproven")
-		noteSessGap(max(e.At, time.Now().UnixMilli()))
+		noteSessGap(max(e.At, sessSeenMax.Load(), time.Now().UnixMilli()))
 		return
 	}
 	if check != nil && !check(evs, &e) {
@@ -171,7 +185,7 @@ func appendSessEvent(e sessEvent, check func(evs []sessEvent, e *sessEvent) bool
 	p := bindSessionsPath()
 	fail := func(err error) {
 		log.Printf("opencode: session launch evidence: %v", err)
-		bound := e.At
+		bound := max(e.At, sessSeenMax.Load())
 		for _, o := range evs {
 			bound = max(bound, o.At)
 		}
@@ -182,17 +196,40 @@ func appendSessEvent(e sessEvent, check func(evs []sessEvent, e *sessEvent) bool
 		return
 	}
 	if len(evs) >= bindSessionsKeep {
-		cut := len(evs) - bindSessionsKeep/2
+		// Keep the newest half, and every session's newest launch even when older: a running pane's
+		// only row must not go. Whatever else is dropped is carried as a floor: no call stamped at
+		// or before it is proven, and no pane launched at or before it either (a dropped account
+		// touch may have followed it).
+		keepIdx := map[int]bool{}
+		newest := map[string]int{}
+		for i, ev := range evs {
+			if ev.Kind != evSessAcct && ev.Session != "" {
+				newest[ev.Session] = i
+			}
+		}
+		for _, i := range newest {
+			keepIdx[i] = true
+		}
+		for i := len(evs) - bindSessionsKeep/2; i < len(evs); i++ {
+			keepIdx[i] = true
+		}
+		var kept []sessEvent
 		carry := int64(0)
-		for _, ev := range evs[:cut] {
-			carry = max(carry, ev.Carry)
+		for i, ev := range evs {
+			if keepIdx[i] {
+				kept = append(kept, ev)
+				continue
+			}
+			carry = max(carry, ev.Carry, ev.At)
 			if ev.Reg {
 				carry = max(carry, ev.Floor)
 			}
 		}
-		if carry > 0 {
-			evs[cut].Carry = max(evs[cut].Carry, carry)
+		if carry > 0 && len(kept) > 0 {
+			kept[0].Carry = max(kept[0].Carry, carry)
 		}
+		evs = kept
+		cut := 0
 		var sb strings.Builder
 		for _, ev := range evs[cut:] {
 			b, _ := json.Marshal(ev)
@@ -231,14 +268,12 @@ func appendSessEvent(e sessEvent, check func(evs []sessEvent, e *sessEvent) bool
 }
 
 // noteSessionAccount records an Agent flow that can change the Console account (or a sign-in
-// observed). Written only when the newest event is not already such an event: the first one after
-// a launch is the one that ends a pane's proof, and nothing launches in between.
+// observed), before the change takes effect. Every one is kept: a touch hidden behind an earlier
+// one could fall after a later observation.
 func noteSessionAccount(at time.Time) {
 	e := stampedSessEvent(at)
 	e.Kind = evSessAcct
-	appendSessEvent(e, func(evs []sessEvent, _ *sessEvent) bool {
-		return len(evs) == 0 || evs[len(evs)-1].Kind != evSessAcct || evs[len(evs)-1].Reg
-	})
+	appendSessEvent(e, nil)
 }
 
 func stampedSessEvent(at time.Time) sessEvent {
@@ -273,19 +308,37 @@ func recordSessionProcess(at time.Time, name, proc string, env []string, st oaut
 		}
 	}
 	appendSessEvent(e, func(evs []sessEvent, e *sessEvent) bool {
+		gaps, gok := readSessGapsLocked()
+		if !gok {
+			noteSessGap(max(e.At, sessSeenMax.Load(), time.Now().UnixMilli()))
+			return false
+		}
 		if proc != procPane {
 			for i := len(evs) - 1; i >= 0; i-- {
 				if evs[i].Session == name && evs[i].Kind != evSessAcct {
-					return evs[i].Kind != proc
+					// Not a new boundary only while nothing was lost since that row.
+					same := evs[i].Kind == proc
+					for _, g := range gaps {
+						if evs[i].At <= g {
+							same = false
+						}
+					}
+					return !same
 				}
 			}
 			return true
 		}
-		// The account counts as out only when it was observed out, and no Agent flow touched it
-		// between that observation and this launch.
-		out := st.known && !st.connected && !readAt.IsZero()
+		// The account counts as out only when it was observed out, no Agent flow touched it
+		// between that observation and this launch, no flow is under way, and nothing recorded
+		// since the observation was lost.
+		out := st.known && !st.connected && !readAt.IsZero() && !oauthBusy()
+		for _, g := range gaps {
+			if g >= readAt.UnixMilli() {
+				out = false
+			}
+		}
 		for _, o := range evs {
-			if o.Kind == evSessAcct && (o.Reg || o.At >= readAt.UnixMilli()) {
+			if o.Carry >= readAt.UnixMilli() || o.Kind == evSessAcct && (o.Reg || o.At >= readAt.UnixMilli()) {
 				out = false
 			}
 		}
@@ -328,9 +381,9 @@ func sessionBinder(m session.Meta, shared bindFn) bindFn {
 				return ""
 			}
 		}
-		for _, e := range evs[:idx+1] {
+		for _, e := range evs { // wherever it sits: a later clock change can misplace this call too
 			if e.Reg && lo <= e.Floor || lo <= e.Carry {
-				return "" // possibly an earlier process's call, from before the clock was set
+				return "" // possibly another process's call, from before the clock was set
 			}
 		}
 		switch ev.Kind {
@@ -340,7 +393,7 @@ func sessionBinder(m session.Meta, shared bindFn) bindFn {
 			}
 			return shared(route, paid, times...)
 		case procPane:
-			return paneBinding(evs, idx, route, paid, lo, hi)
+			return paneBinding(evs, idx, route, lo, hi)
 		}
 		return "" // a private route server has no opencode.ai payer; its calls are never bound here
 	}
@@ -374,13 +427,18 @@ func processAt(evs []sessEvent, name string, ts int64) int {
 
 // paneBinding binds a call of the pane process launched at evs[idx]: its environment fixed the key,
 // and the account must have been out at launch and not touched or signed in since.
-func paneBinding(evs []sessEvent, idx int, route string, paid bool, lo, hi int64) string {
+func paneBinding(evs []sessEvent, idx int, route string, lo, hi int64) string {
 	if route != routes.RouteOpencodeZen && route != routes.RouteOpencodeGo {
 		return ""
 	}
 	ev := evs[idx]
 	if !ev.Out || ev.Reg {
 		return ""
+	}
+	for _, e := range evs {
+		if ev.At <= e.Carry {
+			return "" // an account touch after this launch may have been dropped
+		}
 	}
 	for i, e := range evs {
 		if e.Kind != evSessAcct {
@@ -390,11 +448,7 @@ func paneBinding(evs []sessEvent, idx int, route string, paid bool, lo, hi int64
 			return ""
 		}
 	}
-	if !ev.Keyless {
-		return ev.Key
-	}
-	if route == routes.RouteOpencodeZen && !paid {
-		return FreeBinding
-	}
-	return ""
+	// A pane without a key in the environment the Agent handed it can still inherit one from the
+	// tmux server's own environment: "keyless" is not proven here, so it is not bound as free.
+	return ev.Key
 }
