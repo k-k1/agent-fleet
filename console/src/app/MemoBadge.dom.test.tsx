@@ -154,19 +154,21 @@ describe("memo badge with the panel mounted", () => {
   });
 
   it("without a panel, drops a read from before a stop even after the same tenant comes back", async () => {
+    vi.useFakeTimers();
+    const first = deferred();
+    const second = deferred();
+    // Set before mounting: the bar's first read starts on a 0 ms timer and must find its mock.
+    memoList.mockReset();
+    memoList.mockImplementationOnce(() => first.p).mockImplementationOnce(() => second.p);
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
     await act(async () => root!.render(<ActivityBar view="sessions" shown foldable schedulerEnabled />));
-    const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 5))));
-    const first = deferred();
-    const second = deferred();
-    memoList.mockReset();
-    memoList.mockImplementationOnce(() => first.p).mockImplementationOnce(() => second.p);
-    await settle(); // the first period's read is out
+    await act(async () => void vi.advanceTimersByTime(0)); // the first period's read is out
+    expect(memoList).toHaveBeenCalledTimes(1);
     await act(async () => useWorkspaceStore.setState({ state: "stopped" }));
     await act(async () => useWorkspaceStore.setState({ state: "running" }));
-    await settle(); // the second period's read is out; same tenant, same scope string
+    await act(async () => void vi.advanceTimersByTime(0)); // the second period's read; same tenant, same scope string
     expect(memoList).toHaveBeenCalledTimes(2);
     await act(async () => first.res([held("old")]));
     expect(badge()).toBeNull();
