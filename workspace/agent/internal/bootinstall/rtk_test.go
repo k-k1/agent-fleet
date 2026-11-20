@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -322,19 +321,31 @@ func TestProbeParentExitsChildHoldsPipes(t *testing.T) {
 	if _, err := fmt.Sscan(string(b), &pid); err != nil {
 		t.Fatalf("no child pid: %v", err)
 	}
-	time.Sleep(200 * time.Millisecond)
-	if syscall.Kill(pid, 0) == nil {
-		// zombie/reaping by init may lag; a signal-0 success on a live sleep means not reaped
-		if st, _ := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); !strings.Contains(string(st), ") Z") {
-			t.Fatalf("straggler %d still alive", pid)
+	waitGone(t, pid)
+}
+
+// waitGone polls until pid has exited (a zombie or a vanished /proc entry both count).
+func waitGone(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		st, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if err != nil || strings.Contains(string(st), ") Z") {
+			return
 		}
+		time.Sleep(20 * time.Millisecond)
 	}
+	t.Fatalf("straggler %d still alive", pid)
 }
 
 // A wrapper that never finishes is cut at the deadline together with its children.
 func TestProbeDeadlineKillsGroup(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "rtk")
-	os.WriteFile(p, []byte("#!/bin/sh\nsleep 30 &\nsleep 30\n"), 0o755)
+	dir := t.TempDir()
+	p, pidFile := filepath.Join(dir, "rtk"), filepath.Join(dir, "child.pid")
+	script := "#!/bin/sh\nsleep 30 &\necho $! >" + pidFile + "\nsleep 30\n"
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	e := Env{RunTimeout: 500 * time.Millisecond}
 	start := time.Now()
 	if _, _, err := e.probe(p); err == nil {
@@ -343,6 +354,12 @@ func TestProbeDeadlineKillsGroup(t *testing.T) {
 	if d := time.Since(start); d > 5*time.Second {
 		t.Fatalf("probe took %v", d)
 	}
+	b, _ := os.ReadFile(pidFile)
+	var pid int
+	if _, err := fmt.Sscan(string(b), &pid); err != nil {
+		t.Fatalf("no child pid: %v", err)
+	}
+	waitGone(t, pid)
 }
 
 func TestCapWriterKeepsOnlyTheLimit(t *testing.T) {
