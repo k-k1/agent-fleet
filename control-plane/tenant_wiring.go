@@ -521,4 +521,6 @@ func (c cpRoutePolicy) VerifyBridge(ctx context.Context, signKey []byte, token s
 	return c.mgr.verifyBridge(ctx, signKey, token, verify)
 }
 
+func (c cpRoutePolicy) IsSystemTenantSlug(slug string) bool { return isSystemTenantSlug(slug) }
+
 func (c cpRoutePolicy) SigningRoot() []byte { return c.mgr.tokenSigningRoot() }

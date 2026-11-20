@@ -3,7 +3,10 @@ package routepolicysrv
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // TestTenantCounts: the admin Overview's counts are super_admin only, hold numbers and nothing
@@ -57,13 +60,30 @@ func TestTenantCounts(t *testing.T) {
 	put("tenants/acme/route-policy/cap", `{}`) // cleared: no longer counted
 	want(4, 1, 1)
 
-	// Only a super_admin: the tenant's own administrator and a member are refused, the body names no count.
-	for _, who := range []string{"boss-x", "m-x"} {
-		if code, body := get(who); code != 403 {
+	// The reserved tenant is neither listed to administrators nor counted, and a row with no tenant
+	// (a deleted one, or one made after the list was read) never lifts a count above the tenants.
+	if _, err := st.CreateTenant(context.Background(), "af-golden", "Golden"); err != nil {
+		t.Fatal(err)
+	}
+	put("tenants/af-golden/route-policy/cap", `{"deny":["openrouter-api"]}`)
+	put("tenants/af-golden/route-policy", `{"classes":["provided"]}`)
+	want(4, 1, 1)
+	if _, _, err := st.PutRoutePolicy(context.Background(), store.RoutePolicyTenantCap, "no-such-tenant", `{"deny":["x"]}`, "su", nil); err != nil {
+		t.Fatal(err)
+	}
+	want(4, 1, 1)
+
+	// Only a super_admin: the tenant's own administrator and a member are refused, and the refusal
+	// names no count.
+	for _, who := range []string{"boss-x", "m-x", "nobody"} {
+		code, body := get(who)
+		if code != 403 && !(who == "nobody" && code == 401) {
 			t.Fatalf("%s: %d %s", who, code, body)
 		}
-	}
-	if code, _ := get("nobody"); code != 401 {
-		t.Fatalf("unknown caller: %d", code)
+		for _, k := range []string{"tenants", "withCap", "withOwnRestriction"} {
+			if strings.Contains(body, k) {
+				t.Fatalf("%s: the refusal names %q: %s", who, k, body)
+			}
+		}
 	}
 }

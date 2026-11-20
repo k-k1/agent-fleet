@@ -276,6 +276,15 @@ func (a admin) getTenantCounts(w http.ResponseWriter, r *http.Request, _ store.I
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	// Only tenants an administrator can see are counted, and a stored row counts only for one of
+	// them: a row left behind by a deleted tenant, or written after the list was read, would
+	// otherwise put a layer's count above the number of tenants.
+	known := map[string]bool{}
+	for _, t := range tenants {
+		if !a.cp.IsSystemTenantSlug(t.Slug) {
+			known[t.ID] = true
+		}
+	}
 	count := func(scope string, narrows func(routepolicy.Rule) bool) (int, error) {
 		rows, err := st.ListTenantRoutePolicies(ctx, scope)
 		if err != nil {
@@ -283,6 +292,9 @@ func (a admin) getTenantCounts(w http.ResponseWriter, r *http.Request, _ store.I
 		}
 		n := 0
 		for _, row := range rows {
+			if !known[row.TenantID] {
+				continue
+			}
 			l, err := layerOf(row)
 			if err != nil {
 				return 0, err
@@ -293,7 +305,7 @@ func (a admin) getTenantCounts(w http.ResponseWriter, r *http.Request, _ store.I
 		}
 		return n, nil
 	}
-	out := tenantCountsWire{Tenants: len(tenants)}
+	out := tenantCountsWire{Tenants: len(known)}
 	if out.WithCap, err = count(store.RoutePolicyTenantCap, func(r routepolicy.Rule) bool {
 		return r.Restricted() || r.Endpoints != nil
 	}); err == nil {

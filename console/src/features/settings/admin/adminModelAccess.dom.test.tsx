@@ -103,6 +103,10 @@ beforeEach(() => {
     if (m) return Promise.resolve(tenantView(m[1]));
     // Provided routes off, as on a CP without them; pinned in adminProvidedRoutes.dom.test.tsx.
     if (path.includes("provided-routes")) return Promise.resolve({ error: { code: "http_404", status: 404 } });
+    // The overview's tenant counts, off as on a CP without the route (api() gives the plain-text
+    // 404 no status); the tests that read them serve their own answer.
+    if (path === "api/admin/route-policy/tenant-counts")
+      return Promise.resolve({ error: { code: "http_404", message: "404 page not found" } });
     return Promise.resolve({ error: { code: "not_found" } });
   });
   apiJSON.mockResolvedValue({ rule: {}, revision: 9 });
@@ -458,9 +462,17 @@ describe("admin overview and tenants", () => {
     await mount();
     expect(counts()!.textContent).toContain("読み込めませんでした");
     expect(counts()!.textContent).not.toContain("0 件");
+    expect(counts()!.getAttribute("role")).toBe("alert");
+    expect(counts()!.className).toContain("warn");
+    // A JSON error that happens to be a 404 is a failure too; only the plain-text one is "off".
     act(() => root?.unmount());
     host?.remove();
-    serveCounts({ error: { code: "http_404", status: 404 } });
+    serveCounts({ error: { code: "not_found", status: 404 } });
+    await mount();
+    expect(counts()!.textContent).toContain("読み込めませんでした");
+    act(() => root?.unmount());
+    host?.remove();
+    serveCounts({ error: { code: "http_404", message: "404 page not found" } });
     await mount();
     expect(counts()).toBeNull();
   });

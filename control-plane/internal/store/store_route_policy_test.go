@@ -182,6 +182,12 @@ func TestListTenantRoutePolicies(t *testing.T) {
 		if len(own) != 1 || own[0].TenantID != a.ID || own[0].Rule != `{"deny":["t"]}` {
 			t.Fatalf("own = %+v", own)
 		}
+		mustDo(t, st.DeleteTenant(ctx, b.ID))
+		caps, err = st.ListTenantRoutePolicies(ctx, RoutePolicyTenantCap)
+		mustDo(t, err)
+		if len(caps) != 1 || caps[0].TenantID != a.ID {
+			t.Fatalf("caps after deleting a tenant = %+v, want its row gone", caps)
+		}
 		for _, scope := range []string{RoutePolicyDeployment, RoutePolicyCeiling, "x"} {
 			if _, err := st.ListTenantRoutePolicies(ctx, scope); err == nil {
 				t.Errorf("scope %q was read as a tenant layer", scope)

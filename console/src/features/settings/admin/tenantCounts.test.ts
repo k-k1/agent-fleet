@@ -9,6 +9,13 @@ describe("parseTenantCounts", () => {
       withOwnRestriction: 1,
     });
   });
+  it("reads a deployment with no tenant restricted as zeros", () => {
+    expect(parseTenantCounts({ tenants: 0, withCap: 0, withOwnRestriction: 0 })).toEqual({
+      tenants: 0,
+      withCap: 0,
+      withOwnRestriction: 0,
+    });
+  });
   it("is null for anything else, so a damaged answer never reads as zero", () => {
     for (const bad of [
       null,
@@ -21,6 +28,7 @@ describe("parseTenantCounts", () => {
       { tenants: 4, withCap: -1, withOwnRestriction: 0 },
       { tenants: 4, withCap: 1.5, withOwnRestriction: 0 },
       { tenants: 4, withCap: 5, withOwnRestriction: 0 },
+      { tenants: 4, withCap: 0, withOwnRestriction: 5 },
       { tenants: 4, withCap: 0 },
     ])
       expect(parseTenantCounts(bad), JSON.stringify(bad)).toBeNull();

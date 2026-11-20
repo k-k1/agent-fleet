@@ -25,6 +25,7 @@ import {
 } from "../tenant/routePolicyRule.ts";
 import { PolicyLimits, useTenantRoutePolicy } from "../tenant/tenantModelAccess.tsx";
 import { TabbedViews, usePageDirty, useShowView, useViewActive } from "../parts/tabbedViews.tsx";
+import { isOff } from "../tenant/providedRoutes.ts";
 import { parseTenantCounts, type TenantCounts } from "./tenantCounts.ts";
 import { askConfirm } from "../../../ui/confirmBridge.ts";
 
@@ -34,13 +35,14 @@ const CEILING_ENV = "AF_MODEL_ROUTE_CEILING";
 const PATH = "api/admin/route-policy";
 
 /** The tenant counts for the overview: undefined while unread, null when unreadable, and "off" on a
- *  Control Plane without the route (a plain 404), which says nothing rather than a failure. */
+ *  Control Plane without the route (its plain-text 404), which says nothing rather than a failure.
+ *  A JSON error answer, a 404 included, is a failure. */
 function useTenantCounts(): TenantCounts | null | undefined | "off" {
   const [counts, setCounts] = useState<TenantCounts | null | undefined | "off">(undefined);
   useEffect(() => {
     let live = true;
     api(`${PATH}/tenant-counts`)
-      .then((d) => live && setCounts(d?.error?.status === 404 ? "off" : parseTenantCounts(d)))
+      .then((d) => live && setCounts(isOff(d) ? "off" : parseTenantCounts(d)))
       .catch(() => live && setCounts(null));
     return () => {
       live = false;
@@ -275,7 +277,11 @@ function AdminOverview({ view, source }: { view: DeploymentPolicyView; source: S
             <strong>{tr("admin.model_access_who_caps")}</strong> <span>{tr("admin.model_access_who_caps_note")}</span>{" "}
             <OverviewLink view="tenants" label={tr("admin.model_access_go_tenants")} />
             {counts !== undefined && counts !== "off" && (
-              <p className="admin-hint" data-testid="overview-tenant-counts">
+              <p
+                className={counts ? "admin-hint" : "admin-hint warn"}
+                role={counts ? undefined : "alert"}
+                data-testid="overview-tenant-counts"
+              >
                 {counts
                   ? tr("admin.model_access_counts", {
                       n: counts.tenants,
