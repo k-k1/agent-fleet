@@ -136,3 +136,16 @@ func (agentImpl) WarmStatus() { go Status() }
 func (agentImpl) ProgressSignals() agents.ProgressTraits {
 	return agents.ProgressTraits{Signal: agents.ProgressHooks}
 }
+
+// StopBackgroundBusy is agents.StopBackgroundBusyer: a Terminal session's process tree (a
+// run_in_background worker or a background shell loop); a Managed one has no pane to read.
+func (agentImpl) StopBackgroundBusy(m session.Meta) bool {
+	if m.DriverKind() == session.DriverManaged {
+		return false
+	}
+	return BackgroundBusy(m.Name) || BackgroundShellBusy(m.Name)
+}
+
+// KeepsLocalTranscript is agents.LocalTranscriptKeeper: the conversation is a jsonl file the
+// Agent holds, so the trash bundles it and removes it.
+func (agentImpl) KeepsLocalTranscript() bool { return true }

@@ -70,3 +70,10 @@ func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 // them a subagent's). AF's clamps turn subagents and observers off, but a clamp is a setting
 // and this is a declaration about the SOURCE, so it stays partial.
 func (agentImpl) UsageMeasured() string { return usagex.MeasuredPartial }
+
+// StopBackgroundBusy is agents.StopBackgroundBusyer: the host's own in-memory answer, for
+// either driver.
+func (agentImpl) StopBackgroundBusy(m session.Meta) bool {
+	busy, _ := BackgroundWork(m.Name)
+	return busy
+}

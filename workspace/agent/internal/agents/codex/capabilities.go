@@ -127,3 +127,13 @@ func (agentImpl) StopContinued(m session.Meta, _ string, marker time.Time) bool 
 func (agentImpl) ProgressSignals() agents.ProgressTraits {
 	return agents.ProgressTraits{Signal: agents.ProgressPaneOnly}
 }
+
+// StopBackgroundBusy is agents.StopBackgroundBusyer: a Managed codex answers from its thread;
+// a Terminal one has no process tree that is read.
+func (agentImpl) StopBackgroundBusy(m session.Meta) bool {
+	if m.DriverKind() != session.DriverManaged {
+		return false
+	}
+	busy, _ := BackgroundWork(m.Name)
+	return busy
+}
