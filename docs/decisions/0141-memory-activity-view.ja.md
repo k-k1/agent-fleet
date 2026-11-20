@@ -81,3 +81,4 @@
 ## 注記
 
 - 2026-11-20: `useFileEditor` が任意の `FileEditorIO`（`load`・`save`）を受け取り、既定はファイル API のままにした。「検討して退けた案」にある adapter の最初の段階にあたる。メモリのペインはまだ使っていない。#4569 の残りがそれにあたる。
+- 2026-11-20: 既存メモリの `memoryEntry` ペインは、adapter（`memory/memoryEntryIO.ts`）を付けた `useFileEditor` で編集する。バッファは description・type を入れた JSON 1 行と本文、ストアの版番号は読んだ本文のハッシュで引き、member-save の `memory_conflict` は `revision_conflict` に写す。未保存ガードとファイル編集の解決パネルがメモリにも効く。新規メモリ（バッファの鍵にする名前がまだない）は下書きをペインに持ったままで、それをフックへ移すのが #4569 の残り。

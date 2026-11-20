@@ -24,6 +24,9 @@ vi.mock("../editor/CodeEditor.tsx", () => ({
 }));
 
 import { MemoryEntryView, resetMemoryDrafts } from "./MemoryEntryView.tsx";
+import { resetMemoryRevisions } from "./memoryEntryIO.ts";
+import { clearEditorSlotsForTests } from "../editor/useFileEditor.ts";
+import { clearDirtyRegistryForTests, dirtyPaneIds } from "../editor/dirtyRegistry.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { useMemoryStore } from "./store.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -89,6 +92,9 @@ async function open(content = memoryEntryContent({ scope: "project", project, na
 
 beforeEach(() => {
   resetMemoryDrafts();
+  resetMemoryRevisions();
+  clearEditorSlotsForTests();
+  clearDirtyRegistryForTests();
   editorPaths.length = 0;
   useTenantStore.setState({ tenant: "t1" });
   useLayoutStore.setState({ layout: freshLayout() });
@@ -126,6 +132,7 @@ describe("MemoryEntryView", () => {
   });
 
   it("saves an edit through member-save at the revision it was read at, with the kinds kept", async () => {
+    apiJSON.mockResolvedValue({ name: "build-cmd", revision: 5 });
     await open();
     await act(async () => button(t("mem.br_edit"))!.click());
     await setValue(host!.querySelector<HTMLInputElement>(".mentry-desc input")!, "how to build it");
@@ -151,6 +158,7 @@ describe("MemoryEntryView", () => {
     apiJSON.mockResolvedValue({ error: { code: "memory_secret_detected", message: "secret" }, findings: [{ rule: "aws-key", line: 3, hint: "AKIA…" }] });
     await open();
     await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "token AKIA…");
     await act(async () => button(t("mem.br_save"))!.click());
     await flush();
     expect(host!.querySelector('[role="alert"]')?.textContent).toBe(t("mem.br_secret"));
@@ -373,5 +381,81 @@ describe("MemoryEntryView", () => {
     await flush();
     // `latest` is live: the memory is back already, there is nothing to unforget.
     expect(button(t("mem.br_unforget"))).toBeUndefined();
+  });
+
+  it("registers an edited memory with the dirty guards and clears them once saved", async () => {
+    apiJSON.mockResolvedValue({ name: "build-cmd", revision: 5 });
+    await open();
+    expect(dirtyPaneIds()).toEqual([]);
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "changed");
+    expect(dirtyPaneIds()).toEqual([pane().id]);
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(dirtyPaneIds()).toEqual([]);
+  });
+
+  it("opens the resolution panel when the memory changed first, and adopting the remote text replaces the draft", async () => {
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "mine");
+    apiJSON.mockResolvedValue({ error: { code: "memory_conflict", message: "changed" } });
+    // The re-read the conflict flow makes finds the newer revision.
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { ...memory, revision: 5, body: "theirs" } : {}));
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(host!.querySelector(".file-editor-resolution")).not.toBeNull();
+    // The save button waits for the resolution.
+    expect(button(t("mem.br_save"))!.disabled).toBe(true);
+    await act(async () => button(t("editor.conflict.adopt_remote"))!.click());
+    await flush();
+    expect(host!.querySelector(".file-editor-resolution")).toBeNull();
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("theirs");
+  });
+
+  it("saves the counter that belongs to the base it was edited from, not the latest read", async () => {
+    apiJSON.mockResolvedValue({ name: "build-cmd", revision: 5 });
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "x");
+    // Another read lands (a pin elsewhere bumped the list) with a newer counter and other text.
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { ...memory, revision: 9, body: "other" } : {}));
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({ body: "x", revision: 4 });
+  });
+
+  it("keeps the counter and kinds the edit started from when the same text is read again", async () => {
+    apiJSON.mockResolvedValue({ name: "build-cmd", revision: 6 });
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "x");
+    // Someone else changed only the kinds: same text, newer counter.
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { ...memory, revision: 5, kinds: ["codex"] } : {}));
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({ revision: 4, kinds: ["claude"] });
+  });
+
+  it("treats a success answer without the new revision as an unknown outcome, not a saved one", async () => {
+    apiJSON.mockResolvedValue({});
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "x");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(dirtyPaneIds()).toEqual([pane().id]);
+  });
+
+  it("says why a body with a CR cannot be edited, instead of opening an editor on it", async () => {
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { ...memory, body: "a\r\nb" } : {}));
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+    expect(host!.querySelector('[role="alert"]')?.textContent).toBe(t("editor.validation.unsupported_newline"));
   });
 });

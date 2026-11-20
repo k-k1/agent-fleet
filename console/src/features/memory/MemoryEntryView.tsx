@@ -8,10 +8,13 @@
 // revert brings it back. A memory whose text fails the secret scan is never readable here (the
 // Agent refuses the read), so no body of one reaches this DOM.
 //
-// The draft lives outside React (drafts below), keyed by the memory: a tabbed cell renders only its
-// selected view, so a tab switch unmounts this one, and held in state the text would go with it.
-// Close, reload and logout guards for it are #4569.
-import { useCallback, useEffect, useRef, useState } from "react";
+// An existing memory is edited through useFileEditor with the adapter in memoryEntryIO: its buffer
+// outlives a tab switch, the close / reload / logout guards cover it, and a save that lost a race
+// opens the same resolution panel a file does. A new memory has no revision to guard and no name
+// to key a buffer by yet, so its draft lives outside React (drafts below), keyed by the memory: a
+// tabbed cell renders only its selected view, so a tab switch unmounts this one, and held in state
+// the text would go with it.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, apiJSON, errDetail, isTransientErr } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { allViews } from "../../layout/ops.ts";
@@ -27,8 +30,11 @@ import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { CodeEditor } from "../editor/CodeEditor.tsx";
+import { useFileEditor } from "../editor/useFileEditor.ts";
+import { dirtyPaneIds } from "../editor/dirtyRegistry.ts";
+import { EditorResolutionPanel } from "../viewer/parts/EditorResolutionPanel.tsx";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
-import { validationErrText } from "../viewer/parts/fileStatusText.ts";
+import { isEditorAlert, validationErrText } from "../viewer/parts/fileStatusText.ts";
 import { MemoryHistory, useAllChanges } from "../settings/memory/memoryHistory.tsx";
 import { PurgeHistoryDialog, type PurgeTarget } from "../settings/memory/memoryPurge.tsx";
 import type { MemoryBody, MemoryChange, SecretFinding } from "../settings/memory/memoryTypes.ts";
@@ -36,16 +42,16 @@ import type { PaneContent } from "../../layout/types.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { openMemoryView } from "./open.ts";
 import { useMemoryStore } from "./store.ts";
+import { decodeEntry, encodeEntry, entryFile, isMemoryBody, memoryEntryIO, type EntryRefusal } from "./memoryEntryIO.ts";
 
 type EntryContent = Extract<PaneContent, { kind: "memoryEntry" }>;
 
 const TYPES = ["user", "feedback", "project", "reference"] as const;
 const projectQuery = (project: string) => (project ? "?project=" + encodeURIComponent(project) : "");
 
+/** The draft of a new memory; an existing one is the hook's buffer. */
 export interface Draft {
-  /** The revision the edit started from; 0 for a new memory. A save never lands on a newer one. */
   revision: number;
-  /** Kept as read: a save replaces the kinds, and an edit of the body must not widen who sees it. */
   kinds: string[];
   name: string;
   description: string;
@@ -71,6 +77,8 @@ interface MemoryEntryViewProps {
 
 export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryViewProps) {
   const tr = useT();
+  const trRef = useRef(tr);
+  trRef.current = tr;
   const toast = useToast();
   const askConfirm = useConfirm();
   const wsState = useWorkspaceStore((s) => s.state);
@@ -84,12 +92,48 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const key = draftKey(tenant, content);
   const where = scope === "user" ? tr("mem.af_scope_user") : content.projectName || project;
 
-  const [body, setBody] = useState<MemoryBody | null>(null);
+  const [bodyRaw, setBodyState] = useState<MemoryBody | null>(null);
+  const [bodyKey, setBodyKey] = useState("");
+  // Only the body read for this key is shown: the first render after a retarget still holds the
+  // previous target's.
+  const body = bodyRaw && bodyKey === key ? bodyRaw : null;
+  const setBody = useCallback(
+    (b: MemoryBody | null) => {
+      setBodyState(b);
+      setBodyKey(b ? key : "");
+    },
+    [key],
+  );
   const [change, setChange] = useState<MemoryChange | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [draft, setDraftState] = useState<Draft | null>(() => initialDraft(key, isNew, !!gone));
   const [formErr, setFormErr] = useState("");
   const [findings, setFindings] = useState<SecretFinding[]>([]);
+  const [editing, setEditing] = useState(false);
+  const [resolutionOpen, setResolutionOpen] = useState(true);
+  const onRefused = useCallback((r: EntryRefusal | null) => {
+    setFindings(r?.findings ?? []);
+    setFormErr(r ? (r.code === "memory_secret_detected" ? trRef.current("mem.br_secret") : r.text) : "");
+  }, []);
+  const io = useMemo(() => memoryEntryIO({ key, scope, project, name }, onRefused), [key, scope, project, name, onRefused]);
+  // A body the editor cannot hold (a CR, a NUL) is read-only here, not a render error.
+  // The body is the one read for `key`: after a retarget the first render still holds the old
+  // target's body, which must not be registered under the new key.
+  const { file, fileErr } = useMemo(() => {
+    if (!body || bodyKey !== key || isNew || gone) return { file: null, fileErr: "" };
+    try {
+      // Text a dirty buffer rests on keeps its counter; a clean pane takes the one just read.
+      return { file: entryFile(key, body, !dirtyPaneIds().includes(paneId)), fileErr: "" };
+    } catch (e) {
+      return { file: null, fileErr: e instanceof Error ? e.message : "" };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [body, bodyKey, key, isNew, gone]);
+  const editor = useFileEditor(paneId, file, io);
+  // A buffer is shown only for the memory this pane is on.
+  const model = isNew || editor.model?.path === key ? editor.model : null;
+  const phase = model?.phase;
+  const alert = isEditorAlert(phase);
   const [busy, setBusy] = useState(false);
   const [purging, setPurging] = useState<PurgeTarget | null>(null);
   const [showHistory, setShowHistory] = useState(false);
@@ -119,6 +163,8 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setBody(null);
     setChange(null);
     setLoadErr("");
+    setEditing(false);
+    setResolutionOpen(true);
   }, [key, isNew, gone]);
   useEffect(() => {
     setShowHistory(false);
@@ -141,6 +187,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
         setLoadErr("");
         setBody(null);
         setChange(res as MemoryChange);
+      } else if (!isMemoryBody(res, scope, name)) {
+        setLoadErr(tr("mem.af_failed"));
+        setBody(null);
       } else {
         setLoadErr("");
         setChange(null);
@@ -148,7 +197,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
       }
       return true;
     },
-    [running, isNew, scope, project, name, gone],
+    [running, isNew, scope, project, name, gone, setBody, tr],
   );
   // The tenant is another workspace: the reset above clears what was read, so it is read again.
   useRetryLoad(load, [load, version, tenant]);
@@ -250,17 +299,39 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     if (!body) return;
     setFormErr("");
     setFindings([]);
-    setDraft({
-      revision: body.revision,
-      kinds: body.kinds ?? [],
-      name,
-      description: body.description,
-      type: body.type || "feedback",
-      body: body.body,
-    });
+    if (!model) {
+      // entryFile refused the text (see `file`): say why instead of opening an editor on it.
+      setFormErr(fileErr === "too_large" || fileErr === "binary_not_supported" || fileErr === "unsupported_newline" || fileErr === "invalid_unicode" ? validationErrText(tr, fileErr) : tr("mem.af_failed"));
+      return;
+    }
+    setEditing(true);
+    setResolutionOpen(true);
+    // The buffer may predate a change made elsewhere; a clean one follows the store before it is edited.
+    if (!model.dirty) void editor.applyProbeResult({ kind: "revision", revision: file!.revision });
+  };
+
+  // What the form shows and edits: the new memory's draft, or the hook's buffer of an existing one.
+  const fields = isNew ? draft : editing || model?.dirty ? (model ? { ...decodeEntry(model.content), name } : null) : null;
+  const setField = (patch: Partial<Pick<Draft, "description" | "type" | "body">>) => {
+    if (isNew) {
+      if (draft) setDraft({ ...draft, ...patch });
+    } else if (model) {
+      editor.edit(encodeEntry({ ...decodeEntry(model.content), ...patch }));
+    }
+  };
+
+  const saveExisting = async () => {
+    if (inFlight.current || !model?.dirty || phase === "saving") return;
+    setFormErr("");
+    setFindings([]);
+    const ok = await editor.save();
+    if (!ok) return;
+    toast(tr("mem.br_saved", { name }), { kind: "success" });
+    setEditing(false);
   };
 
   const save = async () => {
+    if (!isNew) return saveExisting();
     if (!draft || inFlight.current) return;
     const saveName = draft.name.trim();
     inFlight.current = true;
@@ -311,12 +382,20 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     }
   };
 
-  const cancel = () => {
-    setDraft(null);
+  const cancel = async () => {
     setFormErr("");
     setFindings([]);
+    if (!isNew) {
+      if (await editor.discard()) {
+        setEditing(false);
+        // A remote text adopted during a conflict is newer than the body this pane last read.
+        bump();
+      }
+      return;
+    }
+    setDraft(null);
     // A new memory that is not saved has nothing to show: its pane closes.
-    if (isNew) useLayoutStore.getState().closePane(paneId);
+    useLayoutStore.getState().closePane(paneId);
   };
 
   const who = (m: { authorKind: string; authorSession: string }) =>
@@ -326,12 +405,12 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
 
   const actions = (
     <>
-      {draft ? (
+      {fields ? (
         <>
-          <Button icon="save" disabled={busy} onClick={() => void save()}>
+          <Button icon="save" disabled={busy || phase === "saving" || alert || (!isNew && !model?.dirty)} onClick={() => void save()}>
             {tr("mem.br_save")}
           </Button>
-          <Button variant="ghost" disabled={busy} onClick={cancel}>
+          <Button variant="ghost" disabled={busy || phase === "saving"} onClick={() => void cancel()}>
             {tr("mem.br_cancel")}
           </Button>
         </>
@@ -382,16 +461,21 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           {where}
         </span>
         {gone && <span className="mem-badge">{tr("mem.md_f_forgotten")}</span>}
-        {body?.pinned && !draft && <span className="mem-badge">{tr("mem.br_pinned")}</span>}
+        {body?.pinned && !fields && <span className="mem-badge">{tr("mem.br_pinned")}</span>}
       </ViewHead>
       <div className="mentry-body">
+        {!fields && formErr && (
+          <p className="mem-warn pad" role="alert">
+            {formErr}
+          </p>
+        )}
         {!running ? (
           <EmptyState icon="archive" title={tr("mem.ws_required_title")} hint={tr("mem.ws_required_hint")}>
             <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
               {wsStartBusy(wsState) ? tr("common.starting") : tr("mem.start_ws")}
             </Button>
           </EmptyState>
-        ) : draft ? (
+        ) : fields ? (
           <form
             className="mentry-form"
             onSubmit={(e) => {
@@ -403,17 +487,17 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
               {isNew && (
                 <label>
                   {tr("mem.br_f_name")}
-                  <input value={draft.name} autoFocus onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+                  <input value={fields.name} autoFocus onChange={(e) => draft && setDraft({ ...draft, name: e.target.value })} />
                 </label>
               )}
               <label className="mentry-desc">
                 {tr("mem.br_f_description")}
                 {/* Edit replaces the button that had focus: focus moves here so the keyboard keeps its place. */}
-                <input value={draft.description} autoFocus={!isNew} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+                <input value={fields.description} autoFocus={!isNew} onChange={(e) => setField({ description: e.target.value })} />
               </label>
               <label>
                 {tr("mem.br_f_type")}
-                <select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>
+                <select value={fields.type} onChange={(e) => setField({ type: e.target.value })}>
                   {TYPES.map((t) => (
                     <option key={t} value={t}>
                       {t}
@@ -422,6 +506,11 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
                 </select>
               </label>
             </div>
+            {editor.mergeMine !== null && !isNew && (
+              <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(editor.mergeMine!)}>
+                {tr("editor.copy_mine")}
+              </Button>
+            )}
             {formErr && (
               <p className="mem-warn" role="alert">
                 {formErr}
@@ -441,9 +530,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
                 // Fixed: the editor is rebuilt whenever its path changes, which would drop undo on
                 // every keystroke in a new memory's name field. The extension picks Markdown.
                 path={(name || "memory") + ".md"}
-                content={draft.body}
+                content={fields.body}
                 wrap
-                onChange={(text) => setDraft({ ...draft, body: text })}
+                onChange={(text) => setField({ body: text })}
                 onSave={() => void save()}
                 onValidationError={(err) => setFormErr(validationErrText(tr, err.code))}
               />
@@ -489,7 +578,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
         ) : (
           <p className="muted pad">{tr("common.loading")}</p>
         )}
-        {running && !isNew && !draft && (
+        {running && !isNew && !fields && (
           <div className="mentry-history" ref={historyRef}>
             <button
               type="button"
@@ -504,6 +593,30 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           </div>
         )}
       </div>
+      {!isNew && model && alert && (
+        <EditorResolutionPanel
+          model={model}
+          open={resolutionOpen}
+          onOpen={() => setResolutionOpen(true)}
+          onCancel={() => setResolutionOpen(false)}
+          onRetryConflict={() => void editor.recoverConflict()}
+          onRetryUnknown={() => void editor.recoverUnknown()}
+          onResave={() => void editor.resaveUnknown()}
+          onRiskAccept={editor.riskAccept}
+          // The adopted text is newer than the body this pane last read; back in the read view it would show the old one.
+          onTakeRemote={() => {
+            editor.takeRemote();
+            bump();
+          }}
+          onDiscardMine={() => {
+            editor.discardRemote();
+            bump();
+          }}
+          onManualMerge={editor.manualMerge}
+          onCopyMine={() => void navigator.clipboard.writeText(model.content)}
+          onClose={() => useLayoutStore.getState().closePane(paneId)}
+        />
+      )}
       {purging && <PurgeHistoryDialog target={purging} onClose={() => setPurging(null)} onDone={bump} />}
     </div>
   );

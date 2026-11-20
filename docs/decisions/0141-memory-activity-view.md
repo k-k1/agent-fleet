@@ -86,3 +86,9 @@ that wrote the Markdown file directly would skip all of that.
 - 2026-11-20: `useFileEditor` takes an optional `FileEditorIO` (`load`, `save`) and defaults to the
   file API, so the first step of the adapter named under Alternatives exists. The memory pane does
   not use it yet; that is the remaining part of #4569.
+- 2026-11-20: the `memoryEntry` pane of an existing memory edits through `useFileEditor` with an
+  adapter (`memory/memoryEntryIO.ts`): the buffer is one JSON header line (description, type) plus
+  the body, the store's revision counter is kept by the hash of the text it was read as, and
+  `memory_conflict` from member-save becomes `revision_conflict`. Dirty guards and the file
+  editor's resolution panel now cover it. A new memory (no name to key a buffer by) still keeps its
+  draft in the pane; moving it onto the hook is the remaining part of #4569.
