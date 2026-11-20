@@ -52,6 +52,26 @@ import { LabelBadge } from "./LabelBadge.tsx";
 import { AddToAutoRunDialog } from "../memo/AddToAutoRunDialog.tsx";
 import type { ResolvedSessionRef } from "./sessionRefs.ts";
 import { linkPRState } from "../sessions/sessionLinks.ts";
+
+const CLOSE_SOURCE_KEY = "af.merge-close-source";
+
+/** The last confirmed "Close source branch" choice of this browser, or null when none is stored. */
+function loadCloseSource(): boolean | null {
+  try {
+    const v = localStorage.getItem(CLOSE_SOURCE_KEY);
+    return v === "true" ? true : v === "false" ? false : null;
+  } catch {
+    return null; // private mode: the preference is auxiliary, fall back to the PR's own flag
+  }
+}
+
+function saveCloseSource(v: boolean) {
+  try {
+    localStorage.setItem(CLOSE_SOURCE_KEY, String(v));
+  } catch {
+    // storage unavailable or full: the merge itself must not be affected
+  }
+}
 import {
   canComment,
   canReadLive,
@@ -421,13 +441,14 @@ export function WorkItemDetailModal({
       sha: d.headSha,
       methods: d.mergeMethods,
       method: d.defaultMergeMethod || d.mergeMethods[0] || "",
-      closeSource: d.provider === "bitbucket" ? d.closeSourceBranch : null,
+      closeSource: d.provider === "bitbucket" ? (loadCloseSource() ?? d.closeSourceBranch) : null,
     });
   };
   const confirmMerge = async () => {
     if (!mergeDlg || mergeBusy) return;
     setMergeBusy(true);
     setMergeErr("");
+    if (mergeDlg.closeSource !== null) saveCloseSource(mergeDlg.closeSource);
     let result = readMergeResult(null);
     try {
       result = readMergeResult(
