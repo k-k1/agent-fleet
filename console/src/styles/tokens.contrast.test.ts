@@ -4,6 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { SURFACE_COLORS } from "../lib/settings/options.ts";
 
 const css = readFileSync(path.resolve(__dirname, "tokens.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
@@ -131,4 +132,28 @@ describe("activity bar badge wiring", () => {
     expect(rule(".actbar-badge")).toMatch(/color:\s*var\(--on-accent\)/);
     expect(rule(".actbar-badge.tone-waiting")).toMatch(/color:\s*var\(--on-warn\)/);
   });
+});
+
+// Light segmented-control selection: --sel-bg = accent mixed into --bg, --sel-fg = accent mixed
+// into --fg (the knobs are the light block's --sel-*-mix). For every top-bar accent the fill
+// must come out darker than the unselected cells (--panel2) — at a 16% mix slate and graphite
+// were as light as the cells and the selection vanished — and the label must keep 4.5:1.
+describe("light segment selection", () => {
+  const base = baseBlock("light");
+  const pct = (n: string) => Number(base.body.match(new RegExp(`${n}:\\s*(\\d+)%`))![1]) / 100;
+  const hex = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const mix = (a: string, b: string, p: number) =>
+    "#" + hex(a).map((v, i) => Math.round(v * p + hex(b)[i] * (1 - p)).toString(16).padStart(2, "0")).join("");
+  const accents: [string, string][] = [
+    ["default", decl(base.body, "--topbar-accent")!],
+    ...SURFACE_COLORS.filter((c) => c.accent).map((c): [string, string] => [c.id, c.accent!]),
+  ];
+  for (const [id, accent] of accents) {
+    it(`${id}: the fill is darker than --panel2 and the label clears 4.5:1 on it`, () => {
+      const fill = mix(accent, decl(base.body, "--bg")!, pct("--sel-bg-mix"));
+      const label = mix(accent, decl(base.body, "--fg")!, pct("--sel-fg-mix"));
+      expect(lum(fill)).toBeLessThan(lum(decl(base.body, "--panel2")!));
+      expect(ratio(label, fill)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
 });
