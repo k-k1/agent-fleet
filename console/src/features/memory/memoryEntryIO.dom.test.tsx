@@ -60,4 +60,30 @@ describe("memoryEntryIO", () => {
     api.mockResolvedValue({});
     await expect(io.load("k")).rejects.toThrow();
   });
+
+  it("answers a custom-coded 5xx as an unknown outcome", async () => {
+    const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+    const file = entryFile("k", body);
+    apiJSON.mockResolvedValue({ error: { code: "gateway_stuff", message: "x", status: 504 } });
+    expect(await io.save("k", file.content, file.revision)).toMatchObject({ ok: false, error: { code: "write_state_unknown" } });
+  });
+
+  it("does not take an answer for another memory, or a save answer with a bad revision, as good", async () => {
+    const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+    api.mockResolvedValue({ ...body, name: "other" });
+    await expect(io.load("k")).rejects.toThrow();
+    const file = entryFile("k", body);
+    apiJSON.mockResolvedValue({ revision: 0 });
+    await expect(io.save("k", file.content, file.revision)).rejects.toThrow();
+  });
+
+  it("keeps the counter of text it already knows when the same text is read again", async () => {
+    const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+    const file = entryFile("k", body);
+    api.mockResolvedValue({ ...body, revision: 6, kinds: ["codex"] });
+    await io.load("k");
+    apiJSON.mockResolvedValue({ revision: 7 });
+    await io.save("k", file.content, file.revision);
+    expect(apiJSON.mock.calls[0][2]).toMatchObject({ revision: 3, kinds: ["claude"] });
+  });
 });

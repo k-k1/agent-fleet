@@ -31,6 +31,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { CodeEditor } from "../editor/CodeEditor.tsx";
 import { useFileEditor } from "../editor/useFileEditor.ts";
+import { dirtyPaneIds } from "../editor/dirtyRegistry.ts";
 import { EditorResolutionPanel } from "../viewer/parts/EditorResolutionPanel.tsx";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { isEditorAlert, validationErrText } from "../viewer/parts/fileStatusText.ts";
@@ -91,7 +92,15 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const key = draftKey(tenant, content);
   const where = scope === "user" ? tr("mem.af_scope_user") : content.projectName || project;
 
-  const [body, setBody] = useState<MemoryBody | null>(null);
+  const [body, setBodyState] = useState<MemoryBody | null>(null);
+  const [bodyKey, setBodyKey] = useState("");
+  const setBody = useCallback(
+    (b: MemoryBody | null) => {
+      setBodyState(b);
+      setBodyKey(b ? key : "");
+    },
+    [key],
+  );
   const [change, setChange] = useState<MemoryChange | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [draft, setDraftState] = useState<Draft | null>(() => initialDraft(key, isNew, !!gone));
@@ -105,14 +114,18 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   }, []);
   const io = useMemo(() => memoryEntryIO({ key, scope, project, name }, onRefused), [key, scope, project, name, onRefused]);
   // A body the editor cannot hold (a CR, a NUL) is read-only here, not a render error.
-  const file = useMemo(() => {
-    if (!body || isNew || gone) return null;
+  // The body is the one read for `key`: after a retarget the first render still holds the old
+  // target's body, which must not be registered under the new key.
+  const { file, fileErr } = useMemo(() => {
+    if (!body || bodyKey !== key || isNew || gone) return { file: null, fileErr: "" };
     try {
-      return entryFile(key, body);
-    } catch {
-      return null;
+      // Text a dirty buffer rests on keeps its counter; a clean pane takes the one just read.
+      return { file: entryFile(key, body, !dirtyPaneIds().includes(paneId)), fileErr: "" };
+    } catch (e) {
+      return { file: null, fileErr: e instanceof Error ? e.message : "" };
     }
-  }, [body, key, isNew, gone]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [body, bodyKey, key, isNew, gone]);
   const editor = useFileEditor(paneId, file, io);
   const model = editor.model;
   const phase = model?.phase;
@@ -177,7 +190,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
       }
       return true;
     },
-    [running, isNew, scope, project, name, gone],
+    [running, isNew, scope, project, name, gone, setBody],
   );
   // The tenant is another workspace: the reset above clears what was read, so it is read again.
   useRetryLoad(load, [load, version, tenant]);
@@ -281,7 +294,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setFindings([]);
     if (!model) {
       // entryFile refused the text (see `file`): say why instead of opening an editor on it.
-      setFormErr(tr("mem.af_failed"));
+      setFormErr(fileErr === "too_large" || fileErr === "binary_not_supported" || fileErr === "unsupported_newline" || fileErr === "invalid_unicode" ? validationErrText(tr, fileErr) : tr("mem.af_failed"));
       return;
     }
     setEditing(true);
@@ -366,7 +379,11 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setFormErr("");
     setFindings([]);
     if (!isNew) {
-      if (await editor.discard()) setEditing(false);
+      if (await editor.discard()) {
+        setEditing(false);
+        // A remote text adopted during a conflict is newer than the body this pane last read.
+        bump();
+      }
       return;
     }
     setDraft(null);

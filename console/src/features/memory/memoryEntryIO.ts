@@ -91,6 +91,13 @@ export function entryFile(key: string, body: MemoryBody, overwrite = false): Edi
   return { path: key, content, size: content.length, binary: false, truncated: false, editable: true, editabilityReason: null, revision };
 }
 
+const validRevision = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v > 0;
+
+function isMemoryBody(res: unknown, scope: string, name: string): res is MemoryBody {
+  const b = res as Partial<MemoryBody> | null;
+  return !!b && b.name === name && b.scope === scope && typeof b.body === "string" && typeof b.description === "string" && typeof b.type === "string" && validRevision(b.revision);
+}
+
 const projectQuery = (project: string) => (project ? "?project=" + encodeURIComponent(project) : "");
 
 export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal | null) => void): FileEditorIO {
@@ -106,8 +113,10 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       const res = await api(`api/agents/memory/entries/member-read?${q}`);
       if (res?.error) throw new Error(res.error.code || "load_failed");
       // An empty or malformed answer is not a memory: never a candidate for conflict resolution.
-      if (typeof res?.body !== "string" || typeof res?.revision !== "number") throw new Error("load_failed");
-      return entryFile(key, res as MemoryBody, true);
+      if (!isMemoryBody(res, scope, name)) throw new Error("load_failed");
+      // Not overwriting: a GET the buffer does not adopt (typing won the race) must not move the
+      // counter the edit started from.
+      return entryFile(key, res as MemoryBody);
     },
     async save(_path, content, baseRevision): Promise<PutFileResult> {
       onRefused(null);
@@ -130,13 +139,13 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (res?.error) {
         let code: string = res.error.code || "save_failed";
         // The commit may have landed before the snapshot failed: the outcome is unknown.
-        if (code === "memory_snapshot_failed") code = "write_state_unknown";
+        if (code === "memory_snapshot_failed" || (res.error.status ?? 0) >= 500) code = "write_state_unknown";
         if (code === "memory_conflict") return { ok: false, status: 409, error: { code: "revision_conflict", message: errDetail(res.error) } };
         onRefused({ code, text: errDetail(res.error), findings: code === "memory_secret_detected" ? (res.findings ?? []) : [] });
         return { ok: false, status: 422, error: { code, message: errDetail(res.error) } };
       }
       // A success without the new counter cannot be told from a lost answer.
-      if (typeof res?.revision !== "number") throw new Error("save response without revision");
+      if (!validRevision(res?.revision)) throw new Error("save response without revision");
       // What was saved is what the store now holds: the next base is this text at the counter it was given.
       const revision = revisionOf(content);
       remember(key, revision, { revision: res.revision, kinds: base.kinds }, true);

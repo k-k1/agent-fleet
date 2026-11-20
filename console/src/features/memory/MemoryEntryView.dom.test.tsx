@@ -450,4 +450,12 @@ describe("MemoryEntryView", () => {
     await flush();
     expect(dirtyPaneIds()).toEqual([pane().id]);
   });
+
+  it("says why a body with a CR cannot be edited, instead of opening an editor on it", async () => {
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { ...memory, body: "a\r\nb" } : {}));
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+    expect(host!.querySelector('[role="alert"]')?.textContent).toBe(t("editor.validation.unsupported_newline"));
+  });
 });
