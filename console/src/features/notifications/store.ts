@@ -248,6 +248,9 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   // rejects anything.
   if (n.kind === "memory-consolidation") {
     useLeftRail.getState().showView("memory");
+    // The notice can arrive before the next poll: read the proposals now, so the one opened, the
+    // list and the activity bar's count are the ones the notice is about.
+    await useMemoryStore.getState().loadProposals();
     const first = (useMemoryStore.getState().proposals ?? []).find((p) => p.status === "pending");
     openMemoryView("proposals", first ? { proposalId: first.id } : {});
     return { opened: true };

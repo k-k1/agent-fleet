@@ -14,7 +14,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errDetail, isTransientErr } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
-import { useLeftRail } from "../../core/store/leftRail.ts";
+import { allViews } from "../../layout/ops.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -54,7 +55,9 @@ export interface Draft {
 
 // The drafts of every memory pane, by memory. Never persisted: a page reload starts clean.
 const drafts = new Map<string, Draft>();
-export const draftKey = (c: { scope: string; project: string; name: string }) => `${c.scope}:${c.project}/${c.name}`;
+// The tenant is part of the key: a user-scope memory of one tenant has the same name as another's,
+// and a draft carried across a switch would be saved into the wrong workspace.
+export const draftKey = (tenant: string, c: { scope: string; project: string; name: string }) => `${tenant}|${c.scope}:${c.project}/${c.name}`;
 /** Forget every draft; tests call it between cases. */
 export function resetMemoryDrafts() {
   drafts.clear();
@@ -77,13 +80,14 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const bump = useMemoryStore((s) => s.bump);
   const { scope, project, name, gone } = content;
   const isNew = name === "";
-  const key = draftKey(content);
+  const tenant = useTenantStore((s) => s.tenant);
+  const key = draftKey(tenant, content);
   const where = scope === "user" ? tr("mem.af_scope_user") : content.projectName || project;
 
   const [body, setBody] = useState<MemoryBody | null>(null);
   const [change, setChange] = useState<MemoryChange | null>(null);
   const [loadErr, setLoadErr] = useState("");
-  const [draft, setDraftState] = useState<Draft | null>(() => drafts.get(key) ?? (isNew ? blankDraft() : null));
+  const [draft, setDraftState] = useState<Draft | null>(() => initialDraft(key, isNew, !!gone));
   const [formErr, setFormErr] = useState("");
   const [findings, setFindings] = useState<SecretFinding[]>([]);
   const [busy, setBusy] = useState(false);
@@ -100,12 +104,20 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     },
     [key],
   );
-  // The pane can be retargeted to another memory while mounted (a save of a new one, a forget).
+  // The pane can be retargeted while mounted (a forget, an unforget, a save of a new memory): what
+  // was read for the old target must not be shown, edited or written back for the new one.
   useEffect(() => {
-    setDraftState(drafts.get(key) ?? (isNew ? blankDraft() : null));
+    setDraftState(initialDraft(key, isNew, !!gone));
     setFormErr("");
     setFindings([]);
-  }, [key, isNew]);
+    setBody(null);
+    setChange(null);
+    setLoadErr("");
+  }, [key, isNew, gone]);
+  useEffect(() => {
+    setShowHistory(false);
+    setPurging(null);
+  }, [key]);
 
   const running = wsState === "running";
   const load = useCallback(
@@ -121,9 +133,11 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
         setChange(null);
       } else if (gone) {
         setLoadErr("");
+        setBody(null);
         setChange(res as MemoryChange);
       } else {
         setLoadErr("");
+        setChange(null);
         setBody(res as MemoryBody);
       }
       return true;
@@ -131,7 +145,6 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     [running, isNew, scope, project, name, gone],
   );
   useRetryLoad(load, [load, version]);
-  const history = useAllChanges(version);
 
   const retarget = (next: Partial<EntryContent>) => setPaneTarget(paneId, { content: { ...content, ...next } });
 
@@ -165,23 +178,36 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
 
   const forget = async () => {
     if (!body || inFlight.current) return;
-    // Forget is the change list's own revert route, on the newest change of the memory.
-    const latest = await api(`api/agents/memory/entries/member-latest?scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(name)}`).catch(
-      () => null,
-    );
-    if (!latest || latest.error) return toast(latest?.error ? errDetail(latest.error) : tr("mem.af_failed"));
-    if (!latest.commit || !latest.live || !latest.revertible) return toast(tr("mem.br_forget_unavailable", { name }));
-    const ok = await askConfirm({
-      title: tr("mem.af_forget_title"),
-      body: <p>{tr("mem.af_forget_body", { name, where })}</p>,
-      confirmLabel: tr("mem.af_forget"),
-      danger: true,
-    });
-    if (!ok) return;
+    // Held from the first read until the answer: a second press, or an edit or pin while the
+    // confirmation is up, would otherwise race the forget it is about to send.
+    inFlight.current = true;
+    setBusy(true);
+    let latest: (MemoryChange & { error?: { code?: string; message?: string } }) | null = null;
+    let ok = false;
+    try {
+      // Forget is the change list's own revert route, on the newest change of the memory.
+      latest = await api(
+        `api/agents/memory/entries/member-latest?scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(name)}`,
+      ).catch(() => null);
+      if (!latest || latest.error) toast(latest?.error ? errDetail(latest.error) : tr("mem.af_failed"));
+      else if (!latest.commit || !latest.live || !latest.revertible) toast(tr("mem.br_forget_unavailable", { name }));
+      else
+        ok = await askConfirm({
+          title: tr("mem.af_forget_title"),
+          body: <p>{tr("mem.af_forget_body", { name, where })}</p>,
+          confirmLabel: tr("mem.af_forget"),
+          danger: true,
+        });
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+    if (!ok || !latest) return;
+    const commit = latest.commit;
     await write(
       () =>
-        apiJSON("api/agents/memory/entries/revert?commit=" + encodeURIComponent(latest.commit), "POST", {
-          commit: latest.commit,
+        apiJSON("api/agents/memory/entries/revert?commit=" + encodeURIComponent(commit), "POST", {
+          commit,
           forget: true,
           ack: false,
           // The read and the change are apart: pin the forget to the revision this pane showed.
@@ -255,8 +281,20 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
         toast(tr("mem.br_saved", { name: saveName }), { kind: "success" });
         setDraft(null);
         bump();
-        // A new memory becomes the pane of the memory it now is.
-        if (isNew) setPaneTarget(paneId, { content: memoryEntryContent({ scope, project: { id: project, display: content.projectName }, name: saveName }) });
+        // A new memory becomes the pane of the memory it now is; when that memory already has a
+        // pane (one memory, one pane), this one closes and that one comes forward.
+        if (isNew) {
+          const saved = memoryEntryContent({ scope, project: { id: project, display: content.projectName }, name: saveName });
+          const st = useLayoutStore.getState();
+          const other = allViews(st.layout).find(
+            (p) => p.id !== paneId && p.content.kind === "memoryEntry" && p.content.scope === scope && p.content.project === project && p.content.name === saveName,
+          );
+          if (other) {
+            st.setPaneTarget(other.id, { content: saved });
+            st.closePane(paneId);
+            st.selectTab(other.id);
+          } else setPaneTarget(paneId, { content: saved });
+        }
       }
     } catch {
       setFormErr(tr("mem.af_failed"));
@@ -270,8 +308,8 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setDraft(null);
     setFormErr("");
     setFindings([]);
-    // A new memory that is not saved has nothing to show: the pane goes back to the view.
-    if (isNew) useLeftRail.getState().showView("memory");
+    // A new memory that is not saved has nothing to show: its pane closes.
+    if (isNew) useLayoutStore.getState().closePane(paneId);
   };
 
   const who = (m: { authorKind: string; authorSession: string }) =>
@@ -291,7 +329,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           </Button>
         </>
       ) : gone ? (
-        change && (
+        change &&
+        !change.live &&
+        change.revertible && (
           <>
             <Button icon="discard" disabled={busy} onClick={unforget}>
               {tr("mem.br_unforget")}
@@ -307,7 +347,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
             <Button icon="edit" disabled={busy} onClick={startEdit}>
               {tr("mem.br_edit")}
             </Button>
-            <Button variant="ghost" icon={body.pinned ? "pinned" : "pin"} aria-pressed={body.pinned} disabled={busy} onClick={togglePin}>
+            <Button variant="ghost" icon={body.pinned ? "pinned" : "pin"} aria-pressed={!!body.pinned} disabled={busy} onClick={togglePin}>
               {tr(body.pinned ? "mem.pin_unpin" : "mem.pin_pin")}
             </Button>
             <Button variant="ghost" icon="trash" disabled={busy} onClick={() => void forget()}>
@@ -359,7 +399,8 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
               )}
               <label className="mentry-desc">
                 {tr("mem.br_f_description")}
-                <input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+                {/* Edit replaces the button that had focus: focus moves here so the keyboard keeps its place. */}
+                <input value={draft.description} autoFocus={!isNew} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
               </label>
               <label>
                 {tr("mem.br_f_type")}
@@ -388,7 +429,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
             )}
             <div className="mentry-editor" aria-label={tr("mem.br_f_body")}>
               <CodeEditor
-                path={(draft.name || "memory") + ".md"}
+                // Fixed: the editor is rebuilt whenever its path changes, which would drop undo on
+                // every keystroke in a new memory's name field. The extension picks Markdown.
+                path={(name || "memory") + ".md"}
                 content={draft.body}
                 wrap
                 onChange={(text) => setDraft({ ...draft, body: text })}
@@ -442,13 +485,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
             <button type="button" className="linklike" aria-expanded={showHistory} onClick={() => setShowHistory((v) => !v)}>
               <Icon name={showHistory ? "chevron-down" : "chevron-right"} /> {tr("mem.rv_history")}
             </button>
-            {showHistory && (
-              <MemoryHistory
-                target={{ scope, project, name }}
-                data={history}
-                onOpenChanges={() => openMemoryView("changes")}
-              />
-            )}
+            {showHistory && <EntryHistory scope={scope} project={project} name={name} version={version} />}
           </div>
         )}
       </div>
@@ -459,4 +496,17 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
 
 function blankDraft(): Draft {
   return { revision: 0, kinds: [], name: "", description: "", type: "feedback", body: "" };
+}
+
+// A forgotten memory is read-only: a draft left from before the forget is not offered on it.
+function initialDraft(key: string, isNew: boolean, gone: boolean): Draft | null {
+  if (gone) return null;
+  return drafts.get(key) ?? (isNew ? blankDraft() : null);
+}
+
+/** The memory's own history, read only while it is shown: 300 changes is not a read to make for a
+ *  pane nobody asked the history of, nor again on every write. */
+function EntryHistory({ scope, project, name, version }: { scope: "user" | "project"; project: string; name: string; version: number }) {
+  const history = useAllChanges(version);
+  return <MemoryHistory target={{ scope, project, name }} data={history} onOpenChanges={() => openMemoryView("changes")} />;
 }

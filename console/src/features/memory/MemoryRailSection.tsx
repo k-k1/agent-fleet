@@ -98,10 +98,6 @@ export function MemoryRailSection() {
   useRetryLoad(load, [loadVersion, loadTenant]);
   const shownNow = useViewShown();
   const rootRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!activeKey || !shownNow) return;
-    rootRef.current?.querySelector(`[data-row-key="${CSS.escape(activeKey)}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [activeKey, shownNow, rows]);
 
   // Every scope there is a memory in. A chosen scope that no longer holds one falls back to all,
   // and every read below asks for the scope on screen, never the stale choice.
@@ -116,6 +112,10 @@ export function MemoryRailSection() {
   const scopeShown = scopes.some(([k]) => k === scope) ? scope : ALL_SCOPES;
 
   const forgotten = useForgotten(filter === "forgotten", scopeShown, loadTenant, `${loadVersion}/${loadTenant}`);
+  useEffect(() => {
+    if (!activeKey || !shownNow) return;
+    rootRef.current?.querySelector(`[data-row-key="${CSS.escape(activeKey)}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [activeKey, shownNow, rows, forgotten.rows]);
 
   const q = query.trim().toLowerCase();
   const search = useMemoryBodySearch(filter === "forgotten" ? "" : q, scopeShown);
@@ -136,7 +136,7 @@ export function MemoryRailSection() {
   const props = (proposals ?? []).filter((p) => matchesFilter(p.status, allProposals ? "all" : "pending"));
   const pending = pendingProposals(proposals);
   const consolOn = useSettings().memoryConsolidation;
-  const consol = useConsolRun(loadVersion, consolOn && shownNow);
+  const consol = useConsolRun(loadVersion, consolOn && shownNow, loadTenant);
   // A new memory starts in the project on screen; with every scope shown, in the user scope.
   const newMemory = () => {
     const [kind, id = ""] = scopeShown.split(":");

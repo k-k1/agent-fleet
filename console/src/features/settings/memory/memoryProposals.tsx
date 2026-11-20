@@ -8,7 +8,8 @@
 // change list's layout (memoryChanges.tsx) on purpose.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail, isTransientErr } from "../../../core/api/client.ts";
+import { useMemoryStore } from "../../memory/store.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
@@ -126,15 +127,21 @@ export function LintScheduleSettings() {
 /**
  * The consolidator's status and its "run now", shared by Settings and the left pane's Memory view.
  * `active` false stops the read and the run poll (a hidden view makes no read of its own, ADR 0140
- * decision 3); `reload` re-reads.
+ * decision 3); `reload` re-reads; `tenant` is another workspace, whose status replaces this one.
  */
-export function useConsolRun(reload: number, active = true) {
+export function useConsolRun(reload: number, active = true, tenant = "") {
   const tr = useT();
   const [st, setSt] = useState<ConsolStatus | null>(null);
   const [err, setErr] = useState(false);
+  useEffect(() => {
+    setSt(null);
+    setErr(false);
+  }, [tenant]);
   const load = useCallback(async (signal: AbortSignal) => {
     const res = await api(BASE);
     if (signal.aborted) return true;
+    // Right after a start the Agent answers 5xx for a moment: retried, never settled as a failure.
+    if (isTransientErr(res)) return false;
     if (res?.error) {
       setErr(true);
       return true;
@@ -143,8 +150,15 @@ export function useConsolRun(reload: number, active = true) {
     setSt(res as ConsolStatus);
     return true;
   }, []);
-  useRetryLoad(async (signal) => (active ? load(signal) : true), [reload, active, load]);
+  useRetryLoad(async (signal) => (active ? load(signal) : true), [reload, active, tenant, load]);
   const running = st?.run?.running === true;
+  // A run that just finished may have queued proposals: everything memory-shaped reads again, the
+  // list and the activity bar's count included, instead of waiting for the next poll.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !running) useMemoryStore.getState().bump();
+    wasRunning.current = running;
+  }, [running]);
   // While a run is in flight the status is re-read so the progress and the final report appear
   // without a page action; it stops by itself once the Agent says nothing is running.
   // A failed read does not stop it: the next poll clears the warning by itself, whereas stopping would

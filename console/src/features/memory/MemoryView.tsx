@@ -63,7 +63,8 @@ export function MemoryView({ paneId, view, proposalId, headerActions }: MemoryVi
       </ViewHead>
       <div className="mview-body">
         <ViewNav label={tr("mem.views_label")} views={defs} value={legacy ? "" : current} onChange={pick} prefix="mview" />
-        <div role="tabpanel" id="mview-panel" aria-labelledby={`mview-tab-${current}`} className="mem-view">
+        {/* On the retired Memories tab no tab is selected, so the panel names none. */}
+        <div role="tabpanel" id="mview-panel" aria-labelledby={legacy ? undefined : `mview-tab-${current}`} className="mem-view">
           {legacy ? (
             <EmptyState icon="archive" title={tr("mem.mv_moved_title")} hint={tr("mem.mv_moved_hint")}>
               <Button icon="archive" onClick={() => useLeftRail.getState().showView("memory")}>

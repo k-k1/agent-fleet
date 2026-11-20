@@ -91,6 +91,12 @@ describe("openMemoryView", () => {
     expect(validateStoredContent({ ...ok, project: "a/b" })).toEqual(blank);
     expect(validateStoredContent({ ...ok, scope: "user" })).toEqual(blank);
     expect(validateStoredContent({ ...ok, scope: "team" })).toEqual(blank);
+    // The Agent's own rules: no ".." in a name; a project id of 1-80 lower-case, not "." or "..".
+    expect(validateStoredContent({ ...ok, name: "a..b" })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, project: ".." })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, project: "." })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, project: "App" })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, project: "a".repeat(81) })).toEqual(blank);
     // A new memory has nothing to have forgotten.
     expect(validateStoredContent({ kind: "memoryEntry", scope: "user", project: "", name: "", gone: true })).toEqual({ kind: "memoryEntry", scope: "user", project: "", name: "" });
   });

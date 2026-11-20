@@ -14,10 +14,13 @@ vi.mock("../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 // The editor is CodeMirror; a textarea stands in so a test can type into the body.
+// Every path it is given is kept: the real editor is rebuilt (undo lost) whenever its path changes.
+const editorPaths: string[] = [];
 vi.mock("../editor/CodeEditor.tsx", () => ({
-  CodeEditor: ({ content, onChange }: { content: string; onChange(v: string): void }) => (
-    <textarea data-testid="editor" value={content} onChange={(e) => onChange(e.target.value)} />
-  ),
+  CodeEditor: ({ path, content, onChange }: { path: string; content: string; onChange(v: string): void }) => {
+    if (editorPaths.at(-1) !== path) editorPaths.push(path);
+    return <textarea data-testid="editor" value={content} onChange={(e) => onChange(e.target.value)} />;
+  },
 }));
 
 import { MemoryEntryView, resetMemoryDrafts } from "./MemoryEntryView.tsx";
@@ -26,6 +29,7 @@ import { useMemoryStore } from "./store.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { allViews, freshLayout } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { ToastProvider } from "../../ui/ToastProvider.tsx";
 import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
 
@@ -85,6 +89,8 @@ async function open(content = memoryEntryContent({ scope: "project", project, na
 
 beforeEach(() => {
   resetMemoryDrafts();
+  editorPaths.length = 0;
+  useTenantStore.setState({ tenant: "t1" });
   useLayoutStore.setState({ layout: freshLayout() });
   // The API first: other stores react to the workspace starting and read through it.
   api.mockImplementation(async (url: string) => {
@@ -219,6 +225,120 @@ describe("MemoryEntryView", () => {
     useWorkspaceStore.setState({ state: "stopped" });
     await open();
     expect(host!.textContent).toContain(t("mem.ws_required_title"));
-    expect(api.mock.calls.some((c) => String(c[0]).includes("member-read"))).toBe(false);
+    expect(api.mock.calls.some((c) => String(c[0]).startsWith("api/agents/memory"))).toBe(false);
+  });
+
+  it("reads the memory's history only once it is opened", async () => {
+    await open();
+    const historyReads = () => api.mock.calls.filter((c) => String(c[0]).startsWith("api/agents/memory/entries/changes")).length;
+    expect(historyReads()).toBe(0);
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    expect(historyReads()).toBe(0);
+    await act(async () => button(t("mem.rv_history"))!.click());
+    await flush();
+    expect(historyReads()).toBe(1);
+  });
+
+  it("keeps one editor while a new memory's name is typed", async () => {
+    await open(memoryEntryContent({ scope: "user", name: "" }));
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "body first");
+    await setValue(host!.querySelector<HTMLInputElement>(".mentry-fields input")!, "h");
+    await setValue(host!.querySelector<HTMLInputElement>(".mentry-fields input")!, "ho");
+    expect(editorPaths).toHaveLength(1);
+  });
+
+  it("shows nothing of a pinned memory once it is forgotten", async () => {
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/member-read")) return { ...memory, pinned: true };
+      if (url.startsWith("api/agents/memory/entries/member-latest")) return pending;
+      return {};
+    });
+    // The forgotten read is held, so what the pane shows meanwhile is what it carried over.
+    let pending: unknown = latest;
+    await open();
+    expect(host!.querySelector(".view-head")?.textContent).toContain(t("mem.br_pinned"));
+    await act(async () => button(t("mem.af_forget"))!.click());
+    await flush();
+    pending = new Promise(() => {});
+    await act(async () => document.body.querySelector<HTMLButtonElement>(".ui-confirm-actions button:last-child")!.click());
+    await flush();
+    expect(pane().content).toMatchObject({ gone: true });
+    expect(host!.querySelector(".view-head")?.textContent).not.toContain(t("mem.br_pinned"));
+    expect(host!.querySelector(".mentry-md")).toBeNull();
+    expect(button(t("mem.br_edit"))).toBeUndefined();
+  });
+
+  it("opens a forgotten memory read-only even with a draft left from before the forget", async () => {
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "left behind");
+    api.mockImplementation(async (url: string) =>
+      url.startsWith("api/agents/memory/entries/member-latest") ? { ...latest, op: "forget", live: false } : {},
+    );
+    await act(async () => useLayoutStore.getState().setPaneTarget(pane().id, { content: memoryEntryContent({ scope: "project", project, name: "build-cmd" }, true) }));
+    await flush();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+    expect(button(t("mem.br_unforget"))).toBeTruthy();
+  });
+
+  it("asks the Agent once for a forget pressed twice, and allows no edit while it is pending", async () => {
+    await open();
+    // Both clicks land before React re-renders the button as disabled: only the ref can stop the second.
+    const forgetButton = button(t("mem.af_forget"))!;
+    await act(async () => {
+      forgetButton.click();
+      forgetButton.click();
+    });
+    await flush();
+    expect(api.mock.calls.filter((c) => String(c[0]).startsWith("api/agents/memory/entries/member-latest"))).toHaveLength(1);
+    expect(button(t("mem.br_edit"))!.disabled).toBe(true);
+  });
+
+  it("joins the pane the saved memory already has, rather than laying a second beside it", async () => {
+    useLayoutStore.setState({ layout: { ...freshLayout(), mode: "tabs" } as ReturnType<typeof freshLayout> });
+    const existing = memoryEntryContent({ scope: "user", name: "house-rules" });
+    await act(async () => useLayoutStore.getState().openTarget({ content: existing }));
+    await act(async () => useLayoutStore.getState().openTargetInNew({ content: memoryEntryContent({ scope: "user", name: "" }) }));
+    const fresh = allViews(useLayoutStore.getState().layout).find((v) => v.content.kind === "memoryEntry" && v.content.name === "")!;
+    await act(async () =>
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <MemoryEntryView paneId={fresh.id} content={fresh.content as typeof existing} />
+          </ConfirmProvider>
+        </ToastProvider>,
+      ),
+    );
+    await flush();
+    await setValue(host!.querySelector<HTMLInputElement>(".mentry-fields input")!, "house-rules");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    const entries = allViews(useLayoutStore.getState().layout).filter((v) => v.content.kind === "memoryEntry");
+    expect(entries.map((v) => v.content)).toEqual([existing]);
+  });
+
+  it("closes a new memory's pane on Cancel", async () => {
+    await open(memoryEntryContent({ scope: "user", name: "" }));
+    await act(async () => button(t("mem.br_cancel"))!.click());
+    expect(allViews(useLayoutStore.getState().layout).some((v) => v.content.kind === "memoryEntry")).toBe(false);
+  });
+
+  it("never offers one tenant's draft in another", async () => {
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await act(async () => useTenantStore.setState({ tenant: "t2" }));
+    await flush();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+  });
+
+  it("states the pin as pressed or not, and offers Unforget only for a change that can bring it back", async () => {
+    await open();
+    expect(button(t("mem.pin_pin"))!.getAttribute("aria-pressed")).toBe("false");
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-latest") ? latest : {}));
+    await act(async () => useLayoutStore.getState().setPaneTarget(pane().id, { content: memoryEntryContent({ scope: "project", project, name: "build-cmd" }, true) }));
+    await flush();
+    // `latest` is live: the memory is back already, there is nothing to unforget.
+    expect(button(t("mem.br_unforget"))).toBeUndefined();
   });
 });

@@ -8,6 +8,7 @@ import { useSettingsUI } from "../settings/store.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { allViews, freshLayout } from "../../layout/ops.ts";
 import { useMemoryStore } from "../memory/store.ts";
+import { api } from "../../core/api/client.ts";
 import { useLeftRail } from "../../core/store/leftRail.ts";
 import { setLocale } from "../../lib/i18n/index.ts";
 import { ja } from "../../lib/i18n/locales/ja.ts";
@@ -96,9 +97,16 @@ describe("a memory-consolidation notification", () => {
 
   it("opens the first proposal waiting, alone (ADR 0141 decision 8)", async () => {
     const prop = (id: string, status: string) => ({ id, status, memory: id, topicId: "t", scope: "user", created: "", expires: "", items: [], observationIds: [], evidence: [] });
-    useMemoryStore.setState({ proposals: [prop("0000000000000000000a", "approved"), prop("0000000000000000000b", "pending")] });
+    // Stale in the store; the notice reads them again before it picks one.
+    useMemoryStore.setState({ proposals: [prop("0000000000000000000f", "pending")] });
+    vi.mocked(api).mockImplementation(async (url: unknown) =>
+      String(url) === "api/agents/memory-consolidation/proposals"
+        ? { proposals: [prop("0000000000000000000a", "approved"), prop("0000000000000000000b", "pending")] }
+        : {},
+    );
     await openNotificationTarget(consolidation(), false);
     expect(memoryPanes().map((v) => v.content)).toEqual([{ kind: "memory", memoryView: "proposals", proposalId: "0000000000000000000b" }]);
+    vi.mocked(api).mockImplementation(async () => ({}));
     useMemoryStore.getState().reset();
   });
 
