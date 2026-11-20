@@ -97,6 +97,12 @@ func memoContinue(tx store.MemoTxOps, membershipID string, m store.Memo, via mem
 		given.Repo != m.Repo || given.Category != m.Category {
 		return no(memoContHeldReference, given.ID)
 	}
+	// The approval must be the one the delivery really carried: the given message is this
+	// delivery's delivered row and still holds its release. A queue's settings deleted and made
+	// again clear both, and that would read an old run's message as a fresh root.
+	if given.State != store.MemoStateDelivered || given.DeliveryID != d.ID || given.ReleaseHash == "" || given.ReleasedAt == "" {
+		return no(memoContHeldRoot, given.ID)
+	}
 	root := given.ChainID
 	if root == "" {
 		// A chain starts at a message the member released: by a press or a Console write
@@ -143,6 +149,13 @@ func memoContinue(tx store.MemoTxOps, membershipID string, m store.Memo, via mem
 		return memoContinuationVerdict{}, err
 	}
 	if !taken {
+		// Nothing was written. Read the delivery again to say why: the close, the overdue mark
+		// and the retire change it outside the member's lock, between the read above and here.
+		if now, found, err := tx.GetDelivery(d.ID); err != nil {
+			return memoContinuationVerdict{}, err
+		} else if !found || now.State != store.DeliveryOpen || memoDeliveryPastDue(now, q, time.Now()) {
+			return no(memoContHeldDelivery, "")
+		}
 		return no(memoContHeldUsed, given.ID)
 	}
 	seq, _, won, err := tx.AdmitChain(store.MemoChain{ID: root, CategoryID: q.CategoryID,
@@ -165,11 +178,13 @@ func memoDeliveryPastDue(d store.MemoDelivery, q store.MemoQueue, now time.Time)
 	if d.OverdueAt != "" || d.RetirePending {
 		return true
 	}
+	// The origin and the boundary of the dispatcher's own overdue mark (markOverdue): from when the
+	// delivery was opened, or created, and overdue once that is not after now minus the bound.
 	since := d.OpenedAt
 	if since == "" {
-		since = d.SentAt
+		since = d.CreatedAt
 	}
-	return since != "" && since < store.DeliveryTS(now.Add(-time.Duration(memoQueueTaskHours(q))*time.Hour))
+	return since != "" && !(since > store.DeliveryTS(now.Add(-time.Duration(memoQueueTaskHours(q))*time.Hour)))
 }
 
 // memoContinuationApply puts the verdict on m, which memoQueueMove entered as held (a token-face

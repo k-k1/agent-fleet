@@ -373,6 +373,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.q_err_continuation": "Enter a whole number from 0 to {max}.",
   "memo.release_continuation_hint": "Approving a memo with a work item also lets its run add up to {max} follow-ups for the same item without another approval.",
   "memo.continuation_badge_of": "Follow-up {seq} of {max}, accepted without approval",
+  "memo.continuation_badge_plain": "Follow-up, accepted without approval",
   "memo.continuation_badge": "Follow-up {seq}, accepted without approval",
   "memo.continuation_title": "A run added this as a follow-up of a memo you approved, for the same work item, so it waits to run without approval. Stop chain makes the next follow-up wait for approval.",
   "memo.continuation_stop": "Stop chain",

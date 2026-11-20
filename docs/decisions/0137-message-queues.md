@@ -1004,10 +1004,14 @@ a run feed the queue without bound. Option A keeps the press as a checkpoint at 
   an admitted continuation carries the given message's URL, so it can never point the next session elsewhere); (5) that message is a chain
   member or a root (below); (6) the chain row admits one more (below); (7) the delivery has not admitted a continuation
   already, which keeps the chain linear and stops a fan-out inside one run. (2) also requires the delivery not to be
-  overdue, waiting for its retire, or older than the queue's `max_task_hours`. (7) is the column
+  overdue, waiting for its retire, or older than the queue's `max_task_hours`, counted from `opened_at` (else `created_at`) with the dispatcher's own boundary
+  (`markOverdue`), and a lost race to the overdue mark or the retire reads as `continuation_delivery`, not `used`. (7) is the column
   `memo_delivery.continuation_taken`, set by one conditional UPDATE on the delivery row that also requires `open`, no
   `overdue_at` and no pending retire, because the close, the overdue mark and the retire change the row outside the
   member's lock. The record outlives the child: deleting or moving the child does not give the run's place back.
+- **The approval must be the one the delivery carried.** The given message has to be this delivery's `delivered` row and
+  still hold its release (`release_hash`, `released_at`, which a real delivery leaves in place). A queue's settings
+  deleted and made again clear them, and an old open run's message would otherwise read as a fresh root.
 - **A root is a message a person, or the person's own switch, released**: `released_by` empty (a Console press or a
   Console-authored note) or `setting` (the per-queue switch "accept from sessions I started", decided 2026-11-21). A
   `setting` root starts a chain only while the switch is still on: turning it off does not call back a message it
@@ -1056,8 +1060,9 @@ keeps the stored value, so an older client cannot turn a member's 0 back into 4;
   (including a continuation held for the limit, decided 2026-11-21: one button) is a fresh release, so it clears
   `chain_id` and may root a new chain of up to M. That is the meaning of "release also approves M continuations", said
   on the card.
-- **Rename, move, reference edit.** A rename of the same queue keeps the chain and what admitted the child, since the
-  chain row is bound to the queue's id. A move to another queue clears `chain_id` and keeps `released_by`
+- **Rename, move, reference edit.** A rename of the same queue keeps the chain and, for every pending message, who approved it
+  (switch, tidy, continuation): only the release copy and hash are rewritten. A merge into another category ends the
+  chain of the rows that move. A move to another queue clears `chain_id` and keeps `released_by`
   `continuation`, which is no root: the member's move keeps the state as it always did, and mints no new approval over
   there. A chain row also remembers its work item: a person editing a follow-up's reference ends its use, and the next
   continuation of it is held (`continuation_reference`).

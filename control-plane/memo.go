@@ -941,7 +941,7 @@ func (a memoAPI) updateCategory(via memoVia) func(http.ResponseWriter, *http.Req
 					}
 					// Move the memos onto the new name, then either merge into an existing
 					// same-name category or rename this row.
-					if err := memoMoveBucket(tx, cur.Repo, cur.Name, newName, curQ, nextQ, via); err != nil {
+					if err := memoMoveBucket(tx, cur.Repo, cur.Name, newName, curQ, nextQ, !hasDup, via); err != nil {
 						return err
 					}
 					if !hasDup && curQ {
@@ -994,7 +994,7 @@ func (a memoAPI) deleteCategory(via memoVia) func(http.ResponseWriter, *http.Req
 			if curQ && via.fromWorkspace() {
 				return memoTxFail(&apiError{http.StatusConflict, errCodeMemoQueueCategory, "a queue is renamed, merged or deleted from the Console only"})
 			}
-			if err := memoMoveBucket(tx, cur.Repo, cur.Name, "", curQ, false, via); err != nil {
+			if err := memoMoveBucket(tx, cur.Repo, cur.Name, "", curQ, false, false, via); err != nil {
 				return err
 			}
 			if err := tx.DeleteQueue(cur.ID); err != nil {

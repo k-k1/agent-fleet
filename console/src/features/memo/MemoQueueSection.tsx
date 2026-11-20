@@ -1616,9 +1616,11 @@ function MemoRow(props: MemoRowProps) {
       )}
       {m.releasedBy === "continuation" && (m.state === "pending" || m.state === "delivered") && (
         <span className="memo-qorigin" title={tr("memo.continuation_title")}>
-          {(props.continuationMax ?? 0) >= (m.chainSeq ?? 0) && (props.continuationMax ?? 0) > 0
-            ? tr("memo.continuation_badge_of", { seq: m.chainSeq ?? 0, max: props.continuationMax! })
-            : tr("memo.continuation_badge", { seq: m.chainSeq ?? 0 })}
+          {(m.chainSeq ?? 0) === 0
+            ? tr("memo.continuation_badge_plain")
+            : (props.continuationMax ?? 0) >= m.chainSeq! && (props.continuationMax ?? 0) > 0
+              ? tr("memo.continuation_badge_of", { seq: m.chainSeq!, max: props.continuationMax! })
+              : tr("memo.continuation_badge", { seq: m.chainSeq! })}
         </span>
       )}
       {props.onStopChain && (m.state === "pending" || m.state === "delivered") && (

@@ -51,7 +51,7 @@ func (e *inboxEnv) contRoot(category, key string) store.Memo {
 }
 
 // contRun is an open delivery of queue q that holds messages ids and whose session is session,
-// with the messages delivered the way a fire leaves them.
+// with the messages delivered the way a fire leaves them: state, delivery and sent_at set, the release kept.
 func (e *inboxEnv) contRun(q, session string, state string, ids ...string) string {
 	e.t.Helper()
 	id := store.NewID()
@@ -63,7 +63,7 @@ func (e *inboxEnv) contRun(q, session string, state string, ids ...string) strin
 	}
 	for _, mid := range ids {
 		if _, err := e.st.DB().ExecContext(context.Background(),
-			`UPDATE memo SET state='delivered', delivery_id=?, sent_at=?, release_hash='', released_at='' WHERE id=?`, id, ts, mid); err != nil {
+			`UPDATE memo SET state='delivered', delivery_id=?, sent_at=? WHERE id=?`, id, ts, mid); err != nil {
 			e.t.Fatal(err)
 		}
 	}
@@ -626,6 +626,165 @@ func TestMemoContinuationChainRowsGoWithTheMember(t *testing.T) {
 		}
 		if _, _, found := e.chainRow(root.ID); found {
 			t.Errorf("the chain row outlived the member")
+		}
+	})
+}
+
+// A rename of the queue's own category rewrites the release copy and hash and keeps who approved:
+// a switch-accepted or tidy-made message does not become the member's own.
+func TestMemoContinuationRenameKeepsEveryApprover(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("sw", 4, map[string]any{"acceptOwnSessions": true})
+		_, a := e.fromSession("sw", "by the switch", "user", map[string]any{"reference": map[string]any{"provider": "github", "key": "acme/app#41", "url": "https://example.test/acme/app#41"}})
+		b := e.contRoot("sw", "acme/app#42")
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET released_by='tidy' WHERE id=?`, b.ID); err != nil {
+			t.Fatal(err)
+		}
+		if rec := e.do("a", "PATCH", "/api/memo-categories/"+q, map[string]any{"name": "sw2"}); rec.Code != http.StatusOK {
+			t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+		}
+		for id, want := range map[string]string{a.ID: store.MemoReleasedBySetting, b.ID: "tidy"} {
+			row := e.memoRow(id)
+			if row.State != store.MemoStatePending || row.ReleasedBy != want || row.ReleaseHash != memoContentHash(row) {
+				t.Errorf("after the rename %s: %+v, want released_by %q", id, row, want)
+			}
+		}
+		// And a switch-accepted root cannot start a chain once the switch is off.
+		if rec := e.do("a", "PUT", "/api/memo-queues/"+q, map[string]any{"instruction": "do it"}); rec.Code != http.StatusOK {
+			t.Fatal(rec.Body.String())
+		}
+		c := e.contSend("sw2", "next", "acme/app#41", "queue", "run-1", e.contRun(q, "run-1", store.DeliveryOpen, a.ID))
+		if contHeldReason(t, c) != memoContHeldRoot {
+			t.Errorf("a renamed setting root started a chain with the switch off: %+v", c)
+		}
+	})
+}
+
+// Merging a category into another ends the chain of the rows that move.
+func TestMemoContinuationMergeEndsTheChain(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl3", 4, nil)
+		e.contQueue("impl", 4, nil)
+		root := e.contRoot("impl3", contRef)
+		c := e.contSend("impl3", "p2", contRef, "queue", "run-1", e.contRun(q, "run-1", store.DeliveryOpen, root.ID))
+		if rec := e.do("a", "PATCH", "/api/memo-categories/"+q, map[string]any{"name": "impl"}); rec.Code != http.StatusOK {
+			t.Fatalf("merge: %d %s", rec.Code, rec.Body.String())
+		}
+		if row := e.memoRow(c.ID); row.Category != "impl" || row.ChainID != "" || row.ChainSeq != 0 || row.ChainDelivery != "" {
+			t.Errorf("after the merge: %+v", row)
+		}
+	})
+}
+
+// Deleting a queue's settings and making them again leaves an old run's message with no release:
+// the old open delivery must not read it as a fresh root.
+func TestMemoContinuationOldRunAfterSettingsDeleteAndRecreate(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl", 4, nil)
+		root := e.contRoot("impl", contRef)
+		d := e.contRun(q, "run-1", store.DeliveryOpen, root.ID)
+		if rec := e.do("a", "DELETE", "/api/memo-queues/"+q, nil); rec.Code != http.StatusNoContent {
+			t.Fatalf("delete: %d", rec.Code)
+		}
+		if rec := e.do("a", "PUT", "/api/memo-queues/"+q, map[string]any{"instruction": "do it"}); rec.Code != http.StatusOK {
+			t.Fatal(rec.Body.String())
+		}
+		c := e.contSend("impl", "next", contRef, "queue", "run-1", d)
+		if contHeldReason(t, c) != memoContHeldRoot {
+			t.Errorf("an old run took a new root's place: %+v", c)
+		}
+		if _, _, found := e.chainRow(root.ID); found {
+			t.Errorf("a chain row was written")
+		}
+	})
+}
+
+// txFlip lets the dispatcher's overdue mark land between memoContinue's read of the delivery and
+// its conditional UPDATE, which the member's lock does not order.
+type txFlip struct {
+	store.MemoTxOps
+	reads int
+}
+
+func (t *txFlip) GetDelivery(id string) (store.MemoDelivery, bool, error) {
+	d, ok, err := t.MemoTxOps.GetDelivery(id)
+	t.reads++
+	if t.reads > 1 {
+		d.OverdueAt = "2026-11-21T00:00:00Z"
+	}
+	return d, ok, err
+}
+
+func (t *txFlip) TakeDeliveryContinuation(string) (bool, error) { return false, nil }
+
+func TestMemoContinuationLostRaceToOverdueSaysDelivery(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl", 4, nil)
+		root := e.contRoot("impl", contRef)
+		d := e.contRun(q, "run-1", store.DeliveryOpen, root.ID)
+		var v memoContinuationVerdict
+		err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+			qq, _, err := tx.GetQueue(q)
+			if err != nil {
+				return err
+			}
+			m := store.Memo{Repo: "r", Category: "impl", RefProvider: root.RefProvider, RefKey: root.RefKey}
+			v, err = memoContinue(&txFlip{MemoTxOps: tx}, e.members["a"], m, memoVia{face: memoFaceToken, producer: "run-1", producerOrigin: "queue", continuation: true, queueDelivery: d}, qq, "2026-11-21T00:00:00Z")
+			return err
+		})
+		if err != nil || v.Admitted || v.Reason != memoContHeldDelivery {
+			t.Errorf("verdict %+v, err %v, want %s", v, err, memoContHeldDelivery)
+		}
+	})
+}
+
+// Two runs of one chain race for its last place: one child is pending, the other create is
+// answered with it (one open message per reference), and the loser's delivery is not spent.
+func TestMemoContinuationRaceForTheLastPlace(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl", 2, nil)
+		root := e.contRoot("impl", contRef)
+		c1 := e.contSend("impl", "p2", contRef, "queue", "run-1", e.contRun(q, "run-1", store.DeliveryOpen, root.ID))
+		d2 := e.contRun(q, "run-2", store.DeliveryOpen, c1.ID)
+		// A second member of the same chain, so that two runs each carry their own message of it.
+		sib := c1
+		sib.ID, sib.Position = store.NewID(), c1.Position+1
+		if err := e.st.CreateMemo(context.Background(), sib); err != nil {
+			t.Fatal(err)
+		}
+		d3 := e.contRun(q, "run-3", store.DeliveryOpen, sib.ID)
+		type res struct {
+			code int
+			id   string
+		}
+		out := make(chan res, 2)
+		for _, c := range []struct{ run, d string }{{"run-2", d2}, {"run-3", d3}} {
+			go func(run, d string) {
+				m := contMemo("impl", "p3 from "+run, contRef)
+				m["producer"], m["producerOrigin"], m["continuation"], m["queueDelivery"] = run, "queue", true, d
+				rec := e.memoTokenDo("a", "POST", "/internal/memos", m)
+				out <- res{rec.Code, decode[memoDTO](t, rec).ID}
+			}(c.run, c.d)
+		}
+		a, b := <-out, <-out
+		created := 0
+		for _, r := range []res{a, b} {
+			if r.code == http.StatusCreated {
+				created++
+			}
+		}
+		if created != 1 || a.id != b.id {
+			t.Fatalf("answers %+v %+v: want one created message and the other answered with it", a, b)
+		}
+		if row := e.memoRow(a.id); row.State != store.MemoStatePending || row.ChainSeq != 2 {
+			t.Errorf("winner: %+v", row)
+		}
+		if n, _, _ := e.chainRow(root.ID); n != 2 {
+			t.Errorf("admitted %d, want 2", n)
+		}
+		var taken int
+		if err := e.st.DB().QueryRowContext(context.Background(), `SELECT COALESCE(SUM(continuation_taken),0) FROM memo_delivery WHERE id IN (?,?)`, d2, d3).Scan(&taken); err != nil || taken != 1 {
+			t.Errorf("spent deliveries = %d, %v, want 1", taken, err)
 		}
 	})
 }

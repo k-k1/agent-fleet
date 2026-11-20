@@ -258,7 +258,7 @@ func memoQueueSwitch(tx store.MemoTxOps, repo, category string) (inQ, accept boo
 // rename, the merge, the category delete and the settings create or delete. Those run through the
 // Console or touch no queue from the token face, so accept is always false here: moving a bucket
 // never makes a message pending by the switch.
-func memoMoveBucket(tx store.MemoTxOps, repo, from, to string, inPrev, inNext bool, via memoVia) error {
+func memoMoveBucket(tx store.MemoTxOps, repo, from, to string, inPrev, inNext, sameQueue bool, via memoVia) error {
 	rows, err := tx.ListMemosIn(repo, from)
 	if err != nil {
 		return err
@@ -277,6 +277,16 @@ func memoMoveBucket(tx store.MemoTxOps, repo, from, to string, inPrev, inNext bo
 		next, aerr := memoQueueMove(prev, next, inPrev, inNext, false, via)
 		if aerr != nil {
 			return memoTxFail(aerr)
+		}
+		switch {
+		case sameQueue && inPrev && inNext && prev.State == store.MemoStatePending && next.State == store.MemoStatePending:
+			// A rename of the queue's own category changes the release copy and hash and nothing
+			// that says who approved: a switch-accepted, tidy-made or continuation message must not
+			// become the member's own.
+			next.ReleasedBy = prev.ReleasedBy
+		case !sameQueue && prev.ChainID != "":
+			// A merge into another category ends the chain: the destination is another queue.
+			next.ChainID, next.ChainSeq, next.ChainDelivery = "", 0, ""
 		}
 		// The rows that stay or become open in a queue hold each reference once. A bucket that
 		// cannot be made so is refused whole: which of two notes to drop is the member's choice.
@@ -707,7 +717,7 @@ func (a memoAPI) putQueue(w http.ResponseWriter, r *http.Request, _ store.Identi
 			}
 		} else {
 			q.CreatedAt = now
-			if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, false, true, memoViaConsole); err != nil {
+			if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, false, true, false, memoViaConsole); err != nil {
 				return err
 			}
 		}
@@ -738,7 +748,7 @@ func (a memoAPI) deleteQueue(w http.ResponseWriter, r *http.Request, _ store.Ide
 		if _, isQ, err := tx.GetQueue(c.ID); err != nil || !isQ {
 			return err
 		}
-		if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, true, false, memoViaConsole); err != nil {
+		if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, true, false, false, memoViaConsole); err != nil {
 			return err
 		}
 		return tx.DeleteQueue(c.ID)

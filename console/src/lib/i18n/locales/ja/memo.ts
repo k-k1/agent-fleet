@@ -370,6 +370,7 @@ export const memo = {
   "memo.q_err_continuation": "0 から {max} の整数を入力してください。",
   "memo.release_continuation_hint": "作業項目つきのメモを承認すると、その実行が同じ項目の続きを最大 {max} 件、あらためて承認を待たずに追加できます。",
   "memo.continuation_badge_of": "続き {seq} / {max}（承認なしで受け付け）",
+  "memo.continuation_badge_plain": "続き（承認なしで受け付け）",
   "memo.continuation_badge": "続き {seq}（承認なしで受け付け）",
   "memo.continuation_title": "あなたが承認したメモの続きとして、同じ作業項目について実行が追加したため、承認を求めずに実行待ちになっています。「連鎖を止める」で、次の続きは承認待ちになります。",
   "memo.continuation_stop": "連鎖を止める",
