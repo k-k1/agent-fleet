@@ -313,6 +313,9 @@ type usageTurnRow struct {
 	Route, Billing, Connection string
 	routeSet                   bool // a call has been noted
 	routeMixed                 bool // the noted calls disagreed
+	// connMixed: the calls agree on route and billing and differ only in their connection (one
+	// proven, one not, or two keys). The route is still proven, so only the connection is dropped.
+	connMixed bool
 	// segs are the row's contributions in order, adjacent ones with the same evidence merged. A
 	// mixed row keeps them (settleRoute) only when every contribution proves its billing, which
 	// is what makes the boundary between two of them provable; usageRecordsOf then writes one
@@ -376,8 +379,11 @@ func (r *usageTurnRow) noteRoute(route, billing, connection string) {
 		r.Route, r.Billing, r.Connection, r.routeSet = route, billing, connection, true
 		return
 	}
-	if r.Route != route || r.Billing != billing || r.Connection != connection {
+	switch {
+	case r.Route != route || r.Billing != billing:
 		r.routeMixed = true
+	case r.Connection != connection:
+		r.connMixed = true
 	}
 }
 
@@ -389,6 +395,7 @@ func (r *usageTurnRow) absorbRoute(p usageTurnRow) {
 	}
 	r.noteRoute(p.Route, p.Billing, p.Connection)
 	r.routeMixed = r.routeMixed || p.routeMixed
+	r.connMixed = r.connMixed || p.connMixed
 }
 
 // settleRoute clears a mixed row's route and billing before it leaves the fold.
@@ -400,6 +407,9 @@ func (r *usageTurnRow) absorbRoute(p usageTurnRow) {
 func (r *usageTurnRow) settleRoute() {
 	if !r.routeMixed {
 		r.segs = nil
+		if r.connMixed {
+			r.Connection = ""
+		}
 		return
 	}
 	r.Route, r.Billing, r.Connection = "", "", ""
@@ -1047,7 +1057,7 @@ func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
 	if rec.TS == "" {
 		rec.TS = time.Now().UTC().Format(time.RFC3339)
 	}
-	if !r.routeMixed {
+	if !r.routeMixed && !r.connMixed {
 		// A turn whose calls disagreed is not a gap: its cleared or split evidence stands.
 		stampLaunch(m, &rec)
 	}

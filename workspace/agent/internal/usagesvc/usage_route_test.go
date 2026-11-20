@@ -308,3 +308,20 @@ func TestFoldDoesNotSplitWithoutProof(t *testing.T) {
 		}
 	}
 }
+
+// Calls that agree on route and billing and differ only in their connection keep the route (Go
+// carries no billing, so the whole row would otherwise turn unresolved); only the connection is
+// dropped, and the launch record does not fill the gap.
+func TestFoldConnectionOnlyMismatchKeepsRoute(t *testing.T) {
+	bound := routeTurn(usagex.RouteOpencodeGo, "", 5)
+	bound.Connection = "OPENCODE_API_KEY@aaaa"
+	for name, calls := range map[string][]transcript.Turn{
+		"bound then not": {bound, routeTurn(usagex.RouteOpencodeGo, "", 7)},
+		"not then bound": {routeTurn(usagex.RouteOpencodeGo, "", 7), bound},
+	} {
+		rows := foldTurnRows(append([]transcript.Turn{{Role: "user"}}, calls...), true)
+		if len(rows) != 1 || rows[0].Route != usagex.RouteOpencodeGo || rows[0].Connection != "" {
+			t.Errorf("%s: rows = %+v, want one row on opencode-go with no connection", name, rows)
+		}
+	}
+}

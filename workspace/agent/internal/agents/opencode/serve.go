@@ -398,8 +398,6 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("opencode serve の起動に失敗しました / failed to start opencode serve: %w", err)
 	}
-	// The environment is fixed for this process's life; recorded before it can serve a call.
-	noteDaemonStart(spawnedAt, cmd.Env)
 	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
 	began := time.Now()
 	deadline := began.Add(serveStartTimeout)
@@ -407,6 +405,9 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		time.Sleep(200 * time.Millisecond)
 		if healthy(addr) {
 			started = true
+			// The environment is fixed for this process's life. Recorded only once the daemon
+			// answers: a start that never took the port must not stand for the one that did.
+			noteDaemonStart(spawnedAt, cmd.Env)
 			if err := persistServePassword(password); err != nil {
 				log.Printf("opencode serve: password not saved, a restarted Agent cannot adopt this daemon: %v", err)
 			}
@@ -424,6 +425,10 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			s.exited = exited
 			go s.waitDaemon(cmd, tail, gen, exited)
 			go s.monitorEvents(addr, gen)
+			// The first account reading of this daemon's life: calls bind only after it
+			// (bind_intervals.go), so do not wait for the next Console poll.
+			invalidateOAuthStatus()
+			refreshOAuthAsync()
 			log.Printf("opencode serve: started (gen %d, pid %d, %s) in %v, %s", gen, cmd.Process.Pid, addr,
 				time.Since(began).Round(time.Millisecond), s.sinceOldExit())
 			recordLifecycle("started", gen, fmt.Sprintf("pid %d", cmd.Process.Pid))
