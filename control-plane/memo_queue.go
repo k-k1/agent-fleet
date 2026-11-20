@@ -210,7 +210,13 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext, accept bool, via memoV
 		case via.fromWorkspace():
 			next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = store.MemoStateHeld, "", "", ""
 		default:
-			next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = memoContentHash(next), memoNow(), ""
+			// The member's own edit keeps what admitted the message: a continuation stays one, so an
+			// edit or a rename of its queue does not make it the root of a fresh chain.
+			by := ""
+			if prev.ReleasedBy == store.MemoReleasedByContinuation {
+				by = prev.ReleasedBy
+			}
+			next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = memoContentHash(next), memoNow(), by
 		}
 	}
 	return next, nil
@@ -694,6 +700,11 @@ func (a memoAPI) putQueue(w http.ResponseWriter, r *http.Request, _ store.Identi
 		q.CategoryID, q.MembershipID, q.UpdatedAt = c.ID, mv.MembershipID, now
 		if existed {
 			q.CreatedAt, q.Generation, q.NoTidyAt = cur.CreatedAt, cur.Generation, cur.NoTidyAt
+			// A client that does not know the field (an older Console tab) must not turn the member's
+			// 0 back into the default: an omitted value keeps what is stored.
+			if in.ContinuationMax == nil {
+				q.ContinuationMax = cur.ContinuationMax
+			}
 		} else {
 			q.CreatedAt = now
 			if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, false, true, memoViaConsole); err != nil {

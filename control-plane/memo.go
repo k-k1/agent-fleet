@@ -420,7 +420,7 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		}
 		if inQ && via.continuation && m.State == store.MemoStateHeld {
 			// Last, so that the place it takes in the chain is given back by a failure below.
-			v, err := memoContinue(tx, mv.MembershipID, m, via, q, rows, now)
+			v, err := memoContinue(tx, mv.MembershipID, m, via, q, now)
 			if err != nil {
 				return err
 			}
@@ -535,6 +535,21 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 		}
 		if next, aerr = memoQueueMove(cur, next, inPrev, inNext, accept, via); aerr != nil {
 			return memoTxFail(aerr)
+		}
+		if moved && cur.ChainID != "" {
+			// A continuation belongs to the queue it was added to. A move to another queue ends the
+			// chain, and what admitted the message stays as it was, so it is no root over there.
+			pq, _, err := tx.QueueOf(cur.Repo, cur.Category)
+			if err != nil {
+				return err
+			}
+			nq, _, err := tx.QueueOf(next.Repo, next.Category)
+			if err != nil {
+				return err
+			}
+			if pq.CategoryID != nq.CategoryID {
+				next.ChainID, next.ChainSeq, next.ChainDelivery = "", 0, ""
+			}
 		}
 		if inNext && memoOpenState(next.State) && next.RefKey != "" {
 			rows, err := tx.ListMemosIn(next.Repo, next.Category)

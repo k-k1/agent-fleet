@@ -218,8 +218,9 @@ func TestMemoContinuationWalls(t *testing.T) {
 		if got := decode[memoDTO](t, rec); rec.Code != http.StatusOK || got.ID != first.ID {
 			t.Errorf("a second continuation from one run: %d %+v", rec.Code, got)
 		}
-		// Once the first has moved on, the run's own delivery still admits no second one.
-		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state='delivered', release_hash='', released_at='' WHERE id=?`, first.ID); err != nil {
+		// The record is on the delivery: with the first child gone (the member deleted it, or it moved
+		// out of the bucket) the run's delivery still admits no second one.
+		if _, err := e.st.DB().ExecContext(context.Background(), `DELETE FROM memo WHERE id=?`, first.ID); err != nil {
 			t.Fatal(err)
 		}
 		if second := e.contSend("impl", "second", contRef, "queue", "run-1", d); contHeldReason(t, second) != memoContHeldUsed {
@@ -338,7 +339,7 @@ func TestMemoContinuationForgedUserClaimFollowsTheSwitchOnly(t *testing.T) {
 	})
 }
 
-// The Console face and /mcp never read the claim: a Console note stays the member's own, with no chain.
+// The Console face never reads the claim, even a complete one: a Console note stays the member's own, with no chain.
 func TestMemoContinuationClaimIsTokenFaceOnly(t *testing.T) {
 	eachDialect(t, func(t *testing.T, e *inboxEnv) {
 		q := e.contQueue("impl", 4, nil)
@@ -346,7 +347,15 @@ func TestMemoContinuationClaimIsTokenFaceOnly(t *testing.T) {
 		d := e.contRun(q, "run-1", store.DeliveryOpen, root.ID)
 		m := contMemo("impl", "console", contRef)
 		m["continuation"], m["queueDelivery"] = true, d
-		c := e.memoRow(decode[memoDTO](t, e.do("a", "POST", "/api/memos", m)).ID)
+		m["producer"], m["producerOrigin"] = "run-1", "queue"
+		rec := e.do("a", "POST", "/api/memos", m)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("console create: %d %s", rec.Code, rec.Body.String())
+		}
+		c := e.memoRow(decode[memoDTO](t, rec).ID)
+		if c.State != store.MemoStatePending || c.Provenance != store.MemoProvenanceMember {
+			t.Errorf("a Console create is the member's own note: %+v", c)
+		}
 		if c.ChainID != "" || c.ReleasedBy != "" {
 			t.Errorf("the Console claim was read: %+v", c)
 		}
@@ -416,4 +425,207 @@ func TestMemoContinuationIsKeptByATidy(t *testing.T) {
 	if l := memoafter.Linked(rows); !l["a"] || l["b"] {
 		t.Errorf("Linked = %v", l)
 	}
+}
+
+// The URL of an admitted continuation is the given message's, whatever the claim sent: the
+// work item is the provider and key, and the next session and the Console link follow the URL.
+func TestMemoContinuationTakesTheGivenURL(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl", 4, nil)
+		root := e.contRoot("impl", contRef)
+		d := e.contRun(q, "run-1", store.DeliveryOpen, root.ID)
+		m := contMemo("impl", "next", contRef)
+		m["reference"] = map[string]any{"provider": "github", "key": contRef, "url": "https://evil.example/elsewhere"}
+		m["producer"], m["producerOrigin"], m["continuation"], m["queueDelivery"] = "run-1", "queue", true, d
+		rec := e.memoTokenDo("a", "POST", "/internal/memos", m)
+		if rec.Code != http.StatusCreated {
+			t.Fatal(rec.Body.String())
+		}
+		c := e.memoRow(decode[memoDTO](t, rec).ID)
+		if c.State != store.MemoStatePending || c.RefURL != root.RefURL || c.ReleaseHash != memoContentHash(c) {
+			t.Errorf("continuation URL %q, want %q: %+v", c.RefURL, root.RefURL, c)
+		}
+	})
+}
+
+// A delivery that is overdue, waiting to be retired or past the queue's bound admits nothing.
+func TestMemoContinuationNeedsALiveDelivery(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl", 4, nil)
+		for i, set := range []string{"overdue_at='2026-11-20T00:00:00Z'", "retire_pending=1", "opened_at='2020-01-01T00:00:00Z'"} {
+			root := e.contRoot("impl", "acme/app#"+string(rune('1'+i))+"0")
+			d := e.contRun(q, "run-1", store.DeliveryOpen, root.ID)
+			if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET `+set+` WHERE id=?`, d); err != nil {
+				t.Fatal(err)
+			}
+			c := e.contSend("impl", "next", root.RefKey, "queue", "run-1", d)
+			if contHeldReason(t, c) != memoContHeldDelivery {
+				t.Errorf("%s: %+v", set, c)
+			}
+		}
+	})
+}
+
+// A rename of the queue keeps the chain and what admitted the child, and a move to another
+// queue ends the chain without making the child a root there.
+func TestMemoContinuationRenameAndMove(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl", 1, nil)
+		other := e.contQueue("other", 4, nil)
+		root := e.contRoot("impl", contRef)
+		c1 := e.contSend("impl", "p2", contRef, "queue", "run-1", e.contRun(q, "run-1", store.DeliveryOpen, root.ID))
+		if rec := e.do("a", "PATCH", "/api/memo-categories/"+q, map[string]any{"name": "impl2"}); rec.Code != http.StatusOK {
+			t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+		}
+		row := e.memoRow(c1.ID)
+		if row.State != store.MemoStatePending || row.ReleasedBy != store.MemoReleasedByContinuation || row.ChainID != root.ID {
+			t.Errorf("after the rename: %+v", row)
+		}
+		// The chain is at its limit: the renamed child's own continuation is held.
+		c2 := e.contSend("impl2", "p3", contRef, "queue", "run-2", e.contRun(q, "run-2", store.DeliveryOpen, row.ID))
+		if contHeldReason(t, c2) != memoContHeldLimit {
+			t.Errorf("past the limit after a rename: %+v", c2)
+		}
+		// A move to another queue: pending as the member's own move, chain ended, no root there.
+		root2 := e.contRoot("impl2", "acme/app#31")
+		d1 := e.contSend("impl2", "q2", "acme/app#31", "queue", "run-4", e.contRun(q, "run-4", store.DeliveryOpen, root2.ID))
+		if rec := e.do("a", "PATCH", "/api/memos/"+d1.ID, map[string]any{"category": "other"}); rec.Code != http.StatusOK {
+			t.Fatalf("move: %d %s", rec.Code, rec.Body.String())
+		}
+		moved := e.memoRow(d1.ID)
+		if moved.ChainID != "" || moved.ReleasedBy != store.MemoReleasedByContinuation {
+			t.Errorf("after the move: %+v", moved)
+		}
+		c3 := e.contSend("other", "p4", "acme/app#31", "queue", "run-3", e.contRun(other, "run-3", store.DeliveryOpen, moved.ID))
+		if contHeldReason(t, c3) != memoContHeldRoot {
+			t.Errorf("a moved continuation rooted a chain: %+v", c3)
+		}
+	})
+}
+
+// A chain row belongs to one work item: a person editing a child's reference ends its use.
+func TestMemoContinuationReferenceEditEndsTheChain(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl", 4, nil)
+		root := e.contRoot("impl", contRef)
+		c1 := e.contSend("impl", "p2", contRef, "queue", "run-1", e.contRun(q, "run-1", store.DeliveryOpen, root.ID))
+		if rec := e.do("a", "PATCH", "/api/memos/"+c1.ID, map[string]any{"reference": map[string]any{"provider": "github", "key": "acme/app#77", "url": "https://example.test/acme/app#77"}}); rec.Code != http.StatusOK {
+			t.Fatal(rec.Body.String())
+		}
+		edited := e.memoRow(c1.ID)
+		c2 := e.contSend("impl", "p3", "acme/app#77", "queue", "run-2", e.contRun(q, "run-2", store.DeliveryOpen, edited.ID))
+		if contHeldReason(t, c2) != memoContHeldReference {
+			t.Errorf("a chain was reused for another work item: %+v", c2)
+		}
+	})
+}
+
+// A switch-accepted message starts a chain only while the switch is on. A chain already
+// started goes on within its M after the switch is turned off.
+func TestMemoContinuationSwitchRootNeedsTheSwitchNow(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("sw", 4, map[string]any{"acceptOwnSessions": true})
+		ref := map[string]any{"reference": map[string]any{"provider": "github", "key": "acme/app#21", "url": "https://example.test/acme/app#21"}}
+		_, a := e.fromSession("sw", "note a", "user", ref)
+		ref2 := map[string]any{"reference": map[string]any{"provider": "github", "key": "acme/app#22", "url": "https://example.test/acme/app#22"}}
+		_, b := e.fromSession("sw", "note b", "user", ref2)
+		// b starts its chain while the switch is on.
+		first := e.contSend("sw", "b2", "acme/app#22", "queue", "run-b", e.contRun(q, "run-b", store.DeliveryOpen, b.ID))
+		if first.State != store.MemoStatePending {
+			t.Fatalf("with the switch on: %+v", first)
+		}
+		if rec := e.do("a", "PUT", "/api/memo-queues/"+q, map[string]any{"instruction": "do it", "acceptOwnSessions": false}); rec.Code != http.StatusOK {
+			t.Fatal(rec.Body.String())
+		}
+		// a never started one: held now.
+		c := e.contSend("sw", "a2", "acme/app#21", "queue", "run-a", e.contRun(q, "run-a", store.DeliveryOpen, a.ID))
+		if contHeldReason(t, c) != memoContHeldRoot {
+			t.Errorf("a root started after the switch went off: %+v", c)
+		}
+		// b's chain, started already, goes on.
+		next := e.contSend("sw", "b3", "acme/app#22", "queue", "run-b2", e.contRun(q, "run-b2", store.DeliveryOpen, first.ID))
+		if next.State != store.MemoStatePending || next.ChainSeq != 2 {
+			t.Errorf("a started chain stopped with the switch: %+v", next)
+		}
+	})
+}
+
+// A PUT that leaves continuationMax out keeps the stored value: an older Console tab must not
+// turn a member's 0 back into the default.
+func TestMemoContinuationMaxSurvivesAnOmittingPut(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl", 0, nil)
+		if rec := e.do("a", "PUT", "/api/memo-queues/"+q, map[string]any{"instruction": "changed"}); rec.Code != http.StatusOK {
+			t.Fatal(rec.Body.String())
+		}
+		for _, qq := range decode[memoQueuesWire](t, e.do("a", "GET", "/api/memo-queues", nil)).Queues {
+			if qq.CategoryID == q && qq.ContinuationMax != 0 {
+				t.Errorf("continuationMax = %d after an omitting PUT, want 0", qq.ContinuationMax)
+			}
+		}
+	})
+}
+
+// A root stopped before its first continuation exists is kept whole by a tidy, and the next
+// continuation is held. The count's place is taken once per delivery, even at M-1.
+func TestMemoContinuationStopRootAndTidyAndLastPlace(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl", 1, nil)
+		root := e.contRoot("impl", contRef)
+		if rec := e.do("a", "POST", "/api/memos/"+root.ID+"/stop-chain", nil); rec.Code != http.StatusOK {
+			t.Fatal(rec.Body.String())
+		}
+		err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+			rows, err := tx.ListMemosIn("r", "impl")
+			if err != nil {
+				return err
+			}
+			l, err := memoLinked(tx, rows)
+			if !l[root.ID] {
+				t.Errorf("a root with a chain row is not keep-only: %v", l)
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c := e.contSend("impl", "x", contRef, "queue", "run-1", e.contRun(q, "run-1", store.DeliveryOpen, root.ID)); contHeldReason(t, c) != memoContHeldStopped {
+			t.Errorf("a stopped root admitted: %+v", c)
+		}
+		// Two admissions at M-1 (M=1 here, the chain empty): one place only.
+		var won []bool
+		if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+			for i := 0; i < 2; i++ {
+				_, _, ok, err := tx.AdmitChain(store.MemoChain{ID: "free-root", CategoryID: q, CreatedAt: "2026-11-21T00:00:00Z"}, 1)
+				if err != nil {
+					return err
+				}
+				won = append(won, ok)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if len(won) != 2 || !won[0] || won[1] {
+			t.Errorf("admissions at the last place = %v, want [true false]", won)
+		}
+	})
+}
+
+// The member's removal takes the chain rows with the rest of their memo tables.
+func TestMemoContinuationChainRowsGoWithTheMember(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl", 4, nil)
+		root := e.contRoot("impl", contRef)
+		e.contSend("impl", "p2", contRef, "queue", "run-1", e.contRun(q, "run-1", store.DeliveryOpen, root.ID))
+		if _, _, found := e.chainRow(root.ID); !found {
+			t.Fatal("no chain row")
+		}
+		if err := e.st.DeleteMembership(context.Background(), e.members["a"]); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, found := e.chainRow(root.ID); found {
+			t.Errorf("the chain row outlived the member")
+		}
+	})
 }

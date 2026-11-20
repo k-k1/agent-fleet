@@ -1000,15 +1000,21 @@ a run feed the queue without bound. Option A keeps the press as a checkpoint at 
   `continuation_<why>`: (1) the face is the token face and `producerOrigin` is `queue`; (2) the delivery named exists, is
   `open`, belongs to the same member and queue (category id) as the memo being added, and its session is `producer`;
   (3) the delivery carries exactly one message (`memo.delivery_id`), so a batch run never continues; (4) that message has
-  a reference and the new one has the same provider and key, and the same repo and category; (5) that message is a chain
+  a reference and the new one has the same provider and key, and the same repo and category (the URL is not compared:
+  an admitted continuation carries the given message's URL, so it can never point the next session elsewhere); (5) that message is a chain
   member or a root (below); (6) the chain row admits one more (below); (7) the delivery has not admitted a continuation
-  already, which keeps the chain linear and stops a fan-out inside one run.
+  already, which keeps the chain linear and stops a fan-out inside one run. (2) also requires the delivery not to be
+  overdue, waiting for its retire, or older than the queue's `max_task_hours`. (7) is the column
+  `memo_delivery.continuation_taken`, set by one conditional UPDATE on the delivery row that also requires `open`, no
+  `overdue_at` and no pending retire, because the close, the overdue mark and the retire change the row outside the
+  member's lock. The record outlives the child: deleting or moving the child does not give the run's place back.
 - **A root is a message a person, or the person's own switch, released**: `released_by` empty (a Console press or a
-  Console-authored note) or `setting` (the per-queue switch "accept from sessions I started", decided 2026-11-21). The
-  switch counts because with it on, code in the workspace can already enqueue without a press, so rooting a chain adds
-  no exposure; with it off no such message is pending, so there is no root. A message made by a tidy (`tidy`) or
-  admitted as a continuation (`continuation`) roots none: a tidy cannot manufacture an approval, and a chain does not
-  restart itself.
+  Console-authored note) or `setting` (the per-queue switch "accept from sessions I started", decided 2026-11-21). A
+  `setting` root starts a chain only while the switch is still on: turning it off does not call back a message it
+  accepted, but that message can no longer start a chain, while a chain already started goes on within its M. The switch
+  counts because with it on, code in the workspace can already enqueue without a press, so rooting a chain adds no new
+  exposure. A message made by a tidy (`tidy`) or admitted as a continuation (`continuation`) roots none: a tidy cannot
+  manufacture an approval, and a chain does not restart itself.
 - The count lives in a table of its own, `memo_chain(id, membership_id, category_id, ref_provider, ref_key, admitted,
   stopped, created_at, updated_at)`, id the root message's id. It is created at the first continuation, not at the
   release, so releases and the hash are untouched. Admission is one statement, `UPDATE memo_chain SET admitted =
@@ -1034,12 +1040,14 @@ for. A per-release override on the card was considered and left out of the first
 release binds (the hash) for a case the queue setting already covers, and the member can lower the setting at any
 time. M counts continuations, not parts, so a task of at most N parts needs M = N - 1. M is read live: raising it
 extends a chain in flight (the member did that), lowering it takes effect on the next admission, and `0` stops every
-chain of the queue. A queue set to 0 behaves exactly as before the note.
+chain of the queue. A queue set to 0 behaves exactly as before the note. A settings PUT that leaves the field out
+keeps the stored value, so an older client cannot turn a member's 0 back into 4; 4 is the default of a new queue and of the migration.
 
 *(c) What happens to the count.*
 
-- **Tidy.** A message with `chain_id` or a chain row is only kept by a tidy: never merged, split or moved, as §A
-  already does for messages with prerequisites. A derived message therefore never inherits or loses a count.
+- **Tidy.** A message with `chain_id`, or whose id has a chain row (a root has no `chain_id` of its own), is only kept by
+  a tidy, in the candidate list and in the server's validation alike: never merged, split or moved, as §A already does
+  for messages with prerequisites. A derived message therefore never inherits or loses a count.
 - **Hand-back.** `defer_queue_item` returns the same row, so its chain and count are unchanged. The re-fire is a new run of
   the same message and may add its continuation (the delivery rule (7) is per delivery). A deferred run that had already
   admitted a continuation keeps it: the count was spent at admission.
@@ -1048,10 +1056,14 @@ chain of the queue. A queue set to 0 behaves exactly as before the note.
   (including a continuation held for the limit, decided 2026-11-21: one button) is a fresh release, so it clears
   `chain_id` and may root a new chain of up to M. That is the meaning of "release also approves M continuations", said
   on the card.
-- **Move to another category.** Clears `chain_id`; a continuation targets the queue of the message it follows, so a move
-  ends that chain. The row is released again by the destination's rules.
-- **Batch.** A run that was given several messages never continues (rule 3); a queue whose batch is above one therefore
-  never uses this, and the setting's hint says so.
+- **Rename, move, reference edit.** A rename of the same queue keeps the chain and what admitted the child, since the
+  chain row is bound to the queue's id. A move to another queue clears `chain_id` and keeps `released_by`
+  `continuation`, which is no root: the member's move keeps the state as it always did, and mints no new approval over
+  there. A chain row also remembers its work item: a person editing a follow-up's reference ends its use, and the next
+  continuation of it is held (`continuation_reference`).
+- **Batch.** A delivery that carries several messages never continues (rule 3). The queue's `batch` is the most a claim
+  takes, so a queue with a batch above one can still run a single message, which continues normally. The hint says that a
+  run given several memos adds no follow-up.
 - **Deleted or sent by hand.** The chain row survives; a given message that is gone fails rule (5) and the next
   continuation is `held`.
 
@@ -1069,18 +1081,19 @@ waits on the usual release card, which is the notice.
 0131): `memo_queue.continuation_max INTEGER NOT NULL DEFAULT 4`; `memo.chain_id TEXT NOT NULL DEFAULT ''`;
 `memo.chain_seq INTEGER NOT NULL DEFAULT 0`; `CREATE TABLE memo_chain`. A binary that predates it ignores the columns and
 creates every continuation `held`, which is today's rule, and the release constraint of migration 0131 is untouched
-because a continuation is inserted with its release copy. Rule (7) is rarely the one that fires, because an open message already holding the reference is answered first (§4's
-one open message per reference), but it is kept for the case where the first has moved on. Tests, each shown failing
-without the change: past M is held
-(and the M-th is admitted, a race of two admissions at M-1 admits one); a different reference, repo or category is held; a
-session not started by this queue is held (origin `user`, `schedule`, `session`, and a queue session whose delivery is
-closed, belongs to another queue or member, or whose `producer` is not the delivery's session); a batch delivery is held;
-a forged continuation from a user session follows the switch rules only (held with the switch off, `pending` as today
-with it on and no chain row written); a message the switch accepted roots a chain only because the switch is on (with it
-off the same session's message is held, so no run is ever given it), and a message made by a tidy roots none; a Console
-edit, a token-face edit, a move, a tidy and a hand-back each leave the count as stated in (c); the relay drops a
-`queueDelivery` the model wrote and refuses `continuation` without a delivery; both migration sets apply on a copy of
-the previous schema.
+because a continuation is inserted with its release copy. Tests, each shown failing without the change: past M is held (the M-th is admitted, and two admissions at the last place
+admit one); a different reference, queue or work item is held; a session not started by this queue is held (origin `user`,
+`schedule`, `session`, no delivery, an unknown, closed, overdue, retiring or too old delivery, another queue's or
+another session's delivery); a batch delivery is held; a tidy-released root is held; M = 0 is held; a second continuation
+from one delivery is held even with the first child deleted; a stopped chain, also a root stopped before its first
+continuation, is held and kept whole by a tidy; the admitted URL is the given message's; a Console create carrying a
+complete claim stays the member's own note with no chain; a forged claim from a user session follows the switch rules only
+(held with the switch off, `pending` as today with it on, no chain row written); a `setting` root starts a chain only
+while the switch is on and a started chain goes on; a rename keeps the chain, a move ends it without a root, a
+reference edit ends its use, a release starts a fresh one; an omitting PUT keeps the stored M; the chain rows go with the
+member; the relay drops a `queueDelivery` the model wrote and refuses `continuation` without a delivery. The `/mcp` face
+has no field for the claim, so it has no test of its own. Each test runs on SQLite and, with `AF_TEST_DATABASE_URL`, on
+Postgres.
 
 *Decided by the owner, 2026-11-21:* the ceiling is 10 and the default 4 (not 0), applied to existing queues through the column
 default; a press on a continuation held for the limit starts a fresh chain of up to M, with one button; and a message the

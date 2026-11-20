@@ -70,7 +70,7 @@ type Memo struct {
 	// ChainID, ChainSeq and ChainDelivery mark a continuation of a released message (ADR 0137,
 	// addendum 2026-11-20): the root message of its chain, its place in it, and the delivery whose
 	// run added it. Display and bookkeeping only: the count is memo_chain's. A release by a person
-	// and a move to another category clear them, in SQL (writeMemoRow, ReleaseMemo).
+	// clears them in SQL (writeMemoRow, ReleaseMemo), a move to another queue in Go.
 	ChainID, ChainDelivery string
 	ChainSeq               int
 }
@@ -248,9 +248,10 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 	// the row out of every queue: a plain note waits for nothing, and a later queue must not
 	// inherit another's count. The CASE reads the row's state before this write.
 	args = append(args, m.State, m.State, m.State, m.State, m.State, m.State)
-	// The chain columns follow the same rule, and also clear when the row changes repo or category:
-	// a continuation belongs to the queue it was added to. The comparison reads the old row.
-	args = append(args, m.State, m.State, m.Repo, m.Category, m.State, m.State, m.Repo, m.Category, m.State, m.State, m.Repo, m.Category)
+	// The chain columns follow the same rule. A caller that moves the row to
+	// another queue clears ChainID on the struct, which clears the columns: a rename of the same
+	// queue keeps them.
+	args = append(args, m.State, m.State, m.ChainID, m.State, m.State, m.ChainID, m.State, m.State, m.ChainID)
 	args = append(args, m.ID, m.MembershipID)
 	if !restore {
 		args = append(args, m.State)
@@ -266,9 +267,9 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 		   not_before=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' THEN '' ELSE not_before END,
 		   defer_count=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' THEN 0 ELSE defer_count END,
 		   defer_reasons=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' THEN '' ELSE defer_reasons END,
-		   chain_id=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' OR repo<>? OR category<>? THEN '' ELSE chain_id END,
-		   chain_seq=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' OR repo<>? OR category<>? THEN 0 ELSE chain_seq END,
-		   chain_delivery=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' OR repo<>? OR category<>? THEN '' ELSE chain_delivery END
+		   chain_id=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' OR CAST(? AS TEXT)='' THEN '' ELSE chain_id END,
+		   chain_seq=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' OR CAST(? AS TEXT)='' THEN 0 ELSE chain_seq END,
+		   chain_delivery=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' OR CAST(? AS TEXT)='' THEN '' ELSE chain_delivery END
 		   WHERE id=? AND membership_id=?`+guard, args...)
 	if err != nil {
 		return err

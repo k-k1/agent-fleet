@@ -25,7 +25,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/k-k1/agent-fleet/control-plane/internal/memoafter"
 	"github.com/k-k1/agent-fleet/control-plane/internal/memotidy"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -236,7 +235,10 @@ func (r *memoQueueRunner) reserveTidy(tx store.MemoTxOps, cur store.MemoQueue, c
 	groups := map[memotidy.Group]int{}
 	job = &memoTidyJob{q: cur, c: c}
 	bytesUsed, cut, chosenUnseen := 0, len(cands), false
-	linked := memoafter.Linked(rows)
+	linked, err := memoLinked(tx, rows)
+	if err != nil {
+		return nil, false, err
+	}
 	for i, m := range cands {
 		size := len(m.Body) + len(m.RefPath)
 		if i >= memotidy.MaxInputItems || bytesUsed+size > memoTidyTextBytes {
@@ -254,7 +256,7 @@ func (r *memoQueueRunner) reserveTidy(tx store.MemoTxOps, cur store.MemoQueue, c
 		if m.Kind == "file" {
 			kind = "file"
 		}
-		// A message that has or is a prerequisite is offered to keep only (memoafter.Linked).
+		// A message that has or is a prerequisite is offered to keep only (memoLinked).
 		job.items = append(job.items, memoTidyWireItem{ID: m.ID, Kind: kind, Text: m.Body, File: m.RefPath, Group: g,
 			Merge: it.Mergeable && !linked[m.ID], Move: !it.Moved && !linked[m.ID]})
 		job.input = append(job.input, memoTidyItem{ID: m.ID, Hash: memoContentHash(m), State: m.State})

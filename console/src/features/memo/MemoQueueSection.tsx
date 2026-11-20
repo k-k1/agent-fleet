@@ -973,7 +973,13 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           : undefined
                       }
                       continuationMax={queue?.continuationMax}
-                      onStopChain={m.chainId ? () => void stopChain(m) : undefined}
+                      onStopChain={
+                        // A root has no chain id: it can be stopped before its first follow-up exists, while the
+                        // category allows follow-ups and the note a person or the switch approved points at a work item.
+                        m.chainId || (isQueue && (queue?.continuationMax ?? 0) > 0 && memoReference(m) && !(m.releasedBy && m.releasedBy !== "setting"))
+                          ? () => void stopChain(m)
+                          : undefined
+                      }
                       onOpenMenu={(e) => openMemoMenu(e, m)}
                       onOpenKebab={(e) => openMemoMenuBtn(e, m)}
                       onDragStart={(e) => {
@@ -1610,7 +1616,7 @@ function MemoRow(props: MemoRowProps) {
       )}
       {m.releasedBy === "continuation" && (m.state === "pending" || m.state === "delivered") && (
         <span className="memo-qorigin" title={tr("memo.continuation_title")}>
-          {(props.continuationMax ?? 0) > 0
+          {(props.continuationMax ?? 0) >= (m.chainSeq ?? 0) && (props.continuationMax ?? 0) > 0
             ? tr("memo.continuation_badge_of", { seq: m.chainSeq ?? 0, max: props.continuationMax! })
             : tr("memo.continuation_badge", { seq: m.chainSeq ?? 0 })}
         </span>

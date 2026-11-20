@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -58,12 +59,14 @@ type memoContinuationVerdict struct {
 	After string
 	Root  string
 	Seq   int
+	// RefURL is the given message's URL, which an admitted continuation carries instead of its own.
+	RefURL string
 }
 
 // memoContinue decides whether message m, being created by via, is a continuation the member's
-// release already covers. rows is the bucket m goes into. It claims one place of the chain as its
-// last step, in the create's own transaction, so a create that fails after it gives the place back.
-func memoContinue(tx store.MemoTxOps, membershipID string, m store.Memo, via memoVia, q store.MemoQueue, rows []store.Memo, now string) (memoContinuationVerdict, error) {
+// release already covers. It claims the run's one place and one place of the chain as its last
+// steps, in the create's own transaction, so a create that fails after them gives both back.
+func memoContinue(tx store.MemoTxOps, membershipID string, m store.Memo, via memoVia, q store.MemoQueue, now string) (memoContinuationVerdict, error) {
 	no := func(reason, after string) (memoContinuationVerdict, error) {
 		return memoContinuationVerdict{Reason: reason, After: after}, nil
 	}
@@ -74,7 +77,8 @@ func memoContinue(tx store.MemoTxOps, membershipID string, m store.Memo, via mem
 	if err != nil {
 		return memoContinuationVerdict{}, err
 	}
-	if !ok || d.MembershipID != membershipID || d.QueueID != q.CategoryID || d.State != store.DeliveryOpen || d.Session == "" || d.Session != via.producer {
+	if !ok || d.MembershipID != membershipID || d.QueueID != q.CategoryID || d.State != store.DeliveryOpen || d.Session == "" || d.Session != via.producer ||
+		memoDeliveryPastDue(d, q, time.Now()) {
 		return no(memoContHeldDelivery, "")
 	}
 	if len(d.MessageIDs) != 1 {
@@ -87,16 +91,28 @@ func memoContinue(tx store.MemoTxOps, membershipID string, m store.Memo, via mem
 	if !ok {
 		return no(memoContHeldGiven, d.MessageIDs[0])
 	}
+	// The work item is the provider and key. The URL is not compared: it is taken from the given
+	// message below, so a continuation can never point the next session at another place.
 	if given.RefKey == "" || given.RefProvider != m.RefProvider || given.RefKey != m.RefKey ||
 		given.Repo != m.Repo || given.Category != m.Category {
 		return no(memoContHeldReference, given.ID)
 	}
 	root := given.ChainID
 	if root == "" {
-		// A chain starts at a message the member released: by a press or a Console write (released_by
-		// empty), or by the switch they turned on. A tidy's, a continuation's and a hand-back's do not.
+		// A chain starts at a message the member released: by a press or a Console write
+		// (released_by empty), or by the switch they turned on. A tidy's, a continuation's and a
+		// hand-back's do not, and a switch-accepted message starts one only while the switch is
+		// still on: turning it off does not leave a chain that can still be started. A chain that
+		// already started goes on within its M.
 		if given.ReleasedBy != "" && given.ReleasedBy != store.MemoReleasedBySetting {
 			return no(memoContHeldRoot, given.ID)
+		}
+		if given.ReleasedBy == store.MemoReleasedBySetting && !q.AcceptOwnSessions {
+			if _, found, err := tx.GetChain(given.ID); err != nil {
+				return memoContinuationVerdict{}, err
+			} else if !found {
+				return no(memoContHeldRoot, given.ID)
+			}
 		}
 		root = given.ID
 	}
@@ -104,29 +120,63 @@ func memoContinue(tx store.MemoTxOps, membershipID string, m store.Memo, via mem
 	if max == 0 {
 		return no(memoContHeldOff, given.ID)
 	}
-	for _, r := range rows {
-		if r.ChainDelivery == d.ID {
-			return no(memoContHeldUsed, given.ID)
+	// The chain row was made for one queue and one work item. A message whose reference a person
+	// edited, or that was merged into another queue, does not extend it.
+	c, found, err := tx.GetChain(root)
+	if err != nil {
+		return memoContinuationVerdict{}, err
+	}
+	if found {
+		switch {
+		case c.Stopped:
+			return no(memoContHeldStopped, given.ID)
+		case (c.CategoryID != "" && c.CategoryID != q.CategoryID) || (c.RefKey != "" && (c.RefProvider != given.RefProvider || c.RefKey != given.RefKey)):
+			return no(memoContHeldReference, given.ID)
+		case c.Admitted >= max:
+			return no(memoContHeldLimit, given.ID)
 		}
 	}
-	seq, stopped, won, err := tx.AdmitChain(store.MemoChain{ID: root, CategoryID: q.CategoryID,
+	// One conditional UPDATE on the delivery row: its close, overdue mark and retire change it
+	// from outside the member's lock, and the record outlives the child message.
+	taken, err := tx.TakeDeliveryContinuation(d.ID)
+	if err != nil {
+		return memoContinuationVerdict{}, err
+	}
+	if !taken {
+		return no(memoContHeldUsed, given.ID)
+	}
+	seq, _, won, err := tx.AdmitChain(store.MemoChain{ID: root, CategoryID: q.CategoryID,
 		RefProvider: given.RefProvider, RefKey: given.RefKey, CreatedAt: now}, max)
 	if err != nil {
 		return memoContinuationVerdict{}, err
 	}
-	switch {
-	case won:
-		return memoContinuationVerdict{Admitted: true, Root: root, Seq: seq, After: given.ID}, nil
-	case stopped:
-		return no(memoContHeldStopped, given.ID)
+	if !won {
+		// The member's lock makes this unreachable after the check above. Rolling back also gives
+		// the delivery's place back.
+		return memoContinuationVerdict{}, errors.New("memo chain: no place after the check")
 	}
-	return no(memoContHeldLimit, given.ID)
+	return memoContinuationVerdict{Admitted: true, Root: root, Seq: seq, After: given.ID, RefURL: given.RefURL}, nil
+}
+
+// memoDeliveryPastDue is a delivery that is overdue, waiting to be retired, or older than the
+// queue's task bound: the dispatcher marks the first two outside the member's lock and may not
+// have reached the third yet.
+func memoDeliveryPastDue(d store.MemoDelivery, q store.MemoQueue, now time.Time) bool {
+	if d.OverdueAt != "" || d.RetirePending {
+		return true
+	}
+	since := d.OpenedAt
+	if since == "" {
+		since = d.SentAt
+	}
+	return since != "" && since < store.DeliveryTS(now.Add(-time.Duration(memoQueueTaskHours(q))*time.Hour))
 }
 
 // memoContinuationApply puts the verdict on m, which memoQueueMove entered as held (a token-face
 // create never enters pending except by the switch, and a queue session is not the switch's).
 func memoContinuationApply(m store.Memo, v memoContinuationVerdict, delivery string) store.Memo {
 	if v.Admitted {
+		m.RefURL = v.RefURL
 		m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy = store.MemoStatePending, memoContentHash(m), memoNow(), store.MemoReleasedByContinuation
 		m.ChainID, m.ChainSeq, m.ChainDelivery, m.HeldReason = v.Root, v.Seq, delivery, ""
 		return m
@@ -136,6 +186,20 @@ func memoContinuationApply(m store.Memo, v memoContinuationVerdict, delivery str
 		m.HeldReason = string(raw)
 	}
 	return m
+}
+
+// memoLinked is memoafter.Linked plus the messages that have a chain row: a root carries no
+// chain_id itself, and a tidy only keeps it whole (ADR 0137, addendum 2026-11-20).
+func memoLinked(tx store.MemoTxOps, rows []store.Memo) (map[string]bool, error) {
+	linked := memoafter.Linked(rows)
+	ids, err := tx.ListChainIDs()
+	if err != nil {
+		return nil, err
+	}
+	for id := range ids {
+		linked[id] = true
+	}
+	return linked, nil
 }
 
 // memoChainStopped is the answer to a stop-chain.

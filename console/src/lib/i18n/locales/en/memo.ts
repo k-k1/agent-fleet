@@ -369,7 +369,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.tidy_moved_unknown": "Moved from another category by a tidy",
   "memo.tidy_moved_title": "A tidy moved this memo here from another category.",
   "memo.q_continuation": "Follow-ups a run may add without approval",
-  "memo.q_continuation_hint": "Approving a memo that carries a work item also lets the run that receives it add up to this many follow-up memos for the same item, in this category, without another approval. 0 turns it off. At most 10, and every category starts with 4. Like “accept from sessions I started” this is a guard rail, not a lock: a program running in the workspace can claim to be such a run, so per approval at most this many memos of its choosing run unapproved.",
+  "memo.q_continuation_hint": "Approving a memo that carries a work item also lets the run that receives it add up to this many follow-up memos for the same item, in this category, without another approval. 0 turns it off. At most 10, and every category starts with 4. A run given more than one memo adds no follow-up. Like “accept from sessions I started” this is a guard rail, not a lock: a program running in the workspace can claim to be such a run, so per approval at most this many memos of its choosing run unapproved.",
   "memo.q_err_continuation": "Enter a whole number from 0 to {max}.",
   "memo.release_continuation_hint": "Approving a memo with a work item also lets its run add up to {max} follow-ups for the same item without another approval.",
   "memo.continuation_badge_of": "Follow-up {seq} of {max}, accepted without approval",

@@ -27,6 +27,14 @@ type MemoChainTxOps interface {
 	GetChain(id string) (MemoChain, bool, error)
 	// StopChain stops a chain, false when there is none.
 	StopChain(id, at string) (bool, error)
+	// TakeDeliveryContinuation records that the delivery admitted its one continuation. It is one
+	// conditional UPDATE on the delivery row: the delivery must still be open, not overdue and not
+	// waiting to be retired, which those updates change from outside the member's lock. False
+	// means nothing was taken, and the record outlives the child message.
+	TakeDeliveryContinuation(deliveryID string) (bool, error)
+	// ListChainIDs is the ids of the messages that have a chain row: roots among them, which carry
+	// no chain_id themselves.
+	ListChainIDs() (map[string]bool, error)
 }
 
 func (t memoTx) AdmitChain(c MemoChain, max int) (int, bool, bool, error) {
@@ -69,4 +77,27 @@ func (t memoTx) StopChain(id, at string) (bool, error) {
 		return false, err
 	}
 	return affected(t.q.ExecContext(t.ctx, `UPDATE memo_chain SET stopped=1, updated_at=? WHERE id=? AND membership_id=?`, at, id, t.mid))
+}
+
+func (t memoTx) TakeDeliveryContinuation(deliveryID string) (bool, error) {
+	return affected(t.q.ExecContext(t.ctx,
+		`UPDATE memo_delivery SET continuation_taken=1 WHERE id=? AND membership_id=? AND state=? AND overdue_at='' AND retire_pending=0 AND continuation_taken=0`,
+		deliveryID, t.mid, DeliveryOpen))
+}
+
+func (t memoTx) ListChainIDs() (map[string]bool, error) {
+	rows, err := t.q.QueryContext(t.ctx, `SELECT id FROM memo_chain WHERE membership_id=?`, t.mid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }

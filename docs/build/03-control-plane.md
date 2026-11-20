@@ -333,7 +333,8 @@ Memos you accumulate and send to a session in one go (the tables are
   that holds exactly one message with the same reference, repo and category, whose chain root a person (or the switch)
   released, with the chain under the queue's `continuation_max` (default 4, clamped to 10) and not stopped. Otherwise it
   is created `held` with `held_reason` `continuation_<why>`. The count is `memo_chain.admitted`, bumped by one conditional
-  UPDATE. A person's release and a change of repo or category clear `memo.chain_id`, `chain_seq` and `chain_delivery`
+  UPDATE, and the run's one place is `memo_delivery.continuation_taken`, taken by a conditional UPDATE that also needs the
+  delivery open, not overdue and not retiring. A person's release and a change of repo or category clear `memo.chain_id`, `chain_seq` and `chain_delivery`
   (in SQL, `writeMemoRow` and `ReleaseMemo`), and a tidy only keeps such a message (`memoafter.Linked`).
   `POST /api/memos/{id}/stop-chain` (Console only) sets `stopped`. Migrations 0147 (SQLite) and 0132 (Postgres).
 - **Tidy, the manual path** ([decisions/0137](../decisions/0137-message-queues.md) §8, step 5, slice S5; code in

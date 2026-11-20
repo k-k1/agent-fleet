@@ -178,11 +178,11 @@ A task too big for one pull request lands one part per run, and each run adds th
 
 A follow-up skips the approval only when all of these hold. Otherwise it waits for approval like any memo a session adds, and its row says why:
 
-- The run that adds it was started by this category's auto-run, is still open, and was given **one** memo
+- The run that adds it was started by this category's auto-run, is still open (not overdue or being ended), and was given **one** memo. A category that runs several memos per session never continues those runs
 - The follow-up points at the **same work item** and sits in the same category as the memo the run was given
-- The memo the run was given was approved by you (or accepted by the setting for your own sessions), or is itself a follow-up of one
+- The memo the run was given was approved by you, or accepted by the setting for your own sessions while that setting is still on, or is itself a follow-up of one. Renaming the category keeps the chain. Moving a follow-up to another category ends it, and it starts none there. Changing a follow-up's work item ends the chain
 - The chain has not reached M follow-ups counted from the original memo, and you have not stopped it
-- The run has not added a follow-up already
+- The run has not added a follow-up already. Deleting the follow-up does not give the run another
 
 What you see and do:
 

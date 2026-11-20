@@ -8,6 +8,8 @@
 -- memo_chain holds the count, keyed by the root message's id, so that it outlives the sweep that
 -- deletes a delivered message. admitted is the continuations let in, stopped is set by the
 -- member's Stop chain.
+-- memo_delivery.continuation_taken is set once by the first continuation a delivery admits, in the
+-- same statement that checks the delivery is still open and not overdue. It outlives the child.
 -- Forward compatible: columns and a table are only added. A binary that predates them ignores
 -- them and holds every continuation as it does today.
 -- NOTE the migrator splits on the semicolon, so comments must not contain one.
@@ -15,6 +17,7 @@ ALTER TABLE memo_queue ADD COLUMN continuation_max INTEGER NOT NULL DEFAULT 4;
 ALTER TABLE memo ADD COLUMN chain_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo ADD COLUMN chain_seq INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE memo ADD COLUMN chain_delivery TEXT NOT NULL DEFAULT '';
+ALTER TABLE memo_delivery ADD COLUMN continuation_taken INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS memo_chain(
   id            TEXT PRIMARY KEY,
   membership_id TEXT NOT NULL,

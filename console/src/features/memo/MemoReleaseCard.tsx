@@ -15,7 +15,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
 import { memoReference } from "./reference.ts";
-import { tidyMarks } from "./queues.ts";
+import { continuationHeldKey, tidyMarks } from "./queues.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import type { Memo } from "../../types/memo.ts";
 import type { ReleaseCard } from "./queues.ts";
@@ -81,6 +81,9 @@ export function MemoReleaseCard({ card, continuationMax, busy, changedIds, edite
                     {tr(k.key, k.params)}
                   </div>
                 ))}
+                {continuationHeldKey(m.heldReason?.reason) && (
+                  <div className="memo-release-tidy">{tr("memo.continuation_held", { why: tr(continuationHeldKey(m.heldReason?.reason)!) })}</div>
+                )}
                 {(releaseRowText(m) || (m.kind !== "file" && !ref)) && (
                   <div className="memo-release-text">{releaseRowText(m) || "—"}</div>
                 )}
