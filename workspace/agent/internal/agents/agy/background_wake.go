@@ -5,6 +5,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 var _ agents.BackgroundWaker = agentImpl{}
@@ -30,7 +31,14 @@ func finishedTurnMark(r lastStepRow) (string, bool) {
 	return r.conv + ":" + strconv.Itoa(r.turnEnd), true
 }
 
-// InputIdle is the idle composer footer, unrepainted for the settle window: "esc to cancel"
-// stays on screen for the whole of a turn, so a turn agy has just begun is never read as idle
-// even before its DB rows land (stale.go).
-func (agentImpl) InputIdle(m session.Meta) bool { return paneIdleSettled(m.Name) }
+// InputIdle is the idle composer footer on the pane right now. "esc to cancel" stays on screen
+// for the whole of a turn (stale.go), so a turn agy has just begun is refused even before its
+// DB rows land. Not paneIdleSettled: its settle window starts at the first sighting, and the
+// nudge asks only once its own 60 s of idle are over, so every first ask would read unsettled
+// and restart the grace.
+func (agentImpl) InputIdle(m session.Meta) bool {
+	return hasIdleFooter(capturePaneFrame(session.TmuxName(m.Name)))
+}
+
+// capturePaneFrame is the capture seam, so a test can feed a frame without tmux.
+var capturePaneFrame = tmuxx.CapturePane

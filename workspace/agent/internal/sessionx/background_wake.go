@@ -182,10 +182,11 @@ func backgroundWakeObserve(m session.Meta, s bgWakeLive, now time.Time) {
 		}
 		bgWakeMu.Lock()
 		p := bgWakePeriods[m.Name]
-		if p == nil || p.done || p.mark == "" || mark != p.mark || s.turnEnd != p.turnEnd {
+		if p == nil || p.done || s.turnEnd != p.turnEnd || (ok && (p.mark == "" || mark != p.mark)) {
 			// A new period, or the one we track turned out to belong to a later turn (agy ran a
 			// turn of its own and backgrounded work again), or its mark was not written yet when
-			// the work was first seen.
+			// the work was first seen. A read that fails now (a DB busy with agy's own write) says
+			// nothing about the turn, so it never wipes a mark already taken.
 			bgWakePeriods[m.Name] = &bgWakePeriod{mark: mark, turnEnd: s.turnEnd}
 		} else {
 			p.quietSince = time.Time{}

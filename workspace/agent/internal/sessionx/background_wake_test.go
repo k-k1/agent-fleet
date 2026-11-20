@@ -432,3 +432,21 @@ func (fakeWaker) LiveStateTraits() agents.LiveStateTraits {
 }
 func (fakeWaker) FinishedTurnMark(session.Meta) (string, bool) { return "conv:41", true }
 func (fakeWaker) InputIdle(session.Meta) bool                  { return true }
+
+// A mark read that fails on a later busy tick (the DB busy with agy's own write) must not wipe
+// the mark the period already holds.
+func TestBackgroundWake_TransientMarkFailureKeepsThePeriod(t *testing.T) {
+	f := newBgWakeFixture(t)
+	f.busy = true
+	f.tick(0)
+	f.markOK = false
+	f.tick(secs(15))
+	f.markOK = true
+	f.busy = false
+	for s := 30; s <= 120; s += 15 {
+		f.tick(secs(s))
+	}
+	if len(f.sent) != 1 {
+		t.Fatalf("a transient mark failure cancelled the nudge: %d sends", len(f.sent))
+	}
+}
