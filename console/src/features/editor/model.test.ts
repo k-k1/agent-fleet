@@ -8,6 +8,7 @@ import {
   conflictFound,
   createFileEditorModel,
   createRemoteSnapshot,
+  conflictUnavailable,
   discardToBase,
   editBuffer,
   followExternal,
@@ -209,6 +210,16 @@ describe("file editor save model", () => {
     expect(() => discardToBase(
       saveStateUnknown(saving, snapshot, "unknown"),
     )).toThrow("discard target unavailable");
+  });
+
+  it("drops a conflict whose remote cannot be read to its base only when the store allows it", () => {
+    const dirty = editBuffer(initial(), "mine\n");
+    const [saving] = beginSave(dirty);
+    const unavailable = conflictUnavailable(saving, "http_404");
+    expect(() => discardToBase(unavailable)).toThrow("discard target unavailable");
+    const dropped = discardToBase(unavailable, true);
+    expect(dropped.dirty).toBe(false);
+    expect(dropped.content).toBe(unavailable.baseDiskContent);
   });
 });
 

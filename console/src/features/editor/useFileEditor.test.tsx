@@ -18,7 +18,7 @@ import {
   type SuggestEditResult,
 } from "./api.ts";
 import { revisionOf } from "./buffer.ts";
-import { clearEditorSlotsForTests, useFileEditor } from "./useFileEditor.ts";
+import { clearEditorSlotsForTests, useFileEditor, type FileEditorIO } from "./useFileEditor.ts";
 
 vi.mock("./api.ts", () => ({
   getEditableFile: vi.fn(),
@@ -53,8 +53,10 @@ let renderer: ReactTestRenderer | null = null;
 // copy of the same one).
 let given: typeof initial = initial;
 
+let givenIo: FileEditorIO | undefined;
+
 function Harness() {
-  editor = useFileEditor("p1", given);
+  editor = useFileEditor("p1", given, givenIo);
   return null;
 }
 
@@ -79,6 +81,7 @@ function editableFile(content: string): EditableFile {
 }
 
 beforeEach(() => {
+  givenIo = undefined;
   given = initial;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.mocked(putFile).mockReset();
@@ -902,20 +905,124 @@ describe("useFileEditor across unmount (tab switch)", () => {
     expect(editor!.model?.content).toBe(otherContent);
     expect(editor!.model?.baseDiskRevision).toBe(revisionOf(otherContent));
     expect(editor!.model?.dirty).toBe(false);
-    // The old buffer is still guarded, and its guard does not act on the new one: the new
-    // file's own unsaved edit must survive a discard aimed at the old file.
+    // The save finished on the slot it started on, so the old file is clean and no longer guarded;
+    // the new file's own unsaved edit is the only entry.
     await act(async () => editor!.edit("other edit\n"));
     const decision = confirmDirtyNavigation("layout", ["p1"]);
     const request = currentDirtyGuardRequest()!;
-    expect(request.entries.map((e) => e.label)).toEqual([initial.path, "repos/b.txt"]);
-    let discarded = true;
-    await act(async () => {
-      discarded = await request.entries[0]!.discard() !== false;
-    });
-    expect(discarded).toBe(false); // fail closed
+    expect(request.entries.map((e) => e.label)).toEqual(["repos/b.txt"]);
     expect(editor!.model?.content).toBe("other edit\n");
     expect(editor!.model?.dirty).toBe(true);
     cancelDirtyGuardRequest(request.id);
     await expect(decision).resolves.toBe(false);
+  });
+
+  it("settles a save on its own file when the pane went to another file, the answer came, and it came back", async () => {
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    const aGiven = given;
+    given = { path: "repos/b.txt", content: "other\n", revision: revisionOf("other\n") };
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    await act(async () => {
+      pendingPut.resolve({ ok: true, path: initial.path, size: 5, revision: revisionOf("mine\n") });
+      await pendingPut.promise;
+    });
+    given = aGiven;
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    expect(editor!.model?.phase).not.toBe("saving");
+    expect(editor!.model?.dirty).toBe(false);
+  });
+
+  it("recovers a conflict with the adapter the save was sent through, not the one the pane has moved to", async () => {
+    const pendingSave = deferred<PutFileResult>();
+    const remote = editableFile("remote\n");
+    const ioA: FileEditorIO = {
+      load: vi.fn(async () => ({ ...remote, path: initial.path })),
+      save: vi.fn(() => pendingSave.promise),
+    };
+    givenIo = ioA;
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    const aGiven = given;
+    givenIo = { load: vi.fn(async () => { throw new Error("wrong adapter"); }), save: vi.fn() };
+    given = { path: "repos/b.txt", content: "other\n", revision: revisionOf("other\n") };
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    await act(async () => {
+      pendingSave.resolve({ ok: false, status: 409, error: { code: "revision_conflict", message: "x" } });
+      await pendingSave.promise;
+    });
+    givenIo = ioA;
+    given = aGiven;
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    expect(editor!.model?.phase).toBe("conflict");
+    expect(ioA.load).toHaveBeenCalled();
+    givenIo = undefined;
+  });
+
+  it("keeps text typed while a discard waited on a save, and answers not discarded", async () => {
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    let result: boolean | null = null;
+    await act(async () => {
+      void editor!.discard().then((v) => { result = v; });
+      await Promise.resolve();
+    });
+    await act(async () => editor!.edit("mine and more\n"));
+    await act(async () => {
+      pendingPut.resolve({ ok: false, status: 422, error: { code: "refused", message: "no" } });
+      await pendingPut.promise;
+      await Promise.resolve();
+    });
+    expect(result).toBe(false);
+    expect(editor!.model?.content).toBe("mine and more\n");
+    expect(editor!.model?.dirty).toBe(true);
+  });
+
+  it("answers discarded to a second discard that waited on the same save as the first", async () => {
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    const results: boolean[] = [];
+    await act(async () => {
+      void editor!.discard().then((v) => results.push(v));
+      void editor!.discard().then((v) => results.push(v));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      pendingPut.resolve({ ok: false, status: 422, error: { code: "refused", message: "no" } });
+      await pendingPut.promise;
+      await Promise.resolve();
+    });
+    expect(results).toEqual([true, true]);
+    expect(editor!.model?.dirty).toBe(false);
   });
 });

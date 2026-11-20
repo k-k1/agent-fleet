@@ -208,25 +208,28 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const mergeMineRef = refs.mergeMine;
   const recoveryRef = refs.recovery;
 
-  const setModel = useCallback((next: FileEditorModel) => {
-    const target = slotRef.current;
+  // Writes into a given slot. A save and its recoveries run on the slot the save started on,
+  // never on whichever slot the hook points at when the answer arrives: a pane that went to
+  // another memory and back would otherwise leave this one in `saving` for good.
+  const setModelOn = useCallback((target: EditorSlot, next: FileEditorModel) => {
     target.model.current = next;
     notifyDirtyEditorChanged();
     for (const listener of target.listeners) listener(next);
     // Unmounted, this is the guard's save / discard, or a save that outlived the view.
     releaseIfIdle(target);
   }, []);
+  const setModel = useCallback((next: FileEditorModel) => setModelOn(slotRef.current, next), [setModelOn]);
 
-  const recoverConflict = useCallback((): Promise<void> => {
-    const current = modelRef.current;
+  const runConflictRecovery = useCallback((owner: EditorSlot, io: FileEditorIO): Promise<void> => {
+    const current = owner.model.current;
     if (!current) return Promise.resolve();
     const path = current.path;
     const baseDiskRevision = current.baseDiskRevision;
-    return recoveryRef.current!.run(
+    return owner.recovery.run(
       `conflict:${path}:${baseDiskRevision}`,
       async () => {
         try {
-          const remote = remoteFromFile(await ioRef.current.load(path));
+          const remote = remoteFromFile(await io.load(path));
           if (remote.path !== path) throw new Error("path mismatch");
           return { ok: true as const, remote };
         } catch (error) {
@@ -234,24 +237,26 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
         }
       },
       (result) => {
-        const latest = modelRef.current;
+        const latest = owner.model.current;
         if (
           !latest ||
           latest.path !== path ||
           latest.baseDiskRevision !== baseDiskRevision ||
           !["saving", "conflict", "conflict_remote_unavailable"].includes(latest.phase)
         ) return;
-        setModel(
+        setModelOn(
+          owner,
           result.ok
             ? conflictFound(latest, result.remote)
             : conflictUnavailable(latest, result.message),
         );
       },
     );
-  }, [setModel]);
+  }, [setModelOn]);
+  const recoverConflict = useCallback((): Promise<void> => runConflictRecovery(slotRef.current, ioRef.current), [runConflictRecovery]);
 
-  const recoverUnknown = useCallback((snapshot?: SaveSnapshot): Promise<void> => {
-    const current = modelRef.current;
+  const runUnknownRecovery = useCallback((owner: EditorSlot, io: FileEditorIO, snapshot?: SaveSnapshot): Promise<void> => {
+    const current = owner.model.current;
     const sent = snapshot || current?.saveSnapshot;
     if (!current || !sent) return Promise.resolve();
     const path = current.path;
@@ -260,11 +265,11 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       sent.bufferRevision,
       sent.baseDiskRevision,
     ].join(":");
-    return recoveryRef.current!.run(
+    return owner.recovery.run(
       `unknown:${path}:${snapshotKey}`,
       async () => {
         try {
-          const remote = remoteFromFile(await ioRef.current.load(path));
+          const remote = remoteFromFile(await io.load(path));
           if (remote.path !== path) throw new Error("path mismatch");
           return { ok: true as const, remote };
         } catch (error) {
@@ -272,7 +277,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
         }
       },
       (result) => {
-        const latest = modelRef.current;
+        const latest = owner.model.current;
         const latestSnapshot = latest?.saveSnapshot;
         if (
           !latest ||
@@ -283,7 +288,8 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
           latestSnapshot.bufferRevision !== sent.bufferRevision ||
           latestSnapshot.baseDiskRevision !== sent.baseDiskRevision
         ) return;
-        setModel(
+        setModelOn(
+          owner,
           observeUnknown(
             latest,
             result.ok
@@ -293,11 +299,16 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
         );
       },
     );
-  }, [setModel]);
+  }, [setModelOn]);
+  const recoverUnknown = useCallback(
+    (snapshot?: SaveSnapshot): Promise<void> => runUnknownRecovery(slotRef.current, ioRef.current, snapshot),
+    [runUnknownRecovery],
+  );
 
   const save = useCallback(async (): Promise<boolean> => {
-    if (savingRef.current) return savingRef.current;
-    const current = modelRef.current;
+    const owner = slotRef.current;
+    if (owner.saving.current) return owner.saving.current;
+    const current = owner.model.current;
     if (!current || !current.dirty) return true;
     let saving: FileEditorModel;
     let snapshot: SaveSnapshot;
@@ -306,47 +317,43 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     } catch {
       return false;
     }
-    setModel(saving);
+    setModelOn(owner, saving);
+    // The adapter of the memory this save is for: the hook may point at another one by the time a
+    // recovery read is needed, and that adapter would read the wrong thing.
+    const io = ioRef.current;
     const operation = (async () => {
       try {
-        const result = await ioRef.current.save(snapshot.path, snapshot.content, snapshot.baseDiskRevision);
-        // The hook moved to another file while the PUT was out: its refs now read that file's
-        // buffer, which must not take this save's outcome. The save's own slot stays dirty
-        // and guarded.
-        if (modelRef.current?.path !== snapshot.path) return false;
+        const result = await io.save(snapshot.path, snapshot.content, snapshot.baseDiskRevision);
+        // The outcome lands on the slot the save started on, whatever the hook points at now.
         if (result.ok) {
           try {
             if (result.path !== snapshot.path) throw new Error("save response path mismatch");
-            const next = saveSucceeded(modelRef.current!, snapshot, result.revision);
-            if (!next.dirty) mergeMineRef.current = null;
-            setModel(next);
+            const next = saveSucceeded(owner.model.current!, snapshot, result.revision);
+            if (!next.dirty) owner.mergeMine.current = null;
+            setModelOn(owner, next);
           } catch (error) {
-            setModel(saveStateUnknown(modelRef.current!, snapshot, String(error)));
-            await recoverUnknown(snapshot);
+            setModelOn(owner, saveStateUnknown(owner.model.current!, snapshot, String(error)));
+            await runUnknownRecovery(owner, io, snapshot);
           }
         } else if (result.status === 409 && result.error.code === "revision_conflict") {
-          await recoverConflict();
+          await runConflictRecovery(owner, io);
         } else if (
           result.error.code === "write_state_unknown" ||
           /^http_5\d\d$/.test(result.error.code)
         ) {
-          setModel(saveStateUnknown(modelRef.current!, snapshot, result.error.message));
-          await recoverUnknown(snapshot);
+          setModelOn(owner, saveStateUnknown(owner.model.current!, snapshot, result.error.message));
+          await runUnknownRecovery(owner, io, snapshot);
         } else {
-          setModel(saveFailed(modelRef.current!, errText(result.error)));
+          setModelOn(owner, saveFailed(owner.model.current!, errText(result.error)));
         }
       } catch (error) {
-        if (modelRef.current?.path !== snapshot.path) return false; // moved away, as above
         // A thrown transport failure may have lost a response after the Agent
         // committed the rename. It is never treated as an ordinary failed save.
-        setModel(saveStateUnknown(modelRef.current!, snapshot, String(error)));
-        await recoverUnknown(snapshot);
+        setModelOn(owner, saveStateUnknown(owner.model.current!, snapshot, String(error)));
+        await runUnknownRecovery(owner, io, snapshot);
       }
-      return !modelRef.current?.dirty;
+      return !owner.model.current?.dirty;
     })();
-    // The slot the save started on: if the hook moves to another file meanwhile, clearing the
-    // marker there would leave this one pending, and never released.
-    const owner = slotRef.current;
     owner.saving.current = operation;
     try {
       return await operation;
@@ -354,7 +361,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       owner.saving.current = null;
       releaseIfIdle(owner);
     }
-  }, [recoverConflict, recoverUnknown, setModel]);
+  }, [runConflictRecovery, runUnknownRecovery, setModelOn]);
 
   const edit = useCallback((content: string) => {
     const current = modelRef.current;
@@ -390,6 +397,13 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       if (signal?.aborted) return false;
       current = modelRef.current;
       if (!current || current.path !== path) return false;
+
+      // Another discard of the same buffer waited on the same save / read and finished first:
+      // the buffer is already clean, which is what this one was asked for.
+      if (!current.dirty && current.bufferGeneration !== requested.bufferGeneration) return true;
+      // Text typed while the saves and reads above were out is newer than the decision to drop
+      // the buffer: it stays, and the guard / button answers "not discarded".
+      if (current.bufferGeneration !== requested.bufferGeneration || current.bufferRevision !== requested.bufferRevision) return false;
 
       mergeMineRef.current = null;
       setModel(discardToBase(current, !!ioRef.current.discardUnconfirmed));

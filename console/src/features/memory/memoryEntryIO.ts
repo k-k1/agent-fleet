@@ -184,6 +184,21 @@ export function isMemoryBody(res: unknown, scope: string, name: string): res is 
   return !!b && b.name === name && b.scope === scope && optionalString(b.body) && typeof b.description === "string" && optionalString(b.type) && (b.kinds === undefined || (Array.isArray(b.kinds) && b.kinds.every((k) => typeof k === "string"))) && validRevision(b.revision);
 }
 
+// A request that never answers would hold the pane in `saving` (or its recovery read in flight)
+// for good. Aborted, a save throws and reads as an unknown outcome, which the recovery read then
+// settles; an aborted read is an unavailable remote the member can retry.
+export const READ_TIMEOUT_MS = 20_000;
+export const SAVE_TIMEOUT_MS = 30_000;
+async function timed(ms: number, send: (signal: AbortSignal) => Promise<any>): Promise<any> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    return await send(ctl.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const projectQuery = (project: string) => (project ? "?project=" + encodeURIComponent(project) : "");
 
 /** `onSaved` runs once a new memory is stored, with its name: the adapter outlives the view, and a
@@ -199,7 +214,10 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
   // replaces the counter and kinds of text it shares with the base. Any other read must not. Kept
   // per memory outside the adapter, which a tab switch rebuilds.
   return {
-    discardUnconfirmed: isNew,
+    // The member may drop a buffer whose outcome or remote cannot be read (a secret-scan refusal, a
+    // 404 on the recovery read): a resave is checked against the counter, so a save that had landed
+    // makes it a 409, not an overwrite.
+    discardUnconfirmed: true,
     async load() {
       if (!sameTenant()) throw new Error("tenant_changed");
       // Nothing is stored under a new memory's key: what a recovery read finds is the blank it began on.
@@ -210,7 +228,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         // A read that fails confirms nothing and stays unavailable; the buffer can still be dropped
         // (discardUnconfirmed), since a resave of it at revision 0 is refused if the save had landed.
         const q = `scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(last.name)}`;
-        const res = await api(`api/agents/memory/entries/member-read?${q}`);
+        const res = await timed(READ_TIMEOUT_MS, (signal) => api(`api/agents/memory/entries/member-read?${q}`, { signal }));
         if (res?.error?.code === "memory_not_found" || res?.error?.status === 404) return blankNewFile(key);
         if (res?.error) throw new Error(res.error.code || "load_failed");
         if (!isMemoryBody(res, scope, last.name)) throw new Error("load_failed");
@@ -224,7 +242,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         return { ...blankNewFile(key), content: last.raw, size: last.raw.length, revision: revisionOf(last.raw) };
       }
       const q = `scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(name)}`;
-      const res = await api(`api/agents/memory/entries/member-read?${q}`);
+      const res = await timed(READ_TIMEOUT_MS, (signal) => api(`api/agents/memory/entries/member-read?${q}`, { signal }));
       if (res?.error) throw new Error(res.error.code || "load_failed");
       // An empty or malformed answer is not a memory: never a candidate for conflict resolution.
       if (!isMemoryBody(res, scope, name)) throw new Error("load_failed");
@@ -268,7 +286,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (isNew) sentNew.set(key, { name: saveName, raw: content, stored: storedForm(encodeEntry({ description: fields.description, type: fields.type, body: fields.body })) });
       if (!isNew) sent.set(key, { raw: content, stored: storedForm(content), revision: base.revision, kinds: base.kinds });
       // The project id also goes in the query: the CP audit ledger reads the URL only.
-      const res = await apiJSON("api/agents/memory/entries/member-save" + projectQuery(project), "POST", {
+      const payload = {
         scope,
         project,
         name: saveName,
@@ -277,7 +295,10 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         kinds: base.kinds,
         body: fields.body,
         revision: base.revision,
-      });
+      };
+      const res = await timed(SAVE_TIMEOUT_MS, (signal) =>
+        apiJSON("api/agents/memory/entries/member-save" + projectQuery(project), "POST", payload, undefined, { signal }),
+      );
       if (res?.error) {
         let code: string = res.error.code || "save_failed";
         // The commit may have landed before the snapshot failed: the outcome is unknown.
