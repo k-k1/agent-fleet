@@ -32,6 +32,8 @@ type UsageLimiter interface {
 // UsageLimitTraits is one kind's answers to the sweep's questions. Each field names what breaks
 // without it.
 type UsageLimitTraits struct {
+	// NativeResume identifies the CLI's own in-process wait and continuation.
+	NativeResume bool
 	// ManagedOnly restricts the watch to Managed sessions: a Terminal session of the kind leaves
 	// no evidence that THIS session's turn died on the limit (codex's rollout records the
 	// account's percentages whether or not the session ran into the wall). Without it a Terminal

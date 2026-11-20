@@ -88,7 +88,8 @@ func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return S
 // tail's usage-limit abort (UsageLimitAbort) and its reset instant (ResetAt).
 func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 	return agents.UsageLimitTraits{
-		PaneMenu: func(name string) bool { return tmuxx.ReadPane(name).RateLimitMenu },
+		NativeResume: true,
+		PaneMenu:     func(name string) bool { return tmuxx.ReadPane(name).RateLimitMenu },
 		AtLimit: func(m session.Meta) (agents.LimitKind, bool) {
 			a, kind, atLimit := UsageLimitAbort(session.UUID(m.Dir, m.Name))
 			if atLimit && apiAccountCredit(m, a.Msg) {

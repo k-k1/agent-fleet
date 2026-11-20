@@ -156,6 +156,43 @@ func findLine(s string, match func(string) bool) string {
 // keying on either alone would report a menu that is long gone, and the session would be
 // badged as stopped at the usage limit forever instead of returning to waiting for input.
 // Only the confirm footer disappears with the menu.
+func TestRateLimitReorderedMenu(t *testing.T) {
+	const frame = "❯ 1. Switch to usage credits\n  2. Stop\nEnter to confirm · Esc to cancel"
+	if !atRateLimitModal(frame) || rateLimitDefaultRe.MatchString(frame) {
+		t.Fatal("the limit menu must be detected without confirming usage credits")
+	}
+	if !rateLimitDefaultRe.MatchString("  1. Switch to usage credits\n❯ 2. Stop\nEnter to confirm") {
+		t.Fatal("the stop action remains safe when reordered")
+	}
+	for _, tc := range []struct{ menu, key string }{
+		{"❯ 1. Ask your admin for more usage\n  2. Stop and wait for limit to reset", "Escape"},
+		{"  1. Stop and wait for limit to reset\n❯ 2. Switch to usage credits", ""},
+	} {
+		if got := dismissLimitKey(tc.menu + "\nEnter to confirm · Esc to cancel"); got != tc.key {
+			t.Errorf("dismissLimitKey(%q) = %q, want %q", tc.menu, got, tc.key)
+		}
+	}
+}
+
+func TestClaudeUsageLimitWait(t *testing.T) {
+	for _, tc := range []struct {
+		frame string
+		want  bool
+	}{
+		{"Usage limit reached · limit resets 3:45pm\nContinuing automatically at 3:45pm · Esc to cancel", true},
+		{"Usage limit reached · limit resets 3:45pm\nContinuing shortly · Esc to cancel", true},
+		{"Usage limit reached\nContinuing automatically when\nit resets · Esc to cancel\n──────\n❯\nstatus line", true},
+		{"Usage limit reached · continuing automatically at 3:45pm · esc to cancel\n❯", false},
+		{"You've hit your weekly limit · resets 12am (Asia/Tokyo)", false},
+		{"Usage limit reached · wrapping up\nContinuing automatically at 3pm\n──────\nAllow? · Esc to cancel", false},
+		{"Usage limit reached · limit resets 3:45pm\nContinuing automatically at 3:45pm", false},
+	} {
+		if got := ClaudeUsageLimitWait(tc.frame); got != tc.want {
+			t.Errorf("ClaudeUsageLimitWait(%q) = %v, want %v", tc.frame, got, tc.want)
+		}
+	}
+}
+
 func TestRateLimitModalDismissed(t *testing.T) {
 	frame := readFrame(t, "modal_rate_limit.txt")
 	if !atRateLimitModal(frame) {

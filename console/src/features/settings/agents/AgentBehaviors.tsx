@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
-import { useSettings, setSetting } from "../../../lib/settings.ts";
+import { useSettings, setSetting, setSettings, useUIPrefsLoading } from "../../../lib/settings.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { Choice, OnOff } from "../parts/controls.tsx";
 import { ProviderCard } from "../parts/providerCard.tsx";
@@ -46,9 +46,17 @@ export function ClaudeBehavior({
         </SettingRow>
         <p className="ps-note">{tr("agents.note_claude_abort_resume")}</p>
         <SettingRow label={tr("agents.rate_limit_resume")}>
-          <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
+          <Choice
+            value={s.claudeLimitResumeMode === "inherit" ? (s.rateLimitAutoResume ? "af" : "off") : s.claudeLimitResumeMode}
+            options={[
+              ["af", tr("agents.claude_limit_resume_af")],
+              ["native", tr("agents.claude_limit_resume_native")],
+              ["off", tr("agents.claude_limit_resume_off")],
+            ]}
+            onChange={(v) => setSetting("claudeLimitResumeMode", v)}
+          />
         </SettingRow>
-        <p className="ps-note">{tr("agents.note_claude_rate_limit_resume")}</p>
+        <p className="ps-note">{tr("agents.claude_limit_resume_mode_note")}</p>
         {/* Remote Control / notifications / idle compaction / RTK are workspace-level files (independent of Claude
             auth) — pre-settable, but need the api/claude/settings endpoint loaded. */}
         {claude && (
@@ -106,6 +114,7 @@ export function CodexBehavior({
 }) {
   const tr = useT();
   const s = useSettings();
+  const prefsLoading = useUIPrefsLoading();
   return (
     <ProviderCard id="codex" name={kindDisplayName("codex")} status={undefined}>
       {head}
@@ -113,11 +122,13 @@ export function CodexBehavior({
       <CardSettings>
         <LaunchDefaults kind="codex" />
         <ThinkingRow kind="codex" />
-        {/* One switch shared with the Claude card (uiprefs.rateLimitAutoResume): what it
-            governs is one behaviour of the workspace, and it is shown here because a Codex
-            user has no reason to open the Claude card to find it (docs/log/47 §4-12). */}
         <SettingRow label={tr("agents.rate_limit_resume")}>
-          <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
+          {prefsLoading ? "…" : <OnOff value={s.rateLimitAutoResume} onChange={(v) => {
+            setSettings({
+              rateLimitAutoResume: v,
+              ...(s.claudeLimitResumeMode === "inherit" ? { claudeLimitResumeMode: s.rateLimitAutoResume ? "af" : "off" } : {}),
+            });
+          }} />}
         </SettingRow>
         <p className="ps-note">{tr("agents.note_codex_rate_limit_resume")}</p>
         {codex && (

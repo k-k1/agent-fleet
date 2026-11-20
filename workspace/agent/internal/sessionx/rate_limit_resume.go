@@ -52,6 +52,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -281,6 +282,56 @@ func rateLimitWatched(m session.Meta) bool {
 	return ok && (!tr.ManagedOnly || m.DriverKind() == session.DriverManaged)
 }
 
+func claudeLaunchLimitMode(m session.Meta) string {
+	const key = "AF_CLAUDE_LIMIT_RESUME_MODE"
+	raw, err := tmuxx.Output("show-environment", "-t", "="+session.TmuxName(m.Name), key)
+	if err == nil {
+		switch mode := strings.TrimSpace(strings.TrimPrefix(string(raw), key+"=")); mode {
+		case "af", "native", "off":
+			return mode
+		}
+	}
+	return uiprefs.ClaudeLimitResumeMode()
+}
+
+func hasNativeLimitResume(m session.Meta) bool {
+	tr, ok := usageLimitTraits(m)
+	return ok && tr.NativeResume
+}
+
+func rateLimitBookingEnabled(m session.Meta) bool {
+	if hasNativeLimitResume(m) {
+		return claudeLaunchLimitMode(m) == "af"
+	}
+	return uiprefs.RateLimitAutoResume()
+}
+
+func claudeTurnAfterLimit(m session.Meta, st rateLimitState) bool {
+	episode, err := time.Parse(time.RFC3339, st.At)
+	if err != nil {
+		return false
+	}
+	if tr, ok := usageLimitTraits(m); ok && tr.RanTurnSince != nil && tr.RanTurnSince(m, episode) {
+		return true
+	}
+	sid := session.UUID(m.Dir, m.Name)
+	start, err := time.Parse(time.RFC3339Nano, status.LastTurnStart(sid))
+	return err == nil && !start.Before(episode.Add(time.Second)) &&
+		SessionAlive(m) && status.LiveState(sid) == "working" && !claudeStillAtLimit(m)
+}
+
+func claudeStillAtLimit(m session.Meta) bool {
+	_, limited := atUsageLimit(m)
+	return limited
+}
+
+func claudeOwnsLimitWait(m session.Meta) bool {
+	if !hasNativeLimitResume(m) {
+		return false
+	}
+	return tmuxx.ClaudeUsageLimitWait(tmuxx.CapturePane(session.TmuxName(m.Name)))
+}
+
 // usageLimitTraits is the kind's agents.UsageLimitTraits, resolved by the normalised kind so an
 // empty or legacy kind is claude's. ok=false means the kind has no capability: its limit cannot
 // be seen, so the sweep never asks it anything.
@@ -351,11 +402,17 @@ func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu b
 		_ = RateLimitStates.Write(m.Name, st)
 		return
 	}
+	if hasNativeLimitResume(m) && (!rateLimitBookingEnabled(m) || claudeOwnsLimitWait(m)) && st.ScheduleID != "" {
+		if cancelRateLimitSchedule(m.Name, st.ScheduleID) == nil {
+			st.ScheduleID, st.ResumeAt, st.FiredDuringMove = "", "", ""
+			st.ScheduleTries = 0
+		}
+	}
 	st = scheduleRateLimitResume(m, st, now)
 	st = rateLimitMoveEarly(m, st, now)
 	notifyRateLimitReached(m, st)
 
-	if onMenu && !st.Dismissed && st.DismissTries < maxRateLimitDismissTries && !triedRecently(st, now) {
+	if onMenu && claudeLaunchLimitMode(m) != "native" && !st.Dismissed && st.DismissTries < maxRateLimitDismissTries && !triedRecently(st, now) {
 		st.DismissTries++
 		st.LastTry = now.Format(time.RFC3339)
 		// Record before sending: a crash midway must not roll the count back and let the key
@@ -457,7 +514,7 @@ func rateLimitFollowUp(m session.Meta, st rateLimitState, now time.Time, alive b
 // has passed and episodeSpent re-books it (docs/log/47 §4-13), so a wrong reading costs one
 // refused turn.
 func rateLimitMoveEarly(m session.Meta, st rateLimitState, now time.Time) rateLimitState {
-	if st.Spend || st.ScheduleID == "" || st.FiredDuringMove != "" || !uiprefs.RateLimitAutoResume() {
+	if st.Spend || st.ScheduleID == "" || st.FiredDuringMove != "" || !rateLimitBookingEnabled(m) {
 		return st
 	}
 	tr, ok := usageLimitTraits(m)
@@ -539,7 +596,7 @@ func rateLimitMovedOn(m session.Meta, st rateLimitState, now time.Time) (rateLim
 // scheduleRateLimitResume registers the one-shot resume when it is wanted and not yet
 // in place. It returns the updated state; the caller writes it.
 func scheduleRateLimitResume(m session.Meta, st rateLimitState, now time.Time) rateLimitState {
-	if st.ScheduleID != "" || !uiprefs.RateLimitAutoResume() || st.ScheduleTries >= maxRateLimitScheduleTries {
+	if st.ScheduleID != "" || !rateLimitBookingEnabled(m) || st.ScheduleTries >= maxRateLimitScheduleTries || claudeOwnsLimitWait(m) {
 		return st
 	}
 	at, source, ok := usageLimitResetAt(m, st, now)

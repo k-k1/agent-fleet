@@ -101,6 +101,9 @@ const nativePeerSettingsNoAutoMemory = `{"permissions":{"deny":["ListAgents","Se
 // means "leave claude's memory alone".
 var AutoMemoryOff func() bool
 
+// LimitResumeMode reads the Agent preference at process launch.
+var LimitResumeMode func() string
+
 // launchSettings is the `--settings` JSON for a real session.
 func launchSettings() string {
 	if AutoMemoryOff != nil && AutoMemoryOff() {
@@ -135,7 +138,7 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool)
 
 // buildProgramPinned is buildProgram with a route's pin (routeSettingsPin) merged into the one
 // `--settings` object; nil adds nothing, so a launch without a route is byte-for-byte unchanged.
-func buildProgramPinned(pin []string, sid, model, effort, mode, label, forkFrom string, bypass bool) string {
+func buildProgramPinned(pin []string, sid, model, effort, mode, label, forkFrom string, bypass bool, limitMode ...string) string {
 	if override := os.Getenv("AGENT_SESSION_CMD"); override != "" {
 		return override
 	}
@@ -154,7 +157,20 @@ func buildProgramPinned(pin []string, sid, model, effort, mode, label, forkFrom 
 	}
 	// Appended after AGENT_CLAUDE_FLAGS so it cannot be overridden: closing the channel is
 	// the point, so no environment variable is left that would disable it.
-	flags += " --settings " + session.ShellQuote(pinnedSettings(launchSettings(), pin))
+	settings := pinnedSettings(launchSettings(), pin)
+	if len(limitMode) > 0 {
+		var doc map[string]json.RawMessage
+		if json.Unmarshal([]byte(settings), &doc) == nil {
+			doc["autoContinueAtUsageLimit"] = json.RawMessage("false")
+			if limitMode[0] == "native" {
+				doc["autoContinueAtUsageLimit"] = json.RawMessage("true")
+			}
+			if encoded, err := json.Marshal(doc); err == nil {
+				settings = string(encoded)
+			}
+		}
+	}
+	flags += " --settings " + session.ShellQuote(settings)
 	if mode == "plan" {
 		flags += " --permission-mode plan"
 	}

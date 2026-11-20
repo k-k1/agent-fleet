@@ -40,7 +40,7 @@ As the sign-in nears its expiry, the card shows "**Expires in N day(s)**". The C
 | Additional Claude models | Adds a full model ID such as `claude-opus-4-8` to the choices |
 | Stream replies in the chat view | How a reply being written is shown: "**Typewriter**" (default), "**Line by line**" or "**Off**" |
 | Auto-resume a cut-off turn | Whether a turn stopped by something that clears with time, such as a dropped connection, carries on by itself. On by default |
-| Auto-resume after a usage limit resets | Whether a session stopped by a usage limit gets one "carry on" when the limit lifts. On by default |
+| Auto-resume after a usage limit resets | Choose **Resume with AF** (default), **Continue with Claude**, or **Off** for subscription sessions |
 | Remote control | Whether the Claude app on your own device and the like can drive a running session ([below](#use-remote-control)) |
 | Notifications | Whether a change of session state notifies you |
 | Idle compaction | Whether Claude Code may compact a long conversation by itself while it sits idle. On by default |
@@ -49,7 +49,9 @@ As the sign-in nears its expiry, the card shows "**Expires in N day(s)**". The C
 - Whether an **additional model** is usable is checked by Claude Code when the session starts. Removing one does not change sessions that already have it
 - **Streaming** is display only. What reaches the screen is finished lines, so a long paragraph arrives at once
 - **Idle compaction** applies to conversations of 200,000 tokens or more, about 54 minutes after the last action. The next turn costs less, but you come back to a summarised conversation
-- **Auto-resume after a usage limit** is the same setting as the one on the Codex card. Even with it off, the usage-limit menu picks the waiting option (no extra charge) by itself
+- **Resume with AF** books one continuation when the reset time is known. The workspace can stop while it waits and wake for delivery
+- **Continue with Claude** uses Claude Code's own wait. Keep the session and workspace running until it continues. Claude may leave longer waits for you to handle
+- **Off** leaves continuation to you. Claude Code applies the selected mode on its next launch
 
 ### Use Remote control
 

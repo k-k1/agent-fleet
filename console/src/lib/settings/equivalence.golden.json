@@ -653,6 +653,7 @@
   "assistantAutoPilot",
   "assistantAutoResume",
   "rateLimitAutoResume",
+  "claudeLimitResumeMode",
   "claudeAbortAutoResume",
   "assistantAutoCompact",
   "assistantAutoCompactTokens",
@@ -891,6 +892,7 @@
   "assistantAutoPilot": false,
   "assistantAutoResume": true,
   "rateLimitAutoResume": true,
+  "claudeLimitResumeMode": "inherit",
   "claudeAbortAutoResume": true,
   "assistantAutoCompact": true,
   "assistantAutoCompactTokens": 150000,
@@ -1129,6 +1131,7 @@
   "assistantAutoPilot": false,
   "assistantAutoResume": true,
   "rateLimitAutoResume": true,
+  "claudeLimitResumeMode": "inherit",
   "claudeAbortAutoResume": true,
   "assistantAutoCompact": true,
   "assistantAutoCompactTokens": 150000,
@@ -1547,6 +1550,10 @@
    "accumulated": false
   },
   "rateLimitAutoResume": {
+   "deviceLocal": false,
+   "accumulated": false
+  },
+  "claudeLimitResumeMode": {
    "deviceLocal": false,
    "accumulated": false
   },
@@ -3496,6 +3503,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -3817,6 +3825,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -4138,6 +4147,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -4956,6 +4966,7 @@
     "assistantAutoPilot": true,
     "assistantAutoResume": false,
     "rateLimitAutoResume": false,
+    "claudeLimitResumeMode": "inherit-x",
     "claudeAbortAutoResume": false,
     "assistantAutoCompact": false,
     "assistantAutoCompactTokens": 150001,
@@ -5155,6 +5166,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -5655,6 +5667,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -5715,6 +5728,7 @@
       "expandThinking": {
        "claude": true
       },
+      "claudeLimitResumeMode": "af",
       "ssmHostColors": {
        "x": "y"
       },
@@ -5831,6 +5845,7 @@
     "expandThinking": {
      "claude": true
     },
+    "claudeLimitResumeMode": "af",
     "ssmHostColors": {
      "x": "y"
     },
@@ -6090,7 +6105,6 @@
     "assistantQuietCompletion": true,
     "assistantAutoPilot": true,
     "assistantAutoResume": false,
-    "rateLimitAutoResume": false,
     "claudeAbortAutoResume": false,
     "assistantAutoCompact": false,
     "assistantAutoCompactTokens": 150001,
@@ -6228,6 +6242,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -6512,6 +6527,7 @@
     "sharedColor": "teal",
     "assistantColor": "mono",
     "appearancePerTenant": true,
+    "claudeLimitResumeMode": "af",
     "ttsEnabled": true,
     "ttsSessionNotify": true,
     "usageResetNotify": false,
@@ -6705,7 +6721,6 @@
     "assistantQuietCompletion": true,
     "assistantAutoPilot": true,
     "assistantAutoResume": false,
-    "rateLimitAutoResume": false,
     "claudeAbortAutoResume": false,
     "assistantAutoCompact": false,
     "assistantAutoCompactTokens": 150001,
@@ -6843,6 +6858,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -7343,6 +7359,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -7403,6 +7420,7 @@
       "expandThinking": {
        "claude": true
       },
+      "claudeLimitResumeMode": "af",
       "ssmHostColors": {
        "x": "y"
       },
@@ -7519,6 +7537,7 @@
     "expandThinking": {
      "claude": true
     },
+    "claudeLimitResumeMode": "af",
     "ssmHostColors": {
      "x": "y"
     },
@@ -8056,6 +8075,7 @@
     "assistantAutoPilot": true,
     "assistantAutoResume": false,
     "rateLimitAutoResume": false,
+    "claudeLimitResumeMode": "inherit-x",
     "claudeAbortAutoResume": false,
     "assistantAutoCompact": false,
     "assistantAutoCompactTokens": 150001,
@@ -8255,6 +8275,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -8755,6 +8776,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -8815,6 +8837,7 @@
       "expandThinking": {
        "claude": true
       },
+      "claudeLimitResumeMode": "af",
       "ssmHostColors": {
        "x": "y"
       },
@@ -8931,6 +8954,7 @@
     "expandThinking": {
      "claude": true
     },
+    "claudeLimitResumeMode": "af",
     "ssmHostColors": {
      "x": "y"
     },
@@ -9090,6 +9114,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -9259,6 +9284,7 @@
       "assistantAutoPilot": true,
       "assistantAutoResume": false,
       "rateLimitAutoResume": false,
+      "claudeLimitResumeMode": "inherit-x",
       "claudeAbortAutoResume": false,
       "assistantAutoCompact": false,
       "assistantAutoCompactTokens": 150001,
@@ -9527,6 +9553,7 @@
     "assistantAutoPilot": true,
     "assistantAutoResume": false,
     "rateLimitAutoResume": false,
+    "claudeLimitResumeMode": "inherit-x",
     "claudeAbortAutoResume": false,
     "assistantAutoCompact": false,
     "assistantAutoCompactTokens": 150001,
@@ -9731,6 +9758,7 @@
   "assistantAutoPilot": 1,
   "assistantAutoResume": 1,
   "rateLimitAutoResume": 1,
+  "claudeLimitResumeMode": 1,
   "claudeAbortAutoResume": 1,
   "assistantAutoCompact": 1,
   "assistantAutoCompactTokens": 1,
@@ -9868,6 +9896,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -10075,6 +10104,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -10266,6 +10296,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -10416,6 +10447,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -10594,6 +10626,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -10861,6 +10894,7 @@
     "assistantAutoPilot",
     "assistantAutoResume",
     "rateLimitAutoResume",
+    "claudeLimitResumeMode",
     "claudeAbortAutoResume",
     "assistantAutoCompact",
     "assistantAutoCompactTokens",
@@ -11111,6 +11145,7 @@
       "assistantAutoPilot",
       "assistantAutoResume",
       "rateLimitAutoResume",
+      "claudeLimitResumeMode",
       "claudeAbortAutoResume",
       "assistantAutoCompact",
       "assistantAutoCompactTokens",
@@ -11378,6 +11413,7 @@
     "assistantAutoPilot",
     "assistantAutoResume",
     "rateLimitAutoResume",
+    "claudeLimitResumeMode",
     "claudeAbortAutoResume",
     "assistantAutoCompact",
     "assistantAutoCompactTokens",
@@ -11716,6 +11752,7 @@
      "assistantAutoPilot",
      "assistantAutoResume",
      "rateLimitAutoResume",
+     "claudeLimitResumeMode",
      "claudeAbortAutoResume",
      "assistantAutoCompact",
      "assistantAutoCompactTokens",
@@ -11986,6 +12023,7 @@
      "assistantAutoPilot",
      "assistantAutoResume",
      "rateLimitAutoResume",
+     "claudeLimitResumeMode",
      "claudeAbortAutoResume",
      "assistantAutoCompact",
      "assistantAutoCompactTokens",
@@ -12122,6 +12160,7 @@
        "assistantAutoPilot",
        "assistantAutoResume",
        "rateLimitAutoResume",
+       "claudeLimitResumeMode",
        "claudeAbortAutoResume",
        "assistantAutoCompact",
        "assistantAutoCompactTokens",
@@ -12554,6 +12593,7 @@
     "assistantAutoPilot",
     "assistantAutoResume",
     "rateLimitAutoResume",
+    "claudeLimitResumeMode",
     "claudeAbortAutoResume",
     "assistantAutoCompact",
     "assistantAutoCompactTokens",
@@ -12715,6 +12755,7 @@
        "assistantAutoPilot",
        "assistantAutoResume",
        "rateLimitAutoResume",
+       "claudeLimitResumeMode",
        "claudeAbortAutoResume",
        "assistantAutoCompact",
        "assistantAutoCompactTokens",

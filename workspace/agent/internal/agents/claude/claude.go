@@ -174,7 +174,14 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		unset = rp.Unset
 		pin = append(append([]string(nil), rp.Unset...), rp.Settings...)
 	}
-	program := buildProgramPinned(pin, sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m))
+	var limitMode []string
+	if m.Route == nil || m.Route.Route == RouteSubscription {
+		if LimitResumeMode != nil {
+			limitMode = []string{LimitResumeMode()}
+			env = append(env, "AF_CLAUDE_LIMIT_RESUME_MODE="+limitMode[0])
+		}
+	}
+	program := buildProgramPinned(pin, sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m), limitMode...)
 	if m.Route != nil {
 		program = routeLaunchProgram(program, unset)
 	}
@@ -245,6 +252,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 				HealIdle(sid)
 			}
 			li.State = agents.StateBlocked
+			return li
+		}
+		if pane.UsageLimitWait {
+			li.UsageLimitWait = true
+			li.State = "working"
 			return li
 		}
 		// Self-heal a stale cache: a non-idle state that no longer matches the terminal

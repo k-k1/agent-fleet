@@ -22,7 +22,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // errCodeSessionMoved refuses input to a session that is moving or was moved. The body names
@@ -360,7 +359,8 @@ func rebookSpentRateLimitBooking(m session.Meta, st rateLimitState, now time.Tim
 	name := m.Name
 	_ = cancelRateLimitSchedule(name, st.ScheduleID)
 	st.ScheduleID, st.FiredDuringMove = "", ""
-	if !uiprefs.RateLimitAutoResume() {
+	if !rateLimitBookingEnabled(m) || claudeOwnsLimitWait(m) {
+		st.ResumeAt = ""
 		_ = RateLimitStates.Write(name, st)
 		return
 	}

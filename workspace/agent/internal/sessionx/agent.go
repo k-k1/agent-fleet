@@ -157,6 +157,9 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		}
 		return agents.StateBlocked
 	}
+	if usageLimits && pane.UsageLimitWait {
+		return "working"
+	}
 	// A turn rejected or failed on a usage limit (codex Managed, muse) leaves the session
 	// sitting at idle, but re-sending will hit the same limit. Surface it as "waiting for the
 	// limit to lift": there is no menu to dismiss and the window opens by waiting (the same

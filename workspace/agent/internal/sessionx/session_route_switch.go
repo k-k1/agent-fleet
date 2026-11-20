@@ -745,7 +745,14 @@ func refuseCancelledResume(name, source, prompt, scheduleID string) bool {
 	}
 	// A retired, stopped session takes no resume at all, whatever became of its booking's
 	// cancel: that is what retire promised (ADR 0137 §6).
-	if m, ok := session.ReadMeta(name); ok && isRetired(m) {
+	m, ok := session.ReadMeta(name)
+	st, has := RateLimitStates.Read(name)
+	booked := has && scheduleID != "" && st.ScheduleID == scheduleID
+	if ok && booked && hasNativeLimitResume(m) && claudeTurnAfterLimit(m, st) {
+		return true
+	}
+	if ok && (isRetired(m) || (hasNativeLimitResume(m) &&
+		(claudeOwnsLimitWait(m) || (!booked && !rateLimitBookingEnabled(m))))) {
 		return true
 	}
 	if scheduleID == "" {
@@ -754,10 +761,8 @@ func refuseCancelledResume(name, source, prompt, scheduleID string) bool {
 	if rateLimitCancelRecorded(scheduleID) {
 		return true
 	}
-	m, ok := session.ReadMeta(name)
 	if !ok || len(m.RouteSwitches) == 0 {
 		return false
 	}
-	st, has := RateLimitStates.Read(name)
-	return !has || st.ScheduleID != scheduleID
+	return !booked
 }

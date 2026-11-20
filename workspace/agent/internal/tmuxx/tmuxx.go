@@ -725,6 +725,7 @@ func atIdlePrompt(s string) bool {
 // It is as width-fragile as modalMarkers; the line-start anchor is there so the repo's own
 // prose (this comment included) cannot match.
 var rateLimitOptionRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?\d+\.\s+(?:Stop and wait for limit|Ask your admin for more usage)`)
+var currentRateLimitOptionRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?\d+\.\s+(?:Switch to usage|Add funds to continue with usage|Upgrade your plan|Wait here, then continue automatically|Don.t continue automatically)`)
 
 // AtRateLimitModal reports whether a claude pane is parked on that menu.
 //
@@ -755,18 +756,53 @@ func AtRateLimitModal(name string) bool {
 // (claude echoes the chosen option into the transcript, so the option text alone can
 // linger after the menu is gone — the same reason isCodexUpdateMenu needs two markers).
 func atRateLimitModal(s string) bool {
-	return strings.Contains(s, "Enter to confirm") && rateLimitOptionRe.MatchString(s)
+	return strings.Contains(s, "Enter to confirm") &&
+		(rateLimitOptionRe.MatchString(s) || currentRateLimitOptionRe.MatchString(s))
 }
 
-// rateLimitDefaultRe matches the menu's FIRST option while it is the marked one
-// ("❯ 1. Stop and wait for limit to reset"). DismissRateLimitModal requires it: Enter
-// confirms whatever the cursor stands on, so pressing it blind would pick option 2
-// ("Ask your admin for more usage" — a billing request) if a human had already moved
-// down. Press only while the cursor stands on the default option.
-var rateLimitDefaultRe = regexp.MustCompile(`(?m)^\s*\x{276F} 1\.\s+Stop and wait for limit`)
+// rateLimitDefaultRe recognizes the selected stop action regardless of menu order.
+// Enter can otherwise spend credits or start Claude's own continuation.
+var rateLimitDefaultRe = regexp.MustCompile(`(?m)^\s*\x{276F} \d+\.\s+(?:Stop and wait for limit|Stop[ \t]*$)`)
 
-// DismissRateLimitModal confirms the usage-limit menu's DEFAULT option ("1. Stop and
-// wait for limit to reset") and reports whether the menu is gone afterwards.
+// ClaudeUsageLimitWait uses the live footer because the transcript banner survives cancellation.
+func ClaudeUsageLimitWait(frame string) bool {
+	lines := strings.Split(strings.TrimSpace(frame), "\n")
+	for i := max(0, len(lines)-12); i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line != "Usage limit reached" && !strings.HasPrefix(line, "Usage limit reached ·") {
+			continue
+		}
+		end := i + 1
+		for end < len(lines) && end < i+4 {
+			next := strings.TrimSpace(lines[end])
+			if next == "" || strings.HasPrefix(next, "❯") || strings.HasPrefix(next, "──") {
+				break
+			}
+			end++
+		}
+		footer := strings.Join(strings.Fields(strings.Join(lines[i:end], " ")), " ")
+		if nativeLimitWaitFooter.MatchString(footer) {
+			return true
+		}
+	}
+	return false
+}
+
+var nativeLimitWaitFooter = regexp.MustCompile(`^Usage limit reached(?: · limit resets [^·]+)? (?:Continuing automatically (?:at [^·]+|when it resets)|Continuing shortly) · Esc to cancel(?:$| · )`)
+
+var selectedFirstLimitOption = regexp.MustCompile(`(?m)^\s*\x{276F} 1\.\s+`)
+
+func dismissLimitKey(frame string) string {
+	if rateLimitDefaultRe.MatchString(frame) {
+		return "Enter"
+	}
+	if selectedFirstLimitOption.MatchString(frame) && strings.Contains(frame, "Esc to cancel") {
+		return "Escape"
+	}
+	return ""
+}
+
+// DismissRateLimitModal confirms a selected stop action and reports whether the menu is gone.
 //
 // Why pressing it automatically is acceptable: the choices are "wait for the reset" and "ask
 // your admin for more usage", and only the latter carries a billing decision. The former
@@ -788,10 +824,11 @@ func DismissRateLimitModal(name string) bool {
 	if !atRateLimitModal(frame) {
 		return true // the menu is already gone
 	}
-	if !rateLimitDefaultRe.MatchString(frame) {
-		return false // the selection has moved off 1 — a human is mid-choice, so leave it alone
+	key := dismissLimitKey(frame)
+	if key == "" {
+		return false
 	}
-	if err := Run("send-keys", "-t", pane, "Enter"); err != nil {
+	if err := Run("send-keys", "-t", pane, key); err != nil {
 		return false
 	}
 	time.Sleep(400 * time.Millisecond) // wait for the repaint (same interval as LeaveAgentsView)
@@ -811,9 +848,10 @@ type PaneRead struct {
 	// this — not Idle — to conclude "the turn is over" (self-heal, turn-end events),
 	// because a frame that merely LOOKS idle is also what claude draws while it renders
 	// an answer, for up to 21s at a time (idlesettle.go).
-	IdleSettled   bool
-	RateLimitMenu bool // parked on the usage-limit menu (AtRateLimitModal)
-	OK            bool
+	IdleSettled    bool
+	RateLimitMenu  bool // parked on the usage-limit menu (AtRateLimitModal)
+	UsageLimitWait bool
+	OK             bool
 }
 
 // ReadPane captures a session's pane once and returns all pane-derived verdicts.
@@ -836,11 +874,12 @@ func ReadPane(name string) PaneRead {
 	idle := atIdlePrompt(s)
 	settled := observeFrame(name, s)
 	return PaneRead{
-		Busy:          spinnerActive(s),
-		Idle:          idle,
-		IdleSettled:   idle && settled,
-		RateLimitMenu: atRateLimitModal(s),
-		OK:            true,
+		Busy:           spinnerActive(s),
+		Idle:           idle,
+		IdleSettled:    idle && settled,
+		RateLimitMenu:  atRateLimitModal(s),
+		UsageLimitWait: ClaudeUsageLimitWait(s),
+		OK:             true,
 	}
 }
 
