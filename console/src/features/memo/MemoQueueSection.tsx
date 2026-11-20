@@ -33,6 +33,7 @@ import {
   memoImageGC,
   memoQueueList,
   memoRelease,
+  memoStopChain,
   memoQueueResume,
 } from "./api.ts";
 import { memoScope, useMemoStore } from "./store.ts";
@@ -57,7 +58,7 @@ import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import { tidySelection } from "./tidyOps.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
-import { afterChoices, afterItemMessage, afterItemWords, deferredUntil, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
+import { afterChoices, afterItemMessage, continuationHeldKey, afterItemWords, deferredUntil, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -327,6 +328,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // Approve what a release card showed, each message with the hash its row carried. A 409
   // means something changed after the card was drawn: nothing was approved, the stale ids
   // are marked, and the list is re-read so the card shows what is there now.
+  const stopChain = async (m: Memo) => {
+    try {
+      const res = await memoStopChain(m.id);
+      if (res?.error) toast(errText(res.error) || t("memo.continuation_stop_failed"), { kind: "warn" });
+      else toast(t("memo.continuation_stopped"), { kind: "success" });
+    } catch {
+      toast(t("memo.continuation_stop_failed"), { kind: "warn" });
+    }
+    bumpMemos();
+  };
+
   const release = async (cardKey: string, items: Memo[]) => {
     if (releasing) return;
     setReleasing(cardKey);
@@ -960,6 +972,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             }
                           : undefined
                       }
+                      continuationMax={queue?.continuationMax}
+                      onStopChain={m.chainId ? () => void stopChain(m) : undefined}
                       onOpenMenu={(e) => openMemoMenu(e, m)}
                       onOpenKebab={(e) => openMemoMenuBtn(e, m)}
                       onDragStart={(e) => {
@@ -1183,6 +1197,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                         <MemoReleaseCard
                           key={c.key}
                           card={c}
+                          continuationMax={queue?.continuationMax}
                           busy={releasing === dropKey + "\x00" + c.key}
                           changedIds={changedIds}
                           edited={edited}
@@ -1419,6 +1434,10 @@ interface MemoRowProps {
   afterChoices?: { id: string; label: string }[];
   /** Opens the run history of this note's category; absent outside an auto-run category. */
   onOpenTidyRuns?: () => void;
+  /** The category's follow-up allowance, for "follow-up K of M". */
+  continuationMax?: number;
+  /** Stops the chain a follow-up belongs to; absent on a note that is in none. */
+  onStopChain?: () => void;
   onOpenMenu: (e: RMouseEvent) => void;
   onOpenKebab: (e: RMouseEvent) => void;
   onDragStart: (e: RDragEvent) => void;
@@ -1589,6 +1608,26 @@ function MemoRow(props: MemoRowProps) {
           {tr("memo.accepted_by_setting")}
         </span>
       )}
+      {m.releasedBy === "continuation" && (m.state === "pending" || m.state === "delivered") && (
+        <span className="memo-qorigin" title={tr("memo.continuation_title")}>
+          {(props.continuationMax ?? 0) > 0
+            ? tr("memo.continuation_badge_of", { seq: m.chainSeq ?? 0, max: props.continuationMax! })
+            : tr("memo.continuation_badge", { seq: m.chainSeq ?? 0 })}
+        </span>
+      )}
+      {props.onStopChain && (m.state === "pending" || m.state === "delivered") && (
+        <button
+          type="button"
+          className="linkish"
+          title={tr("memo.continuation_stop_title")}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onStopChain!();
+          }}
+        >
+          {tr("memo.continuation_stop")}
+        </button>
+      )}
       {releasedByTidy(m) && (
         <span className="memo-qorigin" title={tr("memo.released_by_tidy_title")}>
           {tr("memo.released_by_tidy")}
@@ -1704,7 +1743,10 @@ function MemoRow(props: MemoRowProps) {
             {(m.deferReasons ?? []).length > 0 && <span className="memo-deferred-reason">{(m.deferReasons ?? []).at(-1)!.reason}</span>}
           </div>
         )}
-        {m.state === "held" && m.heldReason && m.heldReason.reason !== "deferred" && (
+        {m.state === "held" && continuationHeldKey(m.heldReason?.reason) && (
+          <div className="memo-after-held">{tr("memo.continuation_held", { why: tr(continuationHeldKey(m.heldReason?.reason)!) })}</div>
+        )}
+        {m.state === "held" && m.heldReason && m.heldReason.reason !== "deferred" && !continuationHeldKey(m.heldReason.reason) && (
           <div className="memo-after-held">
             {tr("memo.after_held", {
               label: m.afterStatus?.find((a) => a.id === m.heldReason!.after)?.label || m.heldReason.after,

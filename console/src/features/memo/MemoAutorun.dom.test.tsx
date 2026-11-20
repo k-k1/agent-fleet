@@ -467,6 +467,7 @@ describe("the settings dialog", () => {
       spendCapUsd: 0,
       worktree: true,
       acceptOwnSessions: false,
+      continuationMax: 4,
       tidy: false,
       tidyDestinations: [],
       maxActive: 2,

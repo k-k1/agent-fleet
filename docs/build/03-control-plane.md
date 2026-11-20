@@ -326,6 +326,16 @@ Memos you accumulate and send to a session in one go (the tables are
   message is edited, moved and released like any other (a move into a queue from a plain category enters it `held`).
   The tidy switch is a guard rail, not a wall: the reply is produced inside the workspace, so code there that can answer
   for the Agent chooses the text of a derived message inside these bounds. Migrations 0142 (SQLite) and 0127 (Postgres).
+- **Bounded continuation of a released message** ([decisions/0137](../decisions/0137-message-queues.md), addendum 2026-11-20,
+  #4606; code in `memo_continuation.go`, `store_memo_chain.go`): a token-face create carrying `continuation: true` and the
+  `queueDelivery` the Agent stamped from the session's meta is admitted `pending` (`released_by` `continuation`) only
+  when `memoContinue` finds, in the Control Plane's own rows, an open delivery of the same member, queue and session
+  that holds exactly one message with the same reference, repo and category, whose chain root a person (or the switch)
+  released, with the chain under the queue's `continuation_max` (default 4, clamped to 10) and not stopped. Otherwise it
+  is created `held` with `held_reason` `continuation_<why>`. The count is `memo_chain.admitted`, bumped by one conditional
+  UPDATE. A person's release and a change of repo or category clear `memo.chain_id`, `chain_seq` and `chain_delivery`
+  (in SQL, `writeMemoRow` and `ReleaseMemo`), and a tidy only keeps such a message (`memoafter.Linked`).
+  `POST /api/memos/{id}/stop-chain` (Console only) sets `stopped`. Migrations 0147 (SQLite) and 0132 (Postgres).
 - **Tidy, the manual path** ([decisions/0137](../decisions/0137-message-queues.md) §8, step 5, slice S5; code in
   `memo_tidy.go` `applyTidy`): `POST /api/memo-tidy/apply`, Console only (not on the token face or `/mcp`). The Console
   asks `POST /api/chat/ask` for a proposal and shows the member a preview; approving sends

@@ -30,6 +30,8 @@ export function releaseRowText(m: Memo): string {
 
 interface Props {
   card: ReleaseCard;
+  /** The category's follow-up allowance (0 or absent: none), said on the card because approving covers it. */
+  continuationMax?: number;
   busy: boolean;
   /** Ids a refused release named as changed; marked until the card is approved. */
   changedIds: ReadonlySet<string>;
@@ -42,7 +44,7 @@ interface Props {
   onConfirm: (items: Memo[]) => void;
 }
 
-export function MemoReleaseCard({ card, busy, changedIds, edited, awaiting, onRelease, onConfirm }: Props) {
+export function MemoReleaseCard({ card, continuationMax, busy, changedIds, edited, awaiting, onRelease, onConfirm }: Props) {
   const tr = useT();
   const title =
     card.provenance === "mcp" && card.producer
@@ -119,6 +121,7 @@ export function MemoReleaseCard({ card, busy, changedIds, edited, awaiting, onRe
           {tr("memo.release_hint")}
           {card.items.some((m) => memoReference(m)) && " " + tr("memo.ref_card_hint")}
           {card.items.some((m) => m.tidyFrom?.id) && " " + tr("memo.release_tidy_hint")}
+          {(continuationMax ?? 0) > 0 && card.items.some((m) => memoReference(m)) && " " + tr("memo.release_continuation_hint", { max: continuationMax! })}
         </span>
         {mustConfirm ? (
           <Button small variant="primary" disabled={busy} onClick={() => onConfirm(card.items)}>

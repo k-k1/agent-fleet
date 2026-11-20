@@ -522,12 +522,14 @@ func Deferred(m store.Memo, now time.Time) bool {
 	return m.NotBefore != "" && m.NotBefore > store.DeliveryTS(now)
 }
 
-// Linked is the set of ids of a bucket that have or are a prerequisite, or that wait for a
-// not_before: a tidy run only keeps them (ADR 0137 section 8, as the addendum amends it).
+// Linked is the set of ids of a bucket that have or are a prerequisite, that wait for a
+// not_before, or that are a continuation: a tidy run only keeps them (ADR 0137 section 8, as the addendum amends it).
 func Linked(rows []store.Memo) map[string]bool {
 	out := map[string]bool{}
 	for _, r := range rows {
-		if r.NotBefore != "" {
+		if r.NotBefore != "" || r.ChainID != "" {
+			// A continuation is kept whole too: a merge or a move would make a message the
+			// member's release of the chain does not cover (ADR 0137, addendum 2026-11-20).
 			out[r.ID] = true
 		}
 		ids := IDs(r)

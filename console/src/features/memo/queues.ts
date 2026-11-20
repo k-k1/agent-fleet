@@ -26,6 +26,9 @@ import type {
 // so a mistake is named next to its field; the Control Plane stays the authority.
 export const QUEUE_MAX_ACTIVE_MAX = 6;
 export const QUEUE_BATCH_MAX = 20;
+/** The Control Plane's ceiling for follow-ups of one approved note, and what a queue starts with. */
+export const QUEUE_CONTINUATION_MAX = 10;
+export const QUEUE_CONTINUATION_DEFAULT = 4;
 export const QUEUE_INSTRUCTION_MAX_BYTES = 16 << 10;
 export const QUEUE_SPEND_MAX = 10000;
 export const QUEUE_TASK_HOURS_MAX = 72;
@@ -96,6 +99,7 @@ function readQueue(v: unknown): MemoQueue | null {
     spendCapUsd: num(v.spendCapUsd, 0),
     worktree: v.worktree !== false,
     acceptOwnSessions: v.acceptOwnSessions === true,
+    continuationMax: num(v.continuationMax, 4),
     tidy: v.tidy === true,
     tidyDestinations: strings(v.tidyDestinations),
     maxActive: num(v.maxActive, 2),
@@ -257,6 +261,15 @@ export function afterItemWords(it: Pick<MemoAfterItem, "state" | "reason">): Msg
   return it.state === "failed" ? "memo.after_r_failed" : "memo.after_r_waiting";
 }
 
+/** The words for why a follow-up note was not accepted without approval: a heldReason whose
+ *  reason is continuation_<why>. Null for any other reason. */
+export function continuationHeldKey(reason: string | undefined): MsgKey | null {
+  if (!reason || !reason.startsWith("continuation_")) return null;
+  const why = reason.slice("continuation_".length);
+  return (CONTINUATION_REASONS as readonly string[]).includes(why) ? (`memo.cont_r_${why}` as MsgKey) : "memo.cont_r_other";
+}
+const CONTINUATION_REASONS = ["origin", "delivery", "batch", "given", "reference", "root", "off", "used", "limit", "stopped"] as const;
+
 /** The PR number of a key "owner/repo#N", with its # ("#N"), else the key. */
 const prNumberOf = (key: string) => {
   const i = key.lastIndexOf("#");
@@ -386,6 +399,7 @@ export interface QueueDraft {
   spendCapUsd: string;
   worktree: boolean;
   acceptOwnSessions: boolean;
+  continuationMax: string;
   tidy: boolean;
   tidyDestinations: string[];
   maxActive: string;
@@ -413,6 +427,7 @@ export function draftOf(q: MemoQueue | undefined): QueueDraft {
     spendCapUsd: String(q?.spendCapUsd ?? 0),
     worktree: q?.worktree ?? true,
     acceptOwnSessions: q?.acceptOwnSessions ?? false,
+    continuationMax: String(q?.continuationMax ?? QUEUE_CONTINUATION_DEFAULT),
     tidy: q?.tidy ?? false,
     tidyDestinations: q?.tidyDestinations ?? [],
     maxActive: String(q?.maxActive ?? 2),
@@ -441,6 +456,7 @@ export type DraftField =
   | "openAfter"
   | "maxFiresPerDay"
   | "maxTaskHours"
+  | "continuationMax"
   | "tidyDestinations";
 export type DraftErrors = Partial<Record<DraftField, MsgKey>>;
 
@@ -461,6 +477,7 @@ export function draftErrors(d: QueueDraft): DraftErrors {
   if (!/^\d+(\.\d+)?$/.test(spend) || Number(spend) > QUEUE_SPEND_MAX) e.spendCapUsd = "memo.q_err_budget";
   if (!wholeIn(d.maxActive, 1, QUEUE_MAX_ACTIVE_MAX)) e.maxActive = "memo.q_err_max_active";
   if (!wholeIn(d.batch, 1, QUEUE_BATCH_MAX)) e.batch = "memo.q_err_batch";
+  if (!wholeIn(d.continuationMax, 0, QUEUE_CONTINUATION_MAX)) e.continuationMax = "memo.q_err_continuation";
   if (!wholeIn(d.maxFiresPerDay, 1, QUEUE_FIRES_PER_DAY_MAX)) e.maxFiresPerDay = "memo.q_err_fires";
   if (!wholeIn(d.maxTaskHours, 1, QUEUE_TASK_HOURS_MAX)) e.maxTaskHours = "memo.q_err_task_hours";
   if (d.tidyDestinations.length > QUEUE_TIDY_DESTINATIONS_MAX) e.tidyDestinations = "memo.q_err_tidy_destinations";
@@ -489,6 +506,7 @@ export function draftBody(d: QueueDraft, route: string): MemoQueueInput {
     spendCapUsd: Number(d.spendCapUsd.trim()),
     worktree: d.worktree,
     acceptOwnSessions: d.acceptOwnSessions,
+    continuationMax: Number(d.continuationMax.trim()),
     tidy: d.tidy,
     // Always the current choice, also with the switch off: a PUT replaces the row, and an omitted
     // list would forget what the member picked.

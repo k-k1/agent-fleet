@@ -50,6 +50,10 @@ type Fields struct {
 	// After is the messages of the same queue this one waits for, memo ids or reference keys.
 	// The Control Plane resolves and checks them.
 	After []string `json:"after,omitempty"`
+	// Continuation is the model's claim that this follows the message its queue run was given
+	// (ADR 0137, addendum 2026-11-20). It names no id: the relay adds the delivery from the
+	// session's own meta, and the Control Plane decides from its own rows.
+	Continuation bool `json:"continuation,omitempty"`
 }
 
 // Reference is the typed pointer {provider, key, url} a queue message may carry. The fields are
@@ -73,6 +77,10 @@ type cpCreate struct {
 	Fields
 	Producer       string `json:"producer"`
 	ProducerOrigin string `json:"producerOrigin"`
+	// QueueDelivery is the queue delivery that started the calling session, set only when the
+	// create claims to be a continuation. Fields has no field for it, so what the model writes
+	// under that name is dropped by the decode.
+	QueueDelivery string `json:"queueDelivery,omitempty"`
 }
 
 // Patch is PATCH /memos/{id}: the fields update_memo may change. Nil leaves a field as it is,
@@ -201,7 +209,15 @@ func HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Memo.Repo = baseRepo(in.Memo.Repo)
-	body, err := json.Marshal(cpCreate{Fields: in.Memo, Producer: producer, ProducerOrigin: origin})
+	out := cpCreate{Fields: in.Memo, Producer: producer, ProducerOrigin: origin}
+	if in.Memo.Continuation {
+		if out.QueueDelivery = QueueDeliveryOf(in.From); out.QueueDelivery == "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "continuation_not_a_queue_run",
+				"continuation is only for a session a queue started: this session was not given a queued message")
+			return
+		}
+	}
+	body, err := json.Marshal(out)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "encode_failed", err.Error())
 		return

@@ -47,9 +47,10 @@ Decide these fields before you do ([the fields](../chat/memo-auto-run.md#the-fie
 | Sessions at the same time | Start at 1 or 2. A category allows at most 6 open runs, and all your auto-run categories together at most 4 |
 | Runs per day | A little above what you expect. It holds back a runaway |
 | When it runs | "In a time window" when you want runs only while you are away, or when the host is quiet |
+| Follow-ups a run may add without approval | Leave 4 for a task done in parts, 0 where no run should add memos unseen ([follow-ups](../chat/memo-auto-run.md#follow-ups-of-an-approved-memo)) |
 | Accept notes from sessions I started without approval | Leave it off until you have read a few memos sessions added ([approval](../chat/memo-auto-run.md#skip-the-approval-for-your-own-sessions)) |
 
-A memo a session adds waits for your approval, and a session an auto-run started is never one that skips it. Read the memos on the approval card as instructions to the next session, because that is what they become ([Approve](../chat/memo-auto-run.md#approve)).
+A memo a session adds waits for your approval. The one memo a run adds without it is a follow-up of the memo it was given, for the same work item and within the category's number ([follow-ups](../chat/memo-auto-run.md#follow-ups-of-an-approved-memo)). Read the memos on the approval card as instructions to the next session, because that is what they become ([Approve](../chat/memo-auto-run.md#approve)).
 
 ## Write the standing instruction for nobody watching
 
@@ -104,7 +105,7 @@ A task that does not fit in one run goes through the queue in parts.
 - **One part per run.** Say in the memo which part this is
 - **Each part leaves the main branch releasable on its own.** New behaviour is unreachable, or sits behind today's default; no half-wired screen is merged. A part that cannot be released alone is too big, so cut it differently
 - **Record what is left on the issue before ending.** A checklist on the issue is enough. The queue does not run a started memo again by itself, so the issue is where the remainder survives. The one exception is a run that hands its memo back because the work cannot be done yet ([A run hands its memo back](../chat/memo-auto-run.md#a-run-hands-its-memo-back)); the memo then runs again later as a new run
-- **Let the run queue the next part, with a cap in the memo**, for example `Part 2 of at most 5`. The memo the run adds waits for your approval, because a session auto-run started cannot add a memo that skips it. You see each part before it runs, and at the cap the run says so and adds nothing
+- **Let the run queue the next part, with a cap in the memo**, for example `Part 2 of at most 5`. Your approval of the first memo also covers up to the category's "Follow-ups a run may add without approval" (4 unless you changed it) follow-ups of it, for the same work item, so a five-part task needs one approval, not four ([follow-ups](../chat/memo-auto-run.md#follow-ups-of-an-approved-memo)). Set that number to at least the parts minus one. The number in the memo is advice to the run, and the category's number is what the Control Plane counts. Past it the next part waits on the approval card, where approving it starts a new chain. Tell the run to add the next part for the same work item (the same reference), after its own pull request merges (a prerequisite), and to say when it reaches the cap and add nothing
 - **Start the summary with `Partial:`** for a part that left work, `Deferred:` for an item it did not do, and `Too large:` for an item that needs cutting first. They read at a glance in [the run history](../chat/memo-auto-run.md#read-the-run-history)
 
 ## Review and merge without a person per pull request

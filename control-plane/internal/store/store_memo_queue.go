@@ -43,6 +43,14 @@ const MaxTidyDestinations = 10
 // accept-from-own-sessions switch and not by a press.
 const MemoReleasedBySetting = "setting"
 
+// MemoReleasedByContinuation is memo.released_by for a continuation a run of the queue added and
+// the Control Plane admitted as pending without a press (ADR 0137, addendum 2026-11-20).
+const MemoReleasedByContinuation = "continuation"
+
+// MemoOriginQueue is the producer origin of a session a queue's delivery started: the value
+// the Agent records from the delivery's envelope and never from a client's launch field.
+const MemoOriginQueue = "queue"
+
 // MemoOriginUser is the producer origin of a session the member started themselves: the value
 // the Agent's relay sends for session.OriginUser.
 const MemoOriginUser = "user"
@@ -65,7 +73,10 @@ type MemoQueue struct {
 	// AcceptOwnSessions drops the release press for a message from a session the member started
 	// (ADR 0137 section 3). It is a guard rail: the Agent supplies the session's origin.
 	AcceptOwnSessions bool
-	MaxActive, Batch  int
+	// ContinuationMax is how many continuations of one released message a run of this queue may
+	// add without a press (ADR 0137, addendum 2026-11-20). 0 is off. The column defaults to 4.
+	ContinuationMax  int
+	MaxActive, Batch int
 	// MaxTaskHours is how long a delivery of the queue may stay open before it is overdue
 	// (ADR 0137 section 6), 1 to 72.
 	MaxTaskHours int
@@ -185,6 +196,7 @@ type MemoTxOps interface {
 	MemoWaitOps
 	MemoPRWakeTxOps
 	MemoDeferTxOps
+	MemoChainTxOps
 }
 
 // MemoWaitOps are the reads behind "may this queue fire now", the ones the dispatcher makes
@@ -313,7 +325,7 @@ func (t memoTx) ReleaseMemo(seen Memo, hash, at string) (bool, error) {
 		   release_repo=repo, release_category=category, release_kind=kind, release_body=body,
 		   release_ref_path=ref_path, release_attachments=attachments,
 		   release_ref_provider=ref_provider, release_ref_key=ref_key, release_ref_url=ref_url,
-		   release_after_ids=after_ids
+		   release_after_ids=after_ids, chain_id='', chain_seq=0, chain_delivery=''
 		   WHERE id=? AND membership_id=? AND state=?
 		     AND repo=? AND category=? AND kind=? AND body=? AND ref_path=? AND attachments=?
 		     AND ref_provider=? AND ref_key=? AND ref_url=? AND after_ids=?`,
@@ -394,7 +406,7 @@ func (t memoTx) DeleteCategory(id string) error {
 const memoQueueCols = `SELECT category_id, membership_id, instruction, agent_kind, model, effort, route, spend_cap_usd,
 	worktree, max_active, batch, enabled, generation, created_at, updated_at, max_task_hours,
 	open_cron, open_minutes, tz, open_after, max_fires_per_day, draining, paused, paused_at, paused_reason, breaker_after,
-	no_report_at, no_refs_at, accept_own_sessions, tidy, tidy_destinations, no_tidy_at FROM memo_queue`
+	no_report_at, no_refs_at, accept_own_sessions, tidy, tidy_destinations, no_tidy_at, continuation_max FROM memo_queue`
 
 func scanMemoQueue(row scanner) (MemoQueue, error) {
 	var q MemoQueue
@@ -403,7 +415,7 @@ func scanMemoQueue(row scanner) (MemoQueue, error) {
 	err := row.Scan(&q.CategoryID, &q.MembershipID, &q.Instruction, &q.AgentKind, &q.Model, &q.Effort, &q.Route,
 		&q.SpendCapUSD, &worktree, &q.MaxActive, &q.Batch, &enabled, &q.Generation, &q.CreatedAt, &q.UpdatedAt, &q.MaxTaskHours,
 		&q.OpenCron, &q.OpenMinutes, &q.TZ, &q.OpenAfter, &q.MaxFiresPerDay, &draining, &paused, &q.PausedAt, &q.PausedReason,
-		&q.BreakerAfter, &q.NoReportAt, &q.NoRefsAt, &acceptOwn, &tidy, &dests, &q.NoTidyAt)
+		&q.BreakerAfter, &q.NoReportAt, &q.NoRefsAt, &acceptOwn, &tidy, &dests, &q.NoTidyAt, &q.ContinuationMax)
 	q.Worktree, q.Enabled, q.Draining, q.Paused = worktree != 0, enabled != 0, draining != 0, paused != 0
 	q.AcceptOwnSessions = acceptOwn != 0
 	q.Tidy, q.TidyDestinations = tidy != 0, decodeIDList(dests)
@@ -435,20 +447,21 @@ func (t memoTx) PutQueue(q MemoQueue) error {
 	_, err := t.q.ExecContext(t.ctx, `INSERT INTO memo_queue(category_id, membership_id, instruction, agent_kind, model,
 		effort, route, spend_cap_usd, worktree, max_active, batch, enabled, generation, created_at, updated_at,
 		max_task_hours, open_cron, open_minutes, tz, open_after, max_fires_per_day, accept_own_sessions,
-		tidy, tidy_destinations)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		tidy, tidy_destinations, continuation_max)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(category_id) DO UPDATE SET instruction=excluded.instruction, agent_kind=excluded.agent_kind,
 		  model=excluded.model, effort=excluded.effort, route=excluded.route, spend_cap_usd=excluded.spend_cap_usd,
 		  worktree=excluded.worktree, max_active=excluded.max_active, batch=excluded.batch, enabled=excluded.enabled,
 		  max_task_hours=excluded.max_task_hours, open_cron=excluded.open_cron, open_minutes=excluded.open_minutes,
 		  tz=excluded.tz, open_after=excluded.open_after, max_fires_per_day=excluded.max_fires_per_day,
 		  accept_own_sessions=excluded.accept_own_sessions, tidy=excluded.tidy,
-		  tidy_destinations=excluded.tidy_destinations, updated_at=excluded.updated_at
+		  tidy_destinations=excluded.tidy_destinations, continuation_max=excluded.continuation_max,
+		  updated_at=excluded.updated_at
 		WHERE memo_queue.membership_id=excluded.membership_id`,
 		q.CategoryID, t.mid, q.Instruction, q.AgentKind, q.Model, q.Effort, q.Route, q.SpendCapUSD,
 		b2i(q.Worktree), q.MaxActive, q.Batch, b2i(q.Enabled), q.Generation, q.CreatedAt, q.UpdatedAt, q.MaxTaskHours,
 		q.OpenCron, q.OpenMinutes, q.TZ, q.OpenAfter, q.MaxFiresPerDay, b2i(q.AcceptOwnSessions),
-		b2i(q.Tidy), encodeIDList(q.TidyDestinations))
+		b2i(q.Tidy), encodeIDList(q.TidyDestinations), q.ContinuationMax)
 	return err
 }
 

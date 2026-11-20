@@ -979,7 +979,7 @@ watch may have started the tree between the close's read and the retire); a rele
 drops the hand-back and rewrites the outcome to clean. A run of more than one message is never handed back, even when
 the batch was lowered while it ran.
 
-Added 2026-11-20 (#4606, the owner's decision, option C; phase 1 of the work, nothing is built): **a member's release of a
+Added 2026-11-20 (#4606, the owner's decision, option C; built in the same PR as this note): **a member's release of a
 message also approves a bounded chain of continuations of it.** This amends §3's sentence "Through the tools, never
 without a press" in one case and nothing else. *Why.* An issue too large for one PR lands one part per run, and each run
 queues the next (`Part K of at most M`). Today each part stops at a release card, so a five-part task needs four presses
@@ -1003,9 +1003,12 @@ a run feed the queue without bound. Option A keeps the press as a checkpoint at 
   a reference and the new one has the same provider and key, and the same repo and category; (5) that message is a chain
   member or a root (below); (6) the chain row admits one more (below); (7) the delivery has not admitted a continuation
   already, which keeps the chain linear and stops a fan-out inside one run.
-- **A root is a message a person released**: `released_by` empty with a Console press or a Console-authored note. A
-  message that entered by the per-queue switch (`setting`), a tidy (`tidy`) or the hand-back path roots no chain: the
-  switch's scope stays exactly what §3 says, and a tidy cannot manufacture an approval.
+- **A root is a message a person, or the person's own switch, released**: `released_by` empty (a Console press or a
+  Console-authored note) or `setting` (the per-queue switch "accept from sessions I started", decided 2026-11-21). The
+  switch counts because with it on, code in the workspace can already enqueue without a press, so rooting a chain adds
+  no exposure; with it off no such message is pending, so there is no root. A message made by a tidy (`tidy`) or
+  admitted as a continuation (`continuation`) roots none: a tidy cannot manufacture an approval, and a chain does not
+  restart itself.
 - The count lives in a table of its own, `memo_chain(id, membership_id, category_id, ref_provider, ref_key, admitted,
   stopped, created_at, updated_at)`, id the root message's id. It is created at the first continuation, not at the
   release, so releases and the hash are untouched. Admission is one statement, `UPDATE memo_chain SET admitted =
@@ -1021,14 +1024,17 @@ a run feed the queue without bound. Option A keeps the press as a checkpoint at 
   what a session already could with the original message: choose the text of up to M messages that then run under the
   queue's instruction, in one reference. That is the guard rail, bounded per release, and the card says so.
 
-*(b) Where M comes from. Recommended: a per-queue setting, `continuation_max`, with a server ceiling of 10 and default 0
-(off).* The line in the memo's text (`Part K of at most M`) is written by the session, so a number the Control Plane read
+*(b) Where M comes from. Decided 2026-11-21: a per-queue setting, `continuation_max`, with a server ceiling of 10 and a
+default of 4 for every queue, existing ones included.* The migration's column default is 4, so **every queue category
+continues up to 4 follow-ups of a released message unless the member lowers it (0 turns it off)**. The default is on
+because the member's release already says what the run is to do, the chain is bounded, and each follow-up is the same
+work item in the same queue. The line in the memo's text (`Part K of at most M`) is written by the session, so a number the Control Plane read
 from it could only be a number the session chose; it stays advice for the run, which the standing instruction can ask
 for. A per-release override on the card was considered and left out of the first version: it adds a field to what a
 release binds (the hash) for a case the queue setting already covers, and the member can lower the setting at any
 time. M counts continuations, not parts, so a task of at most N parts needs M = N - 1. M is read live: raising it
 extends a chain in flight (the member did that), lowering it takes effect on the next admission, and `0` stops every
-chain of the queue. A queue with 0 behaves exactly as before.
+chain of the queue. A queue set to 0 behaves exactly as before the note.
 
 *(c) What happens to the count.*
 
@@ -1038,9 +1044,10 @@ chain of the queue. A queue with 0 behaves exactly as before.
   the same message and may add its continuation (the delivery rule (7) is per delivery). A deferred run that had already
   admitted a continuation keeps it: the count was spent at admission.
 - **Edit after release.** A Console edit keeps the state and the chain. An edit by the token face or `/mcp` puts a
-  continuation back to `held` as for any released message, and the count stays spent; a person's later release of it is
-  a fresh release, so it clears `chain_id` and may root a new chain of up to M. That is the meaning of "release also
-  approves M continuations", said on the card.
+  continuation back to `held` as for any released message, and the count stays spent; a person's later release of it
+  (including a continuation held for the limit, decided 2026-11-21: one button) is a fresh release, so it clears
+  `chain_id` and may root a new chain of up to M. That is the meaning of "release also approves M continuations", said
+  on the card.
 - **Move to another category.** Clears `chain_id`; a continuation targets the queue of the message it follows, so a move
   ends that chain. The row is released again by the destination's rules.
 - **Batch.** A run that was given several messages never continues (rule 3); a queue whose batch is above one therefore
@@ -1050,29 +1057,31 @@ chain of the queue. A queue with 0 behaves exactly as before.
 
 *(d) What the member sees, and how they stop a chain.* The release card of a queue with `continuation_max` above 0 and a
 message with a reference says "releasing this also lets the run add up to M continuations of it without another
-approval". A continuation's row shows "Continuation K of M, accepted without approval", with a link to the message it
-followed and the run that added it; the run history shows on a delivery the continuation it admitted, or the reason it
-was held (`continuation_limit`, `continuation_reference`, `continuation_batch`, `continuation_closed`, `continuation_stopped`)
-with the card in the usual place. The member stops a chain by "Stop chain" on any message of it (sets `stopped`, so
+approval". A continuation's row shows "Continuation K of M, accepted without approval". A continuation held instead shows its reason on the
+card's row (`continuation_origin`, `_delivery`, `_batch`, `_given`, `_reference`, `_root`, `_off`, `_used`, `_limit`,
+`_stopped`, each in words). The run history is unchanged: the continuation is a message like any other and its delivery
+is listed when it runs. The member stops a chain by "Stop chain" on any message of it (sets `stopped`, so
 the next continuation is held), by setting `continuation_max` to 0, by deleting or holding the pending continuation, or
-by pausing the queue. "Runs per day" and the pause after failed runs apply to continuations like any run. Reaching M
-raises the notification of a held message, once.
+by pausing the queue. "Runs per day" and the pause after failed runs apply to continuations like any run. A continuation held for the limit
+waits on the usual release card, which is the notice.
 
 *(e) Migration and the tests that prove the wall.* Additive only, SQLite 0147 and Postgres 0132 (`origin/main` is at 0146 and
-0131): `memo_queue.continuation_max INTEGER NOT NULL DEFAULT 0`; `memo.chain_id TEXT NOT NULL DEFAULT ''`;
+0131): `memo_queue.continuation_max INTEGER NOT NULL DEFAULT 4`; `memo.chain_id TEXT NOT NULL DEFAULT ''`;
 `memo.chain_seq INTEGER NOT NULL DEFAULT 0`; `CREATE TABLE memo_chain`. A binary that predates it ignores the columns and
 creates every continuation `held`, which is today's rule, and the release constraint of migration 0131 is untouched
-because a continuation is inserted with its release copy. Tests, each shown failing without the change: past M is held
+because a continuation is inserted with its release copy. Rule (7) is rarely the one that fires, because an open message already holding the reference is answered first (§4's
+one open message per reference), but it is kept for the case where the first has moved on. Tests, each shown failing
+without the change: past M is held
 (and the M-th is admitted, a race of two admissions at M-1 admits one); a different reference, repo or category is held; a
 session not started by this queue is held (origin `user`, `schedule`, `session`, and a queue session whose delivery is
 closed, belongs to another queue or member, or whose `producer` is not the delivery's session); a batch delivery is held;
 a forged continuation from a user session follows the switch rules only (held with the switch off, `pending` as today
-with it on and no chain row written); a message accepted by the switch or made by a tidy roots no chain; a Console
+with it on and no chain row written); a message the switch accepted roots a chain only because the switch is on (with it
+off the same session's message is held, so no run is ever given it), and a message made by a tidy roots none; a Console
 edit, a token-face edit, a move, a tidy and a hand-back each leave the count as stated in (c); the relay drops a
 `queueDelivery` the model wrote and refuses `continuation` without a delivery; both migration sets apply on a copy of
 the previous schema.
 
-*Choices that need the owner:* (1) the ceiling of 10 and default 0; (2) that a press on a message held for the limit
-starts a fresh chain of up to M (the alternative is that only "continue the chain" extends it, which needs a second
-button and a second hash rule); (3) whether the message that entered by "accept from sessions I started" may root a
-chain (recommended no, above).
+*Decided by the owner, 2026-11-21:* the ceiling is 10 and the default 4 (not 0), applied to existing queues through the column
+default; a press on a continuation held for the limit starts a fresh chain of up to M, with one button; and a message the
+switch accepted may root a chain, like a person's press.

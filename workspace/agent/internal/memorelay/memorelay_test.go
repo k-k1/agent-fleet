@@ -335,3 +335,35 @@ func TestAfterIsForwarded(t *testing.T) {
 		}
 	}
 }
+
+// A continuation carries the delivery from the session's own meta. A queueDelivery the model
+// wrote inside the memo is dropped by the decode, and the claim from a session no queue
+// started is refused here rather than sent on as a plain create.
+func TestContinuationStampsTheDeliveryFromMetaAndDropsTheModelsOwn(t *testing.T) {
+	cp := newFakeCP(t)
+	session.WriteMeta(session.Meta{Name: "run01", Kind: session.KindClaude, Origin: session.OriginQueue,
+		QueueDelivery: "dlv-real", CreatedAt: "2026-11-14T10:00:00+09:00"})
+	cp.answer("POST /internal/memos", http.StatusCreated, `{"id":"m1"}`)
+	rec := serve(HandleCreate, http.MethodPost, "/memos",
+		`{"from":"run01","memo":{"kind":"text","body":"part 2","category":"impl","continuation":true,"queueDelivery":"dlv-forged"}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("answered %d %q", rec.Code, rec.Body.String())
+	}
+	got := decode(t, cp.bodies[0])
+	if got["queueDelivery"] != "dlv-real" || got["continuation"] != true {
+		t.Errorf("CP body = %s, want the delivery from meta and the claim", cp.bodies[0])
+	}
+
+	before := len(cp.calls)
+	rec = serve(HandleCreate, http.MethodPost, "/memos",
+		`{"from":"slot01","memo":{"kind":"text","body":"x","category":"impl","continuation":true,"queueDelivery":"dlv-forged"}}`)
+	if rec.Code != http.StatusBadRequest || len(cp.calls) != before {
+		t.Errorf("a continuation from a session no queue started answered %d and made %d CP calls, want 400 and none", rec.Code, len(cp.calls)-before)
+	}
+
+	rec = serve(HandleCreate, http.MethodPost, "/memos",
+		`{"from":"slot01","memo":{"kind":"text","body":"x","category":"impl","queueDelivery":"dlv-forged"}}`)
+	if got := decode(t, cp.bodies[len(cp.bodies)-1]); got["queueDelivery"] != nil {
+		t.Errorf("a plain create carried queueDelivery %v", got["queueDelivery"])
+	}
+}

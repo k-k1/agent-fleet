@@ -51,8 +51,12 @@ export interface Memo {
   contentHash?: string;
   releasedAt?: string;
   /** "setting" when the category's accept-from-own-sessions switch made the message pending and no
-   *  approval did; "tidy" when a tidy run put it there. */
+   *  approval did; "tidy" when a tidy run put it there; "continuation" when it was admitted as a
+   *  continuation of an approved note (ADR 0137, addendum 2026-11-20). */
   releasedBy?: string;
+  /** Set on a continuation: the first note of its chain, and its place in it. */
+  chainId?: string;
+  chainSeq?: number;
   /** The delivery (one fire) that took the message (#4163). */
   deliveryId?: string;
   /** Set on a message a tidy run made from other notes: their ids. Absent on any other. */
@@ -172,6 +176,9 @@ export interface MemoQueue {
   worktree: boolean;
   /** Notes from sessions the member started themselves start without an approval. */
   acceptOwnSessions: boolean;
+  /** How many follow-ups of one approved note a run of this category may add without another
+   *  approval (0 turns it off; the Control Plane allows at most 10). */
+  continuationMax: number;
   /** A model in the workspace tidies the waiting notes before an automatic run. */
   tidy: boolean;
   /** The auto-run categories a tidy may move a message to so that it waits to run there. */
@@ -245,6 +252,7 @@ export type MemoQueueInput = Pick<
   | "spendCapUsd"
   | "worktree"
   | "acceptOwnSessions"
+  | "continuationMax"
   | "tidy"
   | "tidyDestinations"
   | "maxActive"
