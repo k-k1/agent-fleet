@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -50,6 +51,10 @@ const (
 
 // ErrChecksum marks a downloaded artifact whose digest is not the pinned one.
 var ErrChecksum = errors.New("checksum mismatch")
+
+// ErrNetwork marks a failed download, whatever the transport reported (a body cut short
+// included).
+var ErrNetwork = errors.New("download failed")
 
 // Env is everything an install touches, so tests can point it at a fake home and server.
 type Env struct {
@@ -107,11 +112,19 @@ func (e Env) note(tool, status, reason string) {
 	fmt.Fprintf(f, "%s\t%s\t%s\n", tool, status, reason)
 }
 
-// runs reports whether the binary at p answers --version in time.
-func (e Env) runs(p string) bool {
+// probe runs `p --version` once under the deadline and returns its combined output, so a caller
+// gets both the verdict and the reason (a dynamic-linker complaint, say) from a single run.
+func (e Env) probe(p string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), e.RunTimeout)
 	defer cancel()
-	return exec.CommandContext(ctx, p, "--version").Run() == nil
+	out, err := exec.CommandContext(ctx, p, "--version").CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// runs reports whether the binary at p answers --version in time.
+func (e Env) runs(p string) bool {
+	_, err := e.probe(p)
+	return err == nil
 }
 
 func usable(p string) bool {
@@ -124,7 +137,7 @@ func (e Env) cliPresent(name string) bool {
 	if usable("/usr/local/bin/" + name) {
 		return true
 	}
-	_, err := os.Lstat(filepath.Join(e.localBin(), name))
+	_, err := os.Stat(filepath.Join(e.localBin(), name)) // follows links: a dangling one is absent, like `[ -e ]`
 	return err == nil
 }
 
@@ -151,6 +164,8 @@ func classify(err error) string {
 		return ReasonNoSpace
 	case errors.Is(err, ErrChecksum):
 		return ReasonChecksum
+	case errors.Is(err, ErrNetwork):
+		return ReasonNetwork
 	}
 	var ue *url.Error
 	var ne interface{ Timeout() bool }
@@ -175,8 +190,9 @@ func (e Env) get(ctx context.Context, u, dest string) error {
 		if last == nil {
 			return nil
 		}
+		last = fmt.Errorf("%w: %w", ErrNetwork, last)
 		var hs httpStatusError
-		if errors.As(last, &hs) && hs >= 400 && hs < 500 && hs != 429 {
+		if errors.As(last, &hs) && hs >= 400 && hs < 500 && hs != 429 && hs != 408 {
 			return last // a 404 will not heal
 		}
 	}
@@ -211,7 +227,9 @@ func (e Env) getOnce(ctx context.Context, u, dest string) error {
 	return f.Close()
 }
 
-// checksumFor returns the digest listed for asset in a sha256sum-style file.
+// checksumFor returns the digest listed for asset in a sha256sum-style file. Every line naming
+// the asset must carry the same valid digest: `sha256sum -c` checked each of them, so a first
+// matching line must not hide a later contradicting one.
 func checksumFor(file, asset string) (string, error) {
 	f, err := os.Open(file)
 	if err != nil {
@@ -219,13 +237,28 @@ func checksumFor(file, asset string) (string, error) {
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
+	got := ""
 	for sc.Scan() {
 		fs := strings.Fields(sc.Text())
-		if len(fs) == 2 && strings.TrimPrefix(fs[1], "*") == asset {
-			return strings.ToLower(fs[0]), nil
+		if len(fs) != 2 || strings.TrimPrefix(fs[1], "*") != asset {
+			continue
 		}
+		sum := strings.ToLower(fs[0])
+		if _, err := hex.DecodeString(sum); err != nil || len(sum) != 64 {
+			return "", fmt.Errorf("%w: malformed digest listed for %s", ErrChecksum, asset)
+		}
+		if got != "" && got != sum {
+			return "", fmt.Errorf("%w: conflicting digests listed for %s", ErrChecksum, asset)
+		}
+		got = sum
 	}
-	return "", fmt.Errorf("%w: no checksum listed for %s", ErrChecksum, asset)
+	if err := sc.Err(); err != nil {
+		return "", err
+	}
+	if got == "" {
+		return "", fmt.Errorf("%w: no checksum listed for %s", ErrChecksum, asset)
+	}
+	return got, nil
 }
 
 // extractMember writes the first regular member of the .tar.gz whose base name is name to dest.
@@ -270,16 +303,18 @@ func (e Env) installAtomic(src, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	tmp := fmt.Sprintf("%s.af-new.%d", dest, os.Getpid())
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	// Exclusive creation beside dest: a pre-planted link at a predictable name must never lead
+	// the write into the copy being replaced.
+	out, err := os.CreateTemp(filepath.Dir(dest), filepath.Base(dest)+".af-new.")
 	if err != nil {
 		return err
 	}
+	tmp := out.Name()
 	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
 		os.Remove(tmp)
@@ -289,9 +324,13 @@ func (e Env) installAtomic(src, dest string) error {
 		os.Remove(tmp)
 		return err
 	}
-	if !e.runs(tmp) {
+	if err := os.Chmod(tmp, 0o755); err != nil {
 		os.Remove(tmp)
-		return fmt.Errorf("%s does not run in this environment, keeping the current copy", filepath.Base(dest))
+		return err
+	}
+	if msg, err := e.probe(tmp); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("%s does not run in this environment, keeping the current copy: %v: %s", filepath.Base(dest), err, msg)
 	}
 	if err := os.Rename(tmp, dest); err != nil {
 		os.Remove(tmp)

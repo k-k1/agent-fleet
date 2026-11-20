@@ -714,14 +714,23 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # rtk: installed by the Agent (`workspace-agent boot-install rtk`, internal/bootinstall): the
   # pinned GitHub Releases build, checksum-verified, status recorded to $AF_BOOT_INSTALL_STATUS.
   # Exit 3 = skipped for lack of space, which holds back this start's later downloads too.
-  if command -v workspace-agent >/dev/null 2>&1; then
+  # The image's Agent first: a stale or broken workspace-agent earlier on PATH (home's
+  # ~/.local/bin leads it) must not decide the install.
+  RTK_WA="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
+  if [ -x "$RTK_WA" ]; then
     rtk_rc=0
-    if [ "$REPIN" = 1 ]; then workspace-agent boot-install rtk --repin || rtk_rc=$?
-    else workspace-agent boot-install rtk || rtk_rc=$?; fi
-    if [ "$rtk_rc" = 3 ]; then BI_LOW_SPACE=1; fi
+    if [ "$REPIN" = 1 ]; then "$RTK_WA" boot-install rtk --repin || rtk_rc=$?
+    else "$RTK_WA" boot-install rtk || rtk_rc=$?; fi
+    case "$rtk_rc" in
+      0|1) ;;
+      3) BI_LOW_SPACE=1 ;;
+      *) # Outside the subcommand's contract (usage error, not runnable): no status line was written.
+         echo "[entrypoint] WARN: rtk boot-install exited $rtk_rc (retrying next start)"
+         if cli_usable rtk; then bi_note rtk skipped; else bi_note rtk failed other; fi ;;
+    esac
   elif [ -n "$(vj_pin rtk)" ]; then
     echo "[entrypoint] WARN: the Agent binary is missing; rtk boot-install skipped"
-    bi_note rtk failed other
+    if cli_usable rtk; then bi_note rtk skipped; else bi_note rtk failed other; fi
   fi
   # agy: the pinned immutable GCS object named by the official installer manifest, fetched
   # and verified via versions.json's agy + agy_build + agy_sha256 (same path as the Dockerfile

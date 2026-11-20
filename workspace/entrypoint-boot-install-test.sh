@@ -85,8 +85,8 @@ fails=0
 fail() { echo "FAIL: $1" >&2; echo "--- output ---" >&2; cat "$T/out" >&2; fails=$((fails+1)); }
 # run_block [VAR=val ...] — one start. SKIP=1 means no repin, so only absence/breakage triggers.
 run_block() {
-  cd "$T/cwd" && env -i PATH="$T/bin:/usr/bin:/bin:$(dirname "$(command -v node)")" HOME="$T/home" TMPDIR="$T/tmp" BI_DIR="$T/bidir" STUB_WA_LOG="$STUB_WA_LOG" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
-    bash -c 'set -e; export PATH="$HOME/.local/bin:$PATH"; source "$1"' _ "$BLOCK" >"$T/out" 2>&1
+  cd "$T/cwd" && env -i PATH="$T/bin:/usr/bin:/bin:$(dirname "$(command -v node)")" HOME="$T/home" TMPDIR="$T/tmp" BI_DIR="$T/bidir" STUB_WA_LOG="$STUB_WA_LOG" BI_AGENT_BIN="$T/bin/workspace-agent" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
+    bash -c 'set -e; export PATH="$HOME/.local/bin:$PATH"; source "$1"; echo "BI_LOW_SPACE=$BI_LOW_SPACE"' _ "$BLOCK" >"$T/out" 2>&1
 }
 reset() { rm -rf "$T/home/.local/bin/"{agy,.agy.version,rtk,cursor-agent} "$T/home/.local/share" "$T"/cwd/* "${T:?}"/home/*; }
 has() { grep -q -- "$1" "$T/out"; }
@@ -163,8 +163,23 @@ reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=1
 grep -qx 'workspace-agent boot-install rtk' "$STUB_WA_LOG" || fail "rtk: not handed to workspace-agent ($(cat "$STUB_WA_LOG"))"
 reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=0
 grep -qx 'workspace-agent boot-install rtk --repin' "$STUB_WA_LOG" || fail "rtk: --repin not passed on a repin start"
-# Exit 3 (no space) is not an error of the entrypoint and makes later downloads hold back.
+# Exit 3 (no space) is not an error of the entrypoint and sets BI_LOW_SPACE for what follows.
 reset; run_block STUB_WA_RC=3 || fail "rtk: exit 3 aborted the entrypoint"
+has 'BI_LOW_SPACE=1' || fail "rtk: exit 3 did not set BI_LOW_SPACE"
+reset; run_block STUB_WA_RC=0
+has 'BI_LOW_SPACE=0' || fail "rtk: BI_LOW_SPACE set without a no-space exit"
+# An exit code outside the contract (usage error, not runnable) is warned about and recorded.
+reset; run_block STUB_WA_RC=126
+has 'WARN: rtk boot-install exited 126' || fail "rtk: no WARN for an exit outside the contract"
+grep -qP '^rtk\tfailed\tother' "$T/bidir/install.tsv" || fail "rtk: no failed status for an exit outside the contract"
+# No Agent binary at all: recorded as failed when there is no usable rtk, skipped when there is one.
+reset; run_block BI_AGENT_BIN="$T/none"
+has 'Agent binary is missing' || fail "rtk: no WARN without the Agent"
+grep -qP '^rtk\tfailed\tother' "$T/bidir/install.tsv" || fail "rtk: no failed status without the Agent"
+reset; printf '#!/bin/sh\necho rtk 1.2.3\n' >"$T/home/.local/bin/rtk"; chmod +x "$T/home/.local/bin/rtk"
+run_block BI_AGENT_BIN="$T/none"
+grep -qP '^rtk\tskipped' "$T/bidir/install.tsv" || fail "rtk: a working copy was not recorded skipped without the Agent"
+reset; run_block
 # The shell no longer carries an rtk install of its own.
 grep -q 'boot-install rtk \$(vj_pin' "$BLOCK" && fail "rtk: shell install block still present"
 [ -e "$T/home/.local/bin/rtk" ] && fail "rtk: shell installed rtk itself"

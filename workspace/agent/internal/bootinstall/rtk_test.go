@@ -187,3 +187,109 @@ func TestClassify(t *testing.T) {
 		t.Fatal("other")
 	}
 }
+
+// A dangling ~/.local/bin/rtk is absent (the shell's `[ -e ]` followed links) and is reinstalled.
+func TestRTKReinstallsDanglingLink(t *testing.T) {
+	f := newRTK(t, goodRTK, "")
+	os.MkdirAll(filepath.Dir(f.bin()), 0o755)
+	if err := os.Symlink(filepath.Join(f.home, "gone"), f.bin()); err != nil {
+		t.Fatal(err)
+	}
+	if rc := RTK(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if b, _ := os.ReadFile(f.bin()); string(b) != goodRTK {
+		t.Fatalf("not reinstalled: %q", b)
+	}
+}
+
+// A link planted at a predictable candidate name must not redirect the write into the copy
+// being replaced.
+func TestRTKCandidateNameIsNotPredictable(t *testing.T) {
+	f := newRTK(t, "#!/bin/sh\nexit 1\n", "")
+	os.MkdirAll(filepath.Dir(f.bin()), 0o755)
+	os.WriteFile(f.bin(), []byte("#!/bin/sh\necho rtk 0.0.1\n"), 0o755)
+	os.Symlink(f.bin(), fmt.Sprintf("%s.af-new.%d", f.bin(), os.Getpid()))
+	f.env.Repin = true
+	RTK(t.Context(), f.env)
+	if b, _ := os.ReadFile(f.bin()); !strings.Contains(string(b), "0.0.1") {
+		t.Fatalf("current copy overwritten through a planted link: %q", b)
+	}
+}
+
+func TestChecksumForRejectsConflictingLines(t *testing.T) {
+	good, bad := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	for name, body := range map[string]string{
+		"conflict":  good + "  x.tgz\n" + bad + "  x.tgz\n",
+		"malformed": "zz  x.tgz\n",
+		"missing":   good + "  y.tgz\n",
+	} {
+		p := filepath.Join(t.TempDir(), "c.txt")
+		os.WriteFile(p, []byte(body), 0o600)
+		if _, err := checksumFor(p, "x.tgz"); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	p := filepath.Join(t.TempDir(), "c.txt")
+	os.WriteFile(p, []byte(good+"  x.tgz\n"+good+" *x.tgz\n"), 0o600)
+	if got, err := checksumFor(p, "x.tgz"); err != nil || got != good {
+		t.Fatalf("got %q %v", got, err)
+	}
+}
+
+func TestRTKTransientStatusRetriedAndTruncationIsNetwork(t *testing.T) {
+	f := newRTK(t, goodRTK, "")
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if hits == 1 {
+			w.WriteHeader(http.StatusRequestTimeout)
+			return
+		}
+		w.Header().Set("Content-Length", "100")
+		w.Write([]byte("short")) // body cut short
+	}))
+	defer srv.Close()
+	f.env.RTKBaseURL = srv.URL
+	f.env.Client = srv.Client()
+	if rc := RTK(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d", rc)
+	}
+	if hits < 2 {
+		t.Fatal("408 was not retried")
+	}
+	if got := f.statusText(); got != "rtk\tfailed\tnetwork\n" {
+		t.Fatalf("status %q", got)
+	}
+}
+
+func TestRTKNoPinKeepsSkippedForExistingCopy(t *testing.T) {
+	f := newRTK(t, goodRTK, "")
+	f.env.Pins = map[string]string{}
+	os.MkdirAll(filepath.Dir(f.bin()), 0o755)
+	os.WriteFile(f.bin(), []byte(goodRTK), 0o755)
+	if rc := RTK(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d", rc)
+	}
+	if got := f.statusText(); got != "rtk\tskipped\t\n" {
+		t.Fatalf("status %q", got)
+	}
+}
+
+func TestRTKRepinSkippedForNoSpaceKeepsOldCopy(t *testing.T) {
+	f := newRTK(t, goodRTK, "")
+	os.MkdirAll(filepath.Dir(f.bin()), 0o755)
+	old := "#!/bin/sh\necho rtk 0.0.1\n"
+	os.WriteFile(f.bin(), []byte(old), 0o755)
+	f.env.Repin = true
+	f.env.FreeMiB = func(string) (int64, bool) { return 10, true }
+	if rc := RTK(t.Context(), f.env); rc != ExitNoSpace {
+		t.Fatalf("rc=%d", rc)
+	}
+	if got := f.statusText(); got != "rtk\tskipped\tno_space\n" {
+		t.Fatalf("status %q", got)
+	}
+	if b, _ := os.ReadFile(f.bin()); string(b) != old {
+		t.Fatal("old copy changed")
+	}
+}

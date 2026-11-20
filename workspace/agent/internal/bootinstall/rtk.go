@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -24,13 +23,9 @@ func rtkAsset(arch string) (string, error) {
 	return "", fmt.Errorf("unsupported arch: %s", arch)
 }
 
-// rtkCurrent is the installed version, "" when it cannot be read.
-func (e Env) rtkCurrent(bin string) string {
-	out, err := exec.Command(bin, "--version").Output()
-	if err != nil {
-		return ""
-	}
-	line, _, _ := strings.Cut(string(out), "\n")
+// rtkVersion parses "rtk <version>" from a --version answer, "" when it is not that shape.
+func rtkVersion(out string) string {
+	line, _, _ := strings.Cut(out, "\n")
 	if f := strings.Fields(line); len(f) >= 2 {
 		return f[1]
 	}
@@ -41,18 +36,15 @@ func (e Env) rtkCurrent(bin string) string {
 // Repin) not at the pin. It returns the process exit code and records the outcome.
 func RTK(ctx context.Context, e Env) int {
 	pin := e.Pins["rtk"]
-	if pin == "" {
-		return ExitOK
-	}
 	bin := filepath.Join(e.localBin(), "rtk")
 	need := false
-	switch {
-	case !e.cliPresent("rtk"):
-		need = true
-	case func() bool { _, err := os.Stat(bin); return err == nil && !e.runs(bin) }():
-		need = true // present but does not answer --version: counts as not present
-	case e.Repin && usable(bin):
-		if cur := e.rtkCurrent(bin); cur != "" && cur != pin {
+	if pin != "" {
+		// One bounded probe answers both "does it run" and "which version".
+		if _, err := os.Stat(bin); err != nil {
+			need = !e.cliPresent("rtk")
+		} else if out, err := e.probe(bin); err != nil {
+			need = true // present but does not answer --version: counts as not present
+		} else if cur := rtkVersion(out); e.Repin && cur != "" && cur != pin {
 			need = true
 		}
 	}
