@@ -173,6 +173,7 @@ func TestClaudeUsageLimitWait(t *testing.T) {
 	}{
 		{"Usage limit reached · limit resets 3:45pm\nContinuing automatically at 3:45pm · Esc to cancel", true},
 		{"Usage limit reached · limit resets 3:45pm\nContinuing shortly · Esc to cancel", true},
+		{"Usage limit reached\nContinuing automatically when\nit resets · Esc to cancel\n──────\n❯\nstatus line", true},
 		{"Usage limit reached · continuing automatically at 3:45pm · esc to cancel\n❯", false},
 		{"You've hit your weekly limit · resets 12am (Asia/Tokyo)", false},
 		{"Usage limit reached · limit resets 3:45pm\nContinuing automatically at 3:45pm", false},

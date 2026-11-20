@@ -508,7 +508,7 @@ const PREFS = {
   // stopped in the meantime is woken for it). Default ON. Note this toggle governs the
   // RESUME only — dismissing the limit menu itself ("stop and wait", the no-charge
   // option) happens either way, because while it is up the session accepts nothing at all.
-  rateLimitAutoResume: synced(true),
+  rateLimitAutoResume: agentDefaulted(true),
   claudeLimitResumeMode: agentDefaulted("inherit", {
     normalize: (v) => v === "af" || v === "claude" || v === "off" ? v : "inherit",
   }),

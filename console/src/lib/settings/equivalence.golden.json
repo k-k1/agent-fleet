@@ -5728,6 +5728,7 @@
       "expandThinking": {
        "claude": true
       },
+      "claudeLimitResumeMode": "af",
       "ssmHostColors": {
        "x": "y"
       },
@@ -5844,6 +5845,7 @@
     "expandThinking": {
      "claude": true
     },
+    "claudeLimitResumeMode": "af",
     "ssmHostColors": {
      "x": "y"
     },
@@ -6103,7 +6105,6 @@
     "assistantQuietCompletion": true,
     "assistantAutoPilot": true,
     "assistantAutoResume": false,
-    "rateLimitAutoResume": false,
     "claudeAbortAutoResume": false,
     "assistantAutoCompact": false,
     "assistantAutoCompactTokens": 150001,
@@ -6526,6 +6527,7 @@
     "sharedColor": "teal",
     "assistantColor": "mono",
     "appearancePerTenant": true,
+    "claudeLimitResumeMode": "af",
     "ttsEnabled": true,
     "ttsSessionNotify": true,
     "usageResetNotify": false,
@@ -6719,7 +6721,6 @@
     "assistantQuietCompletion": true,
     "assistantAutoPilot": true,
     "assistantAutoResume": false,
-    "rateLimitAutoResume": false,
     "claudeAbortAutoResume": false,
     "assistantAutoCompact": false,
     "assistantAutoCompactTokens": 150001,
@@ -7419,6 +7420,7 @@
       "expandThinking": {
        "claude": true
       },
+      "claudeLimitResumeMode": "af",
       "ssmHostColors": {
        "x": "y"
       },
@@ -7535,6 +7537,7 @@
     "expandThinking": {
      "claude": true
     },
+    "claudeLimitResumeMode": "af",
     "ssmHostColors": {
      "x": "y"
     },
@@ -8834,6 +8837,7 @@
       "expandThinking": {
        "claude": true
       },
+      "claudeLimitResumeMode": "af",
       "ssmHostColors": {
        "x": "y"
       },
@@ -8950,6 +8954,7 @@
     "expandThinking": {
      "claude": true
     },
+    "claudeLimitResumeMode": "af",
     "ssmHostColors": {
      "x": "y"
     },

@@ -725,7 +725,7 @@ func atIdlePrompt(s string) bool {
 // It is as width-fragile as modalMarkers; the line-start anchor is there so the repo's own
 // prose (this comment included) cannot match.
 var rateLimitOptionRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?\d+\.\s+(?:Stop and wait for limit|Ask your admin for more usage)`)
-var currentRateLimitOptionRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?\d+\.\s+(?:Switch to usage credits|Add funds to continue with usage credits|Wait here, then continue automatically|Don.t continue automatically)`)
+var currentRateLimitOptionRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?\d+\.\s+(?:Switch to usage|Add funds to continue with usage|Upgrade your plan|Wait here, then continue automatically|Don.t continue automatically)`)
 
 // AtRateLimitModal reports whether a claude pane is parked on that menu.
 //
@@ -767,8 +767,9 @@ var rateLimitDefaultRe = regexp.MustCompile(`(?m)^\s*\x{276F} \d+\.\s+(?:Stop an
 // ClaudeUsageLimitWait uses the live footer because the transcript banner survives cancellation.
 func ClaudeUsageLimitWait(frame string) bool {
 	lines := strings.Split(strings.TrimSpace(frame), "\n")
-	for i := max(0, len(lines)-6); i < len(lines); i++ {
-		if !strings.HasPrefix(strings.TrimSpace(lines[i]), "Usage limit reached ·") {
+	for i := max(0, len(lines)-12); i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line != "Usage limit reached" && !strings.HasPrefix(line, "Usage limit reached ·") {
 			continue
 		}
 		footer := strings.Join(strings.Fields(strings.Join(lines[i:], " ")), " ")
@@ -779,7 +780,7 @@ func ClaudeUsageLimitWait(frame string) bool {
 	return false
 }
 
-var nativeLimitWaitFooter = regexp.MustCompile(`^Usage limit reached · .* (?:Continuing automatically (?:at .+?|when it resets)|Continuing shortly) · Esc to cancel(?:$| · )`)
+var nativeLimitWaitFooter = regexp.MustCompile(`^Usage limit reached(?: · .*?)? (?:Continuing automatically (?:at .+?|when it resets)|Continuing shortly) · Esc to cancel(?:$| )`)
 
 // DismissRateLimitModal confirms a selected stop action and reports whether the menu is gone.
 //
@@ -803,10 +804,14 @@ func DismissRateLimitModal(name string) bool {
 	if !atRateLimitModal(frame) {
 		return true // the menu is already gone
 	}
+	key := "Enter"
 	if !rateLimitDefaultRe.MatchString(frame) {
-		return false // the selection has moved off 1 — a human is mid-choice, so leave it alone
+		if !currentRateLimitOptionRe.MatchString(frame) || !strings.Contains(frame, "Esc to cancel") {
+			return false
+		}
+		key = "Escape"
 	}
-	if err := Run("send-keys", "-t", pane, "Enter"); err != nil {
+	if err := Run("send-keys", "-t", pane, key); err != nil {
 		return false
 	}
 	time.Sleep(400 * time.Millisecond) // wait for the repaint (same interval as LeaveAgentsView)

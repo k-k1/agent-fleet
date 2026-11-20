@@ -255,6 +255,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 			return li
 		}
 		if pane.UsageLimitWait {
+			li.UsageLimitWait = true
 			li.State = "working"
 			return li
 		}

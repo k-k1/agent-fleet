@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
-import { useSettings, setSetting } from "../../../lib/settings.ts";
+import { useSettings, setSetting, setSettings, useUIPrefsLoading } from "../../../lib/settings.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { Choice, OnOff } from "../parts/controls.tsx";
 import { ProviderCard } from "../parts/providerCard.tsx";
@@ -114,6 +114,7 @@ export function CodexBehavior({
 }) {
   const tr = useT();
   const s = useSettings();
+  const prefsLoading = useUIPrefsLoading();
   return (
     <ProviderCard id="codex" name={kindDisplayName("codex")} status={undefined}>
       {head}
@@ -122,12 +123,12 @@ export function CodexBehavior({
         <LaunchDefaults kind="codex" />
         <ThinkingRow kind="codex" />
         <SettingRow label={tr("agents.rate_limit_resume")}>
-          <OnOff value={s.rateLimitAutoResume} onChange={(v) => {
-            if (s.claudeLimitResumeMode === "inherit") {
-              setSetting("claudeLimitResumeMode", s.rateLimitAutoResume ? "af" : "off");
-            }
-            setSetting("rateLimitAutoResume", v);
-          }} />
+          {prefsLoading ? "…" : <OnOff value={s.rateLimitAutoResume} onChange={(v) => {
+            setSettings({
+              rateLimitAutoResume: v,
+              ...(s.claudeLimitResumeMode === "inherit" ? { claudeLimitResumeMode: s.rateLimitAutoResume ? "af" : "off" } : {}),
+            });
+          }} />}
         </SettingRow>
         <p className="ps-note">{tr("agents.note_codex_rate_limit_resume")}</p>
         {codex && (

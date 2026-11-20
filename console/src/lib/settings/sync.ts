@@ -435,6 +435,9 @@ async function hydrateUIPrefsOnce(): Promise<boolean> {
   if (!("ttsBackgroundPlayback" in srv) && typeof srv.ttsQuietWhenHidden === "boolean") {
     srv.ttsBackgroundPlayback = srv.ttsQuietWhenHidden ? "quiet" : "normal";
   }
+  if ((!('claudeLimitResumeMode' in srv) || srv.claudeLimitResumeMode === "inherit") && typeof srv.rateLimitAutoResume === "boolean") {
+    srv.claudeLimitResumeMode = srv.rateLimitAutoResume ? "af" : "off";
+  }
   // Users left with only the legacy single pin (assistantAgent) migrate to a priority list with
   // that pin promoted to the front (the same rule as the Agent's assistantAgentOrderPref).
   if (!("assistantAgentOrder" in srv) && typeof srv.assistantAgent === "string" && srv.assistantAgent !== "auto") {

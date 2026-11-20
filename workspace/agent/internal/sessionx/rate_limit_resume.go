@@ -52,6 +52,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -298,6 +299,15 @@ func rateLimitBookingEnabled(m session.Meta) bool {
 		return claudeLaunchLimitMode(m) == "af"
 	}
 	return uiprefs.RateLimitAutoResume()
+}
+
+func claudeTurnAfterLimit(m session.Meta, st rateLimitState) bool {
+	episode, err := time.Parse(time.RFC3339, st.At)
+	if err != nil {
+		return false
+	}
+	start, err := time.Parse(time.RFC3339Nano, status.LastTurnStart(session.UUID(m.Dir, m.Name)))
+	return err == nil && !start.Before(episode.Add(time.Second))
 }
 
 func claudeOwnsLimitWait(m session.Meta) bool {

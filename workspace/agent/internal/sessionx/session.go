@@ -198,7 +198,12 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	fillStateSince(&s, m, realSinceProbes)
 	fillBackgroundSince(&s, time.Now())
 	if alive {
-		fillProgress(&s, m, realProgressProbes)
+		if li.UsageLimitWait {
+			// The live footer confirms a wait even when the pane is unchanged for hours.
+			s.ProgressAt = time.Now().Format(time.RFC3339)
+		} else {
+			fillProgress(&s, m, realProgressProbes)
+		}
 	}
 	// When the login in force was written. Sent for a stopped session too: the mirror of a
 	// session that died on an expired login is exactly where the reader goes to see whether

@@ -166,6 +166,7 @@ const (
 // LiveInfo is the slice of a wire Session whose values depend on the kind and live
 // state. wireSession fills the static fields and asks the agent for this.
 type LiveInfo struct {
+	UsageLimitWait bool
 	State          string                // claude/opencode/codex live state; "" for shell/ssm
 	RemoteURL      string                // claude Remote Control URL, "" otherwise
 	Context        *session.ContextUsage // context fill; nil = sessionx derives it from Transcript()
