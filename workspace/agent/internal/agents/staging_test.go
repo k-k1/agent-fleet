@@ -48,6 +48,30 @@ func TestInstallFileReplacesWithMode(t *testing.T) {
 	}
 }
 
+func TestWriteFileAtomicCheckedKeepsConcurrentUpdate(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(dst, []byte("before"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed := errors.New("config changed")
+	err := WriteFileAtomicChecked(dst, []byte("staged"), 0o600, func() error {
+		if err := os.WriteFile(dst, []byte("concurrent update"), 0o600); err != nil {
+			return err
+		}
+		return changed
+	})
+	if !errors.Is(err, changed) {
+		t.Fatalf("write returned %v; want the check error", err)
+	}
+	if b, err := os.ReadFile(dst); err != nil || string(b) != "concurrent update" {
+		t.Fatalf("config = %q, %v; want concurrent update", b, err)
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
+		t.Fatalf("temporary files left: %v, %v", entries, err)
+	}
+}
+
 // Homes left by a dead Agent are swept; one in use (younger than the TTL) is not.
 func TestNewStagingHomeSweepsOnlyStaleHomes(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

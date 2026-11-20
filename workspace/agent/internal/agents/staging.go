@@ -82,6 +82,12 @@ func InstallFile(src, dst string, perm os.FileMode) error {
 // WriteFileAtomic writes b to dst through a synced temporary file in the same directory and a
 // rename, creating the directory (0700) when it is missing.
 func WriteFileAtomic(dst string, b []byte, perm os.FileMode) error {
+	return WriteFileAtomicChecked(dst, b, perm, nil)
+}
+
+// WriteFileAtomicChecked runs check after staging the replacement and, if the
+// check succeeds, renames it immediately. It does not lock external writers.
+func WriteFileAtomicChecked(dst string, b []byte, perm os.FileMode, check func() error) error {
 	dir := filepath.Dir(dst)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -105,6 +111,11 @@ func WriteFileAtomic(dst string, b []byte, perm os.FileMode) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return err
+	}
+	if check != nil {
+		if err := check(); err != nil {
+			return err
+		}
 	}
 	return os.Rename(tmp.Name(), dst)
 }

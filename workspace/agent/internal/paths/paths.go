@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 func HomeDir() string {
@@ -82,6 +83,16 @@ func CodexHome() string {
 		return d
 	}
 	return filepath.Join(HomeDir(), ".codex")
+}
+
+// CodexConfigMu serializes Agent Fleet's read-modify-write operations on the
+// shared Codex user config across launch, settings and MCP materialization.
+var CodexConfigMu sync.Mutex
+
+// CodexConfigWritePath resolves existing links before an atomic rename. A
+// dangling config symlink must remain a link even when its target is missing.
+func CodexConfigWritePath() (string, error) {
+	return ResolveFileWritePath(filepath.Join(CodexHome(), "config.toml"))
 }
 
 // OpencodeConfigDir is opencode's global config root (opencode.jsonc, plugin/,

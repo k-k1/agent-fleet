@@ -62,6 +62,7 @@ type mockCodexServer struct {
 	// the way a CLI without the method does.
 	bgTerminals []map[string]any
 	bgUnknown   bool
+	threadRPC   func(string) (result map[string]any, errMessage string)
 }
 
 func newMockCodexServer(t *testing.T) (*mockCodexServer, *appClient) {
@@ -122,6 +123,20 @@ func (m *mockCodexServer) serve(conn *websocket.Conn) {
 		m.mu.Unlock()
 		close(signal)
 		switch msg.Method {
+		case "thread/start", "thread/resume", "thread/fork":
+			m.mu.Lock()
+			handle := m.threadRPC
+			m.mu.Unlock()
+			if handle == nil {
+				m.result(msg.ID, map[string]any{})
+				continue
+			}
+			result, errMessage := handle(msg.Method)
+			if errMessage != "" {
+				m.write(map[string]any{"id": json.RawMessage(msg.ID), "error": map[string]any{"code": -32600, "message": errMessage}})
+				continue
+			}
+			m.result(msg.ID, result)
 		case "turn/start":
 			m.mu.Lock()
 			failErr := m.failNextStart

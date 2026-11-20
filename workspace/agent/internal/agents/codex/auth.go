@@ -291,8 +291,16 @@ func ensureFolderTrusted(dir string) {
 	if dir == "" {
 		return
 	}
-	p := filepath.Join(paths.HomeDir(), ".codex", "config.toml")
-	b, _ := os.ReadFile(p)
+	paths.CodexConfigMu.Lock()
+	defer paths.CodexConfigMu.Unlock()
+	p, err := paths.CodexConfigWritePath()
+	if err != nil {
+		return
+	}
+	b, err := os.ReadFile(p)
+	if err != nil && !os.IsNotExist(err) {
+		return
+	}
 	// tomlString quotes+escapes the path as a TOML key, matching codex's own format.
 	header := "[projects." + tomlString(dir) + "]"
 	if strings.Contains(string(b), header) {

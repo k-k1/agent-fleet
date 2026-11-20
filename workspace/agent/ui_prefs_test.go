@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -55,6 +56,25 @@ func TestAssistantAgentOrderPref(t *testing.T) {
 			writeUIPrefs(t, tt.prefs)
 			if got := assistantAgentOrderPref(); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("order = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCodexRememberLaunchDefaultsPref(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		want        bool
+	}{
+		{"missing", `{}`, true},
+		{"enabled", `{"codexRememberDefaults":true}`, true},
+		{"disabled", `{"codexRememberDefaults":false}`, false},
+		{"invalid", `{"codexRememberDefaults":"false"}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writeUIPrefs(t, tc.value)
+			if got := codex.RememberLaunchDefaults(); got != tc.want {
+				t.Fatalf("remember = %v, want %v", got, tc.want)
 			}
 		})
 	}

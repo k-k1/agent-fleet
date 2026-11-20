@@ -430,6 +430,8 @@ export const settings = {
   "agents.codex_hint2_1": "ChatGPT サブスクで接続するには、先に ChatGPT の ",
   "agents.codex_hint2_2": " で「Codex に対してデバイスコード認証を有効にする」をオンにしてください。",
   "agents.codex_nudge": "利用制限時のモデル切替案内",
+  "agents.codex_remember_defaults": "Codex 自身のモデルと推論レベルを記憶",
+  "agents.note_codex_remember_defaults": "設定の保存後、オフの状態で新規 Codex セッションを起動すると、Codex の共通ユーザー設定からモデルと推論レベルを削除します。同じ設定を使うターミナル起動にも影響します。プロジェクトやプロファイルの設定は引き続き適用されます。",
   "agents.codex_nudge_on": "⚠ オンの場合、利用制限が近づくと Codex の案内が表示され、軽量モデルへ切り替わる可能性があります。",
   "agents.codex_nudge_off": "オフの場合、利用制限が近いときに軽量モデルへの切替を勧める Codex の案内を表示しません。",
   "agents.codex_rtk_note":

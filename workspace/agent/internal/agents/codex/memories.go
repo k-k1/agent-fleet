@@ -52,7 +52,12 @@ func MemoriesFlag() (val, found bool) {
 // SetMemoriesFlag writes features.memories alone: no tuning is seeded, because the Agent memory
 // switch only puts back the value the member had (#1972), and nothing else in config.toml moves.
 func SetMemoriesFlag(on bool) error {
-	path := codexConfigPath()
+	paths.CodexConfigMu.Lock()
+	defer paths.CodexConfigMu.Unlock()
+	path, err := paths.CodexConfigWritePath()
+	if err != nil {
+		return err
+	}
 	b, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err

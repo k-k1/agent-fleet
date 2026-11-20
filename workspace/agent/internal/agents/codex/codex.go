@@ -251,6 +251,11 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if threadHeld(resumeID) {
 		return agents.LaunchPlan{}, ErrThreadReleasing
 	}
+	if resumeID == "" && forkFrom == "" {
+		if err := prepareFreshLaunch(); err != nil {
+			return agents.LaunchPlan{}, err
+		}
+	}
 	// A pane killed mid-compaction left its PreCompact mark open, and a resumed rollout
 	// records no end for that turn: drop it, or the fresh pane reads compacting until its
 	// first prompt.

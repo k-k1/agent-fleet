@@ -6,6 +6,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/tats-u/goldmark-cjk-friendly/v2 v2.0.3
 	github.com/yuin/goldmark v1.7.17

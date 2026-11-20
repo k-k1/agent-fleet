@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
@@ -61,6 +62,10 @@ func skipPermissionsPref(kind string) (bool, bool) {
 // the same way opencode.UsagePref and mcpreg.PeerMessagingEnabled are.
 func init() {
 	agents.SkipPermissionsPref = skipPermissionsPref
+	codex.RememberLaunchDefaults = func() bool {
+		v, ok := uiprefs.Read()["codexRememberDefaults"].(bool)
+		return !ok || v
+	}
 	muse.ModelHidden = func(id string) bool { return sessionx.ModelHidden(session.KindMuse, id) }
 }
 

@@ -509,6 +509,7 @@ const PREFS = {
   // RESUME only — dismissing the limit menu itself ("stop and wait", the no-charge
   // option) happens either way, because while it is up the session accepts nothing at all.
   rateLimitAutoResume: agentDefaulted(true),
+  codexRememberDefaults: agentDefaulted(true),
   claudeLimitResumeMode: agentDefaulted("inherit", {
     normalize: (v) => v === "af" || v === "native" || v === "off" ? v : "inherit",
   }),
