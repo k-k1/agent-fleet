@@ -1421,9 +1421,9 @@ func writeBlockedErr(w http.ResponseWriter, state, kind string) {
 // markSessionWorking optimistically marks the session working so a poll immediately
 // after a send doesn't read a stale idle before claude's UserPromptSubmit hook fires.
 //
-// It records no turn mark: only the two prompt-delivery sites, which can take the baseline
-// before the input is delivered, use markSessionWorkingFrom. Any other caller's turn keeps the
-// settle window.
+// It records no turn mark: the prompt-delivery sites, which can take the baseline before the
+// input is delivered, use markSessionWorkingFrom (submitPromptTUI, its revision variant and
+// injectSessionPrompt). Any other caller's turn keeps the settle window.
 func markSessionWorking(name string) (rev string) {
 	return markSessionWorkingFrom(name, turnMarkBaseline{})
 }

@@ -42,6 +42,7 @@ The items under "**Behavior**" on the **Antigravity** card in **⚙Settings → 
 - **The models on offer are fetched from the account when you start.** The reasoning effort is part of the model name, so there is no separate picker
 - The usage chip on the WS bar shows the 5-hour and weekly usage ([Check prices and usage](usage.md))
 - **It may end a turn while a background command keeps running.** Meanwhile the session reads "**Ready · running in background**" and is not treated as idle
+- When that background work finishes, agy normally starts the next turn by itself. If it has not done so a minute later, Agent Fleet sends it one prompt to read the output and continue. The turn carries the **Notice** badge. A session waiting on your answer, or with a message already on its way, does not get one, and a session gets at most 3 an hour
 - Background work keeps the workspace awake for at most 2 hours by default, though. For a longer build, use "**Keep awake**" ([Stop when done, or keep a session awake](../sessions/auto-stop.md#keep-a-session-awake))
 - A turn agy never closes loses its in-progress mark after an hour without change. It keeps the mark while that turn's command is still running
 - **It is one of the routes a session can make images with.** It makes one image per call and takes up to 3 reference images for an edit ([Have a session make images](../images/from-session.md))

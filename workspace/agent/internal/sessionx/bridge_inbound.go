@@ -84,13 +84,17 @@ func injectSessionPrompt(name, prompt string, origin agents.Origin) error {
 	if pane == "" {
 		return fmt.Errorf("could not resolve session pane for %q", name)
 	}
+	// The baseline is taken before the input lands, as submitPromptTUI does: without it a poll
+	// within the settle window could read the previous turn's end off a hook-less kind's source
+	// and stamp it as this turn's.
+	pre := captureTurnMark(name)
 	if err := typeLineAndSubmit(name, pane, prompt); err != nil {
 		return err
 	}
 	// A slash command isn't a turn — don't optimistically mark working (mirrors submitPromptTUI),
 	// and for the same reason it does not supersede a stop-after-turn arm (docs/log/85).
 	if !slashCmdRe.MatchString(prompt) {
-		markSessionWorking(name)
+		markSessionWorkingFrom(name, pre)
 		cancelStopArmOnNewPrompt(name)
 	}
 	return nil
