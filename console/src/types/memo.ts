@@ -292,7 +292,9 @@ export interface MemoDelivery {
   /** How the first turn of the session ended; null until it did. */
   firstTurn: { outcome: string; ms: number; endedAt: string } | null;
   /** The hand-back the run's session asked for, null for none. result is what the close made of
-   *  it: "applied", or why it was dropped ("turn", "pr", "unread"); "" before the close. */
+   *  it: "applied", or why it was dropped ("turn", "pr", "unread", "released": a person took the session
+   *  over; "returned": a person returned the notes first); "" before the close, and on a run closed as
+   *  "deferred" until its session is stopped and the notes go back. */
   defer: { reason: string; notBefore: string; at: string; result: string } | null;
   /** The notes that stayed with the run because another waiting note holds their work item, and
    *  that note. */

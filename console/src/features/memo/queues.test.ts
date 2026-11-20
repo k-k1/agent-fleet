@@ -394,11 +394,14 @@ describe("a run that hands its memo back (ADR 0137, addendum 2026-11-19, part B)
 
   it("words what became of the request", () => {
     const req = { reason: "r", notBefore: "n", at: "a", result: "" };
-    expect(deferWords({ state: "closed", defer: null })).toBeNull();
-    expect(deferWords({ state: "open", defer: req })).toBe("memo.d_defer_asked");
-    expect(deferWords({ state: "closed", defer: { ...req, result: "applied" } })).toBe("memo.d_defer_applied");
-    expect(deferWords({ state: "closed", defer: { ...req, result: "turn" } })).toBe("memo.d_defer_dropped_turn");
-    expect(deferWords({ state: "closed", defer: req })).toBe("memo.d_defer_not_applied");
+    expect(deferWords({ state: "closed", outcome: "clean", defer: null })).toBeNull();
+    expect(deferWords({ state: "open", outcome: "", defer: req })).toBe("memo.d_defer_asked");
+    expect(deferWords({ state: "closed", outcome: "deferred", defer: { ...req, result: "applied" } })).toBe("memo.d_defer_applied");
+    expect(deferWords({ state: "closed", outcome: "clean", defer: { ...req, result: "turn" } })).toBe("memo.d_defer_dropped_turn");
+    expect(deferWords({ state: "closed", outcome: "aborted", defer: req })).toBe("memo.d_defer_not_applied");
+    expect(deferWords({ state: "closed", outcome: "deferred", defer: req })).toBe("memo.d_defer_settling");
+    expect(deferWords({ state: "closed", outcome: "clean", defer: { ...req, result: "released" } })).toBe("memo.d_defer_dropped_released");
+    expect(deferWords({ state: "closed", outcome: "clean", defer: { ...req, result: "returned" } })).toBe("memo.d_defer_returned");
   });
 
   it("offers the return on a closed run with memos that was not returned yet", () => {
@@ -436,6 +439,9 @@ describe("a run that hands its memo back (ADR 0137, addendum 2026-11-19, part B)
     expect(
       waitingWords({ waiting: { reason: "below_threshold", detail: { needed: 3, waiting: 1, blocked: 0, deferred: 1 } } }, at, (k) => k)?.key,
     ).toBe("memo.waiting_below_threshold_deferred");
+    expect(
+      waitingWords({ waiting: { reason: "below_threshold", detail: { needed: 3, waiting: 1, blocked: 2, deferred: 1 } } }, at, (k) => k)?.key,
+    ).toBe("memo.waiting_below_threshold_blocked_deferred");
   });
 });
 

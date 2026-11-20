@@ -378,6 +378,9 @@ A run that went on working is not handed back: the run ends as "Done", the memo 
 |---|---|
 | Asked to hand its memo back | The run is still open. The request applies when it ends |
 | Handed its memo back | It was applied |
+| Handing its memo back once its session is stopped | The run is over. The memo goes back once its session has been stopped |
+| Hand-back dropped: you took the session over | You acted on the session before it was stopped |
+| You returned the memo before the hand-back | You pressed "Return to queue" first. Your return stands |
 | Hand-back dropped: the run went on working after asking | The session, or a session it started, took another turn after asking |
 | Hand-back dropped: its session has an open or merged pull request | The work may already be done |
 | Hand-back dropped: whether the run went on could not be checked | The workspace could not show it (an older version, or the pull requests could not be read) |

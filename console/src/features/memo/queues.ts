@@ -196,7 +196,7 @@ export function waitingWords(
     case "below_threshold":
       if (w.detail?.deferred)
         return {
-          key: "memo.waiting_below_threshold_deferred",
+          key: w.detail?.blocked ? "memo.waiting_below_threshold_blocked_deferred" : "memo.waiting_below_threshold_deferred",
           params: { needed: w.detail?.needed ?? 0, count: w.detail?.waiting ?? 0, blocked: w.detail?.blocked ?? 0, deferred: w.detail.deferred },
         };
       return w.detail?.blocked
@@ -855,14 +855,23 @@ const DEFER_RESULT_KEYS: Record<string, MsgKey> = {
   turn: "memo.d_defer_dropped_turn",
   pr: "memo.d_defer_dropped_pr",
   unread: "memo.d_defer_dropped_unread",
+  released: "memo.d_defer_dropped_released",
+  returned: "memo.d_defer_returned",
 };
+
+/** Whether a run's hand-back is still to come: asked on an open run, or closed as deferred and
+ *  waiting for its session to be stopped before the notes go back. */
+export function deferPending(d: Pick<MemoDelivery, "state" | "outcome" | "defer">): boolean {
+  return !!d.defer && (d.state !== "closed" || (d.outcome === "deferred" && !d.defer.result));
+}
 
 /** What became of a run's hand-back request: asked (open run), applied, or why it was dropped.
  *  null for a run with none. A closed run with no result was closed in a way that does not read one
  *  (ended, aborted, ...): the request did not apply. */
-export function deferWords(d: Pick<MemoDelivery, "state" | "defer">): MsgKey | null {
+export function deferWords(d: Pick<MemoDelivery, "state" | "outcome" | "defer">): MsgKey | null {
   if (!d.defer) return null;
   if (d.state !== "closed") return "memo.d_defer_asked";
+  if (deferPending(d)) return "memo.d_defer_settling";
   return DEFER_RESULT_KEYS[d.defer.result] ?? "memo.d_defer_not_applied";
 }
 

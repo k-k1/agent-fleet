@@ -585,3 +585,31 @@ func TestMemoPRWaitsSkipsDeferredMessages(t *testing.T) {
 		}
 	})
 }
+
+// Review round 2: a person's return of a run whose hand-back is not decided yet stands; the settle
+// pass that follows the retire does not record the run's own hand-back over it.
+func TestMemoReturnSettlesAnUndecidedHandBack(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d, mid := e.openDeferrable(nil)
+		e.deferCall(d.ID, map[string]any{"session": d.Session, "reason": "later"})
+		agent.mu.Lock()
+		agent.retireFail = 1
+		agent.mu.Unlock()
+		e.settleTwice()
+		if got := e.delivery(d.ID); got.Outcome != store.DeliveryDeferred || got.DeferResult != "" {
+			t.Fatalf("not undecided: %+v", got)
+		}
+		if rec := e.do("a", "POST", "/api/memo-queues/"+d.QueueID+"/deliveries/"+d.ID+"/return", nil); rec.Code != http.StatusOK {
+			t.Fatalf("return: %d %s", rec.Code, rec.Body.String())
+		}
+		e.settleNow(time.Now())
+		e.settleNow(time.Now())
+		got := e.delivery(d.ID)
+		if got.DeferResult != store.DeferReturnedByPerson || got.Outcome != store.DeliveryClean || got.ReturnedAt == "" {
+			t.Fatalf("after the retire: %+v", got)
+		}
+		if m := e.memoRow(mid); m.State != store.MemoStatePending || m.DeferCount != 0 || m.NotBefore != "" {
+			t.Fatalf("message %+v", m)
+		}
+	})
+}

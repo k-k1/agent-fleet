@@ -42,6 +42,10 @@ const (
 // person took the session over) or refused: the run is theirs, and nothing is handed back.
 const DeferDroppedReleased = "released"
 
+// DeferReturnedByPerson: a person returned the run's messages before its hand-back was decided;
+// their return stands, and the hand-back is not applied.
+const DeferReturnedByPerson = "returned"
+
 // MemoHeldDeferred is memo.held_reason's reason for a message the third hand-back sent to held.
 const MemoHeldDeferred = "deferred"
 
@@ -157,7 +161,7 @@ func (t memoTx) SettleDeferResult(id, result, blocked string) (bool, error) {
 // retire has ended (or was never pending), oldest first: the settle pass decides them.
 func (s *SQL) ListDeferredToSettle(ctx context.Context) ([]MemoDelivery, error) {
 	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state=? AND outcome=? AND defer_result=''
-		  AND retire_pending=0 ORDER BY closed_at, id`, DeliveryClosed, DeliveryDeferred))
+		  AND retire_pending=0 AND returned_at='' ORDER BY closed_at, id`, DeliveryClosed, DeliveryDeferred))
 }
 
 func (t memoTx) MarkDeliveryReturned(id, at, blocked string) error {

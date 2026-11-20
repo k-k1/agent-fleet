@@ -5,10 +5,12 @@ package main
 // The delivery's session asks with defer_queue_item, which the Agent relays here with the
 // session's name (deferDelivery): the request is only recorded on the delivery. It is applied by
 // a clean close made on a running Agent's report (closeIfDoneReported, memoCloseClean), which
-// returns the messages to pending with a not_before and closes the delivery as deferred. One
-// message is therefore never held by two runs: it leaves the delivery in the transaction that
-// closes it. The close from the kept report while the workspace is stopped never applies it
-// (tickKept leaves such a delivery open), and an aborted or unknown close ignores it.
+// closes the delivery as deferred and requests the retire of its tree; the messages stay with the
+// closed delivery until that retire is confirmed and a read made after it still shows nothing
+// that drops the request (settleDeferred). They are never held by two runs: a closed delivery
+// holds no slot, and nothing claims a message whose delivery_id is set. The closes from the
+// mirror while the workspace is stopped never apply it (tickKept and closeIfDoneUnreported leave
+// such a delivery open), and an aborted or unknown close ignores it.
 //
 // A run that went on to do the work is not handed back: a turn of the delivery's session tree
 // that started after the call, or a PR of the session that is open or merged in a provider answer
@@ -338,7 +340,7 @@ func (r *memoQueueRunner) applyDeferred(ctx context.Context, d store.MemoDeliver
 	defer cancel()
 	err := r.mgr.store.MemoTx(wctx, d.MembershipID, func(tx store.MemoTxOps) error {
 		cur, ok, err := tx.GetDelivery(d.ID)
-		if err != nil || !ok || cur.Outcome != store.DeliveryDeferred || cur.DeferResult != "" {
+		if err != nil || !ok || cur.Outcome != store.DeliveryDeferred || cur.DeferResult != "" || cur.ReturnedAt != "" {
 			return err
 		}
 		if result != "" {
@@ -408,6 +410,13 @@ func (a memoAPI) returnDelivery(w http.ResponseWriter, r *http.Request, _ store.
 		}
 		if err := tx.MarkDeliveryReturned(id, at, store.EncodeReturnBlocked(res.Blocked)); err != nil {
 			return err
+		}
+		// A hand-back not decided yet is settled by this press: the person's return stands, and the
+		// settle pass must not record it as the run's own.
+		if d.Outcome == store.DeliveryDeferred && d.DeferResult == "" {
+			if _, err := tx.SettleDeferResult(id, store.DeferReturnedByPerson, store.EncodeReturnBlocked(res.Blocked)); err != nil {
+				return err
+			}
 		}
 		out, _, err = tx.GetDelivery(id)
 		return err

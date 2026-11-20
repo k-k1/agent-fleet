@@ -22,6 +22,7 @@ import { memoQueueDeliveries, memoQueueFire, memoTidyRuns, memoTidyUndo } from "
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import {
   canReturnRun,
+  deferPending,
   deferWords,
   deliveryStateKey,
   firstTurnWords,
@@ -298,9 +299,9 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                   {turn && <span className={"memo-d-turn" + (d.firstTurn?.outcome === "clean" ? "" : " bad")}>{tr(turn)}</span>}
                   {d.retire === "released" && <span className="memo-d-tag">{tr("memo.d_taken_over")}</span>}
                   {d.defer && (
-                    <span className={"memo-d-defer" + (d.state === "closed" && d.defer.result !== "applied" ? " dropped" : "")}>
+                    <span className={"memo-d-defer" + (!deferPending(d) && d.defer.result !== "applied" ? " dropped" : "")}>
                       {tr(deferWords(d)!)}
-                      {d.defer.result === "applied" || d.state !== "closed"
+                      {d.defer.result === "applied" || deferPending(d)
                         ? " " + tr("memo.d_defer_until", { at: at(d.defer.notBefore) })
                         : ""}
                       <span className="memo-deferred-reason">{d.defer.reason}</span>
