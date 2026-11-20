@@ -139,4 +139,38 @@ describe("memo badge with the panel mounted", () => {
     await flush();
     expect(badge()?.textContent).toBe("2");
   });
+
+  it("does not let an older poll of the same effect overwrite a newer one (no bump in between)", async () => {
+    vi.useFakeTimers();
+    await mountBoth();
+    const slow = deferred();
+    memoList.mockImplementationOnce(() => slow.p);
+    await act(async () => void vi.advanceTimersByTime(10_000)); // poll A, held by the server
+    memoList.mockImplementation(() => Promise.resolve([]));
+    await act(async () => void vi.advanceTimersByTime(10_000)); // poll B answers with nothing
+    expect(badge()).toBeNull();
+    await act(async () => slow.res([held("m1"), held("m2")])); // A answers last, with old data
+    expect(badge()).toBeNull();
+  });
+
+  it("without a panel, drops a read from before a stop even after the same tenant comes back", async () => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<ActivityBar view="sessions" shown foldable schedulerEnabled />));
+    const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 5))));
+    const first = deferred();
+    const second = deferred();
+    memoList.mockReset();
+    memoList.mockImplementationOnce(() => first.p).mockImplementationOnce(() => second.p);
+    await settle(); // the first period's read is out
+    await act(async () => useWorkspaceStore.setState({ state: "stopped" }));
+    await act(async () => useWorkspaceStore.setState({ state: "running" }));
+    await settle(); // the second period's read is out; same tenant, same scope string
+    expect(memoList).toHaveBeenCalledTimes(2);
+    await act(async () => first.res([held("old")]));
+    expect(badge()).toBeNull();
+    await act(async () => second.res([held("a"), held("b")]));
+    expect(badge()?.textContent).toBe("2");
+  });
 });

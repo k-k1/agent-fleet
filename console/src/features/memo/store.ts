@@ -39,7 +39,7 @@ interface MemoStore {
    *  one on screen (the workspace stopped, another tenant). */
   publish(list: Memo[], ticket: number, scope: string): void;
   /** One read for the badge when no panel is mounted. */
-  loadWaiting(scope: string): Promise<void>;
+  loadWaiting(scope: string, current: () => boolean): Promise<void>;
 }
 
 /** What a count belongs to: the tenant while the workspace runs, "" (no count) otherwise. */
@@ -76,11 +76,13 @@ export const useMemoStore = create<MemoStore>((set, get) => ({
     const n = approvalCount(list);
     if (cur.waiting?.scope !== scope || cur.waiting.n !== n) set({ waiting: { scope, n } });
   },
-  loadWaiting: async (scope) => {
+  loadWaiting: async (scope, current) => {
     const ticket = get().begin();
     const list = await memoList().catch(() => null);
-    // An error body is a failed read, not an empty list.
-    if (Array.isArray(list)) get().publish(list, ticket, scope);
+    // An error body is a failed read, not an empty list. `current` is false once the feed's effect
+    // that started the read has been torn down: back in the same scope after a stop, the scope
+    // string alone cannot tell this answer from one of the new period.
+    if (Array.isArray(list) && current()) get().publish(list, ticket, scope);
   },
 }));
 
@@ -98,7 +100,8 @@ export function useMemoWaitingFeed(running: boolean, tenant: string): void {
   }, [scope]);
   useEffect(() => {
     if (!scope || panelUp) return;
-    const load = () => void useMemoStore.getState().loadWaiting(scope);
+    let alive = true;
+    const load = () => void useMemoStore.getState().loadWaiting(scope, () => alive);
     // A tick later: a panel attaching in the same commit makes this read redundant.
     const first = window.setTimeout(() => {
       if (useMemoStore.getState().panels === 0) load();
@@ -107,6 +110,7 @@ export function useMemoWaitingFeed(running: boolean, tenant: string): void {
       if (!document.hidden) load();
     }, POLL_MS);
     return () => {
+      alive = false;
       window.clearTimeout(first);
       window.clearInterval(id);
     };

@@ -243,6 +243,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
 
   // While mounted this list is the one the activity bar's badge counts from (store.ts): the bar's
   // own feed stands down, so api/memos is read by one timer.
+  // App mounts one panel; the badge's hand-over assumes that. A second instance would poll on its
+  // own timer too, and sharing one poller across instances is not worth the machinery for a case
+  // the app does not have.
   useEffect(() => useMemoStore.getState().attachPanel(), []);
 
   // Refetch memos + categories on mount / bump / tenant switch, and poll while mounted.
