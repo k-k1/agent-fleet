@@ -158,6 +158,14 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const model = editor.model?.path === key ? editor.model : null;
   const phase = model?.phase;
   const alert = isEditorAlert(phase);
+  // A new memory is stored as sent: text typed while its save is out, or its outcome is unknown,
+  // would be lost to the landing or saved against a revision that no longer fits.
+  const locked = isNew && (phase === "saving" || alert);
+  const editorBox = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // The code editor keeps its own document; only making it inert keeps it from taking input.
+    editorBox.current?.toggleAttribute("inert", locked);
+  });
   const [busy, setBusy] = useState(false);
   const [purging, setPurging] = useState<PurgeTarget | null>(null);
   const [showHistory, setShowHistory] = useState(false);
@@ -342,8 +350,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const decoded = model ? decodeEntry(model.content) : null;
   const fields = isNew ? decoded && { ...decoded, name: decoded.name ?? "" } : !gone && (editing || model?.dirty) && decoded ? { ...decoded, name } : null;
   const setField = (patch: Partial<Pick<EntryFields, "name" | "description" | "type" | "body">>) => {
-    // What was sent is what the memory becomes: text typed while the save is out would be lost to the landing.
-    if (model && !(isNew && phase === "saving")) editor.edit(encodeEntry({ ...decodeEntry(model.content), ...patch }));
+    if (model && !locked) editor.edit(encodeEntry({ ...decodeEntry(model.content), ...patch }));
   };
 
   const save = async () => {
@@ -475,17 +482,17 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
               {isNew && (
                 <label>
                   {tr("mem.br_f_name")}
-                  <input value={fields.name} autoFocus onChange={(e) => setField({ name: e.target.value })} />
+                  <input value={fields.name} autoFocus disabled={locked} onChange={(e) => setField({ name: e.target.value })} />
                 </label>
               )}
               <label className="mentry-desc">
                 {tr("mem.br_f_description")}
                 {/* Edit replaces the button that had focus: focus moves here so the keyboard keeps its place. */}
-                <input value={fields.description} autoFocus={!isNew} onChange={(e) => setField({ description: e.target.value })} />
+                <input value={fields.description} autoFocus={!isNew} disabled={locked} onChange={(e) => setField({ description: e.target.value })} />
               </label>
               <label>
                 {tr("mem.br_f_type")}
-                <select value={fields.type} onChange={(e) => setField({ type: e.target.value })}>
+                <select value={fields.type} disabled={locked} onChange={(e) => setField({ type: e.target.value })}>
                   {TYPES.map((t) => (
                     <option key={t} value={t}>
                       {t}
@@ -513,7 +520,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
                 ))}
               </ul>
             )}
-            <div className="mentry-editor" aria-label={tr("mem.br_f_body")}>
+            <div className="mentry-editor" aria-label={tr("mem.br_f_body")} aria-busy={locked} ref={editorBox}>
               <CodeEditor
                 // Fixed: the editor is rebuilt whenever its path changes, which would drop undo on
                 // every keystroke in a new memory's name field. The extension picks Markdown.
@@ -609,6 +616,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           onManualMerge={editor.manualMerge}
           onCopyMine={() => void navigator.clipboard.writeText(model.content)}
           onClose={() => useLayoutStore.getState().closePane(paneId)}
+          canResaveStored={!isNew}
         />
       )}
       {purging && <PurgeHistoryDialog target={purging} onClose={() => setPurging(null)} onDone={bump} />}

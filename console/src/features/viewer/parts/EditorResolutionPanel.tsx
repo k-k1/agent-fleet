@@ -18,6 +18,9 @@ export interface EditorResolutionPanelProps {
   onManualMerge(): void;
   onCopyMine(): void;
   onClose(): void;
+  /** False where a resave of the text already stored would only be refused (a new memory at
+   *  revision 0); the choice left is to accept it. Default true. */
+  canResaveStored?: boolean;
 }
 
 export function EditorResolutionPanel(props: EditorResolutionPanelProps) {
@@ -74,8 +77,8 @@ export function EditorResolutionPanel(props: EditorResolutionPanelProps) {
       <div className="file-editor-actions">
         {observation?.kind === "sent_live" && (
           <>
-            <button type="button" autoFocus onClick={props.onResave}>{tr("editor.unknown.resave")}</button>
-            <button type="button" onClick={props.onRiskAccept}>{tr("editor.unknown.accept_risk")}</button>
+            {props.canResaveStored !== false && <button type="button" autoFocus onClick={props.onResave}>{tr("editor.unknown.resave")}</button>}
+            <button type="button" autoFocus={props.canResaveStored === false} onClick={props.onRiskAccept}>{tr("editor.unknown.accept_risk")}</button>
           </>
         )}
         {observation?.kind === "old_base_live" && (

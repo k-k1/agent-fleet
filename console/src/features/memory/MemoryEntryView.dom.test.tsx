@@ -443,6 +443,18 @@ describe("MemoryEntryView", () => {
       expect(pane().content).toMatchObject({ name: "house-rules" });
     });
 
+    it("locks the form and the code editor while the save is out", async () => {
+      let release: (v: unknown) => void = () => {};
+      apiJSON.mockImplementation(() => new Promise((r) => (release = r)));
+      await open(memoryEntryContent({ scope: "user", name: "" }));
+      await setValue(nameInput(), "house-rules");
+      await act(async () => button(t("mem.br_save"))!.click());
+      expect(nameInput().disabled).toBe(true);
+      expect(host!.querySelector(".mentry-editor")!.hasAttribute("inert")).toBe(true);
+      await act(async () => release({ name: "house-rules", revision: 1 }));
+      await flush();
+    });
+
     describe("when the answer to the save is lost", () => {
       const stored = { ...memory, name: "house-rules", scope: "user", description: "", type: "feedback", body: "text", revision: 1, kinds: [] };
       const lost = async () => {
@@ -459,6 +471,9 @@ describe("MemoryEntryView", () => {
         await lost();
         expect(api.mock.calls.some((c) => String(c[0]).includes("member-read") && String(c[0]).includes("name=house-rules"))).toBe(true);
         expect(dirtyPaneIds()).toEqual([pane().id]);
+        expect(button(t("editor.unknown.resave"))).toBeUndefined();
+        expect(nameInput().disabled).toBe(true);
+        expect(host!.querySelector(".mentry-editor")!.hasAttribute("inert")).toBe(true);
         await act(async () => button(t("editor.unknown.accept_risk"))!.click());
         await flush();
         expect(dirtyPaneIds()).toEqual([]);
@@ -472,6 +487,17 @@ describe("MemoryEntryView", () => {
         expect(pane().content).toMatchObject({ name: "" });
         expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
         expect(button(t("editor.unknown.resave_old"))).toBeDefined();
+      });
+
+      it.each([
+        ["an earlier revision", { revision: 2 }],
+        ["kinds it was not sent with", { kinds: ["claude"] }],
+      ])("offers neither when the same text is stored with %s", async (_why, patch) => {
+        api.mockImplementation(async (url: string) => (url.includes("name=house-rules") ? { ...stored, ...patch } : {}));
+        await lost();
+        expect(dirtyPaneIds()).toEqual([pane().id]);
+        expect(pane().content).toMatchObject({ name: "" });
+        expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
       });
 
       it("offers neither when a memory of that name holds other text", async () => {

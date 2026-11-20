@@ -212,7 +212,9 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         const b = res as MemoryBody;
         const found = encodeEntry({ description: b.description, type: b.type || "feedback", body: b.body ?? "" });
         // Another memory of that name, not the one sent: nothing here can confirm the save.
-        if (found !== last.stored) throw new Error("name_taken");
+        // Revision 1 with no kinds is what a first save of this text leaves; anything else is a
+        // memory that was there before, whatever its text.
+        if (found !== last.stored || b.revision !== 1 || (b.kinds ?? []).length > 0) throw new Error("name_taken");
         // Stored as sent: the buffer's text is reported as the remote, which the panel offers to accept
         // (the view lands the pane when it is).
         return { ...blankNewFile(key), content: last.raw, size: last.raw.length, revision: revisionOf(last.raw) };
