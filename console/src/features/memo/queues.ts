@@ -848,6 +848,10 @@ export function deliveryStateKey(d: Pick<MemoDelivery, "state" | "outcome">): Ms
 /** Waiting to run, for the fire button: the messages a fire could take. */
 export const pendingCount = (memos: Memo[]): number => memos.filter((m) => m.state === "pending" && !m.sentAt).length;
 
+/** Waiting for the member's approval: held notes, "Changed" ones included. A held state exists only
+ * in an auto-run category, and a note already waiting to run (pending) has been approved. */
+export const approvalCount = (memos: Memo[]): number => memos.filter((m) => m.state === "held" && !m.sentAt).length;
+
 // ---- a run that hands its note back (ADR 0137, addendum 2026-11-19, part B) ----------------
 
 const DEFER_RESULT_KEYS: Record<string, MsgKey> = {

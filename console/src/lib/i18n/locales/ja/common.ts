@@ -375,6 +375,8 @@ export const common = {
   "rail.badge.unread": "未読あり",
   "rail.badge.failed": "直近の実行が失敗",
   "rail.view.memory": "メモリ",
+  "rail.badge.memos_one": "承認待ちのメモ {count} 件",
+  "rail.badge.memos_other": "承認待ちのメモ {count} 件",
   "rail.badge.proposals_one": "判断待ちの提案 {count} 件",
   "rail.badge.proposals_other": "判断待ちの提案 {count} 件",
   "ui.filter_models": "モデルを絞り込み…",

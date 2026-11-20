@@ -101,3 +101,17 @@ in `console/src/app/barSwipe.ts`). It clamps at the ends, takes one step per ges
 overflowing column keeps native scrolling. It lives in its own hook (`useBarSwipe`), not in
 `installSwipeGestures`, whose horizontal gestures are unchanged. Home and the foot launchers are never
 targets. Tablet and desktop keep taps only. Direction and clamp-vs-wrap still need a check on a phone.
+
+## Note, 2026-11-20: memos waiting for approval are a waiting badge (#4607)
+
+The first sentence of `badges.ts` said the memo queue has no badge because only the member adds its
+rows. Sessions and `/mcp` connections now add memos that wait for the member's approval (state
+`held`), and nothing runs until they are approved. That is the same case as a session waiting for an
+answer, so the memo icon carries a `waiting` badge counting them: it stays while the view is open
+and clears as memos are approved or removed. Decision 2 above is unchanged. The memo list is read
+for the count by the memo panel, which App mounts for the whole session and which
+publishes each read it makes; a small feed reads on its own only when no panel is mounted. Reads are
+numbered when they start (a slow older answer cannot overwrite a newer one) and tied to the scope
+they started in: the tenant while the workspace runs, none while it is stopped, so a stopped
+workspace or another tenant never shows a count. A working set does not narrow it, because the memo view does
+not either.

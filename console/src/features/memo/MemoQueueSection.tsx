@@ -35,7 +35,7 @@ import {
   memoRelease,
   memoQueueResume,
 } from "./api.ts";
-import { useMemoStore } from "./store.ts";
+import { memoScope, useMemoStore } from "./store.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
@@ -241,11 +241,21 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const composerTextRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextarea(composerTextRef, newText);
 
+  // While mounted this list is the one the activity bar's badge counts from (store.ts): the bar's
+  // own feed stands down, so api/memos is read by one timer.
+  // App mounts one panel; the badge's hand-over assumes that. A second instance would poll on its
+  // own timer too, and sharing one poller across instances is not worth the machinery for a case
+  // the app does not have.
+  useEffect(() => useMemoStore.getState().attachPanel(), []);
+
   // Refetch memos + categories on mount / bump / tenant switch, and poll while mounted.
   useEffect(() => {
     let alive = true;
-    const load = () =>
-      Promise.all([memoList(), memoCategoryList(), memoQueueList().catch(() => null)])
+    const scope = memoScope(workspaceRunning, tenant ?? "");
+    const load = () => {
+      // Numbered when the request starts, and tied to the scope it starts in (store.ts).
+      const ticket = useMemoStore.getState().begin();
+      return Promise.all([memoList(), memoCategoryList(), memoQueueList().catch(() => null)])
         .then(([mList, cList, qRaw]) => {
           if (!alive) return;
           // An error body (api() resolves HTTP errors as {error}) is a failed read, not an empty
@@ -254,6 +264,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           if (!readOk(mList) || !readOk(cList)) return;
           const marr = Array.isArray(mList) ? mList : [];
           const carr = Array.isArray(cList) ? cList : [];
+          useMemoStore.getState().publish(marr, ticket, scope);
           // A failed settings read (an older Control Plane, an error body) keeps the last good
           // one; it never takes the memo list down with it.
           const qw = readMemoQueues(qRaw) ?? lastQueues.current;
@@ -269,6 +280,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           }
         })
         .catch(() => {});
+    };
     load();
     const id = setInterval(() => {
       if (!document.hidden) load(); // hidden tab: skip the tick (mobile data / battery)
@@ -277,7 +289,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       alive = false;
       clearInterval(id);
     };
-  }, [memosKey, tenant]);
+  }, [memosKey, tenant, workspaceRunning]);
 
   // Leader Ctrl/⌘+K → M (or any requestCompose) reveals + focuses the composer.
   useEffect(() => {

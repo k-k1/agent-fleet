@@ -13,6 +13,7 @@ import { useSeenStore } from "../features/workitems/seen.ts";
 import { dedupeWorkItems, sortWorkItems } from "../features/workitems/read.ts";
 import { useSchedulesStore } from "../features/schedules/store.ts";
 import { pendingProposals, useMemoryStore, useProposalsFeed } from "../features/memory/store.ts";
+import { memoScope, useMemoStore, useMemoWaitingFeed } from "../features/memo/store.ts";
 import { useWorkspaceStore } from "../core/store/workspace.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { openHome } from "../features/home/open.ts";
@@ -186,8 +187,8 @@ function LaunchButton({ id, icon, label, name, onClick }: { id: string; icon: st
 function badgeText(b: RailBadge, tr: ReturnType<typeof useT>, view: RailView): string {
   switch (b.tone) {
     case "waiting":
-      // What waits differs by view: sessions on an answer, the Memory view's proposals on a decision.
-      return tCount(view === "memory" ? "rail.badge.proposals" : "rail.badge.waiting", b.count);
+      // What waits differs by view: sessions on an answer, proposals and memos on a decision.
+      return tCount(view === "memory" ? "rail.badge.proposals" : view === "memo" ? "rail.badge.memos" : "rail.badge.waiting", b.count);
     case "news":
       return tCount("rail.badge.news", b.count);
     case "failed":
@@ -217,6 +218,14 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
     useWorkspaceStore((s) => s.state) === "running",
     useTenantStore((s) => s.tenant),
   );
+  // The memo list is read by the panel while it is mounted; the bar needs the count before that.
+  const running = useWorkspaceStore((s) => s.state) === "running";
+  const tenant = useTenantStore((s) => s.tenant);
+  useMemoWaitingFeed(running, tenant);
+  // A count read for another scope (stopped, another tenant) is not this one's, even for the
+  // render before the feed has caught up.
+  const memoScopeNow = memoScope(running, tenant);
+  const waitingMemos = useMemoStore((s) => (s.waiting && s.waiting.scope === memoScopeNow ? s.waiting.n : 0));
   const pendingMemory = useMemoryStore((s) => pendingProposals(s.proposals));
   const acked = useRailAck((s) => s.acked);
   const ack = useRailAck((s) => s.ack);
@@ -242,6 +251,10 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   if (news > 0) out.workitems = { tone: "news", count: news };
   // Like a waiting session (ADR 0141 decision 2): a proposal waits on the member's decision, so
   // the count stays while the view is open and clears only as proposals are decided.
+  // Notes in an auto-run category that wait for approval (ADR 0140, note of 2026-11-20): nothing
+  // runs until the member approves, so the count stays while the view is open. Not set-scoped: the
+  // memo view lists every note whatever the working set.
+  if (waitingMemos > 0) out.memo = { tone: "waiting", count: waitingMemos };
   if (pendingMemory > 0) out.memory = { tone: "waiting", count: pendingMemory };
   if (onScreen !== "schedules" && pendingNews(failedRuns, acked.schedules).length > 0) out.schedules = { tone: "failed" };
   return out;

@@ -373,6 +373,8 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "rail.badge.unread": "unread",
   "rail.badge.failed": "the latest run failed",
   "rail.view.memory": "Memory",
+  "rail.badge.memos_one": "{count} memo waiting for approval",
+  "rail.badge.memos_other": "{count} memos waiting for approval",
   "rail.badge.proposals_one": "{count} suggestion waiting for your decision",
   "rail.badge.proposals_other": "{count} suggestions waiting for your decision",
   "ui.filter_models": "Filter models…",
