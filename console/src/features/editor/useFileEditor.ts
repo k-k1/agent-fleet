@@ -5,6 +5,7 @@ import {
   suggestEdit,
   type EditableFile,
   type FileProbeResult,
+  type PutFileResult,
 } from "./api.ts";
 import {
   CLEAN_PHASES,
@@ -45,6 +46,22 @@ import {
   registerDirtyEditor,
 } from "./dirtyRegistry.ts";
 import { errText } from "../../core/api/client.ts";
+
+/** Where the buffer's text comes from and goes to. `path` is the pane's identity for the thing
+ *  edited (a file path for the default adapter, any stable key for another), and `revision` is
+ *  whatever the store compares on a write: a save on a stale one must answer 409 with code
+ *  `revision_conflict`, which is what starts the conflict flow. */
+export interface FileEditorIO {
+  load(path: string): Promise<EditableFile>;
+  save(path: string, content: string, baseRevision: string): Promise<PutFileResult>;
+}
+
+/** Working-copy files through the file API; what every caller without an adapter gets. The
+ *  calls are made through the imports at call time, never captured. */
+export const fileEditorIO: FileEditorIO = {
+  load: (path) => getEditableFile(path),
+  save: (path, content, baseRevision) => putFile(path, content, baseRevision),
+};
 
 interface InitialEditableFile {
   path: string;
@@ -147,7 +164,11 @@ function remoteFromFile(
   );
 }
 
-export function useFileEditor(paneId: string, initial: InitialEditableFile | null) {
+export function useFileEditor(paneId: string, initial: InitialEditableFile | null, io: FileEditorIO = fileEditorIO) {
+  // Read at call time: the guards' save / discard outlive a render and must use the adapter of
+  // the hook that registered them, not the one of the render that created the callback.
+  const ioRef = useRef(io);
+  ioRef.current = io;
   const initialPath = initial?.path;
   // Keyed on the path, not the object: a refetch of the same file keeps the buffer.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -184,7 +205,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       `conflict:${path}:${baseDiskRevision}`,
       async () => {
         try {
-          const remote = remoteFromFile(await getEditableFile(path));
+          const remote = remoteFromFile(await ioRef.current.load(path));
           if (remote.path !== path) throw new Error("path mismatch");
           return { ok: true as const, remote };
         } catch (error) {
@@ -222,7 +243,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       `unknown:${path}:${snapshotKey}`,
       async () => {
         try {
-          const remote = remoteFromFile(await getEditableFile(path));
+          const remote = remoteFromFile(await ioRef.current.load(path));
           if (remote.path !== path) throw new Error("path mismatch");
           return { ok: true as const, remote };
         } catch (error) {
@@ -267,7 +288,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     setModel(saving);
     const operation = (async () => {
       try {
-        const result = await putFile(snapshot.path, snapshot.content, snapshot.baseDiskRevision);
+        const result = await ioRef.current.save(snapshot.path, snapshot.content, snapshot.baseDiskRevision);
         // The hook moved to another file while the PUT was out: its refs now read that file's
         // buffer, which must not take this save's outcome. The save's own slot stays dirty
         // and guarded.
@@ -447,7 +468,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     if (!current || savingRef.current || !isCleanForFollow(current)) return null;
     const path = current.path;
     try {
-      const file = await getEditableFile(path);
+      const file = await ioRef.current.load(path);
       const remote = remoteFromFile(file);
       if (remote.path !== path) return null;
       const latest = modelRef.current;
@@ -526,7 +547,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     if (!current || current.phase !== "dirty" || savingRef.current) return;
     const path = current.path;
     try {
-      const remote = remoteFromFile(await getEditableFile(path));
+      const remote = remoteFromFile(await ioRef.current.load(path));
       if (remote.path !== path) throw new Error("path mismatch");
       const latest = modelRef.current;
       if (!latest || latest.path !== path || latest.phase !== "dirty") return;

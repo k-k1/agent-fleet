@@ -80,3 +80,9 @@ that wrote the Markdown file directly would skip all of that.
 - `memoryMasterDetail.tsx` splits into a data hook (used by the view) and the pane's detail parts;
   its phone two-screen layout is no longer needed, since the drawer and the pane already are two
   screens.
+
+## Notes
+
+- 2026-11-20: `useFileEditor` takes an optional `FileEditorIO` (`load`, `save`) and defaults to the
+  file API, so the first step of the adapter named under Alternatives exists. The memory pane does
+  not use it yet; that is the remaining part of #4569.
