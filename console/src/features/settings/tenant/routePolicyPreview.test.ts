@@ -52,20 +52,65 @@ describe("previewTenantRule against the CP's table", () => {
     });
   }
 
-  it("the table exercises a real hide, a host that changes the answer, and an unsaved host", () => {
-    const ps = Object.entries(cases).map(([n, c]) => [n, previewTenantRule(view(c), c.edit)!] as const);
-    expect(ps.some(([, p]) => GROUPS.some((g) => p.hides[g].length > 0))).toBe(true);
-    expect(ps.some(([n, p]) => n === "restricted-keep-host-narrow-classes" && p.hides.kinds.includes("lcpp"))).toBe(true);
-    expect(ps.some(([, p]) => p.unsavedHosts)).toBe(true);
+  const predict = (n: string) => previewTenantRule(view(cases[n]), cases[n].edit)!;
+
+  it("the table exercises the host and the upper-layer paths that decide a hide", () => {
+    expect(Object.values(cases).some((c) => GROUPS.some((g) => previewTenantRule(view(c), c.edit)!.hides[g].length > 0)))
+      .toBe(true);
+    // Dropping the one approved host is what hides lcpp (af-engine-llm is denied).
+    expect(predict("host-only-lcpp-drop-host").hides.kinds).toEqual(["lcpp"]);
+    // A host the CP has not judged: the Console cannot tell, and says a rescue is possible.
+    const swap = predict("host-only-lcpp-swap-host");
+    expect(swap.hides.kinds).toEqual(["lcpp"]);
+    expect(swap.unsavedHosts && swap.unsavedMayRescue).toBe(true);
+    // A layer above that leaves self-hosted out (or denies the route) stops the approved host's
+    // routes: lcpp stays hidden, and the preview must not count the host for the draft alone.
+    for (const n of ["deployment-drops-self-hosted-keep-host", "cap-denies-llamacpp-keep-host"]) {
+      const p = predict(n);
+      expect(p.allowed.kinds["lcpp"], n).toEqual(cases[n].after.owners.kinds.find((o) => o.id === "lcpp")!.allowed);
+      expect(p.allowed.kinds["lcpp"], n).toEqual([]);
+    }
+  });
+
+  it("raises no unsaved-host flag when the host cannot change the answer", () => {
+    // classes without self-hosted: no per-connection route is allowed by the draft at all.
+    expect(predict("open-unapproved-host").unsavedHosts).toBe(false);
+    // A host is already approved: a further one changes nothing.
+    expect(predict("restricted-keep-host-narrow-classes").unsavedMayRescue).toBe(false);
+    // The hidden owners have no per-connection route a host could make usable.
+    expect(predict("restricted-add-host").unsavedMayRescue).toBe(false);
+  });
+
+  it("does not count a host the CP lists as not approved, and raises no unsaved flag for it", () => {
+    const c = cases["host-only-lcpp-swap-host"];
+    const v = view(c);
+    const draft = { ...c.edit, endpoints: ["llm.corp.example"] };
+    const p = previewTenantRule(
+      { ...v, endpoints: [{ host: "llm.corp.example", approved: false, excludedBy: ["ceiling"] }] },
+      draft,
+    )!;
+    expect(p.unsavedHosts).toBe(false);
+    expect(p.allowed.kinds["lcpp"]).toEqual([]);
+  });
+
+  it("keeps a route not allowed for no named layer forbidden (fail closed)", () => {
+    const c = cases["open-except-only"];
+    const v = view(c);
+    const routes = v.routes.map((r) => (r.id === "anthropic-api" ? { ...r, allowed: false, forbiddenBy: undefined } : r));
+    const p = previewTenantRule({ ...v, routes }, {})!;
+    expect(p.allowed.kinds["claude"]).not.toContain("anthropic-api");
+    // The same route with its layers named only by the tenant layer is the draft's to decide.
+    const only = v.routes.map((r) => (r.id === "anthropic-api" ? { ...r, allowed: false, forbiddenBy: ["tenant"] } : r));
+    expect(previewTenantRule({ ...v, routes: only }, {})!.allowed.kinds["claude"]).toContain("anthropic-api");
   });
 
   it("counts no route for a host the CP has not judged (less than the CP, never more)", () => {
-    const c = cases["restricted-add-host"];
+    const c = cases["host-only-lcpp-swap-host"];
     const p = previewTenantRule(view(c), c.edit)!;
     expect(p.unsavedHosts).toBe(true);
-    // The CP, once the host is saved, allows lcpp a second route through it.
-    expect(c.after.owners.kinds.find((o) => o.id === "lcpp")!.allowed).toHaveLength(2);
-    expect(p.allowed.kinds["lcpp"]).toHaveLength(1);
+    // The CP, once the host is saved, still lets lcpp through it; the preview cannot know yet.
+    expect(c.after.owners.kinds.find((o) => o.id === "lcpp")!.allowed).toEqual(["member-llamacpp"]);
+    expect(p.allowed.kinds["lcpp"]).toEqual([]);
   });
 
   it("answers null when the CP sent no owners or a malformed list", () => {

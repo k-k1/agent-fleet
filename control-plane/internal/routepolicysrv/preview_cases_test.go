@@ -45,6 +45,23 @@ var previewScenes = []struct {
 	{name: "restricted-add-host", ceiling: shotCeilingRestricted, puts: [][2]string{
 		{"tenants/demo/route-policy/cap", previewCapUnderCeiling},
 	}, edit: `{"classes":["member-key","self-hosted"],"endpoints":["llm.corp.example"]}`},
+	// Only the approved host keeps lcpp usable (af-engine-llm is denied): dropping it hides lcpp,
+	// swapping it for one the CP has not judged leaves the Console unable to tell.
+	{name: "host-only-lcpp-drop-host", puts: [][2]string{
+		{"tenants/demo/route-policy", `{"classes":["member-key","self-hosted"],"deny":["af-engine-llm"],"endpoints":["llm.corp.example"]}`},
+	}, edit: `{"classes":["member-key","self-hosted"],"deny":["af-engine-llm"],"endpoints":[]}`},
+	{name: "host-only-lcpp-swap-host", puts: [][2]string{
+		{"tenants/demo/route-policy", `{"classes":["member-key","self-hosted"],"deny":["af-engine-llm"],"endpoints":["llm.corp.example"]}`},
+	}, edit: `{"classes":["member-key","self-hosted"],"deny":["af-engine-llm"],"endpoints":["llm2.corp.example"]}`},
+	// A layer above that leaves self-hosted out stops the per-connection routes on an approved host.
+	{name: "deployment-drops-self-hosted-keep-host", puts: [][2]string{
+		{"tenants/demo/route-policy", `{"classes":["member-key","self-hosted"],"endpoints":["llm.corp.example"]}`},
+		{"route-policy", `{"classes":["member-key","member-cloud","provided"]}`},
+	}, edit: `{"classes":["member-key","self-hosted"],"deny":["anthropic-api"],"endpoints":["llm.corp.example"]}`},
+	{name: "cap-denies-llamacpp-keep-host", puts: [][2]string{
+		{"tenants/demo/route-policy", `{"classes":["member-key","self-hosted"],"deny":["af-engine-llm"],"endpoints":["llm.corp.example"]}`},
+		{"tenants/demo/route-policy/cap", `{"deny":["member-llamacpp"]}`},
+	}, edit: `{"classes":["member-key","self-hosted"],"deny":["af-engine-llm","anthropic-api"],"endpoints":["llm.corp.example"]}`},
 	{name: "deployment-no-subscriptions", puts: [][2]string{
 		{"route-policy", `{"classes":["member-key","member-cloud","provided","self-hosted"]}`},
 	}, edit: `{"classes":["subscription","provided"]}`},

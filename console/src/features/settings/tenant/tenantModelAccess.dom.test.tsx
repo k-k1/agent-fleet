@@ -861,11 +861,34 @@ describe("what saving would hide", () => {
     expect(preview()).toBeNull();
   });
 
-  it("says a server not saved yet is not counted", async () => {
+  const CASES = JSON.parse(readFileSync("scripts/shots/model-access/preview-cases.json", "utf8"));
+  const LCPP = () => ({ ...CASES["host-only-lcpp-drop-host"].before, vocabulary: VOCAB });
+  const removeServer = (h: string) =>
+    click(field("endpoints").querySelector<HTMLButtonElement>(`[data-server="${h}"] button`)!);
+
+  it("names what dropping the only approved server hides, with no caveat", async () => {
+    serve(LCPP());
+    await mount();
+    await removeServer("llm.corp.example");
+    expect(preview()!.querySelector('[data-group="kinds"]')!.textContent).toContain("llama.cpp");
+    expect(preview()!.textContent).not.toContain("まだ保存していないサーバー");
+  });
+
+  it("says a server not saved yet is not counted, where it could keep an agent usable", async () => {
+    serve(LCPP());
+    await mount();
+    await removeServer("llm.corp.example");
+    await addServer("llm2.corp.example");
+    expect(preview()!.querySelector('[data-group="kinds"]')!.textContent).toContain("llama.cpp");
+    expect(preview()!.textContent).toContain("まだ保存していないサーバー");
+  });
+
+  it("gives no caveat for an unsaved server that could not rescue what is hidden", async () => {
     serve(RESTRICTED);
     await mount();
     await click(tickIn("classes", "メンバーの API キー"));
     await addServer("gpu.corp.example");
-    expect(preview()!.textContent).toContain("まだ保存していないサーバー");
+    expect(preview()).not.toBeNull();
+    expect(preview()!.textContent).not.toContain("まだ保存していないサーバー");
   });
 });

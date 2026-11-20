@@ -293,7 +293,7 @@ function HidesPreview({ preview }: { preview: Preview }) {
           </li>
         ))}
       </ul>
-      {preview.unsavedHosts && <p className="admin-hint">{tr("admin.mpol_preview_unsaved_hosts")}</p>}
+      {preview.unsavedMayRescue && <p className="admin-hint">{tr("admin.mpol_preview_unsaved_hosts")}</p>}
     </div>
   );
 }
@@ -707,7 +707,7 @@ export function RuleEditor({
           onMatch={() => edit(matchCeiling(draft, ceiling, vocab))}
         />
       )}
-      {dirty && previewed && <HidesPreview preview={previewed} />}
+      {previewed && <HidesPreview preview={previewed} />}
       {refusal && (
         <p className="admin-hint warn" role="alert">
           {tr("admin.mpol_refused", { reason: refusal })}
