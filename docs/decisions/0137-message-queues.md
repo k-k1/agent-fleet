@@ -1024,8 +1024,8 @@ a run feed the queue without bound. Option A keeps the press as a checkpoint at 
   release, so releases and the hash are untouched. Admission is one statement, `UPDATE memo_chain SET admitted =
   admitted + 1 WHERE id = ? AND stopped = 0 AND admitted < ?`, whose affected row count decides, so two runs racing
   cannot pass M. The table, not the `memo` rows, holds the count, because the sweep deletes a delivered message 7 days
-  after `sent_at` (`memoRetentionDays`) and a chain may outlive that. `memo.chain_id` and `memo.chain_seq` on a
-  continuation point back for display only; no rule reads them.
+  after `sent_at` (`memoRetentionDays`) and a chain may outlive that. `memo.chain_id` on a continuation says which chain it belongs to, and `memoContinue` reads it to pick the
+  chain a later continuation extends; `memo.chain_seq` is for display only.
 - **What a forged claim can and cannot do.** The relay stamps from session meta, and any process in the workspace holds the
   memo token (fact 1), so a program can send a delivery id it read from its own run. The wall is the Control Plane's rows.
   It cannot exceed M continuations under one member's release, cannot change the reference, the repo or the queue,
@@ -1062,9 +1062,10 @@ keeps the stored value, so an older client cannot turn a member's 0 back into 4;
   on the card.
 - **Rename, move, reference edit.** A rename of the same queue keeps the chain and, for every pending message, who approved it
   (switch, tidy, continuation): only the release copy and hash are rewritten. A merge into another category ends the
-  chain of the rows that move. A move to another queue clears `chain_id` and keeps `released_by`
-  `continuation`, which is no root: the member's move keeps the state as it always did, and mints no new approval over
-  there. A chain row also remembers its work item: a person editing a follow-up's reference ends its use, and the next
+  chain of the rows that move. A move to another queue, or a merge, clears `chain_id` and keeps `released_by` whatever it was (`setting`, `tidy`,
+  `continuation`) when only the place changed: the member's move keeps the state as it always did, and mints no new
+  approval over there. The destination's own rules decide what the message may start: a `tidy` or `continuation` message
+  is no root, and a `setting` root needs the destination's switch on. A body edit is the member's own, as before. A chain row also remembers its work item: a person editing a follow-up's reference ends its use, and the next
   continuation of it is held (`continuation_reference`).
 - **Batch.** A delivery that carries several messages never continues (rule 3). The queue's `batch` is the most a claim
   takes, so a queue with a batch above one can still run a single message, which continues normally. The hint says that a

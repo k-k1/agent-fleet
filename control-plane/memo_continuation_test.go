@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -753,20 +754,26 @@ func TestMemoContinuationRaceForTheLastPlace(t *testing.T) {
 			t.Fatal(err)
 		}
 		d3 := e.contRun(q, "run-3", store.DeliveryOpen, sib.ID)
-		type res struct {
-			code int
-			id   string
-		}
-		out := make(chan res, 2)
+		out := make(chan *httptest.ResponseRecorder, 2)
 		for _, c := range []struct{ run, d string }{{"run-2", d2}, {"run-3", d3}} {
 			go func(run, d string) {
 				m := contMemo("impl", "p3 from "+run, contRef)
 				m["producer"], m["producerOrigin"], m["continuation"], m["queueDelivery"] = run, "queue", true, d
-				rec := e.memoTokenDo("a", "POST", "/internal/memos", m)
-				out <- res{rec.Code, decode[memoDTO](t, rec).ID}
+				out <- e.memoTokenDo("a", "POST", "/internal/memos", m)
 			}(c.run, c.d)
 		}
-		a, b := <-out, <-out
+		// The workers only return what the route answered: a failure is judged here, so a route
+		// that regresses to a text error cannot leave this test waiting.
+		type res struct {
+			code int
+			id   string
+		}
+		var got []res
+		for i := 0; i < 2; i++ {
+			rec := <-out
+			got = append(got, res{rec.Code, decode[memoDTO](t, rec).ID})
+		}
+		a, b := got[0], got[1]
 		created := 0
 		for _, r := range []res{a, b} {
 			if r.code == http.StatusCreated {
@@ -786,5 +793,57 @@ func TestMemoContinuationRaceForTheLastPlace(t *testing.T) {
 		if err := e.st.DB().QueryRowContext(context.Background(), `SELECT COALESCE(SUM(continuation_taken),0) FROM memo_delivery WHERE id IN (?,?)`, d2, d3).Scan(&taken); err != nil || taken != 1 {
 			t.Errorf("spent deliveries = %d, %v, want 1", taken, err)
 		}
+	})
+}
+
+// A message a switch or a tidy made pending keeps that approver through a move or a merge into
+// another queue, and so roots no chain there: a continuation from its run is held.
+func TestMemoContinuationMovedApproverRootsNothingElsewhere(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		src := e.contQueue("src", 4, map[string]any{"acceptOwnSessions": true})
+		dst := e.contQueue("dst", 4, nil) // the switch is off here
+		ref := func(n string) map[string]any {
+			return map[string]any{"reference": map[string]any{"provider": "github", "key": n, "url": "https://example.test/" + n}}
+		}
+		_, bySwitch := e.fromSession("src", "by the switch", "user", ref("acme/app#51"))
+		byTidy := e.contRoot("src", "acme/app#52")
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET released_by='tidy' WHERE id=?`, byTidy.ID); err != nil {
+			t.Fatal(err)
+		}
+		// A single move of each.
+		for _, id := range []string{bySwitch.ID, byTidy.ID} {
+			if rec := e.do("a", "PATCH", "/api/memos/"+id, map[string]any{"category": "dst"}); rec.Code != http.StatusOK {
+				t.Fatalf("move: %d %s", rec.Code, rec.Body.String())
+			}
+		}
+		check := func(what string, id, key string) {
+			row := e.memoRow(id)
+			if row.Category != "dst" || row.State != store.MemoStatePending || row.ReleasedBy == "" {
+				t.Fatalf("%s: the approver was lost: %+v", what, row)
+			}
+			c := e.contSend("dst", "next "+what, key, "queue", "run-1", e.contRun(dst, "run-1", store.DeliveryOpen, id))
+			if contHeldReason(t, c) != memoContHeldRoot {
+				t.Errorf("%s rooted a chain in the other queue: %+v", what, c)
+			}
+			if _, _, found := e.chainRow(id); found {
+				t.Errorf("%s: a chain row was written", what)
+			}
+		}
+		check("moved switch memo", bySwitch.ID, "acme/app#51")
+		check("moved tidy memo", byTidy.ID, "acme/app#52")
+
+		// A merge of a whole category into the queue.
+		src2 := e.contQueue("src2", 4, map[string]any{"acceptOwnSessions": true})
+		_, merged := e.fromSession("src2", "merged by the switch", "user", ref("acme/app#53"))
+		tidied := e.contRoot("src2", "acme/app#54")
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET released_by='tidy' WHERE id=?`, tidied.ID); err != nil {
+			t.Fatal(err)
+		}
+		if rec := e.do("a", "PATCH", "/api/memo-categories/"+src2, map[string]any{"name": "dst"}); rec.Code != http.StatusOK {
+			t.Fatalf("merge: %d %s", rec.Code, rec.Body.String())
+		}
+		check("merged switch memo", merged.ID, "acme/app#53")
+		check("merged tidy memo", tidied.ID, "acme/app#54")
+		_ = src
 	})
 }
