@@ -93,6 +93,12 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const [busy, setBusy] = useState(false);
   const [purging, setPurging] = useState<PurgeTarget | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  // The toggle sits at the foot of the body, often below the fold of a long memory, and the history
+  // opens under it: without this, opening it changes nothing on screen (measured on a 900px window).
+  const historyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (showHistory) historyRef.current?.scrollIntoView?.({ block: "start" });
+  }, [showHistory]);
   // setBusy is asynchronous state; the ref stops a second click that lands before it renders.
   const inFlight = useRef(false);
 
@@ -484,11 +490,17 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           <p className="muted pad">{tr("common.loading")}</p>
         )}
         {running && !isNew && !draft && (
-          <div className="mentry-history">
-            <button type="button" className="linklike" aria-expanded={showHistory} onClick={() => setShowHistory((v) => !v)}>
+          <div className="mentry-history" ref={historyRef}>
+            <button
+              type="button"
+              id={`mentry-history-${paneId}`}
+              className="linklike"
+              aria-expanded={showHistory}
+              onClick={() => setShowHistory((v) => !v)}
+            >
               <Icon name={showHistory ? "chevron-down" : "chevron-right"} /> {tr("mem.rv_history")}
             </button>
-            {showHistory && <EntryHistory scope={scope} project={project} name={name} version={version} />}
+            {showHistory && <EntryHistory scope={scope} project={project} name={name} version={version} labelledBy={`mentry-history-${paneId}`} />}
           </div>
         )}
       </div>
@@ -509,7 +521,19 @@ function initialDraft(key: string, isNew: boolean, gone: boolean): Draft | null 
 
 /** The memory's own history, read only while it is shown: 300 changes is not a read to make for a
  *  pane nobody asked the history of, nor again on every write. */
-function EntryHistory({ scope, project, name, version }: { scope: "user" | "project"; project: string; name: string; version: number }) {
+function EntryHistory({
+  scope,
+  project,
+  name,
+  version,
+  labelledBy,
+}: {
+  scope: "user" | "project";
+  project: string;
+  name: string;
+  version: number;
+  labelledBy: string;
+}) {
   const history = useAllChanges(version);
-  return <MemoryHistory target={{ scope, project, name }} data={history} onOpenChanges={() => openMemoryView("changes")} />;
+  return <MemoryHistory target={{ scope, project, name }} data={history} onOpenChanges={() => openMemoryView("changes")} labelledBy={labelledBy} />;
 }

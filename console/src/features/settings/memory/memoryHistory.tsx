@@ -91,10 +91,14 @@ export function MemoryHistory({
   target,
   data,
   onOpenChanges,
+  labelledBy,
 }: {
   target: HistoryTarget;
   data: AllChanges;
   onOpenChanges?: () => void;
+  /** The id of a heading that already names this section (a disclosure's toggle): the section's
+   *  own title is then left out instead of saying the same words twice. */
+  labelledBy?: string;
 }) {
   const tr = useT();
   const [sel, setSel] = useState("");
@@ -116,8 +120,8 @@ export function MemoryHistory({
     c.authorKind === "member" ? tr("mem.af_by_member") : `${c.authorKind} · ${c.authorSession}`;
 
   return (
-    <section className="mem-md-history" aria-labelledby="mem-md-history-h">
-      <h5 id="mem-md-history-h">{tr("mem.md_hist_title")}</h5>
+    <section className="mem-md-history" aria-labelledby={labelledBy ?? "mem-md-history-h"}>
+      {!labelledBy && <h5 id="mem-md-history-h">{tr("mem.md_hist_title")}</h5>}
       {err && <p className="mem-warn">{err}</p>}
       {capped && <p className="muted ds-hint">{tr("mem.md_hist_capped", { n: data.changes?.length ?? 0 })}</p>}
       {olderErr && <p className="mem-warn">{tr("mem.md_hist_more_failed")}</p>}
