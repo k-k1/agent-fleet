@@ -162,7 +162,7 @@ func buildProgramPinned(pin []string, sid, model, effort, mode, label, forkFrom 
 		var doc map[string]json.RawMessage
 		if json.Unmarshal([]byte(settings), &doc) == nil {
 			doc["autoContinueAtUsageLimit"] = json.RawMessage("false")
-			if limitMode[0] == "claude" {
+			if limitMode[0] == "native" {
 				doc["autoContinueAtUsageLimit"] = json.RawMessage("true")
 			}
 			if encoded, err := json.Marshal(doc); err == nil {

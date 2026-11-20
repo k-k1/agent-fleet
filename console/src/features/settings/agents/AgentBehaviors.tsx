@@ -50,7 +50,7 @@ export function ClaudeBehavior({
             value={s.claudeLimitResumeMode === "inherit" ? (s.rateLimitAutoResume ? "af" : "off") : s.claudeLimitResumeMode}
             options={[
               ["af", tr("agents.claude_limit_resume_af")],
-              ["claude", tr("agents.claude_limit_resume_native")],
+              ["native", tr("agents.claude_limit_resume_native")],
               ["off", tr("agents.claude_limit_resume_off")],
             ]}
             onChange={(v) => setSetting("claudeLimitResumeMode", v)}

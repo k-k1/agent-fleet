@@ -287,15 +287,20 @@ func claudeLaunchLimitMode(m session.Meta) string {
 	raw, err := tmuxx.Output("show-environment", "-t", "="+session.TmuxName(m.Name), key)
 	if err == nil {
 		switch mode := strings.TrimSpace(strings.TrimPrefix(string(raw), key+"=")); mode {
-		case "af", "claude", "off":
+		case "af", "native", "off":
 			return mode
 		}
 	}
 	return uiprefs.ClaudeLimitResumeMode()
 }
 
+func hasNativeLimitResume(m session.Meta) bool {
+	tr, ok := usageLimitTraits(m)
+	return ok && tr.NativeResume
+}
+
 func rateLimitBookingEnabled(m session.Meta) bool {
-	if NormalizeKind(m.Kind) == "claude" {
+	if hasNativeLimitResume(m) {
 		return claudeLaunchLimitMode(m) == "af"
 	}
 	return uiprefs.RateLimitAutoResume()
@@ -321,7 +326,7 @@ func claudeStillAtLimit(m session.Meta) bool {
 }
 
 func claudeOwnsLimitWait(m session.Meta) bool {
-	if NormalizeKind(m.Kind) != "claude" {
+	if !hasNativeLimitResume(m) {
 		return false
 	}
 	return tmuxx.ClaudeUsageLimitWait(tmuxx.CapturePane(session.TmuxName(m.Name)))
@@ -397,7 +402,7 @@ func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu b
 		_ = RateLimitStates.Write(m.Name, st)
 		return
 	}
-	if NormalizeKind(m.Kind) == "claude" && (!rateLimitBookingEnabled(m) || claudeOwnsLimitWait(m)) && st.ScheduleID != "" {
+	if hasNativeLimitResume(m) && (!rateLimitBookingEnabled(m) || claudeOwnsLimitWait(m)) && st.ScheduleID != "" {
 		if cancelRateLimitSchedule(m.Name, st.ScheduleID) == nil {
 			st.ScheduleID, st.ResumeAt, st.FiredDuringMove = "", "", ""
 			st.ScheduleTries = 0
@@ -407,7 +412,7 @@ func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu b
 	st = rateLimitMoveEarly(m, st, now)
 	notifyRateLimitReached(m, st)
 
-	if onMenu && claudeLaunchLimitMode(m) != "claude" && !st.Dismissed && st.DismissTries < maxRateLimitDismissTries && !triedRecently(st, now) {
+	if onMenu && claudeLaunchLimitMode(m) != "native" && !st.Dismissed && st.DismissTries < maxRateLimitDismissTries && !triedRecently(st, now) {
 		st.DismissTries++
 		st.LastTry = now.Format(time.RFC3339)
 		// Record before sending: a crash midway must not roll the count back and let the key

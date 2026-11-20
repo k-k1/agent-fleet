@@ -128,9 +128,9 @@ func launchSettingsOf(t *testing.T, program string) map[string]any {
 // JSON is decoded, so a malformed constant fails here rather than at claude's start.
 func TestLaunchPinsUsageLimitContinuation(t *testing.T) {
 	t.Setenv("AGENT_SESSION_CMD", "")
-	for _, mode := range []string{"af", "claude", "off"} {
+	for _, mode := range []string{"af", "native", "off"} {
 		settings := launchSettingsOf(t, buildProgramPinned([]string{"TEST_ROUTE=kept"}, "sid", "", "", "", "", "", true, mode))
-		if got := settings["autoContinueAtUsageLimit"]; got != (mode == "claude") {
+		if got := settings["autoContinueAtUsageLimit"]; got != (mode == "native") {
 			t.Errorf("mode %s: autoContinueAtUsageLimit = %v", mode, got)
 		}
 		if env, _ := settings["env"].(map[string]any); env["TEST_ROUTE"] != "kept" {

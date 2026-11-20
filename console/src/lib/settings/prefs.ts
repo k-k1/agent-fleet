@@ -510,7 +510,7 @@ const PREFS = {
   // option) happens either way, because while it is up the session accepts nothing at all.
   rateLimitAutoResume: agentDefaulted(true),
   claudeLimitResumeMode: agentDefaulted("inherit", {
-    normalize: (v) => v === "af" || v === "claude" || v === "off" ? v : "inherit",
+    normalize: (v) => v === "af" || v === "native" || v === "off" ? v : "inherit",
   }),
   // Auto-resume a cut-off turn (docs/log/47 §4-6): when a claude turn dies on something that
   // clears on its own (dropped connection, temporary rate limit, stream idle timeout),

@@ -748,10 +748,10 @@ func refuseCancelledResume(name, source, prompt, scheduleID string) bool {
 	m, ok := session.ReadMeta(name)
 	st, has := RateLimitStates.Read(name)
 	booked := has && scheduleID != "" && st.ScheduleID == scheduleID
-	if ok && booked && NormalizeKind(m.Kind) == "claude" && claudeTurnAfterLimit(m, st) {
+	if ok && booked && hasNativeLimitResume(m) && claudeTurnAfterLimit(m, st) {
 		return true
 	}
-	if ok && (isRetired(m) || (NormalizeKind(m.Kind) == "claude" &&
+	if ok && (isRetired(m) || (hasNativeLimitResume(m) &&
 		(claudeOwnsLimitWait(m) || (!booked && !rateLimitBookingEnabled(m))))) {
 		return true
 	}

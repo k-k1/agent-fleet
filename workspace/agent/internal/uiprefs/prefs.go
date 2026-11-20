@@ -564,7 +564,7 @@ func RateLimitAutoResume() bool {
 func ClaudeLimitResumeMode() string {
 	prefs := Read()
 	switch mode, _ := prefs["claudeLimitResumeMode"].(string); mode {
-	case "af", "claude", "off":
+	case "af", "native", "off":
 		return mode
 	}
 	if on, ok := prefs["rateLimitAutoResume"].(bool); ok && !on {
