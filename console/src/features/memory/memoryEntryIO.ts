@@ -123,7 +123,9 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (!isMemoryBody(res, scope, name)) throw new Error("load_failed");
       // Not overwriting: a GET the buffer does not adopt (typing won the race) must not move the
       // counter the edit started from.
-      const file = entryFile(key, res as MemoryBody, adoptNext.delete(key));
+      const file = entryFile(key, res as MemoryBody, adoptNext.has(key));
+      // Only a read that became a buffer base uses the flag up.
+      adoptNext.delete(key);
       return file;
     },
     async save(_path, content, baseRevision): Promise<PutFileResult> {

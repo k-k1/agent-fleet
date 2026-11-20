@@ -99,7 +99,7 @@ describe("memoryEntryIO", () => {
     expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 5, kinds: ["codex"] });
   });
 
-  it("reads a memory the Agent sent without type, description or body", async () => {
+  it("reads a memory the Agent sent without type or body", async () => {
     const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
     api.mockResolvedValue({ name: "n", scope: "user", description: "", revision: 2 });
     const file = await io.load("k");
@@ -112,10 +112,24 @@ describe("memoryEntryIO", () => {
     apiJSON.mockResolvedValueOnce({ error: { code: "memory_conflict", message: "x" } });
     await memoryEntryIO(target, () => {}).save("k", file.content, file.revision);
     const rebuilt = memoryEntryIO(target, () => {});
-    api.mockResolvedValue({ ...body, revision: 5 });
+    api.mockResolvedValue({ ...body, revision: 5, kinds: ["codex"] });
     await rebuilt.load("k");
     apiJSON.mockResolvedValue({ revision: 6 });
     await rebuilt.save("k", file.content, file.revision);
-    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 5 });
+    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 5, kinds: ["codex"] });
+  });
+
+  it("keeps the adoption flag when the first read after a conflict cannot be edited", async () => {
+    const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+    const file = entryFile("k", body);
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_conflict", message: "x" } });
+    await io.save("k", file.content, file.revision);
+    api.mockResolvedValueOnce({ ...body, revision: 5, body: "a\rb" });
+    await expect(io.load("k")).rejects.toThrow();
+    api.mockResolvedValue({ ...body, revision: 6, kinds: ["codex"] });
+    await io.load("k");
+    apiJSON.mockResolvedValue({ revision: 7 });
+    await io.save("k", file.content, file.revision);
+    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 6, kinds: ["codex"] });
   });
 });
