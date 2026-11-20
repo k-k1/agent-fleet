@@ -325,3 +325,20 @@ func TestFoldConnectionOnlyMismatchKeepsRoute(t *testing.T) {
 		}
 	}
 }
+
+// Calls on one route whose billing is proven keep their boundary when only the connection differs:
+// one ledger row per connection, as before a connection could differ inside one turn.
+func TestFoldConnectionBoundaryKeptWhenBillingProven(t *testing.T) {
+	a := routeTurn(usagex.RouteOpencodeZen, usagex.BillingMetered, 5)
+	a.Connection = "OPENCODE_API_KEY@aaaa"
+	b := routeTurn(usagex.RouteOpencodeZen, usagex.BillingMetered, 7)
+	b.Connection = "OPENCODE_API_KEY@bbbb"
+	rows := foldTurnRows([]transcript.Turn{{Role: "user"}, a, b}, true)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	recs := usageRecordsOf(session.Meta{Name: "s", Kind: session.KindOpencode, Model: "opencode/glm-5.2"}, rows[0])
+	if len(recs) != 2 || recs[0].Connection != a.Connection || recs[1].Connection != b.Connection {
+		t.Fatalf("records = %+v, want one per connection", recs)
+	}
+}

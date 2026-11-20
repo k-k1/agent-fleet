@@ -558,7 +558,13 @@ func usageTurnsV2(t apiTarget, m session.Meta) []transcript.Turn {
 	if err != nil || c.Info == nil {
 		return nil
 	}
-	return v2TurnsBound(c, true, ledgerBinder(m))
+	// Only a conversation this slot's recorded id names is known to have run on this slot's server:
+	// without the id the conversation was found by directory and may be another server's.
+	var bind bindFn
+	if id := sids.Read(session.UUID(m.Dir, m.Name)); id != "" && id == c.Info.ID {
+		bind = ledgerBinder(m)
+	}
+	return v2TurnsBound(c, true, bind)
 }
 
 func recallSettingsV2(t apiTarget, m session.Meta) agents.RecalledSettings {
@@ -687,10 +693,10 @@ func v2SessionTurnsBound(msgs []v2Msg, cwd string, born int64, sidechain, usage 
 		}
 		var times []int64
 		for _, m := range msgs {
-			times = append(times, m.Time.Created)
-			if m.Time.Completed > 0 {
-				times = append(times, m.Time.Completed)
+			if m.Time.Completed < m.Time.Created || m.Time.Created <= 0 {
+				return "" // no end instant (the daemon went away mid-step), or one before the start
 			}
+			times = append(times, m.Time.Created, m.Time.Completed)
 		}
 		return bind(route, cost > 0, times...)
 	}

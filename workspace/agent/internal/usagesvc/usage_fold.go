@@ -406,9 +406,19 @@ func (r *usageTurnRow) absorbRoute(p usageTurnRow) {
 // began cannot be told.
 func (r *usageTurnRow) settleRoute() {
 	if !r.routeMixed {
-		r.segs = nil
-		if r.connMixed {
-			r.Connection = ""
+		if !r.connMixed {
+			r.segs = nil
+			return
+		}
+		// Only the connection differs. With every contribution's billing proven the boundary
+		// between them is proven and the segments stay (a self-hosted engine on two connections);
+		// otherwise the route stands and the connection is dropped.
+		for _, s := range r.segs {
+			if s.Billing == "" {
+				r.segs = nil
+				r.Connection = ""
+				return
+			}
 		}
 		return
 	}

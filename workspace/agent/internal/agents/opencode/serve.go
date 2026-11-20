@@ -265,6 +265,10 @@ func serveAddr() string {
 // Disabled reports whether managed opencode is switched off for this workspace.
 func (s *Supervisor) Disabled() bool { return os.Getenv("AF_OPENCODE_SERVE_DISABLE") == "1" }
 
+// genSnap is the runtime generation readable without s.mu (bind_intervals.go reads it from paths that
+// must not wait on the supervisor).
+var genSnap atomic.Int64
+
 // Generation returns the current runtime generation (§7).
 func (s *Supervisor) Generation() int {
 	s.mu.Lock()
@@ -317,6 +321,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	if healthy(addr) {
 		s.credGen = ""
 		s.gen++
+		genSnap.Store(int64(s.gen))
 		s.cmd = nil
 		s.up = true
 		s.stopping = false
@@ -324,7 +329,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		go s.monitorEvents(addr, s.gen)
 		log.Printf("opencode serve: adopted running daemon at %s (gen %d)", addr, s.gen)
 		recordLifecycle("adopted", s.gen, addr)
-		noteDaemonUnknown(time.Now()) // its environment was set by an earlier Agent process
+		noteDaemonUnknown(time.Now(), s.gen) // its environment was set by an earlier Agent process
 		return addr, s.gen, nil
 	}
 	// Past this point a new process starts, i.e. new memory is paid for. Do not pay
@@ -406,8 +411,13 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		if healthy(addr) {
 			started = true
 			// The environment is fixed for this process's life. Recorded only once the daemon
-			// answers: a start that never took the port must not stand for the one that did.
-			noteDaemonStart(spawnedAt, cmd.Env)
+			// answers and this process is still running: one that exited (the port was taken) did
+			// not answer, and its environment must not stand for whoever did.
+			if procRunning(cmd.Process.Pid) {
+				noteDaemonStart(spawnedAt, cmd.Env, s.gen+1)
+			} else {
+				noteDaemonUnknown(time.Now(), s.gen+1)
+			}
 			if err := persistServePassword(password); err != nil {
 				log.Printf("opencode serve: password not saved, a restarted Agent cannot adopt this daemon: %v", err)
 			}
@@ -415,6 +425,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			// the reconnecting TUIs submit as soon as they can.
 			restoreTerminalEnvs(addr)
 			s.gen++
+			genSnap.Store(int64(s.gen))
 			s.cmd = cmd
 			s.up = true
 			s.stopping = false
@@ -427,8 +438,10 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			go s.monitorEvents(addr, gen)
 			// The first account reading of this daemon's life: calls bind only after it
 			// (bind_intervals.go), so do not wait for the next Console poll.
-			invalidateOAuthStatus()
-			refreshOAuthAsync()
+			go func() { // not under s.mu: oauthMu is held across a daemon round trip
+				invalidateOAuthStatus()
+				refreshOAuthAsync()
+			}()
 			log.Printf("opencode serve: started (gen %d, pid %d, %s) in %v, %s", gen, cmd.Process.Pid, addr,
 				time.Since(began).Round(time.Millisecond), s.sinceOldExit())
 			recordLifecycle("started", gen, fmt.Sprintf("pid %d", cmd.Process.Pid))
