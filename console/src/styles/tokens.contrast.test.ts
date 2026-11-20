@@ -157,3 +157,34 @@ describe("light segment selection", () => {
     });
   }
 });
+
+// The ratios above hold only if the tokens are actually derived from those knobs and the outline
+// is actually painted: pin the formulas in every block that declares them, the per-theme ring
+// widths, and the rules in ui.css that draw the ring (the big grid has its own, which must keep
+// the cell separators).
+describe("segment selection wiring", () => {
+  const BG = "color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg))";
+  const FG = "color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg))";
+  const value = (body: string, n: string) => body.match(new RegExp(`${n}:\\s*([^;]+);`))?.[1].trim();
+  const scope = blocks.find((b) => b.selector === ".sel-scope")!;
+  for (const [name, b] of [["light", baseBlock("light")], ["dark", baseBlock("dark")], [".sel-scope", scope]] as const) {
+    it(`${name}: --sel-bg / --sel-fg use the mix knobs`, () => {
+      expect(value(b.body, "--sel-bg")).toBe(BG);
+      expect(value(b.body, "--sel-fg")).toBe(FG);
+    });
+  }
+  it("light draws a ring, dark none", () => {
+    expect(parseFloat(value(baseBlock("light").body, "--sel-ring")!)).toBeGreaterThanOrEqual(1);
+    expect(parseFloat(value(baseBlock("dark").body, "--sel-ring")!)).toBe(0);
+  });
+  it("ui.css paints the ring on .seg-btn.active and on the big grid's active cell", () => {
+    const uiCss = readFileSync(path.resolve(__dirname, "../ui/ui.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const rule = (sel: string) =>
+      [...uiCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].trim() === sel).map((m) => m[2]).join(";");
+    const ring = /inset 0 0 0 var\(--sel-ring\) var\(--sel-fg\)/;
+    expect(rule(".seg-btn.active")).toMatch(ring);
+    const big = rule(".ui-seg.big .seg-btn.active");
+    expect(big).toMatch(ring);
+    expect(big).toMatch(/inset -1px 0 0 var\(--btn-border\)/);
+  });
+});

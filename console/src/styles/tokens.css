@@ -77,6 +77,11 @@
      text = plain --fg (0% accent). */
   --sel-bg-mix: 30%;
   --sel-fg-mix: 0%;
+  /* Selected-segment outline width (ui.css .seg-btn.active). Dark needs none: its 30% fill
+     already stands apart from the near-black cells. A token rather than a
+     [data-theme] descendant selector, so a dark region nested in a light root (or the
+     reverse) takes the width of its NEAREST theme. */
+  --sel-ring: 0px;
   --sel-bg: color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg));
   --sel-fg: color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg));
   /* Transcript marks (docs/log/69 / ADR 0050). The fill carries the meaning the user picks;
@@ -239,7 +244,7 @@
   --hover-bg: #eaf1fb;
   /* Light: soft tint + accent-tinted text (a solid fill reads too heavy). Same
      --sel-accent mechanism so region rebinds apply in light too. The text is the accent
-     darkened toward --fg (55%/45%), NOT the raw accent: surface accents are tuned for
+     darkened toward --fg (45%/55%), NOT the raw accent: surface accents are tuned for
      dark backgrounds (green #2fb872, warm #e0964a …) and read ~2:1 on the pale --sel-bg
      tint — the launch/clone modal segs were illegible. The fill is 32%, not lighter: at 16%
      a low-chroma accent (slate, graphite) came out as light as or lighter than the
@@ -249,6 +254,7 @@
   --sel-accent: var(--topbar-accent);
   --sel-bg-mix: 32%;
   --sel-fg-mix: 45%;
+  --sel-ring: 1.5px;
   --sel-bg: color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg));
   --sel-fg: color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg));
   /* highlight.js syntax palette (GitHub Light). (--sel-* re-derivation for rebound
