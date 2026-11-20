@@ -133,7 +133,11 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
   const tr = useT();
   const [st, setSt] = useState<ConsolStatus | null>(null);
   const [err, setErr] = useState(false);
+  // Whether the last status read said a run was going: a run that ends refreshes memory below. A
+  // tenant switch empties the status, which is not a run ending, so it forgets this too.
+  const wasRunning = useRef(false);
   useEffect(() => {
+    wasRunning.current = false;
     setSt(null);
     setErr(false);
   }, [tenant]);
@@ -154,7 +158,6 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
   const running = st?.run?.running === true;
   // A run that just finished may have queued proposals: everything memory-shaped reads again, the
   // list and the activity bar's count included, instead of waiting for the next poll.
-  const wasRunning = useRef(false);
   useEffect(() => {
     if (wasRunning.current && !running) useMemoryStore.getState().bump();
     wasRunning.current = running;

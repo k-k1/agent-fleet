@@ -144,7 +144,8 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     },
     [running, isNew, scope, project, name, gone],
   );
-  useRetryLoad(load, [load, version]);
+  // The tenant is another workspace: the reset above clears what was read, so it is read again.
+  useRetryLoad(load, [load, version, tenant]);
 
   const retarget = (next: Partial<EntryContent>) => setPaneTarget(paneId, { content: { ...content, ...next } });
 
@@ -329,13 +330,15 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           </Button>
         </>
       ) : gone ? (
-        change &&
-        !change.live &&
-        change.revertible && (
+        change && (
           <>
-            <Button icon="discard" disabled={busy} onClick={unforget}>
-              {tr("mem.br_unforget")}
-            </Button>
+            {/* Only a forget that can still be reverted brings the memory back; the purge stays
+                for one that cannot, whose past text may be exactly what has to go. */}
+            {!change.live && change.revertible && (
+              <Button icon="discard" disabled={busy} onClick={unforget}>
+                {tr("mem.br_unforget")}
+              </Button>
+            )}
             <Button variant="ghost" disabled={busy} onClick={() => setPurging({ scope, project: { id: project }, name, where })}>
               {tr("mem.pg_button")}
             </Button>

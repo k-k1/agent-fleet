@@ -80,6 +80,16 @@ describe("useConsolRun", () => {
     expect(seen!.st).toBeNull();
   });
 
+  it("does not take a tenant switch during a run for the run ending", async () => {
+    api.mockResolvedValue(status(true));
+    await render(true, "a");
+    const before = useMemoryStore.getState().version;
+    api.mockImplementation(() => new Promise(() => {}));
+    await render(true, "b");
+    await act(async () => {});
+    expect(useMemoryStore.getState().version).toBe(before);
+  });
+
   it("re-reads memory everywhere once a run finishes", async () => {
     api.mockResolvedValue(status(true));
     await render(true);

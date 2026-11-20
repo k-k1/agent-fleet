@@ -9,6 +9,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { allViews, freshLayout } from "../../layout/ops.ts";
 import { useMemoryStore } from "../memory/store.ts";
 import { api } from "../../core/api/client.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useLeftRail } from "../../core/store/leftRail.ts";
 import { setLocale } from "../../lib/i18n/index.ts";
 import { ja } from "../../lib/i18n/locales/ja.ts";
@@ -98,6 +99,7 @@ describe("a memory-consolidation notification", () => {
   it("opens the first proposal waiting, alone (ADR 0141 decision 8)", async () => {
     const prop = (id: string, status: string) => ({ id, status, memory: id, topicId: "t", scope: "user", created: "", expires: "", items: [], observationIds: [], evidence: [] });
     // Stale in the store; the notice reads them again before it picks one.
+    useWorkspaceStore.setState({ state: "running" });
     useMemoryStore.setState({ proposals: [prop("0000000000000000000f", "pending")] });
     vi.mocked(api).mockImplementation(async (url: unknown) =>
       String(url) === "api/agents/memory-consolidation/proposals"
@@ -107,6 +109,17 @@ describe("a memory-consolidation notification", () => {
     await openNotificationTarget(consolidation(), false);
     expect(memoryPanes().map((v) => v.content)).toEqual([{ kind: "memory", memoryView: "proposals", proposalId: "0000000000000000000b" }]);
     vi.mocked(api).mockImplementation(async () => ({}));
+    useMemoryStore.getState().reset();
+  });
+
+  it("asks a stopped workspace for nothing, and opens what the store knows", async () => {
+    const prop = (id: string, status: string) => ({ id, status, memory: id, topicId: "t", scope: "user", created: "", expires: "", items: [], observationIds: [], evidence: [] });
+    useWorkspaceStore.setState({ state: "stopped" });
+    useMemoryStore.setState({ proposals: [prop("0000000000000000000c", "pending")] });
+    vi.mocked(api).mockClear();
+    await openNotificationTarget(consolidation(), false);
+    expect(vi.mocked(api).mock.calls.some((c) => String(c[0]).includes("memory-consolidation"))).toBe(false);
+    expect(memoryPanes().map((v) => v.content)).toEqual([{ kind: "memory", memoryView: "proposals", proposalId: "0000000000000000000c" }]);
     useMemoryStore.getState().reset();
   });
 

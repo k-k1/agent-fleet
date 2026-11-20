@@ -21,6 +21,7 @@ import { useSettingsUI } from "../settings/store.ts";
 import { openMemoryView } from "../memory/open.ts";
 import { useLeftRail } from "../../core/store/leftRail.ts";
 import { useMemoryStore } from "../memory/store.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { destinationShown, opensConversation, unseenConversationEventIDs, unseenSessionEventIDs } from "./read.ts";
 import { isMemoQueueKind, notificationWording } from "./wording.ts";
 import { useMemoStore } from "../memo/store.ts";
@@ -250,7 +251,9 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     useLeftRail.getState().showView("memory");
     // The notice can arrive before the next poll: read the proposals now, so the one opened, the
     // list and the activity bar's count are the ones the notice is about.
-    await useMemoryStore.getState().loadProposals();
+    // Only while the workspace runs: a stopped one has no Agent to answer, and a refusal would
+    // be kept as the proposals' error.
+    if (useWorkspaceStore.getState().state === "running") await useMemoryStore.getState().loadProposals();
     const first = (useMemoryStore.getState().proposals ?? []).find((p) => p.status === "pending");
     openMemoryView("proposals", first ? { proposalId: first.id } : {});
     return { opened: true };

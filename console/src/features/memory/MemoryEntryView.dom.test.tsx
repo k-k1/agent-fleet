@@ -324,12 +324,25 @@ describe("MemoryEntryView", () => {
     expect(allViews(useLayoutStore.getState().layout).some((v) => v.content.kind === "memoryEntry")).toBe(false);
   });
 
-  it("never offers one tenant's draft in another", async () => {
+  it("never offers one tenant's draft in another, and reads the memory again there", async () => {
     await open();
     await act(async () => button(t("mem.br_edit"))!.click());
+    const reads = () => api.mock.calls.filter((c) => String(c[0]).startsWith("api/agents/memory/entries/member-read")).length;
+    const before = reads();
     await act(async () => useTenantStore.setState({ tenant: "t2" }));
     await flush();
     expect(host!.querySelector(".mentry-form")).toBeNull();
+    expect(reads()).toBe(before + 1);
+    expect(host!.querySelector(".mentry-md")).not.toBeNull();
+  });
+
+  it("keeps the purge for a forgotten memory that can no longer be brought back", async () => {
+    api.mockImplementation(async (url: string) =>
+      url.startsWith("api/agents/memory/entries/member-latest") ? { ...latest, op: "forget", live: false, revertible: false } : {},
+    );
+    await open(memoryEntryContent({ scope: "project", project, name: "build-cmd" }, true));
+    expect(button(t("mem.br_unforget"))).toBeUndefined();
+    expect(button(t("mem.pg_button"))).toBeTruthy();
   });
 
   it("states the pin as pressed or not, and offers Unforget only for a change that can bring it back", async () => {
