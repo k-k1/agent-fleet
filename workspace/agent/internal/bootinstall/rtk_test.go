@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -298,16 +299,60 @@ func TestRTKRepinSkippedForNoSpaceKeepsOldCopy(t *testing.T) {
 	}
 }
 
-// A wrapper whose child keeps our output pipes open must not stall the probe past its deadline.
-func TestProbeBoundedWhenChildHoldsPipes(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "rtk")
-	os.WriteFile(p, []byte("#!/bin/sh\nsleep 30 &\necho rtk 1.2.3\nsleep 30\n"), 0o755)
-	e := Env{RunTimeout: 500 * time.Millisecond}
+// A wrapper that exits at once but leaves a child holding our output pipes: the probe stops
+// waiting at WaitDelay, keeps the answer it already got and reaps the straggler.
+func TestProbeParentExitsChildHoldsPipes(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "rtk")
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	script := "#!/bin/sh\nsleep 30 &\necho $! >" + pidFile + "\necho rtk 1.2.3\nexit 0\n"
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := Env{RunTimeout: 10 * time.Second}
 	start := time.Now()
-	e.probe(p)
+	out, _, err := e.probe(p)
+	if err != nil || out != "rtk 1.2.3" {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Fatalf("probe took %v", d)
+	}
+	b, _ := os.ReadFile(pidFile)
+	var pid int
+	if _, err := fmt.Sscan(string(b), &pid); err != nil {
+		t.Fatalf("no child pid: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if syscall.Kill(pid, 0) == nil {
+		// zombie/reaping by init may lag; a signal-0 success on a live sleep means not reaped
+		if st, _ := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); !strings.Contains(string(st), ") Z") {
+			t.Fatalf("straggler %d still alive", pid)
+		}
+	}
+}
+
+// A wrapper that never finishes is cut at the deadline together with its children.
+func TestProbeDeadlineKillsGroup(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "rtk")
+	os.WriteFile(p, []byte("#!/bin/sh\nsleep 30 &\nsleep 30\n"), 0o755)
+	e := Env{RunTimeout: 500 * time.Millisecond}
+	start := time.Now()
+	if _, _, err := e.probe(p); err == nil {
+		t.Fatal("no error at the deadline")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("probe took %v", d)
+	}
+}
+
+func TestCapWriterKeepsOnlyTheLimit(t *testing.T) {
+	c := &capWriter{max: 4}
+	if n, _ := c.Write([]byte("abcdefgh")); n != 8 {
+		t.Fatalf("n=%d", n)
+	}
+	c.Write([]byte("zz"))
+	if c.String() != "abcd" {
+		t.Fatalf("kept %q", c.String())
 	}
 }
 

@@ -124,10 +124,46 @@ func (e Env) probe(p string) (stdout, stderr string, err error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
-	var so, se bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &so, &se
+	so, se := &capWriter{max: probeMaxBytes}, &capWriter{max: probeMaxBytes}
+	cmd.Stdout, cmd.Stderr = so, se
 	err = cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// The process itself exited successfully; only a straggler still holds the pipes.
+		// Reap the stragglers and take the answer.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		err = nil
+	}
 	return strings.TrimSpace(so.String()), strings.TrimSpace(se.String()), err
+}
+
+// probeMaxBytes bounds what a probe keeps of each stream; the rest is read and dropped, so a
+// wrapper that logs without end cannot grow our memory before the deadline.
+const probeMaxBytes = 8 << 10
+
+type capWriter struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (c *capWriter) Write(p []byte) (int, error) {
+	if room := c.max - c.buf.Len(); room > 0 {
+		c.buf.Write(p[:min(room, len(p))])
+	}
+	return len(p), nil
+}
+
+func (c *capWriter) String() string { return c.buf.String() }
+
+// localWriter marks write failures to the destination as ours, apart from read failures of
+// the response body.
+type localWriter struct{ w io.Writer }
+
+func (l localWriter) Write(p []byte) (int, error) {
+	n, err := l.w.Write(p)
+	if err != nil {
+		err = localError{err}
+	}
+	return n, err
 }
 
 // runs reports whether the binary at p answers --version in time.
@@ -233,11 +269,8 @@ func (e Env) getOnce(ctx context.Context, u, dest string) error {
 	if err != nil {
 		return localError{err}
 	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	if _, err := io.Copy(localWriter{f}, resp.Body); err != nil {
 		f.Close()
-		if errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT) {
-			return localError{err}
-		}
 		return err
 	}
 	if err := f.Close(); err != nil {
