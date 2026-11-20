@@ -87,11 +87,16 @@ interface Known {
 // a dirty buffer's guard saves after its pane has unmounted. Bounded per memory.
 const known = new Map<string, Map<string, Known>>();
 const KEEP = 16;
-const adoptNext = new Set<string>();
+// Set when a save lost to a conflict (or met an unknown base): the next read that *starts after*
+// it is the remote the member is about to adopt. The value is a ticket, so a read already in
+// flight when the flag was set (an edit-start follow) cannot consume it by finishing first.
+const adoptNext = new Map<string, number>();
+let adoptTicket = 0;
+const raiseAdopt = (key: string) => void adoptNext.set(key, ++adoptTicket);
 // The text last sent for a memory, as the Agent stores it. The Agent trims the description, type
 // and body it is given, so what a read answers after a save differs from the buffer by trailing
 // whitespace alone. Kept by memory, outside the adapter, like the counters.
-const sent = new Map<string, { raw: string; stored: string; revision: number; kinds: string[] }>();
+const sent = new Map<string, { raw: string; stored: string; base: string; revision: number; kinds: string[] }>();
 // The refusal of the last save of a memory, for a pane that was not mounted when it came: the
 // adapter outlives the view that asked for the save.
 const refusals = new Map<string, EntryRefusal>();
@@ -111,10 +116,16 @@ function remember(key: string, sha: string, entry: Known, overwrite: boolean) {
   while (byHash.size > KEEP) byHash.delete(byHash.keys().next().value as string);
 }
 
+// The pane that was in edit mode, and on which memory: a tabbed cell renders only its selected
+// view, so the view that comes back reads this instead of falling to the read view. Per pane and
+// key, so a retarget does not carry edit mode to another memory.
+export const editingPanes = new Map<string, string>();
+
 /** Test hook. */
 export function resetMemoryRevisions() {
   known.clear();
   adoptNext.clear();
+  editingPanes.clear();
   sent.clear();
   sentNew.clear();
   refusals.clear();
@@ -241,6 +252,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         // (the view lands the pane when it is).
         return { ...blankNewFile(key), content: last.raw, size: last.raw.length, revision: revisionOf(last.raw) };
       }
+      const adopting = adoptNext.get(key);
       const q = `scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(name)}`;
       const res = await timed(READ_TIMEOUT_MS, (signal) => api(`api/agents/memory/entries/member-read?${q}`, { signal }));
       if (res?.error) throw new Error(res.error.code || "load_failed");
@@ -248,9 +260,9 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (!isMemoryBody(res, scope, name)) throw new Error("load_failed");
       // Not overwriting: a GET the buffer does not adopt (typing won the race) must not move the
       // counter the edit started from.
-      let file = entryFile(key, res as MemoryBody, adoptNext.has(key));
-      // Only a read that became a buffer base uses the flag up.
-      adoptNext.delete(key);
+      let file = entryFile(key, res as MemoryBody, adopting !== undefined);
+      // Only a read that began after the flag was raised uses it up; a newer flag stays.
+      if (adopting !== undefined && adoptNext.get(key) === adopting) adoptNext.delete(key);
       // After a save whose outcome is unknown, the memory as the Agent stores the text sent is that
       // text: reporting its trimmed form would read the committed save as a third version. The
       // base for the next save is this very read, whatever counter an older read of the text had.
@@ -262,6 +274,11 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         const revision = revisionOf(last.raw);
         remember(key, revision, { revision: (res as MemoryBody).revision, kinds: (res as MemoryBody).kinds ?? [] }, true);
         file = { ...file, content: last.raw, size: last.raw.length, revision };
+      } else if (last && file.revision === last.base && (answered.revision !== last.revision || !sameKinds(answered.kinds ?? [], last.kinds))) {
+        // Another writer stored the text the save started from, at a later counter: the save did not
+        // land, but the counter it was sent with is spent. A resave from the original has to carry
+        // the live one, or it ends in a 409.
+        remember(key, file.revision, { revision: answered.revision, kinds: answered.kinds ?? [] }, true);
       }
       return file;
     },
@@ -274,7 +291,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       // a save whose answer was lost cannot write a second copy.
       const base = isNew ? { revision: 0, kinds: [] as string[] } : known.get(key)?.get(baseRevision);
       // A base this pane never read cannot be saved over safely: let the hook re-read.
-      if (!base) adoptNext.add(key);
+      if (!base) raiseAdopt(key);
       if (!base) return { ok: false, status: 409, error: { code: "revision_conflict", message: "unknown base" } };
       const fields = decodeEntry(content);
       const saveName = isNew ? (fields.name ?? "").trim() : name;
@@ -284,7 +301,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         while (sentNew.size >= KEEP_SENT) sentNew.delete(sentNew.keys().next().value as string);
       }
       if (isNew) sentNew.set(key, { name: saveName, raw: content, stored: storedForm(encodeEntry({ description: fields.description, type: fields.type, body: fields.body })) });
-      if (!isNew) sent.set(key, { raw: content, stored: storedForm(content), revision: base.revision, kinds: base.kinds });
+      if (!isNew) sent.set(key, { raw: content, stored: storedForm(content), base: baseRevision, revision: base.revision, kinds: base.kinds });
       // The project id also goes in the query: the CP audit ledger reads the URL only.
       const payload = {
         scope,
@@ -309,7 +326,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
           sentNew.delete(key);
         }
         // For a new memory the name is taken: there is no remote text to resolve against.
-        if (code === "memory_conflict" && !isNew) adoptNext.add(key);
+        if (code === "memory_conflict" && !isNew) raiseAdopt(key);
         if (code === "memory_conflict" && !isNew) return { ok: false, status: 409, error: { code: "revision_conflict", message: errDetail(res.error) } };
         const refusal = { code, text: errDetail(res.error), findings: code === "memory_secret_detected" ? ((res.findings ?? []) as SecretFinding[]) : [], content };
         setRefusal(key, refusal);

@@ -185,6 +185,33 @@ describe("memoryEntryIO", () => {
     expect(other.read.content).toBe(spaced("x"));
   });
 
+  it("carries the live counter into a resave when another writer stored the text the save started from", async () => {
+    const { io, file, sentText, read } = await lostAnswer({ revision: 9, kinds: ["codex"] });
+    expect(read.content).toBe(spaced("x"));
+    expect(read.revision).toBe(file.revision);
+    apiJSON.mockResolvedValue({ revision: 10 });
+    await io.save("k", sentText, read.revision);
+    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 9, kinds: ["codex"] });
+  });
+
+  it("does not let a read that began before the conflict use up the adoption flag", async () => {
+    const io = memoryEntryIO(target, () => {});
+    const file = entryFile("k", body);
+    // The follow read starts first and answers last.
+    let release!: (v: unknown) => void;
+    api.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const early = io.load("k");
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_conflict", message: "x" } });
+    await io.save("k", file.content, file.revision);
+    api.mockResolvedValueOnce({ ...body, revision: 5, kinds: ["codex"] });
+    await io.load("k");
+    release({ ...body, revision: 4 });
+    await early;
+    apiJSON.mockResolvedValue({ revision: 6 });
+    await io.save("k", file.content, file.revision);
+    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 5, kinds: ["codex"] });
+  });
+
   it("does not take a read for the text sent once the save is known to have been refused as a conflict", async () => {
     const io = memoryEntryIO(target, () => {});
     const file = entryFile("k", { ...body, body: "x" });

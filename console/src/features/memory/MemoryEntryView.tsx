@@ -42,7 +42,7 @@ import type { PaneContent } from "../../layout/types.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { openMemoryView } from "./open.ts";
 import { useMemoryStore } from "./store.ts";
-import { blankNewFile, clearPending, clearRefusal, decodeEntry, encodeEntry, entryFile, entryKey, isMemoryBody, memoryEntryIO, newEntryKey, refusalOf, subscribeRefusal, type EntryFields, type EntryRefusal } from "./memoryEntryIO.ts";
+import { editingPanes, blankNewFile, clearPending, clearRefusal, decodeEntry, encodeEntry, entryFile, entryKey, isMemoryBody, memoryEntryIO, newEntryKey, refusalOf, subscribeRefusal, type EntryFields, type EntryRefusal } from "./memoryEntryIO.ts";
 
 type EntryContent = Extract<PaneContent, { kind: "memoryEntry" }>;
 
@@ -111,7 +111,15 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const [loadErr, setLoadErr] = useState("");
   const [formErr, setFormErr] = useState("");
   const [findings, setFindings] = useState<SecretFinding[]>([]);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditingState] = useState(() => editingPanes.get(paneId) === key);
+  const setEditing = useCallback(
+    (on: boolean) => {
+      if (on) editingPanes.set(paneId, key);
+      else if (editingPanes.get(paneId) === key) editingPanes.delete(paneId);
+      setEditingState(on);
+    },
+    [paneId, key],
+  );
   const [resolutionOpen, setResolutionOpen] = useState(true);
   const [refusal, setRefusalState] = useState<EntryRefusal | null>(null);
   const onRefused = useCallback((r: EntryRefusal | null) => {
@@ -194,7 +202,8 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setBody(null);
     setChange(null);
     setLoadErr("");
-    setEditing(false);
+    // Edit mode survives a remount on the same memory; a retarget or a forget ends it.
+    setEditingState(!gone && editingPanes.get(paneId) === key);
     setResolutionOpen(true);
   }, [key, isNew, gone]);
   // The save that was refused may have been asked for by a view that is gone by now.
@@ -349,13 +358,35 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     }
     setEditing(true);
     setResolutionOpen(true);
-    // The buffer may predate a change made elsewhere; a clean one follows the store before it is edited.
-    if (!model.dirty) void editor.applyProbeResult({ kind: "revision", revision: file!.revision });
+    // A clean buffer that rests on older text than the body shown follows it before the form
+    // opens (see `baseLag`).
   };
+
+  // A clean buffer whose base is not the body shown (the buffer was kept while the body was
+  // re-read): editing it would start from the older text and end in a conflict. The form waits
+  // until the hook has followed the shown text.
+  const baseLag = !isNew && !gone && !!model && !model.dirty && !!file && model.baseDiskRevision !== file.revision;
+  const lagRevision = baseLag ? file!.revision : "";
+  useEffect(() => {
+    if (!editing || !lagRevision) return;
+    let live = true;
+    void editor.applyProbeResult({ kind: "revision", revision: lagRevision }).then((followed) => {
+      // The read behind the follow failed, or answered older text: opening on the stale base
+      // would only move the conflict to the save.
+      if (live && !followed) {
+        setEditing(false);
+        setFormErr(trRef.current("mem.br_edit_stale"));
+      }
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, lagRevision, key]);
 
   // What the form shows and edits: the hook's buffer, which for a new memory also holds its name.
   const decoded = model ? decodeEntry(model.content) : null;
-  const fields = isNew ? decoded && { ...decoded, name: decoded.name ?? "" } : !gone && (editing || model?.dirty) && decoded ? { ...decoded, name } : null;
+  const fields = isNew ? decoded && { ...decoded, name: decoded.name ?? "" } : !gone && ((editing && !baseLag) || model?.dirty) && decoded ? { ...decoded, name } : null;
   const setField = (patch: Partial<Pick<EntryFields, "name" | "description" | "type" | "body">>) => {
     if (model && !locked) editor.edit(encodeEntry({ ...decodeEntry(model.content), ...patch }));
   };
