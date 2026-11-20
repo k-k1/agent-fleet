@@ -205,18 +205,33 @@ grep -qP '^claude\tfailed\tother' "$T/bidir/install.tsv" || fail "npm: no failed
 reset; mkdir -p "$T/home/.local/bin"; printf '#!/bin/sh\necho 1.0.0\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"
 run_block BI_AGENT_BIN="$T/none"
 grep -qP '^claude\tskipped' "$T/bidir/install.tsv" || fail "npm: a working copy was not recorded skipped without the Agent"
-# Without the Agent, the every-start pass cannot repair, but a broken ~/.local copy must not stay
-# on PATH where it hides a baked one.
-reset; mkdir -p "$T/home/.local/bin"; printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/codex"; chmod +x "$T/home/.local/bin/codex"
-cat >"$T/fallback.sh" <<'S'
-NPM_CLIS="claude opencode codex copilot"
-BI_AGENT_BIN=/nonexistent
-S
-awk '/^npm_wa\(\)/{on=1} on{print} on&&/^}/{exit}' "$BLOCK" >>"$T/fallback.sh"
-VJ="$T/versions.json"; ( HOME="$T/home" BI_STATUS="$T/fb.tsv"; bi_note() { printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >>"$BI_STATUS"; }; cli_usable() { return 1; }; vj_pin() { :; }
-  . "$T/fallback.sh"; npm_wa npm-verify --present ) >/dev/null 2>&1
+# Without the Agent, the verify passes cannot repair, but a broken ~/.local copy must not stay
+# on PATH where it hides a baked one, and nothing here may end the start (set -e).
+fb() { # fb <usable: 0|1> <npm_wa args...> — the fallback of npm_wa, run under set -e
+  local usable="$1"; shift
+  ( set -e; HOME="$T/home"; BI_STATUS="$T/fb.tsv"; VJ="$T/versions.json"
+    bi_note() { printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >>"$BI_STATUS"; }
+    cli_usable() { [ "$usable" = 1 ]; }; vj_pin() { :; }
+    NPM_CLIS="claude opencode codex copilot"; BI_AGENT_BIN=/nonexistent
+    . "$T/npm_wa.sh"; npm_wa "$@"; echo STARTED ) >"$T/fb.out" 2>&1
+}
+awk '/^npm_wa\(\)/{on=1} on{print} on&&/^}/{exit}' "$BLOCK" >"$T/npm_wa.sh"
+reset; rm -f "$T/fb.tsv"; mkdir -p "$T/home/.local/bin"; printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/codex"; chmod +x "$T/home/.local/bin/codex"
+fb 0 npm-verify --present
+grep -q STARTED "$T/fb.out" || fail "npm: the fallback ended the start"
 [ -e "$T/home/.local/bin/codex" ] && fail "npm: a broken copy stayed on PATH without the Agent"
 grep -qP '^codex\tfailed' "$T/fb.tsv" || fail "npm: no failed status for the broken copy without the Agent"
+# --present is limited to the copies there are; an explicit list answers for a missing one too.
+reset; rm -f "$T/fb.tsv"; fb 0 npm-verify --present
+[ -s "$T/fb.tsv" ] && fail "npm: --present recorded something for CLIs with no copy"
+fb 0 npm-verify codex
+grep -qP '^codex\tfailed' "$T/fb.tsv" || fail "npm: an explicit verify of a missing CLI left no status"
+grep -qP '^claude' "$T/fb.tsv" && fail "npm: an explicit verify touched a CLI it was not asked about"
+# A copy that cannot be removed (a directory here) is reported, and the start goes on.
+reset; rm -f "$T/fb.tsv"; mkdir -p "$T/home/.local/bin/codex/sub"
+fb 0 npm-verify --present
+grep -q STARTED "$T/fb.out" || fail "npm: an unremovable copy ended the start"
+grep -qP '^codex\tfailed' "$T/fb.tsv" || fail "npm: an unremovable copy left no status"
 # The shell no longer carries an npm install or a verify of its own.
 grep -q 'npm install -g' "$BLOCK" && fail "npm: shell install block still present"
 grep -q 'npm_clis_verify' "$BLOCK" && fail "npm: shell verify still present"

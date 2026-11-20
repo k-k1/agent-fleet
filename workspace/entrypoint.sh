@@ -572,7 +572,8 @@ agy_effective_version() {
 # workspace-agent earlier on PATH (home's ~/.local/bin leads it) must not decide the install.
 NPM_CLIS="claude opencode codex copilot"
 npm_wa() {
-  local wa="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}" rc=0 c
+  local wa="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}" rc=0 c gone list="$NPM_CLIS"
+  [ "$1" = npm-verify ] && [ "${2:-}" != --present ] && [ $# -gt 1 ] && list="${*:2}"
   if [ -x "$wa" ]; then
     "$wa" boot-install "$@" || rc=$?
   else
@@ -583,14 +584,20 @@ npm_wa() {
     3) BI_LOW_SPACE=1 ;;
     *) # Outside the subcommand's contract (usage error, not runnable): no status line was written.
        [ "$rc" = 127 ] || echo "[entrypoint] WARN: npm boot-install $1 exited $rc (retrying next start)"
-       for c in $NPM_CLIS; do
+       for c in $list; do
          if [ "$1" != npm ]; then
            # No repair pass: at least take a copy that does not run off PATH, where it would hide a
-           # working baked one, and say so.
+           # working baked one, and say so. An explicit list also answers for a CLI with no copy at
+           # all; only --present is limited to the copies there are.
+           gone=0
            if { [ -e "$HOME/.local/bin/$c" ] || [ -L "$HOME/.local/bin/$c" ]; } \
               && ! timeout 30 "$HOME/.local/bin/$c" --version >/dev/null 2>&1; then
-             rm -f "$HOME/.local/bin/$c"
-             if cli_usable "$c"; then bi_note "$c" skipped; else bi_note "$c" failed other; fi
+             # `if`, not a bare rm: a failure here must not end the start under set -e.
+             if rm -f "$HOME/.local/bin/$c"; then gone=1
+             else echo "[entrypoint] WARN: could not remove $HOME/.local/bin/$c"; bi_note "$c" failed other; continue; fi
+           fi
+           if [ "$gone" = 1 ] || [ "${2:-}" != --present ]; then
+             if cli_usable "$c"; then [ "$gone" = 0 ] || bi_note "$c" skipped; else bi_note "$c" failed other; fi
            fi
          elif cli_usable "$c"; then bi_note "$c" skipped
          elif [ -n "$(vj_pin "$c")" ]; then bi_note "$c" failed other; fi

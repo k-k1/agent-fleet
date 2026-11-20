@@ -82,8 +82,13 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 	se := &tailWriter{max: 64 << 10}
 	cmd.Stderr = se
 	err = cmd.Run()
-	if errors.Is(err, exec.ErrWaitDelay) {
+	// Whatever npm answered, nothing it started may outlive it: Wait prefers the exit error over
+	// ErrWaitDelay, so a failed npm with a postinstall child holding the pipes would otherwise
+	// skip the group kill. ESRCH (nothing left) is the usual answer.
+	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	if errors.Is(err, exec.ErrWaitDelay) {
 		err = nil
 	}
 	return se.String(), err
@@ -247,9 +252,7 @@ func (e Env) NPMVerify(clis []string, present bool) int {
 		if statErr != nil && usable(filepath.Join(e.bakedBin(), c)) {
 			continue
 		}
-		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: could not remove %s: %v\n", link, err)
-		}
+		e.removeLink(link)
 		pin := e.Pins[c]
 		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s in ~/.local does not run after the npm install", c)
 		if pin != "" {
@@ -279,14 +282,17 @@ func (e Env) NPMVerify(clis []string, present bool) int {
 					fmt.Fprintf(e.Stdout, "[entrypoint] %s repaired at the pin %s\n", c, e.Pins[c])
 					e.note(c, statusOK, "")
 				} else {
-					os.Remove(filepath.Join(e.localBin(), c))
 					broken = append(broken, c)
 				}
 			}
 		}
 	}
 	for _, c := range broken {
-		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s does not run; removed its ~/.local link (retrying next start)\n", c)
+		if e.removeLink(filepath.Join(e.localBin(), c)) {
+			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s does not run; removed its ~/.local link (retrying next start)\n", c)
+		} else {
+			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s does not run (retrying next start)\n", c)
+		}
 		e.note(c, statusFailed, reasonFromStderr(lastErr))
 	}
 	// No space first: the entrypoint holds back its later downloads on it, and the individual
@@ -298,6 +304,16 @@ func (e Env) NPMVerify(clis []string, present bool) int {
 		return ExitFailed
 	}
 	return ExitOK
+}
+
+// removeLink removes a copy that does not run and reports whether it is gone; a failure is said
+// out loud, because a copy left in place keeps shadowing a baked one.
+func (e Env) removeLink(link string) bool {
+	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: could not remove %s: %v\n", link, err)
+		return false
+	}
+	return true
 }
 
 // NPMVerifyPresent is NPMVerify for the CLIs that have a ~/.local copy, on every start and not

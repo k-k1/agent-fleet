@@ -2,6 +2,7 @@ package bootinstall
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -364,5 +365,37 @@ func TestTailWriterKeepsTheEnd(t *testing.T) {
 	w.Write([]byte("EINTEGRITY"))
 	if s := w.String(); len(s) > 10 || !strings.HasSuffix(s, "EINTEGRITY") {
 		t.Fatalf("got %q", s)
+	}
+}
+
+// A failing npm whose postinstall child still holds the pipes must not leave the child running.
+func TestNPMInstallFailureKillsStragglers(t *testing.T) {
+	f := newNPM(t, map[string]string{"claude": "1.0.0"})
+	pidFile := filepath.Join(f.dir, "child.pid")
+	f.write(f.env.NPM, "#!/bin/sh\nsleep 30 &\necho $! >"+pidFile+"\necho 'npm error code EINTEGRITY' >&2\nexit 1\n")
+	os.Chmod(f.env.NPM, 0o755)
+	if rc := NPM(f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d", rc)
+	}
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pid int
+	fmt.Sscan(strings.TrimSpace(string(b)), &pid)
+	waitGone(t, pid)
+}
+
+func TestNPMVerifyUnremovableCopyIsReportedNotRemoved(t *testing.T) {
+	f := newNPM(t, map[string]string{})
+	if err := os.MkdirAll(filepath.Join(f.bin("claude"), "sub"), 0o755); err != nil { // a directory: runs() fails, Remove fails
+		t.Fatal(err)
+	}
+	if rc := f.env.NPMVerify([]string{"claude"}, false); rc != ExitFailed {
+		t.Fatalf("rc=%d", rc)
+	}
+	out := f.out.String()
+	if !strings.Contains(out, "could not remove") || strings.Contains(out, "removed its ~/.local link") {
+		t.Fatalf("out=%s", out)
 	}
 }
