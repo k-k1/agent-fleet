@@ -262,3 +262,18 @@ func TestAGYCandidateWithoutVersionKeepsWorkingCopy(t *testing.T) {
 		t.Fatalf("status %q", got)
 	}
 }
+
+// The candidate is probed beside the destination, never in the download's temp dir, so a noexec
+// TMPDIR cannot fail an install whose destination runs.
+func TestAGYProbesCandidateBesideDestination(t *testing.T) {
+	f := newAGY(t, "#!/bin/sh\necho \"$0\" >\"$AF_PROBE_LOG\"\necho 9.9.9\n", "")
+	log := filepath.Join(t.TempDir(), "probe")
+	t.Setenv("AF_PROBE_LOG", log)
+	if rc := AGY(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	b, _ := os.ReadFile(log)
+	if got := filepath.Dir(strings.TrimSpace(string(b))); got != filepath.Dir(f.bin()) {
+		t.Fatalf("candidate probed in %q, want %q", got, filepath.Dir(f.bin()))
+	}
+}

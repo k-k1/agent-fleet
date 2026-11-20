@@ -379,10 +379,12 @@ func extractMember(archive, name, dest string) error {
 // installAtomic copies src to dest through a sibling temp name and a rename, so a failure part-way
 // (ENOSPC leaves a truncated file) never leaves anything at dest. The candidate must answer
 // --version before it replaces dest: a binary that cannot run here never displaces a working copy.
-func (e Env) installAtomic(src, dest string) error { return e.installAtomicWith(src, dest, nil) }
+func (e Env) installAtomic(src, dest string) error { return e.installAtomicWith(src, dest, nil, nil) }
 
-// installAtomicWith is installAtomic whose --version probe of the candidate runs with extra env.
-func (e Env) installAtomicWith(src, dest string, extra []string) error {
+// installAtomicWith is installAtomic whose --version probe of the candidate runs with extra env,
+// and, when answer is set, must also print something answer accepts. The probe runs on the copy
+// beside dest, not on src: a noexec temp dir must not fail an install whose destination runs.
+func (e Env) installAtomicWith(src, dest string, extra []string, answer func(stdout string) bool) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
@@ -411,9 +413,14 @@ func (e Env) installAtomicWith(src, dest string, extra []string) error {
 		os.Remove(tmp)
 		return err
 	}
-	if _, msg, err := e.probeEnv(tmp, extra); err != nil {
+	stdout, msg, err := e.probeEnv(tmp, extra)
+	if err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("%s does not run in this environment, keeping the current copy: %v: %s", filepath.Base(dest), err, msg)
+	}
+	if answer != nil && !answer(stdout) {
+		os.Remove(tmp)
+		return fmt.Errorf("%s does not report a version in this environment, keeping the current copy", filepath.Base(dest))
 	}
 	if err := os.Rename(tmp, dest); err != nil {
 		os.Remove(tmp)

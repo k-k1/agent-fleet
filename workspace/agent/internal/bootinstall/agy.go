@@ -63,6 +63,10 @@ func (e Env) AgyEffectiveVersion() string {
 // agyAnswer is the version a binary reports behind the host mask ("" when it prints nothing parsable): the digits and dots of the first line, as the shell's tr -dc did.
 func (e Env) agyAnswer(p string) string {
 	out, _, _ := e.probeEnv(p, e.agyEnv()) // the exit status is not read: a version on stdout is what the shell accepted
+	return agyParseVersion(out)
+}
+
+func agyParseVersion(out string) string {
 	line, _, _ := strings.Cut(out, "\n")
 	return strings.Map(func(r rune) rune {
 		if r == '.' || (r >= '0' && r <= '9') {
@@ -133,10 +137,8 @@ func (e Env) installAGY(ctx context.Context, ver, build, sum string) error {
 		return err
 	}
 	// Exit 0 with no version is not "runs": the next start would judge it silent and fetch again.
-	if e.agyAnswer(cand) == "" {
-		return fmt.Errorf("the downloaded agy does not report a version in this environment, keeping the current copy")
-	}
-	if err := e.installAtomicWith(cand, filepath.Join(e.localBin(), "agy"), e.agyEnv()); err != nil {
+	has := func(out string) bool { return agyParseVersion(out) != "" }
+	if err := e.installAtomicWith(cand, filepath.Join(e.localBin(), "agy"), e.agyEnv(), has); err != nil {
 		return err
 	}
 	marker := filepath.Join(e.localBin(), agyMarker)
