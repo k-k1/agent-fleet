@@ -606,6 +606,7 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.mv_all_proposals": "← All suggestions",
   "mem.rv_type_all": "All types",
   "mem.rv_prop_empty": "No suggestions waiting.",
+  "mem.rv_prop_show_all": "Show decided and expired suggestions too",
   "mem.rv_list_empty": "No memories yet.",
   "mem.rv_open_changes": "Change history",
   "mem.pv_title": "If you approve",

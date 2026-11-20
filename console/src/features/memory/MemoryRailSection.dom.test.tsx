@@ -16,6 +16,7 @@ vi.mock("./open.ts", async (importActual) => ({
 }));
 
 import { MemoryRailSection, groupByScope } from "./MemoryRailSection.tsx";
+import { ViewShownContext } from "../../lib/viewShown.ts";
 import { useMemoryStore } from "./store.ts";
 import { parseMemoryTarget } from "../settings/memory/memorySearch.ts";
 import type { MemoryListed } from "../settings/memory/memoryTypes.ts";
@@ -86,9 +87,18 @@ beforeEach(async () => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  await act(async () => root!.render(<MemoryRailSection />));
-  await flush();
+  await render(true);
 });
+async function render(shown: boolean) {
+  await act(async () =>
+    root!.render(
+      <ViewShownContext.Provider value={shown}>
+        <MemoryRailSection />
+      </ViewShownContext.Provider>,
+    ),
+  );
+  await flush();
+}
 afterEach(async () => {
   if (root) await act(async () => root!.unmount());
   host?.remove();
@@ -134,7 +144,11 @@ describe("MemoryRailSection", () => {
     expect(props().map((b) => b.dataset.proposalId)).toEqual(["p1"]);
     await act(async () => props()[0].click());
     expect(openMemoryView).toHaveBeenCalledWith("proposals", { proposalId: "p1" });
-    await act(async () => button(t("mem.cs_status_pending")).click());
+    const toggle = host!.querySelector<HTMLButtonElement>(".memrail-toggle")!;
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle.textContent).toBe(t("mem.md_f_all"));
     expect(props().map((b) => b.dataset.proposalId)).toEqual(["p1", "p2"]);
   });
 
@@ -158,10 +172,77 @@ describe("MemoryRailSection", () => {
   });
 });
 
+describe("MemoryRailSection reads", () => {
+  const calls = (prefix: string) => api.mock.calls.filter((c) => String(c[0]).startsWith(prefix)).map((c) => String(c[0]));
+
+  it("makes no Agent read while hidden, and reads once on the next show (ADR 0140 decision 3)", async () => {
+    await render(false);
+    const before = calls("api/agents/memory/entries/list").length;
+    await act(async () => useMemoryStore.getState().bump());
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    expect(calls("api/agents/memory/entries/list")).toHaveLength(before);
+    await render(true);
+    expect(calls("api/agents/memory/entries/list")).toHaveLength(before + 1);
+  });
+
+  it("asks for the scope on screen once a chosen project scope has no memory left", async () => {
+    const [scopeSel] = Array.from(host!.querySelectorAll<HTMLSelectElement>(".memrail-selects select"));
+    await setValue(scopeSel, "project:" + project.id);
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/list")) return { entries: entries.filter((m) => m.scope === "user") };
+      if (url.startsWith("api/agents/memory/entries/member-forgotten")) return { forgotten: [] };
+      if (url.startsWith("api/agents/memory/entries/member-search")) return { hits: [] };
+      return {};
+    });
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    expect(scopeSel.value).toBe("all");
+    await act(async () => button(t("mem.md_f_forgotten")).click());
+    await flush();
+    expect(calls("api/agents/memory/entries/member-forgotten").at(-1)).toBe("api/agents/memory/entries/member-forgotten");
+  });
+
+  it("says it is searching, not 'no match', while the body search is on its way", async () => {
+    vi.useFakeTimers();
+    try {
+      await setValue(host!.querySelector<HTMLInputElement>('input[type="search"]')!, "zebra");
+      expect(host!.textContent).toContain(t("mem.br_searching"));
+      expect(host!.textContent).not.toContain(t("mem.br_no_match"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops the paging cursor of the old scope at once when the scope changes", async () => {
+    let release: (v: unknown) => void = () => {};
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/list")) return { entries };
+      if (url === "api/agents/memory/entries/member-forgotten") return { forgotten: [], next: "curA" };
+      if (url.startsWith("api/agents/memory/entries/member-forgotten?scope=user")) return new Promise((r) => (release = r));
+      return {};
+    });
+    await act(async () => button(t("mem.md_f_forgotten")).click());
+    await flush();
+    expect(button(t("mem.br_forgotten_more"))).toBeTruthy();
+    const [scopeSel] = Array.from(host!.querySelectorAll<HTMLSelectElement>(".memrail-selects select"));
+    await setValue(scopeSel, "user");
+    // The user scope's first page has not answered: no cursor of "all" may be offered meanwhile.
+    expect(button(t("mem.br_forgotten_more"))).toBeUndefined();
+    await act(async () => release({ forgotten: [] }));
+    await flush();
+    expect(calls("api/agents/memory/entries/member-forgotten").some((u) => u.includes("before=curA"))).toBe(false);
+  });
+});
+
 describe("groupByScope", () => {
   it("orders projects by name after the user scope", () => {
     const other = { ...project, id: "zzz-0123456789ab", display: "aaa" };
     const out = groupByScope([mem("x", { scope: "project", project }), mem("y", { scope: "project", project: other }), mem("z")], "U");
-    expect(out.map(([label]) => label)).toEqual(["U", "aaa", "app"]);
+    expect(out.map(([, label]) => label)).toEqual(["U", "aaa", "app"]);
+    // Keyed by scope: two projects may share a display name.
+    const twin = { ...project, id: "twin-0123456789ab" };
+    const keys = groupByScope([mem("a", { scope: "project", project }), mem("b", { scope: "project", project: twin })], "U").map(([k]) => k);
+    expect(new Set(keys).size).toBe(2);
   });
 });

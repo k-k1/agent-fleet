@@ -14,6 +14,7 @@ import { dedupeWorkItems, sortWorkItems } from "../features/workitems/read.ts";
 import { useSchedulesStore } from "../features/schedules/store.ts";
 import { pendingProposals, useMemoryStore, useProposalsFeed } from "../features/memory/store.ts";
 import { useWorkspaceStore } from "../core/store/workspace.ts";
+import { useTenantStore } from "../core/store/tenant.ts";
 import { openHome } from "../features/home/open.ts";
 import { openSessionsOverview } from "../features/overview/open.ts";
 import { openImagegen } from "../features/imagegen/open.ts";
@@ -212,7 +213,10 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   const allFailedRuns = useSchedulesStore((s) => s.failedAll);
   // A count, not the list: the list is replaced on every read.
   // Read here, not by the Memory view: the view mounts on first show, the badge cannot wait for it.
-  useProposalsFeed(useWorkspaceStore((s) => s.state) === "running");
+  useProposalsFeed(
+    useWorkspaceStore((s) => s.state) === "running",
+    useTenantStore((s) => s.tenant),
+  );
   const pendingMemory = useMemoryStore((s) => pendingProposals(s.proposals));
   const acked = useRailAck((s) => s.acked);
   const ack = useRailAck((s) => s.ack);

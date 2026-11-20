@@ -23,6 +23,7 @@ import { useSchedulesStore } from "../features/schedules/store.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { useWorkspaceStore } from "../core/store/workspace.ts";
 import { useMemoryStore } from "../features/memory/store.ts";
+import { tCount } from "../lib/i18n/index.ts";
 import { selectedView } from "../layout/ops.ts";
 import type { Session } from "../types/session.ts";
 
@@ -239,8 +240,9 @@ describe("ActivityBar badges", () => {
     await act(async () => {});
     expect(badge("memory")?.dataset.badge).toBe("waiting");
     expect(badge("memory")?.textContent).toBe("2");
-    expect(btn("memory").title).toContain("2");
-    expect(btn("memory").title).not.toBe(btn("memory").getAttribute("aria-label"));
+    // The memory badge speaks of suggestions, not of sessions waiting for an answer.
+    expect(btn("memory").title).toContain(tCount("rail.badge.proposals", 2));
+    expect(btn("memory").title).not.toContain(tCount("rail.badge.waiting", 2));
   });
 
   it("reads no proposals while the workspace is stopped", async () => {

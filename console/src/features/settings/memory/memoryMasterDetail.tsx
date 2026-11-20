@@ -141,6 +141,8 @@ export function MemoriesMasterDetail({
   const focusRow = useRef("");
   // A memory just saved: its row is not in the list until the re-read lands.
   const justSaved = useRef("");
+  // The forgotten memory a target asked for (its key), until it is found or known to be gone.
+  const askedGone = useRef("");
 
   useEffect(() => {
     session.scope = scope;
@@ -226,6 +228,9 @@ export function MemoriesMasterDetail({
     setGoneNext(res?.next ?? "");
   };
 
+  const loadMoreRef = useRef(loadMoreGone);
+  loadMoreRef.current = loadMoreGone;
+
   // The scopes there is something to browse in. "All scopes" comes first and is the default: a
   // query is expected to cover everything, and the user scope alone is often empty. User scope is
   // always offered: a new memory can start there. A project is offered once it holds a memory
@@ -280,7 +285,20 @@ export function MemoriesMasterDetail({
     if (outOfScope) return setSel(null);
     if (sel.gone) {
       if (filter !== "forgotten") return setSel(null);
-      if (goneLoaded && !goneErr && !goneRow) setSel(null);
+      if (goneRow) {
+        if (askedGone.current === key) askedGone.current = "";
+        return;
+      }
+      if (!goneLoaded || goneErr) return;
+      // A forgotten memory the left pane asked for can sit on a page this list has not read (the
+      // view pages on its own): read on until it turns up or the list ends, then let it go.
+      if (askedGone.current === key && goneNext) {
+        if (!goneMoreBusy && !goneMoreErr) void loadMoreRef.current();
+        else if (goneMoreErr) askedGone.current = "";
+        return;
+      }
+      askedGone.current = "";
+      setSel(null);
       return;
     }
     if (filter === "forgotten") return setSel(null);
@@ -289,7 +307,7 @@ export function MemoriesMasterDetail({
     if (curRow) {
       if (justSaved.current === key) justSaved.current = "";
     } else if (rows !== null && justSaved.current !== key) setSel(null);
-  }, [sel, scope, filter, rows, curRow, goneRow, goneLoaded, goneErr, key]);
+  }, [sel, scope, filter, rows, curRow, goneRow, goneLoaded, goneErr, goneNext, goneMoreBusy, goneMoreErr, key]);
 
   // The body of the pick, read again after this view's own writes.
   const readable = !!sel && !sel.gone;
@@ -354,8 +372,11 @@ export function MemoriesMasterDetail({
     // here: the pick's own check drops it once that list has landed without it.
     if (want.gone) {
       clearAsked();
-      // The list on screen is for another scope; until the one for all scopes lands it says nothing.
-      if (scope !== ALL) setGoneLoaded(false);
+      // The list on screen may be for another scope or older than the forget the left pane saw:
+      // it is read again, and says nothing about the pick until that answer lands.
+      setGoneLoaded(false);
+      setMine((n) => n + 1);
+      askedGone.current = selKey({ scope: want.scope, project: want.project, name: want.name, gone: true });
       focusPane.current = true;
       setDraft(null);
       setMenuOpen(false);

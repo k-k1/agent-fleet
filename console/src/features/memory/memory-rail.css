@@ -43,10 +43,18 @@
   color: var(--muted);
   cursor: pointer;
 }
-.memrail-chip.active {
+.memrail-chip.active,
+.memrail-toggle.active {
   color: var(--fg);
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.memrail-chip:focus-visible,
+.memrail-toggle:focus-visible,
+.memrail-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .memrail-list {
@@ -102,6 +110,9 @@
   flex: none;
   color: var(--accent);
   font-size: 12px;
+}
+.memrail-status {
+  flex: none;
 }
 .memrail-type {
   flex: none;

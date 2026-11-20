@@ -1096,6 +1096,33 @@ describe("MemoriesMasterDetail settings target", () => {
     expect(useSettingsUI.getState().settingsTarget).toBeNull();
   });
 
+  it("reads the forgotten list again for a target, even when it already shows all scopes", async () => {
+    await chip("mem.md_f_forgotten");
+    const before = calls0("api/agents/memory/entries/member-forgotten").length;
+    await act(async () => useSettingsUI.setState({ settingsTarget: memoryTarget({ scope: "project", project, name: "old-note" }, true) }));
+    await flush();
+    expect(calls0("api/agents/memory/entries/member-forgotten").length).toBeGreaterThan(before);
+    expect(picked()?.textContent).toContain("old-note");
+  });
+
+  it("pages on until a forgotten target turns up", async () => {
+    const page2 = { ...changes.find((c) => c.name === "old-note")!, commit: "p2", name: "older-note" };
+    const base = api.getMockImplementation()!;
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/member-forgotten")) {
+        if (url.includes("before=")) return { forgotten: [page2] };
+        const first = await base(url);
+        return { ...first, next: "cur1" };
+      }
+      return base(url);
+    });
+    await act(async () => useSettingsUI.setState({ settingsTarget: memoryTarget({ scope: "project", project, name: "older-note" }, true) }));
+    await flush();
+    await flush();
+    expect(calls0("api/agents/memory/entries/member-forgotten").some((c) => String(c[0]).includes("before=cur1"))).toBe(true);
+    expect(picked()?.textContent).toContain("older-note");
+  });
+
   it("leaves a target that names something else for its owner", async () => {
     await act(async () => useSettingsUI.setState({ settingsTarget: "codex" }));
     await flush();

@@ -653,9 +653,14 @@ export function App() {
             {/* Mounted on first show, like Files: the memory list is a read of the Agent. The
                 activity bar's proposal badge does not wait for it (features/memory/store.ts). */}
             <RailView id="memory" active={railView} shown={railShown} lazy>
-              <SoloSection>
-                {workspaceRunning ? <MemoryRailSection /> : <StoppedRailSection id="memory" title={tr("rail.view.memory")} icon="archive" />}
-              </SoloSection>
+              {/* The view lays out its own sections; only its head is solo. */}
+              {workspaceRunning ? (
+                <MemoryRailSection />
+              ) : (
+                <SoloSection>
+                  <StoppedRailSection id="memory" title={tr("rail.view.memory")} icon="archive" />
+                </SoloSection>
+              )}
             </RailView>
             {schedulerEnabled && (
               <RailView id="schedules" active={railView} shown={railShown} scoped>

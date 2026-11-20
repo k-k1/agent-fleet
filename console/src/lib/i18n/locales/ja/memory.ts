@@ -605,6 +605,7 @@ export const memory = {
   "mem.mv_all_proposals": "← 提案の一覧へ",
   "mem.rv_type_all": "すべての種別",
   "mem.rv_prop_empty": "承認待ちの提案はありません。",
+  "mem.rv_prop_show_all": "処理済み・期限切れの提案も表示",
   "mem.rv_list_empty": "メモリはまだありません。",
   "mem.rv_open_changes": "変更履歴",
   "mem.pv_title": "承認するとどうなるか",
