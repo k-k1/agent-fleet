@@ -143,5 +143,6 @@ More on what starts a stopped session: [Run memos automatically](../chat/memo-au
 ## Related
 
 - [Hand work to the Fleet Operator](operator.md)
+- [Run work unattended with memo auto-run](memo-auto-run-practices.md)
 - [Connect Discord and Slack](../integrations/chat-bridge.md)
 - [Stop when done, or keep a session awake](../sessions/auto-stop.md)

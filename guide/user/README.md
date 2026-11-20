@@ -108,6 +108,7 @@ Each page covers one thing you want to do.
 | [Hand work to the Fleet Operator](fleet/operator.md) | Have it start sessions, instruct them and take their reports, from chat |
 | [Ways to use the Fleet Operator](fleet/operator-patterns.md) | Patterns that work, such as parallel implementation and cross-review |
 | [Run at a set time](fleet/schedules.md) | Have an agent work at set times or intervals |
+| [Run work unattended with memo auto-run](fleet/memo-auto-run-practices.md) | Habits for instructions, memos, large tasks and merging that hold up with nobody watching |
 
 ## Integrations
 

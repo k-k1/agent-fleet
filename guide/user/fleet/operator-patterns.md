@@ -81,3 +81,4 @@ Just looking, before moving anything, is useful too.
 
 - [Hand work to the Fleet Operator](operator.md)
 - [Run at a set time](schedules.md)
+- [Run work unattended with memo auto-run](memo-auto-run-practices.md)

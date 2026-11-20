@@ -535,6 +535,7 @@ It says "An auto-run category cannot be renamed, merged or deleted from inside t
 ## Related
 
 - [Collect memos and hand them over](memos.md): how to write memos and send them together
+- [Run work unattended with memo auto-run](../fleet/memo-auto-run-practices.md): how to write the instruction and the memos, and how to run large tasks and merges
 - [Run at a set time](../fleet/schedules.md): for a fixed time, use a schedule
 - [Start child sessions from a session](../fleet/child-sessions.md)
 - [Stop a session that spends too much with a budget](../sessions/budget.md)
