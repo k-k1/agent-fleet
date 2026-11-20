@@ -78,6 +78,14 @@ var (
 
 func bindSessionsPath() string { return filepath.Join(paths.AgentConfigDir(), bindSessionsFile) }
 
+// callSlack is how soon after a launch row a call is still unplaced: a clock set back by less
+// than this cannot be told from the call belonging to the new process. A var so tests with small
+// stamps can use none.
+var callSlack int64 = clockSlack
+
+// wallNow is the wall clock; a seam for tests whose stamps are not real time.
+var wallNow = time.Now
+
 func bumpSessSeen(v int64) {
 	for {
 		cur := sessSeenMax.Load()
@@ -90,11 +98,13 @@ func bumpSessSeen(v int64) {
 // sessGapBound is the bound of a gap taken because the file cannot be read: every row known to
 // this process, and the current time; when nothing is known, no row is proven at all.
 func sessGapBound(at int64) int64 {
-	seen := sessSeenMax.Load()
-	if seen == 0 {
-		return math.MaxInt64
+	now := time.Now().UnixMilli()
+	if sessSeenMax.Load() == 0 {
+		// Nothing is known of the rows: a day past now covers any clock that was set back less than
+		// that, and still lets sessions established after a transient read error prove themselves.
+		return max(at, now+24*3600*1000)
 	}
-	return max(at, seen, time.Now().UnixMilli())
+	return max(at, sessSeenMax.Load(), now)
 }
 
 func readSessEvents() (evs []sessEvent, ok bool) {
@@ -227,14 +237,11 @@ func appendSessEvent(e sessEvent, check func(evs []sessEvent, e *sessEvent) bool
 				newest[ev.Session] = i
 			}
 		}
-		// A session whose newest row is a month old has no process worth proving; and a hard cap
-		// keeps the file bounded however many sessions came and went.
-		old := time.Now().Add(-30 * 24 * time.Hour).UnixMilli()
+		// A hard cap keeps the file bounded however many sessions came and went; the rows that go
+		// are the least recently launched.
 		var rows []int
 		for _, i := range newest {
-			if evs[i].At >= old {
-				rows = append(rows, i)
-			}
+			rows = append(rows, i)
 		}
 		sort.Ints(rows)
 		if len(rows) > bindSessionsKeep {
@@ -378,14 +385,24 @@ func recordSessionProcess(at time.Time, name, proc string, env []string, st oaut
 		// between that observation and this launch, no flow is under way, and nothing recorded
 		// since the observation was lost.
 		out := st.known && !st.connected && !readAt.IsZero() && !oauthBusy()
-		for _, g := range gaps {
-			if g >= readAt.UnixMilli() {
+		holdMs := oauthFlowHold.Milliseconds()
+		ageMs := at.Sub(readAt).Milliseconds() // monotonic when both are real clock readings
+		quiet := func(touchAt, touchUp int64, touchBoot string) bool {
+			if e.Boot != "" && touchBoot == e.Boot && touchUp > 0 {
+				return touchUp <= (e.Up-ageMs)-holdMs // uptime does not follow a clock that was set
+			}
+			return touchAt < readAt.UnixMilli()-holdMs
+		}
+		for _, g := range gaps { // a lost write may have been a touch
+			if g >= readAt.UnixMilli()-holdMs {
 				out = false
 			}
 		}
 		for _, o := range evs {
-			if o.Touch > 0 && o.Touch >= readAt.UnixMilli()-oauthFlowHold.Milliseconds() ||
-				o.Kind == evSessAcct && (o.Reg || o.At >= readAt.UnixMilli()-oauthFlowHold.Milliseconds()) {
+			if o.Touch > 0 && o.Touch >= readAt.UnixMilli()-holdMs {
+				out = false
+			}
+			if o.Kind == evSessAcct && (o.Reg || !quiet(o.At, o.Up, o.Boot)) {
 				out = false
 			}
 		}
@@ -408,6 +425,17 @@ func sessionBinder(m session.Meta, shared bindFn) bindFn {
 	if !ok {
 		return nil
 	}
+	// A clock set back since the newest row was written is not in the file yet: calls up to the
+	// latest time the earlier clock can have shown are not placed (as an append would record).
+	var nowFloor int64
+	if boot, up, ok := clockStamp(); !ok {
+		nowFloor = math.MaxInt64
+	} else if n := len(evs); n > 0 && evs[n-1].Boot == boot && evs[n-1].Up > 0 {
+		last := evs[n-1]
+		if d := (wallNow().UnixMilli() - last.At) - (up - last.Up); d > clockSlack || d < -clockSlack {
+			nowFloor = max(last.At+(up-last.Up)+clockSlack, last.At)
+		}
+	}
 	return func(route string, paid bool, times ...int64) string {
 		if len(times) == 0 {
 			return ""
@@ -421,6 +449,9 @@ func sessionBinder(m session.Meta, shared bindFn) bindFn {
 				return ""
 			}
 			idx = i
+		}
+		if lo <= nowFloor {
+			return ""
 		}
 		ev := evs[idx]
 		for _, g := range gaps {
@@ -454,8 +485,8 @@ func processAt(evs []sessEvent, name string, ts int64) int {
 		if e.Session != name || e.Kind == evSessAcct {
 			continue
 		}
-		if e.At == ts {
-			return -1
+		if e.At <= ts && ts-e.At <= callSlack {
+			return -1 // a clock set back by less than the slack cannot be told from this
 		}
 		if e.At < ts {
 			si = i

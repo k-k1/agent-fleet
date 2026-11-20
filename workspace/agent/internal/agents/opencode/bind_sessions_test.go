@@ -333,3 +333,47 @@ func TestSharedDuplicateStillChecksTheClock(t *testing.T) {
 		t.Errorf("call = %q, want none", got)
 	}
 }
+
+// A call just after a launch row may belong to the previous process if the clock was set back by a
+// second: it is not placed.
+func TestCallJustAfterLaunchIsNotPlaced(t *testing.T) {
+	bindT(t)
+	callSlack = clockSlack
+	onPane("a", 4000, "k", 3500)
+	b := bindFor("a")
+	if got := zen(b, true, 4500); got != "" {
+		t.Errorf("call 0.5 s after the launch = %q, want none", got)
+	}
+	if got := zen(b, true, 4000+clockSlack+1); got == "" {
+		t.Error("a call well after the launch stays bound")
+	}
+}
+
+// A clock set back since the last row was written is not in the file yet; the fold notices it.
+func TestFoldNoticesClockSetBack(t *testing.T) {
+	bindT(t)
+	start(500, 1, "K")
+	acct(600, acctOut, 1)
+	onShared("s", 1000)
+	b := bindFor("s")
+	if zen(b, true, 3000) == "" {
+		t.Fatal("setup: shared call must bind")
+	}
+	stampUp = 1100 // 100 ms of uptime later the wall clock reads 20 s earlier
+	wallNow = func() time.Time { return time.UnixMilli(-19000) }
+	if got := zen(bindFor("s"), true, 3000); got != "" {
+		t.Errorf("call after the clock was set back = %q, want none", got)
+	}
+}
+
+// A signed-out observation soon after a lost write is not proof either.
+func TestPaneGapInsideQuietPeriod(t *testing.T) {
+	bindT(t)
+	_ = os.MkdirAll(paths.AgentConfigDir(), 0o700)
+	hold := oauthFlowHold.Milliseconds()
+	noteSessGap(1000)
+	onPane("a", 2000+hold, "k", 1500+hold/2)
+	if got := zen(bindFor("a"), true, 5000+hold); got != "" {
+		t.Errorf("observed soon after a lost write = %q, want none", got)
+	}
+}

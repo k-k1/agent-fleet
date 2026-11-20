@@ -24,11 +24,19 @@ func bindT(t *testing.T) {
 	credbind.ResetForTest()
 	old := clockStamp
 	clockStamp = func() (string, int64, bool) { return "boot", stampUp, true }
+	oldNow, oldSlack := wallNow, callSlack
+	callSlack = 0
+	wallNow = func() time.Time { return time.UnixMilli(stampUp) }
 	gapsMem, sessGapsMem = nil, nil
 	seenMaxAt.Store(0)
 	bindOff.Store(false)
 	sessOff.Store(false)
-	t.Cleanup(func() { credbind.ResetForTest(); clockStamp = old; gapsMem, sessGapsMem = nil, nil })
+	t.Cleanup(func() {
+		credbind.ResetForTest()
+		clockStamp = old
+		wallNow, callSlack = oldNow, oldSlack
+		gapsMem, sessGapsMem = nil, nil
+	})
 }
 
 // start and acct write events whose uptime follows their wall time (a clock that was not set).
