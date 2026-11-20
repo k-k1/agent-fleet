@@ -421,6 +421,17 @@ type BackgroundReporter interface {
 	BackgroundWork(m session.Meta) (busy bool, reason string)
 }
 
+// BackgroundWaker is an optional Agent capability, and the opt-in to the background-done
+// nudge (sessionx/background_wake.go, #4581): the kind's CLI is supposed to start a turn by
+// itself when background work an earlier turn left running finishes, and is known to miss it
+// sometimes. FinishedTurnMark identifies the newest finished turn in the kind's own state
+// source; the nudge fires only while it has not moved since the background work began, so a
+// turn the CLI did start (and finish) on its own cancels it. ok=false when the source cannot
+// say, which never nudges. It must not block: it runs on the watch's tick.
+type BackgroundWaker interface {
+	FinishedTurnMark(m session.Meta) (mark string, ok bool)
+}
+
 // ProgressReporter is an optional Agent capability: the mtime of the file or store the kind's
 // own working verdict is read from (transcript, events.jsonl, rollout, conversation DB). It
 // feeds LiveInfo-adjacent Session.ProgressAt, so it must be one stat, never a parse, and must

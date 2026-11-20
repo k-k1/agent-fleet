@@ -402,6 +402,9 @@ func serve() {
 	// Nudge a parent session once when it and all its live children have sat idle with nothing
 	// in flight (stalled_tree.go). Its own loop: it must work while nobody has a screen open.
 	sessionx.StartStalledTreeWatch()
+	// Tell an agy session to continue once its background tasks have finished and it did not
+	// start the follow-up turn itself (background_wake.go, #4581).
+	sessionx.StartBackgroundWakeWatch()
 	sessionx.StartPRFeedbackWatch()
 	sessionx.StartWatchEngine()
 	// A retire the previous process did not finish (marked, still running or not yet swept).

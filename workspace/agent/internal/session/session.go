@@ -764,6 +764,10 @@ type Meta struct {
 	// (stopArmMaxAge) instead of folding a session away hours later, in the middle of
 	// unrelated work.
 	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
+	// BackgroundNudge is the last background-done nudge (sessionx/background_wake.go, #4581).
+	// On the meta rather than in memory so an Agent restart cannot nudge the same finished
+	// turn twice, and so the hourly cap that stops a nudge loop survives one.
+	BackgroundNudge *BackgroundNudge `json:"backgroundNudge,omitempty"`
 	// SpendCapUSD is the session's spend budget in US dollars (#1054); 0 = none. The spend it
 	// is compared with is an estimate (spend_cap.go), so this is a guard against a runaway
 	// session, not a billing limit.
@@ -1142,4 +1146,15 @@ func CleanSubdir(s string) (string, bool) {
 		return "", false
 	}
 	return c, true
+}
+
+// BackgroundNudge records the last background-done nudge of a session (Meta.BackgroundNudge).
+type BackgroundNudge struct {
+	// Mark is the kind's finished-turn mark the nudge was sent for; the same mark is never
+	// nudged again.
+	Mark string `json:"mark"`
+	// At (RFC3339) is when it was sent, and Count how many were sent in the hour that ended
+	// at At: the loop guard.
+	At    string `json:"at"`
+	Count int    `json:"count"`
 }
