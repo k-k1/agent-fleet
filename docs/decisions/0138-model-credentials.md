@@ -878,3 +878,5 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
     approved, with the reason), and is never sent to the Agent; saving the same list again is refused naming the
     address. Nothing is dropped silently. A ceiling that names such an address no longer starts (the existing rule for
     an invalid pattern).
+
+**Note, 2026-11-20 (#4446 item 3).** The admin Overview shows how many tenants have a cap and how many have restricted themselves, from `GET /api/admin/route-policy/tenant-counts`: super_admin only, three counts (`tenants`, `withCap`, `withOwnRestriction`) and no tenant name or rule. A cap counts when it restricts routes or narrows endpoint patterns, a tenant's own rule only when it restricts routes (approved hosts and exceptions alone do not). The Console words an unreadable answer as unreadable, never as zero.

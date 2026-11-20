@@ -1130,6 +1130,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.model_access_who_title": "Who decides what",
   "admin.model_access_who_caps": "Restrictions on each tenant",
   "admin.model_access_who_caps_note": "Set per tenant by the deployment administrator; each tenant's administrators narrow them further.",
+  "admin.model_access_counts": "Of {n} tenants, {cap} have a restriction set by you and {own} have restricted themselves.",
+  "admin.model_access_counts_failed": "The number of restricted tenants could not be read.",
   "admin.model_access_ceiling_raw": "See the setting's value",
   "admin.model_access_go_change": "Change →",
   "admin.model_access_go_tenants": "Per tenant →",

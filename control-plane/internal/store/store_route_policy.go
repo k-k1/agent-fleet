@@ -40,6 +40,10 @@ type RoutePolicyStore interface {
 	// tenant's members are judged by: the ceiling, the deployment rule, and the tenant's cap and
 	// rule (tenantID empty reads the first two). Rows never written read as no restriction.
 	GetRoutePolicyLayers(ctx context.Context, tenantID string) (RoutePolicyLayers, error)
+	// ListTenantRoutePolicies reads every stored row of one tenant-scoped layer (RoutePolicyTenantCap
+	// or RoutePolicyTenant), for a count across tenants. A tenant whose row was never written has
+	// none; deleting a tenant deletes its rows.
+	ListTenantRoutePolicies(ctx context.Context, scope string) ([]RoutePolicyRow, error)
 	// PutRoutePolicy writes one row under a new revision, strictly greater than every revision
 	// written before, and returns the row as it was before and as it is now. audit, when set,
 	// builds the audit row from the two, inserted in the same transaction: the write and its
@@ -151,6 +155,27 @@ func (s *SQL) PutRoutePolicyIf(ctx context.Context, scope, tenantID, rule, actor
 		}
 	}
 	return before, after, tx.Commit()
+}
+
+func (s *SQL) ListTenantRoutePolicies(ctx context.Context, scope string) ([]RoutePolicyRow, error) {
+	if scope != RoutePolicyTenantCap && scope != RoutePolicyTenant {
+		return nil, fmt.Errorf("route policy: %q is not a tenant-scoped layer", scope)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT scope, tenant_id, rule, revision, updated_by, updated_at FROM route_policy
+		WHERE scope = ? AND tenant_id <> '' ORDER BY tenant_id`, scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RoutePolicyRow
+	for rows.Next() {
+		var r RoutePolicyRow
+		if err := rows.Scan(&r.Scope, &r.TenantID, &r.Rule, &r.Revision, &r.UpdatedBy, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func (s *SQL) GetRoutePolicyLayers(ctx context.Context, tenantID string) (RoutePolicyLayers, error) {

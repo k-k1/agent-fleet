@@ -25,12 +25,29 @@ import {
 } from "../tenant/routePolicyRule.ts";
 import { PolicyLimits, useTenantRoutePolicy } from "../tenant/tenantModelAccess.tsx";
 import { TabbedViews, usePageDirty, useShowView, useViewActive } from "../parts/tabbedViews.tsx";
+import { parseTenantCounts, type TenantCounts } from "./tenantCounts.ts";
 import { askConfirm } from "../../../ui/confirmBridge.ts";
 
 // The variable the ceiling is read from (routepolicy.EnvCeiling), named when the wire's source is
 // "deployment", the only source the CP has; any other source is shown as the CP spells it.
 const CEILING_ENV = "AF_MODEL_ROUTE_CEILING";
 const PATH = "api/admin/route-policy";
+
+/** The tenant counts for the overview: undefined while unread, null when unreadable, and "off" on a
+ *  Control Plane without the route (a plain 404), which says nothing rather than a failure. */
+function useTenantCounts(): TenantCounts | null | undefined | "off" {
+  const [counts, setCounts] = useState<TenantCounts | null | undefined | "off">(undefined);
+  useEffect(() => {
+    let live = true;
+    api(`${PATH}/tenant-counts`)
+      .then((d) => live && setCounts(d?.error?.status === 404 ? "off" : parseTenantCounts(d)))
+      .catch(() => live && setCounts(null));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return counts;
+}
 
 function useDeploymentRoutePolicy() {
   const tr = useT();
@@ -225,6 +242,7 @@ function OverviewLink({ view, label }: { view: string; label: string }) {
  *  provided-route source. Each points at the view where it is changed. */
 function AdminOverview({ view, source }: { view: DeploymentPolicyView; source: SourceRead }) {
   const tr = useT();
+  const counts = useTenantCounts();
   const words = (rule: RouteRule, ceiling: boolean) =>
     layerClauses(tr, summarizeLayer(rule, view.vocabulary, ceiling), false).join(tr("tenant.mpol_clause_sep"));
   return (
@@ -256,6 +274,17 @@ function AdminOverview({ view, source }: { view: DeploymentPolicyView; source: S
           <li data-layer="tenant_cap">
             <strong>{tr("admin.model_access_who_caps")}</strong> <span>{tr("admin.model_access_who_caps_note")}</span>{" "}
             <OverviewLink view="tenants" label={tr("admin.model_access_go_tenants")} />
+            {counts !== undefined && counts !== "off" && (
+              <p className="admin-hint" data-testid="overview-tenant-counts">
+                {counts
+                  ? tr("admin.model_access_counts", {
+                      n: counts.tenants,
+                      cap: counts.withCap,
+                      own: counts.withOwnRestriction,
+                    })
+                  : tr("admin.model_access_counts_failed")}
+              </p>
+            )}
           </li>
         </ol>
       </section>
