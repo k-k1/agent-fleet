@@ -20,6 +20,8 @@ func TestKindCapabilityLookupsAreExact(t *testing.T) {
 		{"", false, false, false, false},
 		{"unknown", false, false, false, false},
 		{"Claude", false, false, false, false},
+		{"Codex", false, false, false, false},
+		{"KIRO", false, false, false, false},
 	} {
 		if got := answersPendingQuestion(tc.kind); got != tc.answers {
 			t.Errorf("answersPendingQuestion(%q) = %v, want %v", tc.kind, got, tc.answers)
@@ -30,15 +32,8 @@ func TestKindCapabilityLookupsAreExact(t *testing.T) {
 		if got := terminalSwitchNeedsStopped(tc.kind); got != tc.needsStop {
 			t.Errorf("terminalSwitchNeedsStopped(%q) = %v, want %v", tc.kind, got, tc.needsStop)
 		}
-	}
-	// dropForTerminalSwitch is not called for codex/unknown kinds here: for kiro it waits on a
-	// handle, which with no live handle returns at once.
-	if !dropForTerminalSwitch(session.KindKiro, "no_such_session") {
-		t.Error("kiro must take over the drop on a terminal switch")
-	}
-	for _, k := range []string{session.KindCodex, "", "unknown"} {
-		if dropForTerminalSwitch(k, "no_such_session") {
-			t.Errorf("dropForTerminalSwitch(%q) = true, want false", k)
+		if got := dropForTerminalSwitch(tc.kind, "no_such_session"); got != tc.drop {
+			t.Errorf("dropForTerminalSwitch(%q) = %v, want %v", tc.kind, got, tc.drop)
 		}
 	}
 }

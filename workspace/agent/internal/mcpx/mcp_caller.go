@@ -158,12 +158,13 @@ func mcpCallerSession(cwd string) (string, bool) {
 		if m.Archived || !session.ValidName(m.Name) {
 			continue
 		}
-		if !mcpRunsIn(m, cwd) {
+		// A kind with no slot mapping is dropped before mcpRunsIn, which stats the session's
+		// directory; the slot id is read once, after the cwd filter, because it is a store read.
+		c, ok := mcpSlotCapability(m.Kind)
+		if !ok || !mcpRunsIn(m, cwd) {
 			continue
 		}
-		// Read the slot id once, after the cwd filter: it is a store read, and a kind with no
-		// mapping answers "", which never equals the (non-empty) stamp.
-		if mcpSlotSID(m) == mcpCallerSID {
+		if c.SlotSessionID(m) == mcpCallerSID {
 			found = append(found, m.Name)
 		}
 	}
@@ -274,13 +275,20 @@ func mcpAliveSessions(names []string) (alive []string, ok bool) {
 	return alive, true
 }
 
-// mcpSlotSID is the provider-side session id m's slot is mapped to; "" for a kind with no such
-// mapping, which therefore never matches a caller stamp.
+// mcpSlotCapability resolves the kind's slot mapping by exact registry key.
+func mcpSlotCapability(kind string) (agents.SlotSessionIDer, bool) {
+	if a, ok := agentreg.Lookup(kind); ok {
+		c, ok := a.(agents.SlotSessionIDer)
+		return c, ok
+	}
+	return nil, false
+}
+
+// mcpSlotSID is the provider-side session id m's slot is mapped to; "" for a kind with no
+// such mapping.
 func mcpSlotSID(m session.Meta) string {
-	if a, ok := agentreg.Lookup(m.Kind); ok {
-		if c, ok := a.(agents.SlotSessionIDer); ok {
-			return c.SlotSessionID(m)
-		}
+	if c, ok := mcpSlotCapability(m.Kind); ok {
+		return c.SlotSessionID(m)
 	}
 	return ""
 }
