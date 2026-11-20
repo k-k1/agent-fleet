@@ -19,7 +19,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/k-k1/agent-fleet/control-plane/internal/memoafter"
 	"github.com/k-k1/agent-fleet/control-plane/internal/memotidy"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -242,7 +241,10 @@ func memoTidyApplyTx(tx store.MemoTxOps, in memoTidyApplyIn, out *memoTidyApplyO
 	if err != nil {
 		return err
 	}
-	linked := memoafter.Linked(bucket)
+	linked, err := memoLinked(tx, bucket)
+	if err != nil {
+		return err
+	}
 	items := make([]memotidy.Item, 0, len(in.Input))
 	for _, it := range in.Input {
 		item := memoTidyItemOf(rows[it.ID])

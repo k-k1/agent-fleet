@@ -24,6 +24,7 @@ import type { MemoQueue } from "../../types/memo.ts";
 import { memoQueueDelete, memoQueuePut } from "./api.ts";
 import {
   QUEUE_BATCH_MAX,
+  QUEUE_CONTINUATION_MAX,
   QUEUE_FIRES_PER_DAY_MAX,
   QUEUE_INSTRUCTION_MAX_BYTES,
   QUEUE_MAX_ACTIVE_MAX,
@@ -87,6 +88,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
     spendCapUsd: QUEUE_SPEND_MAX,
     maxActive: QUEUE_MAX_ACTIVE_MAX,
     batch: QUEUE_BATCH_MAX,
+    continuationMax: QUEUE_CONTINUATION_MAX,
     openCron: 0,
     openMinutes: QUEUE_WINDOW_MAX_MINUTES,
     tz: 0,
@@ -302,6 +304,24 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
             </span>
           </span>
         </label>
+
+        <div className="ui-field memo-q-narrow">
+          <label className="ui-field-label" htmlFor="memo-q-continuation">
+            {tr("memo.q_continuation")}
+          </label>
+          <input
+            id="memo-q-continuation"
+            type="text"
+            inputMode="numeric"
+            value={draft.continuationMax}
+            disabled={blocked}
+            onChange={(e) => set("continuationMax", e.target.value)}
+          />
+          {fieldErr("continuationMax")}
+          <span className="ui-field-hint" style={{ display: "block" }}>
+            {tr("memo.q_continuation_hint")}
+          </span>
+        </div>
 
         <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
           <input type="checkbox" checked={draft.tidy} disabled={blocked} onChange={(e) => set("tidy", e.target.checked)} />

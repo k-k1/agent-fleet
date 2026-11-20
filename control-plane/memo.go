@@ -72,6 +72,14 @@ type memoDTO struct {
 	// them), on /mcp the connection id. Never read by a rule.
 	Producer       string `json:"producer,omitempty"`
 	ProducerOrigin string `json:"producerOrigin,omitempty"`
+	// Continuation and QueueDelivery are request fields of the token face only (memo_continuation.go):
+	// the model's claim that this follows the message its run was given, and the delivery id the
+	// Agent stamped from the session's meta. Every other face ignores them, and no answer carries them.
+	Continuation  bool   `json:"continuation,omitempty"`
+	QueueDelivery string `json:"queueDelivery,omitempty"`
+	// ChainID and ChainSeq mark a continuation: the root message of its chain and its place in it.
+	ChainID  string `json:"chainId,omitempty"`
+	ChainSeq int    `json:"chainSeq,omitempty"`
 	// DeliveryID is the queue delivery that claimed the message (memo_delivery.go), written by
 	// the CP. Absent for a message no delivery holds.
 	DeliveryID string `json:"deliveryId,omitempty"`
@@ -130,7 +138,7 @@ func memoToDTO(m store.Memo) memoDTO {
 		ContentHash: memoContentHash(m), Producer: m.Producer, ProducerOrigin: m.ProducerOrigin,
 		DeliveryID: m.DeliveryID, Reference: memoRefToWire(m),
 		DerivedFrom: decodeIDs(m.DerivedFrom), SourceProvenance: m.SourceProvenance, TidyRunID: m.TidyRunID,
-		After: memoafter.IDs(m)}
+		After: memoafter.IDs(m), ChainID: m.ChainID, ChainSeq: m.ChainSeq}
 	if m.State == store.MemoStateHeld {
 		d.HeldReason = memoafter.ParseHeldReason(m.HeldReason)
 	}
@@ -356,10 +364,11 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 	m.Provenance, m.Producer, m.ProducerOrigin = via.provenance(), clipProducer(via.producer), clipProducer(via.producerOrigin)
 	created := true
 	err := st.MemoTx(ctx, mv.MembershipID, func(tx store.MemoTxOps) error {
-		inQ, accept, err := memoQueueSwitch(tx, m.Repo, m.Category)
+		q, inQ, err := tx.QueueOf(m.Repo, m.Category)
 		if err != nil {
 			return err
 		}
+		accept := inQ && q.AcceptOwnSessions
 		// One read of the bucket and one clock reading serve the whole create: the time the
 		// prerequisites are ordered against is the time the row is stamped with.
 		rows, err := tx.ListMemosIn(m.Repo, m.Category)
@@ -409,6 +418,14 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		if m, aerr = memoQueueMove(m, m, false, inQ, accept, via); aerr != nil {
 			return memoTxFail(aerr)
 		}
+		if inQ && via.continuation && m.State == store.MemoStateHeld {
+			// Last, so that the place it takes in the chain is given back by a failure below.
+			v, err := memoContinue(tx, mv.MembershipID, m, via, q, now)
+			if err != nil {
+				return err
+			}
+			m = memoContinuationApply(m, v, via.queueDelivery)
+		}
 		if inQ && via.fromWorkspace() {
 			if err := tx.RecordQueueIntake(m.CreatedAt); err != nil {
 				return err
@@ -437,6 +454,7 @@ func (a memoAPI) create(via memoVia) func(http.ResponseWriter, *http.Request, st
 		v := via
 		if v.face == memoFaceToken {
 			v.producer, v.producerOrigin = in.Producer, in.ProducerOrigin
+			v.continuation, v.queueDelivery = in.Continuation, in.QueueDelivery
 		}
 		dto, created, aerr := memoCreateVia(r.Context(), a.store, mv, in, v)
 		if aerr != nil {
@@ -517,6 +535,32 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 		}
 		if next, aerr = memoQueueMove(cur, next, inPrev, inNext, accept, via); aerr != nil {
 			return memoTxFail(aerr)
+		}
+		if moved && !via.fromWorkspace() && inPrev && inNext && cur.State == store.MemoStatePending && next.State == store.MemoStatePending {
+			// A move that changes only where the message is (no edit of its text, reference, file or
+			// prerequisites) is not a new approval: who approved it stays, and the destination's own
+			// rules decide what it may start (memoContinue). An edit of the content is the member's own. Only the
+			// Console does this: from inside the workspace the destination's own setting decides the approver.
+			moved := cur
+			moved.Repo, moved.Category = next.Repo, next.Category
+			if memoContentHash(moved) == memoContentHash(next) {
+				next.ReleasedBy = cur.ReleasedBy
+			}
+		}
+		if moved && cur.ChainID != "" {
+			// A continuation belongs to the queue it was added to. A move to another queue ends the
+			// chain, and what admitted the message stays as it was, so it is no root over there.
+			pq, _, err := tx.QueueOf(cur.Repo, cur.Category)
+			if err != nil {
+				return err
+			}
+			nq, _, err := tx.QueueOf(next.Repo, next.Category)
+			if err != nil {
+				return err
+			}
+			if pq.CategoryID != nq.CategoryID {
+				next.ChainID, next.ChainSeq, next.ChainDelivery = "", 0, ""
+			}
 		}
 		if inNext && memoOpenState(next.State) && next.RefKey != "" {
 			rows, err := tx.ListMemosIn(next.Repo, next.Category)
@@ -908,7 +952,7 @@ func (a memoAPI) updateCategory(via memoVia) func(http.ResponseWriter, *http.Req
 					}
 					// Move the memos onto the new name, then either merge into an existing
 					// same-name category or rename this row.
-					if err := memoMoveBucket(tx, cur.Repo, cur.Name, newName, curQ, nextQ, via); err != nil {
+					if err := memoMoveBucket(tx, cur.Repo, cur.Name, newName, curQ, nextQ, !hasDup, via); err != nil {
 						return err
 					}
 					if !hasDup && curQ {
@@ -961,7 +1005,7 @@ func (a memoAPI) deleteCategory(via memoVia) func(http.ResponseWriter, *http.Req
 			if curQ && via.fromWorkspace() {
 				return memoTxFail(&apiError{http.StatusConflict, errCodeMemoQueueCategory, "a queue is renamed, merged or deleted from the Console only"})
 			}
-			if err := memoMoveBucket(tx, cur.Repo, cur.Name, "", curQ, false, via); err != nil {
+			if err := memoMoveBucket(tx, cur.Repo, cur.Name, "", curQ, false, false, via); err != nil {
 				return err
 			}
 			if err := tx.DeleteQueue(cur.ID); err != nil {

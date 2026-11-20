@@ -13,6 +13,7 @@ import {
   deliveryStateKey,
   draftBody,
   draftErrors,
+  continuationHeldKey,
   draftOf,
   confirmShown,
   firstTurnWords,
@@ -202,7 +203,7 @@ describe("when it runs", () => {
     const th = draftBody({ ...ok, runMode: "threshold", openCron: "0 9 * * *", openAfter: "7" }, "r");
     expect(th).toMatchObject({ openCron: "", openMinutes: 0, tz: "", openAfter: 7 });
     expect(Object.keys(w).sort()).toEqual(
-      ["acceptOwnSessions", "agentKind", "batch", "effort", "enabled", "instruction", "maxActive", "maxFiresPerDay", "maxTaskHours", "model", "openAfter", "openCron", "openMinutes", "route", "spendCapUsd", "tidy", "tidyDestinations", "tz", "worktree"],
+      ["acceptOwnSessions", "agentKind", "batch", "continuationMax", "effort", "enabled", "instruction", "maxActive", "maxFiresPerDay", "maxTaskHours", "model", "openAfter", "openCron", "openMinutes", "route", "spendCapUsd", "tidy", "tidyDestinations", "tz", "worktree"],
     );
   });
 });
@@ -461,5 +462,28 @@ describe("runOpenPRs", () => {
         ],
       }),
     ).toEqual(["#12", "o/r#13"]);
+  });
+});
+
+describe("follow-ups of an approved note (ADR 0137, addendum 2026-11-20)", () => {
+  it("starts at 4, reads the Control Plane's number, and sends the form's", () => {
+    expect(draftOf(undefined).continuationMax).toBe("4");
+    expect(draftBody(draftOf(undefined), "").continuationMax).toBe(4);
+    const q = readMemoQueues({ queues: [{ categoryId: "c1", continuationMax: 0 }] })!.queues[0];
+    expect(q.continuationMax).toBe(0);
+    expect(draftBody(draftOf(q), "").continuationMax).toBe(0);
+    // A queue from an older Control Plane that sends none reads as the default.
+    expect(readMemoQueues({ queues: [{ categoryId: "c1" }] })!.queues[0].continuationMax).toBe(4);
+  });
+  it("accepts 0 to 10 and nothing else", () => {
+    const d = (v: string) => draftErrors({ ...draftOf(undefined), continuationMax: v }).continuationMax;
+    for (const ok of ["0", "4", "10"]) expect(d(ok)).toBeUndefined();
+    for (const bad of ["", "11", "-1", "1.5", "x"]) expect(d(bad)).toBe("memo.q_err_continuation");
+  });
+  it("names the held reasons it knows and falls back for the rest", () => {
+    expect(continuationHeldKey("continuation_limit")).toBe("memo.cont_r_limit");
+    expect(continuationHeldKey("continuation_whatever")).toBe("memo.cont_r_other");
+    expect(continuationHeldKey("deferred")).toBeNull();
+    expect(continuationHeldKey(undefined)).toBeNull();
   });
 });

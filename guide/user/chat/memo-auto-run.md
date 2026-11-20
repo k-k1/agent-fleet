@@ -47,6 +47,7 @@ Auto-run is not a [schedule](../fleet/schedules.md). A schedule runs a fixed pro
 | Spend limit (USD) | A limit for each run, from 0 to 10,000. 0 means no limit. It starts at 0 |
 | Run each time in a new worktree | When on, each run works in a new worktree of the category's repository. On to begin with. It has no effect on a category without a repository |
 | Accept notes from sessions I started without approval | When on, a memo added by a session you started yourself is "Waiting to run" at once, with no approval. Off to begin with. See [Skip the approval for your own sessions](#skip-the-approval-for-your-own-sessions) before turning it on |
+| Follow-ups a run may add without approval | How many follow-up memos of one approved memo the run that gets it may add without another approval, from 0 to 10. Every category starts at **4**, existing ones included. 0 turns it off. See [Follow-ups of an approved memo](#follow-ups-of-an-approved-memo) |
 | Tidy the waiting memos before a run | When on, a model in the workspace tidies the memos waiting to run before an automatic run. Off to begin with. See [Tidy the memos before a run](#tidy-the-memos-before-a-run) before turning it on |
 | Auto-run categories a tidy may move memos to | Shown with the switch above. Up to 10 of your other auto-run categories. Memos moved there wait to run; memos moved to any other auto-run category wait for approval |
 | Sessions at the same time | How many runs the category may have open at once. A whole number from 1 to 6. It starts at 2 |
@@ -79,6 +80,7 @@ Press "**Remove settings**" and the category is an ordinary memo category again.
 |---|---|
 | You (in the Console, with "Add to queue" in the file viewer, and so on) | "Waiting to run". It is taken by the next run as it is |
 | A session (`add_memo`), or an `/mcp` connection such as an outside assistant | "Waits for approval". It does not run until you approve it |
+| A run of this category, adding a follow-up of the memo it was given, for the same work item | "Waiting to run", marked "**Follow-up K of M, accepted without approval**", while your approval of the original still covers it ([Follow-ups of an approved memo](#follow-ups-of-an-approved-memo)). Past M, or for anything else, "Waits for approval" |
 
 - In an auto-run category, a session can add and change memos. It cannot send or delete them, and cannot rename, merge or delete the category. You do those in the Console
 - When a session changes a memo you approved (waiting to run), it goes back to "Waits for approval". When you change it yourself, it stays waiting to run. The exception is a category with "Accept notes from sessions I started without approval" on ([below](#skip-the-approval-for-your-own-sessions))
@@ -170,6 +172,27 @@ With the Memo queue view closed, an amber number on its icon in the activity bar
 - If a session changes a memo while the card is on screen, the memo is tagged "**Changed**", and the button becomes "**I have read the change**". Read the change and press it, and the card says "Approving runs the text shown now". Then press "Approve"
 - If the text changed after you pressed the button, nothing at all is approved, and the latest text is shown again. Check it and approve once more. A card is approved whole or not at all
 
+### Follow-ups of an approved memo
+
+A task too big for one pull request lands one part per run, and each run adds the next part. Approving the first memo covers that: the run it starts may add up to **M follow-ups** of it, where M is the category's "Follow-ups a run may add without approval" (4 unless you changed it, at most 10). A follow-up is "Waiting to run" with no card. Every category continues up to 4 follow-ups this way unless you lower it, and 0 turns it off.
+
+A follow-up skips the approval only when all of these hold. Otherwise it waits for approval like any memo a session adds, and its row says why:
+
+- The run that adds it was started by this category's auto-run, is still open (not overdue or being ended), and was given **one** memo. A category that runs several memos per session never continues those runs
+- The follow-up points at the **same work item** and sits in the same category as the memo the run was given
+- The memo the run was given was approved by you, or accepted by the setting for your own sessions while that setting is still on, or is itself a follow-up of one. Renaming the category keeps the chain. Moving a follow-up to another category ends it, and it starts none there. Changing a follow-up's work item ends the chain
+- The chain has not reached M follow-ups counted from the original memo, and you have not stopped it
+- The run has not added a follow-up already. Deleting the follow-up does not give the run another
+
+What you see and do:
+
+- The row reads "**Follow-up K of M, accepted without approval**". The approval card says that approving a memo with a work item also covers up to M follow-ups
+- Past M, the follow-up waits on the approval card. **Approving it starts a new chain** of up to M from there
+- "**Stop chain**" on a follow-up makes the next follow-up wait for approval. Setting the number to 0, deleting the waiting follow-up, or pausing the category also stops it
+- When a session changes a follow-up, it goes back to "Waits for approval", and the count stays used. A tidy does not merge, split or move a follow-up. A run that hands its memo back keeps the chain as it was
+- "Runs per day" and the automatic pause after failed runs apply to follow-ups as to any run
+- **This is a guard rail, not a lock.** The workspace tells the Control Plane which run is adding the memo, and a program running in the workspace can pass itself off as that run. What it can reach is bounded: at most M memos of its choosing per approval, for the work item you approved, in that category. Set the number to 0 for a category where that is not acceptable
+
 ### Skip the approval for your own sessions
 
 By default every memo a session adds waits for your approval. Turn on "**Accept notes from sessions I started without approval**" in a category's auto-run settings, and that stops being so for that category, for sessions you started yourself.
@@ -177,7 +200,7 @@ By default every memo a session adds waits for your approval. Turn on "**Accept 
 | Who started the session that adds the memo | State of the memo |
 |---|---|
 | You, yourself (a session you launched in the Console) | "Waiting to run", marked "**Accepted without approval**" on its row |
-| Auto-run, a schedule, another session or the operator assistant | "Waits for approval", as without the setting |
+| Auto-run, a schedule, another session or the operator assistant | "Waits for approval", as without the setting. The one exception is a run adding a follow-up of the memo it was given ([above](#follow-ups-of-an-approved-memo)) |
 | An `/mcp` connection | "Waits for approval", as without the setting |
 
 - When such a session changes a memo it added, the memo stays "Waiting to run" and the approval is recorded again for the new text. A memo that was already approved by you, or one from another kind of session, goes back to "Waits for approval" as usual

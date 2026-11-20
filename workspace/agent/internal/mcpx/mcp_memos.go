@@ -101,6 +101,8 @@ func memoTools() []toolSpec {
 							"category":  map[string]any{"type": "string", "description": "Free-form sub-project label (optional; reuse one from list_memos)"},
 							"reference": memoRefSchema(false),
 							"after":     memoAfterSchema(false),
+							"continuation": map[string]any{"type": "boolean", "description": "Only for a session a queue started: true when this note is the next part of the queued message you were given, for the same work item (give the same reference, repo and category). " +
+								"If your user's release of that message allows continuations, it runs without another release, up to the queue's limit. Otherwise it waits for a release like any note"},
 						},
 						"required": []string{"kind"},
 					},

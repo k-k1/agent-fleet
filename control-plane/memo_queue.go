@@ -69,6 +69,12 @@ const (
 type memoVia struct {
 	face                     memoFace
 	producer, producerOrigin string
+	// continuation and queueDelivery are the claim of a create that follows the message a queue
+	// run was given (memo_continuation.go): the model's boolean, and the delivery id the Agent
+	// stamped from the session's meta. Read on the token face only, and only as a claim: the
+	// Control Plane decides from its own rows.
+	continuation  bool
+	queueDelivery string
 }
 
 var memoViaConsole = memoVia{face: memoFaceConsole}
@@ -141,6 +147,7 @@ func memoAcceptedBySetting(m store.Memo, via memoVia, accept bool) bool {
 // fire it again.
 func memoEnter(m store.Memo, via memoVia, accept bool) store.Memo {
 	m.ReleasedBy = ""
+	m.ChainID, m.ChainSeq, m.ChainDelivery = "", 0, ""
 	if m.SentAt != "" {
 		m.State, m.ReleaseHash, m.ReleasedAt = store.MemoStateDelivered, "", ""
 		return m
@@ -203,7 +210,13 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext, accept bool, via memoV
 		case via.fromWorkspace():
 			next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = store.MemoStateHeld, "", "", ""
 		default:
-			next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = memoContentHash(next), memoNow(), ""
+			// The member's own edit keeps what admitted the message: a continuation stays one, so an
+			// edit or a rename of its queue does not make it the root of a fresh chain.
+			by := ""
+			if prev.ReleasedBy == store.MemoReleasedByContinuation {
+				by = prev.ReleasedBy
+			}
+			next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = memoContentHash(next), memoNow(), by
 		}
 	}
 	return next, nil
@@ -245,7 +258,7 @@ func memoQueueSwitch(tx store.MemoTxOps, repo, category string) (inQ, accept boo
 // rename, the merge, the category delete and the settings create or delete. Those run through the
 // Console or touch no queue from the token face, so accept is always false here: moving a bucket
 // never makes a message pending by the switch.
-func memoMoveBucket(tx store.MemoTxOps, repo, from, to string, inPrev, inNext bool, via memoVia) error {
+func memoMoveBucket(tx store.MemoTxOps, repo, from, to string, inPrev, inNext, sameQueue bool, via memoVia) error {
 	rows, err := tx.ListMemosIn(repo, from)
 	if err != nil {
 		return err
@@ -264,6 +277,16 @@ func memoMoveBucket(tx store.MemoTxOps, repo, from, to string, inPrev, inNext bo
 		next, aerr := memoQueueMove(prev, next, inPrev, inNext, false, via)
 		if aerr != nil {
 			return memoTxFail(aerr)
+		}
+		if !via.fromWorkspace() && inPrev && inNext && prev.State == store.MemoStatePending && next.State == store.MemoStatePending {
+			// A rename or a merge changes the release copy and hash and nothing that says who approved:
+			// a switch-accepted, tidy-made or continuation message must not become the member's own.
+			// The destination's own rules still decide what it may start (memoContinue).
+			next.ReleasedBy = prev.ReleasedBy
+		}
+		if !sameQueue && prev.ChainID != "" {
+			// A merge into another category ends the chain: the destination is another queue.
+			next.ChainID, next.ChainSeq, next.ChainDelivery = "", 0, ""
 		}
 		// The rows that stay or become open in a queue hold each reference once. A bucket that
 		// cannot be made so is refused whole: which of two notes to drop is the member's choice.
@@ -339,8 +362,11 @@ type memoQueueDTO struct {
 	// AcceptOwnSessions is the switch "accept from sessions I started": a message from a session
 	// the member started enters without a release. Off by default.
 	AcceptOwnSessions bool `json:"acceptOwnSessions"`
-	MaxActive         int  `json:"maxActive"`
-	Batch             int  `json:"batch"`
+	// ContinuationMax is how many continuations of one released message a run may add without a
+	// press (0 turns it off, at most memoContinuationCeiling). The default for every queue is 4.
+	ContinuationMax int `json:"continuationMax"`
+	MaxActive       int `json:"maxActive"`
+	Batch           int `json:"batch"`
 	// MaxTaskHours is how long one of its deliveries may stay open before it is overdue.
 	MaxTaskHours int `json:"maxTaskHours"`
 	// When the queue fires by itself (ADR 0137 section 6): OpenCron, OpenMinutes and TZ are a
@@ -379,7 +405,7 @@ type memoQueueDTO struct {
 func memoQueueToDTO(q store.MemoQueue, c store.MemoCategory) memoQueueDTO {
 	return memoQueueDTO{CategoryID: q.CategoryID, Repo: c.Repo, Category: c.Name, Instruction: q.Instruction,
 		AgentKind: q.AgentKind, Model: q.Model, Effort: q.Effort, Route: q.Route, SpendCapUSD: q.SpendCapUSD,
-		Worktree: q.Worktree, AcceptOwnSessions: q.AcceptOwnSessions, MaxActive: q.MaxActive, Batch: q.Batch, MaxTaskHours: memoQueueTaskHours(q),
+		Worktree: q.Worktree, AcceptOwnSessions: q.AcceptOwnSessions, ContinuationMax: memoContinuationMax(q), MaxActive: q.MaxActive, Batch: q.Batch, MaxTaskHours: memoQueueTaskHours(q),
 		OpenCron: q.OpenCron, OpenMinutes: q.OpenMinutes, TZ: q.TZ, OpenAfter: q.OpenAfter, MaxFiresPerDay: memoQueueFiresPerDay(q),
 		Paused: q.Paused, PausedAt: q.PausedAt, PausedReason: q.PausedReason, Draining: q.Draining, NoReportAt: q.NoReportAt, NoRefsAt: q.NoRefsAt,
 		Tidy: q.Tidy, TidyDestinations: nonNilIDs(q.TidyDestinations), NoTidyAt: q.NoTidyAt,
@@ -398,8 +424,10 @@ type memoQueueIn struct {
 	Worktree    *bool   `json:"worktree"`
 	// AcceptOwnSessions omitted means off.
 	AcceptOwnSessions bool `json:"acceptOwnSessions"`
-	MaxActive         *int `json:"maxActive"`
-	Batch             *int `json:"batch"`
+	// ContinuationMax is omitted for the default of 4 (a PUT replaces the row), 0 turns it off.
+	ContinuationMax *int `json:"continuationMax"`
+	MaxActive       *int `json:"maxActive"`
+	Batch           *int `json:"batch"`
 	// MaxTaskHours is omitted for the default, like the numbers above.
 	MaxTaskHours   *int   `json:"maxTaskHours"`
 	OpenCron       string `json:"openCron"`
@@ -456,6 +484,7 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 		Enabled:     in.Enabled,
 
 		AcceptOwnSessions: in.AcceptOwnSessions,
+		ContinuationMax:   memoContinuationDefault,
 		Tidy:              in.Tidy,
 		MaxTaskHours:      memoQueueMaxTaskHoursDefault,
 		MaxFiresPerDay:    memoQueueMaxFiresDefault,
@@ -489,6 +518,12 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 	}
 	if in.Worktree != nil {
 		q.Worktree = *in.Worktree
+	}
+	if in.ContinuationMax != nil {
+		q.ContinuationMax = *in.ContinuationMax
+	}
+	if q.ContinuationMax < 0 || q.ContinuationMax > memoContinuationCeiling {
+		return q, badQueueSettings(fmt.Sprintf("continuationMax must be between 0 and %d", memoContinuationCeiling))
 	}
 	if in.MaxActive != nil {
 		q.MaxActive = *in.MaxActive
@@ -675,9 +710,14 @@ func (a memoAPI) putQueue(w http.ResponseWriter, r *http.Request, _ store.Identi
 		q.CategoryID, q.MembershipID, q.UpdatedAt = c.ID, mv.MembershipID, now
 		if existed {
 			q.CreatedAt, q.Generation, q.NoTidyAt = cur.CreatedAt, cur.Generation, cur.NoTidyAt
+			// A client that does not know the field (an older Console tab) must not turn the member's
+			// 0 back into the default: an omitted value keeps what is stored.
+			if in.ContinuationMax == nil {
+				q.ContinuationMax = cur.ContinuationMax
+			}
 		} else {
 			q.CreatedAt = now
-			if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, false, true, memoViaConsole); err != nil {
+			if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, false, true, false, memoViaConsole); err != nil {
 				return err
 			}
 		}
@@ -708,7 +748,7 @@ func (a memoAPI) deleteQueue(w http.ResponseWriter, r *http.Request, _ store.Ide
 		if _, isQ, err := tx.GetQueue(c.ID); err != nil || !isQ {
 			return err
 		}
-		if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, true, false, memoViaConsole); err != nil {
+		if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, true, false, false, memoViaConsole); err != nil {
 			return err
 		}
 		return tx.DeleteQueue(c.ID)
@@ -811,6 +851,7 @@ func (a memoAPI) release(w http.ResponseWriter, r *http.Request, _ store.Identit
 				continue
 			}
 			m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy = store.MemoStatePending, h, at, ""
+			m.ChainID, m.ChainSeq, m.ChainDelivery = "", 0, ""
 			out.Released = append(out.Released, memoToDTO(m))
 		}
 		if len(out.Stale) > 0 {
