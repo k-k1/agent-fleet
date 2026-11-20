@@ -282,6 +282,7 @@ func oauthStatus() oauthState {
 	}
 	oauthCache = st
 	oauthAt = time.Now()
+	noteAccountObs(oauthAt, st.connected)
 	return st
 }
 

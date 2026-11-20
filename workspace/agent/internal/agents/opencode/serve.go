@@ -324,6 +324,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		go s.monitorEvents(addr, s.gen)
 		log.Printf("opencode serve: adopted running daemon at %s (gen %d)", addr, s.gen)
 		recordLifecycle("adopted", s.gen, addr)
+		noteDaemonUnknown(time.Now()) // its environment was set by an earlier Agent process
 		return addr, s.gen, nil
 	}
 	// Past this point a new process starts, i.e. new memory is paid for. Do not pay
@@ -392,10 +393,13 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		cmd.Env = append(cmd.Env, sharedServeEnv+"=1")
 	}
 	cmd.Dir = paths.HomeDir()
+	spawnedAt := time.Now()
 	tail, err := agents.StartWithStderrTail(cmd)
 	if err != nil {
 		return "", 0, fmt.Errorf("opencode serve の起動に失敗しました / failed to start opencode serve: %w", err)
 	}
+	// The environment is fixed for this process's life; recorded before it can serve a call.
+	noteDaemonStart(spawnedAt, cmd.Env)
 	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
 	began := time.Now()
 	deadline := began.Add(serveStartTimeout)

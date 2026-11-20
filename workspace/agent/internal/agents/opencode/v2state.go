@@ -558,7 +558,7 @@ func usageTurnsV2(t apiTarget, m session.Meta) []transcript.Turn {
 	if err != nil || c.Info == nil {
 		return nil
 	}
-	return v2Turns(c, true)
+	return v2TurnsBound(c, true, ledgerBinder(m))
 }
 
 func recallSettingsV2(t apiTarget, m session.Meta) agents.RecalledSettings {
@@ -630,12 +630,16 @@ type v2Stamped struct {
 // rewriting each message in v1's stored shape and handing it to parseMessage: one reader decides
 // what a turn looks like on both majors. With usage set it also returns a CostOnly turn for every
 // billed message that shows nothing (an empty failed step, a compaction).
-func v2Turns(c v2Conv, usage bool) []transcript.Turn {
+func v2Turns(c v2Conv, usage bool) []transcript.Turn { return v2TurnsBound(c, usage, nil) }
+
+// v2TurnsBound is v2Turns with bind, which names the connection binding of a call on a route made
+// at a time (unix ms), "" for none; nil binds nothing.
+func v2TurnsBound(c v2Conv, usage bool, bind bindFn) []transcript.Turn {
 	win := modelWindowLookup()
 	cwd := c.Info.Location.Directory
-	all := v2SessionTurns(c.Msgs, cwd, c.Info.Time.Created, false, usage, win)
+	all := v2SessionTurnsBound(c.Msgs, cwd, c.Info.Time.Created, false, usage, win, bind)
 	for _, k := range c.Kids {
-		all = append(all, v2SessionTurns(k.Msgs, cwd, k.Born, true, usage, win)...)
+		all = append(all, v2SessionTurnsBound(k.Msgs, cwd, k.Born, true, usage, win, bind)...)
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].created < all[j].created })
 	out := make([]transcript.Turn, len(all))
@@ -662,15 +666,35 @@ func v2Children(msgs []v2Msg) []string {
 }
 
 func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool, win windowFn) []v2Stamped {
+	return v2SessionTurnsBound(msgs, cwd, born, sidechain, usage, win, nil)
+}
+
+// bindFn names the connection binding of one call, from its route and its start time in unix
+// milliseconds; "" is none (bind_intervals.go).
+type bindFn func(route string, ms int64) string
+
+func v2SessionTurnsBound(msgs []v2Msg, cwd string, born int64, sidechain, usage bool, win windowFn, bind bindFn) []v2Stamped {
 	var out []v2Stamped
 	add := func(created int64, t transcript.Turn) {
 		t.Sidechain = sidechain
 		out = append(out, v2Stamped{created, t})
 	}
-	costOnly := func(created int64, id, model, route, billing string, cost float64) {
+	// span is the binding of the calls made between two instants: the one binding they share, "" when
+	// the interval evidence differs between them (a daemon restart inside a multi-step run).
+	span := func(route string, from, to int64) string {
+		if bind == nil || route == "" {
+			return ""
+		}
+		b := bind(route, from)
+		if to > from && bind(route, to) != b {
+			return ""
+		}
+		return b
+	}
+	costOnly := func(created int64, id, model, route, billing, conn string, cost float64) {
 		if usage && cost > 0 {
 			add(created, transcript.Turn{Role: "assistant", CostOnly: true, CostUSD: cost,
-				TS: msTS(created), Model: model, Route: route, Billing: billing, AnchorID: id})
+				TS: msTS(created), Model: model, Route: route, Billing: billing, Connection: conn, AnchorID: id})
 		}
 	}
 	shownErr := "" // the failure the last assistant run already rendered, so its idle message does not repeat it
@@ -700,7 +724,7 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 			t, ok := parseMessage(run[0].ID, data, parts, 0, win)
 			if !ok {
 				if !copied {
-					costOnly(created, run[0].ID, last.Model.ID, v2RunRoute(run), v2RunBilling(run), v2RunCost(run))
+					costOnly(created, run[0].ID, last.Model.ID, v2RunRoute(run), v2RunBilling(run), span(v2RunRoute(run), created, runEnd(last)), v2RunCost(run))
 				}
 				continue
 			}
@@ -709,6 +733,7 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 			}
 			t.Route = v2RunRoute(run)
 			t.Billing = v2RunBilling(run)
+			t.Connection = span(t.Route, created, runEnd(last))
 			add(created, t)
 		case "idle":
 			// A failure with no assistant message to carry it (the model was never reached) would
@@ -726,7 +751,7 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 			}
 			if !copied {
 				route := usagex.RouteOfOpencodeProvider(m.Model.ProviderID)
-				costOnly(m.Time.Created, m.ID, m.Model.ID, route, usagex.BillingOfOpencodeCall(route, m.Cost), m.Cost)
+				costOnly(m.Time.Created, m.ID, m.Model.ID, route, usagex.BillingOfOpencodeCall(route, m.Cost), span(route, m.Time.Created, m.Time.Completed), m.Cost)
 			}
 		}
 	}
@@ -753,6 +778,14 @@ func v2RunRoute(run []v2Msg) string {
 		}
 	}
 	return route
+}
+
+// runEnd is the instant a run's last message finished, or began while it has not.
+func runEnd(last v2Msg) int64 {
+	if last.Time.Completed > 0 {
+		return last.Time.Completed
+	}
+	return last.Time.Created
 }
 
 // v2RunBilling is the billing every message of the run proves, "" when any of them proves none or
