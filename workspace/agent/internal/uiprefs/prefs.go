@@ -560,6 +560,19 @@ func RateLimitAutoResume() bool {
 	return !ok || v
 }
 
+// ClaudeLimitResumeMode preserves the old shared preference until Claude has an explicit choice.
+func ClaudeLimitResumeMode() string {
+	prefs := Read()
+	switch mode, _ := prefs["claudeLimitResumeMode"].(string); mode {
+	case "af", "claude", "off":
+		return mode
+	}
+	if on, ok := prefs["rateLimitAutoResume"].(bool); ok && !on {
+		return "off"
+	}
+	return "af"
+}
+
 // AbortAutoResume is the ON/OFF for auto-resuming a cut-off turn (docs/log/47 §4-6, Settings >
 // Agents > Claude > Behavior): when a claude turn is cut off by something that
 // clears on its own (a dropped connection, a transient rate limit, the stream watchdog), the

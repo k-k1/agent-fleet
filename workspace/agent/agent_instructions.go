@@ -227,6 +227,7 @@ func init() {
 	// follows the reconciler's phase, not the raw switch: native memory stays off until a
 	// write-back has finished (#1972).
 	claude.AutoMemoryOff = memoryx.AutoSyncNativeMemoryOff
+	claude.LimitResumeMode = uiprefs.ClaudeLimitResumeMode
 	// Likewise muse's native memory (#1990): MUSE_EXPERIMENTAL_MEMORY=0 on launches while the switch is on.
 	muse.NativeMemoryOff = uiprefs.AgentMemory
 }

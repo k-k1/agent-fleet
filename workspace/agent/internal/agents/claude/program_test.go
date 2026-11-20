@@ -126,6 +126,19 @@ func launchSettingsOf(t *testing.T, program string) map[string]any {
 // launch shape (new, resume, drifted resume, fork) carries autoMemoryEnabled:false in its one
 // --settings, and with the switch off or unwired none does (ADR 0108 decision 6 step 2). The
 // JSON is decoded, so a malformed constant fails here rather than at claude's start.
+func TestLaunchPinsUsageLimitContinuation(t *testing.T) {
+	t.Setenv("AGENT_SESSION_CMD", "")
+	for _, mode := range []string{"af", "claude", "off"} {
+		settings := launchSettingsOf(t, buildProgramPinned([]string{"TEST_ROUTE=kept"}, "sid", "", "", "", "", "", true, mode))
+		if got := settings["autoContinueAtUsageLimit"]; got != (mode == "claude") {
+			t.Errorf("mode %s: autoContinueAtUsageLimit = %v", mode, got)
+		}
+		if env, _ := settings["env"].(map[string]any); env["TEST_ROUTE"] != "kept" {
+			t.Errorf("mode %s: route settings lost: %v", mode, settings)
+		}
+	}
+}
+
 func TestBuildProgramSwitchesAutoMemoryOffWithAFMemory(t *testing.T) {
 	cfg := isolateSlot(t)
 	t.Cleanup(func() { AutoMemoryOff = nil })

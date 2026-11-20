@@ -509,6 +509,7 @@ const PREFS = {
   // RESUME only — dismissing the limit menu itself ("stop and wait", the no-charge
   // option) happens either way, because while it is up the session accepts nothing at all.
   rateLimitAutoResume: synced(true),
+  claudeLimitResumeMode: synced("inherit"),
   // Auto-resume a cut-off turn (docs/log/47 §4-6): when a claude turn dies on something that
   // clears on its own (dropped connection, temporary rate limit, stream idle timeout),
   // the agent itself re-sends 「続けて」 (continue) after a short backoff, up to maxAutoResumeAttempts.

@@ -765,6 +765,13 @@ func atRateLimitModal(s string) bool {
 // down. Press only while the cursor stands on the default option.
 var rateLimitDefaultRe = regexp.MustCompile(`(?m)^\s*\x{276F} 1\.\s+Stop and wait for limit`)
 
+// ClaudeUsageLimitWait uses the live footer because the transcript banner survives cancellation.
+func ClaudeUsageLimitWait(frame string) bool {
+	return strings.Contains(frame, "Usage limit reached") &&
+		(strings.Contains(frame, "Continuing automatically at") || strings.Contains(frame, "Continuing shortly")) &&
+		strings.Contains(frame, "Esc to cancel")
+}
+
 // DismissRateLimitModal confirms the usage-limit menu's DEFAULT option ("1. Stop and
 // wait for limit to reset") and reports whether the menu is gone afterwards.
 //
@@ -811,9 +818,10 @@ type PaneRead struct {
 	// this — not Idle — to conclude "the turn is over" (self-heal, turn-end events),
 	// because a frame that merely LOOKS idle is also what claude draws while it renders
 	// an answer, for up to 21s at a time (idlesettle.go).
-	IdleSettled   bool
-	RateLimitMenu bool // parked on the usage-limit menu (AtRateLimitModal)
-	OK            bool
+	IdleSettled    bool
+	RateLimitMenu  bool // parked on the usage-limit menu (AtRateLimitModal)
+	UsageLimitWait bool
+	OK             bool
 }
 
 // ReadPane captures a session's pane once and returns all pane-derived verdicts.
@@ -836,11 +844,12 @@ func ReadPane(name string) PaneRead {
 	idle := atIdlePrompt(s)
 	settled := observeFrame(name, s)
 	return PaneRead{
-		Busy:          spinnerActive(s),
-		Idle:          idle,
-		IdleSettled:   idle && settled,
-		RateLimitMenu: atRateLimitModal(s),
-		OK:            true,
+		Busy:           spinnerActive(s),
+		Idle:           idle,
+		IdleSettled:    idle && settled,
+		RateLimitMenu:  atRateLimitModal(s),
+		UsageLimitWait: ClaudeUsageLimitWait(s),
+		OK:             true,
 	}
 }
 

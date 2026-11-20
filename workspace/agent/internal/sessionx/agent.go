@@ -151,6 +151,9 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	if state == "idle" && authBlockedFor(m) {
 		return agents.StateAuth
 	}
+	if usageLimits && pane.UsageLimitWait {
+		return "working"
+	}
 	if usageLimits && pane.RateLimitMenu {
 		if heal && state != "idle" {
 			healIdle(t, sid)

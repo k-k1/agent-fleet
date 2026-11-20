@@ -280,6 +280,10 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.image_kind_comfy": "ComfyUI",
   "agents.image_kind_openai_compat": "OpenAI-compatible",
   "agents.rate_limit_resume": "Auto-resume after a usage limit resets",
+  "agents.claude_limit_resume_af": "Resume with AF",
+  "agents.claude_limit_resume_native": "Continue with Claude",
+  "agents.claude_limit_resume_off": "Off",
+  "agents.claude_limit_resume_mode_note": "AF can wake the workspace to resume after the limit resets. Claude's automatic continuation requires its session and workspace to stay running while it waits. Claude's setting takes effect at its next launch.",
   "agents.note_claude_rate_limit_resume":
     "When a Claude session is interrupted by its usage limit, a one-time resume is booked to send \"please carry on\" to that session when the limit resets. The booking is deleted after use and never repeats. If the workspace stops while waiting, it is started at the booked time for delivery. The resume is skipped if you are already driving the session then. Reaching the limit and a successful automatic resume are also shown in the notification center. Sessions launched directly from Console are included. Default ON.\nEven when OFF, the limit menu (\"1. Stop and wait for limit to reset / 2. Ask your admin for more usage\") is still confirmed automatically. While the menu is open, the session accepts no input, notifications, or reports, and only the no-cost waiting option is chosen automatically. To pick 2, choose it yourself while the menu is on screen.\nThis switch also covers Codex (managed), and is the same setting as the one on the Codex card.",
   "agents.note_codex_rate_limit_resume":

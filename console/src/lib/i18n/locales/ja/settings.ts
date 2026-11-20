@@ -278,6 +278,10 @@ export const settings = {
   "agents.image_kind_comfy": "ComfyUI",
   "agents.image_kind_openai_compat": "OpenAI 互換",
   "agents.rate_limit_resume": "利用上限リセット後の自動再開",
+  "agents.claude_limit_resume_af": "AF で自動再開",
+  "agents.claude_limit_resume_native": "Claude の自動継続",
+  "agents.claude_limit_resume_off": "オフ",
+  "agents.claude_limit_resume_mode_note": "AF はリセット時に Workspace を起動して再開できます。Claude の自動継続は、待機中のセッションと Workspace の稼働が必要です。Claude 側の設定は次回の起動時に適用されます。",
   "agents.note_claude_rate_limit_resume":
     "Claude セッションが利用上限で中断したとき、上限が解ける時刻に、そのセッションへ「続きを進めて」と 1 回だけ送る再開予約を作ります。予約は使用後に削除され、繰り返し実行はしません。待機中にワークスペースが停止しても、予約時刻に起動して届けます。その時刻に人がすでにセッションを動かしていれば見送ります。利用上限に達したときと、実際に自動再開したときは通知センターにも表示します。Console から直接起動したセッションも対象です。既定ではオンです。\nオフにしても、上限メニュー（「1. リセットまで待つ / 2. 管理者に増枠を依頼」）は自動確定します。メニュー中は通知・報告・入力を受け付けず、自動で選ぶのは待つ側（無課金）だけです。2 を選びたい場合は、メニュー表示中に自分で選んでください。\nこのスイッチは Codex（マネージド）にも適用されます（Codex カードの同じ項目と同じ設定です）。",
   "agents.note_codex_rate_limit_resume":

@@ -745,7 +745,7 @@ func refuseCancelledResume(name, source, prompt, scheduleID string) bool {
 	}
 	// A retired, stopped session takes no resume at all, whatever became of its booking's
 	// cancel: that is what retire promised (ADR 0137 §6).
-	if m, ok := session.ReadMeta(name); ok && isRetired(m) {
+	if m, ok := session.ReadMeta(name); ok && (isRetired(m) || (NormalizeKind(m.Kind) == "claude" && (!rateLimitBookingEnabled(m) || claudeOwnsLimitWait(m)))) {
 		return true
 	}
 	if scheduleID == "" {
