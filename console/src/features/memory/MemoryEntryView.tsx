@@ -372,10 +372,13 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setFormErr("");
     setFindings([]);
     // The store could not say whether the save landed: dropping the text is the member's call.
-    if (isNew && phase === "save_state_unknown" && (!model?.unknownObservation || model.unknownObservation.kind === "unavailable")) {
+    if (
+      (phase === "save_state_unknown" && (!model?.unknownObservation || model.unknownObservation.kind === "unavailable")) ||
+      (!isNew && phase === "conflict_remote_unavailable")
+    ) {
       const sure = await askConfirm({
         title: tr("mem.br_discard_unconfirmed_title"),
-        body: <p>{tr("mem.br_discard_unconfirmed_body", { name: (fields?.name ?? "").trim() })}</p>,
+        body: <p>{tr("mem.br_discard_unconfirmed_body", { name: isNew ? (fields?.name ?? "").trim() : name })}</p>,
         confirmLabel: tr("mem.br_discard_unconfirmed"),
         danger: true,
       });
@@ -632,6 +635,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           onCopyMine={() => void navigator.clipboard.writeText(model.content)}
           onClose={() => useLayoutStore.getState().closePane(paneId)}
           canResaveStored={!isNew}
+          sentLiveText={tr("mem.br_unknown_sent_live")}
         />
       )}
       {purging && <PurgeHistoryDialog target={purging} onClose={() => setPurging(null)} onDone={bump} />}

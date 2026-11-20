@@ -150,7 +150,7 @@ describe("MemoryEntryView", () => {
       kinds: ["claude"],
       body: "Run `make all`.",
       revision: 4,
-    });
+    }, undefined, { signal: expect.any(AbortSignal) });
     expect(host!.querySelector(".mentry-form")).toBeNull();
     expect(useMemoryStore.getState().version).toBeGreaterThan(before);
   });
@@ -740,7 +740,26 @@ describe("MemoryEntryView", () => {
     api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { ...memory, revision: 5, body: "kept" } : {}));
     await act(async () => button(t("mem.br_save"))!.click());
     await flush();
-    expect(host!.textContent).toContain(t("editor.unknown.sent_live"));
+    expect(host!.textContent).toContain(t("mem.br_unknown_sent_live"));
+  });
+
+  it("lets an existing memory be closed without saving when its recovery read answers 404", async () => {
+    apiJSON.mockResolvedValue({ error: { code: "memory_snapshot_failed", message: "x" } });
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "kept\n");
+    api.mockImplementation(async (url: string) =>
+      url.startsWith("api/agents/memory/entries/member-read") ? { error: { code: "memory_not_found", message: "gone", status: 404 } } : {},
+    );
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(dirtyPaneIds()).toEqual([pane().id]);
+    void confirmDirtyNavigation("layout").catch(() => {});
+    await act(async () => {
+      const req = currentDirtyGuardRequest();
+      if (req) await discardDirtyGuardRequest(req.id);
+    });
+    expect(dirtyPaneIds()).toEqual([]);
   });
 
   const remount = async () => {

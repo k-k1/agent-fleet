@@ -8,7 +8,7 @@ vi.mock("../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...a: unknown[]) => apiJSON(...a),
 }));
 
-import { decodeEntry, encodeEntry, entryFile, memoryEntryIO, resetMemoryRevisions, storedForm } from "./memoryEntryIO.ts";
+import { READ_TIMEOUT_MS, SAVE_TIMEOUT_MS, decodeEntry, encodeEntry, entryFile, memoryEntryIO, resetMemoryRevisions, storedForm } from "./memoryEntryIO.ts";
 import type { MemoryBody } from "../settings/memory/memoryTypes.ts";
 import { revisionOf } from "../editor/buffer.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
@@ -198,5 +198,33 @@ describe("memoryEntryIO", () => {
   it("trims the way the Agent does: U+0085 goes, U+FEFF stays", () => {
     expect(storedForm(spaced("a\u0085 "))).toBe(spaced("a"));
     expect(storedForm(spaced("\ufeffa"))).toBe(spaced("\ufeffa"));
+  });
+
+  it("aborts a save and a read that never answer, so the pane is not held forever", async () => {
+    vi.useFakeTimers();
+    try {
+      const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+      const file = entryFile("k", body);
+      const hang = (...a: unknown[]) => {
+        const signal = (a.at(-1) as { signal?: AbortSignal }).signal!;
+        return new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("aborted"))));
+      };
+      apiJSON.mockImplementation(hang);
+      api.mockImplementation((_p: string, init: unknown) => hang(init));
+      const saved = io.save("k", file.content, file.revision);
+      const savedErr = expect(saved).rejects.toThrow("aborted");
+      await vi.advanceTimersByTimeAsync(SAVE_TIMEOUT_MS);
+      await savedErr;
+      const read = io.load("k");
+      const readErr = expect(read).rejects.toThrow("aborted");
+      await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS);
+      await readErr;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets a memory whose recovery cannot be read be discarded", () => {
+    expect(memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {}).discardUnconfirmed).toBe(true);
   });
 });

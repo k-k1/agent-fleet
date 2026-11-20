@@ -902,20 +902,41 @@ describe("useFileEditor across unmount (tab switch)", () => {
     expect(editor!.model?.content).toBe(otherContent);
     expect(editor!.model?.baseDiskRevision).toBe(revisionOf(otherContent));
     expect(editor!.model?.dirty).toBe(false);
-    // The old buffer is still guarded, and its guard does not act on the new one: the new
-    // file's own unsaved edit must survive a discard aimed at the old file.
+    // The save finished on the slot it started on, so the old file is clean and no longer guarded;
+    // the new file's own unsaved edit is the only entry.
     await act(async () => editor!.edit("other edit\n"));
     const decision = confirmDirtyNavigation("layout", ["p1"]);
     const request = currentDirtyGuardRequest()!;
-    expect(request.entries.map((e) => e.label)).toEqual([initial.path, "repos/b.txt"]);
-    let discarded = true;
-    await act(async () => {
-      discarded = await request.entries[0]!.discard() !== false;
-    });
-    expect(discarded).toBe(false); // fail closed
+    expect(request.entries.map((e) => e.label)).toEqual(["repos/b.txt"]);
     expect(editor!.model?.content).toBe("other edit\n");
     expect(editor!.model?.dirty).toBe(true);
     cancelDirtyGuardRequest(request.id);
     await expect(decision).resolves.toBe(false);
+  });
+
+  it("settles a save on its own file when the pane went to another file, the answer came, and it came back", async () => {
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    const aGiven = given;
+    given = { path: "repos/b.txt", content: "other\n", revision: revisionOf("other\n") };
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    await act(async () => {
+      pendingPut.resolve({ ok: true, path: initial.path, size: 5, revision: revisionOf("mine\n") });
+      await pendingPut.promise;
+    });
+    given = aGiven;
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    expect(editor!.model?.phase).not.toBe("saving");
+    expect(editor!.model?.dirty).toBe(false);
   });
 });

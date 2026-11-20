@@ -355,8 +355,9 @@ export const apiHeld = (path: string, method: string, body?: unknown): Promise<a
 
 // apiJSON is a convenience for the common "POST/PUT JSON body" shape.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const apiJSON = (path: string, method: string, body?: unknown, headers?: Record<string, string>): Promise<any> =>
+export const apiJSON = (path: string, method: string, body?: unknown, headers?: Record<string, string>, init?: Pick<RequestInit, "signal">): Promise<any> =>
   api(path, {
+    ...init,
     method,
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),

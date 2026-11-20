@@ -154,6 +154,7 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.br_discard_unconfirmed_title": "Discard a memory that may have been saved?",
   "mem.br_discard_unconfirmed_body": "The Agent could not confirm whether \"{name}\" was saved. Discarding drops the text you typed; if it was saved, the memory stays.",
   "mem.br_discard_unconfirmed": "Discard",
+  "mem.br_unknown_sent_live": "The sent text is what the memory holds now, but its durability could not be confirmed.",
   "mem.br_cancel": "Cancel",
   "mem.br_saved": "Saved {name}.",
   "mem.br_secret": "The text looks like it contains a secret, so it was not saved. Remove it and save again.",

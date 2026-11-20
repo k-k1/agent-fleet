@@ -153,6 +153,7 @@ export const memory = {
   "mem.br_discard_unconfirmed_title": "保存されたかもしれないメモを破棄しますか？",
   "mem.br_discard_unconfirmed_body": "「{name}」が保存されたかどうかを Agent から確認できませんでした。破棄すると入力した本文は消えます。保存されていた場合、そのメモは残ります。",
   "mem.br_discard_unconfirmed": "破棄する",
+  "mem.br_unknown_sent_live": "送信した本文は現在のメモに反映されていますが、耐久性は確認できません。",
   "mem.br_cancel": "キャンセル",
   "mem.br_saved": "{name} を保存しました。",
   "mem.br_secret": "秘密情報を含む可能性があるため保存しませんでした。取り除いてからもう一度保存してください。",

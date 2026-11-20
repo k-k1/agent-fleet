@@ -21,6 +21,8 @@ export interface EditorResolutionPanelProps {
   /** False where a resave of the text already stored would only be refused (a new memory at
    *  revision 0); the choice left is to accept it. Default true. */
   canResaveStored?: boolean;
+  /** Replaces the "sent content is live" sentence for a store that is not a file. */
+  sentLiveText?: string;
 }
 
 export function EditorResolutionPanel(props: EditorResolutionPanelProps) {
@@ -69,7 +71,7 @@ export function EditorResolutionPanel(props: EditorResolutionPanelProps) {
       <h4>{tr("editor.status.unknown")}</h4>
       <p>
         {observation?.kind === "sent_live"
-          ? tr("editor.unknown.sent_live")
+          ? (props.sentLiveText ?? tr("editor.unknown.sent_live"))
           : observation?.kind === "old_base_live"
             ? tr("editor.unknown.old_base")
             : tr("editor.unknown.unavailable")}

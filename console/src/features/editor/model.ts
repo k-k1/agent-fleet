@@ -305,8 +305,10 @@ export function startManualMerge(model: FileEditorModel): FileEditorModel {
   return adoptRemote(model, true);
 }
 
-/** `allowUnconfirmed` lets a state whose remote could not be read be dropped to its base: for a
- *  store where the caller knows a resave of the same text is refused if the save had landed. */
+/** `allowUnconfirmed` lets a state whose remote could not be read be dropped to its base (an
+ *  unknown save outcome, or a conflict whose remote cannot be fetched): for a store where the
+ *  caller knows a resave of the same text is refused if the save had landed, so the worst case is
+ *  a 409 on the next edit, never an overwrite. */
 export function discardToBase(model: FileEditorModel, allowUnconfirmed = false): FileEditorModel {
   const observed =
     model.conflict ||
@@ -317,7 +319,7 @@ export function discardToBase(model: FileEditorModel, allowUnconfirmed = false):
     model.phase === "saving" ||
     (model.phase === "save_state_unknown" && !observed && !allowUnconfirmed) ||
     (model.phase === "conflict" && !observed) ||
-    model.phase === "conflict_remote_unavailable"
+    (model.phase === "conflict_remote_unavailable" && !allowUnconfirmed)
   ) {
     throw new Error("discard target unavailable");
   }
