@@ -53,6 +53,10 @@ const (
 	// backgroundWakeRetry spaces delivery retries, and backgroundWakeAttempts bounds them.
 	backgroundWakeRetry    = 2 * time.Minute
 	backgroundWakeAttempts = 3
+	// backgroundWakeGiveUp closes a period that found no moment to nudge (a pane that never
+	// came back to its prompt, a person wait) this long after the work ended. While a period is
+	// open the turn end is held back (turn_end_defer.go), so this is also that hold's bound.
+	backgroundWakeGiveUp = 10 * time.Minute
 
 	backgroundWakeNotice = "[agent-fleet:notice kind=background-done reply=none] Your background task(s) have finished; " +
 		"read their output and continue. This is an automated notice, sent once: if you have already handled " +
@@ -120,6 +124,11 @@ func backgroundWakeOptedInDefault(kind string) bool {
 type bgWakePeriod struct {
 	mark    string // the finished-turn mark while the work ran; "" = cannot nudge
 	turnEnd string // LastTurnEndAt then
+	since   time.Time
+	// endedAt is the first reading with no background work; a period still open
+	// backgroundWakeGiveUp after it is closed, so it cannot hold a turn end back for ever
+	// (turn_end_defer.go).
+	endedAt time.Time
 	// quietSince is the first of the unbroken idle, no-background readings; zero otherwise.
 	quietSince time.Time
 	done       bool // nudged, cancelled or given up: wait for the next period
@@ -182,14 +191,23 @@ func backgroundWakeObserve(m session.Meta, s bgWakeLive, now time.Time) {
 		}
 		bgWakeMu.Lock()
 		p := bgWakePeriods[m.Name]
-		if p == nil || p.done || s.turnEnd != p.turnEnd || (ok && (p.mark == "" || mark != p.mark)) {
+		switch {
+		case p == nil || p.done || (ok && p.mark != "" && mark != p.mark):
 			// A new period, or the one we track turned out to belong to a later turn (agy ran a
-			// turn of its own and backgrounded work again), or its mark was not written yet when
-			// the work was first seen. A read that fails now (a DB busy with agy's own write) says
+			// turn of its own and backgrounded work again): that turn's work starts its own
+			// clock.
+			bgWakePeriods[m.Name] = &bgWakePeriod{mark: mark, turnEnd: s.turnEnd, since: now}
+		default:
+			// The same turn, read more fully: a mark that was not written yet when the work was
+			// first seen, or a turn end stamped since (by the list once the hold's bound ran
+			// out, turn_end_defer.go). The period keeps its start, or a late stamp would restart
+			// the hold's bound. A read that fails now (a DB busy with agy's own write) says
 			// nothing about the turn, so it never wipes a mark already taken.
-			bgWakePeriods[m.Name] = &bgWakePeriod{mark: mark, turnEnd: s.turnEnd}
-		} else {
-			p.quietSince = time.Time{}
+			if ok && p.mark == "" {
+				p.mark = mark
+			}
+			p.turnEnd = s.turnEnd
+			p.quietSince, p.endedAt = time.Time{}, time.Time{}
 		}
 		bgWakeMu.Unlock()
 		return
@@ -199,6 +217,18 @@ func backgroundWakeObserve(m session.Meta, s bgWakeLive, now time.Time) {
 	if p == nil || p.done {
 		delete(bgWakePeriods, m.Name)
 		bgWakeMu.Unlock()
+		return
+	}
+	if p.endedAt.IsZero() {
+		p.endedAt = now
+	}
+	if now.Sub(p.endedAt) >= backgroundWakeGiveUp {
+		p.done = true
+		bgWakeMu.Unlock()
+		if s.state != "working" {
+			// Working is agy's own follow-up turn, long but under way: nothing was missed.
+			log.Printf("background-wake: %s: not nudging (no chance to deliver within %s)", m.Name, backgroundWakeGiveUp)
+		}
 		return
 	}
 	if s.state != "idle" {
@@ -336,4 +366,17 @@ func backgroundWakeDone(name string) {
 	if p := bgWakePeriods[name]; p != nil {
 		p.done = true
 	}
+}
+
+// backgroundWakePending reports the open period of name, if any: the background work began at
+// since, and the nudge is still to come or the work still runs. The mark it was taken against is
+// returned too, so a caller can tell a turn that has followed since.
+func backgroundWakePending(name string) (mark string, since time.Time, ok bool) {
+	bgWakeMu.Lock()
+	defer bgWakeMu.Unlock()
+	p := bgWakePeriods[name]
+	if p == nil || p.done {
+		return "", time.Time{}, false
+	}
+	return p.mark, p.since, true
 }

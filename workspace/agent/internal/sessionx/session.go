@@ -113,6 +113,9 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		reconcileInputDelivery(m)
 	}
 	li := AgentOf(m.Kind).WireLive(m, alive)
+	if alive && li.State == "idle" {
+		li.BackgroundBusy, li.BackgroundBusyReason = withAwaitedTurn(m, li.BackgroundBusy, li.BackgroundBusyReason)
+	}
 	// The overview card's usage facts, for the kinds whose WireLive does not read them itself
 	// (overview_facts.go). A field the agent did fill wins: lcpp knows its window exactly.
 	f := overviewFactsFor(m, alive)

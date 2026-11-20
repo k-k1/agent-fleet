@@ -512,6 +512,9 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// not already working.
 	if br, ok := AgentOf(meta.Kind).(agents.BackgroundReporter); ok && alive && (state == "idle" || state == "") {
 		busy, reason := br.BackgroundWork(meta)
+		if state == "idle" {
+			busy, reason = withAwaitedTurn(meta, busy, reason)
+		}
 		resp["backgroundBusy"] = busy
 		resp["backgroundBusyReason"] = reason
 	}
