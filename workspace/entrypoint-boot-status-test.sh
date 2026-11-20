@@ -3,8 +3,8 @@
 # it behaves on a nearly full home: the per-CLI status file with its reason class, the free-space
 # check before the installs, and the prune that runs ahead of them. Only the section from `VJ=`
 # to the Kiro comment is sliced out and run, against stub curl / tar / install / npm / df.
-# rtk and the npm CLIs are installed, verified and recorded by the Agent (`workspace-agent
-# boot-install rtk|npm|npm-verify`), so their status lines are tested in Go (internal/bootinstall)
+# rtk, agy and the npm CLIs are installed, verified and recorded by the Agent (`workspace-agent
+# boot-install rtk|agy|npm|npm-verify`), so their status lines are tested in Go (internal/bootinstall)
 # and their hand-off in entrypoint-boot-install-test.sh. What is left here for npm is the
 # self-update opt-in's own install.
 #
@@ -18,7 +18,7 @@ mkdir -p "$T/bin" "$T/home/.local/bin" "$T/cwd" "$T/tmp"
 
 BLOCK="$T/block.sh"
 awk '/^VJ=\/usr/{on=1} /^# Seed the default settings.json/{on=0} on' "$ENTRY" | sed "s#^VJ=.*#VJ=$T/versions.json#" > "$BLOCK"
-for needle in 'AGY_NEED' 'CUR_NEED' 'npm_wa'; do
+for needle in 'boot-install agy' 'CUR_NEED' 'npm_wa'; do
   grep -q -- "$needle" "$BLOCK" || { echo "FAIL: slice lacks $needle; fix the awk range" >&2; exit 1; }
 done
 
@@ -119,29 +119,23 @@ st() { grep -P "^$1\t" "$T/bidir/install.tsv" 2>/dev/null | tail -1 | tr '\t' ' 
 
 # 1. Healthy start: everything installed, status ok.
 reset; run_block
-for n in agy cursor; do [ "$(st $n)" = "$n ok " ] || fail "healthy: $n status is '$(st $n)'"; done
+[ "$(st cursor)" = "cursor ok " ] || fail "healthy: cursor status is '$(st cursor)'"
 
 # 2. A second start finds them present: skipped.
 run_block
-for n in agy; do [ "$(st $n)" = "$n skipped " ] || fail "present: $n status is '$(st $n)'"; done
+[ "$(st cursor)" = "cursor skipped " ] || fail "present: cursor status is '$(st cursor)'"
 
 # 3. Reason classes.
-reset; run_block STUB_INSTALL_FAIL=1
-[ "$(st agy)" = "agy failed no_space" ] || fail "ENOSPC from install: agy is '$(st agy)'"
 reset; run_block STUB_CURL_FAIL=1
-[ "$(st agy)" = "agy failed network" ] || fail "curl failure: agy is '$(st agy)'"
 [ "$(st cursor)" = "cursor failed network" ] || fail "curl failure: cursor is '$(st cursor)'"
 reset; run_block STUB_SHA_FAIL=1
-[ "$(st agy)" = "agy failed checksum" ] || fail "sha mismatch: agy is '$(st agy)'"
+[ "$(st cursor)" = "cursor failed checksum" ] || fail "sha mismatch: cursor is '$(st cursor)'"
 
 # 4. Low free space: nothing is attempted, what is installed stays, the reason is no_space.
 reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/rtk"; chmod +x "$T/home/.local/bin/rtk"
 run_block STUB_FREE_MB=100
 [ ! -e "$T/npm.calls" ] || fail "low space: npm was still run"
-[ ! -e "$T/home/.local/bin/agy" ] || fail "low space: agy was still installed"
-[ "$(st agy)" = "agy failed no_space" ] || fail "low space: agy is '$(st agy)'"
 has 'only 100 MiB free' || fail "low space: no WARN naming the free space"
-has 'agy already present' && fail "low space: reported agy as already present"
 grep -q 0.9 "$T/home/.local/bin/rtk" || fail "low space: an installed CLI was touched"
 
 # 4a. An installed CLI whose upgrade is skipped for lack of space keeps working: "skipped
@@ -149,14 +143,12 @@ grep -q 0.9 "$T/home/.local/bin/rtk" || fail "low space: an installed CLI was to
 # failure as "install failed").
 reset; printf '#!/bin/sh\necho rtk 0.9\n' >"$T/home/.local/bin/rtk"; chmod +x "$T/home/.local/bin/rtk"
 run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0
-[ "$(st agy)" = "agy failed no_space" ] || fail "low space, rtk installed: absent agy is '$(st agy)'"
 
 # 4a2. A leftover that cannot run is not "the old version still in use": a broken agy (exits 1)
 # and a non-executable partial rtk stay failed, which also keeps the Agent's start refusal.
 reset; printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/agy"; chmod +x "$T/home/.local/bin/agy"
 printf 'partial' >"$T/home/.local/bin/rtk"; chmod 600 "$T/home/.local/bin/rtk"
 run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0
-[ "$(st agy)" = "agy failed no_space" ] || fail "low space, broken agy: agy is '$(st agy)'"
 
 # 4a3. cursor's binary is cursor-agent: a working old tree linked there, pinned tree not fetched.
 reset; d="$T/home/.local/share/cursor-agent/versions"; mkdir -p "$d/2026.0.9-old"
@@ -199,7 +191,7 @@ has "AF_BOOT_INSTALL_STATUS=$T/bidir/install.tsv" || fail "the Agent was not tol
 reset; mkdir -p "$T/bidir/install.tsv"; : >"$T/bidir/install.tsv/blocker"
 run_block
 has 'AF_BOOT_INSTALL_STATUS=unset' || fail "recording could not start but the Agent was still pointed at a file"
-has 'boot-install agy' || fail "recording off broke the install"
+has 'boot-install cursor' || fail "recording off broke the install"
 
 # Reason classes from the stderr of real-looking failures.
 reason() { printf '%s\n' "$1" >"$T/err.txt"; BI_ERR="$T/err.txt" bash -c 'source <(sed -n "/^bi_reason()/,/^}/p" "$1"); bi_reason' _ "$BLOCK_SRC"; }
@@ -224,7 +216,7 @@ run_block STUB_FREE_MB=399 AF_AGENT_SELF_UPDATE_SKIP=0
 reset; mkdir -p "$T/bidir"; echo keep >"$T/victim"; ln -s "$T/victim" "$T/bidir/install.tsv"; ln -s "$T/victim" "$T/bidir/install.err"
 run_block
 [ "$(cat "$T/victim")" = keep ] || fail "a planted symlink was followed and its target changed"
-[ "$(st agy)" = "agy ok " ] || fail "status not recorded beside a planted symlink: '$(st agy)'"
+[ "$(st cursor)" = "cursor ok " ] || fail "status not recorded beside a planted symlink: '$(st cursor)'"
 reset; mkdir -p "$T/bidir"; printf 'claude\tfailed\tno_space\n' >"$T/bidir/install.tsv"
 run_block STUB_FREE_MB=9000
 grep -qP '^claude\tfailed\tno_space' "$T/bidir/install.tsv" && fail "the previous start's result was served"
@@ -232,7 +224,7 @@ reset; mkdir -p "$T/real"; chmod 0755 "$T/real"; ln -s "$T/real" "$T/linkdir"
 BI_DIR_OVERRIDE="$T/linkdir" run_block
 [ -z "$(ls -A "$T/real")" ] || fail "a symlinked status directory was used"
 [ "$(stat -c %a "$T/real")" = 755 ] || fail "a refused symlinked directory had its target chmod'ed"
-has 'boot-install agy' || fail "a rejected status directory broke the install"
+has 'boot-install cursor' || fail "a rejected status directory broke the install"
 
 # 6. The self-update opt-in's own npm install (the pinned install and the repair pass are the
 # Agent's, tested in Go): its npm errors reach the log instead of /dev/null.
