@@ -4,6 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { SURFACE_COLORS } from "../lib/settings/options.ts";
 
 const css = readFileSync(path.resolve(__dirname, "tokens.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
@@ -130,5 +131,66 @@ describe("activity bar badge wiring", () => {
   it("base badge text is --on-accent, tone-waiting text is --on-warn", () => {
     expect(rule(".actbar-badge")).toMatch(/color:\s*var\(--on-accent\)/);
     expect(rule(".actbar-badge.tone-waiting")).toMatch(/color:\s*var\(--on-warn\)/);
+  });
+});
+
+// Light segmented-control selection: --sel-bg = accent mixed into --bg, --sel-fg = accent mixed
+// into --fg (the knobs are the light block's --sel-*-mix). For every top-bar accent the fill
+// must come out darker than the unselected cells (--panel2) — at a 16% mix slate and graphite
+// were as light as the cells and the selection vanished — and the label must keep 4.5:1.
+describe("light segment selection", () => {
+  const base = baseBlock("light");
+  const pct = (n: string) => Number(base.body.match(new RegExp(`${n}:\\s*(\\d+)%`))![1]) / 100;
+  const hex = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const mix = (a: string, b: string, p: number) =>
+    "#" + hex(a).map((v, i) => Math.round(v * p + hex(b)[i] * (1 - p)).toString(16).padStart(2, "0")).join("");
+  const accents: [string, string][] = [
+    ["default", decl(base.body, "--topbar-accent")!],
+    ...SURFACE_COLORS.filter((c) => c.accent).map((c): [string, string] => [c.id, c.accent!]),
+  ];
+  for (const [id, accent] of accents) {
+    it(`${id}: the fill is darker than --panel2 and the label clears 4.5:1 on it`, () => {
+      const fill = mix(accent, decl(base.body, "--bg")!, pct("--sel-bg-mix"));
+      const label = mix(accent, decl(base.body, "--fg")!, pct("--sel-fg-mix"));
+      expect(lum(fill)).toBeLessThan(lum(decl(base.body, "--panel2")!));
+      expect(ratio(label, fill)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+});
+
+// The ratios above hold only if the tokens are actually derived from those knobs and the outline
+// is actually painted: pin the formulas in every block that declares them, the per-theme ring
+// widths, and the rules in ui.css that draw the ring (the big grid has its own, which must keep
+// the cell separators).
+describe("segment selection wiring", () => {
+  const BG = "color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg))";
+  const FG = "color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg))";
+  const value = (body: string, n: string) => body.match(new RegExp(`${n}:\\s*([^;]+);`))?.[1].trim();
+  const scope = blocks.find((b) => b.selector === ".sel-scope")!;
+  for (const [name, b] of [["light", baseBlock("light")], ["dark", baseBlock("dark")], [".sel-scope", scope]] as const) {
+    it(`${name}: --sel-bg / --sel-fg use the mix knobs`, () => {
+      expect(value(b.body, "--sel-bg")).toBe(BG);
+      expect(value(b.body, "--sel-fg")).toBe(FG);
+    });
+  }
+  it("light draws a ring, dark none", () => {
+    expect(parseFloat(value(baseBlock("light").body, "--sel-ring")!)).toBeGreaterThanOrEqual(1);
+    expect(parseFloat(value(baseBlock("dark").body, "--sel-ring")!)).toBe(0);
+  });
+  it("ui.css paints the ring on .seg-btn.active and on the big grid's active cell", () => {
+    const uiCss = readFileSync(path.resolve(__dirname, "../ui/ui.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const rule = (sel: string) =>
+      [...uiCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].trim() === sel).map((m) => m[2]).join(";");
+    const ring = /inset 0 0 0 var\(--sel-ring\) var\(--sel-fg\)/;
+    expect(rule(".seg-btn.active")).toMatch(ring);
+    const big = rule(".ui-seg.big .seg-btn.active");
+    expect(big).toMatch(ring);
+    expect(big).toMatch(/inset -1px 0 0 var\(--btn-border\)/);
+  });
+  it("the move dialog's selected quota-left card keeps its green ring next to the selection ring", () => {
+    const sessCss = readFileSync(path.resolve(__dirname, "../features/sessions/sessions.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const both = [...sessCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find((m) => m[1].trim() === ".move-form .ui-seg .seg-btn.quota-left.active")?.[2] ?? "";
+    expect(both).toMatch(/var\(--ok/);
+    expect(both).toMatch(/var\(--sel-ring\)\) var\(--sel-fg\)/);
   });
 });

@@ -1045,6 +1045,18 @@
   color: var(--sel-fg);
   font-weight: 600;
 }
+/* Selection outline in the label's colour, --sel-ring wide (1.5px in light, 0 in dark;
+   tokens.css). Light needs it because a pastel fill alone cannot stand out from the unselected
+   --panel2 cells while its text stays ≥4.5:1 (graphite's best is ~1.1:1 fill-to-cell). Inset,
+   so the control's clipped corners are unaffected. The big agent grid draws its cell
+   separators with box-shadow at a higher specificity, so it gets its own rule that keeps
+   them and adds the outline. */
+.seg-btn.active {
+  box-shadow: inset 0 0 0 var(--sel-ring) var(--sel-fg);
+}
+.ui-seg.big .seg-btn.active {
+  box-shadow: inset 0 0 0 var(--sel-ring) var(--sel-fg), inset -1px 0 0 var(--btn-border), inset 0 -1px 0 var(--btn-border);
+}
 /* Choice segmented control (`ui-seg|seg choice-seg`: account menu, inbox, Settings). Placed
    after both `.ui-seg` and `.seg` so it wins their `display` and the `.ui-seg .seg-btn`
    padding, which it ties on specificity. */
