@@ -32,3 +32,33 @@ func TestStopBackgroundBusyerKinds(t *testing.T) {
 		}
 	}
 }
+
+// TestPart2CapabilityKinds pins which kinds carry the capabilities that replaced the
+// session_status.go and PaneKind kind branches: launch preparation was claude only, managed
+// abort signals codex and opencode, and the pane sniff knew opencode, codex and claude.
+func TestPart2CapabilityKinds(t *testing.T) {
+	launch := map[string]bool{session.KindClaude: true}
+	abort := map[string]bool{session.KindCodex: true, session.KindOpencode: true}
+	pane := map[string]string{session.KindClaude: "claude", session.KindCodex: "codex", session.KindOpencode: "opencode"}
+	for _, k := range agentreg.Kinds() {
+		a, _ := agentreg.Lookup(k)
+		_, gotLaunch := a.(agents.LaunchPreparer)
+		if gotLaunch != launch[k] {
+			t.Errorf("kind %q: implements LaunchPreparer = %v, want %v", k, gotLaunch, launch[k])
+		}
+		gotAbort := false
+		if c, ok := a.(agents.ManagedAbortSignaler); ok {
+			gotAbort = c.ManagedAbortSignals()
+		}
+		if gotAbort != abort[k] {
+			t.Errorf("kind %q: ManagedAbortSignals = %v, want %v", k, gotAbort, abort[k])
+		}
+		gotPane := ""
+		if c, ok := a.(agents.PaneStartMarker); ok {
+			gotPane = c.PaneStartMarker()
+		}
+		if gotPane != pane[k] {
+			t.Errorf("kind %q: PaneStartMarker = %q, want %q", k, gotPane, pane[k])
+		}
+	}
+}

@@ -137,3 +137,9 @@ func (agentImpl) StopBackgroundBusy(m session.Meta) bool {
 	busy, _ := BackgroundWork(m.Name)
 	return busy
 }
+
+// ManagedAbortSignals is agents.ManagedAbortSignaler.
+func (agentImpl) ManagedAbortSignals() bool { return true }
+
+// PaneStartMarker is agents.PaneStartMarker.
+func (agentImpl) PaneStartMarker() string { return "codex" }

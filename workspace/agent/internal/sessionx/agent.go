@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
@@ -200,4 +201,35 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		}
 	}
 	return state
+}
+
+// PaneKind sniffs a session's kind from its tmux pane start command. This is a LAST RESORT,
+// used ONLY for orphan sessions that have no meta (handleListSessions); a session with a meta
+// always takes the recorded meta.Kind and never reaches here. The match is a fragile substring
+// test: a claude/shell pane that merely RAN `opencode`/`codex` as a command (or a wrapper whose
+// path contains one of these words) would misclassify. Kept because an orphan has no other
+// signal, and the only cost is a wrong badge on a session that already lost its meta. Each
+// kind's marker comes from agents.PaneStartMarker; the longest matching marker wins, ties go to
+// the kind that sorts first. Defaults to shell.
+func PaneKind(name string) string {
+	cmd, ok := tmuxx.PaneStartCommand(name)
+	if !ok {
+		return session.KindShell
+	}
+	return paneKindOf(cmd)
+}
+
+func paneKindOf(cmd string) string {
+	best, bestLen := session.KindShell, 0
+	for _, k := range agentreg.Kinds() {
+		a, _ := agentreg.Lookup(k)
+		pm, ok := a.(agents.PaneStartMarker)
+		if !ok {
+			continue
+		}
+		if m := pm.PaneStartMarker(); m != "" && len(m) > bestLen && strings.Contains(cmd, m) {
+			best, bestLen = k, len(m)
+		}
+	}
+	return best
 }

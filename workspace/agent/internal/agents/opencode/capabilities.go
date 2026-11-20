@@ -108,3 +108,9 @@ func (agentImpl) TUIInterrupt(inSubagentView func() bool) agents.TUIInterruptTra
 func (agentImpl) ProgressSignals() agents.ProgressTraits {
 	return agents.ProgressTraits{Signal: agents.ProgressPaneOnly}
 }
+
+// ManagedAbortSignals is agents.ManagedAbortSignaler.
+func (agentImpl) ManagedAbortSignals() bool { return true }
+
+// PaneStartMarker is agents.PaneStartMarker.
+func (agentImpl) PaneStartMarker() string { return "opencode" }
