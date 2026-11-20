@@ -203,6 +203,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.waiting_deferred": "Every waiting memo ({count}) was handed back by its run and waits for its time.",
   "memo.waiting_deferred_at": "Every waiting memo ({count}) was handed back by its run. The next may run at {at}.",
   "memo.waiting_prerequisites_deferred": "{count} waiting memos wait for other memos of this category to finish first, and {deferred} were handed back by their runs and wait for their time.",
+  "memo.waiting_below_threshold_deferred": "Waiting for more memos: {count} of {needed} ready so far; {blocked} more wait for the memos they depend on and {deferred} were handed back by their runs and wait for their time. Runs start once {needed} are ready.",
   "memo.d_end": "End",
   "memo.d_end_title": "End this run?",
   "memo.d_end_body": "The run finishes, its slot is freed and session {name} is stopped. The session is kept, not archived, and it will not be recorded as interrupted.",

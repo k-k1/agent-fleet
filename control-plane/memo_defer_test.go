@@ -414,3 +414,174 @@ func TestMemoDeferSkippedByTheBreaker(t *testing.T) {
 		}
 	})
 }
+
+// Review round 1: the messages go back only after the retire the deferred close requested was
+// confirmed and a read made after it still shows no later turn. A retire a person answered
+// (released) or a turn that started after the close read drops the hand-back, and the close
+// becomes clean; meanwhile a dependent waits instead of going to held.
+func TestMemoDeferReturnsOnlyAfterTheRetire(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d, mid := e.openDeferrable(nil)
+		e.deferCall(d.ID, map[string]any{"session": d.Session, "reason": "later"})
+		agent.mu.Lock()
+		agent.retireRelease = d.Session
+		agent.mu.Unlock()
+		e.settleTwice()
+		e.settleNow(time.Now())
+		got := e.delivery(d.ID)
+		if got.Outcome != store.DeliveryClean || got.DeferResult != store.DeferDroppedReleased {
+			t.Fatalf("released retire: %+v", got)
+		}
+		if m := e.memoRow(mid); m.State != store.MemoStateDelivered {
+			t.Fatalf("a run a person took over handed its message back: %s", m.State)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d, mid := e.openDeferrable(nil)
+		e.deferCall(d.ID, map[string]any{"session": d.Session, "reason": "later"})
+		agent.mu.Lock()
+		agent.retireFail = 1 // the first retire does not end the tree
+		agent.mu.Unlock()
+		e.settleTwice()
+		got := e.delivery(d.ID)
+		if got.Outcome != store.DeliveryDeferred || got.DeferResult != "" || !got.RetirePending {
+			t.Fatalf("closed before the retire ended: %+v", got)
+		}
+		if m := e.memoRow(mid); m.State != store.MemoStateDelivered {
+			t.Fatalf("returned before the retire ended: %s", m.State)
+		}
+		if st, why := memoafter.DeliveryState(got, true, time.Now()); st != memoafter.Waiting || why != memoafter.WhyRunning {
+			t.Fatalf("a dependent would read %s/%s", st, why)
+		}
+		// A turn started between the close's read and the retire.
+		agent.setRow(d.Session, map[string]any{"lastTurnStartAt": time.Now().Add(time.Minute).Format(time.RFC3339Nano)})
+		e.settleNow(time.Now())
+		got = e.delivery(d.ID)
+		if got.Outcome != store.DeliveryClean || got.DeferResult != store.DeferDroppedTurn {
+			t.Fatalf("after the retire: %+v", got)
+		}
+		if m := e.memoRow(mid); m.State != store.MemoStateDelivered {
+			t.Fatalf("message %s", m.State)
+		}
+	})
+}
+
+// Review round 1: a delivery never reported (the workspace stopped before the first read) with a
+// request stays open on the mirror, and the settle wake counts it.
+func TestMemoDeferUnreportedStaysOpenWhileStopped(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d, _ := e.openDeferrable(nil)
+		e.deferCall(d.ID, map[string]any{"session": d.Session, "reason": "later"})
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET reported=0 WHERE id=?`, d.ID); err != nil {
+			t.Fatal(err)
+		}
+		e.stopWorkspace(agent, d.Session, "")
+		for i := 0; i < 3; i++ {
+			e.settleNow(time.Now())
+		}
+		got := e.delivery(d.ID)
+		if got.State != store.DeliveryOpen {
+			t.Fatalf("closed from the mirror: %+v", got)
+		}
+		if !settleNeedsAgent(got) {
+			t.Fatal("not woken for")
+		}
+	})
+}
+
+// Review round 1: a run of several messages is never handed back, even when the batch was
+// lowered to 1 while it ran.
+func TestMemoDeferRefusesARunOfSeveral(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"batch": 3})
+		e.pending("app", "impl", "one")
+		e.pending("app", "impl", "two")
+		agent := e.useQueueAgent("")
+		agent.mu.Lock()
+		agent.report = true
+		agent.mu.Unlock()
+		d := e.fired(q)
+		e.tick(e.runner(), time.Now())
+		open := e.delivery(d.ID)
+		e.queueWith("app", "impl", map[string]any{"batch": 1})
+		rec := e.deferCall(d.ID, map[string]any{"session": open.Session, "reason": "x"})
+		if rec.Code != http.StatusConflict || deliveryErrCode(t, rec) != errCodeMemoDeferBatch {
+			t.Fatalf("defer: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// Review round 1: an in-place rename of the queue keeps the release of the message a run holds,
+// so the hand-back returns it claimable; the person's return records a new release.
+func TestMemoDeferSurvivesARename(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, d, mid := e.openDeferrable(nil)
+		if r := e.do("a", "PATCH", "/api/memo-categories/"+d.QueueID, map[string]any{"name": "impl2"}); r.Code != http.StatusOK {
+			t.Fatalf("rename: %d %s", r.Code, r.Body.String())
+		}
+		e.deferCall(d.ID, map[string]any{"session": d.Session, "reason": "later"})
+		e.settleTwice()
+		m := e.memoRow(mid)
+		if m.State != store.MemoStatePending || m.ReleaseHash != memoContentHash(m) {
+			t.Fatalf("after the rename and the hand-back: %+v", m)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, d, mid := e.openDeferrable(nil)
+		e.settleTwice()
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET release_hash='stale' WHERE id=?`, mid); err != nil {
+			t.Fatal(err)
+		}
+		if rec := e.do("a", "POST", "/api/memo-queues/"+d.QueueID+"/deliveries/"+d.ID+"/return", nil); rec.Code != http.StatusOK {
+			t.Fatalf("return: %d %s", rec.Code, rec.Body.String())
+		}
+		if m := e.memoRow(mid); m.ReleaseHash != memoContentHash(m) {
+			t.Fatalf("the person's return kept a stale release: %+v", m)
+		}
+	})
+}
+
+// Review round 1: a message that leaves every queue drops its hand-backs.
+func TestMemoDeferClearedWhenLeavingTheQueue(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", nil)
+		m := e.pending("app", "impl", "one")
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET not_before=?, defer_count=2, defer_reasons='[{"reason":"x","at":"y"}]' WHERE id=?`,
+			store.DeliveryTS(time.Now().Add(time.Hour)), m.ID); err != nil {
+			t.Fatal(err)
+		}
+		if rec := e.do("a", "DELETE", "/api/memo-queues/"+q, nil); rec.Code != http.StatusNoContent && rec.Code != http.StatusOK {
+			t.Fatalf("delete queue: %d %s", rec.Code, rec.Body.String())
+		}
+		got := e.memoRow(m.ID)
+		if got.State != "" || got.NotBefore != "" || got.DeferCount != 0 || got.DeferReasons != "" {
+			t.Fatalf("a plain note kept its hand-backs: %+v", got)
+		}
+	})
+}
+
+// Review round 1: a message waiting for its time neither asks for a PR wake nor keeps one from a
+// message that waits for a PR.
+func TestMemoPRWaitsSkipsDeferredMessages(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, _, da, _ := e.prChain("clean", time.Now().Add(-time.Minute))
+		e.setPRs(da.ID, store.PRStateWaiting)
+		m := e.pending("app", "impl", "handed back")
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET not_before=? WHERE id=?`,
+			store.DeliveryTS(time.Now().Add(72*time.Hour)), m.ID); err != nil {
+			t.Fatal(err)
+		}
+		var ok bool
+		err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+			rows, err := tx.ListMemosIn("app", "impl")
+			if err != nil {
+				return err
+			}
+			_, _, ok, err = memoPRWaits(tx, rows, time.Now())
+			return err
+		})
+		if err != nil || !ok {
+			t.Fatalf("a deferred message stopped the PR wake: ok=%v err=%v", ok, err)
+		}
+	})
+}

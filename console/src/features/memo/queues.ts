@@ -194,6 +194,11 @@ export function waitingWords(
     case "window_closed":
       return when ? { key: "memo.waiting_window_closed_at", params: when } : { key: "memo.waiting_window_closed" };
     case "below_threshold":
+      if (w.detail?.deferred)
+        return {
+          key: "memo.waiting_below_threshold_deferred",
+          params: { needed: w.detail?.needed ?? 0, count: w.detail?.waiting ?? 0, blocked: w.detail?.blocked ?? 0, deferred: w.detail.deferred },
+        };
       return w.detail?.blocked
         ? { key: "memo.waiting_below_threshold_blocked", params: { needed: w.detail?.needed ?? 0, count: w.detail?.waiting ?? 0, blocked: w.detail.blocked } }
         : { key: "memo.waiting_below_threshold", params: { needed: w.detail?.needed ?? 0, count: w.detail?.waiting ?? 0 } };
@@ -863,8 +868,11 @@ export function deferWords(d: Pick<MemoDelivery, "state" | "defer">): MsgKey | n
 
 /** Whether "return to queue" is offered on a run: closed, not a wake, not returned already, with
  *  notes. The Control Plane decides what can return; this only hides the button where nothing can. */
-export function canReturnRun(d: Pick<MemoDelivery, "state" | "outcome" | "returnedAt" | "messageIds">): boolean {
-  return d.state === "closed" && d.outcome !== "wake" && d.outcome !== "not_sent" && !d.returnedAt && d.messageIds.length > 0;
+export function canReturnRun(d: Pick<MemoDelivery, "state" | "outcome" | "returnedAt" | "messageIds" | "returnBlocked" | "defer">): boolean {
+  if (d.state !== "closed" || d.outcome === "wake" || d.outcome === "not_sent" || d.returnedAt || d.messageIds.length === 0) return false;
+  // A hand-back that went through already put its notes back; only those another note's work item
+  // kept with the run are left to return.
+  return d.outcome !== "deferred" || d.defer?.result !== "applied" || d.returnBlocked.length > 0;
 }
 
 /** "waiting until <time>" for a note its run handed back, while that time is still ahead. */
@@ -882,6 +890,9 @@ export function runOpenPRs(session: Pick<Session, "pr" | "links"> | undefined): 
   const out: string[] = [];
   if (session.pr && (session.pr.state === "open" || session.pr.state === "merged")) out.push("#" + session.pr.number);
   for (const l of session.links ?? []) {
+    // The links the run's own work holds, as the Control Plane's PR snapshot reads them: not a PR it
+    // only reviewed or watched.
+    if (l.role !== "started" && l.role !== "created" && l.role !== "working") continue;
     if ((l.state === "open" || l.state === "draft" || l.state === "merged") && l.key && !out.some((k) => l.key.endsWith(k))) out.push(l.key);
   }
   return out;

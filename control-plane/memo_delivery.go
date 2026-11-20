@@ -648,6 +648,8 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 	}
 	// The retire pass has the reserved end of the budget (and what the read pass left of the rest).
 	r.retirePending(rctx, views, now)
+	// A deferred close returns its messages only after its retire ended (memo_defer.go).
+	r.settleDeferred(rctx, views, now)
 	// The first-turn pass has a budget of its own: the reads above may have used all of the pass's,
 	// and a pass that never runs would leave the breaker blind.
 	tctx, tcancel := context.WithTimeout(tick, memoClosedTurnBudget)
@@ -811,6 +813,12 @@ func (r *memoQueueRunner) closeIfDone(ctx context.Context, v *memoMemberView, d 
 // consecutive ticks. A session where a machine is working, or a person has to act, keeps it
 // open. The rows of other states (limited, unknown) keep it open too.
 func (r *memoQueueRunner) closeIfDoneUnreported(ctx context.Context, v *memoMemberView, d store.MemoDelivery, now time.Time) {
+	// A hand-back request is decided by a running Agent's report alone: the mirror can tell
+	// neither a later turn nor a PR, so the delivery stays open for it (settleWake wakes it).
+	if !v.liveOK && d.DeferAt != "" {
+		r.markIdle(ctx, d, 0)
+		return
+	}
 	if !v.liveOK && !v.mirrorOK {
 		// No observation this tick: the idle ticks are no longer consecutive.
 		r.markIdle(ctx, d, 0)
@@ -1103,7 +1111,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		if ticks < 2 {
 			return nil
 		}
-		return memoCloseClean(tx, d.ID, dc, now)
+		return memoCloseClean(tx, d.ID, dc)
 	})
 	cancel()
 	if err != nil {
@@ -1663,7 +1671,14 @@ func (r *memoQueueRunner) open(ctx context.Context, d store.MemoDelivery, sessio
 }
 
 func (r *memoQueueRunner) closeOpen(ctx context.Context, d store.MemoDelivery, outcome string) {
-	if _, err := memoDeliveryMove(ctx, r.mgr.store, d, store.DeliveryOpen, store.DeliveryClosed, "", outcome, nil); err != nil {
+	// A clean close made without a report (an older Agent) cannot apply a hand-back: it says so.
+	var then func(tx store.MemoTxOps, at string) error
+	if outcome == store.DeliveryClean && d.DeferAt != "" {
+		then = func(tx store.MemoTxOps, _ string) error {
+			return tx.SetDeliveryDeferResult(d.ID, store.DeferDroppedUnread, "")
+		}
+	}
+	if _, err := memoDeliveryMove(ctx, r.mgr.store, d, store.DeliveryOpen, store.DeliveryClosed, "", outcome, then); err != nil {
 		log.Printf("memo queue: delivery %s: close: %v", d.ID, err)
 	}
 }

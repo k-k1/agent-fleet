@@ -52,3 +52,38 @@ func TestSweepOrphanTurnStartsKeepsLiveAndYoung(t *testing.T) {
 		t.Fatal("the sweep removed the wrong start")
 	}
 }
+
+// Review round 1: a working write under another prompt id is a new turn even when the end of the
+// turn before was never written, and a driver's second mark of the same input is not.
+func TestLastTurnStartPromptChangeAndRepeatedMark(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const sid = "ts-prompt"
+	PersistOpen(sid, "working", "P1")
+	first := LastTurnStart(sid)
+	time.Sleep(5 * time.Millisecond)
+	PersistOpen(sid, "working", "P1") // a heartbeat of the same prompt
+	if LastTurnStart(sid) != first {
+		t.Fatal("a heartbeat moved the start")
+	}
+	PersistOpen(sid, "working", "P2") // the Stop of P1 was missed
+	second := LastTurnStart(sid)
+	if second == first {
+		t.Fatal("a new prompt id did not move the start")
+	}
+	time.Sleep(5 * time.Millisecond)
+	PersistTurnEnd(sid, "idle")
+	PersistTurnStart(sid, "input-1")
+	third := LastTurnStart(sid)
+	if third == second {
+		t.Fatal("a driver's start did not move the start")
+	}
+	time.Sleep(5 * time.Millisecond)
+	PersistTurnStart(sid, "input-1") // the same input marked again on the CLI's own start
+	if LastTurnStart(sid) != third {
+		t.Fatal("a second mark of the same input moved the start")
+	}
+	RemoveTurnStart(sid)
+	if LastTurnStart(sid) != "" {
+		t.Fatal("not removed")
+	}
+}

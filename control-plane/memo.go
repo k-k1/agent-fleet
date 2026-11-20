@@ -911,6 +911,11 @@ func (a memoAPI) updateCategory(via memoVia) func(http.ResponseWriter, *http.Req
 					if err := memoMoveBucket(tx, cur.Repo, cur.Name, newName, curQ, nextQ, via); err != nil {
 						return err
 					}
+					if !hasDup && curQ {
+						if err := memoRehashRenamed(tx, cur.Repo, cur.Name, newName); err != nil {
+							return err
+						}
+					}
 					if hasDup {
 						if err := tx.DeleteQueue(cur.ID); err != nil {
 							return err
@@ -1195,4 +1200,31 @@ func memoAgentError(err error) *apiError {
 		}
 	}
 	return &apiError{http.StatusBadGateway, "flush_failed", err.Error()}
+}
+
+// memoRehashRenamed keeps the release of the messages a run holds (delivered, unconfirmed) bound
+// across an in-place rename of their queue: the release named the old category, and a run that
+// hands its message back would otherwise return it under a hash that no longer matches, so the
+// next claim would send it to held. Only a release that matched the content before the rename is
+// carried; a merge into another queue keeps the old hash (another instruction and budget).
+func memoRehashRenamed(tx store.MemoTxOps, repo, from, to string) error {
+	rows, err := tx.ListMemosIn(repo, to)
+	if err != nil {
+		return err
+	}
+	for _, m := range rows {
+		if (m.State != store.MemoStateDelivered && m.State != store.MemoStateUnconfirmed) || m.ReleaseHash == "" {
+			continue
+		}
+		before := m
+		before.Category = from
+		if memoContentHash(before) != m.ReleaseHash {
+			continue
+		}
+		m.ReleaseHash = memoContentHash(m)
+		if err := tx.WriteMemo(m); err != nil {
+			return err
+		}
+	}
+	return nil
 }

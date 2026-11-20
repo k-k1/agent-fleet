@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -151,6 +152,9 @@ func (a memoAPI) deferDelivery(w http.ResponseWriter, r *http.Request, _ store.I
 		if d.State != store.DeliveryOpen {
 			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoDeferNotOpen, "the run is not open: a message can be handed back only while its run is"})
 		}
+		if len(d.MessageIDs) != 1 {
+			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoDeferBatch, "a run of more than one message cannot hand its messages back"})
+		}
 		if d.Session != in.Session {
 			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoDeferNotYours, "the run was not started for this session"})
 		}
@@ -236,9 +240,10 @@ func treeTurnStartedAfter(tree []*sessionWire, at time.Time) bool {
 // memoCloseClean closes an open delivery that nothing held on two reads in a row, in the MemoTx
 // that counted the second read, and requests the retire of its session. A delivery with a
 // hand-back request closes as deferred when dc, read for that same request, found nothing that
-// drops it: its messages return by the return transition. A request dc was not read for (none
-// read, or replaced since) keeps the delivery open for the next tick, which reads it.
-func memoCloseClean(tx store.MemoTxOps, id string, dc *memoDeferCheck, now time.Time) error {
+// drops it; its messages stay with it until settleDeferred has seen the retire end and read the
+// tree again. A request dc was not read for (none read, or replaced since) keeps the delivery open
+// for the next tick, which reads it. A run of more than one message is never handed back.
+func memoCloseClean(tx store.MemoTxOps, id string, dc *memoDeferCheck) error {
 	cur, ok, err := tx.GetDelivery(id)
 	if err != nil || !ok || cur.State != store.DeliveryOpen {
 		return err
@@ -247,30 +252,112 @@ func memoCloseClean(tx store.MemoTxOps, id string, dc *memoDeferCheck, now time.
 		return nil
 	}
 	outcome := store.DeliveryClean
-	if cur.DeferAt != "" && dc.result == "" {
+	if cur.DeferAt != "" && dc.result == "" && len(cur.MessageIDs) == 1 {
 		outcome = store.DeliveryDeferred
 	}
-	at := store.DeliveryTS(time.Now())
-	won, err := tx.MoveDelivery(id, store.DeliveryOpen, store.DeliveryClosed, "", outcome, at)
+	won, err := tx.MoveDelivery(id, store.DeliveryOpen, store.DeliveryClosed, "", outcome, store.DeliveryTS(time.Now()))
 	if err != nil || !won {
 		return err
 	}
 	if err := tx.SetDeliveryRetirePending(id); err != nil {
 		return err
 	}
-	if cur.DeferAt == "" {
-		return nil
+	if cur.DeferAt != "" && outcome == store.DeliveryClean {
+		result := dc.result
+		if result == "" {
+			result = store.DeferDroppedUnread
+		}
+		return tx.SetDeliveryDeferResult(id, result, "")
 	}
-	if outcome == store.DeliveryClean {
-		return tx.SetDeliveryDeferResult(id, dc.result, "")
+	return nil
+}
+
+// settleDeferred decides the deferred closes whose retire has ended. The close was decided on a
+// read made before the retire, and a person, a peer or a watch may have started the tree again
+// between that read and the retire: the messages go back only when the retire was confirmed (a
+// released or done one means a person took the session over), and a list and a PR answer read
+// after it still show no later turn and no PR. Anything else drops the hand-back, and the close
+// becomes the clean one it would have been. Nothing is decided without a running Agent's answer.
+func (r *memoQueueRunner) settleDeferred(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
+	if ctx.Err() != nil {
+		return
 	}
-	held, _ := json.Marshal(memoafter.HeldReason{Reason: store.MemoHeldDeferred, At: store.DeliveryTS(now)})
-	res, err := tx.ReturnDelivered(id, store.MemoReturn{NotBefore: cur.DeferNotBefore,
-		Entry: store.MemoDeferEntry{Reason: cur.DeferReason, At: at, Delivery: id}, HeldReason: string(held)})
+	ds, err := r.mgr.store.ListDeferredToSettle(ctx)
 	if err != nil {
-		return err
+		log.Printf("memo queue: list deferred closes: %v", err)
+		return
 	}
-	return tx.SetDeliveryDeferResult(id, store.DeferApplied, store.EncodeReturnBlocked(res.Blocked))
+	for _, d := range ds {
+		if ctx.Err() != nil {
+			return
+		}
+		result := ""
+		switch d.RetireResult {
+		case string(retireConfirmed):
+		case string(retireReleased), string(retireDone), string(retireFault):
+			result = store.DeferDroppedReleased
+		default:
+			// gone, or a close an older binary made: nothing shows the tree stopped.
+			result = store.DeferDroppedUnread
+		}
+		if result == "" {
+			v := r.view(ctx, views, d.MembershipID)
+			if v == nil || !v.liveOK || !v.report {
+				continue // the next tick with a running Agent decides
+			}
+			result = r.deferRecheck(ctx, v, d)
+			if result == "wait" {
+				continue
+			}
+		}
+		r.applyDeferred(ctx, d, result, now)
+	}
+}
+
+// deferRecheck reads the tree and its PRs again after the retire: "" when the hand-back stands,
+// a store.DeferDropped* reason when it does not, "wait" when the Agent did not answer the list.
+func (r *memoQueueRunner) deferRecheck(ctx context.Context, v *memoMemberView, d store.MemoDelivery) string {
+	cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
+	env, err := r.mgr.agentSessionsEnv(cctx, v.res.rt)
+	cancel()
+	if err != nil || !env.reportsQueue() {
+		return "wait"
+	}
+	tree := deliveryTree(env.Sessions, d.Session)
+	if len(tree) == 0 {
+		return store.DeferDroppedUnread
+	}
+	fresh := *v
+	fresh.defers, fresh.prs = env.readsDefers(), env.readsPRs()
+	return r.deferCheck(ctx, &fresh, d, tree).result
+}
+
+// applyDeferred keeps the decision: the return transition when result is "", else the drop.
+func (r *memoQueueRunner) applyDeferred(ctx context.Context, d store.MemoDelivery, result string, now time.Time) {
+	wctx, cancel := memoWriteCtx(ctx)
+	defer cancel()
+	err := r.mgr.store.MemoTx(wctx, d.MembershipID, func(tx store.MemoTxOps) error {
+		cur, ok, err := tx.GetDelivery(d.ID)
+		if err != nil || !ok || cur.Outcome != store.DeliveryDeferred || cur.DeferResult != "" {
+			return err
+		}
+		if result != "" {
+			_, err := tx.SettleDeferResult(d.ID, result, "")
+			return err
+		}
+		at := store.DeliveryTS(now)
+		held, _ := json.Marshal(memoafter.HeldReason{Reason: store.MemoHeldDeferred, At: at})
+		res, err := tx.ReturnDelivered(d.ID, store.MemoReturn{NotBefore: cur.DeferNotBefore,
+			Entry: store.MemoDeferEntry{Reason: cur.DeferReason, At: at, Delivery: d.ID}, HeldReason: string(held)})
+		if err != nil {
+			return err
+		}
+		_, err = tx.SettleDeferResult(d.ID, store.DeferApplied, store.EncodeReturnBlocked(res.Blocked))
+		return err
+	})
+	if err != nil {
+		log.Printf("memo queue: delivery %s: settle the hand-back: %v", d.ID, err)
+	}
 }
 
 // returnDelivery (POST /api/memo-queues/{categoryId}/deliveries/{id}/return): the person's "return
@@ -314,11 +401,12 @@ func (a memoAPI) returnDelivery(w http.ResponseWriter, r *http.Request, _ store.
 		if n == 0 {
 			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoReturnNothing, "no message of this run can return to the queue"})
 		}
-		res, err := tx.ReturnDelivered(id, store.MemoReturn{Person: true})
+		at := store.DeliveryTS(time.Now())
+		res, err := tx.ReturnDelivered(id, store.MemoReturn{Person: true, Hash: memoContentHash, At: memoNow()})
 		if err != nil {
 			return err
 		}
-		if err := tx.MarkDeliveryReturned(id, store.DeliveryTS(time.Now()), store.EncodeReturnBlocked(res.Blocked)); err != nil {
+		if err := tx.MarkDeliveryReturned(id, at, store.EncodeReturnBlocked(res.Blocked)); err != nil {
 			return err
 		}
 		out, _, err = tx.GetDelivery(id)

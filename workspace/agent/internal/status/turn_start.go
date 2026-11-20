@@ -17,27 +17,46 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// TurnStart is when a session's latest turn started, by this host's clock.
+// TurnStart is when a session's latest turn started, by this host's clock, with what told that
+// turn apart: the prompt id of the write and the input a driver marked it for.
 type TurnStart struct {
-	At string `json:"at"`
+	At       string `json:"at"`
+	PromptID string `json:"promptId,omitempty"`
+	StartKey string `json:"startKey,omitempty"`
 }
 
 var turnStarts = fstore.JSON[TurnStart](paths.AgentStateDir, "session-turn-start", ".json")
 
 // noteTurnStart is called by persistLocked, with the per-sid lock held and before the new record
 // replaces the old one. A working write is a start when a driver marked it as one, when no record
-// was there (a stop deleted it), or when the record was a plain idle: a heartbeat and the answer
-// to a question or a permission are the same turn.
+// was there (a stop deleted it), when the record was a plain idle, or when it carries another
+// prompt id than the record (the end of the turn before was never written). A heartbeat and the
+// answer to a question or a permission are the same turn, and so is a driver's second mark of the
+// same input (at send, and again on the CLI's own start): moving the time then would drop a
+// hand-back made in between.
 func noteTurnStart(sid string, s SessionStatus) {
 	if s.State != "working" {
 		return
 	}
+	cur, hasCur := turnStarts.Read(sid)
+	if s.turnStart && s.startKey != "" && hasCur && s.startKey == cur.StartKey {
+		return
+	}
 	if !s.turnStart {
-		if prev, had := Read(sid); had && !(prev.State == "idle" && !prev.InputNotDelivered) {
+		prev, had := Read(sid)
+		newPrompt := s.PromptID != "" && prev.PromptID != "" && s.PromptID != prev.PromptID
+		if had && !(prev.State == "idle" && !prev.InputNotDelivered) && !newPrompt {
 			return
 		}
 	}
-	_ = turnStarts.Write(sid, TurnStart{At: time.Now().Format(time.RFC3339Nano)})
+	_ = turnStarts.Write(sid, TurnStart{At: time.Now().Format(time.RFC3339Nano), PromptID: s.PromptID, StartKey: s.startKey})
+}
+
+// RemoveTurnStart forgets sid's turn start; deleting the session does.
+func RemoveTurnStart(sid string) {
+	unlock, _ := lockSid(sid)
+	defer unlock()
+	turnStarts.Remove(sid)
 }
 
 // LastTurnStart is when sid's latest turn started (RFC 3339), "" when none was seen.
@@ -66,12 +85,16 @@ func SweepOrphanTurnStarts(live map[string]bool, minAge time.Duration, now time.
 		if live[sid] {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil || now.Sub(info.ModTime()) <= minAge {
-			continue
+		unlock, locked := lockSid(sid)
+		if !locked {
+			continue // not serialised with a status write: the next start retries
 		}
-		turnStarts.Remove(sid)
-		n++
+		// Looked at again under the lock: a start written since the listing is young.
+		if info, err := os.Stat(turnStarts.Path(sid)); err == nil && now.Sub(info.ModTime()) > minAge {
+			turnStarts.Remove(sid)
+			n++
+		}
+		unlock()
 	}
 	return n
 }

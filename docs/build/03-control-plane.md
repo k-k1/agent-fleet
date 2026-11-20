@@ -420,14 +420,17 @@ Memos you accumulate and send to a session in one go (the tables are
   the Agent's `POST /memos/defer`) takes `{session, reason, notBefore, cancel, at}` and only records the request on
   the delivery (`defer_reason`, `defer_not_before`, `defer_at` by the Agent's clock): `409 delivery_not_open` unless
   the delivery is `open`, `409 delivery_not_yours` unless it names `session`, `409 defer_needs_batch_1` unless the
-  queue's batch is 1, `400 bad_defer` for no reason, one over 1 KiB, a `notBefore` outside 10 minutes to 7 days ahead
+  queue's batch is 1 and the delivery holds one message, `400 bad_defer` for no reason, one over 1 KiB, a `notBefore` outside 10 minutes to 7 days ahead
   (default 1 hour; within a minute of a bound it is moved onto it) or an `at` more than 10 minutes from this clock. A
   later call replaces it, `cancel` withdraws it. Only a clean close made on a running Agent's report applies it
   (`memoCloseClean`), read outside the lock on the tick before the close: the request is dropped
   (`defer_result` `turn`, `pr` or `unread`, and the close is `clean`) when a session of the tree reports a
   `lastTurnStartAt` after `defer_at`, when `POST /memos/pr-snapshot` `{session, since: defer_at}` names a PR that is
   not `closed`, or when the Agent lacks `queueDefer` / `queuePRs` or gives no answer. Otherwise the outcome is
-  `deferred`, the retire is requested as for `clean`, and the return transition (`ReturnDelivered`) moves every
+  `deferred` and the retire is requested as for `clean`; only once that retire is `confirmed` and a list and a PR
+  answer read after it still show no later turn and no PR (`settleDeferred`; `released`/`done`/`fault` is
+  `defer_result` `released`, and every drop rewrites the outcome to `clean`, so a dependent reads the run as
+  running meanwhile) does the return transition (`ReturnDelivered`) move every
   message whose `delivery_id` is the delivery and whose state is `delivered` or `unconfirmed` to `pending` with
   `sent_at` and `delivery_id` cleared, the release copy rewritten and `not_before` set; the third hand-back since the
   last release goes to `held` (`held_reason` `deferred`, release cleared). A message whose reference another message

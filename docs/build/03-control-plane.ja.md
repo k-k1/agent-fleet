@@ -339,14 +339,16 @@ Workspace を起こさない。
   `store_memo_defer.go`、migration 0146 / pg 0131）。`POST /internal/memo-deliveries/{id}/defer`（token の面。Agent の
   `POST /memos/defer` が中継する）は `{session, reason, notBefore, cancel, at}` を受け、依頼を配信に記録するだけ
   （`defer_reason`・`defer_not_before`・`defer_at` は Agent の時計）。配信が `open` でなければ `409 delivery_not_open`、
-  `session` を指していなければ `409 delivery_not_yours`、キューの batch が 1 でなければ `409 defer_needs_batch_1`、
+  `session` を指していなければ `409 delivery_not_yours`、キューの batch が 1 で配信のメッセージが 1 件でなければ `409 defer_needs_batch_1`、
   理由なし・1 KiB 超・`notBefore` が 10 分後から 7 日後の外（既定 1 時間後。境界から 1 分以内は境界へ寄せる）・`at` が
   この時計から 10 分超ずれていれば `400 bad_defer`。後の呼び出しが置き換え、`cancel` が取り下げる。適用するのは、動いて
   いる Agent の報告での clean な閉じ（`memoCloseClean`）だけで、閉じる前の tick でロックの外で読む。木のセッションの
   `lastTurnStartAt` が `defer_at` より後、`POST /memos/pr-snapshot` `{session, since: defer_at}` が `closed` 以外の PR を
   返す、Agent に `queueDefer` / `queuePRs` が無いか答えが無い、のどれかなら依頼は捨てられ（`defer_result` は `turn`・
-  `pr`・`unread`）、閉じは `clean`。そうでなければ outcome は `deferred` で、`clean` と同じく retire を求め、戻す遷移
-  （`ReturnDelivered`）が `delivery_id` がその配信で状態が `delivered` か `unconfirmed` のメッセージを `pending` に戻す
+  `pr`・`unread`）、閉じは `clean`。そうでなければ outcome は `deferred` で、`clean` と同じく retire を求める。その retire が
+  `confirmed` になり、その後で読んだ一覧と PR の答えにも後のターンも PR も無いときだけ（`settleDeferred`。`released`・
+  `done`・`fault` は `defer_result` が `released`。どの取り消しも outcome を `clean` に書き直すので、それまで待つ側は
+  実行中と読む）、戻す遷移（`ReturnDelivered`）が `delivery_id` がその配信で状態が `delivered` か `unconfirmed` のメッセージを `pending` に戻す
   （`sent_at`・`delivery_id` を消し、解放のコピーを書き直し、`not_before` を設定）。前回の解放から 3 回目の差し戻しは
   `held`（`held_reason` は `deferred`、解放は消える）。キューの別のメッセージが同じ参照を `held` / `pending` /
   `claimed` で持っていれば、そのメッセージは動かさず `return_blocked` に載せる。ワークスペース停止中の保持報告からの

@@ -366,6 +366,7 @@ A session that auto-run started can hand its memo back when the work cannot be d
 
 - The session asks for it with the `defer_queue_item` tool. Only a session a run started gets the tool, only for that run, and only in a category whose "Memos per session" is 1
 - It takes effect only when the run ends as it otherwise would ("Done"). The run's state is then "**Handed back**", and the memo goes back to "Waiting to run" with "**Waits until** *time*: its run handed it back". The time is what the session asked for: 10 minutes to 7 days ahead, 1 hour when it named none. Until then the memo does not run, and "Run now" does not take it either
+- The memo goes back only after the session has been stopped. When you take the session over before that ([When a run ends, its session is stopped](#when-a-run-ends-its-session-is-stopped)), or it starts working again, nothing is handed back and the run is "Done"
 - The session's reason shows on the run's row in the run history and under the memo. It is never given to the next session
 - The memo runs again as a new run, which counts towards "Runs per day"
 - The third time one memo is handed back, it goes back to "**Waits for approval**" instead, with the reasons. Approve it again to run it; that starts the count again

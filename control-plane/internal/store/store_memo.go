@@ -238,9 +238,10 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 		m.AfterIDs, rel[9], heldReasonOf(m)}
 	args = append(args, tidyArgs...)
 	// A write that takes a held message to pending is a person's release (the Console's own
-	// write in a queue): it clears the hand-backs as ReleaseMemo does. The CASE reads the row's
-	// state before this write.
-	args = append(args, m.State, m.State, m.State)
+	// write in a queue): it clears the hand-backs as ReleaseMemo does. So does a write that takes
+	// the row out of every queue: a plain note waits for nothing, and a later queue must not
+	// inherit another's count. The CASE reads the row's state before this write.
+	args = append(args, m.State, m.State, m.State, m.State, m.State, m.State)
 	args = append(args, m.ID, m.MembershipID)
 	if !restore {
 		args = append(args, m.State)
@@ -253,9 +254,9 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 		   release_repo=?, release_category=?, release_kind=?, release_body=?, release_ref_path=?, release_attachments=?,
 		   release_ref_provider=?, release_ref_key=?, release_ref_url=?, released_by=?,
 		   after_ids=?, release_after_ids=?, held_reason=?`+tidyCols+`,
-		   not_before=CASE WHEN state='held' AND CAST(? AS TEXT)='pending' THEN '' ELSE not_before END,
-		   defer_count=CASE WHEN state='held' AND CAST(? AS TEXT)='pending' THEN 0 ELSE defer_count END,
-		   defer_reasons=CASE WHEN state='held' AND CAST(? AS TEXT)='pending' THEN '' ELSE defer_reasons END
+		   not_before=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' THEN '' ELSE not_before END,
+		   defer_count=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' THEN 0 ELSE defer_count END,
+		   defer_reasons=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' THEN '' ELSE defer_reasons END
 		   WHERE id=? AND membership_id=?`+guard, args...)
 	if err != nil {
 		return err

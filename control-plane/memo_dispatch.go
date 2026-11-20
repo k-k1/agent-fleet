@@ -885,7 +885,8 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 
 // settleNeedsAgent reports whether a live delivery is one only a running Agent can settle: a
 // sending one, an overdue one that waits for its retire, or one with a hand-back request that the
-// last report saw nothing holding (the close from the mirror leaves it open, tickKept).
+// last report saw nothing holding, or that no report was read for (the closes from the mirror
+// leave it open: tickKept, closeIfDoneUnreported).
 func settleNeedsAgent(d store.MemoDelivery) bool {
 	switch {
 	case d.State == store.DeliverySending:
@@ -895,7 +896,9 @@ func settleNeedsAgent(d store.MemoDelivery) bool {
 	case d.OverdueAt != "" && d.RetiredAt == "":
 		return true
 	}
-	return d.DeferAt != "" && d.Reported && d.HeldBy == ""
+	// A request on a delivery that was never reported (the workspace stopped before the first read)
+	// needs the running Agent too: closeIfDoneUnreported leaves it open.
+	return d.DeferAt != "" && (!d.Reported || d.HeldBy == "")
 }
 
 // auditSettleWake writes the system's entry for a wake that was recorded (a request to start
@@ -1389,6 +1392,11 @@ func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []sto
 	waiting := false
 	for _, m := range rows {
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
+			continue
+		}
+		// A message handed back waits for its time, not for a PR: it neither asks for a wake nor
+		// keeps one from the messages that do.
+		if memoafter.Deferred(m, now) {
 			continue
 		}
 		waiting = true

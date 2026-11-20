@@ -201,6 +201,7 @@ export const memo = {
   "memo.waiting_deferred": "待っているメモ（{count} 件）はどれも実行から差し戻され、決まった時刻を待っています。",
   "memo.waiting_deferred_at": "待っているメモ（{count} 件）はどれも実行から差し戻されています。次は {at} から実行できます。",
   "memo.waiting_prerequisites_deferred": "待っているメモのうち {count} 件はこのカテゴリのほかのメモが先に終わるのを待ち、{deferred} 件は実行から差し戻されて決まった時刻を待っています。",
+  "memo.waiting_below_threshold_deferred": "メモがたまるのを待っています（実行できるのは {count} 件、ほかに {blocked} 件が先に終わるべきメモを待ち、{deferred} 件は実行から差し戻されて決まった時刻を待っています。{needed} 件で実行を始めます）。",
   "memo.d_end": "終了",
   "memo.d_end_title": "この実行を終了しますか？",
   "memo.d_end_body": "実行を終えて枠を空け、セッション {name} を停止します。セッションはアーカイブされず残り、「中断」とも記録されません。",

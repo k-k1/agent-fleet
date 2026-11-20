@@ -174,6 +174,7 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 	sessionx.ForgetRuntime(m)
 	// The delivery's first-turn ledger survives a stop and goes only with the session.
 	status.RemoveFirstTurn(session.UUID(m.Dir, m.Name))
+	status.RemoveTurnStart(session.UUID(m.Dir, m.Name))
 	sessionsearch.Forget(m.Name) // the trash bundle is now the only copy of its text (ADR 0110)
 	removeSessionSideFiles(m.Name)
 	removeTerminalHistory(m.Name)

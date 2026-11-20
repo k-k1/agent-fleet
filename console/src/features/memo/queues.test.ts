@@ -402,13 +402,17 @@ describe("a run that hands its memo back (ADR 0137, addendum 2026-11-19, part B)
   });
 
   it("offers the return on a closed run with memos that was not returned yet", () => {
-    const d = { state: "closed", outcome: "clean", returnedAt: "", messageIds: ["a"] };
+    const d = { state: "closed", outcome: "clean", returnedAt: "", messageIds: ["a"], returnBlocked: [] as { id: string; by: string }[], defer: null };
     expect(canReturnRun(d)).toBe(true);
     expect(canReturnRun({ ...d, state: "open" })).toBe(false);
     expect(canReturnRun({ ...d, outcome: "wake" })).toBe(false);
     expect(canReturnRun({ ...d, outcome: "not_sent" })).toBe(false);
     expect(canReturnRun({ ...d, returnedAt: "t" })).toBe(false);
     expect(canReturnRun({ ...d, messageIds: [] })).toBe(false);
+    const applied = { reason: "r", notBefore: "n", at: "a", result: "applied" };
+    expect(canReturnRun({ ...d, outcome: "deferred", defer: applied })).toBe(false);
+    expect(canReturnRun({ ...d, outcome: "deferred", defer: applied, returnBlocked: [{ id: "m1", by: "m2" }] })).toBe(true);
+    expect(canReturnRun({ ...d, outcome: "deferred", defer: { ...applied, result: "" } })).toBe(true);
   });
 
   it("says until when a handed-back memo waits, only while that is ahead", () => {
@@ -429,6 +433,9 @@ describe("a run that hands its memo back (ADR 0137, addendum 2026-11-19, part B)
     expect(
       waitingWords({ waiting: { reason: "prerequisites", detail: { blocked: 1, deferred: 2 } } }, at, (k) => k)?.key,
     ).toBe("memo.waiting_prerequisites_deferred");
+    expect(
+      waitingWords({ waiting: { reason: "below_threshold", detail: { needed: 3, waiting: 1, blocked: 0, deferred: 1 } } }, at, (k) => k)?.key,
+    ).toBe("memo.waiting_below_threshold_deferred");
   });
 });
 
@@ -444,6 +451,7 @@ describe("runOpenPRs", () => {
           { provider: "github", key: "o/r#13", role: "created", state: "merged" },
           { provider: "github", key: "o/r#14", role: "created", state: "closed" },
           { provider: "github", key: "o/r#15", role: "started" },
+          { provider: "github", key: "o/r#16", role: "reviewing", state: "open" },
         ],
       }),
     ).toEqual(["#12", "o/r#13"]);

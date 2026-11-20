@@ -401,6 +401,10 @@ func DeliveryState(d store.MemoDelivery, found bool, now time.Time) (state, reas
 		return Failed, WhyUnknown
 	case d.State != store.DeliveryClosed:
 		return Waiting, WhyRunning
+	case d.Outcome == store.DeliveryDeferred && d.DeferResult == "":
+		// A hand-back not decided yet: its message either returns (and the dependent waits for
+		// it as pending) or the close becomes clean.
+		return Waiting, WhyRunning
 	case d.Outcome == store.DeliveryAborted:
 		return Failed, WhyAborted
 	case d.Outcome == store.DeliveryUnknown:

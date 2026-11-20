@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,10 @@ const (
 	// handed back on a doubt.
 	DeferDroppedUnread = "unread"
 )
+
+// DeferDroppedReleased: the retire that a deferred close requested came back released or done (a
+// person took the session over) or refused: the run is theirs, and nothing is handed back.
+const DeferDroppedReleased = "released"
 
 // MemoHeldDeferred is memo.held_reason's reason for a message the third hand-back sent to held.
 const MemoHeldDeferred = "deferred"
@@ -91,6 +96,11 @@ type MemoReturn struct {
 	Entry     MemoDeferEntry
 	// HeldReason is memo.held_reason for a hand-back that goes to held.
 	HeldReason string
+	// Hash is the content hash a release binds (the API layer's memoContentHash). The person's
+	// return is a release of the content as it stands now (a rename of the category since the run
+	// included), so it records Hash and At; a hand-back keeps the release it ran under.
+	Hash func(Memo) string
+	At   string
 }
 
 // MemoReturnResult is what the transition did: the messages back in pending, the ones sent to
@@ -107,6 +117,10 @@ type MemoDeferTxOps interface {
 	SetDeliveryDefer(id, session, reason, notBefore, at string) (bool, error)
 	// SetDeliveryDeferResult keeps what a close made of the request, and the messages blocked.
 	SetDeliveryDeferResult(id, result, blocked string) error
+	// SettleDeferResult ends a deferred close whose return has not been decided yet: result
+	// applied keeps the outcome deferred; any other result is a drop, and the close becomes the
+	// clean one it would have been. False means it was decided already.
+	SettleDeferResult(id, result, blocked string) (bool, error)
 	// MarkDeliveryReturned stamps a person's return to the queue of a closed delivery.
 	MarkDeliveryReturned(id, at, blocked string) error
 	// OpenRefHolder is the id of another message of (repo, category) that holds the reference
@@ -127,6 +141,23 @@ func (t memoTx) SetDeliveryDeferResult(id, result, blocked string) error {
 	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET defer_result=?, return_blocked=? WHERE id=? AND membership_id=?`,
 		result, blocked, id, t.mid)
 	return err
+}
+
+func (t memoTx) SettleDeferResult(id, result, blocked string) (bool, error) {
+	outcome := DeliveryClean
+	if result == DeferApplied {
+		outcome = DeliveryDeferred
+	}
+	return affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET outcome=?, defer_result=?, return_blocked=?
+		WHERE id=? AND membership_id=? AND state=? AND outcome=? AND defer_result=''`,
+		outcome, result, blocked, id, t.mid, DeliveryClosed, DeliveryDeferred))
+}
+
+// ListDeferredToSettle returns the deferred closes whose return is not decided yet and whose
+// retire has ended (or was never pending), oldest first: the settle pass decides them.
+func (s *SQL) ListDeferredToSettle(ctx context.Context) ([]MemoDelivery, error) {
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state=? AND outcome=? AND defer_result=''
+		  AND retire_pending=0 ORDER BY closed_at, id`, DeliveryClosed, DeliveryDeferred))
 }
 
 func (t memoTx) MarkDeliveryReturned(id, at, blocked string) error {
@@ -202,13 +233,18 @@ func (t memoTx) ReturnDelivered(delivery string, r MemoReturn) (MemoReturnResult
 			res.Held = append(res.Held, m.ID)
 			continue
 		}
+		hash, releasedAt, releasedBy := m.ReleaseHash, m.ReleasedAt, m.ReleasedBy
+		if r.Person && r.Hash != nil {
+			hash, releasedAt, releasedBy = r.Hash(m), r.At, ""
+		}
 		_, err = t.q.ExecContext(t.ctx, `UPDATE memo SET state=?, sent_at='', delivery_id='', held_reason='',
+			  release_hash=?, released_at=?, released_by=?,
 			  release_repo=repo, release_category=category, release_kind=kind, release_body=body,
 			  release_ref_path=ref_path, release_attachments=attachments,
 			  release_ref_provider=ref_provider, release_ref_key=ref_key, release_ref_url=ref_url,
 			  release_after_ids=after_ids,
 			  not_before=?, defer_count=?, defer_reasons=?`+guard,
-			append([]any{MemoStatePending, notBefore, count, reasons}, gargs...)...)
+			append([]any{MemoStatePending, hash, releasedAt, releasedBy, notBefore, count, reasons}, gargs...)...)
 		if err != nil {
 			return res, err
 		}

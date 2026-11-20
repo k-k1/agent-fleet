@@ -973,4 +973,8 @@ dropped and the close is clean (`defer_result` `unread`): a hand-back is never m
 return the run's messages. A PR whose state the provider could not show counts as held, like an open one. The wake for
 a delivery with a request is made only when its last report saw nothing holding it. The reasons are shown on the
 Console's list only: the token face and `/mcp` lists leave them out, so a session never reads another's reason. A
-Console write that takes a `held` message to `pending` is a release and clears the hand-backs as the release does.
+Console write that takes a `held` message to `pending` is a release and clears the hand-backs as the release does. After review: the messages go back only once the retire the deferred close requested
+was confirmed and a list and a PR answer read after it still show no later turn and no PR (a person, a peer or a
+watch may have started the tree between the close's read and the retire); a released retire, or anything read then,
+drops the hand-back and rewrites the outcome to clean. A run of more than one message is never handed back, even when
+the batch was lowered while it ran.

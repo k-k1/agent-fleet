@@ -185,6 +185,8 @@ type MemoDeliveryStore interface {
 	// retired, oldest first: the ones marked pending, and every clean close of a reported
 	// delivery without a result (an older binary's close sets no mark).
 	ListRetirePendingDeliveries(ctx context.Context) ([]MemoDelivery, error)
+	// ListDeferredToSettle: see store_memo_defer.go.
+	ListDeferredToSettle(ctx context.Context) ([]MemoDelivery, error)
 	// FinishDeliveryRetire clears the pending retire of a closed delivery and keeps result
 	// (confirmed, released, done, gone, fault). retired_at is set only for a confirmed one.
 	FinishDeliveryRetire(ctx context.Context, id, at, result string) (bool, error)
