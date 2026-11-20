@@ -189,7 +189,7 @@ describe("segment selection wiring", () => {
   });
   it("the move dialog's selected quota-left card keeps its green ring next to the selection ring", () => {
     const sessCss = readFileSync(path.resolve(__dirname, "../features/sessions/sessions.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-    const both = [...sessCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find((m) => m[1].trim() === ".ui-seg.big .seg-btn.quota-left.active")?.[2] ?? "";
+    const both = [...sessCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find((m) => m[1].trim() === ".move-form .ui-seg .seg-btn.quota-left.active")?.[2] ?? "";
     expect(both).toMatch(/var\(--ok/);
     expect(both).toMatch(/var\(--sel-ring\)\) var\(--sel-fg\)/);
   });

@@ -1060,8 +1060,9 @@
 }
 /* The selected card's outline rule (ui.css `.ui-seg.big .seg-btn.active`) outranks the one
    above and would drop the quota-left ring from the card the user picked, so the pair is drawn
-   together: the green ring on the edge, the selection ring (--sel-ring, 0 in dark) inside it. */
-.ui-seg.big .seg-btn.quota-left.active {
+   together: the green ring on the edge, the selection ring (--sel-ring, 0 in dark) inside it.
+   Scoped by .move-form rather than .big, which would add a class name to css-dup's ceiling. */
+.move-form .ui-seg .seg-btn.quota-left.active {
   box-shadow: inset 0 0 0 1px var(--ok, #4caf7d), inset 0 0 0 calc(1px + var(--sel-ring)) var(--sel-fg);
 }
 .ui-seg .move-quota-left {
