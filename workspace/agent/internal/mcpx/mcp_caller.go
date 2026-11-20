@@ -155,12 +155,14 @@ func mcpCallerSession(cwd string) (string, bool) {
 	}
 	var found []string
 	for _, m := range session.ListMetas() {
-		if m.Archived || !session.ValidName(m.Name) || mcpSlotSID(m) == "" {
+		if m.Archived || !session.ValidName(m.Name) {
 			continue
 		}
 		if !mcpRunsIn(m, cwd) {
 			continue
 		}
+		// Read the slot id once, after the cwd filter: it is a store read, and a kind with no
+		// mapping answers "", which never equals the (non-empty) stamp.
 		if mcpSlotSID(m) == mcpCallerSID {
 			found = append(found, m.Name)
 		}
