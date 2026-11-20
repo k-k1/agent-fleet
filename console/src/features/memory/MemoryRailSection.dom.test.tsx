@@ -17,6 +17,7 @@ vi.mock("./open.ts", async (importActual) => ({
 
 import { MemoryRailSection, groupByScope } from "./MemoryRailSection.tsx";
 import { ViewShownContext } from "../../lib/viewShown.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useMemoryStore } from "./store.ts";
 import { parseMemoryTarget } from "../settings/memory/memorySearch.ts";
 import type { MemoryListed } from "../settings/memory/memoryTypes.ts";
@@ -184,6 +185,15 @@ describe("MemoryRailSection reads", () => {
     expect(calls("api/agents/memory/entries/list")).toHaveLength(before);
     await render(true);
     expect(calls("api/agents/memory/entries/list")).toHaveLength(before + 1);
+  });
+
+  it("does not show one tenant's memories while the next tenant's list is on its way", async () => {
+    expect(names().length).toBeGreaterThan(0);
+    api.mockImplementation(() => new Promise(() => {}));
+    await act(async () => useTenantStore.setState({ tenant: "other-tenant" }));
+    await flush();
+    expect(names()).toEqual([]);
+    expect(host!.textContent).toContain(t("common.loading"));
   });
 
   it("asks for the scope on screen once a chosen project scope has no memory left", async () => {

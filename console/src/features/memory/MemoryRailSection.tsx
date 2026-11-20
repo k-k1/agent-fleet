@@ -78,6 +78,16 @@ export function MemoryRailSection() {
     setWithheld(list?.error ? 0 : (list?.withheld ?? 0));
     return true;
   }, []);
+  // Another tenant is another workspace: its list replaces this one, so this one is not shown
+  // while that answer is on its way.
+  const listTenant = useRef(loadTenant);
+  useEffect(() => {
+    if (listTenant.current === loadTenant) return;
+    listTenant.current = loadTenant;
+    setRows(null);
+    setWithheld(0);
+    setLoadErr("");
+  }, [loadTenant]);
   useRetryLoad(load, [loadVersion, loadTenant]);
 
   // Every scope there is a memory in. A chosen scope that no longer holds one falls back to all,
@@ -92,7 +102,7 @@ export function MemoryRailSection() {
   }, [rows, tr]);
   const scopeShown = scopes.some(([k]) => k === scope) ? scope : ALL_SCOPES;
 
-  const forgotten = useForgotten(filter === "forgotten", scopeShown, `${loadVersion}/${loadTenant}`);
+  const forgotten = useForgotten(filter === "forgotten", scopeShown, loadTenant, `${loadVersion}/${loadTenant}`);
 
   const q = query.trim().toLowerCase();
   const search = useMemoryBodySearch(filter === "forgotten" ? "" : q, scopeShown);
@@ -323,8 +333,8 @@ export function groupByScope(rows: MemoryListed[], userLabel: string): [string, 
 }
 
 /** The forgotten memories of a scope, read only while the Forgotten chip is on, with paging.
- *  `reloadKey` changes on a write or a tenant switch (as of the last show). */
-function useForgotten(active: boolean, scope: string, reloadKey: string) {
+ *  `tenant` and `reloadKey` are as of the last show; `reloadKey` also moves on a write. */
+function useForgotten(active: boolean, scope: string, tenant: string, reloadKey: string) {
   const [rows, setRows] = useState<MemoryChange[] | null>(null);
   const [err, setErr] = useState(false);
   const [moreErr, setMoreErr] = useState(false);
@@ -342,11 +352,13 @@ function useForgotten(active: boolean, scope: string, reloadKey: string) {
     setMoreBusy(false);
     setMoreErr(false);
   }, [active, scope, reloadKey]);
-  const scopeRef = useRef(scope);
+  // Another scope or tenant is another list: the old one is not shown while the new one loads.
+  const listOf = useRef(scope + "\n" + tenant);
   useEffect(() => {
-    if (scopeRef.current !== scope) setRows(null);
-    scopeRef.current = scope;
-  }, [scope]);
+    const now = scope + "\n" + tenant;
+    if (listOf.current !== now) setRows(null);
+    listOf.current = now;
+  }, [scope, tenant]);
 
   const load = useCallback(
     async (signal: AbortSignal) => {

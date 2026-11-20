@@ -1123,6 +1123,27 @@ describe("MemoriesMasterDetail settings target", () => {
     expect(picked()?.textContent).toContain("older-note");
   });
 
+  it("keeps a forgotten target after a failed page, and finds it on the member's own retry", async () => {
+    const page2 = { ...changes.find((c) => c.name === "old-note")!, commit: "p2", name: "older-note" };
+    const base = api.getMockImplementation()!;
+    let failPage = true;
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/member-forgotten")) {
+        if (url.includes("before=")) return failPage ? { error: { code: "boom", message: "x" } } : { forgotten: [page2] };
+        return { ...(await base(url)), next: "cur1" };
+      }
+      return base(url);
+    });
+    await act(async () => useSettingsUI.setState({ settingsTarget: memoryTarget({ scope: "project", project, name: "older-note" }, true) }));
+    await flush();
+    await flush();
+    expect(text(t("mem.br_forgotten_more"))).toBeTruthy();
+    failPage = false;
+    await click(text(t("mem.br_forgotten_more")));
+    await flush();
+    expect(picked()?.textContent).toContain("older-note");
+  });
+
   it("leaves a target that names something else for its owner", async () => {
     await act(async () => useSettingsUI.setState({ settingsTarget: "codex" }));
     await flush();

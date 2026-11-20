@@ -293,8 +293,8 @@ export function MemoriesMasterDetail({
       // A forgotten memory the left pane asked for can sit on a page this list has not read (the
       // view pages on its own): read on until it turns up or the list ends, then let it go.
       if (askedGone.current === key && goneNext) {
+        // After a failed page the pick stays and waits: the member's own "more" retries it.
         if (!goneMoreBusy && !goneMoreErr) void loadMoreRef.current();
-        else if (goneMoreErr) askedGone.current = "";
         return;
       }
       askedGone.current = "";
