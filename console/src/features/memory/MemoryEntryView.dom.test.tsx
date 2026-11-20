@@ -132,6 +132,7 @@ describe("MemoryEntryView", () => {
   });
 
   it("saves an edit through member-save at the revision it was read at, with the kinds kept", async () => {
+    apiJSON.mockResolvedValue({ name: "build-cmd", revision: 5 });
     await open();
     await act(async () => button(t("mem.br_edit"))!.click());
     await setValue(host!.querySelector<HTMLInputElement>(".mentry-desc input")!, "how to build it");
@@ -424,5 +425,29 @@ describe("MemoryEntryView", () => {
     await act(async () => button(t("mem.br_save"))!.click());
     await flush();
     expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({ body: "x", revision: 4 });
+  });
+
+  it("keeps the counter and kinds the edit started from when the same text is read again", async () => {
+    apiJSON.mockResolvedValue({ name: "build-cmd", revision: 6 });
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "x");
+    // Someone else changed only the kinds: same text, newer counter.
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { ...memory, revision: 5, kinds: ["codex"] } : {}));
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({ revision: 4, kinds: ["claude"] });
+  });
+
+  it("treats a success answer without the new revision as an unknown outcome, not a saved one", async () => {
+    apiJSON.mockResolvedValue({});
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "x");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(dirtyPaneIds()).toEqual([pane().id]);
   });
 });

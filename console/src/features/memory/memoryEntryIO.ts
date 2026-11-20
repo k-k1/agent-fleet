@@ -9,6 +9,8 @@
 //    sends the counter that belongs to the base the hook names;
 //  - a `memory_conflict` answer is the hook's `revision_conflict`, which starts its conflict flow.
 import { api, apiJSON, errDetail } from "../../core/api/client.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
+import { useMemoryStore } from "./store.ts";
 import type { EditableFile, PutFileResult } from "../editor/api.ts";
 import { revisionOf } from "../editor/buffer.ts";
 import type { FileEditorIO } from "../editor/useFileEditor.ts";
@@ -66,9 +68,12 @@ interface Known {
 const known = new Map<string, Map<string, Known>>();
 const KEEP = 16;
 
-function remember(key: string, sha: string, entry: Known) {
+function remember(key: string, sha: string, entry: Known, overwrite: boolean) {
   let byHash = known.get(key);
   if (!byHash) known.set(key, (byHash = new Map()));
+  // A re-read of text the buffer already rests on must not move its base: another writer may have
+  // changed only the kinds, and the counter the edit started from is what the store has to check.
+  if (!overwrite && byHash.has(sha)) return;
   byHash.delete(sha);
   byHash.set(sha, entry);
   while (byHash.size > KEEP) byHash.delete(byHash.keys().next().value as string);
@@ -79,10 +84,10 @@ export function resetMemoryRevisions() {
   known.clear();
 }
 
-export function entryFile(key: string, body: MemoryBody): EditableFile {
+export function entryFile(key: string, body: MemoryBody, overwrite = false): EditableFile {
   const content = encodeEntry({ description: body.description, type: body.type || "feedback", body: body.body });
   const revision = revisionOf(content);
-  remember(key, revision, { revision: body.revision, kinds: body.kinds ?? [] });
+  remember(key, revision, { revision: body.revision, kinds: body.kinds ?? [] }, overwrite);
   return { path: key, content, size: content.length, binary: false, truncated: false, editable: true, editabilityReason: null, revision };
 }
 
@@ -90,15 +95,23 @@ const projectQuery = (project: string) => (project ? "?project=" + encodeURIComp
 
 export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal | null) => void): FileEditorIO {
   const { key, scope, project, name } = target;
+  // The requests carry the tenant current at send time; a buffer kept from another tenant must not
+  // be read or written under it.
+  const tenant = useTenantStore.getState().tenant;
+  const sameTenant = () => useTenantStore.getState().tenant === tenant;
   return {
     async load() {
+      if (!sameTenant()) throw new Error("tenant_changed");
       const q = `scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(name)}`;
       const res = await api(`api/agents/memory/entries/member-read?${q}`);
       if (res?.error) throw new Error(res.error.code || "load_failed");
-      return entryFile(key, res as MemoryBody);
+      // An empty or malformed answer is not a memory: never a candidate for conflict resolution.
+      if (typeof res?.body !== "string" || typeof res?.revision !== "number") throw new Error("load_failed");
+      return entryFile(key, res as MemoryBody, true);
     },
     async save(_path, content, baseRevision): Promise<PutFileResult> {
       onRefused(null);
+      if (!sameTenant()) return { ok: false, status: 400, error: { code: "tenant_changed", message: "the workspace changed since this text was read" } };
       const base = known.get(key)?.get(baseRevision);
       // A base this pane never read cannot be saved over safely: let the hook re-read.
       if (!base) return { ok: false, status: 409, error: { code: "revision_conflict", message: "unknown base" } };
@@ -115,14 +128,20 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         revision: base.revision,
       });
       if (res?.error) {
-        const code: string = res.error.code || "save_failed";
+        let code: string = res.error.code || "save_failed";
+        // The commit may have landed before the snapshot failed: the outcome is unknown.
+        if (code === "memory_snapshot_failed") code = "write_state_unknown";
         if (code === "memory_conflict") return { ok: false, status: 409, error: { code: "revision_conflict", message: errDetail(res.error) } };
         onRefused({ code, text: errDetail(res.error), findings: code === "memory_secret_detected" ? (res.findings ?? []) : [] });
         return { ok: false, status: 422, error: { code, message: errDetail(res.error) } };
       }
+      // A success without the new counter cannot be told from a lost answer.
+      if (typeof res?.revision !== "number") throw new Error("save response without revision");
       // What was saved is what the store now holds: the next base is this text at the counter it was given.
       const revision = revisionOf(content);
-      remember(key, revision, { revision: res.revision, kinds: base.kinds });
+      remember(key, revision, { revision: res.revision, kinds: base.kinds }, true);
+      // Every route that saves (the button, a guard, the resolution panel) ends here.
+      useMemoryStore.getState().bump();
       return { ok: true, path: key, size: content.length, revision };
     },
   };

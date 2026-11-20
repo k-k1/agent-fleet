@@ -308,7 +308,6 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     if (!ok) return;
     toast(tr("mem.br_saved", { name }), { kind: "success" });
     setEditing(false);
-    bump();
   };
 
   const save = async () => {
@@ -441,6 +440,11 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
         {body?.pinned && !fields && <span className="mem-badge">{tr("mem.br_pinned")}</span>}
       </ViewHead>
       <div className="mentry-body">
+        {!fields && formErr && (
+          <p className="mem-warn pad" role="alert">
+            {formErr}
+          </p>
+        )}
         {!running ? (
           <EmptyState icon="archive" title={tr("mem.ws_required_title")} hint={tr("mem.ws_required_hint")}>
             <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
@@ -478,6 +482,11 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
                 </select>
               </label>
             </div>
+            {editor.mergeMine !== null && !isNew && (
+              <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(editor.mergeMine!)}>
+                {tr("editor.copy_mine")}
+              </Button>
+            )}
             {formErr && (
               <p className="mem-warn" role="alert">
                 {formErr}
