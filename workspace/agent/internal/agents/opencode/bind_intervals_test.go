@@ -24,10 +24,19 @@ func bindT(t *testing.T) {
 	credbind.ResetForTest()
 	old := clockStamp
 	clockStamp = func() (string, int64, bool) { return "boot", stampUp, true }
-	gapsMem = nil
+	oldNow, oldSlack := wallNow, callSlack
+	callSlack = 0
+	wallNow = func() time.Time { return time.UnixMilli(stampUp) }
+	gapsMem, sessGapsMem = nil, nil
 	seenMaxAt.Store(0)
 	bindOff.Store(false)
-	t.Cleanup(func() { credbind.ResetForTest(); clockStamp = old; gapsMem = nil })
+	sessOff.Store(false)
+	t.Cleanup(func() {
+		credbind.ResetForTest()
+		clockStamp = old
+		wallNow, callSlack = oldNow, oldSlack
+		gapsMem, sessGapsMem = nil, nil
+	})
 }
 
 // start and acct write events whose uptime follows their wall time (a clock that was not set).
@@ -226,9 +235,10 @@ func TestBindingNeedsIntactEvidence(t *testing.T) {
 	bindT(t)
 	start(1000, 1, "A")
 	acct(1100, acctOut, 1)
-	m := session.Meta{Kind: session.KindOpencode, Driver: session.DriverManaged}
-	if ledgerBinder(m) == nil {
-		t.Fatal("intact evidence gives a binder")
+	m := session.Meta{Name: "s", Kind: session.KindOpencode, Driver: session.DriverManaged}
+	onShared("s", 500)
+	if zen(ledgerBinder(m), true, 2000) == "" {
+		t.Fatal("intact evidence binds")
 	}
 	f, err := os.OpenFile(bindIntervalsPath(), os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
@@ -236,8 +246,8 @@ func TestBindingNeedsIntactEvidence(t *testing.T) {
 	}
 	_, _ = f.WriteString("{not json\n")
 	f.Close()
-	if ledgerBinder(m) != nil {
-		t.Error("a damaged line must disable binding")
+	if got := zen(ledgerBinder(m), true, 2000); got != "" {
+		t.Errorf("a damaged line must disable binding, got %q", got)
 	}
 
 	bindT(t)
@@ -329,7 +339,8 @@ func TestV2TurnsBoundByInterval(t *testing.T) {
 	acct(1100, acctOut, 1)
 	start(8000, 2, "key-B")
 	acct(8100, acctOut, 2)
-	m := session.Meta{Kind: session.KindOpencode, Driver: session.DriverManaged}
+	m := session.Meta{Name: "s", Kind: session.KindOpencode, Driver: session.DriverManaged}
+	onShared("s", 500)
 	b := ledgerBinder(m)
 	if b == nil {
 		t.Fatal("a managed session on the shared daemon has a binder")
@@ -365,10 +376,13 @@ func TestV2TurnsBoundByInterval(t *testing.T) {
 		t.Errorf("a run A,B,A = %q, want none", got)
 	}
 	for name, meta := range map[string]session.Meta{
-		"own route server": {Kind: session.KindOpencode, Driver: session.DriverManaged, Route: &routes.Selection{Route: routes.RouteBedrock}},
-		"terminal":         {Kind: session.KindOpencode, Driver: session.DriverTUI},
+		"own route server": {Name: "r", Kind: session.KindOpencode, Driver: session.DriverManaged, Route: &routes.Selection{Route: routes.RouteBedrock}},
+		"no launch record": {Name: "u", Kind: session.KindOpencode, Driver: session.DriverManaged},
 	} {
-		if ledgerBinder(meta) != nil {
+		if meta.Name == "r" {
+			recordSessionProcess(atMs(500), "r", procRoute, nil, oauthState{}, time.Time{})
+		}
+		if b := ledgerBinder(meta); b != nil && connOf(b, []v2Msg{user, step}, 0)[0] != "" {
 			t.Errorf("%s: must not be bound from the shared daemon's evidence", name)
 		}
 	}

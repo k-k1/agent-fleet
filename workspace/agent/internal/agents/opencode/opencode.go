@@ -137,7 +137,11 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// An explicit route runs on a private server in this pane, with none of the workspace's
 	// provider keys or engine token (route.go).
 	if m.Route != nil {
-		return buildRouteLaunch(spec, m, ocSid)
+		plan, err := buildRouteLaunch(spec, m, ocSid)
+		if err == nil {
+			noteSessionProcess(m.Name, procRoute, nil)
+		}
+		return plan, err
 	}
 	// The fleet's own inference engines (ADR 0071): env() already carries a workspace-scoped
 	// engine token (it has to, for the managed route's shared daemon), and this route can do
@@ -153,6 +157,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 			return agents.LaunchPlan{}, err
 		}
 		if ok {
+			noteSessionProcess(m.Name, procShared, nil)
 			return agents.LaunchPlan{Program: plan.Program, Cwd: m.CWD(), Env: mergeCommandEnv(envs, plan.Env)}, nil
 		}
 	} else {
@@ -162,6 +167,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if err != nil {
 		return agents.LaunchPlan{}, err
 	}
+	noteSessionProcess(m.Name, procPane, envs)
 	return agents.LaunchPlan{Program: buildProgramV2(spec, m.Model, m.Mode, resume, fork), Cwd: m.CWD(), Env: envs}, nil
 }
 

@@ -559,3 +559,16 @@ func oauthFirstComplete(attemptID string) bool {
 	oauthCompleted[attemptID] = true
 	return true
 }
+
+// oauthReading is oauthCached with the instant the view was read, for evidence that must say how
+// old its account observation is. at is zero when the view is not current.
+func oauthReading() (st oauthState, at time.Time) {
+	if !oauthMu.TryLock() {
+		return oauthState{}, time.Time{}
+	}
+	defer oauthMu.Unlock()
+	if oauthAt.IsZero() || time.Since(oauthAt) >= oauthStatusTTL {
+		return oauthState{}, time.Time{}
+	}
+	return oauthCache, oauthAt
+}
