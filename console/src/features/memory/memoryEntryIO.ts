@@ -199,18 +199,21 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
   // replaces the counter and kinds of text it shares with the base. Any other read must not. Kept
   // per memory outside the adapter, which a tab switch rebuilds.
   return {
+    discardUnconfirmed: isNew,
     async load() {
       if (!sameTenant()) throw new Error("tenant_changed");
       // Nothing is stored under a new memory's key: what a recovery read finds is the blank it began on.
       if (isNew) {
         const last = sentNew.get(key);
         if (!last) return blankNewFile(key);
-        // Anything but "stored exactly as sent" reads as the blank the buffer began on: the revision-0
-        // resave is refused by the Agent if the save did land, so the member is never left with a
-        // buffer that can be neither saved nor discarded because the store could not confirm it.
+        // Stored by another, or not at all, is a definite "not ours": the blank the buffer began on.
+        // A read that fails confirms nothing and stays unavailable; the buffer can still be dropped
+        // (discardUnconfirmed), since a resave of it at revision 0 is refused if the save had landed.
         const q = `scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(last.name)}`;
-        const res = await api(`api/agents/memory/entries/member-read?${q}`).catch(() => null);
-        if (!isMemoryBody(res, scope, last.name)) return blankNewFile(key);
+        const res = await api(`api/agents/memory/entries/member-read?${q}`);
+        if (res?.error?.code === "memory_not_found" || res?.error?.status === 404) return blankNewFile(key);
+        if (res?.error) throw new Error(res.error.code || "load_failed");
+        if (!isMemoryBody(res, scope, last.name)) throw new Error("load_failed");
         const b = res as MemoryBody;
         const found = encodeEntry({ description: b.description, type: b.type || "feedback", body: b.body ?? "" });
         // Revision 1 with no kinds is what a first save of this text leaves; anything else is a

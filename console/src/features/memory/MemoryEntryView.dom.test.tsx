@@ -508,13 +508,43 @@ describe("MemoryEntryView", () => {
         expect(allViews(useLayoutStore.getState().layout).some((v) => v.content.kind === "memoryEntry")).toBe(false);
       });
 
+      it("keeps the outcome unconfirmed while the memory cannot be read, and lands once the read answers", async () => {
+        let online = false;
+        api.mockImplementation(async (url: string) => {
+          if (!url.includes("name=house-rules")) return {};
+          if (!online) throw new Error("offline");
+          return stored;
+        });
+        await lost();
+        expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
+        expect(button(t("editor.unknown.resave_old"))).toBeUndefined();
+        online = true;
+        await act(async () => button(t("editor.unknown.retry"))!.click());
+        await flush();
+        expect(button(t("editor.unknown.accept_risk"))).toBeDefined();
+      });
+
+      it("asks before Cancel drops a buffer whose save cannot be confirmed", async () => {
+        api.mockImplementation(async (url: string) => {
+          if (url.includes("name=house-rules")) throw new Error("offline");
+          return {};
+        });
+        await lost();
+        await act(async () => button(t("mem.br_cancel"))!.click());
+        await flush();
+        expect(document.body.textContent).toContain(t("mem.br_discard_unconfirmed_title"));
+        expect(dirtyPaneIds()).toEqual([pane().id]);
+        await act(async () => button(t("mem.br_discard_unconfirmed"))!.click());
+        await flush();
+        expect(dirtyPaneIds()).toEqual([]);
+      });
+
       it("can be discarded by the guard with its view gone when the read of the memory fails", async () => {
         api.mockImplementation(async (url: string) => {
           if (url.includes("name=house-rules")) throw new Error("offline");
           return {};
         });
         await lost();
-        expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
         await act(async () => root!.render(<></>));
         void confirmDirtyNavigation("layout").catch(() => {});
         await act(async () => {

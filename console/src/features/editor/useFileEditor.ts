@@ -60,6 +60,9 @@ import { errText } from "../../core/api/client.ts";
  *    `write_state_unknown` / an `http_5xx` code; any other `ok:false` is a confirmed failure and
  *    the buffer is kept against the old base without re-reading. */
 export interface FileEditorIO {
+  /** The buffer may be dropped while a save's outcome cannot be confirmed (the member is asked
+   *  first): for a store whose saves of this text are refused if it had landed. */
+  discardUnconfirmed?: boolean;
   load(path: string): Promise<EditableFile>;
   save(path: string, content: string, baseRevision: string): Promise<PutFileResult>;
 }
@@ -389,7 +392,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       if (!current || current.path !== path) return false;
 
       mergeMineRef.current = null;
-      setModel(discardToBase(current));
+      setModel(discardToBase(current, !!ioRef.current.discardUnconfirmed));
       return true;
     } catch {
       // Without a verified live snapshot, marking the buffer clean would invent

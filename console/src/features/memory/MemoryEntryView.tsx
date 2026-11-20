@@ -371,6 +371,16 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const cancel = async () => {
     setFormErr("");
     setFindings([]);
+    // The store could not say whether the save landed: dropping the text is the member's call.
+    if (isNew && phase === "save_state_unknown" && (!model?.unknownObservation || model.unknownObservation.kind === "unavailable")) {
+      const sure = await askConfirm({
+        title: tr("mem.br_discard_unconfirmed_title"),
+        body: <p>{tr("mem.br_discard_unconfirmed_body", { name: (fields?.name ?? "").trim() })}</p>,
+        confirmLabel: tr("mem.br_discard_unconfirmed"),
+        danger: true,
+      });
+      if (!sure) return;
+    }
     if (await editor.discard()) {
       clearPending(key);
       setEditing(false);
