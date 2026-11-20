@@ -1160,6 +1160,8 @@ export const admin = {
   "admin.mpol_exceeds_endpoints": "このままでは保存できません: 運用者の設定は承認してよいサーバー {list} を含みません。",
   "admin.mpol_match": "運用者の設定に合わせる",
   "admin.mpol_match_hint": "上の欄を、運用者の設定が許す範囲まで狭めます。広げることも、保存することもしません。",
+  "admin.mpol_preview_hides": "この内容で保存すると、次のものはメンバーから見えなくなります(使えるルートがなくなります)。",
+  "admin.mpol_preview_unsaved_hosts": "まだ保存していないサーバーはここでは数えていないため、承認されれば使えるままになるものが含まれることがあります。",
   "admin.mpol_and_more": "{list} ほか {n} 件",
   "admin.mpol_individual": "個別の変更: {n} 件",
   "admin.mpol_individual_none": "個別の変更: なし",

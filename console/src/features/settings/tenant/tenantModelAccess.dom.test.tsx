@@ -828,3 +828,44 @@ describe("the super_admin's cards", () => {
     expect(google.querySelector(".mpol-mark.locked")).toBeNull();
   });
 });
+
+// The pre-save preview (#4446 item 2) on a tenant answer the real handlers wrote
+// (routepolicysrv TestShotFixturesPolicy): what the draft would hide is named before Save.
+describe("what saving would hide", () => {
+  const OPEN = JSON.parse(readFileSync("scripts/shots/model-access/policy-open.json", "utf8"))["tenant/demo"];
+  const RESTRICTED = JSON.parse(readFileSync("scripts/shots/model-access/policy-restricted.json", "utf8"))["tenant/demo"];
+  const serve = (v: unknown) =>
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path.includes("/provided-routes/") ? { error: { code: "http_404", status: 404 } } : v),
+    );
+  const preview = () => host!.querySelector<HTMLElement>('.model-access-rule [data-testid="preview-hides"]');
+
+  it("says nothing until the draft changes, then names what it would hide", async () => {
+    serve(OPEN);
+    await mount();
+    expect(preview()).toBeNull();
+    await click(segBtn("classes", "選んだものだけ許す"));
+    // "Only these" with nothing ticked allows no class at all.
+    expect(preview()).not.toBeNull();
+    expect(preview()!.querySelector('[data-group="kinds"]')!.textContent).toContain("Claude Code");
+    // Ticking a class that carries the agent's routes takes it off the list again.
+    await click(tickIn("classes", "サブスクリプション・ログイン"));
+    await click(tickIn("classes", "メンバーの API キー"));
+    expect(preview()!.querySelector('[data-group="kinds"]')!.textContent).not.toContain("Claude Code");
+  });
+
+  it("says nothing when the CP sends no owners (it cannot tell)", async () => {
+    serve({ ...OPEN, owners: undefined });
+    await mount();
+    await click(segBtn("classes", "選んだものだけ許す"));
+    expect(preview()).toBeNull();
+  });
+
+  it("says a server not saved yet is not counted", async () => {
+    serve(RESTRICTED);
+    await mount();
+    await click(tickIn("classes", "メンバーの API キー"));
+    await addServer("gpu.corp.example");
+    expect(preview()!.textContent).toContain("まだ保存していないサーバー");
+  });
+});

@@ -878,3 +878,5 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
     approved, with the reason), and is never sent to the Agent; saving the same list again is refused naming the
     address. Nothing is dropped silently. A ceiling that names such an address no longer starts (the existing rule for
     an invalid pattern).
+
+**Note, 2026-11-20 (#4446 item 2).** The tenant Restrictions tab previews what a save would hide. The Console computes only the tenant's own layer and takes every other layer from the server's `forbiddenBy`, `owners` and host decisions; a host it has not seen judged counts as not approved, so the preview may over-warn but never allows what the CP refuses. `routePolicyPreview.test.ts` replays the Go-generated `preview-cases.json` (`TestPreviewCases`) to hold this. The CP still decides the write.

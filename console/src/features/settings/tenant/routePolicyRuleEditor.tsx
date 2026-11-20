@@ -10,6 +10,8 @@ import { apiJSON, errDetail } from "../../../core/api/client.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { useReportDirty } from "../parts/dirtyScope.tsx";
 import { PRESET_KEYS, applyPreset, presetAvailable, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
+import { ownerName } from "./routePolicyOwners.tsx";
+import type { Preview } from "./routePolicyPreview.ts";
 import {
   draftOf,
   endpointLines,
@@ -269,6 +271,33 @@ function Exceeds({
   );
 }
 
+const PREVIEW_GROUPS = [
+  ["kinds", "admin.mpol_hidden_kinds"],
+  ["imagegen", "admin.mpol_hidden_imagegen"],
+  ["chat", "admin.mpol_hidden_chat"],
+] as const;
+
+/** HidesPreview says, before a save, which agents, image providers and chat backends the draft
+ *  would leave with no allowed route. It only warns: the save is the CP's decision. */
+function HidesPreview({ preview }: { preview: Preview }) {
+  const tr = useT();
+  const groups = PREVIEW_GROUPS.filter(([g]) => preview.hides[g].length > 0);
+  if (groups.length === 0) return null;
+  return (
+    <div className="mpol-preview" data-testid="preview-hides">
+      <p className="admin-hint warn">{tr("admin.mpol_preview_hides")}</p>
+      <ul>
+        {groups.map(([g, title]) => (
+          <li key={g} data-group={g}>
+            {tr(title)}: {preview.hides[g].map((id) => ownerName(tr, id)).join(tr("tenant.mpol_list_sep"))}
+          </li>
+        ))}
+      </ul>
+      {preview.unsavedHosts && <p className="admin-hint">{tr("admin.mpol_preview_unsaved_hosts")}</p>}
+    </div>
+  );
+}
+
 /** AllOrOnly: the "every value" / "only these" choice and, under "only these", one tick per
  *  value. Ticking nothing under "only these" is a real rule (none allowed), not the same as all. */
 function AllOrOnly({
@@ -498,6 +527,7 @@ export function RuleEditor({
   hostState,
   ceiling,
   above = [],
+  preview,
   save,
   onSaved,
 }: {
@@ -516,6 +546,9 @@ export function RuleEditor({
   ceiling?: RouteRule;
   /** The layers above whose narrowing stops an option without refusing the save, top first. */
   above?: readonly { layer: string; rule: RouteRule }[];
+  /** What saving the draft would hide, computed over the other layers as the CP answered them;
+   *  null where it cannot be told. Absent where the page has no such view. */
+  preview?: (body: RouteRule) => Preview | null;
   save: (body: RouteRule, revision: number) => Promise<unknown>;
   /** Called after a save landed; the editor stays busy until what it returns settles, so the next
    *  save cannot go out on the old revision while the reload that brings the new one is running. */
@@ -527,6 +560,7 @@ export function RuleEditor({
   const [refusal, setRefusal] = useState<string | null>(null);
   const body = ruleFromDraft(base, draft);
   const dirty = !ruleEqual(body, base);
+  const previewed = dirty ? (preview?.(body) ?? null) : null;
   useReportDirty(dirty);
   const edit = (patch: Partial<RuleDraft>) => {
     setDraft((d) => ({ ...d, ...patch }));
@@ -673,6 +707,7 @@ export function RuleEditor({
           onMatch={() => edit(matchCeiling(draft, ceiling, vocab))}
         />
       )}
+      {dirty && previewed && <HidesPreview preview={previewed} />}
       {refusal && (
         <p className="admin-hint warn" role="alert">
           {tr("admin.mpol_refused", { reason: refusal })}
