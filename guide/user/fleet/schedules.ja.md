@@ -143,5 +143,6 @@ source_of_truth: "Console の左ペインの「スケジュール」ビューと
 ## 関連
 
 - [フリート・オペレーターに任せる](operator.ja.md)
+- [メモの自動実行で、見ていなくても作業を進める](memo-auto-run-practices.ja.md)
 - [Discord・Slack とつなぐ](../integrations/chat-bridge.ja.md)
 - [終わったら止める・動かしたままにする](../sessions/auto-stop.ja.md)

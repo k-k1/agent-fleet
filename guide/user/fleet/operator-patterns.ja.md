@@ -81,3 +81,4 @@ source_of_truth: "Console の左ペインの「アシスタント」ビューの
 
 - [フリート・オペレーターに任せる](operator.ja.md)
 - [決まった時刻に実行する](schedules.ja.md)
+- [メモの自動実行で、見ていなくても作業を進める](memo-auto-run-practices.ja.md)
