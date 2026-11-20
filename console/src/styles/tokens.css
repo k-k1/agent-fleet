@@ -241,11 +241,14 @@
      --sel-accent mechanism so region rebinds apply in light too. The text is the accent
      darkened toward --fg (55%/45%), NOT the raw accent: surface accents are tuned for
      dark backgrounds (green #2fb872, warm #e0964a …) and read ~2:1 on the pale --sel-bg
-     tint — the launch/clone modal segs were illegible. 55% keeps the hue and puts every
-     surface accent ≥4.8:1 on its own tint. */
+     tint — the launch/clone modal segs were illegible. The fill is 32%, not lighter: at 16%
+     a low-chroma accent (slate, graphite) came out as light as or lighter than the
+     unselected --panel2 (#eaecef), so the selection vanished; 32% puts every surface accent
+     darker than --panel2, and 45% text keeps each accent ≥5.0:1 on its own tint. The
+     outline that carries the rest of the cue is in ui.css (light .seg-btn.active). */
   --sel-accent: var(--topbar-accent);
-  --sel-bg-mix: 16%;
-  --sel-fg-mix: 55%;
+  --sel-bg-mix: 32%;
+  --sel-fg-mix: 45%;
   --sel-bg: color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg));
   --sel-fg: color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg));
   /* highlight.js syntax palette (GitHub Light). (--sel-* re-derivation for rebound

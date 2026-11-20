@@ -162,10 +162,10 @@ export const SURFACE_COLORS: { id: string; labelKey: MsgKey; dark: string | null
   // 2026-08-07: five more hues so the five surfaces can be told apart at a glance.
   // The binding constraint when adding one is NOT the surface tints (they sit at
   // 11–13:1 against --fg in both themes) but the light theme's segmented control:
-  // tokens.css derives --sel-fg = accent 55% + --fg on --sel-bg = accent 16% + white,
+  // tokens.css derives --sel-fg = accent 45% + --fg on --sel-bg = accent 32% + white,
   // so a bright//saturated accent (vivid yellow, lime) drops that pair below AA. Every
-  // accent below was measured through that derivation and clears the existing worst
-  // case (warm, 4.82:1): teal 4.91 / rose 6.09 / pink 5.38 / indigo 5.86 / mono 5.25.
+  // accent below was measured through that derivation; the worst case is warm / teal /
+  // green at 5.06:1, the rest 5.3–6.7:1.
   { id: "teal", labelKey: "surface_color.teal", dark: "#12292b", light: "#d8eeee", accent: "#2fb3bd" },
   { id: "rose", labelKey: "surface_color.rose", dark: "#2e1a1e", light: "#fbe0e4", accent: "#e05770" },
   { id: "pink", labelKey: "surface_color.pink", dark: "#2c1a28", light: "#f9e0f2", accent: "#d872c8" },

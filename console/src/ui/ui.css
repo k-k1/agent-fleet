@@ -1045,6 +1045,14 @@
   color: var(--sel-fg);
   font-weight: 600;
 }
+/* Light: a pastel fill alone cannot stand out from the unselected --panel2 cells while its
+   text stays ≥4.5:1 (graphite's best is ~1.1:1 fill-to-cell), so the selection also gets an
+   outline in its own text colour. Inset, so the grid's cell separators and the control's
+   clipped corners are unaffected; this rule outranks `.ui-seg.big .seg-btn`'s separator
+   shadow by coming later at a specificity at least as high. */
+[data-theme="light"] .seg-btn.active {
+  box-shadow: inset 0 0 0 1.5px var(--sel-fg);
+}
 /* Choice segmented control (`ui-seg|seg choice-seg`: account menu, inbox, Settings). Placed
    after both `.ui-seg` and `.seg` so it wins their `display` and the `.ui-seg .seg-btn`
    padding, which it ties on specificity. */
