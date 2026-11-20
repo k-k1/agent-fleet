@@ -26,7 +26,7 @@ vi.mock("../editor/CodeEditor.tsx", () => ({
 import { MemoryEntryView, resetMemoryDrafts } from "./MemoryEntryView.tsx";
 import { resetMemoryRevisions } from "./memoryEntryIO.ts";
 import { clearEditorSlotsForTests } from "../editor/useFileEditor.ts";
-import { clearDirtyRegistryForTests, dirtyPaneIds } from "../editor/dirtyRegistry.ts";
+import { clearDirtyRegistryForTests, confirmDirtyNavigation, currentDirtyGuardRequest, dirtyPaneIds, saveDirtyGuardRequest } from "../editor/dirtyRegistry.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { useMemoryStore } from "./store.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -457,5 +457,80 @@ describe("MemoryEntryView", () => {
     await act(async () => button(t("mem.br_edit"))!.click());
     expect(host!.querySelector(".mentry-form")).toBeNull();
     expect(host!.querySelector('[role="alert"]')?.textContent).toBe(t("editor.validation.unsupported_newline"));
+  });
+
+  // The guard path a dirty buffer is saved through when the pane is closed or the page reloaded.
+  async function saveThroughGuard() {
+    void confirmDirtyNavigation("layout");
+    return act(async () => saveDirtyGuardRequest(currentDirtyGuardRequest()!.id));
+  }
+
+  it("keeps a dirty buffer saveable through the guard when the re-read of the memory fails", async () => {
+    apiJSON.mockResolvedValue({ name: "build-cmd", revision: 5 });
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "mine");
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { error: { code: "memory_unreadable", message: "no" } } : {}));
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("mine");
+    expect(await saveThroughGuard()).toBe(true);
+    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({ body: "mine", revision: 4 });
+  });
+
+  it("keeps a dirty buffer saveable through the guard when the pane switches to the forgotten memory", async () => {
+    apiJSON.mockResolvedValue({ name: "build-cmd", revision: 5 });
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "mine");
+    await act(async () => useLayoutStore.getState().setPaneTarget(pane().id, { content: memoryEntryContent({ scope: "project", project, name: "build-cmd" }, true) }));
+    await flush();
+    // Read-only as a forgotten memory is, but the unsaved text is still the guards' to save.
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+    expect(dirtyPaneIds()).toEqual([pane().id]);
+    expect(await saveThroughGuard()).toBe(true);
+    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({ body: "mine" });
+  });
+
+  it("shows the reason a save was refused when the tab was switched while it was in flight", async () => {
+    let answer!: (v: unknown) => void;
+    apiJSON.mockReturnValue(new Promise((r) => (answer = r)));
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "token AKIA…");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await act(async () => root!.render(<></>));
+    await act(async () => answer({ error: { code: "memory_secret_detected", message: "secret" }, findings: [{ rule: "aws-key", line: 3, hint: "AKIA…" }] }));
+    await act(async () =>
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <Host />
+          </ConfirmProvider>
+        </ToastProvider>,
+      ),
+    );
+    await flush();
+    expect(host!.querySelector('[role="alert"]')?.textContent).toBe(t("mem.br_secret"));
+    expect(host!.querySelector(".mem-findings")?.textContent).toContain("aws-key");
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("token AKIA…");
+  });
+
+  it("reads a lost answer for a text with trailing whitespace as the text that was sent, not a third version", async () => {
+    apiJSON.mockResolvedValue({ error: { code: "memory_snapshot_failed", message: "x" } });
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "kept  \n\n");
+    // The commit landed: the store holds what the Agent trims the text to.
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { ...memory, revision: 5, body: "kept" } : {}));
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(host!.textContent).toContain(t("editor.unknown.sent_live"));
+  });
+
+  it("says upfront why a body with a CR is read-only", async () => {
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { ...memory, body: "a\r\nb" } : {}));
+    await open();
+    expect(host!.querySelector(".mentry-readonly-why")?.textContent).toBe(t("editor.validation.unsupported_newline"));
   });
 });

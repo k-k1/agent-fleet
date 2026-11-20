@@ -30,7 +30,7 @@ import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { CodeEditor } from "../editor/CodeEditor.tsx";
-import { useFileEditor } from "../editor/useFileEditor.ts";
+import { heldEditorBuffer, useFileEditor } from "../editor/useFileEditor.ts";
 import { dirtyPaneIds } from "../editor/dirtyRegistry.ts";
 import { EditorResolutionPanel } from "../viewer/parts/EditorResolutionPanel.tsx";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
@@ -42,7 +42,7 @@ import type { PaneContent } from "../../layout/types.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { openMemoryView } from "./open.ts";
 import { useMemoryStore } from "./store.ts";
-import { decodeEntry, encodeEntry, entryFile, isMemoryBody, memoryEntryIO, type EntryRefusal } from "./memoryEntryIO.ts";
+import { clearRefusal, decodeEntry, encodeEntry, entryFile, isMemoryBody, memoryEntryIO, refusalOf, type EntryRefusal } from "./memoryEntryIO.ts";
 
 type EntryContent = Extract<PaneContent, { kind: "memoryEntry" }>;
 
@@ -120,15 +120,24 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   // The body is the one read for `key`: after a retarget the first render still holds the old
   // target's body, which must not be registered under the new key.
   const { file, fileErr } = useMemo(() => {
-    if (!body || bodyKey !== key || isNew || gone) return { file: null, fileErr: "" };
+    // Unsaved work outlives the body it was made on: a failed re-read, or the memory forgotten
+    // elsewhere, must not hand the hook no file, which would leave the buffer's guards with nothing
+    // that can save or discard it.
+    const held = () => (isNew ? null : heldEditorBuffer(paneId, key));
+    if (!body || bodyKey !== key || isNew || gone) return { file: held(), fileErr: "" };
     try {
       // Text a dirty buffer rests on keeps its counter; a clean pane takes the one just read.
       return { file: entryFile(key, body, !dirtyPaneIds().includes(paneId)), fileErr: "" };
     } catch (e) {
-      return { file: null, fileErr: e instanceof Error ? e.message : "" };
+      return { file: held(), fileErr: e instanceof Error ? e.message : "" };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [body, bodyKey, key, isNew, gone]);
+  // Why the body cannot be opened in the editor, when the buffer validator is what refused it.
+  const readOnlyWhy =
+    fileErr === "too_large" || fileErr === "binary_not_supported" || fileErr === "unsupported_newline" || fileErr === "invalid_unicode"
+      ? validationErrText(tr, fileErr)
+      : "";
   const editor = useFileEditor(paneId, file, io);
   // A buffer is shown only for the memory this pane is on.
   const model = isNew || editor.model?.path === key ? editor.model : null;
@@ -158,8 +167,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   // was read for the old target must not be shown, edited or written back for the new one.
   useEffect(() => {
     setDraftState(initialDraft(key, isNew, !!gone));
-    setFormErr("");
-    setFindings([]);
+    // A save refused while this pane was away (its view unmounted) left its reason with the
+    // buffer, which is still dirty: show it again rather than a form that says nothing.
+    onRefused(!isNew && dirtyPaneIds().includes(paneId) ? refusalOf(key) : null);
     setBody(null);
     setChange(null);
     setLoadErr("");
@@ -299,9 +309,10 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     if (!body) return;
     setFormErr("");
     setFindings([]);
+    if (!model?.dirty) clearRefusal(key);
     if (!model) {
       // entryFile refused the text (see `file`): say why instead of opening an editor on it.
-      setFormErr(fileErr === "too_large" || fileErr === "binary_not_supported" || fileErr === "unsupported_newline" || fileErr === "invalid_unicode" ? validationErrText(tr, fileErr) : tr("mem.af_failed"));
+      setFormErr(readOnlyWhy || tr("mem.af_failed"));
       return;
     }
     setEditing(true);
@@ -311,7 +322,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   };
 
   // What the form shows and edits: the new memory's draft, or the hook's buffer of an existing one.
-  const fields = isNew ? draft : editing || model?.dirty ? (model ? { ...decodeEntry(model.content), name } : null) : null;
+  const fields = isNew ? draft : !gone && (editing || model?.dirty) ? (model ? { ...decodeEntry(model.content), name } : null) : null;
   const setField = (patch: Partial<Pick<Draft, "description" | "type" | "body">>) => {
     if (isNew) {
       if (draft) setDraft({ ...draft, ...patch });
@@ -387,6 +398,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setFindings([]);
     if (!isNew) {
       if (await editor.discard()) {
+        clearRefusal(key);
         setEditing(false);
         // A remote text adopted during a conflict is newer than the body this pane last read.
         bump();
@@ -570,6 +582,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
               <dt>{tr("mem.md_m_uses")}</dt>
               <dd>{body.uses ?? 0}</dd>
             </dl>
+            {readOnlyWhy && <p className="muted mentry-readonly-why">{readOnlyWhy}</p>}
             {body.description && <p className="mentry-desc-read">{body.description}</p>}
             <div className="mentry-md">
               <MarkdownView source={body.body} />

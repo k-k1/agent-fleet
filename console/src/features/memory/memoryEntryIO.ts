@@ -68,6 +68,13 @@ interface Known {
 const known = new Map<string, Map<string, Known>>();
 const KEEP = 16;
 const adoptNext = new Set<string>();
+// The text last sent for a memory, as the Agent stores it. The Agent trims the description, type
+// and body it is given, so what a read answers after a save differs from the buffer by trailing
+// whitespace alone. Kept by memory, outside the adapter, like the counters.
+const sent = new Map<string, { raw: string; stored: string }>();
+// The refusal of the last save of a memory, for a pane that was not mounted when it came: the
+// adapter outlives the view that asked for the save.
+const refusals = new Map<string, EntryRefusal>();
 
 function remember(key: string, sha: string, entry: Known, overwrite: boolean) {
   let byHash = known.get(key);
@@ -84,6 +91,18 @@ function remember(key: string, sha: string, entry: Known, overwrite: boolean) {
 export function resetMemoryRevisions() {
   known.clear();
   adoptNext.clear();
+  sent.clear();
+  refusals.clear();
+}
+
+/** The refusal the last save of this memory ended in, until the next save starts or it is cleared. */
+export const refusalOf = (key: string): EntryRefusal | null => refusals.get(key) ?? null;
+export const clearRefusal = (key: string) => void refusals.delete(key);
+
+/** `text` as the Agent stores it (it trims every field it is given). */
+export function storedForm(text: string): string {
+  const f = decodeEntry(text);
+  return encodeEntry({ description: f.description.trim(), type: f.type.trim(), body: f.body.trim() });
 }
 
 export function entryFile(key: string, body: MemoryBody, overwrite = false): EditableFile {
@@ -123,12 +142,23 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (!isMemoryBody(res, scope, name)) throw new Error("load_failed");
       // Not overwriting: a GET the buffer does not adopt (typing won the race) must not move the
       // counter the edit started from.
-      const file = entryFile(key, res as MemoryBody, adoptNext.has(key));
+      let file = entryFile(key, res as MemoryBody, adoptNext.has(key));
       // Only a read that became a buffer base uses the flag up.
       adoptNext.delete(key);
+      // The memory as the Agent stored the text just sent is that text: reporting its trimmed form
+      // would read an answer lost after the commit as a third version, and a saved buffer as stale.
+      const last = sent.get(key);
+      if (last && last.raw !== file.content && last.stored === file.content) {
+        const revision = revisionOf(last.raw);
+        const byHash = known.get(key);
+        const entry = byHash?.get(file.revision);
+        if (entry && !byHash!.has(revision)) remember(key, revision, entry, true);
+        file = { ...file, content: last.raw, size: last.raw.length, revision };
+      }
       return file;
     },
     async save(_path, content, baseRevision): Promise<PutFileResult> {
+      refusals.delete(key);
       onRefused(null);
       if (!sameTenant()) return { ok: false, status: 400, error: { code: "tenant_changed", message: "the workspace changed since this text was read" } };
       const base = known.get(key)?.get(baseRevision);
@@ -136,6 +166,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (!base) adoptNext.add(key);
       if (!base) return { ok: false, status: 409, error: { code: "revision_conflict", message: "unknown base" } };
       const fields = decodeEntry(content);
+      sent.set(key, { raw: content, stored: storedForm(content) });
       // The project id also goes in the query: the CP audit ledger reads the URL only.
       const res = await apiJSON("api/agents/memory/entries/member-save" + projectQuery(project), "POST", {
         scope,
@@ -153,7 +184,9 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         if (code === "memory_snapshot_failed" || (res.error.status ?? 0) >= 500) code = "write_state_unknown";
         if (code === "memory_conflict") adoptNext.add(key);
         if (code === "memory_conflict") return { ok: false, status: 409, error: { code: "revision_conflict", message: errDetail(res.error) } };
-        onRefused({ code, text: errDetail(res.error), findings: code === "memory_secret_detected" ? (res.findings ?? []) : [] });
+        const refusal = { code, text: errDetail(res.error), findings: code === "memory_secret_detected" ? ((res.findings ?? []) as SecretFinding[]) : [] };
+        refusals.set(key, refusal);
+        onRefused(refusal);
         return { ok: false, status: 422, error: { code, message: errDetail(res.error) } };
       }
       // A success without the new counter cannot be told from a lost answer.
