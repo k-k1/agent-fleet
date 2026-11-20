@@ -536,10 +536,11 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 		if next, aerr = memoQueueMove(cur, next, inPrev, inNext, accept, via); aerr != nil {
 			return memoTxFail(aerr)
 		}
-		if moved && inPrev && inNext && cur.State == store.MemoStatePending && next.State == store.MemoStatePending {
+		if moved && !via.fromWorkspace() && inPrev && inNext && cur.State == store.MemoStatePending && next.State == store.MemoStatePending {
 			// A move that changes only where the message is (no edit of its text, reference, file or
 			// prerequisites) is not a new approval: who approved it stays, and the destination's own
-			// rules decide what it may start (memoContinue). An edit of the content is the member's own.
+			// rules decide what it may start (memoContinue). An edit of the content is the member's own. Only the
+			// Console does this: from inside the workspace the destination's own setting decides the approver.
 			moved := cur
 			moved.Repo, moved.Category = next.Repo, next.Category
 			if memoContentHash(moved) == memoContentHash(next) {

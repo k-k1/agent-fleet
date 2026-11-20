@@ -1065,7 +1065,7 @@ keeps the stored value, so an older client cannot turn a member's 0 back into 4;
   chain of the rows that move. A move to another queue, or a merge, clears `chain_id` and keeps `released_by` whatever it was (`setting`, `tidy`,
   `continuation`) when only the place changed: the member's move keeps the state as it always did, and mints no new
   approval over there. The destination's own rules decide what the message may start: a `tidy` or `continuation` message
-  is no root, and a `setting` root needs the destination's switch on. A body edit is the member's own, as before. A chain row also remembers its work item: a person editing a follow-up's reference ends its use, and the next
+  is no root, and a `setting` root needs the destination's switch on. A body edit is the member's own, as before. Only the Console keeps the approver: a move from inside the workspace takes the destination's own setting (the switch makes it `setting` there), so with that switch off it starts no chain. A chain row also remembers its work item: a person editing a follow-up's reference ends its use, and the next
   continuation of it is held (`continuation_reference`).
 - **Batch.** A delivery that carries several messages never continues (rule 3). The queue's `batch` is the most a claim
   takes, so a queue with a batch above one can still run a single message, which continues normally. The hint says that a

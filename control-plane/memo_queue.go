@@ -278,7 +278,7 @@ func memoMoveBucket(tx store.MemoTxOps, repo, from, to string, inPrev, inNext, s
 		if aerr != nil {
 			return memoTxFail(aerr)
 		}
-		if inPrev && inNext && prev.State == store.MemoStatePending && next.State == store.MemoStatePending {
+		if !via.fromWorkspace() && inPrev && inNext && prev.State == store.MemoStatePending && next.State == store.MemoStatePending {
 			// A rename or a merge changes the release copy and hash and nothing that says who approved:
 			// a switch-accepted, tidy-made or continuation message must not become the member's own.
 			// The destination's own rules still decide what it may start (memoContinue).

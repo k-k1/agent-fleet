@@ -847,3 +847,36 @@ func TestMemoContinuationMovedApproverRootsNothingElsewhere(t *testing.T) {
 		_ = src
 	})
 }
+
+// From inside the workspace the destination's own setting decides the approver: a message the
+// member approved in one queue and a session then moves to a queue whose switch is on is the
+// switch's there, so with the switch turned off it starts no chain.
+func TestMemoContinuationTokenMoveTakesTheDestinationsApprover(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.contQueue("a-src", 4, nil) // the switch is off: the session's message is held
+		dst := e.contQueue("a-dst", 4, map[string]any{"acceptOwnSessions": true})
+		ref := map[string]any{"reference": map[string]any{"provider": "github", "key": "acme/app#61", "url": "https://example.test/acme/app#61"}}
+		_, held := e.fromSession("a-src", "by a session the member started", "user", ref)
+		row := e.memoRow(held.ID)
+		if rec := e.do("a", "POST", "/api/memos/release", map[string]any{"items": []map[string]any{{"id": held.ID, "contentHash": memoContentHash(row)}}}); rec.Code != http.StatusOK {
+			t.Fatalf("release: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := e.memoTokenDo("a", "PATCH", "/internal/memos/"+held.ID, map[string]any{"category": "a-dst"}); rec.Code != http.StatusOK {
+			t.Fatalf("token move: %d %s", rec.Code, rec.Body.String())
+		}
+		moved := e.memoRow(held.ID)
+		if moved.State != store.MemoStatePending || moved.ReleasedBy != store.MemoReleasedBySetting {
+			t.Fatalf("after the token move: %+v, want pending released by the destination's switch", moved)
+		}
+		if rec := e.do("a", "PUT", "/api/memo-queues/"+dst, map[string]any{"instruction": "do it"}); rec.Code != http.StatusOK {
+			t.Fatal(rec.Body.String())
+		}
+		c := e.contSend("a-dst", "next", "acme/app#61", "queue", "run-1", e.contRun(dst, "run-1", store.DeliveryOpen, held.ID))
+		if contHeldReason(t, c) != memoContHeldRoot {
+			t.Errorf("a message moved in by a session started a chain with the switch off: %+v", c)
+		}
+		if _, _, found := e.chainRow(held.ID); found {
+			t.Errorf("a chain row was written")
+		}
+	})
+}
