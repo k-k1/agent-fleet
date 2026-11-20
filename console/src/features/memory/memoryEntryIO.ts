@@ -93,16 +93,45 @@ export function resetMemoryRevisions() {
   adoptNext.clear();
   sent.clear();
   refusals.clear();
+  refusalListeners.clear();
+}
+
+const refusalListeners = new Map<string, Set<(r: EntryRefusal | null) => void>>();
+function setRefusal(key: string, r: EntryRefusal | null) {
+  if (r) refusals.set(key, r);
+  else refusals.delete(key);
+  for (const fn of refusalListeners.get(key) ?? []) fn(r);
 }
 
 /** The refusal the last save of this memory ended in, until the next save starts or it is cleared. */
 export const refusalOf = (key: string): EntryRefusal | null => refusals.get(key) ?? null;
+/** Called with every refusal (or its clearing) of this memory's saves, whichever view asked for the
+ *  save: a view that was unmounted and mounted again while the save was in flight is told too. */
+export function subscribeRefusal(key: string, fn: (r: EntryRefusal | null) => void): () => void {
+  let set = refusalListeners.get(key);
+  if (!set) refusalListeners.set(key, (set = new Set()));
+  set.add(fn);
+  return () => void set.delete(fn);
+}
+/** Drop the stored reason without telling the views: the text it was about changed. */
 export const clearRefusal = (key: string) => void refusals.delete(key);
+/** Forget what a finished or abandoned edit left: its refusal, and the text an unknown outcome
+ *  would have to be matched against. */
+export function clearPending(key: string) {
+  refusals.delete(key);
+  sent.delete(key);
+}
+
+// Go's strings.TrimSpace, which the Agent trims with: JS trim() differs at U+0085 (Go trims it, JS
+// does not) and U+FEFF (JS trims it, Go does not).
+const GO_SPACE = "[\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]+";
+const goSpaceEdges = new RegExp(`^${GO_SPACE}|${GO_SPACE}$`, "g");
+const goTrim = (v: string) => v.replace(goSpaceEdges, "");
 
 /** `text` as the Agent stores it (it trims every field it is given). */
 export function storedForm(text: string): string {
   const f = decodeEntry(text);
-  return encodeEntry({ description: f.description.trim(), type: f.type.trim(), body: f.body.trim() });
+  return encodeEntry({ description: goTrim(f.description), type: goTrim(f.type), body: goTrim(f.body) });
 }
 
 export function entryFile(key: string, body: MemoryBody, overwrite = false): EditableFile {
@@ -145,20 +174,20 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       let file = entryFile(key, res as MemoryBody, adoptNext.has(key));
       // Only a read that became a buffer base uses the flag up.
       adoptNext.delete(key);
-      // The memory as the Agent stored the text just sent is that text: reporting its trimmed form
-      // would read an answer lost after the commit as a third version, and a saved buffer as stale.
+      // After a save whose outcome is unknown, the memory as the Agent stores the text sent is that
+      // text: reporting its trimmed form would read the committed save as a third version. The
+      // base for the next save is this very read, whatever counter an older read of the text had.
       const last = sent.get(key);
       if (last && last.raw !== file.content && last.stored === file.content) {
         const revision = revisionOf(last.raw);
-        const byHash = known.get(key);
-        const entry = byHash?.get(file.revision);
-        if (entry && !byHash!.has(revision)) remember(key, revision, entry, true);
+        remember(key, revision, { revision: (res as MemoryBody).revision, kinds: (res as MemoryBody).kinds ?? [] }, true);
         file = { ...file, content: last.raw, size: last.raw.length, revision };
       }
       return file;
     },
     async save(_path, content, baseRevision): Promise<PutFileResult> {
-      refusals.delete(key);
+      sent.delete(key);
+      setRefusal(key, null);
       onRefused(null);
       if (!sameTenant()) return { ok: false, status: 400, error: { code: "tenant_changed", message: "the workspace changed since this text was read" } };
       const base = known.get(key)?.get(baseRevision);
@@ -182,10 +211,12 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         let code: string = res.error.code || "save_failed";
         // The commit may have landed before the snapshot failed: the outcome is unknown.
         if (code === "memory_snapshot_failed" || (res.error.status ?? 0) >= 500) code = "write_state_unknown";
+        // Only an unknown outcome keeps the sent text to match a read against.
+        if (code !== "write_state_unknown") sent.delete(key);
         if (code === "memory_conflict") adoptNext.add(key);
         if (code === "memory_conflict") return { ok: false, status: 409, error: { code: "revision_conflict", message: errDetail(res.error) } };
         const refusal = { code, text: errDetail(res.error), findings: code === "memory_secret_detected" ? ((res.findings ?? []) as SecretFinding[]) : [] };
-        refusals.set(key, refusal);
+        setRefusal(key, refusal);
         onRefused(refusal);
         return { ok: false, status: 422, error: { code, message: errDetail(res.error) } };
       }
@@ -193,6 +224,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (!validRevision(res?.revision)) throw new Error("save response without revision");
       // What was saved is what the store now holds: the next base is this text at the counter it was given.
       const revision = revisionOf(content);
+      sent.delete(key);
       remember(key, revision, { revision: res.revision, kinds: base.kinds }, true);
       // Every route that saves (the button, a guard, the resolution panel) ends here.
       useMemoryStore.getState().bump();

@@ -42,7 +42,7 @@ import type { PaneContent } from "../../layout/types.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { openMemoryView } from "./open.ts";
 import { useMemoryStore } from "./store.ts";
-import { clearRefusal, decodeEntry, encodeEntry, entryFile, isMemoryBody, memoryEntryIO, refusalOf, type EntryRefusal } from "./memoryEntryIO.ts";
+import { clearPending, clearRefusal, decodeEntry, encodeEntry, entryFile, isMemoryBody, memoryEntryIO, refusalOf, subscribeRefusal, type EntryRefusal } from "./memoryEntryIO.ts";
 
 type EntryContent = Extract<PaneContent, { kind: "memoryEntry" }>;
 
@@ -176,6 +176,8 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setEditing(false);
     setResolutionOpen(true);
   }, [key, isNew, gone]);
+  // The save that was refused may have been asked for by a view that is gone by now.
+  useEffect(() => (isNew ? undefined : subscribeRefusal(key, onRefused)), [key, isNew, onRefused]);
   useEffect(() => {
     setShowHistory(false);
     setPurging(null);
@@ -309,7 +311,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     if (!body) return;
     setFormErr("");
     setFindings([]);
-    if (!model?.dirty) clearRefusal(key);
+    if (!model?.dirty) clearPending(key);
     if (!model) {
       // entryFile refused the text (see `file`): say why instead of opening an editor on it.
       setFormErr(readOnlyWhy || tr("mem.af_failed"));
@@ -327,6 +329,8 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     if (isNew) {
       if (draft) setDraft({ ...draft, ...patch });
     } else if (model) {
+      // The reason belonged to the text as it was.
+      clearRefusal(key);
       editor.edit(encodeEntry({ ...decodeEntry(model.content), ...patch }));
     }
   };
@@ -398,7 +402,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setFindings([]);
     if (!isNew) {
       if (await editor.discard()) {
-        clearRefusal(key);
+        clearPending(key);
         setEditing(false);
         // A remote text adopted during a conflict is newer than the body this pane last read.
         bump();
@@ -606,7 +610,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           </div>
         )}
       </div>
-      {!isNew && model && alert && (
+      {!isNew && !gone && model && alert && (
         <EditorResolutionPanel
           model={model}
           open={resolutionOpen}

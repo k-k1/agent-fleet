@@ -26,7 +26,7 @@ vi.mock("../editor/CodeEditor.tsx", () => ({
 import { MemoryEntryView, resetMemoryDrafts } from "./MemoryEntryView.tsx";
 import { resetMemoryRevisions } from "./memoryEntryIO.ts";
 import { clearEditorSlotsForTests } from "../editor/useFileEditor.ts";
-import { clearDirtyRegistryForTests, confirmDirtyNavigation, currentDirtyGuardRequest, dirtyPaneIds, saveDirtyGuardRequest } from "../editor/dirtyRegistry.ts";
+import { clearDirtyRegistryForTests, confirmDirtyNavigation, currentDirtyGuardRequest, dirtyPaneIds, discardDirtyGuardRequest, saveDirtyGuardRequest } from "../editor/dirtyRegistry.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { useMemoryStore } from "./store.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -526,6 +526,63 @@ describe("MemoryEntryView", () => {
     await act(async () => button(t("mem.br_save"))!.click());
     await flush();
     expect(host!.textContent).toContain(t("editor.unknown.sent_live"));
+  });
+
+  const remount = async () => {
+    await act(async () => root!.render(<></>));
+    await act(async () =>
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <Host />
+          </ConfirmProvider>
+        </ToastProvider>,
+      ),
+    );
+    await flush();
+  };
+
+  it("shows a refusal that arrives after the view came back to the tab", async () => {
+    let answer!: (v: unknown) => void;
+    apiJSON.mockReturnValue(new Promise((r) => (answer = r)));
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "token AKIA…");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await remount();
+    await act(async () => answer({ error: { code: "memory_secret_detected", message: "secret" }, findings: [{ rule: "aws-key", line: 3, hint: "AKIA…" }] }));
+    await flush();
+    expect(host!.querySelector('[role="alert"]')?.textContent).toBe(t("mem.br_secret"));
+  });
+
+  it("does not bring back a refusal about text that was edited afterwards", async () => {
+    apiJSON.mockResolvedValue({ error: { code: "memory_secret_detected", message: "secret" }, findings: [] });
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "token AKIA…");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "fixed");
+    await remount();
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("fixed");
+  });
+
+  it("lets the guards discard, and refuses to save, the buffer of a memory forgotten in the meantime", async () => {
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "mine");
+    await act(async () => useLayoutStore.getState().setPaneTarget(pane().id, { content: memoryEntryContent({ scope: "project", project, name: "build-cmd" }, true) }));
+    await flush();
+    apiJSON.mockResolvedValue({ error: { code: "memory_not_found", message: "gone", status: 404 } });
+    expect(await saveThroughGuard()).toBe(false);
+    expect(dirtyPaneIds()).toEqual([pane().id]);
+    void confirmDirtyNavigation("layout").catch(() => {});
+    await act(async () => {
+      const req = currentDirtyGuardRequest();
+      if (req) await discardDirtyGuardRequest(req.id);
+    });
+    expect(dirtyPaneIds()).toEqual([]);
   });
 
   it("says upfront why a body with a CR is read-only", async () => {
