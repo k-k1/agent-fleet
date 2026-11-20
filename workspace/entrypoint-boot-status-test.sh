@@ -3,6 +3,8 @@
 # it behaves on a nearly full home: the per-CLI status file with its reason class, the free-space
 # check before the installs, and the prune that runs ahead of them. Only the section from `VJ=`
 # to the Kiro comment is sliced out and run, against stub curl / tar / install / npm / df.
+# rtk is installed and recorded by the Agent (`workspace-agent boot-install rtk`), so its status
+# lines are tested in Go (internal/bootinstall) and its hand-off in entrypoint-boot-install-test.sh.
 #
 #   workspace/entrypoint-boot-status-test.sh
 set -u
@@ -14,7 +16,7 @@ mkdir -p "$T/bin" "$T/home/.local/bin" "$T/cwd" "$T/tmp"
 
 BLOCK="$T/block.sh"
 awk '/^VJ=\/usr/{on=1} /^# Seed the default settings.json/{on=0} on' "$ENTRY" | sed "s#^VJ=.*#VJ=$T/versions.json#" > "$BLOCK"
-for needle in 'AGY_NEED' 'CUR_NEED' 'RTK_NEED' 'NPM_BOOT'; do
+for needle in 'AGY_NEED' 'CUR_NEED' 'NPM_BOOT'; do
   grep -q -- "$needle" "$BLOCK" || { echo "FAIL: slice lacks $needle; fix the awk range" >&2; exit 1; }
 done
 
@@ -113,16 +115,15 @@ st() { grep -P "^$1\t" "$T/bidir/install.tsv" 2>/dev/null | tail -1 | tr '\t' ' 
 
 # 1. Healthy start: everything installed, status ok.
 reset; run_block
-for n in claude rtk agy cursor; do [ "$(st $n)" = "$n ok " ] || fail "healthy: $n status is '$(st $n)'"; done
+for n in claude agy cursor; do [ "$(st $n)" = "$n ok " ] || fail "healthy: $n status is '$(st $n)'"; done
 
 # 2. A second start finds them present: skipped.
 run_block
-for n in claude rtk agy; do [ "$(st $n)" = "$n skipped " ] || fail "present: $n status is '$(st $n)'"; done
+for n in claude agy; do [ "$(st $n)" = "$n skipped " ] || fail "present: $n status is '$(st $n)'"; done
 
 # 3. Reason classes.
 reset; run_block STUB_INSTALL_FAIL=1
 [ "$(st agy)" = "agy failed no_space" ] || fail "ENOSPC from install: agy is '$(st agy)'"
-[ "$(st rtk)" = "rtk failed no_space" ] || fail "ENOSPC from install: rtk is '$(st rtk)'"
 reset; run_block STUB_CURL_FAIL=1
 [ "$(st agy)" = "agy failed network" ] || fail "curl failure: agy is '$(st agy)'"
 [ "$(st cursor)" = "cursor failed network" ] || fail "curl failure: cursor is '$(st cursor)'"
@@ -148,7 +149,6 @@ grep -q 0.9 "$T/home/.local/bin/rtk" || fail "low space: an installed CLI was to
 # failure as "install failed").
 reset; printf '#!/bin/sh\necho rtk 0.9\n' >"$T/home/.local/bin/rtk"; chmod +x "$T/home/.local/bin/rtk"
 run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0
-[ "$(st rtk)" = "rtk skipped no_space" ] || fail "low space, rtk installed: rtk is '$(st rtk)'"
 [ "$(st agy)" = "agy failed no_space" ] || fail "low space, rtk installed: absent agy is '$(st agy)'"
 
 # 4a2. A leftover that cannot run is not "the old version still in use": a broken agy (exits 1)
@@ -157,7 +157,6 @@ reset; printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/agy"; chmod +x "$T/home
 printf 'partial' >"$T/home/.local/bin/rtk"; chmod 600 "$T/home/.local/bin/rtk"
 run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0
 [ "$(st agy)" = "agy failed no_space" ] || fail "low space, broken agy: agy is '$(st agy)'"
-[ "$(st rtk)" = "rtk failed no_space" ] || fail "low space, partial rtk: rtk is '$(st rtk)'"
 
 # 4a3. cursor's binary is cursor-agent: a working old tree linked there, pinned tree not fetched.
 reset; d="$T/home/.local/share/cursor-agent/versions"; mkdir -p "$d/2026.0.9-old"
