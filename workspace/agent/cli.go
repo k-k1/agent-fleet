@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/bootinstall"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -171,6 +172,14 @@ var subcommands = []subcommand{
 		name:    "install-muse",
 		summary: "download the pinned Muse Code binary into the home volume",
 		run:     muse.RunInstall,
+	},
+	{
+		// One CLI of the lean boot-install, moved out of entrypoint.sh a CLI at a time (#3894).
+		name:     "boot-install",
+		operands: "rtk [--repin]",
+		summary:  "install one pinned agent CLI into ~/.local and record the outcome",
+		hidden:   true,
+		run:      bootinstall.Run,
 	},
 	{
 		// Removes superseded copilot / cursor versions from home. The entrypoint runs it ahead of

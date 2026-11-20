@@ -711,50 +711,17 @@ if [ "$LEAN_CLIS" = 1 ]; then
   else
     echo "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)"
   fi
-  # rtk: the pinned GitHub Releases build of the Apache-2.0 edition (rtk-oss), checksum-verified
-  # (same path and assets as the Dockerfile bake, which says why oss).
-  RTK_NEED=0
-  if [ -n "$(vj_pin rtk)" ]; then
-    if ! cli_present rtk; then
-      RTK_NEED=1
-    elif bin_broken "$HOME/.local/bin/rtk"; then
-      RTK_NEED=1
-    elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/rtk" ]; then
-      rtk_cur="$("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1 | awk '{print $2}')"
-      if [ -n "$rtk_cur" ] && [ "$rtk_cur" != "$(vj_pin rtk)" ]; then RTK_NEED=1; fi
-    fi
-  fi
-  if [ "$RTK_NEED" = 1 ] && ! bi_room 150 rtk; then RTK_NEED=2; fi
-  if [ "$RTK_NEED" = 1 ]; then
-    (
-      set -e
-      rver="$(vj_pin rtk)"
-      arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
-      case "$arch" in
-        amd64 | x86_64) asset="rtk-oss-x86_64-unknown-linux-musl.tar.gz" ;;
-        arm64 | aarch64) asset="rtk-oss-aarch64-unknown-linux-gnu.tar.gz" ;;
-        *) echo "unsupported arch: $arch" >&2; exit 1 ;;
-      esac
-      base="https://github.com/rtk-ai/rtk/releases/download/v${rver}"
-      tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
-      cd "$tmp" || exit 1
-      # --retry: a transient blip on first boot otherwise leaves rtk uninstalled
-      # until the next start (observed on the WSL2 gate — docs/log/35 §35.9-9).
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/${asset}" -o "${asset}" || exit 1
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/checksums.txt" -o checksums.txt || exit 1
-      grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
-      tar xzf "${asset}" || exit 1
-      # A matching checksum says nothing about whether the binary's runtime libraries match this
-      # image (the arm64 release is a gnu build that needs a recent glibc — docs/log/70 §70.9.2),
-      # so the candidate is run before it replaces anything.
-      install_atomic rtk "$HOME/.local/bin/rtk" verify || exit 1
-    ) 2>"$BI_ERR" && { echo "[entrypoint] boot-install rtk $(vj_pin rtk)"; bi_note rtk ok; } \
-      || { cat "$BI_ERR" >&2; echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"; bi_failed rtk; }
-  elif [ "$RTK_NEED" = 2 ]; then
-    :
-  elif cli_present rtk; then
-    bi_note rtk skipped
-    echo "[entrypoint] boot-install: rtk already present (skip)"
+  # rtk: installed by the Agent (`workspace-agent boot-install rtk`, internal/bootinstall): the
+  # pinned GitHub Releases build, checksum-verified, status recorded to $AF_BOOT_INSTALL_STATUS.
+  # Exit 3 = skipped for lack of space, which holds back this start's later downloads too.
+  if command -v workspace-agent >/dev/null 2>&1; then
+    rtk_rc=0
+    if [ "$REPIN" = 1 ]; then workspace-agent boot-install rtk --repin || rtk_rc=$?
+    else workspace-agent boot-install rtk || rtk_rc=$?; fi
+    if [ "$rtk_rc" = 3 ]; then BI_LOW_SPACE=1; fi
+  elif [ -n "$(vj_pin rtk)" ]; then
+    echo "[entrypoint] WARN: the Agent binary is missing; rtk boot-install skipped"
+    bi_note rtk failed other
   fi
   # agy: the pinned immutable GCS object named by the official installer manifest, fetched
   # and verified via versions.json's agy + agy_build + agy_sha256 (same path as the Dockerfile

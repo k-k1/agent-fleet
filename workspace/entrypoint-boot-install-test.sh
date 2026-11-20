@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behaviour of entrypoint.sh's lean boot-install blocks (rtk, agy, cursor) when a step fails
+# Behaviour of entrypoint.sh's lean boot-install blocks (agy, cursor; rtk is workspace-agent's, see below) when a step fails
 # part-way, e.g. ENOSPC on a full home. Only the section from `VJ=` to the Kiro comment is sliced
 # out and run, against stub curl / tar / install / sha256sum / dpkg and a fake home.
 #
@@ -17,7 +17,7 @@ mkdir -p "$T/bin" "$T/home/.local/bin" "$T/tmp"
 
 BLOCK="$T/block.sh"
 awk '/^VJ=\/usr/{on=1} /^# Kiro CLI \(kind/{on=0} on' "$ENTRY" | sed "s#^VJ=.*#VJ=$T/versions.json#" > "$BLOCK"
-for needle in 'AGY_NEED' 'CUR_NEED' 'RTK_NEED'; do
+for needle in 'AGY_NEED' 'CUR_NEED' 'boot-install rtk'; do
   grep -q -- "$needle" "$BLOCK" || { echo "FAIL: slice lacks $needle; fix the awk range" >&2; exit 1; }
 done
 
@@ -70,14 +70,22 @@ cat >"$T/bin/mktemp" <<'S'
 [ -z "${STUB_MKTEMP_FAIL:-}" ] || exit 1
 exec /usr/bin/mktemp "$@"
 S
+# workspace-agent: rtk is installed by the Agent (internal/bootinstall has the Go tests for it,
+# including that a wrong sha256 fails the install); here only the hand-off is checked.
+cat >"$T/bin/workspace-agent" <<'S'
+#!/bin/sh
+echo "workspace-agent $*" >>"$STUB_WA_LOG"
+exit "${STUB_WA_RC:-0}"
+S
 chmod +x "$T"/bin/*
+export STUB_WA_LOG="$T/wa.log"
 mkdir "$T/cwd"
 
 fails=0
 fail() { echo "FAIL: $1" >&2; echo "--- output ---" >&2; cat "$T/out" >&2; fails=$((fails+1)); }
 # run_block [VAR=val ...] — one start. SKIP=1 means no repin, so only absence/breakage triggers.
 run_block() {
-  cd "$T/cwd" && env -i PATH="$T/bin:/usr/bin:/bin:$(dirname "$(command -v node)")" HOME="$T/home" TMPDIR="$T/tmp" BI_DIR="$T/bidir" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
+  cd "$T/cwd" && env -i PATH="$T/bin:/usr/bin:/bin:$(dirname "$(command -v node)")" HOME="$T/home" TMPDIR="$T/tmp" BI_DIR="$T/bidir" STUB_WA_LOG="$STUB_WA_LOG" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
     bash -c 'set -e; export PATH="$HOME/.local/bin:$PATH"; source "$1"' _ "$BLOCK" >"$T/out" 2>&1
 }
 reset() { rm -rf "$T/home/.local/bin/"{agy,.agy.version,rtk,cursor-agent} "$T/home/.local/share" "$T"/cwd/* "${T:?}"/home/*; }
@@ -88,12 +96,9 @@ has 'WARN: agy boot-install failed' || fail "agy: no WARN when install fails"
 has 'boot-install agy 9.9.9' && fail "agy: success logged after a failed install"
 [ -e "$T/home/.local/bin/.agy.version" ] && fail "agy: marker written after a failed install"
 [ -e "$T/home/.local/bin/agy" ] && fail "agy: truncated binary left behind"
-has 'WARN: rtk boot-install failed' || fail "rtk: no WARN when install fails"
-[ -e "$T/home/.local/bin/rtk" ] && fail "rtk: truncated binary left behind"
 run_block
 has 'boot-install agy 9.9.9' || fail "agy: next start did not reinstall"
 [ "$(cat "$T/home/.local/bin/.agy.version" 2>/dev/null)" = 9.9.9 ] || fail "agy: marker missing after reinstall"
-has 'boot-install rtk 1.2.3' || fail "rtk: next start did not reinstall"
 
 # A truncated binary with a marker that matches the pin, with and without repin.
 for skip in 1 0; do
@@ -152,18 +157,22 @@ has 'WARN: cursor boot-install failed' || fail "cursor: no WARN for a candidate 
 [ "$(readlink "$T/home/.local/bin/cursor-agent")" = "$d/cursor-agent" ] || fail "cursor: link moved"
 [ -z "$(find "$T/home/.local/share" -name '*af-*')" ] || fail "cursor: staging/aside dir left behind"
 
-# rtk: a candidate that cannot run must not replace a working copy, and must not log success.
-reset; printf '#!/bin/sh\necho rtk 0.0.1\n' >"$T/home/.local/bin/rtk"; chmod +x "$T/home/.local/bin/rtk"
-run_block STUB_RTK_BAD=1 AF_AGENT_SELF_UPDATE_SKIP=0
-has 'WARN: rtk boot-install failed' || fail "rtk: no WARN for a candidate that does not run"
-has 'boot-install rtk 1.2.3' && fail "rtk: success logged for a candidate that does not run"
-grep -q 0.0.1 "$T/home/.local/bin/rtk" || fail "rtk: the working copy was displaced"
-[ -z "$(find "$T/home/.local/bin" -name "*af-new*")" ] || fail "rtk: temp candidate left behind"
+# rtk: the block hands over to `workspace-agent boot-install rtk`, with --repin only when the
+# start repins, and runs no download of its own.
+reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=1
+grep -qx 'workspace-agent boot-install rtk' "$STUB_WA_LOG" || fail "rtk: not handed to workspace-agent ($(cat "$STUB_WA_LOG"))"
+reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=0
+grep -qx 'workspace-agent boot-install rtk --repin' "$STUB_WA_LOG" || fail "rtk: --repin not passed on a repin start"
+# Exit 3 (no space) is not an error of the entrypoint and makes later downloads hold back.
+reset; run_block STUB_WA_RC=3 || fail "rtk: exit 3 aborted the entrypoint"
+# The shell no longer carries an rtk install of its own.
+grep -q 'boot-install rtk \$(vj_pin' "$BLOCK" && fail "rtk: shell install block still present"
+[ -e "$T/home/.local/bin/rtk" ] && fail "rtk: shell installed rtk itself"
 
 # mktemp / download failures stop the block before anything is written outside a temp dir.
 for what in STUB_MKTEMP_FAIL STUB_CURL_FAIL; do
   reset; run_block $what=1
-  for n in agy rtk cursor; do has "WARN: $n boot-install failed" || fail "$n: no WARN with $what"; done
+  for n in agy cursor; do has "WARN: $n boot-install failed" || fail "$n: no WARN with $what"; done
   [ -z "$(find "$T/cwd" "$T/home" -maxdepth 1 -type f)" ] || fail "files written outside .local with $what"
   [ -e "$T/home/.local/bin/agy" ] || [ -e "$T/home/.local/bin/.agy.version" ] && fail "agy installed or marked with $what"
 done
