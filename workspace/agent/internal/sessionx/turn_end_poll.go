@@ -43,7 +43,7 @@ import (
 // already fired it and the persisted state is idle — no double fire.
 func notifyPolledTurnEnd(m session.Meta, state string) {
 	sid := session.UUID(m.Dir, m.Name)
-	if state != "idle" || status.LiveState(sid) != "working" || !idleEndsThisTurn(m, sid) {
+	if state != "idle" || status.LiveState(sid) != "working" || !idleEndsThisTurn(m, sid) || turnEndHeld(m) {
 		return
 	}
 	if t := liveStateTraits(m.Kind); t.TurnFailure != nil {
@@ -153,7 +153,7 @@ func recordPolledTurnEnd(m session.Meta, state string) {
 	if !liveStateTraits(m.Kind).PolledTurnEnd {
 		return
 	}
-	if state != "idle" || !idleEndsThisTurn(m, sid) {
+	if state != "idle" || !idleEndsThisTurn(m, sid) || turnEndHeld(m) {
 		return
 	}
 	status.RecordTurnEnd(sid)

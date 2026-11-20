@@ -169,6 +169,9 @@ func recordHook(name, gen, event string, in hookInput, now time.Time) {
 	if hadPrev && prev.ConvID != "" && prev.ConvID != in.ConversationID {
 		return
 	}
+	if event == "PreInvocation" {
+		reopenTurn(slotSid)
+	}
 	rec := hookRecord{ConvID: in.ConversationID, State: state, At: now.Format(time.RFC3339), Gen: gen}
 	if event == "Stop" {
 		st, _ := status.Read(slotSid)
@@ -182,6 +185,21 @@ func recordHook(name, gen, event string, in hookInput, now time.Time) {
 		rec.State = prev.State
 	}
 	_ = hookRecords.Write(slotSid, rec)
+}
+
+// reopenTurn puts the slot's status record back to "working" when a turn starts that no input
+// route announced: the follow-up turn agy starts by itself once a background command finishes
+// (#4267), or a prompt typed straight into the pane. The turn-end notification is gated on that
+// record being "working", so without this such a turn ended unreported. A record already
+// "working" (an input route wrote it, with its turn mark) is left alone. Written before the hook
+// record, so the Stop that closes this turn captures this write's Rev (newInputSince). No turn
+// mark: agy's EndedAfter pairs an end with a user step, and a self-started turn has none, so the
+// settle window decides instead.
+func reopenTurn(slotSid string) {
+	if st, ok := status.Read(slotSid); ok && st.State == "working" {
+		return
+	}
+	status.Persist(slotSid, "working")
 }
 
 // idleGrace is how long after a Stop the conversation DB may still be landing the turn's own
