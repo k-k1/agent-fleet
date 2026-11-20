@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
@@ -504,16 +506,27 @@ func chatModel(c *ChatConversation) string {
 // contract implemented here is what the settings screen promises ("If priority falls back to
 // another CLI, that CLI uses its row's model"). A provider only has to pass its own kind.
 func chatModelFor(c *ChatConversation, kind string) string {
-	if c.modelOverride != "" && kind == session.KindClaude {
+	if c.modelOverride != "" && usesDeploymentChatModel(kind) {
 		return c.modelOverride // the auto-turn model is claude's alone
 	}
 	if c.Agent != "" && kind != c.Agent {
 		return ResolveChatModel(kind, "")
 	}
-	if kind == session.KindClaude {
+	if usesDeploymentChatModel(kind) {
 		return chatModel(c) // keep the historical AF_CHAT_MODEL default
 	}
 	return c.Model // empty = leave it to that CLI's own default (pass no --model)
+}
+
+// usesDeploymentChatModel reports whether kind runs the assistant chat on the deployment-wide
+// chat model (claude): its auto turns may override the model and its default is AF_CHAT_MODEL.
+func usesDeploymentChatModel(kind string) bool {
+	if a, ok := agentreg.Lookup(kind); ok {
+		if d, ok := a.(agents.ChatModelDefaulter); ok {
+			return d.UsesDeploymentChatModel()
+		}
+	}
+	return false
 }
 
 // chatTimeout bounds a single CLI turn so a hung process can't wedge the request.

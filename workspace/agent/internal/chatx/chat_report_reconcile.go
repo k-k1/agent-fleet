@@ -396,7 +396,7 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 	}
 	// Subagent and main-transcript freshness are claude-specific signals (no other kind has an
 	// equivalent transcript).
-	if normalizeKind(m.Kind) == session.KindClaude {
+	if reportsTranscriptBusy(m) {
 		s.SubagentBusy = claude.SubagentBusy(sid)
 		s.TranscriptBusy = reportTranscriptBusy(sid, markerAt)
 		collectAbortSignal(&s, m.Name, sid, since)
@@ -525,13 +525,24 @@ func reportStopContinued(m session.Meta, sid string, marker time.Time) bool {
 	return false
 }
 
+// reportsTranscriptBusy reports whether the kind's transcripts and TUI spinner carry the
+// freshness signals the reconciler reads (claude's).
+func reportsTranscriptBusy(m session.Meta) bool {
+	if a, ok := agentreg.Lookup(normalizeKind(m.Kind)); ok {
+		if r, ok := a.(agents.TranscriptBusyReporter); ok {
+			return r.ReportsTranscriptBusy()
+		}
+	}
+	return false
+}
+
 // reportPaneBusy checks the pane's interrupt affordance (the same grounds as the reverse heal).
 // It hits tmux, so it runs only for a settle candidate (docs/log/51: keep the tmux load down).
 // It is limited to claude's TUI because tmuxx.IsBusy reads claude's spinner contract (the same
 // scope as the v1 waiter): misreading another kind's pane as busy would mean that kind's reports
 // never come out at all, and a loss is worse than a delay.
 func reportPaneBusy(m session.Meta) bool {
-	if m.DriverKind() == session.DriverManaged || normalizeKind(m.Kind) != session.KindClaude {
+	if m.DriverKind() == session.DriverManaged || !reportsTranscriptBusy(m) {
 		return false
 	}
 	return tmuxx.IsBusy(m.Name)

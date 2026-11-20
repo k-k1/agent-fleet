@@ -33,6 +33,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
@@ -77,15 +78,16 @@ type deliverySnapshot struct {
 // started a turn, so it proves nothing if it was already spinning beforehand (a previous
 // turn, or a background agent).
 func deliveryBaseline(m session.Meta) deliverySnapshot {
-	if NormalizeKind(m.Kind) != session.KindClaude {
+	b, ok := agentreg.Lookup(NormalizeKind(m.Kind))
+	if !ok {
 		return deliverySnapshot{}
 	}
-	sid := session.UUID(m.Dir, m.Name)
-	return deliverySnapshot{
-		logs:      claude.TranscriptSnapshot(sid),
-		subagents: claude.SubagentSnapshot(sid),
-		paneBusy:  deliveryPaneBusy(m.Name),
+	d, ok := b.(agents.DeliveryBaseliner)
+	if !ok {
+		return deliverySnapshot{}
 	}
+	logs, subagents := d.DeliveryBaseline(session.UUID(m.Dir, m.Name))
+	return deliverySnapshot{logs: logs, subagents: subagents, paneBusy: deliveryPaneBusy(m.Name)}
 }
 
 // deliveryPaneBusy is the spinner read of delivery verification. A variable so tests stub it.
@@ -354,7 +356,15 @@ var (
 // isCursorTerminal reports whether m is a cursor session driven through its TUI, the only kind
 // whose rejected submit confirmCursorSubmit can see.
 func isCursorTerminal(m session.Meta) bool {
-	return NormalizeKind(m.Kind) == session.KindCursor && m.DriverKind() != session.DriverManaged
+	if m.DriverKind() == session.DriverManaged {
+		return false
+	}
+	if a, ok := agentreg.Lookup(NormalizeKind(m.Kind)); ok {
+		if c, ok := a.(agents.SubmitRejectionConfirmer); ok {
+			return c.ConfirmsTerminalSubmit()
+		}
+	}
+	return false
 }
 
 // confirmCursorSubmit reports whether the cursor TUI handed the just-submitted prompt back:

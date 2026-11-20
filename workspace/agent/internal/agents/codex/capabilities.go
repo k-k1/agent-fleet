@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -150,3 +151,9 @@ func (agentImpl) SwitchNeedsStopped() bool { return true }
 
 // DropForTerminalSwitch is agents.TerminalSwitchGuard: codex has no lock to wait on.
 func (agentImpl) DropForTerminalSwitch(string) bool { return false }
+
+// ModelRetirement is agents.ModelRetirer: this package's Retirement.
+func (agentImpl) ModelRetirement(id string) (agents.ModelRetiring, bool) { return Retirement(id) }
+
+// ChatFallbackModel is agents.ChatFallbackModeler.
+func (agentImpl) ChatFallbackModel() string { return modelfallback.ChatCodex }

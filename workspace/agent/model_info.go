@@ -14,8 +14,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"slices"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -30,30 +30,25 @@ var modelInfoNone = map[string]bool{
 	session.KindLcpp:   true,
 }
 
-// claudeTierAliases are claude's fixed picker entries. Which model an alias runs depends on the
-// installed CLI, so pricing "the newest model of that family" would be a guess; only a full id
-// a member registered is looked up.
-var claudeTierAliases = map[string]bool{"fable": true, "opus": true, "sonnet": true, "haiku": true}
-
-// codexRetirement is codex.Retirement, a seam for tests: the real one answers from the last
-// `codex debug models` run.
-var codexRetirement = defaultCodexRetirement
-
-var defaultCodexRetirement = codex.Retirement
-
 // resolveModelInfo returns what is known about one (kind, model id), or nil when nothing is.
 func resolveModelInfo(kind, id string) *agents.ModelInfo {
 	if modelInfoNone[kind] || id == "" {
 		return nil
 	}
-	if kind == session.KindClaude && claudeTierAliases[id] {
-		return nil
+	// A kind's tier aliases run whatever the installed CLI maps them to, so only a full id a
+	// member registered is looked up.
+	if a, ok := agentreg.Lookup(kind); ok {
+		if s, ok := a.(agents.ModelInfoSuppressor); ok && s.SuppressesModelInfo(id) {
+			return nil
+		}
 	}
 	info := &agents.ModelInfo{}
 	usagesvc.FillCatalogModelInfo(info, kind, recommendPriceID(kind, id))
-	if kind == session.KindCodex {
-		if r, ok := codexRetirement(id); ok {
-			info.Retiring = &r
+	if a, ok := agentreg.Lookup(kind); ok {
+		if rt, ok := a.(agents.ModelRetirer); ok {
+			if r, ok := rt.ModelRetirement(id); ok {
+				info.Retiring = &r
+			}
 		}
 	}
 	if *info == (agents.ModelInfo{}) {

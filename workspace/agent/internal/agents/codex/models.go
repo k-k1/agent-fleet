@@ -202,3 +202,17 @@ func compactStrings(in []string) []string {
 	}
 	return out
 }
+
+// SetRetiringForTest pins the retirement table Retirement answers from, and restores it when
+// the test ends. A later Models refresh overwrites it. Test-only.
+func SetRetiringForTest(t interface{ Cleanup(func()) }, m map[string]agents.ModelRetiring) {
+	modelsMu.Lock()
+	prev := modelsRetiring
+	modelsRetiring = m
+	modelsMu.Unlock()
+	t.Cleanup(func() {
+		modelsMu.Lock()
+		modelsRetiring = prev
+		modelsMu.Unlock()
+	})
+}

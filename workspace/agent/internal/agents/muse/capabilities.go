@@ -77,3 +77,32 @@ func (agentImpl) StopBackgroundBusy(m session.Meta) bool {
 	busy, _ := BackgroundWork(m.Name)
 	return busy
 }
+
+// LimitInMessage is agents.MessageLimitReader: a window limit for the whole kind.
+func (agentImpl) LimitInMessage(msg string, _ time.Time) (agents.MessageLimit, bool) {
+	at, ok := LimitInMessage(msg)
+	if !ok {
+		return agents.MessageLimit{}, false
+	}
+	return agents.MessageLimit{Kind: agents.LimitWindow, ResetAt: at}, true
+}
+
+// LiveContext is agents.LiveContextReader: the live MSP handle's context usage (ADR 0095
+// P2-16). usedTokens is exact; the window is the host's basis limit, or the default when the
+// basis has none.
+func (agentImpl) LiveContext(name string) (agents.LiveContext, bool) {
+	used, win, ok := ManagedContext(name)
+	if !ok {
+		return agents.LiveContext{}, false
+	}
+	window, source := MuseDefaultWindow, "estimated"
+	if win != nil && *win > 0 {
+		window, source = int(*win), "recorded"
+	}
+	tokens := int(used)
+	var pct float64
+	if window > 0 {
+		pct = float64(tokens) / float64(window) * 100
+	}
+	return agents.LiveContext{Tokens: tokens, Window: window, WindowSource: source, Pct: pct}, true
+}
