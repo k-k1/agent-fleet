@@ -306,8 +306,18 @@ func claudeTurnAfterLimit(m session.Meta, st rateLimitState) bool {
 	if err != nil {
 		return false
 	}
-	start, err := time.Parse(time.RFC3339Nano, status.LastTurnStart(session.UUID(m.Dir, m.Name)))
-	return err == nil && !start.Before(episode.Add(time.Second))
+	if tr, ok := usageLimitTraits(m); ok && tr.RanTurnSince != nil && tr.RanTurnSince(m, episode) {
+		return true
+	}
+	sid := session.UUID(m.Dir, m.Name)
+	start, err := time.Parse(time.RFC3339Nano, status.LastTurnStart(sid))
+	return err == nil && !start.Before(episode.Add(time.Second)) &&
+		SessionAlive(m) && status.LiveState(sid) == "working" && !claudeStillAtLimit(m)
+}
+
+func claudeStillAtLimit(m session.Meta) bool {
+	_, limited := atUsageLimit(m)
+	return limited
 }
 
 func claudeOwnsLimitWait(m session.Meta) bool {

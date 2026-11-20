@@ -19,6 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -112,6 +113,26 @@ func setRateLimitPref(t *testing.T, on bool) {
 
 func rlMeta() session.Meta {
 	return session.Meta{Name: "rl1", Dir: "/tmp/rl1", Kind: session.KindClaude}
+}
+
+func TestRateLimitFailedProbeDoesNotSupersedeBooking(t *testing.T) {
+	newRateLimitFixture(t)
+	m := rlMeta()
+	completed := false
+	editUsageLimitTraits(t, session.KindClaude, func(tr *agents.UsageLimitTraits) {
+		tr.RanTurnSince = func(session.Meta, time.Time) bool { return completed }
+	})
+	st := rateLimitState{At: time.Now().Add(-time.Minute).Format(time.RFC3339)}
+	sid := session.UUID(m.Dir, m.Name)
+	status.Persist(sid, "working")
+	status.Persist(sid, "idle")
+	if status.LastTurnStart(sid) == "" || claudeTurnAfterLimit(m, st) {
+		t.Fatal("a failed attempt must leave the original booking eligible")
+	}
+	completed = true
+	if !claudeTurnAfterLimit(m, st) {
+		t.Fatal("a completed turn must supersede the original booking")
+	}
 }
 
 func stateOf(t *testing.T, name string) rateLimitState {

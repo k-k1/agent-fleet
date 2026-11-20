@@ -772,7 +772,15 @@ func ClaudeUsageLimitWait(frame string) bool {
 		if line != "Usage limit reached" && !strings.HasPrefix(line, "Usage limit reached ·") {
 			continue
 		}
-		footer := strings.Join(strings.Fields(strings.Join(lines[i:], " ")), " ")
+		end := i + 1
+		for end < len(lines) && end < i+4 {
+			next := strings.TrimSpace(lines[end])
+			if next == "" || strings.HasPrefix(next, "❯") || strings.HasPrefix(next, "──") {
+				break
+			}
+			end++
+		}
+		footer := strings.Join(strings.Fields(strings.Join(lines[i:end], " ")), " ")
 		if nativeLimitWaitFooter.MatchString(footer) {
 			return true
 		}
@@ -780,7 +788,19 @@ func ClaudeUsageLimitWait(frame string) bool {
 	return false
 }
 
-var nativeLimitWaitFooter = regexp.MustCompile(`^Usage limit reached(?: · .*?)? (?:Continuing automatically (?:at .+?|when it resets)|Continuing shortly) · Esc to cancel(?:$| )`)
+var nativeLimitWaitFooter = regexp.MustCompile(`^Usage limit reached(?: · limit resets [^·]+)? (?:Continuing automatically (?:at [^·]+|when it resets)|Continuing shortly) · Esc to cancel(?:$| · )`)
+
+var selectedFirstLimitOption = regexp.MustCompile(`(?m)^\s*\x{276F} 1\.\s+`)
+
+func dismissLimitKey(frame string) string {
+	if rateLimitDefaultRe.MatchString(frame) {
+		return "Enter"
+	}
+	if selectedFirstLimitOption.MatchString(frame) && strings.Contains(frame, "Esc to cancel") {
+		return "Escape"
+	}
+	return ""
+}
 
 // DismissRateLimitModal confirms a selected stop action and reports whether the menu is gone.
 //
@@ -804,12 +824,9 @@ func DismissRateLimitModal(name string) bool {
 	if !atRateLimitModal(frame) {
 		return true // the menu is already gone
 	}
-	key := "Enter"
-	if !rateLimitDefaultRe.MatchString(frame) {
-		if !currentRateLimitOptionRe.MatchString(frame) || !strings.Contains(frame, "Esc to cancel") {
-			return false
-		}
-		key = "Escape"
+	key := dismissLimitKey(frame)
+	if key == "" {
+		return false
 	}
 	if err := Run("send-keys", "-t", pane, key); err != nil {
 		return false
