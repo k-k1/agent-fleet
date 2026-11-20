@@ -228,6 +228,26 @@ describe("MemoryEntryView", () => {
     expect(api.mock.calls.some((c) => String(c[0]).startsWith("api/agents/memory"))).toBe(false);
   });
 
+  it("brings the history into view when it is opened, since its toggle is at the foot", async () => {
+    const scrolled: Element[] = [];
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      await open();
+      await act(async () => button(t("mem.rv_history"))!.click());
+      await flush();
+      expect(scrolled.some((el) => el.classList.contains("mentry-history"))).toBe(true);
+      // Named once, by its toggle: the section does not repeat the title under it.
+      const section = host!.querySelector(".mentry-history section")!;
+      expect(section.querySelector("h5")).toBeNull();
+      expect(document.getElementById(section.getAttribute("aria-labelledby")!)?.textContent?.trim()).toBe(t("mem.rv_history"));
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+
   it("reads the memory's history only once it is opened", async () => {
     await open();
     const historyReads = () => api.mock.calls.filter((c) => String(c[0]).startsWith("api/agents/memory/entries/changes")).length;
