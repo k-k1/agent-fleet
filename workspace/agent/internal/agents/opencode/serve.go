@@ -329,7 +329,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		go s.monitorEvents(addr, s.gen)
 		log.Printf("opencode serve: adopted running daemon at %s (gen %d)", addr, s.gen)
 		recordLifecycle("adopted", s.gen, addr)
-		noteDaemonUnknown(time.Now(), s.gen) // its environment was set by an earlier Agent process
+		noteDaemonUnknown(s.gen) // its environment was set by an earlier Agent process
 		return addr, s.gen, nil
 	}
 	// Past this point a new process starts, i.e. new memory is paid for. Do not pay
@@ -398,7 +398,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		cmd.Env = append(cmd.Env, sharedServeEnv+"=1")
 	}
 	cmd.Dir = paths.HomeDir()
-	spawnedAt := time.Now()
+	spawn := stampNow()
 	tail, err := agents.StartWithStderrTail(cmd)
 	if err != nil {
 		return "", 0, fmt.Errorf("opencode serve の起動に失敗しました / failed to start opencode serve: %w", err)
@@ -413,10 +413,10 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			// The environment is fixed for this process's life. Recorded only once the daemon
 			// answers and this process is still running: one that exited (the port was taken) did
 			// not answer, and its environment must not stand for whoever did.
-			if procRunning(cmd.Process.Pid) {
-				noteDaemonStart(spawnedAt, cmd.Env, s.gen+1)
+			if ownsListener(cmd.Process.Pid, port) {
+				noteDaemonStart(spawn, cmd.Env, s.gen+1)
 			} else {
-				noteDaemonUnknown(time.Now(), s.gen+1)
+				noteDaemonUnknown(s.gen + 1)
 			}
 			if err := persistServePassword(password); err != nil {
 				log.Printf("opencode serve: password not saved, a restarted Agent cannot adopt this daemon: %v", err)

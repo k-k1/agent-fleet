@@ -326,19 +326,48 @@ func TestFoldConnectionOnlyMismatchKeepsRoute(t *testing.T) {
 	}
 }
 
-// Calls on one route whose billing is proven keep their boundary when only the connection differs:
-// one ledger row per connection, as before a connection could differ inside one turn.
+// Calls on a route with stable connection evidence whose billing is proven keep their boundary when
+// only the connection differs: one ledger row per connection.
 func TestFoldConnectionBoundaryKeptWhenBillingProven(t *testing.T) {
+	const route = "lcpp-selfhosted"
+	a := routeTurn(route, usagex.BillingSelfHosted, 5)
+	a.Connection = "engine@aaaa"
+	b := routeTurn(route, usagex.BillingSelfHosted, 7)
+	b.Connection = "engine@bbbb"
+	rows := foldTurnRows([]transcript.Turn{{Role: "user"}, a, b}, true)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	recs := usageRecordsOf(session.Meta{Name: "s", Kind: session.KindLcpp}, rows[0])
+	if len(recs) != 2 || recs[0].Connection != a.Connection || recs[1].Connection != b.Connection {
+		t.Fatalf("records = %+v, want one per connection", recs)
+	}
+}
+
+// opencode.ai's bindings never split a row: they come from evidence that can differ between two folds
+// of one turn, and a split numbered differently on a retry would count a cost twice.
+func TestFoldOpencodeConnectionNeverSplitsARow(t *testing.T) {
 	a := routeTurn(usagex.RouteOpencodeZen, usagex.BillingMetered, 5)
 	a.Connection = "OPENCODE_API_KEY@aaaa"
 	b := routeTurn(usagex.RouteOpencodeZen, usagex.BillingMetered, 7)
-	b.Connection = "OPENCODE_API_KEY@bbbb"
 	rows := foldTurnRows([]transcript.Turn{{Role: "user"}, a, b}, true)
 	if len(rows) != 1 {
 		t.Fatalf("rows = %+v", rows)
 	}
 	recs := usageRecordsOf(session.Meta{Name: "s", Kind: session.KindOpencode, Model: "opencode/glm-5.2"}, rows[0])
-	if len(recs) != 2 || recs[0].Connection != a.Connection || recs[1].Connection != b.Connection {
-		t.Fatalf("records = %+v, want one per connection", recs)
+	if len(recs) != 1 || recs[0].Connection != "" || recs[0].Route != usagex.RouteOpencodeZen || recs[0].Billing != usagex.BillingMetered {
+		t.Fatalf("records = %+v, want one row on zen/metered with no connection", recs)
+	}
+}
+
+// An orphan row that gathered cost from two connections names neither.
+func TestFoldOrphanOfTwoConnectionsHasNone(t *testing.T) {
+	cost := func(conn string) transcript.Turn {
+		return transcript.Turn{Role: "assistant", CostOnly: true, CostUSD: 0.5, Model: "glm-5.2",
+			Route: "lcpp-selfhosted", Billing: usagex.BillingSelfHosted, Connection: conn, AnchorID: "a"}
+	}
+	rows := foldTurnRows([]transcript.Turn{{Role: "user"}, cost("engine@aaaa"), cost("engine@bbbb")}, true)
+	if len(rows) != 1 || !rows[0].Orphan || rows[0].Connection != "" || rows[0].CostUSD != 1 {
+		t.Fatalf("orphan = %+v, want one row of 1.0 with no connection", rows)
 	}
 }

@@ -4,14 +4,17 @@ import (
 	"bufio"
 	"encoding/json"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/listenports"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -72,6 +75,9 @@ type bindEvent struct {
 	// when they do not, the wall clock was set and the events cannot be ordered by time (Reg).
 	Boot string `json:"boot,omitempty"`
 	Up   int64  `json:"up,omitempty"`
+	// Floor, on a Reg event, is the latest wall time the clock before it can have shown: calls of
+	// this and every later life stamped at or below it may belong to an earlier daemon.
+	Floor int64 `json:"floor,omitempty"`
 }
 
 // clockStamp is the current boot id and uptime in milliseconds; ok=false when the kernel does not
@@ -103,6 +109,29 @@ const bindGapsFile = "opencode-binding-intervals.gaps"
 
 // gapsMem holds the gaps of this process, for when the gaps file cannot be written either.
 var gapsMem []int64
+
+// bindOff turns binding off for this process when even a gap could not be recorded.
+var bindOff atomic.Bool
+
+// A gap is the bound of the lives an event could not be recorded for: every life that began at or
+// before it is not proven at all (the missing event may have been the boundary or the account
+// touch that ended its proof). It is the later of the failed event's time and the newest time in the
+// file, so a clock that was set back cannot place a life beyond it. Kept in the gaps file (append
+// only, never cleared) and in memory.
+func noteGap(bound int64) {
+	gapsMem = append(gapsMem, bound)
+	f, err := os.OpenFile(filepath.Join(paths.AgentConfigDir(), bindGapsFile), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err == nil {
+		_, err = f.WriteString(strconv.FormatInt(bound, 10) + "\n")
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+	}
+	if err != nil {
+		log.Printf("opencode: binding intervals gap not persisted, binding is off until restart: %v", err)
+		bindOff.Store(true)
+	}
+}
 
 // readGaps returns every recorded gap; ok=false when the file cannot be read whole.
 func readGaps() (gaps []int64, ok bool) {
@@ -175,23 +204,21 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent) bool) {
 	evs, ok := readBindEvents()
 	if !ok {
 		log.Printf("opencode: binding intervals unreadable; bindings stay unproven")
-		gapsMem = append(gapsMem, e.At)
-		noteGapFile(e.At)
+		noteGap(e.At)
 		return
 	}
 	if check != nil && !check(evs) {
 		return
 	}
-	boot, up, stamped := clockStamp()
-	e.Boot, e.Up = boot, up
-	if !stamped {
-		e.Reg = true
+	if e.Boot == "" { // not stamped: nothing orders it against the clock
+		e.Reg, e.Floor = true, math.MaxInt64
 	}
-	if n := len(evs); n > 0 && stamped {
+	if n := len(evs); n > 0 && e.Boot != "" {
 		prev := evs[n-1]
-		if prev.Boot == boot && prev.Up > 0 {
+		if prev.Boot == e.Boot && prev.Up > 0 {
 			if d := (e.At - prev.At) - (e.Up - prev.Up); d > clockSlack || d < -clockSlack {
 				e.Reg = true
+				e.Floor = max(e.Floor, prev.At+(e.Up-prev.Up)+clockSlack)
 			}
 		}
 	}
@@ -199,6 +226,7 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent) bool) {
 		for _, o := range evs { // an event stamped after e shows the clock going back too
 			if o.At >= e.At {
 				e.Reg = true
+				e.Floor = max(e.Floor, o.At)
 			}
 		}
 	}
@@ -207,8 +235,11 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent) bool) {
 	p := bindIntervalsPath()
 	fail := func(err error) {
 		log.Printf("opencode: binding intervals: %v", err)
-		gapsMem = append(gapsMem, e.At)
-		noteGapFile(e.At)
+		bound := e.At
+		for _, o := range evs {
+			bound = max(bound, o.At)
+		}
+		noteGap(bound)
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		fail(err)
@@ -253,21 +284,34 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent) bool) {
 	}
 }
 
-// noteGapFile writes a gap to the gaps file only (the in-memory copy is already kept).
-func noteGapFile(at int64) {
-	f, err := os.OpenFile(filepath.Join(paths.AgentConfigDir(), bindGapsFile), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-	if err != nil {
-		return
-	}
-	_, _ = f.WriteString(strconv.FormatInt(at, 10) + "\n")
-	_ = f.Close()
+// spawnStamp is the wall time and uptime at one instant (the moment a daemon process was spawned),
+// taken together so that the time the daemon then needs to answer does not read as a clock change.
+type spawnStamp struct {
+	at      time.Time
+	boot    string
+	up      int64
+	stamped bool
+}
+
+func stampNow() spawnStamp {
+	at := time.Now()
+	boot, up, ok := clockStamp()
+	return spawnStamp{at: at, boot: boot, up: up, stamped: ok}
+}
+
+// stampedEvent is an event at the given instant with the uptime of that instant.
+func stampedEvent(at time.Time) bindEvent {
+	boot, up, _ := clockStamp()
+	// clockStamp reads now; an instant a moment ago (an observation that waited for the lock) is
+	// close enough, since the slack is seconds.
+	return bindEvent{At: at.UnixMilli(), Boot: boot, Up: up}
 }
 
 // noteDaemonStart records generation gen of the daemon, which this Agent started at `at` (when its
 // process was spawned) with environment env, the one it keeps for its whole life. Called once the
 // daemon answers and its process is known to be alive.
-func noteDaemonStart(at time.Time, env []string, gen int) {
-	e := bindEvent{At: at.UnixMilli(), Kind: evStart, Keyless: true, Gen: gen}
+func noteDaemonStart(sp spawnStamp, env []string, gen int) {
+	e := bindEvent{At: sp.at.UnixMilli(), Boot: sp.boot, Up: sp.up, Kind: evStart, Keyless: true, Gen: gen}
 	for _, kv := range env { // a duplicate keeps its last value, as exec does
 		if v, ok := strings.CutPrefix(kv, opencodeKeyEnv+"="); ok {
 			e.Keyless = strings.TrimSpace(v) == ""
@@ -288,8 +332,10 @@ func noteDaemonStart(at time.Time, env []string, gen int) {
 // noteDaemonUnknown records a daemon whose environment this Agent did not set (an adopted one, or
 // a start whose process cannot be shown to own the port): calls from here until the next start
 // prove nothing.
-func noteDaemonUnknown(at time.Time, gen int) {
-	appendBindEvent(bindEvent{At: at.UnixMilli(), Kind: evUnknown, Gen: gen}, nil)
+func noteDaemonUnknown(gen int) {
+	e := stampedEvent(time.Now())
+	e.Kind, e.Gen = evUnknown, gen
+	appendBindEvent(e, nil)
 }
 
 // noteAccount records, in the life of daemon generation gen, an observation of the Console account
@@ -298,7 +344,9 @@ func noteDaemonUnknown(at time.Time, gen int) {
 // the account was out from the start of the life up to then. The event is written only when gen is
 // the newest daemon event's generation, checked in the same step as the write.
 func noteAccount(at time.Time, acct string, gen int) {
-	appendBindEvent(bindEvent{At: at.UnixMilli(), Kind: evAccount, Acct: acct, Gen: gen}, func(evs []bindEvent) bool {
+	e := stampedEvent(at)
+	e.Kind, e.Acct, e.Gen = evAccount, acct, gen
+	appendBindEvent(e, func(evs []bindEvent) bool {
 		di := lastDaemonEvent(evs)
 		if di < 0 || evs[di].Kind != evStart || evs[di].Gen != gen {
 			return false
@@ -318,8 +366,8 @@ func noteAccount(at time.Time, acct string, gen int) {
 // bindingAt is the binding of one call on route, "" when the evidence does not prove a single
 // payer. times are the instants (unix ms) the call was made: a multi-step run gives every step's
 // start and end, and all of them must fall in one daemon's life. paid says the call reported a
-// cost, which a keyless free call cannot have. gaps are the instants an event could not be
-// recorded: a life that began before one is not proven for calls after it.
+// cost, which a keyless free call cannot have. gaps are the bounds of the lives an event could not
+// be recorded for (noteGap): none of those lives is proven.
 //
 // The life is the newest daemon event strictly before the call, and nothing may share its
 // millisecond or lie out of order (a clock that went back): then the interval is not told apart.
@@ -343,8 +391,13 @@ func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...
 		return ""
 	}
 	for _, g := range gaps {
-		if g >= evs[life].At && g <= hi {
+		if evs[life].At <= g {
 			return ""
+		}
+	}
+	for _, e := range evs[:life+1] {
+		if e.Reg && lo <= e.Floor {
+			return "" // possibly an earlier daemon's call, from before the clock was set
 		}
 	}
 	out := false
@@ -404,7 +457,7 @@ func lifeAt(evs []bindEvent, ts int64) int {
 // run on the shared daemon this evidence describes: a session with its own route server, a
 // Terminal session, or evidence that cannot be read.
 func ledgerBinder(m session.Meta) bindFn {
-	if m.DriverKind() != session.DriverManaged || m.Route != nil {
+	if m.DriverKind() != session.DriverManaged || m.Route != nil || bindOff.Load() {
 		return nil
 	}
 	evs, ok := readBindEvents()
@@ -420,17 +473,36 @@ func ledgerBinder(m session.Meta) bindFn {
 	}
 }
 
-// procRunning reports whether pid is a live process that has not exited (a zombie, which a failed
-// start leaves until it is reaped, is not).
-func procRunning(pid int) bool {
-	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+// ownsListener reports whether process pid holds every socket listening on port: the daemon that
+// answered on the port is the one this Agent spawned. A process that lost the race for the port
+// holds none of them, and one that shares the port with another listener does not own it alone.
+// "Cannot tell" is false.
+func ownsListener(pid int, portStr string) bool {
+	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		return false
 	}
-	// "pid (comm) S ...": comm may hold spaces and parentheses, so cut at the last ')'.
-	i := strings.LastIndexByte(string(b), ')')
-	if i < 0 || i+2 >= len(b) {
+	inodes := listenports.Inodes("/proc", port)
+	if len(inodes) == 0 {
 		return false
 	}
-	return b[i+2] != 'Z' && b[i+2] != 'X'
+	held := map[string]bool{}
+	dir := "/proc/" + strconv.Itoa(pid) + "/fd"
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range ents {
+		if l, err := os.Readlink(filepath.Join(dir, e.Name())); err == nil {
+			if v, ok := strings.CutPrefix(l, "socket:["); ok {
+				held[strings.TrimSuffix(v, "]")] = true
+			}
+		}
+	}
+	for _, in := range inodes {
+		if !held[in] {
+			return false
+		}
+	}
+	return true
 }

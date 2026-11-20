@@ -1,8 +1,10 @@
 package opencode
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -33,7 +35,7 @@ func start(ms int64, gen int, key string) {
 	if key != "" {
 		env = append(env, opencodeKeyEnv+"="+key)
 	}
-	noteDaemonStart(atMs(ms), env, gen)
+	noteDaemonStart(spawnStamp{at: atMs(ms), boot: "boot", up: ms, stamped: true}, env, gen)
 }
 
 func acct(ms int64, a string, gen int) {
@@ -116,9 +118,17 @@ func TestBindingKeylessFreeAndDoubt(t *testing.T) {
 	if got := bind(t, routes.RouteOpencodeZen, false, 4000); got != "" {
 		t.Errorf("a call after the touch = %q, want none", got)
 	}
-	// An adopted daemon proves nothing.
-	stampUp = 6000
-	noteDaemonUnknown(atMs(6000), 2)
+}
+
+// An adopted daemon proves nothing.
+func TestBindingAdoptedDaemonProvesNothing(t *testing.T) {
+	bindT(t)
+	start(1000, 1, "A")
+	acct(1100, acctOut, 1)
+	appendBindEvent(bindEvent{At: 6000, Boot: "boot", Up: 6000, Kind: evUnknown, Gen: 2}, nil)
+	if got := bind(t, routes.RouteOpencodeZen, false, 2000); got == "" {
+		t.Error("a call before the adoption stays bound")
+	}
 	if got := bind(t, routes.RouteOpencodeZen, false, 7000); got != "" {
 		t.Errorf("adopted daemon = %q, want none", got)
 	}
@@ -155,20 +165,30 @@ func TestBindingStableAsEvidenceGrows(t *testing.T) {
 }
 
 // A clock that was set (wall time and uptime disagree between two events), a start that shares the
-// call's millisecond, and a run whose steps fall in different daemons prove nothing.
+// call's millisecond, and a run whose steps fall in different daemons prove nothing. The doubt
+// outlives the daemon that showed it: a later daemon whose calls overlap the old clock's range is
+// unbound too.
 func TestBindingRefusesAmbiguousIntervals(t *testing.T) {
 	bindT(t)
 	start(10000, 1, "A")
 	acct(10100, acctOut, 1)
-	// The clock goes back by 8 s: B is stamped 2000 on the wall, 18000 on the uptime.
-	stampUp = 18000
-	noteDaemonStart(atMs(2000), []string{opencodeKeyEnv + "=B"}, 2)
-	stampUp = 18100
-	noteAccount(atMs(2100), acctOut, 2)
-	for _, ts := range []int64{2500, 10050, 12000} {
+	// A runs and makes calls stamped up to 31000 on the wall; then the clock is set back, so B is
+	// stamped 14000 on the wall while the uptime says 32000.
+	noteDaemonStart(spawnStamp{at: atMs(14000), boot: "boot", up: 32000, stamped: true}, []string{opencodeKeyEnv + "=B"}, 2)
+	stampUp = 32100
+	noteAccount(atMs(14100), acctOut, 2)
+	// C starts 6 s later on both clocks: nothing looks wrong about C itself.
+	stampUp = 38000
+	noteDaemonStart(spawnStamp{at: atMs(20000), boot: "boot", up: 38000, stamped: true}, []string{opencodeKeyEnv + "=C"}, 3)
+	stampUp = 38100
+	noteAccount(atMs(21000), acctOut, 3)
+	for _, ts := range []int64{14500, 30000, 31000} { // A's calls read as B's or C's by time
 		if got := bind(t, routes.RouteOpencodeZen, false, ts); got != "" {
 			t.Errorf("at %d after the clock was set = %q, want none", ts, got)
 		}
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 40000); got == "" {
+		t.Error("a call beyond everything the old clock could show binds again")
 	}
 	bindT(t)
 	start(1000, 1, "A")
@@ -180,6 +200,21 @@ func TestBindingRefusesAmbiguousIntervals(t *testing.T) {
 	}
 	if got := bind(t, routes.RouteOpencodeZen, false, 2000, 6000); got != "" {
 		t.Errorf("a run across a restart = %q, want none even with the same key", got)
+	}
+}
+
+// A daemon that merely takes a few seconds to answer is not a clock change: the wall time and the
+// uptime of a start are taken together at spawn.
+func TestBindingSlowStartIsNotAClockChange(t *testing.T) {
+	bindT(t)
+	start(1000, 1, "A")
+	acct(1100, acctOut, 1)
+	stampUp = 9000 // the writer runs 3 s after the spawn stamp below
+	noteDaemonStart(spawnStamp{at: atMs(6000), boot: "boot", up: 6000, stamped: true}, []string{opencodeKeyEnv + "=B"}, 2)
+	stampUp = 9100
+	noteAccount(atMs(9100), acctOut, 2)
+	if got := bind(t, routes.RouteOpencodeZen, false, 10000); got == "" {
+		t.Error("a slow start must stay bound")
 	}
 }
 
@@ -215,18 +250,18 @@ func TestBindingNeedsIntactEvidence(t *testing.T) {
 	if err := os.Mkdir(p, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	acct(3000, acctTouch, 1) // unreadable evidence: a gap at 3000
+	acct(3000, acctTouch, 1) // unreadable evidence: a gap
 	_ = os.Remove(p)
 	if err := os.WriteFile(p, good, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	start(9000, 2, "A") // a later success must not undo the gap
 	acct(9100, acctOut, 2)
-	if got := bind(t, routes.RouteOpencodeZen, false, 2000); got == "" {
-		t.Error("a call before the gap stays bound")
-	}
 	if got := bind(t, routes.RouteOpencodeZen, false, 4000); got != "" {
-		t.Errorf("a call after a lost boundary = %q, want none", got)
+		t.Errorf("a call of a life whose boundary was lost = %q, want none", got)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 10000); got == "" {
+		t.Error("a life that began after the gap stays bound")
 	}
 	// After a restart the gaps file still says so.
 	gapsMem = nil
@@ -253,12 +288,23 @@ func TestBindingTrimKeepsLiveDaemon(t *testing.T) {
 	}
 }
 
-func TestProcRunning(t *testing.T) {
-	if !procRunning(os.Getpid()) {
-		t.Error("this process is running")
+// The daemon that answered is the process that holds the listening socket: this test process owns a
+// listener it opened, and nobody else does.
+func TestOwnsListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("no loopback listener")
 	}
-	if procRunning(1 << 30) {
-		t.Error("a pid that does not exist is not running")
+	defer ln.Close()
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	if !ownsListener(os.Getpid(), port) {
+		t.Error("the process that listens owns the port")
+	}
+	if ownsListener(os.Getppid(), port) {
+		t.Error("another process must not own it")
+	}
+	if ownsListener(os.Getpid(), "1") {
+		t.Error("a port nothing listens on is owned by nobody")
 	}
 }
 

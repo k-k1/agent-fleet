@@ -412,9 +412,13 @@ func (r *usageTurnRow) settleRoute() {
 		}
 		// Only the connection differs. With every contribution's billing proven the boundary
 		// between them is proven and the segments stay (a self-hosted engine on two connections);
-		// otherwise the route stands and the connection is dropped.
+		// otherwise the route stands and the connection is dropped. opencode.ai's bindings come from
+		// interval evidence that can change between two folds of the same turn, and a row's split
+		// must not depend on it (a retry would number the rows differently and count a cost twice),
+		// so they never split a row.
+		stable := r.Route != usagex.RouteOpencodeZen && r.Route != usagex.RouteOpencodeGo
 		for _, s := range r.segs {
-			if s.Billing == "" {
+			if s.Billing == "" || !stable {
 				r.segs = nil
 				r.Connection = ""
 				return
@@ -472,6 +476,13 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			if p := pending[i]; p.CostUSD > 0 {
 				p.Orphan = true
 				p.settleRoute()
+				if len(p.segs) > 1 {
+					for _, sg := range p.segs[1:] {
+						if sg.Connection != p.segs[0].Connection {
+							p.Connection = "" // one row holds several connections' cost
+						}
+					}
+				}
 				p.segs = nil           // an orphan is one keyed row
 				if p.OrphanKey == "" { // no message id: the best stable stand-in there is
 					p.OrphanKey = fmt.Sprintf("ts:%s#%d", p.TS, p.LastIdx)
