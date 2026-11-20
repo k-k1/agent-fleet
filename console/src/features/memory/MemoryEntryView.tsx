@@ -117,7 +117,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setFindings(r?.findings ?? []);
     setFormErr(r ? (r.code === "memory_secret_detected" ? trRef.current("mem.br_secret") : r.text) : "");
   }, []);
-  const io = useMemo(() => memoryEntryIO({ key, scope, project, name }, onRefused), [key, scope, project, name, onRefused]);
+  // A refusal reaches the pane through the subscription below, not through the adapter: the adapter
+  // of memory A can answer after this view was reused for memory B.
+  const io = useMemo(() => memoryEntryIO({ key, scope, project, name }, () => {}), [key, scope, project, name]);
   // A body the editor cannot hold (a CR, a NUL) is read-only here, not a render error.
   // The body is the one read for `key`: after a retarget the first render still holds the old
   // target's body, which must not be registered under the new key.
@@ -490,6 +492,14 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
         {body?.pinned && !fields && <span className="mem-badge">{tr("mem.br_pinned")}</span>}
       </ViewHead>
       <div className="mentry-body">
+        {gone && model?.dirty && (
+          // Offered whether or not the last change could be read: it is the member's only way to
+          // keep unsaved text of a memory that can no longer be edited here. A manual merge in
+          // progress holds the member's own text apart from the buffer.
+          <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(editor.mergeMine ?? model.content)}>
+            {tr("editor.copy_mine")}
+          </Button>
+        )}
         {!fields && formErr && (
           <p className="mem-warn pad" role="alert">
             {formErr}
@@ -570,11 +580,6 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           change ? (
             <div className="mentry-read">
               <p className="muted">{tr("mem.br_forgotten_note")}</p>
-              {model?.dirty && (
-                <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(model.content)}>
-                  {tr("editor.copy_mine")}
-                </Button>
-              )}
               <dl className="mentry-meta">
                 <dt>{tr("mem.md_m_forgotten")}</dt>
                 <dd>{fmtDateTime(change.at, DATETIME_FULL)}</dd>

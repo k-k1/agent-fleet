@@ -143,7 +143,13 @@ export function entryFile(key: string, body: MemoryBody, overwrite = false): Edi
   return { path: key, content, size: content.length, binary: false, truncated: false, editable: true, editabilityReason: null, revision };
 }
 
-const sameKinds = (a: string[], b: string[]) => a.length === b.length && a.every((k, i) => k === b[i]);
+// The Agent drops duplicate kinds on a save, so a hand-written memory read with one still matches.
+const uniq = (a: string[]) => [...new Set(a)];
+const sameKinds = (a: string[], b: string[]) => {
+  const x = uniq(a);
+  const y = uniq(b);
+  return x.length === y.length && x.every((k, i) => k === y[i]);
+};
 const validRevision = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v > 0;
 
 // The Agent omits empty fields on the wire (omitempty), so a memory with no type or body is valid.

@@ -613,13 +613,56 @@ describe("MemoryEntryView", () => {
     expect(host!.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("offers the unsaved text for copying when the memory is forgotten under it", async () => {
+  const copied: string[] = [];
+  const forgetUnder = () => useLayoutStore.getState().setPaneTarget(pane().id, { content: memoryEntryContent({ scope: "project", project, name: "build-cmd" }, true) });
+  const copyButtons = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).filter((b) => b.textContent?.trim() === t("editor.copy_mine"));
+  beforeEach(() => {
+    copied.length = 0;
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (v: string) => void copied.push(v) } });
+  });
+
+  it("offers the unsaved text for copying when the memory is forgotten under it, even if its last change cannot be read", async () => {
     await open();
     await act(async () => button(t("mem.br_edit"))!.click());
     await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "mine");
-    await act(async () => useLayoutStore.getState().setPaneTarget(pane().id, { content: memoryEntryContent({ scope: "project", project, name: "build-cmd" }, true) }));
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-latest") ? { error: { code: "memory_unreadable", message: "no" } } : {}));
+    await act(async () => forgetUnder());
     await flush();
-    expect(button(t("editor.copy_mine"))).toBeTruthy();
+    await act(async () => copyButtons()[0].click());
+    expect(copied[0]).toContain("mine");
+  });
+
+  it("copies the member's own text, not the adopted remote, when a manual merge was started before the memory was forgotten", async () => {
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "mine");
+    apiJSON.mockResolvedValue({ error: { code: "memory_conflict", message: "changed" } });
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { ...memory, revision: 5, body: "theirs" } : {}));
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    await act(async () => button(t("editor.conflict.manual_merge"))!.click());
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-latest") ? latest : {}));
+    await act(async () => forgetUnder());
+    await flush();
+    await act(async () => copyButtons()[0].click());
+    expect(copied[0]).toContain("mine");
+    expect(copied[0]).not.toContain("theirs");
+  });
+
+  it("does not show memory A's refusal on memory B when the view was reused while A's save was in flight", async () => {
+    let answer!: (v: unknown) => void;
+    apiJSON.mockReturnValue(new Promise((r) => (answer = r)));
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "token AKIA…");
+    await act(async () => button(t("mem.br_save"))!.click());
+    // The same pane now shows memory B, whose read fails.
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { error: { code: "memory_unreadable", message: "no" } } : {}));
+    await act(async () => useLayoutStore.getState().setPaneTarget(pane().id, { content: memoryEntryContent({ scope: "project", project, name: "other" }) }));
+    await flush();
+    await act(async () => answer({ error: { code: "memory_secret_detected", message: "secret" }, findings: [] }));
+    await flush();
+    expect(host!.textContent).not.toContain(t("mem.br_secret"));
   });
 
   it("says upfront why a body with a CR is read-only", async () => {
