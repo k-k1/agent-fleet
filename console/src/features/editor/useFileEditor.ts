@@ -220,7 +220,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   }, []);
   const setModel = useCallback((next: FileEditorModel) => setModelOn(slotRef.current, next), [setModelOn]);
 
-  const runConflictRecovery = useCallback((owner: EditorSlot): Promise<void> => {
+  const runConflictRecovery = useCallback((owner: EditorSlot, io: FileEditorIO): Promise<void> => {
     const current = owner.model.current;
     if (!current) return Promise.resolve();
     const path = current.path;
@@ -229,7 +229,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       `conflict:${path}:${baseDiskRevision}`,
       async () => {
         try {
-          const remote = remoteFromFile(await ioRef.current.load(path));
+          const remote = remoteFromFile(await io.load(path));
           if (remote.path !== path) throw new Error("path mismatch");
           return { ok: true as const, remote };
         } catch (error) {
@@ -253,9 +253,9 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       },
     );
   }, [setModelOn]);
-  const recoverConflict = useCallback((): Promise<void> => runConflictRecovery(slotRef.current), [runConflictRecovery]);
+  const recoverConflict = useCallback((): Promise<void> => runConflictRecovery(slotRef.current, ioRef.current), [runConflictRecovery]);
 
-  const runUnknownRecovery = useCallback((owner: EditorSlot, snapshot?: SaveSnapshot): Promise<void> => {
+  const runUnknownRecovery = useCallback((owner: EditorSlot, io: FileEditorIO, snapshot?: SaveSnapshot): Promise<void> => {
     const current = owner.model.current;
     const sent = snapshot || current?.saveSnapshot;
     if (!current || !sent) return Promise.resolve();
@@ -269,7 +269,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       `unknown:${path}:${snapshotKey}`,
       async () => {
         try {
-          const remote = remoteFromFile(await ioRef.current.load(path));
+          const remote = remoteFromFile(await io.load(path));
           if (remote.path !== path) throw new Error("path mismatch");
           return { ok: true as const, remote };
         } catch (error) {
@@ -301,7 +301,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     );
   }, [setModelOn]);
   const recoverUnknown = useCallback(
-    (snapshot?: SaveSnapshot): Promise<void> => runUnknownRecovery(slotRef.current, snapshot),
+    (snapshot?: SaveSnapshot): Promise<void> => runUnknownRecovery(slotRef.current, ioRef.current, snapshot),
     [runUnknownRecovery],
   );
 
@@ -318,9 +318,12 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       return false;
     }
     setModelOn(owner, saving);
+    // The adapter of the memory this save is for: the hook may point at another one by the time a
+    // recovery read is needed, and that adapter would read the wrong thing.
+    const io = ioRef.current;
     const operation = (async () => {
       try {
-        const result = await ioRef.current.save(snapshot.path, snapshot.content, snapshot.baseDiskRevision);
+        const result = await io.save(snapshot.path, snapshot.content, snapshot.baseDiskRevision);
         // The outcome lands on the slot the save started on, whatever the hook points at now.
         if (result.ok) {
           try {
@@ -330,16 +333,16 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
             setModelOn(owner, next);
           } catch (error) {
             setModelOn(owner, saveStateUnknown(owner.model.current!, snapshot, String(error)));
-            await runUnknownRecovery(owner, snapshot);
+            await runUnknownRecovery(owner, io, snapshot);
           }
         } else if (result.status === 409 && result.error.code === "revision_conflict") {
-          await runConflictRecovery(owner);
+          await runConflictRecovery(owner, io);
         } else if (
           result.error.code === "write_state_unknown" ||
           /^http_5\d\d$/.test(result.error.code)
         ) {
           setModelOn(owner, saveStateUnknown(owner.model.current!, snapshot, result.error.message));
-          await runUnknownRecovery(owner, snapshot);
+          await runUnknownRecovery(owner, io, snapshot);
         } else {
           setModelOn(owner, saveFailed(owner.model.current!, errText(result.error)));
         }
@@ -347,7 +350,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
         // A thrown transport failure may have lost a response after the Agent
         // committed the rename. It is never treated as an ordinary failed save.
         setModelOn(owner, saveStateUnknown(owner.model.current!, snapshot, String(error)));
-        await runUnknownRecovery(owner, snapshot);
+        await runUnknownRecovery(owner, io, snapshot);
       }
       return !owner.model.current?.dirty;
     })();

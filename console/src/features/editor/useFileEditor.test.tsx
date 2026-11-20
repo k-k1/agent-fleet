@@ -18,7 +18,7 @@ import {
   type SuggestEditResult,
 } from "./api.ts";
 import { revisionOf } from "./buffer.ts";
-import { clearEditorSlotsForTests, useFileEditor } from "./useFileEditor.ts";
+import { clearEditorSlotsForTests, useFileEditor, type FileEditorIO } from "./useFileEditor.ts";
 
 vi.mock("./api.ts", () => ({
   getEditableFile: vi.fn(),
@@ -53,8 +53,10 @@ let renderer: ReactTestRenderer | null = null;
 // copy of the same one).
 let given: typeof initial = initial;
 
+let givenIo: FileEditorIO | undefined;
+
 function Harness() {
-  editor = useFileEditor("p1", given);
+  editor = useFileEditor("p1", given, givenIo);
   return null;
 }
 
@@ -79,6 +81,7 @@ function editableFile(content: string): EditableFile {
 }
 
 beforeEach(() => {
+  givenIo = undefined;
   given = initial;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.mocked(putFile).mockReset();
@@ -938,5 +941,39 @@ describe("useFileEditor across unmount (tab switch)", () => {
     });
     expect(editor!.model?.phase).not.toBe("saving");
     expect(editor!.model?.dirty).toBe(false);
+  });
+
+  it("recovers a conflict with the adapter the save was sent through, not the one the pane has moved to", async () => {
+    const pendingSave = deferred<PutFileResult>();
+    const remote = editableFile("remote\n");
+    const ioA: FileEditorIO = {
+      load: vi.fn(async () => ({ ...remote, path: initial.path })),
+      save: vi.fn(() => pendingSave.promise),
+    };
+    givenIo = ioA;
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    const aGiven = given;
+    givenIo = { load: vi.fn(async () => { throw new Error("wrong adapter"); }), save: vi.fn() };
+    given = { path: "repos/b.txt", content: "other\n", revision: revisionOf("other\n") };
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    await act(async () => {
+      pendingSave.resolve({ ok: false, status: 409, error: { code: "revision_conflict", message: "x" } });
+      await pendingSave.promise;
+    });
+    givenIo = ioA;
+    given = aGiven;
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    expect(editor!.model?.phase).toBe("conflict");
+    expect(ioA.load).toHaveBeenCalled();
+    givenIo = undefined;
   });
 });

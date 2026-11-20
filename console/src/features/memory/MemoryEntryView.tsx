@@ -156,6 +156,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const editor = useFileEditor(paneId, file, io);
   // A buffer is shown only for the memory this pane is on.
   const model = editor.model?.path === key ? editor.model : null;
+  // The memory this pane is on now, for a callback that outlives the render it was made in.
+  const keyRef = useRef(key);
+  keyRef.current = key;
   const phase = model?.phase;
   const alert = isEditorAlert(phase);
   // A new memory is stored as sent: text typed while its save is out, or its outcome is unknown,
@@ -362,10 +365,12 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     const savedName = isNew ? (fields?.name ?? "").trim() : name;
     setFormErr("");
     setFindings([]);
+    const savedKey = key;
     const ok = await editor.save();
     if (!ok) return;
     toast(tr("mem.br_saved", { name: savedName }), { kind: "success" });
-    setEditing(false);
+    // The pane may be on another memory by now; its edit form is not this save's to close.
+    if (keyRef.current === savedKey) setEditing(false);
   };
 
   const cancel = async () => {
@@ -376,13 +381,16 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
       (phase === "save_state_unknown" && (!model?.unknownObservation || model.unknownObservation.kind === "unavailable")) ||
       (!isNew && phase === "conflict_remote_unavailable")
     ) {
+      const askedKey = key;
+      const conflict = phase === "conflict_remote_unavailable";
       const sure = await askConfirm({
-        title: tr("mem.br_discard_unconfirmed_title"),
-        body: <p>{tr("mem.br_discard_unconfirmed_body", { name: isNew ? (fields?.name ?? "").trim() : name })}</p>,
+        title: tr(conflict ? "mem.br_discard_conflict_title" : "mem.br_discard_unconfirmed_title"),
+        body: <p>{tr(conflict ? "mem.br_discard_conflict_body" : "mem.br_discard_unconfirmed_body", { name: isNew ? (fields?.name ?? "").trim() : name })}</p>,
         confirmLabel: tr("mem.br_discard_unconfirmed"),
         danger: true,
       });
-      if (!sure) return;
+      // The pane may have moved to another memory while the question was open: the answer was for this one.
+      if (!sure || keyRef.current !== askedKey) return;
     }
     if (await editor.discard()) {
       clearPending(key);
