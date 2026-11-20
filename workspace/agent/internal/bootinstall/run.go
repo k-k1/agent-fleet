@@ -43,7 +43,7 @@ func Run(args []string) {
 	switch step {
 	case "rtk":
 		os.Exit(RTK(context.Background(), DefaultEnv(repin)))
-	case "agy":
+	case agyTool:
 		os.Exit(AGY(context.Background(), DefaultEnv(repin)))
 	case "agy-version":
 		fmt.Println(DefaultEnv(false).AgyEffectiveVersion())

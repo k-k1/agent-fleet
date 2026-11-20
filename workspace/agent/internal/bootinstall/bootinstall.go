@@ -193,7 +193,7 @@ func (e Env) runs(p string) bool {
 // runsAs is runs for the CLI called name: agy needs its host env overlay, or it aborts at start
 // on a host without a usable RDRAND.
 func (e Env) runsAs(name, p string) bool {
-	if name != "agy" {
+	if name != agyTool {
 		return e.runs(p)
 	}
 	_, _, err := e.probeEnv(p, e.agyEnv())

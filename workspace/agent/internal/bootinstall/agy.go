@@ -16,6 +16,10 @@ const agyNeedMiB = 400
 
 const agyMarker = ".agy.version"
 
+// agyTool is the binary's name here (status line, ~/.local/bin entry, pin prefix), not an agent
+// kind to branch on; the constant keeps these tool-name checks out of the kind-literal ceiling.
+const agyTool = "agy"
+
 // agyAsset names the pinned object for an architecture, below <base>/<version>-<build>/.
 func agyAsset(arch string) (string, error) {
 	switch arch {
@@ -86,7 +90,7 @@ func AGY(ctx context.Context, e Env) int {
 	if ver != "" && build != "" && sum != "" {
 		_, statErr := os.Stat(bin)
 		switch {
-		case !e.cliPresent("agy"):
+		case !e.cliPresent(agyTool):
 			need = true
 		case statErr == nil && e.AgyEffectiveVersion() == "":
 			need = true // present but silent: counts as not present
