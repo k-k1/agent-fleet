@@ -121,11 +121,13 @@ export function CodexBehavior({
       <CardSettings>
         <LaunchDefaults kind="codex" />
         <ThinkingRow kind="codex" />
-        {/* One switch shared with the Claude card (uiprefs.rateLimitAutoResume): what it
-            governs is one behaviour of the workspace, and it is shown here because a Codex
-            user has no reason to open the Claude card to find it (docs/log/47 §4-12). */}
         <SettingRow label={tr("agents.rate_limit_resume")}>
-          <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
+          <OnOff value={s.rateLimitAutoResume} onChange={(v) => {
+            if (s.claudeLimitResumeMode === "inherit") {
+              setSetting("claudeLimitResumeMode", s.rateLimitAutoResume ? "af" : "off");
+            }
+            setSetting("rateLimitAutoResume", v);
+          }} />
         </SettingRow>
         <p className="ps-note">{tr("agents.note_codex_rate_limit_resume")}</p>
         {codex && (

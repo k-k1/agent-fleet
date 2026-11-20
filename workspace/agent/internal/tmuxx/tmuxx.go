@@ -767,10 +767,20 @@ var rateLimitDefaultRe = regexp.MustCompile(`(?m)^\s*\x{276F} 1\.\s+Stop and wai
 
 // ClaudeUsageLimitWait uses the live footer because the transcript banner survives cancellation.
 func ClaudeUsageLimitWait(frame string) bool {
-	return strings.Contains(frame, "Usage limit reached") &&
-		(strings.Contains(frame, "Continuing automatically at") || strings.Contains(frame, "Continuing shortly")) &&
-		strings.Contains(frame, "Esc to cancel")
+	lines := strings.Split(strings.TrimSpace(frame), "\n")
+	for i := max(0, len(lines)-6); i < len(lines); i++ {
+		if !strings.HasPrefix(strings.TrimSpace(lines[i]), "Usage limit reached ·") {
+			continue
+		}
+		footer := strings.Join(strings.Fields(strings.Join(lines[i:], " ")), " ")
+		if nativeLimitWaitFooter.MatchString(footer) {
+			return true
+		}
+	}
+	return false
 }
+
+var nativeLimitWaitFooter = regexp.MustCompile(`^Usage limit reached · .* (?:Continuing automatically (?:at .+?|when it resets)|Continuing shortly) · Esc to cancel(?:$| · )`)
 
 // DismissRateLimitModal confirms the usage-limit menu's DEFAULT option ("1. Stop and
 // wait for limit to reset") and reports whether the menu is gone afterwards.

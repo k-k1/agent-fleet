@@ -360,6 +360,7 @@ func rebookSpentRateLimitBooking(m session.Meta, st rateLimitState, now time.Tim
 	_ = cancelRateLimitSchedule(name, st.ScheduleID)
 	st.ScheduleID, st.FiredDuringMove = "", ""
 	if !rateLimitBookingEnabled(m) || claudeOwnsLimitWait(m) {
+		st.ResumeAt = ""
 		_ = RateLimitStates.Write(name, st)
 		return
 	}

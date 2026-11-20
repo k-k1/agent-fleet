@@ -366,9 +366,10 @@ func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu b
 		return
 	}
 	if NormalizeKind(m.Kind) == "claude" && (!rateLimitBookingEnabled(m) || claudeOwnsLimitWait(m)) && st.ScheduleID != "" {
-		cancelRateLimitSchedule(m.Name, st.ScheduleID)
-		st.ScheduleID, st.ResumeAt, st.FiredDuringMove = "", "", ""
-		st.ScheduleTries = 0
+		if cancelRateLimitSchedule(m.Name, st.ScheduleID) == nil {
+			st.ScheduleID, st.ResumeAt, st.FiredDuringMove = "", "", ""
+			st.ScheduleTries = 0
+		}
 	}
 	st = scheduleRateLimitResume(m, st, now)
 	st = rateLimitMoveEarly(m, st, now)

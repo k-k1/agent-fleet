@@ -151,14 +151,14 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	if state == "idle" && authBlockedFor(m) {
 		return agents.StateAuth
 	}
-	if usageLimits && pane.UsageLimitWait {
-		return "working"
-	}
 	if usageLimits && pane.RateLimitMenu {
 		if heal && state != "idle" {
 			healIdle(t, sid)
 		}
 		return agents.StateBlocked
+	}
+	if usageLimits && pane.UsageLimitWait {
+		return "working"
 	}
 	// A turn rejected or failed on a usage limit (codex Managed, muse) leaves the session
 	// sitting at idle, but re-sending will hit the same limit. Surface it as "waiting for the

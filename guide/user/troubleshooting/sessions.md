@@ -68,7 +68,7 @@ A cut-off that time will cure is resumed from where it stopped by these settings
 | Setting | What it resumes |
 |---|---|
 | **"Auto-resume a cut-off turn"** in ⚙ Settings → Agents | A Claude turn cut off by a dropped connection, a temporary rate limit or a timeout. Up to twice in a row |
-| **"Auto-resume after a usage limit resets"** in ⚙ Settings → Agents | Claude and Codex (Managed) stopped at a usage limit. Once, when the limit resets |
+| **"Auto-resume after a usage limit resets"** in ⚙ Settings → Agents | [Claude](../agents/claude.md) offers AF scheduling, Claude's own continuation, or manual resume. Codex (Managed) can schedule one resume at the reset |
 | **"Auto-resume interrupted turns"** in ⚙ Settings → Assistant | A turn of a session the assistant directed. Up to twice in a row |
 
 A cut-off caused by the request itself, an exhausted balance or an over-long prompt fails again if repeated, so nothing resumes it.

@@ -178,6 +178,11 @@ func progressOf(m session.Meta, state string, p progressProbes) (time.Time, bool
 
 // fillProgress sets the wire fields from progressOf.
 func fillProgress(s *session.Session, m session.Meta, p progressProbes) {
+	if s.State == "working" && claudeOwnsLimitWait(m) {
+		// A live wait can be static for hours, but stopping it loses Claude's continuation.
+		s.ProgressAt = p.now().Format(time.RFC3339)
+		return
+	}
 	at, ok := progressOf(m, s.State, p)
 	if !ok {
 		return
