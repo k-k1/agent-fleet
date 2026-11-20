@@ -427,9 +427,12 @@ type BackgroundReporter interface {
 // sometimes. FinishedTurnMark identifies the newest finished turn in the kind's own state
 // source; the nudge fires only while it has not moved since the background work began, so a
 // turn the CLI did start (and finish) on its own cancels it. ok=false when the source cannot
-// say, which never nudges. It must not block: it runs on the watch's tick.
+// say, which never nudges. InputIdle reports that the pane sits at the idle prompt (no turn
+// running on screen), the last guard before typing into it: the state source can lag a turn
+// that has just begun. Neither may block: they run on the watch's tick.
 type BackgroundWaker interface {
 	FinishedTurnMark(m session.Meta) (mark string, ok bool)
+	InputIdle(m session.Meta) bool
 }
 
 // ProgressReporter is an optional Agent capability: the mtime of the file or store the kind's

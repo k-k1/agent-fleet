@@ -15,12 +15,20 @@ package sessionx
 //     the persisted status).
 //   - Never into a session waiting on a person, one with a peer message queued or in flight (that
 //     message wakes it anyway), one armed to stop after its turn (the injection would cancel the
-//     arm), one still being handed its first prompt, or one stopped or archived.
+//     arm), one still being handed its first prompt, one being retired (ADR 0137: no automatic
+//     input once RetiredAt is set), or one stopped or archived; never while the pane shows a
+//     running turn (BackgroundWaker.InputIdle).
 //   - At most once per finished turn, recorded on the meta (Meta.BackgroundNudge) so an Agent
-//     restart cannot repeat it, and at most backgroundWakeMaxPerHour per session, so a model that
-//     answers every nudge by backgrounding something it never collects cannot loop.
-//   - A period is "busy seen, then quiet for the whole grace". Any busy reading inside the grace
-//     restarts it, so a flapping BackgroundBusy (a gap between two commands) does not fire.
+//     restart cannot repeat it, and at most backgroundWakeMaxPerHour per session in any rolling
+//     hour, so a model that answers every nudge by backgrounding something it never collects
+//     cannot loop.
+//   - A period is "busy seen, then idle with no background work for the whole grace". A busy
+//     reading, a non-idle state or a not-ready pane inside the grace restarts it, so a flapping
+//     BackgroundBusy (a gap between two commands) or a brief idle between a person's answer and
+//     the turn it starts does not fire. The mark and LastTurnEndAt are re-read on every busy tick,
+//     so a later turn that backgrounds work again starts a period of its own.
+//   - Free of the turn-end side effects: it reads WireLive and the status store, never
+//     DriveState, which would settle and notify the interim turn end (turn_end_poll.go).
 //
 // Its own loop for the same reason stalled_tree.go has one: it must work at 3 a.m. with no
 // Console open. A period the Agent did not see begin (it restarted mid-period) is not nudged:
@@ -36,11 +44,11 @@ import (
 )
 
 const (
-	// backgroundWakeGrace is how long the background work must have been over, with the session
-	// idle and no turn started, before the nudge. agy starts its own follow-up turn within a few
-	// seconds of a completion when it does start one (docs/log/32, background commands).
+	// backgroundWakeGrace is how long the session must have sat idle with its background work
+	// over, and no turn started, before the nudge. agy starts its own follow-up turn within a
+	// few seconds of a completion when it does start one (docs/log/32, background commands).
 	backgroundWakeGrace = 60 * time.Second
-	// backgroundWakeMaxPerHour bounds nudges per session in a rolling hour.
+	// backgroundWakeMaxPerHour bounds nudges per session in any rolling hour.
 	backgroundWakeMaxPerHour = 3
 	// backgroundWakeRetry spaces delivery retries, and backgroundWakeAttempts bounds them.
 	backgroundWakeRetry    = 2 * time.Minute
@@ -54,33 +62,65 @@ const (
 // backgroundWakeInterval is the loop's tick; a variable so a test could shorten it.
 var backgroundWakeInterval = 15 * time.Second
 
+// bgWakeLive is one tick's reading of a session.
+type bgWakeLive struct {
+	state   string
+	busy    bool
+	turnEnd string
+}
+
 // Side effects, replaceable by tests.
 var (
 	backgroundWakeAlive = SessionAlive
-	backgroundWakeWire  = wireSession
-	backgroundWakeReady = func(m session.Meta) bool { ready, _ := peerDeliveryReady(m); return ready }
-	backgroundWakeMark  = func(m session.Meta) (string, bool) {
+	// backgroundWakeProbe is the cheap first look (a /proc walk, no DB) that keeps sessions with
+	// nothing running out of the full read.
+	backgroundWakeProbe = func(m session.Meta) bool {
+		br, ok := AgentOf(m.Kind).(agents.BackgroundReporter)
+		if !ok {
+			return false
+		}
+		busy, _ := br.BackgroundWork(m)
+		return busy
+	}
+	// backgroundWakeRead is the kind's own WireLive plus the recorded turn end: the three fields
+	// this watch uses, without the rest of wireSession (overview facts, git, images, the list's
+	// own turn-end recording).
+	backgroundWakeRead = backgroundWakeReadDefault
+	backgroundWakeMark = func(m session.Meta) (string, bool) {
 		w, ok := AgentOf(m.Kind).(agents.BackgroundWaker)
 		if !ok {
 			return "", false
 		}
 		return w.FinishedTurnMark(m)
 	}
+	// backgroundWakeReady: nothing a person must answer, and the pane at its idle prompt.
+	backgroundWakeReady  = backgroundWakeReadyDefault
 	backgroundWakeQueued = func(name string) bool { return peersInFlight(map[string]bool{name: true}) }
 	backgroundWakeInject = injectSessionPrompt
 	// backgroundWakeOptedIn reports whether the kind takes the nudge at all.
-	backgroundWakeOptedIn = func(kind string) bool {
-		_, ok := AgentOf(kind).(agents.BackgroundWaker)
-		return ok
-	}
+	backgroundWakeOptedIn = backgroundWakeOptedInDefault
 )
+
+func backgroundWakeReadDefault(m session.Meta) bgWakeLive {
+	li := AgentOf(m.Kind).WireLive(m, true)
+	return bgWakeLive{state: li.State, busy: li.BackgroundBusy, turnEnd: lastTurnEndAt(m)}
+}
+
+func backgroundWakeReadyDefault(m session.Meta) bool {
+	w, ok := AgentOf(m.Kind).(agents.BackgroundWaker)
+	return ok && peerQueueBlocker(m) == "" && w.InputIdle(m)
+}
+
+func backgroundWakeOptedInDefault(kind string) bool {
+	_, ok := AgentOf(kind).(agents.BackgroundWaker)
+	return ok
+}
 
 // bgWakePeriod is one background period of one session, as this process saw it.
 type bgWakePeriod struct {
-	mark    string // the finished-turn mark when the work was first seen; "" = cannot nudge
+	mark    string // the finished-turn mark while the work ran; "" = cannot nudge
 	turnEnd string // LastTurnEndAt then
-	// quietSince is the first reading of no background work after the busy ones; zero while
-	// busy.
+	// quietSince is the first of the unbroken idle, no-background readings; zero otherwise.
 	quietSince time.Time
 	done       bool // nudged, cancelled or given up: wait for the next period
 	attempts   int
@@ -103,44 +143,66 @@ func StartBackgroundWakeWatch() {
 	}()
 }
 
+func bgWakeTracked(name string) bool {
+	bgWakeMu.Lock()
+	defer bgWakeMu.Unlock()
+	_, ok := bgWakePeriods[name]
+	return ok
+}
+
 // backgroundWakeTick is one sweep over the live sessions of the opted-in kinds.
 func backgroundWakeTick(now time.Time) {
 	seen := map[string]bool{}
 	for _, m := range session.ListMetas() {
-		if m.Archived || !backgroundWakeOptedIn(m.Kind) || !backgroundWakeAlive(m) {
+		if m.Archived || isRetired(m) || !backgroundWakeOptedIn(m.Kind) || !backgroundWakeAlive(m) {
 			continue
 		}
 		seen[m.Name] = true
-		backgroundWakeObserve(m, backgroundWakeWire(m, true), now)
+		if !bgWakeTracked(m.Name) && !backgroundWakeProbe(m) {
+			continue
+		}
+		backgroundWakeObserve(m, backgroundWakeRead(m), now)
 	}
 	bgWakeMu.Lock()
 	for name := range bgWakePeriods {
 		if !seen[name] {
-			delete(bgWakePeriods, name) // stopped, archived or gone: a resume starts afresh
+			delete(bgWakePeriods, name) // stopped, archived, retired or gone: a resume starts afresh
 		}
 	}
 	bgWakeMu.Unlock()
 }
 
 // backgroundWakeObserve advances one session's period and nudges when it is due.
-func backgroundWakeObserve(m session.Meta, s session.Session, now time.Time) {
-	bgWakeMu.Lock()
-	p := bgWakePeriods[m.Name]
-	if s.BackgroundBusy {
-		if p == nil || p.done {
-			mark, ok := backgroundWakeMark(m)
-			if !ok {
-				mark = ""
-			}
-			bgWakePeriods[m.Name] = &bgWakePeriod{mark: mark, turnEnd: s.LastTurnEndAt}
+func backgroundWakeObserve(m session.Meta, s bgWakeLive, now time.Time) {
+	if s.busy {
+		// Read outside the lock: it opens the conversation DB.
+		mark, ok := backgroundWakeMark(m)
+		if !ok {
+			mark = ""
+		}
+		bgWakeMu.Lock()
+		p := bgWakePeriods[m.Name]
+		if p == nil || p.done || p.mark == "" || mark != p.mark || s.turnEnd != p.turnEnd {
+			// A new period, or the one we track turned out to belong to a later turn (agy ran a
+			// turn of its own and backgrounded work again), or its mark was not written yet when
+			// the work was first seen.
+			bgWakePeriods[m.Name] = &bgWakePeriod{mark: mark, turnEnd: s.turnEnd}
 		} else {
 			p.quietSince = time.Time{}
 		}
 		bgWakeMu.Unlock()
 		return
 	}
+	bgWakeMu.Lock()
+	p := bgWakePeriods[m.Name]
 	if p == nil || p.done {
 		delete(bgWakePeriods, m.Name)
+		bgWakeMu.Unlock()
+		return
+	}
+	if s.state != "idle" {
+		// A turn of agy's own, or a person wait: the grace counts only unbroken idle.
+		p.quietSince = time.Time{}
 		bgWakeMu.Unlock()
 		return
 	}
@@ -153,12 +215,15 @@ func backgroundWakeObserve(m session.Meta, s session.Session, now time.Time) {
 	if !due {
 		return
 	}
-	verdict := backgroundWakeVerdict(m, s, period, now)
-	switch verdict {
-	case bgWakeWait:
-		return
+	switch verdict := backgroundWakeVerdict(m, s, period, now); verdict {
 	case bgWakeSend:
 		backgroundWakeSend(m, period, now)
+	case bgWakeWait:
+		bgWakeMu.Lock()
+		if cur := bgWakePeriods[m.Name]; cur != nil {
+			cur.quietSince = time.Time{}
+		}
+		bgWakeMu.Unlock()
 	default:
 		if verdict != bgWakeTurnStarted {
 			log.Printf("background-wake: %s: not nudging (%s)", m.Name, verdict)
@@ -173,18 +238,21 @@ const (
 	bgWakeTurnStarted = "a turn followed the background work"
 )
 
-// backgroundWakeVerdict is the last look before a send, on a fresh meta. It answers
-// bgWakeWait only for states that can still end in a nudge (a turn still running, or a reading
-// that is not idle yet); everything else closes the period.
-func backgroundWakeVerdict(m session.Meta, s session.Session, p bgWakePeriod, now time.Time) string {
+// backgroundWakeVerdict is the last look before a send, on a fresh meta. bgWakeWait (restart
+// the grace) only for a pane that cannot take input yet; everything else that is not a send
+// closes the period.
+func backgroundWakeVerdict(m session.Meta, s bgWakeLive, p bgWakePeriod, now time.Time) string {
 	fresh, ok := session.ReadMeta(m.Name)
 	if !ok || fresh.Archived || !backgroundWakeAlive(fresh) {
 		return "stopped or archived"
 	}
-	if p.mark == "" {
-		return "no finished-turn mark when the work began"
+	if isRetired(fresh) {
+		return "retired"
 	}
-	if s.LastTurnEndAt != p.turnEnd {
+	if p.mark == "" {
+		return "no finished-turn mark while the work ran"
+	}
+	if s.turnEnd != p.turnEnd {
 		return bgWakeTurnStarted
 	}
 	mark, ok := backgroundWakeMark(fresh)
@@ -194,18 +262,13 @@ func backgroundWakeVerdict(m session.Meta, s session.Session, p bgWakePeriod, no
 	if mark != p.mark {
 		return bgWakeTurnStarted
 	}
-	if s.State != "idle" {
-		// Working: agy started its own turn, which moves the mark when it ends. A person wait
-		// (question, plan, permission, limit) is not ours to interrupt; it ends in a turn too.
-		return bgWakeWait
-	}
 	if fresh.BackgroundNudge != nil && fresh.BackgroundNudge.Mark == p.mark {
 		return "already nudged for this turn"
 	}
-	if backgroundWakeCapped(fresh.BackgroundNudge, now) {
+	if backgroundWakeCount(fresh.BackgroundNudge, now) >= backgroundWakeMaxPerHour {
 		return "hourly cap reached"
 	}
-	if fresh.StopAfterTurnAt != "" {
+	if _, armed := session.StopArmedAt(fresh, now); armed {
 		return "armed to stop after its turn"
 	}
 	if fresh.InitialPromptState == session.InitialPromptPending {
@@ -220,21 +283,22 @@ func backgroundWakeVerdict(m session.Meta, s session.Session, p bgWakePeriod, no
 	return bgWakeSend
 }
 
-// backgroundWakeCapped reports whether the rolling hour already holds the maximum.
-func backgroundWakeCapped(last *session.BackgroundNudge, now time.Time) bool {
-	return backgroundWakeCount(last, now) >= backgroundWakeMaxPerHour
+// backgroundWakeRecent is the record's send times that fall in the hour before now.
+func backgroundWakeRecent(last *session.BackgroundNudge, now time.Time) []string {
+	if last == nil {
+		return nil
+	}
+	var out []string
+	for _, v := range last.Recent {
+		if at, err := time.Parse(time.RFC3339, v); err == nil && now.Sub(at) < time.Hour {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
-// backgroundWakeCount is how many nudges the hour before now holds, from the last record.
 func backgroundWakeCount(last *session.BackgroundNudge, now time.Time) int {
-	if last == nil {
-		return 0
-	}
-	at, err := time.Parse(time.RFC3339, last.At)
-	if err != nil || now.Sub(at) >= time.Hour {
-		return 0
-	}
-	return last.Count
+	return len(backgroundWakeRecent(last, now))
 }
 
 func backgroundWakeSend(m session.Meta, p bgWakePeriod, now time.Time) {
@@ -255,13 +319,14 @@ func backgroundWakeSend(m session.Meta, p bgWakePeriod, now time.Time) {
 	}
 	backgroundWakeDone(m.Name)
 	UpdateSessionMeta(m.Name, func(cur *session.Meta) bool {
+		at := now.UTC().Format(time.RFC3339)
 		cur.BackgroundNudge = &session.BackgroundNudge{
-			Mark: p.mark, At: now.UTC().Format(time.RFC3339), Count: backgroundWakeCount(cur.BackgroundNudge, now) + 1,
+			Mark: p.mark, At: at, Recent: append(backgroundWakeRecent(cur.BackgroundNudge, now), at),
 		}
 		return true
 	})
 	recordFleetGraphInstruct(m.Name, TurnSourceNotice, "", "", backgroundWakeNotice)
-	log.Printf("background-wake: nudged %s (background work over for %s, no turn followed)", m.Name, backgroundWakeGrace)
+	log.Printf("background-wake: nudged %s (idle %s after its background work, no turn followed)", m.Name, backgroundWakeGrace)
 }
 
 func backgroundWakeDone(name string) {

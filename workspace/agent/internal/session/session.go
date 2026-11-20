@@ -1153,8 +1153,9 @@ type BackgroundNudge struct {
 	// Mark is the kind's finished-turn mark the nudge was sent for; the same mark is never
 	// nudged again.
 	Mark string `json:"mark"`
-	// At (RFC3339) is when it was sent, and Count how many were sent in the hour that ended
-	// at At: the loop guard.
-	At    string `json:"at"`
-	Count int    `json:"count"`
+	// At (RFC3339) is when it was sent.
+	At string `json:"at"`
+	// Recent (RFC3339) holds the send times of the last hour, this one included: the loop
+	// guard counts them over a rolling hour.
+	Recent []string `json:"recent,omitempty"`
 }

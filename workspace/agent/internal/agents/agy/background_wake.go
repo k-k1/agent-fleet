@@ -29,3 +29,8 @@ func finishedTurnMark(r lastStepRow) (string, bool) {
 	}
 	return r.conv + ":" + strconv.Itoa(r.turnEnd), true
 }
+
+// InputIdle is the idle composer footer, unrepainted for the settle window: "esc to cancel"
+// stays on screen for the whole of a turn, so a turn agy has just begun is never read as idle
+// even before its DB rows land (stale.go).
+func (agentImpl) InputIdle(m session.Meta) bool { return paneIdleSettled(m.Name) }
