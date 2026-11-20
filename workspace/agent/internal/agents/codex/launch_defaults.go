@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -29,14 +28,14 @@ func prepareFreshLaunch() error {
 
 func clearSavedLaunchDefaults(path string) error {
 	// Preserve the workspace's config symlink when replacing the file atomically.
-	target, err := filepath.EvalSymlinks(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+	target, err := paths.ResolveFileWritePath(path)
 	if err != nil {
 		return err
 	}
 	info, err := os.Stat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -54,7 +53,7 @@ func clearSavedLaunchDefaults(path string) error {
 	// A Codex process can save independently of the Agent Fleet lock. Check for
 	// that as close to rename as possible, though the two ops cannot be atomic.
 	return agents.WriteFileAtomicChecked(target, after, info.Mode().Perm(), func() error {
-		currentTarget, err := filepath.EvalSymlinks(path)
+		currentTarget, err := paths.ResolveFileWritePath(path)
 		if err != nil {
 			return err
 		}

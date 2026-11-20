@@ -163,7 +163,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 }
 
 // resume is Resume without the held peer messages.
-func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
+func (d managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindCodex {
 		return nil, errors.New("codex driver は codex セッション専用です")
 	}
@@ -174,6 +174,11 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if err != nil {
 		return nil, err
 	}
+	return d.resumeThread(m, cl, gen)
+}
+
+func (managedDriver) resumeThread(m session.Meta, cl *appClient, gen int) (agents.ThreadHandle, error) {
+	var err error
 	slotSid := session.UUID(m.Dir, m.Name) // identity: the working copy, never the subdir
 	cwd := m.CWD()                         // where the thread runs (Dir, or a chosen subdir)
 	handlesMu.Lock()

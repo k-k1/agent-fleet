@@ -243,6 +243,28 @@ func TestMaterializeCodexRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMaterializeCodexWritesThroughDanglingLink(t *testing.T) {
+	home := withTempCLIHomes(t)
+	path := codexConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := "../settings/config.toml"
+	if err := os.Symlink(link, path); err != nil {
+		t.Fatal(err)
+	}
+	defs := []ServerDef{sessionDef(ServerDef{Name: "wiki", Origin: OriginUser, Transport: TransportStdio, Command: "wiki-mcp"})}
+	if _, _, changed, err := materializeCodex(defs, nil); err != nil || !changed {
+		t.Fatalf("materializeCodex changed=%v, err=%v", changed, err)
+	}
+	if got, err := os.Readlink(path); err != nil || got != link {
+		t.Fatalf("config link = %q, %v; want %q", got, err, link)
+	}
+	if got := readFile(t, filepath.Join(home, "settings", "config.toml")); !strings.Contains(got, "[mcp_servers.wiki]") {
+		t.Fatalf("config target = %q; want wiki MCP table", got)
+	}
+}
+
 // Codex gives stdio MCP children a default-deny environment. The built-in af
 // server needs these names forwarded or af_report/Chromium calls reach the Agent REST
 // without the bearer token and get 401.

@@ -92,13 +92,7 @@ var CodexConfigMu sync.Mutex
 // CodexConfigWritePath resolves existing links before an atomic rename. A
 // dangling config symlink must remain a link even when its target is missing.
 func CodexConfigWritePath() (string, error) {
-	path := filepath.Join(CodexHome(), "config.toml")
-	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
-		return path, nil
-	} else if err != nil {
-		return "", err
-	}
-	return filepath.EvalSymlinks(path)
+	return ResolveFileWritePath(filepath.Join(CodexHome(), "config.toml"))
 }
 
 // OpencodeConfigDir is opencode's global config root (opencode.jsonc, plugin/,

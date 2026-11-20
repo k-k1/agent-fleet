@@ -124,16 +124,14 @@ func TestManagedClearsDefaultsOnlyWhenStartingAThread(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	t.Setenv("AF_CODEX_APP_SERVER_DISABLE", "")
 	path := codexConfigPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	previousPref, previousSupervisor := RememberLaunchDefaults, supervisor
-	t.Cleanup(func() { RememberLaunchDefaults, supervisor = previousPref, previousSupervisor })
+	previousPref := RememberLaunchDefaults
+	t.Cleanup(func() { RememberLaunchDefaults = previousPref })
 	RememberLaunchDefaults = func() bool { return false }
 	mock, client := newMockCodexServer(t)
-	supervisor = &Supervisor{up: true, client: client, gen: 1}
 	const saved = "model = 'saved-model'\nmodel_reasoning_effort = 'high'\n"
 	for _, tc := range []struct {
 		name, first, last string
@@ -177,7 +175,7 @@ func TestManagedClearsDefaultsOnlyWhenStartingAThread(t *testing.T) {
 				return map[string]any{"thread": map[string]string{"id": "thread-" + tc.name}}, ""
 			}
 			mock.mu.Unlock()
-			if _, err := (managedDriver{}).resume(m); err != nil {
+			if _, err := (managedDriver{}).resumeThread(m, client, 1); err != nil {
 				t.Fatal(err)
 			}
 			wantRequests := []string{tc.first}
