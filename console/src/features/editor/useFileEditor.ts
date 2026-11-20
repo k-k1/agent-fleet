@@ -398,6 +398,10 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       current = modelRef.current;
       if (!current || current.path !== path) return false;
 
+      // Text typed while the saves and reads above were out is newer than the decision to drop
+      // the buffer: it stays, and the guard / button answers "not discarded".
+      if (current.bufferGeneration !== requested.bufferGeneration || current.bufferRevision !== requested.bufferRevision) return false;
+
       mergeMineRef.current = null;
       setModel(discardToBase(current, !!ioRef.current.discardUnconfirmed));
       return true;

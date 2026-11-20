@@ -398,7 +398,14 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
       // A remote text adopted during a conflict is newer than the body this pane last read.
       bump();
       // A new memory that is not saved has nothing to show: its pane closes.
-      if (isNew) useLayoutStore.getState().closePane(paneId);
+      // The view may be gone and the pane retargeted to another memory while the discard ran: close
+      // only a pane that still holds this new memory, in the same workspace.
+      if (isNew) {
+        const c = allViews(useLayoutStore.getState().layout).find((p) => p.id === paneId)?.content;
+        if (c && c.kind === "memoryEntry" && c.name === "" && c.scope === scope && c.project === project && useTenantStore.getState().tenant === tenant) {
+          useLayoutStore.getState().closePane(paneId);
+        }
+      }
     }
   };
 

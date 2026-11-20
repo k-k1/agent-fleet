@@ -976,4 +976,29 @@ describe("useFileEditor across unmount (tab switch)", () => {
     expect(ioA.load).toHaveBeenCalled();
     givenIo = undefined;
   });
+
+  it("keeps text typed while a discard waited on a save, and answers not discarded", async () => {
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    let result: boolean | null = null;
+    await act(async () => {
+      void editor!.discard().then((v) => { result = v; });
+      await Promise.resolve();
+    });
+    await act(async () => editor!.edit("mine and more\n"));
+    await act(async () => {
+      pendingPut.resolve({ ok: false, status: 422, error: { code: "refused", message: "no" } });
+      await pendingPut.promise;
+      await Promise.resolve();
+    });
+    expect(result).toBe(false);
+    expect(editor!.model?.content).toBe("mine and more\n");
+    expect(editor!.model?.dirty).toBe(true);
+  });
 });
