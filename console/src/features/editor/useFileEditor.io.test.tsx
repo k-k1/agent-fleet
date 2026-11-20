@@ -96,6 +96,40 @@ describe("useFileEditor with an I/O adapter", () => {
     expect(getEditableFile).not.toHaveBeenCalled();
   });
 
+  it("treats a thrown save as unknown and re-reads through the adapter", async () => {
+    const mine = "mine\n";
+    const save = vi.fn(async (): Promise<PutFileResult> => {
+      throw new Error("lost");
+    });
+    const load = vi.fn(async () => file(mine, revisionOf(mine)));
+    io = { load, save };
+    const current = await mount();
+    await act(async () => current.edit(mine));
+    await act(async () => {
+      await editor!.save();
+    });
+    expect(load).toHaveBeenCalledWith(key);
+    expect(editor!.model?.phase).toBe("save_state_unknown");
+    expect(editor!.model?.unknownObservation?.kind).not.toBe("unavailable");
+  });
+
+  it("keeps a confirmed failure dirty without re-reading", async () => {
+    const save = vi.fn(async (): Promise<PutFileResult> => ({
+      ok: false,
+      status: 400,
+      error: { code: "bad", message: "no" },
+    }));
+    const load = vi.fn();
+    io = { load, save };
+    const current = await mount();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      await editor!.save();
+    });
+    expect(load).not.toHaveBeenCalled();
+    expect(editor!.model?.dirty).toBe(true);
+  });
+
   it("defaults to the file API", async () => {
     vi.mocked(putFile).mockResolvedValue({ ok: true, path: "repos/a.txt", size: 5, revision: revisionOf("x\n") });
     function Default() {

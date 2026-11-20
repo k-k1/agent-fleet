@@ -48,9 +48,17 @@ import {
 import { errText } from "../../core/api/client.ts";
 
 /** Where the buffer's text comes from and goes to. `path` is the pane's identity for the thing
- *  edited (a file path for the default adapter, any stable key for another), and `revision` is
- *  whatever the store compares on a write: a save on a stale one must answer 409 with code
- *  `revision_conflict`, which is what starts the conflict flow. */
+ *  edited (a file path for the default adapter, any stable key for another).
+ *
+ *  Contract the model enforces, which the adapter must meet:
+ *  - `revision` is `revisionOf(content)` (`sha256:` plus the content hash), never an ETag or a
+ *    counter: the model compares it with the hash of the buffer. A store with its own CAS token
+ *    keeps the mapping inside the adapter.
+ *  - A save on a stale base answers `{ok:false, status:409, error:{code:"revision_conflict"}}`,
+ *    which starts the conflict flow (it then calls `load`).
+ *  - A save whose outcome is unknown (the store may have committed) must throw, or answer
+ *    `write_state_unknown` / an `http_5xx` code; any other `ok:false` is a confirmed failure and
+ *    the buffer is kept against the old base without re-reading. */
 export interface FileEditorIO {
   load(path: string): Promise<EditableFile>;
   save(path: string, content: string, baseRevision: string): Promise<PutFileResult>;
