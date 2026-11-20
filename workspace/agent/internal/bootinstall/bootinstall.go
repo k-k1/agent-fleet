@@ -66,8 +66,10 @@ type Env struct {
 	RTKBaseURL string                         // https://github.com/rtk-ai/rtk/releases/download (tests: a local server)
 	FreeMiB    func(dir string) (int64, bool) // false when unknown
 	Client     *http.Client
-	NPM        string // the npm executable; empty = "npm" from PATH
-	BakedBin   string // where the image bakes its CLIs; empty = /usr/local/bin
+	NPM        string          // the npm executable; empty = "npm" from PATH
+	AgyBaseURL string          // https://storage.googleapis.com/antigravity-public/antigravity-cli (tests: a local server)
+	AgyEnv     func() []string // env overlay every agy run needs on this host; nil = hostcaps.AgyRDRANDMask
+	BakedBin   string          // where the image bakes its CLIs; empty = /usr/local/bin
 	Stdout     io.Writer
 	Stderr     io.Writer
 	RunTimeout time.Duration // --version probe bound
@@ -83,6 +85,7 @@ func DefaultEnv(repin bool) Env {
 		Repin:      repin,
 		Arch:       arch,
 		RTKBaseURL: "https://github.com/rtk-ai/rtk/releases/download",
+		AgyBaseURL: "https://storage.googleapis.com/antigravity-public/antigravity-cli",
 		FreeMiB:    freeMiB,
 		Client:     &http.Client{Timeout: 10 * time.Minute},
 		Stdout:     os.Stdout,
@@ -126,13 +129,19 @@ func (e Env) note(tool, status, reason string) {
 // dynamic-linker complaint, say). The wrapper script of an installed rtk may leave a child
 // holding our pipes, so the whole process group is killed at the deadline and WaitDelay stops
 // us waiting for descriptors a straggler keeps open.
-func (e Env) probe(p string) (stdout, stderr string, err error) {
+func (e Env) probe(p string) (stdout, stderr string, err error) { return e.probeEnv(p, nil) }
+
+// probeEnv is probe with extra environment assignments on top of ours (agy's RDRAND mask).
+func (e Env) probeEnv(p string, extra []string) (stdout, stderr string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), e.RunTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, p, "--version")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
+	if len(extra) > 0 {
+		cmd.Env = append(os.Environ(), extra...)
+	}
 	so, se := &capWriter{max: probeMaxBytes}, &capWriter{max: probeMaxBytes}
 	cmd.Stdout, cmd.Stderr = so, se
 	err = cmd.Run()
@@ -181,6 +190,16 @@ func (e Env) runs(p string) bool {
 	return err == nil
 }
 
+// runsAs is runs for the CLI called name: agy needs its host env overlay, or it aborts at start
+// on a host without a usable RDRAND.
+func (e Env) runsAs(name, p string) bool {
+	if name != "agy" {
+		return e.runs(p)
+	}
+	_, _, err := e.probeEnv(p, e.agyEnv())
+	return err == nil
+}
+
 func usable(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0
@@ -198,7 +217,7 @@ func (e Env) cliPresent(name string) bool {
 // cliUsable: a copy that can run now, in either place.
 func (e Env) cliUsable(name string) bool {
 	for _, p := range []string{filepath.Join(e.bakedBin(), name), filepath.Join(e.localBin(), name)} {
-		if usable(p) && e.runs(p) {
+		if usable(p) && e.runsAs(name, p) {
 			return true
 		}
 	}
@@ -360,7 +379,10 @@ func extractMember(archive, name, dest string) error {
 // installAtomic copies src to dest through a sibling temp name and a rename, so a failure part-way
 // (ENOSPC leaves a truncated file) never leaves anything at dest. The candidate must answer
 // --version before it replaces dest: a binary that cannot run here never displaces a working copy.
-func (e Env) installAtomic(src, dest string) error {
+func (e Env) installAtomic(src, dest string) error { return e.installAtomicWith(src, dest, nil) }
+
+// installAtomicWith is installAtomic whose --version probe of the candidate runs with extra env.
+func (e Env) installAtomicWith(src, dest string, extra []string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
@@ -389,7 +411,7 @@ func (e Env) installAtomic(src, dest string) error {
 		os.Remove(tmp)
 		return err
 	}
-	if _, msg, err := e.probe(tmp); err != nil {
+	if _, msg, err := e.probeEnv(tmp, extra); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("%s does not run in this environment, keeping the current copy: %v: %s", filepath.Base(dest), err, msg)
 	}

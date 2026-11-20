@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behaviour of entrypoint.sh's lean boot-install blocks (agy, cursor; rtk and the npm CLIs are workspace-agent's, see below) when a step fails
+# Behaviour of entrypoint.sh's lean boot-install blocks (cursor; rtk, agy and the npm CLIs are workspace-agent's, see below) when a step fails
 # part-way, e.g. ENOSPC on a full home. Only the section from `VJ=` to the Kiro comment is sliced
 # out and run, against stub curl / tar / install / sha256sum / dpkg and a fake home.
 #
@@ -17,7 +17,7 @@ mkdir -p "$T/bin" "$T/home/.local/bin" "$T/tmp"
 
 BLOCK="$T/block.sh"
 awk '/^VJ=\/usr/{on=1} /^# Kiro CLI \(kind/{on=0} on' "$ENTRY" | sed "s#^VJ=.*#VJ=$T/versions.json#" > "$BLOCK"
-for needle in 'AGY_NEED' 'CUR_NEED' 'boot-install rtk' 'npm_wa'; do
+for needle in 'boot-install agy' 'CUR_NEED' 'boot-install rtk' 'npm_wa'; do
   grep -q -- "$needle" "$BLOCK" || { echo "FAIL: slice lacks $needle; fix the awk range" >&2; exit 1; }
 done
 
@@ -91,27 +91,25 @@ run_block() {
 reset() { rm -rf "$T/home/.local/bin/"{agy,.agy.version,rtk,cursor-agent} "$T/home/.local/share" "$T"/cwd/* "${T:?}"/home/*; }
 has() { grep -q -- "$1" "$T/out"; }
 
-reset; run_block STUB_INSTALL_FAIL=1
-has 'WARN: agy boot-install failed' || fail "agy: no WARN when install fails"
-has 'boot-install agy 9.9.9' && fail "agy: success logged after a failed install"
-[ -e "$T/home/.local/bin/.agy.version" ] && fail "agy: marker written after a failed install"
-[ -e "$T/home/.local/bin/agy" ] && fail "agy: truncated binary left behind"
-run_block
-has 'boot-install agy 9.9.9' || fail "agy: next start did not reinstall"
-[ "$(cat "$T/home/.local/bin/.agy.version" 2>/dev/null)" = 9.9.9 ] || fail "agy: marker missing after reinstall"
-
-# A truncated binary with a marker that matches the pin, with and without repin.
-for skip in 1 0; do
-  reset; printf '#!/bi' >"$T/home/.local/bin/agy"; chmod +x "$T/home/.local/bin/agy"
-  echo 9.9.9 >"$T/home/.local/bin/.agy.version"
-  run_block AF_AGENT_SELF_UPDATE_SKIP=$skip
-  has 'boot-install agy 9.9.9' || fail "agy: truncated binary + matching marker not reinstalled (skip=$skip)"
-  "$T/home/.local/bin/agy" --version 2>/dev/null | grep -q 9.9.9 || fail "agy: reinstalled binary does not run (skip=$skip)"
-done
-
-# A healthy agy is left alone.
-run_block
-has 'agy already present' || fail "agy: healthy binary was reinstalled"
+# agy: the block hands over to `workspace-agent boot-install agy` (Go tests in internal/bootinstall
+# cover the digest, the marker and the truncated-binary cases), with --repin only when the start
+# repins, and runs no download of its own.
+reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=1
+grep -qx 'workspace-agent boot-install agy' "$STUB_WA_LOG" || fail "agy: not handed to workspace-agent ($(cat "$STUB_WA_LOG"))"
+reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=0
+grep -qx 'workspace-agent boot-install agy --repin' "$STUB_WA_LOG" || fail "agy: --repin not passed on a repin start"
+reset; run_block STUB_WA_RC=3 || fail "agy: exit 3 aborted the entrypoint"
+has 'BI_LOW_SPACE=1' || fail "agy: exit 3 did not set BI_LOW_SPACE"
+reset; run_block STUB_WA_RC=126
+has 'WARN: agy boot-install exited 126' || fail "agy: no WARN for an exit outside the contract"
+grep -qP '^agy\tfailed\tother' "$T/bidir/install.tsv" || fail "agy: no failed status for an exit outside the contract"
+reset; run_block BI_AGENT_BIN="$T/none"
+has 'WARN: the Agent binary is missing; agy boot-install skipped' || fail "agy: no WARN without the Agent"
+grep -qP '^agy\tfailed\tother' "$T/bidir/install.tsv" || fail "agy: no failed status without the Agent"
+reset; run_block
+[ -e "$T/home/.local/bin/agy" ] || [ -e "$T/home/.local/bin/.agy.version" ] && fail "agy: shell installed agy itself"
+grep -q 'agy-version' "$ENTRY" || fail "agy: agy_effective_version does not ask the Agent"
+grep -q 'AGY_NEED' "$BLOCK" && fail "agy: shell install block still present"
 
 # cursor: tar dies part-way.
 reset; run_block STUB_TAR_FAIL=1
@@ -239,9 +237,8 @@ grep -q 'npm_clis_verify' "$BLOCK" && fail "npm: shell verify still present"
 # mktemp / download failures stop the block before anything is written outside a temp dir.
 for what in STUB_MKTEMP_FAIL STUB_CURL_FAIL; do
   reset; run_block $what=1
-  for n in agy cursor; do has "WARN: $n boot-install failed" || fail "$n: no WARN with $what"; done
+  has "WARN: cursor boot-install failed" || fail "cursor: no WARN with $what"
   [ -z "$(find "$T/cwd" "$T/home" -maxdepth 1 -type f)" ] || fail "files written outside .local with $what"
-  [ -e "$T/home/.local/bin/agy" ] || [ -e "$T/home/.local/bin/.agy.version" ] && fail "agy installed or marked with $what"
 done
 
 [ "$fails" = 0 ] && echo "ok: entrypoint boot-install failure handling" || exit 1

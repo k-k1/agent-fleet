@@ -530,40 +530,13 @@ oc_drop_v1() { # oc_drop_v1 <prefix>
   rm -rf "$pfx/lib/node_modules/opencode-ai"
 }
 oc_drop_v1 "$HOME/.local" || echo "[entrypoint] WARN: could not remove opencode 1 from ~/.local (retrying next start)"
-# agy_effective_version — the version of the agy that is actually installed now.
-#
-# The marker (.agy.version) is the version AF last installed, not the one present now. agy
-# can rewrite itself (measured, docs/log/70 §70.14.9: started as 1.1.17, 34 s later it was
-# 1.1.19 with `auto_updater.go:305 Spawned background update process` in its log), and the
-# marker is AF's own file, so that update does not move it.
-#
-# The Dockerfile's AGY_CLI_DISABLE_AUTO_UPDATE lock does not make the marker trustworthy:
-# an explicit `agy update` by the user, the self-update opt-in (the shadow block below) and
-# homes populated by older images all move the binary without moving the marker.
-#
-# Deciding the repin from the marker alone therefore gets stuck at "marker == pin, binary
-# differs". The harm is quiet: if that version changed its output format, the session runs
-# but silently on a different model (docs/log/70 §70.14.8).
-#
-# So always ask the binary. On x86 hosts whose kernel withdrew RDRAND a plain start SIGABRTs
-# (decisions/0008), so apply the same OPENSSL_ia32cap mask the Agent applies to every spawn
-# (only on hosts without RDRAND, as 0008 decides). arm64 is confirmed
-# safe unmasked by the §70.13 measurement (BoringCrypto takes randomness from getrandom(2),
-# not the instruction, so RC=0 even on Graviton2, which lacks `rng`).
-# The mask is applied per call — exporting it would reach every process, not just agy.
+# agy_effective_version — the version of the agy that is installed in ~/.local now ("" when it
+# does not answer). The rule (the binary, behind the host's RDRAND mask, never the marker alone)
+# lives in internal/bootinstall (AgyEffectiveVersion); the image's Agent first, as for the
+# installs, since a stale workspace-agent earlier on PATH must not decide.
 agy_effective_version() {
-  local bin="$HOME/.local/bin/agy" v=""
-  if [ ! -x "$bin" ]; then :
-  elif [ "$(uname -m)" = "aarch64" ] || grep -qw rdrand /proc/cpuinfo 2>/dev/null; then
-    v="$(timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
-  else
-    v="$(OPENSSL_ia32cap='~0x4000000000000000' timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
-  fi
-  # The marker answers only when there is no binary to ask. A binary that exists but does not
-  # answer is broken (truncated by a full disk, say), and the marker, which says what AF wrote
-  # there, must not vouch for it.
-  [ -n "$v" ] || [ -e "$bin" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
-  printf '%s' "$v"
+  local wa="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
+  if [ -x "$wa" ]; then "$wa" boot-install agy-version 2>/dev/null || true; fi
 }
 # npm_wa <args...> — one step of `workspace-agent boot-install` for the npm CLIs (claude, opencode,
 # codex, copilot): the pinned install (`npm [--repin]`) and the repair pass (`npm-verify`), both
@@ -660,50 +633,25 @@ if [ "$LEAN_CLIS" = 1 ]; then
     echo "[entrypoint] WARN: the Agent binary is missing; rtk boot-install skipped"
     bi_note rtk failed other
   fi
-  # agy: the pinned immutable GCS object named by the official installer manifest, fetched
-  # and verified via versions.json's agy + agy_build + agy_sha256 (same path as the Dockerfile
-  # bake). Also write the self-update version marker, so the pin is not re-fetched right
-  # after installing it.
-  AGY_NEED=0
-  if [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_build)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
-    if ! cli_present agy; then
-      AGY_NEED=1
-    elif [ -e "$HOME/.local/bin/agy" ] && [ -z "$(agy_effective_version)" ]; then
-      # Present but it does not answer --version (agy needs agy_effective_version's env mask,
-      # so bin_broken would misjudge it).
-      AGY_NEED=1
-    elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/agy" ] \
-         && [ "$(agy_effective_version)" != "$(vj_pin agy)" ]; then
-      AGY_NEED=1
-    fi
-  fi
-  if [ "$AGY_NEED" = 1 ] && ! bi_room 400 agy; then AGY_NEED=2; fi
-  if [ "$AGY_NEED" = 1 ]; then
-    (
-      set -e
-      aver="$(vj_pin agy)"; abuild="$(vj_pin agy_build)"; asha="$(vj_pin agy_sha256)"
-      arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
-      case "$arch" in
-        amd64 | x86_64) asset="linux-x64/cli_linux_x64.tar.gz" ;;
-        arm64 | aarch64) asset="linux-arm/cli_linux_arm64.tar.gz" ;;
-        *) echo "unsupported arch: $arch" >&2; exit 1 ;;
-      esac
-      tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
-      cd "$tmp" || exit 1
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://storage.googleapis.com/antigravity-public/antigravity-cli/${aver}-${abuild}/${asset}" -o agy.tgz || exit 1
-      echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null || exit 1
-      tar -xzf agy.tgz antigravity || exit 1
-      install_atomic antigravity "$HOME/.local/bin/agy" || exit 1
-      # The marker is written last and only after the binary landed whole.
-      printf '%s\n' "$aver" > "$HOME/.local/bin/.agy.version" \
-        || { rm -f "$HOME/.local/bin/.agy.version"; exit 1; }
-    ) 2>"$BI_ERR" && { echo "[entrypoint] boot-install agy $(vj_pin agy)"; bi_note agy ok; } \
-      || { cat "$BI_ERR" >&2; echo "[entrypoint] WARN: agy boot-install failed (retrying next start)"; bi_failed agy; }
-  elif [ "$AGY_NEED" = 2 ]; then
-    :
-  elif cli_present agy; then
+  # agy: installed by the Agent (`workspace-agent boot-install agy`, internal/bootinstall): the
+  # pinned immutable GCS object (versions.json's agy + agy_build + agy_sha256, the Dockerfile
+  # bake's path), checksum-verified, with the .agy.version marker written last and the status
+  # recorded to $AF_BOOT_INSTALL_STATUS. Exit 3 = skipped for lack of space, as for rtk.
+  if [ -x "$RTK_WA" ]; then
+    agy_rc=0
+    if [ "$REPIN" = 1 ]; then "$RTK_WA" boot-install agy --repin || agy_rc=$?
+    else "$RTK_WA" boot-install agy || agy_rc=$?; fi
+    case "$agy_rc" in
+      0|1) ;;
+      3) BI_LOW_SPACE=1 ;;
+      *) echo "[entrypoint] WARN: agy boot-install exited $agy_rc (retrying next start)"
+         if cli_usable agy; then bi_note agy skipped; else bi_note agy failed other; fi ;;
+    esac
+  elif cli_usable agy; then
     bi_note agy skipped
-    echo "[entrypoint] boot-install: agy already present (skip)"
+  elif [ -n "$(vj_pin agy)" ]; then
+    echo "[entrypoint] WARN: the Agent binary is missing; agy boot-install skipped"
+    bi_note agy failed other
   fi
   # cursor (kind="cursor", docs/log/40): unpack the versioned tarball's Node.js bundle into
   # ~/.local/share/cursor-agent/versions/<version>/ and link ~/.local/bin/cursor-agent (the
