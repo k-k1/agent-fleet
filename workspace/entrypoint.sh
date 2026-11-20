@@ -583,12 +583,18 @@ npm_wa() {
     3) BI_LOW_SPACE=1 ;;
     *) # Outside the subcommand's contract (usage error, not runnable): no status line was written.
        [ "$rc" = 127 ] || echo "[entrypoint] WARN: npm boot-install $1 exited $rc (retrying next start)"
-       if [ "$1" = npm ]; then
-         for c in $NPM_CLIS; do
-           if cli_usable "$c"; then bi_note "$c" skipped
-           elif [ -n "$(vj_pin "$c")" ]; then bi_note "$c" failed other; fi
-         done
-       fi ;;
+       for c in $NPM_CLIS; do
+         if [ "$1" != npm ]; then
+           # No repair pass: at least take a copy that does not run off PATH, where it would hide a
+           # working baked one, and say so.
+           if { [ -e "$HOME/.local/bin/$c" ] || [ -L "$HOME/.local/bin/$c" ]; } \
+              && ! timeout 30 "$HOME/.local/bin/$c" --version >/dev/null 2>&1; then
+             rm -f "$HOME/.local/bin/$c"
+             if cli_usable "$c"; then bi_note "$c" skipped; else bi_note "$c" failed other; fi
+           fi
+         elif cli_usable "$c"; then bi_note "$c" skipped
+         elif [ -n "$(vj_pin "$c")" ]; then bi_note "$c" failed other; fi
+       done ;;
   esac
   return 0
 }

@@ -43,7 +43,8 @@ install)
         fi ;;
     esac
     shift
-  done ;;
+  done
+  if [ -f "$D/failafter" ]; then cat "$D/failafter" >&2; exit 1; fi ;;
 esac
 exit 0
 `
@@ -321,5 +322,47 @@ func TestNPMVerifyPresentOnlyClearsEarlierFailure(t *testing.T) {
 	}
 	if strings.Contains(st, "opencode") || strings.Contains(st, "copilot") {
 		t.Errorf("CLIs with no ~/.local copy were touched: %q", st)
+	}
+}
+
+func TestNPMFailedRepairRunIsNotRecordedRepaired(t *testing.T) {
+	f := newNPM(t, map[string]string{"codex": "3.0.0", "claude": "1.0.0"})
+	f.stub("body.codex", brokenCLI)
+	// The repair run places claude's copy, then dies on codex's tarball.
+	f.stub("failafter", "npm error code EINTEGRITY\n")
+	f.put("claude", brokenCLI)
+	if rc := f.env.NPMVerify([]string{"claude", "codex"}, false); rc != ExitFailed {
+		t.Fatalf("rc=%d", rc)
+	}
+	st := f.statusText()
+	if strings.Contains(st, "\tok\t") || strings.Contains(f.out.String(), "repaired") {
+		t.Fatalf("a failed repair run was recorded repaired: status=%q out=%s", st, f.out)
+	}
+	if !strings.Contains(st, "claude\tfailed\tchecksum\n") {
+		t.Fatalf("status=%q", st)
+	}
+}
+
+func TestNPMVerifyNoSpaceOutranksFailure(t *testing.T) {
+	f := newNPM(t, map[string]string{"claude": "1.0.0"}) // codex has no pin: removed, failed
+	f.put("claude", brokenCLI)
+	f.put("codex", brokenCLI)
+	f.env.FreeMiB = func(string) (int64, bool) { return 10, true }
+	if rc := f.env.NPMVerify([]string{"claude", "codex"}, false); rc != ExitNoSpace {
+		t.Fatalf("rc=%d, want no-space to win", rc)
+	}
+	if !strings.Contains(f.statusText(), "codex\tfailed\t") {
+		t.Fatalf("status=%q", f.statusText())
+	}
+}
+
+func TestTailWriterKeepsTheEnd(t *testing.T) {
+	w := &tailWriter{max: 10}
+	for i := 0; i < 50; i++ {
+		w.Write([]byte("warn warn\n"))
+	}
+	w.Write([]byte("EINTEGRITY"))
+	if s := w.String(); len(s) > 10 || !strings.HasSuffix(s, "EINTEGRITY") {
+		t.Fatalf("got %q", s)
 	}
 }

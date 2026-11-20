@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -72,10 +74,18 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 	defer cancel()
 	args := append([]string{"install", "-g", "--prefix", filepath.Join(e.Home, ".local")}, specs...)
 	cmd := exec.CommandContext(ctx, e.npmBin(), args...)
+	// Postinstall scripts may outlive npm: kill the whole group at the deadline so none keeps
+	// writing to ~/.local while the verify pass runs.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
-	se := &capWriter{max: 64 << 10}
+	se := &tailWriter{max: 64 << 10}
 	cmd.Stderr = se
 	err = cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		err = nil
+	}
 	return se.String(), err
 }
 
@@ -100,6 +110,28 @@ func (e Env) npmVersions() map[string]string {
 		}
 	}
 	return got
+}
+
+// tailWriter keeps the last max bytes written: npm prints the reason it failed at the end, after
+// any amount of warnings.
+type tailWriter struct {
+	buf []byte
+	max int
+}
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	if len(w.buf) > 2*w.max {
+		w.buf = append([]byte(nil), w.buf[len(w.buf)-w.max:]...)
+	}
+	return len(p), nil
+}
+
+func (w *tailWriter) String() string {
+	if len(w.buf) > w.max {
+		return string(w.buf[len(w.buf)-w.max:])
+	}
+	return string(w.buf)
 }
 
 // lastStatus is the status recorded for tool by an earlier step of this start ("" when none).
@@ -189,11 +221,8 @@ func NPM(e Env) int {
 		return ExitFailed
 	}
 	fmt.Fprintln(e.Stdout, "[entrypoint] boot-install ok")
-	for _, c := range wanted {
-		e.note(c, statusOK, "")
-	}
 	// npm exits 0 when an optional dependency cannot be fetched, and codex ships its binary as
-	// one, so "installed" is not "runs".
+	// one, so "installed" is not "runs": ok is recorded only by the verify pass.
 	return e.NPMVerify(wanted, false)
 }
 
@@ -218,7 +247,9 @@ func (e Env) NPMVerify(clis []string, present bool) int {
 		if statErr != nil && usable(filepath.Join(e.bakedBin(), c)) {
 			continue
 		}
-		os.Remove(link)
+		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: could not remove %s: %v\n", link, err)
+		}
 		pin := e.Pins[c]
 		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s in ~/.local does not run after the npm install", c)
 		if pin != "" {
@@ -242,7 +273,9 @@ func (e Env) NPMVerify(clis []string, present bool) int {
 				lastErr = stderr
 			}
 			for _, c := range fixCLIs {
-				if e.runs(filepath.Join(e.localBin(), c)) {
+				// A failed repair run can leave a copy that was placed before it stopped:
+				// that copy is not the pin and must not be recorded as repaired.
+				if err == nil && e.runs(filepath.Join(e.localBin(), c)) {
 					fmt.Fprintf(e.Stdout, "[entrypoint] %s repaired at the pin %s\n", c, e.Pins[c])
 					e.note(c, statusOK, "")
 				} else {
@@ -256,11 +289,13 @@ func (e Env) NPMVerify(clis []string, present bool) int {
 		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s does not run; removed its ~/.local link (retrying next start)\n", c)
 		e.note(c, statusFailed, reasonFromStderr(lastErr))
 	}
+	// No space first: the entrypoint holds back its later downloads on it, and the individual
+	// failures are in the status file either way.
 	switch {
-	case len(broken) > 0:
-		return ExitFailed
 	case noSpace:
 		return ExitNoSpace
+	case len(broken) > 0:
+		return ExitFailed
 	}
 	return ExitOK
 }

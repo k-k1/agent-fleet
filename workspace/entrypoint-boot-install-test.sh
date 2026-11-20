@@ -73,6 +73,8 @@ S
 cat >"$T/bin/workspace-agent" <<'S'
 #!/bin/sh
 echo "workspace-agent $*" >>"$STUB_WA_LOG"
+# STUB_WA_RC_NPM answers only the npm steps, so a test can tell the two mappings apart.
+case "$2" in npm|npm-verify) exit "${STUB_WA_RC_NPM:-${STUB_WA_RC:-0}}" ;; esac
 exit "${STUB_WA_RC:-0}"
 S
 chmod +x "$T"/bin/*
@@ -190,11 +192,11 @@ grep -qx 'workspace-agent boot-install npm' "$STUB_WA_LOG" || fail "npm: not han
 grep -qx 'workspace-agent boot-install npm-verify --present' "$STUB_WA_LOG" && fail "npm: the lean block ran the every-start pass"
 reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=0
 grep -qx 'workspace-agent boot-install npm --repin' "$STUB_WA_LOG" || fail "npm: --repin not passed on a repin start"
-reset; run_block STUB_WA_RC=3 || fail "npm: exit 3 aborted the entrypoint"
+reset; run_block STUB_WA_RC_NPM=3 STUB_WA_RC=0 || fail "npm: exit 3 aborted the entrypoint"
 has 'BI_LOW_SPACE=1' || fail "npm: exit 3 did not set BI_LOW_SPACE"
-reset; run_block STUB_WA_RC=1 || fail "npm: exit 1 aborted the entrypoint"
+reset; run_block STUB_WA_RC_NPM=1 STUB_WA_RC=0 || fail "npm: exit 1 aborted the entrypoint"
 has 'BI_LOW_SPACE=0' || fail "npm: exit 1 set BI_LOW_SPACE"
-reset; run_block STUB_WA_RC=126
+reset; run_block STUB_WA_RC_NPM=126 STUB_WA_RC=0
 has 'WARN: npm boot-install npm exited 126' || fail "npm: no WARN for an exit outside the contract"
 grep -qP '^claude\tfailed\tother' "$T/bidir/install.tsv" || fail "npm: no failed status for an exit outside the contract"
 reset; run_block BI_AGENT_BIN="$T/none"
@@ -203,6 +205,18 @@ grep -qP '^claude\tfailed\tother' "$T/bidir/install.tsv" || fail "npm: no failed
 reset; mkdir -p "$T/home/.local/bin"; printf '#!/bin/sh\necho 1.0.0\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"
 run_block BI_AGENT_BIN="$T/none"
 grep -qP '^claude\tskipped' "$T/bidir/install.tsv" || fail "npm: a working copy was not recorded skipped without the Agent"
+# Without the Agent, the every-start pass cannot repair, but a broken ~/.local copy must not stay
+# on PATH where it hides a baked one.
+reset; mkdir -p "$T/home/.local/bin"; printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/codex"; chmod +x "$T/home/.local/bin/codex"
+cat >"$T/fallback.sh" <<'S'
+NPM_CLIS="claude opencode codex copilot"
+BI_AGENT_BIN=/nonexistent
+S
+awk '/^npm_wa\(\)/{on=1} on{print} on&&/^}/{exit}' "$BLOCK" >>"$T/fallback.sh"
+VJ="$T/versions.json"; ( HOME="$T/home" BI_STATUS="$T/fb.tsv"; bi_note() { printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >>"$BI_STATUS"; }; cli_usable() { return 1; }; vj_pin() { :; }
+  . "$T/fallback.sh"; npm_wa npm-verify --present ) >/dev/null 2>&1
+[ -e "$T/home/.local/bin/codex" ] && fail "npm: a broken copy stayed on PATH without the Agent"
+grep -qP '^codex\tfailed' "$T/fb.tsv" || fail "npm: no failed status for the broken copy without the Agent"
 # The shell no longer carries an npm install or a verify of its own.
 grep -q 'npm install -g' "$BLOCK" && fail "npm: shell install block still present"
 grep -q 'npm_clis_verify' "$BLOCK" && fail "npm: shell verify still present"

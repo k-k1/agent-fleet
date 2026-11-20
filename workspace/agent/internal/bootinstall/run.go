@@ -31,7 +31,10 @@ func Run(args []string) {
 		usage()
 	}
 	step, rest := names[0], names[1:]
-	if step != "npm-verify" && len(rest) > 0 {
+	if (step != "npm-verify" && len(rest) > 0) || (present && step != "npm-verify") || (repin && step == "npm-verify") {
+		usage()
+	}
+	if present && len(rest) > 0 {
 		usage()
 	}
 	switch step {
