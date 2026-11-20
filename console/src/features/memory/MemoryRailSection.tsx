@@ -13,22 +13,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errText, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { useLayoutStore } from "../../layout/store.ts";
-import { allViews } from "../../layout/ops.ts";
+import { activePane, allViews } from "../../layout/ops.ts";
 import { useT, tMaybe } from "../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
 import { Section, SoloSection } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { useSettingsUI } from "../settings/store.ts";
-import { hasEveryWord, keyOf, matchMemoriesDetail, memoryTarget, scopeKey } from "../settings/memory/memorySearch.ts";
-import { isAdviceOnly, matchesFilter } from "../settings/memory/memoryProposals.tsx";
+import { hasEveryWord, keyOf, matchMemoriesDetail, scopeKey } from "../settings/memory/memorySearch.ts";
+import { isAdviceOnly, matchesFilter, useConsolRun } from "../settings/memory/memoryProposals.tsx";
+import { useSettings } from "../../lib/settings.ts";
 import { proposalSubject } from "../settings/memory/memoryProposalPreview.tsx";
 import type { MemoryChange, MemoryListed } from "../settings/memory/memoryTypes.ts";
 import { ALL_SCOPES, useMemoryBodySearch } from "./bodySearch.ts";
 import { openMemoryView } from "./open.ts";
+import { openMemoryEntry } from "./openEntry.ts";
 import { pendingProposals, useMemoryStore } from "./store.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
-import { useShownValue } from "../../lib/viewShown.ts";
+import { useShownValue, useViewShown } from "../../lib/viewShown.ts";
 
 const TYPES = ["user", "feedback", "project", "reference"] as const;
 type Filter = "all" | "pinned" | "forgotten";
@@ -49,6 +51,11 @@ export function MemoryRailSection() {
   const proposals = useMemoryStore((s) => s.proposals);
   const proposalsErr = useMemoryStore((s) => s.proposalsErr);
   const openSettings = useSettingsUI((s) => s.openSettings);
+  // The memory of the pane in front, so its row reads as the current one (and is scrolled to).
+  const activeKey = useLayoutStore((s) => {
+    const c = activePane(s.layout)?.content;
+    return c?.kind === "memoryEntry" && c.name ? keyOf({ scope: c.scope, project: { id: c.project }, name: c.name }) : "";
+  });
   // The proposal the Memory pane shows, so its row reads as the current one.
   const openProposal = useLayoutStore((s) => {
     const c = allViews(s.layout).find((p) => p.content.kind === "memory")?.content;
@@ -89,6 +96,12 @@ export function MemoryRailSection() {
     setLoadErr("");
   }, [loadTenant]);
   useRetryLoad(load, [loadVersion, loadTenant]);
+  const shownNow = useViewShown();
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!activeKey || !shownNow) return;
+    rootRef.current?.querySelector(`[data-row-key="${CSS.escape(activeKey)}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [activeKey, shownNow, rows]);
 
   // Every scope there is a memory in. A chosen scope that no longer holds one falls back to all,
   // and every read below asks for the scope on screen, never the stale choice.
@@ -122,6 +135,14 @@ export function MemoryRailSection() {
 
   const props = (proposals ?? []).filter((p) => matchesFilter(p.status, allProposals ? "all" : "pending"));
   const pending = pendingProposals(proposals);
+  const consolOn = useSettings().memoryConsolidation;
+  const consol = useConsolRun(loadVersion, consolOn && shownNow);
+  // A new memory starts in the project on screen; with every scope shown, in the user scope.
+  const newMemory = () => {
+    const [kind, id = ""] = scopeShown.split(":");
+    if (kind === "project") openMemoryEntry({ scope: "project", project: { id, display: scopes.find(([k]) => k === scopeShown)?.[1] ?? id }, name: "" });
+    else openMemoryEntry({ scope: "user", name: "" });
+  };
   // What an empty memory list says: a body search still on its way is not "no match" yet.
   const emptyKey =
     q && search.searching
@@ -136,12 +157,17 @@ export function MemoryRailSection() {
   // siblings, as the Sessions view stacks its sections. Nested, their sticky heads would pin over
   // the view's own head and hide its settings button.
   return (
-    <div className="memrail">
+    <div className="memrail" ref={rootRef}>
       <SoloSection>
         <Section
           title={tr("rail.view.memory")}
           icon="archive"
-          actions={<IconButton icon="settings-gear" label={tr("mem.mv_open_settings")} onClick={() => openSettings("memory")} />}
+          actions={
+            <>
+              <IconButton icon="add" label={tr("mem.rv_new")} onClick={newMemory} />
+              <IconButton icon="settings-gear" label={tr("mem.mv_open_settings")} onClick={() => openSettings("memory")} />
+            </>
+          }
         >
           <div className="memrail-filter">
             <input
@@ -184,19 +210,35 @@ export function MemoryRailSection() {
         title={tr("mem.view_proposals")}
         count={pending}
         actions={
-          // A fixed label with its pressed state: a label that flips with the state reads backwards
-          // to a screen reader ("Pending, not pressed" while pending ones are shown).
-          <button
-            type="button"
-            className={"memrail-toggle" + (allProposals ? " active" : "")}
-            aria-pressed={allProposals}
-            title={tr("mem.rv_prop_show_all")}
-            onClick={() => setAllProposals((v) => !v)}
-          >
-            {tr("mem.md_f_all")}
-          </button>
+          <>
+            {/* A fixed label with its pressed state: a label that flips with the state reads
+                backwards to a screen reader ("Pending, not pressed" while pending ones are shown). */}
+            <button
+              type="button"
+              className={"memrail-toggle" + (allProposals ? " active" : "")}
+              aria-pressed={allProposals}
+              title={tr("mem.rv_prop_show_all")}
+              onClick={() => setAllProposals((v) => !v)}
+            >
+              {tr("mem.md_f_all")}
+            </button>
+            {/* The tidy-up's own run, only where it is switched on; its options stay in Settings. */}
+            {consolOn && (
+              <IconButton
+                icon="play"
+                label={tr("mem.rv_run")}
+                disabled={!consol.st || consol.running || consol.starting}
+                onClick={() => void consol.runNow(false)}
+              />
+            )}
+          </>
         }
       >
+        {consolOn && consol.running && (
+          <p className="memrail-note" role="status">
+            {tr(consol.st?.run?.manual ? "mem.cs_running_manual" : "mem.cs_running_auto")}
+          </p>
+        )}
         {proposalsErr && <p className="memrail-note warn">{proposalsErr}</p>}
         <ul className="memrail-list" aria-label={tr("mem.view_proposals")}>
           {proposals === null ? (
@@ -247,9 +289,10 @@ export function MemoryRailSection() {
                   <li key={c.commit}>
                     <button
                       type="button"
-                      className="memrail-row gone"
+                      className={"memrail-row gone" + (keyOf(c) === activeKey ? " active" : "")}
+                      aria-current={keyOf(c) === activeKey ? "true" : undefined}
                       data-row-key={keyOf(c)}
-                      onClick={() => openMemoryView("memories", { target: memoryTarget(c, true) })}
+                      onClick={() => openMemoryEntry(c, { gone: true })}
                     >
                       <span className="memrail-line">
                         <span className="memrail-name">{c.name}</span>
@@ -286,9 +329,10 @@ export function MemoryRailSection() {
                   <li key={keyOf(m)}>
                     <button
                       type="button"
-                      className="memrail-row"
+                      className={"memrail-row" + (keyOf(m) === activeKey ? " active" : "")}
+                      aria-current={keyOf(m) === activeKey ? "true" : undefined}
                       data-row-key={keyOf(m)}
-                      onClick={() => openMemoryView("memories", { target: memoryTarget(m) })}
+                      onClick={() => openMemoryEntry(m)}
                     >
                       <span className="memrail-line">
                         {m.pinned && <Icon name="pinned" className="memrail-pin" title={tr("mem.br_pinned")} />}

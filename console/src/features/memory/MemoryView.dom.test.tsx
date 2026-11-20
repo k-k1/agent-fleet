@@ -29,6 +29,7 @@ const { MemoryTab } = await import("../settings/memory/MemoryTab.tsx");
 const { useLayoutStore } = await import("../../layout/store.ts");
 const { allViews, freshLayout } = await import("../../layout/ops.ts");
 const { useSettingsUI } = await import("../settings/store.ts");
+const { useLeftRail } = await import("../../core/store/leftRail.ts");
 const { setLocale, t } = await import("../../lib/i18n/index.ts");
 
 let root: Root | null = null;
@@ -64,10 +65,17 @@ afterEach(() => {
 });
 
 describe("MemoryView", () => {
-  it("offers the viewer, the change list and the proposals", async () => {
+  it("offers the change list and the proposals; the memories moved to the left pane", async () => {
+    await mount(<MemoryView paneId="x" view="proposals" />);
+    expect(tabs()).toEqual([t("mem.view_changes"), t("mem.view_proposals")]);
+  });
+
+  it("points a pane saved on the retired Memories tab at the left pane's view (ADR 0141 decision 6)", async () => {
+    useLeftRail.setState({ view: "sessions" });
     await mount(<MemoryView paneId="x" view="memories" />);
-    expect(tabs()).toEqual([t("mem.view_memories"), t("mem.view_changes"), t("mem.view_proposals")]);
-    expect(headings()).toEqual([t("mem.br_title")]);
+    expect(host!.textContent).toContain(t("mem.mv_moved_title"));
+    await act(async () => Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === t("mem.mv_show_view"))!.click());
+    expect(useLeftRail.getState().view).toBe("memory");
   });
 
   it.each([
@@ -79,9 +87,9 @@ describe("MemoryView", () => {
   });
 
   it("retargets the pane when a tab is clicked", async () => {
-    useLayoutStore.getState().openTarget({ content: { kind: "memory", memoryView: "memories" } });
+    useLayoutStore.getState().openTarget({ content: { kind: "memory", memoryView: "changes" } });
     const pane = memoryPane()!;
-    await mount(<MemoryView paneId={pane.id} view="memories" />);
+    await mount(<MemoryView paneId={pane.id} view="changes" />);
     await act(async () => host!.querySelector<HTMLButtonElement>("[role=tab][id$='-tab-proposals']")!.click());
     expect(memoryPane()!.content).toEqual({ kind: "memory", memoryView: "proposals" });
   });
@@ -117,11 +125,13 @@ describe("Settings > Agent memory", () => {
     expect(tabs()).toEqual([t("mem.view_settings"), t("mem.view_importexport")]);
   });
 
-  it("opens the Memory view from the link, closing the modal", async () => {
+  it("shows the left pane's Memory view from the link, closing the modal (ADR 0141 decision 8)", async () => {
+    useLeftRail.setState({ view: "sessions" });
     act(() => useSettingsUI.getState().openSettings("memory"));
     await mount(<MemoryTab />);
     await act(async () => Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === t("mem.open_view"))!.click());
     expect(useSettingsUI.getState().settingsOpen).toBe(false);
-    expect(memoryPane()!.content).toEqual({ kind: "memory", memoryView: "memories" });
+    expect(useLeftRail.getState().view).toBe("memory");
+    expect(memoryPane()).toBeUndefined();
   });
 });

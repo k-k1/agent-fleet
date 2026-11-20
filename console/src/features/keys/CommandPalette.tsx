@@ -74,8 +74,9 @@ import { openFileDiff } from "../scm/open.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useSettings } from "../../lib/settings.ts";
-import { openMemoryView } from "../memory/open.ts";
-import { keyOf, matchMemories, memoryTarget } from "../settings/memory/memorySearch.ts";
+import { openMemoryEntry } from "../memory/openEntry.ts";
+import { useLeftRail } from "../../core/store/leftRail.ts";
+import { keyOf, matchMemories } from "../settings/memory/memorySearch.ts";
 import type { MemoryListed, MemorySearchHit } from "../settings/memory/memoryTypes.ts";
 import { loadMemoryList, searchMemoryBodies, type MemoryList } from "./memoryPalette.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
@@ -324,7 +325,8 @@ function TalkWhere({ h }: { h: SessionSearchHit }) {
   );
 }
 
-// One memory → a palette row. Enter opens the Memory view with it picked.
+// One memory → a palette row. Enter opens the memory in its own pane and shows the left pane's
+// Memory view, where its row is marked (ADR 0141 decision 8).
 function memoryItem(m: MemoryListed, snippet?: string): Item {
   const where = m.scope === "user" ? t("keys.palette.memory_user") : (m.project?.display ?? "");
   return {
@@ -334,7 +336,10 @@ function memoryItem(m: MemoryListed, snippet?: string): Item {
     search: m.name,
     keys: [],
     memory: { m, snippet },
-    run: () => openMemoryView("memories", { target: memoryTarget(m) }),
+    run: () => {
+      openMemoryEntry(m);
+      useLeftRail.getState().showView("memory");
+    },
   };
 }
 

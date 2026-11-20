@@ -113,7 +113,11 @@ export type PaneContent =
   // because switching tabs unmounts the view. One per workspace (sameTarget is the kind alone).
   // `proposalId` (proposals only): the one proposal the left pane's Memory view opened, shown alone
   // at full width (ADR 0141 decision 5); absent, the tab is the list beside its detail.
-  | { kind: "memory"; memoryView?: "memories" | "changes" | "proposals"; proposalId?: string };
+  | { kind: "memory"; memoryView?: "memories" | "changes" | "proposals"; proposalId?: string }
+  // One memory, read and edited like a file (ADR 0141 decision 4). `name` "" is a new memory not
+  // saved yet; `gone` is a forgotten one, read-only. `projectName` is the project's display name
+  // as the opener knew it: the Agent's read of one memory does not carry it.
+  | { kind: "memoryEntry"; scope: "user" | "project"; project: string; projectName?: string; name: string; gone?: boolean };
 
 export type PaneKind = PaneContent["kind"];
 

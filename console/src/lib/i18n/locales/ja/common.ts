@@ -238,6 +238,7 @@ export const common = {
   "pane.kind.fleetgraph": "フリート俯瞰図",
   "pane.kind.home": "ホーム",
   "pane.kind.memory": "メモリ",
+  "pane.kind.memory_new": "新しいメモリ",
   "pane.open_home": "ホームを開く",
   "home.autostart_starting": "ワークスペースを起動しています…（ホームはそのまま使えます）",
   "home.autostart_quota": "組織のワークスペース上限に達しているため、自動では起動しませんでした。ほかのワークスペースが止まってから、自分で起動してください。",

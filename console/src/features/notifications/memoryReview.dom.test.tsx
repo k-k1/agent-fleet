@@ -7,6 +7,8 @@ import { notifyRowOf } from "./prefs.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { allViews, freshLayout } from "../../layout/ops.ts";
+import { useMemoryStore } from "../memory/store.ts";
+import { useLeftRail } from "../../core/store/leftRail.ts";
 import { setLocale } from "../../lib/i18n/index.ts";
 import { ja } from "../../lib/i18n/locales/ja.ts";
 import { en } from "../../lib/i18n/locales/en.ts";
@@ -82,11 +84,22 @@ describe("a memory-consolidation notification", () => {
     useLayoutStore.setState({ layout: freshLayout() });
   });
 
-  it("opens the proposals in a Memory view pane and leaves Settings closed", async () => {
+  it("shows the Memory view and opens the proposals tab when no proposal is known yet", async () => {
+    useMemoryStore.getState().reset();
+    useLeftRail.setState({ view: "sessions" });
     const r = await openNotificationTarget(consolidation(), false);
     expect(r.opened).toBe(true);
     expect(useSettingsUI.getState().settingsOpen).toBe(false);
+    expect(useLeftRail.getState().view).toBe("memory");
     expect(memoryPanes().map((v) => v.content)).toEqual([{ kind: "memory", memoryView: "proposals" }]);
+  });
+
+  it("opens the first proposal waiting, alone (ADR 0141 decision 8)", async () => {
+    const prop = (id: string, status: string) => ({ id, status, memory: id, topicId: "t", scope: "user", created: "", expires: "", items: [], observationIds: [], evidence: [] });
+    useMemoryStore.setState({ proposals: [prop("0000000000000000000a", "approved"), prop("0000000000000000000b", "pending")] });
+    await openNotificationTarget(consolidation(), false);
+    expect(memoryPanes().map((v) => v.content)).toEqual([{ kind: "memory", memoryView: "proposals", proposalId: "0000000000000000000b" }]);
+    useMemoryStore.getState().reset();
   });
 
   it("retargets the Memory view that is already open instead of opening a second one", async () => {
