@@ -13,7 +13,7 @@ import { useSeenStore } from "../features/workitems/seen.ts";
 import { dedupeWorkItems, sortWorkItems } from "../features/workitems/read.ts";
 import { useSchedulesStore } from "../features/schedules/store.ts";
 import { pendingProposals, useMemoryStore, useProposalsFeed } from "../features/memory/store.ts";
-import { useMemoStore, useMemoWaitingFeed } from "../features/memo/store.ts";
+import { memoScope, useMemoStore, useMemoWaitingFeed } from "../features/memo/store.ts";
 import { useWorkspaceStore } from "../core/store/workspace.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { openHome } from "../features/home/open.ts";
@@ -219,11 +219,13 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
     useTenantStore((s) => s.tenant),
   );
   // The memo list is read by the panel while it is mounted; the bar needs the count before that.
-  useMemoWaitingFeed(
-    useWorkspaceStore((s) => s.state) === "running",
-    useTenantStore((s) => s.tenant),
-  );
-  const waitingMemos = useMemoStore((s) => s.waiting) ?? 0;
+  const running = useWorkspaceStore((s) => s.state) === "running";
+  const tenant = useTenantStore((s) => s.tenant);
+  useMemoWaitingFeed(running, tenant);
+  // A count read for another scope (stopped, another tenant) is not this one's, even for the
+  // render before the feed has caught up.
+  const memoScopeNow = memoScope(running, tenant);
+  const waitingMemos = useMemoStore((s) => (s.waiting && s.waiting.scope === memoScopeNow ? s.waiting.n : 0));
   const pendingMemory = useMemoryStore((s) => pendingProposals(s.proposals));
   const acked = useRailAck((s) => s.acked);
   const ack = useRailAck((s) => s.ack);

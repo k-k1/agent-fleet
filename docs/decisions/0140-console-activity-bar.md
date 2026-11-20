@@ -109,6 +109,9 @@ rows. Sessions and `/mcp` connections now add memos that wait for the member's a
 `held`), and nothing runs until they are approved. That is the same case as a session waiting for an
 answer, so the memo icon carries a `waiting` badge counting them: it stays while the view is open
 and clears as memos are approved or removed. Decision 2 above is unchanged. The memo list is read
-for the count by an always-on feed while the workspace runs; while the panel is mounted it publishes
-its own read and the feed stands down. A working set does not narrow it, because the memo view does
+for the count by the memo panel, which App mounts for the whole session and which
+publishes each read it makes; a small feed reads on its own only when no panel is mounted. Reads are
+numbered when they start (a slow older answer cannot overwrite a newer one) and tied to the scope
+they started in: the tenant while the workspace runs, none while it is stopped, so a stopped
+workspace or another tenant never shows a count. A working set does not narrow it, because the memo view does
 not either.
