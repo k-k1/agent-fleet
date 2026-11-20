@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -153,13 +155,13 @@ func mcpCallerSession(cwd string) (string, bool) {
 	}
 	var found []string
 	for _, m := range session.ListMetas() {
-		if m.Archived || m.Kind != session.KindOpencode || !session.ValidName(m.Name) {
+		if m.Archived || !session.ValidName(m.Name) || mcpSlotSID(m) == "" {
 			continue
 		}
 		if !mcpRunsIn(m, cwd) {
 			continue
 		}
-		if opencode.SlotSessionID(m) == mcpCallerSID {
+		if mcpSlotSID(m) == mcpCallerSID {
 			found = append(found, m.Name)
 		}
 	}
@@ -239,8 +241,8 @@ func mcpStampedFolderSessions() []string {
 	seen := map[string]bool{}
 	for _, n := range alive {
 		m := metas[n]
-		id := opencode.SlotSessionID(m)
-		if m.Kind != session.KindOpencode || id == "" || seen[id] {
+		id := mcpSlotSID(m)
+		if id == "" || seen[id] {
 			return nil
 		}
 		seen[id] = true
@@ -268,4 +270,15 @@ func mcpAliveSessions(names []string) (alive []string, ok bool) {
 		}
 	}
 	return alive, true
+}
+
+// mcpSlotSID is the provider-side session id m's slot is mapped to; "" for a kind with no such
+// mapping, which therefore never matches a caller stamp.
+func mcpSlotSID(m session.Meta) string {
+	if a, ok := agentreg.Lookup(m.Kind); ok {
+		if c, ok := a.(agents.SlotSessionIDer); ok {
+			return c.SlotSessionID(m)
+		}
+	}
+	return ""
 }

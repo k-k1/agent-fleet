@@ -159,3 +159,10 @@ func (agentImpl) PrepareLaunch() {
 
 // PaneStartMarker is agents.PaneStartMarker.
 func (agentImpl) PaneStartMarker() string { return "claude" }
+
+// AnswersPendingQuestion is agents.PendingQuestionAnswerer: the hooks record the pending
+// question payload.
+func (agentImpl) AnswersPendingQuestion() bool { return true }
+
+// RespondsToPlan is agents.PlanResponder: plan mode and its ExitPlanMode approval are claude's.
+func (agentImpl) RespondsToPlan() bool { return true }

@@ -143,3 +143,10 @@ func (agentImpl) ManagedAbortSignals() bool { return true }
 
 // PaneStartMarker is agents.PaneStartMarker.
 func (agentImpl) PaneStartMarker() string { return "codex" }
+
+// SwitchNeedsStopped is agents.TerminalSwitchGuard: the TUI cannot open a thread the shared
+// app-server still has loaded (see release.go), so the switch needs a stopped session.
+func (agentImpl) SwitchNeedsStopped() bool { return true }
+
+// DropForTerminalSwitch is agents.TerminalSwitchGuard: codex has no lock to wait on.
+func (agentImpl) DropForTerminalSwitch(string) bool { return false }
