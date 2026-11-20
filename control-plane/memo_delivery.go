@@ -163,6 +163,23 @@ type memoDeliveryDTO struct {
 	Retire string `json:"retire"`
 	// FirstTurn is how the first turn of the delivery's session ended, null until it did.
 	FirstTurn *memoFirstTurnDTO `json:"firstTurn"`
+	// Defer is the hand-back the delivery's session asked for (defer_queue_item), absent for
+	// none. ReturnBlocked names the messages that stayed where they were because another message
+	// of the queue holds their reference, and the message that does. ReturnedAt is when a person
+	// returned the run's messages to the queue.
+	Defer         *memoDeferDTO             `json:"defer,omitempty"`
+	ReturnBlocked []store.MemoReturnBlocked `json:"returnBlocked,omitempty"`
+	ReturnedAt    string                    `json:"returnedAt,omitempty"`
+}
+
+// memoDeferDTO is a delivery's hand-back request: the session's reason, the time it asked to wait
+// for, when it asked (the Agent's clock) and, once closed, what the close made of it (applied, or
+// the store.DeferDropped* reason it was dropped for; "" for a close that does not read one).
+type memoDeferDTO struct {
+	Reason    string `json:"reason"`
+	NotBefore string `json:"notBefore"`
+	At        string `json:"at"`
+	Result    string `json:"result,omitempty"`
 }
 
 // memoFirstTurnDTO is the end of a delivery's first turn: outcome is clean, turn-failed or
@@ -189,6 +206,10 @@ func memoDeliveryToDTO(d store.MemoDelivery) memoDeliveryDTO {
 	if out.HeldWakers == nil {
 		out.HeldWakers = []memoHeldWakerDTO{}
 	}
+	if d.DeferAt != "" {
+		out.Defer = &memoDeferDTO{Reason: d.DeferReason, NotBefore: d.DeferNotBefore, At: d.DeferAt, Result: d.DeferResult}
+	}
+	out.ReturnBlocked, out.ReturnedAt = store.ParseReturnBlocked(d.ReturnBlocked), d.ReturnedAt
 	out.Retire = d.RetireResult
 	if d.RetirePending || (d.State == store.DeliveryClosed && d.Outcome == store.DeliveryClean && d.Reported && d.RetireResult == "") {
 		out.Retire = "pending"
@@ -545,7 +566,9 @@ type memoMemberView struct {
 	// tidy is set when the Agent that answered has the tidy endpoint and takes a derived message.
 	tidy bool
 	// prs is set when the Agent that answered has the PR snapshot endpoint (queuePRs).
-	prs    bool
+	prs bool
+	// defers is set when the Agent that answered reports the turn starts (queueDefer).
+	defers bool
 	readAt string
 	// actMark is the envelope's actMark of that read, 0 when the Agent sent none.
 	actMark int64
@@ -625,6 +648,8 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 	}
 	// The retire pass has the reserved end of the budget (and what the read pass left of the rest).
 	r.retirePending(rctx, views, now)
+	// A deferred close returns its messages only after its retire ended (memo_defer.go).
+	r.settleDeferred(rctx, views, now)
 	// The first-turn pass has a budget of its own: the reads above may have used all of the pass's,
 	// and a pass that never runs would leave the breaker blind.
 	tctx, tcancel := context.WithTimeout(tick, memoClosedTurnBudget)
@@ -673,6 +698,7 @@ func (r *memoQueueRunner) view(ctx context.Context, views map[string]*memoMember
 		v.refs = err == nil && env.showsReferences()
 		v.tidy = err == nil && env.showsTidy()
 		v.prs = err == nil && env.readsPRs()
+		v.defers = err == nil && env.readsDefers()
 		if v.liveOK {
 			v.actMark = env.ActMark
 			if env.ActMark > 0 {
@@ -787,6 +813,12 @@ func (r *memoQueueRunner) closeIfDone(ctx context.Context, v *memoMemberView, d 
 // consecutive ticks. A session where a machine is working, or a person has to act, keeps it
 // open. The rows of other states (limited, unknown) keep it open too.
 func (r *memoQueueRunner) closeIfDoneUnreported(ctx context.Context, v *memoMemberView, d store.MemoDelivery, now time.Time) {
+	// A hand-back request is decided by a running Agent's report alone: the mirror can tell
+	// neither a later turn nor a PR, so the delivery stays open for it (settleWake wakes it).
+	if !v.liveOK && d.DeferAt != "" {
+		r.markIdle(ctx, d, 0)
+		return
+	}
 	if !v.liveOK && !v.mirrorOK {
 		// No observation this tick: the idle ticks are no longer consecutive.
 		r.markIdle(ctx, d, 0)
@@ -1051,6 +1083,12 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	if t := tree[0].QueueTurn; t != nil && t.EndedAt != "" {
 		o.TurnOutcome, o.TurnMs, o.TurnEndedAt = t.Outcome, t.Ms, t.EndedAt
 	}
+	// A hand-back is decided from reads that need the Agent (its PRs), made before the lock and
+	// only when this read may close the delivery: nothing holds it and the last one was clear.
+	var dc *memoDeferCheck
+	if d.DeferAt != "" && why == "" && d.Reported && d.HeldBy == "" && d.IdleTicks >= 1 {
+		dc = r.deferCheck(ctx, v, d, tree)
+	}
 	// Keeping the read, counting it, and closing on it are one transaction behind the membership
 	// lock, and the count is worked out from the stored row: another Control Plane's newer read
 	// that holds the delivery cannot be overwritten by a close made on this one's older copy.
@@ -1073,11 +1111,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		if ticks < 2 {
 			return nil
 		}
-		ok, err := tx.MoveDelivery(d.ID, store.DeliveryOpen, store.DeliveryClosed, "", store.DeliveryClean, store.DeliveryTS(time.Now()))
-		if err != nil || !ok {
-			return err
-		}
-		return tx.SetDeliveryRetirePending(d.ID)
+		return memoCloseClean(tx, d.ID, dc)
 	})
 	cancel()
 	if err != nil {
@@ -1129,6 +1163,11 @@ func (r *memoQueueRunner) tickKept(ctx context.Context, d store.MemoDelivery) {
 		cur, ok, err := tx.GetDelivery(d.ID)
 		if err != nil || !ok || cur.State != store.DeliveryOpen || cur.HeldBy != "" || !cur.Reported {
 			return err
+		}
+		// The mirror can tell neither a later turn nor a PR: a delivery with a hand-back request
+		// stays open until a running Agent reports (settleWake wakes the workspace for it).
+		if cur.DeferAt != "" {
+			return nil
 		}
 		if cur.IdleTicks < 1 {
 			return tx.SetDeliveryIdleTicks(d.ID, 1)
@@ -1632,7 +1671,14 @@ func (r *memoQueueRunner) open(ctx context.Context, d store.MemoDelivery, sessio
 }
 
 func (r *memoQueueRunner) closeOpen(ctx context.Context, d store.MemoDelivery, outcome string) {
-	if _, err := memoDeliveryMove(ctx, r.mgr.store, d, store.DeliveryOpen, store.DeliveryClosed, "", outcome, nil); err != nil {
+	// A clean close made without a report (an older Agent) cannot apply a hand-back: it says so.
+	var then func(tx store.MemoTxOps, at string) error
+	if outcome == store.DeliveryClean && d.DeferAt != "" {
+		then = func(tx store.MemoTxOps, _ string) error {
+			return tx.SetDeliveryDeferResult(d.ID, store.DeferDroppedUnread, "")
+		}
+	}
+	if _, err := memoDeliveryMove(ctx, r.mgr.store, d, store.DeliveryOpen, store.DeliveryClosed, "", outcome, then); err != nil {
 		log.Printf("memo queue: delivery %s: close: %v", d.ID, err)
 	}
 }

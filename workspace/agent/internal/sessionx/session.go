@@ -146,6 +146,9 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		KeepAwakeUntil: m.KeepAwakeUntil, StopAfterTurnAt: stopArmVisible(m),
 		SpendCapUSD: m.SpendCapUSD, SpendCapHitAt: m.SpendCapHitAt,
 		LastTurnEndAt: lastTurnEndAt(m),
+		// A queue run's hand-back is dropped when a turn of its tree started after the call
+		// (ADR 0137, addendum 2026-11-19, part B).
+		LastTurnStartAt: status.LastTurnStart(session.UUID(m.Dir, m.Name)),
 		// The list's own reason for an idle that is not a turn end (status.InputNotDelivered).
 		InputNotDelivered: alive && status.InputNotDelivered(session.UUID(m.Dir, m.Name)),
 		// Origin / OriginSession ride the wire so a caller outside this process can answer

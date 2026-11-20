@@ -263,6 +263,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /memos", memorelay.HandleList)
 	mux.HandleFunc("POST /memos", memorelay.HandleCreate)
 	mux.HandleFunc("PATCH /memos/{id}", memorelay.HandleUpdate)
+	// defer_queue_item's relay: the queue run of the calling session hands its message back.
+	mux.HandleFunc("POST /memos/defer", memorelay.HandleDefer)
 	// A queue's tidy run (ADR 0137 §8): the one deny-all model call over the pending notes. The
 	// Control Plane's dispatcher calls it directly; no browser relay exists for it.
 	mux.HandleFunc("POST /memos/tidy", memotidy.HandleTidy)

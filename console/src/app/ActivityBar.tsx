@@ -12,6 +12,9 @@ import { useWorkItemStore } from "../features/workitems/store.ts";
 import { useSeenStore } from "../features/workitems/seen.ts";
 import { dedupeWorkItems, sortWorkItems } from "../features/workitems/read.ts";
 import { useSchedulesStore } from "../features/schedules/store.ts";
+import { pendingProposals, useMemoryStore, useProposalsFeed } from "../features/memory/store.ts";
+import { useWorkspaceStore } from "../core/store/workspace.ts";
+import { useTenantStore } from "../core/store/tenant.ts";
 import { openHome } from "../features/home/open.ts";
 import { openSessionsOverview } from "../features/overview/open.ts";
 import { openImagegen } from "../features/imagegen/open.ts";
@@ -40,6 +43,7 @@ const VIEWS: ViewDef[] = [
   { id: "assistant", icon: "comment-discussion", label: "asst.section_title" },
   { id: "workitems", icon: "issues", label: "wi.title" },
   { id: "memo", icon: "note", label: "memo.title" },
+  { id: "memory", icon: "archive", label: "rail.view.memory" },
   { id: "schedules", icon: "calendar", label: "sched.title" },
   { id: "files", icon: "files", label: "pj.files" },
 ];
@@ -111,7 +115,7 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
             data-rail-view={v.id}
             aria-pressed={active}
             aria-label={name}
-            title={badge ? `${name} — ${badgeText(badge, tr)}` : name}
+            title={badge ? `${name} — ${badgeText(badge, tr, v.id)}` : name}
             onClick={() => {
               setAnnounced("");
               if (foldable) pickView(v.id);
@@ -179,10 +183,11 @@ function LaunchButton({ id, icon, label, name, onClick }: { id: string; icon: st
   );
 }
 
-function badgeText(b: RailBadge, tr: ReturnType<typeof useT>): string {
+function badgeText(b: RailBadge, tr: ReturnType<typeof useT>, view: RailView): string {
   switch (b.tone) {
     case "waiting":
-      return tCount("rail.badge.waiting", b.count);
+      // What waits differs by view: sessions on an answer, the Memory view's proposals on a decision.
+      return tCount(view === "memory" ? "rail.badge.proposals" : "rail.badge.waiting", b.count);
     case "news":
       return tCount("rail.badge.news", b.count);
     case "failed":
@@ -206,6 +211,13 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   const seen = useSeenStore((s) => s.map);
   const failedRuns = useSchedulesStore((s) => s.failed);
   const allFailedRuns = useSchedulesStore((s) => s.failedAll);
+  // A count, not the list: the list is replaced on every read.
+  // Read here, not by the Memory view: the view mounts on first show, the badge cannot wait for it.
+  useProposalsFeed(
+    useWorkspaceStore((s) => s.state) === "running",
+    useTenantStore((s) => s.tenant),
+  );
+  const pendingMemory = useMemoryStore((s) => pendingProposals(s.proposals));
   const acked = useRailAck((s) => s.acked);
   const ack = useRailAck((s) => s.ack);
 
@@ -228,6 +240,9 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   if (unreadConversation) out.assistant = { tone: "unread" };
   const news = onScreen === "workitems" ? 0 : pendingNews(workItemKeys, acked.workitems).length;
   if (news > 0) out.workitems = { tone: "news", count: news };
+  // Like a waiting session (ADR 0141 decision 2): a proposal waits on the member's decision, so
+  // the count stays while the view is open and clears only as proposals are decided.
+  if (pendingMemory > 0) out.memory = { tone: "waiting", count: pendingMemory };
   if (onScreen !== "schedules" && pendingNews(failedRuns, acked.schedules).length > 0) out.schedules = { tone: "failed" };
   return out;
 }

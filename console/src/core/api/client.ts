@@ -1510,6 +1510,11 @@ export const memoQueueResume = (categoryId: string): Promise<MemoWriteResult> =>
 // stopped (not archived). Idempotent; 409 delivery_not_open for a run with no session yet.
 export const memoQueueDeliveryEnd = (categoryId: string, deliveryId: string): Promise<MemoWriteResult> =>
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries/${encodeURIComponent(deliveryId)}/end`, "POST", {});
+// Returns a closed run's notes to the queue (ADR 0137, addendum 2026-11-19, part B): they wait
+// again with no time and no hand-backs counted. 409 memo_ref_taken names the waiting note that holds
+// the same work item, nothing_to_return when no note is still the run's.
+export const memoQueueDeliveryReturn = (categoryId: string, deliveryId: string): Promise<MemoWriteResult> =>
+  apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries/${encodeURIComponent(deliveryId)}/return`, "POST", {});
 export const memoQueueDeliveries = (categoryId: string): Promise<unknown> =>
   api(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries`);
 // The tidy runs of a category, newest first. Raw like the other reads: readTidyRuns normalises it.

@@ -38,6 +38,10 @@ const (
 	// the deliveries of a stopped workspace (ADR 0137 section 6), kept so that it counts as a
 	// fire of the day.
 	DeliveryWake = "wake"
+	// DeliveryDeferred is a clean close that applied the session's hand-back (defer_queue_item):
+	// its messages went back to pending with a not_before, or to held on the third time. The
+	// circuit breaker skips it (RecentTurnDeliveries).
+	DeliveryDeferred = "deferred"
 )
 
 // MemoDelivery is one fire of a queue. QueueID is the queue's category id.
@@ -102,6 +106,11 @@ type MemoDelivery struct {
 	// PRState* values, "" until a read answered). PRReadAt is the last read that answered,
 	// PRTriedAt the last read begun, PRChangedAt when the snapshot last changed.
 	PRSnapshot, PRState, PRReadAt, PRTriedAt, PRChangedAt string
+	// The hand-back the delivery's session asked for (store_memo_defer.go): DeferReason,
+	// DeferNotBefore and DeferAt (the Agent's clock) are "" for none. DeferResult is what the
+	// close made of it, ReturnBlocked the JSON array of the messages another message's reference
+	// kept where they were, ReturnedAt when a person returned the run's messages to the queue.
+	DeferReason, DeferNotBefore, DeferAt, DeferResult, ReturnBlocked, ReturnedAt string
 }
 
 // What holds an open delivery (memo_delivery.held_by).
@@ -176,6 +185,8 @@ type MemoDeliveryStore interface {
 	// retired, oldest first: the ones marked pending, and every clean close of a reported
 	// delivery without a result (an older binary's close sets no mark).
 	ListRetirePendingDeliveries(ctx context.Context) ([]MemoDelivery, error)
+	// ListDeferredToSettle: see store_memo_defer.go.
+	ListDeferredToSettle(ctx context.Context) ([]MemoDelivery, error)
 	// FinishDeliveryRetire clears the pending retire of a closed delivery and keeps result
 	// (confirmed, released, done, gone, fault). retired_at is set only for a confirmed one.
 	FinishDeliveryRetire(ctx context.Context, id, at, result string) (bool, error)
@@ -248,7 +259,8 @@ const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, se
 	created_at, sent_at, opened_at, closed_at, updated_at,
 	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at, retire_result,
 	turn_outcome, turn_ms, turn_ended_at, auto, limit_kinds, drain, act_mark, retire_act_mark, retire_gen, act_incarnation, retire_act_incarnation, held_detail,
-	pr_snapshot, pr_state, pr_read_at, pr_tried_at, pr_changed_at FROM memo_delivery`
+	pr_snapshot, pr_state, pr_read_at, pr_tried_at, pr_changed_at,
+	defer_reason, defer_not_before, defer_at, defer_result, return_blocked, returned_at FROM memo_delivery`
 
 func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	var d MemoDelivery
@@ -258,7 +270,8 @@ func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 		&d.CreatedAt, &d.SentAt, &d.OpenedAt, &d.ClosedAt, &d.UpdatedAt,
 		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt, &d.RetireResult,
 		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto, &d.LimitKinds, &drain, &d.ActMark, &d.RetireActMark, &d.RetireGen, &d.ActIncarnation, &d.RetireActIncarnation, &d.HeldDetail,
-		&d.PRSnapshot, &d.PRState, &d.PRReadAt, &d.PRTriedAt, &d.PRChangedAt)
+		&d.PRSnapshot, &d.PRState, &d.PRReadAt, &d.PRTriedAt, &d.PRChangedAt,
+		&d.DeferReason, &d.DeferNotBefore, &d.DeferAt, &d.DeferResult, &d.ReturnBlocked, &d.ReturnedAt)
 	d.Reported, d.RetirePending, d.Auto, d.Drain = reported != 0, retire != 0, auto != 0, drain != 0
 	d.MessageIDs = []string{}
 	if err == nil && ids != "" {
@@ -317,8 +330,10 @@ func (t memoTx) LiveQueueDeliveries(queueID string) ([]MemoDelivery, error) {
 }
 
 func (t memoTx) RecentTurnDeliveries(queueID, after string, limit int) ([]MemoDelivery, error) {
-	return t.queryDeliveries(memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND turn_ended_at<>'' AND created_at>?
-		ORDER BY created_at DESC, id DESC LIMIT ?`, t.mid, queueID, after, limit)
+	// A deferred delivery is skipped: it neither counts as bad nor ends a run of bad ones, so a
+	// hand-back (forged or not) cannot reset the breaker.
+	return t.queryDeliveries(memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND turn_ended_at<>'' AND created_at>? AND outcome<>?
+		ORDER BY created_at DESC, id DESC LIMIT ?`, t.mid, queueID, after, DeliveryDeferred, limit)
 }
 
 func (t memoTx) CountMemberWakesSince(since string) (int, error) {

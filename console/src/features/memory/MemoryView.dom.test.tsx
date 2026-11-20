@@ -86,6 +86,22 @@ describe("MemoryView", () => {
     expect(memoryPane()!.content).toEqual({ kind: "memory", memoryView: "proposals" });
   });
 
+  it("shows one proposal alone when the pane names it, with a way back to the list (ADR 0141)", async () => {
+    const id = "0123456789abcdef0123";
+    api.mockImplementation(async (url: string) =>
+      url.startsWith("api/agents/memory-consolidation/proposal?")
+        ? { id, topicId: "t", scope: "user", memory: "m", status: "pending", created: "", expires: "", items: [], itemViews: [], observationIds: [], evidence: [] }
+        : {},
+    );
+    useLayoutStore.getState().openTarget({ content: { kind: "memory", memoryView: "proposals", proposalId: id } });
+    const pane = memoryPane()!;
+    await mount(<MemoryView paneId={pane.id} view="proposals" proposalId={id} />);
+    expect(api.mock.calls.map((c) => String(c[0]))).toContain(`api/agents/memory-consolidation/proposal?id=${id}`);
+    expect(host!.querySelector(".mem-list")).toBeNull();
+    await act(async () => Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === t("mem.mv_all_proposals"))!.click());
+    expect(memoryPane()!.content).toEqual({ kind: "memory", memoryView: "proposals" });
+  });
+
   it("offers Start while the workspace is stopped", async () => {
     ws.state = "stopped";
     await mount(<MemoryView paneId="x" view="proposals" />);

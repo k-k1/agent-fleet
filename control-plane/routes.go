@@ -614,7 +614,7 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	// The face each route is registered with is what the memo cores read the provenance and
 	// the queue rules from (memo_queue.go). It is never taken from the request.
 	console, token := memoViaConsole, memoVia{face: memoFaceToken}
-	mux.HandleFunc("GET /api/memos", memo.withMembership(memo.list))
+	mux.HandleFunc("GET /api/memos", memo.withMembership(memo.listConsole))
 	mux.HandleFunc("POST /api/memos", memo.withMembership(memo.create(console)))
 	mux.HandleFunc("POST /api/memos/flush", memo.withResolved(memo.flush(console)))
 	// Release (ADR 0137): Console only. The workspace does not hold the member's session, and
@@ -640,6 +640,9 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/memo-queues/{categoryId}/deliveries", memo.withMembership(memo.listDeliveries))
 	// End an open run from the history: close it as "ended" and retire its session. Console only.
 	mux.HandleFunc("POST /api/memo-queues/{categoryId}/deliveries/{id}/end", memo.withMembership(memo.endDelivery))
+	// Return a closed run's messages to the queue (ADR 0137, addendum 2026-11-19, part B): the
+	// person's own press, Console only. Never on the token face or /mcp.
+	mux.HandleFunc("POST /api/memo-queues/{categoryId}/deliveries/{id}/return", memo.withMembership(memo.returnDelivery))
 	// Tidy runs (ADR 0137 section 8): the Console's run list and undo. Neither is on the token face or /mcp.
 	mux.HandleFunc("GET /api/memo-queues/{categoryId}/tidy-runs", memo.withMembership(memo.listTidyRuns))
 	mux.HandleFunc("POST /api/memo-tidy-runs/{runId}/undo", memo.withMembership(memo.undoTidy))
@@ -655,6 +658,9 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /internal/memos/flush", memo.withMemoTokenResolved(memo.flush(token)))
 	mux.HandleFunc("PATCH /internal/memos/{id}", memo.withMemoToken(memo.update(token)))
 	mux.HandleFunc("DELETE /internal/memos/{id}", memo.withMemoToken(memo.delete(token)))
+	// A queue run's session hands its message back (defer_queue_item, relayed by the Agent with
+	// the session's name). Only records the request: a clean close applies it.
+	mux.HandleFunc("POST /internal/memo-deliveries/{id}/defer", memo.withMemoToken(memo.deferDelivery))
 	mux.HandleFunc("GET /internal/memo-categories", memo.withMemoToken(memo.listCategories))
 	mux.HandleFunc("POST /internal/memo-categories", memo.withMemoToken(memo.createCategory))
 	mux.HandleFunc("PATCH /internal/memo-categories/{id}", memo.withMemoToken(memo.updateCategory(token)))

@@ -37,7 +37,7 @@ GENERATOR = "scripts/mcp_catalogue.py"
 # convention are for the reviewer and are not checked here.
 TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)*$")
 TOOL_VERBS = frozenset(
-    "add answer archive ask attach create delete detach flush generate get link list pause peek "
+    "add answer archive ask attach create defer delete detach flush generate get link list pause peek "
     "propose purge rename request respond restore resume run search send set stop tail unwatch "
     "update watch".split()
 )
@@ -109,6 +109,8 @@ WS_SESSION_GATES = (
     ("session-memory", "memory"),
     ("session-imagegen", "imagegen"),
     ("session-studio", "studio"),
+    # A session whose meta names the queue run that started it (defer_queue_item).
+    ("session-queue-run", "queuerun"),
 )
 WS_ASSISTANT = (
     # (audience, the same without a browser, grant)
@@ -133,6 +135,7 @@ LABELS = {
         "memory": '"Agent memory"',
         "imagegen": '"Image generation"',
         "studio": "image studio",
+        "queuerun": "only a session an auto-run started",
         "browser": "with a browser",
         "read": "AF read",
         "write": "AF write",
@@ -149,6 +152,7 @@ LABELS = {
         "memory": "「エージェントメモリ」",
         "imagegen": "「画像生成」",
         "studio": "画像スタジオ",
+        "queuerun": "自動実行が起動したセッションだけ",
         "browser": "ブラウザあり",
         "read": "AF 読み取り",
         "write": "AF 書き込み",
@@ -284,6 +288,8 @@ def availability(root: str) -> dict[str, dict]:
             row(tool)["session"] = gates
     for tool in names("session-studio") - every_session:
         row(tool)["session"] = ["studio"]
+    for tool in names("session-queue-run") - every_session:
+        row(tool)["session"] = ["queuerun"]
     for full, nobrowser, grant in WS_ASSISTANT:
         for tool in names(full):
             if row(tool)["assistant"]:

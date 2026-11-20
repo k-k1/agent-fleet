@@ -31,17 +31,15 @@ import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { PurgeHistoryDialog, type PurgeTarget } from "./memoryPurge.tsx";
 import { MemoryHistory, useAllChanges } from "./memoryHistory.tsx";
 import { useSettingsUI } from "../store.ts";
+import { ALL_SCOPES, useMemoryBodySearch } from "../../memory/bodySearch.ts";
 import { hasEveryWord, keyOf, matchMemoriesDetail, parseMemoryTarget, scopeKey } from "./memorySearch.ts";
-import type { MemoryBody, MemoryChange, MemoryListed, MemorySearchHit, SecretFinding } from "./memoryTypes.ts";
+import type { MemoryBody, MemoryChange, MemoryListed, SecretFinding } from "./memoryTypes.ts";
 
 const TYPES = ["user", "feedback", "project", "reference"] as const;
 const projectQuery = (project?: string) => (project ? "?project=" + encodeURIComponent(project) : "");
 
-/** Pause after the last keystroke before the body search is asked. */
-const SEARCH_DELAY_MS = 300;
-
 // The default selection: every scope at once (list, field filter and body search).
-const ALL = "all";
+const ALL = ALL_SCOPES;
 
 type Filter = "all" | "pinned" | "forgotten";
 const FILTERS = [
@@ -130,11 +128,6 @@ export function MemoriesMasterDetail({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [findings, setFindings] = useState<SecretFinding[]>([]);
   const [formErr, setFormErr] = useState("");
-  const [hits, setHits] = useState<MemorySearchHit[]>([]);
-  // "any": no memory held every word, so the hits hold only some of them (member-search).
-  const [fallback, setFallback] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [searchErr, setSearchErr] = useState(false);
   const [busy, setBusy] = useState(false);
   // Bumped by this view's own writes: the list, the forgotten list, the body and the history are
   // read again (the parent's `reload` does the same for the status header and the other views).
@@ -148,6 +141,8 @@ export function MemoriesMasterDetail({
   const focusRow = useRef("");
   // A memory just saved: its row is not in the list until the re-read lands.
   const justSaved = useRef("");
+  // The forgotten memory a target asked for (its key), until it is found or known to be gone.
+  const askedGone = useRef("");
 
   useEffect(() => {
     session.scope = scope;
@@ -233,6 +228,9 @@ export function MemoriesMasterDetail({
     setGoneNext(res?.next ?? "");
   };
 
+  const loadMoreRef = useRef(loadMoreGone);
+  loadMoreRef.current = loadMoreGone;
+
   // The scopes there is something to browse in. "All scopes" comes first and is the default: a
   // query is expected to cover everything, and the user scope alone is often empty. User scope is
   // always offered: a new memory can start there. A project is offered once it holds a memory
@@ -256,42 +254,8 @@ export function MemoriesMasterDetail({
   }, [scopes, scope, rows, goneLoaded]);
 
   const q = query.trim().toLowerCase();
-  // Body search: asked after a pause, for the scope on screen. "All" sends no scope param, which makes the
-  // Agent search the user scope and every project. A newer question or a scope change
-  // drops the answer of an older one.
-  const searchSeq = useRef(0);
-  useEffect(() => {
-    const seq = ++searchSeq.current;
-    setHits([]);
-    setFallback("");
-    setSearchErr(false);
-    if (!q) {
-      setSearching(false);
-      return;
-    }
-    setSearching(true);
-    const [kind, projectId = ""] = scope.split(":");
-    const timer = setTimeout(() => {
-      const scopeQ =
-        kind === ALL ? "" : kind === "user" ? "scope=user&" : `scope=project&project=${encodeURIComponent(projectId)}&`;
-      api(`api/agents/memory/entries/member-search?${scopeQ}limit=50&q=${encodeURIComponent(q)}`)
-        .then((res) => {
-          if (seq !== searchSeq.current) return;
-          if (res?.error) setSearchErr(true);
-          else {
-            setHits(res?.hits ?? []);
-            setFallback(res?.fallback ?? "");
-          }
-        })
-        .catch(() => {
-          if (seq === searchSeq.current) setSearchErr(true);
-        })
-        .finally(() => {
-          if (seq === searchSeq.current) setSearching(false);
-        });
-    }, SEARCH_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [q, scope]);
+  // Body search: asked after a pause, for the scope on screen.
+  const { hits, fallback, searching, failed: searchErr } = useMemoryBodySearch(q, scope);
 
   // The rows of the scope that match by a listed field (instant) or by a body hit; a body hit
   // brings its matching lines. Order: listed matches as listed, then body-only hits in rank order.
@@ -321,7 +285,20 @@ export function MemoriesMasterDetail({
     if (outOfScope) return setSel(null);
     if (sel.gone) {
       if (filter !== "forgotten") return setSel(null);
-      if (goneLoaded && !goneErr && !goneRow) setSel(null);
+      if (goneRow) {
+        if (askedGone.current === key) askedGone.current = "";
+        return;
+      }
+      if (!goneLoaded || goneErr) return;
+      // A forgotten memory the left pane asked for can sit on a page this list has not read (the
+      // view pages on its own): read on until it turns up or the list ends, then let it go.
+      if (askedGone.current === key && goneNext) {
+        // After a failed page the pick stays and waits: the member's own "more" retries it.
+        if (!goneMoreBusy && !goneMoreErr) void loadMoreRef.current();
+        return;
+      }
+      askedGone.current = "";
+      setSel(null);
       return;
     }
     if (filter === "forgotten") return setSel(null);
@@ -330,7 +307,7 @@ export function MemoriesMasterDetail({
     if (curRow) {
       if (justSaved.current === key) justSaved.current = "";
     } else if (rows !== null && justSaved.current !== key) setSel(null);
-  }, [sel, scope, filter, rows, curRow, goneRow, goneLoaded, goneErr, key]);
+  }, [sel, scope, filter, rows, curRow, goneRow, goneLoaded, goneErr, goneNext, goneMoreBusy, goneMoreErr, key]);
 
   // The body of the pick, read again after this view's own writes.
   const readable = !!sel && !sel.gone;
@@ -390,7 +367,26 @@ export function MemoriesMasterDetail({
   const clearAsked = useSettingsUI((st) => st.clearSettingsTarget);
   useEffect(() => {
     const want = parseMemoryTarget(asked);
-    if (!want || rows === null) return;
+    if (!want) return;
+    // A forgotten one is picked from the forgotten list of every scope. Its answer is not awaited
+    // here: the pick's own check drops it once that list has landed without it.
+    if (want.gone) {
+      clearAsked();
+      // The list on screen may be for another scope or older than the forget the left pane saw:
+      // it is read again, and says nothing about the pick until that answer lands.
+      setGoneLoaded(false);
+      setMine((n) => n + 1);
+      askedGone.current = selKey({ scope: want.scope, project: want.project, name: want.name, gone: true });
+      focusPane.current = true;
+      setDraft(null);
+      setMenuOpen(false);
+      setQuery("");
+      setScope(ALL);
+      setFilter("forgotten");
+      setSel({ scope: want.scope, project: want.project, name: want.name, gone: true });
+      return;
+    }
+    if (rows === null) return;
     clearAsked();
     const m = rows.find((r) => keyOf(r) === keyOf({ scope: want.scope, project: { id: want.project }, name: want.name }));
     if (!m) return;
@@ -401,7 +397,7 @@ export function MemoriesMasterDetail({
     setScope(ALL);
     setFilter("all");
     setSel(selFrom(m, false));
-  }, [asked, rows, clearAsked]);
+  }, [asked, rows, clearAsked, scope]);
   const back = () => {
     if (paneKey) focusRow.current = key;
     setDraft(null);

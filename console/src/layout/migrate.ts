@@ -15,6 +15,8 @@ const str = (v: unknown): string | null => (typeof v === "string" && v ? v : nul
 /** Session names are slugs (the Agent's `session.ValidName`), and `gallerySession` only
  *  ever reaches a title — anything else is a stored value pretending to be a name. */
 const SESSION_NAME_RE = /^[A-Za-z0-9_-]{1,40}$/;
+// A memory consolidation proposal id: the Agent mints 20 hex digits (memconsol.ValidID).
+const PROPOSAL_ID_RE = /^[0-9a-f]{20}$/;
 // An image studio id (ADR 0100): the Agent mints a UUID and refuses anything else.
 const STUDIO_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -158,6 +160,9 @@ function contentFromFlat(p: any): PaneContent {
       return { kind: "home" };
     case "memory": {
       const v = p.memoryView;
+      // The proposal id reaches an API query, so it is held to the Agent's id shape (20 hex digits).
+      const proposalId = str(p.proposalId);
+      if (v === "proposals" && proposalId && PROPOSAL_ID_RE.test(proposalId)) return { kind: "memory", memoryView: v, proposalId };
       return v === "memories" || v === "changes" || v === "proposals" ? { kind: "memory", memoryView: v } : { kind: "memory" };
     }
     case "fleetgraph": {

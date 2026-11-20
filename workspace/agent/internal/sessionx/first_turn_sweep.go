@@ -56,5 +56,7 @@ func SweepFirstTurnOrphans() int {
 		}
 		live[session.UUID(m.Dir, m.Name)] = true
 	}
+	// The turn starts (status.TurnStart) are keyed and orphaned the same way.
+	status.SweepOrphanTurnStarts(live, firstTurnOrphanAge, time.Now())
 	return status.SweepOrphanFirstTurns(live, firstTurnOrphanAge, time.Now())
 }

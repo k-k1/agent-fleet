@@ -252,3 +252,59 @@ func HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	res, err := cpDoFn(r.Context(), http.MethodPatch, "/internal/memos/"+url.PathEscape(id), body)
 	relay(w, res, err)
 }
+
+// DeferRequest is POST /memos/defer: defer_queue_item of the session From (filled by the MCP
+// process from its own identity, never by the model). The relay sends it for the queue delivery
+// the session's meta names, so a session hands back only the run that started it.
+type DeferRequest struct {
+	From      string `json:"from"`
+	Reason    string `json:"reason"`
+	NotBefore string `json:"notBefore,omitempty"`
+	Cancel    bool   `json:"cancel,omitempty"`
+}
+
+// cpDefer is the body POST /internal/memo-deliveries/{id}/defer gets. At is this host's clock: the
+// Control Plane compares it with the turn starts of the run's tree, which the same clock stamps.
+type cpDefer struct {
+	Session   string `json:"session"`
+	Reason    string `json:"reason"`
+	NotBefore string `json:"notBefore,omitempty"`
+	Cancel    bool   `json:"cancel,omitempty"`
+	At        string `json:"at"`
+}
+
+// QueueDeliveryOf is the queue delivery that started the session named from, "" for none (or a
+// name with no meta).
+func QueueDeliveryOf(from string) string {
+	from = strings.TrimSpace(from)
+	if !session.ValidName(from) {
+		return ""
+	}
+	m, ok := session.ReadMeta(from)
+	if !ok {
+		return ""
+	}
+	return m.QueueDelivery
+}
+
+// HandleDefer is POST /memos/defer (ADR 0137, addendum 2026-11-19, part B).
+func HandleDefer(w http.ResponseWriter, r *http.Request) {
+	var in DeferRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequest)
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	delivery := QueueDeliveryOf(in.From)
+	if delivery == "" {
+		httpx.WriteErr(w, http.StatusConflict, "no_queue_delivery", "this session was not started by a queue run, so it has no message to hand back")
+		return
+	}
+	body, err := json.Marshal(cpDefer{Session: strings.TrimSpace(in.From), Reason: in.Reason, NotBefore: in.NotBefore,
+		Cancel: in.Cancel, At: time.Now().Format(time.RFC3339Nano)})
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "encode_failed", err.Error())
+		return
+	}
+	res, err := cpDoFn(r.Context(), http.MethodPost, "/internal/memo-deliveries/"+url.PathEscape(delivery)+"/defer", body)
+	relay(w, res, err)
+}

@@ -145,6 +145,14 @@ source_of_truth: "コード（本書は地図と設計意図）"
     名前を付けられない PR、meta・作業コピー・origin を読めないときは `503`（`pr_snapshot_unanswered` /
     `pr_snapshot_unreadable`）、meta が無いときは `404 pr_snapshot_no_session`、不正な body は
     `400 bad_pr_snapshot_request`。どの答えにも `X-AF-PR-Snapshot: 1` が付く。
+  - **差し戻し**（ADR 0137 2026-11-19 追記の B）。`GET /sessions` は `"queueDefer": 1`（`queueDeferVersion`、`>=` で読む）
+    と、各行の `lastTurnStartAt`（セッションの最新ターンが始まった時刻、このホストの時計）を載せる。`status.TurnStart`
+    がファイル `session-turn-start/<sid>.json` に、sid ごとのロックの下で最初のターン台帳と同じ開始の規則で書き、停止を
+    越えて残し、最初のターンの孤児と一緒に掃除する。MCP ツール `defer_queue_item(reason, not_before, cancel)` は meta に
+    `queueDelivery` があるセッションにだけ広告する。ツールは自分のセッション名で `POST /memos/defer`
+    （`memorelay.HandleDefer`）を呼び、中継は meta が指す配信について `{session, reason, notBefore, cancel, at}` を
+    Control Plane の `POST /internal/memo-deliveries/{delivery}/defer` に送る（`at` はこのホストでの呼び出し時刻）。配信の
+    無いセッションは `409 no_queue_delivery`。Control Plane の答えはそのまま返す。
   - `POST /sessions/{name}/retire` は、そのセッションと、それが始めた全セッション（深さを問わない。
     `origin == "session"` と `originSession` の連鎖で、`spendDescendants` と同じ辿り方）について、
     上のものを全部終わらせ、予約済みの再開を取り消し、halt する。答えは、セッションの一覧、それぞれで

@@ -72,6 +72,19 @@ export interface Memo {
   /** Set on a note the Control Plane sent back for approval because one of the notes it waits for
    *  can no longer finish well. */
   heldReason?: { after: string; reason: string; at?: string };
+  /** A note its run handed back (ADR 0137, addendum 2026-11-19, part B): when it may run again,
+   *  how many times it was handed back since it was last approved or returned, and those hand-backs
+   *  with the sessions' reasons (the Console's list only). */
+  notBefore?: string;
+  deferCount?: number;
+  deferReasons?: MemoDeferEntry[];
+}
+
+/** One hand-back of a note: the session's reason, when, and by which run. */
+export interface MemoDeferEntry {
+  reason: string;
+  at: string;
+  delivery?: string;
 }
 
 /** One note another waits for, and how it stands: satisfied, waiting (with why) or failed (with
@@ -211,13 +224,14 @@ export type MemoWaitingReason =
   | "no_place"
   | "tidying"
   | "no_tidy"
-  | "prerequisites";
+  | "prerequisites"
+  | "deferred";
 
 export interface MemoQueueWaiting {
   reason: MemoWaitingReason;
   /** RFC 3339: when the Control Plane will act, only when it is known. */
   until?: string;
-  detail?: { needed?: number; waiting?: number; agentKind?: string; by?: "category" | "member"; blocked?: number };
+  detail?: { needed?: number; waiting?: number; agentKind?: string; by?: "category" | "member"; blocked?: number; deferred?: number };
 }
 
 /** The PUT body: a PUT replaces the whole row, so every setting is sent, and nothing read-only. */
@@ -254,7 +268,7 @@ export interface MemoQueuesWire {
 export interface MemoDelivery {
   id: string;
   state: string; // claimed | sending | open | closed
-  outcome: string; // clean | failed | aborted | unknown | not_sent ("" while not closed)
+  outcome: string; // clean | deferred | failed | aborted | ended | unknown | not_sent ("" while not closed)
   session: string; // the started session's name; "" until known
   messageIds: string[];
   createdAt: string;
@@ -277,6 +291,16 @@ export interface MemoDelivery {
   retire: string;
   /** How the first turn of the session ended; null until it did. */
   firstTurn: { outcome: string; ms: number; endedAt: string } | null;
+  /** The hand-back the run's session asked for, null for none. result is what the close made of
+   *  it: "applied", or why it was dropped ("turn", "pr", "unread", "released": a person took the session
+   *  over; "returned": a person returned the notes first); "" before the close, and on a run closed as
+   *  "deferred" until its session is stopped and the notes go back. */
+  defer: { reason: string; notBefore: string; at: string; result: string } | null;
+  /** The notes that stayed with the run because another waiting note holds their work item, and
+   *  that note. */
+  returnBlocked: { id: string; by: string }[];
+  /** When a person returned the run's notes to the queue; "" for never. */
+  returnedAt: string;
 }
 
 // Body sent to POST /api/memo-categories.

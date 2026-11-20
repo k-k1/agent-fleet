@@ -401,6 +401,10 @@ func DeliveryState(d store.MemoDelivery, found bool, now time.Time) (state, reas
 		return Failed, WhyUnknown
 	case d.State != store.DeliveryClosed:
 		return Waiting, WhyRunning
+	case d.Outcome == store.DeliveryDeferred && d.DeferResult == "":
+		// A hand-back not decided yet: its message either returns (and the dependent waits for
+		// it as pending) or the close becomes clean.
+		return Waiting, WhyRunning
 	case d.Outcome == store.DeliveryAborted:
 		return Failed, WhyAborted
 	case d.Outcome == store.DeliveryUnknown:
@@ -496,6 +500,10 @@ func Verdict(items []Item) (eligible bool, failed *Item) {
 // claimed now. A read that fails makes a message not eligible: it is never fired on a doubt.
 func EligibleIn(lk Lookup) func(store.Memo) bool {
 	return func(m store.Memo) bool {
+		// A message handed back waits for its not_before as well (part B of the addendum).
+		if Deferred(m, lk.Now) {
+			return false
+		}
 		if m.AfterIDs == "" {
 			return true
 		}
@@ -508,11 +516,20 @@ func EligibleIn(lk Lookup) func(store.Memo) bool {
 	}
 }
 
-// Linked is the set of ids of a bucket that have or are a prerequisite: a tidy run only keeps
-// them (ADR 0137 section 8, as the addendum amends it).
+// Deferred reports whether m was handed back and its not_before has not passed at now. The
+// statistics' SQL (store.memoNotBeforeSQL) says the same.
+func Deferred(m store.Memo, now time.Time) bool {
+	return m.NotBefore != "" && m.NotBefore > store.DeliveryTS(now)
+}
+
+// Linked is the set of ids of a bucket that have or are a prerequisite, or that wait for a
+// not_before: a tidy run only keeps them (ADR 0137 section 8, as the addendum amends it).
 func Linked(rows []store.Memo) map[string]bool {
 	out := map[string]bool{}
 	for _, r := range rows {
+		if r.NotBefore != "" {
+			out[r.ID] = true
+		}
 		ids := IDs(r)
 		if len(ids) == 0 {
 			continue

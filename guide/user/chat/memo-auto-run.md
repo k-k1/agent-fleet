@@ -289,6 +289,7 @@ The states of a run:
 | Starting | The session is being started |
 | Running | The session is running and the run is not over |
 | Done | The run is over |
+| Handed back | The run is over, and it handed its memo back to wait ([A run hands its memo back](#a-run-hands-its-memo-back)) |
 | Stopped | The session was archived or deleted while the run was open |
 | Ended by you | You pressed "**End**" on the run ([End a run yourself](#end-a-run-yourself)) |
 | Needs a look | Whether the session started could not be confirmed. Its memos become "Needs a look" too |
@@ -358,6 +359,44 @@ A run that is still open (a child that keeps working, a watch you no longer need
 - Pressing it again, or pressing it for a run that has just ended by itself, changes nothing
 - It is not offered while the run has no session yet ("Starting"). Those settle by themselves
 - A session you act on after pressing is still stopped: ending the run is your word that it is over. Stopping happens within about a minute, and only while the workspace is running. A stopped workspace has nothing to stop. If the workspace does not report the run's state (an older version), the place is freed but the session is not stopped; stop it yourself
+
+### A run hands its memo back
+
+A session that auto-run started can hand its memo back when the work cannot be done yet, for example because another change is not merged or a service it needs is down. The memo then runs again later, as a new run.
+
+- The session asks for it with the `defer_queue_item` tool. Only a session a run started gets the tool, only for that run, and only in a category whose "Memos per session" is 1
+- It takes effect only when the run ends as it otherwise would ("Done"). The run's state is then "**Handed back**", and the memo goes back to "Waiting to run" with "**Waits until** *time*: its run handed it back". The time is what the session asked for: 10 minutes to 7 days ahead, 1 hour when it named none. Until then the memo does not run, and "Run now" does not take it either
+- The memo goes back only after the session has been stopped. When you take the session over before that ([When a run ends, its session is stopped](#when-a-run-ends-its-session-is-stopped)), or it starts working again, nothing is handed back and the run is "Done"
+- The session's reason shows on the run's row in the run history and under the memo. It is never given to the next session
+- The memo runs again as a new run, which counts towards "Runs per day"
+- The third time one memo is handed back, it goes back to "**Waits for approval**" instead, with the reasons. Approve it again to run it; that starts the count again
+- A handed-back run never counts towards pausing the category, and never stops a pause either ([Pause and resume](#pause-and-resume))
+
+A run that went on working is not handed back: the run ends as "Done", the memo stays "Started", and the row says why.
+
+| On the run's row | Meaning |
+|---|---|
+| Asked to hand its memo back | The run is still open. The request applies when it ends |
+| Handed its memo back | It was applied |
+| Handing its memo back once its session is stopped | The run is over. The memo goes back once its session has been stopped |
+| Hand-back dropped: you took the session over | You acted on the session before it was stopped |
+| You returned the memo before the hand-back | You pressed "Return to queue" first. Your return stands |
+| Hand-back dropped: the run went on working after asking | The session, or a session it started, took another turn after asking |
+| Hand-back dropped: its session has an open or merged pull request | The work may already be done |
+| Hand-back dropped: whether the run went on could not be checked | The workspace could not show it (an older version, or the pull requests could not be read) |
+| Hand-back not applied: the run did not end on its own | The run was stopped, ended by you, or its state is not known |
+| Stayed with this run: another waiting memo (…) already holds the same work item | That memo will do the work. The memo of this run stays "Started" |
+
+- While the workspace is stopped, a run that asked is left open, because only the running workspace can show whether it went on. When such runs use every place of a category with memos waiting, auto-run starts the workspace to settle them, as it does for an overdue run
+
+### Return a run's memos to the queue
+
+To run a finished run's memos again yourself, press "**Return to queue**" on its row in the run history and confirm. Its memos go back to "Waiting to run", with no time to wait and the count of hand-backs started again.
+
+- It is offered on a run that has ended, once. Only memos still of that run return: a memo you have since changed or that ran again is left alone
+- When the run's session has a pull request that is open or merged, the confirmation says so: the work may already be done, and running it again may do it twice
+- When another waiting memo already points at the same work item, nothing returns and the message names that memo
+- Only you can do this, in the Console. A session or an `/mcp` connection cannot
 
 ### What the session is given
 
@@ -430,6 +469,7 @@ When memos are waiting to run and nothing starts, a line or a notice under the c
 | Waiting for more memos: *n* of *m* so far. Runs start once *m* are waiting. | The number of memos waiting to run has not reached "Notes waiting to run". Add memos, or press "Run now" |
 | Waiting for more memos: *n* of *m* ready so far, and *k* more waiting for the memos they depend on. … | As above. Memos that wait for other memos do not count until those have ended well ([Make a memo wait for another](#make-a-memo-wait-for-another)) |
 | Every waiting memo (*n*) waits for other memos of this category to finish first. | Every memo waiting to run waits for another memo. It runs once those have ended well |
+| Every waiting memo (*n*) was handed back by its run and waits for its time.<br>Every waiting memo (*n*) was handed back by its run. The next may run at *time*. | Their runs handed them back ([A run hands its memo back](#a-run-hands-its-memo-back)). They run by themselves once the time has come, and "Run now" does not take them before it |
 | A memo was just added. Runs start once nothing new has come in for a minute.<br>A memo was just added. Runs start once nothing new has come in for a minute, at *time*. | Wait. While memos keep coming, the minute starts again |
 | The number of runs allowed per day has been reached, so nothing starts by itself.<br>The number of runs allowed per day has been reached. The next run can start at *time*. | The runs of the last 24 hours have reached "Runs per day". Wait for the time, or raise the number. "Run now" still works |
 | The last run could not be sent, so auto-run is waiting a while before it tries again.<br>The last run could not be sent, so auto-run is waiting until *time* before it tries again. | Wait, and it tries again by itself. The wait begins at 5 minutes, doubles with each failure in a row, and is at most 4 hours. If it goes on, check the run history for the run that ended as "Not sent" |

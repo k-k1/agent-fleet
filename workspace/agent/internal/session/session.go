@@ -452,6 +452,11 @@ type Session struct {
 	// "the turn ended" apart from "an idle we cannot explain" (status.SessionStatus.TurnEnd,
 	// docs/log/51), and a fabricated time would be read as evidence of completion.
 	LastTurnEndAt string `json:"lastTurnEndAt,omitempty"`
+	// LastTurnStartAt is when this session's newest turn STARTED (RFC 3339, this host's clock),
+	// "" when none was seen (status.TurnStart). It survives a stop. The Control Plane drops a
+	// queue run's hand-back (defer_queue_item) when a turn of the run's tree started after the
+	// call.
+	LastTurnStartAt string `json:"lastTurnStartAt,omitempty"`
 	// InputNotDelivered is true while the session reads idle because the last input never reached
 	// the CLI (hook-less kinds: the new user line did not show up in the kind's source within its
 	// window). It is not a turn end: LastTurnEndAt is not set and no idle watch version exists.
@@ -764,6 +769,10 @@ type Meta struct {
 	// (stopArmMaxAge) instead of folding a session away hours later, in the middle of
 	// unrelated work.
 	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
+	// BackgroundNudge is the last background-done nudge (sessionx/background_wake.go, #4581).
+	// On the meta rather than in memory so an Agent restart cannot nudge the same finished
+	// turn twice, and so the hourly cap that stops a nudge loop survives one.
+	BackgroundNudge *BackgroundNudge `json:"backgroundNudge,omitempty"`
 	// SpendCapUSD is the session's spend budget in US dollars (#1054); 0 = none. The spend it
 	// is compared with is an estimate (spend_cap.go), so this is a guard against a runaway
 	// session, not a billing limit.
@@ -1142,4 +1151,16 @@ func CleanSubdir(s string) (string, bool) {
 		return "", false
 	}
 	return c, true
+}
+
+// BackgroundNudge records the last background-done nudge of a session (Meta.BackgroundNudge).
+type BackgroundNudge struct {
+	// Mark is the kind's finished-turn mark the nudge was sent for; the same mark is never
+	// nudged again.
+	Mark string `json:"mark"`
+	// At (RFC3339) is when it was sent.
+	At string `json:"at"`
+	// Recent (RFC3339) holds the send times of the last hour, this one included: the loop
+	// guard counts them over a rolling hour.
+	Recent []string `json:"recent,omitempty"`
 }

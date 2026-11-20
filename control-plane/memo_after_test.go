@@ -218,7 +218,7 @@ func (e *deliveryEnv) statsOf(queueID string) (sql, goSide store.QueuePending) {
 		if err != nil {
 			return err
 		}
-		goSide = pendingOf(rows, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, time.Now())))
+		goSide = pendingOf(rows, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, time.Now())), time.Now())
 		return nil
 	})
 	if err != nil {

@@ -119,6 +119,7 @@ var sessionWireBinding = map[string]string{
 	"Wakers":               "wakers",
 	"WakersUnknown":        "wakersUnknown",
 	"QueueTurn":            "queueTurn",
+	"LastTurnStartAt":      "lastTurnStartAt",
 }
 
 // --- 2. exemption tables for the correspondence check (the family list itself is
@@ -161,6 +162,9 @@ var goOnlyExempt = map[string]string{
 	// Read by the Control Plane alone (a run stays open on it); the Console's list shows the
 	// card through `carried` and must not change.
 	"carriedLive": "read only by the Control Plane's queue rule (#4291); the Console does not draw it",
+	// Read by the Control Plane alone: a queue run's hand-back is dropped when a turn of its tree
+	// started after the call (ADR 0137, addendum 2026-11-19, part B). The Console draws nothing from it.
+	"lastTurnStartAt": "read only by the Control Plane's queue hand-back (#4541); the Console does not draw it",
 }
 
 // sessionContractFamily describes the sessionWire family. The body of the check lives in

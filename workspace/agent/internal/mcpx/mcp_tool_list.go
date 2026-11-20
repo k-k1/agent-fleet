@@ -22,6 +22,7 @@ func mcpStdioToolList() []map[string]any {
 			tools = append(tools, mcpStdioPeerTools()...)
 		}
 		tools = append(tools, mcpStdioFleetObserveTools()...)
+		tools = append(tools, mcpStdioQueueDeferTools()...)
 		tools = append(tools, mcpStdioBranchTools()...)
 		tools = append(tools, mcpStdioSkillTools()...)
 		tools = append(tools, mcpStdioWatchTools()...)

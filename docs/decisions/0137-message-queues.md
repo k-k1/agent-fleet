@@ -962,3 +962,19 @@ no PR holds the dependent (`no_pr`) once the 24-hour window has passed, and a me
 wakes stop after 24 hours without a change; the read goes on whenever the workspace runs. The wakes are kept in a
 table of their own (`memo_pr_wake`), and a wake is made only when the message could fire once the PRs read merged:
 a free slot, the day's fires not used up, no back-off and no usage limit.
+
+Added 2026-11-20 (step 3 of the addendum, part B, built, PR for #4541): the request lives on the delivery (`defer_reason`,
+`defer_not_before`, `defer_at`, `defer_result`, `return_blocked`, `returned_at`) and the hand-back on the message
+(`not_before`, `defer_count`, `defer_reasons`), migration 0146 / pg 0131. `defer_at` is stamped by the Agent that relays
+the call, so it is compared with the turn starts by the same clock; the Control Plane refuses a stamp more than 10
+minutes from its own. The Agent reports each session's last turn start (`lastTurnStartAt`, kept across a stop) and
+announces it with `queueDefer`; without that marker, without `queuePRs`, or without a PR answer the request is
+dropped and the close is clean (`defer_result` `unread`): a hand-back is never made on a doubt, and the person can still
+return the run's messages. A PR whose state the provider could not show counts as held, like an open one. The wake for
+a delivery with a request is made only when its last report saw nothing holding it. The reasons are shown on the
+Console's list only: the token face and `/mcp` lists leave them out, so a session never reads another's reason. A
+Console write that takes a `held` message to `pending` is a release and clears the hand-backs as the release does. After review: the messages go back only once the retire the deferred close requested
+was confirmed and a list and a PR answer read after it still show no later turn and no PR (a person, a peer or a
+watch may have started the tree between the close's read and the retire); a released retire, or anything read then,
+drops the hand-back and rewrites the outcome to clean. A run of more than one message is never handed back, even when
+the batch was lowered while it ran.

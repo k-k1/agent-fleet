@@ -253,7 +253,7 @@ function ConsolidationStatus({ reload }: { reload: number }) {
 
 const statusLabel = (status: string): string => tMaybe("mem.cs_status_" + status) ?? status;
 
-function ProposalDetail({
+export function ProposalDetail({
   id,
   version,
   onDecided,

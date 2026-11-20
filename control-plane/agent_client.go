@@ -344,6 +344,11 @@ type agentSessionsEnvelope struct {
 	// 2026-11-19, part A, step 2). Read with >=. An older Agent sends none and is never asked, so a
 	// message that waits for a delivery's PRs keeps waiting: no answer is never "no PR".
 	QueuePRs int `json:"queuePRs,omitempty"`
+	// QueueDefer is the marker of an Agent that reports each session's last turn start
+	// (sessionWire.LastTurnStartAt) and relays defer_queue_item (ADR 0137, addendum 2026-11-19,
+	// part B). Read with >=. A hand-back is applied only on a report that carries it: without the
+	// turn starts a run that went on to do the work could be handed back.
+	QueueDefer int `json:"queueDefer,omitempty"`
 	// ActMark orders this answer against the acts of a person that follow it (the Agent's
 	// session act mark): a retire sent with it as ifNoActSince leaves a session a person started or
 	// typed into after this read. 0 when the Agent sends none, and no condition is sent then.
@@ -382,6 +387,14 @@ const queuePRsVersion = 1
 
 // readsPRs says the Agent that sent this envelope answers the PR snapshot of a delivery.
 func (e agentSessionsEnvelope) readsPRs() bool { return e.QueuePRs >= queuePRsVersion }
+
+// queueDeferVersion is the version of the turn starts and the defer relay this Control Plane
+// reads.
+const queueDeferVersion = 1
+
+// readsDefers says the Agent that sent this envelope reports the turn starts a hand-back is
+// checked against.
+func (e agentSessionsEnvelope) readsDefers() bool { return e.QueueDefer >= queueDeferVersion }
 
 // jobsRunning reports whether session-less work is in flight in the workspace.
 func (e agentSessionsEnvelope) jobsRunning() bool { return e.RepoJobs > 0 || e.ImageJobs > 0 }

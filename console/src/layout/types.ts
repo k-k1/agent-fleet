@@ -111,7 +111,9 @@ export type PaneContent =
   // The Memory view (#3720): the memory viewer, the change list and the consolidator's proposals at
   // pane size. `memoryView` is which of the three is showing; it lives here, not in React state,
   // because switching tabs unmounts the view. One per workspace (sameTarget is the kind alone).
-  | { kind: "memory"; memoryView?: "memories" | "changes" | "proposals" };
+  // `proposalId` (proposals only): the one proposal the left pane's Memory view opened, shown alone
+  // at full width (ADR 0141 decision 5); absent, the tab is the list beside its detail.
+  | { kind: "memory"; memoryView?: "memories" | "changes" | "proposals"; proposalId?: string };
 
 export type PaneKind = PaneContent["kind"];
 

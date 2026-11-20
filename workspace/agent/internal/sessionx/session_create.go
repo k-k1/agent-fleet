@@ -767,7 +767,10 @@ func (c *createRun) launch(meta session.Meta) {
 		// (status.FirstTurn). A kind that records no end reason keeps the outcome empty.
 		sid := session.UUID(meta.Dir, name)
 		status.ArmFirstTurn(sid, liveStateTraits(meta.Kind).PolledTurnEnd)
-		dropLedger = func() { status.RemoveFirstTurn(sid) }
+		dropLedger = func() {
+			status.RemoveFirstTurn(sid)
+			status.RemoveTurnStart(sid)
+		}
 	}
 	if meta.DriverKind() == session.DriverManaged {
 		// managed (docs/log/27 P2): no tmux pane — the driver opens a thread on the shared

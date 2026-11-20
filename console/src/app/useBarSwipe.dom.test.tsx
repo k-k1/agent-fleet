@@ -97,7 +97,7 @@ describe("activity bar swipe", () => {
   });
 
   it("skips Schedules when the scheduler is off", async () => {
-    useLeftRail.setState({ view: "memo" });
+    useLeftRail.setState({ view: "memory" });
     await mount({ schedulerEnabled: false });
     await swipe(bar(), true);
     expect(useLeftRail.getState().view).toBe("files");
