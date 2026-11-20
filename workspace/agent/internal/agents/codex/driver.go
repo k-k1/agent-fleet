@@ -212,6 +212,12 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if tid == "" {
 		tid = sids.Read(slotSid)
 	}
+	fresh := tid == "" && m.ForkFrom == ""
+	if fresh {
+		if err := prepareFreshLaunch(); err != nil {
+			return nil, err
+		}
+	}
 	var st threadSnapshotWire
 	if tid != "" {
 		st, err = threadResume(cl, tid, cwd, m.Name)

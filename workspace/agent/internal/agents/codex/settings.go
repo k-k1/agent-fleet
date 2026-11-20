@@ -153,6 +153,8 @@ func HandleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, settingsBody())
 		return
 	}
+	paths.CodexConfigMu.Lock()
+	defer paths.CodexConfigMu.Unlock()
 	path := codexConfigPath()
 	b, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {

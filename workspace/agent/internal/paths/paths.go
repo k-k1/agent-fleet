@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 func HomeDir() string {
@@ -83,6 +84,10 @@ func CodexHome() string {
 	}
 	return filepath.Join(HomeDir(), ".codex")
 }
+
+// CodexConfigMu serializes Agent Fleet's read-modify-write operations on the
+// shared Codex user config across launch, settings and MCP materialization.
+var CodexConfigMu sync.Mutex
 
 // OpencodeConfigDir is opencode's global config root (opencode.jsonc, plugin/,
 // AGENTS.md). opencode itself resolves it through XDG_CONFIG_HOME, but the workspace

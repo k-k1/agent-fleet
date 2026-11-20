@@ -430,6 +430,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.codex_hint2_1": "To connect with a ChatGPT subscription, first turn on, in ChatGPT's ",
   "agents.codex_hint2_2": ", “Enable device-code authentication for Codex”.",
   "agents.codex_nudge": "Model-switch nudge at usage limits",
+  "agents.codex_remember_defaults": "Remember Codex's own model and reasoning level",
+  "agents.note_codex_remember_defaults": "When off, starting a new Codex session clears the model and reasoning level saved in Codex's user settings. This also affects Codex Terminal launches that use those settings.",
   "agents.codex_nudge_on": "⚠ When on, as a usage limit approaches Codex may show a nudge and switch to a lighter model.",
   "agents.codex_nudge_off": "When off, Codex won't show its nudge suggesting a switch to a lighter model as a limit approaches.",
   "agents.codex_rtk_note":
