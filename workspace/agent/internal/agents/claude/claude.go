@@ -178,6 +178,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if m.Route == nil || m.Route.Route == RouteSubscription {
 		if LimitResumeMode != nil {
 			limitMode = []string{LimitResumeMode()}
+			env = append(env, "AF_CLAUDE_LIMIT_RESUME_MODE="+limitMode[0])
 		}
 	}
 	program := buildProgramPinned(pin, sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m), limitMode...)

@@ -725,6 +725,7 @@ func atIdlePrompt(s string) bool {
 // It is as width-fragile as modalMarkers; the line-start anchor is there so the repo's own
 // prose (this comment included) cannot match.
 var rateLimitOptionRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?\d+\.\s+(?:Stop and wait for limit|Ask your admin for more usage)`)
+var currentRateLimitOptionRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?\d+\.\s+(?:Switch to usage credits|Add funds to continue with usage credits|Wait here, then continue automatically|Don.t continue automatically)`)
 
 // AtRateLimitModal reports whether a claude pane is parked on that menu.
 //
@@ -755,15 +756,13 @@ func AtRateLimitModal(name string) bool {
 // (claude echoes the chosen option into the transcript, so the option text alone can
 // linger after the menu is gone — the same reason isCodexUpdateMenu needs two markers).
 func atRateLimitModal(s string) bool {
-	return strings.Contains(s, "Enter to confirm") && rateLimitOptionRe.MatchString(s)
+	return strings.Contains(s, "Enter to confirm") &&
+		(rateLimitOptionRe.MatchString(s) || currentRateLimitOptionRe.MatchString(s))
 }
 
-// rateLimitDefaultRe matches the menu's FIRST option while it is the marked one
-// ("❯ 1. Stop and wait for limit to reset"). DismissRateLimitModal requires it: Enter
-// confirms whatever the cursor stands on, so pressing it blind would pick option 2
-// ("Ask your admin for more usage" — a billing request) if a human had already moved
-// down. Press only while the cursor stands on the default option.
-var rateLimitDefaultRe = regexp.MustCompile(`(?m)^\s*\x{276F} 1\.\s+Stop and wait for limit`)
+// rateLimitDefaultRe recognizes the selected stop action regardless of menu order.
+// Enter can otherwise spend credits or start Claude's own continuation.
+var rateLimitDefaultRe = regexp.MustCompile(`(?m)^\s*\x{276F} \d+\.\s+(?:Stop and wait for limit|Stop[ \t]*$)`)
 
 // ClaudeUsageLimitWait uses the live footer because the transcript banner survives cancellation.
 func ClaudeUsageLimitWait(frame string) bool {
@@ -782,8 +781,7 @@ func ClaudeUsageLimitWait(frame string) bool {
 
 var nativeLimitWaitFooter = regexp.MustCompile(`^Usage limit reached · .* (?:Continuing automatically (?:at .+?|when it resets)|Continuing shortly) · Esc to cancel(?:$| · )`)
 
-// DismissRateLimitModal confirms the usage-limit menu's DEFAULT option ("1. Stop and
-// wait for limit to reset") and reports whether the menu is gone afterwards.
+// DismissRateLimitModal confirms a selected stop action and reports whether the menu is gone.
 //
 // Why pressing it automatically is acceptable: the choices are "wait for the reset" and "ask
 // your admin for more usage", and only the latter carries a billing decision. The former

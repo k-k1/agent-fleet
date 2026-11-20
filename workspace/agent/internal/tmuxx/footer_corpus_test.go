@@ -156,6 +156,16 @@ func findLine(s string, match func(string) bool) string {
 // keying on either alone would report a menu that is long gone, and the session would be
 // badged as stopped at the usage limit forever instead of returning to waiting for input.
 // Only the confirm footer disappears with the menu.
+func TestRateLimitReorderedMenu(t *testing.T) {
+	const frame = "❯ 1. Switch to usage credits\n  2. Stop\nEnter to confirm · Esc to cancel"
+	if !atRateLimitModal(frame) || rateLimitDefaultRe.MatchString(frame) {
+		t.Fatal("the limit menu must be detected without confirming usage credits")
+	}
+	if !rateLimitDefaultRe.MatchString("  1. Switch to usage credits\n❯ 2. Stop\nEnter to confirm") {
+		t.Fatal("the stop action remains safe when reordered")
+	}
+}
+
 func TestClaudeUsageLimitWait(t *testing.T) {
 	for _, tc := range []struct {
 		frame string

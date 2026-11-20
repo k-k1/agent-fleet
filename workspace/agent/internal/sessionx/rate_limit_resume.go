@@ -281,9 +281,21 @@ func rateLimitWatched(m session.Meta) bool {
 	return ok && (!tr.ManagedOnly || m.DriverKind() == session.DriverManaged)
 }
 
+func claudeLaunchLimitMode(m session.Meta) string {
+	const key = "AF_CLAUDE_LIMIT_RESUME_MODE"
+	raw, err := tmuxx.Output("show-environment", "-t", "="+session.TmuxName(m.Name), key)
+	if err == nil {
+		switch mode := strings.TrimSpace(strings.TrimPrefix(string(raw), key+"=")); mode {
+		case "af", "claude", "off":
+			return mode
+		}
+	}
+	return uiprefs.ClaudeLimitResumeMode()
+}
+
 func rateLimitBookingEnabled(m session.Meta) bool {
 	if NormalizeKind(m.Kind) == "claude" {
-		return uiprefs.ClaudeLimitResumeMode() == "af"
+		return claudeLaunchLimitMode(m) == "af"
 	}
 	return uiprefs.RateLimitAutoResume()
 }
@@ -375,7 +387,7 @@ func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu b
 	st = rateLimitMoveEarly(m, st, now)
 	notifyRateLimitReached(m, st)
 
-	if onMenu && uiprefs.ClaudeLimitResumeMode() != "claude" && !st.Dismissed && st.DismissTries < maxRateLimitDismissTries && !triedRecently(st, now) {
+	if onMenu && claudeLaunchLimitMode(m) != "claude" && !st.Dismissed && st.DismissTries < maxRateLimitDismissTries && !triedRecently(st, now) {
 		st.DismissTries++
 		st.LastTry = now.Format(time.RFC3339)
 		// Record before sending: a crash midway must not roll the count back and let the key
