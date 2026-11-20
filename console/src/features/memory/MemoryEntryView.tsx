@@ -42,7 +42,7 @@ import type { PaneContent } from "../../layout/types.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { openMemoryView } from "./open.ts";
 import { useMemoryStore } from "./store.ts";
-import { decodeEntry, encodeEntry, entryFile, memoryEntryIO, type EntryRefusal } from "./memoryEntryIO.ts";
+import { decodeEntry, encodeEntry, entryFile, isMemoryBody, memoryEntryIO, type EntryRefusal } from "./memoryEntryIO.ts";
 
 type EntryContent = Extract<PaneContent, { kind: "memoryEntry" }>;
 
@@ -92,8 +92,11 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const key = draftKey(tenant, content);
   const where = scope === "user" ? tr("mem.af_scope_user") : content.projectName || project;
 
-  const [body, setBodyState] = useState<MemoryBody | null>(null);
+  const [bodyRaw, setBodyState] = useState<MemoryBody | null>(null);
   const [bodyKey, setBodyKey] = useState("");
+  // Only the body read for this key is shown: the first render after a retarget still holds the
+  // previous target's.
+  const body = bodyRaw && bodyKey === key ? bodyRaw : null;
   const setBody = useCallback(
     (b: MemoryBody | null) => {
       setBodyState(b);
@@ -127,7 +130,8 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [body, bodyKey, key, isNew, gone]);
   const editor = useFileEditor(paneId, file, io);
-  const model = editor.model;
+  // A buffer is shown only for the memory this pane is on.
+  const model = isNew || editor.model?.path === key ? editor.model : null;
   const phase = model?.phase;
   const alert = isEditorAlert(phase);
   const [busy, setBusy] = useState(false);
@@ -183,6 +187,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
         setLoadErr("");
         setBody(null);
         setChange(res as MemoryChange);
+      } else if (!isMemoryBody(res, scope, name)) {
+        setLoadErr(tr("mem.af_failed"));
+        setBody(null);
       } else {
         setLoadErr("");
         setChange(null);
@@ -190,7 +197,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
       }
       return true;
     },
-    [running, isNew, scope, project, name, gone, setBody],
+    [running, isNew, scope, project, name, gone, setBody, tr],
   );
   // The tenant is another workspace: the reset above clears what was read, so it is read again.
   useRetryLoad(load, [load, version, tenant]);
@@ -596,8 +603,15 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           onRetryUnknown={() => void editor.recoverUnknown()}
           onResave={() => void editor.resaveUnknown()}
           onRiskAccept={editor.riskAccept}
-          onTakeRemote={editor.takeRemote}
-          onDiscardMine={editor.discardRemote}
+          // The adopted text is newer than the body this pane last read; back in the read view it would show the old one.
+          onTakeRemote={() => {
+            editor.takeRemote();
+            bump();
+          }}
+          onDiscardMine={() => {
+            editor.discardRemote();
+            bump();
+          }}
           onManualMerge={editor.manualMerge}
           onCopyMine={() => void navigator.clipboard.writeText(model.content)}
           onClose={() => useLayoutStore.getState().closePane(paneId)}

@@ -86,4 +86,23 @@ describe("memoryEntryIO", () => {
     await io.save("k", file.content, file.revision);
     expect(apiJSON.mock.calls[0][2]).toMatchObject({ revision: 3, kinds: ["claude"] });
   });
+
+  it("takes the counter and kinds of the remote read that follows a lost save", async () => {
+    const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+    const file = entryFile("k", body);
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_conflict", message: "x" } });
+    expect(await io.save("k", file.content, file.revision)).toMatchObject({ ok: false, status: 409 });
+    api.mockResolvedValue({ ...body, revision: 5, kinds: ["codex"] });
+    await io.load("k");
+    apiJSON.mockResolvedValue({ revision: 6 });
+    await io.save("k", file.content, file.revision);
+    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 5, kinds: ["codex"] });
+  });
+
+  it("reads a memory the Agent sent without type, description or body", async () => {
+    const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+    api.mockResolvedValue({ name: "n", scope: "user", revision: 2 });
+    const file = await io.load("k");
+    expect(decodeEntry(file.content)).toEqual({ description: "", type: "feedback", body: "" });
+  });
 });
