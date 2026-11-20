@@ -490,24 +490,38 @@ describe("MemoryEntryView", () => {
       });
 
       it.each([
+        ["other text", { body: "someone else" }],
         ["an earlier revision", { revision: 2 }],
         ["kinds it was not sent with", { kinds: ["claude"] }],
-      ])("offers neither when the same text is stored with %s", async (_why, patch) => {
+      ])("offers a resave but not acceptance when a memory of that name holds %s, and Cancel leaves it be", async (_why, patch) => {
         api.mockImplementation(async (url: string) => (url.includes("name=house-rules") ? { ...stored, ...patch } : {}));
         await lost();
         expect(dirtyPaneIds()).toEqual([pane().id]);
         expect(pane().content).toMatchObject({ name: "" });
         expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
+        expect(button(t("editor.unknown.resave_old"))).toBeDefined();
+        apiJSON.mockClear();
+        await act(async () => button(t("mem.br_cancel"))!.click());
+        await flush();
+        expect(dirtyPaneIds()).toEqual([]);
+        expect(apiJSON).not.toHaveBeenCalled();
+        expect(allViews(useLayoutStore.getState().layout).some((v) => v.content.kind === "memoryEntry")).toBe(false);
       });
 
-      it("offers neither when a memory of that name holds other text", async () => {
-        api.mockImplementation(async (url: string) => (url.includes("name=house-rules") ? { ...stored, body: "someone else" } : {}));
+      it("can be discarded by the guard with its view gone when the read of the memory fails", async () => {
+        api.mockImplementation(async (url: string) => {
+          if (url.includes("name=house-rules")) throw new Error("offline");
+          return {};
+        });
         await lost();
-        expect(dirtyPaneIds()).toEqual([pane().id]);
-        expect(pane().content).toMatchObject({ name: "" });
         expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
-        expect(button(t("editor.unknown.resave_old"))).toBeUndefined();
-        expect(button(t("editor.unknown.retry"))).toBeDefined();
+        await act(async () => root!.render(<></>));
+        void confirmDirtyNavigation("layout").catch(() => {});
+        await act(async () => {
+          const req = currentDirtyGuardRequest();
+          if (req) await discardDirtyGuardRequest(req.id);
+        });
+        expect(dirtyPaneIds()).toEqual([]);
       });
     });
 

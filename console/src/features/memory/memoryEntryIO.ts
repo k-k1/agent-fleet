@@ -98,6 +98,7 @@ const refusals = new Map<string, EntryRefusal>();
 // The new memory a save was sent for, until its outcome is known: a recovery read has to look for
 // that name, not for the blank the buffer began on.
 const sentNew = new Map<string, { name: string; raw: string; stored: string }>();
+const KEEP_SENT = 16;
 
 function remember(key: string, sha: string, entry: Known, overwrite: boolean) {
   let byHash = known.get(key);
@@ -144,6 +145,7 @@ export const clearRefusal = (key: string) => void refusals.delete(key);
 export function clearPending(key: string) {
   refusals.delete(key);
   sent.delete(key);
+  sentNew.delete(key);
 }
 
 // Go's strings.TrimSpace, which the Agent trims with: JS trim() differs at U+0085 (Go trims it, JS
@@ -203,18 +205,17 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (isNew) {
         const last = sentNew.get(key);
         if (!last) return blankNewFile(key);
+        // Anything but "stored exactly as sent" reads as the blank the buffer began on: the revision-0
+        // resave is refused by the Agent if the save did land, so the member is never left with a
+        // buffer that can be neither saved nor discarded because the store could not confirm it.
         const q = `scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(last.name)}`;
-        const res = await api(`api/agents/memory/entries/member-read?${q}`);
-        // Not stored: the save did not land, and a resave at revision 0 is safe.
-        if (res?.error?.code === "memory_not_found" || res?.error?.status === 404) return blankNewFile(key);
-        if (res?.error) throw new Error(res.error.code || "load_failed");
-        if (!isMemoryBody(res, scope, last.name)) throw new Error("load_failed");
+        const res = await api(`api/agents/memory/entries/member-read?${q}`).catch(() => null);
+        if (!isMemoryBody(res, scope, last.name)) return blankNewFile(key);
         const b = res as MemoryBody;
         const found = encodeEntry({ description: b.description, type: b.type || "feedback", body: b.body ?? "" });
-        // Another memory of that name, not the one sent: nothing here can confirm the save.
         // Revision 1 with no kinds is what a first save of this text leaves; anything else is a
         // memory that was there before, whatever its text.
-        if (found !== last.stored || b.revision !== 1 || (b.kinds ?? []).length > 0) throw new Error("name_taken");
+        if (found !== last.stored || b.revision !== 1 || (b.kinds ?? []).length > 0) return blankNewFile(key);
         // Stored as sent: the buffer's text is reported as the remote, which the panel offers to accept
         // (the view lands the pane when it is).
         return { ...blankNewFile(key), content: last.raw, size: last.raw.length, revision: revisionOf(last.raw) };
@@ -256,6 +257,11 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (!base) return { ok: false, status: 409, error: { code: "revision_conflict", message: "unknown base" } };
       const fields = decodeEntry(content);
       const saveName = isNew ? (fields.name ?? "").trim() : name;
+      if (isNew) {
+        sentNew.delete(key);
+        // Bounded: a pane that never settles its save leaves its text here.
+        while (sentNew.size >= KEEP_SENT) sentNew.delete(sentNew.keys().next().value as string);
+      }
       if (isNew) sentNew.set(key, { name: saveName, raw: content, stored: storedForm(encodeEntry({ description: fields.description, type: fields.type, body: fields.body })) });
       if (!isNew) sent.set(key, { raw: content, stored: storedForm(content), revision: base.revision, kinds: base.kinds });
       // The project id also goes in the query: the CP audit ledger reads the URL only.

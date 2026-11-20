@@ -161,6 +161,10 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   // A new memory is stored as sent: text typed while its save is out, or its outcome is unknown,
   // would be lost to the landing or saved against a revision that no longer fits.
   const locked = isNew && (phase === "saving" || alert);
+  // Once the buffer is clean again (saved, accepted or discarded) the text sent is not needed.
+  useEffect(() => {
+    if (isNew && model && !model.dirty) clearPending(key);
+  }, [isNew, model, key]);
   const editorBox = useRef<HTMLDivElement>(null);
   useEffect(() => {
     // The code editor keeps its own document; only making it inert keeps it from taking input.
@@ -602,6 +606,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
             // Accepted for a new memory: it is stored under the name sent, so the pane becomes it.
             const sentName = isNew ? (decoded?.name ?? "").trim() : "";
             editor.riskAccept();
+            clearPending(key);
             if (sentName) setTimeout(() => landSavedMemory(paneId, key, tenant, scope, project, projectName, sentName), 0);
           }}
           // The adopted text is newer than the body this pane last read; back in the read view it would show the old one.
