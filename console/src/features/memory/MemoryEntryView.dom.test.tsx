@@ -23,7 +23,7 @@ vi.mock("../editor/CodeEditor.tsx", () => ({
   },
 }));
 
-import { MemoryEntryView, resetMemoryDrafts } from "./MemoryEntryView.tsx";
+import { MemoryEntryView } from "./MemoryEntryView.tsx";
 import { resetMemoryRevisions } from "./memoryEntryIO.ts";
 import { clearEditorSlotsForTests } from "../editor/useFileEditor.ts";
 import { clearDirtyRegistryForTests, confirmDirtyNavigation, currentDirtyGuardRequest, dirtyPaneIds, discardDirtyGuardRequest, saveDirtyGuardRequest } from "../editor/dirtyRegistry.ts";
@@ -61,6 +61,8 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 const flush = async () => {
   for (let i = 0; i < 4; i++) await act(async () => {});
+  // A new memory lands on its saved pane from a timer, once its save has settled.
+  await act(async () => new Promise((r) => setTimeout(r, 0)));
 };
 const button = (label: string) => Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.trim() === label);
 const pane = () => allViews(useLayoutStore.getState().layout).find((v) => v.content.kind === "memoryEntry")!;
@@ -91,7 +93,6 @@ async function open(content = memoryEntryContent({ scope: "project", project, na
 }
 
 beforeEach(() => {
-  resetMemoryDrafts();
   resetMemoryRevisions();
   clearEditorSlotsForTests();
   clearDirtyRegistryForTests();
@@ -350,6 +351,82 @@ describe("MemoryEntryView", () => {
     await open(memoryEntryContent({ scope: "user", name: "" }));
     await act(async () => button(t("mem.br_cancel"))!.click());
     expect(allViews(useLayoutStore.getState().layout).some((v) => v.content.kind === "memoryEntry")).toBe(false);
+  });
+
+  describe("a new memory's draft rides the editor hook", () => {
+    const nameInput = () => host!.querySelector<HTMLInputElement>(".mentry-fields input")!;
+    const bodyEditor = () => host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!;
+    const remount = async () => {
+      await act(async () => root!.render(<></>));
+      await act(async () =>
+        root!.render(
+          <ToastProvider>
+            <ConfirmProvider>
+              <Host />
+            </ConfirmProvider>
+          </ToastProvider>,
+        ),
+      );
+      await flush();
+    };
+
+    it("is not dirty until something is typed, and cannot be saved empty", async () => {
+      await open(memoryEntryContent({ scope: "user", name: "" }));
+      expect(dirtyPaneIds()).toEqual([]);
+      expect(button(t("mem.br_save"))!.disabled).toBe(true);
+      await setValue(nameInput(), "house-rules");
+      expect(dirtyPaneIds()).toEqual([pane().id]);
+      expect(button(t("mem.br_save"))!.disabled).toBe(false);
+    });
+
+    it("is guarded while typed, kept with its name across a tab switch, and cleared by Cancel", async () => {
+      await open(memoryEntryContent({ scope: "user", name: "" }));
+      await setValue(nameInput(), "house-rules");
+      await setValue(bodyEditor(), "half-written");
+      await remount();
+      expect(dirtyPaneIds()).toEqual([pane().id]);
+      expect(nameInput().value).toBe("house-rules");
+      expect(bodyEditor().value).toBe("half-written");
+      await act(async () => button(t("mem.br_cancel"))!.click());
+      expect(dirtyPaneIds()).toEqual([]);
+      expect(allViews(useLayoutStore.getState().layout).some((v) => v.content.kind === "memoryEntry")).toBe(false);
+    });
+
+    it("is saved by the close / reload guard even after its view is gone, and the pane lands on the memory", async () => {
+      await open(memoryEntryContent({ scope: "user", name: "" }));
+      await setValue(nameInput(), " house-rules ");
+      await setValue(bodyEditor(), "text");
+      await act(async () => root!.render(<></>));
+      expect(await saveThroughGuard()).toBe(true);
+      await act(async () => new Promise((r) => setTimeout(r, 0)));
+      expect(apiJSON.mock.calls[0][2]).toMatchObject({ scope: "user", name: "house-rules", body: "text", revision: 0, kinds: [] });
+      expect(dirtyPaneIds()).toEqual([]);
+      expect(pane().content).toEqual({ kind: "memoryEntry", scope: "user", project: "", name: "house-rules" });
+    });
+
+    it("is discarded by the guard without a request", async () => {
+      await open(memoryEntryContent({ scope: "user", name: "" }));
+      await setValue(bodyEditor(), "text");
+      await act(async () => root!.render(<></>));
+      void confirmDirtyNavigation("layout").catch(() => {});
+      await act(async () => {
+        const req = currentDirtyGuardRequest();
+        if (req) await discardDirtyGuardRequest(req.id);
+      });
+      expect(dirtyPaneIds()).toEqual([]);
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("keeps the buffer and shows the reason when the Agent refuses it", async () => {
+      apiJSON.mockResolvedValue({ error: { code: "memory_secret_detected", message: "secret" }, findings: [{ rule: "aws-key", line: 1, hint: "AKIA…" }] });
+      await open(memoryEntryContent({ scope: "user", name: "" }));
+      await setValue(nameInput(), "keys");
+      await act(async () => button(t("mem.br_save"))!.click());
+      await flush();
+      expect(host!.querySelector(".mem-findings")?.textContent).toContain("aws-key");
+      expect(dirtyPaneIds()).toEqual([pane().id]);
+      expect(pane().content).toMatchObject({ name: "" });
+    });
   });
 
   it("never offers one tenant's draft in another, and reads the memory again there", async () => {

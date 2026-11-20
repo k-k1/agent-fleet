@@ -17,13 +17,16 @@ import type { FileEditorIO } from "../editor/useFileEditor.ts";
 import type { MemoryBody, SecretFinding } from "../settings/memory/memoryTypes.ts";
 
 export interface EntryFields {
+  /** Carried only by a new memory's buffer, which has no name to key it by until one is typed. */
+  name?: string;
   description: string;
   type: string;
   body: string;
 }
 
 export function encodeEntry(f: EntryFields): string {
-  return JSON.stringify({ description: f.description, type: f.type }) + "\n" + f.body;
+  const head = f.name === undefined ? { description: f.description, type: f.type } : { name: f.name, description: f.description, type: f.type };
+  return JSON.stringify(head) + "\n" + f.body;
 }
 
 /** The inverse of encodeEntry. Text that is not its output is taken as a bare body, so a buffer the
@@ -32,9 +35,10 @@ export function decodeEntry(text: string): EntryFields {
   const cut = text.indexOf("\n");
   if (cut >= 0) {
     try {
-      const head = JSON.parse(text.slice(0, cut)) as { description?: unknown; type?: unknown };
+      const head = JSON.parse(text.slice(0, cut)) as { name?: unknown; description?: unknown; type?: unknown };
       if (typeof head.description === "string" && typeof head.type === "string") {
-        return { description: head.description, type: head.type, body: text.slice(cut + 1) };
+        const body = text.slice(cut + 1);
+        return typeof head.name === "string" ? { name: head.name, description: head.description, type: head.type, body } : { description: head.description, type: head.type, body };
       }
     } catch {
       // fall through to the bare body
@@ -43,8 +47,22 @@ export function decodeEntry(text: string): EntryFields {
   return { description: "", type: "feedback", body: text };
 }
 
+/** The hook's identity for the buffer of a new memory: one per pane, since no name exists to share
+ *  it by. The tenant is part of it, as for an existing memory. */
+export const newEntryKey = (tenant: string, c: { scope: string; project: string }, paneId: string) => `${tenant}|new:${c.scope}:${c.project}/${paneId}`;
+/** The key of an existing memory; the tenant is part of it: a user-scope memory of one tenant has
+ *  the same name as another's, and a buffer carried across a switch would be saved into the wrong
+ *  workspace. */
+export const entryKey = (tenant: string, c: { scope: string; project: string; name: string }) => `${tenant}|${c.scope}:${c.project}/${c.name}`;
+
+/** The file a new memory's buffer rests on: empty, at a revision no save is ever based on. */
+export function blankNewFile(key: string): EditableFile {
+  const content = encodeEntry({ name: "", description: "", type: "feedback", body: "" });
+  return { path: key, content, size: content.length, binary: false, truncated: false, editable: true, editabilityReason: null, revision: revisionOf(content) };
+}
+
 export interface EntryTarget {
-  /** The hook's identity for the memory; the tenant is part of it (see draftKey). */
+  /** The hook's identity for the memory (entryKey, or newEntryKey for a memory without a name). */
   key: string;
   scope: string;
   project: string;
@@ -162,8 +180,11 @@ export function isMemoryBody(res: unknown, scope: string, name: string): res is 
 
 const projectQuery = (project: string) => (project ? "?project=" + encodeURIComponent(project) : "");
 
-export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal | null) => void): FileEditorIO {
+/** `onSaved` runs once a new memory is stored, with its name: the adapter outlives the view, and a
+ *  guard's save of an unmounted pane must still land the pane on the memory it became. */
+export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal | null) => void, onSaved?: (name: string) => void): FileEditorIO {
   const { key, scope, project, name } = target;
+  const isNew = name === "";
   // The requests carry the tenant current at send time; a buffer kept from another tenant must not
   // be read or written under it.
   const tenant = useTenantStore.getState().tenant;
@@ -174,6 +195,8 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
   return {
     async load() {
       if (!sameTenant()) throw new Error("tenant_changed");
+      // Nothing is stored under a new memory's key: what a recovery read finds is the blank it began on.
+      if (isNew) return blankNewFile(key);
       const q = `scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(name)}`;
       const res = await api(`api/agents/memory/entries/member-read?${q}`);
       if (res?.error) throw new Error(res.error.code || "load_failed");
@@ -203,17 +226,20 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       setRefusal(key, null);
       onRefused(null);
       if (!sameTenant()) return { ok: false, status: 400, error: { code: "tenant_changed", message: "the workspace changed since this text was read" } };
-      const base = known.get(key)?.get(baseRevision);
+      // A new memory is stored at revision 0, which the Agent refuses once the name exists: a retry of
+      // a save whose answer was lost cannot write a second copy.
+      const base = isNew ? { revision: 0, kinds: [] as string[] } : known.get(key)?.get(baseRevision);
       // A base this pane never read cannot be saved over safely: let the hook re-read.
       if (!base) adoptNext.add(key);
       if (!base) return { ok: false, status: 409, error: { code: "revision_conflict", message: "unknown base" } };
       const fields = decodeEntry(content);
-      sent.set(key, { raw: content, stored: storedForm(content), revision: base.revision, kinds: base.kinds });
+      const saveName = isNew ? (fields.name ?? "").trim() : name;
+      if (!isNew) sent.set(key, { raw: content, stored: storedForm(content), revision: base.revision, kinds: base.kinds });
       // The project id also goes in the query: the CP audit ledger reads the URL only.
       const res = await apiJSON("api/agents/memory/entries/member-save" + projectQuery(project), "POST", {
         scope,
         project,
-        name,
+        name: saveName,
         description: fields.description,
         type: fields.type,
         kinds: base.kinds,
@@ -226,12 +252,19 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         if (code === "memory_snapshot_failed" || (res.error.status ?? 0) >= 500) code = "write_state_unknown";
         // Only an unknown outcome keeps the sent text to match a read against.
         if (code !== "write_state_unknown") sent.delete(key);
-        if (code === "memory_conflict") adoptNext.add(key);
-        if (code === "memory_conflict") return { ok: false, status: 409, error: { code: "revision_conflict", message: errDetail(res.error) } };
+        // For a new memory the name is taken: there is no remote text to resolve against.
+        if (code === "memory_conflict" && !isNew) adoptNext.add(key);
+        if (code === "memory_conflict" && !isNew) return { ok: false, status: 409, error: { code: "revision_conflict", message: errDetail(res.error) } };
         const refusal = { code, text: errDetail(res.error), findings: code === "memory_secret_detected" ? ((res.findings ?? []) as SecretFinding[]) : [], content };
         setRefusal(key, refusal);
         onRefused(refusal);
         return { ok: false, status: 422, error: { code, message: errDetail(res.error) } };
+      }
+      if (isNew) {
+        // The pane re-reads the memory it becomes; no counter is kept for this key.
+        useMemoryStore.getState().bump();
+        onSaved?.(saveName);
+        return { ok: true, path: key, size: content.length, revision: revisionOf(content) };
       }
       // A success without the new counter cannot be told from a lost answer.
       if (!validRevision(res?.revision)) throw new Error("save response without revision");
