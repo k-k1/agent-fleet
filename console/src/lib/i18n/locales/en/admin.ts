@@ -1166,6 +1166,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mpol_exceeds_endpoints": "As it is, this cannot be saved: the operator setting does not cover the server patterns {list}.",
   "admin.mpol_match": "Match the operator setting",
   "admin.mpol_match_hint": "Narrows the fields above to what the operator setting allows. It never widens them, and it does not save.",
+  "admin.mpol_preview_hides": "Saving this would hide these from your members: none of their routes would be allowed.",
+  "admin.mpol_preview_unsaved_hosts": "A server you have not saved yet is not counted here, so some of these may stay available once it is approved.",
   "admin.mpol_and_more": "{list} and {n} more",
   "admin.mpol_individual": "Individual changes: {n}",
   "admin.mpol_individual_none": "Individual changes: none",

@@ -879,4 +879,6 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
     address. Nothing is dropped silently. A ceiling that names such an address no longer starts (the existing rule for
     an invalid pattern).
 
+**Note, 2026-11-20 (#4446 item 2).** The tenant Restrictions tab previews what a save would hide. The Console computes only the tenant's own layer and takes every other layer from the server's `forbiddenBy`, `owners` and host decisions; a host it has not seen judged counts as not approved, so the preview may over-warn but never allows what the CP refuses, measured against the upper layers as loaded (one narrowed by another administrator after the load shows up on the next reload). `routePolicyPreview.test.ts` replays the Go-generated `preview-cases.json` (`TestPreviewCases`) to hold this. The CP still decides the write.
+
 **Note, 2026-11-20 (#4446 item 3).** The admin Overview shows how many tenants have a cap and how many have restricted themselves, from `GET /api/admin/route-policy/tenant-counts`: super_admin only, three counts (`tenants`, `withCap`, `withOwnRestriction`) and no tenant name or rule. A cap counts when it restricts routes or narrows endpoint patterns, a tenant's own rule only when it restricts routes (approved hosts and exceptions alone do not). The Console words an unreadable answer as unreadable, never as zero.

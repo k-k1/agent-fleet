@@ -12,6 +12,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { TenantOverview, byList } from "./routePolicyOverview.tsx";
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
 import { TabbedViews } from "../parts/tabbedViews.tsx";
+import { previewTenantRule } from "./routePolicyPreview.ts";
 import { RuleEditor, putRule } from "./routePolicyRuleEditor.tsx";
 import { isOlderPolicyAnswer, parseTenantPolicy, type TenantPolicyView } from "./routePolicyRule.ts";
 
@@ -144,6 +145,7 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
                       { layer: "deployment", rule: view.deployment.rule },
                       { layer: "tenant_cap", rule: view.cap.rule },
                     ]}
+                    preview={(body) => previewTenantRule(view, body)}
                     save={(body, rev) => putRule(path, body, rev)}
                     onSaved={load}
                   />
