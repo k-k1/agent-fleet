@@ -49,14 +49,7 @@ func (e Env) AgyEffectiveVersion() string {
 	bin := filepath.Join(e.localBin(), "agy")
 	v := ""
 	if usable(bin) {
-		out, _, _ := e.probeEnv(bin, e.agyEnv())
-		line, _, _ := strings.Cut(out, "\n")
-		v = strings.Map(func(r rune) rune {
-			if r == '.' || (r >= '0' && r <= '9') {
-				return r
-			}
-			return -1
-		}, line)
+		v = e.agyAnswer(bin)
 	}
 	if v == "" {
 		if _, err := os.Stat(bin); err != nil {
@@ -65,6 +58,18 @@ func (e Env) AgyEffectiveVersion() string {
 		}
 	}
 	return v
+}
+
+// agyAnswer is the version a binary reports behind the host mask ("" when it prints nothing parsable): the digits and dots of the first line, as the shell's tr -dc did.
+func (e Env) agyAnswer(p string) string {
+	out, _, _ := e.probeEnv(p, e.agyEnv()) // the exit status is not read: a version on stdout is what the shell accepted
+	line, _, _ := strings.Cut(out, "\n")
+	return strings.Map(func(r rune) rune {
+		if r == '.' || (r >= '0' && r <= '9') {
+			return r
+		}
+		return -1
+	}, line)
 }
 
 // AGY installs the pinned agy build (versions.json's agy + agy_build + agy_sha256) into
@@ -126,6 +131,10 @@ func (e Env) installAGY(ctx context.Context, ver, build, sum string) error {
 	cand := filepath.Join(tmp, "antigravity")
 	if err := extractMember(archive, "antigravity", cand); err != nil {
 		return err
+	}
+	// Exit 0 with no version is not "runs": the next start would judge it silent and fetch again.
+	if e.agyAnswer(cand) == "" {
+		return fmt.Errorf("the downloaded agy does not report a version in this environment, keeping the current copy")
 	}
 	if err := e.installAtomicWith(cand, filepath.Join(e.localBin(), "agy"), e.agyEnv()); err != nil {
 		return err

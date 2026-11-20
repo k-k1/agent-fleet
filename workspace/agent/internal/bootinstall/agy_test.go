@@ -243,3 +243,22 @@ func TestAGYEffectiveVersionAppliesMaskAndMarkerOnlyWithoutBinary(t *testing.T) 
 		t.Fatalf("masked: %q", v)
 	}
 }
+
+// A candidate that exits 0 but prints no version never replaces the working copy or its marker.
+func TestAGYCandidateWithoutVersionKeepsWorkingCopy(t *testing.T) {
+	f := newAGY(t, "#!/bin/sh\nexit 0\n", "")
+	f.put(t, "#!/bin/sh\necho 0.0.1\n", "0.0.1")
+	f.env.Repin = true
+	if rc := AGY(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if b, _ := os.ReadFile(f.bin()); !strings.Contains(string(b), "0.0.1") {
+		t.Fatal("working copy displaced by a silent candidate")
+	}
+	if b, _ := os.ReadFile(f.marker()); string(b) != "0.0.1\n" {
+		t.Fatalf("marker moved: %q", b)
+	}
+	if got := f.statusText(); got != "agy\tfailed\tother\n" {
+		t.Fatalf("status %q", got)
+	}
+}

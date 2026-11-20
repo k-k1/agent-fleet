@@ -106,6 +106,15 @@ grep -qP '^agy\tfailed\tother' "$T/bidir/install.tsv" || fail "agy: no failed st
 reset; run_block BI_AGENT_BIN="$T/none"
 has 'WARN: the Agent binary is missing; agy boot-install skipped' || fail "agy: no WARN without the Agent"
 grep -qP '^agy\tfailed\tother' "$T/bidir/install.tsv" || fail "agy: no failed status without the Agent"
+# Agent missing, or too old to know agy-version: a healthy agy is still judged by the same rule
+# (the binary, then the marker), so it is recorded skipped and not as broken.
+reset; printf '#!/bin/sh\necho 1.2.3\n' >"$T/home/.local/bin/agy"; chmod +x "$T/home/.local/bin/agy"
+run_block BI_AGENT_BIN="$T/none"
+grep -qP '^agy\tskipped' "$T/bidir/install.tsv" || fail "agy: a healthy copy was not recorded skipped without the Agent"
+reset; printf '#!/bin/sh\necho 1.2.3\n' >"$T/home/.local/bin/agy"; chmod +x "$T/home/.local/bin/agy"
+printf '#!/bin/sh\necho x >>"$STUB_WA_LOG"; exit 2\n' >"$T/bin/wa-old"; chmod +x "$T/bin/wa-old"
+run_block BI_AGENT_BIN="$T/bin/wa-old"
+grep -qP '^agy\tskipped' "$T/bidir/install.tsv" || fail "agy: a healthy copy was not recorded skipped with an old Agent"
 reset; run_block
 [ -e "$T/home/.local/bin/agy" ] || [ -e "$T/home/.local/bin/.agy.version" ] && fail "agy: shell installed agy itself"
 grep -q 'agy-version' "$ENTRY" || fail "agy: agy_effective_version does not ask the Agent"

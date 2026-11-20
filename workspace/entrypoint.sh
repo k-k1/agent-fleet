@@ -531,12 +531,23 @@ oc_drop_v1() { # oc_drop_v1 <prefix>
 }
 oc_drop_v1 "$HOME/.local" || echo "[entrypoint] WARN: could not remove opencode 1 from ~/.local (retrying next start)"
 # agy_effective_version — the version of the agy that is installed in ~/.local now ("" when it
-# does not answer). The rule (the binary, behind the host's RDRAND mask, never the marker alone)
-# lives in internal/bootinstall (AgyEffectiveVersion); the image's Agent first, as for the
-# installs, since a stale workspace-agent earlier on PATH must not decide.
+# does not answer). The rule (the binary, behind the host's RDRAND mask, never the marker alone;
+# the marker only when there is no binary) lives in internal/bootinstall (AgyEffectiveVersion),
+# asked of the image's Agent first, as for the installs. When that Agent is missing or too old to
+# know `agy-version` (exit != 0), the same rule is applied here, so a healthy agy is not judged
+# broken (and re-fetched) just because the Agent cannot answer.
 agy_effective_version() {
-  local wa="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
-  if [ -x "$wa" ]; then "$wa" boot-install agy-version 2>/dev/null || true; fi
+  local wa="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}" bin="$HOME/.local/bin/agy" v=""
+  if [ -x "$wa" ] && v="$("$wa" boot-install agy-version 2>/dev/null)"; then printf '%s' "$v"; return 0; fi
+  v=""
+  if [ ! -x "$bin" ]; then :
+  elif [ "$(uname -m)" = "aarch64" ] || grep -qw rdrand /proc/cpuinfo 2>/dev/null; then
+    v="$(timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
+  else
+    v="$(OPENSSL_ia32cap='~0x4000000000000000' timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
+  fi
+  [ -n "$v" ] || [ -e "$bin" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
+  printf '%s' "$v"
 }
 # npm_wa <args...> — one step of `workspace-agent boot-install` for the npm CLIs (claude, opencode,
 # codex, copilot): the pinned install (`npm [--repin]`) and the repair pass (`npm-verify`), both
