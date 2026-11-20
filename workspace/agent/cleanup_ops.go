@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -159,7 +160,7 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 		return "", code, errors.New(why)
 	}
 	// Now that the conversation is safely bundled and the meta is gone, delete the live jsonl(s).
-	if m.Kind == session.KindClaude {
+	if keepsLocalTranscript(m) {
 		if _, _, matched := claude.TranscriptRead(session.UUID(m.Dir, m.Name)); len(matched) > 0 {
 			for _, p := range matched {
 				_ = os.Remove(p)
@@ -204,11 +205,22 @@ func lockTrashName(name string) func() {
 	return l.Unlock
 }
 
+// keepsLocalTranscript reports whether the session's kind holds its conversation in files the
+// trash takes. The kind is read as stored: an empty or unknown kind keeps none, as before.
+func keepsLocalTranscript(m session.Meta) bool {
+	a, ok := sessionx.RegisteredAgent(m.Kind)
+	if !ok {
+		return false
+	}
+	k, ok := a.(agents.LocalTranscriptKeeper)
+	return ok && k.KeepsLocalTranscript()
+}
+
 // transcriptSizes is the size of each transcript file of a claude session (other kinds keep
 // their conversation in their own store, which the trash does not take).
 func transcriptSizes(m session.Meta) map[string]int64 {
 	out := map[string]int64{}
-	if m.Kind != session.KindClaude {
+	if !keepsLocalTranscript(m) {
 		return out
 	}
 	_, _, matched := claude.TranscriptRead(session.UUID(m.Dir, m.Name))
@@ -303,7 +315,7 @@ func archiveSessionForDelete(m session.Meta) (string, error) {
 	metaJSON := marshalMeta(m)
 	payloads := map[string][]byte{}
 	as := cleanupArchivedSession{Name: m.Name, Display: session.Display(m), Kind: m.Kind, Meta: metaJSON}
-	if m.Kind == session.KindClaude {
+	if keepsLocalTranscript(m) {
 		// Deleting the session removes the Agent's backup of the log, so the archive always holds
 		// its bytes (read once, under the backup lock). Where a live log sits at the very path the
 		// backup would restore to, the read bytes of both decide who takes that path: the live

@@ -17,9 +17,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -35,20 +34,12 @@ import (
 // muse and a managed codex answer from their own drivers instead (in memory, no pane): the
 // halt stops their host or thread, and the command an earlier turn left running goes with it.
 func stopArmBackgroundBusy(m session.Meta) bool {
-	switch normalizeKind(m.Kind) {
-	case session.KindMuse:
-		busy, _ := muse.BackgroundWork(m.Name)
-		return busy
-	case session.KindCodex:
-		if m.DriverKind() == session.DriverManaged {
-			busy, _ := codex.BackgroundWork(m.Name)
-			return busy
+	if a, ok := agentreg.Lookup(normalizeKind(m.Kind)); ok {
+		if c, ok := a.(agents.StopBackgroundBusyer); ok {
+			return c.StopBackgroundBusy(m)
 		}
 	}
-	if m.DriverKind() == session.DriverManaged || normalizeKind(m.Kind) != session.KindClaude {
-		return false // no tmux pane / process tree to read (same gate as reportPaneBusy)
-	}
-	return claude.BackgroundBusy(m.Name) || claude.BackgroundShellBusy(m.Name)
+	return false
 }
 
 // stopArmSweepSessions lists the sessions currently armed. Reading the metas is the same
