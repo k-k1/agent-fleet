@@ -41,7 +41,7 @@ func buildProgram(model, effort, slotSid, codexResumeID, forkFrom string) string
 	// The command bakes in our slot sid + the "codex" marker so the status helper
 	// keys by the slot and captures codex's own session id from the hook's stdin.
 	hookFlag := func(event, state string) string {
-		cmd := fmt.Sprintf("%s session-status %s %s codex", exe, state, slotSid)
+		cmd := fmt.Sprintf("%s session-status %s %s %s", exe, state, slotSid, StatusHookMarker)
 		// codex uses claude's hook schema: hooks.<Event> is an array of entries that
 		// each hold a NESTED "hooks" list of {type,command}. A flat [{type,command}]
 		// parses without error but never fires, so the nesting is required.
@@ -99,3 +99,7 @@ func tomlString(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 	return `"` + r.Replace(s) + `"`
 }
+
+// StatusHookMarker is the third positional argument of `session-status <state> <sid>` that
+// tells the status helper the hook came from codex and carries codex's own session id on stdin.
+const StatusHookMarker = "codex"

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
@@ -40,11 +41,11 @@ import (
 // unrecoverable until a workspace restart). Two small JSON reads per launch, writing
 // only when something actually changed, repairs it without one.
 func EnsureClaudeSettingsWiring(kind string) {
-	if kind != session.KindClaude {
-		return
+	if a, ok := agentreg.Lookup(kind); ok {
+		if p, ok := a.(agents.LaunchPreparer); ok {
+			p.PrepareLaunch()
+		}
 	}
-	claude.EnsureStatusHooks()
-	claude.EnsureStatusLine()
 }
 
 // RunSessionStatusHook is `workspace-agent session-status <state> [sid] [codex]`.
@@ -358,7 +359,7 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 			kickPlanAuto(m.Name)
 		}
 		holdReport := false
-		if m.DriverKind() == session.DriverManaged && (m.Kind == session.KindCodex || m.Kind == session.KindOpencode) {
+		if m.DriverKind() == session.DriverManaged && managedAbortSignalKind(m.Kind) {
 			switch state {
 			case agents.StateAborted:
 				sig, ok := managedAbortSignals.Read(m.Name)
@@ -467,7 +468,7 @@ func parseStatusHookArgs(args []string) (state, sid string, codexMarker bool) {
 	if len(args) > 0 {
 		state = args[0]
 	}
-	if len(args) > 2 && args[2] == "codex" {
+	if len(args) > 2 && args[2] == codex.StatusHookMarker {
 		return state, args[1], true // codex: slot sid baked into the hook command
 	}
 	if len(args) > 1 {
@@ -675,4 +676,15 @@ func permToolDetail(name, file, notebook, path, command string) string {
 		return name
 	}
 	return name + " · " + arg
+}
+
+// managedAbortSignalKind reports whether a Managed session of the kind records abort signals
+// from the status hook.
+func managedAbortSignalKind(kind string) bool {
+	if a, ok := agentreg.Lookup(kind); ok {
+		if c, ok := a.(agents.ManagedAbortSignaler); ok {
+			return c.ManagedAbortSignals()
+		}
+	}
+	return false
 }

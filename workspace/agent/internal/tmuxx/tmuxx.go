@@ -477,29 +477,14 @@ func LiveSessionNames() map[string]bool {
 	return live
 }
 
-// PaneKind sniffs a session's kind from its tmux pane start command. This is a LAST
-// RESORT, used ONLY for orphan sessions that have no meta (handleListSessions); a
-// session with a meta always takes the recorded meta.Kind and never reaches here.
-// The match is a fragile substring test: a claude/shell pane that merely RAN
-// `opencode`/`codex` as a command (or a wrapper whose path contains one of these
-// words) would misclassify. Kept because an orphan has no other signal, and the only
-// cost is a wrong badge on a session that already lost its meta. Defaults to shell.
-func PaneKind(name string) string {
+// PaneStartCommand returns a session's tmux pane start command, and false when tmux cannot
+// say. PaneKind in sessionx sniffs a kind from it, for an orphan session that has no meta.
+func PaneStartCommand(name string) (string, bool) {
 	out, err := Output("list-panes", "-t", session.ExactTarget(session.TmuxName(name)), "-F", "#{pane_start_command}")
 	if err != nil {
-		return session.KindShell
+		return "", false
 	}
-	s := string(out)
-	switch {
-	case strings.Contains(s, "opencode"):
-		return session.KindOpencode
-	case strings.Contains(s, "codex"):
-		return session.KindCodex
-	case strings.Contains(s, "claude"):
-		return session.KindClaude
-	default:
-		return session.KindShell
-	}
+	return string(out), true
 }
 
 // AtIdlePrompt reports whether a claude pane is sitting at its ready input

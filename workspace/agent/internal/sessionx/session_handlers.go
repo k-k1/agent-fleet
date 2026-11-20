@@ -256,7 +256,7 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		sessions = append(sessions, session.Session{
-			Name: name, Tmux: session.TmuxName(name), Kind: tmuxx.PaneKind(name), Repo: name,
+			Name: name, Tmux: session.TmuxName(name), Kind: PaneKind(name), Repo: name,
 			Alive: true, Resumable: true,
 		})
 	}

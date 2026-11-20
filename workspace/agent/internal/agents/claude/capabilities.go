@@ -149,3 +149,13 @@ func (agentImpl) StopBackgroundBusy(m session.Meta) bool {
 // KeepsLocalTranscript is agents.LocalTranscriptKeeper: the conversation is a jsonl file the
 // Agent holds, so the trash bundles it and removes it.
 func (agentImpl) KeepsLocalTranscript() bool { return true }
+
+// PrepareLaunch is agents.LaunchPreparer: re-assert the status hooks and the statusLine that
+// captures rate_limits in the shared settings.json.
+func (agentImpl) PrepareLaunch() {
+	EnsureStatusHooks()
+	EnsureStatusLine()
+}
+
+// PaneStartMarker is agents.PaneStartMarker.
+func (agentImpl) PaneStartMarker() string { return "claude" }

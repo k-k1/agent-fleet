@@ -218,7 +218,7 @@ func HandleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		out = append(out, cleanupCandidate{
-			Type: "session", ID: name, Display: name, Kind: tmuxx.PaneKind(name),
+			Type: "session", ID: name, Display: name, Kind: PaneKind(name),
 			Safety: "review", ReasonKey: cleanReasonOrphanPane, Reason: cleanupReasonText(cleanReasonOrphanPane),
 		})
 	}
