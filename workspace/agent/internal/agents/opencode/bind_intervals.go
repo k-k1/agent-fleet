@@ -29,7 +29,10 @@ import (
 // daemon start fixes the key every call of that daemon was paid with. The Console account is the
 // other possible payer (opencode gates paid models on the key OR the account), and it changes
 // inside the daemon, so it is recorded as observations. A call is bound only when its interval
-// proves exactly one payer; any doubt gives no binding.
+// proves exactly one payer; any doubt gives no binding. The account pays (opencode-account binding)
+// only for a daemon started with no key, from a sign-in observation of one credential that lies a
+// full quiet period behind every Agent flow; a Terminal pane is never bound to the account, because
+// a pane started without a key can still inherit one from the tmux server's environment.
 //
 // What is proven, and what is not: the Agent's own flows are the only account changes it can see
 // (oauthDaemon marks every one), the way credbind.Generation sees only the Agent's own login
@@ -67,6 +70,9 @@ type bindEvent struct {
 	// so calls of this daemon cannot be told from the previous one's by time.
 	Reg  bool   `json:"reg,omitempty"`
 	Acct string `json:"acct,omitempty"`
+	// ID, on an acctIn observation, is the binding of the signed-in Console credential
+	// (credbind.Account); "" when it could not be bound. It names a payer, never a token.
+	ID string `json:"id,omitempty"`
 	// Gen is the supervisor generation a daemon event describes, and the one an account event was
 	// read from or touched on: an account event counts only for the life of that generation.
 	Gen int `json:"gen,omitempty"`
@@ -110,6 +116,17 @@ var bindIntervalsMu sync.Mutex
 // seenMaxAt is the newest event time this process has read, so a gap recorded while the file is
 // unreadable still reaches every life known before.
 var seenMaxAt atomic.Int64
+
+// bumpSeenMax raises seenMaxAt to v and never lowers it: a concurrent older read cannot undo a
+// newer one.
+func bumpSeenMax(v int64) {
+	for {
+		cur := seenMaxAt.Load()
+		if v <= cur || seenMaxAt.CompareAndSwap(cur, v) {
+			return
+		}
+	}
+}
 
 const bindGapsFile = "opencode-binding-intervals.gaps"
 
@@ -171,9 +188,7 @@ func bindIntervalsPath() string {
 func readBindEvents() (evs []bindEvent, ok bool) {
 	defer func() {
 		for _, e := range evs {
-			if e.At > seenMaxAt.Load() {
-				seenMaxAt.Store(e.At)
-			}
+			bumpSeenMax(e.At)
 		}
 	}()
 	f, err := os.Open(bindIntervalsPath())
@@ -365,31 +380,83 @@ func noteDaemonUnknown(gen int) {
 	appendBindEvent(e, nil)
 }
 
+// touchCoalesce is how soon after a written touch another one is not written: the later one is
+// covered by requiring the quiet period to be this much longer (accountQuiet).
+const touchCoalesce = time.Minute
+
+// accountQuiet is how long an in observation must lie behind every earlier account event of its
+// life to prove the account was not changed by a flow that finished on its own (the user approves
+// a sign-in on the Console; opencode saves the credential without any call from the Agent).
+var accountQuiet = oauthFlowHold + touchCoalesce
+
+// eventGap is how far b lies after a in milliseconds, by uptime when both are of one boot (it does
+// not follow a clock that was set), by wall time otherwise.
+func eventGap(a, b bindEvent) int64 {
+	if a.Boot != "" && a.Boot == b.Boot && a.Up > 0 && b.Up > 0 {
+		return b.Up - a.Up
+	}
+	return b.At - a.At
+}
+
+// quietBehind reports whether every event of life before index i lies at least accountQuiet
+// before it, other than readings of the same credential.
+func quietBehind(life []bindEvent, i int) bool {
+	for _, o := range life[:i] {
+		if o.Acct == acctIn && o.ID == life[i].ID {
+			continue
+		}
+		if eventGap(o, life[i]) < accountQuiet.Milliseconds() {
+			return false
+		}
+	}
+	return true
+}
+
 // noteAccount records, in the life of daemon generation gen, an observation of the Console account
-// (acctOut / acctIn) or an Agent flow that can change it (acctTouch). Only the first of each
-// matters: a life is bound only until its first sign-in or touch, and an out observation proves
-// the account was out from the start of the life up to then. The event is written only when gen is
+// (acctOut / acctIn) or an Agent flow that can change it (acctTouch). See noteAccountID.
+func noteAccount(at time.Time, acct string, gen int) { noteAccountID(at, acct, "", gen) }
+
+// noteAccountID is noteAccount with the binding of the signed-in credential (acctIn only). An out
+// observation counts only before any other account event (it proves the account was out from the
+// start of the life up to then), once. After that every touch, and every in observation that
+// names another credential than the last event, is kept: they bound the stretch in which one
+// credential paid. A touch within touchCoalesce of the last written touch, and an in observation
+// repeating the last event, add nothing and are not written. The event is written only when gen is
 // the newest daemon event's generation, checked in the same step as the write.
-func noteAccount(at time.Time, acct string, gen int) {
+func noteAccountID(at time.Time, acct, id string, gen int) {
 	if acct != acctOut {
 		noteSessionAccount(at) // the panes' proofs end here too (bind_sessions.go)
 	}
 	e := stampedEvent(at)
-	e.Kind, e.Acct, e.Gen = evAccount, acct, gen
+	e.Kind, e.Acct, e.ID, e.Gen = evAccount, acct, id, gen
 	appendBindEvent(e, func(evs []bindEvent) bool {
 		di := lastDaemonEvent(evs)
 		if di < 0 || evs[di].Kind != evStart || evs[di].Gen != gen {
 			return false
 		}
 		hasOut, hasBad := false, false
-		for _, e := range evs[di+1:] {
-			if e.Acct == acctOut {
+		var last *bindEvent
+		for i, o := range evs[di+1:] {
+			if o.Acct == acctOut {
 				hasOut = true
 			} else {
 				hasBad = true
 			}
+			last = &evs[di+1+i]
 		}
-		return !hasBad && !(acct == acctOut && hasOut)
+		switch acct {
+		case acctOut:
+			return !hasBad && !hasOut
+		case acctIn:
+			if last == nil || last.Acct != acctIn || last.ID != id {
+				return true
+			}
+			// The same credential again adds nothing once the earlier reading is already behind a
+			// full quiet period; until then it is kept (at most one a minute), as it is the one
+			// that can prove the period over.
+			return !quietBehind(evs[di+1:], len(evs[di+1:])-1) && eventGap(*last, e) > touchCoalesce.Milliseconds()
+		}
+		return last == nil || last.Acct != acctTouch || eventGap(*last, e) > touchCoalesce.Milliseconds()
 	})
 }
 
@@ -402,7 +469,8 @@ func noteAccount(at time.Time, acct string, gen int) {
 // The life is the newest daemon event strictly before the call, and nothing may share its
 // millisecond or lie out of order (a clock that went back): then the interval is not told apart.
 // The Console account must have been observed signed out before the call and not signed in, or
-// touched by an Agent flow, at or before it.
+// touched by an Agent flow, at or before it; or, for a daemon with no key, observed signed in to
+// one credential before the call with no flow near it (accountPayer).
 func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...int64) string {
 	if route != routes.RouteOpencodeZen && route != routes.RouteOpencodeGo || len(times) == 0 {
 		return ""
@@ -431,6 +499,7 @@ func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...
 		}
 	}
 	out := false
+	var late []bindEvent // the account events at or before the end of the call, in order
 	for _, e := range evs[life+1:] {
 		if e.Kind != evAccount {
 			break
@@ -442,8 +511,11 @@ func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...
 		case e.Acct == acctOut && e.At < lo:
 			out = true
 		case e.Acct != acctOut && e.At <= hi:
-			return ""
+			late = append(late, e)
 		}
+	}
+	if len(late) > 0 {
+		return accountPayer(evs[life], late, route, paid, lo)
 	}
 	if !out {
 		return ""
@@ -455,6 +527,26 @@ func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...
 		return FreeBinding
 	}
 	return ""
+}
+
+// accountPayer binds a call to the Console account when that is the one payer proven: the daemon
+// had no key in its environment, the last account event up to the end of the call is a sign-in
+// observation of one credential made before the call, and nothing earlier in the life was recent
+// enough for a flow to still be finishing on its own. A free zen call cannot be told from a paid one
+// while the account is signed in (the account is not what paid for it), so only a call that
+// reported a cost is bound on zen; opencode go has no free calls.
+func accountPayer(life bindEvent, late []bindEvent, route string, paid bool, lo int64) string {
+	in := late[len(late)-1]
+	if !life.Keyless || in.Acct != acctIn || in.ID == "" || in.At >= lo {
+		return ""
+	}
+	if route == routes.RouteOpencodeZen && !paid {
+		return ""
+	}
+	if !quietBehind(late, len(late)-1) {
+		return ""
+	}
+	return in.ID
 }
 
 // lifeAt is the index of the daemon event whose life contains a call at ts, -1 when the evidence
