@@ -238,6 +238,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "pane.kind.fleetgraph": "Fleet graph",
   "pane.kind.home": "Home",
   "pane.kind.memory": "Memory",
+  "pane.kind.memory_new": "New memory",
   "pane.open_home": "Open Home",
   "home.autostart_starting": "Starting your workspace… (you can keep using Home)",
   "home.autostart_quota": "Your workspace was not started automatically: your organization\u2019s workspace limit is reached. Start it yourself once another one stops.",

@@ -19,6 +19,9 @@ import { receivedOfferState } from "../sharing/handoffStore.ts";
 import { useSchedulesStore } from "../schedules/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { openMemoryView } from "../memory/open.ts";
+import { useLeftRail } from "../../core/store/leftRail.ts";
+import { useMemoryStore } from "../memory/store.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { destinationShown, opensConversation, unseenConversationEventIDs, unseenSessionEventIDs } from "./read.ts";
 import { isMemoQueueKind, notificationWording } from "./wording.ts";
 import { useMemoStore } from "../memo/store.ts";
@@ -240,10 +243,19 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     openMemoryView("changes");
     return { opened: true };
   }
-  // The memory consolidator's daily notice (ADR 0130 decision 7) opens its suggestions in the
-  // Memory view (#3720). Opening is all it does: a notification never approves or rejects anything.
+  // The memory consolidator's daily notice (ADR 0130 decision 7) shows the left pane's Memory view,
+  // where its suggestions are listed, and opens the first one waiting (ADR 0141 decision 8); with
+  // none known yet, the Proposals tab. Opening is all it does: a notification never approves or
+  // rejects anything.
   if (n.kind === "memory-consolidation") {
-    openMemoryView("proposals");
+    useLeftRail.getState().showView("memory");
+    // The notice can arrive before the next poll: read the proposals now, so the one opened, the
+    // list and the activity bar's count are the ones the notice is about.
+    // Only while the workspace runs: a stopped one has no Agent to answer, and a refusal would
+    // be kept as the proposals' error.
+    if (useWorkspaceStore.getState().state === "running") await useMemoryStore.getState().loadProposals();
+    const first = (useMemoryStore.getState().proposals ?? []).find((p) => p.status === "pending");
+    openMemoryView("proposals", first ? { proposalId: first.id } : {});
     return { opened: true };
   }
   // Anything left whose target is not a session has nowhere to go, and must not fall through:

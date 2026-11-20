@@ -17,7 +17,8 @@ import { EmptyState } from "../../../ui/EmptyState.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { ViewNav, useSectionView, type ViewDef } from "../parts/viewNav.tsx";
 import { AgentMemoryStatus } from "./views/AgentMemoryStatus.tsx";
-import { openMemoryView } from "../../memory/open.ts";
+import { useLeftRail } from "../../../core/store/leftRail.ts";
+import { useSettingsUI } from "../store.ts";
 import { ImportExportView } from "./views/ImportExportView.tsx";
 import { AgentSettingsView } from "./views/AgentSettingsView.tsx";
 
@@ -28,6 +29,7 @@ const VIEWS: readonly string[] = MEMORY_VIEWS;
 
 export function MemoryTab() {
   const tr = useT();
+  const closeSettings = useSettingsUI((st) => st.closeSettings);
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
   const running = wsState === "running";
@@ -49,7 +51,10 @@ export function MemoryTab() {
           type="button"
           className="linklike"
           onClick={() => {
-            openMemoryView("memories");
+            // The memories are a view of the left pane (ADR 0141 decision 8): the modal closes so
+            // the view it shows is not hidden behind it.
+            closeSettings();
+            useLeftRail.getState().showView("memory");
           }}
         >
           {tr("mem.open_view")}

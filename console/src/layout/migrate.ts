@@ -17,6 +17,13 @@ const str = (v: unknown): string | null => (typeof v === "string" && v ? v : nul
 const SESSION_NAME_RE = /^[A-Za-z0-9_-]{1,40}$/;
 // A memory consolidation proposal id: the Agent mints 20 hex digits (memconsol.ValidID).
 const PROPOSAL_ID_RE = /^[0-9a-f]{20}$/;
+// A memory name as the Agent accepts one (agentMemValidName: 1-64 of a-z 0-9 . _ -, not starting
+// with "." or "-", no ".."), or "" for a new memory not saved yet; and a project id as the Agent
+// accepts one (agentMemValidProjectID: 1-80 of a-z 0-9 . _ -, neither "." nor "..").
+const MEMORY_NAME_RE = /^(?:[a-z0-9_][a-z0-9._-]{0,63})?$/;
+const MEMORY_PROJECT_RE = /^[a-z0-9._-]{1,80}$/;
+const validMemoryName = (n: string) => MEMORY_NAME_RE.test(n) && !n.includes("..");
+const validMemoryProject = (p: string) => MEMORY_PROJECT_RE.test(p) && p !== "." && p !== "..";
 // An image studio id (ADR 0100): the Agent mints a UUID and refuses anything else.
 const STUDIO_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -164,6 +171,28 @@ function contentFromFlat(p: any): PaneContent {
       const proposalId = str(p.proposalId);
       if (v === "proposals" && proposalId && PROPOSAL_ID_RE.test(proposalId)) return { kind: "memory", memoryView: v, proposalId };
       return v === "memories" || v === "changes" || v === "proposals" ? { kind: "memory", memoryView: v } : { kind: "memory" };
+    }
+    // The scope, project and name reach API queries: held to the Agent's shapes, or dropped to a
+    // blank terminal rather than a pane that would ask the Agent about something malformed.
+    case "memoryEntry": {
+      const scope = p.scope === "user" || p.scope === "project" ? p.scope : null;
+      const project = typeof p.project === "string" ? p.project : "";
+      const name = typeof p.name === "string" ? p.name : null;
+      const ok =
+        scope !== null &&
+        name !== null &&
+        validMemoryName(name) &&
+        (scope === "user" ? project === "" : validMemoryProject(project));
+      if (!ok) return { kind: "terminal", chat: false };
+      const projectName = str(p.projectName);
+      return {
+        kind: "memoryEntry",
+        scope,
+        project,
+        name,
+        ...(projectName && projectName.length <= 200 ? { projectName } : {}),
+        ...(p.gone === true && name ? { gone: true } : {}),
+      };
     }
     case "fleetgraph": {
       const collapsed = collapsedNames(p.collapsed);

@@ -4,6 +4,7 @@
 // pick travels as the one-shot target, and a stored layout of this kind survives a reload.
 import { beforeEach, describe, expect, it } from "vitest";
 import { openMemoryView } from "./open.ts";
+import { openMemoryEntry } from "./openEntry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { allViews, freshLayout } from "../../layout/ops.ts";
 import { useSettingsUI } from "../settings/store.ts";
@@ -19,14 +20,33 @@ beforeEach(() => {
   setLocale("en");
 });
 
+describe("openMemoryEntry", () => {
+  const entries = () => allViews(useLayoutStore.getState().layout).filter((v) => v.content.kind === "memoryEntry");
+
+  it("opens one pane per memory, and retargets it when the memory was forgotten since", () => {
+    const m = { scope: "project", project: { id: "app-0123456789ab", display: "app" }, name: "build-cmd" };
+    openMemoryEntry(m);
+    openMemoryEntry(m, { gone: true });
+    expect(entries().map((p) => p.content)).toEqual([
+      { kind: "memoryEntry", scope: "project", project: "app-0123456789ab", projectName: "app", name: "build-cmd", gone: true },
+    ]);
+  });
+
+  it("closes the settings modal, which would cover the pane", () => {
+    useSettingsUI.getState().openSettings("memory");
+    openMemoryEntry({ scope: "user", name: "rules" });
+    expect(useSettingsUI.getState().settingsOpen).toBe(false);
+  });
+});
+
 describe("openMemoryView", () => {
-  it("opens a Memory pane on the viewer by default", () => {
+  it("opens a Memory pane on the proposals by default", () => {
     openMemoryView();
-    expect(panes().map((p) => p.content)).toEqual([{ kind: "memory", memoryView: "memories" }]);
+    expect(panes().map((p) => p.content)).toEqual([{ kind: "memory", memoryView: "proposals" }]);
   });
 
   it("retargets the pane that is open instead of adding a second", () => {
-    openMemoryView("memories");
+    openMemoryView("changes");
     openMemoryView("proposals");
     expect(panes().map((p) => p.content)).toEqual([{ kind: "memory", memoryView: "proposals" }]);
   });
@@ -35,12 +55,6 @@ describe("openMemoryView", () => {
     useSettingsUI.getState().openSettings("memory");
     openMemoryView("changes");
     expect(useSettingsUI.getState().settingsOpen).toBe(false);
-  });
-
-  it("hands a memory to pick over as the one-shot target", () => {
-    useSettingsUI.getState().openSettings("memory");
-    openMemoryView("memories", { target: "user::notes" });
-    expect(useSettingsUI.getState().settingsTarget).toBe("user::notes");
   });
 
   it("opens one proposal alone, and drops it when the pane goes back to a tab (ADR 0141)", () => {
@@ -64,5 +78,26 @@ describe("openMemoryView", () => {
     // on a view that does not show a single proposal.
     expect(validateStoredContent({ kind: "memory", memoryView: "proposals", proposalId: "../x" })).toEqual({ kind: "memory", memoryView: "proposals" });
     expect(validateStoredContent({ kind: "memory", memoryView: "changes", proposalId: id })).toEqual({ kind: "memory", memoryView: "changes" });
+  });
+
+  it("keeps a stored memory pane and drops one whose names the Agent would refuse (ADR 0141)", () => {
+    const ok = { kind: "memoryEntry", scope: "project", project: "app-0123456789ab", projectName: "app", name: "build-cmd" };
+    expect(validateStoredContent(ok)).toEqual(ok);
+    expect(validateStoredContent({ ...ok, gone: true })).toEqual({ ...ok, gone: true });
+    expect(validateStoredContent({ kind: "memoryEntry", scope: "user", project: "", name: "" })).toEqual({ kind: "memoryEntry", scope: "user", project: "", name: "" });
+    const blank = { kind: "terminal", chat: false };
+    expect(validateStoredContent({ ...ok, name: "../etc" })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, name: "Upper" })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, project: "a/b" })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, scope: "user" })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, scope: "team" })).toEqual(blank);
+    // The Agent's own rules: no ".." in a name; a project id of 1-80 lower-case, not "." or "..".
+    expect(validateStoredContent({ ...ok, name: "a..b" })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, project: ".." })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, project: "." })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, project: "App" })).toEqual(blank);
+    expect(validateStoredContent({ ...ok, project: "a".repeat(81) })).toEqual(blank);
+    // A new memory has nothing to have forgotten.
+    expect(validateStoredContent({ kind: "memoryEntry", scope: "user", project: "", name: "", gone: true })).toEqual({ kind: "memoryEntry", scope: "user", project: "", name: "" });
   });
 });

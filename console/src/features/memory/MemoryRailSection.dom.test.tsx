@@ -10,6 +10,11 @@ vi.mock("../../core/api/client.ts", async (importActual) => ({
   api: (...args: unknown[]) => api(...args),
 }));
 const openMemoryView = vi.fn();
+const openMemoryEntry = vi.fn();
+vi.mock("./openEntry.ts", async (importActual) => ({
+  ...(await importActual<typeof import("./openEntry.ts")>()),
+  openMemoryEntry: (...args: unknown[]) => openMemoryEntry(...args),
+}));
 vi.mock("./open.ts", async (importActual) => ({
   ...(await importActual<typeof import("./open.ts")>()),
   openMemoryView: (...args: unknown[]) => openMemoryView(...args),
@@ -19,7 +24,12 @@ import { MemoryRailSection, groupByScope } from "./MemoryRailSection.tsx";
 import { ViewShownContext } from "../../lib/viewShown.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useMemoryStore } from "./store.ts";
-import { parseMemoryTarget } from "../settings/memory/memorySearch.ts";
+import { ToastProvider } from "../../ui/ToastProvider.tsx";
+import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
+import { useLayoutStore } from "../../layout/store.ts";
+import { freshLayout } from "../../layout/ops.ts";
+import { memoryEntryContent } from "./openEntry.ts";
+import { setSetting } from "../../lib/settings.ts";
 import type { MemoryListed } from "../settings/memory/memoryTypes.ts";
 
 const { t } = await import("../../lib/i18n/index.ts");
@@ -93,9 +103,13 @@ beforeEach(async () => {
 async function render(shown: boolean) {
   await act(async () =>
     root!.render(
-      <ViewShownContext.Provider value={shown}>
-        <MemoryRailSection />
-      </ViewShownContext.Provider>,
+      <ToastProvider>
+        <ConfirmProvider>
+          <ViewShownContext.Provider value={shown}>
+            <MemoryRailSection />
+          </ViewShownContext.Provider>
+        </ConfirmProvider>
+      </ToastProvider>,
     ),
   );
   await flush();
@@ -106,6 +120,8 @@ afterEach(async () => {
   root = host = null;
   api.mockReset();
   openMemoryView.mockReset();
+  openMemoryEntry.mockReset();
+  useLayoutStore.setState({ layout: freshLayout() });
 });
 
 describe("MemoryRailSection", () => {
@@ -132,12 +148,39 @@ describe("MemoryRailSection", () => {
     expect(names()).toEqual(["build-cmd"]);
   });
 
-  it("opens a memory in the Memory pane with that memory picked", async () => {
+  it("opens a memory in a pane of its own (ADR 0141 decision 4)", async () => {
     await act(async () => rows()[2].click());
-    expect(openMemoryView).toHaveBeenCalledTimes(1);
-    const [view, opts] = openMemoryView.mock.calls[0];
-    expect(view).toBe("memories");
-    expect(parseMemoryTarget(opts.target)).toEqual({ scope: "project", project: project.id, name: "build-cmd" });
+    expect(openMemoryEntry).toHaveBeenCalledTimes(1);
+    expect(openMemoryEntry.mock.calls[0][0]).toMatchObject({ scope: "project", project, name: "build-cmd" });
+  });
+
+  it("marks the row of the memory in the pane in front", async () => {
+    await act(async () =>
+      useLayoutStore.getState().openTarget({ content: memoryEntryContent({ scope: "project", project, name: "build-cmd" }) }),
+    );
+    const current = host!.querySelector('[aria-current="true"][data-row-key]');
+    expect(current?.querySelector(".memrail-name")?.textContent).toBe("build-cmd");
+  });
+
+  it("starts a new memory in the project on screen, or in the user scope", async () => {
+    const plus = () => host!.querySelector<HTMLButtonElement>(`button[aria-label="${t("mem.rv_new")}"]`)!;
+    await act(async () => plus().click());
+    expect(openMemoryEntry.mock.calls.at(-1)![0]).toEqual({ scope: "user", name: "" });
+    const [scopeSel] = Array.from(host!.querySelectorAll<HTMLSelectElement>(".memrail-selects select"));
+    await setValue(scopeSel, "project:" + project.id);
+    await act(async () => plus().click());
+    expect(openMemoryEntry.mock.calls.at(-1)![0]).toEqual({ scope: "project", project: { id: project.id, display: "app" }, name: "" });
+  });
+
+  it("offers the tidy-up's run only where it is switched on", async () => {
+    const run = () => host!.querySelector(`button[aria-label="${t("mem.rv_run")}"]`);
+    setSetting("memoryConsolidation", false);
+    await render(true);
+    expect(run()).toBeNull();
+    setSetting("memoryConsolidation", true);
+    await render(true);
+    expect(run()).not.toBeNull();
+    setSetting("memoryConsolidation", false);
   });
 
   it("lists pending proposals only by default, and opens one alone in the pane", async () => {
@@ -161,7 +204,7 @@ describe("MemoryRailSection", () => {
     expect(forgottenCalls()).toHaveLength(1);
     expect(names()).toEqual(["old-note"]);
     await act(async () => rows()[0].click());
-    expect(parseMemoryTarget(openMemoryView.mock.calls[0][1].target)).toEqual({ scope: "project", project: project.id, name: "old-note", gone: true });
+    expect(openMemoryEntry.mock.calls[0]).toEqual([expect.objectContaining({ scope: "project", name: "old-note" }), { gone: true }]);
   });
 
   it("reads the list again after a write anywhere bumps the shared version", async () => {

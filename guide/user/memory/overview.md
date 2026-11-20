@@ -27,45 +27,47 @@ How it differs from instruction files and the agent's own memory is in [Choose w
 ## Open the Memory view
 
 Press the **Memory** icon on the activity bar. The left pane lists the tidy-up's pending suggestions and your memories by
-scope, with a search box, the scope and type, and the **All**, **Pinned** and **Forgotten** chips. Click a memory or a
-suggestion to open it in the Memory view: a pane of its own (the **Memory** tab), with three tabs: **Memories**, **Changes**
-and **Suggestions**. **Change history** at the foot of the left pane opens the Changes tab.
+scope. Click a memory and it opens in a pane of its own: one pane per memory, like a file, so you can keep it beside a
+session. Click a suggestion and it opens on its own in the **Suggestions** tab of the **Memory** pane. **Change history**
+at the foot of the left pane opens its **Changes** tab.
 
-- **⚙ Settings → Agent memory → Open memory view** opens the same pane
-
-- You can also search in the command palette's **Memory** scope and use **Open in Agent memory** ([Use the keyboard and the command palette](../start/shortcuts.md#find-and-open-with-the-command-palette))
-- There is one Memory view per workspace. Opening it again moves you to the one already open
+- The amber number on the icon is the suggestions waiting for your decision. It stays until you approve or reject them
+- You can also search in the command palette's **Memory** scope and use **Open in Agent memory** to open a memory's pane ([Use the keyboard and the command palette](../start/shortcuts.md#find-and-open-with-the-command-palette))
+- **⚙ Settings → Agent memory → Open memory view** shows the Memory view of the left pane
 - Memory lives inside the workspace, so you can read it only while the workspace is running
 
-![The Memories tab of the Memory view. On the left the scope, the filter chips, the search box and the list of memories; on the right the selected memory's text with Edit, Pin and Forget this memory](../../assets/memory-view-en-light.webp)
+![The Memory view of the left pane (search box, scope, type and chips, the pending suggestions, the memories by scope) and a memory open in its own pane on the right, with Edit, Unpin, Forget this memory and Purge history… in its head and the text rendered as Markdown](../../assets/memory-view-en-light.webp)
 
 ## Find and read memories
 
-Above the list on the left, pick a scope and a chip.
+At the top of the left pane, pick a scope, a type and a chip.
 
 | What you pick | What the list shows |
 |---|---|
-| Scope **All scopes** (the default) | The user-wide memories and those of every project. Each row says where it lives |
+| Scope **All scopes** (the default) | The user-wide memories and those of every project, grouped by scope |
 | Scope **User-wide (shared with every project)**, or one project | Only that scope's memories |
+| Type | Only memories of that type |
 | Chip **All**, **Pinned** or **Forgotten** | Everything, the pinned ones, or the forgotten ones |
 
 - The **Search memories** box looks at once for every word you typed (in any order) in the name, description, type and author. When you stop typing it searches the bodies too
 - When no memory holds every word, it shows the ones that hold some, under "**No memory contains every word. Showing memories that contain some of the words only.**"
-- Pick a row and the right side shows the text, scope, type, **Author**, **Updated** and **Uses** (how often agents read it). Your own reading and searching do not count as uses
+- Pinned memories come first within their scope
+- A memory's pane shows its text (rendered as Markdown), description, type, **Author**, **Updated** and **Uses** (how often agents read it). Your own reading and searching do not count as uses
 - A memory whose name or text looks like a secret is not listed, only counted
-- On a phone the list and the detail are two screens. **Back to the list** (or Escape) returns from the detail
 
 ## Write and correct memories
 
-- **New memory** creates a memory in the scope on screen. While all scopes are shown it goes to the user-wide scope
-- **Edit** in the detail lets you change the name, description, type and text, then **Save**
+- **+** in the head of the left pane creates a memory in the project on screen. While all scopes are shown it goes to the user-wide scope
+- **Edit** in a memory's pane puts the description and type in the fields at the top and the text in the editor below. Press **Save** (or Ctrl+S / ⌘S in the editor)
 - A save goes through the same revision check and secret scan as an agent's save, and is recorded in Changes as written by **You (Console)**. You can revert it later
+- A save that looks like it holds a secret is refused, and what was found is listed under the fields. Your draft stays
+- A draft survives switching to another tab. Closing the pane or reloading the page drops it
 - You can write into a project only once that project already holds memory
 - An edit does not change which kinds of agent may read the memory (when it is limited to some)
 
 ## Pin a memory
 
-Press **Pin** in the detail and the memory is always listed first in the index agents read when they start work. **Unpin** takes it back.
+Press **Pin** in a memory's pane and the memory is always listed first in the index agents read when they start work. **Unpin** takes it back.
 
 - Memories that are not pinned are ordered by type (feedback and user first), then by how often they are read, then by recency
 - The index has a size limit (about 24 KiB of described lines), and pins share it. If the pins alone do not fit, the last of them drop to the names-only list. Pin only what every session needs
@@ -74,18 +76,18 @@ Press **Pin** in the detail and the memory is always listed first in the index a
 
 ## Forget a memory
 
-Press **Forget this memory** in the detail and no agent sees the memory any more. Its text stays in the history.
+Press **Forget this memory** in a memory's pane and no agent sees the memory any more. Its text stays in the history. The pane turns read-only.
 
-- Forgotten memories are listed under the **Forgotten** chip, newest first. **Unforget**, on the row or in the detail, brings back the text it had just before
+- Forgotten memories are listed under the **Forgotten** chip, newest first. Click one to open it, and **Unforget** brings back the text it had just before
 - If that earlier text now trips the secret scan, Unforget is refused. Use **Revert this change** on its forget entry in [Changes](changes.md), where you can check the text before bringing it back
 - A memory with no change in its history, such as a file put in place by hand, cannot be forgotten from here
-- **History of this memory**, below the detail, lists that memory's own changes. Pick one to see its diff. If older changes are missing, press **Load older changes**
+- **History of this memory**, at the foot of a memory's pane, lists that memory's own changes. Pick one to see its diff. If older changes are missing, press **Load older changes**
 
 ## Remove past text from the history
 
 Forgetting only hides a memory: its past text stays in the history and in exports. To delete past revisions from the workspace, for example after writing a secret into one:
 
-1. In the memory's detail, open **More actions** (⋯) → **Purge history…**. For a forgotten memory it is also on the row and in the detail
+1. Press **Purge history…** in the memory's pane. A forgotten memory's pane has it too
 2. The dialog shows how many change records go, which histories are rewritten, and what the secret scan found in past revisions (values masked)
 3. Type the memory's name to confirm, and press **Purge history**
 

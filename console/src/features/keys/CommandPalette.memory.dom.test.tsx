@@ -69,7 +69,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { allViews, freshLayout } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { setSetting } from "../../lib/settings.ts";
-import { parseMemoryTarget } from "../settings/memory/memorySearch.ts";
+import { useLeftRail } from "../../core/store/leftRail.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -190,27 +190,23 @@ describe("CommandPalette memory mode", () => {
     expect(rows()[0].textContent).toContain("app");
   });
 
-  it("opens the Memory view asking for the memory, with Enter and with Ctrl+Enter", async () => {
+  it("opens the memory in its own pane and shows the Memory view, with Enter and with Ctrl+Enter (ADR 0141)", async () => {
     useLayoutStore.setState({ layout: freshLayout() });
+    useLeftRail.setState({ view: "sessions" });
     await mount();
     await openMemoryMode();
     await typeQuery("build-cmd");
     pressEnter();
-    let ui = useSettingsUI.getState();
-    expect(ui.settingsOpen).toBe(false);
-    expect(allViews(useLayoutStore.getState().layout).find((v) => v.content.kind === "memory")?.content).toEqual({
-      kind: "memory",
-      memoryView: "memories",
-    });
-    expect(parseMemoryTarget(ui.settingsTarget)).toEqual({ scope: "project", project: project.id, name: "build-cmd" });
+    const entries = () => allViews(useLayoutStore.getState().layout).filter((v) => v.content.kind === "memoryEntry").map((v) => v.content);
+    expect(useSettingsUI.getState().settingsOpen).toBe(false);
+    expect(entries()).toEqual([{ kind: "memoryEntry", scope: "project", project: project.id, projectName: project.display, name: "build-cmd" }]);
+    expect(useLeftRail.getState().view).toBe("memory");
     expect(useKeysStore.getState().paletteOpen).toBe(false);
 
-    useSettingsUI.setState({ settingsOpen: false, settingsTarget: null });
     await openMemoryMode();
     await typeQuery("house-rules");
     pressEnter({ ctrlKey: true });
-    ui = useSettingsUI.getState();
-    expect(parseMemoryTarget(ui.settingsTarget)).toEqual({ scope: "user", project: "", name: "house-rules" });
+    expect(entries()).toContainEqual({ kind: "memoryEntry", scope: "user", project: "", name: "house-rules" });
   });
 
   it("says when the workspace is stopped, without asking the Agent", async () => {

@@ -3552,20 +3552,26 @@ const SCENES = [
   // memoryGuide*). The three Memory pane scenes open the pane on one view each; the settings and
   // lint scenes open Settings › Agent memory.
   {
-    // The Memory pane's Memories view: the list, and a project memory opened with its actions.
+    // The left pane's Memory view (proposals and memories by scope) beside one project memory in a
+    // pane of its own, with its actions (ADR 0141).
     name: "memory-view",
     guide: true,
     stubEnv: { SHOT_MEMORY_GUIDE: "1" },
-    clip: ".mview",
+    clip: ".app-body",
     pad: 0,
-    sections: FOCUS_TREE,
+    view: "memory",
     width: 1400,
-    height: 1000,
-    layout: { cols: [col("c0", [pane("p0", null, { kind: "memory", memoryView: "memories" })])], colRatios: [1], activeId: "p0" },
-    ready: `!!document.querySelector(".mem-md-pick")`,
-    action: `(async () => {
-      [...document.querySelectorAll(".mem-md-pick")].find((b) => /checkout-tests-need-payment-mock/.test(b.getAttribute("data-row-key") || b.textContent || ""))?.click();
-    })()`,
+    height: 900,
+    layout: {
+      cols: [
+        col("c0", [
+          pane("p0", null, { kind: "memoryEntry", scope: "project", project: "p-webshop", projectName: "webshop", name: "checkout-tests-need-payment-mock" }),
+        ]),
+      ],
+      colRatios: [1],
+      activeId: "p0",
+    },
+    ready: `!!document.querySelector(".memrail [data-row-key]") && !!document.querySelector(".mentry-md")`,
     settle: 1500,
   },
   {

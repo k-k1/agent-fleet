@@ -8,7 +8,8 @@
 // change list's layout (memoryChanges.tsx) on purpose.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail, isTransientErr } from "../../../core/api/client.ts";
+import { useMemoryStore } from "../../memory/store.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
@@ -123,13 +124,28 @@ export function LintScheduleSettings() {
   );
 }
 
-function ConsolidationStatus({ reload }: { reload: number }) {
+/**
+ * The consolidator's status and its "run now", shared by Settings and the left pane's Memory view.
+ * `active` false stops the read and the run poll (a hidden view makes no read of its own, ADR 0140
+ * decision 3); `reload` re-reads; `tenant` is another workspace, whose status replaces this one.
+ */
+export function useConsolRun(reload: number, active = true, tenant = "") {
   const tr = useT();
   const [st, setSt] = useState<ConsolStatus | null>(null);
   const [err, setErr] = useState(false);
+  // Whether the last status read said a run was going: a run that ends refreshes memory below. A
+  // tenant switch empties the status, which is not a run ending, so it forgets this too.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    wasRunning.current = false;
+    setSt(null);
+    setErr(false);
+  }, [tenant]);
   const load = useCallback(async (signal: AbortSignal) => {
     const res = await api(BASE);
     if (signal.aborted) return true;
+    // Right after a start the Agent answers 5xx for a moment: retried, never settled as a failure.
+    if (isTransientErr(res)) return false;
     if (res?.error) {
       setErr(true);
       return true;
@@ -138,29 +154,34 @@ function ConsolidationStatus({ reload }: { reload: number }) {
     setSt(res as ConsolStatus);
     return true;
   }, []);
-  useRetryLoad(load, [reload]);
+  useRetryLoad(async (signal) => (active ? load(signal) : true), [reload, active, tenant, load]);
   const running = st?.run?.running === true;
+  // A run that just finished may have queued proposals: everything memory-shaped reads again, the
+  // list and the activity bar's count included, instead of waiting for the next poll.
+  useEffect(() => {
+    if (wasRunning.current && !running) useMemoryStore.getState().bump();
+    wasRunning.current = running;
+  }, [running]);
   // While a run is in flight the status is re-read so the progress and the final report appear
   // without a page action; it stops by itself once the Agent says nothing is running.
   // A failed read does not stop it: the next poll clears the warning by itself, whereas stopping would
   // leave a stale "running" that only a reload could end. The interval is bounded and cleared on unmount.
   useEffect(() => {
-    if (!running) return;
+    if (!running || !active) return;
     const ac = new AbortController();
     const h = setInterval(() => void load(ac.signal), RUN_POLL_MS);
     return () => {
       ac.abort();
       clearInterval(h);
     };
-  }, [running, load]);
+  }, [running, active, load]);
 
-  const [all, setAll] = useState(false);
   const [starting, setStarting] = useState(false);
   // setStarting is asynchronous state; the ref stops a second click that lands before it renders.
   const inFlight = useRef(false);
   const toast = useToast();
   const askConfirm = useConfirm();
-  const runNow = async () => {
+  const runNow = async (all: boolean) => {
     if (!st || inFlight.current || running) return;
     const budget = st.config.tokenBudget;
     const ok = await askConfirm({
@@ -191,6 +212,14 @@ function ConsolidationStatus({ reload }: { reload: number }) {
       await load(new AbortController().signal);
     }
   };
+  return { st, err, running, starting, runNow };
+}
+
+function ConsolidationStatus({ reload }: { reload: number }) {
+  const tr = useT();
+  const { st, err, running, starting, runNow: run } = useConsolRun(reload);
+  const [all, setAll] = useState(false);
+  const runNow = () => run(all);
   if (err) return <p className="mem-warn">{tr("mem.cs_status_failed")}</p>;
   if (!st) return <p className="muted ds-note">{tr("common.loading")}</p>;
   const last = st.lastRun;
