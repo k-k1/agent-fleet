@@ -398,6 +398,9 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       current = modelRef.current;
       if (!current || current.path !== path) return false;
 
+      // Another discard of the same buffer waited on the same save / read and finished first:
+      // the buffer is already clean, which is what this one was asked for.
+      if (!current.dirty && current.bufferGeneration !== requested.bufferGeneration) return true;
       // Text typed while the saves and reads above were out is newer than the decision to drop
       // the buffer: it stays, and the guard / button answers "not discarded".
       if (current.bufferGeneration !== requested.bufferGeneration || current.bufferRevision !== requested.bufferRevision) return false;

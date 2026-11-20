@@ -1001,4 +1001,28 @@ describe("useFileEditor across unmount (tab switch)", () => {
     expect(editor!.model?.content).toBe("mine and more\n");
     expect(editor!.model?.dirty).toBe(true);
   });
+
+  it("answers discarded to a second discard that waited on the same save as the first", async () => {
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    const results: boolean[] = [];
+    await act(async () => {
+      void editor!.discard().then((v) => results.push(v));
+      void editor!.discard().then((v) => results.push(v));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      pendingPut.resolve({ ok: false, status: 422, error: { code: "refused", message: "no" } });
+      await pendingPut.promise;
+      await Promise.resolve();
+    });
+    expect(results).toEqual([true, true]);
+    expect(editor!.model?.dirty).toBe(false);
+  });
 });
