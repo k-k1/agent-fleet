@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -153,13 +155,16 @@ func mcpCallerSession(cwd string) (string, bool) {
 	}
 	var found []string
 	for _, m := range session.ListMetas() {
-		if m.Archived || m.Kind != session.KindOpencode || !session.ValidName(m.Name) {
+		if m.Archived || !session.ValidName(m.Name) {
 			continue
 		}
-		if !mcpRunsIn(m, cwd) {
+		// A kind with no slot mapping is dropped before mcpRunsIn, which stats the session's
+		// directory; the slot id is read once, after the cwd filter, because it is a store read.
+		c, ok := mcpSlotCapability(m.Kind)
+		if !ok || !mcpRunsIn(m, cwd) {
 			continue
 		}
-		if opencode.SlotSessionID(m) == mcpCallerSID {
+		if c.SlotSessionID(m) == mcpCallerSID {
 			found = append(found, m.Name)
 		}
 	}
@@ -239,8 +244,8 @@ func mcpStampedFolderSessions() []string {
 	seen := map[string]bool{}
 	for _, n := range alive {
 		m := metas[n]
-		id := opencode.SlotSessionID(m)
-		if m.Kind != session.KindOpencode || id == "" || seen[id] {
+		id := mcpSlotSID(m)
+		if id == "" || seen[id] {
 			return nil
 		}
 		seen[id] = true
@@ -268,4 +273,22 @@ func mcpAliveSessions(names []string) (alive []string, ok bool) {
 		}
 	}
 	return alive, true
+}
+
+// mcpSlotCapability resolves the kind's slot mapping by exact registry key.
+func mcpSlotCapability(kind string) (agents.SlotSessionIDer, bool) {
+	if a, ok := agentreg.Lookup(kind); ok {
+		c, ok := a.(agents.SlotSessionIDer)
+		return c, ok
+	}
+	return nil, false
+}
+
+// mcpSlotSID is the provider-side session id m's slot is mapped to; "" for a kind with no
+// such mapping.
+func mcpSlotSID(m session.Meta) string {
+	if c, ok := mcpSlotCapability(m.Kind); ok {
+		return c.SlotSessionID(m)
+	}
+	return ""
 }

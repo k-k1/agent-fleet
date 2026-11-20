@@ -22,12 +22,11 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -103,7 +102,7 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	// meanwhile.
 	// The claim comes first: a Resume that finishes before it shows up as alive below, and one
 	// in flight makes the claim fail.
-	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindCodex {
+	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && terminalSwitchNeedsStopped(m.Kind) {
 		end, ok := beginCodexTerminalSwitch(name)
 		if !ok {
 			httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, errDriverSwitching.Error())
@@ -158,13 +157,11 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Stop the old managed runtime. For a managed→TUI switch of kiro, whose per-sid `.lock`
-	// guards the session cross-process, wait bounded for the child to exit + release the lock
-	// so the TUI's `--resume-id` relaunch below doesn't race it into an error or a split-brain
-	// new sid (A2-2). Other kinds / directions don't gate on a lock, so drop asynchronously.
-	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindKiro {
-		kiro.DropHandleWait(name, 5*time.Second)
-	} else {
+	// Stop the old managed runtime. A kind whose lock guards the session cross-process (kiro)
+	// waits for it in dropForTerminalSwitch on a managed→TUI switch, so the TUI's relaunch below
+	// does not race it into an error or a split-brain new sid. Other kinds / directions drop
+	// asynchronously.
+	if !(m.DriverKind() == session.DriverManaged && target == session.DriverTUI && dropForTerminalSwitch(m.Kind, name)) {
 		dropManagedRuntime(m)
 	}
 	if target == session.DriverTUI {
@@ -256,4 +253,26 @@ func writeCodexReleasingErr(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	return true
+}
+
+// terminalSwitchNeedsStopped reports whether a Managed -> Terminal switch of the kind is
+// refused unless the session is stopped.
+func terminalSwitchNeedsStopped(kind string) bool {
+	if a, ok := agentreg.Lookup(kind); ok {
+		if g, ok := a.(agents.TerminalSwitchGuard); ok {
+			return g.SwitchNeedsStopped()
+		}
+	}
+	return false
+}
+
+// dropForTerminalSwitch lets the kind stop its Managed runtime and wait out its own lock;
+// false means it has no such wait and the caller drops the runtime as usual.
+func dropForTerminalSwitch(kind, name string) bool {
+	if a, ok := agentreg.Lookup(kind); ok {
+		if g, ok := a.(agents.TerminalSwitchGuard); ok {
+			return g.DropForTerminalSwitch(name)
+		}
+	}
+	return false
 }

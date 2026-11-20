@@ -114,3 +114,6 @@ func (agentImpl) ManagedAbortSignals() bool { return true }
 
 // PaneStartMarker is agents.PaneStartMarker.
 func (agentImpl) PaneStartMarker() string { return "opencode" }
+
+// SlotSessionID is agents.SlotSessionIDer.
+func (agentImpl) SlotSessionID(m session.Meta) string { return SlotSessionID(m) }

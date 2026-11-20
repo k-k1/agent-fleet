@@ -194,7 +194,7 @@ func abortInfoFor(m session.Meta) (claude.Abort, bool) {
 			return claude.Abort{Msg: f.Msg, Auth: true, At: f.At}, true
 		}
 	}
-	if m.DriverKind() != session.DriverManaged || (m.Kind != session.KindCodex && m.Kind != session.KindOpencode) {
+	if m.DriverKind() != session.DriverManaged || !managedAbortSignalKind(m.Kind) {
 		return claude.Abort{}, false
 	}
 	s, ok := managedAbortSignals.Read(m.Name)

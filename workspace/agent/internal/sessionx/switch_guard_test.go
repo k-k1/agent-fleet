@@ -22,6 +22,18 @@ type probeHookAgent struct {
 	afterProbe func()
 }
 
+// The wrapper embeds the Agent interface, which hides optional capabilities; the switch guard
+// is the one the code under test reads.
+func (a probeHookAgent) SwitchNeedsStopped() bool {
+	g, ok := a.Agent.(agents.TerminalSwitchGuard)
+	return ok && g.SwitchNeedsStopped()
+}
+
+func (a probeHookAgent) DropForTerminalSwitch(name string) bool {
+	g, ok := a.Agent.(agents.TerminalSwitchGuard)
+	return ok && g.DropForTerminalSwitch(name)
+}
+
 func (a probeHookAgent) BuildLaunch(m session.Meta, o agents.LaunchOpts) (agents.LaunchPlan, error) {
 	p, err := a.Agent.BuildLaunch(m, o)
 	if err == nil {

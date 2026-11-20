@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -167,7 +168,7 @@ func HandleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 
 	// TUI: only claude records a pending question payload (hooks); other TUI kinds
 	// have no structured form to answer.
-	if meta.Kind != session.KindClaude {
+	if !answersPendingQuestion(meta.Kind) {
 		httpx.WriteErr(w, http.StatusNotImplemented, "answer_unsupported",
 			"この kind の質問は Console から回答してください")
 		return
@@ -221,8 +222,26 @@ func planRespondLock(name string) (unlock func()) {
 	return mu.(*sync.Mutex).Unlock
 }
 
-// planRespondSupported: plan mode, and so a plan approval to answer, is a claude concept.
-func planRespondSupported(kind string) bool { return kind == session.KindClaude }
+// answersPendingQuestion reports whether a Terminal session of the kind records a structured
+// pending question the Console can answer. The kind is read as stored: an unknown kind has none.
+func answersPendingQuestion(kind string) bool {
+	if a, ok := agentreg.Lookup(kind); ok {
+		if c, ok := a.(agents.PendingQuestionAnswerer); ok {
+			return c.AnswersPendingQuestion()
+		}
+	}
+	return false
+}
+
+// planRespondSupported: whether the kind has a plan approval to answer (plan mode is claude's).
+func planRespondSupported(kind string) bool {
+	if a, ok := agentreg.Lookup(kind); ok {
+		if c, ok := a.(agents.PlanResponder); ok {
+			return c.RespondsToPlan()
+		}
+	}
+	return false
+}
 
 // HandleSessionPlanRespond (POST /sessions/{name}/plan-respond {decision, feedback})
 // applies the operator's decision to a pending ExitPlanMode approval (claude TUI —

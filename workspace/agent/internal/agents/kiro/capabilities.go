@@ -1,6 +1,8 @@
 package kiro
 
 import (
+	"time"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -71,4 +73,15 @@ func (agentImpl) WarmStatus() { WarmStatus() }
 // ProgressSignals is agents.ProgressSignaler: ProgressPaneOnly; its Terminal sessions have no status hook.
 func (agentImpl) ProgressSignals() agents.ProgressTraits {
 	return agents.ProgressTraits{Signal: agents.ProgressPaneOnly, HooklessStatus: true}
+}
+
+// SwitchNeedsStopped is agents.TerminalSwitchGuard: kiro switches from a live session.
+func (agentImpl) SwitchNeedsStopped() bool { return false }
+
+// DropForTerminalSwitch is agents.TerminalSwitchGuard: the per-sid `.lock` guards the session
+// across processes, so wait bounded for the child to exit and release it; otherwise the TUI's
+// `--resume-id` relaunch races it into an error or a split-brain new sid.
+func (agentImpl) DropForTerminalSwitch(name string) bool {
+	DropHandleWait(name, 5*time.Second)
+	return true
 }
