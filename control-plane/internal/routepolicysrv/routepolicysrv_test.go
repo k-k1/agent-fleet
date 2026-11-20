@@ -28,6 +28,9 @@ var testRoot = []byte(strings.Repeat("k", 32))
 
 func (fakeCP) SigningRoot() []byte { return testRoot }
 
+// IsSystemTenantSlug names the reserved tenant the way system_tenant.go does.
+func (fakeCP) IsSystemTenantSlug(slug string) bool { return slug == "af-golden" }
+
 func (fakeCP) VerifyBridge(_ context.Context, signKey []byte, token string, verify func([]byte, string) (string, bool)) (string, bool) {
 	return verify(signKey, token)
 }

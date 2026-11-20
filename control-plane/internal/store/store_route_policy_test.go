@@ -156,6 +156,46 @@ func TestRoutePolicyLayersRead(t *testing.T) {
 	})
 }
 
+// ListTenantRoutePolicies reads one tenant-scoped layer across tenants, never the deployment
+// rows or the other layer, and goes with the tenant.
+func TestListTenantRoutePolicies(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		a, _ := limitMembers(t, st, "a")
+		b, err := st.CreateTenant(ctx, "other", "Other")
+		mustDo(t, err)
+		_, _, err = st.PutRoutePolicy(ctx, RoutePolicyDeployment, "", `{"deny":["d"]}`, "su", nil)
+		mustDo(t, err)
+		_, _, err = st.PutRoutePolicy(ctx, RoutePolicyTenantCap, a.ID, `{"deny":["a"]}`, "su", nil)
+		mustDo(t, err)
+		_, _, err = st.PutRoutePolicy(ctx, RoutePolicyTenantCap, b.ID, `{"deny":["b"]}`, "su", nil)
+		mustDo(t, err)
+		_, _, err = st.PutRoutePolicy(ctx, RoutePolicyTenant, a.ID, `{"deny":["t"]}`, "ta", nil)
+		mustDo(t, err)
+		caps, err := st.ListTenantRoutePolicies(ctx, RoutePolicyTenantCap)
+		mustDo(t, err)
+		if len(caps) != 2 || caps[0].Scope != RoutePolicyTenantCap || caps[1].Scope != RoutePolicyTenantCap {
+			t.Fatalf("caps = %+v, want the two cap rows only", caps)
+		}
+		own, err := st.ListTenantRoutePolicies(ctx, RoutePolicyTenant)
+		mustDo(t, err)
+		if len(own) != 1 || own[0].TenantID != a.ID || own[0].Rule != `{"deny":["t"]}` {
+			t.Fatalf("own = %+v", own)
+		}
+		mustDo(t, st.DeleteTenant(ctx, b.ID))
+		caps, err = st.ListTenantRoutePolicies(ctx, RoutePolicyTenantCap)
+		mustDo(t, err)
+		if len(caps) != 1 || caps[0].TenantID != a.ID {
+			t.Fatalf("caps after deleting a tenant = %+v, want its row gone", caps)
+		}
+		for _, scope := range []string{RoutePolicyDeployment, RoutePolicyCeiling, "x"} {
+			if _, err := st.ListTenantRoutePolicies(ctx, scope); err == nil {
+				t.Errorf("scope %q was read as a tenant layer", scope)
+			}
+		}
+	})
+}
+
 // A conditional write passes only at the revision the caller loaded (0 for a row never written),
 // and a refused one leaves the row, the audit log and the revision sequence untouched.
 func TestPutRoutePolicyIfPrecondition(t *testing.T) {

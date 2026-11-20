@@ -1126,6 +1126,8 @@ export const admin = {
   "admin.model_access_who_title": "だれが決めているか",
   "admin.model_access_who_caps": "テナントごとの制限",
   "admin.model_access_who_caps_note": "配備の管理者がテナントごとに決めます。各テナントの管理者は、その中でさらに狭めます。",
+  "admin.model_access_counts": "テナント {n} 件のうち、{cap} 件に配備の管理者の制限があり、{own} 件が自分たちでも制限しています。",
+  "admin.model_access_counts_failed": "制限しているテナントの数を読み込めませんでした。",
   "admin.model_access_ceiling_raw": "設定値を見る",
   "admin.model_access_go_change": "変える →",
   "admin.model_access_go_tenants": "テナントごと →",

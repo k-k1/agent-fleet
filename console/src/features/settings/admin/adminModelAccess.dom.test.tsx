@@ -103,6 +103,10 @@ beforeEach(() => {
     if (m) return Promise.resolve(tenantView(m[1]));
     // Provided routes off, as on a CP without them; pinned in adminProvidedRoutes.dom.test.tsx.
     if (path.includes("provided-routes")) return Promise.resolve({ error: { code: "http_404", status: 404 } });
+    // The overview's tenant counts, off as on a CP without the route (api() gives the plain-text
+    // 404 no status); the tests that read them serve their own answer.
+    if (path === "api/admin/route-policy/tenant-counts")
+      return Promise.resolve({ error: { code: "http_404", message: "404 page not found" } });
     return Promise.resolve({ error: { code: "not_found" } });
   });
   apiJSON.mockResolvedValue({ rule: {}, revision: 9 });
@@ -437,6 +441,41 @@ describe("admin overview and tenants", () => {
     Array.from(host!.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent?.startsWith(text))!;
   const shown = (el: Element) => el.closest("[hidden]") === null;
   const tenantReads = () => api.mock.calls.filter((c) => /^api\/admin\/tenants\//.test(String(c[0]))).length;
+
+  const serveCounts = (answer: unknown) => {
+    const base = api.getMockImplementation()!;
+    api.mockImplementation((path: string) =>
+      path === "api/admin/route-policy/tenant-counts" ? Promise.resolve(answer) : base(path),
+    );
+  };
+  const counts = () => host!.querySelector<HTMLElement>('[data-testid="overview-tenant-counts"]');
+
+  it("counts the tenants with a cap and with their own restriction on the overview", async () => {
+    serveCounts({ tenants: 4, withCap: 2, withOwnRestriction: 1 });
+    await mount();
+    expect(counts()!.textContent).toBe("テナント 4 件のうち、2 件に配備の管理者の制限があり、1 件が自分たちでも制限しています。");
+    expect(within(".model-access-who").querySelector('[data-layer="tenant_cap"]')!.contains(counts())).toBe(true);
+  });
+
+  it("says the counts could not be read rather than showing zero, and nothing on an older CP", async () => {
+    serveCounts({ error: { code: "forbidden", status: 403 } });
+    await mount();
+    expect(counts()!.textContent).toContain("読み込めませんでした");
+    expect(counts()!.textContent).not.toContain("0 件");
+    expect(counts()!.getAttribute("role")).toBe("alert");
+    expect(counts()!.className).toContain("warn");
+    // A JSON error that happens to be a 404 is a failure too; only the plain-text one is "off".
+    act(() => root?.unmount());
+    host?.remove();
+    serveCounts({ error: { code: "not_found", status: 404 } });
+    await mount();
+    expect(counts()!.textContent).toContain("読み込めませんでした");
+    act(() => root?.unmount());
+    host?.remove();
+    serveCounts({ error: { code: "http_404", message: "404 page not found" } });
+    await mount();
+    expect(counts()).toBeNull();
+  });
 
   it("says who decides what in plain lines and opens the view where each is changed", async () => {
     serve(SOURCE());

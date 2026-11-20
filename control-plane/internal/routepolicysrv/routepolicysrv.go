@@ -95,6 +95,7 @@ func Register(mux *http.ServeMux, cp CP) {
 	a := admin{cp}
 	mux.HandleFunc("GET /api/admin/route-policy", a.withSuperAdmin(a.getDeployment))
 	mux.HandleFunc("PUT /api/admin/route-policy", a.withSuperAdmin(a.putDeployment))
+	mux.HandleFunc("GET /api/admin/route-policy/tenant-counts", a.withSuperAdmin(a.getTenantCounts))
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/route-policy", a.getTenant)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/route-policy", a.putTenant)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/route-policy/cap", a.putCap)
@@ -252,6 +253,69 @@ func (a admin) getDeployment(w http.ResponseWriter, r *http.Request, _ store.Ide
 		Revision   int64           `json:"revision"`
 		Vocabulary vocabularyWire  `json:"vocabulary"`
 	}{v.Ceiling, v.Deployment, v.Revision, v.Vocabulary})
+}
+
+// tenantCountsWire is the admin Overview's count of tenants by what restricts them. Counts only:
+// no tenant is named and no rule is shown, so the answer holds nothing a tenant keeps private.
+type tenantCountsWire struct {
+	// Tenants is every tenant of the deployment.
+	Tenants int `json:"tenants"`
+	// WithCap counts tenants whose cap (the super_admin's layer) narrows anything, endpoint
+	// patterns included.
+	WithCap int `json:"withCap"`
+	// WithOwnRestriction counts tenants whose own rule restricts routes; a rule that only lists
+	// approved hosts or exceptions restricts none.
+	WithOwnRestriction int `json:"withOwnRestriction"`
+}
+
+func (a admin) getTenantCounts(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+	ctx := r.Context()
+	st := a.cp.Store()
+	tenants, err := st.ListTenants(ctx)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	// Only tenants an administrator can see are counted, and a stored row counts only for one of
+	// them: a row left behind by a deleted tenant, or written after the list was read, would
+	// otherwise put a layer's count above the number of tenants.
+	known := map[string]bool{}
+	for _, t := range tenants {
+		if !a.cp.IsSystemTenantSlug(t.Slug) {
+			known[t.ID] = true
+		}
+	}
+	count := func(scope string, narrows func(routepolicy.Rule) bool) (int, error) {
+		rows, err := st.ListTenantRoutePolicies(ctx, scope)
+		if err != nil {
+			return 0, err
+		}
+		n := 0
+		for _, row := range rows {
+			if !known[row.TenantID] {
+				continue
+			}
+			l, err := layerOf(row)
+			if err != nil {
+				return 0, err
+			}
+			if narrows(l.Rule) {
+				n++
+			}
+		}
+		return n, nil
+	}
+	out := tenantCountsWire{Tenants: len(known)}
+	if out.WithCap, err = count(store.RoutePolicyTenantCap, func(r routepolicy.Rule) bool {
+		return r.Restricted() || r.Endpoints != nil
+	}); err == nil {
+		out.WithOwnRestriction, err = count(store.RoutePolicyTenant, routepolicy.Rule.Restricted)
+	}
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // readRule decodes and validates a rule body. above, when set, is the layer the rule may not
