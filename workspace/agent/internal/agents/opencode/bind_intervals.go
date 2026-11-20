@@ -371,6 +371,9 @@ func noteDaemonUnknown(gen int) {
 // the account was out from the start of the life up to then. The event is written only when gen is
 // the newest daemon event's generation, checked in the same step as the write.
 func noteAccount(at time.Time, acct string, gen int) {
+	if acct != acctOut {
+		noteSessionAccount(at) // the panes' proofs end here too (bind_sessions.go)
+	}
 	e := stampedEvent(at)
 	e.Kind, e.Acct, e.Gen = evAccount, acct, gen
 	appendBindEvent(e, func(evs []bindEvent) bool {
@@ -480,13 +483,20 @@ func lifeAt(evs []bindEvent, ts int64) int {
 	return si
 }
 
-// ledgerBinder returns the function that binds the calls of session m, nil when m's calls did not
-// run on the shared daemon this evidence describes: a session with its own route server, a
-// Terminal session, or evidence that cannot be read.
+// ledgerBinder returns the function that binds the calls of session m, nil when there is nothing
+// to go on. Which process served a call is the session's own history (bind_sessions.go): the
+// shared daemon's evidence applies only to the stretches the session was attached to it, so a
+// session that moved from a Terminal pane to Managed does not take the daemon's evidence for the
+// pane's calls. A session with its own route server is never bound from opencode.ai evidence.
 func ledgerBinder(m session.Meta) bindFn {
-	if m.DriverKind() != session.DriverManaged || m.Route != nil || bindOff.Load() {
+	if bindOff.Load() {
 		return nil
 	}
+	return sessionBinder(m, daemonBinder())
+}
+
+// daemonBinder binds a call by the shared daemon's evidence; nil when that is unreadable.
+func daemonBinder() bindFn {
 	evs, ok := readBindEvents()
 	if !ok || len(evs) == 0 {
 		return nil

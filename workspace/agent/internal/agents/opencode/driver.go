@@ -114,6 +114,11 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if err != nil {
 		return nil, err
 	}
+	if m.Route != nil {
+		noteSessionProcess(m.Name, procRoute, nil)
+	} else {
+		noteSessionProcess(m.Name, procShared, nil)
+	}
 	ocSid := session.UUID(m.Dir, m.Name) // identity: the working copy, never the subdir
 	cwd := m.CWD()                       // where the session runs (Dir, or a chosen subdir)
 	handlesMu.Lock()
