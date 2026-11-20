@@ -78,6 +78,8 @@ type bindEvent struct {
 	// Floor, on a Reg event, is the latest wall time the clock before it can have shown: calls of
 	// this and every later life stamped at or below it may belong to an earlier daemon.
 	Floor int64 `json:"floor,omitempty"`
+	// Carry is the largest Floor of the Reg events a trim dropped before this event.
+	Carry int64 `json:"carry,omitempty"`
 }
 
 // clockStamp is the current boot id and uptime in milliseconds; ok=false when the kernel does not
@@ -104,6 +106,10 @@ var clockStamp = func() (boot string, up int64, ok bool) {
 const clockSlack = 2000
 
 var bindIntervalsMu sync.Mutex
+
+// seenMaxAt is the newest event time this process has read, so a gap recorded while the file is
+// unreadable still reaches every life known before.
+var seenMaxAt atomic.Int64
 
 const bindGapsFile = "opencode-binding-intervals.gaps"
 
@@ -163,6 +169,13 @@ func bindIntervalsPath() string {
 // whole or holds a line that does not parse: a lost boundary would stretch the interval before it,
 // so nothing is proven then. A missing file is no events, readable.
 func readBindEvents() (evs []bindEvent, ok bool) {
+	defer func() {
+		for _, e := range evs {
+			if e.At > seenMaxAt.Load() {
+				seenMaxAt.Store(e.At)
+			}
+		}
+	}()
 	f, err := os.Open(bindIntervalsPath())
 	if os.IsNotExist(err) {
 		return nil, true
@@ -204,7 +217,11 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent) bool) {
 	evs, ok := readBindEvents()
 	if !ok {
 		log.Printf("opencode: binding intervals unreadable; bindings stay unproven")
-		noteGap(e.At)
+		if m := seenMaxAt.Load(); m > 0 {
+			noteGap(max(e.At, m))
+		} else {
+			noteGap(max(e.At, time.Now().UnixMilli())) // nothing known: every life up to now
+		}
 		return
 	}
 	if check != nil && !check(evs) {
@@ -247,6 +264,16 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent) bool) {
 	}
 	if len(evs) >= bindIntervalsKeep {
 		cut := min(len(evs)-bindIntervalsKeep/2, lastDaemonEvent(evs))
+		carry := int64(0)
+		for _, ev := range evs[:cut] {
+			carry = max(carry, ev.Carry)
+			if ev.Reg {
+				carry = max(carry, ev.Floor)
+			}
+		}
+		if carry > 0 {
+			evs[cut].Carry = max(evs[cut].Carry, carry)
+		}
 		var sb strings.Builder
 		for _, ev := range evs[cut:] {
 			b, _ := json.Marshal(ev)
@@ -396,7 +423,7 @@ func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...
 		}
 	}
 	for _, e := range evs[:life+1] {
-		if e.Reg && lo <= e.Floor {
+		if e.Reg && lo <= e.Floor || lo <= e.Carry {
 			return "" // possibly an earlier daemon's call, from before the clock was set
 		}
 	}
@@ -405,8 +432,8 @@ func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...
 		if e.Kind != evAccount {
 			break
 		}
-		if e.Reg && e.At <= hi {
-			return "" // the clock was set inside this life
+		if e.Reg {
+			return "" // the clock was set inside this life; no order of its events and the call holds
 		}
 		switch {
 		case e.Acct == acctOut && e.At < lo:

@@ -25,6 +25,8 @@ func bindT(t *testing.T) {
 	old := clockStamp
 	clockStamp = func() (string, int64, bool) { return "boot", stampUp, true }
 	gapsMem = nil
+	seenMaxAt.Store(0)
+	bindOff.Store(false)
 	t.Cleanup(func() { credbind.ResetForTest(); clockStamp = old; gapsMem = nil })
 }
 
@@ -373,3 +375,55 @@ func TestV2TurnsBoundByInterval(t *testing.T) {
 }
 
 func atMs(ms int64) time.Time { return time.UnixMilli(ms) }
+
+// A touch recorded while the clock was ahead is still a touch after the clock comes back.
+func TestBindingTouchSurvivesClockSetBack(t *testing.T) {
+	bindT(t)
+	start(1000, 1, "A")
+	acct(2000, acctOut, 1)
+	// The wall clock is 10 s ahead of the uptime when the sign-in flow touches the account.
+	stampUp = 3000
+	noteAccount(atMs(13000), acctTouch, 1)
+	if got := bind(t, routes.RouteOpencodeZen, false, 6000); got != "" {
+		t.Errorf("a call after a touch whose clock was ahead = %q, want none", got)
+	}
+}
+
+// The floor of a Reg event survives the trim that drops the event.
+func TestBindingTrimCarriesTheClockFloor(t *testing.T) {
+	bindT(t)
+	start(10000, 1, "A")
+	acct(10100, acctOut, 1)
+	// B stamped 14000 on the wall, 32000 on the uptime: A's late calls overlap B's and C's range.
+	noteDaemonStart(spawnStamp{at: atMs(14000), boot: "boot", up: 32000, stamped: true}, []string{opencodeKeyEnv + "=B"}, 2)
+	for i := 0; i < bindIntervalsKeep+10; i++ { // enough later lives that the trim drops B
+		up := int64(38000 + 10*i)
+		noteDaemonStart(spawnStamp{at: atMs(20000 + 10*int64(i)), boot: "boot", up: up, stamped: true}, []string{opencodeKeyEnv + "=C"}, 3+i)
+		stampUp = up + 5
+		noteAccount(atMs(20000+10*int64(i)+5), acctOut, 3+i)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 30000); got != "" {
+		t.Errorf("an old call that overlaps the new lives = %q, want none after the trim", got)
+	}
+}
+
+// A gap recorded while the file cannot be read reaches every life known before, not only the
+// failed event's own time.
+func TestBindingGapWhileUnreadableCoversKnownLives(t *testing.T) {
+	bindT(t)
+	start(100000, 1, "A")
+	acct(101000, acctOut, 1)
+	if _, ok := readBindEvents(); !ok {
+		t.Fatal("setup")
+	}
+	p := bindIntervalsPath()
+	good, _ := os.ReadFile(p)
+	_ = os.Remove(p)
+	_ = os.Mkdir(p, 0o700)
+	acct(90000, acctTouch, 1) // clock set back; the file is unreadable now
+	_ = os.Remove(p)
+	_ = os.WriteFile(p, good, 0o600)
+	if got := bind(t, routes.RouteOpencodeZen, false, 102000); got != "" {
+		t.Errorf("a known life after a gap taken while unreadable = %q, want none", got)
+	}
+}
