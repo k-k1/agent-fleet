@@ -409,9 +409,9 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # rebuild, then Stop→Start each Workspace. Check latest with `npm view <pkg> version`.
 # Without a pin the unchanged RUN line hits the layer cache and a rebuild keeps the old
 # version; changing the ARG is what reliably busts the cache.
-ARG CLAUDE_CODE_VERSION=2.1.328
+ARG CLAUDE_CODE_VERSION=2.1.329
 ARG OPENCODE_VERSION=2.3.2
-ARG CODEX_VERSION=0.170.0
+ARG CODEX_VERSION=0.171.0
 ARG COPILOT_VERSION=1.0.114
 # opencode is the npm package @opencode/cli (it also installs an `opencode2` bin). Only opencode 2
 # is supported (ADR 0127): a rollback is an earlier 2.x pin, never a 1.x one (the opencode 1
@@ -441,10 +441,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # OPENSSL_ia32cap mask the Agent applies to every spawn (0008, decision of 2026-09-07), so
 # only a non-x86 build host skips the --version check (an arm64 cross-build cannot always
 # run the binary).
-ARG AGY_VERSION=1.5.12
-ARG AGY_RELEASE_BUILD=5281398513336320
-ARG AGY_SHA256_X64=0f0cb851cdc9fbedd50432570aa6ae9c4c398b9ea3f1e23e7776f707643c5b3e
-ARG AGY_SHA256_ARM64=594046de1b91561f7fe16476365e3843038ecca56f5f59af45cf9d3091e43bd4
+ARG AGY_VERSION=1.5.13
+ARG AGY_RELEASE_BUILD=5999302598852608
+ARG AGY_SHA256_X64=7fa9cc6df0d09562693d637c406a86c1b0f52ab3364714b1fd2d79cc6060d4b2
+ARG AGY_SHA256_ARM64=36596ad8038531fd75f0e97b5ba8967a30f2fd67f8d9c61959d2e4761d7b215f
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
