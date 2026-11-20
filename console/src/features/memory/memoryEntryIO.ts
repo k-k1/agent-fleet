@@ -95,6 +95,9 @@ const sent = new Map<string, { raw: string; stored: string; revision: number; ki
 // The refusal of the last save of a memory, for a pane that was not mounted when it came: the
 // adapter outlives the view that asked for the save.
 const refusals = new Map<string, EntryRefusal>();
+// The new memory a save was sent for, until its outcome is known: a recovery read has to look for
+// that name, not for the blank the buffer began on.
+const sentNew = new Map<string, { name: string; raw: string; stored: string }>();
 
 function remember(key: string, sha: string, entry: Known, overwrite: boolean) {
   let byHash = known.get(key);
@@ -112,6 +115,7 @@ export function resetMemoryRevisions() {
   known.clear();
   adoptNext.clear();
   sent.clear();
+  sentNew.clear();
   refusals.clear();
   refusalListeners.clear();
 }
@@ -196,7 +200,23 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
     async load() {
       if (!sameTenant()) throw new Error("tenant_changed");
       // Nothing is stored under a new memory's key: what a recovery read finds is the blank it began on.
-      if (isNew) return blankNewFile(key);
+      if (isNew) {
+        const last = sentNew.get(key);
+        if (!last) return blankNewFile(key);
+        const q = `scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(last.name)}`;
+        const res = await api(`api/agents/memory/entries/member-read?${q}`);
+        // Not stored: the save did not land, and a resave at revision 0 is safe.
+        if (res?.error?.code === "memory_not_found" || res?.error?.status === 404) return blankNewFile(key);
+        if (res?.error) throw new Error(res.error.code || "load_failed");
+        if (!isMemoryBody(res, scope, last.name)) throw new Error("load_failed");
+        const b = res as MemoryBody;
+        const found = encodeEntry({ description: b.description, type: b.type || "feedback", body: b.body ?? "" });
+        // Another memory of that name, not the one sent: nothing here can confirm the save.
+        if (found !== last.stored) throw new Error("name_taken");
+        // Stored as sent: the buffer's text is reported as the remote, which the panel offers to accept
+        // (the view lands the pane when it is).
+        return { ...blankNewFile(key), content: last.raw, size: last.raw.length, revision: revisionOf(last.raw) };
+      }
       const q = `scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(name)}`;
       const res = await api(`api/agents/memory/entries/member-read?${q}`);
       if (res?.error) throw new Error(res.error.code || "load_failed");
@@ -234,6 +254,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (!base) return { ok: false, status: 409, error: { code: "revision_conflict", message: "unknown base" } };
       const fields = decodeEntry(content);
       const saveName = isNew ? (fields.name ?? "").trim() : name;
+      if (isNew) sentNew.set(key, { name: saveName, raw: content, stored: storedForm(encodeEntry({ description: fields.description, type: fields.type, body: fields.body })) });
       if (!isNew) sent.set(key, { raw: content, stored: storedForm(content), revision: base.revision, kinds: base.kinds });
       // The project id also goes in the query: the CP audit ledger reads the URL only.
       const res = await apiJSON("api/agents/memory/entries/member-save" + projectQuery(project), "POST", {
@@ -251,7 +272,10 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         // The commit may have landed before the snapshot failed: the outcome is unknown.
         if (code === "memory_snapshot_failed" || (res.error.status ?? 0) >= 500) code = "write_state_unknown";
         // Only an unknown outcome keeps the sent text to match a read against.
-        if (code !== "write_state_unknown") sent.delete(key);
+        if (code !== "write_state_unknown") {
+          sent.delete(key);
+          sentNew.delete(key);
+        }
         // For a new memory the name is taken: there is no remote text to resolve against.
         if (code === "memory_conflict" && !isNew) adoptNext.add(key);
         if (code === "memory_conflict" && !isNew) return { ok: false, status: 409, error: { code: "revision_conflict", message: errDetail(res.error) } };
@@ -262,6 +286,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       }
       if (isNew) {
         // The pane re-reads the memory it becomes; no counter is kept for this key.
+        sentNew.delete(key);
         useMemoryStore.getState().bump();
         onSaved?.(saveName);
         return { ok: true, path: key, size: content.length, revision: revisionOf(content) };

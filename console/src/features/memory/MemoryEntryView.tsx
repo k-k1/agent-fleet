@@ -52,7 +52,14 @@ const projectQuery = (project: string) => (project ? "?project=" + encodeURIComp
 /** A new memory becomes the pane of the memory it now is; when that memory already has a pane
  *  (one memory, one pane), this one closes and that one comes forward. Runs from the adapter, so it
  *  also lands a pane whose view is gone (a guard's save). */
-function landSavedMemory(paneId: string, scope: "user" | "project", project: string, projectName: string | undefined, name: string) {
+function landSavedMemory(paneId: string, key: string, tenant: string, scope: "user" | "project", project: string, projectName: string | undefined, name: string) {
+  // Only the pane this save was for, still on that new memory, in the same workspace, and holding
+  // nothing typed since: a guard may have closed or retargeted the pane first, and text typed after
+  // the send would otherwise be hidden behind the saved memory.
+  const here = allViews(useLayoutStore.getState().layout).find((p) => p.id === paneId);
+  const c = here?.content;
+  if (!c || c.kind !== "memoryEntry" || c.name !== "" || c.scope !== scope || c.project !== project) return;
+  if (useTenantStore.getState().tenant !== tenant || heldEditorBuffer(paneId, key)) return;
   const saved = memoryEntryContent({ scope, project: { id: project, display: projectName }, name });
   const st = useLayoutStore.getState();
   const other = allViews(st.layout).find(
@@ -119,9 +126,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     () => memoryEntryIO({ key, scope, project, name }, () => {}, (saved) => {
       // After the hook has taken the save's outcome: closing a pane whose buffer is still saving
       // would be refused by the dirty guard.
-      setTimeout(() => landSavedMemory(paneId, scope, project, projectName, saved), 0);
+      setTimeout(() => landSavedMemory(paneId, key, tenant, scope, project, projectName, saved), 0);
     }),
-    [key, scope, project, name, paneId, projectName],
+    [key, tenant, scope, project, name, paneId, projectName],
   );
   // A body the editor cannot hold (a CR, a NUL) is read-only here, not a render error.
   // The body is the one read for `key`: after a retarget the first render still holds the old
@@ -335,7 +342,8 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const decoded = model ? decodeEntry(model.content) : null;
   const fields = isNew ? decoded && { ...decoded, name: decoded.name ?? "" } : !gone && (editing || model?.dirty) && decoded ? { ...decoded, name } : null;
   const setField = (patch: Partial<Pick<EntryFields, "name" | "description" | "type" | "body">>) => {
-    if (model) editor.edit(encodeEntry({ ...decodeEntry(model.content), ...patch }));
+    // What was sent is what the memory becomes: text typed while the save is out would be lost to the landing.
+    if (model && !(isNew && phase === "saving")) editor.edit(encodeEntry({ ...decodeEntry(model.content), ...patch }));
   };
 
   const save = async () => {
@@ -583,7 +591,12 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           onRetryConflict={() => void editor.recoverConflict()}
           onRetryUnknown={() => void editor.recoverUnknown()}
           onResave={() => void editor.resaveUnknown()}
-          onRiskAccept={editor.riskAccept}
+          onRiskAccept={() => {
+            // Accepted for a new memory: it is stored under the name sent, so the pane becomes it.
+            const sentName = isNew ? (decoded?.name ?? "").trim() : "";
+            editor.riskAccept();
+            if (sentName) setTimeout(() => landSavedMemory(paneId, key, tenant, scope, project, projectName, sentName), 0);
+          }}
           // The adopted text is newer than the body this pane last read; back in the read view it would show the old one.
           onTakeRemote={() => {
             editor.takeRemote();

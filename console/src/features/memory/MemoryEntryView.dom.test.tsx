@@ -417,6 +417,74 @@ describe("MemoryEntryView", () => {
       expect(apiJSON).not.toHaveBeenCalled();
     });
 
+    it("does not land on the saved memory when the pane was retargeted while the save was out", async () => {
+      let release: (v: unknown) => void = () => {};
+      apiJSON.mockImplementation(() => new Promise((r) => (release = r)));
+      await open(memoryEntryContent({ scope: "user", name: "" }));
+      await setValue(nameInput(), "house-rules");
+      await act(async () => button(t("mem.br_save"))!.click());
+      const other = memoryEntryContent({ scope: "user", name: "elsewhere" });
+      await act(async () => useLayoutStore.getState().setPaneTarget(pane().id, { content: other }));
+      await act(async () => release({ name: "house-rules", revision: 1 }));
+      await flush();
+      expect(pane().content).toEqual(other);
+    });
+
+    it("ignores typing while the save is out, so the landing cannot hide it", async () => {
+      let release: (v: unknown) => void = () => {};
+      apiJSON.mockImplementation(() => new Promise((r) => (release = r)));
+      await open(memoryEntryContent({ scope: "user", name: "" }));
+      await setValue(nameInput(), "house-rules");
+      await act(async () => button(t("mem.br_save"))!.click());
+      await setValue(bodyEditor(), "late addition");
+      await act(async () => release({ name: "house-rules", revision: 1 }));
+      await flush();
+      expect(dirtyPaneIds()).toEqual([]);
+      expect(pane().content).toMatchObject({ name: "house-rules" });
+    });
+
+    describe("when the answer to the save is lost", () => {
+      const stored = { ...memory, name: "house-rules", scope: "user", description: "", type: "feedback", body: "text", revision: 1, kinds: [] };
+      const lost = async () => {
+        apiJSON.mockRejectedValue(new Error("network"));
+        await open(memoryEntryContent({ scope: "user", name: "" }));
+        await setValue(nameInput(), "house-rules");
+        await setValue(bodyEditor(), "text");
+        await act(async () => button(t("mem.br_save"))!.click());
+        await flush();
+      };
+
+      it("lands on the memory when the recovery read finds it stored as sent", async () => {
+        api.mockImplementation(async (url: string) => (url.includes("name=house-rules") ? stored : {}));
+        await lost();
+        expect(api.mock.calls.some((c) => String(c[0]).includes("member-read") && String(c[0]).includes("name=house-rules"))).toBe(true);
+        expect(dirtyPaneIds()).toEqual([pane().id]);
+        await act(async () => button(t("editor.unknown.accept_risk"))!.click());
+        await flush();
+        expect(dirtyPaneIds()).toEqual([]);
+        expect(pane().content).toMatchObject({ name: "house-rules" });
+      });
+
+      it("offers a resave, not acceptance, when the memory is not there", async () => {
+        api.mockImplementation(async (url: string) => (url.includes("name=house-rules") ? { error: { code: "memory_not_found", message: "no", status: 404 } } : {}));
+        await lost();
+        expect(dirtyPaneIds()).toEqual([pane().id]);
+        expect(pane().content).toMatchObject({ name: "" });
+        expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
+        expect(button(t("editor.unknown.resave_old"))).toBeDefined();
+      });
+
+      it("offers neither when a memory of that name holds other text", async () => {
+        api.mockImplementation(async (url: string) => (url.includes("name=house-rules") ? { ...stored, body: "someone else" } : {}));
+        await lost();
+        expect(dirtyPaneIds()).toEqual([pane().id]);
+        expect(pane().content).toMatchObject({ name: "" });
+        expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
+        expect(button(t("editor.unknown.resave_old"))).toBeUndefined();
+        expect(button(t("editor.unknown.retry"))).toBeDefined();
+      });
+    });
+
     it("keeps the buffer and shows the reason when the Agent refuses it", async () => {
       apiJSON.mockResolvedValue({ error: { code: "memory_secret_detected", message: "secret" }, findings: [{ rule: "aws-key", line: 1, hint: "AKIA…" }] });
       await open(memoryEntryContent({ scope: "user", name: "" }));
