@@ -495,10 +495,18 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
         {gone && model?.dirty && (
           // Offered whether or not the last change could be read: it is the member's only way to
           // keep unsaved text of a memory that can no longer be edited here. A manual merge in
-          // progress holds the member's own text apart from the buffer.
-          <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(editor.mergeMine ?? model.content)}>
-            {tr("editor.copy_mine")}
-          </Button>
+          // progress holds the member's own draft apart from the merge text being edited, so
+          // each has its button.
+          <div className="mentry-copy">
+            <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(editor.mergeMine ?? model.content)}>
+              {tr("editor.copy_mine")}
+            </Button>
+            {editor.mergeMine !== null && editor.mergeMine !== model.content && (
+              <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(model.content)}>
+                {tr("mem.br_copy_current")}
+              </Button>
+            )}
+          </div>
         )}
         {!fields && formErr && (
           <p className="mem-warn pad" role="alert">

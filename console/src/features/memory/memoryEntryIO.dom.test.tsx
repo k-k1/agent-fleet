@@ -166,6 +166,16 @@ describe("memoryEntryIO", () => {
     expect((await io.load("k")).content).toBe(sentText);
   });
 
+  it("matches kinds the Agent trimmed on save", async () => {
+    const io = memoryEntryIO(target, () => {});
+    const file = entryFile("k", { ...body, body: "x", kinds: [" claude "] });
+    const sentText = spaced("x \n");
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_snapshot_failed", message: "x" } });
+    await io.save("k", sentText, file.revision);
+    api.mockResolvedValue({ ...body, body: "x", revision: 4, kinds: ["claude"] });
+    expect((await io.load("k")).content).toBe(sentText);
+  });
+
   it("does not take the unchanged memory, or another writer's update, for the save that was sent", async () => {
     // The save never landed: the memory is still at the counter it was sent from.
     const old = await lostAnswer({ revision: 3 });

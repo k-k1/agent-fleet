@@ -145,9 +145,10 @@ export function entryFile(key: string, body: MemoryBody, overwrite = false): Edi
 
 // The Agent drops duplicate kinds on a save, so a hand-written memory read with one still matches.
 const uniq = (a: string[]) => [...new Set(a)];
+// ...and trims each one, as it trims every field it is given.
 const sameKinds = (a: string[], b: string[]) => {
-  const x = uniq(a);
-  const y = uniq(b);
+  const x = uniq(a.map(goTrim));
+  const y = uniq(b.map(goTrim));
   return x.length === y.length && x.every((k, i) => k === y[i]);
 };
 const validRevision = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v > 0;

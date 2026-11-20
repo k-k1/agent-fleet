@@ -149,6 +149,7 @@ export const memory = {
   "mem.br_f_type": "種別",
   "mem.br_f_body": "本文",
   "mem.br_save": "保存",
+  "mem.br_copy_current": "現在の本文をコピー",
   "mem.br_cancel": "キャンセル",
   "mem.br_saved": "{name} を保存しました。",
   "mem.br_secret": "秘密情報を含む可能性があるため保存しませんでした。取り除いてからもう一度保存してください。",

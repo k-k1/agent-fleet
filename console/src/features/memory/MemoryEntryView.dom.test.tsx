@@ -641,12 +641,17 @@ describe("MemoryEntryView", () => {
     await act(async () => button(t("mem.br_save"))!.click());
     await flush();
     await act(async () => button(t("editor.conflict.manual_merge"))!.click());
+    // The member goes on editing the merge text.
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "merged by hand");
     api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-latest") ? latest : {}));
     await act(async () => forgetUnder());
     await flush();
     await act(async () => copyButtons()[0].click());
     expect(copied[0]).toContain("mine");
     expect(copied[0]).not.toContain("theirs");
+    expect(copied[0]).not.toContain("merged by hand");
+    await act(async () => button(t("mem.br_copy_current"))!.click());
+    expect(copied[1]).toContain("merged by hand");
   });
 
   it("does not show memory A's refusal on memory B when the view was reused while A's save was in flight", async () => {
