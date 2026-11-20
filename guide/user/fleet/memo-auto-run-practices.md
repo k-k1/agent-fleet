@@ -15,7 +15,7 @@ Every screen and every state is in [Run memos automatically](../chat/memo-auto-r
 | What you do | What the agent does |
 |---|---|
 | Keep the detailed procedure in the repository, and write a short standing instruction that points at it | Reads the instruction when the session starts, then follows the procedure it points at |
-| Write one memo per work item, with its scope and what is out of scope | Takes the memos waiting to run in order, one run for each |
+| Write one memo per work item, with its scope and what is out of scope | Takes the memos waiting to run in order, as many per run as "Memos per session" says |
 | Put what is left of a large task on the issue, and cap how many parts it may queue | Does one part, records the rest, and ends |
 | Read the run history, approve what sessions add, end a run that hangs | Ends the run when its session has nothing left to wait for, and stops the session |
 
@@ -43,6 +43,7 @@ Decide these fields before you do ([the fields](../chat/memo-auto-run.md#the-fie
 | Field | A starting point |
 |---|---|
 | Spend limit (USD) | Set a number. 0 means no limit, and nothing else bounds a run that goes wrong ([budget](../sessions/budget.md)) |
+| Memos per session | Set 1, so one run is one work item and one pull request to review. At 2 or more, a run takes several memos and the separation this page relies on is lost |
 | Sessions at the same time | Start at 1 or 2. A category allows at most 6 open runs, and all your auto-run categories together at most 4 |
 | Runs per day | A little above what you expect. It holds back a runaway |
 | When it runs | "In a time window" when you want runs only while you are away, or when the host is quiet |
@@ -102,7 +103,7 @@ A task that does not fit in one run goes through the queue in parts.
 
 - **One part per run.** Say in the memo which part this is
 - **Each part leaves the main branch releasable on its own.** New behaviour is unreachable, or sits behind today's default; no half-wired screen is merged. A part that cannot be released alone is too big, so cut it differently
-- **Record what is left on the issue before ending.** A checklist on the issue is enough. The queue does not run a started memo again, so the issue is the only place the remainder survives
+- **Record what is left on the issue before ending.** A checklist on the issue is enough. The queue does not run a started memo again by itself, so the issue is where the remainder survives. The one exception is a run that hands its memo back because the work cannot be done yet ([A run hands its memo back](../chat/memo-auto-run.md#a-run-hands-its-memo-back)); the memo then runs again later as a new run
 - **Let the run queue the next part, with a cap in the memo**, for example `Part 2 of at most 5`. The memo the run adds waits for your approval, because a session auto-run started cannot add a memo that skips it. You see each part before it runs, and at the cap the run says so and adds nothing
 - **Start the summary with `Partial:`** for a part that left work, `Deferred:` for an item it did not do, and `Too large:` for an item that needs cutting first. They read at a glance in [the run history](../chat/memo-auto-run.md#read-the-run-history)
 
@@ -130,7 +131,7 @@ The instruction states which of these the session may do. A session that must no
 - **Editing the instruction does not change a run that is going.** It applies from the next run
 - **Issues left open after their pull request merged waste runs.** The next run picks them, finds nothing to do and ends with `Deferred:`. Close the issue, or check before you queue it
 - **A waiting run holds a place.** Four runs waiting on watches leave a category with 4 places full and nothing else starts. End them, or make the order explicit with a memo that waits
-- **A started memo does not run again by itself.** When a run ended with work left, the remainder is on the issue. Put it back with "Return to queue" only after you have checked the pull request ([Return a run's memos to the queue](../chat/memo-auto-run.md#return-a-runs-memos-to-the-queue))
+- **A started memo does not run again by itself**, except when its run handed it back ([A run hands its memo back](../chat/memo-auto-run.md#a-run-hands-its-memo-back)). When a run ended with work left, the remainder is on the issue. Put it back with "Return to queue" only after you have checked the pull request ([Return a run's memos to the queue](../chat/memo-auto-run.md#return-a-runs-memos-to-the-queue))
 - **Do not turn on "Run by itself" first.** Try once with "Run now", then switch it on, and set the spend limit before you do
 
 ## Related
