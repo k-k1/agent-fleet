@@ -6,28 +6,56 @@ import (
 	"os"
 )
 
-// Run is `workspace-agent boot-install <cli> [--repin]`: one CLI of the entrypoint's lean
-// boot-install. Exit 1 is a failed install, 3 a skip for lack of space (the entrypoint then
-// holds back its other downloads), 2 a usage error.
+// Run is `workspace-agent boot-install <step> [--repin] [--present] [cli...]`: one step of the
+// entrypoint's lean boot-install. Steps: rtk, npm (the four npm CLIs), npm-verify (the repair
+// pass; --present limits it to CLIs with a ~/.local copy). Exit 1 is a failed install, 3 a skip
+// for lack of space (the entrypoint then holds back its other downloads), 2 a usage error.
 func Run(args []string) {
-	repin := false
+	repin, present := false, false
 	var names []string
 	for _, a := range args {
-		if a == "--repin" {
+		switch a {
+		case "--repin":
 			repin = true
-		} else {
+		case "--present":
+			present = true
+		default:
 			names = append(names, a)
 		}
 	}
-	if len(names) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: workspace-agent boot-install rtk [--repin]")
+	usage := func() {
+		fmt.Fprintln(os.Stderr, "usage: workspace-agent boot-install rtk|npm [--repin] | npm-verify [--present] [claude|opencode|codex|copilot...]")
 		os.Exit(2)
 	}
-	switch names[0] {
+	if len(names) == 0 {
+		usage()
+	}
+	step, rest := names[0], names[1:]
+	if step != "npm-verify" && len(rest) > 0 {
+		usage()
+	}
+	switch step {
 	case "rtk":
 		os.Exit(RTK(context.Background(), DefaultEnv(repin)))
+	case "npm":
+		os.Exit(NPM(DefaultEnv(repin)))
+	case "npm-verify":
+		e := DefaultEnv(false)
+		if present {
+			os.Exit(e.NPMVerifyPresent())
+		}
+		for _, c := range rest {
+			if npmPkg(c) == "" {
+				fmt.Fprintf(os.Stderr, "boot-install: %q is not an npm CLI\n", c)
+				os.Exit(2)
+			}
+		}
+		if len(rest) == 0 {
+			usage()
+		}
+		os.Exit(e.NPMVerify(rest, false))
 	default:
-		fmt.Fprintf(os.Stderr, "boot-install: unknown CLI %q (have: rtk)\n", names[0])
+		fmt.Fprintf(os.Stderr, "boot-install: unknown step %q (have: rtk, npm, npm-verify)\n", step)
 		os.Exit(2)
 	}
 }

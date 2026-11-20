@@ -565,75 +565,32 @@ agy_effective_version() {
   [ -n "$v" ] || [ -e "$bin" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
   printf '%s' "$v"
 }
-# NPM_CLI_PKGS — the npm-distributed CLIs, as <cli>=<package>.
-NPM_CLI_PKGS="claude=@anthropic-ai/claude-code opencode=@opencode/cli codex=@openai/codex copilot=@github/copilot"
-# bi_ok_if_failed <tool> — record ok only over an earlier failed line of this start, so a CLI
-# that was merely present keeps its "skipped".
-bi_ok_if_failed() {
-  [ "$(grep -P "^$1\t" "$BI_STATUS" 2>/dev/null | tail -1 | cut -f2)" = failed ] && bi_note "$1" ok
-  return 0
-}
-# npm_clis_verify_present — npm_clis_verify for the npm CLIs that have a ~/.local copy, on every
-# start, not only after an install: a copy broken by an earlier start (or with its version
-# already current, so no install runs) is otherwise never looked at again. A copy that runs
-# keeps the status this start already gave it (NPM_VERIFY_PRESENT). Measured: four --version
-# calls take about 0.3 s.
-npm_clis_verify_present() {
-  local pair c list="" NPM_VERIFY_PRESENT=1
-  for pair in $NPM_CLI_PKGS; do
-    c="${pair%%=*}"
-    if [ -e "$HOME/.local/bin/$c" ] || [ -L "$HOME/.local/bin/$c" ]; then list="$list $c"; fi
-  done
-  # shellcheck disable=SC2086
-  [ -z "$list" ] || npm_clis_verify $list
-}
-# npm_clis_verify <cli...> — after an npm install into ~/.local, check that each named CLI's
-# ~/.local copy answers --version; reinstall the broken or missing ones at their versions.json
-# pin once (space permitting), record a working one ok, and record the ones that still do not
-# run as failed. npm exits 0 when an optional dependency cannot be fetched, and codex ships its
-# binary as one. Measured: a self-update that ran two minutes after @openai/codex 0.167.0 was
-# published fetched the main tarball but not codex-linux-x64. The upgrade had already removed
-# the old binary, so codex could not start, and the update was still logged as "updated".
-# A CLI with no ~/.local copy is left alone when a baked /usr/local copy takes over on PATH.
-#
-# A broken copy's link is removed before the repair. Left in place it would shadow a working
-# baked copy on PATH, and the next start's presence check would call it installed and never
-# retry; without it, lean reinstalls on the next start and baked falls back at once. Removing
-# a link needs no free space, which a retry list written to a full home would.
-npm_cli_runs() { timeout 30 "$HOME/.local/bin/$1" --version >/dev/null 2>&1; }
-npm_clis_verify() {
-  local c pair pkg pin fix="" fix_clis="" broken=""
-  for c in "$@"; do
-    if npm_cli_runs "$c"; then
-      if [ -n "${NPM_VERIFY_PRESENT:-}" ]; then bi_ok_if_failed "$c"; else bi_note "$c" ok; fi
-      continue
-    fi
-    [ ! -e "$HOME/.local/bin/$c" ] && [ ! -L "$HOME/.local/bin/$c" ] && [ -x "/usr/local/bin/$c" ] && continue
-    rm -f "$HOME/.local/bin/$c"
-    pkg=""; for pair in $NPM_CLI_PKGS; do [ "${pair%%=*}" = "$c" ] && pkg="${pair#*=}"; done
-    pin="$(vj_pin "$c")"
-    echo "[entrypoint] WARN: $c in ~/.local does not run after the npm install${pin:+; reinstalling the pin $pin}"
-    if [ -n "$pin" ]; then fix="$fix $pkg@$pin"; fix_clis="$fix_clis $c"; else broken="$broken $c"; fi
-  done
-  if [ -n "$fix" ]; then
-    # shellcheck disable=SC2086
-    if bi_room $(( $(echo $fix | wc -w) * 300 )) $fix_clis; then
-      : > "$BI_ERR" 2>/dev/null || true
-      # shellcheck disable=SC2086
-      npm install -g --prefix "$HOME/.local" $fix >/dev/null 2>>"${BI_ERR:-/dev/null}" \
-        || cat "$BI_ERR" >&2 2>/dev/null || true
-      for c in $fix_clis; do
-        if npm_cli_runs "$c"; then echo "[entrypoint] $c repaired at the pin $(vj_pin "$c")"; bi_note "$c" ok
-        else rm -f "$HOME/.local/bin/$c"; broken="$broken $c"; fi
-      done
-    fi
-    # Otherwise bi_room has recorded them (failed, or skipped when a baked copy runs).
+# npm_wa <args...> — one step of `workspace-agent boot-install` for the npm CLIs (claude, opencode,
+# codex, copilot): the pinned install (`npm [--repin]`) and the repair pass (`npm-verify`), both
+# in internal/bootinstall. It records the status lines itself. Exit 3 = skipped for lack of space,
+# which holds back this start's later downloads too. The image's Agent first: a stale or broken
+# workspace-agent earlier on PATH (home's ~/.local/bin leads it) must not decide the install.
+NPM_CLIS="claude opencode codex copilot"
+npm_wa() {
+  local wa="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}" rc=0 c
+  if [ -x "$wa" ]; then
+    "$wa" boot-install "$@" || rc=$?
+  else
+    rc=127; echo "[entrypoint] WARN: the Agent binary is missing; npm boot-install $1 skipped"
   fi
-  for c in $broken; do
-    echo "[entrypoint] WARN: $c does not run; removed its ~/.local link (retrying next start)"
-    bi_note "$c" failed "$(bi_reason)"
-  done
-  [ -z "$broken" ]
+  case "$rc" in
+    0|1) ;;
+    3) BI_LOW_SPACE=1 ;;
+    *) # Outside the subcommand's contract (usage error, not runnable): no status line was written.
+       [ "$rc" = 127 ] || echo "[entrypoint] WARN: npm boot-install $1 exited $rc (retrying next start)"
+       if [ "$1" = npm ]; then
+         for c in $NPM_CLIS; do
+           if cli_usable "$c"; then bi_note "$c" skipped
+           elif [ -n "$(vj_pin "$c")" ]; then bi_note "$c" failed other; fi
+         done
+       fi ;;
+  esac
+  return 0
 }
 # Lean detection: claude is not baked and versions.json has a pin for it → lean variant.
 # In lean, the start-time update in the CLAUDE_INSTALL block below is suppressed too, to keep
@@ -664,53 +621,9 @@ if [ "$LEAN_CLIS" = 1 ]; then
      && { [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" != "1" ] || [ "${AF_AGENT_SELF_UPDATE:-0}" != "1" ]; }; then
     REPIN=1
   fi
-  # The 4 npm-distributed CLIs go in a single npm install (prefix=$HOME/.local → ~/.local/bin).
-  # Their installed versions for the repin check come from one npm ls (each CLI's own
-  # --version takes seconds).
-  NPM_LS=""
-  if [ "$REPIN" = 1 ]; then
-    NPM_LS="$(npm ls -g --prefix "$HOME/.local" --depth=0 --json 2>/dev/null || true)"
-  fi
-  npm_cur() {
-    NPM_LS="$NPM_LS" node -e 'try{const d=JSON.parse(process.env.NPM_LS).dependencies||{};process.stdout.write(((d[process.argv[1]]||{}).version)||"")}catch{}' "$1" 2>/dev/null
-  }
-  NPM_BOOT=""; NPM_BOOT_CLIS=""
-  npm_want() { NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"; NPM_BOOT_CLIS="$NPM_BOOT_CLIS $cli"; }
-  for pair in $NPM_CLI_PKGS; do
-    cli="${pair%%=*}"; pkg="${pair#*=}"; ver="$(vj_pin "$cli")"
-    [ -n "$ver" ] || continue
-    if cli_present "$cli"; then bi_note "$cli" skipped; fi
-    if ! cli_present "$cli"; then
-      npm_want
-    elif [ "$REPIN" = 1 ] && [ -e "$HOME/.local/bin/$cli" ]; then
-      # Move a drifted copy back to the pin. Installs npm does not manage (no version) are left alone.
-      cur="$(npm_cur "$pkg")"
-      if [ -n "$cur" ] && [ "$cur" != "$ver" ]; then npm_want; fi
-    fi
-  done
-  if [ -n "$NPM_BOOT" ]; then
-    echo "[entrypoint] boot-install (pinned):$NPM_BOOT ..."
-    # shellcheck disable=SC2086
-    # 300 MiB per package: the tarball plus its unpacked tree, with room for npm's rollback copy.
-    # shellcheck disable=SC2086
-    if bi_room $(( $(echo $NPM_BOOT | wc -w) * 300 )) $NPM_BOOT_CLIS; then
-      : > "$BI_ERR" 2>/dev/null || true
-      # shellcheck disable=SC2086
-      if npm install -g --prefix "$HOME/.local" $NPM_BOOT >/dev/null 2>>"${BI_ERR:-/dev/null}"; then
-        echo "[entrypoint] boot-install ok"
-        for c in $NPM_BOOT_CLIS; do bi_note "$c" ok; done
-        # shellcheck disable=SC2086
-        npm_clis_verify $NPM_BOOT_CLIS || true
-      else
-        cat "$BI_ERR" >&2 2>/dev/null || true
-        echo "[entrypoint] WARN: npm boot-install failed (retrying next start)"
-        # shellcheck disable=SC2086
-        bi_failed $NPM_BOOT_CLIS
-      fi
-    fi
-  else
-    echo "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)"
-  fi
+  # The 4 npm-distributed CLIs go in a single npm install (prefix=$HOME/.local → ~/.local/bin),
+  # then each is verified and repaired at its pin: `workspace-agent boot-install npm`.
+  if [ "$REPIN" = 1 ]; then npm_wa npm --repin; else npm_wa npm; fi
   # rtk: installed by the Agent (`workspace-agent boot-install rtk`, internal/bootinstall): the
   # pinned GitHub Releases build, checksum-verified, status recorded to $AF_BOOT_INSTALL_STATUS.
   # Exit 3 = skipped for lack of space, which holds back this start's later downloads too.
@@ -982,7 +895,7 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
       fi
     fi
     # A failed install can leave a half-replaced tree, or none, so check either way.
-    npm_clis_verify claude opencode codex copilot || true
+    npm_wa npm-verify claude opencode codex copilot
   fi
   # agy (Antigravity) follows the same opt-in to latest. It ships via Google's install.sh
   # rather than npm, and a baked copy (BAKE_AGENT_CLIS=1) is in root-owned /usr/local/bin,
@@ -1097,7 +1010,7 @@ else
 fi
 # Every start, lean or baked, attended or not, whatever the update above did: the last word on
 # the npm CLIs' ~/.local copies.
-npm_clis_verify_present || true
+npm_wa npm-verify --present
 
 # Seed the default settings.json (only when the file is absent; after that the Console's
 # Claude settings are the source of truth).
