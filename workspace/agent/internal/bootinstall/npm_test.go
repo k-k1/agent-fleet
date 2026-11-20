@@ -160,6 +160,9 @@ func TestNPMFailureReasons(t *testing.T) {
 		if rc := NPM(f.env); rc != ExitFailed {
 			t.Fatalf("%q: rc=%d", msg, rc)
 		}
+		if !strings.Contains(f.out.String(), "WARN: npm boot-install failed") {
+			t.Errorf("%q: no WARN in the log: %s", msg, f.out)
+		}
 		if !strings.Contains(f.statusText(), "claude\tfailed\t"+want+"\n") {
 			t.Errorf("%q: want reason %s, got %q", msg, want, f.statusText())
 		}
@@ -397,5 +400,83 @@ func TestNPMVerifyUnremovableCopyIsReportedNotRemoved(t *testing.T) {
 	out := f.out.String()
 	if !strings.Contains(out, "could not remove") || strings.Contains(out, "removed its ~/.local link") {
 		t.Fatalf("out=%s", out)
+	}
+}
+
+func TestNPMVerifyPresentRepairsOnlyTheBrokenCopy(t *testing.T) {
+	f := newNPM(t, allPins)
+	f.put("claude", "#!/bin/sh\necho 1\n")
+	f.put("codex", brokenCLI)
+	f.env.note("claude", statusSkip, "")
+	if rc := f.env.NPMVerifyPresent(); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	log := f.npmLog()
+	if !strings.Contains(log, "@openai/codex@3.0.0") || strings.Contains(log, "claude") {
+		t.Fatalf("npm log %q: want the codex pin only", log)
+	}
+	st := f.statusText()
+	if !strings.HasSuffix(st, "codex\tok\t\n") || strings.Contains(st, "claude\tok") || !f.env.runs(f.bin("codex")) {
+		t.Fatalf("status=%q", st)
+	}
+}
+
+func TestNPMVerifyReinstallsAMissingCopyWithoutABakedOne(t *testing.T) {
+	f := newNPM(t, allPins)
+	f.put("claude", "#!/bin/sh\necho 1\n") // codex's copy is gone entirely
+	if rc := f.env.NPMVerify([]string{"claude", "codex"}, false); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	log := f.npmLog()
+	if !strings.Contains(log, "@openai/codex@3.0.0") || strings.Contains(log, "claude") {
+		t.Fatalf("npm log %q", log)
+	}
+	st := f.statusText()
+	if !strings.Contains(st, "claude\tok\t") || !strings.Contains(st, "codex\tok\t") || !f.env.runs(f.bin("codex")) {
+		t.Fatalf("status=%q", st)
+	}
+}
+
+// Space is enough for the install and gone by the repair: the repair never runs, the broken link
+// goes, and the outcome depends on whether a baked copy can take over.
+func TestNPMRepairNoSpaceAfterInstall(t *testing.T) {
+	for _, baked := range []bool{false, true} {
+		f := newNPM(t, map[string]string{"codex": "3.0.0"})
+		f.stub("body.codex", brokenCLI)
+		calls := 0
+		f.env.FreeMiB = func(string) (int64, bool) {
+			calls++
+			if calls == 1 {
+				return 100000, true // the install's own check
+			}
+			return 10, true
+		}
+		want := "codex\tfailed\tno_space\n"
+		if baked {
+			// A baked copy takes over once the broken link is gone, so the install's check is not the
+			// first call: the install is skipped for the present copy, and the repair finds no space.
+			f.putIn(f.env.BakedBin, "codex", "#!/bin/sh\necho baked\n")
+			f.put("codex", brokenCLI)
+			calls = 1
+			want = "codex\tskipped\tno_space\n"
+		}
+		var rc int
+		if baked {
+			rc = f.env.NPMVerify([]string{"codex"}, false)
+		} else {
+			rc = NPM(f.env)
+		}
+		if rc != ExitNoSpace {
+			t.Fatalf("baked=%v: rc=%d out=%s", baked, rc, f.out)
+		}
+		if strings.Count(f.npmLog(), "install") > 1 {
+			t.Fatalf("baked=%v: the repair ran without space: %q", baked, f.npmLog())
+		}
+		if _, err := os.Lstat(f.bin("codex")); err == nil {
+			t.Fatalf("baked=%v: broken link kept", baked)
+		}
+		if !strings.HasSuffix(f.statusText(), want) {
+			t.Fatalf("baked=%v: status=%q want suffix %q", baked, f.statusText(), want)
+		}
 	}
 }

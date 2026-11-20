@@ -223,9 +223,9 @@ reset; mkdir -p "$T/bidir"; echo keep >"$T/victim"; ln -s "$T/victim" "$T/bidir/
 run_block
 [ "$(cat "$T/victim")" = keep ] || fail "a planted symlink was followed and its target changed"
 [ "$(st agy)" = "agy ok " ] || fail "status not recorded beside a planted symlink: '$(st agy)'"
-reset; mkdir -p "$T/bidir"; echo "claude\tfailed\tno_space" >"$T/bidir/install.tsv"
+reset; mkdir -p "$T/bidir"; printf 'claude\tfailed\tno_space\n' >"$T/bidir/install.tsv"
 run_block STUB_FREE_MB=9000
-[ "$(st claude)" != "claude failed no_space" ] || fail "the previous start's result was served"
+grep -qP '^claude\tfailed\tno_space' "$T/bidir/install.tsv" && fail "the previous start's result was served"
 reset; mkdir -p "$T/real"; chmod 0755 "$T/real"; ln -s "$T/real" "$T/linkdir"
 BI_DIR_OVERRIDE="$T/linkdir" run_block
 [ -z "$(ls -A "$T/real")" ] || fail "a symlinked status directory was used"
@@ -240,6 +240,25 @@ reset; run_block
 run_block STUB_NPM_FAIL=1 $ON
 has 'npm error ENOSPC' || fail "self-update failure: npm's error was discarded"
 has 'WARN: agent CLI update failed' || fail "self-update failure: no WARN"
+
+# 6b. The entrypoint's own calls into the Agent for the npm CLIs, in the real start slice: the
+# pinned install first, the every-start verify last, and the explicit verify after a self-update,
+# whatever the update did and however little space there is.
+cat >"$T/bin/rec-agent" <<'S'
+#!/bin/sh
+echo "$*" >>"$STUB_DIR/rec.calls"
+S
+chmod +x "$T/bin/rec-agent"
+reset; rm -f "$T/rec.calls"; run_block BI_AGENT_BIN="$T/bin/rec-agent"
+grep -qx 'boot-install npm' "$T/rec.calls" || fail "npm: the lean start did not call 'boot-install npm': $(cat "$T/rec.calls")"
+[ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "npm: the every-start verify is not the last call: $(cat "$T/rec.calls")"
+reset; rm -f "$T/rec.calls"; run_block BI_AGENT_BIN="$T/bin/rec-agent" STUB_FREE_MB=100
+[ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "npm: no every-start verify on a nearly full home: $(cat "$T/rec.calls")"
+reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"; rm -f "$T/rec.calls"
+# shellcheck disable=SC2086
+run_block BI_AGENT_BIN="$T/bin/rec-agent" $ON
+grep -qx 'boot-install npm-verify claude opencode codex copilot' "$T/rec.calls" || fail "npm: no explicit verify after the self-update: $(cat "$T/rec.calls")"
+[ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "npm: the every-start verify did not follow the self-update: $(cat "$T/rec.calls")"
 
 # 5. The prune runs before the installs, once.
 reset; run_block
