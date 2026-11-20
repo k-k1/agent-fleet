@@ -1229,6 +1229,22 @@
   margin: 0 0 6px;
 }
 
+.mpol-preview {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+}
+
+.mpol-preview > p {
+  margin: 0 0 6px;
+}
+
+.mpol-preview > ul {
+  margin: 0 0 6px;
+  padding-left: 20px;
+}
+
 .mpol-individual > summary {
   cursor: pointer;
   font-weight: 600;
