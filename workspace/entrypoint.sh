@@ -664,78 +664,26 @@ if [ "$LEAN_CLIS" = 1 ]; then
     echo "[entrypoint] WARN: the Agent binary is missing; agy boot-install skipped"
     bi_note agy failed other
   fi
-  # cursor (kind="cursor", docs/log/40): unpack the versioned tarball's Node.js bundle into
-  # ~/.local/share/cursor-agent/versions/<version>/ and link ~/.local/bin/cursor-agent (the
-  # upstream install.sh layout; same path as the Dockerfile bake). sha256 is checked against
-  # versions.json's cursor_sha256 (a per-architecture value written at image build).
-  CUR_NEED=0
-  if [ -n "$(vj_pin cursor)" ] && [ -n "$(vj_pin cursor_sha256)" ]; then
-    if ! cli_present cursor-agent; then
-      CUR_NEED=1
-    elif ! cursor_runs "$HOME/.local/bin/cursor-agent"; then
-      # Present but the bundle does not answer (a tree unpacked only in part keeps its execute bit).
-      CUR_NEED=1
-    elif [ "$REPIN" = 1 ] && [ -L "$HOME/.local/bin/cursor-agent" ]; then
-      # Read the current version from the symlink target's versions/<version>/ (cursor-agent
-      # --version takes seconds to start Node, so decide from the path).
-      cur_ver="$(readlink "$HOME/.local/bin/cursor-agent" 2>/dev/null | sed -n 's#.*/versions/\([^/]*\)/.*#\1#p')"
-      if [ -n "$cur_ver" ] && [ "$cur_ver" != "$(vj_pin cursor)" ]; then CUR_NEED=1; fi
-    fi
-  fi
-  # Space is needed only when the pinned tree has to be downloaded; relinking to a healthy one
-  # (a repin after the self-update moved ahead) writes nothing.
-  if [ "$CUR_NEED" = 1 ] \
-     && ! cursor_runs "$HOME/.local/share/cursor-agent/versions/$(vj_pin cursor)/cursor-agent" \
-     && ! bi_room 400 cursor; then CUR_NEED=2; fi
-  if [ "$CUR_NEED" = 1 ]; then
-    (
-      set -e
-      cver="$(vj_pin cursor)"; csha="$(vj_pin cursor_sha256)"
-      dir="$HOME/.local/share/cursor-agent/versions/${cver}"
-      # On repin: the self-update (upstream install.sh) only adds the new version in another
-      # directory, so the pinned version's tree usually still exists — if so, skip the
-      # ~100 MB re-download and just repoint the symlink.
-      if ! cursor_runs "$dir/cursor-agent"; then
-        arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
-        case "$arch" in
-          amd64 | x86_64) casset="x64" ;;
-          arm64 | aarch64) casset="arm64" ;;
-          *) echo "unsupported arch: $arch" >&2; exit 1 ;;
-        esac
-        tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
-        curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
-          "https://downloads.cursor.com/lab/${cver}/linux/${casset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz" || exit 1
-        echo "${csha}  $tmp/cursor.tgz" | sha256sum -c - >/dev/null || exit 1
-        # Unpack beside the final name and rename: a tar that dies part-way (ENOSPC) must not
-        # leave a tree at $dir whose cursor-agent is already executable.
-        stage="${dir}.af-new.$$"
-        rm -rf "$stage"
-        mkdir -p "$stage" || exit 1
-        tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$stage" || { rm -rf "$stage"; exit 1; }
-        # The tree being replaced is moved aside, not deleted: the candidate must run at its final
-        # path, and when it does not (or the old one only timed out under load) the working copy
-        # is put back.
-        old="${dir}.af-old.$$"
-        rm -rf "$old"
-        if [ -e "$dir" ]; then mv "$dir" "$old" || { rm -rf "$stage"; exit 1; }; fi
-        if ! mv "$stage" "$dir" || ! cursor_runs "$dir/cursor-agent"; then
-          rm -rf "$stage" "$dir"
-          if [ -e "$old" ]; then mv "$old" "$dir" || true; fi
-          exit 1
-        fi
-        rm -rf "$old"
-      fi
-      mkdir -p "$HOME/.local/bin" || exit 1
-      ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent" || exit 1
-      # If the self-update install.sh left an `agent` alias, point it at the same version.
-      if [ -L "$HOME/.local/bin/agent" ]; then ln -sf "$dir/cursor-agent" "$HOME/.local/bin/agent" || exit 1; fi
-    ) 2>"$BI_ERR" && { echo "[entrypoint] boot-install cursor $(vj_pin cursor)"; bi_note cursor ok; } \
-      || { cat "$BI_ERR" >&2; echo "[entrypoint] WARN: cursor boot-install failed (retrying next start)"; bi_failed cursor; }
-  elif [ "$CUR_NEED" = 2 ]; then
-    :
-  elif cli_present cursor-agent; then
+  # cursor (kind="cursor", docs/log/40): installed by the Agent (`workspace-agent boot-install
+  # cursor`, internal/bootinstall): the versioned tarball's Node.js bundle unpacked into
+  # ~/.local/share/cursor-agent/versions/<version>/ and linked from ~/.local/bin/cursor-agent (the
+  # upstream install.sh layout), sha256-checked against versions.json's cursor_sha256, status
+  # recorded to $AF_BOOT_INSTALL_STATUS. Exit 3 = skipped for lack of space, as for rtk.
+  if [ -x "$RTK_WA" ]; then
+    cur_rc=0
+    if [ "$REPIN" = 1 ]; then "$RTK_WA" boot-install cursor --repin || cur_rc=$?
+    else "$RTK_WA" boot-install cursor || cur_rc=$?; fi
+    case "$cur_rc" in
+      0|1) ;;
+      3) BI_LOW_SPACE=1 ;;
+      *) echo "[entrypoint] WARN: cursor boot-install exited $cur_rc (retrying next start)"
+         if cli_usable cursor; then bi_note cursor skipped; else bi_note cursor failed other; fi ;;
+    esac
+  elif cli_usable cursor; then
     bi_note cursor skipped
-    echo "[entrypoint] boot-install: cursor already present (skip)"
+  elif [ -n "$(vj_pin cursor)" ] && [ -n "$(vj_pin cursor_sha256)" ]; then
+    echo "[entrypoint] WARN: the Agent binary is missing; cursor boot-install skipped"
+    bi_note cursor failed other
   fi
 fi
 
