@@ -67,6 +67,7 @@ The icons in the upper group choose the view the left pane shows. Hover over an 
 | Blue dot on Sessions or Assistants | Something there is unread |
 | Blue number on Issue tracker | Issues or pull requests that moved since you last opened the view |
 | Red dot on Schedules | The latest run of a schedule failed |
+| Amber number on Memo queue | Memos waiting for your approval in an auto-run category. It stays until you approve or delete them ([Run memos automatically](../chat/memo-auto-run.md#approve)) |
 | Amber number on Memory | Memory suggestions waiting for your decision. It stays until you approve or reject them |
 
 The other icons open a pane in the main area and leave the left pane as it is: **Home** at the top, and

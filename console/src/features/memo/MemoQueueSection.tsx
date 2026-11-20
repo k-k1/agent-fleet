@@ -241,6 +241,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const composerTextRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextarea(composerTextRef, newText);
 
+  // While mounted this list is the one the activity bar's badge counts from (store.ts): the bar's
+  // own feed stands down, so api/memos is read by one timer.
+  useEffect(() => useMemoStore.getState().attachPanel(), []);
+
   // Refetch memos + categories on mount / bump / tenant switch, and poll while mounted.
   useEffect(() => {
     let alive = true;
@@ -254,6 +258,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           if (!readOk(mList) || !readOk(cList)) return;
           const marr = Array.isArray(mList) ? mList : [];
           const carr = Array.isArray(cList) ? cList : [];
+          useMemoStore.getState().publish(marr);
           // A failed settings read (an older Control Plane, an error body) keeps the last good
           // one; it never takes the memo list down with it.
           const qw = readMemoQueues(qRaw) ?? lastQueues.current;

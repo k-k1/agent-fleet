@@ -4,10 +4,14 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-const { api } = vi.hoisted(() => ({ api: vi.fn((..._args: unknown[]) => Promise.resolve({})) }));
+const { api, memoList } = vi.hoisted(() => ({
+  api: vi.fn((..._args: unknown[]) => Promise.resolve({})),
+  memoList: vi.fn((): Promise<unknown> => Promise.resolve([])),
+}));
 vi.mock("../core/api/client.ts", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   api: (...args: unknown[]) => api(...args),
+  memoList: () => memoList(),
 }));
 
 import { ActivityBar } from "./ActivityBar.tsx";
@@ -22,6 +26,7 @@ import { useSeenStore } from "../features/workitems/seen.ts";
 import { useSchedulesStore } from "../features/schedules/store.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { useWorkspaceStore } from "../core/store/workspace.ts";
+import { useMemoStore } from "../features/memo/store.ts";
 import { useMemoryStore } from "../features/memory/store.ts";
 import { tCount } from "../lib/i18n/index.ts";
 import { selectedView } from "../layout/ops.ts";
@@ -64,6 +69,10 @@ beforeEach(() => {
   useSchedulesStore.setState({ failed: [], failedAll: null });
   useRailAck.setState({ acked: {} });
   useMemoryStore.getState().reset();
+  useMemoStore.setState({ tick: 0, panels: 0 });
+  useMemoStore.getState().reset();
+  memoList.mockReset();
+  memoList.mockImplementation(() => Promise.resolve([]));
   api.mockImplementation(() => Promise.resolve({}));
 });
 afterEach(async () => {
@@ -252,10 +261,82 @@ describe("ActivityBar badges", () => {
     expect(badge("memory")).toBeNull();
   });
 
-  it("never badges the memo queue or the files view", async () => {
+  const note1 = (id: string, state: string, extra: Record<string, unknown> = {}) => ({ id, state, sentAt: "", ...extra });
+
+  it("badges the memo icon with the notes waiting for approval, with the panel closed or open", async () => {
+    memoList.mockImplementation(() =>
+      Promise.resolve([note1("a", "held"), note1("b", "held", { heldReason: { reason: "deferred" } }), note1("c", "pending"), note1("d", ""), note1("e", "delivered")]),
+    );
+    useWorkspaceStore.setState({ state: "running" });
+    useLeftRail.setState({ view: "memo" });
+    await mount();
+    await act(async () => {});
+    expect(badge("memo")?.dataset.badge).toBe("waiting");
+    expect(badge("memo")?.textContent).toBe("2");
+    expect(btn("memo").title).toContain(tCount("rail.badge.memos", 2));
+    expect(btn("memo").title).not.toContain(tCount("rail.badge.waiting", 2));
+  });
+
+  it("shows no memo badge before the first read and clears it once the held notes are approved", async () => {
+    let list: unknown[] = [note1("a", "held")];
+    let answer: () => void = () => {};
+    memoList.mockImplementationOnce(() => new Promise((res) => (answer = () => res(list))));
+    memoList.mockImplementation(() => Promise.resolve(list));
+    useWorkspaceStore.setState({ state: "running" });
+    await mount();
+    expect(badge("memo")).toBeNull(); // read not answered yet: not "0", not a flash
+    await act(async () => answer());
+    expect(badge("memo")?.textContent).toBe("1");
+    list = [note1("a", "pending")];
+    await act(async () => useMemoStore.getState().bump()); // the panel's write re-reads
+    await act(async () => {});
+    expect(badge("memo")).toBeNull();
+  });
+
+  it("polls api/memos once while a panel is mounted: the panel publishes, the bar does not read", async () => {
+    vi.useFakeTimers();
+    try {
+      memoList.mockImplementation(() => Promise.resolve([note1("a", "held")]));
+      useWorkspaceStore.setState({ state: "running" });
+      await mount();
+      await act(async () => {});
+      expect(memoList).toHaveBeenCalledTimes(1);
+      let detach = () => {};
+      await act(async () => {
+        detach = useMemoStore.getState().attachPanel();
+        useMemoStore.getState().publish([note1("a", "held"), note1("b", "held")] as never);
+      });
+      expect(badge("memo")?.textContent).toBe("2");
+      await act(async () => void vi.advanceTimersByTime(35_000));
+      expect(memoList).toHaveBeenCalledTimes(1);
+      await act(async () => detach());
+      expect(memoList).toHaveBeenCalledTimes(2); // the panel is gone: the bar reads again
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads no memos while the workspace is stopped", async () => {
+    useWorkspaceStore.setState({ state: "stopped" });
+    await mount();
+    expect(memoList).not.toHaveBeenCalled();
+    expect(badge("memo")).toBeNull();
+  });
+
+  it("keeps the last count when a read fails", async () => {
+    memoList.mockImplementationOnce(() => Promise.resolve([note1("a", "held")]));
+    useWorkspaceStore.setState({ state: "running" });
+    await mount();
+    await act(async () => {});
+    memoList.mockImplementation(() => Promise.resolve({ error: "http_502" }));
+    await act(async () => useMemoStore.getState().bump());
+    await act(async () => {});
+    expect(badge("memo")?.textContent).toBe("1");
+  });
+
+  it("never badges the files view", async () => {
     useSessionsStore.setState({ sessions: [sess("a", "question")] });
     await mount();
-    expect(badge("memo")).toBeNull();
     expect(badge("files")).toBeNull();
   });
 });

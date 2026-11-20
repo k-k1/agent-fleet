@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hasUnreadConversation, hasUnreadSession, mergeAcked, pendingNews, waitingSessions, workItemNewsKeys } from "./badges.ts";
+import { approvalCount } from "../../features/memo/queues.ts";
+import type { Memo } from "../../types/memo.ts";
 import type { FleetNotification } from "../../features/notifications/store.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 import { failedScheduleKeys } from "../../features/schedules/read.ts";
@@ -101,5 +103,18 @@ describe("pendingNews", () => {
     expect(pendingNews(["a", "b"], undefined)).toEqual(["a", "b"]);
     expect(pendingNews(["a", "b"], ["a"])).toEqual(["b"]);
     expect(pendingNews(["a"], ["a", "gone"])).toEqual([]);
+  });
+});
+
+describe("approvalCount", () => {
+  const memo = (id: string, state: string, sentAt = "") => ({ id, state, sentAt }) as unknown as Memo;
+
+  it("counts only held notes: not plain notes, notes waiting to run, or those past that", () => {
+    const list = [memo("a", "held"), memo("b", "held"), memo("c", ""), memo("d", "pending"), memo("e", "claimed"), memo("f", "delivered"), memo("g", "unconfirmed"), memo("h", "superseded")];
+    expect(approvalCount(list)).toBe(2);
+  });
+
+  it("is zero for an empty list", () => {
+    expect(approvalCount([])).toBe(0);
   });
 });

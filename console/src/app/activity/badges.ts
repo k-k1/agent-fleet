@@ -1,7 +1,8 @@
 // What the activity bar's icons say about a view that is not on screen (ADR 0140).
 //
 // A badge is a notice, not an inventory: it marks something that arrived and that the member has
-// not looked at. A view whose rows only the member adds (the memo queue) therefore has none.
+// not looked at. A view whose rows only the member adds has none; the memo queue is one only for
+// the notes that wait for the member's approval, which is a waiting badge (below).
 //
 // Two kinds, and they clear differently:
 //   - waiting: a session is stopped on the member's answer. It stays until the answer is given,

@@ -164,6 +164,8 @@ Memos waiting for approval gather in a card for each session (or `/mcp` connecti
 1. Read the memos shown on the card
 2. Press "**Approve (N)**". The memos become "Waiting to run"
 
+With the Memo queue view closed, an amber number on its icon in the activity bar counts the memos waiting for approval, "Changed" ones included. It stays while the view is open and drops as you approve or delete memos. Memos already waiting to run are not counted, and a working set does not narrow the count.
+
 - **Only what the card shows is approved.** The approval covers the memo's text, its referenced file path, the work item it points at and its attachment information as shown. If one of these changes after the card was drawn, the memo is not approved. It does not pin the contents of a referenced file or of an image file
 - If a session changes a memo while the card is on screen, the memo is tagged "**Changed**", and the button becomes "**I have read the change**". Read the change and press it, and the card says "Approving runs the text shown now". Then press "Approve"
 - If the text changed after you pressed the button, nothing at all is approved, and the latest text is shown again. Check it and approve once more. A card is approved whole or not at all
