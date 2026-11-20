@@ -1350,6 +1350,60 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     });
   });
 
+  describe("remembering the close-source choice per device", () => {
+    const KEY = "af.merge-close-source";
+    const openBb = async (flag: boolean) => {
+      workItemDetail.mockResolvedValue({ ...bbMergeable, closeSourceBranch: flag });
+      workItemMerge.mockResolvedValue({ merged: true, sha: "feedface" });
+      const modal = await open(bbRow());
+      await act(async () => mergeBtn(modal)!.click());
+      return dialog()!.querySelector<HTMLInputElement>("input[type=checkbox]")!;
+    };
+    beforeEach(() => localStorage.removeItem(KEY));
+    afterEach(() => {
+      vi.restoreAllMocks();
+      localStorage.removeItem(KEY);
+    });
+
+    it("starts from the pull request's own flag when nothing is stored", async () => {
+      expect((await openBb(true)).checked).toBe(true);
+    });
+
+    it("restores the stored choice over the pull request's flag", async () => {
+      localStorage.setItem(KEY, "false");
+      expect((await openBb(true)).checked).toBe(false);
+    });
+
+    it("saves the choice only on confirm, not on toggle or cancel", async () => {
+      const box = await openBb(true);
+      await act(async () => box.click());
+      expect(localStorage.getItem(KEY)).toBeNull();
+      await act(async () => {
+        [...dialog()!.querySelectorAll<HTMLButtonElement>(".confirm-actions button")].find((b) => b !== confirmBtn())!.click();
+      });
+      expect(localStorage.getItem(KEY)).toBeNull();
+      const modal = document.querySelector(".wi-dmodal")!;
+      await act(async () => mergeBtn(modal)!.click());
+      await act(async () => dialog()!.querySelector<HTMLInputElement>("input[type=checkbox]")!.click());
+      await act(async () => confirmBtn().click());
+      await settle();
+      expect(localStorage.getItem(KEY)).toBe("false");
+    });
+
+    it("still merges when localStorage is unavailable", async () => {
+      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new Error("denied");
+      });
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new Error("denied");
+      });
+      expect((await openBb(true)).checked).toBe(true);
+      await act(async () => confirmBtn().click());
+      await settle();
+      expect(workItemMerge).toHaveBeenCalledWith(expect.objectContaining({ closeSourceBranch: true }));
+    });
+  });
+
   it("sends no close-source option for GitHub", async () => {
     workItemDetail.mockResolvedValue(mergeable);
     workItemMerge.mockResolvedValue({ merged: true, sha: "feedface" });
