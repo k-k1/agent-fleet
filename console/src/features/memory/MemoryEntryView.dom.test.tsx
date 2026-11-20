@@ -585,6 +585,43 @@ describe("MemoryEntryView", () => {
     expect(dirtyPaneIds()).toEqual([]);
   });
 
+  it("drops a refusal about text the buffer no longer holds", async () => {
+    apiJSON.mockResolvedValue({ error: { code: "memory_secret_detected", message: "secret" }, findings: [{ rule: "aws-key", line: 3, hint: "AKIA…" }] });
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "token AKIA…");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(host!.querySelector(".mem-findings")).not.toBeNull();
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "fixed");
+    expect(host!.querySelector(".mem-findings")).toBeNull();
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("does not show a refusal that comes back for text the member has rewritten since it was sent", async () => {
+    let answer!: (v: unknown) => void;
+    apiJSON.mockReturnValue(new Promise((r) => (answer = r)));
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "token AKIA…");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "rewritten");
+    await act(async () => answer({ error: { code: "memory_secret_detected", message: "secret" }, findings: [{ rule: "aws-key", line: 3, hint: "AKIA…" }] }));
+    await flush();
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
+    await remount();
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("offers the unsaved text for copying when the memory is forgotten under it", async () => {
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "mine");
+    await act(async () => useLayoutStore.getState().setPaneTarget(pane().id, { content: memoryEntryContent({ scope: "project", project, name: "build-cmd" }, true) }));
+    await flush();
+    expect(button(t("editor.copy_mine"))).toBeTruthy();
+  });
+
   it("says upfront why a body with a CR is read-only", async () => {
     api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? { ...memory, body: "a\r\nb" } : {}));
     await open();

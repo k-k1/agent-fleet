@@ -111,7 +111,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const [findings, setFindings] = useState<SecretFinding[]>([]);
   const [editing, setEditing] = useState(false);
   const [resolutionOpen, setResolutionOpen] = useState(true);
+  const [refusal, setRefusalState] = useState<EntryRefusal | null>(null);
   const onRefused = useCallback((r: EntryRefusal | null) => {
+    setRefusalState(r);
     setFindings(r?.findings ?? []);
     setFormErr(r ? (r.code === "memory_secret_detected" ? trRef.current("mem.br_secret") : r.text) : "");
   }, []);
@@ -132,7 +134,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
       return { file: held(), fileErr: e instanceof Error ? e.message : "" };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, bodyKey, key, isNew, gone]);
+  }, [body, bodyKey, key, isNew, gone, paneId]);
   // Why the body cannot be opened in the editor, when the buffer validator is what refused it.
   const readOnlyWhy =
     fileErr === "too_large" || fileErr === "binary_not_supported" || fileErr === "unsupported_newline" || fileErr === "invalid_unicode"
@@ -213,6 +215,16 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   );
   // The tenant is another workspace: the reset above clears what was read, so it is read again.
   useRetryLoad(load, [load, version, tenant]);
+
+  // A refusal is about the text that was sent: once the buffer reads otherwise (edited since, or
+  // the save was refused after the member went on typing), it is no longer shown nor kept.
+  const bufferText = model?.content;
+  useEffect(() => {
+    if (refusal && bufferText !== undefined && bufferText !== refusal.content) {
+      onRefused(null);
+      clearRefusal(key);
+    }
+  }, [refusal, bufferText, key, onRefused]);
 
   const retarget = (next: Partial<EntryContent>) => setPaneTarget(paneId, { content: { ...content, ...next } });
 
@@ -329,8 +341,6 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     if (isNew) {
       if (draft) setDraft({ ...draft, ...patch });
     } else if (model) {
-      // The reason belonged to the text as it was.
-      clearRefusal(key);
       editor.edit(encodeEntry({ ...decodeEntry(model.content), ...patch }));
     }
   };
@@ -560,6 +570,11 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           change ? (
             <div className="mentry-read">
               <p className="muted">{tr("mem.br_forgotten_note")}</p>
+              {model?.dirty && (
+                <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(model.content)}>
+                  {tr("editor.copy_mine")}
+                </Button>
+              )}
               <dl className="mentry-meta">
                 <dt>{tr("mem.md_m_forgotten")}</dt>
                 <dd>{fmtDateTime(change.at, DATETIME_FULL)}</dd>

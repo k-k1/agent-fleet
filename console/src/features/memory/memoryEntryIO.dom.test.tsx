@@ -137,20 +137,32 @@ describe("memoryEntryIO", () => {
   const spaced = (b: string) => encodeEntry({ description: "d", type: "user", body: b });
   const target = { key: "k", scope: "user", project: "", name: "n" };
 
-  it("matches the text sent when the Agent's trimmed copy is read after a lost answer, with the counter of that read", async () => {
+  async function lostAnswer(read: Partial<MemoryBody>) {
     const io = memoryEntryIO(target, () => {});
     const file = entryFile("k", { ...body, body: "x" });
     const sentText = spaced("x  \n");
     apiJSON.mockResolvedValueOnce({ error: { code: "memory_snapshot_failed", message: "x" } });
     await io.save("k", sentText, file.revision);
-    // The text is the stored one again, now at a newer counter and with other kinds.
-    api.mockResolvedValue({ ...body, body: "x", revision: 5, kinds: ["codex"] });
-    const read = await io.load("k");
+    api.mockResolvedValue({ ...body, body: "x", ...read });
+    return { io, file, sentText, read: await io.load("k") };
+  }
+
+  it("matches the text sent when the Agent's trimmed copy is read at the counter the save would have made", async () => {
+    const { io, sentText, read } = await lostAnswer({ revision: 4 });
     expect(read.content).toBe(sentText);
     expect(read.revision).toBe(revisionOf(sentText));
-    apiJSON.mockResolvedValue({ revision: 6 });
+    apiJSON.mockResolvedValue({ revision: 5 });
     await io.save("k", sentText, read.revision);
-    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 5, kinds: ["codex"] });
+    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 4, kinds: ["claude"] });
+  });
+
+  it("does not take the unchanged memory, or another writer's update, for the save that was sent", async () => {
+    // The save never landed: the memory is still at the counter it was sent from.
+    const old = await lostAnswer({ revision: 3 });
+    expect(old.read.content).toBe(spaced("x"));
+    // Someone else wrote the same text at the next counter, with other kinds.
+    const other = await lostAnswer({ revision: 4, kinds: ["codex"] });
+    expect(other.read.content).toBe(spaced("x"));
   });
 
   it("does not take a read for the text sent once the save is known to have been refused as a conflict", async () => {

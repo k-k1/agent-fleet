@@ -56,6 +56,8 @@ export interface EntryRefusal {
   code: string;
   text: string;
   findings: SecretFinding[];
+  /** The buffer text the save was for: the reason holds only while the buffer still reads so. */
+  content: string;
 }
 
 interface Known {
@@ -71,7 +73,7 @@ const adoptNext = new Set<string>();
 // The text last sent for a memory, as the Agent stores it. The Agent trims the description, type
 // and body it is given, so what a read answers after a save differs from the buffer by trailing
 // whitespace alone. Kept by memory, outside the adapter, like the counters.
-const sent = new Map<string, { raw: string; stored: string }>();
+const sent = new Map<string, { raw: string; stored: string; revision: number; kinds: string[] }>();
 // The refusal of the last save of a memory, for a pane that was not mounted when it came: the
 // adapter outlives the view that asked for the save.
 const refusals = new Map<string, EntryRefusal>();
@@ -141,6 +143,7 @@ export function entryFile(key: string, body: MemoryBody, overwrite = false): Edi
   return { path: key, content, size: content.length, binary: false, truncated: false, editable: true, editabilityReason: null, revision };
 }
 
+const sameKinds = (a: string[], b: string[]) => a.length === b.length && a.every((k, i) => k === b[i]);
 const validRevision = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v > 0;
 
 // The Agent omits empty fields on the wire (omitempty), so a memory with no type or body is valid.
@@ -178,7 +181,10 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       // text: reporting its trimmed form would read the committed save as a third version. The
       // base for the next save is this very read, whatever counter an older read of the text had.
       const last = sent.get(key);
-      if (last && last.raw !== file.content && last.stored === file.content) {
+      const answered = res as MemoryBody;
+      // The one counter the sent save would have produced, with the kinds it sent: a read at the
+      // old counter is the save not having landed, and anything else is another writer's.
+      if (last && last.raw !== file.content && last.stored === file.content && answered.revision === last.revision + 1 && sameKinds(answered.kinds ?? [], last.kinds)) {
         const revision = revisionOf(last.raw);
         remember(key, revision, { revision: (res as MemoryBody).revision, kinds: (res as MemoryBody).kinds ?? [] }, true);
         file = { ...file, content: last.raw, size: last.raw.length, revision };
@@ -195,7 +201,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (!base) adoptNext.add(key);
       if (!base) return { ok: false, status: 409, error: { code: "revision_conflict", message: "unknown base" } };
       const fields = decodeEntry(content);
-      sent.set(key, { raw: content, stored: storedForm(content) });
+      sent.set(key, { raw: content, stored: storedForm(content), revision: base.revision, kinds: base.kinds });
       // The project id also goes in the query: the CP audit ledger reads the URL only.
       const res = await apiJSON("api/agents/memory/entries/member-save" + projectQuery(project), "POST", {
         scope,
@@ -215,7 +221,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         if (code !== "write_state_unknown") sent.delete(key);
         if (code === "memory_conflict") adoptNext.add(key);
         if (code === "memory_conflict") return { ok: false, status: 409, error: { code: "revision_conflict", message: errDetail(res.error) } };
-        const refusal = { code, text: errDetail(res.error), findings: code === "memory_secret_detected" ? ((res.findings ?? []) as SecretFinding[]) : [] };
+        const refusal = { code, text: errDetail(res.error), findings: code === "memory_secret_detected" ? ((res.findings ?? []) as SecretFinding[]) : [], content };
         setRefusal(key, refusal);
         onRefused(refusal);
         return { ok: false, status: 422, error: { code, message: errDetail(res.error) } };
