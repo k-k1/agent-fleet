@@ -75,6 +75,12 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 	defer cancel()
 	args := append([]string{"install", "-g", "--prefix", filepath.Join(e.Home, ".local")}, specs...)
 	cmd := exec.CommandContext(ctx, e.npmBin(), args...)
+	if e.npmLockFile != nil {
+		// The child inherits the lock's open file description: if only this process is killed,
+		// npm (and anything it started) keeps the lock until it exits, and a recovery on the next
+		// start finds the lock taken instead of restoring a backup under npm's feet.
+		cmd.ExtraFiles = []*os.File{e.npmLockFile}
+	}
 	// Postinstall scripts may outlive npm: kill the whole group at the deadline so none keeps
 	// writing to ~/.local while the verify pass runs.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -188,6 +194,12 @@ func (e Env) room(needMiB int64, tools []string, what string) bool {
 // NPM installs the pinned npm CLIs into ~/.local that are missing or (with Repin) drifted from
 // the pin, in one npm run, then verifies each. It returns the process exit code.
 func NPM(e Env) int {
+	e, release, ok := e.lockNPM()
+	if !ok {
+		e.npmBusy("npm boot-install")
+		return ExitFailed
+	}
+	defer release()
 	var specs, wanted []string
 	var cur map[string]string
 	for _, c := range npmCLIs {
@@ -251,6 +263,12 @@ func NPM(e Env) int {
 // it, except that it clears an earlier "failed". Exit 0 when all run, 1 when one still does not,
 // 3 when a repair was skipped for lack of space.
 func (e Env) NPMVerify(clis []string, present bool) int {
+	e, release, ok := e.lockNPM()
+	if !ok {
+		e.npmBusy("npm verify")
+		return ExitFailed
+	}
+	defer release()
 	var fix, fixCLIs, broken, stuckRestore []string
 	defer func() {
 		if len(stuckRestore) > 0 {
@@ -380,6 +398,39 @@ func (e Env) NPMVerifyPresent() int {
 		return ExitOK
 	}
 	return e.NPMVerify(list, true)
+}
+
+// npmLockPath is the lock every writer of the npm trees (an install) and every restore or
+// delete of their backups holds.
+func (e Env) npmLockPath() string { return filepath.Join(e.Home, ".local", ".af-npm.lock") }
+
+// lockNPM takes the npm lock without waiting and returns an Env that carries it (npmInstall hands
+// it to npm), plus its release. A holder that already has it (the Env carries it) is not asked
+// again. ok is false when another process holds it: its npm may still be writing, so nothing here
+// may restore, delete or install. The lock is an flock: it is dropped when the last process
+// holding the file description exits, whatever way that happens.
+func (e Env) lockNPM() (_ Env, release func(), ok bool) {
+	if e.npmLockFile != nil {
+		return e, func() {}, true
+	}
+	if err := os.MkdirAll(filepath.Dir(e.npmLockPath()), 0o755); err != nil {
+		return e, func() {}, false
+	}
+	f, err := os.OpenFile(e.npmLockPath(), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return e, func() {}, false
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return e, func() {}, false
+	}
+	e.npmLockFile = f
+	return e, func() { f.Close() }, true
+}
+
+// npmBusy says why a step did nothing when the lock was not free.
+func (e Env) npmBusy(what string) {
+	fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s skipped (another process holds %s; an earlier npm may still be writing)\n", what, e.npmLockPath())
 }
 
 // npmAside is one path npm may replace, moved aside before a self-update install.
@@ -543,6 +594,15 @@ func npmManagedBin(bin, tree string) bool {
 // backup is settled. keepAccepted leaves an accepted update's backups in place (the final
 // verify pass of the same start may still need them: see npmRestoreCLI).
 func (e Env) npmRecoverAside(keepAccepted bool) {
+	if _, err := os.Lstat(e.npmMarker()); err != nil {
+		return // nothing to settle; do not even take the lock
+	}
+	e, release, ok := e.lockNPM()
+	if !ok {
+		e.npmBusy("recovery of an earlier agent CLI update")
+		return
+	}
+	defer release()
 	state, clis, ok, bad := e.npmReadMarker()
 	if !ok {
 		return
@@ -709,6 +769,12 @@ func npmDiscardAside(moved []npmAside) bool {
 // NPMVerifyPresentStep is the entrypoint's final pass: it recovers what a killed update left but
 // keeps an accepted update's backups, verifies the copies, then settles the backups.
 func (e Env) NPMVerifyPresentStep() int {
+	e, release, ok := e.lockNPM()
+	if !ok {
+		e.npmBusy("agent CLI verify")
+		return ExitFailed
+	}
+	defer release()
 	e.npmRecoverAside(true)
 	rc := e.NPMVerifyPresent()
 	e.npmRecoverAside(false)
