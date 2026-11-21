@@ -248,3 +248,31 @@ func TestMemoDeliveryCreateBodyNamesTheCategory(t *testing.T) {
 		t.Fatalf("queue_delivery.queue = %q (%v), want cat-1", got.QueueDelivery.Queue, err)
 	}
 }
+
+// A queue run's category goes Agent response -> mirror (sessionRows) -> the stopped Workspace's
+// ordinary list (sessionsShared), so a run does not drop into "Other runs" when the Workspace stops.
+func TestQueueCategoryIDSurvivesTheMirrorIntoTheStoppedList(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, _, ws := usageHourFixture(t)
+	srv := agentSessionsServer(t, `{"sessions":[
+		{"name":"qrun","alive":true,"state":"working","kind":"claude","origin":"queue","queueCategoryId":"cat-1"},
+		{"name":"plain","alive":true,"state":"working","kind":"claude"}
+	]}`)
+	mgr.rtFactory = stubFactory{rt: stubRuntime{endpoint: srv.URL}}
+	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+
+	api := workspaceAPI{memberAuth: memberAuth{mgr: mgr}}
+	got := map[string]string{}
+	for _, s := range api.sessionsShared(ctx, &resolved{rt: stubRuntime{state: "stopped"}, ws: ws}) {
+		got[s.Name] = s.QueueCategoryID
+	}
+	if got["qrun"] != "cat-1" || got["plain"] != "" || len(got) != 2 {
+		t.Fatalf("stopped list category ids = %v, want qrun=cat-1 and plain empty", got)
+	}
+	rows, _ := st.ListSessions(ctx, ws.ID)
+	for _, r := range rows {
+		if r.Name == "qrun" && r.QueueCategoryID != "cat-1" {
+			t.Fatalf("mirror row = %+v", r)
+		}
+	}
+}

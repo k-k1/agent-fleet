@@ -26,7 +26,7 @@ export interface RunDelivery {
 
 export interface RunRow {
   root: Session;
-  /** The queue's category id the run came from; "" when no delivery names this session. */
+  /** The queue's category id the run came from: the delivery's, else the session's own; "" when neither names one. */
   categoryId: string;
   state: RunState;
   /** The delivery that started the run; "" while unknown. */
