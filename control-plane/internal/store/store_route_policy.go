@@ -30,6 +30,9 @@ type RoutePolicyRow struct {
 	Revision  int64
 	UpdatedBy string
 	UpdatedAt string
+	// Writer is the key of the Control Plane that wrote the ceiling row (CeilingWriterKey); empty
+	// for every other row and for a ceiling written before the column existed.
+	Writer string
 }
 
 // RoutePolicyStore holds the policy rows.
@@ -54,7 +57,20 @@ type RoutePolicyStore interface {
 	// writes nothing, records nothing, takes no revision, and returns ErrRoutePolicyStale with
 	// before set to the row as it is. The check and the write are one transaction.
 	PutRoutePolicyIf(ctx context.Context, scope, tenantID, rule, actor string, expect *int64, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error)
+	// PutCeiling writes the operator ceiling row on behalf of the Control Plane identified by
+	// writer. When the row was written by a greater writer key (a Control Plane that started
+	// later) it writes nothing, records nothing, takes no revision, and returns ErrCeilingSuperseded
+	// with before set to the row as it is. The same writer key always passes, so a database edit
+	// of the row is still re-recorded by the newest Control Plane.
+	PutCeiling(ctx context.Context, rule, actor, writer string, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error)
 }
+
+// ErrCeilingSuperseded: PutCeiling found the ceiling row written by a Control Plane that started later.
+var ErrCeilingSuperseded = errors.New("route policy: the operator ceiling was recorded by a newer Control Plane")
+
+// CeilingWriterKey orders Control Plane processes by start time; the random id breaks a tie
+// between two that started in the same nanosecond. Fixed-width, so string order is time order.
+func CeilingWriterKey(startNS int64, id string) string { return fmt.Sprintf("%020d-%s", startNS, id) }
 
 // ErrRoutePolicyStale: a conditional PutRoutePolicyIf found the row at another revision than the
 // caller loaded.
@@ -88,8 +104,8 @@ func validRoutePolicyScope(scope, tenantID string) error {
 
 func getRoutePolicy(ctx context.Context, q rowQuerier, scope, tenantID string) (RoutePolicyRow, error) {
 	r := RoutePolicyRow{Scope: scope, TenantID: tenantID, Rule: "{}"}
-	err := q.QueryRowContext(ctx, `SELECT rule, revision, updated_by, updated_at FROM route_policy WHERE scope=? AND tenant_id=?`,
-		scope, tenantID).Scan(&r.Rule, &r.Revision, &r.UpdatedBy, &r.UpdatedAt)
+	err := q.QueryRowContext(ctx, `SELECT rule, revision, updated_by, updated_at, writer FROM route_policy WHERE scope=? AND tenant_id=?`,
+		scope, tenantID).Scan(&r.Rule, &r.Revision, &r.UpdatedBy, &r.UpdatedAt, &r.Writer)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, nil
 	}
@@ -114,6 +130,18 @@ func (s *SQL) PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor s
 // only after it is held, so a competing write has either committed (and is seen) or waits behind
 // this one; two writes based on the same revision cannot both pass.
 func (s *SQL) PutRoutePolicyIf(ctx context.Context, scope, tenantID, rule, actor string, expect *int64, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error) {
+	return s.putRoutePolicy(ctx, scope, tenantID, rule, actor, "", expect, audit)
+}
+
+// PutCeiling: when the stored rule already equals rule it writes nothing and returns before as
+// both rows (after.Revision == before.Revision). The supersede check runs after the sequence lock is held, so it reads the row as
+// the last committed writer left it; a yield rolls back with the sequence untouched.
+func (s *SQL) PutCeiling(ctx context.Context, rule, actor, writer string, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error) {
+	return s.putRoutePolicy(ctx, RoutePolicyCeiling, "", rule, actor, writer, nil, audit)
+}
+
+// putRoutePolicy: a non-empty writer makes the write yield to a row written by a greater key.
+func (s *SQL) putRoutePolicy(ctx context.Context, scope, tenantID, rule, actor, writer string, expect *int64, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error) {
 	if err := validRoutePolicyScope(scope, tenantID); err != nil {
 		return before, after, err
 	}
@@ -138,12 +166,26 @@ func (s *SQL) PutRoutePolicyIf(ctx context.Context, scope, tenantID, rule, actor
 	if expect != nil && before.Revision != *expect {
 		return before, RoutePolicyRow{}, ErrRoutePolicyStale
 	}
-	after = RoutePolicyRow{Scope: scope, TenantID: tenantID, Rule: rule, Revision: rev, UpdatedBy: actor, UpdatedAt: NowTS()}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO route_policy(scope, tenant_id, rule, revision, updated_by, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?)
+	if writer != "" {
+		// Re-compared under the lock: a read made before another CP committed the same rule is stale.
+		if before.Revision != 0 && before.Rule == rule || before.Revision == 0 && rule == "{}" {
+			return before, before, nil
+		}
+		if before.Writer > writer {
+			return before, RoutePolicyRow{}, ErrCeilingSuperseded
+		}
+	}
+	if writer == "" {
+		// A write that is not a CP's own record (a database edit) changes the rule only: the
+		// ceiling row keeps the key of the newest writer.
+		writer = before.Writer
+	}
+	after = RoutePolicyRow{Scope: scope, TenantID: tenantID, Rule: rule, Revision: rev, UpdatedBy: actor, UpdatedAt: NowTS(), Writer: writer}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO route_policy(scope, tenant_id, rule, revision, updated_by, updated_at, writer)
+		VALUES(?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(scope, tenant_id) DO UPDATE SET rule=excluded.rule, revision=excluded.revision,
-		updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
-		scope, tenantID, rule, rev, actor, after.UpdatedAt); err != nil {
+		updated_by=excluded.updated_by, updated_at=excluded.updated_at, writer=excluded.writer`,
+		scope, tenantID, rule, rev, actor, after.UpdatedAt, writer); err != nil {
 		return before, after, err
 	}
 	if audit != nil {
@@ -182,7 +224,7 @@ func (s *SQL) GetRoutePolicyLayers(ctx context.Context, tenantID string) (RouteP
 	blank := func(scope, tid string) RoutePolicyRow { return RoutePolicyRow{Scope: scope, TenantID: tid, Rule: "{}"} }
 	out := RoutePolicyLayers{Ceiling: blank(RoutePolicyCeiling, ""), Deployment: blank(RoutePolicyDeployment, ""),
 		TenantCap: blank(RoutePolicyTenantCap, tenantID), Tenant: blank(RoutePolicyTenant, tenantID)}
-	rows, err := s.db.QueryContext(ctx, `SELECT scope, tenant_id, rule, revision, updated_by, updated_at FROM route_policy
+	rows, err := s.db.QueryContext(ctx, `SELECT scope, tenant_id, rule, revision, updated_by, updated_at, writer FROM route_policy
 		WHERE (tenant_id = '' AND scope IN ('ceiling', 'deployment')) OR (tenant_id = ? AND tenant_id <> '' AND scope IN ('tenant_cap', 'tenant'))`,
 		tenantID)
 	if err != nil {
@@ -191,7 +233,7 @@ func (s *SQL) GetRoutePolicyLayers(ctx context.Context, tenantID string) (RouteP
 	defer rows.Close()
 	for rows.Next() {
 		var r RoutePolicyRow
-		if err := rows.Scan(&r.Scope, &r.TenantID, &r.Rule, &r.Revision, &r.UpdatedBy, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.Scope, &r.TenantID, &r.Rule, &r.Revision, &r.UpdatedBy, &r.UpdatedAt, &r.Writer); err != nil {
 			return out, err
 		}
 		switch r.Scope {

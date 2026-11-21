@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 // The three administered layers are separate rows (ADR 0138 D8): writing one never touches
@@ -277,6 +278,151 @@ func TestPutRoutePolicyIfConcurrentWriters(t *testing.T) {
 			if want := fmt.Sprintf(`{"deny":["w%d"]}`, winner); got.Rule != want || got.Revision != base+1 || afters[winner].Revision != base+1 {
 				t.Fatalf("round %d: stored %+v, want %s at revision %d", round, got, want, base+1)
 			}
+		}
+	})
+}
+
+// PutCeiling yields to a row written by a greater writer key without taking a revision or an
+// audit row; the same key, a greater key and an unkeyed row (a database edit, or one written
+// before the column existed) all write.
+func TestPutCeilingYieldsToNewerWriter(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		audit := func(before, after RoutePolicyRow) AuditLog {
+			return AuditLog{ID: NewID(), ActorKind: "system", ActorID: "op", Action: "route_policy.ceiling.sync", Target: "deployment", At: NowTS()}
+		}
+		old, newer := CeilingWriterKey(100, "a"), CeilingWriterKey(200, "a")
+		_, first, err := st.PutCeiling(ctx, `{"classes":["provided"]}`, "op", newer, audit)
+		mustDo(t, err)
+		if first.Writer != newer {
+			t.Fatalf("writer not stored: %+v", first)
+		}
+		before, _, err := st.PutCeiling(ctx, `{}`, "op", old, audit)
+		if !errors.Is(err, ErrCeilingSuperseded) || before.Revision != first.Revision {
+			t.Fatalf("older writer: before %+v err %v", before, err)
+		}
+		got, _ := st.GetRoutePolicy(ctx, RoutePolicyCeiling, "")
+		if got != first {
+			t.Fatalf("the row moved: %+v -> %+v", first, got)
+		}
+		logs, _ := st.ListAuditByTenant(ctx, "", 10)
+		if len(logs) != 1 {
+			t.Fatalf("audit rows = %d, want 1", len(logs))
+		}
+		// The yield took no revision: the next write is the very next one.
+		_, same, err := st.PutCeiling(ctx, `{"deny":["x"]}`, "op", newer, nil)
+		mustDo(t, err)
+		if same.Revision != first.Revision+1 {
+			t.Errorf("revision after a yield = %d, want %d", same.Revision, first.Revision+1)
+		}
+		_, _, err = st.PutRoutePolicy(ctx, RoutePolicyCeiling, "", `{}`, "edit", nil)
+		mustDo(t, err)
+		// The edit changed the rule only: the newer writer's key still stands.
+		if _, _, err = st.PutCeiling(ctx, `{"deny":["y"]}`, "op", old, nil); !errors.Is(err, ErrCeilingSuperseded) {
+			t.Fatalf("older writer after an edit: %v, want superseded", err)
+		}
+	})
+}
+
+// A write that finds the stored rule already equal (another CP recorded it after this one read
+// the row) writes nothing and does not yield, whichever writer key is greater; a write that is
+// not a CP's own (a database edit) changes the rule and keeps the newest writer's key.
+func TestPutCeilingEqualRuleAndEditKeepsWriter(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		old, newer := CeilingWriterKey(100, "a"), CeilingWriterKey(200, "a")
+		_, first, err := st.PutCeiling(ctx, `{"classes":["provided"]}`, "op", newer, nil)
+		mustDo(t, err)
+		before, after, err := st.PutCeiling(ctx, `{"classes":["provided"]}`, "op", old, nil)
+		if err != nil || before.Revision != first.Revision || after.Revision != first.Revision {
+			t.Fatalf("equal rule from an older writer: %+v %+v %v", before, after, err)
+		}
+		_, edited, err := st.PutRoutePolicy(ctx, RoutePolicyCeiling, "", `{}`, "edit", nil)
+		mustDo(t, err)
+		if edited.Writer != newer {
+			t.Fatalf("an edit dropped the writer key: %+v", edited)
+		}
+		if _, _, err := st.PutCeiling(ctx, `{}`, "op", old, nil); err != nil {
+			t.Fatalf("older writer, rule equal to the edited one: %v", err)
+		}
+		if _, _, err := st.PutCeiling(ctx, `{"deny":["z"]}`, "op", old, nil); !errors.Is(err, ErrCeilingSuperseded) {
+			t.Fatalf("older writer after an edit: %v, want superseded", err)
+		}
+	})
+}
+
+// The newer Control Plane holds the sequence lock (stopped in its audit callback, before commit)
+// while the older one starts recording: the older one must find the newer writer's row once the
+// lock is released and yield, so the writer check cannot have run before the lock. Nothing of
+// the older write is recorded and the next write takes the very next revision. A row with no
+// writer key (legacy, or written by an edit) is taken over by the first CP to record.
+func TestPutCeilingFenceHoldsAcrossTheLock(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, open func() *SQL) {
+		ctx := context.Background()
+		old, newer := CeilingWriterKey(100, "a"), CeilingWriterKey(200, "a")
+		plain := func(before, after RoutePolicyRow) AuditLog {
+			return AuditLog{ID: NewID(), ActorKind: "system", ActorID: "op", Action: "route_policy.ceiling.sync", Target: "deployment", At: NowTS()}
+		}
+		if _, _, err := st.PutRoutePolicy(ctx, RoutePolicyCeiling, "", `{"deny":["legacy"]}`, "edit", nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, r, err := st.PutCeiling(ctx, `{"deny":["old"]}`, "op", old, plain); err != nil || r.Writer != old {
+			t.Fatalf("an unkeyed row was not taken over: %+v %v", r, err)
+		}
+		newH, oldH := open(), open()
+		inTx, release := make(chan struct{}), make(chan struct{})
+		var once sync.Once
+		free := func() { once.Do(func() { close(release) }) }
+		defer free() // a failed path must not leave the newer writer parked
+		holding := func(before, after RoutePolicyRow) AuditLog {
+			close(inTx)
+			<-release
+			return plain(before, after)
+		}
+		var newRow RoutePolicyRow
+		var newErr, oldErr error
+		newDone, oldDone := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(newDone)
+			_, newRow, newErr = newH.PutCeiling(ctx, `{"deny":["new"]}`, "op", newer, holding)
+		}()
+		select {
+		case <-inTx: // the newer CP holds the lock with its write uncommitted
+		case <-newDone:
+			t.Fatalf("the newer writer finished before its audit callback: %v", newErr)
+		case <-time.After(10 * time.Second):
+			t.Fatal("the newer writer never reached its audit callback")
+		}
+		go func() {
+			defer close(oldDone)
+			_, _, oldErr = oldH.PutCeiling(ctx, `{"deny":["old2"]}`, "op", old, plain)
+		}()
+		time.Sleep(300 * time.Millisecond) // long enough for the older CP to read the row and queue on the lock
+		free()
+		for _, d := range []chan struct{}{newDone, oldDone} {
+			select {
+			case <-d:
+			case <-time.After(10 * time.Second):
+				t.Fatal("a writer did not finish after the lock was released")
+			}
+		}
+		if newErr != nil {
+			t.Fatalf("newer writer: %v", newErr)
+		}
+		if !errors.Is(oldErr, ErrCeilingSuperseded) {
+			t.Fatalf("older writer = %v, want ErrCeilingSuperseded", oldErr)
+		}
+		row, _ := st.GetRoutePolicy(ctx, RoutePolicyCeiling, "")
+		if row.Writer != newer || row.Rule != `{"deny":["new"]}` || row.Revision != newRow.Revision {
+			t.Fatalf("the row did not end at the newer writer: %+v", row)
+		}
+		if logs, _ := st.ListAuditByTenant(ctx, "", 20); len(logs) != 2 {
+			t.Errorf("audit rows = %d, want 2 (the takeover and the newer write)", len(logs))
+		}
+		_, next, err := st.PutCeiling(ctx, `{"deny":["next"]}`, "op", newer, nil)
+		mustDo(t, err)
+		if next.Revision != newRow.Revision+1 {
+			t.Errorf("next revision = %d, want %d", next.Revision, newRow.Revision+1)
 		}
 	})
 }

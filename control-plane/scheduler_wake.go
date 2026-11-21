@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicysrv"
 	"io"
 	"log"
 	"net/http"
@@ -97,6 +98,10 @@ func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time
 		// this run, and the failed run notifies the member (notifyOutcome). The Agent judges
 		// again, an empty selection included.
 		if aerr := routePolicyCreateRefusal(ctx, f.mgr.store, sch.TenantID, sch.Route); aerr != nil {
+			// The policy is being replaced by a newer Control Plane (a rollover): retry the same slot.
+			if aerr.code == routepolicysrv.CodePolicyUnconfirmed {
+				return "", "", retryableFireErr(fmt.Errorf("schedule route (%s): %s", aerr.code, aerr.message))
+			}
 			return "", "", fmt.Errorf("schedule route (%s): %s", aerr.code, aerr.message)
 		}
 	}
