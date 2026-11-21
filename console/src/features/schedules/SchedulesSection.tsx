@@ -403,7 +403,14 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const scoped = useMemo(() => (wset ? sorted.filter((s) => scheduleInSet(wset, s, wctx)) : sorted), [sorted, wset, wctx]);
   const scheduledRuns = useScheduledRuns();
   // Runs go under the row of the schedule that started them; the rows listed are the ones shown.
-  const grouped = useMemo(() => groupRunsBySchedule(scheduledRuns, new Set(scoped.map((s) => s.id))), [scheduledRuns, scoped]);
+  // Until this tenant's first read has settled the list of schedules is unknown, so a run that
+  // names a schedule is held back rather than shown in the group and then moved under its row
+  // (which would drop an open fold or the focus). A failed first read ends the wait.
+  const firstReadPending = loadedFor !== tenant && !loadErr;
+  const grouped = useMemo(() => {
+    const g = groupRunsBySchedule(scheduledRuns, new Set(scoped.map((s) => s.id)));
+    return firstReadPending ? { ...g, rest: g.rest.filter((r) => !r.scheduleId) } : g;
+  }, [scheduledRuns, scoped, firstReadPending]);
   const activeCount = useMemo(() => scoped.filter((s) => s.enabled).length, [scoped]);
   // From the rows the active working set lists, not from everything loaded: opening the view
   // acknowledges what it publishes, and a failure the view does not show must stay unread.

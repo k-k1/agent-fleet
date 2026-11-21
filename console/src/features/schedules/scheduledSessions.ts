@@ -92,8 +92,13 @@ export function groupRunsBySchedule(runs: ScheduledRun[], known: ReadonlySet<str
   const bySchedule = new Map<string, ScheduledRun[]>();
   const rest: ScheduledRun[] = [];
   for (const r of runs) {
-    if (r.scheduleId && known.has(r.scheduleId)) bySchedule.set(r.scheduleId, [...(bySchedule.get(r.scheduleId) ?? []), r]);
-    else rest.push(r);
+    if (!r.scheduleId || !known.has(r.scheduleId)) {
+      rest.push(r);
+      continue;
+    }
+    const bucket = bySchedule.get(r.scheduleId);
+    if (bucket) bucket.push(r);
+    else bySchedule.set(r.scheduleId, [r]);
   }
   return { bySchedule, rest };
 }

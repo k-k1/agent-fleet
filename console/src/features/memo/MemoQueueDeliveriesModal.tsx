@@ -47,6 +47,8 @@ interface Props {
   categoryName: string;
   /** The category's live settings (undefined: it has none). */
   queue: MemoQueue | undefined;
+  /** The category's repository, "" for none: the caller has it even when the queue list did not load. */
+  repo: string;
   /** How many messages are waiting to run now (the fire button needs at least one). */
   waiting: number;
   onClose: () => void;
@@ -60,7 +62,7 @@ interface Props {
   onResume: () => Promise<boolean>;
 }
 
-export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, waiting, onClose, onFired, onUndone, focusRun, onResume }: Props) {
+export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, repo, waiting, onClose, onFired, onUndone, focusRun, onResume }: Props) {
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
@@ -69,7 +71,6 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
   // hides the category's repository (the link would land on nothing).
   const listed = new Set(sessions.filter((x) => x.origin === "queue").map((x) => x.name));
   const wset = useActiveWorkingSet();
-  const repo = queue?.repo ?? "";
   const hiddenByWset = !!wset && !!repo && !wset.repos.includes(repo);
   // The run whose notes are being returned to the queue.
   const [returning, setReturning] = useState("");

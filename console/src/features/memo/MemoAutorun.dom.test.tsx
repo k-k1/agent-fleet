@@ -1364,6 +1364,34 @@ describe("full run history dialog", () => {
   });
 });
 
+describe("full run history dialog under a working set", () => {
+  it("disables the Auto-run link for a category the working set hides, even when the queue list failed to load", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    const { useMemoStore } = await import("./store.ts");
+    const { createWorkingSet, setActiveWorkingSet, toggleWorkingSetMember, deleteWorkingSet } = await import("../../lib/workingSetsStore.ts");
+    useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }] as never });
+    servedCats = [aCat({ repo: "B", queue: true })];
+    queuesFail = true;
+    servedDeliveries = [{ id: "d1", state: "closed", outcome: "clean", session: "s-d1", messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "", auto: true }];
+    const id = createWorkingSet("only A");
+    toggleWorkingSetMember(id, "repos", "A");
+    setActiveWorkingSet(id);
+    try {
+      await render();
+      await act(async () => useMemoStore.getState().revealCategory("c1", true));
+      await settle();
+      const link = dialog().querySelector<HTMLButtonElement>(".memo-d-show-run");
+      expect(link?.disabled).toBe(true);
+      expect(link?.title).toBe(t("memo.d_show_run_hidden"));
+    } finally {
+      queuesFail = false;
+      setActiveWorkingSet("");
+      deleteWorkingSet(id);
+      useSessionsStore.setState({ sessions: [] });
+    }
+  });
+});
+
 describe("inline run list under a category", () => {
   const toggle = () => must([...document.querySelectorAll<HTMLElement>(".memo-runs-toggle")][0], "runs toggle");
   const run = (id: string, over: Record<string, unknown> = {}) => ({

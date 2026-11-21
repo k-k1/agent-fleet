@@ -228,3 +228,40 @@ describe("SchedulesSection scheduled sessions under their schedule", () => {
     useSessionsStore.setState({ sessions: [] });
   });
 });
+
+describe("SchedulesSection scheduled sessions before the schedule list has loaded", () => {
+  const s = (name: string, extra: Record<string, unknown>) => ({ name, title: name, kind: "claude", alive: true, ...extra });
+  const seed = async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({
+      sessions: [
+        s("mine-run", { origin: "schedule", scheduleId: sched.id, createdAt: "2026-11-02T00:00:00Z" }),
+        s("old-run", { origin: "schedule", createdAt: "2026-11-01T00:00:00Z" }),
+      ] as never,
+    });
+    return useSessionsStore;
+  };
+
+  it("holds back a run that names a schedule until the list settles, then files it under its row without a group flash", async () => {
+    const store = await seed();
+    let resolve: (v: unknown) => void = () => {};
+    scheduleList.mockReturnValue(new Promise((r) => (resolve = r)));
+    await render();
+    const group = () => host.querySelector("[data-sched-sessions]");
+    expect(host.querySelector('[data-sched-session="mine-run"]')).toBeNull();
+    expect(group()?.querySelector('[data-sched-session="old-run"]')).not.toBeNull();
+    await act(async () => resolve([sched]));
+    await act(async () => {});
+    expect(host.querySelector(`[data-sched-sessions-of="${sched.id}"] [data-sched-session="mine-run"]`)).not.toBeNull();
+    expect(group()?.querySelector('[data-sched-session="mine-run"]')).toBeNull();
+    store.setState({ sessions: [] });
+  });
+
+  it("shows the run in the group when the first read fails", async () => {
+    const store = await seed();
+    scheduleList.mockResolvedValue({ error: { code: "http_502", message: "bad gateway" } });
+    await render();
+    expect(host.querySelector("[data-sched-sessions]")?.querySelector('[data-sched-session="mine-run"]')).not.toBeNull();
+    store.setState({ sessions: [] });
+  });
+});
