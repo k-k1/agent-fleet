@@ -69,6 +69,7 @@ type Env struct {
 	NPM        string          // the npm executable; empty = "npm" from PATH
 	AgyBaseURL string          // https://storage.googleapis.com/antigravity-public/antigravity-cli (tests: a local server)
 	AgyEnv     func() []string // env overlay every agy run needs on this host; nil = hostcaps.AgyRDRANDMask
+	CursorURL  string          // https://downloads.cursor.com/lab (tests: a local server)
 	BakedBin   string          // where the image bakes its CLIs; empty = /usr/local/bin
 	Stdout     io.Writer
 	Stderr     io.Writer
@@ -86,6 +87,7 @@ func DefaultEnv(repin bool) Env {
 		Arch:       arch,
 		RTKBaseURL: "https://github.com/rtk-ai/rtk/releases/download",
 		AgyBaseURL: "https://storage.googleapis.com/antigravity-public/antigravity-cli",
+		CursorURL:  "https://downloads.cursor.com/lab",
 		FreeMiB:    freeMiB,
 		Client:     &http.Client{Timeout: 10 * time.Minute},
 		Stdout:     os.Stdout,
@@ -133,9 +135,15 @@ func (e Env) probe(p string) (stdout, stderr string, err error) { return e.probe
 
 // probeEnv is probe with extra environment assignments on top of ours (agy's RDRAND mask).
 func (e Env) probeEnv(p string, extra []string) (stdout, stderr string, err error) {
+	return e.probeArgs(p, []string{"--version"}, extra)
+}
+
+// probeArgs is probeEnv with the arguments chosen by the caller (cursor needs
+// --disable-auto-update before --version).
+func (e Env) probeArgs(p string, args, extra []string) (stdout, stderr string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), e.RunTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, p, "--version")
+	cmd := exec.CommandContext(ctx, p, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
@@ -216,6 +224,14 @@ func (e Env) cliPresent(name string) bool {
 
 // cliUsable: a copy that can run now, in either place.
 func (e Env) cliUsable(name string) bool {
+	if name == cursorStatusName { // the status name is not the binary's, and its bundle needs its own probe
+		for _, p := range []string{filepath.Join(e.bakedBin(), cursorTool), filepath.Join(e.localBin(), cursorTool)} {
+			if usable(p) && e.cursorRuns(p) {
+				return true
+			}
+		}
+		return false
+	}
 	for _, p := range []string{filepath.Join(e.bakedBin(), name), filepath.Join(e.localBin(), name)} {
 		if usable(p) && e.runsAs(name, p) {
 			return true

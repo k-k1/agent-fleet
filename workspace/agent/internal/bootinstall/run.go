@@ -7,7 +7,7 @@ import (
 )
 
 // Run is `workspace-agent boot-install <step> [--repin] [--present] [cli...]`: one step of the
-// entrypoint's lean boot-install. Steps: rtk, agy, agy-version (prints the installed agy's version), npm (the four npm CLIs), npm-verify (the repair
+// entrypoint's lean boot-install. Steps: rtk, agy, cursor, agy-version (prints the installed agy's version), npm (the four npm CLIs), npm-verify (the repair
 // pass; --present limits it to CLIs with a ~/.local copy). Exit 1 is a failed install, 3 a skip
 // for lack of space (the entrypoint then holds back its other downloads), 2 a usage error.
 func Run(args []string) {
@@ -24,7 +24,7 @@ func Run(args []string) {
 		}
 	}
 	usage := func() {
-		fmt.Fprintln(os.Stderr, "usage: workspace-agent boot-install rtk|agy|npm [--repin] | agy-version | npm-verify [--present] [claude|opencode|codex|copilot...]")
+		fmt.Fprintln(os.Stderr, "usage: workspace-agent boot-install rtk|agy|cursor|npm [--repin] | agy-version | npm-verify [--present] [claude|opencode|codex|copilot...]")
 		os.Exit(2)
 	}
 	if len(names) == 0 {
@@ -45,6 +45,8 @@ func Run(args []string) {
 		os.Exit(RTK(context.Background(), DefaultEnv(repin)))
 	case agyTool:
 		os.Exit(AGY(context.Background(), DefaultEnv(repin)))
+	case cursorStatusName:
+		os.Exit(Cursor(context.Background(), DefaultEnv(repin)))
 	case "agy-version":
 		fmt.Println(DefaultEnv(false).AgyEffectiveVersion())
 	case "npm":
@@ -65,7 +67,7 @@ func Run(args []string) {
 		}
 		os.Exit(e.NPMVerify(rest, false))
 	default:
-		fmt.Fprintf(os.Stderr, "boot-install: unknown step %q (have: rtk, agy, agy-version, npm, npm-verify)\n", step)
+		fmt.Fprintf(os.Stderr, "boot-install: unknown step %q (have: rtk, agy, cursor, agy-version, npm, npm-verify)\n", step)
 		os.Exit(2)
 	}
 }

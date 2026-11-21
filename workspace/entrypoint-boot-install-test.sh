@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behaviour of entrypoint.sh's lean boot-install blocks (cursor; rtk, agy and the npm CLIs are workspace-agent's, see below) when a step fails
+# Behaviour of entrypoint.sh's lean boot-install blocks (rtk, agy, cursor and the npm CLIs are workspace-agent's, see below) when a step fails
 # part-way, e.g. ENOSPC on a full home. Only the section from `VJ=` to the Kiro comment is sliced
 # out and run, against stub curl / tar / install / sha256sum / dpkg and a fake home.
 #
@@ -17,7 +17,7 @@ mkdir -p "$T/bin" "$T/home/.local/bin" "$T/tmp"
 
 BLOCK="$T/block.sh"
 awk '/^VJ=\/usr/{on=1} /^# Kiro CLI \(kind/{on=0} on' "$ENTRY" | sed "s#^VJ=.*#VJ=$T/versions.json#" > "$BLOCK"
-for needle in 'boot-install agy' 'CUR_NEED' 'boot-install rtk' 'npm_wa'; do
+for needle in 'boot-install agy' 'boot-install cursor' 'boot-install rtk' 'npm_wa'; do
   grep -q -- "$needle" "$BLOCK" || { echo "FAIL: slice lacks $needle; fix the awk range" >&2; exit 1; }
 done
 
@@ -74,7 +74,7 @@ cat >"$T/bin/workspace-agent" <<'S'
 #!/bin/sh
 echo "workspace-agent $*" >>"$STUB_WA_LOG"
 # STUB_WA_RC_NPM answers only the npm steps, so a test can tell the two mappings apart.
-case "$2" in npm|npm-verify) exit "${STUB_WA_RC_NPM:-${STUB_WA_RC:-0}}" ;; esac
+case "$2" in npm|npm-verify) exit "${STUB_WA_RC_NPM:-${STUB_WA_RC:-0}}" ;; cursor) exit "${STUB_WA_RC_CURSOR:-${STUB_WA_RC:-0}}" ;; esac
 exit "${STUB_WA_RC:-0}"
 S
 chmod +x "$T"/bin/*
@@ -120,49 +120,35 @@ reset; run_block
 grep -q 'agy-version' "$ENTRY" || fail "agy: agy_effective_version does not ask the Agent"
 grep -q 'AGY_NEED' "$BLOCK" && fail "agy: shell install block still present"
 
-# cursor: tar dies part-way.
-reset; run_block STUB_TAR_FAIL=1
-has 'WARN: cursor boot-install failed' || fail "cursor: no WARN when tar fails"
-has 'boot-install cursor' && fail "cursor: success logged after a failed unpack"
-[ -e "$T/home/.local/bin/cursor-agent" ] || [ -L "$T/home/.local/bin/cursor-agent" ] && fail "cursor: link left after a failed unpack"
-[ -e "$T/home/.local/share/cursor-agent/versions/2026.1.1-abc" ] && fail "cursor: half-unpacked tree left behind"
-run_block
-has 'boot-install cursor 2026.1.1-abc' || fail "cursor: next start did not install"
-[ -x "$T/home/.local/bin/cursor-agent" ] || fail "cursor: link not runnable after reinstall"
-
-
-# cursor: a tree from an older ENOSPC (execute bit set, contents cut) at the pinned path.
-# Reinstalled whatever the repin setting, and the reinstalled one runs.
-mk_cursor_tree() { # mk_cursor_tree <cursor-agent body>
-  local d="$T/home/.local/share/cursor-agent/versions/2026.1.1-abc"
-  rm -rf "$T/home/.local/share" "$T/home/.local/bin/cursor-agent"; mkdir -p "$d"
-  printf '%s\n' "$1" >"$d/cursor-agent"; chmod +x "$d/cursor-agent"
-  ln -s "$d/cursor-agent" "$T/home/.local/bin/cursor-agent"
-}
-for skip in 1 0; do
-  mk_cursor_tree '#!/bi'
-  run_block AF_AGENT_SELF_UPDATE_SKIP=$skip
-  has 'boot-install cursor 2026.1.1-abc' || fail "cursor: truncated executable tree not reinstalled (skip=$skip)"
-  "$T/home/.local/bin/cursor-agent" --disable-auto-update --version >/dev/null 2>&1 || fail "cursor: reinstalled tree does not run (skip=$skip)"
-  # A bundle whose dependency file is missing.
-  mk_cursor_tree '#!/bin/sh
-[ -f "$(dirname "$(readlink -f "$0")")/index.js" ] || exit 1
-echo c'
-  run_block AF_AGENT_SELF_UPDATE_SKIP=$skip
-  has 'boot-install cursor 2026.1.1-abc' || fail "cursor: tree missing its bundle not reinstalled (skip=$skip)"
-  [ -f "$T/home/.local/share/cursor-agent/versions/2026.1.1-abc/index.js" ] || fail "cursor: bundle file still missing (skip=$skip)"
-done
-run_block
-has 'cursor already present' || fail "cursor: healthy tree was reinstalled"
-
-# cursor: the existing tree (here: one whose check fails) survives a candidate that cannot run.
-mk_cursor_tree '#!/bi'
-d="$T/home/.local/share/cursor-agent/versions/2026.1.1-abc"; echo keep >"$d/keep.txt"
-run_block STUB_CURSOR_BAD=1
-has 'WARN: cursor boot-install failed' || fail "cursor: no WARN for a candidate that does not run"
-[ -f "$d/keep.txt" ] || fail "cursor: the existing tree was not restored"
-[ "$(readlink "$T/home/.local/bin/cursor-agent")" = "$d/cursor-agent" ] || fail "cursor: link moved"
-[ -z "$(find "$T/home/.local/share" -name '*af-*')" ] || fail "cursor: staging/aside dir left behind"
+# cursor: the block hands over to `workspace-agent boot-install cursor` (Go tests in
+# internal/bootinstall cover the digest, the partial unpack, the restore of a working tree and
+# the relink), with --repin only when the start repins, and runs no download of its own.
+reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=1
+grep -qx 'workspace-agent boot-install cursor' "$STUB_WA_LOG" || fail "cursor: not handed to workspace-agent ($(cat "$STUB_WA_LOG"))"
+reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=0
+grep -qx 'workspace-agent boot-install cursor --repin' "$STUB_WA_LOG" || fail "cursor: --repin not passed on a repin start"
+reset; run_block STUB_WA_RC=3 || fail "cursor: exit 3 aborted the entrypoint"
+has 'BI_LOW_SPACE=1' || fail "cursor: exit 3 did not set BI_LOW_SPACE"
+# Only cursor answers 3: dropping the exit-3 branch for cursor must show.
+reset; run_block STUB_WA_RC_CURSOR=3 STUB_WA_RC=0
+has 'BI_LOW_SPACE=1' || fail "cursor: its own exit 3 did not set BI_LOW_SPACE"
+reset; run_block STUB_WA_RC_CURSOR=0 STUB_WA_RC=3
+has 'BI_LOW_SPACE=1' || fail "cursor: a later success cleared the earlier no-space flag"
+reset; run_block STUB_WA_RC_CURSOR=1 STUB_WA_RC=0
+has 'BI_LOW_SPACE=0' || fail "cursor: exit 1 set BI_LOW_SPACE"
+reset; run_block STUB_WA_RC=126
+has 'WARN: cursor boot-install exited 126' || fail "cursor: no WARN for an exit outside the contract"
+grep -qP '^cursor\tfailed\tother' "$T/bidir/install.tsv" || fail "cursor: no failed status for an exit outside the contract"
+reset; run_block BI_AGENT_BIN="$T/none"
+has 'WARN: the Agent binary is missing; cursor boot-install skipped' || fail "cursor: no WARN without the Agent"
+grep -qP '^cursor\tfailed\tother' "$T/bidir/install.tsv" || fail "cursor: no failed status without the Agent"
+# A working copy is recorded skipped, not broken, when the Agent is missing.
+reset; mkdir -p "$T/home/.local/bin"; printf '#!/bin/sh\necho c\n' >"$T/home/.local/bin/cursor-agent"; chmod +x "$T/home/.local/bin/cursor-agent"
+run_block BI_AGENT_BIN="$T/none"
+grep -qP '^cursor\tskipped' "$T/bidir/install.tsv" || fail "cursor: a working copy was not recorded skipped without the Agent"
+reset; run_block
+[ -e "$T/home/.local/bin/cursor-agent" ] || [ -e "$T/home/.local/share/cursor-agent" ] && fail "cursor: shell installed cursor itself"
+grep -q 'CUR_NEED' "$BLOCK" && fail "cursor: shell install block still present"
 
 # rtk: the block hands over to `workspace-agent boot-install rtk`, with --repin only when the
 # start repins, and runs no download of its own.
@@ -242,12 +228,5 @@ grep -qP '^codex\tfailed' "$T/fb.tsv" || fail "npm: an unremovable copy left no 
 # The shell no longer carries an npm install or a verify of its own.
 grep -q 'npm install -g' "$BLOCK" && fail "npm: shell install block still present"
 grep -q 'npm_clis_verify' "$BLOCK" && fail "npm: shell verify still present"
-
-# mktemp / download failures stop the block before anything is written outside a temp dir.
-for what in STUB_MKTEMP_FAIL STUB_CURL_FAIL; do
-  reset; run_block $what=1
-  has "WARN: cursor boot-install failed" || fail "cursor: no WARN with $what"
-  [ -z "$(find "$T/cwd" "$T/home" -maxdepth 1 -type f)" ] || fail "files written outside .local with $what"
-done
 
 [ "$fails" = 0 ] && echo "ok: entrypoint boot-install failure handling" || exit 1
