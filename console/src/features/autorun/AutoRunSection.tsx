@@ -44,12 +44,15 @@ function useQueueRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDeliv
     let listing = false;
     const reading = new Set<string>();
     let current = new Set<string>(); // categories the latest queue list names
+    // Bumped when a category leaves the list, so a read begun before cannot land after it returns.
+    const epoch = new Map<string, number>();
     const readCategory = async (q: MemoQueue) => {
       if (reading.has(q.categoryId)) return;
       reading.add(q.categoryId);
+      const mine = epoch.get(q.categoryId) ?? 0;
       try {
         const list = readDeliveries(await memoQueueDeliveries(q.categoryId));
-        if (!live || !list || !current.has(q.categoryId)) return;
+        if (!live || !list || !current.has(q.categoryId) || (epoch.get(q.categoryId) ?? 0) !== mine) return;
         setDeliveries((prev) => {
           const next = new Map(prev);
           const seen = new Set(list.map((d) => d.session));
@@ -64,7 +67,7 @@ function useQueueRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDeliv
       } catch {
         /* keep what this category had */
       } finally {
-        reading.delete(q.categoryId);
+        if ((epoch.get(q.categoryId) ?? 0) === mine) reading.delete(q.categoryId);
       }
     };
     const load = async () => {
@@ -73,7 +76,13 @@ function useQueueRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDeliv
       try {
         const wire = readMemoQueues(await memoQueueList());
         if (!live || !wire) return;
-        current = new Set(wire.queues.map((q) => q.categoryId));
+        const now = new Set(wire.queues.map((q) => q.categoryId));
+        for (const id of current) {
+          if (now.has(id)) continue;
+          epoch.set(id, (epoch.get(id) ?? 0) + 1);
+          reading.delete(id);
+        }
+        current = now;
         setQueues(wire.queues);
         // A category that is gone is no longer read: whatever it left unsettled is dropped too.
         setDeliveries((prev) => {

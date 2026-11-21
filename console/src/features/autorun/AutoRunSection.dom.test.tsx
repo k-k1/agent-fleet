@@ -201,6 +201,32 @@ describe("AutoRunSection", () => {
     }
   });
 
+  it("ignores a late answer to a read begun before its category was deleted and created again", async () => {
+    vi.useFakeTimers();
+    try {
+      let late: (v: unknown) => void = () => {};
+      memoQueueDeliveries.mockImplementationOnce(() => new Promise((r) => (late = r)));
+      await mount(); // the first read of c1 stays pending
+      const one = { tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] };
+      memoQueueList.mockResolvedValueOnce({ tenantEnabled: true, queues: [] }).mockResolvedValue(one);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000); // deleted
+      });
+      useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.map((x) => (x.origin === "user" ? x : { ...x, alive: false })) });
+      memoQueueDeliveries.mockImplementation(async () => []);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000); // created again: a new read starts
+      });
+      await act(async () => {
+        late([{ id: "d1", session: "run-a", state: "open" }]); // the old answer arrives now
+        await Promise.resolve();
+      });
+      expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull(); // not pinned open again
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("says so when there is no run", async () => {
     useSessionsStore.setState({ sessions: [sess("hand", { origin: "user" })] });
     await mount();

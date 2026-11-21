@@ -559,10 +559,19 @@ function pruneForest(
     const ch = pruneForest(n.children, keep, scopeKeep);
     const groups: RepoTreeGroup[] = [];
     const rest = [...ch.scope];
+    // Copies the display drops but the operational rule matches (a mixed copy whose hidden
+    // auto-run session carries the match) are still reached through this node.
+    const opOnly = (all: RepoTreeNode[], shown: RepoTreeNode[]): RepoTreeNode[] => {
+      if (scopeKeep === keep) return [];
+      const have = new Set(shown.map((x) => x.repo.name));
+      const op = pruneForest(all, scopeKeep, scopeKeep);
+      return [...op.kept, ...op.scope].filter((x) => !have.has(x.repo.name));
+    };
+    rest.push(...opOnly(n.children, [...ch.kept, ...ch.scope]));
     for (const g of n.groups) {
       const gr = pruneForest(g.nodes, keep, scopeKeep);
       if (gr.kept.length > 0) groups.push({ kind: g.kind, nodes: gr.kept });
-      rest.push(...gr.scope);
+      rest.push(...gr.scope, ...opOnly(g.nodes, [...gr.kept, ...gr.scope]));
     }
     // Detached copies are never displayed, so only the operational rule applies to them.
     const det = pruneForest(n.detached ?? [], scopeKeep, scopeKeep);

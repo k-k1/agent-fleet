@@ -610,3 +610,18 @@ describe("a filter narrows stop and delete by every session, hidden auto-run inc
     expect(planTree(f[0], sessions).map((p) => p.repo.name)).toEqual(["af"]);
   });
 });
+
+describe("a filter and a mixed copy an auto-run's title matches", () => {
+  const t = (n: number) => `2026-09-0${n}T00:00:00Z`;
+  const repos = [repo("af"), wt("af@mix", "af", { createdAt: t(1) })];
+  const live = (x: Session): Session => ({ ...x, alive: true });
+  const sessions = [
+    live(sess("run", { repo: "af@mix", createdAt: t(1), origin: "queue" })),
+    live(sess("hand", { repo: "af@mix", createdAt: t(2), origin: "user" })),
+  ];
+  it("reaches the copy from the base when the run's title is what matched", () => {
+    const f = filterRepoTree(repoTree(repos, sessions), (r) => r.name === "af", (r) => r.name === "af" || r.name === "af@mix");
+    expect(planStopTree(f[0], sessions).map((g) => g.repo.name)).toEqual(["af@mix"]);
+    expect(planTree(f[0], sessions).map((p) => p.repo.name).sort()).toEqual(["af", "af@mix"]);
+  });
+});
