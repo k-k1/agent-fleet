@@ -296,5 +296,29 @@ describe("SchedulesSection scheduled sessions before the schedule list has loade
     store.setState({ sessions: [] });
     await act(async () => useTenantStore.setState({ tenant: "" } as never));
   });
-});
 
+  it("waits again for a first read when the member returns to a tenant after another one expired", async () => {
+    vi.useFakeTimers();
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    try {
+      const store = await seed();
+      scheduleList.mockResolvedValue([sched]);
+      await act(async () => useTenantStore.setState({ tenant: "A" } as never));
+      await render();
+      await act(async () => {
+        vi.advanceTimersByTime(6000); // A's own wait expires
+      });
+      scheduleList.mockResolvedValue([{ ...sched, id: "sch_other" }]); // B lists another schedule
+      await act(async () => useTenantStore.setState({ tenant: "B" } as never));
+      await act(async () => {});
+      scheduleList.mockReturnValue(new Promise(() => {}));
+      await act(async () => useTenantStore.setState({ tenant: "A" } as never));
+      await act(async () => {});
+      expect(host.querySelector("[data-sched-sessions]")?.querySelector('[data-sched-session="mine-run"]') ?? null).toBeNull(); // A is reading again
+      store.setState({ sessions: [] });
+    } finally {
+      vi.useRealTimers();
+      await act(async () => useTenantStore.setState({ tenant: "" } as never));
+    }
+  });
+});

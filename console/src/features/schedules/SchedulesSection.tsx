@@ -417,9 +417,14 @@ export const SchedulesSection = memo(function SchedulesSection() {
   // Until this tenant's first read has settled the list of schedules is unknown, so a run that
   // names a schedule is held back rather than shown in the group and then moved under its row
   // (which would drop an open fold or the focus). A failed first read ends the wait.
-  useEffect(() => {
+  // Layout effect so the stale mark is cleared before paint: leaving a tenant and coming back is a
+  // new first read, and the earlier visit's expiry must not skip its wait.
+  useLayoutEffect(() => {
     const id = setTimeout(() => setWaitedFor(tenant), FIRST_READ_WAIT_MS);
-    return () => clearTimeout(id);
+    return () => {
+      clearTimeout(id);
+      setWaitedFor(null);
+    };
   }, [tenant]);
   const firstReadPending = loadedFor !== tenant && !(loadErr && loadErrFor === tenant) && waitedFor !== tenant;
   const grouped = useMemo(() => {
