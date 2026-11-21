@@ -71,6 +71,21 @@ func TestBuildProgramPermissionsOn(t *testing.T) {
 	if strings.Contains(got, "--permission-mode plan") {
 		t.Errorf("normal launch must not start in plan: %q", got)
 	}
+	if !strings.Contains(got, "--permission-mode default") {
+		t.Errorf("permissions-on launch must start in manual mode: %q", got)
+	}
+	// bypass and plan are unchanged.
+	if b := buildProgram("55555555-5555-4555-8555-555555555bym", "", "", "", "", "", true); strings.Contains(b, "--permission-mode") {
+		t.Errorf("bypass launch must not set a permission mode: %q", b)
+	}
+	if p := buildProgram("55555555-5555-4555-8555-555555555pln", "", "", "plan", "", "", false); strings.Contains(p, "--permission-mode default") {
+		t.Errorf("plan launch must not also set default: %q", p)
+	}
+	// An explicit mode in AGENT_CLAUDE_FLAGS is not duplicated.
+	t.Setenv("AGENT_CLAUDE_FLAGS", "--permission-mode acceptEdits")
+	if o := buildProgram("55555555-5555-4555-8555-555555555ovr", "", "", "", "", "", false); strings.Contains(o, "--permission-mode default") {
+		t.Errorf("AGENT_CLAUDE_FLAGS mode overridden: %q", o)
+	}
 }
 
 // TestBuildProgramBlocksNativePeerChannel: claude's own cross-session channel must be

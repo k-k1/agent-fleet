@@ -195,15 +195,23 @@ func buildProgramPinned(pin []string, sid, model, effort, mode, label, forkFrom 
 		// never re-copies the source.
 		return launchCommand(fmt.Sprintf("claude --resume %s %s", session.ShellQuote(resume), flags))
 	}
+	// Prompts on must start in manual (ask) mode whatever the CLI's own default is: 2.1.330 came
+	// up in auto mode, which refuses every command a PreToolUse hook rewrites. Not added on a
+	// resume (below), so a mode the member cycled to with shift+tab is not undone; an explicit
+	// --permission-mode in AGENT_CLAUDE_FLAGS wins.
+	freshFlags := flags
+	if !bypass && mode != "plan" && !strings.Contains(" "+flags+" ", " --permission-mode ") {
+		freshFlags += " --permission-mode default"
+	}
 	if forkFrom != "" {
 		// First launch of a fork: copy the source conversation into OUR sid via the
 		// official --fork-session, pinning the new id with --session-id so it lands
 		// exactly on our deterministic jsonl (verified: --session-id sets the fork's
 		// id). The source jsonl is left untouched.
 		return launchCommand(fmt.Sprintf("claude --resume %s --fork-session --session-id %s %s",
-			session.ShellQuote(forkFrom), session.ShellQuote(sid), flags))
+			session.ShellQuote(forkFrom), session.ShellQuote(sid), freshFlags))
 	}
-	return launchCommand(fmt.Sprintf("claude --session-id %s %s", session.ShellQuote(sid), flags))
+	return launchCommand(fmt.Sprintf("claude --session-id %s %s", session.ShellQuote(sid), freshFlags))
 }
 
 // rawJSONLPaths returns the conversation log file(s) claude stores UNDER THAT EXACT
