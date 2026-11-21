@@ -74,7 +74,7 @@ cat >"$T/bin/workspace-agent" <<'S'
 #!/bin/sh
 echo "workspace-agent $*" >>"$STUB_WA_LOG"
 # STUB_WA_RC_NPM answers only the npm steps, so a test can tell the two mappings apart.
-case "$2" in npm|npm-verify) exit "${STUB_WA_RC_NPM:-${STUB_WA_RC:-0}}" ;; cursor) exit "${STUB_WA_RC_CURSOR:-${STUB_WA_RC:-0}}" ;; esac
+case "$2" in npm|npm-verify|npm-recover) exit "${STUB_WA_RC_NPM:-${STUB_WA_RC:-0}}" ;; cursor) exit "${STUB_WA_RC_CURSOR:-${STUB_WA_RC:-0}}" ;; esac
 exit "${STUB_WA_RC:-0}"
 S
 chmod +x "$T"/bin/*
@@ -85,6 +85,7 @@ fails=0
 fail() { echo "FAIL: $1" >&2; echo "--- output ---" >&2; cat "$T/out" >&2; fails=$((fails+1)); }
 # run_block [VAR=val ...] — one start. SKIP=1 means no repin, so only absence/breakage triggers.
 run_block() {
+  : >"$STUB_WA_LOG"
   cd "$T/cwd" && env -i PATH="$T/bin:/usr/bin:/bin:$(dirname "$(command -v node)")" HOME="$T/home" TMPDIR="$T/tmp" BI_DIR="$T/bidir" STUB_WA_LOG="$STUB_WA_LOG" BI_AGENT_BIN="$T/bin/workspace-agent" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
     bash -c 'set -e; export PATH="$HOME/.local/bin:$PATH"; source "$1"; echo "BI_LOW_SPACE=$BI_LOW_SPACE"' _ "$BLOCK" >"$T/out" 2>&1
 }
@@ -237,6 +238,34 @@ reset; rm -f "$T/fb.tsv"; mkdir -p "$T/home/.local/bin/codex/sub"
 fb 0 npm-verify --present
 grep -q STARTED "$T/fb.out" || fail "npm: an unremovable copy ended the start"
 grep -qP '^codex\tfailed' "$T/fb.tsv" || fail "npm: an unremovable copy left no status"
+# The recovery of a killed self-update runs before the OFF branch's `npm uninstall` and the lean block.
+reset; run_block STUB_WA_RC=0 || fail "npm-recover: the start aborted"
+rec=$(grep -nx 'workspace-agent boot-install npm-recover' "$STUB_WA_LOG" | head -1 | cut -d: -f1)
+npm1=$(grep -nx 'workspace-agent boot-install npm' "$STUB_WA_LOG" | head -1 | cut -d: -f1)
+{ [ -n "$rec" ] && [ -n "$npm1" ] && [ "$rec" -lt "$npm1" ]; } || fail "npm-recover: not run before the lean install ($(cat "$STUB_WA_LOG"))"
+reset; run_block STUB_WA_RC=126 || fail "npm-recover: an exit outside the contract aborted the start"
+has 'WARN: npm boot-install npm-recover exited 126' || fail "npm-recover: no WARN for an exit outside the contract"
+awk '/boot-install npm-recover/{r=NR} /npm uninstall -g/{u=NR} END{exit !(r && u && r<u)}' "$ENTRY" || fail "npm-recover: not before the OFF branch's npm uninstall"
+# The step is exactly this stanza, at the top of the start (no condition added to the call or the
+# line before it can skip it on the starts that most need it), and it runs: the stanza is cut out
+# of the entrypoint and executed against the stub Agent.
+awk '/^NPM_RECOVER_WA=/{on=1} on{print} on&&/^fi$/{exit}' "$ENTRY" >"$T/recover.sh"
+want='NPM_RECOVER_WA="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
+if [ -x "$NPM_RECOVER_WA" ]; then
+  "$NPM_RECOVER_WA" boot-install npm-recover || echo "[entrypoint] WARN: npm boot-install npm-recover exited $? (continuing)"
+fi'
+[ "$(cat "$T/recover.sh")" = "$want" ] || fail "npm-recover: the stanza in entrypoint.sh changed"
+prev_code() { awk '/^[ \t]*#/ || /^[ \t]*$/ { next } /^NPM_RECOVER_WA=/ { print last; exit } { last=$0 }' "$1"; }
+case "$(prev_code "$ENTRY")" in
+  *then|*do|*else|*'{'|*'&&'|*'||') fail "npm-recover: wrapped in a condition ($(prev_code "$ENTRY"))" ;;
+  '') fail "npm-recover: the step is missing" ;;
+esac
+: >"$STUB_WA_LOG"
+BI_AGENT_BIN="$T/bin/workspace-agent" bash -c 'set -e; . "$1"' _ "$T/recover.sh" >"$T/out" 2>&1 || fail "npm-recover: the stanza failed"
+grep -qx 'workspace-agent boot-install npm-recover' "$STUB_WA_LOG" || fail "npm-recover: the stanza did not call the Agent"
+BI_AGENT_BIN="$T/none" bash -c 'set -e; . "$1"; echo STARTED' _ "$T/recover.sh" >"$T/out" 2>&1; has STARTED || fail "npm-recover: a missing Agent ended the start"
+# Where it sits: before the OFF branch's uninstall and before the lean block's installs.
+awk '/boot-install npm-recover/{r=NR} /npm uninstall -g/{u=NR} /^LEAN_CLIS=0/{l=NR} END{exit !(r && u && l && r<l && l<u)}' "$ENTRY" || fail "npm-recover: not before the lean block and the OFF branch's uninstall"
 # The shell no longer carries an npm install or a verify of its own.
 grep -q 'npm install -g' "$BLOCK" && fail "npm: shell install block still present"
 grep -q 'npm_clis_verify' "$BLOCK" && fail "npm: shell verify still present"

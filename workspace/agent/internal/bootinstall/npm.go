@@ -195,6 +195,9 @@ func NPM(e Env) int {
 		if pin == "" {
 			continue
 		}
+		if e.npmPendingHas(c.Name) {
+			continue // its previous copy is still waiting to be put back
+		}
 		present := e.cliPresent(c.Name)
 		if present {
 			e.note(c.Name, statusSkip, "")
@@ -248,7 +251,12 @@ func NPM(e Env) int {
 // it, except that it clears an earlier "failed". Exit 0 when all run, 1 when one still does not,
 // 3 when a repair was skipped for lack of space.
 func (e Env) NPMVerify(clis []string, present bool) int {
-	var fix, fixCLIs, broken []string
+	var fix, fixCLIs, broken, stuckRestore []string
+	defer func() {
+		if len(stuckRestore) > 0 {
+			e.npmKeepPendingFor(stuckRestore)
+		}
+	}()
 	for _, c := range clis {
 		link := filepath.Join(e.localBin(), c)
 		if e.runs(link) {
@@ -256,6 +264,27 @@ func (e Env) NPMVerify(clis []string, present bool) int {
 				e.note(c, statusOK, "")
 			}
 			continue
+		}
+		// The every-start pass can follow an accepted self-update whose backups are still on disk:
+		// one probe that failed must not cost the previous copy, so it goes back first.
+		if present && e.npmPendingHas(c) {
+			// An earlier restore of this CLI has not gone through: its links are the copy being
+			// restored, so no repair or removal runs over them.
+			stuckRestore = append(stuckRestore, c)
+			continue
+		}
+		if present {
+			switch restored, failed := e.npmRestoreCLI(c); {
+			case failed:
+				// The previous copy could not be put back: it stays recorded for the next start
+				// and the pin repair below must not run over it.
+				stuckRestore = append(stuckRestore, c)
+				continue
+			case restored && e.runs(link):
+				fmt.Fprintf(e.Stdout, "[entrypoint] WARN: updated %s does not run; kept the previous copy\n", c)
+				e.note(c, statusOK, "")
+				continue
+			}
 		}
 		_, statErr := os.Lstat(link)
 		if statErr != nil && usable(filepath.Join(e.bakedBin(), c)) {
@@ -306,10 +335,14 @@ func (e Env) NPMVerify(clis []string, present bool) int {
 	}
 	// No space first: the entrypoint holds back its later downloads on it, and the individual
 	// failures are in the status file either way.
+	for _, c := range stuckRestore {
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s does not run and its previous copy could not be restored yet (retrying next start)\n", c)
+		e.note(c, statusFailed, ReasonOther)
+	}
 	switch {
 	case noSpace:
 		return ExitNoSpace
-	case len(broken) > 0:
+	case len(broken) > 0 || len(stuckRestore) > 0:
 		return ExitFailed
 	}
 	return ExitOK
@@ -330,8 +363,16 @@ func (e Env) removeLink(link string) bool {
 // install ran, is otherwise never looked at again.
 func (e Env) NPMVerifyPresent() int {
 	var list []string
+	_, marked, mok, mbad := e.npmReadMarker()
 	for _, c := range npmCLIs {
-		if _, err := os.Lstat(filepath.Join(e.localBin(), c.Name)); err == nil {
+		_, err := os.Lstat(filepath.Join(e.localBin(), c.Name))
+		// A CLI of an accepted update is looked at even when its new link vanished: its previous
+		// copy may still be on disk.
+		listed := false
+		for _, m := range marked {
+			listed = listed || (mok && !mbad && e.npmEntryCLI(m) == c.Name)
+		}
+		if err == nil || listed {
 			list = append(list, c.Name)
 		}
 	}
@@ -347,19 +388,16 @@ type npmAside struct{ cli, orig, bak string }
 const npmBakSuffix = ".af-bak"
 
 // npmMarker records one self-update's backups: a first line "pending" or "accepted", then the
-// original path of every entry moved aside (its backup is that path + npmBakSuffix). It is
-// written before anything is moved. A killed start leaves it behind, and recovery then acts on
-// exactly the listed backups: pending puts them back whatever the new copy looks like, accepted
-// deletes them. A *.af-bak that is not listed is someone else's and is never touched.
+// names of the CLIs whose trees were moved aside. Paths are never stored: recovery rebuilds a CLI's
+// tree and bin link from its name (npmAsidesOf), so a corrupt marker cannot point a restore or a
+// delete outside the npm paths, and an unknown entry refuses the whole marker before any
+// destructive step. It is written before anything is moved. A killed start leaves it behind, and
+// recovery then acts on the listed CLIs' backups: pending puts them back whatever the new copy
+// looks like, accepted deletes them. Where no backup exists at a rebuilt path there is nothing to do.
 func (e Env) npmMarker() string { return filepath.Join(e.Home, ".local", ".af-npm-update") }
 
-func (e Env) npmWriteMarker(state string, origs []string) error {
-	for _, o := range origs {
-		if strings.ContainsAny(o, "\r\n") {
-			return fmt.Errorf("a path with a line break cannot be recorded: %q", o)
-		}
-	}
-	body := state + "\n" + strings.Join(origs, "\n") + "\n"
+func (e Env) npmWriteMarker(state string, clis []string) error {
+	body := state + "\n" + strings.Join(clis, "\n") + "\n"
 	// An exclusive temp file beside the marker: a fixed name could be the member's own file or a link.
 	f, err := os.CreateTemp(filepath.Dir(e.npmMarker()), ".af-npm-update.tmp.")
 	if err != nil {
@@ -380,6 +418,100 @@ func (e Env) npmWriteMarker(state string, origs []string) error {
 		return err
 	}
 	return nil
+}
+
+// npmReadMarker parses the marker: its state and its entries. An entry is a CLI name (both of
+// its paths) or, from an earlier release, the exact tree or bin path of a known CLI under this
+// home (that one path only: the other side was never recorded and is not ours). ok is false when
+// there is no marker; bad is true when it is present but not one we wrote.
+func (e Env) npmReadMarker() (state string, entries []string, ok, bad bool) {
+	b, err := os.ReadFile(e.npmMarker())
+	if err != nil {
+		return "", nil, false, false
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	state = lines[0]
+	if state != "pending" && state != "accepted" {
+		return state, nil, true, true
+	}
+	for _, l := range lines[1:] {
+		if l == "" {
+			continue
+		}
+		if e.npmEntryCLI(l) == "" {
+			return state, nil, true, true
+		}
+		entries = append(entries, l)
+	}
+	return state, entries, true, false
+}
+
+// npmEntryCLI is the CLI a marker entry belongs to ("" for an entry we do not understand).
+func (e Env) npmEntryCLI(entry string) string {
+	if npmPkg(entry) != "" {
+		return entry
+	}
+	for _, c := range npmCLIs {
+		if entry == e.npmTreeOf(c.Pkg) || entry == filepath.Join(e.localBin(), c.Name) {
+			return c.Name
+		}
+	}
+	return ""
+}
+
+// npmAsidesOf rebuilds the backups the marker entries stand for: a name gives the CLI's tree and
+// bin link, a legacy path only itself; each counts when its <path>.af-bak exists.
+func (e Env) npmAsidesOf(entries []string) []npmAside {
+	var out []npmAside
+	for _, ent := range entries {
+		c := e.npmEntryCLI(ent)
+		paths := []string{ent}
+		if c == ent {
+			paths = []string{e.npmTreeOf(npmPkg(c)), filepath.Join(e.localBin(), c)}
+		}
+		for _, orig := range paths {
+			bak := orig + npmBakSuffix
+			// Only a confirmed ENOENT means there is no backup: an unreadable parent says nothing.
+			if _, err := os.Lstat(bak); !errors.Is(err, fs.ErrNotExist) {
+				out = append(out, npmAside{cli: c, orig: orig, bak: bak})
+			}
+		}
+	}
+	return out
+}
+
+// npmEntriesOf selects the marker entries that belong to one of the named CLIs.
+func (e Env) npmEntriesOf(entries, clis []string) []string {
+	var out []string
+	for _, ent := range entries {
+		for _, c := range clis {
+			if e.npmEntryCLI(ent) == c {
+				out = append(out, ent)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// npmPendingHas reports whether a pending marker still lists the CLI: its previous copy is waiting
+// to be put back, so nothing may repair, reinstall or remove the CLI's links meanwhile.
+func (e Env) npmPendingHas(cli string) bool {
+	state, entries, ok, bad := e.npmReadMarker()
+	return ok && !bad && state == "pending" && len(e.npmEntriesOf(entries, []string{cli})) > 0
+}
+
+// npmCLINames is the distinct CLI names of the entries, in order.
+func npmCLINames(as []npmAside) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, a := range as {
+		if !seen[a.cli] {
+			seen[a.cli] = true
+			out = append(out, a.cli)
+		}
+	}
+	return out
 }
 
 // npmTreeOf is the package tree of a CLI under lib/node_modules.
@@ -406,23 +538,25 @@ func npmManagedBin(bin, tree string) bool {
 	return t == tree || strings.HasPrefix(t, tree+string(filepath.Separator))
 }
 
-// npmRecoverAside settles what a killed self-update left, by what its marker lists. Run it before
-// anything else looks at the npm CLIs. The marker goes only when every listed backup is settled.
-func (e Env) npmRecoverAside() {
-	b, err := os.ReadFile(e.npmMarker())
-	if err != nil {
+// npmRecoverAside settles what a killed or finished self-update left, by what its marker lists.
+// Run it before anything else looks at the npm CLIs. The marker goes only when every listed
+// backup is settled. keepAccepted leaves an accepted update's backups in place (the final
+// verify pass of the same start may still need them: see npmRestoreCLI).
+func (e Env) npmRecoverAside(keepAccepted bool) {
+	state, clis, ok, bad := e.npmReadMarker()
+	if !ok {
 		return
 	}
-	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	accepted := lines[0] == "accepted"
-	var all []npmAside
-	for _, orig := range lines[1:] {
-		if orig == "" {
-			continue
-		}
-		all = append(all, npmAside{orig: orig, bak: orig + npmBakSuffix})
+	if bad {
+		// Not ours: act on nothing, and say so; the backups (if any) stay where they are.
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: ignoring an unreadable %s (backups, if any, stay as *%s)\n", e.npmMarker(), npmBakSuffix)
+		return
 	}
-	if accepted {
+	all := e.npmAsidesOf(clis)
+	if state == "accepted" {
+		if keepAccepted {
+			return
+		}
 		if !npmDiscardAside(all) {
 			return // something stayed behind: keep the marker so the next start sweeps it again
 		}
@@ -430,6 +564,47 @@ func (e Env) npmRecoverAside() {
 		return // a backup could not be put back: keep the marker so the next start tries again
 	}
 	os.Remove(e.npmMarker())
+}
+
+// npmRestoreCLI puts back the previous copy of one CLI whose accepted new copy turned out not to
+// run, while the backup is still there. restored says a previous copy went back; failed says one
+// is there and could not be put back.
+func (e Env) npmRestoreCLI(cli string) (restored, failed bool) {
+	state, entries, ok, bad := e.npmReadMarker()
+	if !ok || bad || state != "accepted" {
+		return false, false
+	}
+	as := e.npmAsidesOf(e.npmEntriesOf(entries, []string{cli}))
+	if len(as) == 0 {
+		return false, false
+	}
+	if e.npmRestoreAside(as) {
+		return true, false
+	}
+	return false, true
+}
+
+// npmKeepPendingFor turns an accepted marker into a pending one that keeps only the entries of the
+// CLIs whose restore failed, so the next start retries it; the other CLIs' backups (all verified
+// by now) go.
+func (e Env) npmKeepPendingFor(stuck []string) {
+	state, entries, ok, bad := e.npmReadMarker()
+	if !ok || bad || state != "accepted" {
+		return
+	}
+	keep := e.npmEntriesOf(entries, stuck)
+	var rest []string
+	for _, ent := range entries {
+		in := false
+		for _, k := range keep {
+			in = in || k == ent
+		}
+		if !in {
+			rest = append(rest, ent)
+		}
+	}
+	npmDiscardAside(e.npmAsidesOf(rest))
+	_ = e.npmWriteMarker("pending", keep)
 }
 
 // npmMoveAside renames the installed tree and npm's own bin link of every npm CLI to
@@ -450,12 +625,18 @@ func (e Env) npmMoveAside() ([]npmAside, error) {
 			plan = append(plan, cand{c.Name, bin})
 		}
 	}
-	origs := make([]string, 0, len(plan))
+	var clis []string
 	for _, c := range plan {
-		if _, err := os.Lstat(c.orig + npmBakSuffix); err == nil {
-			return nil, fmt.Errorf("%s already exists; not overwriting it", c.orig+npmBakSuffix)
+		// The marker names the CLI, so recovery treats both of its paths as ours: neither may
+		// carry a *.af-bak we did not make, whichever of the two is moved.
+		for _, p := range []string{e.npmTreeOf(npmPkg(c.cli)), filepath.Join(e.localBin(), c.cli)} {
+			if _, err := os.Lstat(p + npmBakSuffix); !errors.Is(err, fs.ErrNotExist) {
+				return nil, fmt.Errorf("%s already exists; not overwriting it", p+npmBakSuffix)
+			}
 		}
-		origs = append(origs, c.orig)
+		if len(clis) == 0 || clis[len(clis)-1] != c.cli {
+			clis = append(clis, c.cli)
+		}
 	}
 	if len(plan) == 0 {
 		return nil, nil
@@ -463,7 +644,7 @@ func (e Env) npmMoveAside() ([]npmAside, error) {
 	if err := os.MkdirAll(filepath.Dir(e.npmMarker()), 0o755); err != nil {
 		return nil, err
 	}
-	if err := e.npmWriteMarker("pending", origs); err != nil {
+	if err := e.npmWriteMarker("pending", clis); err != nil {
 		return nil, err
 	}
 	var moved []npmAside
@@ -472,8 +653,10 @@ func (e Env) npmMoveAside() ([]npmAside, error) {
 		if err := os.Rename(c.orig, bak); err != nil {
 			if e.npmRestoreAside(moved) {
 				os.Remove(e.npmMarker())
+				return nil, err
 			}
-			return nil, err
+			// The marker stays so the next start puts the rest back; the error says where.
+			return nil, fmt.Errorf("%w (previous copies are kept as *%s under ~/.local)", err, npmBakSuffix)
 		}
 		moved = append(moved, npmAside{c.cli, c.orig, bak})
 	}
@@ -483,19 +666,29 @@ func (e Env) npmMoveAside() ([]npmAside, error) {
 // npmRestoreAside puts the moved paths back, discarding whatever npm wrote at their names. It
 // reports whether every one went back.
 func (e Env) npmRestoreAside(moved []npmAside) bool {
-	ok := true
+	return len(e.npmRestoreAsideFailed(moved)) == 0
+}
+
+// npmRestoreAsideFailed is npmRestoreAside that returns the entries that did not go back.
+func (e Env) npmRestoreAsideFailed(moved []npmAside) []npmAside {
+	var failed []npmAside
 	for i := len(moved) - 1; i >= 0; i-- {
 		m := moved[i]
 		if _, err := os.Lstat(m.bak); err != nil {
-			continue // already back
+			if errors.Is(err, fs.ErrNotExist) {
+				continue // already back
+			}
+			failed = append(failed, m) // unreadable says nothing about the backup
+			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: could not look at %s: %v\n", m.bak, err)
+			continue
 		}
 		removeTree(m.orig)
 		if err := os.Rename(m.bak, m.orig); err != nil {
-			ok = false
+			failed = append(failed, m)
 			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: could not restore %s: %v (previous copy left at %s)\n", m.orig, err, m.bak)
 		}
 	}
-	return ok
+	return failed
 }
 
 // npmDiscardAside deletes the backups once the new copies are trusted and reports whether none
@@ -511,4 +704,13 @@ func npmDiscardAside(moved []npmAside) bool {
 		}
 	}
 	return gone
+}
+
+// NPMVerifyPresentStep is the entrypoint's final pass: it recovers what a killed update left but
+// keeps an accepted update's backups, verifies the copies, then settles the backups.
+func (e Env) NPMVerifyPresentStep() int {
+	e.npmRecoverAside(true)
+	rc := e.NPMVerifyPresent()
+	e.npmRecoverAside(false)
+	return rc
 }
