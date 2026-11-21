@@ -321,4 +321,23 @@ describe("SchedulesSection scheduled sessions before the schedule list has loade
       await act(async () => useTenantStore.setState({ tenant: "" } as never));
     }
   });
+
+  it("waits again when the member returns to a tenant whose first read had failed", async () => {
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    try {
+      const store = await seed();
+      scheduleList.mockResolvedValue({ error: { code: "http_502", message: "bad gateway" } });
+      await act(async () => useTenantStore.setState({ tenant: "A" } as never));
+      await render();
+      expect(host.querySelector('[data-sched-session="mine-run"]')).not.toBeNull(); // A failed: shown in the group
+      scheduleList.mockReturnValue(new Promise(() => {})); // B and the second A never answer
+      await act(async () => useTenantStore.setState({ tenant: "B" } as never));
+      await act(async () => useTenantStore.setState({ tenant: "A" } as never));
+      await act(async () => {});
+      expect(host.querySelector("[data-sched-sessions]")?.querySelector('[data-sched-session="mine-run"]') ?? null).toBeNull();
+      store.setState({ sessions: [] });
+    } finally {
+      await act(async () => useTenantStore.setState({ tenant: "" } as never));
+    }
+  });
 });
