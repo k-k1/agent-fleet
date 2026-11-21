@@ -195,22 +195,17 @@ func (e Env) selfUpdateNPM() {
 	if stderr, err := e.npmInstall(specs); err != nil {
 		fmt.Fprint(e.Stderr, stderr)
 		e.npmRestoreAside(moved)
+		moved = nil
 		if usable(filepath.Join(e.bakedBin(), "opencode")) {
 			fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update failed (using baked versions)")
 		} else {
 			fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update failed (kept the installed versions)")
 		}
 	} else {
+		// A CLI whose new copy does not run goes back to its previous one now; the rest stay
+		// backed up until the verify pass below has had its say.
+		reverted := e.npmNotRunning(moved)
 		var keep []npmAside
-		reverted := map[string]bool{}
-		for _, m := range moved {
-			if reverted[m.cli] {
-				continue
-			}
-			if !e.runs(filepath.Join(e.localBin(), m.cli)) {
-				reverted[m.cli] = true
-			}
-		}
 		for _, m := range moved {
 			if reverted[m.cli] {
 				e.npmRestoreAside([]npmAside{m})
@@ -218,16 +213,49 @@ func (e Env) selfUpdateNPM() {
 			}
 			keep = append(keep, m)
 		}
-		npmDiscardAside(keep)
 		for _, c := range names {
 			if reverted[c] {
 				fmt.Fprintf(e.Stdout, "[entrypoint] WARN: updated %s does not run; kept the previous copy\n", c)
 			}
 		}
 		fmt.Fprintln(e.Stdout, "[entrypoint] agent CLIs updated (~/.local)")
+		moved = keep
 	}
 	// A failed install can leave a half-replaced tree, or none, so check either way.
 	e.NPMVerify(names, false)
+	// The verify pass may still drop a new copy (it removes a link that does not run): the
+	// previous copy goes back for those, and only then are the backups given up.
+	failed := e.npmNotRunning(moved)
+	var still []npmAside
+	for _, m := range moved {
+		if failed[m.cli] {
+			e.npmRestoreAside([]npmAside{m})
+		} else {
+			still = append(still, m)
+		}
+	}
+	moved = still
+	if len(failed) > 0 {
+		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: a new agent CLI copy failed verification; kept the previous copy")
+	}
+	os.Remove(e.npmMarker()) // accepted: from here the backups are stale and only deleted
+	npmDiscardAside(moved)
+}
+
+// npmNotRunning is the set of CLIs among the moved entries whose ~/.local copy does not answer
+// --version; each CLI is asked once, however many of its paths were moved.
+func (e Env) npmNotRunning(moved []npmAside) map[string]bool {
+	asked, bad := map[string]bool{}, map[string]bool{}
+	for _, m := range moved {
+		if asked[m.cli] {
+			continue
+		}
+		asked[m.cli] = true
+		if !e.runs(filepath.Join(e.localBin(), m.cli)) {
+			bad[m.cli] = true
+		}
+	}
+	return bad
 }
 
 func (e Env) npmLatest(pkg string) string {

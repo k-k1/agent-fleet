@@ -492,17 +492,49 @@ var lstatAlias = os.Lstat
 // readlinkAlias is a seam for tests: reading where the alias points.
 var readlinkAlias = os.Readlink
 
-// installCursorLatest runs the upstream install script against a private HOME beside the real
-// share directory and publishes the version it unpacked only after that bundle answers
-// --version. The script never touches ~/.local: run against the real home, a timeout after it
-// removed the old link, or a bundle that only has the execute bit, left no working copy.
-// The stage sits under ~/.local/share/cursor-agent so the final move is a rename on one filesystem.
-func (e Env) installCursorLatest(ctx context.Context, script string) error {
-	parent := filepath.Dir(e.cursorShare())
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+// cursorAnswers is cursorRuns that also requires a version on stdout: a bundle that exits 0
+// and prints nothing is not a working one.
+func (e Env) cursorAnswers(p string) bool {
+	out, _, err := e.probeArgs(p, []string{"--disable-auto-update", "--version"}, nil)
+	return err == nil && out != ""
+}
+
+// cursorSweepStale removes what a killed self-update left in the versions directory: a stage,
+// and the aside copy of a tree that was being replaced (put back when its name is free).
+func (e Env) cursorSweepStale() {
+	versions := e.cursorShare()
+	if m, _ := filepath.Glob(filepath.Join(versions, ".af-up-*")); len(m) > 0 {
+		for _, p := range m {
+			removeTree(p)
+		}
+	}
+	old, _ := filepath.Glob(filepath.Join(versions, "*.af-old.*"))
+	for _, p := range old {
+		dir := p[:strings.Index(p, ".af-old.")]
+		if _, err := os.Lstat(dir); err != nil {
+			_ = restoreTree(p, dir)
+			continue
+		}
+		removeTree(p)
+	}
+}
+
+// installCursorLatest runs the upstream install script against a private HOME inside the real
+// versions directory (so publishing is a rename on one filesystem) and publishes the version it
+// unpacked only after that bundle answers --version. The script never touches ~/.local: run
+// against the real home, a timeout after it removed the old link, or a bundle that only has the
+// execute bit, left no working copy. A healthy tree already published under the same version is
+// kept and only relinked. Every failure after the first change goes through one rollback.
+func (e Env) installCursorLatest(ctx context.Context, script string) (err error) {
+	versions := e.cursorShare()
+	if err := os.MkdirAll(versions, 0o755); err != nil {
 		return err
 	}
-	stage, err := os.MkdirTemp(parent, ".af-up-")
+	if err := os.MkdirAll(e.localBin(), 0o755); err != nil {
+		return err
+	}
+	e.cursorSweepStale()
+	stage, err := os.MkdirTemp(versions, ".af-up-")
 	if err != nil {
 		return err
 	}
@@ -520,67 +552,106 @@ func (e Env) installCursorLatest(ctx context.Context, script string) error {
 		return fmt.Errorf("the install script left no cursor-agent: %w", err)
 	}
 	verDir := filepath.Dir(cand)
-	versions := filepath.Join(real, ".local", "share", "cursor-agent", "versions")
+	stageVersions := filepath.Join(real, ".local", "share", "cursor-agent", "versions")
 	ver := filepath.Base(verDir)
-	if filepath.Base(cand) != cursorTool || filepath.Dir(verDir) != versions || ver == "" || ver == "." || ver == ".." {
+	if filepath.Base(cand) != cursorTool || filepath.Dir(verDir) != stageVersions || ver == "" || ver == "." || ver == ".." || strings.HasPrefix(ver, ".af-") {
 		return fmt.Errorf("the install script put cursor-agent at an unexpected path: %s", cand)
 	}
-	if !e.cursorRuns(cand) {
-		return fmt.Errorf("cursor %s does not run in this environment, keeping the current copy", ver)
-	}
-	if err := os.MkdirAll(e.cursorShare(), 0o755); err != nil {
-		return err
-	}
-	dir := filepath.Join(e.cursorShare(), ver)
-	old := fmt.Sprintf("%s.af-old.%d", dir, os.Getpid())
-	removeTree(old)
-	if _, err := os.Lstat(dir); err == nil {
-		if err := os.Rename(dir, old); err != nil {
-			return err
-		}
-	}
-	if err := os.Rename(verDir, dir); err != nil {
-		if rerr := restoreTree(old, dir); rerr != nil {
-			return fmt.Errorf("%w; the previous tree is left at %s: %v", err, old, rerr)
-		}
-		return err
+	if !e.cursorAnswers(cand) {
+		return fmt.Errorf("cursor %s does not report a version in this environment, keeping the current copy", ver)
 	}
 	link := filepath.Join(e.localBin(), cursorTool)
-	if err := os.MkdirAll(e.localBin(), 0o755); err != nil {
-		return err
-	}
 	links, err := e.cursorLinks(link)
-	prevTargets := map[string]string{}
-	for _, l := range links {
-		if t, rerr := os.Readlink(l); rerr == nil {
-			prevTargets[l] = t
-		}
-	}
-	if err == nil {
-		err = relinkAll(links, filepath.Join(dir, cursorTool))
-	}
-	if err == nil && !e.cursorRuns(link) {
-		err = fmt.Errorf("cursor %s does not run through ~/.local/bin", ver)
-		// relinkAll succeeded, so the links have to go back by hand.
-		for _, l := range links {
-			if t, ok := prevTargets[l]; ok {
-				_ = relinkAll([]string{l}, t)
-			} else {
-				os.Remove(l)
-			}
-		}
-	}
 	if err != nil {
-		// Put the previous tree back (same-version replace); a new version directory is simply
-		// moved aside and removed.
-		bad := fmt.Sprintf("%s.af-bad.%d", dir, os.Getpid())
-		removeTree(bad)
-		if os.Rename(dir, bad) == nil {
-			_ = restoreTree(old, dir)
-			removeTree(bad)
-		}
 		return err
 	}
-	removeTree(old)
+	// The script's own `agent` alias follows too when the real home has none yet (a first install);
+	// another tool's alias is never touched.
+	alias := filepath.Join(e.localBin(), "agent")
+	if _, aerr := lstatAlias(alias); os.IsNotExist(aerr) {
+		if t, terr := filepath.EvalSymlinks(filepath.Join(stage, ".local", "bin", "agent")); terr == nil && t == cand {
+			links = append([]string{alias}, links...)
+		}
+	}
+
+	var undo []func() // run in reverse order on failure
+	defer func() {
+		if err == nil {
+			return
+		}
+		for i := len(undo) - 1; i >= 0; i-- {
+			undo[i]()
+		}
+	}()
+
+	dir := filepath.Join(versions, ver)
+	target := filepath.Join(dir, cursorTool)
+	if !e.cursorAnswers(target) {
+		old := fmt.Sprintf("%s.af-old.%d", dir, os.Getpid())
+		removeTree(old)
+		moved := false
+		if _, lerr := os.Lstat(dir); lerr == nil {
+			if err := os.Rename(dir, old); err != nil {
+				return err
+			}
+			moved = true
+		}
+		if err := os.Rename(verDir, dir); err != nil {
+			if rerr := restoreTree(old, dir); rerr != nil {
+				return fmt.Errorf("%w; the previous tree is left at %s: %v", err, old, rerr)
+			}
+			return err
+		}
+		undo = append(undo, func() {
+			bad := fmt.Sprintf("%s.af-bad.%d", dir, os.Getpid())
+			removeTree(bad)
+			if os.Rename(dir, bad) == nil {
+				if rerr := restoreTree(old, dir); rerr != nil {
+					fmt.Fprintf(e.Stderr, "cursor: the previous tree is left at %s: %v\n", old, rerr)
+				}
+				removeTree(bad)
+			}
+		})
+		if !e.cursorAnswers(target) {
+			return fmt.Errorf("cursor %s does not report a version at its final path, keeping the current copy", ver)
+		}
+		defer func() {
+			if err == nil && moved {
+				removeTree(old)
+			}
+		}()
+	}
+
+	// Links: a regular file in a link's place is moved aside whole, and every link's previous
+	// target is remembered, so the rollback gives back exactly what was there.
+	for _, l := range links {
+		l := l
+		st, lerr := os.Lstat(l)
+		switch {
+		case lerr != nil:
+			undo = append(undo, func() { os.Remove(l) })
+		case st.Mode()&os.ModeSymlink != 0:
+			t, _ := os.Readlink(l)
+			undo = append(undo, func() { _ = relinkAll([]string{l}, t) })
+		default:
+			keep := fmt.Sprintf("%s.af-prev.%d", l, os.Getpid())
+			os.Remove(keep)
+			if err := os.Rename(l, keep); err != nil {
+				return err
+			}
+			undo = append(undo, func() { os.Remove(l); _ = os.Rename(keep, l) })
+			defer func() {
+				if err == nil {
+					os.Remove(keep)
+				}
+			}()
+		}
+	}
+	if err := relinkAll(links, target); err != nil {
+		return err
+	}
+	if !e.cursorAnswers(link) {
+		return fmt.Errorf("cursor %s does not report a version through ~/.local/bin", ver)
+	}
 	return nil
 }

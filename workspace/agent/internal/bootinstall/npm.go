@@ -343,53 +343,92 @@ func (e Env) NPMVerifyPresent() int {
 // npmAside is one path npm may replace, moved aside before a self-update install.
 type npmAside struct{ cli, orig, bak string }
 
-// npmAsidePaths lists, for one CLI, what an `npm install -g` replaces: its package tree under
-// lib/node_modules and its bin entry.
-func (e Env) npmAsidePaths(c struct{ Name, Pkg string }) []string {
-	local := filepath.Join(e.Home, ".local")
-	return []string{
-		filepath.Join(local, "lib", "node_modules", filepath.FromSlash(c.Pkg)),
-		filepath.Join(local, "bin", c.Name),
-	}
-}
-
 const npmBakSuffix = ".af-bak"
 
-// npmRecoverAside finishes what a killed self-update left: a backup whose original is missing is
-// the only copy of the CLI and goes back; one beside a present original is stale and goes.
+// npmMarker exists while backups are the truth: written before anything is moved aside, removed
+// once the new copies are accepted (before the backups are deleted). A killed start leaves it
+// behind, and recovery then puts every backup back, whatever the new copy looks like.
+func (e Env) npmMarker() string { return filepath.Join(e.Home, ".local", ".af-npm-update") }
+
+// npmTreeOf is the package tree of a CLI under lib/node_modules.
+func (e Env) npmTreeOf(pkg string) string {
+	return filepath.Join(e.Home, ".local", "lib", "node_modules", filepath.FromSlash(pkg))
+}
+
+// npmManagedBin reports whether bin is a link that npm created for the package tree (it points
+// into it). A regular file, or a link to something else, belongs to someone else and is left
+// alone: npm refuses to overwrite it (EEXIST), as on main.
+func npmManagedBin(bin, tree string) bool {
+	st, err := os.Lstat(bin)
+	if err != nil || st.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	t, err := os.Readlink(bin)
+	if err != nil {
+		return false
+	}
+	if !filepath.IsAbs(t) {
+		t = filepath.Join(filepath.Dir(bin), t)
+	}
+	t = filepath.Clean(t)
+	return t == tree || strings.HasPrefix(t, tree+string(filepath.Separator))
+}
+
+// npmRecoverAside settles what a killed self-update left. With the marker present the backups
+// are put back (the new tree is discarded); without it they are stale leftovers of an accepted
+// update and go. Run it before anything else looks at the npm CLIs.
 func (e Env) npmRecoverAside() {
+	_, merr := os.Lstat(e.npmMarker())
+	marked := merr == nil
+	var all []npmAside
 	for _, c := range npmCLIs {
-		for _, orig := range e.npmAsidePaths(c) {
-			bak := orig + npmBakSuffix
-			if _, err := os.Lstat(bak); err != nil {
-				continue
-			}
-			if _, err := os.Lstat(orig); err == nil {
-				removeTree(bak)
-				continue
-			}
-			if err := os.Rename(bak, orig); err != nil {
-				fmt.Fprintf(e.Stdout, "[entrypoint] WARN: could not restore %s: %v\n", orig, err)
+		for _, orig := range []string{e.npmTreeOf(c.Pkg), filepath.Join(e.localBin(), c.Name)} {
+			if _, err := os.Lstat(orig + npmBakSuffix); err == nil {
+				all = append(all, npmAside{c.Name, orig, orig + npmBakSuffix})
 			}
 		}
 	}
+	if marked {
+		e.npmRestoreAside(all)
+	} else {
+		npmDiscardAside(all)
+	}
+	if marked {
+		os.Remove(e.npmMarker())
+	}
 }
 
-// npmMoveAside renames the existing tree and bin entry of every npm CLI to <path>.af-bak, so an
-// install that dies half-way (ENOSPC, a kill) cannot take the only copy with it. A rename needs
-// no extra space. On an error everything moved so far is put back.
+// npmMoveAside renames the installed tree and npm's own bin link of every npm CLI to
+// <path>.af-bak, so an install that dies half-way (ENOSPC, a kill) cannot take the only copy
+// with it. A rename needs no extra space. On an error everything moved so far is put back.
 func (e Env) npmMoveAside() ([]npmAside, error) {
+	if err := os.MkdirAll(filepath.Dir(e.npmMarker()), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(e.npmMarker(), nil, 0o644); err != nil {
+		return nil, err
+	}
 	var moved []npmAside
+	fail := func(err error) ([]npmAside, error) {
+		e.npmRestoreAside(moved)
+		os.Remove(e.npmMarker())
+		return nil, err
+	}
 	for _, c := range npmCLIs {
-		for _, orig := range e.npmAsidePaths(c) {
-			if _, err := os.Lstat(orig); err != nil {
-				continue
-			}
+		tree := e.npmTreeOf(c.Pkg)
+		bin := filepath.Join(e.localBin(), c.Name)
+		paths := []string{}
+		if _, err := os.Lstat(tree); err == nil {
+			paths = append(paths, tree)
+		}
+		if npmManagedBin(bin, tree) {
+			paths = append(paths, bin)
+		}
+		for _, orig := range paths {
 			bak := orig + npmBakSuffix
 			removeTree(bak)
 			if err := os.Rename(orig, bak); err != nil {
-				e.npmRestoreAside(moved)
-				return nil, err
+				return fail(err)
 			}
 			moved = append(moved, npmAside{c.Name, orig, bak})
 		}
