@@ -275,3 +275,27 @@ func TestParseUsageJSONWorkspaceAccount(t *testing.T) {
 		t.Errorf("claude/gpt = %+v", g)
 	}
 }
+
+// A reply that is incomplete or off-schema must fail (so the TUI fallback answers) rather than
+// parse into a plausible but wrong reading.
+func TestParseUsageJSONRejectsIncomplete(t *testing.T) {
+	wrap := func(groups string) []byte { return []byte(`{"command":{"data":{"groups":[` + groups + `]}}}`) }
+	cases := map[string]string{
+		"missing fraction": `{"name":"G","buckets":[{"window":"weekly","reset_time":"2026-11-28T09:25:01Z"}]}`,
+		"fraction > 1":     `{"name":"G","buckets":[{"window":"weekly","remaining_fraction":1.5,"reset_time":"2026-11-28T09:25:01Z"}]}`,
+		"bad reset":        `{"name":"G","buckets":[{"window":"weekly","remaining_fraction":0,"reset_time":"soon"}]}`,
+		"empty reset":      `{"name":"G","buckets":[{"window":"weekly","remaining_fraction":0,"reset_time":""}]}`,
+		"5h-only group first": `{"name":"A","buckets":[{"window":"5h","remaining_fraction":1,"reset_time":"2026-11-21T13:58:55Z"}]},` +
+			`{"name":"B","buckets":[{"window":"weekly","remaining_fraction":1,"reset_time":"2026-11-28T09:25:01Z"}]}`,
+	}
+	for name, groups := range cases {
+		if _, err := parseUsageJSON(wrap(groups)); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+	}
+	// A real 0% stays a reading.
+	res, err := parseUsageJSON(wrap(`{"name":"G","buckets":[{"window":"weekly","remaining_fraction":0,"reset_time":"2026-11-28T09:25:01Z"}]}`))
+	if err != nil || res.Groups[0].RemainingPct != 0 {
+		t.Errorf("0%% must parse: %v %+v", err, res)
+	}
+}

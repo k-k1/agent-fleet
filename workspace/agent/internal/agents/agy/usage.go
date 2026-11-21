@@ -288,9 +288,9 @@ type printUsage struct {
 				Name        string `json:"name"`
 				Description string `json:"description"`
 				Buckets     []struct {
-					Window            string  `json:"window"` // "weekly" | "5h"
-					RemainingFraction float64 `json:"remaining_fraction"`
-					ResetTime         string  `json:"reset_time"`
+					Window            string   `json:"window"`             // "weekly" | "5h"
+					RemainingFraction *float64 `json:"remaining_fraction"` // nil = field absent, not 0%
+					ResetTime         string   `json:"reset_time"`
 				} `json:"buckets"`
 			} `json:"groups"`
 		} `json:"data"`
@@ -309,6 +309,8 @@ func queryUsageJSON() (*usageResult, error) {
 	cmd := exec.CommandContext(ctx, "agy", "-p", "/usage", "--output-format", "json")
 	cmd.Dir = dir
 	cmd.Env = Env(os.Environ())
+	// A grandchild that inherited stdout would keep Output waiting after the kill.
+	cmd.WaitDelay = 3 * time.Second
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -328,10 +330,20 @@ func parseUsageJSON(b []byte) (*usageResult, error) {
 			ug.Models = strings.TrimSpace(models)
 		}
 		for _, bk := range g.Buckets {
-			pct := math.Round(bk.RemainingFraction*1000) / 10 // one decimal, like the panel's precision
+			// An absent or out-of-range fraction is a changed schema, not an empty wallet: fail
+			// so the TUI fallback answers instead of caching a made-up 0%.
+			if bk.RemainingFraction == nil || *bk.RemainingFraction < 0 || *bk.RemainingFraction > 1 {
+				return nil, errString("usage json: bad remaining_fraction in " + g.Name)
+			}
+			pct := math.Round(*bk.RemainingFraction*1000) / 10 // one decimal, like the panel's precision
 			// A window never opened comes back as the Unix epoch; that is "no reset", not 1970.
+			// Any other unreadable value is an error: adjustGroups cannot expire what it cannot parse.
+			t, err := time.Parse(time.RFC3339, bk.ResetTime)
+			if err != nil {
+				return nil, errString("usage json: bad reset_time in " + g.Name)
+			}
 			resets := ""
-			if t, err := time.Parse(time.RFC3339, bk.ResetTime); err == nil && t.Unix() > 0 {
+			if t.Unix() > 0 {
 				resets = t.UTC().Format(time.RFC3339)
 			}
 			switch bk.Window {
@@ -341,9 +353,12 @@ func parseUsageJSON(b []byte) (*usageResult, error) {
 				ug.FiveHour = &UsageLimit{RemainingPct: pct, ResetsAt: resets}
 			}
 		}
-		if ug.RemainingPct >= 0 {
-			res.Groups = append(res.Groups, ug)
+		// Every group must carry its weekly bucket: dropping one would promote the next group to
+		// "first" (the chip and the route-switch target read groups[0] as the default pool).
+		if ug.RemainingPct < 0 {
+			return nil, errString("usage json: no weekly bucket in " + g.Name)
 		}
+		res.Groups = append(res.Groups, ug)
 	}
 	if len(res.Groups) == 0 {
 		return nil, errString("no quota groups in /usage json")
