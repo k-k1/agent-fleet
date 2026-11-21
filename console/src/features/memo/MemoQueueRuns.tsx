@@ -8,9 +8,6 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { openSessionChat } from "../sessions/open.ts";
-import { useSessionsStore } from "../sessions/store.ts";
-import { useAutoRunReveal } from "../autorun/store.ts";
-import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { errText } from "../../core/api/client.ts";
@@ -21,7 +18,7 @@ import { deferWords, deliveryStateKey, firstTurnWords, heldNames, heldWords, rea
 const POLL_MS = 30000;
 const SHOWN = 5;
 
-export function MemoQueueRuns({ categoryId, repo, onShowAll }: { categoryId: string; /** The category's repository, "" for none: the section knows it before the shared queue list does. */ repo: string; onShowAll: () => void }) {
+export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; onShowAll: () => void }) {
   const tr = useT();
   const askConfirm = useConfirm();
   const toast = useToast();
@@ -29,13 +26,6 @@ export function MemoQueueRuns({ categoryId, repo, onShowAll }: { categoryId: str
   const [rows, setRows] = useState<MemoDelivery[] | null>(null);
   const [failed, setFailed] = useState(false);
   const alive = useRef(true);
-  // A run whose session the Auto-run view lists can be shown there.
-  const runNames = useSessionsStore((s) => s.sessions);
-  const listed = new Set(runNames.filter((x) => x.origin === "queue").map((x) => x.name));
-  // The Auto-run view lists only the categories of the active working set; a link to a run it
-  // hides would land on nothing.
-  const wset = useActiveWorkingSet();
-  const hidden = !!wset && !!repo && !wset.repos.includes(repo);
   // Only the newest read may land: a slow earlier one must not overwrite a later answer.
   const seq = useRef(0);
 
@@ -160,21 +150,6 @@ export function MemoQueueRuns({ categoryId, repo, onShowAll }: { categoryId: str
                 onKeyDown={(e) => e.stopPropagation()}
               >
                 {tr("memo.d_end")}
-              </button>
-            )}
-            {listed.has(d.session) && (
-              <button
-                type="button"
-                className="linkish memo-run-view"
-                title={hidden ? tr("memo.d_show_run_hidden") : tr("memo.d_show_run")}
-                disabled={hidden}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  useAutoRunReveal.getState().reveal(d.session);
-                }}
-                onKeyDown={(e) => e.stopPropagation()}
-              >
-                <Icon name="play" /> {tr("memo.d_show_run")}
               </button>
             )}
             {openable && <Icon name="link-external" className="memo-run-open" />}

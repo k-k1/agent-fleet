@@ -300,7 +300,7 @@ The "**...**" button on a row opens its menu. "**Stop this run's sessions**" sto
 
 The runs are not listed in the "Sessions" view: the working copies and sessions that auto-run started stay out of the repository tree. Stopping or deleting a repository from the tree still covers them, and its confirmation lists them as "Listed elsewhere". Runs that a [schedule](../fleet/schedules.md) started are not in the tree either; the **Schedules** view lists them.
 
-The icon shows an amber number when a run's session waits for your answer; it stays until you answer. It shows a red dot when a run ended as failed, until you open the view. The view also lists a run that is older than the newest 50 of its category's history while it is still open. In the category's inline run list, "**Show in Auto-run**" on a run jumps to that run's row (opening "Ended N" when it is in there).
+The icon shows an amber number when a run's session waits for your answer; it stays until you answer. It shows a red dot when a run ended as failed, until you open the view. The view also lists a run that is older than the newest 50 of its category's history while it is still open. The row of the session open in the main area (a run, or a reviewer or other session it started) is highlighted like the active row in the Sessions view, and the view scrolls to it. A row inside a folded "Ended N" stays folded; open the fold to see it.
 
 ### Read the run history
 

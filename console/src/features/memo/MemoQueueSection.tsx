@@ -1284,7 +1284,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             <Icon name={runsOpen[cat.id] ? "chevron-down" : "chevron-right"} />
                             {tr("memo.d_runs_toggle")}
                           </button>
-                          {runsOpen[cat.id] && <MemoQueueRuns categoryId={cat.id} repo={rb.repo} onShowAll={() => setDeliveriesFor(cat.id)} />}
+                          {runsOpen[cat.id] && <MemoQueueRuns categoryId={cat.id} onShowAll={() => setDeliveriesFor(cat.id)} />}
                         </>
                       )}
 
@@ -1439,7 +1439,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             categoryId={c.id}
             categoryName={c.name}
             queue={queueByCat.get(c.id)}
-            repo={c.repo}
             waiting={pendingCount(memos.filter((m) => m.repo === c.repo && m.category === c.name))}
             focusRun={focusRun}
             slotsFull={slotsFullFor}

@@ -210,31 +210,3 @@ export function useAutoRunFeed(on: boolean): void {
   const scope = tenant + "\u0000" + identity;
   useEffect(() => (on ? acquireAutoRuns(scope) : undefined), [on, scope]);
 }
-
-interface AutoRunReveal {
-  /** The run (its session's name) to bring into view, and a counter so a repeat re-triggers. */
-  name: string;
-  n: number;
-  /** When the request was made (ms): one nobody has acted on for a while is dropped. */
-  at: number;
-  reveal(name: string): void;
-  /** The view has acted on the request: a later mount must not act on it again. */
-  consume(): void;
-}
-
-/** The memo run history links to a run's row in the Auto-run view. */
-export const useAutoRunReveal = create<AutoRunReveal>((set) => ({
-  name: "",
-  n: 0,
-  at: 0,
-  reveal: (name) => set((s) => ({ name, n: s.n + 1, at: Date.now() })),
-  consume: () => set({ name: "" }),
-}));
-
-const REVEAL_TTL_MS = 30000;
-
-/** The run a request still asks for, "" once it was acted on or went stale. */
-export function pendingReveal(): string {
-  const { name, at } = useAutoRunReveal.getState();
-  return name && Date.now() - at < REVEAL_TTL_MS ? name : "";
-}
