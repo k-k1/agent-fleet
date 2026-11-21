@@ -6,9 +6,11 @@
 package agy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -265,7 +267,106 @@ var (
 // scrape is scrapeUsage; a var only so a test can stand in for the TUI.
 var scrape = scrapeUsage
 
+// scrapeUsage prefers print mode (`agy -p /usage --output-format json`: structured, ~5 s, no
+// PTY) and falls back to driving the TUI, so an agy build without that command keeps working.
 func scrapeUsage() (*usageResult, error) {
+	if res, err := queryUsageJSON(); err == nil {
+		return res, nil
+	}
+	return scrapeUsageTUI()
+}
+
+// usageJSONTimeout bounds the print-mode call; it measured ~5 s, most of it agy's own startup.
+const usageJSONTimeout = 45 * time.Second
+
+// printUsage is the print-mode envelope's /usage payload (measured on agy 1.5.13). Buckets are
+// keyed by window, not by position, because a group may carry only one (Argon is weekly only).
+type printUsage struct {
+	Command struct {
+		Data struct {
+			Groups []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				Buckets     []struct {
+					Window            string   `json:"window"`             // "weekly" | "5h"
+					RemainingFraction *float64 `json:"remaining_fraction"` // nil = field absent, not 0%
+					ResetTime         string   `json:"reset_time"`
+				} `json:"buckets"`
+			} `json:"groups"`
+		} `json:"data"`
+	} `json:"command"`
+}
+
+func queryUsageJSON() (*usageResult, error) {
+	dir := filepath.Join(os.TempDir(), "af-agy-usage")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	EnsureWorkspaceTrusted(dir)
+	enforceTelemetryOff()
+	ctx, cancel := context.WithTimeout(context.Background(), usageJSONTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "agy", "-p", "/usage", "--output-format", "json")
+	cmd.Dir = dir
+	cmd.Env = Env(os.Environ())
+	// A grandchild that inherited stdout would keep Output waiting after the kill.
+	cmd.WaitDelay = 3 * time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseUsageJSON(out)
+}
+
+func parseUsageJSON(b []byte) (*usageResult, error) {
+	var env printUsage
+	if err := json.Unmarshal(b, &env); err != nil {
+		return nil, err
+	}
+	res := &usageResult{Account: accountEmail()}
+	for _, g := range env.Command.Data.Groups {
+		ug := UsageGroup{Label: g.Name, RemainingPct: -1}
+		if _, models, ok := strings.Cut(g.Description, "Models within this group:"); ok {
+			ug.Models = strings.TrimSpace(models)
+		}
+		for _, bk := range g.Buckets {
+			// An absent or out-of-range fraction is a changed schema, not an empty wallet: fail
+			// so the TUI fallback answers instead of caching a made-up 0%.
+			if bk.RemainingFraction == nil || *bk.RemainingFraction < 0 || *bk.RemainingFraction > 1 {
+				return nil, errString("usage json: bad remaining_fraction in " + g.Name)
+			}
+			pct := math.Round(*bk.RemainingFraction*1000) / 10 // one decimal, like the panel's precision
+			// A window never opened comes back as the Unix epoch; that is "no reset", not 1970.
+			// Any other unreadable value is an error: adjustGroups cannot expire what it cannot parse.
+			t, err := time.Parse(time.RFC3339, bk.ResetTime)
+			if err != nil {
+				return nil, errString("usage json: bad reset_time in " + g.Name)
+			}
+			resets := ""
+			if t.Unix() > 0 {
+				resets = t.UTC().Format(time.RFC3339)
+			}
+			switch bk.Window {
+			case "weekly":
+				ug.RemainingPct, ug.ResetsAt = pct, resets
+			case "5h":
+				ug.FiveHour = &UsageLimit{RemainingPct: pct, ResetsAt: resets}
+			}
+		}
+		// Every group must carry its weekly bucket: dropping one would promote the next group to
+		// "first" (the chip and the route-switch target read groups[0] as the default pool).
+		if ug.RemainingPct < 0 {
+			return nil, errString("usage json: no weekly bucket in " + g.Name)
+		}
+		res.Groups = append(res.Groups, ug)
+	}
+	if len(res.Groups) == 0 {
+		return nil, errString("no quota groups in /usage json")
+	}
+	return res, nil
+}
+
+func scrapeUsageTUI() (*usageResult, error) {
 	dir := filepath.Join(os.TempDir(), "af-agy-usage")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -371,6 +472,9 @@ func parseUsage(out string) (*usageResult, error) {
 		}
 		if g.RemainingPct >= 0 {
 			res.Groups = append(res.Groups, g)
+		} else if g.FiveHour != nil {
+			// Dropping it would promote the next group to groups[0], the default-model pool.
+			return nil, errString("usage panel: group " + g.Label + " has no weekly limit")
 		}
 	}
 	if len(res.Groups) == 0 {
