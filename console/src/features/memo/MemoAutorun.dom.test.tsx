@@ -662,17 +662,58 @@ describe("deliveries and Run now", () => {
     expect(openSessionChat).toHaveBeenCalledWith("run-1");
   });
 
-  it("fires the queue now, and not when nothing waits", async () => {
+  it("fires the queue now from the category head, and the run history has no Run now", async () => {
     servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
     await render();
     await openDeliveries();
-    const fire = must(
-      [...dialog().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(t("memo.d_fire"))),
-      "fire",
-    );
-    expect(fire.disabled).toBe(false);
-    await click(fire);
-    expect(memoQueueFire).toHaveBeenCalledWith("c1");
+    expect([...dialog().querySelectorAll<HTMLButtonElement>("button")].some((b) => b.textContent?.includes(t("memo.d_fire")))).toBe(false);
+    expect(dialog().textContent).toContain(t("memo.d_waiting", { count: 1 }));
+  });
+
+  describe("Run now on the category head", () => {
+    const fireBtn = () => must(document.querySelector<HTMLElement>(".memo-cat-run"), "Run now");
+    it("starts a run when a waiting memo can start and nothing blocks it", async () => {
+      servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+      await render();
+      expect(fireBtn().getAttribute("aria-disabled")).toBeNull();
+      expect(fireBtn().title).toBe(t("memo.d_fire_title"));
+      await click(fireBtn());
+      expect(memoQueueFire).toHaveBeenCalledWith("c1");
+      expect(document.body.textContent).toContain(t("memo.d_fire_started"));
+    });
+
+    const blocked = async (fireBlock: unknown, reason: string) => {
+      servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+      servedQueues = { tenantEnabled: true, queues: [aQueue({ fireBlock })] };
+      await render();
+      expect(fireBtn().getAttribute("aria-disabled")).toBe("true");
+      expect(fireBtn().title).toBe(t("memo.d_fire_blocked", { why: reason }));
+      await click(fireBtn());
+      expect(memoQueueFire).not.toHaveBeenCalled();
+    };
+    it("is disabled with nothing waiting", async () => {
+      await render();
+      expect(fireBtn().getAttribute("aria-disabled")).toBe("true");
+      expect(fireBtn().title).toBe(t("memo.d_fire_blocked", { why: t("memo.d_fire_none") }));
+    });
+    it("is disabled while every waiting memo waits for another memo, and says so", async () => {
+      await blocked({ reason: "prerequisites", detail: { blocked: 5 } }, t("memo.waiting_prerequisites", { count: 5 }));
+    });
+    it("is disabled while every waiting memo was handed back", async () => {
+      await blocked({ reason: "deferred", detail: { deferred: 2 } }, t("memo.waiting_deferred", { count: 2 }));
+    });
+    it("is disabled while the category's slots are full, and for the member's limit", async () => {
+      await blocked({ reason: "no_place", detail: { by: "category" } }, t("memo.waiting_no_place"));
+    });
+    it("is disabled while the member's own limit is reached", async () => {
+      await blocked({ reason: "no_place", detail: { by: "member" } }, t("memo.waiting_no_place_member"));
+    });
+    it("stays enabled when the queue is paused or switched off: a press ignores both", async () => {
+      servedQueues = { tenantEnabled: true, queues: [aQueue({ paused: true, enabled: false })] };
+      servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+      await render();
+      expect(fireBtn().getAttribute("aria-disabled")).toBeNull();
+    });
   });
 
   describe("a run that handed its memo back (ADR 0137, addendum 2026-11-19, part B)", () => {
@@ -728,19 +769,13 @@ describe("deliveries and Run now", () => {
   });
 
   describe("when Run now is refused", () => {
-    const pressFire = async () =>
-      click(
-        must(
-          [...dialog().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(t("memo.d_fire"))),
-          "fire",
-        ),
-      );
+    const pressFire = async () => click(must(document.querySelector<HTMLElement>(".memo-cat-run"), "Run now"));
     const noSlot = { error: { code: "memo_queue_no_slot", message: "every slot of this queue is taken (2 of 2)" } };
     const run = (id: string, state: string, session: string, heldBy = "", heldWakers: unknown[] = []) => ({
       id, state, outcome: state === "closed" ? "clean" : "", session, messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "", heldBy, heldWakers,
     });
 
-    it("names the runs holding the slots and why, and drops the notice on the next press", async () => {
+    it("opens the history, which names the runs holding the slots and why", async () => {
       servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
       servedDeliveries = [
         run("d1", "open", "run-1", "person"),
@@ -751,11 +786,8 @@ describe("deliveries and Run now", () => {
       ];
       memoQueueFire.mockResolvedValueOnce(noSlot);
       await render();
-      await openDeliveries();
-      expect(dialog().querySelector(".memo-d-slots-full")).toBeNull();
-      const reads = memoQueueDeliveries.mock.calls.length;
+      expect(document.querySelector(".memo-q-modal")).toBeNull();
       await pressFire();
-      expect(memoQueueDeliveries.mock.calls.length).toBeGreaterThan(reads); // re-read, not the last poll
       const note = must(dialog().querySelector<HTMLElement>(".memo-d-slots-full"), "slots-full notice");
       expect(note.textContent).toContain(t("memo.d_slots_full"));
       expect(note.textContent).toContain(t("memo.d_slots_holder", { name: "run-1", why: t("memo.d_held_person") }));
@@ -763,8 +795,6 @@ describe("deliveries and Run now", () => {
       expect(note.textContent).toContain(t("memo.d_slots_holder", { name: t("memo.d_no_session"), why: t("memo.d_state_starting") }));
       expect(note.textContent).toContain(t("memo.d_slots_holder", { name: "run-5", why: t("memo.d_held_wakers_named", { names: "w_7 (github)" }) }));
       expect(note.textContent).not.toContain("run-0");
-      await pressFire(); // the default mock now succeeds
-      expect(dialog().querySelector(".memo-d-slots-full")).toBeNull();
     });
 
     it("says the runs have finished when none holds a slot any more", async () => {
@@ -772,7 +802,6 @@ describe("deliveries and Run now", () => {
       servedDeliveries = [run("d3", "closed", "run-0")];
       memoQueueFire.mockResolvedValueOnce(noSlot);
       await render();
-      await openDeliveries();
       await pressFire();
       const note = must(dialog().querySelector<HTMLElement>(".memo-d-slots-full"), "notice");
       expect(note.textContent).toBe(t("memo.d_slots_cleared"));
@@ -783,29 +812,26 @@ describe("deliveries and Run now", () => {
       servedDeliveries = { error: { code: "x" } };
       memoQueueFire.mockResolvedValueOnce(noSlot);
       await render();
-      await openDeliveries();
       await pressFire();
       const note = must(dialog().querySelector<HTMLElement>(".memo-d-slots-full"), "notice");
       expect(note.textContent).toBe(t("memo.d_load_failed"));
       expect(note.querySelector("ul")).toBeNull();
     });
 
-    it("shows no slot notice for another refusal", async () => {
+    it("only toasts for another refusal and opens nothing", async () => {
       servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
-      servedDeliveries = [run("d1", "open", "run-1")];
       memoQueueFire.mockResolvedValueOnce({ error: { code: "memo_queue_member_limit", message: "x" } });
       await render();
-      await openDeliveries();
       await pressFire();
+      expect(document.querySelector(".memo-q-modal")).toBeNull();
+    });
+
+    it("opens the history without the slot notice when the member opens it themselves", async () => {
+      servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+      await render();
+      await click(byLabel(t("memo.autorun_deliveries")));
       expect(dialog().querySelector(".memo-d-slots-full")).toBeNull();
     });
-  });
-
-  it("disables Run now with nothing waiting", async () => {
-    await render();
-    await openDeliveries();
-    const fire = [...dialog().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(t("memo.d_fire")))!;
-    expect(fire.disabled).toBe(true);
   });
 
   it("says so when the history cannot be read", async () => {
@@ -981,14 +1007,13 @@ describe("a paused category", () => {
     expect(document.body.textContent).toContain(t("memo.paused_resume_done"));
   });
 
-  it("is also said in the run history, with the same button, and Run now still works", async () => {
+  it("is also said in the run history, with the same button", async () => {
     servedQueues = { tenantEnabled: true, queues: [aQueue({ paused: true })] };
     servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
     await render();
     await click(byLabel(t("memo.autorun_deliveries")));
     expect(dialog().querySelector(".memo-q-paused")?.textContent).toContain(t("memo.paused_notice"));
-    const fire = [...dialog().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(t("memo.d_fire")))!;
-    expect(fire.disabled).toBe(false);
+    expect([...dialog().querySelectorAll<HTMLButtonElement>("button")].some((b) => b.textContent?.includes(t("memo.d_fire")))).toBe(false);
     await click(must(dialog().querySelector(".memo-q-paused button"), "resume"));
     expect(memoQueueResume).toHaveBeenCalledWith("c1");
   });
@@ -1016,8 +1041,7 @@ describe("a workspace that cannot run by itself yet", () => {
     expect(document.querySelector(".memo-q-noreport")?.textContent).toBe(t("memo.no_report_notice"));
     await click(byLabel(t("memo.autorun_deliveries")));
     expect(dialog().querySelector(".memo-q-noreport")?.textContent).toBe(t("memo.no_report_notice"));
-    const fire = [...dialog().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(t("memo.d_fire")))!;
-    expect(fire.disabled).toBe(false);
+    expect(document.querySelector(".memo-cat-run")?.getAttribute("aria-disabled")).toBeNull();
   });
 
   it("stays quiet while auto-run is off, since nothing waits to run by itself", async () => {
@@ -1216,9 +1240,7 @@ describe("a refused Run now shows the catalogue line alone (#4208)", () => {
     servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
     memoQueueFire.mockResolvedValue({ error: { code: "memo_queue_no_slot", message: "every slot of this queue is taken (1 of 1)" } });
     await render();
-    await click(byLabel(t("memo.autorun_deliveries")));
-    const fire = [...dialog().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(t("memo.d_fire")))!;
-    await click(fire);
+    await click(must(document.querySelector<HTMLElement>(".memo-cat-run"), "Run now"));
     expect(document.body.textContent).toContain(t("err.memo_queue_no_slot"));
     expect(document.body.textContent).not.toContain("every slot of this queue");
   });

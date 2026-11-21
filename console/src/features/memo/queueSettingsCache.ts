@@ -27,6 +27,7 @@ function withRunState(saved: MemoQueue, old: MemoQueue | undefined): MemoQueue {
     noRefsAt: old.noRefsAt,
     noTidyAt: old.noTidyAt,
     waiting: old.waiting,
+    fireBlock: old.fireBlock,
   };
 }
 

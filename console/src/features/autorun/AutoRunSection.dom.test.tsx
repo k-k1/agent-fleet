@@ -12,7 +12,12 @@ const memoQueueDeliveries = vi.fn(async (_id: string, _openToo?: boolean): Promi
   { id: "d1", session: "run-a", state: "open" },
   { id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" },
 ]);
-vi.mock("../memo/api.ts", () => ({ memoQueueList: () => memoQueueList(), memoQueueDeliveries: (id: string, openToo?: boolean) => memoQueueDeliveries(id, openToo) }));
+const memoQueueFire = vi.fn(async (_id: string): Promise<unknown> => ({ id: "d9" }));
+vi.mock("../memo/api.ts", () => ({
+  memoQueueList: () => memoQueueList(),
+  memoQueueDeliveries: (id: string, openToo?: boolean) => memoQueueDeliveries(id, openToo),
+  memoQueueFire: (id: string) => memoQueueFire(id),
+}));
 
 // The settings dialog is the Memo queue's own and has its own tests; here only that the gear opens it
 // for the category.
@@ -58,6 +63,7 @@ beforeEach(() => {
   opened.mockReset();
   memoQueueList.mockReset();
   memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] });
+  memoQueueFire.mockClear();
   memoQueueDeliveries.mockReset();
   memoQueueDeliveries.mockImplementation(async () => [
     { id: "d1", session: "run-a", state: "open" },
@@ -353,7 +359,7 @@ describe("AutoRunSection", () => {
     expect(head.querySelector('button[aria-label="Auto-run settings"]')).not.toBeNull();
     await act(async () => head.querySelector<HTMLButtonElement>('button[aria-label="Category actions"]')!.click());
     const items = [...document.body.querySelectorAll(".ui-menu-item")].map((b) => b.textContent!.trim());
-    expect(items).toEqual(["Run history", "Show in Memo queue"]);
+    expect(items).toEqual(["Run now", "Run history", "Show in Memo queue"]);
   });
 
   it("opens the category's auto-run settings from the gear", async () => {
@@ -369,6 +375,37 @@ describe("AutoRunSection", () => {
     await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="settings-save"]')!.click());
     expect(useMemoStore.getState().tick).toBe(tick + 1);
     expect(memoQueueList.mock.calls.length).toBe(reads + 1);
+  });
+
+  describe("Run now in the category menu", () => {
+    const openMenu = async () => {
+      await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Category actions"]')!.click());
+      return [...document.body.querySelectorAll<HTMLButtonElement>(".ui-menu-item")].find((b) => b.textContent!.includes("Run now"))!;
+    };
+    const queueWith = (extra: Record<string, unknown>) =>
+      memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds", ...extra }] });
+
+    it("starts a run through the same call as the Memo queue view when nothing blocks it", async () => {
+      await mount();
+      const item = await openMenu();
+      expect(item.disabled).toBe(false);
+      await act(async () => item.click());
+      expect(memoQueueFire).toHaveBeenCalledWith("c1");
+    });
+
+    it.each([
+      ["nothing_waiting", {}, "No memo is waiting to run."],
+      ["prerequisites", { blocked: 5 }, "Every waiting memo (5) waits for other memos of this category to finish first."],
+      ["no_place", { by: "category" }, "This category is already running as many memos at once as it may. The next one starts when a run finishes."],
+    ])("is disabled with the reason as its tooltip: %s", async (reason, detail, words) => {
+      queueWith({ fireBlock: { reason, detail } });
+      await mount();
+      const item = await openMenu();
+      expect(item.disabled).toBe(true);
+      expect(item.title).toBe(`Run now is unavailable. ${words}`);
+      await act(async () => item.click());
+      expect(memoQueueFire).not.toHaveBeenCalled();
+    });
   });
 
   it("opens the memo queue at the category from the menu", async () => {

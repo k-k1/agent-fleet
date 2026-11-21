@@ -54,6 +54,7 @@ import { useQueueSettings, useQueueSettingsCache } from "./queueSettingsCache.ts
 import { MemoProducerText } from "./MemoProducerText.tsx";
 import { MemoQueueRuns } from "./MemoQueueRuns.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
+import { RunNowButton } from "./RunNowButton.tsx";
 import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
 import { memoReference } from "./reference.ts";
@@ -236,6 +237,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // looks the live row up, so a poll that renames or removes it is seen by the dialog.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   const [deliveriesFor, setDeliveriesFor] = useState<string | null>(null);
+  // The history was opened by a "Run now" that found every slot taken: it names who holds them.
+  const [slotsFullFor, setSlotsFullFor] = useState(false);
   // Categories whose inline run list is expanded. Not persisted: it reads the Control Plane on
   // open, so a reload starts quiet.
   const [runsOpen, setRunsOpen] = useState<Record<string, boolean>>({});
@@ -1185,6 +1188,21 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           <Icon name="add" />
                         </button>
                         {cat && isQueue && (
+                          <RunNowButton
+                            categoryId={cat.id}
+                            queue={queueByCat.get(cat.id)}
+                            waiting={pendingCount(g.memos)}
+                            onResult={(r) => {
+                              if (r === "started") bumpMemos();
+                              // The refusal says a slot is taken; the history names who holds it.
+                              if (r === "no_slot") {
+                                setSlotsFullFor(true);
+                                setDeliveriesFor(cat.id);
+                              }
+                            }}
+                          />
+                        )}
+                        {cat && isQueue && (
                           <button
                             type="button"
                             className="memo-cat-act"
@@ -1415,8 +1433,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             queue={queueByCat.get(c.id)}
             waiting={pendingCount(memos.filter((m) => m.repo === c.repo && m.category === c.name))}
             focusRun={focusRun}
+            slotsFull={slotsFullFor}
             onClose={() => {
               setDeliveriesFor(null);
+              setSlotsFullFor(false);
               setFocusRun("");
             }}
             onFired={bumpMemos}

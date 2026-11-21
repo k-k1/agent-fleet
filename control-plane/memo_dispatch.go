@@ -978,6 +978,8 @@ const (
 	waitPrerequisites = "prerequisites"
 	// waitDeferred: every message waiting was handed back by its run and waits for its not_before.
 	waitDeferred = "deferred"
+	// waitNothing is only ever a fireBlock: no message is waiting, so a press has nothing to take.
+	waitNothing = "nothing_waiting"
 )
 
 // memoWaiting is "waiting" on the wire: why a queue with notes waiting starts nothing now.
@@ -1125,17 +1127,8 @@ func memoQueueWaiting(tx store.MemoWaitOps, q store.MemoQueue, tenantOn bool, pe
 	if err != nil || w != nil {
 		return w, err
 	}
-	if pending.Eligible == 0 {
-		// Every message waiting was handed back and waits for its time: the earliest is when the
-		// dispatcher acts. Otherwise some wait for prerequisites, and the detail counts both.
-		if pending.Deferred == pending.Count {
-			w := &memoWaiting{Reason: waitDeferred, Detail: &memoWaitingDetail{Deferred: pending.Deferred}}
-			if t, err := time.Parse("2006-01-02T15:04:05.000000Z", pending.NextAt); err == nil {
-				w.Until = untilOf(t)
-			}
-			return w, nil
-		}
-		return &memoWaiting{Reason: waitPrerequisites, Detail: &memoWaitingDetail{Blocked: pending.Count - pending.Deferred, Deferred: pending.Deferred}}, nil
+	if w := memoNoneEligible(pending); w != nil {
+		return w, nil
 	}
 	if q.NoRefsAt != "" && pending.Refs == pending.Eligible {
 		return &memoWaiting{Reason: waitNoRefs}, nil
@@ -1143,6 +1136,29 @@ func memoQueueWaiting(tx store.MemoWaitOps, q store.MemoQueue, tenantOn bool, pe
 	if q.NoTidyAt != "" && pending.Curators == pending.Eligible {
 		return &memoWaiting{Reason: waitNoTidy}, nil
 	}
+	return memoPlaceWaiting(tx, q)
+}
+
+// memoNoneEligible is the reason when messages wait and none of them may be claimed now, nil
+// otherwise: every one was handed back and waits for its time (the earliest is when the dispatcher
+// acts), or some wait for prerequisites and the detail counts both.
+func memoNoneEligible(pending store.QueuePending) *memoWaiting {
+	if pending.Eligible != 0 {
+		return nil
+	}
+	if pending.Deferred == pending.Count {
+		w := &memoWaiting{Reason: waitDeferred, Detail: &memoWaitingDetail{Deferred: pending.Deferred}}
+		if t, err := time.Parse("2006-01-02T15:04:05.000000Z", pending.NextAt); err == nil {
+			w.Until = untilOf(t)
+		}
+		return w
+	}
+	return &memoWaiting{Reason: waitPrerequisites, Detail: &memoWaitingDetail{Blocked: pending.Count - pending.Deferred, Deferred: pending.Deferred}}
+}
+
+// memoPlaceWaiting is waitNoPlace when the queue has no slot for a run (its own or the member's),
+// nil when it has one.
+func memoPlaceWaiting(tx store.MemoWaitOps, q store.MemoQueue) (*memoWaiting, error) {
 	inQueue, inMember, err := tx.CountLiveDeliveries(q.CategoryID)
 	if err != nil {
 		return nil, err
@@ -1151,6 +1167,21 @@ func memoQueueWaiting(tx store.MemoWaitOps, q store.MemoQueue, tenantOn bool, pe
 		return &memoWaiting{Reason: waitNoPlace, Detail: &memoWaitingDetail{By: by}}, nil
 	}
 	return nil, nil
+}
+
+// memoFireBlock is why a press of "Run now" would be refused, as far as the list can tell: nil
+// when a press would claim something (waitNothing when no message waits). A press
+// ignores the switch, the pause, the window and the caps that hold back a fire by itself, so only
+// what the claim itself checks counts: no message may be claimed (memoNoneEligible) and no place
+// for a run (memoPlaceWaiting). The claim stays the authority (the session quota is not read here).
+func memoFireBlock(tx store.MemoWaitOps, q store.MemoQueue, pending store.QueuePending) (*memoWaiting, error) {
+	if pending.Count == 0 {
+		return &memoWaiting{Reason: waitNothing}, nil
+	}
+	if w := memoNoneEligible(pending); w != nil {
+		return w, nil
+	}
+	return memoPlaceWaiting(tx, q)
 }
 
 // --- PR snapshots of prerequisites -------------------------------------------------------------

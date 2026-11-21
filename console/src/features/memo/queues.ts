@@ -64,6 +64,7 @@ const WAITING_REASONS: readonly string[] = [
   "no_tidy",
   "prerequisites",
   "deferred",
+  "nothing_waiting",
 ] satisfies MemoWaitingReason[];
 
 /** The `waiting` of a queue: absent from an older Control Plane, and a reason this Console does
@@ -122,6 +123,7 @@ export function readQueue(v: unknown): MemoQueue | null {
     createdAt: str(v.createdAt),
     updatedAt: str(v.updatedAt),
     waiting: readWaiting(v.waiting),
+    fireBlock: readWaiting(v.fireBlock),
   };
 }
 
@@ -188,7 +190,7 @@ export function waitingWords(
   agentName: (kind: string) => string,
 ): { key: MsgKey; params?: Record<string, string | number> } | null {
   const w = q.waiting;
-  if (!w || w.reason === "paused" || w.reason === "no_report" || w.reason === "no_references" || w.reason === "no_tidy") return null;
+  if (!w || w.reason === "nothing_waiting" || w.reason === "paused" || w.reason === "no_report" || w.reason === "no_references" || w.reason === "no_tidy") return null;
   const when = w.until && !Number.isNaN(Date.parse(w.until)) ? { at: at(w.until) } : null;
   switch (w.reason) {
     case "tenant_off":
@@ -227,6 +229,21 @@ export function waitingWords(
         ? { key: "memo.waiting_deferred_at", params: { ...when, count: w.detail?.deferred ?? 0 } }
         : { key: "memo.waiting_deferred", params: { count: w.detail?.deferred ?? 0 } };
   }
+}
+
+/** Why "Run now" is unavailable, as a catalogue key and its parameters; null when a press may start
+ *  a run. Advisory: it is the list's fireBlock (what the claim would refuse for), so no rule of the
+ *  Control Plane is copied here, and the press itself stays the authority. A queue the list has not
+ *  read (or an older Control Plane) leaves it enabled. */
+export function fireBlockWords(
+  q: Pick<MemoQueue, "fireBlock"> | undefined,
+  at: (iso: string) => string,
+  agentName: (kind: string) => string,
+): { key: MsgKey; params?: Record<string, string | number> } | null {
+  const b = q?.fireBlock;
+  if (!b) return null;
+  if (b.reason === "nothing_waiting") return { key: "memo.d_fire_none" };
+  return waitingWords({ waiting: b }, at, agentName);
 }
 
 /** Reasons that stop the queue for long or need the member to act; the rest is routine scheduling. */

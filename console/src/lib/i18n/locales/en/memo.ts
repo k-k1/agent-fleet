@@ -163,6 +163,8 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.q_remove_failed": "Could not remove the settings.",
   "memo.d_fire": "Run now",
   "memo.d_fire_title": "Run the memos waiting to run as a session right now.",
+  "memo.d_fire_blocked": "Run now is unavailable. {why}",
+  "memo.d_fire_none": "No memo is waiting to run.",
   "memo.d_fire_started": "Started the run.",
   "memo.d_fire_failed": "Could not start the run.",
   "memo.d_slots_full": "Run now did nothing: every slot of this category is taken. These runs hold them:",

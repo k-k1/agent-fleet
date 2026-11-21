@@ -1,5 +1,5 @@
 // The runs of one auto-run category (ADR 0137 §10): each delivery with its state, its messages
-// and a link to the session it started, plus "Run now". A run that is still open says why (working,
+// and a link to the session it started. A run that is still open says why (working,
 // waiting for you, ...), whether it is overdue, whether it started by itself, how its first turn
 // ended and when a person took its session over. A paused category says so on top, with the button
 // that resumes it. Below the runs, the tidies that ran before them (what each did, how it ended, and
@@ -18,7 +18,7 @@ import { errText } from "../../core/api/client.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { openSessionChat } from "../sessions/open.ts";
 import type { MemoDelivery, MemoQueue, MemoTidyBlocked, MemoTidyRunsWire } from "../../types/memo.ts";
-import { memoQueueDeliveries, memoQueueFire, memoTidyRuns, memoTidyUndo } from "./api.ts";
+import { memoQueueDeliveries, memoTidyRuns, memoTidyUndo } from "./api.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import {
   canReturnRun,
@@ -44,11 +44,14 @@ interface Props {
   categoryName: string;
   /** The category's live settings (undefined: it has none). */
   queue: MemoQueue | undefined;
-  /** How many messages are waiting to run now (the fire button needs at least one). */
+  /** How many messages are waiting to run now. */
   waiting: number;
   onClose: () => void;
-  /** A fire took messages: the memo section refetches. */
+  /** Messages went back to the queue (a run was returned): the memo section refetches. */
   onFired: () => void;
+  /** Opened because a "Run now" was refused for want of a slot: the runs holding them are named
+   *  from the list below (a toast alone is gone before it is read). */
+  slotsFull?: boolean;
   /** A tidy was undone: messages came back and others went, so the memo section refetches. */
   onUndone: () => void;
   /** The tidy run to stand out, when the history was opened from a replaced note. */
@@ -57,7 +60,7 @@ interface Props {
   onResume: () => Promise<boolean>;
 }
 
-export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, waiting, onClose, onFired, onUndone, focusRun, onResume }: Props) {
+export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, waiting, onClose, onFired, onUndone, focusRun, onResume, slotsFull = false }: Props) {
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
@@ -66,9 +69,6 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
   const [returning, setReturning] = useState("");
   const [rows, setRows] = useState<MemoDelivery[] | null>(null);
   const [failed, setFailed] = useState(false);
-  // Set when the last "Run now" was refused because every slot of the category is taken; the
-  // runs holding them are named from the list below (a toast alone is gone before it is read).
-  const [slotsFull, setSlotsFull] = useState(false);
   const [busy, setBusy] = useState(false);
   const [tidy, setTidy] = useState<MemoTidyRunsWire | null>(null);
   const [tidyFailed, setTidyFailed] = useState(false);
@@ -143,31 +143,6 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
     };
   }, [load]);
 
-  const fire = async () => {
-    if (busy || waiting === 0) return;
-    setBusy(true);
-    setSlotsFull(false);
-    try {
-      const res = await memoQueueFire(categoryId);
-      if (res?.error) {
-        if (res.error.code === "memo_queue_no_slot") {
-          setSlotsFull(true);
-          // Show who holds the slots now, not as of the last poll (it pauses while the tab is hidden).
-          void load();
-        }
-        toast(errText(res.error) || t("memo.d_fire_failed"), { kind: "warn" });
-        return;
-      }
-      toast(t("memo.d_fire_started"), { kind: "success" });
-      onFired();
-      void load();
-    } catch {
-      toast(t("memo.d_fire_failed"), { kind: "warn" });
-    } finally {
-      if (alive.current) setBusy(false);
-    }
-  };
-
   const returnRun = async (d: MemoDelivery) => {
     if (returning) return;
     setReturning(d.id);
@@ -198,9 +173,6 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
           <span className="memo-d-waiting">{tr("memo.d_waiting", { count: waiting })}</span>
           <Button small variant="ghost" onClick={() => void load()}>
             {tr("memo.d_refresh")}
-          </Button>
-          <Button small variant="primary" icon="play" title={tr("memo.d_fire_title")} disabled={busy || waiting === 0} onClick={() => void fire()}>
-            {tr("memo.d_fire")}
           </Button>
         </div>
         {slotsFull && (

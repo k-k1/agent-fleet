@@ -11,6 +11,7 @@ import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
 import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useLeftRail } from "../../core/store/leftRail.ts";
 import { useMemoStore } from "../memo/store.ts";
+import { useRunNow } from "../memo/runNow.ts";
 import { MemoQueueSettingsModal } from "../memo/MemoQueueSettingsModal.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName } from "../../lib/sessionview.ts";
@@ -27,6 +28,7 @@ import { useReposStore } from "../repos/store.ts";
 import { StopSessionsModal } from "../repos/StopSessionsModal.tsx";
 import { DeleteCopyModal } from "../repos/DeleteCopyModal.tsx";
 import type { RepoTreeNode } from "../../lib/project.ts";
+import type { MemoQueue } from "../../types/memo.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat } from "../sessions/open.ts";
 import { refreshAutoRuns, reloadAutoRuns, useAutoRunFeed, pendingReveal, useAutoRunReveal, useScopedAutoRuns } from "./store.ts";
@@ -144,10 +146,11 @@ function RunItem({ run, now, onDialog }: { run: RunRow; now: number; onDialog: (
   );
 }
 
-/** The "..." menu of a category head: the run history and the category's place in the Memo queue
- *  view, both of which that view already owns. */
-function CategoryMenu({ categoryId }: { categoryId: string }) {
+/** The "..." menu of a category head: "Run now", the run history and the category's place in the
+ *  Memo queue view, the last two of which that view already owns. */
+function CategoryMenu({ categoryId, queue }: { categoryId: string; queue: MemoQueue | undefined }) {
   const tr = useT();
+  const run = useRunNow(categoryId, queue);
   const [at, setAt] = useState<{ x: number; y: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
@@ -182,6 +185,23 @@ function CategoryMenu({ categoryId }: { categoryId: string }) {
         createPortal(
           <ul className="ui-menu" ref={menuRef} style={{ left: at.x, top: at.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
             <li>
+              <button
+                type="button"
+                className="ui-menu-item"
+                title={run.title}
+                disabled={run.reason !== "" || run.busy}
+                onClick={() => {
+                  setAt(null);
+                  void run.press().then((r) => {
+                    // The list behind the rows follows the start without waiting for its own poll.
+                    if (r === "started") reloadAutoRuns();
+                  });
+                }}
+              >
+                <Icon name="play" /> {tr("memo.d_fire")}
+              </button>
+            </li>
+            <li>
               <button type="button" className="ui-menu-item" onClick={() => reveal(true)}>
                 <Icon name="history" /> {tr("memo.autorun_deliveries")}
               </button>
@@ -212,12 +232,15 @@ function SubHead({ label, open, onToggle, kind }: { label: string; open: boolean
 function Category({
   label,
   categoryId,
+  queue,
   runs,
   now,
   onDialog,
   onSettings,
 }: {
   label: string;
+  /** The category's live queue settings (undefined: none are known). */
+  queue: MemoQueue | undefined;
   /** "" for runs no queue category names: no settings, no history. */
   categoryId: string;
   runs: RunRow[];
@@ -253,7 +276,7 @@ function Category({
             <button type="button" className="autorun-cat-act" aria-label={tr("memo.autorun_settings")} title={tr("memo.autorun_settings")} onClick={() => onSettings(categoryId)}>
               <Icon name="settings-gear" />
             </button>
-            <CategoryMenu categoryId={categoryId} />
+            <CategoryMenu categoryId={categoryId} queue={queue} />
           </>
         )}
       </div>
@@ -487,6 +510,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
             key={id}
             label={labelOf(id)}
             categoryId={id}
+            queue={queues.find((q) => q.categoryId === id)}
             runs={runs.filter((r) => keyOf(r.categoryId) === id)}
             now={now}
             onDialog={setDialog}

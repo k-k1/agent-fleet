@@ -213,6 +213,10 @@ export interface MemoQueue {
   /** Why notes are waiting and nothing starts now (read-only, the list only). Absent when a run
    *  can start, when nothing waits, and from a Control Plane that does not send it. */
   waiting?: MemoQueueWaiting;
+  /** Why a press of "Run now" would be refused now (read-only, the list only): nothing_waiting,
+   *  prerequisites, deferred or no_place. Absent when a press would start a run, and from a
+   *  Control Plane that does not send it; the claim stays the authority. */
+  fireBlock?: MemoQueueWaiting;
 }
 
 /** The reasons the Control Plane gives, in the order it checks them (the first that holds). */
@@ -232,7 +236,9 @@ export type MemoWaitingReason =
   | "tidying"
   | "no_tidy"
   | "prerequisites"
-  | "deferred";
+  | "deferred"
+  /** Only a fireBlock: no note waits to run. */
+  | "nothing_waiting";
 
 export interface MemoQueueWaiting {
   reason: MemoWaitingReason;
