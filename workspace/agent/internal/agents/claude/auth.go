@@ -31,9 +31,8 @@ import (
 // No env injection or token storage is needed — claude owns the credentials file.
 
 var (
-	// Anchored to the two authorize hosts the CLI has printed: claude.com/cai/oauth/authorize
-	// (up to 2.1.325) and claude.ai/oauth/authorize (2.1.330). The URL is shown to the user to
-	// click, so never widen this to an arbitrary host.
+	// The Console opens this URL for the user, so the host and path are pinned: only the CLI's
+	// two authorize endpoints match, never an arbitrary URL.
 	urlRe = regexp.MustCompile(`https://claude\.(?:com/cai|ai)/oauth/authorize\?\S+`)
 	errRe = regexp.MustCompile(`OAuth error:[^\n]*`)
 )
@@ -56,7 +55,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	flows.Reap()
 	// Real subscription login (writes .credentials.json with a refresh token).
 	// CLAUDE_CONFIG_DIR is inherited from os.Environ() so creds land where sessions
-	// read them. Same authorize URL as setup-token (claude.com/cai/oauth/authorize).
+	// read them.
 	//
 	// The login change is recorded in HandleComplete, not here: the CLI writes nothing until a
 	// code is accepted, so a flow abandoned before then must leave the login's generation alone.

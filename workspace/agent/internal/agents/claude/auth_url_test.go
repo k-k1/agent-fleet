@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// claude 2.1.330 prints claude.ai/oauth/authorize, earlier CLIs claude.com/cai/oauth/authorize;
-// both are wrapped in OSC 8 and the line is cut by a read boundary in the middle of the URL.
+// A PTY read that ends in the middle of the URL must not be returned: the scrape waits for the
+// end of the line, so the browser never gets a truncated URL.
 func TestUrlReScrapesBothAuthorizeHosts(t *testing.T) {
 	cases := map[string]string{
 		"2.1.330 claude.ai":    "https://claude.ai/oauth/authorize?code=true&client_id=abc&response_type=code&state=xyz",
@@ -16,8 +16,8 @@ func TestUrlReScrapesBothAuthorizeHosts(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			half := len(url) / 2
 			script := "printf 'Opening browser to sign in…\\r\\nIf the browser didn'\"'\"'t open, visit:\\r\\n';" +
-				"printf '\\033[2m\\033]8;;" + url + "\\007" + url[:half] + "';sleep 1;" +
-				"printf '" + url[half:] + "\\033]8;;\\007\\033[22m\\r\\nPaste code here if prompted > ';sleep 30"
+				"printf '\\033]8;;" + url + "\\007\\033[94m" + url[:half] + "';sleep 1;" +
+				"printf '" + url[half:] + "\\033[39m\\033]8;;\\007\\r\\nPaste code here if prompted > ';sleep 30"
 			f := flowOf(t, script)
 			if got := f.WaitForURL(urlRe, 10*time.Second); got != url {
 				t.Fatalf("WaitForURL = %q, want %q", got, url)
