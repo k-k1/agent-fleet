@@ -1093,3 +1093,58 @@ func TestMemoOccupancyStrongerHoldClearsTheNames(t *testing.T) {
 		}
 	})
 }
+
+// A child that worked after its idle parent's last turn holds the tree for memoChildGrace, so the
+// parent can read the answer; the run is not closed clean on the child's idleness. A parent that
+// worked again, or an expired grace, lets it close.
+func TestMemoOccupancyIdleChildHoldsTreeForItsParent(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		r := e.runner()
+		ctx := context.Background()
+		t0 := time.Now()
+		// The parent is idle; its reviewer child is working.
+		agent.child("rev", d.Session, map[string]any{"state": "working"})
+		r.settle(ctx, t0)
+		// The parent was last seen busy before the child: record that order.
+		r.busySeen[d.Session] = t0.Add(-time.Minute)
+		// The child turns idle. Many ticks later the delivery is still open.
+		agent.setRow("rev", map[string]any{"state": "idle"})
+		for i := 1; i <= 5; i++ {
+			r.settle(ctx, t0.Add(time.Duration(i)*time.Second))
+		}
+		got := e.delivery(d.ID)
+		if got.State != store.DeliveryOpen || got.HeldBy != store.HeldUnknown || got.HeldSession != d.Session {
+			t.Fatalf("closed or unheld while a child's answer is unread: %+v", got)
+		}
+		// The parent has a turn after the child: nothing holds it any more.
+		r.busySeen[d.Session] = t0.Add(2 * time.Second)
+		for i := 6; i <= 8; i++ {
+			r.settle(ctx, t0.Add(time.Duration(i)*time.Second))
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryClean {
+			t.Fatalf("not closed after the parent's turn: %+v", got)
+		}
+	})
+}
+
+func TestMemoChildGraceHoldBounds(t *testing.T) {
+	now := time.Now()
+	tree := []*sessionWire{{Name: "p", Alive: true}, {Name: "c", Alive: true, Origin: "session", OriginSession: "p"}}
+	r := &memoQueueRunner{busySeen: map[string]time.Time{"p": now.Add(-time.Hour), "c": now.Add(-time.Minute)}}
+	if got := r.childGraceHold(tree, now); got != "p" {
+		t.Fatalf("fresh child idle: %q", got)
+	}
+	if got := r.childGraceHold(tree, now.Add(memoChildGrace)); got != "" {
+		t.Fatalf("grace over: %q", got)
+	}
+	r.busySeen["p"] = now
+	if got := r.childGraceHold(tree, now); got != "" {
+		t.Fatalf("parent worked after the child: %q", got)
+	}
+	delete(r.busySeen, "c")
+	r.busySeen["p"] = now.Add(-time.Hour)
+	if got := r.childGraceHold(tree, now); got != "" {
+		t.Fatalf("child never seen busy: %q", got)
+	}
+}
