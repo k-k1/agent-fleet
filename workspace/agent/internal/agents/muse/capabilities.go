@@ -92,6 +92,12 @@ func (agentImpl) LimitInMessage(msg string, _ time.Time) (agents.MessageLimit, b
 // basis has none.
 func (agentImpl) LiveContext(name string) (agents.LiveContext, bool) {
 	used, win, ok := ManagedContext(name)
+	return liveContextOf(used, win, ok)
+}
+
+// liveContextOf: the token count is exact either way; "recorded" vs "estimated" says whether
+// the window is the host's or the default.
+func liveContextOf(used int64, win *int64, ok bool) (agents.LiveContext, bool) {
 	if !ok {
 		return agents.LiveContext{}, false
 	}

@@ -198,8 +198,8 @@ func allSessionsUsage(metas []session.Meta, budget time.Duration) ([]sessionUsag
 
 // overlayLiveUsage fills a running managed session's context (and credits) from its kind's
 // live handle, for kinds whose transcript carries no token counts. No live handle or no report
-// yet leaves the usage unchanged, which is honest. The token count of an "estimated" window
-// source is derived from a reported percentage; see the kind's LiveContext.
+// yet leaves the usage unchanged, which is honest. A window source of "estimated" means the
+// window is a default or a catalog size; whether the token count is exact is the kind's call.
 func overlayLiveUsage(m session.Meta, u *sessionUsage) {
 	a, ok := agentreg.Lookup(m.Kind)
 	if !ok {
@@ -221,8 +221,8 @@ func overlayLiveUsage(m session.Meta, u *sessionUsage) {
 		Pct:          lc.Pct,
 		Model:        lc.Model,
 	}
-	if lc.Credits != 0 {
-		u.Cumulative.Credits = lc.Credits
+	if lc.Credits != nil {
+		u.Cumulative.Credits = *lc.Credits
 	}
 }
 

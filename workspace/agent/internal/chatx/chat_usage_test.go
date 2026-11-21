@@ -190,3 +190,19 @@ func TestCtxPressureContent(t *testing.T) {
 		}
 	}
 }
+
+// With no model resolved, the window is estimated from the kind's own fallback model, and
+// from AF_CHAT_MODEL / the default only for a kind that has none.
+func TestChatCtxModelForFallback(t *testing.T) {
+	t.Setenv("AF_CHAT_MODEL", "env-model")
+	for kind, want := range map[string]string{
+		"codex":    defaultCodexChatModel,
+		"opencode": defaultOpencodeChatModel,
+		"cursor":   "env-model",
+	} {
+		c := &ChatConversation{Agent: kind}
+		if got := chatCtxModelFor(c, kind); got != want {
+			t.Errorf("%s: got %q, want %q", kind, got, want)
+		}
+	}
+}

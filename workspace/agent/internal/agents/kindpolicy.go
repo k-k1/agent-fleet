@@ -82,8 +82,9 @@ type LiveContext struct {
 	WindowSource string // "estimated" or "recorded"
 	Pct          float64
 	Model        string
-	// Credits is the metered credit spend, 0 when the kind meters none.
-	Credits float64
+	// Credits is the metered credit spend; nil when the kind meters none, so a reported 0 is
+	// told apart from "not metered".
+	Credits *float64
 }
 
 // LiveContextReader: a running Managed session of the kind holds its context usage in memory.
