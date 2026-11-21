@@ -28,6 +28,7 @@ const { AutoRunSection } = await import("./AutoRunSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { ViewShownContext } = await import("../../lib/viewShown.ts");
 const { useTenantStore } = await import("../../core/store/tenant.ts");
+const { useQueueSettingsCache } = await import("../memo/queueSettingsCache.ts");
 const { useAutoRunStore, useAutoRunReveal } = await import("./store.ts");
 
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
@@ -50,6 +51,7 @@ const mount = async (shown = true) => {
 };
 
 beforeEach(() => {
+  useQueueSettingsCache.getState().reset();
   // The store keeps what a scope knew across a pause of the poll; each test starts without it.
   useAutoRunStore.setState({ queues: [], deliveries: new Map(), loaded: false, scope: "" });
   useAutoRunReveal.setState({ name: "", n: 0, at: 0 });

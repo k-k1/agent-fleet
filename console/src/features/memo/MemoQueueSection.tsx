@@ -47,9 +47,10 @@ import { useTenantStore } from "../../core/store/tenant.ts";
 import { useDraft } from "../../lib/draft.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { useSettings } from "../../lib/settings.ts";
-import type { Memo, MemoCategory, MemoAttachment, MemoQueue } from "../../types/memo.ts";
+import type { Memo, MemoCategory, MemoAttachment } from "../../types/memo.ts";
 import { errText } from "../../core/api/client.ts";
 import { MemoQueueSettingsModal } from "./MemoQueueSettingsModal.tsx";
+import { useQueueSettings, useQueueSettingsCache } from "./queueSettingsCache.ts";
 import { MemoProducerText } from "./MemoProducerText.tsx";
 import { MemoQueueRuns } from "./MemoQueueRuns.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
@@ -149,6 +150,7 @@ function groupMemos(memos: Memo[], cats: MemoCategory[]): RepoBlock[] {
 export const MemoQueueSection = memo(function MemoQueueSection() {
   const workspaceRunning = useWorkspaceStore((s) => s.state) === "running";
   const tenant = useTenantStore((s) => s.tenant);
+  const identity = useTenantStore((s) => s.identityRev);
   const memosKey = useMemoStore((s) => s.tick);
   const bumpMemos = useMemoStore((s) => s.bump);
   const composeReq = useMemoStore((s) => s.composeReq);
@@ -227,15 +229,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const [tidy, setTidy] = useState<Memo[] | null>(null);
   // Auto-run settings (ADR 0137), read with the memo poll below. tenantEnabled false: the
   // tenant's administrator has not allowed new settings.
-  const [queues, setQueues] = useState<MemoQueue[]>([]);
-  const [tenantEnabled, setTenantEnabled] = useState(false);
-  // False until a settings read has succeeded: tenantEnabled's initial false is "not read yet",
-  // not "the administrator said no". Until then the gear is closed with its own reason
-  // (memo.q_unread), never the tenant-off one.
-  const [tenantKnown, setTenantKnown] = useState(false);
-  const lastQueues = useRef<{ tenantEnabled: boolean; queues: MemoQueue[]; known: boolean }>({ tenantEnabled: false, queues: [], known: false });
-  // The tenant lastQueues was read for: a failed read reuses it only inside that tenant.
-  const lastQueuesTenant = useRef("");
+  // The settings live in the cache the Auto-run view shares (queueSettingsCache.ts).
+  const queueKey = (tenant ?? "") + "\u0000" + identity;
+  const { queues, tenantEnabled, known: tenantKnown } = useQueueSettings(queueKey);
   // The dialogs hold a category id, never a copy of the category or its settings: each render
   // looks the live row up, so a poll that renames or removes it is seen by the dialog.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
@@ -274,6 +270,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     const load = () => {
       // Numbered when the request starts, and tied to the scope it starts in (store.ts).
       const ticket = useMemoStore.getState().begin();
+      const queueTicket = useQueueSettingsCache.getState().begin();
       return Promise.all([memoList(), memoCategoryList(), memoQueueList().catch(() => null)])
         .then(([mList, cList, qRaw]) => {
           if (!alive) return;
@@ -284,24 +281,16 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           const marr = Array.isArray(mList) ? mList : [];
           const carr = Array.isArray(cList) ? cList : [];
           useMemoStore.getState().publish(marr, ticket, scope);
-          // A failed settings read (an older Control Plane, an error body) keeps the last good
-          // one; it never takes the memo list down with it.
+          // A failed settings read (an older Control Plane, an error body) keeps the cached one;
+          // it never takes the memo list down with it.
           const fresh = readMemoQueues(qRaw);
-          if (lastQueuesTenant.current !== (tenant ?? "")) {
-            lastQueuesTenant.current = tenant ?? "";
-            lastQueues.current = { tenantEnabled: false, queues: [], known: false };
-          }
-          const qw = fresh ? { ...fresh, known: true } : lastQueues.current;
-          lastQueues.current = qw;
+          if (fresh) useQueueSettingsCache.getState().publish(queueKey, queueTicket, fresh);
           setMemosTenant(tenant ?? "");
-          const ser = JSON.stringify([marr, carr, qw]);
+          const ser = JSON.stringify([marr, carr]);
           if (ser !== serRef.current) {
             serRef.current = ser;
             setMemos(marr);
             setCats(carr);
-            setQueues(qw.queues);
-            setTenantEnabled(qw.tenantEnabled);
-            setTenantKnown(qw.known);
           }
         })
         .catch(() => {});
@@ -314,7 +303,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       alive = false;
       clearInterval(id);
     };
-  }, [memosKey, tenant, workspaceRunning]);
+  }, [memosKey, tenant, identity, workspaceRunning]);
 
   // Leader Ctrl/⌘+K → M (or any requestCompose) reveals + focuses the composer.
   useEffect(() => {

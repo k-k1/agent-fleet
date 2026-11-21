@@ -85,7 +85,7 @@ function readWaiting(v: unknown): MemoQueueWaiting | undefined {
   };
 }
 
-function readQueue(v: unknown): MemoQueue | null {
+export function readQueue(v: unknown): MemoQueue | null {
   if (!isObj(v) || typeof v.categoryId !== "string" || !v.categoryId) return null;
   return {
     categoryId: v.categoryId,
