@@ -434,6 +434,31 @@ describe("repository group + button", () => {
     useReposStore.setState({ repos: [] });
   });
 
+  it("offers the repository choice in an empty queue, and forgets a repo that left the list", async () => {
+    const { useReposStore } = await import("../repos/store.ts");
+    useReposStore.setState({ repos: [{ name: "newrepo" }] as never });
+    servedCats = [];
+    servedMemos = [];
+    await render();
+    const pick = async (v: string) => {
+      const sel = must(document.querySelector<HTMLSelectElement>(".memo-addcat-repo"), "repo select");
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(sel, v);
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    await pick("newrepo");
+    await click(must(document.querySelector<HTMLButtonElement>(".memo-addcat"), "add button"));
+    expect(memoCategoryCreate.mock.calls[0][0].repo).toBe("newrepo");
+
+    // The repo disappears and comes back: the selection must not silently return.
+    await act(async () => useReposStore.setState({ repos: [] }));
+    await act(async () => useReposStore.setState({ repos: [{ name: "newrepo" }] as never }));
+    await click(must(document.querySelector<HTMLButtonElement>(".memo-addcat"), "add button"));
+    expect(memoCategoryCreate.mock.calls[1][0].repo).toBe("");
+    useReposStore.setState({ repos: [] });
+  });
+
   it("keeps the bottom button for the unfiled area", async () => {
     servedCats = [aCat({ id: "c3", repo: "app", name: "Bugs" })];
     await render();

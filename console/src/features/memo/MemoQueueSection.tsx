@@ -169,6 +169,11 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const workRepos = useReposStore((st) => st.repos);
   // Worktree folders file under their base repo (as add_memo does), so offer each base once.
   const repoChoices = useMemo(() => [...new Set(workRepos.map(repoBaseName))].sort(), [workRepos]);
+  // A selection that left the list (repo removed, tenant switched) falls back to unfiled for good,
+  // so the same name reappearing later is not picked up silently.
+  useEffect(() => {
+    if (newCatRepo && !repoChoices.includes(newCatRepo)) setNewCatRepo("");
+  }, [newCatRepo, repoChoices]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // Collapsed category groups, keyed by repo\x00category and persisted so the fold state
   // survives reloads (clicking a category header toggles it).
@@ -915,6 +920,33 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     </div>
   );
 
+  const addCatRow = (
+    <span className="memo-addcat-row">
+      <button
+        type="button"
+        className="memo-addcat"
+        onClick={() => void addCategory(repoChoices.includes(newCatRepo) ? newCatRepo : "")}
+      >
+        <Icon name="add" /> {tr("memo.add_category")}
+      </button>
+      {repoChoices.length > 0 && (
+        <select
+          className="memo-addcat-repo"
+          aria-label={tr("memo.add_category_where")}
+          value={repoChoices.includes(newCatRepo) ? newCatRepo : ""}
+          onChange={(e) => setNewCatRepo(e.target.value)}
+        >
+          <option value="">{tr("memo.common")}</option>
+          {repoChoices.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+      )}
+    </span>
+  );
+
   return (
     <>
       <Section
@@ -929,7 +961,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         {!target && composer}
 
         {memos.length === 0 && cats.length === 0 ? (
-          <div className="pane-empty">{tr("memo.empty")}</div>
+          <>
+            <div className="pane-empty">{tr("memo.empty")}</div>
+            {addCatRow}
+          </>
         ) : (
           <>
             {blocks.map((rb) => (
@@ -1241,26 +1276,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
               </div>
             ))}
 
-            <span className="memo-addcat-row">
-              <button type="button" className="memo-addcat" onClick={() => void addCategory(repoChoices.includes(newCatRepo) ? newCatRepo : "")}>
-                <Icon name="add" /> {tr("memo.add_category")}
-              </button>
-              {repoChoices.length > 0 && (
-                <select
-                  className="memo-addcat-repo"
-                  aria-label={tr("memo.add_category_where")}
-                  value={repoChoices.includes(newCatRepo) ? newCatRepo : ""}
-                  onChange={(e) => setNewCatRepo(e.target.value)}
-                >
-                  <option value="">{tr("memo.common")}</option>
-                  {repoChoices.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </span>
+            {addCatRow}
           </>
         )}
 
