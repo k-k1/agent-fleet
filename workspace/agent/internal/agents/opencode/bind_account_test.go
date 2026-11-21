@@ -475,8 +475,8 @@ func TestBindingStallBeforeTheCallIsNotAClockChange(t *testing.T) {
 	// real clocks from here on
 	clockStamp = func() (string, int64, bool) { return "boot", time.Now().UnixMilli(), true }
 	wallNow = time.Now
-	instantAge = func(at time.Time) (time.Duration, time.Duration) {
-		return time.Since(at), time.Now().Round(0).Sub(at.Round(0))
+	instantAge = func(now, at time.Time) (time.Duration, time.Duration) {
+		return now.Sub(at), now.Round(0).Sub(at.Round(0))
 	}
 	noteAccount(time.Now().Add(-3*time.Second), acctOut, 1) // the stall happened before the call
 	if n := len(events(t)); n != 2 {
@@ -495,7 +495,7 @@ func TestStampedEventCorrection(t *testing.T) {
 	stampUp = 50_000
 	clockStamp = func() (string, int64, bool) { return "boot", 50_000, true }
 	age := func(mono, wall time.Duration) {
-		instantAge = func(time.Time) (time.Duration, time.Duration) { return mono, wall }
+		instantAge = func(_, _ time.Time) (time.Duration, time.Duration) { return mono, wall }
 	}
 	cases := []struct {
 		name       string
@@ -527,7 +527,7 @@ func TestStampedEventCorrection(t *testing.T) {
 func TestBindingLateFirstOutReadingIsStamped(t *testing.T) {
 	bindT(t)
 	start(1000, 1, "key-A")
-	instantAge = func(time.Time) (time.Duration, time.Duration) { return 3 * time.Second, 3 * time.Second }
+	instantAge = func(_, _ time.Time) (time.Duration, time.Duration) { return 3 * time.Second, 3 * time.Second }
 	stampUp = 4100 // the stamp is read 3 s after the instant 1100
 	noteAccount(atMs(1100), acctOut, 1)
 	evs := events(t)
@@ -546,7 +546,9 @@ func TestBindingLateFirstOutReadingIsStamped(t *testing.T) {
 func TestBindingSuspendKeepsLedgerUsable(t *testing.T) {
 	bindT(t)
 	suspended := func() {
-		instantAge = func(time.Time) (time.Duration, time.Duration) { return 100 * time.Millisecond, 3100 * time.Millisecond }
+		instantAge = func(_, _ time.Time) (time.Duration, time.Duration) {
+			return 100 * time.Millisecond, 3100 * time.Millisecond
+		}
 	}
 	start(1000, 1, "key-A")
 	suspended()
@@ -568,7 +570,7 @@ func TestBindingSuspendKeepsLedgerUsable(t *testing.T) {
 	suspended()
 	stampUp = 9000
 	noteDaemonUnknown(2)
-	instantAge = func(time.Time) (time.Duration, time.Duration) { return 0, 0 }
+	instantAge = func(_, _ time.Time) (time.Duration, time.Duration) { return 0, 0 }
 	stampUp = 9100
 	start(9100, 3, "key-C")
 	stampUp = 9200
@@ -588,7 +590,7 @@ func TestBindingClockSetDuringHoldUpIsKept(t *testing.T) {
 	noteAccount(atMs(160_000), acctTouch, 1)
 	// The instant read 200 s on the wall, the stamp is taken 60 s back on it: monotonic elapsed 0,
 	// wall elapsed -60 s.
-	instantAge = func(time.Time) (time.Duration, time.Duration) { return 0, -60 * time.Second }
+	instantAge = func(_, _ time.Time) (time.Duration, time.Duration) { return 0, -60 * time.Second }
 	wallNow = func() time.Time { return time.UnixMilli(140_000) }
 	stampUp = 170_000
 	noteAccount(atMs(200_000), acctOut, 1)
@@ -598,5 +600,29 @@ func TestBindingClockSetDuringHoldUpIsKept(t *testing.T) {
 	}
 	if got := bind(t, routes.RouteOpencodeZen, false, 141_000); got != "" {
 		t.Errorf("a call after the clock went back bound to %q", got)
+	}
+}
+
+// A stamp read that was cut across by a suspend or a clock set (the wall clock jumped between the
+// reading before the uptime read and the one after it) is read again; when the second read is whole
+// it is stamped, when every read is broken the event stays unstamped.
+func TestStampedEventRereadsABrokenPair(t *testing.T) {
+	bindT(t)
+	at := time.UnixMilli(1_000_000)
+	var clock []int64 // successive wall readings in ms
+	wallNow = func() time.Time { c := clock[0]; clock = clock[1:]; return time.UnixMilli(c) }
+	clockStamp = func() (string, int64, bool) { return "boot", 50_000, true }
+	clock = []int64{1_000_000, 1_003_000, 1_010_000, 1_010_010} // first pair broken by 3 s, second whole
+	if got := stampedEvent(at); got.Boot != "boot" || got.Up != 50_000 || got.At != 1_000_000 {
+		t.Errorf("second read of a broken pair = %+v, want it stamped", got)
+	}
+	clock = []int64{1_000_000, 1_003_000, 1_010_000, 1_013_000} // both broken
+	if got := stampedEvent(at); got.Boot != "" || got.Up != 0 || got.At != 1_000_000 {
+		t.Errorf("two broken pairs = %+v, want it unstamped", got)
+	}
+	clock = []int64{1_000_000, 999_000} // the clock set back across the read
+	clock = append(clock, 1_000_000, 999_000)
+	if got := stampedEvent(at); got.Boot != "" {
+		t.Errorf("a pair across a clock set back = %+v, want it unstamped", got)
 	}
 }

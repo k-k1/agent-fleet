@@ -25,7 +25,7 @@ func bindT(t *testing.T) {
 	old := clockStamp
 	clockStamp = func() (string, int64, bool) { return "boot", stampUp, true }
 	oldNow, oldSlack, oldAge := wallNow, callSlack, instantAge
-	instantAge = func(time.Time) (time.Duration, time.Duration) { return 0, 0 } // test instants are taken as now
+	instantAge = func(_, _ time.Time) (time.Duration, time.Duration) { return 0, 0 } // test instants are taken as now
 	callSlack = 0
 	wallNow = func() time.Time { return time.UnixMilli(stampUp) }
 	gapsMem, sessGapsMem = nil, nil

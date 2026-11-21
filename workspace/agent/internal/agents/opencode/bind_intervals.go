@@ -394,40 +394,48 @@ func stampNow() spawnStamp {
 // uptime and read as a clock that was set; such a sample says nothing, so it is left unstamped.
 const stampWindow = 250 * time.Millisecond
 
-// instantAge is the time elapsed since an observation instant, measured on the monotonic clock
-// and on the wall clock. A seam for tests whose instants are not real time.
-var instantAge = func(at time.Time) (mono, wall time.Duration) {
-	return time.Since(at), time.Now().Round(0).Sub(at.Round(0))
+// instantAge is the time from an observation instant to now, measured on the monotonic clock and
+// on the wall clock. A seam for tests whose instants are not real time.
+var instantAge = func(now, at time.Time) (mono, wall time.Duration) {
+	return now.Sub(at), now.Round(0).Sub(at.Round(0))
 }
 
-// stampedEvent is an event at the given instant with the uptime of that instant. The uptime is
-// read now and moved back by the time elapsed since the instant, so a past instant is never paired
-// with an uncorrected current uptime: a caller held up between taking `at` and getting here would
-// otherwise read as a clock that was set. The uptime counts time spent suspended and the monotonic
-// clock does not, so when the two elapsed readings disagree by more than stampWindow (a suspend, or
-// a clock set in between) the instant cannot be moved onto the uptime. The event is then taken at
-// the moment of the stamp read itself, a wall and uptime pair of one moment, so that a clock that
-// was really set shows against the earlier events and a suspend does not. A stamp that cannot be
-// taken, was itself held up, or whose correction runs past the start of the boot leaves the event
-// unstamped, which says nothing about the clock.
+// stampedEvent is an event at the given instant with the uptime of that instant. One reading `t0`
+// of the clock is taken before the uptime read, and everything is computed from it. A reading is
+// used only when the uptime read followed it closely on both the monotonic and the wall clock (a
+// process held up, a suspend or a clock set in between breaks the pair; it is read again, then left
+// unstamped). The uptime is moved back by the time from the instant to t0, so a past instant is
+// never paired with an uncorrected current uptime. The uptime counts time spent suspended and the
+// monotonic clock does not, so when the two disagree about that time (a suspend, or a clock set,
+// since the instant) the instant cannot be moved onto the uptime: the event is then taken at t0, a
+// pair of one moment, so that a clock really set shows against the earlier events and a suspend
+// does not. An event left unstamped says nothing about the clock.
 func stampedEvent(at time.Time) bindEvent {
-	w0 := wallNow()
-	boot, up, ok := clockStamp()
-	if !ok || wallNow().Sub(w0) > stampWindow {
-		return bindEvent{At: at.UnixMilli()}
+	for range 2 {
+		t0 := wallNow()
+		boot, up, ok := clockStamp()
+		if !ok {
+			break
+		}
+		t1 := wallNow()
+		held, heldWall := t1.Sub(t0), t1.Round(0).Sub(t0.Round(0))
+		if held > stampWindow || held < 0 || heldWall > stampWindow || heldWall < 0 || heldWall-held > stampWindow || held-heldWall > stampWindow {
+			continue
+		}
+		mono, wall := instantAge(t0, at)
+		if wall-mono > stampWindow || mono-wall > stampWindow {
+			return bindEvent{At: t0.UnixMilli(), Boot: boot, Up: up}
+		}
+		if mono < 0 {
+			mono = 0 // an instant ahead of now is taken as now
+		}
+		up -= mono.Milliseconds()
+		if up <= 0 {
+			break
+		}
+		return bindEvent{At: at.UnixMilli(), Boot: boot, Up: up}
 	}
-	mono, wall := instantAge(at)
-	if wall-mono > stampWindow || mono-wall > stampWindow {
-		return bindEvent{At: w0.UnixMilli(), Boot: boot, Up: up}
-	}
-	if mono < 0 {
-		mono = 0 // an instant ahead of now is taken as now
-	}
-	up -= mono.Milliseconds()
-	if up <= 0 {
-		return bindEvent{At: at.UnixMilli()}
-	}
-	return bindEvent{At: at.UnixMilli(), Boot: boot, Up: up}
+	return bindEvent{At: at.UnixMilli()}
 }
 
 // noteDaemonStart records generation gen of the daemon, which this Agent started at `at` (when its
