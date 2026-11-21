@@ -131,7 +131,12 @@ export function SessionLinks({ s, running, onTidy }: { s: Session; running: bool
 }
 
 function openWorkItem(ref: { provider: string; key: string }): void {
-  const { item, reference } = resolveWorkItemRef(ref, useWorkItemStore.getState().payload?.items || []);
+  const items = useWorkItemStore.getState().payload?.items || [];
+  // Repository names are case-insensitive on both hosts, but the cache lookup is exact: a PR URL
+  // spelled `Owner/Repo` must still find the row cached as `owner/repo#N`.
+  const lower = ref.key.toLowerCase();
+  const hit = items.find((i) => i.provider === ref.provider && i.key.toLowerCase() === lower);
+  const { item, reference } = resolveWorkItemRef(hit ? { provider: hit.provider, key: hit.key } : ref, items);
   useWorkItemModal.getState().openDetail(item, { reference });
 }
 
