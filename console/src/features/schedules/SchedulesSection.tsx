@@ -66,6 +66,8 @@ import {
 } from "./read.ts";
 
 const POLL_MS = 15000;
+// How long a run that names a schedule waits for the first schedule list before it is shown in the group.
+const FIRST_READ_WAIT_MS = 5000;
 // Deliberately the same key Section persists to on its own (ui/Section.tsx storeKey), so that
 // making it controlled still carries the user's open/closed choice over.
 const SECTION_KEY = "af-section-schedules";
@@ -325,6 +327,11 @@ export const SchedulesSection = memo(function SchedulesSection() {
   // Why the fetch failed ("" = it succeeded). Kept so an empty list and a failure do not
   // look the same.
   const [loadErr, setLoadErr] = useState("");
+  // The tenant `loadErr` belongs to: another tenant's failure must not end this one's first-read wait.
+  const [loadErrFor, setLoadErrFor] = useState<string | null>(null);
+  // The tenant whose first read has taken longer than FIRST_READ_WAIT_MS: the wait ends so a list
+  // that never answers cannot hide the sessions already fetched.
+  const [waitedFor, setWaitedFor] = useState<string | null>(null);
   // Generation counter (an effect dep) so the retry button re-runs load.
   const [reloadTick, setReloadTick] = useState(0);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -376,6 +383,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
           const { items: arr, error } = readScheduleList(res);
           if (!arr) {
             setLoadErr(errText(error) || t("sched.load_failed"));
+            setLoadErrFor(tenant);
             return;
           }
           setLoadErr("");
@@ -389,7 +397,10 @@ export const SchedulesSection = memo(function SchedulesSection() {
         })
         .catch(() => {
           // Thrown = the network dropped (api() resolves CP errors instead).
-          if (alive) setLoadErr(t("sched.load_failed"));
+          if (alive) {
+            setLoadErr(t("sched.load_failed"));
+            setLoadErrFor(tenant);
+          }
         });
     load();
     const id = setInterval(load, POLL_MS);
@@ -406,7 +417,11 @@ export const SchedulesSection = memo(function SchedulesSection() {
   // Until this tenant's first read has settled the list of schedules is unknown, so a run that
   // names a schedule is held back rather than shown in the group and then moved under its row
   // (which would drop an open fold or the focus). A failed first read ends the wait.
-  const firstReadPending = loadedFor !== tenant && !loadErr;
+  useEffect(() => {
+    const id = setTimeout(() => setWaitedFor(tenant), FIRST_READ_WAIT_MS);
+    return () => clearTimeout(id);
+  }, [tenant]);
+  const firstReadPending = loadedFor !== tenant && !(loadErr && loadErrFor === tenant) && waitedFor !== tenant;
   const grouped = useMemo(() => {
     const g = groupRunsBySchedule(scheduledRuns, new Set(scoped.map((s) => s.id)));
     return firstReadPending ? { ...g, rest: g.rest.filter((r) => !r.scheduleId) } : g;

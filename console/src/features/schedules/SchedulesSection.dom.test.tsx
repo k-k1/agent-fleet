@@ -264,4 +264,37 @@ describe("SchedulesSection scheduled sessions before the schedule list has loade
     expect(host.querySelector("[data-sched-sessions]")?.querySelector('[data-sched-session="mine-run"]')).not.toBeNull();
     store.setState({ sessions: [] });
   });
+
+  it("ends the wait when the first read never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = await seed();
+      scheduleList.mockReturnValue(new Promise(() => {}));
+      await render();
+      expect(host.querySelector('[data-sched-session="mine-run"]')).toBeNull();
+      await act(async () => {
+        vi.advanceTimersByTime(6000);
+      });
+      expect(host.querySelector("[data-sched-sessions]")?.querySelector('[data-sched-session="mine-run"]')).not.toBeNull();
+      store.setState({ sessions: [] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let another tenant's failed read end this tenant's wait", async () => {
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    const store = await seed();
+    scheduleList.mockResolvedValue({ error: { code: "http_502", message: "bad gateway" } });
+    await act(async () => useTenantStore.setState({ tenant: "A" } as never));
+    await render();
+    expect(host.querySelector('[data-sched-session="mine-run"]')).not.toBeNull(); // A failed: shown in the group
+    scheduleList.mockReturnValue(new Promise(() => {}));
+    await act(async () => useTenantStore.setState({ tenant: "B" } as never));
+    await act(async () => {});
+    expect(host.querySelector('[data-sched-session="mine-run"]')).toBeNull(); // B is still reading
+    store.setState({ sessions: [] });
+    await act(async () => useTenantStore.setState({ tenant: "" } as never));
+  });
 });
+
