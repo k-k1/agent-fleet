@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -503,7 +504,9 @@ func npmDiscardAside(moved []npmAside) bool {
 	gone := true
 	for _, m := range moved {
 		removeTree(m.bak)
-		if _, err := os.Lstat(m.bak); err == nil {
+		// Only a confirmed ENOENT counts as gone: any other error (EACCES on the parent, say)
+		// says nothing about the backup.
+		if _, err := os.Lstat(m.bak); !errors.Is(err, fs.ErrNotExist) {
 			gone = false
 		}
 	}

@@ -509,9 +509,24 @@ func (e Env) cursorSweepStale() {
 	if err != nil {
 		return
 	}
+	// Trees the launchers point at now are never swept, whatever their names look like.
+	live := map[string]bool{}
+	for _, l := range []string{filepath.Join(e.localBin(), cursorTool), filepath.Join(e.localBin(), "agent")} {
+		if t, err := os.Readlink(l); err == nil {
+			if !filepath.IsAbs(t) {
+				t = filepath.Join(filepath.Dir(l), t)
+			}
+			if d := filepath.Dir(filepath.Clean(t)); filepath.Dir(d) == filepath.Clean(versions) {
+				live[filepath.Base(d)] = true
+			}
+		}
+	}
 	for _, de := range ents {
 		base := de.Name()
 		p := filepath.Join(versions, base)
+		if live[base] {
+			continue
+		}
 		if strings.HasPrefix(base, ".af-up-") {
 			removeTree(p)
 			continue

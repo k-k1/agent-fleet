@@ -440,6 +440,15 @@ func TestCursorSweepStaleIgnoresGlobCharactersInHome(t *testing.T) {
 	}
 }
 
+func TestCursorSweepStaleSparesATreeALauncherPointsAt(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	d := f.plantCursor(t, "1.0.0.af-old.7") // a member's own version whose name looks like ours
+	f.env.cursorSweepStale()
+	if !usable(f.local("cursor-agent")) {
+		t.Fatalf("the live tree %s was swept", d)
+	}
+}
+
 func TestNPMMarkerWrite(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	t.Run("a member's file at the old fixed temp name survives", func(t *testing.T) {
@@ -456,6 +465,28 @@ func TestNPMMarkerWrite(t *testing.T) {
 			t.Fatal("accepted")
 		}
 	})
+}
+
+func TestNPMDiscardAsideUnknownStateIsNotGone(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	bak := tree + npmBakSuffix
+	f.write(t, filepath.Join(bak, "VERSION"), "1.0.0")
+	parent := filepath.Dir(bak)
+	if err := os.Chmod(parent, 0o000); err != nil { // neither unlinking nor even looking is possible
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	if npmDiscardAside([]npmAside{{orig: tree, bak: bak}}) {
+		t.Fatal("reported gone although the backup could not even be looked at")
+	}
+	os.Chmod(parent, 0o755)
+	if !npmDiscardAside([]npmAside{{orig: tree, bak: bak}}) {
+		t.Fatal("not swept once the permission is back")
+	}
 }
 
 func TestNPMAcceptedCleanupFailureKeepsTheMarker(t *testing.T) {
