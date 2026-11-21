@@ -214,7 +214,7 @@ func managedMoveIsMirror(m session.Meta) bool {
 	if m.DriverKind() != session.DriverManaged {
 		return false
 	}
-	c, ok := AgentOf(m.Kind).(agents.ManagedMoveMirrorer)
+	c, ok := registeredCap[agents.ManagedMoveMirrorer](m.Kind)
 	return ok && c.ManagedMoveIsMirror()
 }
 

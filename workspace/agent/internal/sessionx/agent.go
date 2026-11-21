@@ -31,6 +31,18 @@ func AgentOf(kind string) agents.Agent { return agentreg.Of(kind) }
 // RegisteredAgent is agentreg.Lookup: AgentOf without the claude fallback.
 func RegisteredAgent(kind string) (agents.Agent, bool) { return agentreg.Lookup(kind) }
 
+// registeredCap is the capability C of the kind's own agent. An empty or unknown kind has none:
+// AgentOf would answer claude's, and a kind the registry does not know must not inherit it.
+func registeredCap[C any](kind string) (C, bool) {
+	var zero C
+	a, ok := RegisteredAgent(kind)
+	if !ok {
+		return zero, false
+	}
+	c, ok := a.(C)
+	return c, ok
+}
+
 // RegisteredKinds is agentreg.Kinds: every registered kind, sorted.
 func RegisteredKinds() []string { return agentreg.Kinds() }
 

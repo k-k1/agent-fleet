@@ -30,7 +30,7 @@ const (
 // moment a second time, so it is dropped — the same rule cmux applies to panes
 // with a hook-integrated agent.
 func terminalNotifyHasHooks(kind string) bool {
-	h, ok := AgentOf(kind).(agents.AttentionHooker)
+	h, ok := registeredCap[agents.AttentionHooker](kind)
 	return ok && h.AttentionViaHooks()
 }
 

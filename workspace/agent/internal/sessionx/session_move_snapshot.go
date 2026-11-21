@@ -28,7 +28,7 @@ import (
 var readMoveSource = func(m session.Meta) HandoverInput {
 	in := HandoverInput{Source: m}
 	var edits []transcript.FileEdit
-	if r, ok := AgentOf(m.Kind).(agents.FullTranscriptReader); ok {
+	if r, ok := registeredCap[agents.FullTranscriptReader](m.Kind); ok {
 		// The whole log, as the export reads it: the mirror's collector keeps only a tail.
 		// Queued is typed into the turn the limit cut off, never run.
 		in.Turns, in.Queued, edits = r.FullMoveSource(m)

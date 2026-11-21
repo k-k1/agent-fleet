@@ -1,7 +1,10 @@
 package sessionx
 
 import (
+	"encoding/json"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -41,5 +44,63 @@ func TestKindCapabilityDispatchMatchesTheOldLiterals(t *testing.T) {
 	}
 	if managedMoveIsMirror(session.Meta{Kind: session.KindCursor}) {
 		t.Error("a Terminal cursor session is not a mirror")
+	}
+}
+
+// claudeFixture writes a claude jsonl for a session of the given kind and returns its meta.
+func claudeFixture(t *testing.T, kind string) session.Meta {
+	t.Helper()
+	home := withTempHome(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	dir := t.TempDir()
+	m := session.Meta{Name: "capfx", Dir: dir, Kind: kind}
+	session.WriteMeta(m)
+	lines := []string{
+		`{"type":"user","timestamp":"2026-10-17T10:00:00Z","message":{"role":"user","content":"refactor the parser"}}`,
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-17T10:00:03Z","content":"and keep the old API"}`,
+		`{"type":"assistant","timestamp":"2026-10-17T10:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"Starting."},{"type":"tool_use","id":"t1","name":"Write","input":{"file_path":"` + filepath.Join(dir, "parser.go") + `","content":"package p\n"}}]}}`,
+	}
+	writeFile(t, filepath.Join(home, ".claude", "projects", "p", session.UUID(dir, m.Name)+".jsonl"), strings.Join(lines, "\n")+"\n")
+	return m
+}
+
+func turnsText(m session.Meta) string {
+	b, _ := json.Marshal(exportTurns(m))
+	return string(b)
+}
+
+// A claude session's export and move snapshot read the whole log through the capability.
+func TestClaudeFullTranscriptReachesExportAndMoveSnapshot(t *testing.T) {
+	m := claudeFixture(t, session.KindClaude)
+	if s := turnsText(m); !strings.Contains(s, "refactor the parser") || !strings.Contains(s, "Starting.") {
+		t.Fatalf("export turns = %s", s)
+	}
+	in := readMoveSource(m)
+	if len(in.Turns) == 0 || len(in.Queued) != 1 || in.Queued[0] != "and keep the old API" {
+		t.Fatalf("snapshot turns=%d queued=%q", len(in.Turns), in.Queued)
+	}
+	if len(in.ChangedFiles) == 0 {
+		t.Fatalf("snapshot lost the file edits: %+v", in)
+	}
+}
+
+// An empty or unregistered stored kind gets no capability, as the literal comparison gave it
+// none: AgentOf would answer claude's, and the claude log would leak into export and the move.
+func TestUnknownKindInheritsNoClaudeCapability(t *testing.T) {
+	for _, kind := range []string{"", "nosuchkind"} {
+		m := claudeFixture(t, kind)
+		if s := turnsText(m); strings.Contains(s, "refactor the parser") {
+			t.Errorf("kind %q: export read the claude log: %s", kind, s)
+		}
+		if in := readMoveSource(m); len(in.Queued) != 0 || len(in.ChangedFiles) != 0 {
+			t.Errorf("kind %q: snapshot read the claude log: %+v", kind, in)
+		}
+		if terminalNotifyHasHooks(kind) {
+			t.Errorf("kind %q: terminal notifications would be dropped", kind)
+		}
+		if managedMoveIsMirror(session.Meta{Kind: kind, Driver: session.DriverManaged}) {
+			t.Errorf("kind %q: treated as a mirror", kind)
+		}
 	}
 }

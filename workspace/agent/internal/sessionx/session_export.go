@@ -51,7 +51,7 @@ func HandleSessionExport(w http.ResponseWriter, r *http.Request) {
 // question the agent is still waiting on is held apart from the turns (TranscriptData.Pending)
 // so the mirror can render it as a live card; the file appends it, since it was asked.
 func exportTurns(m session.Meta) []transcript.Turn {
-	if r, ok := AgentOf(m.Kind).(agents.FullTranscriptReader); ok {
+	if r, ok := registeredCap[agents.FullTranscriptReader](m.Kind); ok {
 		return r.FullTurns(m)
 	}
 	td, ok := AgentOf(m.Kind).Transcript(m)
