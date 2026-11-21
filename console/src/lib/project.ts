@@ -301,23 +301,14 @@ export function worktreeParentFolder(ix: LineageIndex, folder: string, rootFolde
   return copy; // the group's base, or a sibling worktree
 }
 
-/** Which unattended source raised a group of working copies (Session.origin). */
-export type AutoGroupKind = "autorun" | "schedule";
-
-/** Unattended working copies gathered under one copy, apart from the member's own. */
-export interface RepoTreeGroup {
-  kind: AutoGroupKind;
-  /** The grouped copies, each with its own nested descendants. Never empty. */
-  nodes: RepoTreeNode[];
-}
+/** Which unattended source raised a session (Session.origin). */
+export type AutoKind = "autorun" | "schedule";
 
 /** One working copy in the rail's tree, with the copies nested under it. */
 export interface RepoTreeNode {
   repo: Repo;
-  /** Copies the member started (or that hang under a grouped copy), nested by lineage. */
+  /** Copies the member started, nested by lineage. */
   children: RepoTreeNode[];
-  /** Schedule copies of this node, folded away from `children`. At most one per kind. */
-  groups: RepoTreeGroup[];
   /** Copies the member started from this node's sessions that the rail shows elsewhere (cut
    *  back to the group's root so hand-started work is not buried in a group). Display
    *  ignores them; stop / delete scope them back in, as it did before grouping. */
@@ -326,11 +317,10 @@ export interface RepoTreeNode {
   spine: string;
 }
 
-/** Every copy directly below a node — its own children and the grouped ones. Walkers that
- *  act on "what the rail shows below this row" (stop, delete, rotate) must use this, not
- *  `children`, or a grouped run silently drops out of the bulk action. */
+/** Every copy directly below a node. Walkers that act on "what the rail shows below this row"
+ *  (stop, delete, rotate) use this; unattended copies are in `detached`, see `lineageNodes`. */
 export function childNodes(n: RepoTreeNode): RepoTreeNode[] {
-  return n.groups.length === 0 ? n.children : [...n.children, ...n.groups.flatMap((g) => g.nodes)];
+  return n.children;
 }
 
 /** Display plus detached: what a bulk action on this node acts on. Walkers must dedupe by
@@ -339,13 +329,6 @@ export function lineageNodes(n: RepoTreeNode): RepoTreeNode[] {
   return n.detached && n.detached.length > 0 ? [...childNodes(n), ...n.detached] : childNodes(n);
 }
 
-const GROUP_ORDER: AutoGroupKind[] = ["autorun", "schedule"];
-
-// Kinds the tree folds into a group. Auto-run is not one: its runs have a view of their own
-// (features/autorun), so the tree keeps their copies out of sight in `detached`, where stop /
-// delete still reach them. Schedules stay grouped until the Schedules view lists their runs.
-const GROUPED_KINDS: AutoGroupKind[] = ["schedule"];
-
 // sessionAutoKind — which unattended source raised a session, "" = the member's own.
 //
 // origin queue / schedule is the run itself. A child the run spawned (origin "session")
@@ -353,7 +336,7 @@ const GROUPED_KINDS: AutoGroupKind[] = ["schedule"];
 // the member launched from a run keeps origin=user while carrying originSession, so it
 // ends the walk as "the member's" and everything it spawns stays visible. A missing
 // parent or a cycle answers "" (ordinary display), never a guess.
-export function sessionAutoKind(s: Session | undefined, byName: Map<string, Session>): AutoGroupKind | "" {
+export function sessionAutoKind(s: Session | undefined, byName: Map<string, Session>): AutoKind | "" {
   const seen = new Set<string>();
   let cur = s;
   while (cur) {
@@ -367,62 +350,30 @@ export function sessionAutoKind(s: Session | undefined, byName: Map<string, Sess
   return "";
 }
 
-/** Sessions the member's own views list: everything except an auto-run run and the sessions it
- *  started, which the Auto-run view lists instead. */
-export function withoutAutoRun(sessions: Session[]): Session[] {
+/** Sessions the member's own views list: everything except an unattended run and the sessions it
+ *  started. The Auto-run view lists the runs of an auto-run queue, the Schedules view the
+ *  runs of a schedule. */
+export function withoutUnattended(sessions: Session[]): Session[] {
   const byName = new Map(sessions.map((s) => [s.name, s]));
-  return sessions.filter((s) => sessionAutoKind(s, byName) !== "autorun");
+  return sessions.filter((s) => !sessionAutoKind(s, byName));
 }
 
-/** A worktree that only auto-run work lives in: the tree keeps it out of sight. A base clone an
- *  auto-run reused stays a row of the tree, so it is never one of these. */
-export function isAutoRunOnlyFolder(sessions: Session[], repo: Repo | undefined, repos: Repo[]): boolean {
+/** A worktree that only unattended work lives in: the tree keeps it out of sight. A base clone an
+ *  unattended run reused stays a row of the tree, so it is never one of these. */
+export function isUnattendedOnlyFolder(sessions: Session[], repo: Repo | undefined, repos: Repo[]): boolean {
   // A worktree whose base clone is not listed is a root of its own in the tree, so it is shown.
   if (!repo?.worktree || !repo.parent || !repos.some((r) => r.worktree !== true && r.name === repo.parent)) return false;
   const here = sessionsInFolder(sessions, repo.name);
   if (here.length === 0) return false;
   const byName = new Map(sessions.map((s) => [s.name, s]));
-  return here.every((s) => sessionAutoKind(s, byName) === "autorun");
+  return here.every((s) => !!sessionAutoKind(s, byName));
 }
 
-/** The kinds a rail renders as a group, in order. */
-export const AUTO_GROUP_KINDS: AutoGroupKind[] = GROUPED_KINDS;
-
-// splitNodeSessions — one node's sessions as the rail lists them: the member's own, and per
-// kind the ones an unattended source started in this very folder (it reused an existing
-// copy). Below a group (`grouped`) nothing splits: that copy holds only unattended work, or
-// it would not have been grouped (repoTree). RepoNode and railOrder share this so the two
-// can never disagree about what sits where.
-export function splitNodeSessions(
-  mine: Session[],
-  byName: Map<string, Session>,
-  grouped: boolean,
-): { own: Session[]; byKind: Record<AutoGroupKind, Session[]> } {
-  const byKind: Record<AutoGroupKind, Session[]> = { autorun: [], schedule: [] };
-  const own: Session[] = [];
-  for (const s of mine) {
-    const k = grouped ? "" : sessionAutoKind(s, byName);
-    if (k) byKind[k].push(s);
-    else own.push(s);
-  }
-  return { own, byKind };
-}
-
-/** Sessions of a subtree in the order the rail draws them: the node's own sessions, its
- *  ordinary copies, then each group's own sessions and copies (Auto-run before Schedules). */
-export function railNodeSessions(
-  n: RepoTreeNode,
-  sessions: Session[],
-  byName: Map<string, Session>,
-  grouped = false,
-): Session[] {
-  const { own, byKind } = splitNodeSessions(sessionsInFolder(sessions, n.repo.name), byName, grouped);
-  const out = [...own];
-  for (const c of n.children) out.push(...railNodeSessions(c, sessions, byName, grouped));
-  for (const k of GROUPED_KINDS) {
-    out.push(...byKind[k]);
-    for (const c of n.groups.find((g) => g.kind === k)?.nodes ?? []) out.push(...railNodeSessions(c, sessions, byName, true));
-  }
+/** Sessions of a subtree in the order the rail draws them: the node's own sessions, then its
+ *  nested copies. Unattended sessions are the Auto-run and Schedules views', not the rail's. */
+export function railNodeSessions(n: RepoTreeNode, sessions: Session[], byName: Map<string, Session>): Session[] {
+  const out = sessionsInFolder(sessions, n.repo.name).filter((s) => !sessionAutoKind(s, byName));
+  for (const c of n.children) out.push(...railNodeSessions(c, sessions, byName));
   return out;
 }
 
@@ -441,7 +392,7 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
   };
   return groupedRepos(repos).map((members) => {
     const nodes = new Map<string, RepoTreeNode>();
-    for (const r of members) nodes.set(r.name, { repo: r, children: [], groups: [], spine: spineOf(r.name) });
+    for (const r of members) nodes.set(r.name, { repo: r, children: [], spine: spineOf(r.name) });
     const rootName = members[0].name;
     const worktrees = members.slice(1);
     const group = new Set(members.map((r) => r.name));
@@ -452,19 +403,19 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
     // that order, so every level of the tree keeps that order: a name sort would be
     // effectively random (temp/<slug>), while chronological order leaves the existing
     // worktrees where they are and puts a new one at the end of its level.
-    const kindOf = new Map<string, AutoGroupKind | "">();
-    // A copy where the member also works (a hand-started session or another kind of run opened there later) stays in
-    // the ordinary tree, so that session is not buried in a folded group; its unattended
-    // sessions fold into the node's own groups instead (splitNodeSessions).
+    const kindOf = new Map<string, AutoKind | "">();
+    // A copy where the member also works (a hand-started session or another kind of run opened there
+    // later) stays in the ordinary tree, so that session is not buried; unattended copies are kept
+    // out of sight in `detached`, where stop / delete still reach them.
     for (const w of worktrees) {
       const k = sessionAutoKind(ix.owners.get(w.name), ix.byName);
       // Mixed = any session of a different origin kind, a run of another category included.
       const mixed = sessionsInFolder(sessions, w.name).some((s) => sessionAutoKind(s, ix.byName) !== k);
       kindOf.set(w.name, mixed ? "" : k);
     }
-    // A copy whose parent copy is grouped nests under it as a plain child (the run's
-    // reviewers and nested worktrees keep their nesting inside the group). A member's own
-    // copy hanging under a grouped one is cut back to the group's root so it stays put.
+    // A copy whose parent copy is unattended nests under it as a plain child (the run's reviewers
+    // and nested worktrees stay together). A member's own copy hanging under an unattended one is
+    // cut back to the root so it stays put.
     for (const w of worktrees) {
       const p = parentOf.get(w.name) || rootName;
       if (p !== rootName && kindOf.get(p) && !kindOf.get(w.name)) {
@@ -479,22 +430,11 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
       const parent = nodes.get(pName);
       const self = nodes.get(w.name);
       if (!parent || !self) continue;
-      const kind = kindOf.get(w.name);
-      if (!kind || kindOf.get(pName)) {
+      if (!kindOf.get(w.name) || kindOf.get(pName)) {
         parent.children.push(self);
         continue;
       }
-      if (!GROUPED_KINDS.includes(kind)) {
-        (parent.detached ??= []).push(self);
-        continue;
-      }
-      let g = parent.groups.find((x) => x.kind === kind);
-      if (!g) {
-        g = { kind, nodes: [] };
-        parent.groups.push(g);
-        parent.groups.sort((a, b) => GROUP_ORDER.indexOf(a.kind) - GROUP_ORDER.indexOf(b.kind));
-      }
-      g.nodes.push(self);
+      (parent.detached ??= []).push(self);
     }
     return nodes.get(rootName) as RepoTreeNode;
   });
@@ -557,7 +497,6 @@ function pruneForest(
   const scope: RepoTreeNode[] = [];
   for (const n of nodes) {
     const ch = pruneForest(n.children, keep, scopeKeep);
-    const groups: RepoTreeGroup[] = [];
     const rest = [...ch.scope];
     // Copies the display drops but the operational rule matches (a mixed copy whose hidden
     // auto-run session carries the match) are still reached through this node.
@@ -568,18 +507,13 @@ function pruneForest(
       return [...op.kept, ...op.scope].filter((x) => !have.has(x.repo.name));
     };
     rest.push(...opOnly(n.children, [...ch.kept, ...ch.scope]));
-    for (const g of n.groups) {
-      const gr = pruneForest(g.nodes, keep, scopeKeep);
-      if (gr.kept.length > 0) groups.push({ kind: g.kind, nodes: gr.kept });
-      rest.push(...gr.scope, ...opOnly(g.nodes, [...gr.kept, ...gr.scope]));
-    }
     // Detached copies are never displayed, so only the operational rule applies to them.
     const det = pruneForest(n.detached ?? [], scopeKeep, scopeKeep);
     const detached = [...det.kept, ...det.scope, ...rest];
-    if (ch.kept.length > 0 || groups.length > 0 || keep(n.repo)) {
-      kept.push({ repo: n.repo, children: ch.kept, groups, detached: detached.length > 0 ? detached : undefined, spine: n.spine });
+    if (ch.kept.length > 0 || keep(n.repo)) {
+      kept.push({ repo: n.repo, children: ch.kept, detached: detached.length > 0 ? detached : undefined, spine: n.spine });
     } else if (detached.length > 0) {
-      scope.push({ repo: n.repo, children: [], groups: [], detached, spine: n.spine });
+      scope.push({ repo: n.repo, children: [], detached, spine: n.spine });
     }
   }
   return { kept, scope };
@@ -590,7 +524,7 @@ function pruneForest(
 // removed). These land in the rail's "other sessions" catch-all (pj.other_sessions).
 export function orphanSessions(sessions: Session[], repos: Repo[]): Session[] {
   const names = new Set(repos.map((r) => r.name));
-  return withoutAutoRun(sessions)
+  return withoutUnattended(sessions)
     .filter((s) => {
       const f = sessionFolder(s);
       return !f || !names.has(f);

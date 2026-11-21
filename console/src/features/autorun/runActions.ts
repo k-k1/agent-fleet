@@ -6,7 +6,7 @@ import type { Session } from "../../types/session.ts";
 import { sessionFolder, sessionsInFolder, worktreeOwners, type RepoTreeNode } from "../../lib/project.ts";
 import { runRootName, type RunRow } from "./runs.ts";
 
-const node = (repo: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo, children, groups: [], spine: "" });
+const node = (repo: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo, children, spine: "" });
 
 /** The run's own sessions: the run and what it started. */
 export const runSessions = (run: RunRow): Session[] => [run.root, ...run.children];

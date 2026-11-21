@@ -8,6 +8,8 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { openSessionChat } from "../sessions/open.ts";
+import { useSessionsStore } from "../sessions/store.ts";
+import { useAutoRunReveal } from "../autorun/store.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { errText } from "../../core/api/client.ts";
@@ -26,6 +28,9 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
   const [rows, setRows] = useState<MemoDelivery[] | null>(null);
   const [failed, setFailed] = useState(false);
   const alive = useRef(true);
+  // A run whose session the Auto-run view lists can be shown there.
+  const runNames = useSessionsStore((s) => s.sessions);
+  const listed = new Set(runNames.filter((x) => x.origin === "queue").map((x) => x.name));
   // Only the newest read may land: a slow earlier one must not overwrite a later answer.
   const seq = useRef(0);
 
@@ -150,6 +155,20 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
                 onKeyDown={(e) => e.stopPropagation()}
               >
                 {tr("memo.d_end")}
+              </button>
+            )}
+            {listed.has(d.session) && (
+              <button
+                type="button"
+                className="linkish memo-run-view"
+                title={tr("memo.d_show_run")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useAutoRunReveal.getState().reveal(d.session);
+                }}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <Icon name="play" /> {tr("memo.d_show_run")}
               </button>
             )}
             {openable && <Icon name="link-external" className="memo-run-open" />}

@@ -208,6 +208,7 @@ export const memo = {
   "memo.d_defer_returned": "差し戻しの前に、あなたがメモをキューに戻した",
   "memo.waiting_below_threshold_deferred": "メモがたまるのを待っています（実行できるのは {count} 件、ほかに {deferred} 件が実行から差し戻されて決まった時刻を待っています。{needed} 件で実行を始めます）。",
   "memo.waiting_below_threshold_blocked_deferred": "メモがたまるのを待っています（実行できるのは {count} 件、ほかに {blocked} 件が先に終わるべきメモを待ち、{deferred} 件は実行から差し戻されて決まった時刻を待っています。{needed} 件で実行を始めます）。",
+  "memo.d_show_run": "自動実行で表示",
   "memo.d_end": "終了",
   "memo.d_end_title": "この実行を終了しますか？",
   "memo.d_end_body": "実行を終えて枠を空け、セッション {name} を停止します。セッションはアーカイブされず残り、「中断」とも記録されません。",

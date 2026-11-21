@@ -155,6 +155,9 @@ type MemoDeliveryStore interface {
 	GetMemoDelivery(ctx context.Context, id string) (MemoDelivery, bool, error)
 	// ListMemoDeliveries returns a queue's deliveries, newest first, at most limit.
 	ListMemoDeliveries(ctx context.Context, membershipID, queueID string, limit int) ([]MemoDelivery, error)
+	// ListOpenMemoDeliveries returns a queue's deliveries that are not closed, newest first, however
+	// many there are: the member-wide limit on them bounds the answer.
+	ListOpenMemoDeliveries(ctx context.Context, membershipID, queueID string) ([]MemoDelivery, error)
 	// ListClosedWithoutTurn returns the deliveries closed at or after since with a session and no
 	// first turn recorded, the least recently tried first (never tried before tried), at most limit.
 	// MarkTurnTried stamps the ones a pass has read, so the next pass goes on with the others.
@@ -307,6 +310,11 @@ func (s *SQL) GetMemoDelivery(ctx context.Context, id string) (MemoDelivery, boo
 func (s *SQL) ListMemoDeliveries(ctx context.Context, membershipID, queueID string, limit int) ([]MemoDelivery, error) {
 	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND outcome<>?
 		ORDER BY created_at DESC, id DESC LIMIT ?`, membershipID, queueID, DeliveryWake, limit))
+}
+
+func (s *SQL) ListOpenMemoDeliveries(ctx context.Context, membershipID, queueID string) ([]MemoDelivery, error) {
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND state<>? AND outcome<>?
+		ORDER BY created_at DESC, id DESC`, membershipID, queueID, DeliveryClosed, DeliveryWake))
 }
 
 func (s *SQL) ListLiveMemoDeliveries(ctx context.Context) ([]MemoDelivery, error) {

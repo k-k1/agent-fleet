@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Session } from "../../types/session.ts";
-import { buildRuns, fmtElapsed, itemLabel, runRootName, type RunDelivery } from "./runs.ts";
+import { buildRuns, failedRunKeys, fmtElapsed, itemLabel, runRootName, waitingRunCount, type RunDelivery } from "./runs.ts";
 
-const dlv = (categoryId: string, state: string, extra: Partial<RunDelivery> = {}): RunDelivery => ({ categoryId, state, sentAt: "", createdAt: "", closedAt: "", heldBy: "", ...extra });
+const dlv = (categoryId: string, state: string, extra: Partial<RunDelivery> = {}): RunDelivery => ({ id: "d-" + categoryId, categoryId, state, outcome: "", sentAt: "", createdAt: "", closedAt: "", heldBy: "", ...extra });
 const sess = (name: string, extra: Partial<Session>): Session => ({ name, kind: "claude", alive: true, ...extra });
 
 describe("buildRuns", () => {
@@ -102,5 +102,21 @@ describe("helpers", () => {
     expect(fmtElapsed(12 * 60_000)).toBe("12m");
     expect(fmtElapsed(65 * 60_000)).toBe("1h 5m");
     expect(fmtElapsed(27 * 3600_000)).toBe("1d 3h");
+  });
+});
+
+describe("run badges", () => {
+  it("counts the waiting runs and keys the failed ones by delivery", () => {
+    const rows = buildRuns(
+      [sess("a", { origin: "queue", state: "question" }), sess("b", { origin: "queue", alive: false }), sess("c", { origin: "queue", alive: false }), sess("d", { origin: "queue", alive: false })],
+      new Map([
+        ["a", dlv("c", "open", { id: "da" })],
+        ["b", dlv("c", "closed", { id: "db", outcome: "failed" })],
+        ["c", dlv("c", "closed", { id: "dc", outcome: "aborted" })],
+        ["d", dlv("c", "closed", { id: "dd", outcome: "clean" })],
+      ]),
+    );
+    expect(waitingRunCount(rows)).toBe(1);
+    expect(failedRunKeys(rows)).toEqual(["db"]);
   });
 });

@@ -4,6 +4,7 @@
 // each signal belongs to.
 import { useLeftRail } from "../../core/store/leftRail.ts";
 import type { RailView } from "../../core/store/leftRail.ts";
+import { useAutoRunReveal } from "../../features/autorun/store.ts";
 import { useFilesStore } from "../../features/files/store.ts";
 import { useMemoStore } from "../../features/memo/store.ts";
 import { useRepoReveal } from "../../features/repos/store.ts";
@@ -24,6 +25,9 @@ export function wireRailReveals(): () => void {
     }),
     useMemoStore.subscribe((s, prev) => {
       if (s.reveal.n !== prev.reveal.n || s.composeReq !== prev.composeReq) show("memo");
+    }),
+    useAutoRunReveal.subscribe((s, prev) => {
+      if (s.n !== prev.n) show("autorun");
     }),
     // Only a reveal that takes focus is the member asking to see the row. The other kind is a
     // side effect of something finishing (a clone landing) and must not pull the pane away

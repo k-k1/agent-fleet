@@ -1361,6 +1361,24 @@ describe("inline run list under a category", () => {
     expect(document.querySelector(".memo-runs")).toBeNull();
   });
 
+  it("links a run the Auto-run view lists to its row there, without opening the session", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    const { useAutoRunReveal } = await import("../autorun/store.ts");
+    useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }, { name: "s-d2", kind: "claude", alive: false, origin: "user" }] as never });
+    servedDeliveries = [run("d1"), run("d2")];
+    await render();
+    await click(toggle());
+    const links = document.querySelectorAll<HTMLElement>(".memo-run-view");
+    // Only the run whose session is a run of a queue; a hand-started session has no row there.
+    expect(links).toHaveLength(1);
+    const n = useAutoRunReveal.getState().n;
+    await click(links[0]);
+    expect(useAutoRunReveal.getState().name).toBe("s-d1");
+    expect(useAutoRunReveal.getState().n).toBe(n + 1);
+    expect(openSessionChat).not.toHaveBeenCalledWith("s-d1");
+    useSessionsStore.setState({ sessions: [] });
+  });
+
   it("opens a run's session from its row, by click and by Enter, and leaves a sessionless run inert", async () => {
     servedDeliveries = [run("d1"), run("d2", { session: "", outcome: "failed" })];
     await render();

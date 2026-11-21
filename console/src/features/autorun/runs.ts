@@ -8,8 +8,11 @@ export type RunState = "running" | "waiting" | "ended";
 
 /** What a queue reported about the run that started a session. */
 export interface RunDelivery {
+  id: string;
   categoryId: string;
   state: string;
+  /** How a closed run ended: clean | failed | aborted | ended | unknown | not_sent | deferred. */
+  outcome: string;
   sentAt: string;
   createdAt: string;
   closedAt: string;
@@ -22,6 +25,9 @@ export interface RunRow {
   /** The queue's category id the run came from; "" when no delivery names this session. */
   categoryId: string;
   state: RunState;
+  /** The delivery that started the run and how it ended; "" while unknown or not closed. */
+  deliveryId: string;
+  outcome: string;
   /** The work item the run started for; null when the session has no `started` link. */
   item: { key: string; label: string; title: string } | null;
   pr: SessionPR | null;
@@ -46,6 +52,13 @@ export function runRootName(s: Session, byName: Map<string, Session>): string {
   }
   return "";
 }
+
+/** Runs that wait for the member's answer: the Auto-run icon's count. */
+export const waitingRunCount = (runs: RunRow[]): number => runs.filter((r) => r.state === "waiting").length;
+
+/** One key per run whose queue closed it as failed: the Auto-run icon's red dot, acknowledged by
+ *  opening the view. Aborted and ended-by-hand runs are the member's own doing, not failures. */
+export const failedRunKeys = (runs: RunRow[]): string[] => runs.filter((r) => r.outcome === "failed" && r.deliveryId).map((r) => r.deliveryId);
 
 /** "owner/repo#45" -> "#45"; a Jira key stays as it is. */
 export function itemLabel(key: string): string {
@@ -97,6 +110,8 @@ export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelive
       return {
         root,
         categoryId: d?.categoryId ?? "",
+        deliveryId: d?.id ?? "",
+        outcome: state === "ended" && d?.state === "closed" ? d.outcome : "",
         state,
         item: link ? { key: link.key, label: itemLabel(link.key), title: link.title ?? "" } : null,
         pr: root.pr ?? null,

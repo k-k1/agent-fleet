@@ -8,11 +8,11 @@ import type { Session } from "../../types/session.ts";
 const opened = vi.fn();
 vi.mock("../sessions/open.ts", () => ({ openSessionChat: (n: string) => opened(n) }));
 const memoQueueList = vi.fn(async () => ({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] }));
-const memoQueueDeliveries = vi.fn(async (_id: string): Promise<unknown> => [
+const memoQueueDeliveries = vi.fn(async (_id: string, _openToo?: boolean): Promise<unknown> => [
   { id: "d1", session: "run-a", state: "open" },
   { id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" },
 ]);
-vi.mock("../memo/api.ts", () => ({ memoQueueList: () => memoQueueList(), memoQueueDeliveries: (id: string) => memoQueueDeliveries(id) }));
+vi.mock("../memo/api.ts", () => ({ memoQueueList: () => memoQueueList(), memoQueueDeliveries: (id: string, openToo?: boolean) => memoQueueDeliveries(id, openToo) }));
 
 const { AutoRunSection } = await import("./AutoRunSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
@@ -96,6 +96,24 @@ describe("AutoRunSection", () => {
     expect(head.textContent).toContain("1");
     await act(async () => head.click());
     expect(host.querySelector('[data-autorun-run="run-old"]')!.getAttribute("data-autorun-state")).toBe("ended");
+  });
+
+  it("asks for every open run too, so one older than the newest fifty keeps its category", async () => {
+    await mount();
+    expect(memoQueueDeliveries).toHaveBeenCalledWith("c1", true);
+  });
+
+  it("opens the Ended fold and focuses the row when the memo run history links to a finished run", async () => {
+    const { useAutoRunReveal } = await import("./store.ts");
+    await mount();
+    expect(host.querySelector('[data-autorun-run="run-old"]')).toBeNull();
+    await act(async () => useAutoRunReveal.getState().reveal("run-old"));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    const main = host.querySelector<HTMLElement>('[data-autorun-run="run-old"] .autorun-run-main');
+    expect(main).not.toBeNull();
+    expect(document.activeElement).toBe(main);
   });
 
   it("keeps a finished run's duration", async () => {

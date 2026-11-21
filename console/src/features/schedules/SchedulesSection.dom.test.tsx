@@ -143,3 +143,28 @@ describe("SchedulesSection reveal", () => {
     localStorage.removeItem("af-section-schedules");
   });
 });
+
+// Sessions a schedule started are not in the repository tree; this view lists them.
+describe("SchedulesSection scheduled sessions", () => {
+  it("lists live scheduled runs with their spawned sessions, folds finished ones, and leaves others out", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    const s = (name: string, extra: Record<string, unknown>) => ({ name, title: name, kind: "claude", alive: true, ...extra });
+    useSessionsStore.setState({
+      sessions: [
+        s("cron-live", { origin: "schedule", createdAt: "2026-11-02T00:00:00Z" }),
+        s("cron-rev", { origin: "session", originSession: "cron-live", createdAt: "2026-11-02T01:00:00Z" }),
+        s("cron-old", { origin: "schedule", alive: false, createdAt: "2026-11-01T00:00:00Z" }),
+        s("mine", { origin: "user" }),
+      ] as never,
+    });
+    scheduleList.mockResolvedValue([sched]);
+    await render();
+    const row = (n: string) => host.querySelector(`[data-sched-session="${n}"]`);
+    expect(row("cron-live")?.querySelectorAll(".sched-sess-kids li")).toHaveLength(1);
+    expect(row("cron-old")).toBeNull();
+    expect(row("mine")).toBeNull();
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    expect(row("cron-old")).not.toBeNull();
+    useSessionsStore.setState({ sessions: [] });
+  });
+});

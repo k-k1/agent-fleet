@@ -19,6 +19,8 @@ export const schedules = {
   "sched.loading": "読み込み中…",
   "sched.load_failed": "スケジュールを読み込めませんでした",
   "sched.retry": "再試行",
+  "sched.sessions": "スケジュールのセッション",
+  "sched.sessions_ended": "終了 {n} 件",
   "sched.no_runs": "実行履歴はまだありません。",
   "sched.paused": "スケジュールを一時停止しました",
   "sched.resumed": "スケジュールを再開しました",

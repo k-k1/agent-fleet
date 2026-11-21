@@ -25,7 +25,7 @@ const repo = (name: string, over: Partial<Repo> = {}): Repo => ({
   ...over,
 });
 
-const node = (r: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo: r, children, groups: [], spine: "" });
+const node = (r: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo: r, children, spine: "" });
 
 const sess = (name: string, folder: string, over: Partial<Session> = {}): Session => ({
   name,
@@ -49,10 +49,10 @@ describe("停止計画の並べ方", () => {
     expect(groups.map((g) => g.depth)).toEqual([0, 1, 1]);
   });
 
-  it("自動実行グループ内の作業コピーも対象に含める（一括停止で数え落とさない）", () => {
+  it("ツリーに出さない自動実行の作業コピーも対象に含める（一括停止で数え落とさない）", () => {
     const tree: RepoTreeNode = {
       ...node(repo("app@a")),
-      groups: [{ kind: "autorun", nodes: [node(repo("app@run"))] }],
+      detached: [node(repo("app@run"))],
     };
     const groups = planStopTree(tree, [sess("s1", "app@a"), sess("s2", "app@run")]);
     expect(groups.map((g) => g.repo.name)).toEqual(["app@a", "app@run"]);

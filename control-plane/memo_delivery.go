@@ -426,13 +426,23 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 
 // listDeliveries (GET /api/memo-queues/{categoryId}/deliveries, and the same read on
 // /internal/memo-queues for the fleet operator): a queue's deliveries, newest first, at most
-// memoDeliveryListMax. The token face leaves out the sessions' hand-back reasons.
+// memoDeliveryListMax. With ?include=open the answer also holds every delivery that is not
+// closed, however old, so a view that lists live runs never loses one to the limit. The token
+// face leaves out the sessions' hand-back reasons.
 func (a memoAPI) listDeliveries(via memoVia) func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView) {
 	return func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 		ds, err := a.store.ListMemoDeliveries(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax)
 		if err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
+		}
+		if r.URL.Query().Get("include") == "open" {
+			open, err := a.store.ListOpenMemoDeliveries(r.Context(), mv.MembershipID, r.PathValue("categoryId"))
+			if err != nil {
+				writeAPIErr(w, internalErr(err))
+				return
+			}
+			ds = mergeOpenDeliveries(ds, open)
 		}
 		out := make([]memoDeliveryDTO, 0, len(ds))
 		for _, d := range ds {
@@ -446,6 +456,28 @@ func (a memoAPI) listDeliveries(via memoVia) func(http.ResponseWriter, *http.Req
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
+}
+
+// mergeOpenDeliveries adds to the newest deliveries the open ones they do not hold, keeping the
+// newest-first order (created_at, then id, as the store sorts).
+func mergeOpenDeliveries(newest, open []store.MemoDelivery) []store.MemoDelivery {
+	have := make(map[string]bool, len(newest))
+	for _, d := range newest {
+		have[d.ID] = true
+	}
+	out := append([]store.MemoDelivery(nil), newest...)
+	for _, d := range open {
+		if !have[d.ID] {
+			out = append(out, d)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt != out[j].CreatedAt {
+			return out[i].CreatedAt > out[j].CreatedAt
+		}
+		return out[i].ID > out[j].ID
+	})
+	return out
 }
 
 // endDelivery (POST /api/memo-queues/{categoryId}/deliveries/{id}/end) finishes an open run by a

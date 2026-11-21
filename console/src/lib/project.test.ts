@@ -10,8 +10,8 @@ import {
   groupedRepos,
   sessionsInFolder,
   orphanSessions,
-  isAutoRunOnlyFolder,
-  withoutAutoRun,
+  isUnattendedOnlyFolder,
+  withoutUnattended,
   workingCopyLabel,
   worktreeOwners,
   worktreeParentFolder,
@@ -25,7 +25,6 @@ import {
   childNodes,
   lineageNodes,
   railNodeSessions,
-  splitNodeSessions,
   sessionAutoKind,
   type RepoTreeNode,
 } from "./project.ts";
@@ -424,36 +423,32 @@ describe("repoTree auto-run / schedule groups", () => {
   const tree = repoTree(repos, sessions)[0];
   const names = (ns: RepoTreeNode[]) => ns.map((n) => n.repo.name);
 
-  it("groups schedule worktrees and takes auto-run ones out of the tree's display", () => {
-    expect(tree.groups.map((g) => g.kind)).toEqual(["schedule"]);
-    expect(names(tree.groups[0].nodes)).toEqual(["af@cron"]);
-    // The run's copy is not displayed (the Auto-run view lists it) but stays in the scope.
-    expect(shapes(tree.detached ?? [])).toEqual([["af@run", [["af@rev", []]]]]);
+  it("takes auto-run and schedule worktrees out of the tree's display", () => {
+    // Neither is displayed (the Auto-run and Schedules views list them) but both stay in the scope.
+    expect(shapes(tree.detached ?? [])).toEqual([["af@run", [["af@rev", []]]], ["af@cron", []]]);
   });
 
   it("leaves hand-started work, handoffs and a hand-started parent's child where they are", () => {
     expect(shapes(tree.children)).toEqual([["af@hand", [["af@kid", []]]], ["af@hf", []]]);
   });
 
-  it("keeps a member's own copy out of a group even when its parent copy is grouped", () => {
+  it("keeps a member's own copy in the tree even when its parent copy is unattended", () => {
     expect(names(tree.detached ?? [])).not.toContain("af@hf");
   });
 
-  it("childNodes still sees the grouped copies and lineageNodes the auto-run ones", () => {
-    expect(names(childNodes(tree))).toEqual(["af@hand", "af@hf", "af@cron"]);
-    expect(names(lineageNodes(tree))).toEqual(["af@hand", "af@hf", "af@cron", "af@run"]);
-    expect(countRepoNodes([tree])).toBe(5);
+  it("childNodes sees what the tree shows and lineageNodes the unattended copies too", () => {
+    expect(names(childNodes(tree))).toEqual(["af@hand", "af@hf"]);
+    expect(names(lineageNodes(tree))).toEqual(["af@hand", "af@hf", "af@run", "af@cron"]);
+    expect(countRepoNodes([tree])).toBe(4); // the root, hand, its kid, hf
   });
 
-  it("filterRepoTree reaches a schedule match and drops empty groups", () => {
-    const hit = filterRepoTree([tree], (r) => r.name === "af@cron")[0];
-    expect(hit.children).toEqual([]);
-    expect(hit.groups.map((g) => g.kind)).toEqual(["schedule"]);
-    expect(filterRepoTree([tree], (r) => r.name === "af@hand")[0].groups).toEqual([]);
+  it("filterRepoTree shows nothing for a schedule match and keeps its scope", () => {
+    expect(filterRepoTree([tree], (r) => r.name === "af@cron")).toEqual([]);
+    expect(filterRepoTree([tree], (r) => r.name === "af@hand")[0].children.map((c) => c.repo.name)).toEqual(["af@hand"]);
   });
 
-  it("makes no group when nothing is unattended", () => {
-    expect(repoTree([repo("x"), wt("x@a", "x")], [sess("a", { repo: "x@a", origin: "user" })])[0].groups).toEqual([]);
+  it("has nothing detached when nothing is unattended", () => {
+    expect(repoTree([repo("x"), wt("x@a", "x")], [sess("a", { repo: "x@a", origin: "user" })])[0].detached).toBeUndefined();
   });
 });
 
@@ -473,7 +468,6 @@ describe("repoTree: a handoff the member made from a run", () => {
   it("keeps H and its reviewer R in the ordinary tree, and A out of it", () => {
     expect(shapes(tree.children)).toEqual([["af@h", [["af@r", []]]]]);
     expect(names(tree.detached ?? [])).toEqual(["af@a"]);
-    expect(tree.groups).toEqual([]);
   });
 
   it("still counts H as part of what a stop / delete on A covers, once, flagged as listed elsewhere", () => {
@@ -519,34 +513,28 @@ describe("repoTree: filtering and mixed copies", () => {
   it("a search that keeps only R shows it under the root and does not surface A's scope", () => {
     const f = filterRepoTree(tree, (r) => r.name === "af@r");
     expect(shapes(f)).toEqual([["af", [["af@h", [["af@r", []]]]]]]);
-    expect(f[0].groups).toEqual([]);
     // The display is H/R only, but the base's stop and delete still reach A once, as on main.
     expect(planStopTree(f[0], sessions).map((g) => g.repo.name).sort()).toEqual(["af@a", "af@h", "af@r"]);
     expect(planTree(f[0], sessions).map((p) => p.repo.name).sort()).toEqual(["af", "af@a", "af@h", "af@r"]);
     expect(planTree(f[0], sessions).filter((p) => p.repo.name === "af@a").map((p) => p.detached)).toEqual([true]);
   });
 
-  it("a run's copy where a schedule also runs stays ordinary; only the schedule's session has a heading", () => {
+  it("a run's copy where a schedule also runs stays ordinary, and neither's session is listed", () => {
     const ss = [...sessions, live(sess("cron", { repo: "af@a", createdAt: t(5), origin: "schedule" }))];
     const r = repoTree(repos, ss)[0];
-    expect(r.groups).toEqual([]);
     const a = r.children.find((c) => c.repo.name === "af@a")!;
     const byName = new Map(ss.map((x) => [x.name, x]));
-    const sp = splitNodeSessions(sessionsInFolder(ss, "af@a"), byName, false);
-    expect(sp.byKind.autorun.map((x) => x.name)).toEqual(["A"]);
-    expect(sp.byKind.schedule.map((x) => x.name)).toEqual(["cron"]);
-    expect(railNodeSessions(a, ss, byName).map((x) => x.name)).toEqual(["H", "R", "cron"]);
+    expect(railNodeSessions(a, ss, byName).map((x) => x.name)).toEqual(["H", "R"]);
   });
 
   it("a copy a run made but where the member later started a session stays in the ordinary tree", () => {
     const mixed = [...sessions, live(sess("hand", { repo: "af@a", createdAt: t(4), origin: "user" }))];
     const r = repoTree(repos, mixed)[0];
-    expect(r.groups).toEqual([]);
     expect(names(r.children)).toContain("af@a");
     expect(planStopTree(r, mixed).map((g) => g.repo.name).sort()).toEqual(["af@a", "af@h", "af@r"]); // no copy twice
   });
 
-  it("railOrder follows the drawn order: own, ordinary copies, then each group", () => {
+  it("railOrder follows the drawn order: own sessions, then ordinary copies, never an unattended one", () => {
     const rs = [repo("af"), wt("af@w", "af", { createdAt: t(1) })];
     const ss = [
       sess("H", { repo: "af", createdAt: t(1), origin: "user" }),
@@ -554,7 +542,7 @@ describe("repoTree: filtering and mixed copies", () => {
       sess("W", { repo: "af@w", createdAt: t(2), origin: "user" }),
     ];
     const byName = new Map(ss.map((x) => [x.name, x]));
-    expect(railNodeSessions(repoTree(rs, ss)[0], ss, byName).map((x) => x.name)).toEqual(["H", "W", "S"]);
+    expect(railNodeSessions(repoTree(rs, ss)[0], ss, byName).map((x) => x.name)).toEqual(["H", "W"]);
   });
 });
 
@@ -566,8 +554,8 @@ describe("auto-run sessions outside the member's lists", () => {
     sess("hand", { origin: "user" }),
     sess("inrepo", { repo: "af", origin: "queue" }),
   ];
-  it("withoutAutoRun drops a run and what it started, and keeps the member's own", () => {
-    expect(withoutAutoRun(sessions).map((s) => s.name)).toEqual(["hand"]);
+  it("withoutUnattended drops a run and what it started, and keeps the member's own", () => {
+    expect(withoutUnattended(sessions).map((s) => s.name)).toEqual(["hand"]);
   });
   it("leaves them out of the repo-less sessions and the rotation order", () => {
     expect(orphanSessions(sessions, repos).map((s) => s.name)).toEqual(["hand"]);
@@ -576,13 +564,13 @@ describe("auto-run sessions outside the member's lists", () => {
   it("tells a copy only auto-run works in", () => {
     const wtree = { name: "af", worktree: true, parent: "base" };
     const all = [{ name: "base" }, wtree];
-    expect(isAutoRunOnlyFolder(sessions, wtree, all)).toBe(true);
-    expect(isAutoRunOnlyFolder([...sessions, sess("m", { repo: "af", origin: "user" })], wtree, all)).toBe(false);
-    expect(isAutoRunOnlyFolder(sessions, { name: "empty", worktree: true, parent: "base" }, all)).toBe(false);
+    expect(isUnattendedOnlyFolder(sessions, wtree, all)).toBe(true);
+    expect(isUnattendedOnlyFolder([...sessions, sess("m", { repo: "af", origin: "user" })], wtree, all)).toBe(false);
+    expect(isUnattendedOnlyFolder(sessions, { name: "empty", worktree: true, parent: "base" }, all)).toBe(false);
     // A base clone an auto-run reused, and a worktree whose base is not listed, are rows of the tree.
-    expect(isAutoRunOnlyFolder(sessions, { name: "af" }, all)).toBe(false);
-    expect(isAutoRunOnlyFolder(sessions, wtree, [wtree])).toBe(false);
-    expect(isAutoRunOnlyFolder(sessions, undefined, all)).toBe(false);
+    expect(isUnattendedOnlyFolder(sessions, { name: "af" }, all)).toBe(false);
+    expect(isUnattendedOnlyFolder(sessions, wtree, [wtree])).toBe(false);
+    expect(isUnattendedOnlyFolder(sessions, undefined, all)).toBe(false);
   });
 });
 

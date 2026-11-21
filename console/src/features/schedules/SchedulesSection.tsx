@@ -25,6 +25,7 @@ import { useFold } from "../../lib/useFold.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
+import { ScheduledSessions } from "./ScheduledSessions.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openChat } from "../chat/open.ts";
 import { chatList } from "../chat/api.ts";
@@ -560,6 +561,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
           ))}
         </div>
       )}
+      <ScheduledSessions />
       {detail && (
         <ScheduleDetailModal
           s={detail}

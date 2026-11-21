@@ -15,7 +15,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { copyText } from "../../lib/clipboard.ts";
-import { isAutoRunOnlyFolder, sessionFolder } from "../../lib/project.ts";
+import { isUnattendedOnlyFolder, sessionFolder } from "../../lib/project.ts";
 import { getSettings, useSettings } from "../../lib/settings.ts";
 import { activeWorkingSet, repoInSet, workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
 import { useReposStore } from "../repos/store.ts";
@@ -154,7 +154,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   // shell can open.
   const popout = usePopoutMode() === "popout";
   const mobile = useIsMobile();
-  const autoRunCopy = isAutoRunOnlyFolder(useSessionsStore((st) => st.sessions), repos.find((r) => r.name === folder), repos);
+  const autoRunCopy = isUnattendedOnlyFolder(useSessionsStore((st) => st.sessions), repos.find((r) => r.name === folder), repos);
   const showRepoMenu = running && !repoLess && !popout && !mobile && !autoRunCopy;
   const openRepoMenu = () => {
     onClose();
