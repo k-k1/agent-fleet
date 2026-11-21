@@ -167,6 +167,41 @@ describe("a row with a reference", () => {
     openDetail.mockRestore();
   });
 
+  const openedItem = async (reference: Memo["reference"]) => {
+    servedMemos = [aMemo({ reference })];
+    await renderSection();
+    const openDetail = vi.spyOn(useWorkItemModal.getState(), "openDetail").mockImplementation(() => {});
+    await click(keyButton()!);
+    const item = openDetail.mock.calls[0][0] as WorkItem;
+    openDetail.mockRestore();
+    return item;
+  };
+
+  it("hands the modal the note's own address for an uncached item when it is http(s)", async () => {
+    const item = await openedItem({ ...ref, url: "https://example.com/own/12" });
+    expect(item.url).toBe("https://example.com/own/12");
+  });
+
+  it("never hands the modal a non-http(s) address: the generated tracker address goes instead", async () => {
+    const item = await openedItem({ ...ref, url: "javascript:alert(1)" });
+    expect(item.url).toBe(ref.url);
+  });
+
+  it("keeps a marked external link for a key-less reference", async () => {
+    servedMemos = [aMemo({ reference: { provider: "github", key: "", url: "https://example.com/x" } })];
+    await renderSection();
+    expect(keyButton()).toBeNull();
+    expect(link()?.getAttribute("href")).toBe("https://example.com/x");
+    expect(link()?.querySelector(".codicon-link-external")).not.toBeNull();
+  });
+
+  it("treats an inherited object property name as an unknown provider", async () => {
+    servedMemos = [aMemo({ reference: { provider: "toString", key: "x#1", url: "https://example.com/item" } })];
+    await renderSection();
+    expect(keyButton()).toBeNull();
+    expect(link()?.querySelector(".codicon-link-external")).not.toBeNull();
+  });
+
   it("keeps an external link, marked as external, for a provider the modal does not know", async () => {
     servedMemos = [aMemo({ reference: { provider: "gitlab", key: "a/b#1", url: "https://example.com/a/b/-/issues/1" } })];
     await renderSection();

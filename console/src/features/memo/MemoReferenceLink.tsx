@@ -31,7 +31,7 @@ export function MemoReferenceLink({
   const item = items ? findWorkItem(reference, items) : undefined;
   const provider = PROVIDER_NAMES[reference.provider] || reference.provider;
   // A key the modal can open without a cached row: a known provider and a key to build from.
-  const openable = !!item || (!!reference.key && reference.provider in PROVIDER_NAMES);
+  const openable = !!item || (!!reference.key && Object.hasOwn(PROVIDER_NAMES, reference.provider));
   return (
     <div className="memo-reflink">
       <span className="memo-reflink-mark" title={provider}>
