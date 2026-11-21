@@ -7,6 +7,8 @@ package routepolicysrv
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicy"
@@ -37,6 +40,8 @@ const (
 type ceilingState struct {
 	raw  string
 	rule routepolicy.Rule
+	// writer orders this process among Control Planes that run at once (store.CeilingWriterKey).
+	writer string
 }
 
 var routePolicyCeiling atomic.Pointer[ceilingState]
@@ -48,16 +53,25 @@ func LoadCeiling() error {
 	if err != nil {
 		return err
 	}
-	routePolicyCeiling.Store(&ceilingState{raw: raw, rule: rule})
+	id := make([]byte, 6)
+	if _, err := rand.Read(id); err != nil {
+		return err
+	}
+	routePolicyCeiling.Store(&ceilingState{raw: raw, rule: rule, writer: store.CeilingWriterKey(time.Now().UnixNano(), hex.EncodeToString(id))})
 	if rule.Restricted() {
 		log.Printf("route policy: operator ceiling %s=%q", routepolicy.EnvCeiling, raw)
 	}
 	return nil
 }
 
+// ErrCeilingSuperseded: the stored ceiling differs from this CP's own and was recorded by a CP
+// that started later. The older CP yields rather than flip the row back during a rollover.
+var ErrCeilingSuperseded = store.ErrCeilingSuperseded
+
 // SyncCeiling records this CP's ceiling as the stored ceiling row when it differs from
 // what is stored, under a new revision and with an audit row, so the change takes part in every
-// member's effective revision; an unchanged ceiling writes nothing and moves no revision.
+// member's effective revision; an unchanged ceiling writes nothing and moves no revision. A row
+// recorded by a CP that started later is never overwritten: ErrCeilingSuperseded, nothing written.
 func SyncCeiling(ctx context.Context, st store.Store) error {
 	c := currentCeiling()
 	want, err := json.Marshal(c.rule)
@@ -71,12 +85,15 @@ func SyncCeiling(ctx context.Context, st store.Store) error {
 	if row.Rule == string(want) || row.Revision == 0 && !c.rule.Restricted() {
 		return nil
 	}
-	_, after, err := st.PutRoutePolicy(ctx, store.RoutePolicyCeiling, "", string(want), "operator",
+	_, after, err := st.PutCeiling(ctx, string(want), "operator", c.writer,
 		func(before, after store.RoutePolicyRow) store.AuditLog {
 			return store.AuditLog{ID: store.NewID(), ActorKind: "system", ActorID: "operator", Action: "route_policy.ceiling.sync",
 				Target: "deployment", Detail: fmt.Sprintf("before=%s after=%s revision=%d raw=%q", before.Rule, after.Rule, after.Revision, c.raw),
 				HTTPStatus: http.StatusOK, At: store.NowTS()}
 		})
+	if errors.Is(err, store.ErrCeilingSuperseded) {
+		return ErrCeilingSuperseded
+	}
 	if err != nil {
 		return fmt.Errorf("recording the operator ceiling: %w", err)
 	}
@@ -173,10 +190,20 @@ func layerOf(row store.RoutePolicyRow) (policyLayerWire, error) {
 	return policyLayerWire{Rule: r, Revision: row.Revision, UpdatedAt: row.UpdatedAt}, nil
 }
 
-// errCeilingUnsettled: the stored ceiling kept differing from this CP's own after re-recording
-// it, which happens only while Control Planes with different ceilings write it in turn. Nothing
-// is served rather than an answer whose revision another CP labels with other content.
-var errCeilingUnsettled = errors.New("route policy: the recorded operator ceiling keeps changing under this Control Plane (Control Planes with different ceilings?)")
+// errCeilingUnsettled: the stored ceiling differs from this CP's own and this CP may not settle
+// it, because a CP that started later recorded it (this one is being replaced), or because it
+// kept changing after re-recording. Nothing is served rather than an answer whose revision
+// another CP labels with other content; callers answer it as retryable (503), so the Agent
+// retries and lands on the newer task.
+var errCeilingUnsettled = errors.New("route policy: the recorded operator ceiling belongs to a newer Control Plane (a rollover is in progress), try again shortly")
+
+// policyErr is the API answer for a failed policy read: the unsettled ceiling is retryable.
+func policyErr(err error) *APIError {
+	if errors.Is(err, errCeilingUnsettled) {
+		return &APIError{Status: http.StatusServiceUnavailable, Code: CodePolicyUnconfirmed, Message: "the credential policy is being replaced by a newer Control Plane; try again shortly"}
+	}
+	return internalErr(err)
+}
 
 // tenantPolicy reads every layer a tenant's members are judged by, in one snapshot, and labels it
 // with that snapshot's revision. The ceiling evaluated is always this CP's own, from its
@@ -202,6 +229,9 @@ func TenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantP
 			return tenantPolicyWire{}, errCeilingUnsettled
 		}
 		if err := SyncCeiling(ctx, st); err != nil {
+			if errors.Is(err, ErrCeilingSuperseded) {
+				return tenantPolicyWire{}, errCeilingUnsettled
+			}
 			return tenantPolicyWire{}, err
 		}
 	}
@@ -244,7 +274,7 @@ func TenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantP
 func (a admin) getDeployment(w http.ResponseWriter, r *http.Request, _ store.Identity) {
 	v, err := TenantPolicy(r.Context(), a.cp.Store(), "")
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, policyErr(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
@@ -273,7 +303,7 @@ func (a admin) getTenantCounts(w http.ResponseWriter, r *http.Request, _ store.I
 	st := a.cp.Store()
 	tenants, err := st.ListTenants(ctx)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, policyErr(err))
 		return
 	}
 	// Only tenants an administrator can see are counted, and a stored row counts only for one of
@@ -312,7 +342,7 @@ func (a admin) getTenantCounts(w http.ResponseWriter, r *http.Request, _ store.I
 		out.WithOwnRestriction, err = count(store.RoutePolicyTenant, routepolicy.Rule.Restricted)
 	}
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, policyErr(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -344,7 +374,7 @@ func readRule(w http.ResponseWriter, r *http.Request, above *routepolicy.Rule) (
 	}
 	b, err := json.Marshal(in)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, policyErr(err))
 		return in, "", false
 	}
 	return in, string(b), true
@@ -401,12 +431,12 @@ func (a admin) putLayer(w http.ResponseWriter, r *http.Request, ident store.Iden
 		return
 	}
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, policyErr(err))
 		return
 	}
 	l, err := layerOf(after)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, policyErr(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, l)
@@ -431,7 +461,7 @@ func (a admin) putCap(w http.ResponseWriter, r *http.Request) {
 	}
 	t, found, err := a.cp.Store().GetTenantBySlug(r.Context(), r.PathValue("slug"))
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, policyErr(err))
 		return
 	}
 	if !found {
@@ -473,7 +503,7 @@ func (a admin) putTenant(w http.ResponseWriter, r *http.Request) {
 		}
 		v, err := TenantPolicy(r.Context(), a.cp.Store(), t.ID)
 		if err != nil {
-			writeAPIErr(w, internalErr(err))
+			writeAPIErr(w, policyErr(err))
 			return
 		}
 		for _, h := range *in.Endpoints {
@@ -494,7 +524,7 @@ func (a admin) getTenant(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := TenantPolicy(r.Context(), a.cp.Store(), t.ID)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, policyErr(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, v)

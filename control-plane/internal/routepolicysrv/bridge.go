@@ -186,7 +186,7 @@ func (a admin) pull(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := MemberPolicyOf(r.Context(), a.cp.Store(), mv.TenantID)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, policyErr(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, p)

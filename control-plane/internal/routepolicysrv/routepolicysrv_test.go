@@ -413,11 +413,11 @@ type fightingCeilingStore struct {
 	inner *store.SQL
 }
 
-func (s fightingCeilingStore) PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor string,
+func (s fightingCeilingStore) PutCeiling(ctx context.Context, rule, actor, writer string,
 	audit func(before, after store.RoutePolicyRow) store.AuditLog) (store.RoutePolicyRow, store.RoutePolicyRow, error) {
-	b, a, err := s.inner.PutRoutePolicy(ctx, scope, tenantID, rule, actor, audit)
-	if err == nil && scope == store.RoutePolicyCeiling {
-		_, _, err = s.inner.PutRoutePolicy(ctx, scope, tenantID, "{}", "other-cp", nil)
+	b, a, err := s.inner.PutCeiling(ctx, rule, actor, writer, audit)
+	if err == nil {
+		_, _, err = s.inner.PutRoutePolicy(ctx, store.RoutePolicyCeiling, "", "{}", "other-cp", nil)
 	}
 	return b, a, err
 }
@@ -429,8 +429,8 @@ func TestRoutePolicyUnsettledCeilingAnswersNothing(t *testing.T) {
 	if _, _, err := st.PutRoutePolicy(context.Background(), store.RoutePolicyCeiling, "", "{}", "other-cp", nil); err != nil {
 		t.Fatal(err)
 	}
-	if w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", ""); w.Code != http.StatusInternalServerError {
-		t.Errorf("unsettled ceiling: %d %s, want a refusal", w.Code, w.Body)
+	if w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", ""); w.Code != http.StatusServiceUnavailable {
+		t.Errorf("unsettled ceiling: %d %s, want a retryable refusal", w.Code, w.Body)
 	}
 }
 
@@ -631,5 +631,106 @@ func TestRoutePolicyServesTheVocabulary(t *testing.T) {
 	}
 	if w := routeAdminDo(mux, "GET", "/api/admin/route-policy", "boss-x", ""); w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "vocabulary") {
 		t.Errorf("a tenant admin's deployment read: %d %s", w.Code, w.Body)
+	}
+}
+
+// actAs makes this process the Control Plane that started at startNS with the given ceiling.
+func actAs(t *testing.T, ceiling string, startNS int64) {
+	t.Helper()
+	t.Setenv(routepolicy.EnvCeiling, ceiling)
+	if err := LoadCeiling(); err != nil {
+		t.Fatal(err)
+	}
+	c := *routePolicyCeiling.Load()
+	c.writer = store.CeilingWriterKey(startNS, "x")
+	routePolicyCeiling.Store(&c)
+}
+
+func ceilingAuditRows(t *testing.T, st *store.SQL) int {
+	t.Helper()
+	rows, err := st.ListAuditByTenant(context.Background(), "", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, r := range rows {
+		if r.Action == "route_policy.ceiling.sync" {
+			n++
+		}
+	}
+	return n
+}
+
+// During a rollover the older CP yields: the stored ceiling ends at the newer CP's, the older
+// one answers retryable (503) and writes no audit row and no revision, and the newer one keeps
+// serving. A CP whose ceiling equals the stored one writes nothing either way.
+func TestCeilingOlderControlPlaneYields(t *testing.T) {
+	st, mux, tn := routePolicyFixture(t, "")
+	ctx := context.Background()
+	actAs(t, "", 100) // the old task
+	if err := SyncCeiling(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	actAs(t, "classes=provided", 200) // the new task
+	if err := SyncCeiling(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	row, _ := st.GetRoutePolicy(ctx, store.RoutePolicyCeiling, "")
+	if row.Rule != `{"classes":["provided"]}` || row.Revision == 0 {
+		t.Fatalf("the newer CP did not record its ceiling: %+v", row)
+	}
+	rows := ceilingAuditRows(t, st)
+
+	actAs(t, "", 100)
+	if err := SyncCeiling(ctx, st); !errors.Is(err, ErrCeilingSuperseded) {
+		t.Fatalf("older CP sync = %v, want ErrCeilingSuperseded", err)
+	}
+	w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", "")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("older CP read: %d %s, want 503", w.Code, w.Body)
+	}
+	if after, _ := st.GetRoutePolicy(ctx, store.RoutePolicyCeiling, ""); after != row {
+		t.Errorf("the older CP changed the row: %+v -> %+v", row, after)
+	}
+	if n := ceilingAuditRows(t, st); n != rows {
+		t.Errorf("the older CP wrote %d audit rows", n-rows)
+	}
+
+	actAs(t, "classes=provided", 200)
+	if w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", ""); w.Code != 200 {
+		t.Errorf("newer CP read: %d %s", w.Code, w.Body)
+	}
+	if after, _ := st.GetRoutePolicy(ctx, store.RoutePolicyCeiling, ""); after != row {
+		t.Errorf("the newer CP re-recorded an unchanged ceiling: %+v -> %+v", row, after)
+	}
+}
+
+// Equal ceilings write nothing whichever CP started first, and a database edit of the row is
+// still re-recorded by the newest CP.
+func TestCeilingEqualWritesNothingAndEditIsRerecorded(t *testing.T) {
+	st, mux, tn := routePolicyFixture(t, "")
+	ctx := context.Background()
+	actAs(t, "classes=provided", 200)
+	if err := SyncCeiling(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	row, _ := st.GetRoutePolicy(ctx, store.RoutePolicyCeiling, "")
+	actAs(t, "classes=provided", 100)
+	if err := SyncCeiling(ctx, st); err != nil {
+		t.Fatalf("equal ceiling from an older CP: %v", err)
+	}
+	if after, _ := st.GetRoutePolicy(ctx, store.RoutePolicyCeiling, ""); after != row {
+		t.Errorf("equal ceilings wrote: %+v -> %+v", row, after)
+	}
+	// A database edit (it carries no writer key) is re-recorded by the newest CP.
+	actAs(t, "classes=provided", 200)
+	if _, _, err := st.PutRoutePolicy(ctx, store.RoutePolicyCeiling, "", "{}", "someone", nil); err != nil {
+		t.Fatal(err)
+	}
+	if w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss-x", ""); w.Code != 200 {
+		t.Fatalf("read after edit: %d %s", w.Code, w.Body)
+	}
+	if after, _ := st.GetRoutePolicy(ctx, store.RoutePolicyCeiling, ""); after.Rule != `{"classes":["provided"]}` || after.Revision <= row.Revision {
+		t.Errorf("the edit was not re-recorded: %+v", after)
 	}
 }

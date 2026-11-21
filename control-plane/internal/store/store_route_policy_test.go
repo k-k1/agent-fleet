@@ -280,3 +280,43 @@ func TestPutRoutePolicyIfConcurrentWriters(t *testing.T) {
 		}
 	})
 }
+
+// PutCeiling yields to a row written by a greater writer key without taking a revision or an
+// audit row; the same key, a greater key and an unkeyed row (a database edit, or one written
+// before the column existed) all write.
+func TestPutCeilingYieldsToNewerWriter(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		audit := func(before, after RoutePolicyRow) AuditLog {
+			return AuditLog{ID: NewID(), ActorKind: "system", ActorID: "op", Action: "route_policy.ceiling.sync", Target: "deployment", At: NowTS()}
+		}
+		old, newer := CeilingWriterKey(100, "a"), CeilingWriterKey(200, "a")
+		_, first, err := st.PutCeiling(ctx, `{"classes":["provided"]}`, "op", newer, audit)
+		mustDo(t, err)
+		if first.Writer != newer {
+			t.Fatalf("writer not stored: %+v", first)
+		}
+		before, _, err := st.PutCeiling(ctx, `{}`, "op", old, audit)
+		if !errors.Is(err, ErrCeilingSuperseded) || before.Revision != first.Revision {
+			t.Fatalf("older writer: before %+v err %v", before, err)
+		}
+		got, _ := st.GetRoutePolicy(ctx, RoutePolicyCeiling, "")
+		if got != first {
+			t.Fatalf("the row moved: %+v -> %+v", first, got)
+		}
+		logs, _ := st.ListAuditByTenant(ctx, "", 10)
+		if len(logs) != 1 {
+			t.Fatalf("audit rows = %d, want 1", len(logs))
+		}
+		// The yield took no revision: the next write is the very next one.
+		_, same, err := st.PutCeiling(ctx, `{"deny":["x"]}`, "op", newer, nil)
+		mustDo(t, err)
+		if same.Revision != first.Revision+1 {
+			t.Errorf("revision after a yield = %d, want %d", same.Revision, first.Revision+1)
+		}
+		_, _, err = st.PutRoutePolicy(ctx, RoutePolicyCeiling, "", `{}`, "edit", nil)
+		mustDo(t, err)
+		_, _, err = st.PutCeiling(ctx, `{"deny":["y"]}`, "op", old, nil)
+		mustDo(t, err)
+	})
+}

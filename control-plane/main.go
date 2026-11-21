@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"github.com/k-k1/agent-fleet/control-plane/internal/routepolicysrv"
 	"log"
@@ -275,7 +276,9 @@ func main() {
 	reconcileSSMSignIns(ctx, st)
 	// The ceiling read above is recorded under a revision of its own, so a change of it reaches
 	// every member's effective revision (ADR 0138 D9, D12). Unrecorded, the start stops.
-	if err := routepolicysrv.SyncCeiling(ctx, st); err != nil {
+	if err := routepolicysrv.SyncCeiling(ctx, st); errors.Is(err, routepolicysrv.ErrCeilingSuperseded) {
+		log.Printf("route policy: a newer Control Plane recorded another operator ceiling; this one is being replaced and answers policy reads as retryable")
+	} else if err != nil {
 		log.Fatalf("route policy: %v", err)
 	}
 	mgr.store = st
