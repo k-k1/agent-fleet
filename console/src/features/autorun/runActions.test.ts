@@ -135,6 +135,9 @@ describe("planClearFinished", () => {
     const rs = runsOf(tree, ["a", "b"]);
     expect(planClearFinished(rs, tree, repos).node).toBeNull();
     expect(planClearFinished(rs, tree.filter((s) => s.name !== "bc"), repos).node!.repo.name).toBe("base@wip-a");
+    // The row menu of run A refuses the same copy for the same reason.
+    expect(runWorktreeNode(rs.find((r) => r.root.name === "a")!, repos, tree)).toBeNull();
+    expect(runWorktreeNode(rs.find((r) => r.root.name === "a")!, repos, tree.filter((s) => s.name !== "bc"))!.repo.name).toBe("base@wip-a");
   });
 
   it("archives a child elsewhere first and offers the worktree once it is gone", () => {

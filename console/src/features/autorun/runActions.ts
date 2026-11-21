@@ -4,7 +4,7 @@
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 import { sessionFolder, sessionsInFolder, worktreeOwners, type RepoTreeNode } from "../../lib/project.ts";
-import type { RunRow } from "./runs.ts";
+import { runRootName, type RunRow } from "./runs.ts";
 
 const node = (repo: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo, children, groups: [], spine: "" });
 
@@ -34,7 +34,7 @@ export function runStopScope(run: RunRow, repos: Repo[]): { node: RepoTreeNode; 
  *  run's to delete. `sessions` is the list the owner is read from. */
 export function runWorktreeNode(run: RunRow, repos: Repo[], sessions: Session[]): RepoTreeNode | null {
   const wt = createdWorktree(run, repos, sessions);
-  return wt && outsideFolder(run, wt.repo.name, sessions).length === 0 ? wt : null;
+  return wt && !leavesRunSessions(wt.repo.name, sessions) ? wt : null;
 }
 
 /** The copy the run created, whatever else of the run lives elsewhere. */
@@ -46,12 +46,16 @@ function createdWorktree(run: RunRow, repos: Repo[], sessions: Session[]): RepoT
   return node(repo);
 }
 
-/** The run's sessions still listed that run outside `folder`. Deleting the folder archives the
- *  run's root with it, and these would then be unreachable from any run. */
-const outsideFolder = (run: RunRow, folder: string, sessions: Session[]): Session[] => {
-  const listed = new Set(sessions.map((s) => s.name));
-  return runSessions(run).filter((s) => listed.has(s.name) && sessionFolder(s) !== folder);
-};
+/** Whether deleting `folder` would archive a run's session while another session of the same run
+ *  stays listed outside it. Those would be unreachable from any run afterwards. Looks at every run
+ *  with a session in the copy, not only the one asking. */
+function leavesRunSessions(folder: string, sessions: Session[]): boolean {
+  const byName = new Map(sessions.map((s) => [s.name, s]));
+  const roots = new Set<string>();
+  for (const s of sessions) if (sessionFolder(s) === folder) roots.add(runRootName(s, byName));
+  roots.delete("");
+  return sessions.some((t) => sessionFolder(t) !== folder && roots.has(runRootName(t, byName)));
+}
 
 /** "Clear finished runs": per ended run, the stopped sessions to archive (what the run started
  *  first, the run itself last, so a failure part-way leaves the run listed and retryable), and one
@@ -78,9 +82,7 @@ export function planClearFinished(
     if (!wt || offered.has(wt.repo.name)) continue;
     if (!sessionsInFolder(sessions, wt.repo.name).every((s) => mine.has(s.name))) continue;
     offered.add(wt.repo.name);
-    // Every finished run that has a session in the copy goes with it, so none may have one left outside.
-    const sharing = ended.filter((x) => ownedBy(x).some((s) => sessionFolder(s) === wt.repo.name));
-    if (sharing.every((x) => outsideFolder(x, wt.repo.name, sessions).length === 0)) heads.push(wt);
+    if (!leavesRunSessions(wt.repo.name, sessions)) heads.push(wt);
   }
   // A session is archived only when it and everything the run started below it can be: an ancestor
   // archived while a descendant stays would leave that descendant unreachable from its run.
