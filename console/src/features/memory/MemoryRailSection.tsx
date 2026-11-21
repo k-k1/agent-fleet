@@ -43,9 +43,12 @@ const FILTERS = [
 
 const FOLD_KEY = "af.memrail-folded";
 // Per-device fold state of the scope groups, keyed by scope key; only folded groups are stored.
+// Anything but an object of `true` values (null, an array, "false" strings) is dropped.
 const readFolded = (): Record<string, boolean> => {
   try {
-    return JSON.parse(localStorage.getItem(FOLD_KEY) || "{}") ?? {};
+    const raw: unknown = JSON.parse(localStorage.getItem(FOLD_KEY) || "{}");
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    return Object.fromEntries(Object.entries(raw).filter(([, v]) => v === true));
   } catch {
     return {};
   }

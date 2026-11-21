@@ -30,6 +30,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { freshLayout } from "../../layout/ops.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { setSetting } from "../../lib/settings.ts";
+import { readFileSync } from "node:fs";
 import type { MemoryListed } from "../settings/memory/memoryTypes.ts";
 
 const { t } = await import("../../lib/i18n/index.ts");
@@ -375,7 +376,47 @@ describe("MemoryRailSection layout (#4675)", () => {
     expect(names()).toContain("build-cmd");
   });
 
-  it("publishes the filter block's height for the group heads to pin under", () => {
-    expect(host!.querySelector(".memrail-filter")!.parentElement!.style.getPropertyValue("--memrail-filter-h")).not.toBe("");
+  it.each([["null"], ["[1]"], ['"x"'], ['{"user":"false"}'], ['{"user":1}']])("ignores a stored fold state of the wrong shape: %s", async (raw) => {
+    localStorage.setItem("af.memrail-folded", raw);
+    await act(async () => root!.unmount());
+    root = createRoot(host!);
+    await render(true);
+    expect(names()).toEqual(["rules", "plain", "build-cmd"]);
+  });
+
+  it("drops a stale key from the stored state's effect and keeps a real fold", async () => {
+    localStorage.setItem("af.memrail-folded", JSON.stringify({ gone: true, user: true }));
+    await act(async () => root!.unmount());
+    root = createRoot(host!);
+    await render(true);
+    expect(names()).toEqual(["build-cmd"]);
+  });
+
+  it("publishes the filter block's height, again after the section is closed and reopened", async () => {
+    const body = () => host!.querySelector(".memrail-filter")!.parentElement!;
+    expect(body().style.getPropertyValue("--memrail-filter-h")).toBe("0px"); // jsdom lays nothing out
+    const toggle = () =>
+      Array.from(host!.querySelectorAll<HTMLButtonElement>("button.ui-section-toggle")).find((b) => b.textContent?.includes(t("mem.view_memories")))!;
+    await act(async () => toggle().click());
+    expect(host!.querySelector(".memrail-filter")).toBeNull();
+    await act(async () => toggle().click());
+    expect(body().style.getPropertyValue("--memrail-filter-h")).toBe("0px");
+    localStorage.removeItem("af-section-memory-list");
+  });
+
+  // jsdom has no layout, so the pinning is pinned in the stylesheet: section head, then the
+  // filter block under it, then the group heads under both, z-index descending.
+  const css = readFileSync("src/features/memory/memory-rail.css", "utf8");
+  it("pins the filter under the section head and the group heads under the filter", () => {
+    const rule = (sel: string) => css.match(new RegExp("(?:^|\\n)" + sel.replace(/[.]/g, "\\.") + " \\{([^}]*)\\}"))![1];
+    const filter = rule(".memrail-filter");
+    const head = rule(".memrail-group-head");
+    expect(filter).toMatch(/position:\s*sticky/);
+    expect(filter).toMatch(/top:\s*var\(--sec-head-h/);
+    expect(head).toMatch(/position:\s*sticky/);
+    expect(head).toMatch(/top:\s*calc\(var\(--sec-head-h[^)]*\)\s*\+\s*var\(--memrail-filter-h/);
+    const z = (r: string) => Number(r.match(/z-index:\s*(\d+)/)![1]);
+    expect(z(filter)).toBeGreaterThan(z(head));
+    expect(z(filter)).toBeLessThan(3); // .ui-section-head is 3
   });
 });

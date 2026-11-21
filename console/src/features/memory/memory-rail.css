@@ -121,8 +121,10 @@
 .memrail-status {
   flex: none;
 }
-/* One pill per type, the hue from an existing theme token (each is contrast-tuned per theme);
-   the text is the token itself on a light tint of it. An unknown type stays neutral. */
+/* One pill per type, the hue from an existing theme token. The text mixes 60% of the hue into
+   --fg and the tint is 10%, which keeps every type at 5.4:1 or better on the plain row and on the
+   selected row (accent 16%) in both themes (computed from the token values; the bare token on its
+   own tint fell to 3.5-4.4:1). An unknown type stays neutral. */
 .memrail-type {
   flex: none;
   font-size: 10.5px;
@@ -130,8 +132,8 @@
   padding: 0 7px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--badge, var(--muted)) 55%, transparent);
-  background: color-mix(in srgb, var(--badge, var(--muted)) 14%, transparent);
-  color: var(--badge, var(--muted));
+  background: color-mix(in srgb, var(--badge, var(--muted)) 10%, transparent);
+  color: color-mix(in srgb, var(--badge, var(--muted)) 60%, var(--fg));
 }
 .memrail-type.t-user {
   --badge: var(--accent);
