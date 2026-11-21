@@ -448,6 +448,18 @@ describe("the settings dialog", () => {
     expect(memoQueuePut).not.toHaveBeenCalled();
   });
 
+  it("opens the saved setting once a later read succeeds", async () => {
+    queuesFail = true;
+    servedCats = [aCat({ queue: true })];
+    await render();
+    expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.q_unread")}"]`)).not.toBeNull();
+    queuesFail = false;
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ instruction: "saved text" })] };
+    await bump();
+    await click(byLabel(t("memo.autorun_settings")));
+    expect(must(dialog().querySelector<HTMLTextAreaElement>("textarea"), "instruction").value).toBe("saved text");
+  });
+
   it("does not carry a blocked tenant's setting over to another tenant whose read failed", async () => {
     const { useTenantStore } = await import("../../core/store/tenant.ts");
     const switchTo = async (tenant: string) => {

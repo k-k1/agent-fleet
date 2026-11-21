@@ -230,7 +230,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const [queues, setQueues] = useState<MemoQueue[]>([]);
   const [tenantEnabled, setTenantEnabled] = useState(false);
   // False until a settings read has succeeded: tenantEnabled's initial false is "not read yet",
-  // not "the administrator said no", so the gear is never blocked on it.
+  // not "the administrator said no". Until then the gear is closed with its own reason
+  // (memo.q_unread), never the tenant-off one.
   const [tenantKnown, setTenantKnown] = useState(false);
   const lastQueues = useRef<{ tenantEnabled: boolean; queues: MemoQueue[]; known: boolean }>({ tenantEnabled: false, queues: [], known: false });
   // The tenant lastQueues was read for: a failed read reuses it only inside that tenant.
