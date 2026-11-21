@@ -14,6 +14,16 @@ const memoQueueDeliveries = vi.fn(async (_id: string): Promise<unknown> => [
 ]);
 vi.mock("../memo/api.ts", () => ({ memoQueueList: () => memoQueueList(), memoQueueDeliveries: (id: string) => memoQueueDeliveries(id) }));
 
+// The settings dialog is the Memo queue's own and has its own tests; here only that the gear opens it
+// for the category.
+vi.mock("../memo/MemoQueueSettingsModal.tsx", () => ({
+  MemoQueueSettingsModal: (p: { categoryId: string; queue: unknown; onChanged: () => void }) => (
+    <div data-testid="settings-modal" data-cat={p.categoryId} data-has-queue={String(!!p.queue)}>
+      <button type="button" data-testid="settings-save" onClick={p.onChanged} />
+    </div>
+  ),
+}));
+
 const { AutoRunSection } = await import("./AutoRunSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { ViewShownContext } = await import("../../lib/viewShown.ts");
@@ -92,7 +102,7 @@ describe("AutoRunSection", () => {
     await mount();
     expect(host.querySelector('[data-autorun-run="run-old"]')).toBeNull();
     expect(host.querySelector('[data-autorun-run="hand"]')).toBeNull();
-    const head = host.querySelector<HTMLButtonElement>(".autorun-ended-head")!;
+    const head = host.querySelector<HTMLButtonElement>(".autorun-sub-head.is-ended")!;
     expect(head.textContent).toContain("1");
     await act(async () => head.click());
     expect(host.querySelector('[data-autorun-run="run-old"]')!.getAttribute("data-autorun-state")).toBe("ended");
@@ -100,7 +110,7 @@ describe("AutoRunSection", () => {
 
   it("keeps a finished run's duration", async () => {
     await mount();
-    await act(async () => host.querySelector<HTMLButtonElement>(".autorun-ended-head")!.click());
+    await act(async () => host.querySelector<HTMLButtonElement>(".autorun-sub-head.is-ended")!.click());
     expect(host.querySelector('[data-autorun-run="run-old"] .autorun-elapsed')!.textContent).toBe("45m");
   });
 
@@ -167,7 +177,7 @@ describe("AutoRunSection", () => {
     }
   });
 
-  it("keeps a closed run ended and its duration when it falls off the list and its session is resumed", async () => {
+  it("lists a closed run whose root is alive under Running with a resumed tag, also after it fell off the list", async () => {
     vi.useFakeTimers();
     try {
       await mount();
@@ -176,10 +186,11 @@ describe("AutoRunSection", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(30_000);
       });
-      await act(async () => host.querySelector<HTMLButtonElement>(".autorun-ended-head")!.click());
       const row = host.querySelector('[data-autorun-run="run-old"]')!;
-      expect(row.getAttribute("data-autorun-state")).toBe("ended");
-      expect(row.querySelector(".autorun-elapsed")!.textContent).toBe("45m");
+      expect(row.getAttribute("data-autorun-state")).toBe("running");
+      expect(row.closest('[data-autorun-group="live"]')).not.toBeNull();
+      expect(row.querySelector(".autorun-resumed")).not.toBeNull();
+      expect(host.querySelector('[data-autorun-run="run-a"] .autorun-resumed')).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -230,6 +241,86 @@ describe("AutoRunSection", () => {
       expect(memoQueueDeliveries).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("has a section head with the title, the count of running runs and a reload that reads again", async () => {
+    await mount();
+    const head = host.querySelector(".ui-section-head")!;
+    expect(head.querySelector(".ui-section-title")!.textContent).toBe("Auto-run");
+    expect(head.querySelector(".ui-section-count")!.textContent).toBe("1"); // run-a; run-old ended
+    await act(async () => head.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')!.click());
+    expect(memoQueueList).toHaveBeenCalledTimes(2);
+  });
+
+  it("puts the category head with a repository icon, the gear and the menu in one sticky header", async () => {
+    await mount();
+    const head = host.querySelector(".autorun-cat-head")!;
+    expect(head.querySelector(".codicon-repo")).not.toBeNull();
+    expect(head.querySelector(".autorun-cat-name")!.textContent).toBe("agent-fleet / issue-rounds");
+    expect(head.querySelector('button[aria-label="Auto-run settings"]')).not.toBeNull();
+    await act(async () => head.querySelector<HTMLButtonElement>('button[aria-label="Category actions"]')!.click());
+    const items = [...document.body.querySelectorAll(".ui-menu-item")].map((b) => b.textContent!.trim());
+    expect(items).toEqual(["Run history", "Show in Memo queue"]);
+  });
+
+  it("opens the category's auto-run settings from the gear", async () => {
+    await mount();
+    expect(host.querySelector('[data-testid="settings-modal"]')).toBeNull();
+    await act(async () => host.querySelector<HTMLButtonElement>('.autorun-cat-head button[aria-label="Auto-run settings"]')!.click());
+    const m = host.querySelector('[data-testid="settings-modal"]')!;
+    expect([m.getAttribute("data-cat"), m.getAttribute("data-has-queue")]).toEqual(["c1", "true"]);
+    // A save reads the queues again and tells the Memo queue view, which holds its own copy.
+    const { useMemoStore } = await import("../memo/store.ts");
+    const tick = useMemoStore.getState().tick;
+    const reads = memoQueueList.mock.calls.length;
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="settings-save"]')!.click());
+    expect(useMemoStore.getState().tick).toBe(tick + 1);
+    expect(memoQueueList.mock.calls.length).toBe(reads + 1);
+  });
+
+  it("opens the memo queue at the category from the menu", async () => {
+    await mount();
+    const { useMemoStore } = await import("../memo/store.ts");
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Category actions"]')!.click());
+    await act(async () => [...document.body.querySelectorAll<HTMLButtonElement>(".ui-menu-item")].find((b) => b.textContent!.includes("Run history"))!.click());
+    expect(useMemoStore.getState().reveal).toMatchObject({ id: "c1", history: true });
+  });
+
+  it("has two sub-headers: Running / waiting expanded, Ended folded", async () => {
+    await mount();
+    const live = host.querySelector<HTMLButtonElement>(".autorun-sub-head.is-live")!;
+    expect(live.textContent).toContain("Running / waiting 1");
+    expect(live.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector<HTMLButtonElement>(".autorun-sub-head.is-ended")!.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => live.click());
+    expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull();
+  });
+
+  it("scopes the categories to the working set, and always lists a category without a repository", async () => {
+    memoQueueList.mockResolvedValue({
+      tenantEnabled: true,
+      queues: [
+        { categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" },
+        { categoryId: "c2", repo: "", category: "loose" },
+      ],
+    });
+    memoQueueDeliveries.mockImplementation(async (id: string) => (id === "c1" ? [{ id: "d1", session: "run-a", state: "open" }] : [{ id: "d2", session: "run-b", state: "open" }]));
+    useSessionsStore.setState({ sessions: [...useSessionsStore.getState().sessions, sess("run-b", { origin: "queue", createdAt: new Date().toISOString() })] });
+    const { setSetting } = await import("../../lib/settings.ts");
+    setSetting("workingSets", [{ id: "w1", name: "other", repos: ["elsewhere"], convs: [], sessions: [], schedules: [] }]);
+    setSetting("workingSetActive", "w1");
+    try {
+      await mount();
+      expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull();
+      expect(host.querySelector('[data-autorun-run="run-b"]')).not.toBeNull();
+      setSetting("workingSets", [{ id: "w1", name: "mine", repos: ["agent-fleet"], convs: [], sessions: [], schedules: [] }]);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(host.querySelector('[data-autorun-run="run-a"]')).not.toBeNull();
+    } finally {
+      setSetting("workingSetActive", "");
     }
   });
 
