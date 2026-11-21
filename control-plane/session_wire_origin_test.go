@@ -45,7 +45,11 @@ func TestSessionsPayloadKeepsOriginThroughTheMirror(t *testing.T) {
 			{"name":"nul","kind":"claude","createdAt":"2026-09-23T07:00:00+09:00","alive":false,
 			 "origin":"qu\u0000eue","originSession":"queue-\u0000root"},
 			{"name":"mixed","kind":"claude","createdAt":"2026-09-23T06:00:00+09:00","alive":false,
-			 "origin":"session","originSession":"bad\u0000"}
+			 "origin":"session","originSession":"bad\u0000"},
+			{"name":"sched","kind":"claude","createdAt":"2026-09-23T05:00:00+09:00","alive":false,
+			 "origin":"schedule","scheduleId":"sch-1"},
+			{"name":"schednul","kind":"claude","createdAt":"2026-09-23T04:00:00+09:00","alive":false,
+			 "origin":"schedule","scheduleId":"sch\u0000-2"}
 		]}`))
 	}))
 	t.Cleanup(agent.Close)
@@ -74,8 +78,8 @@ func TestSessionsPayloadKeepsOriginThroughTheMirror(t *testing.T) {
 		for _, s := range body.Sessions {
 			byName[s["name"].(string)] = s
 		}
-		if len(byName) != 4 {
-			t.Fatalf("%s: sessions = %v, want child, plain, nul and mixed", state, body.Sessions)
+		if len(byName) != 6 {
+			t.Fatalf("%s: sessions = %v, want child, plain, nul, mixed, sched and schednul", state, body.Sessions)
 		}
 		return byName
 	}
@@ -98,7 +102,14 @@ func TestSessionsPayloadKeepsOriginThroughTheMirror(t *testing.T) {
 	if stopped["mixed"]["origin"] != "session" {
 		t.Errorf("stopped: mixed origin = %v, want the healthy field kept", stopped["mixed"]["origin"])
 	}
-	for _, k := range []string{"origin", "originSession"} {
+	// The schedule id survives the mirror; a NUL-bearing one is dropped whole.
+	if stopped["sched"]["scheduleId"] != "sch-1" {
+		t.Errorf("stopped: sched scheduleId = %v, want sch-1", stopped["sched"]["scheduleId"])
+	}
+	if v, ok := stopped["schednul"]["scheduleId"]; ok {
+		t.Errorf("stopped: schednul scheduleId = %v, want absent", v)
+	}
+	for _, k := range []string{"origin", "originSession", "scheduleId"} {
 		if v, ok := stopped["plain"][k]; ok {
 			t.Errorf("stopped: plain %s = %v, want absent", k, v)
 		}

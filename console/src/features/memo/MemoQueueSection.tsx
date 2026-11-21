@@ -1413,6 +1413,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             categoryId={c.id}
             categoryName={c.name}
             queue={queueByCat.get(c.id)}
+            repo={c.repo}
             waiting={pendingCount(memos.filter((m) => m.repo === c.repo && m.category === c.name))}
             focusRun={focusRun}
             onClose={() => {

@@ -21,6 +21,8 @@ type SessionRow struct {
 	// Origin and OriginSession are who raised the session and the session it came from (ADR 0073).
 	// The Console classifies scheduled and auto-run runs by them, so the stopped list must carry them.
 	Origin, OriginSession string
+	// ScheduleID is the schedule that started the session (origin schedule), "" otherwise.
+	ScheduleID string
 	// Links are the work items and PRs the session is linked to (#3134), in the Agent's order.
 	// Written to session_work_link with the row; ListSessions does not fill it (ListSessionLinks
 	// does), so a reader that only counts sessions does not read every link title.
@@ -67,9 +69,9 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 	}
 	for _, r := range rows {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession)); err != nil {
+			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession), dropNUL(r.ScheduleID)); err != nil {
 			return err
 		}
 		if err := insertSessionLinks(ctx, tx, workspaceID, r.Name, r.Links); err != nil {
@@ -122,7 +124,7 @@ func insertSessionLinks(ctx context.Context, tx *sqlTx, workspaceID, session str
 
 func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session
+		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id
 		 FROM session WHERE workspace_id=? ORDER BY created_at DESC`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -131,7 +133,7 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 	var out []SessionRow
 	for rows.Next() {
 		r := SessionRow{WorkspaceID: workspaceID}
-		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio, &r.Origin, &r.OriginSession); err != nil {
+		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio, &r.Origin, &r.OriginSession, &r.ScheduleID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

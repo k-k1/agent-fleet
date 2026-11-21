@@ -25,7 +25,8 @@ import { useFold } from "../../lib/useFold.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
-import { ScheduledSessions } from "./ScheduledSessions.tsx";
+import { ScheduledRunList, ScheduledSessions, useScheduledRuns } from "./ScheduledSessions.tsx";
+import { groupRunsBySchedule, type ScheduledRun } from "./scheduledSessions.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openChat } from "../chat/open.ts";
 import { chatList } from "../chat/api.ts";
@@ -65,6 +66,8 @@ import {
 } from "./read.ts";
 
 const POLL_MS = 15000;
+// How long a run that names a schedule waits for the first schedule list before it is shown in the group.
+const FIRST_READ_WAIT_MS = 5000;
 // Deliberately the same key Section persists to on its own (ui/Section.tsx storeKey), so that
 // making it controlled still carries the user's open/closed choice over.
 const SECTION_KEY = "af-section-schedules";
@@ -101,6 +104,8 @@ interface ScheduleRowProps {
   rowBusy: boolean;
   runsOpen: boolean;
   runs: ScheduleRun[] | undefined;
+  /** Sessions this schedule started (and the ones they spawned), newest first. */
+  sessionRuns: ScheduledRun[];
   /** Working sets (docs/log/52): the defined sets + the derivation context, for the
    * ⋯ menu's membership toggles. */
   wsets: WorkingSet[];
@@ -112,7 +117,7 @@ interface ScheduleRowProps {
   onDelete: (s: ScheduleDTO) => void;
 }
 
-function ScheduleRow({ s, rowBusy, runsOpen, runs, wsets, wctx, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
+function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, wsets, wctx, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
   const tr = useT();
   const paused = !s.enabled;
   const tone = statusTone(s.last_status);
@@ -299,6 +304,11 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, wsets, wctx, onToggleRuns, on
           )}
         </div>
       )}
+      {sessionRuns.length > 0 && (
+        <div className="sched-sess-under" data-sched-sessions-of={s.id}>
+          <ScheduledRunList runs={sessionRuns} />
+        </div>
+      )}
     </div>
   );
 }
@@ -317,6 +327,11 @@ export const SchedulesSection = memo(function SchedulesSection() {
   // Why the fetch failed ("" = it succeeded). Kept so an empty list and a failure do not
   // look the same.
   const [loadErr, setLoadErr] = useState("");
+  // Has this visit to the tenant's first read settled (answered, failed, or taken longer than
+  // FIRST_READ_WAIT_MS so a list that never answers cannot hide the sessions already fetched)?
+  // One flag reset on every tenant change, so nothing from an earlier visit (an expiry, an error,
+  // a list that did load) can end the wait of this one.
+  const [firstReadDone, setFirstReadDone] = useState(false);
   // Generation counter (an effect dep) so the retry button re-runs load.
   const [reloadTick, setReloadTick] = useState(0);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -368,6 +383,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
           const { items: arr, error } = readScheduleList(res);
           if (!arr) {
             setLoadErr(errText(error) || t("sched.load_failed"));
+            setFirstReadDone(true);
             return;
           }
           setLoadErr("");
@@ -378,10 +394,14 @@ export const SchedulesSection = memo(function SchedulesSection() {
           }
           setLoaded(true);
           setLoadedFor(tenant);
+          setFirstReadDone(true);
         })
         .catch(() => {
           // Thrown = the network dropped (api() resolves CP errors instead).
-          if (alive) setLoadErr(t("sched.load_failed"));
+          if (alive) {
+            setLoadErr(t("sched.load_failed"));
+            setFirstReadDone(true);
+          }
         });
     load();
     const id = setInterval(load, POLL_MS);
@@ -393,6 +413,25 @@ export const SchedulesSection = memo(function SchedulesSection() {
 
   const sorted = useMemo(() => sortSchedules(items), [items]);
   const scoped = useMemo(() => (wset ? sorted.filter((s) => scheduleInSet(wset, s, wctx)) : sorted), [sorted, wset, wctx]);
+  const scheduledRuns = useScheduledRuns();
+  // Runs go under the row of the schedule that started them; the rows listed are the ones shown.
+  // Until this tenant's first read has settled the list of schedules is unknown, so a run that
+  // names a schedule is held back rather than shown in the group and then moved under its row
+  // (which would drop an open fold or the focus). A failed first read ends the wait.
+  // Layout effect so the flag is cleared before paint: leaving a tenant and coming back is a new
+  // first read.
+  useLayoutEffect(() => {
+    const id = setTimeout(() => setFirstReadDone(true), FIRST_READ_WAIT_MS);
+    return () => {
+      clearTimeout(id);
+      setFirstReadDone(false);
+    };
+  }, [tenant]);
+  const firstReadPending = !firstReadDone;
+  const grouped = useMemo(() => {
+    const g = groupRunsBySchedule(scheduledRuns, new Set(scoped.map((s) => s.id)));
+    return firstReadPending ? { ...g, rest: g.rest.filter((r) => !r.scheduleId) } : g;
+  }, [scheduledRuns, scoped, firstReadPending]);
   const activeCount = useMemo(() => scoped.filter((s) => s.enabled).length, [scoped]);
   // From the rows the active working set lists, not from everything loaded: opening the view
   // acknowledges what it publishes, and a failure the view does not show must stay unread.
@@ -550,6 +589,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
               rowBusy={!!busy[s.id]}
               runsOpen={openRuns === s.id}
               runs={openRuns === s.id ? runs[s.id] : undefined}
+              sessionRuns={grouped.bySchedule.get(s.id) ?? []}
               wsets={wsets}
               wctx={wctx}
               onToggleRuns={(x) => void toggleRuns(x)}
@@ -561,7 +601,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
           ))}
         </div>
       )}
-      <ScheduledSessions />
+      <ScheduledSessions runs={grouped.rest} />
       {detail && (
         <ScheduleDetailModal
           s={detail}
