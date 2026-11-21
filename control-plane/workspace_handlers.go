@@ -1129,6 +1129,7 @@ func sessionRows(list []sessionWire) []store.SessionRow {
 			Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 			Label: s.Label, CreatedAt: s.CreatedAt, State: state,
 			Carried: s.Carried, Studio: s.Studio,
+			Origin: s.Origin, OriginSession: s.OriginSession,
 			Links: store.SessionLinksFromJSON(s.Links),
 		})
 	}
@@ -1182,6 +1183,8 @@ func (a workspaceAPI) sessionsShared(ctx context.Context, res *resolved) []sessi
 			Carried: r0.Carried,
 			// Which studio a session belongs to decides which pane opens it.
 			Studio: r0.Studio,
+			// Who raised it: the Console sorts scheduled and auto-run runs out of the Sessions list by these.
+			Origin: r0.Origin, OriginSession: r0.OriginSession,
 			// Which items it is on: the Console's rows and item details read them while stopped too.
 			Links: store.SessionLinksJSON(links[r0.Name]),
 			// Container is down: we can't check the dir, so assume resumable; the
