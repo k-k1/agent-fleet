@@ -299,3 +299,24 @@ func TestParseUsageJSONRejectsIncomplete(t *testing.T) {
 		t.Errorf("0%% must parse: %v %+v", err, res)
 	}
 }
+
+// The TUI fallback must not drop a five-hour-only group and let the next one become groups[0].
+func TestParseUsageRejectsFiveHourOnlyGroup(t *testing.T) {
+	const panel = `
+└ Models & Quota
+GEMINI MODELS
+  Models within this group: Gemini Flash
+  Five Hour Limit
+    [██████████████████████████████████████████████████] 100.00%
+    Quota available
+CLAUDE AND GPT MODELS
+  Models within this group: Claude Opus
+  Weekly Limit
+    [██████████████████████████████████████████████████] 100.00%
+    Quota available
+  esc Close
+`
+	if res, err := parseUsage(panel); err == nil {
+		t.Errorf("want an error, got %+v", res.Groups)
+	}
+}

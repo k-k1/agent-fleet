@@ -472,6 +472,9 @@ func parseUsage(out string) (*usageResult, error) {
 		}
 		if g.RemainingPct >= 0 {
 			res.Groups = append(res.Groups, g)
+		} else if g.FiveHour != nil {
+			// Dropping it would promote the next group to groups[0], the default-model pool.
+			return nil, errString("usage panel: group " + g.Label + " has no weekly limit")
 		}
 	}
 	if len(res.Groups) == 0 {
