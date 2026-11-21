@@ -463,6 +463,15 @@
 .memo-cat-act:hover {
   color: var(--fg);
 }
+.memo-cat-act[aria-disabled="true"],
+.memo-cat-act[aria-disabled="true"]:hover {
+  color: var(--muted2);
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.memo-cat-head:hover .memo-cat-act[aria-disabled="true"] {
+  opacity: 0.3;
+}
 .memo-cat-del {
   flex: none;
   background: none;

@@ -152,6 +152,7 @@ export const memo = {
   "memo.q_err_budget": "0 から {max} の数を入力してください。",
   "memo.q_err_max_active": "1 から {max} の整数を入力してください。",
   "memo.q_err_batch": "1 から {max} の整数を入力してください。",
+  "memo.q_unread": "自動実行の設定をまだ読み込めていません。しばらくしてからもう一度お試しください。",
   "memo.q_save_failed": "自動実行の設定を保存できませんでした。",
   "memo.q_saved": "自動実行の設定を保存しました。",
   "memo.q_remove": "設定を外す",

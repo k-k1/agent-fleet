@@ -229,7 +229,13 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // tenant's administrator has not allowed new settings.
   const [queues, setQueues] = useState<MemoQueue[]>([]);
   const [tenantEnabled, setTenantEnabled] = useState(false);
-  const lastQueues = useRef<{ tenantEnabled: boolean; queues: MemoQueue[] }>({ tenantEnabled: false, queues: [] });
+  // False until a settings read has succeeded: tenantEnabled's initial false is "not read yet",
+  // not "the administrator said no". Until then the gear is closed with its own reason
+  // (memo.q_unread), never the tenant-off one.
+  const [tenantKnown, setTenantKnown] = useState(false);
+  const lastQueues = useRef<{ tenantEnabled: boolean; queues: MemoQueue[]; known: boolean }>({ tenantEnabled: false, queues: [], known: false });
+  // The tenant lastQueues was read for: a failed read reuses it only inside that tenant.
+  const lastQueuesTenant = useRef("");
   // The dialogs hold a category id, never a copy of the category or its settings: each render
   // looks the live row up, so a poll that renames or removes it is seen by the dialog.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
@@ -280,7 +286,12 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           useMemoStore.getState().publish(marr, ticket, scope);
           // A failed settings read (an older Control Plane, an error body) keeps the last good
           // one; it never takes the memo list down with it.
-          const qw = readMemoQueues(qRaw) ?? lastQueues.current;
+          const fresh = readMemoQueues(qRaw);
+          if (lastQueuesTenant.current !== (tenant ?? "")) {
+            lastQueuesTenant.current = tenant ?? "";
+            lastQueues.current = { tenantEnabled: false, queues: [], known: false };
+          }
+          const qw = fresh ? { ...fresh, known: true } : lastQueues.current;
           lastQueues.current = qw;
           setMemosTenant(tenant ?? "");
           const ser = JSON.stringify([marr, carr, qw]);
@@ -290,6 +301,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             setCats(carr);
             setQueues(qw.queues);
             setTenantEnabled(qw.tenantEnabled);
+            setTenantKnown(qw.known);
           }
         })
         .catch(() => {});
@@ -1192,20 +1204,37 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             <Icon name="history" />
                           </button>
                         )}
-                        {cat && (
+                        {cat && (() => {
+                          // A category that already is a queue stays openable while the tenant blocks
+                          // new setups: the dialog still lets the member remove it.
+                          const settingsBlocked = tenantKnown && !tenantEnabled && !isQueue;
+                          // Until a settings read has succeeded the dialog would edit a draft built
+                          // from defaults, and a save would overwrite an existing queue's setting.
+                          const settingsUnread = !tenantKnown;
+                          const gearNote = settingsUnread ? tr("memo.q_unread") : settingsBlocked ? tr("memo.q_tenant_off") : null;
+                          return (
                           <button
                             type="button"
                             className="memo-cat-act"
-                            title={tr("memo.autorun_settings")}
-                            aria-label={tr("memo.autorun_settings")}
+                            title={gearNote ?? tr("memo.autorun_settings")}
+                            aria-label={gearNote ?? tr("memo.autorun_settings")}
+                            // aria-disabled, not disabled: a native disabled button cannot take focus
+                            // (the reason would be unreachable by keyboard) and swallows the click,
+                            // which would then fall through to the header and fold the category.
+                            aria-disabled={gearNote ? true : undefined}
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (gearNote) {
+                                toast(gearNote, { kind: "warn" });
+                                return;
+                              }
                               setSettingsFor(cat.id);
                             }}
                           >
                             <Icon name="settings-gear" />
                           </button>
-                        )}
+                          );
+                        })()}
                         {cat && (
                           <button
                             type="button"

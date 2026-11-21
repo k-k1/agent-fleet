@@ -407,13 +407,74 @@ describe("the release card", () => {
 describe("the settings dialog", () => {
   const openSettings = async () => click(byLabel(t("memo.autorun_settings")));
 
-  it("says the tenant switch is off instead of offering to save", async () => {
+  const gearByReason = (reason: string) => must(document.querySelector<HTMLButtonElement>(`.memo-cat-act[aria-label="${reason}"]`), "gear");
+
+  it("marks the gear unavailable with the reason while the tenant blocks new setups", async () => {
     servedQueues = { tenantEnabled: false, queues: [] };
     servedCats = [aCat({})];
     await render();
-    await openSettings();
-    expect(dialog().querySelector(".memo-q-notice")?.textContent).toBe(t("memo.q_tenant_off"));
-    expect(must(dialog().querySelector<HTMLButtonElement>("button[type=submit]"), "save").disabled).toBe(true);
+    const gear = gearByReason(t("memo.q_tenant_off"));
+    // Not natively disabled: it must stay focusable so the reason reaches keyboard users.
+    expect(gear.disabled).toBe(false);
+    expect(gear.getAttribute("aria-disabled")).toBe("true");
+    expect(gear.title).toBe(t("memo.q_tenant_off"));
+    const head = must(document.querySelector(".memo-cat-head"), "head");
+    const expanded = head.querySelector("[aria-expanded]")?.getAttribute("aria-expanded");
+    await click(gear);
+    expect(document.querySelector("[role=dialog]")).toBeNull();
+    expect(document.querySelector(".ui-toast-msg")?.textContent).toBe(t("memo.q_tenant_off"));
+    expect(head.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")).toBe(expanded);
+  });
+
+  it("keeps the gear available when the tenant allows auto-run", async () => {
+    servedQueues = { tenantEnabled: true, queues: [] };
+    servedCats = [aCat({})];
+    await render();
+    const gear = byLabel(t("memo.autorun_settings"));
+    expect(gear.getAttribute("aria-disabled")).toBeNull();
+    expect(gear.title).toBe(t("memo.autorun_settings"));
+  });
+
+  it("does not open the dialog, nor call it a tenant block, while the settings are unread", async () => {
+    queuesFail = true;
+    servedCats = [aCat({ queue: true })]; // an existing queue whose settings could not be read
+    await render();
+    const gear = gearByReason(t("memo.q_unread"));
+    expect(gear.getAttribute("aria-disabled")).toBe("true");
+    await click(gear);
+    // Opening it would edit a draft built from defaults and a save would overwrite the real setting.
+    expect(document.querySelector(".memo-q-modal")).toBeNull();
+    expect(document.querySelector(".ui-toast-msg")?.textContent).toBe(t("memo.q_unread"));
+    expect(memoQueuePut).not.toHaveBeenCalled();
+  });
+
+  it("opens the saved setting once a later read succeeds", async () => {
+    queuesFail = true;
+    servedCats = [aCat({ queue: true })];
+    await render();
+    expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.q_unread")}"]`)).not.toBeNull();
+    queuesFail = false;
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ instruction: "saved text" })] };
+    await bump();
+    await click(byLabel(t("memo.autorun_settings")));
+    expect(must(dialog().querySelector<HTMLTextAreaElement>("textarea"), "instruction").value).toBe("saved text");
+  });
+
+  it("does not carry a blocked tenant's setting over to another tenant whose read failed", async () => {
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    const switchTo = async (tenant: string) => {
+      await act(async () => useTenantStore.setState({ tenant }));
+      await settle();
+    };
+    await switchTo("a");
+    servedQueues = { tenantEnabled: false, queues: [] };
+    servedCats = [aCat({})];
+    await render();
+    expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.q_tenant_off")}"]`)).not.toBeNull();
+    queuesFail = true;
+    await switchTo("b");
+    expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.q_unread")}"]`)).not.toBeNull();
+    await switchTo("");
   });
 
   it("still lets an existing setting be removed while the switch is off", async () => {
