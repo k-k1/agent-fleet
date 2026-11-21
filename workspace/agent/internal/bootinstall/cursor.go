@@ -668,7 +668,8 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 		if lerr != nil && !errors.Is(lerr, fs.ErrNotExist) {
 			return lerr // not knowing whether a tree is there must not read as "none"
 		}
-		m.HadTree = lerr == nil
+		had := lerr == nil
+		m.HadTree = &had
 	}
 	for _, l := range links {
 		st := cursorLinkState{Path: l, Kind: "none"}
@@ -706,7 +707,7 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 	}()
 
 	if m.Tree {
-		if m.HadTree {
+		if *m.HadTree {
 			if err := os.Rename(dir, m.Old); err != nil {
 				return err
 			}
@@ -783,7 +784,7 @@ type cursorMarker struct {
 	Dir     string            `json:"dir"`
 	Old     string            `json:"old"`
 	Tree    bool              `json:"tree"`
-	HadTree bool              `json:"hadTree"`
+	HadTree *bool             `json:"hadTree"` // nil only in a marker this code did not write
 	Links   []cursorLinkState `json:"links"`
 }
 
@@ -837,7 +838,16 @@ func (e Env) cursorMarkerValid(m cursorMarker) bool {
 	if m.Old != "" && !withSuffixDigits(m.Old, m.Dir, ".af-old.") {
 		return false
 	}
-	if m.Tree && m.Old == "" {
+	if m.Tree && (m.Old == "" || m.HadTree == nil) {
+		return false
+	}
+	// The writer always records the main link's state: a marker without it is not ours, and
+	// acting on it could delete a tree no update made.
+	hasMain := false
+	for _, l := range m.Links {
+		hasMain = hasMain || l.Path == filepath.Join(e.localBin(), cursorTool)
+	}
+	if !hasMain {
 		return false
 	}
 	own := map[string]bool{
@@ -910,7 +920,7 @@ func (e Env) cursorRecover() error {
 					removeTree(bad)
 				}
 			}
-		} else if !m.HadTree && errors.Is(lerr, fs.ErrNotExist) {
+		} else if !*m.HadTree && errors.Is(lerr, fs.ErrNotExist) {
 			removeTree(m.Dir) // only the candidate this update published was ever there
 			if _, derr := os.Lstat(m.Dir); !errors.Is(derr, fs.ErrNotExist) {
 				errs = append(errs, fmt.Errorf("cursor: cannot remove the unverified tree %s", m.Dir))

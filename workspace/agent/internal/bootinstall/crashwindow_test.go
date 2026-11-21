@@ -27,7 +27,15 @@ func (f *suFixture) plantSwitched(t *testing.T, links []cursorLinkState) cursorM
 	old := dir + ".af-old.4242"
 	f.write(t, filepath.Join(old, "cursor-agent"), "#!/bin/sh\necho 1.0.0\n")
 	f.write(t, filepath.Join(dir, "cursor-agent"), "#!/bin/sh\necho 2026.2.0-abc123\n")
-	m := cursorMarker{Dir: dir, Old: old, Tree: true, HadTree: true, Links: links}
+	hadTree := true
+	hasMain := false
+	for _, l := range links {
+		hasMain = hasMain || l.Path == f.local("cursor-agent")
+	}
+	if !hasMain {
+		links = append(links, cursorLinkState{Path: f.local("cursor-agent"), Kind: "none"})
+	}
+	m := cursorMarker{Dir: dir, Old: old, Tree: true, HadTree: &hadTree, Links: links}
 	if err := os.MkdirAll(filepath.Join(f.home, ".local", "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -200,6 +208,8 @@ func TestCursorMarkerOutsideTheCursorPathsIsRefused(t *testing.T) {
 		{Dir: victim, Old: victim + ".af-old.1", Tree: true},
 		{Dir: filepath.Join(f.versions(), "x"), Old: victim, Tree: true},
 		{Dir: filepath.Join(f.versions(), "x"), Links: []cursorLinkState{{Path: victim, Kind: "none"}}},
+		// Structurally incomplete: no main link state, or an unrecorded HadTree.
+		{Dir: filepath.Join(f.versions(), "live"), Old: filepath.Join(f.versions(), "live.af-old.1"), Tree: true},
 	} {
 		raw, _ := json.Marshal(m)
 		if err := os.WriteFile(f.env.cursorMarkerPath(), raw, 0o644); err != nil {
@@ -302,7 +312,7 @@ func TestCursorRecoverReviewRound1(t *testing.T) {
 		relinkRename = old
 		os.Chmod(local, 0o755)
 		if _, err := os.Lstat(f.env.cursorMarkerPath()); err != nil {
-			t.Skip("marker was removable on this filesystem")
+			t.Fatalf("no marker after the update: it was not journaled, or its unlink did not fail as arranged:\n%s", f.out)
 		}
 		if strings.Contains(f.out.String(), "cursor updated:") {
 			t.Fatalf("an unsettled update was reported as done:\n%s", f.out)
@@ -425,7 +435,8 @@ func TestNPMLockSurvivesAKilledParent(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	started := filepath.Join(f.npmDir, "started")
 	release := filepath.Join(f.npmDir, "release")
-	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf("#!/bin/sh\necho up >%q\nwhile [ ! -e %q ]; do /usr/bin/sleep 0.1; done\n", started, release))
+	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf("#!/bin/sh\necho up >%q\ni=0; while [ ! -e %q ] && [ $i -lt 300 ]; do i=$((i+1)); /usr/bin/sleep 0.1; done\n", started, release))
+	t.Cleanup(func() { os.WriteFile(release, nil, 0o644) }) // a failing run must not leave the fake npm waiting
 	cmd := exec.Command(os.Args[0], "-test.run=^TestNPMLockHelperProcess$")
 	cmd.Env = append(os.Environ(), "AF_TEST_NPM_PARENT=1", "AF_TEST_HOME="+f.home, "AF_TEST_NPM="+filepath.Join(f.npmDir, "npm"))
 	if err := cmd.Start(); err != nil {
@@ -485,5 +496,31 @@ func TestNPMLockIOErrorIsNotBusy(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(local, 0o755) })
 	if _, _, ok := f.env.lockNPM(); !ok {
 		t.Fatal("an unwritable ~/.local was reported as another holder")
+	}
+}
+
+func TestCursorRecoverReadlinkErrorKeepsTheMarker(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	m := f.plantSwitched(t, []cursorLinkState{{Path: f.local("agent"), Kind: "none"}, {Path: f.local("cursor-agent"), Kind: "none"}})
+	f.link(t, "agent", filepath.Join(m.Dir, cursorTool))
+	f.link(t, "cursor-agent", filepath.Join(m.Dir, cursorTool))
+	bin := filepath.Dir(f.local("agent"))
+	os.Chmod(bin, 0o600) // no search permission: Readlink fails with EACCES
+	t.Cleanup(func() { os.Chmod(bin, 0o755) })
+	if err := f.env.cursorRecover(); err == nil {
+		t.Fatal("a failed look at the link was swallowed")
+	}
+	if _, err := os.Lstat(f.env.cursorMarkerPath()); err != nil {
+		t.Fatal("marker dropped")
+	}
+	os.Chmod(bin, 0o755)
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if _, err := os.Lstat(f.local("agent")); err == nil {
+		t.Fatal("the published agent link stayed")
 	}
 }
