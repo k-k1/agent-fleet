@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1386,6 +1387,42 @@ func TestMemoDeliveryListWire(t *testing.T) {
 		list = decode[[]memoDeliveryDTO](t, e.do("a", "GET", "/api/memo-queues/"+q+"/deliveries?include=open", nil))
 		if len(list) != memoDeliveryListMax+1 || list[0].ID != d2.ID || list[len(list)-1].ID != old.ID {
 			t.Fatalf("include=open: %d rows, first %s, last %s", len(list), list[0].ID, list[len(list)-1].ID)
+		}
+		// A run that closes after it left the newest fifty is read back by closed_since, and only
+		// by it: an older closing stays out, a bad time is a 400, another member sees nothing.
+		closedAt := store.DeliveryTS(time.Now().Add(-500 * time.Hour))
+		if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+			_, err := tx.MoveDelivery(old.ID, store.DeliveryOpen, store.DeliveryClosed, "", store.DeliveryClean, closedAt)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		has := func(path, id string) bool {
+			for _, d := range decode[[]memoDeliveryDTO](t, e.do("a", "GET", path, nil)) {
+				if d.ID == id {
+					return true
+				}
+			}
+			return false
+		}
+		base := "/api/memo-queues/" + q + "/deliveries"
+		since := func(h time.Duration) string {
+			return base + "?closed_since=" + url.QueryEscape(time.Now().Add(h).UTC().Format(time.RFC3339Nano))
+		}
+		if has(base+"?include=open", old.ID) {
+			t.Fatal("a closed run outside the newest fifty is in include=open")
+		}
+		if !has(since(-501*time.Hour), old.ID) {
+			t.Fatal("closed_since before the closing does not return the run")
+		}
+		if has(since(-499*time.Hour), old.ID) {
+			t.Fatal("closed_since after the closing still returns the run")
+		}
+		if rec := e.do("a", "GET", base+"?closed_since=yesterday", nil); rec.Code != http.StatusBadRequest {
+			t.Fatalf("bad closed_since: %d", rec.Code)
+		}
+		if rec := e.do("c", "GET", since(-501*time.Hour), nil); strings.TrimSpace(rec.Body.String()) != "[]" {
+			t.Fatalf("another member's closed_since list: %s", rec.Body.String())
 		}
 		// Another member sees none of it, with or without the parameter.
 		if rec := e.do("c", "GET", "/api/memo-queues/"+q+"/deliveries?include=open", nil); strings.TrimSpace(rec.Body.String()) != "[]" {

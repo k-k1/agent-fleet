@@ -1519,9 +1519,13 @@ export const memoQueueDeliveryEnd = (categoryId: string, deliveryId: string): Pr
 // the same work item, nothing_to_return when no note is still the run's.
 export const memoQueueDeliveryReturn = (categoryId: string, deliveryId: string): Promise<MemoWriteResult> =>
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries/${encodeURIComponent(deliveryId)}/return`, "POST", {});
-// `all` also asks for every run that is not closed, however old: the plain list is the newest fifty.
-export const memoQueueDeliveries = (categoryId: string, openToo = false): Promise<unknown> =>
-  api(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries${openToo ? "?include=open" : ""}`);
+// `openToo` also asks for every run that is not closed, however old: the plain list is the newest
+// fifty. `closedSince` (the closedAt of the latest closing seen) adds the runs closed at or after
+// it, so a run that closed after it left the newest fifty still gets its end; it implies `openToo`.
+export const memoQueueDeliveries = (categoryId: string, openToo = false, closedSince = ""): Promise<unknown> => {
+  const q = closedSince ? `?closed_since=${encodeURIComponent(closedSince)}` : openToo ? "?include=open" : "";
+  return api(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries${q}`);
+};
 // The tidy runs of a category, newest first. Raw like the other reads: readTidyRuns normalises it.
 export const memoTidyRuns = (categoryId: string): Promise<unknown> =>
   api(`api/memo-queues/${encodeURIComponent(categoryId)}/tidy-runs`);

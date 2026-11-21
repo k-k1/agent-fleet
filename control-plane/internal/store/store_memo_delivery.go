@@ -159,6 +159,10 @@ type MemoDeliveryStore interface {
 	// however old, read in one statement so both parts come from one snapshot. The member-wide limit
 	// on open deliveries bounds the extra.
 	ListMemoDeliveriesWithOpen(ctx context.Context, membershipID, queueID string, limit int) ([]MemoDelivery, error)
+	// ListMemoDeliveriesClosedSince is ListMemoDeliveriesWithOpen plus every delivery closed at or
+	// after since (a DeliveryTS stamp), at most MemoClosedSinceMax of them (the newest closed
+	// first), so a viewer that saw a run open still gets its end after it left the newest limit.
+	ListMemoDeliveriesClosedSince(ctx context.Context, membershipID, queueID string, limit int, since string) ([]MemoDelivery, error)
 	// ListClosedWithoutTurn returns the deliveries closed at or after since with a session and no
 	// first turn recorded, the least recently tried first (never tried before tried), at most limit.
 	// MarkTurnTried stamps the ones a pass has read, so the next pass goes on with the others.
@@ -319,6 +323,22 @@ func (s *SQL) ListMemoDeliveriesWithOpen(ctx context.Context, membershipID, queu
 			ORDER BY created_at DESC, id DESC LIMIT ?))
 		ORDER BY created_at DESC, id DESC`,
 		membershipID, queueID, DeliveryWake, DeliveryClosed, membershipID, queueID, DeliveryWake, limit))
+}
+
+// MemoClosedSinceMax bounds the closed-since part of a list, so a stale cursor cannot ask for a queue's whole history.
+const MemoClosedSinceMax = 500
+
+func (s *SQL) ListMemoDeliveriesClosedSince(ctx context.Context, membershipID, queueID string, limit int, since string) ([]MemoDelivery, error) {
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE membership_id=? AND queue_id=? AND outcome<>?
+		AND (state<>?
+			OR id IN (SELECT id FROM memo_delivery WHERE membership_id=? AND queue_id=? AND outcome<>?
+				ORDER BY created_at DESC, id DESC LIMIT ?)
+			OR id IN (SELECT id FROM memo_delivery WHERE membership_id=? AND queue_id=? AND outcome<>? AND state=? AND closed_at>=?
+				ORDER BY closed_at DESC, id DESC LIMIT ?))
+		ORDER BY created_at DESC, id DESC`,
+		membershipID, queueID, DeliveryWake, DeliveryClosed,
+		membershipID, queueID, DeliveryWake, limit,
+		membershipID, queueID, DeliveryWake, DeliveryClosed, since, MemoClosedSinceMax))
 }
 
 func (s *SQL) ListLiveMemoDeliveries(ctx context.Context) ([]MemoDelivery, error) {

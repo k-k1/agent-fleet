@@ -428,15 +428,27 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 // /internal/memo-queues for the fleet operator): a queue's deliveries, newest first, at most
 // memoDeliveryListMax. With ?include=open the answer also holds every delivery that is not
 // closed, however old (one read, so one snapshot), so a view that lists live runs never loses one
-// to the limit. The token
-// face leaves out the sessions' hand-back reasons.
+// to the limit. ?closed_since=<RFC3339 time> implies include=open and adds every delivery closed at
+// or after that time, so a run that closed after it left the newest fifty still shows its end;
+// a time that does not parse is a 400. The token face leaves out the sessions' hand-back reasons.
 func (a memoAPI) listDeliveries(via memoVia) func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView) {
 	return func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 		list := a.store.ListMemoDeliveries
 		if r.URL.Query().Get("include") == "open" {
 			list = a.store.ListMemoDeliveriesWithOpen
 		}
-		ds, err := list(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax)
+		var ds []store.MemoDelivery
+		var err error
+		if cs := r.URL.Query().Get("closed_since"); cs != "" {
+			t, perr := time.Parse(time.RFC3339Nano, cs)
+			if perr != nil {
+				writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "closed_since must be an RFC 3339 time"})
+				return
+			}
+			ds, err = a.store.ListMemoDeliveriesClosedSince(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax, store.DeliveryTS(t))
+		} else {
+			ds, err = list(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax)
+		}
 		if err != nil {
 			writeAPIErr(w, internalErr(err))
 			return

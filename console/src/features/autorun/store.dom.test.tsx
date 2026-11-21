@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const memoQueueList = vi.fn(async () => ({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "r", category: "x" }] }));
-const memoQueueDeliveries = vi.fn(async (_id: string, _open?: boolean): Promise<unknown> => [{ id: "d0", session: "run-old", state: "closed", closedAt: "2026-11-01T00:45:00Z" }]);
-vi.mock("../memo/api.ts", () => ({ memoQueueList: () => memoQueueList(), memoQueueDeliveries: (id: string, o?: boolean) => memoQueueDeliveries(id, o) }));
+const memoQueueDeliveries = vi.fn(async (_id: string, _open?: boolean, _since?: string): Promise<unknown> => [{ id: "d0", session: "run-old", state: "closed", closedAt: "2026-11-01T00:45:00Z" }]);
+vi.mock("../memo/api.ts", () => ({ memoQueueList: () => memoQueueList(), memoQueueDeliveries: (id: string, o?: boolean, since?: string) => memoQueueDeliveries(id, o, since) }));
 
 const { acquireAutoRuns, reloadAutoRuns, useAutoRunStore } = await import("./store.ts");
 
@@ -37,6 +37,28 @@ describe("the shared auto-run feed", () => {
     back();
     acquireAutoRuns("other")();
     expect(useAutoRunStore.getState().deliveries.size).toBe(0);
+  });
+});
+
+describe("a run that closes after it left the newest fifty", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("asks for the closings since the latest one known, and takes the end the answer carries", async () => {
+    vi.useFakeTimers();
+    memoQueueDeliveries.mockImplementation(async () => [
+      { id: "d1", session: "run-a", state: "closed", closedAt: "2026-11-01T00:45:00Z" },
+      { id: "d2", session: "run-b", state: "open" },
+    ]);
+    const off = acquireAutoRuns("s");
+    await vi.advanceTimersByTimeAsync(0);
+    // The first read has nothing to anchor on; the second asks for what closed since d1 did.
+    expect(memoQueueDeliveries.mock.calls[0]).toEqual(["c1", true, ""]);
+    // d2 is no longer in the newest fifty; only the closed-since part brings it back, closed.
+    memoQueueDeliveries.mockImplementation(async () => [{ id: "d2", session: "run-b", state: "closed", outcome: "clean", closedAt: "2026-11-01T01:00:00Z" }]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(memoQueueDeliveries.mock.calls[1]).toEqual(["c1", true, "2026-11-01T00:45:00Z"]);
+    expect(useAutoRunStore.getState().deliveries.get("run-b")).toMatchObject({ state: "closed", closedAt: "2026-11-01T01:00:00Z" });
+    off();
   });
 });
 
