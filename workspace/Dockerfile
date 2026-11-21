@@ -291,7 +291,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # wrapper (gh-auth-wrapper.sh): on every call it takes the token from the same credential
 # helper git uses and injects it as GH_TOKEN, so gh works without `gh auth login`
 # (docs/build/08 §8.3). The wrapper itself is COPY'd with the frequently changing COPYs at the end.
-ARG GH_VERSION=2.103.3
+ARG GH_VERSION=2.105.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) gharch="$arch" ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
