@@ -1015,6 +1015,10 @@ type sessionWire struct {
 	// Schedules view cannot group scheduled sessions under their schedule. The DB mirror keeps
 	// it, so the stopped list carries it too.
 	ScheduleID string `json:"scheduleId,omitempty"`
+	// QueueCategoryID: the message-queue category whose delivery started a session of origin
+	// "queue". Absent here the Auto-run view files a run whose delivery has left its history
+	// window under "Other runs". The DB mirror keeps it, so the stopped list carries it too.
+	QueueCategoryID string `json:"queueCategoryId,omitempty"`
 	// Origin: who raised the session (ADR 0073) — "session" marks a child another session
 	// spawned, the one thing originSession cannot say (a fork or a launched handoff proposal
 	// carries a lineage too). The Console's "don't notify when a child session is waiting for
@@ -1129,7 +1133,7 @@ func sessionRows(list []sessionWire) []store.SessionRow {
 			Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 			Label: s.Label, CreatedAt: s.CreatedAt, State: state,
 			Carried: s.Carried, Studio: s.Studio,
-			Origin: s.Origin, OriginSession: s.OriginSession, ScheduleID: s.ScheduleID,
+			Origin: s.Origin, OriginSession: s.OriginSession, ScheduleID: s.ScheduleID, QueueCategoryID: s.QueueCategoryID,
 			Links: store.SessionLinksFromJSON(s.Links),
 		})
 	}
@@ -1184,7 +1188,7 @@ func (a workspaceAPI) sessionsShared(ctx context.Context, res *resolved) []sessi
 			// Which studio a session belongs to decides which pane opens it.
 			Studio: r0.Studio,
 			// Who raised it: the Console classifies runs (auto-run views vs. Sessions list) by these.
-			Origin: r0.Origin, OriginSession: r0.OriginSession, ScheduleID: r0.ScheduleID,
+			Origin: r0.Origin, OriginSession: r0.OriginSession, ScheduleID: r0.ScheduleID, QueueCategoryID: r0.QueueCategoryID,
 			// Which items it is on: the Console's rows and item details read them while stopped too.
 			Links: store.SessionLinksJSON(links[r0.Name]),
 			// Container is down: we can't check the dir, so assume resumable; the

@@ -292,6 +292,8 @@ The "**Auto-run**" view of the left pane (the icon right after "Memo queue") lis
 
 The view follows the [working set](../fleet/working-sets.md) you picked: a category is listed when its repository is in the set. A category without a repository, and runs that no category names, are listed under every set.
 
+A run is listed under the category whose delivery started it, also after that delivery has left the newest 50 of the category's history: the session records its category when it starts. "**Other runs**" holds only the runs whose category no longer exists (its auto-run settings were deleted) and the runs that were started before sessions recorded it.
+
 Each category has a pinned header like a repository in the "Sessions" view: the repository icon and `repository / category`. Its gear opens the category's auto-run settings, and its "**...**" menu has "**Run now**", "**Run history**" and "**Show in Memo queue**". Under it, "**Running / waiting N**" is open and "**Ended N**" is folded; press either to fold or open it.
 
 A row shows the run's state (running, waiting for your answer, or ended), the work item it started for (`#12 title`), its pull request and the pull request's state when known, and how long it has been going. Press a row to open the run's session. The sessions the run started, such as reviewers, are listed one level under the row. Right-click a row (or press the Menu key on it) to open the same session menu as in the "Sessions" view, for that session: archive, delete, rename, share, resume and so on. A run the queue has closed whose session is running again, because you took it over or it was started again, is listed under "Running / waiting" with a "**resumed**" tag and not under "Ended".

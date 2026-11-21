@@ -166,3 +166,16 @@ describe("scopeRuns", () => {
     expect(waitingRunCount(scoped)).toBe(2);
   });
 });
+
+describe("a run's category", () => {
+  const cat = (sessions: Session[], d?: RunDelivery) => buildRuns(sessions, new Map(d ? [["r", d]] : [])).find((r) => r.root.name === "r")!.categoryId;
+  it("is the delivery's when there is one, even if the session names another", () => {
+    expect(cat([sess("r", { origin: "queue", queueCategoryId: "cat2" })], dlv("cat1", "closed"))).toBe("cat1");
+  });
+  it("falls back to the session's own once the delivery left the history window", () => {
+    expect(cat([sess("r", { origin: "queue", queueCategoryId: "cat2", alive: false })])).toBe("cat2");
+  });
+  it("is empty with neither, which is what \"Other runs\" holds", () => {
+    expect(cat([sess("r", { origin: "queue" })])).toBe("");
+  });
+});

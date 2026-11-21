@@ -242,6 +242,25 @@ describe("AutoRunSection", () => {
     expect(host.querySelector("[data-autorun-category]")!.getAttribute("data-autorun-category")).not.toBe("agent-fleet / issue-rounds");
   });
 
+  it("files a run whose delivery left the window under its own category, and a run with no category under 'Other runs'", async () => {
+    useSessionsStore.setState({
+      sessions: [
+        sess("gone-a", { origin: "queue", createdAt: "2026-10-01T00:00:00Z", queueCategoryId: "c1" }),
+        sess("gone-b", { origin: "queue", createdAt: "2026-10-02T00:00:00Z" }),
+        sess("gone-c", { origin: "queue", createdAt: "2026-10-03T00:00:00Z", queueCategoryId: "deleted" }),
+      ],
+    });
+    await mount();
+    const cats = [...host.querySelectorAll("[data-autorun-category]")];
+    const under = (name: string) => cats.find((c) => c.querySelector(`[data-autorun-run="${name}"]`) !== null) ?? null;
+    const catA = under("gone-a");
+    expect(catA?.getAttribute("data-autorun-category")).toBe("agent-fleet / issue-rounds");
+    const other = under("gone-b");
+    expect(other).not.toBeNull();
+    expect(other).not.toBe(catA);
+    expect(under("gone-c")).toBe(other);
+  });
+
   it("drops what it knew when the tenant changes and reads again", async () => {
     await mount();
     expect(memoQueueList).toHaveBeenCalledTimes(1);

@@ -702,6 +702,9 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 	if c.origin == session.OriginSchedule {
 		meta.ScheduleID = cleanScheduleID(req.ScheduleID)
 	}
+	if c.origin == session.OriginQueue && req.QueueDelivery != nil {
+		meta.QueueCategoryID = cleanQueueCategoryID(req.QueueDelivery.Queue)
+	}
 	applyCreateLinks(&meta, req)
 	// After the route has been checked and bound (checkRoute), before anything starts: the record
 	// is what the session launches on, the resolution the policy judged when it judged one.

@@ -122,7 +122,8 @@ export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelive
       const startedAt = ms(d?.sentAt) || ms(d?.createdAt) || ms(root.createdAt);
       return {
         root,
-        categoryId: d?.categoryId ?? "",
+        // The delivery's word first; a run whose delivery left the history window has the session's own.
+        categoryId: d?.categoryId ?? root.queueCategoryId ?? "",
         deliveryId: d?.id ?? "",
         // From the delivery alone: resuming the run's session changes what the row shows, not what happened.
         failed: d?.state === "closed" && d.turnOutcome === "turn-failed" && d.outcome !== "ended" && d.outcome !== "aborted",
