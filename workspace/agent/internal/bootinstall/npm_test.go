@@ -420,7 +420,7 @@ func TestNPMVerifyPresentRepairsOnlyTheBrokenCopy(t *testing.T) {
 		t.Fatalf("status=%q", st)
 	}
 	// The healthy copy still runs and keeps its earlier skipped status.
-	if !f.env.runs(f.bin("claude")) || !strings.Contains(st, "claude\tskipped\t") {
+	if !f.env.runs(f.bin("claude")) || f.env.lastStatus("claude") != statusSkip {
 		t.Fatalf("healthy claude: runs=%v status=%q", f.env.runs(f.bin("claude")), st)
 	}
 }
