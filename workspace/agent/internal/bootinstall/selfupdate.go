@@ -202,9 +202,7 @@ func (e Env) selfUpdateNPM() {
 	verify := names      // the CLIs the pin-repairing verify pass may look at
 	if stderr, err := e.npmInstall(specs); err != nil {
 		fmt.Fprint(e.Stderr, stderr)
-		if !e.npmRestoreAside(moved) {
-			stuck = moved
-		}
+		stuck = e.npmRestoreAsideFailed(moved) // only the entries that really stayed behind
 		moved = nil
 		if usable(filepath.Join(e.bakedBin(), "opencode")) {
 			fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update failed (using baked versions)")

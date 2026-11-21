@@ -1227,3 +1227,36 @@ func TestSelfUpdateNPMUnreadableScopeKeepsTheRestoredLinkUntilRecovery(t *testin
 		t.Fatalf("the previous claude does not run after recovery: %q %v\n%s", out, err, f.out)
 	}
 }
+
+func TestSelfUpdateNPMFailedInstallHoldsOnlyTheCLIThatDidNotGoBack(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	f.env.StatusPath = filepath.Join(t.TempDir(), "status.tsv")
+	f.write(t, f.env.StatusPath, "")
+	claude := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	codex := f.plantNPMTree(t, "@openai/codex", "codex", "1.0.0")
+	// One fault: npm writes claude's tree, turns its scope unreadable and exits non-zero.
+	f.write(t, filepath.Join(f.npmDir, "failafter"), "npm ERR! EACCES\n")
+	stub := strings.Replace(f.read(filepath.Join(f.npmDir, "npm")), `mkdir -p "$prefix/bin"`, `mkdir -p "$prefix/bin" "$prefix/lib/node_modules/@anthropic-ai/claude-code"; echo half >"$prefix/lib/node_modules/@anthropic-ai/claude-code/VERSION"; chmod 000 `+filepath.Dir(claude), 1)
+	f.write(t, filepath.Join(f.npmDir, "npm"), stub)
+	t.Cleanup(func() { os.Chmod(filepath.Dir(claude), 0o755) })
+	f.env.selfUpdateNPM()
+	os.Chmod(filepath.Dir(claude), 0o755)
+	if _, err := os.Lstat(claude + npmBakSuffix); err != nil {
+		t.Fatalf("setup: claude's previous tree was not left behind:\n%s", f.out)
+	}
+	if st, ents, ok, bad := f.env.npmReadMarker(); !ok || bad || st != "pending" || len(ents) != 1 || ents[0] != "claude" {
+		t.Fatalf("marker = %q %v; want pending [claude]", st, ents)
+	}
+	if out, _, err := f.env.probe(f.local("codex")); err != nil || out != "1.0.0" {
+		t.Fatalf("codex was restored but does not run: %q %v", out, err)
+	}
+	if _, err := os.Lstat(codex + npmBakSuffix); err == nil {
+		t.Fatal("codex's backup is still there")
+	}
+	if f.env.lastStatus("codex") == statusFailed {
+		t.Fatal("codex was recorded failed although its previous copy is back")
+	}
+}

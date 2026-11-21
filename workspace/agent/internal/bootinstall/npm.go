@@ -666,24 +666,29 @@ func (e Env) npmMoveAside() ([]npmAside, error) {
 // npmRestoreAside puts the moved paths back, discarding whatever npm wrote at their names. It
 // reports whether every one went back.
 func (e Env) npmRestoreAside(moved []npmAside) bool {
-	ok := true
+	return len(e.npmRestoreAsideFailed(moved)) == 0
+}
+
+// npmRestoreAsideFailed is npmRestoreAside that returns the entries that did not go back.
+func (e Env) npmRestoreAsideFailed(moved []npmAside) []npmAside {
+	var failed []npmAside
 	for i := len(moved) - 1; i >= 0; i-- {
 		m := moved[i]
 		if _, err := os.Lstat(m.bak); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue // already back
 			}
-			ok = false // unreadable says nothing about the backup
+			failed = append(failed, m) // unreadable says nothing about the backup
 			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: could not look at %s: %v\n", m.bak, err)
 			continue
 		}
 		removeTree(m.orig)
 		if err := os.Rename(m.bak, m.orig); err != nil {
-			ok = false
+			failed = append(failed, m)
 			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: could not restore %s: %v (previous copy left at %s)\n", m.orig, err, m.bak)
 		}
 	}
-	return ok
+	return failed
 }
 
 // npmDiscardAside deletes the backups once the new copies are trusted and reports whether none
