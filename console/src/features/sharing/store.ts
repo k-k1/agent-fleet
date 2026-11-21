@@ -57,6 +57,13 @@ export const useSharedSessionsStore = create<SharedSessionsStore>((set) => ({
   },
 }));
 
+/** "Show this shared session in the rail" signal; the shell brings the Shared view forward. */
+export const useSharedReveal = create<{ id: string | null; n: number; reveal(id: string): void }>((set) => ({
+  id: null,
+  n: 0,
+  reveal: (id) => set((s) => ({ id, n: s.n + 1 })),
+}));
+
 export function startSharedSessionsPolling(): () => void {
   const load = () => { if (!document.hidden) void useSharedSessionsStore.getState().refresh(); };
   load();

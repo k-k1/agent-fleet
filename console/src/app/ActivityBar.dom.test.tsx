@@ -26,6 +26,8 @@ import { useSeenStore } from "../features/workitems/seen.ts";
 import { useSchedulesStore } from "../features/schedules/store.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { useWorkspaceStore } from "../core/store/workspace.ts";
+import { useHandoffStore } from "../features/sharing/handoffStore.ts";
+import type { HandoffOffer } from "../features/sharing/handoffStore.ts";
 import { useMemoStore } from "../features/memo/store.ts";
 import { useMemoryStore } from "../features/memory/store.ts";
 import { tCount } from "../lib/i18n/index.ts";
@@ -69,6 +71,7 @@ beforeEach(() => {
   useSchedulesStore.setState({ failed: [], failedAll: null });
   useRailAck.setState({ acked: {} });
   useMemoryStore.getState().reset();
+  useHandoffStore.setState({ owned: [], received: [], receivedAt: 0 });
   useMemoStore.setState({ tick: 0, panels: 0, waiting: null, scope: "" });
   memoList.mockReset();
   memoList.mockImplementation(() => Promise.resolve([]));
@@ -97,6 +100,31 @@ async function render(props: Partial<Parameters<typeof ActivityBar>[0]> = {}) {
 }
 const btn = (view: RailView) => host!.querySelector<HTMLButtonElement>(`.actbar-btn[data-rail-view="${view}"]`)!;
 const badge = (view: RailView) => btn(view).querySelector<HTMLElement>(".actbar-badge");
+
+describe("ActivityBar shared view", () => {
+  const offer = (id: string, status: string) => ({ id, status }) as unknown as HandoffOffer;
+
+  it("places the shared icon right after Sessions", async () => {
+    await mount();
+    const ids = [...host!.querySelectorAll<HTMLElement>(".actbar-btn[data-rail-view]")].map((b) => b.dataset.railView);
+    expect(ids.slice(0, 2)).toEqual(["sessions", "shared"]);
+  });
+
+  it("badges it with the handoffs waiting for a decision, and with nothing else", async () => {
+    useHandoffStore.setState({ received: [offer("a", "pending"), offer("b", "pending"), offer("c", "accepted")] });
+    await mount();
+    expect(badge("shared")?.dataset.badge).toBe("waiting");
+    expect(badge("shared")?.textContent).toBe("2");
+    expect(btn("shared").title).toContain(tCount("rail.badge.handoffs", 2));
+    expect(badge("sessions")).toBeNull();
+  });
+
+  it("shows no badge without a pending handoff", async () => {
+    useHandoffStore.setState({ received: [offer("c", "declined")] });
+    await mount();
+    expect(badge("shared")).toBeNull();
+  });
+});
 
 describe("ActivityBar views", () => {
   it("presses the icon of the view on screen and no other", async () => {

@@ -372,6 +372,8 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "rail.badge.news_other": "{count} new updates",
   "rail.badge.unread": "unread",
   "rail.badge.failed": "the latest run failed",
+  "rail.badge.handoffs_one": "{count} handoff waiting for your decision",
+  "rail.badge.handoffs_other": "{count} handoffs waiting for your decision",
   "rail.view.memory": "Memory",
   "rail.badge.memos_one": "{count} memo waiting for approval",
   "rail.badge.memos_other": "{count} memos waiting for approval",

@@ -5,6 +5,7 @@
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
 // ja が正本。新しいキーはここに足し、同じキーを ../en/ の同名ファイルにも足す。
 export const sharing = {
+  "share.none": "あなたに共有されているものはまだありません。",
   "share.shared_sessions": "共有セッション",
   "share.list_title": "共有一覧",
   "share.reload": "最新に更新",

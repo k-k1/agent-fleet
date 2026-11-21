@@ -15,6 +15,7 @@ import { openSessionChat, openSessionChatSplit, openSessionTerminal, openSession
 import { openChat } from "../chat/open.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { openSharedSession } from "../sharing/open.ts";
+import { useSharedReveal } from "../sharing/store.ts";
 import { receivedOfferState } from "../sharing/handoffStore.ts";
 import { useSchedulesStore } from "../schedules/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
@@ -216,6 +217,7 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
       toast(tr("noti.handoff_recovery", { inbox: tr("inbox.handoffs") }), { kind: "warn" });
       return { opened: false, handoffClosed: true };
     }
+    useSharedReveal.getState().reveal(n.payload.catalogId);
     openSharedSession(n.payload.catalogId, split);
     return { opened: true };
   }

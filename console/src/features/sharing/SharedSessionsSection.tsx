@@ -46,7 +46,7 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
   };
   const groups = useMemo(() => groupedSharedSessions(sessions), [sessions]);
 
-  if (sessions.length === 0 && proposals.length === 0 && ownedShares === 0 && handoffs === 0) return null;
+  if (sessions.length === 0 && proposals.length === 0 && ownedShares === 0 && handoffs === 0) return <div className="pane-empty">{tr("share.none")}</div>;
   return (
     <>
       <Section id="shared-sessions" title={tr("share.shared_sessions")} icon="broadcast" count={sessions.length}

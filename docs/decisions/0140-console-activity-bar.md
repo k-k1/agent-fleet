@@ -115,3 +115,16 @@ numbered when they start (a slow older answer cannot overwrite a newer one) and 
 they started in: the tenant while the workspace runs, none while it is stopped, so a stopped
 workspace or another tenant never shows a count. A working set does not narrow it, because the memo view does
 not either.
+
+## Note, 2026-11-21: shared sessions get their own view (#4645)
+
+Shared sessions sat at the bottom of the Sessions view, far below the fold under a long repository
+tree. They are now a view of their own, `shared` (icon `broadcast`), right after Sessions, in the
+running and the stopped workspace alike; the Sessions view no longer lists them. Decisions above are
+unchanged. Decision 4: the icon carries a `waiting` badge counting handoffs offered to the member
+that wait for their decision, read from the handoff store the view's section already polls. There
+is no news dot, because nothing client-side marks a shared session unread (notifications never
+target the shared list). Decision 5: opening a handoff-offer notice brings the view forward. The
+phone's vertical swipe follows the icon order, so it includes the new view. The view is not scoped
+by a working set: a shared session belongs to another member's working copy. An empty view says
+that nothing is shared instead of staying blank.

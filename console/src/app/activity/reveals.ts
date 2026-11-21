@@ -7,6 +7,7 @@ import type { RailView } from "../../core/store/leftRail.ts";
 import { useFilesStore } from "../../features/files/store.ts";
 import { useMemoStore } from "../../features/memo/store.ts";
 import { useRepoReveal } from "../../features/repos/store.ts";
+import { useSharedReveal } from "../../features/sharing/store.ts";
 import { useSchedulesStore } from "../../features/schedules/store.ts";
 
 export function wireRailReveals(): () => void {
@@ -14,6 +15,9 @@ export function wireRailReveals(): () => void {
   const unsubs = [
     useRepoReveal.subscribe((s, prev) => {
       if (s.n !== prev.n) show("sessions");
+    }),
+    useSharedReveal.subscribe((s, prev) => {
+      if (s.n !== prev.n) show("shared");
     }),
     useSchedulesStore.subscribe((s, prev) => {
       if (s.reveal.n !== prev.reveal.n) show("schedules");
