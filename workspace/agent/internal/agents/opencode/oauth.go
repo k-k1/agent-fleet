@@ -292,7 +292,7 @@ func oauthStatus() oauthState {
 	// The reading belongs to the daemon life it came from only when no daemon was replaced meanwhile.
 	if int(genSnap.Load()) == genBefore {
 		if st.connected {
-			noteAccount(oauthAt, acctIn, genBefore)
+			noteAccountID(oauthAt, acctIn, accountBinding(st.id), genBefore)
 		} else {
 			noteAccount(oauthAt, acctOut, genBefore)
 		}
