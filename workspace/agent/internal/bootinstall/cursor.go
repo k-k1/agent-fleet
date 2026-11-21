@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
@@ -45,7 +47,9 @@ func (e Env) cursorShare() string {
 	return filepath.Join(e.Home, ".local", "share", "cursor-agent", "versions")
 }
 
-var cursorVersionInLink = regexp.MustCompile(`/versions/([^/]+)/`)
+// cursorVersionInLink reads the version the way the shell's greedy sed did: the last
+// /versions/<v>/ of the target, whatever HOME's own path contains.
+var cursorVersionInLink = regexp.MustCompile(`^.*/versions/([^/]*)/.*$`)
 
 // Cursor installs the pinned cursor bundle (versions.json's cursor + cursor_sha256, a
 // per-architecture value written at image build) under ~/.local/share/cursor-agent/versions/<v>/
@@ -63,9 +67,12 @@ func Cursor(ctx context.Context, e Env) int {
 			need = true // present but the bundle does not answer
 		case e.Repin:
 			// Decide from the link target, not --version: starting Node takes seconds.
-			if t, err := os.Readlink(link); err == nil {
-				if m := cursorVersionInLink.FindAllStringSubmatch(t, -1); len(m) > 0 && m[len(m)-1][1] != ver { // the last one, as the shell's greedy sed read it
-					need = true
+			// The agent alias counts too: a repair that left it on another version is retried.
+			for _, l := range []string{link, filepath.Join(e.localBin(), "agent")} {
+				if t, err := os.Readlink(l); err == nil {
+					if m := cursorVersionInLink.FindStringSubmatch(t); m != nil && m[1] != "" && m[1] != ver {
+						need = true
+					}
 				}
 			}
 		}
@@ -139,12 +146,28 @@ func relinkAll(links []string, target string) error {
 		}
 		tmps[i] = tmp
 	}
+	type prev struct{ link, target string }
+	var done []prev
 	for i, l := range links {
+		old, _ := os.Readlink(l)
 		if err := relinkRename(tmps[i], l); err != nil {
 			cleanup()
+			// Put the links already switched back: a main link left behind an alias that moved
+			// would read as healthy and the repair would never be retried.
+			for _, d := range done {
+				if d.target == "" {
+					continue
+				}
+				back := d.link + ".af-back." + fmt.Sprint(os.Getpid())
+				os.Remove(back)
+				if os.Symlink(d.target, back) == nil && os.Rename(back, d.link) != nil {
+					os.Remove(back)
+				}
+			}
 			return err
 		}
 		tmps[i] = ""
+		done = append(done, prev{l, old})
 	}
 	return nil
 }
@@ -174,12 +197,20 @@ func (e Env) fetchCursorTree(ctx context.Context, ver, sum, dir string) error {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return err
 	}
-	pid := os.Getpid()
-	stage, old := fmt.Sprintf("%s.af-new.%d", dir, pid), fmt.Sprintf("%s.af-old.%d", dir, pid)
-	os.RemoveAll(stage)
-	os.RemoveAll(old)
+	// A fresh private stage: a predictable name could be a leftover (or a link) that mixes old
+	// files into the tree that gets published.
+	stage, err := os.MkdirTemp(filepath.Dir(dir), filepath.Base(dir)+".af-new.")
+	if err != nil {
+		return err
+	}
+	old := fmt.Sprintf("%s.af-old.%d", dir, os.Getpid())
+	removeTree(old)
 	if err := untarStrip1(archive, stage); err != nil {
-		os.RemoveAll(stage)
+		removeTree(stage)
+		return err
+	}
+	if err := os.Chmod(stage, 0o755&^curUmask()); err != nil {
+		removeTree(stage)
 		return err
 	}
 	// The tree being replaced is moved aside, not deleted: the candidate must run at its final
@@ -187,32 +218,60 @@ func (e Env) fetchCursorTree(ctx context.Context, ver, sum, dir string) error {
 	// put back.
 	if _, err := os.Lstat(dir); err == nil {
 		if err := os.Rename(dir, old); err != nil {
-			os.RemoveAll(stage)
+			removeTree(stage)
 			return err
 		}
 	}
 	if err := os.Rename(stage, dir); err != nil {
-		os.RemoveAll(stage)
+		removeTree(stage)
 		if rerr := restoreTree(old, dir); rerr != nil {
 			return fmt.Errorf("%w; the previous tree is left at %s: %v", err, old, rerr)
 		}
 		return err
 	}
 	if !e.cursorRuns(filepath.Join(dir, cursorTool)) {
-		os.RemoveAll(dir)
+		// The candidate is moved aside whole before the old tree goes back: removing it in place
+		// can fail on a read-only subtree and would leave it at the final path.
+		bad := fmt.Sprintf("%s.af-bad.%d", dir, os.Getpid())
+		removeTree(bad)
+		if err := os.Rename(dir, bad); err != nil {
+			return fmt.Errorf("cursor %s does not run in this environment and cannot be moved aside: %v", ver, err)
+		}
 		if rerr := restoreTree(old, dir); rerr != nil {
 			return fmt.Errorf("cursor %s does not run in this environment; the previous tree is left at %s: %v", ver, old, rerr)
 		}
+		removeTree(bad)
 		return fmt.Errorf("cursor %s does not run in this environment, keeping the current copy", ver)
 	}
-	os.RemoveAll(old)
+	removeTree(old)
 	return nil
+}
+
+// removeTree deletes a tree best-effort, making directories writable first (an archive may
+// carry read-only ones).
+func removeTree(p string) {
+	filepath.WalkDir(p, func(q string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			os.Chmod(q, 0o700)
+		}
+		return nil
+	})
+	os.RemoveAll(p)
+}
+
+func curUmask() os.FileMode {
+	m := syscall.Umask(0)
+	syscall.Umask(m)
+	return os.FileMode(m)
 }
 
 // restoreTree puts the aside tree back; nil when there was none.
 func restoreTree(old, dir string) error {
 	if _, err := os.Lstat(old); err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
 	}
 	return os.Rename(old, dir)
 }
@@ -260,11 +319,8 @@ func untarStrip1(archive, dest string) error {
 		return err
 	}
 	defer root.Close()
-	type dirMode struct {
-		name string
-		mode os.FileMode
-	}
-	var dirs []dirMode
+	umask := curUmask()
+	dirModes := map[string]os.FileMode{} // the last header for a path wins, as in tar
 	tr := tar.NewReader(zr)
 	for {
 		h, err := tr.Next()
@@ -295,9 +351,12 @@ func untarStrip1(archive, dest string) error {
 			if err := root.MkdirAll(rel, 0o755); err != nil {
 				return err
 			}
-			dirs = append(dirs, dirMode{rel, mode})
+			dirModes[filepath.Clean(rel)] = mode &^ umask
 		case tar.TypeReg:
-			w, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+			// A new inode renamed into place: an earlier hard link to this name keeps its content.
+			tmpName := rel + ".af-w"
+			root.Remove(tmpName)
+			w, err := root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 			if err != nil {
 				return err
 			}
@@ -308,7 +367,7 @@ func untarStrip1(archive, dest string) error {
 			if err := w.Close(); err != nil {
 				return err
 			}
-			if err := root.Chmod(rel, mode); err != nil { // the umask must not narrow what the archive says
+			if err := root.Rename(tmpName, rel); err != nil {
 				return err
 			}
 		case tar.TypeSymlink:
@@ -336,11 +395,44 @@ func untarStrip1(archive, dest string) error {
 	if _, err := io.Copy(io.Discard, zr); err != nil {
 		return err
 	}
-	// Directory modes last: a read-only directory would block the members inside it.
-	for i := len(dirs) - 1; i >= 0; i-- {
-		if err := root.Chmod(dirs[i].name, dirs[i].mode); err != nil {
+	// Directory modes last, deepest first: a restrictive parent must not block its children.
+	names := make([]string, 0, len(dirModes))
+	for n := range dirModes {
+		names = append(names, n)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		return strings.Count(names[i], "/") > strings.Count(names[j], "/")
+	})
+	for _, n := range names {
+		if err := root.Chmod(n, dirModes[n]); err != nil {
 			return err
 		}
 	}
-	return nil
+	return checkLinksInside(dest)
+}
+
+// checkLinksInside requires every symlink of the unpacked tree to resolve, through any chain,
+// to a place inside it. The unpack checks each link lexically; this is what the finished tree
+// does when run, where no os.Root confines anything.
+func checkLinksInside(dest string) error {
+	base, err := filepath.EvalSymlinks(dest)
+	if err != nil {
+		return err
+	}
+	return filepath.WalkDir(dest, func(p string, d os.DirEntry, err error) error {
+		if err != nil && os.IsPermission(err) {
+			return filepath.SkipDir // a directory nobody can enter holds nothing that can be followed
+		}
+		if err != nil || d.Type()&os.ModeSymlink == 0 {
+			return err
+		}
+		r, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			return nil // dangling: it reaches nothing
+		}
+		if r != base && !strings.HasPrefix(r, base+string(os.PathSeparator)) {
+			return fmt.Errorf("unsafe link in archive: %s resolves outside the tree", strings.TrimPrefix(p, dest+"/"))
+		}
+		return nil
+	})
 }

@@ -133,6 +133,7 @@ has 'BI_LOW_SPACE=1' || fail "cursor: exit 3 did not set BI_LOW_SPACE"
 reset; run_block STUB_WA_RC_CURSOR=3 STUB_WA_RC=0
 has 'BI_LOW_SPACE=1' || fail "cursor: its own exit 3 did not set BI_LOW_SPACE"
 reset; run_block STUB_WA_RC_CURSOR=0 STUB_WA_RC=3
+has 'BI_LOW_SPACE=1' || fail "cursor: a later success cleared the earlier no-space flag"
 reset; run_block STUB_WA_RC_CURSOR=1 STUB_WA_RC=0
 has 'BI_LOW_SPACE=0' || fail "cursor: exit 1 set BI_LOW_SPACE"
 reset; run_block STUB_WA_RC=126

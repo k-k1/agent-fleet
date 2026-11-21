@@ -11,8 +11,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -337,6 +339,10 @@ func TestCursorStripMatchesTar(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(d, "f")); string(b) != "two" {
 		t.Errorf("f=%q, want the later member", b)
 	}
+	// "./dist-package/f" loses only the "." component, so it lands at dist-package/f.
+	if b, _ := os.ReadFile(filepath.Join(d, "dist-package", "f")); string(b) != "one" {
+		t.Errorf("dist-package/f=%q: ./ must count as the stripped component", b)
+	}
 	if st, err := os.Stat(filepath.Join(d, "sub")); err != nil || st.Mode().Perm() != 0o700 {
 		t.Errorf("sub: %v %v", st, err)
 	}
@@ -494,5 +500,203 @@ func TestCursorDownloadFailureKeepsTreeAndRecordsNetwork(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent")); string(b) != "#!/bi" {
 		t.Error("existing tree touched by a failed download")
+	}
+}
+
+func tarSymlinkChain() []tarMember {
+	// d/x -> .. is inside (the tree root); d/y -> x/.. is lexically d, but through the link it
+	// is the parent of the tree. Neither is used by a later member.
+	return []tarMember{
+		{name: "p/d/", typ: tar.TypeDir, mode: 0o755},
+		{name: "p/d/x", typ: tar.TypeSymlink, link: ".."},
+		{name: "p/d/y", typ: tar.TypeSymlink, link: "x/.."},
+	}
+}
+
+func TestCursorRefusesUnusedLinkChainResolvingOutside(t *testing.T) {
+	f := newCursor(t, append(goodCursorMembers(), tarSymlinkChain()...), "")
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if _, err := os.Stat(f.tree("2026.1.1-abc")); err == nil {
+		t.Error("tree with an escaping link chain published")
+	}
+}
+
+func TestCursorAcceptsInternalLinks(t *testing.T) {
+	f := newCursor(t, append(goodCursorMembers(),
+		tarMember{name: "p/sub/", typ: tar.TypeDir, mode: 0o755},
+		tarMember{name: "p/sub/real", body: "r", mode: 0o644},
+		tarMember{name: "p/ln", typ: tar.TypeSymlink, link: "sub/real"},
+		tarMember{name: "p/sub/up", typ: tar.TypeSymlink, link: "../ln"},
+	), "")
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if b, _ := os.ReadFile(filepath.Join(f.tree("2026.1.1-abc"), "sub", "up")); string(b) != "r" {
+		t.Errorf("internal chain: %q", b)
+	}
+}
+
+func TestCursorLeftoverStageIsNotReused(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	share := filepath.Dir(f.tree("x"))
+	os.MkdirAll(share, 0o755)
+	for _, n := range []string{"2026.1.1-abc.af-new." + "1", "2026.1.1-abc.af-new." + strconv.Itoa(os.Getpid())} {
+		os.MkdirAll(filepath.Join(share, n), 0o755)
+		os.WriteFile(filepath.Join(share, n, "stale"), []byte("old"), 0o644)
+	}
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if _, err := os.Stat(filepath.Join(f.tree("2026.1.1-abc"), "stale")); err == nil {
+		t.Error("a stale file from a leftover stage reached the published tree")
+	}
+}
+
+func TestCursorHardLinkKeepsEarlierContent(t *testing.T) {
+	f := newCursor(t, append(goodCursorMembers(),
+		tarMember{name: "p/f", body: "first", mode: 0o644},
+		tarMember{name: "p/h", typ: tar.TypeLink, link: "p/f"},
+		tarMember{name: "p/f", body: "last", mode: 0o644},
+	), "")
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	d := f.tree("2026.1.1-abc")
+	a, _ := os.ReadFile(filepath.Join(d, "h"))
+	b, _ := os.ReadFile(filepath.Join(d, "f"))
+	if string(a) != "first" || string(b) != "last" {
+		t.Errorf("h=%q f=%q", a, b)
+	}
+}
+
+func TestCursorModesFollowUmaskAndHeaderOrder(t *testing.T) {
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	// The child directory is listed before its parent, the parent has no traverse permission
+	// in the end, and the same directory appears twice (the last mode wins).
+	f := newCursor(t, []tarMember{
+		{name: "p/cursor-agent", body: goodCursor, mode: 0o755},
+		{name: "p/index.js", body: "//js\n", mode: 0o644},
+		{name: "p/a/b/", typ: tar.TypeDir, mode: 0o755},
+		{name: "p/a/b/f", body: "f", mode: 0o755},
+		{name: "p/a/", typ: tar.TypeDir, mode: 0o000},
+		{name: "p/d/", typ: tar.TypeDir, mode: 0o755},
+		{name: "p/d/", typ: tar.TypeDir, mode: 0o750},
+	}, "")
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	d := f.tree("2026.1.1-abc")
+	defer os.Chmod(filepath.Join(d, "a"), 0o700)
+	for p, want := range map[string]os.FileMode{".": 0o700, "d": 0o700, "cursor-agent": 0o700} {
+		if st, err := os.Stat(filepath.Join(d, p)); err != nil || st.Mode().Perm() != want {
+			t.Errorf("%s: %v %v, want %o", p, st, err, want)
+		}
+	}
+	if st, err := os.Lstat(filepath.Join(d, "a")); err != nil || st.Mode().Perm() != 0 {
+		t.Errorf("a: %v %v", st, err)
+	}
+}
+
+func TestCursorBadCandidateWithReadOnlySubtreeRestoresOldTree(t *testing.T) {
+	f := newCursor(t, []tarMember{
+		{name: "p/cursor-agent", body: "#!/bin/sh\nexit 1\n", mode: 0o755},
+		{name: "p/ro/", typ: tar.TypeDir, mode: 0o555},
+		{name: "p/ro/f", body: "x", mode: 0o644},
+	}, "")
+	d := f.tree("2026.1.1-abc")
+	os.MkdirAll(d, 0o755)
+	os.WriteFile(filepath.Join(d, "cursor-agent"), []byte("#!/bi"), 0o755)
+	os.WriteFile(filepath.Join(d, "marker"), []byte("old"), 0o644)
+	os.MkdirAll(filepath.Dir(f.link()), 0o755)
+	os.Symlink(filepath.Join(d, "cursor-agent"), f.link())
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if b, err := os.ReadFile(filepath.Join(d, "marker")); err != nil || string(b) != "old" {
+		t.Errorf("old tree not restored: %v %q", err, b)
+	}
+	if _, err := os.Stat(filepath.Join(d, "ro")); err == nil {
+		t.Error("candidate left at the final path")
+	}
+	if m, _ := filepath.Glob(d + ".af-*"); len(m) != 0 {
+		t.Errorf("leftovers %v", m)
+	}
+}
+
+func TestCursorRepinReadsVersionAcrossRepeatedVersionsDirs(t *testing.T) {
+	re := cursorVersionInLink
+	got := re.FindStringSubmatch("/h/.local/share/cursor-agent/versions/team/versions/2026.1.1-abc/cursor-agent")
+	if got == nil || got[1] != "2026.1.1-abc" {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestCursorPinnedTreeIsProbedOncePerRun(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	counting := "#!/bin/sh\nd=\"$(dirname \"$(readlink -f \"$0\")\")\"\necho x >>\"$d/calls\"\n[ \"$(wc -l <\"$d/calls\")\" -le 1 ] || exit 1\n[ -f \"$d/index.js\" ] || exit 1\necho v\n"
+	f.plant(t, "2026.0.9-old", goodCursor, true)
+	f.plant(t, "2026.1.1-abc", counting, true)
+	os.Remove(f.link())
+	os.Symlink(filepath.Join(f.tree("2026.0.9-old"), "cursor-agent"), f.link())
+	f.env.Repin = true
+	f.env.FreeMiB = func(string) (int64, bool) { return 1, true }
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK || f.hits.Load() != 0 {
+		t.Fatalf("rc=%d hits=%d out=%s", rc, f.hits.Load(), f.out)
+	}
+	b, _ := os.ReadFile(filepath.Join(f.tree("2026.1.1-abc"), "calls"))
+	if n := strings.Count(string(b), "x"); n != 1 {
+		t.Errorf("pinned tree probed %d times, want once", n)
+	}
+}
+
+func TestCursorUnwritableTempDirFailsBeforeAnyRequest(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", "#!/bi", false)
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d", rc)
+	}
+	if f.hits.Load() != 0 || f.statusText() != "cursor\tfailed\tother\n" {
+		t.Errorf("hits=%d status=%q", f.hits.Load(), f.statusText())
+	}
+	if b, _ := os.ReadFile(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent")); string(b) != "#!/bi" {
+		t.Error("existing tree touched")
+	}
+}
+
+func TestCursorMainLinkFailureRestoresAliasAndAliasDriftIsRetried(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	f.plant(t, "2026.2.2-def", goodCursor, true)
+	alias := filepath.Join(f.home, ".local", "bin", "agent")
+	oldT := filepath.Join(f.tree("2026.2.2-def"), "cursor-agent")
+	os.Symlink(oldT, alias)
+	f.env.Repin = true
+	orig := relinkRename
+	defer func() { relinkRename = orig }()
+	relinkRename = func(from, to string) error {
+		if to == f.link() {
+			return errors.New("injected")
+		}
+		return os.Rename(from, to)
+	}
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d", rc)
+	}
+	if got, _ := os.Readlink(alias); got != oldT {
+		t.Errorf("alias not restored after the main link failed: %s", got)
+	}
+	// Main link already on the pin, alias still on another version: the next start fixes it.
+	relinkRename = orig
+	os.Remove(f.link())
+	os.Symlink(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent"), f.link())
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d", rc)
+	}
+	if got, _ := os.Readlink(alias); !strings.Contains(got, "2026.1.1-abc") {
+		t.Errorf("alias drift not retried: %s", got)
 	}
 }
