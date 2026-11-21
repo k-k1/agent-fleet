@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
@@ -78,8 +79,8 @@ func Cursor(ctx context.Context, e Env) int {
 	// mid-flight and undo a tree that is about to be accepted.
 	release, ok := e.lockCursor()
 	if !ok {
+		// No status change: the copy on disk is not known to be bad, only busy.
 		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: cursor boot-install skipped (another cursor update is running; retrying next start)")
-		e.note(cursorStatusName, statusFailed, ReasonOther)
 		return ExitFailed
 	}
 	defer release()
@@ -696,7 +697,7 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 		return err
 	}
 	defer func() {
-		if err == nil {
+		if err == nil || errors.Is(err, errCursorUnsettled) {
 			return
 		}
 		if rerr := e.cursorRecover(); rerr != nil {
@@ -735,7 +736,7 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 	if err := os.Remove(e.cursorMarkerPath()); err != nil && !os.IsNotExist(err) {
 		// The marker stays, so the next start rolls back: the backups it needs stay too.
 		fmt.Fprintf(e.Stderr, "cursor: cannot remove %s: %v (previous copies kept)\n", e.cursorMarkerPath(), err)
-		return nil
+		return errCursorUnsettled
 	}
 	if m.Tree {
 		removeTree(m.Old)
@@ -763,6 +764,10 @@ func (e Env) lockCursor() (release func(), ok bool) {
 	return func() { f.Close() }, true
 }
 
+// errCursorUnsettled: the update verified but its marker could not be removed, so the next start
+// rolls it back from the kept backups. It is not reported as an update.
+var errCursorUnsettled = errors.New("cursor update verified but not settled: the marker could not be removed, the next start will roll it back")
+
 // cursorLinkState is what one launcher link was before a self-update touched it.
 type cursorLinkState struct {
 	Path   string `json:"path"`
@@ -787,6 +792,11 @@ func (e Env) cursorMarkerPath() string {
 }
 
 func (e Env) cursorWriteMarker(m cursorMarker) error {
+	// What this writes must pass the reader: a marker the next start refuses would block the pin
+	// and every later update. JSON also turns non-UTF-8 strings into U+FFFD.
+	if !e.cursorMarkerValid(m) || !utf8.ValidString(m.Dir) {
+		return fmt.Errorf("cursor: not updating, the version directory name %q cannot be journaled", filepath.Base(m.Dir))
+	}
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
@@ -834,17 +844,26 @@ func (e Env) cursorMarkerValid(m cursorMarker) bool {
 		filepath.Join(e.localBin(), cursorTool): true,
 		filepath.Join(e.localBin(), "agent"):    true,
 	}
+	seen := map[string]bool{}
 	for _, l := range m.Links {
-		if !own[l.Path] {
+		if !own[l.Path] || seen[l.Path] {
 			return false
 		}
+		seen[l.Path] = true
+		isAlias := l.Path == filepath.Join(e.localBin(), "agent")
 		switch l.Kind {
 		case "symlink":
 			if len(l.Target) == 0 {
 				return false
 			}
+			// The alias is only ever restored to a state that was cursor's own.
+			if isAlias {
+				if _, ok := e.aliasVersion(l.Path, string(l.Target)); !ok {
+					return false
+				}
+			}
 		case "file":
-			if !withSuffixDigits(l.Keep, l.Path, ".af-prev.") {
+			if isAlias || !withSuffixDigits(l.Keep, l.Path, ".af-prev.") {
 				return false
 			}
 		case "none":
@@ -920,10 +939,14 @@ func (e Env) cursorRecover() error {
 		case "none":
 			// Only a link this update published: one at a path that was empty before and now
 			// points at the tree it made. Anything else is someone else's.
-			if cur, rerr := os.Readlink(l.Path); rerr == nil && cur == filepath.Join(m.Dir, cursorTool) {
+			cur, rerr := os.Readlink(l.Path)
+			switch {
+			case rerr == nil && cur == filepath.Join(m.Dir, cursorTool):
 				if err := os.Remove(l.Path); err != nil && !os.IsNotExist(err) {
 					errs = append(errs, fmt.Errorf("cursor: cannot remove %s: %v", l.Path, err))
 				}
+			case rerr != nil && !errors.Is(rerr, fs.ErrNotExist) && !errors.Is(rerr, syscall.EINVAL):
+				errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Path, rerr))
 			}
 		}
 	}

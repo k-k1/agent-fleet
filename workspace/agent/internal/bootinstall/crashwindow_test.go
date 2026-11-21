@@ -2,6 +2,7 @@ package bootinstall
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -200,7 +201,8 @@ func TestCursorMarkerOutsideTheCursorPathsIsRefused(t *testing.T) {
 		{Dir: filepath.Join(f.versions(), "x"), Old: victim, Tree: true},
 		{Dir: filepath.Join(f.versions(), "x"), Links: []cursorLinkState{{Path: victim, Kind: "none"}}},
 	} {
-		if err := f.env.cursorWriteMarker(m); err != nil {
+		raw, _ := json.Marshal(m)
+		if err := os.WriteFile(f.env.cursorMarkerPath(), raw, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if err := f.env.cursorRecover(); err == nil {
@@ -283,34 +285,58 @@ func TestCursorRecoverReviewRound1(t *testing.T) {
 			t.Skip("root ignores directory permissions")
 		}
 		f := newSU(t, goodRTK, "", "", cursorInstaller)
-		d := f.plantCursor(t, "1.0.0")
-		_ = d
-		// ~/.local is not writable but versions and bin are: only the marker's unlink fails.
+		// The same version is already there but does not answer (so it is replaced), and the
+		// launcher is a regular file (so it is moved aside): both backups must survive.
+		dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+		f.write(t, filepath.Join(dir, "cursor-agent"), "#!/bin/sh\nexit 1\n")
+		f.write(t, f.local("cursor-agent"), "#!/bin/sh\necho realfile\n")
 		local := filepath.Join(f.home, ".local")
-		// The marker is written before the lock-down is possible, so lock down from a launcher
-		// hook: the candidate's last probe is the install script's bundle itself.
-		f.env.Stderr = f.out
 		old := relinkRename
 		relinkRename = func(a, b string) error {
 			err := os.Rename(a, b)
-			os.Chmod(local, 0o555)
+			os.Chmod(local, 0o555) // from now on only the marker's unlink fails
 			return err
 		}
 		t.Cleanup(func() { relinkRename = old; os.Chmod(local, 0o755) })
 		f.env.selfUpdateCursor(context.Background())
-		os.Chmod(local, 0o755)
 		relinkRename = old
+		os.Chmod(local, 0o755)
 		if _, err := os.Lstat(f.env.cursorMarkerPath()); err != nil {
 			t.Skip("marker was removable on this filesystem")
 		}
-		if !strings.Contains(f.read(filepath.Join(f.versions(), "1.0.0", "cursor-agent")), "1.0.0") {
-			t.Fatalf("the previous tree went although the marker stayed:\n%s", f.out)
+		if strings.Contains(f.out.String(), "cursor updated:") {
+			t.Fatalf("an unsettled update was reported as done:\n%s", f.out)
+		}
+		keep := f.local("cursor-agent") + ".af-prev." + strconv.Itoa(os.Getpid())
+		if !strings.Contains(f.read(keep), "realfile") {
+			t.Fatalf("the launcher backup was deleted:\n%s", f.out)
+		}
+		if _, err := os.Lstat(dir + ".af-old." + strconv.Itoa(os.Getpid())); err != nil {
+			t.Fatalf("the previous tree backup was deleted:\n%s", f.out)
 		}
 		if err := f.env.cursorRecover(); err != nil {
 			t.Fatal(err)
 		}
-		if out, _, err := f.env.probeArgs(f.local("cursor-agent"), nil, nil); err != nil || out != "1.0.0" {
-			t.Fatalf("recovery after a kept marker: %q %v", out, err)
+		if !strings.Contains(f.read(f.local("cursor-agent")), "realfile") {
+			t.Fatal("launcher not restored")
+		}
+		if !strings.Contains(f.read(filepath.Join(dir, "cursor-agent")), "exit 1") {
+			t.Fatal("previous tree not restored")
+		}
+	})
+	t.Run("a marker with a foreign agent state or a name the reader refuses is not written or not acted on", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", "")
+		os.MkdirAll(filepath.Join(f.home, ".local"), 0o755)
+		if err := f.env.cursorWriteMarker(cursorMarker{Dir: filepath.Join(f.versions(), ".preview")}); err == nil {
+			t.Fatal("a dot-named version was journaled")
+		}
+		foreign := cursorMarker{Dir: filepath.Join(f.versions(), "x"), Links: []cursorLinkState{{Path: f.local("agent"), Kind: "symlink", Target: []byte("/usr/bin/other")}}}
+		if f.env.cursorMarkerValid(foreign) {
+			t.Fatal("an agent state that was never cursor's was accepted")
+		}
+		dup := cursorMarker{Dir: filepath.Join(f.versions(), "x"), Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "none"}, {Path: f.local("cursor-agent"), Kind: "none"}}}
+		if f.env.cursorMarkerValid(dup) {
+			t.Fatal("a duplicate path was accepted")
 		}
 	})
 	t.Run("a path that only cleans to the versions directory is refused", func(t *testing.T) {
@@ -398,7 +424,8 @@ func TestNPMLockSurvivesAKilledParent(t *testing.T) {
 	}
 	f := newSU(t, goodRTK, "", "", "")
 	started := filepath.Join(f.npmDir, "started")
-	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf("#!/bin/sh\necho up >%q\n/usr/bin/sleep 3\n", started))
+	release := filepath.Join(f.npmDir, "release")
+	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf("#!/bin/sh\necho up >%q\nwhile [ ! -e %q ]; do /usr/bin/sleep 0.1; done\n", started, release))
 	cmd := exec.Command(os.Args[0], "-test.run=^TestNPMLockHelperProcess$")
 	cmd.Env = append(os.Environ(), "AF_TEST_NPM_PARENT=1", "AF_TEST_HOME="+f.home, "AF_TEST_NPM="+filepath.Join(f.npmDir, "npm"))
 	if err := cmd.Start(); err != nil {
@@ -420,9 +447,10 @@ func TestNPMLockSurvivesAKilledParent(t *testing.T) {
 	if got := f.read(filepath.Join(tree, "VERSION")); got != "2.0.0" {
 		t.Fatalf("restored under the surviving npm: %q", got)
 	}
+	os.WriteFile(release, nil, 0o644) // let the fake npm finish now that recovery was shown blocked
 	for i := 0; i < 100; i++ {
-		if _, release, ok := f.env.lockNPM(); ok {
-			release()
+		if _, rel, ok := f.env.lockNPM(); ok {
+			rel()
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
