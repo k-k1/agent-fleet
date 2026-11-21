@@ -11,6 +11,7 @@ package codex
 import (
 	"net/url"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,17 +25,27 @@ func TestContractCodexDeviceSignIn(t *testing.T) {
 		t.Fatalf("codex not on PATH: %v", err)
 	}
 	contractenv.Isolate(t)
-	// The code request needs the network, so a CLI that exited without output is retried.
+	// The code request needs the network, so a CLI that exited without output is retried. An
+	// attempt succeeds only with the production scrape's first URL match being the verification
+	// page AND a code printed: a failed request prints an API URL on the same host, which
+	// matches urlRe but is neither.
 	f, got := contractenv.Start(t,
 		func() (*agents.Flow, error) { return agents.StartFlow(deviceLoginCmd(t.TempDir())) },
-		func(f *agents.Flow) string { return f.WaitFor(urlRe, 20*time.Second) })
+		func(f *agents.Flow) string {
+			got := f.WaitFor(urlRe, 20*time.Second)
+			if !isVerificationURL(got) || f.WaitFor(codeRe, 8*time.Second) == "" {
+				return ""
+			}
+			return got
+		})
 	if got == "" {
-		t.Fatalf("no verification URL matched urlRe within 20s; CLI output:\n%s", f.Clean())
+		t.Fatalf("no verification URL and one-time code within 28s; CLI output:\n%s", f.Clean())
 	}
-	if u, err := url.Parse(got); err != nil || u.Scheme != "https" || u.Host != "auth.openai.com" {
-		t.Fatalf("unexpected verification URL %q (err %v)", got, err)
-	}
-	if code := f.WaitFor(codeRe, 8*time.Second); code == "" {
-		t.Fatalf("no one-time code matched codeRe; CLI output:\n%s", f.Clean())
-	}
+}
+
+// isVerificationURL reports whether u is the device verification page (measured:
+// https://auth.openai.com/codex/device).
+func isVerificationURL(u string) bool {
+	p, err := url.Parse(u)
+	return err == nil && p.Scheme == "https" && p.Host == "auth.openai.com" && strings.HasPrefix(p.Path, "/codex/device")
 }

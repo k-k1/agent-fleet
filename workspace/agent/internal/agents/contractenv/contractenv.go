@@ -19,8 +19,9 @@ var keep = map[string]bool{
 	"SSL_CERT_FILE": true, "SSL_CERT_DIR": true,
 	"HTTP_PROXY": true, "HTTPS_PROXY": true, "NO_PROXY": true,
 	"http_proxy": true, "https_proxy": true, "no_proxy": true,
-	// The test harness's own switch for a binary location, not a credential.
-	"AGENT_MUSE_BIN": true,
+	// The harness's own switches for which binary runs and that it must not self-update; the
+	// test LookPaths the same name, so dropping them would run a different binary.
+	"AGENT_MUSE_BIN": true, "AGENT_CURSOR_BIN": true, "AGENT_KIRO_BIN": true, "DISABLE_AUTOUPDATER": true,
 }
 
 // Isolate drops every variable outside the allowlist for the rest of the test, points HOME at

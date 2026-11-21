@@ -26,22 +26,31 @@ func TestContractKiroSignInURL(t *testing.T) {
 	}
 	contractenv.Isolate(t)
 	// The device-code request needs the network, so a CLI that exited without output is retried.
+	// An attempt succeeds only when the first URL match is a device sign-in URL: a failed request
+	// can print a diagnostic URL that matches loginURLRe.
 	f, got := contractenv.Start(t,
 		func() (*agents.Flow, error) { return agents.StartFlow(loginCmd(t.TempDir())) },
-		func(f *agents.Flow) string { return loginURLRe.FindString(f.WaitFor(loginURLRe, 20*time.Second)) })
+		func(f *agents.Flow) string {
+			got := loginURLRe.FindString(f.WaitFor(loginURLRe, 20*time.Second))
+			if !isDeviceURL(got) {
+				return ""
+			}
+			return got
+		})
 	if got == "" {
-		t.Fatalf("no device URL matched loginURLRe within 20s; CLI output:\n%s", f.Clean())
+		t.Fatalf("no device sign-in URL within 20s; CLI output:\n%s", f.Clean())
 	}
-	u, err := url.Parse(got)
+}
+
+// isDeviceURL reports whether s is a device sign-in URL: the IAM Identity Center start page
+// (measured) or the OIDC device endpoint, with the one-time code in the fragment or query.
+func isDeviceURL(s string) bool {
+	u, err := url.Parse(s)
 	if err != nil || u.Scheme != "https" {
-		t.Fatalf("unexpected device URL %q (err %v)", got, err)
+		return false
 	}
-	// The IAM Identity Center start page (measured) or the OIDC device endpoint; the one-time
-	// code rides in the fragment or the query. Any other host is a diagnostic link, not sign-in.
 	okHost := u.Host == "view.awsapps.com" ||
 		(strings.HasPrefix(u.Host, "device.sso.") && strings.HasSuffix(u.Host, ".amazonaws.com"))
-	if !okHost || !strings.Contains(u.Path+u.Fragment, "device") ||
-		!strings.Contains(u.RawQuery+u.Fragment, "user_code=") {
-		t.Fatalf("not a device sign-in URL: host %q path %q", u.Host, u.Path)
-	}
+	return okHost && strings.Contains(u.Path+u.Fragment, "device") &&
+		strings.Contains(u.RawQuery+u.Fragment, "user_code=")
 }

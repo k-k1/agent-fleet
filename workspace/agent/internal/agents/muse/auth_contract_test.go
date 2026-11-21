@@ -26,19 +26,26 @@ func TestContractMuseSignInURL(t *testing.T) {
 	}
 	contractenv.Isolate(t)
 	// The device-code request needs the network, so a CLI that exited without output is retried.
+	// An attempt succeeds only when the first URL match is a device sign-in URL: a failed request
+	// can print a diagnostic URL that matches loginURLRe.
 	f, got := contractenv.Start(t,
 		func() (*agents.Flow, error) { return agents.StartPipeFlow(loginCmd(t.TempDir())) },
-		func(f *agents.Flow) string { return f.WaitFor(loginURLRe, 20*time.Second) })
+		func(f *agents.Flow) string {
+			got := f.WaitFor(loginURLRe, 20*time.Second)
+			if !isDeviceURL(got) {
+				return ""
+			}
+			return got
+		})
 	if got == "" {
-		t.Fatalf("no device URL matched loginURLRe within 20s; CLI output:\n%s", f.Clean())
+		t.Fatalf("no device sign-in URL within 20s; CLI output:\n%s", f.Clean())
 	}
-	u, err := url.Parse(got)
-	if err != nil || u.Scheme != "https" {
-		t.Fatalf("unexpected device URL %q (err %v)", got, err)
-	}
-	// Measured: https://auth.meta.com/oauth/device/?code=XXXX-XXXX. Any other host or path is a
-	// diagnostic link, not sign-in.
-	if u.Host != "auth.meta.com" || !strings.HasPrefix(u.Path, "/oauth/device") || u.Query().Get("code") == "" {
-		t.Fatalf("not a device sign-in URL: host %q path %q", u.Host, u.Path)
-	}
+}
+
+// isDeviceURL reports whether s is a device sign-in URL (measured:
+// https://auth.meta.com/oauth/device/?code=XXXX-XXXX).
+func isDeviceURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Scheme == "https" && u.Host == "auth.meta.com" &&
+		strings.HasPrefix(u.Path, "/oauth/device") && u.Query().Get("code") != ""
 }
