@@ -88,6 +88,10 @@ type bindEvent struct {
 	Floor int64 `json:"floor,omitempty"`
 	// Carry is the largest Floor of the Reg events a trim dropped before this event.
 	Carry int64 `json:"carry,omitempty"`
+	// AcctCarry, on a daemon event, is the time before which a sign-in observation of the life
+	// proves no payer: account events up to it were dropped, and one of them may have been a touch
+	// the quiet period counts from.
+	AcctCarry int64 `json:"acarry,omitempty"`
 }
 
 // clockStamp is the current boot id and uptime in milliseconds; ok=false when the kernel does not
@@ -228,7 +232,7 @@ func lastDaemonEvent(evs []bindEvent) int {
 // appendBindEvent adds one line (a single O_APPEND write), trimming the oldest lines when the file
 // outgrows its bound. Done under the lock with check, which may refuse the event after looking at
 // the file (false = not written, not a failure). A write that fails leaves a gap (noteGap).
-func appendBindEvent(e bindEvent, check func(evs []bindEvent) bool) {
+func appendBindEvent(e bindEvent, check func(evs []bindEvent, e bindEvent) bool) {
 	bindIntervalsMu.Lock()
 	defer bindIntervalsMu.Unlock()
 	evs, ok := readBindEvents()
@@ -239,9 +243,6 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent) bool) {
 		} else {
 			noteGap(max(e.At, time.Now().UnixMilli())) // nothing known: every life up to now
 		}
-		return
-	}
-	if check != nil && !check(evs) {
 		return
 	}
 	if e.Boot == "" { // not stamped: nothing orders it against the clock
@@ -263,6 +264,9 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent) bool) {
 				e.Floor = max(e.Floor, o.At)
 			}
 		}
+	}
+	if check != nil && !check(evs, e) {
+		return
 	}
 	line, _ := json.Marshal(e)
 	line = append(line, '\n')
@@ -298,18 +302,28 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent) bool) {
 			// one dropped are no longer placed, and no sign-in observation at or before that time
 			// proves a payer (accountPayer).
 			di := lastDaemonEvent(kept)
-			n := len(kept) - bindIntervalsKeep/2
-			if di >= 0 && di+1+n <= len(kept) {
-				dropped := kept[di+1 : di+1+n]
-				carry := kept[di].Carry
-				for _, ev := range dropped {
-					carry = max(carry, ev.Carry, ev.At+accountQuiet.Milliseconds())
-					if ev.Reg {
-						carry = max(carry, ev.Floor+accountQuiet.Milliseconds())
-					}
+			if di >= 0 {
+				// Keep the start-of-life reading and the first event that can end it: they decide
+				// every key or free binding of the life. Drop the oldest of what follows.
+				first := di + 1
+				for first < len(kept) && kept[first].Acct == acctOut {
+					first++
 				}
-				kept = append(append([]bindEvent{}, kept[:di+1]...), kept[di+1+n:]...)
-				kept[di].Carry = carry
+				from := min(first+1, len(kept))
+				n := len(kept) - bindIntervalsKeep/2
+				if from+n <= len(kept) && n > 0 {
+					carry, acarry := kept[di].Carry, kept[di].AcctCarry
+					for _, ev := range kept[from : from+n] {
+						carry = max(carry, ev.Carry)
+						acarry = max(acarry, ev.AcctCarry, satAdd(ev.At, accountQuiet.Milliseconds()))
+						if ev.Reg {
+							carry = max(carry, ev.Floor)
+							acarry = max(acarry, satAdd(ev.Floor, accountQuiet.Milliseconds()))
+						}
+					}
+					kept = append(append([]bindEvent{}, kept[:from]...), kept[from+n:]...)
+					kept[di].Carry, kept[di].AcctCarry = carry, acarry
+				}
 			}
 		}
 		var sb strings.Builder
@@ -421,6 +435,14 @@ func eventGap(a, b bindEvent) int64 {
 	return b.At - a.At
 }
 
+// satAdd is a+b, saturating at MaxInt64 (an unknown clock bound is stored as MaxInt64).
+func satAdd(a, b int64) int64 {
+	if a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
+}
+
 // tooClose reports whether b follows a within touchCoalesce on both the uptime and the wall clock:
 // an event that went back on either is never folded into the earlier one, since the going back is
 // itself what the later event has to record.
@@ -462,7 +484,7 @@ func noteAccountID(at time.Time, acct, id string, gen int) {
 	}
 	e := stampedEvent(at)
 	e.Kind, e.Acct, e.ID, e.Gen = evAccount, acct, id, gen
-	appendBindEvent(e, func(evs []bindEvent) bool {
+	appendBindEvent(e, func(evs []bindEvent, e bindEvent) bool {
 		di := lastDaemonEvent(evs)
 		if di < 0 || evs[di].Kind != evStart || evs[di].Gen != gen {
 			return false
@@ -483,15 +505,15 @@ func noteAccountID(at time.Time, acct, id string, gen int) {
 			// a sign-in observation: the credential is gone, which ends that credential's proof.
 			return !hasBad && !hasOut || last != nil && last.Acct == acctIn
 		case acctIn:
-			if last == nil || last.Acct != acctIn || last.ID != id {
-				return true
+			if last == nil || last.Acct != acctIn || last.ID != id || e.Reg {
+				return true // a reading that shows the clock going back is never redundant
 			}
 			// The same credential again adds nothing once the earlier reading is already behind a
 			// full quiet period; until then it is kept (at most one a minute), as it is the one
 			// that can prove the period over.
 			return !quietBehind(evs[di+1:], len(evs[di+1:])-1) && !tooClose(*last, e)
 		}
-		return last == nil || last.Acct != acctTouch || !tooClose(*last, e)
+		return last == nil || last.Acct != acctTouch || e.Reg || !tooClose(*last, e)
 	})
 }
 
@@ -541,9 +563,11 @@ func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...
 			break
 		}
 		if e.Reg {
-			// The clock was set around this event, so it cannot be placed by time. A call that ended
-			// before the event before it cannot be after it either; any other call may be.
-			if hi >= prevAt {
+			// The clock was set around this event, so it cannot be placed by time. Without a stamp at
+			// all (Floor saturated) the clock itself is not known to have moved: a call that ended
+			// before the event before it cannot be after it either. A clock that moved is not
+			// trusted for any call of the life.
+			if e.Floor != math.MaxInt64 || hi >= prevAt {
 				return ""
 			}
 			continue
@@ -581,8 +605,8 @@ func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...
 // reported a cost is bound on zen; opencode go has no free calls.
 func accountPayer(life bindEvent, late []bindEvent, route string, paid bool, lo int64) string {
 	in := late[len(late)-1]
-	if !life.Keyless || in.Acct != acctIn || in.ID == "" || in.At >= lo || in.At <= life.Carry {
-		// (Carry: a trim dropped events that may have been touches the quiet period counts from.)
+	if !life.Keyless || in.Acct != acctIn || in.ID == "" || in.At >= lo || in.At <= life.AcctCarry {
+		// (AcctCarry: a trim dropped events that may have been touches the quiet period counts from.)
 		return ""
 	}
 	if route == routes.RouteOpencodeZen && !paid {

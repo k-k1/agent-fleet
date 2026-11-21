@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -211,6 +212,10 @@ func TestLedgerBinderAccountReplacement(t *testing.T) {
 	accountQuiet = 0
 	t.Cleanup(func() { accountQuiet = oldQ })
 	d := newFakeDaemon(t)
+	oldStamp, oldGen, oldNow := clockStamp, genSnap.Load(), wallNow
+	clockStamp = func() (string, int64, bool) { return "boot", time.Now().UnixMilli(), true }
+	wallNow = time.Now
+	t.Cleanup(func() { clockStamp, wallNow = oldStamp, oldNow; genSnap.Store(oldGen) })
 	now := func() int64 { stampUp = time.Now().UnixMilli(); return stampUp }
 	genSnap.Store(1)
 	base := now() - 100000
@@ -251,5 +256,83 @@ func TestLedgerBinderAccountReplacement(t *testing.T) {
 	}
 	if got, want := bindFor(ty), accountBinding("con_Y"); got != want {
 		t.Errorf("call on Y = %q, want %q", got, want)
+	}
+}
+
+// fill writes n alternating sign-in readings far enough apart to be kept, starting at at.
+func fillReadings(n int, at int64, x, y string) int64 {
+	step := 2 * touchCoalesce.Milliseconds()
+	for i := 0; i < n; i++ {
+		id := x
+		if i%2 == 1 {
+			id = y
+		}
+		acctIn_(at, id, 1)
+		at += step
+	}
+	return at
+}
+
+// A trim inside one life keeps the start-of-life reading and the first touch: a call a key paid
+// before the first touch stays bound, and an out reading kept after the cut never reads as the
+// start-of-life one.
+func TestBindingLongLifeKeepsTheStartOfLife(t *testing.T) {
+	bindT(t)
+	x, y := accountBinding("acct-X"), accountBinding("acct-Y")
+	start(1000, 1, "key-A")
+	acct(1100, acctOut, 1)
+	acct(3000, acctTouch, 1)
+	at := fillReadings(3*bindIntervalsKeep, 10000, x, y)
+	acct(at+10, acctOut, 1)
+	if n := len(events(t)); n > bindIntervalsKeep+1 {
+		t.Errorf("file holds %d events", n)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 2000); got == "" {
+		t.Error("a call a key paid before the first touch lost its binding to the trim")
+	}
+	for _, ts := range []int64{at + 1000000, at + 100} {
+		if got := bind(t, routes.RouteOpencodeZen, false, ts); got != "" {
+			t.Errorf("a call after the out reading at %d = %q, want none", ts, got)
+		}
+	}
+}
+
+// An account event whose clock stamp was unusable (an unknown bound) is not turned into a finite
+// one by the trim: account calls up to the end of what was dropped stay unbound.
+func TestBindingTrimKeepsAnUnknownClockBound(t *testing.T) {
+	bindT(t)
+	x, y := accountBinding("acct-X"), accountBinding("acct-Y")
+	start(1000, 1, "")
+	acctIn_(1100, x, 1)
+	old := clockStamp
+	clockStamp = func() (string, int64, bool) { return "", 0, false }
+	stampUp = 70000
+	noteAccount(atMs(70000), acctTouch, 1) // Reg, Floor unknown
+	clockStamp = old
+	fillReadings(3*bindIntervalsKeep, 200000, x, y)
+	for _, e := range events(t) {
+		if e.Kind == evStart && e.AcctCarry != math.MaxInt64 {
+			t.Errorf("AcctCarry = %d, want it saturated", e.AcctCarry)
+		}
+	}
+}
+
+// A reading that shows the clock going back is recorded even though the same credential was
+// already settled.
+func TestBindingSettledReadingGoingBackIsKept(t *testing.T) {
+	bindT(t)
+	x := accountBinding("acct-X")
+	start(1000, 1, "")
+	acctIn_(1100, x, 1)
+	n := len(events(t))
+	acctIn_(1100+10*touchCoalesce.Milliseconds(), x, 1) // settled: nothing new to learn
+	if got := len(events(t)); got != n {
+		t.Fatalf("settled repeat was written: %d -> %d", n, got)
+	}
+	stampUp = 1100 + 20*touchCoalesce.Milliseconds()
+	noteAccountID(atMs(1500), acctIn, x, 1) // wall clock far behind the uptime
+	last := events(t)
+	if got := last[len(last)-1]; !got.Reg {
+		t.Errorf("the reading that went back was dropped: %+v", got)
 	}
 }
