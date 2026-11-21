@@ -144,7 +144,7 @@ func launchSettingsOf(t *testing.T, program string) map[string]any {
 func TestLaunchPinsUsageLimitContinuation(t *testing.T) {
 	t.Setenv("AGENT_SESSION_CMD", "")
 	for _, mode := range []string{"af", "native", "off"} {
-		settings := launchSettingsOf(t, buildProgramPinned([]string{"TEST_ROUTE=kept"}, "sid", "", "", "", "", "", true, mode))
+		settings := launchSettingsOf(t, buildProgramPinned([]string{"TEST_ROUTE=kept"}, "sid", "", "", "", "", "", true, false, mode))
 		if got := settings["autoContinueAtUsageLimit"]; got != (mode == "native") {
 			t.Errorf("mode %s: autoContinueAtUsageLimit = %v", mode, got)
 		}
@@ -217,5 +217,63 @@ func TestBuildProgramSwitchesAutoMemoryOffWithAFMemory(t *testing.T) {
 	}
 	if strings.Contains(nativePeerSettingsNoAutoMemory, "'") {
 		t.Errorf("settings containing a single quote break under ShellQuote")
+	}
+}
+
+// Prompts on: every launch that starts a conversation carries --permission-mode default, and an
+// ordinary resume of an existing transcript does not (the member's shift+tab choice survives a
+// restart). The first launch of a point fork resumes a transcript that was just written, but is
+// still a fresh start.
+func TestBuildProgramPermissionsOnFreshVersusResume(t *testing.T) {
+	cfg := isolateSlot(t)
+	t.Setenv("AGENT_SESSION_CMD", "")
+	const (
+		newSID    = "aa000000-0000-4000-8000-0000000000new"
+		resumeSID = "aa000000-0000-4000-8000-0000000resume"
+		pointSID  = "aa000000-0000-4000-8000-00000000point"
+	)
+	writeSlotJSONL(t, cfg, "-tmp-repo", resumeSID)
+	writeSlotJSONL(t, cfg, "-tmp-repo", pointSID)
+	const want = "--permission-mode default"
+	cases := []struct {
+		name string
+		got  string
+		has  bool
+	}{
+		{"new", buildProgram(newSID, "", "", "", "", "", false), true},
+		{"whole-conversation fork, first launch", buildProgram(newSID, "", "", "", "", "99999999-9999-4999-8999-999999999999", false), true},
+		{"ordinary resume", buildProgram(resumeSID, "", "", "", "", "", false), false},
+		{"restart of a fork (ForkFrom set, transcript exists)", buildProgram(resumeSID, "", "", "", "", "99999999-9999-4999-8999-999999999999", false), false},
+		{"point fork, first launch", buildProgramPinned(nil, pointSID, "", "", "", "", "99999999-9999-4999-8999-999999999999", false, true), true},
+		{"point fork, later restart", buildProgramPinned(nil, pointSID, "", "", "", "", "99999999-9999-4999-8999-999999999999", false, false), false},
+	}
+	for _, c := range cases {
+		if strings.Contains(c.got, want) != c.has {
+			t.Errorf("%s: contains %q = %v, want %v: %q", c.name, want, !c.has, c.has, c.got)
+		}
+	}
+	for _, name := range []string{"ordinary resume", "point fork, first launch"} {
+		for _, c := range cases {
+			if c.name == name && !strings.HasPrefix(c.got, "claude --resume ") {
+				t.Errorf("%s: expected the resume branch: %q", name, c.got)
+			}
+		}
+	}
+}
+
+// Only a real flag token counts as an explicit mode: a --name that merely contains the text must
+// not suppress the default, and the `=` form is recognised.
+func TestBuildProgramPermissionModeDetection(t *testing.T) {
+	isolateSlot(t)
+	t.Setenv("AGENT_SESSION_CMD", "")
+	got := buildProgram("bb000000-0000-4000-8000-0000000000new", "", "", "", "調査 --permission-mode auto", "", false)
+	if !strings.Contains(got, " --permission-mode default") {
+		t.Errorf("a label containing the flag text suppressed the default: %q", got)
+	}
+	for _, f := range []string{"--permission-mode=acceptEdits", "--verbose\t--permission-mode\tacceptEdits"} {
+		t.Setenv("AGENT_CLAUDE_FLAGS", f)
+		if got := buildProgram("bb000000-0000-4000-8000-0000000000new", "", "", "", "", "", false); strings.Contains(got, "--permission-mode default") {
+			t.Errorf("AGENT_CLAUDE_FLAGS %q was overridden: %q", f, got)
+		}
 	}
 }

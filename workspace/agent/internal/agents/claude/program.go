@@ -133,16 +133,19 @@ func ChatAutoMemorySettings() string {
 // bypass=false means the permission prompt is NOT skipped (the user's choice per docs/log/76,
 // or a plan launch).
 func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool) string {
-	return buildProgramPinned(nil, sid, model, effort, mode, label, forkFrom, bypass)
+	return buildProgramPinned(nil, sid, model, effort, mode, label, forkFrom, bypass, false)
 }
 
 // buildProgramPinned is buildProgram with a route's pin (routeSettingsPin) merged into the one
 // `--settings` object; nil adds nothing, so a launch without a route is byte-for-byte unchanged.
-func buildProgramPinned(pin []string, sid, model, effort, mode, label, forkFrom string, bypass bool, limitMode ...string) string {
+// pointFork marks the first launch of a fork at a message: its transcript already exists by now
+// (MaterializeForkAt), so it takes the resume branch but is still a fresh start for the mode.
+func buildProgramPinned(pin []string, sid, model, effort, mode, label, forkFrom string, bypass bool, pointFork bool, limitMode ...string) string {
 	if override := os.Getenv("AGENT_SESSION_CMD"); override != "" {
 		return override
 	}
 	flags := envOr("AGENT_CLAUDE_FLAGS", "--dangerously-skip-permissions")
+	explicitMode := hasPermissionModeFlag(flags)
 	if !bypass {
 		// --dangerously-skip-permissions forces bypass mode, which is exactly what we
 		// are not doing here. Keep bypass available to the IN-SESSION mode cycle
@@ -183,6 +186,14 @@ func buildProgramPinned(pin []string, sid, model, effort, mode, label, forkFrom 
 	if label != "" {
 		flags += " --name " + session.ShellQuote(label)
 	}
+	// Prompts on must start in manual (ask) mode whatever the CLI's own default is: 2.1.330 came
+	// up in auto mode, which refuses every command a PreToolUse hook rewrites. Not added on a
+	// resume (below), so a mode the member cycled to with shift+tab is not undone; an explicit
+	// --permission-mode in AGENT_CLAUDE_FLAGS wins.
+	freshFlags := flags
+	if !bypass && mode != "plan" && !explicitMode {
+		freshFlags += " --permission-mode default"
+	}
 	// sid / forkFrom are embedded in the shell command too, so quote them like any other
 	// flag value.
 	// Resume the id claude is actually writing under, not necessarily our own: when
@@ -193,15 +204,11 @@ func buildProgramPinned(pin []string, sid, model, effort, mode, label, forkFrom 
 		// Already materialized (normal session, or a fork after its first launch):
 		// resume our own jsonl. ForkFrom is intentionally ignored here so a restart
 		// never re-copies the source.
-		return launchCommand(fmt.Sprintf("claude --resume %s %s", session.ShellQuote(resume), flags))
-	}
-	// Prompts on must start in manual (ask) mode whatever the CLI's own default is: 2.1.330 came
-	// up in auto mode, which refuses every command a PreToolUse hook rewrites. Not added on a
-	// resume (below), so a mode the member cycled to with shift+tab is not undone; an explicit
-	// --permission-mode in AGENT_CLAUDE_FLAGS wins.
-	freshFlags := flags
-	if !bypass && mode != "plan" && !strings.Contains(" "+flags+" ", " --permission-mode ") {
-		freshFlags += " --permission-mode default"
+		resumeFlags := flags
+		if pointFork {
+			resumeFlags = freshFlags
+		}
+		return launchCommand(fmt.Sprintf("claude --resume %s %s", session.ShellQuote(resume), resumeFlags))
 	}
 	if forkFrom != "" {
 		// First launch of a fork: copy the source conversation into OUR sid via the
@@ -512,6 +519,18 @@ func resumablePaths(paths []string) bool {
 		}
 		s := string(b)
 		if strings.Contains(s, `"type":"user"`) || strings.Contains(s, `"type":"assistant"`) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasPermissionModeFlag reports whether the launch flags already choose a permission mode, as
+// `--permission-mode X` or `--permission-mode=X`. Only whole whitespace-delimited tokens count, so
+// a quoted value that merely contains the text (a --name) does not.
+func hasPermissionModeFlag(flags string) bool {
+	for _, tok := range strings.Fields(flags) {
+		if tok == "--permission-mode" || strings.HasPrefix(tok, "--permission-mode=") {
 			return true
 		}
 	}
