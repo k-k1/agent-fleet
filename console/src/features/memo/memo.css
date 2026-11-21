@@ -1093,6 +1093,16 @@
   font-size: 11px;
   color: var(--muted);
 }
+.memo-q-why-warn {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  color: var(--warn, var(--accent));
+}
+.memo-q-why-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
 .memo-q-paused,
 .memo-q-noreport {
   display: flex;

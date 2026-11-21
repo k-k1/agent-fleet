@@ -8,7 +8,8 @@ import { useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { kindLabel } from "../../lib/sessionkind.ts";
 import type { MemoQueue } from "../../types/memo.ts";
-import { waitingWords } from "./queues.ts";
+import { Icon } from "../../ui/Icon.tsx";
+import { waitingIsWarning, waitingWords } from "./queues.ts";
 
 interface Props {
   queue: MemoQueue;
@@ -31,6 +32,7 @@ export function MemoQueueNotices({ queue, busy, onResume }: Props) {
   // what frees them.
   const noTidy = queue.noTidyAt !== "" || queue.waiting?.reason === "no_tidy";
   const why = waitingWords(queue, (iso) => fmtDateTime(iso), (kind) => kindLabel(kind));
+  const warnWhy = waitingIsWarning(queue);
   if (!queue.paused && !noReport && !noRefs && !noTidy && !why) return null;
   return (
     <div className="memo-q-notices">
@@ -43,9 +45,13 @@ export function MemoQueueNotices({ queue, busy, onResume }: Props) {
         </div>
       )}
       {why && (
-        <div className="memo-q-why" role="status">
-          {tr(why.key, why.params)}
+        <div className={warnWhy ? "memo-q-why memo-q-why-warn" : "memo-q-why"} role="status">
+          {warnWhy && <Icon name="warning" />}
+          <span>{tr(why.key, why.params)}</span>
         </div>
+      )}
+      {why && queue.waiting?.reason === "daily_cap" && (
+        <div className="memo-q-why-hint">{tr("memo.waiting_cap_hint")}</div>
       )}
       {noRefs && (
         <div className="memo-q-noreport" role="status">

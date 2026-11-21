@@ -250,6 +250,7 @@ export const memo = {
   "memo.waiting_below_threshold": "メモがたまるのを待っています（現在 {count} 件、{needed} 件で実行を始めます）。",
   "memo.waiting_quiet": "メモが追加されたばかりです。1 分間新しいメモがなければ、実行を始めます。",
   "memo.waiting_quiet_at": "メモが追加されたばかりです。1 分間新しいメモがなければ、{at} に実行を始めます。",
+  "memo.waiting_cap_hint": "カテゴリ設定の「1 日の実行回数」を増やすか、「今すぐ実行」を押してください。手動の実行は上限の対象外です。",
   "memo.waiting_cap": "1 日に実行できる回数に達したため、自動では実行を始めません。",
   "memo.waiting_cap_at": "1 日に実行できる回数に達しました。次は {at} から実行を始められます。",
   "memo.waiting_backoff": "直前の実行を送れなかったため、しばらく待ってからやり直します。",

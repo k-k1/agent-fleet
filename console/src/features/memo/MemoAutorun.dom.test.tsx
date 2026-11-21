@@ -910,6 +910,34 @@ describe("why nothing starts", () => {
     expect(dialog().querySelector(".memo-q-why")?.textContent).toBe(want);
   });
 
+  it.each(["daily_cap", "usage_limit", "backoff", "no_place", "tenant_off"])("draws %s as a warning", async (reason) => {
+    await line({ reason, detail: { agentKind: "claude" } });
+    const el = document.querySelector(".memo-q-why");
+    expect(el?.classList.contains("memo-q-why-warn")).toBe(true);
+    expect(el?.querySelector(".codicon-warning")).not.toBeNull();
+  });
+
+  it.each(["window_closed", "below_threshold", "quiet_minute", "prerequisites", "deferred", "tidying", "disabled"])(
+    "keeps %s muted",
+    async (reason) => {
+      await line({ reason });
+      const el = document.querySelector(".memo-q-why");
+      expect(el).not.toBeNull();
+      expect(el?.classList.contains("memo-q-why-warn")).toBe(false);
+      expect(el?.querySelector(".codicon-warning")).toBeNull();
+    },
+  );
+
+  it("hints at the way out of the daily cap", async () => {
+    await line({ reason: "daily_cap" });
+    expect(document.querySelector(".memo-q-why-hint")?.textContent).toBe(t("memo.waiting_cap_hint"));
+  });
+
+  it("gives no cap hint for another warning reason", async () => {
+    await line({ reason: "backoff" });
+    expect(document.querySelector(".memo-q-why-hint")).toBeNull();
+  });
+
   it("writes the time in the member's local form, not the raw stamp", async () => {
     await line({ reason: "daily_cap", until });
     expect(document.querySelector(".memo-q-why")?.textContent).not.toContain("2026-11-16T");

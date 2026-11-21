@@ -229,6 +229,14 @@ export function waitingWords(
   }
 }
 
+/** Reasons that stop the queue for long or need the member to act; the rest is routine scheduling. */
+const WARN_REASONS: readonly string[] = ["daily_cap", "usage_limit", "backoff", "no_place", "tenant_off"];
+
+/** Whether the "why nothing starts" line should be drawn as a warning rather than muted text. */
+export function waitingIsWarning(q: Pick<MemoQueue, "waiting">): boolean {
+  return !!q.waiting && WARN_REASONS.includes(q.waiting.reason);
+}
+
 // ---- notes that wait for other notes (ADR 0137, addendum 2026-11-19) -------------------------
 
 const AFTER_REASONS = [
