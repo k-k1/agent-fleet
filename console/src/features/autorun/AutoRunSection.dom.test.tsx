@@ -2,6 +2,8 @@
 // level below, finished runs folded, and a click opening the session.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
+import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
+import { ToastProvider } from "../../ui/ToastProvider.tsx";
 import { createRoot, type Root } from "react-dom/client";
 import type { Session } from "../../types/session.ts";
 
@@ -29,6 +31,11 @@ vi.mock("../memo/MemoQueueSettingsModal.tsx", () => ({
   ),
 }));
 
+// SessionMenu hosts the share dialog itself; a marker stands in for the form.
+vi.mock("../sharing/ShareCreateModal.tsx", () => ({
+  ShareCreateModal: (p: { initialTarget?: string }) => <div data-testid="share-modal" data-target={p.initialTarget} />,
+}));
+
 const { AutoRunSection } = await import("./AutoRunSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { ViewShownContext } = await import("../../lib/viewShown.ts");
@@ -46,7 +53,11 @@ const mount = async (shown = true) => {
   await act(async () =>
     root.render(
       <ViewShownContext.Provider value={shown}>
-        <AutoRunSection />
+        <ConfirmProvider>
+          <ToastProvider>
+            <AutoRunSection />
+          </ToastProvider>
+        </ConfirmProvider>
       </ViewShownContext.Provider>,
     ),
   );
@@ -459,6 +470,140 @@ describe("AutoRunSection", () => {
     } finally {
       setSetting("workingSetActive", "");
     }
+  });
+
+  describe("session menu", () => {
+    const ctx = async (el: Element) => {
+      const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 50 });
+      await act(async () => {
+        el.dispatchEvent(ev);
+      });
+      return ev;
+    };
+    const sessMenu = () => document.querySelector(".sess-menu");
+    const mainBtn = () => host.querySelector<HTMLElement>('[data-autorun-run="run-a"] .autorun-run-main')!;
+    const kidBtn = () => host.querySelector<HTMLElement>('[data-autorun-run="run-a"] .autorun-kid')!;
+
+    it("opens the session menu on right-click of a run row and of a child row, not the run menu", async () => {
+      await mount();
+      expect(sessMenu()).toBeNull();
+      const ev = await ctx(mainBtn());
+      expect(ev.defaultPrevented).toBe(true);
+      expect(sessMenu()).not.toBeNull();
+      expect(document.querySelector(".autorun-run-menu[aria-expanded='true']")).toBeNull();
+      expect(sessMenu()!.textContent).toContain("run-a");
+      await act(async () => {
+        document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      });
+      expect(sessMenu()).toBeNull();
+      await ctx(kidBtn());
+      expect(sessMenu()!.textContent).toContain("rev-a");
+    });
+
+    it("opens it with the Menu key on a focused row", async () => {
+      await mount();
+      const ev = new KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true, cancelable: true });
+      await act(async () => {
+        kidBtn().dispatchEvent(ev);
+      });
+      expect(ev.defaultPrevented).toBe(true);
+      expect(sessMenu()).not.toBeNull();
+    });
+
+    it("keeps the run menu on the row's ... button", async () => {
+      await mount();
+      await act(async () => host.querySelector<HTMLButtonElement>('[data-autorun-run="run-a"] .autorun-run-menu')!.click());
+      expect(document.querySelector(".ui-menu:not(.sess-menu)")).not.toBeNull();
+      expect(sessMenu()).toBeNull();
+    });
+
+    it("opens it for the other row when another row is right-clicked without closing the first", async () => {
+      await mount();
+      await ctx(mainBtn());
+      expect(sessMenu()!.textContent).toContain("run-a");
+      await ctx(kidBtn());
+      expect(document.querySelectorAll(".sess-menu").length).toBe(1);
+      expect(sessMenu()!.textContent).toContain("rev-a");
+      expect(sessMenu()!.textContent).not.toContain("run-a");
+    });
+
+    it("opens it with Shift+F10 too", async () => {
+      await mount();
+      const ev = new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true });
+      await act(async () => {
+        mainBtn().dispatchEvent(ev);
+      });
+      expect(ev.defaultPrevented).toBe(true);
+      expect(sessMenu()!.textContent).toContain("run-a");
+    });
+
+    it("never shows the session menu and the run menu together, by keyboard either way", async () => {
+      await mount();
+      const dots = () => host.querySelector<HTMLButtonElement>('[data-autorun-run="run-a"] .autorun-run-menu')!;
+      const runMenu = () => document.querySelector(".ui-menu:not(.sess-menu)");
+      await ctx(mainBtn());
+      await act(async () => dots().click());
+      expect(runMenu()).not.toBeNull();
+      expect(sessMenu()).toBeNull();
+      await act(async () => {
+        mainBtn().dispatchEvent(new KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true, cancelable: true }));
+      });
+      expect(sessMenu()).not.toBeNull();
+      expect(runMenu()).toBeNull();
+    });
+
+    it("keeps a confirmation opened from the menu when its row leaves the list", async () => {
+      await mount();
+      await ctx(mainBtn());
+      const items = Array.from(sessMenu()!.querySelectorAll<HTMLButtonElement>(".ui-menu-item"));
+      const recreate = items.find((b) => /recreate/i.test(b.textContent ?? ""))!;
+      expect(recreate, items.map((b) => b.textContent).join("|")).toBeTruthy();
+      await act(async () => recreate.click());
+      const dialog = () => document.querySelector('[role="dialog"], [role="alertdialog"]');
+      expect(dialog()).not.toBeNull();
+      await act(async () => {
+        useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.filter((x) => x.name !== "run-a" && x.name !== "rev-a") });
+      });
+      expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull();
+      expect(dialog()).not.toBeNull();
+    });
+
+    it("keeps a dialog the menu itself hosts, on the same session, after the menu closed and its row left", async () => {
+      await mount();
+      await ctx(mainBtn());
+      const share = Array.from(sessMenu()!.querySelectorAll<HTMLButtonElement>(".ui-menu-item")).find((b) => /share/i.test(b.textContent ?? ""));
+      expect(share).toBeTruthy();
+      await act(async () => share!.click());
+      expect(sessMenu()).toBeNull();
+      const modal = () => document.querySelector<HTMLElement>('[data-testid="share-modal"]');
+      expect(modal()!.dataset.target).toBe("session:run-a");
+      await act(async () => {
+        useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.filter((x) => x.name !== "run-a" && x.name !== "rev-a") });
+      });
+      expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull();
+      expect(modal()!.dataset.target).toBe("session:run-a");
+    });
+
+    it("shows the session's current state in an open menu after a store update", async () => {
+      await mount();
+      await ctx(mainBtn());
+      expect(sessMenu()!.textContent).toContain("Stop (resumable");
+      await act(async () => {
+        useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.map((x) => (x.name === "run-a" ? { ...x, alive: false } : x)) });
+      });
+      expect(sessMenu()!.textContent).not.toContain("Stop (resumable");
+    });
+
+    it("keeps the menu when the row moves out of the list under it", async () => {
+      await mount();
+      await ctx(mainBtn());
+      expect(sessMenu()).not.toBeNull();
+      await act(async () => {
+        useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.filter((x) => x.name !== "run-a" && x.name !== "rev-a") });
+      });
+      expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull();
+      expect(sessMenu()).not.toBeNull();
+    });
   });
 
   it("says so when there is no run", async () => {
