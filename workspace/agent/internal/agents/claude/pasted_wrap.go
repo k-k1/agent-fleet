@@ -1,6 +1,9 @@
 package claude
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 const (
 	pastedOpenHead  = `<pasted_content id="`
@@ -39,6 +42,14 @@ func unwrapPasted(s string) string {
 	}
 	inner = strings.TrimPrefix(inner, "\n")
 	return strings.TrimSuffix(inner, "\n")
+}
+
+// promptText is contentText for a logged user prompt, without claude's paste wrapper. Only prompt
+// readers use it: an assistant answer or a tool result that happens to be one wrapped pair is the
+// agent's own text and is shown as it is, and claudeOwnLine keeps reading the raw text so a pasted
+// prompt that starts with <task-notification> is still the member's.
+func promptText(raw json.RawMessage) string {
+	return strings.TrimSpace(unwrapPasted(contentText(raw)))
 }
 
 // pastedID reports whether id is the kind of id claude puts on the wrapper: letters and digits

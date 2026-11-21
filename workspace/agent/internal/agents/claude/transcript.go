@@ -761,7 +761,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		}, true
 	}
 	if ev.Type == "user" && ev.Origin.peer() {
-		return peerTurn(ev.Origin, ev.Origin.text(contentText(ev.Message.Content)))
+		return peerTurn(ev.Origin, ev.Origin.text(promptText(ev.Message.Content)))
 	}
 	if ev.IsMeta {
 		return transcript.Turn{}, false
@@ -822,7 +822,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		parts, text = []transcript.Part{e.part()}, e.summary()
 	} else if ev.Type == "assistant" {
 		parts, text = assistantParts(ev.Message.Content)
-	} else if t := contentText(ev.Message.Content); t != "" {
+	} else if t := promptText(ev.Message.Content); t != "" {
 		parts, text = []transcript.Part{{Kind: "text", Text: t}}, t
 	}
 	if len(parts) == 0 {
@@ -1625,8 +1625,7 @@ func toolEdits(name string, input json.RawMessage) (string, []transcript.Edit) {
 // contentText pulls the human text out of a message's content, which claude encodes
 // either as a plain string (simple user turns) or an array of typed blocks. Only
 // text blocks count; tool_use / tool_result / thinking / image blocks are skipped,
-// so a turn that is purely a tool round-trip yields "". A pasted prompt comes back without
-// claude's paste wrapper (unwrapPasted).
+// so a turn that is purely a tool round-trip yields "".
 func contentText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -1634,7 +1633,7 @@ func contentText(raw json.RawMessage) string {
 	if raw[0] == '"' { // plain-string content
 		var s string
 		if json.Unmarshal(raw, &s) == nil {
-			return strings.TrimSpace(unwrapPasted(s))
+			return strings.TrimSpace(s)
 		}
 		return ""
 	}
@@ -1651,5 +1650,5 @@ func contentText(raw json.RawMessage) string {
 			sb.WriteString(b.Text)
 		}
 	}
-	return strings.TrimSpace(unwrapPasted(sb.String()))
+	return strings.TrimSpace(sb.String())
 }

@@ -63,3 +63,37 @@ func TestPastedPromptReachesReadersUnwrapped(t *testing.T) {
 		t.Errorf("queue remove: got %q, want empty", got)
 	}
 }
+
+// Only prompt readers unwrap. Text the agent produced that happens to be one wrapped pair is kept
+// as it is: an assistant answer and a tool result (what a question card's answer is read from).
+func TestPastedWrapperKeptOutsidePrompts(t *testing.T) {
+	const wrapped = "<pasted_content id=\"a1\">\nbody\n</pasted_content id=\"a1\">"
+	text, _ := json.Marshal(wrapped)
+
+	asst := `{"type":"assistant","message":{"content":[{"type":"text","text":` + string(text) + `}]}}`
+	if turn, ok := parseTurn([]byte(asst), 0); !ok || turn.Text != wrapped {
+		t.Errorf("assistant text: got (%q, %v), want %q", turn.Text, ok, wrapped)
+	}
+
+	res := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"q1","content":` + string(text) + `}]}}`
+	if got := collectAnswers([][]byte{[]byte(res)})["q1"].Text; got != wrapped {
+		t.Errorf("tool_result answer: got %q, want %q", got, wrapped)
+	}
+}
+
+// A pasted prompt that starts with <task-notification> is still the member's prompt: claude's
+// own-line check reads the raw text, where the wrapper comes first, so the stop restore and the
+// prompt-shape check still count it.
+func TestPastedTaskNotificationIsTheMembersPrompt(t *testing.T) {
+	const body = "<task-notification>\n<task-id>b1</task-id>\nwhy did this fire?"
+	line := []byte(wrappedLine(t, body))
+	if claudeOwnLine(line) {
+		t.Error("claudeOwnLine: a pasted prompt was taken for claude's own notification")
+	}
+	if got, ok := userPromptText(line); !ok || got != body {
+		t.Errorf("stop restore: got (%q, %v), want %q", got, ok, body)
+	}
+	if !promptShapedUserLine(line) {
+		t.Error("promptShapedUserLine: the pasted prompt does not count as typed")
+	}
+}
