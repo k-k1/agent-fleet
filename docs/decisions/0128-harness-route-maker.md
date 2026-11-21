@@ -750,3 +750,7 @@ table from becoming a menu of models that fail on the first message, which is wh
   event stream leave routed handles out. Measured only against a stand-in server in the unit tests; real opencode and
   real Bedrock under Managed are #4004's live gate. Not done: idle eviction of a private server while its session
   runs (the shared daemon has none either while any Managed handle is registered).
+- 2026-11-14, P3 (#1585): the owner adopted pi as a kind on 2026-11-12 and dropped Stage 0b as P3's gate; decision
+  14 per route remains the gate. The kind and its routes are proposed in [0136](0136-pi-agent-kind.md), which adds
+  `anthropic-api` to pi's candidate routes (an API key, which Anthropic's terms allow a third-party harness) and
+  defers `af-engine-llm` until the engine credential is session-bound.
