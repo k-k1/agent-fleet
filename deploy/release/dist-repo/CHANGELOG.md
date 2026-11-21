@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.48.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.48.0) — 2026-11-21
+
+Agent memory gets its own view in the Console, and each memory opens and edits like a file. Memo
+auto-run gets an Auto-run view of its runs, and queue messages can wait for one another or be
+handed back. Members and tenant administrators can see a daily usage history, and Claude Code lets
+you choose who resumes a session after a usage limit.
+
 ## [0.47.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.47.0) — 2026-11-18
 
 Tenant and deployment administrators can now choose which model routes members may use, and
