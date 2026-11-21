@@ -69,7 +69,7 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session)
 			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, stripNUL(r.Origin), stripNUL(r.OriginSession)); err != nil {
+			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession)); err != nil {
 			return err
 		}
 		if err := insertSessionLinks(ctx, tx, workspaceID, r.Name, r.Links); err != nil {
@@ -79,9 +79,15 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 	return tx.Commit()
 }
 
-// stripNUL drops NUL bytes: PostgreSQL TEXT rejects them, and one rejected row would roll back the
-// whole ReplaceSessions swap, freezing the mirror for every other session of the workspace.
-func stripNUL(v string) string { return strings.ReplaceAll(v, "\x00", "") }
+// dropNUL empties a value that holds a NUL byte: PostgreSQL TEXT rejects it, and one rejected row
+// would roll back the whole ReplaceSessions swap. Stripping the byte instead would forge a valid
+// classification ("qu\x00eue" -> "queue") that the Console then acts on, so the field is dropped whole.
+func dropNUL(v string) string {
+	if strings.ContainsRune(v, 0) {
+		return ""
+	}
+	return v
+}
 
 // insertSessionLinks writes one session's links in one statement: the mirror is rewritten on
 // every list poll, and a round trip per link would hold the transaction open that much
