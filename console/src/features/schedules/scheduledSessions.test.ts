@@ -27,6 +27,25 @@ describe("buildScheduledRuns", () => {
     expect(waitingScheduledCount([sess("c", { origin: "schedule", state: "working" })])).toBe(0);
   });
 
+  it("shows only the children the set shows, and an anchor root's own state does not keep the run live", () => {
+    const repos = [{ name: "a" }, { name: "b" }] as never;
+    const ss = [
+      sess("cron", { origin: "schedule", repo: "a", state: "question" }), // outside the set, waiting
+      sess("rev", { origin: "session", originSession: "cron", repo: "b", alive: false }), // in the set, ended
+      sess("rev2", { origin: "session", originSession: "cron", repo: "a", state: "question" }), // outside the set
+    ];
+    const setB = { id: "w", name: "w", repos: ["b"], sessions: [], convs: [], schedules: [] } as never;
+    const setA = { id: "w", name: "w", repos: ["a"], sessions: [], convs: [], schedules: [] } as never;
+    const b = buildScheduledRuns(ss, setB, repos);
+    expect(b[0].children.map((c) => c.name)).toEqual(["rev"]);
+    expect(b[0].live).toBe(false);
+    expect(waitingScheduledCount(ss, setB, repos)).toBe(0);
+    const a = buildScheduledRuns(ss, setA, repos);
+    expect(a[0].children.map((c) => c.name)).toEqual(["rev2"]);
+    expect(a[0].live).toBe(true);
+    expect(waitingScheduledCount(ss, setA, repos)).toBe(2);
+  });
+
   it("counts a stopped session that still carries its question", () => {
     expect(waitingScheduledCount([sess("c", { origin: "schedule", alive: false, carried: "question" })])).toBe(1);
   });
@@ -54,6 +73,8 @@ describe("buildScheduledRuns", () => {
     ];
     const rows = buildScheduledRuns(ss, set, [{ name: "a" }, { name: "b" }] as never);
     expect(rows.map((r) => r.root.name)).toEqual(["cron"]); // the root anchors the child
+    expect(rows[0].children.map((c) => c.name)).toEqual(["rev"]);
+    expect(rows[0].waiting).toBe(true); // from the child in the set, not the root outside it
     expect(waitingScheduledCount(ss, set, [{ name: "a" }, { name: "b" }] as never)).toBe(1);
   });
 

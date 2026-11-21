@@ -28,7 +28,7 @@ const { AutoRunSection } = await import("./AutoRunSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { ViewShownContext } = await import("../../lib/viewShown.ts");
 const { useTenantStore } = await import("../../core/store/tenant.ts");
-const { useAutoRunStore } = await import("./store.ts");
+const { useAutoRunStore, useAutoRunReveal } = await import("./store.ts");
 
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 g.IS_REACT_ACT_ENVIRONMENT = true;
@@ -52,6 +52,7 @@ const mount = async (shown = true) => {
 beforeEach(() => {
   // The store keeps what a scope knew across a pause of the poll; each test starts without it.
   useAutoRunStore.setState({ queues: [], deliveries: new Map(), loaded: false, scope: "" });
+  useAutoRunReveal.setState({ name: "", n: 0, at: 0 });
   opened.mockReset();
   memoQueueList.mockReset();
   memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] });
@@ -160,6 +161,22 @@ describe("AutoRunSection", () => {
       await new Promise((r) => requestAnimationFrame(() => r(null)));
     });
     expect(document.activeElement).toBe(host.querySelector('[data-autorun-run="run-a"] .autorun-run-main'));
+  });
+
+  it("asks for one extra read per link while the run's category is unknown, not one per data change", async () => {
+    const { useAutoRunReveal } = await import("./store.ts");
+    memoQueueDeliveries.mockImplementation(async () => []); // no delivery names run-old
+    await mount();
+    const before = memoQueueList.mock.calls.length;
+    await act(async () => useAutoRunReveal.getState().reveal("run-old"));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    const afterReveal = memoQueueList.mock.calls.length;
+    expect(afterReveal).toBe(before + 1);
+    // The sessions list changes again and again; the request does not read again each time.
+    for (let i = 0; i < 3; i++) await act(async () => useSessionsStore.setState({ sessions: [...useSessionsStore.getState().sessions] }));
+    expect(memoQueueList.mock.calls.length).toBe(afterReveal);
   });
 
   it("keeps a finished run's duration", async () => {

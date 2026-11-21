@@ -1264,7 +1264,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             <Icon name={runsOpen[cat.id] ? "chevron-down" : "chevron-right"} />
                             {tr("memo.d_runs_toggle")}
                           </button>
-                          {runsOpen[cat.id] && <MemoQueueRuns categoryId={cat.id} onShowAll={() => setDeliveriesFor(cat.id)} />}
+                          {runsOpen[cat.id] && <MemoQueueRuns categoryId={cat.id} repo={rb.repo} onShowAll={() => setDeliveriesFor(cat.id)} />}
                         </>
                       )}
 

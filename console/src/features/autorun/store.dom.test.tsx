@@ -57,16 +57,23 @@ describe("the shared auto-run feed over time", () => {
     expect(memoQueueList).toHaveBeenCalledTimes(2);
   });
 
-  it("reads again after a reload that came while a list was in flight, and drops the stale category answer", async () => {
+  it("reads on its own after a reload, never publishes the list that predates it, and does not wait for one that hangs", async () => {
     vi.useFakeTimers();
-    let first: (v: unknown) => void = () => {};
-    memoQueueList.mockImplementationOnce(() => new Promise((r) => (first = r)) as never);
+    let stale: (v: unknown) => void = () => {};
+    memoQueueList.mockImplementationOnce(() => new Promise((r) => (stale = r)) as never);
     const off = acquireAutoRuns("s");
     await vi.advanceTimersByTimeAsync(0);
-    reloadAutoRuns(); // a saved setting: the list in flight may predate it
-    first({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "r", category: "x" }] });
+    // The first list never answers; the reload (a saved setting) starts its own read at once.
+    memoQueueList.mockImplementationOnce(async () => ({ tenantEnabled: false, queues: [{ categoryId: "new", repo: "r", category: "n" }] }));
+    reloadAutoRuns();
     await vi.advanceTimersByTimeAsync(0);
     expect(memoQueueList).toHaveBeenCalledTimes(2);
+    expect(useAutoRunStore.getState().queues.map((q) => q.categoryId)).toEqual(["new"]);
+    // The old list arrives late with the old setting: it must not replace the new one.
+    stale({ tenantEnabled: true, queues: [{ categoryId: "old", repo: "r", category: "o" }] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useAutoRunStore.getState().queues.map((q) => q.categoryId)).toEqual(["new"]);
+    expect(useAutoRunStore.getState().tenantEnabled).toBe(false);
     off();
   });
 

@@ -80,13 +80,16 @@ function startLoop(scope: string): Loop {
       if ((epoch.get(q.categoryId) ?? 0) === mine) reading.delete(q.categoryId);
     }
   };
-  let again = false;
+  // Bumped by an explicit reload: a queue list asked for before it may predate the change, so it is
+  // never published, and the reload reads on its own instead of waiting for one that may hang.
+  let gen = 0;
   const load = async () => {
     if (listing) return;
     listing = true;
+    const mine = gen;
     try {
       const wire = readMemoQueues(await memoQueueList());
-      if (!live || !wire) return;
+      if (!live || !wire || mine !== gen) return;
       const now = new Set(wire.queues.map((q) => q.categoryId));
       for (const id of current) {
         if (now.has(id)) continue;
@@ -109,11 +112,7 @@ function startLoop(scope: string): Loop {
     } catch {
       /* keep the last read */
     } finally {
-      listing = false;
-      if (again && live) {
-        again = false;
-        void load();
-      }
+      if (mine === gen) listing = false;
     }
   };
   const reload = () => {
@@ -121,8 +120,9 @@ function startLoop(scope: string): Loop {
       epoch.set(id, (epoch.get(id) ?? 0) + 1);
       reading.delete(id);
     }
-    if (listing) again = true; // the list in flight may predate the change: read once more after it
-    else void load();
+    gen++;
+    listing = false;
+    void load();
   };
   void load();
   const id = setInterval(() => {

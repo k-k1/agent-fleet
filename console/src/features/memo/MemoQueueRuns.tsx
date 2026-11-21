@@ -9,7 +9,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { openSessionChat } from "../sessions/open.ts";
 import { useSessionsStore } from "../sessions/store.ts";
-import { useAutoRunReveal, useScopedAutoRuns } from "../autorun/store.ts";
+import { useAutoRunReveal } from "../autorun/store.ts";
 import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -21,7 +21,7 @@ import { deferWords, deliveryStateKey, firstTurnWords, heldNames, heldWords, rea
 const POLL_MS = 30000;
 const SHOWN = 5;
 
-export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; onShowAll: () => void }) {
+export function MemoQueueRuns({ categoryId, repo, onShowAll }: { categoryId: string; /** The category's repository, "" for none: the section knows it before the shared queue list does. */ repo: string; onShowAll: () => void }) {
   const tr = useT();
   const askConfirm = useConfirm();
   const toast = useToast();
@@ -35,7 +35,6 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
   // The Auto-run view lists only the categories of the active working set; a link to a run it
   // hides would land on nothing.
   const wset = useActiveWorkingSet();
-  const repo = useScopedAutoRuns().queues.find((q) => q.categoryId === categoryId)?.repo ?? "";
   const hidden = !!wset && !!repo && !wset.repos.includes(repo);
   // Only the newest read may land: a slow earlier one must not overwrite a later answer.
   const seq = useRef(0);

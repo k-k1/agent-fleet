@@ -548,6 +548,12 @@ describe("repoTree: filtering and mixed copies", () => {
     // the copy was grouped: the scope narrows with the filter.
     const only = filterRepoTree(tree, (r) => r.name === "af");
     expect(planStopTree(only[0], ss)).toEqual([]);
+    expect(planTree(only[0], ss).map((p) => p.repo.name)).toEqual(["af"]);
+    // Displayed: the base only; operational (what stop and delete reach): the schedule's copy matches too.
+    const op = filterRepoTree(tree, (r) => r.name === "af", () => true);
+    expect(op[0].children).toEqual([]);
+    expect(planStopTree(op[0], ss).map((g) => g.repo.name)).toEqual(["af@cron"]);
+    expect(planTree(op[0], ss).map((p) => [p.repo.name, p.detached])).toEqual([["af", false], ["af@cron", true]]);
     expect(filterRepoTree(tree, () => false)).toEqual([]);
   });
 

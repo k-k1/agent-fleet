@@ -1379,20 +1379,31 @@ describe("inline run list under a category", () => {
     useSessionsStore.setState({ sessions: [] });
   });
 
-  it("keeps the link to the Auto-run view live while no working set narrows it", async () => {
+  it("disables the link to the Auto-run view for a category the active working set hides, whatever the shared feed has read", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
-    const { useAutoRunStore } = await import("../autorun/store.ts");
-    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    const { createWorkingSet, setActiveWorkingSet, toggleWorkingSetMember, deleteWorkingSet } = await import("../../lib/workingSetsStore.ts");
     useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }] as never });
-    const t0 = useTenantStore.getState();
-    useAutoRunStore.setState({ queues: [{ categoryId: "c1", repo: "other-repo", category: "x" }] as never, scope: t0.tenant + "\u0000" + t0.identityRev, loaded: true });
+    servedCats = [aCat({ repo: "B", queue: true })];
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ repo: "B" })] };
     servedDeliveries = [run("d1")];
-    await render();
-    await click(toggle());
-    // No working set is active: the link is live.
-    expect(document.querySelector<HTMLButtonElement>(".memo-run-view")?.disabled).toBe(false);
-    useAutoRunStore.setState({ queues: [], scope: "", loaded: false });
-    useSessionsStore.setState({ sessions: [] });
+    const id = createWorkingSet("only A");
+    toggleWorkingSetMember(id, "repos", "A");
+    setActiveWorkingSet(id);
+    try {
+      await render();
+      await click(toggle());
+      // The shared auto-run feed has read nothing in this test: the section's own repo decides.
+      const link = () => document.querySelector<HTMLButtonElement>(".memo-run-view");
+      expect(link()?.disabled).toBe(true);
+      expect(link()?.title).toBe(t("memo.d_show_run_hidden"));
+      toggleWorkingSetMember(id, "repos", "B");
+      await act(async () => {});
+      expect(link()?.disabled).toBe(false);
+    } finally {
+      setActiveWorkingSet("");
+      deleteWorkingSet(id);
+      useSessionsStore.setState({ sessions: [] });
+    }
   });
 
   it("opens a run's session from its row, by click and by Enter, and leaves a sessionless run inert", async () => {

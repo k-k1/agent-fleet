@@ -261,7 +261,6 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   useEffect(() => {
     if (onScreen === "workitems" && workItemsLoaded) ack("workitems", workItemKeys);
     if (onScreen === "schedules" && allFailedRuns !== null) ack("schedules", failedRuns, allFailedRuns);
-    // The view lists every run, so what is shown is also all there is.
     // Nothing is pruned: a read that lacks a run (the newest fifty, a history still on its way)
     // says nothing about whether the run is gone, and a forgotten key would raise its dot again.
     if (onScreen === "autorun" && autoRunsLoaded && failedAutoRuns.length > 0) ack("autorun", failedAutoRuns, [...(acked.autorun ?? []), ...failedAutoRuns]);

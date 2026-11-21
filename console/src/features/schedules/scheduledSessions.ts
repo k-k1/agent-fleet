@@ -10,9 +10,11 @@ import type { Repo } from "../repos/store.ts";
 
 export interface ScheduledRun {
   root: Session;
-  /** Sessions the run spawned (origin "session" all the way up), oldest first. */
+  /** Sessions the run spawned (origin "session" all the way up), oldest first; under a working set,
+   *  only those in it. */
   children: Session[];
-  /** Is any session of the run alive or waiting on the member? An ended run is folded away. */
+  /** Is any session of the run that the working set shows alive or waiting on the member? An ended
+   *  run is folded away. */
   live: boolean;
   waiting: boolean;
 }
@@ -55,15 +57,18 @@ export function buildScheduledRuns(sessions: Session[], set: WorkingSet | null =
     if (!root) continue;
     kids.set(root, [...(kids.get(root) ?? []), s]);
   }
+  const shows = (s: Session) => !set || scheduledSessionInSet(set, s, repos);
   return sessions
     .filter((s) => s.origin === "schedule")
-    .filter((s) => !set || [s, ...(kids.get(s.name) ?? [])].some((x) => scheduledSessionInSet(set, x, repos)))
+    .filter((s) => [s, ...(kids.get(s.name) ?? [])].some(shows))
     .sort((a, b) => byCreated(b, a))
     .map((root) => {
-      const children = (kids.get(root.name) ?? []).sort(byCreated);
-      const tree = [root, ...children];
-      const waiting = tree.some(waitsForMember);
-      return { root, children, waiting, live: waiting || tree.some((s) => s.alive) };
+      const children = (kids.get(root.name) ?? []).filter(shows).sort(byCreated);
+      // A root outside the set stays as the anchor of a child that is in it, but its own state is
+      // not what the set shows.
+      const shown = [...(shows(root) ? [root] : []), ...children];
+      const waiting = shown.some(waitsForMember);
+      return { root, children, waiting, live: waiting || shown.some((s) => s.alive) };
     });
 }
 

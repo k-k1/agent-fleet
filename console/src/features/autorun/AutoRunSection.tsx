@@ -362,12 +362,17 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
  *  request stays open until then (and asks for that read). */
 function useRevealRun(runs: RunRow[]): void {
   const n = useAutoRunReveal((s) => s.n);
+  // One extra read per request: the poll goes on at its own pace after that.
+  const asked = useRef(0);
   useEffect(() => {
     const name = pendingReveal();
     const run = runs.find((r) => r.root.name === name);
     if (!run) return;
     if (run.categoryId === "") {
-      refreshAutoRuns();
+      if (asked.current !== n) {
+        asked.current = n;
+        refreshAutoRuns();
+      }
       return;
     }
     // The view and a fold open in this commit or the next: wait a frame for the row.
