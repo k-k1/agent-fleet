@@ -761,7 +761,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		}, true
 	}
 	if ev.Type == "user" && ev.Origin.peer() {
-		return peerTurn(ev.Origin, ev.Origin.text(contentText(ev.Message.Content)))
+		return peerTurn(ev.Origin, ev.Origin.text(promptText(ev.Message.Content)))
 	}
 	if ev.IsMeta {
 		return transcript.Turn{}, false
@@ -778,7 +778,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	// (docs/log/58 §58.16).
 	if ev.Type == "attachment" {
 		a := ev.Attachment
-		txt := a.Origin.text(a.Prompt)
+		txt := a.Origin.text(unwrapPasted(a.Prompt))
 		if a.Type != "queued_command" || txt == "" ||
 			(a.Origin.Kind != "" && a.Origin.Kind != "human" && !a.Origin.peer()) {
 			return transcript.Turn{}, false
@@ -822,7 +822,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		parts, text = []transcript.Part{e.part()}, e.summary()
 	} else if ev.Type == "assistant" {
 		parts, text = assistantParts(ev.Message.Content)
-	} else if t := contentText(ev.Message.Content); t != "" {
+	} else if t := promptText(ev.Message.Content); t != "" {
 		parts, text = []transcript.Part{{Kind: "text", Text: t}}, t
 	}
 	if len(parts) == 0 {
@@ -1399,6 +1399,7 @@ func CollectQueued(lines [][]byte) []string {
 			if json.Unmarshal(ln, &ev) != nil || ev.Type != "queue-operation" {
 				continue
 			}
+			ev.Content = unwrapPasted(ev.Content)
 			switch {
 			case ev.Operation == "enqueue" && ev.Content != "":
 				queue = append(queue, ev.Content)

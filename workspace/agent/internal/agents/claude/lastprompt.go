@@ -18,8 +18,8 @@ type promptRecord struct {
 }
 
 // LastUserPrompt is the text of the newest prompt the session's conversation received, exactly
-// as claude logged it, or "" when there is none. A tool result, a subagent's line and claude's
-// own meta lines are not prompts.
+// as claude logged it less claude's paste wrapper (unwrapPasted), or "" when there is none. A
+// tool result, a subagent's line and claude's own meta lines are not prompts.
 //
 // It exists for the chat's stop (issue #3290): a prompt interrupted before its first streamed
 // byte is put back into claude's input box, and the copy the pane shows is wrapped at the pane
@@ -57,6 +57,7 @@ func userPromptText(line []byte) (string, bool) {
 	}
 	var s string
 	if json.Unmarshal(r.Message.Content, &s) == nil {
+		s = unwrapPasted(s)
 		return s, strings.TrimSpace(s) != ""
 	}
 	var blocks []struct {
@@ -75,6 +76,6 @@ func userPromptText(line []byte) (string, bool) {
 			parts = append(parts, b.Text)
 		}
 	}
-	s = strings.Join(parts, "\n")
+	s = unwrapPasted(strings.Join(parts, "\n"))
 	return s, strings.TrimSpace(s) != ""
 }
