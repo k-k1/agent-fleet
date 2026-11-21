@@ -172,6 +172,26 @@ describe("AutoRunSection", () => {
     });
   });
 
+  it("scrolls once the active row appears late, and not again on a plain re-poll", async () => {
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+    const all = useSessionsStore.getState().sessions;
+    try {
+      useSessionsStore.setState({ sessions: [] });
+      await mount();
+      await act(async () => useLayoutStore.setState({ layout: singlePaneLayout({ kind: "terminal" } as never, "run-a") }));
+      await act(async () => new Promise<void>((r) => requestAnimationFrame(() => r())));
+      expect(scroll).not.toHaveBeenCalled();
+      await act(async () => useSessionsStore.setState({ sessions: all }));
+      await act(async () => new Promise<void>((r) => requestAnimationFrame(() => r())));
+      expect(scroll).toHaveBeenCalledTimes(1);
+      await act(async () => useSessionsStore.setState({ sessions: all.map((x) => ({ ...x })) }));
+      await act(async () => new Promise<void>((r) => requestAnimationFrame(() => r())));
+      expect(scroll).toHaveBeenCalledTimes(1);
+    } finally {
+      scroll.mockRestore();
+    }
+  });
+
   it("keeps a finished run's duration", async () => {
     await mount();
     await act(async () => host.querySelector<HTMLButtonElement>(".autorun-sub-head.is-ended")!.click());

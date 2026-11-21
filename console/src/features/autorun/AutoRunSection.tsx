@@ -464,13 +464,20 @@ export const AutoRunSection = memo(function AutoRunSection() {
   const activeName = useLayoutStore((st) => activePane(st.layout)?.session ?? null);
   // Scrolls only, never focuses: keyboard focus stays where the member put it. A row inside a
   // closed "Ended N" fold is not rendered, so it is not found and the fold stays closed.
+  // Where the row sits: it can appear late (sessions read) or move between categories (a run no
+  // delivery names yet is under "Other runs"), so a change of place scrolls again; a plain
+  // re-poll leaves it unchanged and does not.
+  const place = (() => {
+    const r = activeName ? runs.find((x) => x.root.name === activeName || x.children.some((c) => c.name === activeName)) : undefined;
+    return r ? r.root.name + "\u0000" + r.categoryId : "";
+  })();
   useEffect(() => {
-    if (!shown || !activeName) return;
+    if (!shown || !activeName || !place) return;
     const id = requestAnimationFrame(() => {
       document.querySelector<HTMLElement>(".autorun-view [aria-current='true']")?.scrollIntoView({ block: "nearest" });
     });
     return () => cancelAnimationFrame(id);
-  }, [shown, activeName]);
+  }, [shown, activeName, place]);
   const labelOf = (id: string): string => {
     const q = queues.find((x) => x.categoryId === id);
     return q ? [q.repo, q.category].filter(Boolean).join(" / ") || tr("memo.autorun") : tr("autorun.other");
