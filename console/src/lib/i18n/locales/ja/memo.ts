@@ -520,4 +520,10 @@ export const memo = {
   "autorun.clear_confirm": "終了した実行の停止済みセッション {count} 件をアーカイブします。マージ済みのワークツリーは、続けて削除を確認します",
   "autorun.cleared": "{count} 件のセッションをアーカイブしました",
   "autorun.clear_failed": "{name} をアーカイブできませんでした: {err}",
+  "autorun.resumed": "再開",
+  "autorun.resumed_hint": "キューはこの実行を終了としましたが、セッションがまた動いています（あなたが引き継いだか、再び起動されました）",
+  "autorun.cat_menu": "カテゴリの操作",
+  "autorun.show_in_memo": "メモキューで表示",
+  "autorun.running_head": "実行中・回答待ち {n} 件",
+  "autorun.reload": "最新に更新",
 };

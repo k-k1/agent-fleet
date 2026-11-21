@@ -289,7 +289,13 @@ It is all or nothing, and it is refused once a result has been used. The history
 
 ### See the runs
 
-The "**Auto-run**" view of the left pane (the icon right after "Memo queue") lists the runs of every auto-run category, one row per run and not one per working copy. A row shows the run's state (running, waiting for your answer, or ended), the work item it started for (`#12 title`), its pull request and the pull request's state when known, and how long it has been going. Press a row to open the run's session. The sessions the run started, such as reviewers, are listed one level under the row. Ended runs are folded into "**Ended N**".
+The "**Auto-run**" view of the left pane (the icon right after "Memo queue") lists the runs of every auto-run category, one row per run and not one per working copy. Its head shows the title and the number of runs that are running or waiting for you, with "**Clear finished runs**" and a refresh button.
+
+The view follows the [working set](../fleet/working-sets.md) you picked: a category is listed when its repository is in the set. A category without a repository, and runs that no category names, are listed under every set.
+
+Each category has a pinned header like a repository in the "Sessions" view: the repository icon and `repository / category`. Its gear opens the category's auto-run settings, and its "**...**" menu has "**Run history**" and "**Show in Memo queue**". Under it, "**Running / waiting N**" is open and "**Ended N**" is folded; press either to fold or open it.
+
+A row shows the run's state (running, waiting for your answer, or ended), the work item it started for (`#12 title`), its pull request and the pull request's state when known, and how long it has been going. Press a row to open the run's session. The sessions the run started, such as reviewers, are listed one level under the row. A run the queue has closed whose session is running again, because you took it over or it was started again, is listed under "Running / waiting" with a "**resumed**" tag and not under "Ended".
 
 The "**...**" button on a row opens its menu. "**Stop this run's sessions**" stops the run and the sessions it started, and nothing else in the same working copy. "**Delete the worktree**" opens the same confirmation as deleting a working copy from the repository tree; it is not offered for a run that works in a base clone. "**Clear finished runs**" at the top of the view archives the stopped sessions of ended runs after one confirmation, then offers the worktrees of runs whose pull request was merged to the same delete confirmation. A worktree that also holds a session of your own is left out.
 

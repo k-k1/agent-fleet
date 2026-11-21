@@ -2,9 +2,16 @@
 // queue, grouped by the queue's category. Unattended work is listed here and not in the
 // repository tree. A row opens the run's session; the sessions the run started (reviewers) sit
 // one level under it, and finished runs fold into "Ended N".
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../../ui/Icon.tsx";
+import { Section } from "../../ui/Section.tsx";
+import { IconButton } from "../../ui/Button.tsx";
+import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
+import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
+import { useLeftRail } from "../../core/store/leftRail.ts";
+import { useMemoStore } from "../memo/store.ts";
+import { MemoQueueSettingsModal } from "../memo/MemoQueueSettingsModal.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { useViewShown } from "../../lib/viewShown.ts";
@@ -38,18 +45,22 @@ const POLL_MS = 30000;
  *  dropped. The API returns only the newest fifty deliveries, so a category read keeps what an
  *  earlier one learned about a run's category, but a run that fell off the list loses its
  *  state (the sessions' own word is used for it). */
-function useQueueRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDelivery> } {
+function useQueueRuns(): { queues: MemoQueue[]; tenantEnabled: boolean; deliveries: Map<string, RunDelivery>; reload: () => void } {
   const shown = useViewShown();
   const tenant = useTenantStore((s) => s.tenant);
   const identity = useTenantStore((s) => s.identityRev);
   const scopeKey = tenant + "\u0000" + identity;
   const [queues, setQueues] = useState<MemoQueue[]>([]);
+  const [tenantEnabled, setTenantEnabled] = useState(false);
+  // Bumped by "reload" and by a saved setting: the effect below starts over and reads at once.
+  const [rev, setRev] = useState(0);
   const [deliveries, setDeliveries] = useState<Map<string, RunDelivery>>(() => new Map());
   const scope = useRef(scopeKey);
   useEffect(() => {
     if (scope.current === scopeKey) return;
     scope.current = scopeKey;
     setQueues([]);
+    setTenantEnabled(false);
     setDeliveries(new Map());
   }, [scopeKey]);
   useEffect(() => {
@@ -98,6 +109,7 @@ function useQueueRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDeliv
         }
         current = now;
         setQueues(wire.queues);
+        setTenantEnabled(wire.tenantEnabled);
         // A category that is gone is no longer read: whatever it left unsettled is dropped too.
         setDeliveries((prev) => {
           let next: Map<string, RunDelivery> | null = null;
@@ -123,8 +135,9 @@ function useQueueRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDeliv
       live = false;
       clearInterval(id);
     };
-  }, [shown, scopeKey]);
-  return { queues, deliveries };
+  }, [shown, scopeKey, rev]);
+  const reload = useCallback(() => setRev((n) => n + 1), []);
+  return { queues, tenantEnabled, deliveries, reload };
 }
 
 const STATE_KEY = { running: "autorun.state_running", waiting: "autorun.state_waiting", ended: "autorun.state_ended" } as const;
@@ -208,6 +221,11 @@ function RunItem({ run, now, onDialog }: { run: RunRow; now: number; onDialog: (
       >
         <span className={"autorun-dot is-" + run.state} role="img" aria-label={tr(STATE_KEY[run.state])} title={tr(STATE_KEY[run.state])} />
         <span className="autorun-title">{title}</span>
+        {run.resumed && (
+          <span className="autorun-resumed" title={tr("autorun.resumed_hint")}>
+            {tr("autorun.resumed")}
+          </span>
+        )}
         {pr && (
           <span className={"autorun-pr " + (pr.draft && pr.state === "open" ? "draft" : pr.state)} title={tr("autorun.pr_title", { n: pr.number })}>
             #{pr.number} {pr.draft && pr.state === "open" ? tr("autorun.pr_draft") : tr(PR_KEY[pr.state])}
@@ -232,25 +250,123 @@ function RunItem({ run, now, onDialog }: { run: RunRow; now: number; onDialog: (
   );
 }
 
-function Category({ label, runs, now, onDialog }: { label: string; runs: RunRow[]; now: number; onDialog: (d: RunDialog) => void }) {
+/** The "..." menu of a category head: the run history and the category's place in the Memo queue
+ *  view, both of which that view already owns. */
+function CategoryMenu({ categoryId }: { categoryId: string }) {
   const tr = useT();
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+  useDismiss([btnRef, menuRef], !!at, () => setAt(null));
+  useMenuRoving(menuRef, !!at);
+  useLayoutEffect(() => {
+    if (at && menuRef.current) placeFixed(menuRef.current, at.x, at.y);
+  });
+  const reveal = (history: boolean) => {
+    setAt(null);
+    useLeftRail.getState().showView("memo");
+    useMemoStore.getState().revealCategory(categoryId, history);
+  };
+  return (
+    <>
+      <button
+        type="button"
+        ref={btnRef}
+        className="autorun-cat-act"
+        aria-label={tr("autorun.cat_menu")}
+        aria-haspopup="menu"
+        aria-expanded={!!at}
+        title={tr("autorun.cat_menu")}
+        onClick={() => {
+          const r = btnRef.current?.getBoundingClientRect();
+          setAt(at ? null : r ? { x: r.left, y: r.bottom } : { x: 0, y: 0 });
+        }}
+      >
+        <Icon name="ellipsis" />
+      </button>
+      {at &&
+        createPortal(
+          <ul className="ui-menu" ref={menuRef} style={{ left: at.x, top: at.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => reveal(true)}>
+                <Icon name="history" /> {tr("memo.autorun_deliveries")}
+              </button>
+            </li>
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => reveal(false)}>
+                <Icon name="inbox" /> {tr("autorun.show_in_memo")}
+              </button>
+            </li>
+          </ul>,
+          document.body,
+        )}
+    </>
+  );
+}
+
+/** A sub-header of a category ("Running / waiting N", "Ended N"). It pins under the category
+ *  header inside its own group, so the next group's header takes its place as the list scrolls. */
+function SubHead({ label, open, onToggle, kind }: { label: string; open: boolean; onToggle: () => void; kind: "live" | "ended" }) {
+  return (
+    <button type="button" className={"autorun-sub-head is-" + kind} data-rail-row="" aria-expanded={open} onClick={onToggle}>
+      <Icon name={open ? "chevron-down" : "chevron-right"} />
+      {label}
+    </button>
+  );
+}
+
+function Category({
+  label,
+  categoryId,
+  runs,
+  now,
+  onDialog,
+  onSettings,
+}: {
+  label: string;
+  /** "" for runs no queue category names: no settings, no history. */
+  categoryId: string;
+  runs: RunRow[];
+  now: number;
+  onDialog: (d: RunDialog) => void;
+  onSettings: (id: string) => void;
+}) {
+  const tr = useT();
+  const [showLive, setShowLive] = useState(true);
   const [showEnded, setShowEnded] = useState(false);
+  // Published on the section so the sub-headers pin directly under this header, wrapped or not.
+  const headRef = usePublishedHeight<HTMLDivElement>("--autorun-cat-head-h");
   const live = runs.filter((r) => r.state !== "ended");
   const ended = runs.filter((r) => r.state === "ended");
   return (
     <section className="autorun-cat" data-autorun-category={label}>
-      <h3 className="autorun-cat-head">{label}</h3>
-      <ul className="autorun-list">
-        {live.map((r) => (
-          <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} />
-        ))}
-      </ul>
+      <div className="autorun-cat-head" ref={headRef}>
+        <Icon name="repo" className="autorun-cat-ic" />
+        <h3 className="autorun-cat-name">{label}</h3>
+        {categoryId && (
+          <>
+            <button type="button" className="autorun-cat-act" aria-label={tr("memo.autorun_settings")} title={tr("memo.autorun_settings")} onClick={() => onSettings(categoryId)}>
+              <Icon name="settings-gear" />
+            </button>
+            <CategoryMenu categoryId={categoryId} />
+          </>
+        )}
+      </div>
+      {live.length > 0 && (
+        <div className="autorun-group" data-autorun-group="live">
+          <SubHead kind="live" label={tr("autorun.running_head", { n: live.length })} open={showLive} onToggle={() => setShowLive((v) => !v)} />
+          {showLive && (
+            <ul className="autorun-list">
+              {live.map((r) => (
+                <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {ended.length > 0 && (
-        <>
-          <button type="button" className="autorun-ended-head" data-rail-row="" aria-expanded={showEnded} onClick={() => setShowEnded((v) => !v)}>
-            <Icon name={showEnded ? "chevron-down" : "chevron-right"} />
-            {tr("autorun.ended", { n: ended.length })}
-          </button>
+        <div className="autorun-group" data-autorun-group="ended">
+          <SubHead kind="ended" label={tr("autorun.ended", { n: ended.length })} open={showEnded} onToggle={() => setShowEnded((v) => !v)} />
           {showEnded && (
             <ul className="autorun-list">
               {ended.map((r) => (
@@ -258,7 +374,7 @@ function Category({ label, runs, now, onDialog }: { label: string; runs: RunRow[
               ))}
             </ul>
           )}
-        </>
+        </div>
       )}
     </section>
   );
@@ -328,11 +444,7 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
   };
   return (
     <>
-      <div className="autorun-toolbar">
-        <button type="button" className="autorun-clear" disabled={nothing || busy} onClick={() => void click()}>
-          {tr("autorun.clear")}
-        </button>
-      </div>
+      <IconButton icon={busy ? "loading" : "clear-all"} spin={busy} className="autorun-clear" label={tr("autorun.clear")} disabled={nothing || busy} onClick={() => void click()} />
       {del && (
         <DeleteCopyModal node={del} onClose={() => setDel(null)} onDeleted={(count) => toast(tr("rp.del.done", { count }), { kind: "success" })} />
       )}
@@ -343,14 +455,29 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
 export const AutoRunSection = memo(function AutoRunSection() {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
-  const { queues, deliveries } = useQueueRuns();
+  const { queues, tenantEnabled, deliveries, reload } = useQueueRuns();
+  const wset = useActiveWorkingSet();
   const [dialog, setDialog] = useState<RunDialog | null>(null);
+  const [settingsFor, setSettingsFor] = useState<string | null>(null);
+  const [reloading, setReloading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(id);
   }, []);
-  const runs = useMemo(() => buildRuns(sessions, deliveries), [sessions, deliveries]);
+  const allRuns = useMemo(() => buildRuns(sessions, deliveries), [sessions, deliveries]);
+  // A category is in the working set when its repository is; a category without a repository, and
+  // the runs no queue category names, are in every set.
+  const inScope = (id: string): boolean => {
+    if (!wset) return true;
+    const q = queues.find((x) => x.categoryId === id);
+    return !q || !q.repo || wset.repos.includes(q.repo);
+  };
+  const runs = useMemo(
+    () => (wset ? allRuns.filter((r) => inScope(r.categoryId)) : allRuns),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allRuns, wset, queues],
+  );
   const labelOf = (id: string): string => {
     const q = queues.find((x) => x.categoryId === id);
     return q ? [q.repo, q.category].filter(Boolean).join(" / ") || tr("memo.autorun") : tr("autorun.other");
@@ -358,6 +485,14 @@ export const AutoRunSection = memo(function AutoRunSection() {
   // A category the queue list no longer names (its settings were deleted) is "Other runs" too.
   const keyOf = (id: string) => (queues.some((q) => q.categoryId === id) ? id : "");
   const ids = [...new Set(runs.map((r) => keyOf(r.categoryId)))];
+  const active = runs.filter((r) => r.state !== "ended").length;
+  const doReload = async () => {
+    setReloading(true);
+    reload();
+    await useSessionsStore.getState().refresh();
+    setReloading(false);
+  };
+  const settingsQueue = settingsFor ? queues.find((q) => q.categoryId === settingsFor) : undefined;
   // Rendered whether or not a run is left: deleting a run's last sessions empties the list while
   // the dialog is still showing its outcome.
   const dialogs = (
@@ -379,16 +514,50 @@ export const AutoRunSection = memo(function AutoRunSection() {
       {dialog?.kind === "delete" && (
         <DeleteCopyModal node={dialog.node} onClose={() => setDialog(null)} onDeleted={(count) => toast(tr("rp.del.done", { count }), { kind: "success" })} />
       )}
+      {settingsQueue && (
+        <MemoQueueSettingsModal
+          key={settingsQueue.categoryId}
+          categoryId={settingsQueue.categoryId}
+          categoryName={settingsQueue.category}
+          queue={settingsQueue}
+          tenantEnabled={tenantEnabled}
+          destinations={queues
+            .filter((q) => q.categoryId !== settingsQueue.categoryId)
+            .map((q) => ({ id: q.categoryId, label: q.repo ? q.repo + " / " + q.category : q.category }))}
+          onClose={() => setSettingsFor(null)}
+          onChanged={reload}
+        />
+      )}
     </>
   );
   return (
-    <div className="autorun-view">
-      <ClearFinished runs={runs} />
-      {runs.length === 0 && <div className="pane-empty">{tr("autorun.none")}</div>}
-      {ids.map((id) => (
-        <Category key={id} label={labelOf(id)} runs={runs.filter((r) => keyOf(r.categoryId) === id)} now={now} onDialog={setDialog} />
-      ))}
+    <Section
+      id="autorun"
+      title={tr("memo.autorun")}
+      icon="play"
+      count={active}
+      actions={
+        <>
+          <ClearFinished runs={runs} />
+          <IconButton icon={reloading ? "loading" : "refresh"} spin={reloading} label={tr("autorun.reload")} disabled={reloading} onClick={() => void doReload()} />
+        </>
+      }
+    >
+      <div className="autorun-view">
+        {runs.length === 0 && <div className="pane-empty">{tr("autorun.none")}</div>}
+        {ids.map((id) => (
+          <Category
+            key={id}
+            label={labelOf(id)}
+            categoryId={id}
+            runs={runs.filter((r) => keyOf(r.categoryId) === id)}
+            now={now}
+            onDialog={setDialog}
+            onSettings={setSettingsFor}
+          />
+        ))}
+      </div>
       {dialogs}
-    </div>
+    </Section>
   );
 });

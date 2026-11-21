@@ -51,8 +51,23 @@ describe("a run's state follows its queue's delivery", () => {
     const r = t([sess("r", { origin: "queue", alive: false }), sess("c", { origin: "session", originSession: "r", state: "question" })], dlv("c1", "open"));
     expect(r.state).toBe("waiting");
   });
-  it("is ended once the delivery closed, even if the root is still alive (retiring, or taken over)", () => {
-    expect(t([sess("r", { origin: "queue" })], dlv("c1", "closed", { closedAt: "2026-11-01T01:00:00Z" })).state).toBe("ended");
+  it("lists a closed run whose root is alive as running and resumed, and waiting when it waits for the member", () => {
+    const r = t([sess("r", { origin: "queue" })], dlv("c1", "closed", { closedAt: "2026-11-01T01:00:00Z" }));
+    expect(r.state).toBe("running");
+    expect(r.resumed).toBe(true);
+    expect(Number.isNaN(r.endedAt)).toBe(true);
+    expect(t([sess("r", { origin: "queue", state: "question" })], dlv("c1", "closed")).state).toBe("waiting");
+  });
+  it("keeps a closed run ended when only a child it started is alive", () => {
+    const r = t([sess("r", { origin: "queue", alive: false }), sess("c", { origin: "session", originSession: "r" })], dlv("c1", "closed"));
+    expect(r.state).toBe("ended");
+    expect(r.resumed).toBe(false);
+  });
+  it("is not resumed while the delivery is open", () => {
+    expect(t([sess("r", { origin: "queue" })], dlv("c1", "open")).resumed).toBe(false);
+  });
+  it("is ended once the delivery closed and the root stopped", () => {
+    expect(t([sess("r", { origin: "queue", alive: false })], dlv("c1", "closed", { closedAt: "2026-11-01T01:00:00Z" })).state).toBe("ended");
   });
   it("stays running while a child works after the root stopped", () => {
     const r = t([sess("r", { origin: "queue", alive: false }), sess("c", { origin: "session", originSession: "r" })], dlv("c1", "open"));

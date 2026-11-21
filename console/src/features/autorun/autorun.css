@@ -1,25 +1,37 @@
 .autorun-view { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
-.autorun-cat-head { margin: 0; padding: 4px 10px; font-size: 11px; font-weight: 600; text-transform: none; opacity: 0.7; }
+/* The sticky stack, top to bottom: the section head (z 3, --sec-head-h), the category head (z 2),
+   the sub-head of the group on screen (z 1). Every band is opaque so rows never show through. */
+.autorun-cat-head {
+  display: flex; align-items: center; gap: 5px; padding: 6px 10px 2px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted);
+  position: sticky; top: var(--sec-head-h, 34px); z-index: 2; background: var(--leftpane-bg, var(--panel));
+}
+.autorun-cat-ic { font-size: 12px; }
+.autorun-cat-name { flex: 1; min-width: 0; margin: 0; font: inherit; letter-spacing: inherit; text-transform: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.autorun-cat-act { flex: none; display: inline-flex; align-items: center; padding: 0 4px; border: 0; background: none; color: var(--muted2); cursor: pointer; }
+.autorun-cat-act:hover { color: var(--fg); }
+.autorun-sub-head {
+  position: sticky; top: calc(var(--sec-head-h, 34px) + var(--autorun-cat-head-h, 0px)); z-index: 1;
+  background: var(--leftpane-bg, var(--panel));
+}
+.autorun-resumed { flex: none; font-size: 11px; padding: 0 5px; border-radius: 8px; border: 1px solid currentColor; opacity: 0.7; }
 .autorun-list, .autorun-kids { list-style: none; margin: 0; padding: 0; }
 .autorun-kids { padding-left: 20px; }
 .autorun-run { position: relative; }
-.autorun-run-main, .autorun-kid, .autorun-ended-head {
+.autorun-run-main, .autorun-kid, .autorun-sub-head {
   display: flex; align-items: center; gap: 6px; width: 100%; padding: 3px 10px;
   background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
 }
-.autorun-run-main:hover, .autorun-kid:hover, .autorun-ended-head:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
+.autorun-run-main:hover, .autorun-kid:hover, .autorun-sub-head:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
 .autorun-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .autorun-elapsed, .autorun-pr { flex: none; font-size: 11px; opacity: 0.7; }
 .autorun-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.4; }
 .autorun-dot.is-running { background: var(--ok, #3fb950); opacity: 1; }
 .autorun-dot.is-waiting { background: var(--warn, #d29922); opacity: 1; }
-.autorun-ended-head { font-size: 12px; opacity: 0.8; }
+.autorun-sub-head { font-size: 12px; }
+.autorun-sub-head.is-ended { opacity: 0.8; }
 .autorun-run { display: flex; flex-wrap: wrap; align-items: center; }
 .autorun-run-main { flex: 1; min-width: 0; width: auto; }
 .autorun-kids { flex-basis: 100%; }
 .autorun-run-menu { flex: none; background: none; border: 0; color: inherit; cursor: pointer; padding: 3px 6px; opacity: 0; }
 .autorun-run:hover .autorun-run-menu, .autorun-run-menu:focus-visible, .autorun-run-menu[aria-expanded="true"] { opacity: 1; }
-.autorun-toolbar { display: flex; justify-content: flex-end; padding: 0 10px; }
-.autorun-clear { background: none; border: 0; color: inherit; font: inherit; font-size: 11px; opacity: 0.8; cursor: pointer; }
-.autorun-clear:hover:not(:disabled) { text-decoration: underline; }
-.autorun-clear:disabled { opacity: 0.4; cursor: default; }

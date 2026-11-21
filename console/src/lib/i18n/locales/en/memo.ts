@@ -523,4 +523,10 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "autorun.clear_confirm": "Archive {count} stopped sessions of finished runs? Merged worktrees are offered for deletion next.",
   "autorun.cleared": "Archived {count} sessions",
   "autorun.clear_failed": "Could not archive {name}: {err}",
+  "autorun.resumed": "resumed",
+  "autorun.resumed_hint": "The queue closed this run, but its session is running again (you took it over, or it was started again).",
+  "autorun.cat_menu": "Category actions",
+  "autorun.show_in_memo": "Show in Memo queue",
+  "autorun.running_head": "Running / waiting {n}",
+  "autorun.reload": "Refresh",
 };

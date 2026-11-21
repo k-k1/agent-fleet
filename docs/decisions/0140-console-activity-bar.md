@@ -149,3 +149,15 @@ is to list them (the Schedules view) is a later part, and removing the group fir
 nowhere. Later parts: the row actions and "Clear finished runs", the badges (decision 4: a waiting
 count, a failed dot, only for rows the view lists), scheduled sessions in the Schedules view, and the
 memo run history linking to a row. Follow-ups: #4646.
+
+## Note, 2026-11-21: the Auto-run view gets a section head, a working-set scope and repository-style categories (#4670)
+
+The view now has a section head like Shared sessions: the Auto-run icon, the title, the number of
+running or waiting runs, and the actions (Clear finished runs, refresh). It is scoped by the working
+set, which supersedes "not scoped" in the note above: a category is listed when its repository is in
+the set, and a category without a repository, like the runs no category names, under every set. A
+category is a sticky header like a repository row (repository icon, `repo / category`, a gear for its
+auto-run settings, a menu with the run history and "Show in Memo queue"), with two sticky sub-headers
+under it: "Running / waiting N" (open) and "Ended N" (folded). A run whose delivery is closed but whose
+root session is alive (taken over, or started again) is listed under Running with a "resumed" tag
+instead of Ended. Decisions above are unchanged.
