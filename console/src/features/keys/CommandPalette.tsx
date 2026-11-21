@@ -761,7 +761,7 @@ export function CommandPalette() {
       // A copy only auto-run works in is not in the tree, so there is no row to reveal: open its
       // Source Control instead.
       run: (split) =>
-        split || isAutoRunOnlyFolder(sessions, r)
+        split || isAutoRunOnlyFolder(sessions, r, repos)
           ? useLayoutStore.getState().openTargetInNew({ content: { kind: "scm", scmRepo: r.name } })
           : revealRepoInRail(r.name),
     }));

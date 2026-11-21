@@ -105,7 +105,10 @@ export const ProjectTree = memo(function ProjectTree() {
   // matching session; an ancestor also stays as the anchor of a matching descendant.
   const visible = (r: (typeof repos)[number]) =>
     repoMatches(r, nq) || sessionsInFolder(withoutAutoRun(sessions), r.name).some((s) => sessionMatches(s, nq, refs));
-  const roots = nq ? filterRepoTree(scoped, visible) : scoped;
+  // What stop / delete reach narrows by every session, an auto-run's included, as it always did.
+  const reaches = (r: (typeof repos)[number]) =>
+    repoMatches(r, nq) || sessionsInFolder(sessions, r.name).some((s) => sessionMatches(s, nq, refs));
+  const roots = nq ? filterRepoTree(scoped, visible, reaches) : scoped;
 
   // The Agent-side job is the source of truth for import progress (docs/log/78). This only
   // starts it and awaits the outcome; the "importing" row is rendered from the job list by

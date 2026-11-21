@@ -40,7 +40,8 @@ const mount = async (shown = true) => {
 
 beforeEach(() => {
   opened.mockReset();
-  memoQueueList.mockClear();
+  memoQueueList.mockReset();
+  memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] });
   memoQueueDeliveries.mockReset();
   memoQueueDeliveries.mockImplementation(async () => [
     { id: "d1", session: "run-a", state: "open" },
@@ -161,6 +162,40 @@ describe("AutoRunSection", () => {
       });
       expect(host.querySelectorAll("[data-autorun-category]")).toHaveLength(1);
       expect(host.querySelector(".autorun-cat-head")!.textContent).not.toContain("issue-rounds");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a closed run ended and its duration when it falls off the list and its session is resumed", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount();
+      memoQueueDeliveries.mockImplementation(async () => []);
+      useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.map((x) => (x.name === "run-old" ? { ...x, alive: true } : x)) });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      await act(async () => host.querySelector<HTMLButtonElement>(".autorun-ended-head")!.click());
+      const row = host.querySelector('[data-autorun-run="run-old"]')!;
+      expect(row.getAttribute("data-autorun-state")).toBe("ended");
+      expect(row.querySelector(".autorun-elapsed")!.textContent).toBe("45m");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops an open state of a category that left the queue list, and ignores its late answer", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount();
+      memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [] });
+      useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.map((x) => (x.origin === "user" ? x : { ...x, alive: false })) });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull(); // ended, not pinned open
+      expect(memoQueueDeliveries).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

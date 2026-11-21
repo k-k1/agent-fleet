@@ -322,9 +322,6 @@ export interface RepoTreeNode {
    *  back to the group's root so hand-started work is not buried in a group). Display
    *  ignores them; stop / delete scope them back in, as it did before grouping. */
   detached?: RepoTreeNode[];
-  /** Set on a copy the tree keeps out of sight because only auto-run works in it. A filter never
-   *  narrows what stop / delete reach through such a copy: its sessions are not what is matched. */
-  autorun?: true;
   /** CSS colour of this copy's lineage spine; "" = it belongs to no family. */
   spine: string;
 }
@@ -379,8 +376,9 @@ export function withoutAutoRun(sessions: Session[]): Session[] {
 
 /** A worktree that only auto-run work lives in: the tree keeps it out of sight. A base clone an
  *  auto-run reused stays a row of the tree, so it is never one of these. */
-export function isAutoRunOnlyFolder(sessions: Session[], repo: { name: string; worktree?: boolean } | undefined): boolean {
-  if (!repo?.worktree) return false;
+export function isAutoRunOnlyFolder(sessions: Session[], repo: Repo | undefined, repos: Repo[]): boolean {
+  // A worktree whose base clone is not listed is a root of its own in the tree, so it is shown.
+  if (!repo?.worktree || !repo.parent || !repos.some((r) => r.worktree !== true && r.name === repo.parent)) return false;
   const here = sessionsInFolder(sessions, repo.name);
   if (here.length === 0) return false;
   const byName = new Map(sessions.map((s) => [s.name, s]));
@@ -487,7 +485,6 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
         continue;
       }
       if (!GROUPED_KINDS.includes(kind)) {
-        self.autorun = true;
         (parent.detached ??= []).push(self);
         continue;
       }
@@ -543,30 +540,37 @@ export function countRepoNodes(nodes: RepoTreeNode[]): number {
 // display (a run A whose handoff H holds the match) is carried in its parent's `detached`, so
 // an action on the base still reaches A once. A node dropped with nothing kept below it
 // leaves no trace.
-export function filterRepoTree(nodes: RepoTreeNode[], keep: (r: Repo) => boolean): RepoTreeNode[] {
-  return pruneForest(nodes, keep).kept;
+//
+// `keep` decides what is displayed; `scopeKeep` (default: the same) decides what the operational
+// tree reaches. They differ because hidden auto-run sessions are not matched for display, while
+// stop / delete must narrow exactly as they did when those sessions were matched.
+export function filterRepoTree(nodes: RepoTreeNode[], keep: (r: Repo) => boolean, scopeKeep: (r: Repo) => boolean = keep): RepoTreeNode[] {
+  return pruneForest(nodes, keep, scopeKeep).kept;
 }
 
-function pruneForest(nodes: RepoTreeNode[], keep: (r: Repo) => boolean): { kept: RepoTreeNode[]; scope: RepoTreeNode[] } {
+function pruneForest(
+  nodes: RepoTreeNode[],
+  keep: (r: Repo) => boolean,
+  scopeKeep: (r: Repo) => boolean,
+): { kept: RepoTreeNode[]; scope: RepoTreeNode[] } {
   const kept: RepoTreeNode[] = [];
   const scope: RepoTreeNode[] = [];
   for (const n of nodes) {
-    const ch = pruneForest(n.children, keep);
+    const ch = pruneForest(n.children, keep, scopeKeep);
     const groups: RepoTreeGroup[] = [];
     const rest = [...ch.scope];
     for (const g of n.groups) {
-      const gr = pruneForest(g.nodes, keep);
+      const gr = pruneForest(g.nodes, keep, scopeKeep);
       if (gr.kept.length > 0) groups.push({ kind: g.kind, nodes: gr.kept });
       rest.push(...gr.scope);
     }
-    // A hidden auto-run copy stays in scope whole whatever the filter matched.
-    const hidden = (n.detached ?? []).filter((d) => d.autorun);
-    const det = pruneForest((n.detached ?? []).filter((d) => !d.autorun), keep);
-    const detached = [...det.kept, ...det.scope, ...rest, ...hidden];
+    // Detached copies are never displayed, so only the operational rule applies to them.
+    const det = pruneForest(n.detached ?? [], scopeKeep, scopeKeep);
+    const detached = [...det.kept, ...det.scope, ...rest];
     if (ch.kept.length > 0 || groups.length > 0 || keep(n.repo)) {
-      kept.push({ repo: n.repo, children: ch.kept, groups, detached: detached.length > 0 ? detached : undefined, spine: n.spine, ...(n.autorun ? { autorun: true as const } : {}) });
+      kept.push({ repo: n.repo, children: ch.kept, groups, detached: detached.length > 0 ? detached : undefined, spine: n.spine });
     } else if (detached.length > 0) {
-      scope.push({ repo: n.repo, children: [], groups: [], detached, spine: n.spine, ...(n.autorun ? { autorun: true as const } : {}) });
+      scope.push({ repo: n.repo, children: [], groups: [], detached, spine: n.spine });
     }
   }
   return { kept, scope };

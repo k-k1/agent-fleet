@@ -43,16 +43,19 @@ function useQueueRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDeliv
     let live = true;
     let listing = false;
     const reading = new Set<string>();
+    let current = new Set<string>(); // categories the latest queue list names
     const readCategory = async (q: MemoQueue) => {
       if (reading.has(q.categoryId)) return;
       reading.add(q.categoryId);
       try {
         const list = readDeliveries(await memoQueueDeliveries(q.categoryId));
-        if (!live || !list) return;
+        if (!live || !list || !current.has(q.categoryId)) return;
         setDeliveries((prev) => {
           const next = new Map(prev);
           const seen = new Set(list.map((d) => d.session));
-          for (const [name, d] of prev) if (d.categoryId === q.categoryId && !seen.has(name)) next.set(name, { ...d, state: "" });
+          // A run that fell off the newest-fifty list keeps its category and, once closed, its end;
+          // an unsettled state is dropped (the sessions' own word is used for it).
+          for (const [name, d] of prev) if (d.categoryId === q.categoryId && !seen.has(name) && d.state !== "closed") next.set(name, { ...d, state: "" });
           for (const d of list) {
             if (d.session) next.set(d.session, { categoryId: q.categoryId, state: d.state, sentAt: d.sentAt, createdAt: d.createdAt, closedAt: d.closedAt, heldBy: d.heldBy });
           }
@@ -70,7 +73,18 @@ function useQueueRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDeliv
       try {
         const wire = readMemoQueues(await memoQueueList());
         if (!live || !wire) return;
+        current = new Set(wire.queues.map((q) => q.categoryId));
         setQueues(wire.queues);
+        // A category that is gone is no longer read: whatever it left unsettled is dropped too.
+        setDeliveries((prev) => {
+          let next: Map<string, RunDelivery> | null = null;
+          for (const [name, d] of prev) {
+            if (current.has(d.categoryId) || d.state === "closed" || d.state === "") continue;
+            next ??= new Map(prev);
+            next.set(name, { ...d, state: "" });
+          }
+          return next ?? prev;
+        });
         for (const q of wire.queues) void readCategory(q);
       } catch {
         /* keep the last read */
