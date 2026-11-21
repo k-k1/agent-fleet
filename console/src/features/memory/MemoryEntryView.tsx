@@ -129,6 +129,10 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   // The shown text the buffer has followed: the form opens on it even when the body shown is older
   // or newer than what the follow read found.
   const [followedTo, setFollowedTo] = useState("");
+  // What was followed belongs to the edit it was for.
+  useEffect(() => {
+    if (!editing) setFollowedTo("");
+  }, [editing]);
   const [resolutionOpen, setResolutionOpen] = useState(true);
   const [refusal, setRefusalState] = useState<EntryRefusal | null>(null);
   const onRefused = useCallback((r: EntryRefusal | null) => {

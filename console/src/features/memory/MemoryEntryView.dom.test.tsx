@@ -275,6 +275,24 @@ describe("MemoryEntryView", () => {
     expect(host!.querySelector(".mentry-form")).toBeNull();
   });
 
+  it("does not bring edit mode back after the memory was forgotten and restored, or moved to another and back", async () => {
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    const id = pane().id;
+    const base = pane().content as Extract<typeof pane extends () => infer P ? (P extends { content: infer C } ? C : never) : never, { kind: "memoryEntry" }>;
+    await act(async () => useLayoutStore.getState().setPaneTarget(id, { content: { ...base, gone: true } }));
+    await flush();
+    await act(async () => useLayoutStore.getState().setPaneTarget(id, { content: { ...base, gone: false } }));
+    await flush();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await act(async () => useLayoutStore.getState().setPaneTarget(id, { content: { ...base, name: "other" } }));
+    await flush();
+    await act(async () => useLayoutStore.getState().setPaneTarget(id, { content: base }));
+    await flush();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+  });
+
   it("does not open the editor on an older base when the follow read fails", async () => {
     await open();
     const newer = { ...memory, revision: 5, body: "Run `make v2`." };
