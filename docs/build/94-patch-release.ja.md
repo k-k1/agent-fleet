@@ -52,7 +52,8 @@ issue をそのままにする。
 各行の **Remedy**:
 
 - `rebuild`: Dockerfile でピンしていない OS パッケージ、または `af-cp` / `workspace-agent` 内の Go 標準ライブラリ。ベースイメージと
-  Go toolchain を新しくして再ビルドすれば直るので、パッチリリースの対象。
+  Go toolchain を新しくして再ビルドすれば直るので、パッチリリースの対象。control-plane のイメージは
+  `apt-get upgrade` を走らせるので、ベースのタグが更新される前でも再ビルドで Debian の修正が入る。
 - `bump`: Dockerfile が版を固定している Debian パッケージ（`CHROMIUM_VERSION` の `chromium`・`chromium-common`・`chromium-sandbox`。新しいベースでも同じビルドが入り直る）、Go モジュール、npm パッケージ、焼き込んだツール（古い toolchain でビルドされたツール自身のピン）。
   再ビルドでは動かない。通常の PR で `main` に入れ、次のリリースに載せる。待てない場合はパッチリリースにも
   その bump を載せる（下記）。
