@@ -3,8 +3,10 @@ package opencode
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // quietMs is a gap that clears the quiet period behind a flow.
@@ -128,5 +130,126 @@ func TestBumpSeenMaxNeverLowers(t *testing.T) {
 	bumpSeenMax(5)
 	if got := seenMaxAt.Load(); got != 200 {
 		t.Errorf("seenMaxAt = %d, want 200", got)
+	}
+}
+
+// The credential going away again ends its proof: a call after an out reading is not the account's,
+// and the out reading is not taken for the start-of-life one.
+func TestBindingAccountOutAfterInEndsProof(t *testing.T) {
+	bindT(t)
+	x := accountBinding("acct-X")
+	start(1000, 1, "")
+	acctIn_(1100, x, 1)
+	acct(5000, acctOut, 1)
+	if n := len(events(t)); n != 3 {
+		t.Fatalf("out after in was not kept: %d events", n)
+	}
+	for _, c := range []struct {
+		ts   int64
+		want string
+	}{{3000, x}, {6000, ""}} {
+		if got := bind(t, routes.RouteOpencodeGo, true, c.ts); got != c.want {
+			t.Errorf("at %d = %q, want %q", c.ts, got, c.want)
+		}
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 6000); got != "" {
+		t.Errorf("a free-looking call after the account went away = %q, want none (out came after a sign-in)", got)
+	}
+}
+
+// A second touch whose clock stamp is unusable puts only the calls it may follow in doubt; a call
+// that a key paid before the first touch keeps its binding.
+func TestBindingUnstampedLaterTouchSparesEarlierCalls(t *testing.T) {
+	bindT(t)
+	start(1000, 1, "key-A")
+	acct(1100, acctOut, 1)
+	acct(3000, acctTouch, 1)
+	old := clockStamp
+	clockStamp = func() (string, int64, bool) { return "", 0, false }
+	stampUp = 3000 + 2*touchCoalesce.Milliseconds()
+	noteAccount(atMs(stampUp), acctTouch, 1)
+	clockStamp = old
+	keyA := bind(t, routes.RouteOpencodeZen, false, 2000)
+	if keyA == "" {
+		t.Error("a call before the first touch lost its key binding")
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 3500); got != "" {
+		t.Errorf("a call after the touches = %q, want none", got)
+	}
+}
+
+// One long life does not grow the file without bound, and the calls whose evidence was dropped are
+// not bound.
+func TestBindingLongLifeStaysBounded(t *testing.T) {
+	bindT(t)
+	x, y := accountBinding("acct-X"), accountBinding("acct-Y")
+	start(1000, 1, "")
+	step := 2 * touchCoalesce.Milliseconds()
+	at := int64(10000)
+	for i := 0; i < 3*bindIntervalsKeep; i++ {
+		id := x
+		if i%2 == 1 {
+			id = y
+		}
+		acctIn_(at, id, 1)
+		at += step
+	}
+	if n := len(events(t)); n > bindIntervalsKeep+1 {
+		t.Errorf("file holds %d events, want at most %d", n, bindIntervalsKeep+1)
+	}
+	if got := bind(t, routes.RouteOpencodeGo, true, 20000); got != "" {
+		t.Errorf("a call whose evidence was dropped = %q, want none", got)
+	}
+}
+
+// End to end through the readers: the Console view the Agent reads from the daemon is what records
+// the credential, and the ledger binder of a session on the shared daemon returns X for a call made
+// on X after the account was replaced by Y.
+func TestLedgerBinderAccountReplacement(t *testing.T) {
+	bindT(t)
+	oldQ := accountQuiet
+	accountQuiet = 0
+	t.Cleanup(func() { accountQuiet = oldQ })
+	d := newFakeDaemon(t)
+	now := func() int64 { stampUp = time.Now().UnixMilli(); return stampUp }
+	genSnap.Store(1)
+	base := now() - 100000
+	start(base, 1, "")
+	stampUp = base + 1
+	recordSessionProcess(atMs(base+1), "s", procShared, nil, oauthState{}, time.Time{})
+	read := func() {
+		time.Sleep(3 * time.Millisecond)
+		now()
+		invalidateOAuthStatus()
+		oauthStatus()
+		time.Sleep(3 * time.Millisecond)
+	}
+	d.setConns([]map[string]any{{"type": "credential", "id": "con_X", "label": "a"}})
+	read()
+	tx := now()
+	time.Sleep(5 * time.Millisecond)
+	d.setConns([]map[string]any{{"type": "credential", "id": "con_Y", "label": "b"}})
+	now()
+	noteAccount(time.Now(), acctTouch, 1) // the flow that replaces it
+	tTouch := now()
+	time.Sleep(5 * time.Millisecond)
+	read()
+	ty := now()
+	bindFor := func(ts int64) string {
+		now()
+		b := ledgerBinder(session.Meta{Name: "s"})
+		if b == nil {
+			t.Fatal("no binder")
+		}
+		return b(routes.RouteOpencodeGo, true, ts)
+	}
+	if got, want := bindFor(tx), accountBinding("con_X"); got != want {
+		t.Errorf("call on X = %q, want %q", got, want)
+	}
+	if got := bindFor(tTouch + 1); got != "" {
+		t.Errorf("call inside the replacement = %q, want none", got)
+	}
+	if got, want := bindFor(ty), accountBinding("con_Y"); got != want {
+		t.Errorf("call on Y = %q, want %q", got, want)
 	}
 }

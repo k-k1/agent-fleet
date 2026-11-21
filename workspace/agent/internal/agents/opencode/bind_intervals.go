@@ -32,7 +32,9 @@ import (
 // proves exactly one payer; any doubt gives no binding. The account pays (opencode-account binding)
 // only for a daemon started with no key, from a sign-in observation of one credential that lies a
 // full quiet period behind every Agent flow; a Terminal pane is never bound to the account, because
-// a pane started without a key can still inherit one from the tmux server's environment.
+// a pane started without a key can still inherit one from the tmux server's environment. An
+// explicit apiKey in the user's own opencode configuration is a third payer the Agent cannot see,
+// as a sign-in by hand is not; the launch record (resolveModel) rests on the same assumption.
 //
 // What is proven, and what is not: the Agent's own flows are the only account changes it can see
 // (oauthDaemon marks every one), the way credbind.Generation sees only the Agent's own login
@@ -289,8 +291,29 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent) bool) {
 		if carry > 0 {
 			evs[cut].Carry = max(evs[cut].Carry, carry)
 		}
+		kept := evs[cut:]
+		if len(kept) >= bindIntervalsKeep {
+			// One life holds most of the file (touches and readings of a long-running daemon): drop
+			// the oldest account events after its start. Calls up to the quiet period past the last
+			// one dropped are no longer placed, and no sign-in observation at or before that time
+			// proves a payer (accountPayer).
+			di := lastDaemonEvent(kept)
+			n := len(kept) - bindIntervalsKeep/2
+			if di >= 0 && di+1+n <= len(kept) {
+				dropped := kept[di+1 : di+1+n]
+				carry := kept[di].Carry
+				for _, ev := range dropped {
+					carry = max(carry, ev.Carry, ev.At+accountQuiet.Milliseconds())
+					if ev.Reg {
+						carry = max(carry, ev.Floor+accountQuiet.Milliseconds())
+					}
+				}
+				kept = append(append([]bindEvent{}, kept[:di+1]...), kept[di+1+n:]...)
+				kept[di].Carry = carry
+			}
+		}
 		var sb strings.Builder
-		for _, ev := range evs[cut:] {
+		for _, ev := range kept {
 			b, _ := json.Marshal(ev)
 			sb.Write(b)
 			sb.WriteByte('\n')
@@ -398,6 +421,16 @@ func eventGap(a, b bindEvent) int64 {
 	return b.At - a.At
 }
 
+// tooClose reports whether b follows a within touchCoalesce on both the uptime and the wall clock:
+// an event that went back on either is never folded into the earlier one, since the going back is
+// itself what the later event has to record.
+func tooClose(a, b bindEvent) bool {
+	w := b.At - a.At
+	d := eventGap(a, b)
+	lim := touchCoalesce.Milliseconds()
+	return d >= 0 && d <= lim && w >= 0 && w <= lim
+}
+
 // quietBehind reports whether every event of life before index i lies at least accountQuiet
 // before it, other than readings of the same credential.
 func quietBehind(life []bindEvent, i int) bool {
@@ -446,7 +479,9 @@ func noteAccountID(at time.Time, acct, id string, gen int) {
 		}
 		switch acct {
 		case acctOut:
-			return !hasBad && !hasOut
+			// Before any other account event: the account was out from the start of the life. After
+			// a sign-in observation: the credential is gone, which ends that credential's proof.
+			return !hasBad && !hasOut || last != nil && last.Acct == acctIn
 		case acctIn:
 			if last == nil || last.Acct != acctIn || last.ID != id {
 				return true
@@ -454,9 +489,9 @@ func noteAccountID(at time.Time, acct, id string, gen int) {
 			// The same credential again adds nothing once the earlier reading is already behind a
 			// full quiet period; until then it is kept (at most one a minute), as it is the one
 			// that can prove the period over.
-			return !quietBehind(evs[di+1:], len(evs[di+1:])-1) && eventGap(*last, e) > touchCoalesce.Milliseconds()
+			return !quietBehind(evs[di+1:], len(evs[di+1:])-1) && !tooClose(*last, e)
 		}
-		return last == nil || last.Acct != acctTouch || eventGap(*last, e) > touchCoalesce.Milliseconds()
+		return last == nil || last.Acct != acctTouch || !tooClose(*last, e)
 	})
 }
 
@@ -500,19 +535,28 @@ func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...
 	}
 	out := false
 	var late []bindEvent // the account events at or before the end of the call, in order
+	prevAt, seenBad := evs[life].At, false
 	for _, e := range evs[life+1:] {
 		if e.Kind != evAccount {
 			break
 		}
 		if e.Reg {
-			return "" // the clock was set inside this life; no order of its events and the call holds
+			// The clock was set around this event, so it cannot be placed by time. A call that ended
+			// before the event before it cannot be after it either; any other call may be.
+			if hi >= prevAt {
+				return ""
+			}
+			continue
 		}
+		prevAt = e.At
+		isBad := e.Acct != acctOut
 		switch {
-		case e.Acct == acctOut && e.At < lo:
-			out = true
-		case e.Acct != acctOut && e.At <= hi:
-			late = append(late, e)
+		case !isBad && !seenBad && e.At < lo:
+			out = true // the account was out from the start of the life
+		case e.At <= hi:
+			late = append(late, e) // a change, or the credential going away again
 		}
+		seenBad = seenBad || isBad
 	}
 	if len(late) > 0 {
 		return accountPayer(evs[life], late, route, paid, lo)
@@ -537,7 +581,8 @@ func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...
 // reported a cost is bound on zen; opencode go has no free calls.
 func accountPayer(life bindEvent, late []bindEvent, route string, paid bool, lo int64) string {
 	in := late[len(late)-1]
-	if !life.Keyless || in.Acct != acctIn || in.ID == "" || in.At >= lo {
+	if !life.Keyless || in.Acct != acctIn || in.ID == "" || in.At >= lo || in.At <= life.Carry {
+		// (Carry: a trim dropped events that may have been touches the quiet period counts from.)
 		return ""
 	}
 	if route == routes.RouteOpencodeZen && !paid {
