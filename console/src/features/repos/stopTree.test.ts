@@ -25,7 +25,7 @@ const repo = (name: string, over: Partial<Repo> = {}): Repo => ({
   ...over,
 });
 
-const node = (r: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo: r, children, spine: "" });
+const node = (r: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo: r, children, groups: [], spine: "" });
 
 const sess = (name: string, folder: string, over: Partial<Session> = {}): Session => ({
   name,
@@ -47,6 +47,16 @@ describe("停止計画の並べ方", () => {
     const groups = planStopTree(tree, [sess("s1", "app@a"), sess("s2", "app@b"), sess("s3", "app@c")]);
     expect(groups.map((g) => g.repo.name)).toEqual(["app@a", "app@b", "app@c"]);
     expect(groups.map((g) => g.depth)).toEqual([0, 1, 1]);
+  });
+
+  it("自動実行グループ内の作業コピーも対象に含める（一括停止で数え落とさない）", () => {
+    const tree: RepoTreeNode = {
+      ...node(repo("app@a")),
+      groups: [{ kind: "autorun", nodes: [node(repo("app@run"))] }],
+    };
+    const groups = planStopTree(tree, [sess("s1", "app@a"), sess("s2", "app@run")]);
+    expect(groups.map((g) => g.repo.name)).toEqual(["app@a", "app@run"]);
+    expect(liveSessionCount(tree, [sess("s2", "app@run")])).toBe(1);
   });
 
   it("停止中のセッションは行にならず、動いているセッションが無い作業コピーは並ばない", () => {

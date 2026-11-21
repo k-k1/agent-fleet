@@ -17,6 +17,7 @@ import {
   repoTree,
   filterRepoTree,
   countRepoNodes,
+  childNodes,
   type RepoTreeNode,
 } from "./project.ts";
 
@@ -386,5 +387,62 @@ describe("orphanSessions", () => {
       sess("gone", { repo: "removed-repo" }),
     ];
     expect(orphanSessions(sessions, repos).map((s) => s.name).sort()).toEqual(["gone", "shell"]);
+  });
+});
+
+describe("repoTree auto-run / schedule groups", () => {
+  const t = (n: number) => `2026-09-0${n}T00:00:00Z`;
+  const repos = [
+    repo("af"),
+    wt("af@hand", "af", { createdAt: t(1) }),
+    wt("af@run", "af", { createdAt: t(2) }),
+    wt("af@rev", "af", { createdAt: t(3) }),
+    wt("af@cron", "af", { createdAt: t(4) }),
+    wt("af@hf", "af", { createdAt: t(5) }),
+    wt("af@kid", "af", { createdAt: t(6) }),
+  ];
+  const sessions = [
+    sess("hand", { repo: "af@hand", createdAt: t(1), origin: "user" }),
+    sess("run", { repo: "af@run", createdAt: t(2), origin: "queue" }),
+    // The run's reviewer: a child spawned from the run's session, in its own worktree.
+    sess("rev", { repo: "af@rev", createdAt: t(3), origin: "session", originSession: "run" }),
+    sess("cron", { repo: "af@cron", createdAt: t(4), origin: "schedule" }),
+    // A handoff keeps origin=user while carrying originSession: it is the member's.
+    sess("hf", { repo: "af@hf", createdAt: t(5), origin: "user", originSession: "run" }),
+    // A child of a hand-started session stays with it.
+    sess("kid", { repo: "af@kid", createdAt: t(6), origin: "session", originSession: "hand" }),
+  ];
+  const tree = repoTree(repos, sessions)[0];
+  const names = (ns: RepoTreeNode[]) => ns.map((n) => n.repo.name);
+
+  it("gathers queue and schedule worktrees into one group per kind, folded out of children", () => {
+    expect(tree.groups.map((g) => g.kind)).toEqual(["autorun", "schedule"]);
+    expect(shapes(tree.groups[0].nodes)).toEqual([["af@run", [["af@rev", []]]]]);
+    expect(names(tree.groups[1].nodes)).toEqual(["af@cron"]);
+  });
+
+  it("leaves hand-started work, handoffs and a hand-started parent's child where they are", () => {
+    expect(shapes(tree.children)).toEqual([["af@hand", [["af@kid", []]]], ["af@hf", []]]);
+  });
+
+  it("keeps a member's own copy out of a group even when its parent copy is grouped", () => {
+    expect(names(tree.groups[0].nodes)).not.toContain("af@hf");
+  });
+
+  it("childNodes and countRepoNodes still see the grouped copies", () => {
+    expect(names(childNodes(tree))).toEqual(["af@hand", "af@hf", "af@run", "af@cron"]);
+    expect(countRepoNodes([tree])).toBe(7);
+  });
+
+  it("filterRepoTree reaches a match inside a group and drops empty groups", () => {
+    const hit = filterRepoTree([tree], (r) => r.name === "af@rev")[0];
+    expect(hit.children).toEqual([]);
+    expect(hit.groups.map((g) => g.kind)).toEqual(["autorun"]);
+    expect(shapes(hit.groups[0].nodes)).toEqual([["af@run", [["af@rev", []]]]]);
+    expect(filterRepoTree([tree], (r) => r.name === "af@hand")[0].groups).toEqual([]);
+  });
+
+  it("makes no group when nothing is unattended", () => {
+    expect(repoTree([repo("x"), wt("x@a", "x")], [sess("a", { repo: "x@a", origin: "user" })])[0].groups).toEqual([]);
   });
 });

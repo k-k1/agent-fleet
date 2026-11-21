@@ -32,7 +32,7 @@ const repo = (name: string, over: Partial<Repo> = {}): Repo => ({
   branch: "temp/" + name.split("@")[1],
   ...over,
 });
-const node = (r: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo: r, children, spine: "" });
+const node = (r: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo: r, children, groups: [], spine: "" });
 const sess = (name: string, folder: string, over: Partial<Session> = {}): Session => ({
   name,
   kind: "claude",

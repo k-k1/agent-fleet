@@ -301,12 +301,57 @@ export function worktreeParentFolder(ix: LineageIndex, folder: string, rootFolde
   return copy; // the group's base, or a sibling worktree
 }
 
+/** Which unattended source raised a group of working copies (Session.origin). */
+export type AutoGroupKind = "autorun" | "schedule";
+
+/** Unattended working copies gathered under one copy, apart from the member's own. */
+export interface RepoTreeGroup {
+  kind: AutoGroupKind;
+  /** The grouped copies, each with its own nested descendants. Never empty. */
+  nodes: RepoTreeNode[];
+}
+
 /** One working copy in the rail's tree, with the copies nested under it. */
 export interface RepoTreeNode {
   repo: Repo;
+  /** Copies the member started (or that hang under a grouped copy), nested by lineage. */
   children: RepoTreeNode[];
+  /** Auto-run / schedule copies of this node, folded away from `children`. At most one per kind. */
+  groups: RepoTreeGroup[];
   /** CSS colour of this copy's lineage spine; "" = it belongs to no family. */
   spine: string;
+}
+
+/** Every copy directly below a node — its own children and the grouped ones. Walkers that
+ *  act on "what the rail shows below this row" (stop, delete, rotate) must use this, not
+ *  `children`, or a grouped run silently drops out of the bulk action. */
+export function childNodes(n: RepoTreeNode): RepoTreeNode[] {
+  return n.groups.length === 0 ? n.children : [...n.children, ...n.groups.flatMap((g) => g.nodes)];
+}
+
+const GROUP_ORDER: AutoGroupKind[] = ["autorun", "schedule"];
+
+// autoGroupOf — which group a worktree belongs to, "" = the member's own.
+//
+// The owner (worktreeOwners: the session that created the folder) decides. origin
+// queue / schedule is the unattended run itself. A child that run spawned (origin
+// "session") follows the ROOT of its spawn lineage, so a reviewer's worktree moves with
+// the run. Every other origin (user, operator, handoff, unknown, absent) stays put — a
+// handoff keeps origin=user while carrying originSession, so originSession alone must
+// never decide, and a hand-started session's child is never grouped because its root
+// is the hand-started one.
+function autoGroupOf(
+  owner: Session | undefined,
+  byName: Map<string, Session>,
+  lineages: Map<string, SessionLineage>,
+): AutoGroupKind | "" {
+  if (!owner) return "";
+  const kindOf = (s: Session | undefined): AutoGroupKind | "" =>
+    s?.origin === "queue" ? "autorun" : s?.origin === "schedule" ? "schedule" : "";
+  const own = kindOf(owner);
+  if (own) return own;
+  if (owner.origin !== "session") return "";
+  return kindOf(byName.get(lineages.get(owner.name)?.root ?? ""));
 }
 
 // repoTree turns the flat repo list into the rail's forest: one root per group from
@@ -324,7 +369,7 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
   };
   return groupedRepos(repos).map((members) => {
     const nodes = new Map<string, RepoTreeNode>();
-    for (const r of members) nodes.set(r.name, { repo: r, children: [], spine: spineOf(r.name) });
+    for (const r of members) nodes.set(r.name, { repo: r, children: [], groups: [], spine: spineOf(r.name) });
     const rootName = members[0].name;
     const worktrees = members.slice(1);
     const group = new Set(members.map((r) => r.name));
@@ -335,10 +380,32 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
     // that order, so every level of the tree keeps that order: a name sort would be
     // effectively random (temp/<slug>), while chronological order leaves the existing
     // worktrees where they are and puts a new one at the end of its level.
+    const kindOf = new Map<string, AutoGroupKind | "">();
+    for (const w of worktrees) kindOf.set(w.name, autoGroupOf(ix.owners.get(w.name), ix.byName, lineages));
+    // A copy whose parent copy is grouped nests under it as a plain child (the run's
+    // reviewers and nested worktrees keep their nesting inside the group). A member's own
+    // copy hanging under a grouped one is cut back to the group's root so it stays put.
     for (const w of worktrees) {
-      const parent = nodes.get(parentOf.get(w.name) || rootName);
+      const p = parentOf.get(w.name) || rootName;
+      if (p !== rootName && kindOf.get(p) && !kindOf.get(w.name)) parentOf.set(w.name, rootName);
+    }
+    for (const w of worktrees) {
+      const pName = parentOf.get(w.name) || rootName;
+      const parent = nodes.get(pName);
       const self = nodes.get(w.name);
-      if (parent && self) parent.children.push(self);
+      if (!parent || !self) continue;
+      const kind = kindOf.get(w.name);
+      if (!kind || kindOf.get(pName)) {
+        parent.children.push(self);
+        continue;
+      }
+      let g = parent.groups.find((x) => x.kind === kind);
+      if (!g) {
+        g = { kind, nodes: [] };
+        parent.groups.push(g);
+        parent.groups.sort((a, b) => GROUP_ORDER.indexOf(a.kind) - GROUP_ORDER.indexOf(b.kind));
+      }
+      g.nodes.push(self);
     }
     return nodes.get(rootName) as RepoTreeNode;
   });
@@ -372,7 +439,7 @@ function breakLineageCycles(parentOf: Map<string, string>, rootName: string): vo
 
 /** Nodes in a forest, the roots included — the rail's repo count under a working set. */
 export function countRepoNodes(nodes: RepoTreeNode[]): number {
-  return nodes.reduce((n, t) => n + 1 + countRepoNodes(t.children), 0);
+  return nodes.reduce((n, t) => n + 1 + countRepoNodes(childNodes(t)), 0);
 }
 
 // filterRepoTree prunes a forest to the nodes that match, keeping every ancestor of a
@@ -382,7 +449,14 @@ export function filterRepoTree(nodes: RepoTreeNode[], keep: (r: Repo) => boolean
   const out: RepoTreeNode[] = [];
   for (const n of nodes) {
     const children = filterRepoTree(n.children, keep);
-    if (children.length > 0 || keep(n.repo)) out.push({ repo: n.repo, children, spine: n.spine });
+    const groups: RepoTreeGroup[] = [];
+    for (const g of n.groups) {
+      const kept = filterRepoTree(g.nodes, keep);
+      if (kept.length > 0) groups.push({ kind: g.kind, nodes: kept });
+    }
+    if (children.length > 0 || groups.length > 0 || keep(n.repo)) {
+      out.push({ repo: n.repo, children, groups, spine: n.spine });
+    }
   }
   return out;
 }

@@ -15,7 +15,7 @@
 //   folder) stopped matching the rail once worktrees nested by lineage.
 import { repoInSet, sessionInSet } from "../../lib/workingSets.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
-import { orphanSessions, repoTree, sessionsInFolder } from "../../lib/project.ts";
+import { childNodes, orphanSessions, repoTree, sessionsInFolder } from "../../lib/project.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
@@ -33,7 +33,7 @@ export function railOrder(sessions: Session[], repos: Repo[], set: WorkingSet | 
   const out: Session[] = [];
   const walk = (n: RepoTreeNode) => {
     out.push(...sessionsInFolder(sessions, n.repo.name));
-    n.children.forEach(walk);
+    childNodes(n).forEach(walk);
   };
   repoTree(repos, sessions)
     .filter((t) => !set || repoInSet(set, t.repo))

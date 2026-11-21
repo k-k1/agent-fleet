@@ -22,8 +22,7 @@
 import type { Repo } from "./store.ts";
 import type { Session } from "../../types/session.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
-import type { RepoTreeNode } from "../../lib/project.ts";
-import { sessionsInFolder } from "../../lib/project.ts";
+import { childNodes, sessionsInFolder, type RepoTreeNode } from "../../lib/project.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { remainingShort } from "../../lib/sessionview.ts";
 
@@ -94,7 +93,7 @@ export function planStopTree(node: RepoTreeNode, sessions: Session[], depth = 0)
     .filter((s) => s.alive)
     .map((s) => rowFor(s, node.repo.name));
   const here: StopGroup[] = rows.length ? [{ repo: node.repo, depth, rows }] : [];
-  return [...here, ...node.children.flatMap((c) => planStopTree(c, sessions, depth + 1))];
+  return [...here, ...childNodes(node).flatMap((c) => planStopTree(c, sessions, depth + 1))];
 }
 
 /** Every row of the plan, groups flattened away. */

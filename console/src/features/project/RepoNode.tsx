@@ -21,8 +21,8 @@ import { useRepoReveal } from "../repos/store.ts";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Session } from "../../types/session.ts";
 import { displayName } from "../../lib/sessionview.ts";
-import { sessionsInFolder } from "../../lib/project.ts";
-import type { RepoTreeNode } from "../../lib/project.ts";
+import { childNodes, countRepoNodes, sessionsInFolder } from "../../lib/project.ts";
+import type { RepoTreeGroup, RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useRefIndex } from "../sessions/useRefIndex.ts";
@@ -35,7 +35,7 @@ const MAX_INDENT_DEPTH = 3;
 
 /** Folder names of every working copy below this node (its own excluded). */
 const descendantFolders = (n: RepoTreeNode): string[] =>
-  n.children.flatMap((c) => [c.repo.name, ...descendantFolders(c)]);
+  childNodes(n).flatMap((c) => [c.repo.name, ...descendantFolders(c)]);
 
 interface RepoNodeProps {
   node: RepoTreeNode;
@@ -189,14 +189,77 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
               body) to avoid a second, redundant gray guide left of the spine.
               The spine is indented to sit where that guide used to be, and stops
               being indented once the chain is deeper than MAX_INDENT_DEPTH. */}
-          {n.children.length > 0 && (
+          {(n.children.length > 0 || n.groups.length > 0) && (
             <ul className={"proj-children" + (depth >= MAX_INDENT_DEPTH ? " flat" : "")}>
               {n.children.map((c) => (
                 <RepoNode key={c.repo.name} node={c} depth={depth + 1} ctx={ctx} actions={actions} />
               ))}
+              {n.groups.map((g) => (
+                <AutoGroup key={g.kind} owner={r.name} group={g} depth={depth} ctx={ctx} actions={actions} />
+              ))}
             </ul>
           )}
         </>
+      )}
+    </li>
+  );
+}
+
+interface AutoGroupProps {
+  /** Folder of the node the group hangs under — part of the fold key. */
+  owner: string;
+  group: RepoTreeGroup;
+  depth: number;
+  ctx: RepoRailContext;
+  actions: SessionActions;
+}
+
+// AutoGroup — the folded "Auto-run" / "Schedules" bucket under a node: working copies raised
+// by unattended work (lib/project.ts autoGroupOf), kept apart from the member's own. Folded by
+// default; the choice persists per owner and kind. Filtering forces it open like any node (the
+// tree is already pruned to matches), and a reveal aimed at a copy inside opens it.
+function AutoGroup({ owner, group, depth, ctx, actions }: AutoGroupProps) {
+  const tr = useT();
+  const sessions = useSessionsStore((s) => s.sessions);
+  const nq = normQuery(useProjectFilter((f) => f.q));
+  const openState = usePersistedOpen(`af-proj-${owner}-grp-${group.kind}`, false);
+  const folders = group.nodes.flatMap((c) => [c.repo.name, ...descendantFolders(c)]);
+  const revealN = useRepoReveal((s) => s.n);
+  useEffect(() => {
+    const target = useRepoReveal.getState().name;
+    if (target && folders.includes(target)) openState.set(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealN]);
+  const open = nq ? true : openState.open;
+  const copies = countRepoNodes(group.nodes);
+  const running = folders.reduce((c, f) => c + sessionsInFolder(sessions, f).filter((s) => s.alive).length, 0);
+  const label = tr(group.kind === "autorun" ? "pj.group_autorun" : "pj.group_schedule");
+  return (
+    <li className={"proj-group" + (open ? "" : " collapsed")} data-proj-group={group.kind}>
+      <button
+        type="button"
+        className="proj-group-head"
+        onClick={openState.toggle}
+        aria-expanded={open}
+        title={open ? tr("pj.collapse") : tr("pj.expand")}
+      >
+        <Icon name={open ? "chevron-down" : "chevron-right"} />
+        <span className="proj-group-label">{label}</span>
+        <span className="repo-sess-badge" title={tr("pj.group_count", { n: copies })}>
+          {copies}
+        </span>
+        {running > 0 && (
+          <span className="repo-sess-badge run" title={tr("repo.sess_running", { n: running })}>
+            ●{running}
+          </span>
+        )}
+      </button>
+      {open && (
+        <ul className={"proj-children" + (depth + 1 >= MAX_INDENT_DEPTH ? " flat" : "")}>
+          {group.nodes.map((c) => (
+            <RepoNode key={c.repo.name} node={c} depth={depth + 1} ctx={ctx} actions={actions} />
+          ))}
+        </ul>
       )}
     </li>
   );

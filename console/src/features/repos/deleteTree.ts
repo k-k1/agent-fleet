@@ -14,8 +14,7 @@
 import type { Repo } from "./store.ts";
 import type { Session } from "../../types/session.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
-import type { RepoTreeNode } from "../../lib/project.ts";
-import { sessionsInFolder } from "../../lib/project.ts";
+import { childNodes, sessionsInFolder, type RepoTreeNode } from "../../lib/project.ts";
 import { agentOf } from "../../agents/registry.ts";
 
 /**
@@ -152,7 +151,7 @@ export function planTree(node: RepoTreeNode, sessions: Session[], depth = 0): Co
     branch,
     branchIn,
   };
-  return [row, ...node.children.flatMap((c) => planTree(c, sessions, depth + 1))];
+  return [row, ...childNodes(node).flatMap((c) => planTree(c, sessions, depth + 1))];
 }
 
 /** Ticked when the modal opens: the rows that lose nothing. A row that would take work
