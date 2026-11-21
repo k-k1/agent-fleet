@@ -434,6 +434,12 @@ func (e Env) installRTKFrom(ctx context.Context, base string) error {
 
 func (e Env) selfUpdateCursor(ctx context.Context) {
 	_, _, _, _, script := e.urls()
+	release, ok := e.lockCursor()
+	if !ok {
+		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: cursor update skipped (another cursor update is running)")
+		return
+	}
+	defer release()
 	// Before the latest check: a killed update's half-switched state would read as current.
 	if err := e.cursorRecover(); err != nil {
 		fmt.Fprintln(e.Stderr, err)

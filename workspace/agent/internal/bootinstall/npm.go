@@ -76,9 +76,10 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 	args := append([]string{"install", "-g", "--prefix", filepath.Join(e.Home, ".local")}, specs...)
 	cmd := exec.CommandContext(ctx, e.npmBin(), args...)
 	if e.npmLockFile != nil {
-		// The child inherits the lock's open file description: if only this process is killed,
-		// npm (and anything it started) keeps the lock until it exits, and a recovery on the next
-		// start finds the lock taken instead of restoring a backup under npm's feet.
+		// npm inherits the lock's open file description: if only this process is killed, npm
+		// itself keeps the lock until it exits, and a recovery on the next start finds the lock
+		// taken instead of restoring a backup under npm's feet. A child npm spawns with the
+		// default child_process options does not inherit it.
 		cmd.ExtraFiles = []*os.File{e.npmLockFile}
 	}
 	// Postinstall scripts may outlive npm: kill the whole group at the deadline so none keeps
@@ -194,12 +195,6 @@ func (e Env) room(needMiB int64, tools []string, what string) bool {
 // NPM installs the pinned npm CLIs into ~/.local that are missing or (with Repin) drifted from
 // the pin, in one npm run, then verifies each. It returns the process exit code.
 func NPM(e Env) int {
-	e, release, ok := e.lockNPM()
-	if !ok {
-		e.npmBusy("npm boot-install")
-		return ExitFailed
-	}
-	defer release()
 	var specs, wanted []string
 	var cur map[string]string
 	for _, c := range npmCLIs {
@@ -235,6 +230,13 @@ func NPM(e Env) int {
 		fmt.Fprintln(e.Stdout, "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)")
 		return ExitOK
 	}
+	// Nothing to install returned above without touching the lock; from here npm writes.
+	e, release, ok := e.lockNPM()
+	if !ok {
+		e.npmBusy("npm boot-install")
+		return ExitFailed
+	}
+	defer release()
 	fmt.Fprintf(e.Stdout, "[entrypoint] boot-install (pinned): %s ...\n", strings.Join(specs, " "))
 	if !e.room(int64(len(specs))*npmPerPkgMiB, wanted, strings.Join(specs, " ")) {
 		return ExitNoSpace
@@ -413,19 +415,34 @@ func (e Env) lockNPM() (_ Env, release func(), ok bool) {
 	if e.npmLockFile != nil {
 		return e, func() {}, true
 	}
-	if err := os.MkdirAll(filepath.Dir(e.npmLockPath()), 0o755); err != nil {
+	f, busy := flockPath(e.npmLockPath())
+	if busy {
 		return e, func() {}, false
 	}
-	f, err := os.OpenFile(e.npmLockPath(), os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		return e, func() {}, false
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		return e, func() {}, false
+	if f == nil {
+		// The lock file itself cannot be made or opened (read-only or full ~/.local): that is
+		// not another holder, and main ran without a lock. Go on unlocked.
+		return e, func() {}, true
 	}
 	e.npmLockFile = f
 	return e, func() { f.Close() }, true
+}
+
+// flockPath takes an exclusive flock on path without waiting. busy is true only when another
+// holder has it; f is nil without busy when the lock could not be set up at all.
+func flockPath(path string) (f *os.File, busy bool) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, false
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, false
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, errors.Is(err, syscall.EWOULDBLOCK)
+	}
+	return f, false
 }
 
 // npmBusy says why a step did nothing when the lock was not free.

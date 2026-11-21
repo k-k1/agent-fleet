@@ -74,6 +74,15 @@ var cursorVersionInLink = regexp.MustCompile(`^.*/versions/([^/]*)/.*$`)
 // and links ~/.local/bin/cursor-agent to it, the upstream install.sh layout. It installs when the
 // CLI is missing or its bundle is silent, and with Repin when the link points at another version.
 func Cursor(ctx context.Context, e Env) int {
+	// One writer per HOME: a recovery or a pin racing a self-update would read its marker
+	// mid-flight and undo a tree that is about to be accepted.
+	release, ok := e.lockCursor()
+	if !ok {
+		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: cursor boot-install skipped (another cursor update is running; retrying next start)")
+		e.note(cursorStatusName, statusFailed, ReasonOther)
+		return ExitFailed
+	}
+	defer release()
 	// What a killed self-update changed goes back before the pin is judged: a half-switched link
 	// pair would otherwise read as healthy.
 	if err := e.cursorRecover(); err != nil {
@@ -655,6 +664,9 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 		m.Tree = true
 		m.Old = fmt.Sprintf("%s.af-old.%d", dir, pid)
 		_, lerr := os.Lstat(dir)
+		if lerr != nil && !errors.Is(lerr, fs.ErrNotExist) {
+			return lerr // not knowing whether a tree is there must not read as "none"
+		}
 		m.HadTree = lerr == nil
 	}
 	for _, l := range links {
@@ -665,9 +677,12 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 				if rerr != nil {
 					return rerr
 				}
-				st.Kind, st.Target = "symlink", t
+				st.Kind, st.Target = "symlink", []byte(t)
 			} else {
 				st.Kind, st.Keep = "file", fmt.Sprintf("%s.af-prev.%d", l, pid)
+				if _, kerr := os.Lstat(st.Keep); !errors.Is(kerr, fs.ErrNotExist) {
+					return fmt.Errorf("%s already exists; not overwriting it", st.Keep)
+				}
 			}
 		} else if !os.IsNotExist(lerr) {
 			return lerr
@@ -705,7 +720,6 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 	// A regular file in a link's place is moved aside whole; the marker names where.
 	for _, st := range m.Links {
 		if st.Kind == "file" {
-			removeTree(st.Keep)
 			if err := os.Rename(st.Path, st.Keep); err != nil {
 				return err
 			}
@@ -718,7 +732,11 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 		return fmt.Errorf("cursor %s does not report a version through ~/.local/bin", ver)
 	}
 	// Accepted: the marker goes first, so a kill from here on cannot roll back a verified update.
-	os.Remove(e.cursorMarkerPath())
+	if err := os.Remove(e.cursorMarkerPath()); err != nil && !os.IsNotExist(err) {
+		// The marker stays, so the next start rolls back: the backups it needs stay too.
+		fmt.Fprintf(e.Stderr, "cursor: cannot remove %s: %v (previous copies kept)\n", e.cursorMarkerPath(), err)
+		return nil
+	}
 	if m.Tree {
 		removeTree(m.Old)
 	}
@@ -730,11 +748,26 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 	return nil
 }
 
+func (e Env) cursorLockPath() string { return filepath.Join(e.Home, ".local", ".af-cursor.lock") }
+
+// lockCursor takes the cursor lock without waiting; ok is false only when another process holds
+// it. A lock that cannot be set up at all is not a holder: go on unlocked, as main did.
+func (e Env) lockCursor() (release func(), ok bool) {
+	f, busy := flockPath(e.cursorLockPath())
+	if busy {
+		return func() {}, false
+	}
+	if f == nil {
+		return func() {}, true
+	}
+	return func() { f.Close() }, true
+}
+
 // cursorLinkState is what one launcher link was before a self-update touched it.
 type cursorLinkState struct {
 	Path   string `json:"path"`
 	Kind   string `json:"kind"`   // "symlink", "file" (moved to Keep) or "none"
-	Target string `json:"target"` // the symlink's previous target
+	Target []byte `json:"target"` // the symlink's previous target, raw bytes (a target need not be UTF-8)
 	Keep   string `json:"keep"`   // where a regular file was moved aside
 }
 
@@ -786,7 +819,9 @@ func withSuffixDigits(p, base, sep string) bool {
 // under this home, so a corrupt or planted marker cannot point a rename or a delete elsewhere.
 func (e Env) cursorMarkerValid(m cursorMarker) bool {
 	versions := filepath.Clean(e.cursorShare())
-	if filepath.Dir(m.Dir) != versions || strings.HasPrefix(filepath.Base(m.Dir), ".") {
+	// Exactly the path the writer builds, not one that merely cleans to it: the OS gets the
+	// string as written.
+	if filepath.Dir(m.Dir) != versions || strings.HasPrefix(filepath.Base(m.Dir), ".") || m.Dir != filepath.Join(versions, filepath.Base(m.Dir)) {
 		return false
 	}
 	if m.Old != "" && !withSuffixDigits(m.Old, m.Dir, ".af-old.") {
@@ -805,7 +840,7 @@ func (e Env) cursorMarkerValid(m cursorMarker) bool {
 		}
 		switch l.Kind {
 		case "symlink":
-			if l.Target == "" {
+			if len(l.Target) == 0 {
 				return false
 			}
 		case "file":
@@ -825,8 +860,11 @@ func (e Env) cursorMarkerValid(m cursorMarker) bool {
 // tree and files are. nil means nothing is pending.
 func (e Env) cursorRecover() error {
 	b, err := os.ReadFile(e.cursorMarkerPath())
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("cursor: cannot read %s: %v", e.cursorMarkerPath(), err)
 	}
 	var m cursorMarker
 	if json.Unmarshal(b, &m) != nil || !e.cursorMarkerValid(m) {
@@ -855,6 +893,9 @@ func (e Env) cursorRecover() error {
 			}
 		} else if !m.HadTree && errors.Is(lerr, fs.ErrNotExist) {
 			removeTree(m.Dir) // only the candidate this update published was ever there
+			if _, derr := os.Lstat(m.Dir); !errors.Is(derr, fs.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("cursor: cannot remove the unverified tree %s", m.Dir))
+			}
 		} else if !errors.Is(lerr, fs.ErrNotExist) {
 			errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", m.Old, lerr))
 		}
@@ -862,8 +903,8 @@ func (e Env) cursorRecover() error {
 	for _, l := range m.Links {
 		switch l.Kind {
 		case "symlink":
-			if cur, rerr := os.Readlink(l.Path); rerr != nil || cur != l.Target {
-				if err := relinkAll([]string{l.Path}, l.Target); err != nil {
+			if cur, rerr := os.Readlink(l.Path); rerr != nil || cur != string(l.Target) {
+				if err := relinkAll([]string{l.Path}, string(l.Target)); err != nil {
 					errs = append(errs, fmt.Errorf("cursor: cannot point %s back at %s: %v", l.Path, l.Target, err))
 				}
 			}
@@ -877,8 +918,12 @@ func (e Env) cursorRecover() error {
 				errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Keep, lerr))
 			}
 		case "none":
-			if fi, lerr := os.Lstat(l.Path); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
-				os.Remove(l.Path)
+			// Only a link this update published: one at a path that was empty before and now
+			// points at the tree it made. Anything else is someone else's.
+			if cur, rerr := os.Readlink(l.Path); rerr == nil && cur == filepath.Join(m.Dir, cursorTool) {
+				if err := os.Remove(l.Path); err != nil && !os.IsNotExist(err) {
+					errs = append(errs, fmt.Errorf("cursor: cannot remove %s: %v", l.Path, err))
+				}
 			}
 		}
 	}

@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func (f *suFixture) versions() string {
@@ -50,8 +53,8 @@ func TestCursorRecoverKillWindows(t *testing.T) {
 	}
 	states := func(f *suFixture) []cursorLinkState {
 		return []cursorLinkState{
-			{Path: f.local("agent"), Kind: "symlink", Target: oldT(f)},
-			{Path: f.local("cursor-agent"), Kind: "symlink", Target: oldT(f)},
+			{Path: f.local("agent"), Kind: "symlink", Target: []byte(oldT(f))},
+			{Path: f.local("cursor-agent"), Kind: "symlink", Target: []byte(oldT(f))},
 		}
 	}
 	setup := func(t *testing.T) *suFixture {
@@ -170,7 +173,7 @@ func TestCursorRecoverErrorsKeepTheMarkerAndNameTheOldTree(t *testing.T) {
 	t.Run("link restore fails", func(t *testing.T) {
 		f := newSU(t, goodRTK, "", "", "")
 		oldTarget := filepath.Join(f.versions(), "1.0.0", "cursor-agent")
-		f.plantSwitched(t, []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "symlink", Target: oldTarget}})
+		f.plantSwitched(t, []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "symlink", Target: []byte(oldTarget)}})
 		f.link(t, "cursor-agent", "/elsewhere")
 		bin := filepath.Dir(f.local("cursor-agent"))
 		os.Chmod(bin, 0o555)
@@ -272,4 +275,187 @@ func TestNPMLock(t *testing.T) {
 			t.Fatal("a second holder got the lock")
 		}
 	})
+}
+
+func TestCursorRecoverReviewRound1(t *testing.T) {
+	t.Run("a marker that cannot be removed after success keeps the backups the rollback needs", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("root ignores directory permissions")
+		}
+		f := newSU(t, goodRTK, "", "", cursorInstaller)
+		d := f.plantCursor(t, "1.0.0")
+		_ = d
+		// ~/.local is not writable but versions and bin are: only the marker's unlink fails.
+		local := filepath.Join(f.home, ".local")
+		// The marker is written before the lock-down is possible, so lock down from a launcher
+		// hook: the candidate's last probe is the install script's bundle itself.
+		f.env.Stderr = f.out
+		old := relinkRename
+		relinkRename = func(a, b string) error {
+			err := os.Rename(a, b)
+			os.Chmod(local, 0o555)
+			return err
+		}
+		t.Cleanup(func() { relinkRename = old; os.Chmod(local, 0o755) })
+		f.env.selfUpdateCursor(context.Background())
+		os.Chmod(local, 0o755)
+		relinkRename = old
+		if _, err := os.Lstat(f.env.cursorMarkerPath()); err != nil {
+			t.Skip("marker was removable on this filesystem")
+		}
+		if !strings.Contains(f.read(filepath.Join(f.versions(), "1.0.0", "cursor-agent")), "1.0.0") {
+			t.Fatalf("the previous tree went although the marker stayed:\n%s", f.out)
+		}
+		if err := f.env.cursorRecover(); err != nil {
+			t.Fatal(err)
+		}
+		if out, _, err := f.env.probeArgs(f.local("cursor-agent"), nil, nil); err != nil || out != "1.0.0" {
+			t.Fatalf("recovery after a kept marker: %q %v", out, err)
+		}
+	})
+	t.Run("a path that only cleans to the versions directory is refused", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", "")
+		victim := filepath.Join(f.home, "victim")
+		f.write(t, filepath.Join(victim, "keep"), "x")
+		os.MkdirAll(filepath.Join(f.versions(), "a"), 0o755)
+		dir := f.versions() + "/a/../../../../victim"
+		os.MkdirAll(filepath.Join(f.home, ".local"), 0o755)
+		for _, m := range []cursorMarker{{Dir: dir, Old: dir + ".af-old.1", Tree: true}, {Dir: f.versions() + "//x"}} {
+			if f.env.cursorMarkerValid(m) {
+				t.Fatalf("accepted %q", m.Dir)
+			}
+		}
+	})
+	t.Run("an existing .af-prev name is never overwritten", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", cursorInstaller)
+		f.write(t, f.local("cursor-agent"), "#!/bin/sh\necho realfile\n")
+		keep := f.local("cursor-agent") + ".af-prev." + strconv.Itoa(os.Getpid())
+		f.write(t, filepath.Join(keep, "precious"), "x")
+		f.env.selfUpdateCursor(context.Background())
+		if f.read(filepath.Join(keep, "precious")) != "x" {
+			t.Fatal("an older backup was deleted")
+		}
+		if !strings.Contains(f.read(f.local("cursor-agent")), "realfile") {
+			t.Fatal("the launcher was changed")
+		}
+	})
+	t.Run("a symlink target that is not UTF-8 comes back byte for byte", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", "")
+		odd := filepath.Join(f.versions(), "1.0.0\xff", "cursor-agent")
+		f.write(t, odd, "#!/bin/sh\necho odd\n")
+		f.plantSwitched(t, []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "symlink", Target: []byte(odd)}})
+		f.link(t, "cursor-agent", "/elsewhere")
+		if err := f.env.cursorRecover(); err != nil {
+			t.Fatal(err)
+		}
+		if tg, _ := os.Readlink(f.local("cursor-agent")); tg != odd {
+			t.Fatalf("target changed: %q", tg)
+		}
+	})
+	t.Run("a link that was empty before is removed only while it points at the published tree", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", "")
+		m := f.plantSwitched(t, []cursorLinkState{{Path: f.local("agent"), Kind: "none"}})
+		f.link(t, "agent", "/usr/bin/someone-elses")
+		if err := f.env.cursorRecover(); err != nil {
+			t.Fatal(err)
+		}
+		if tg, _ := os.Readlink(f.local("agent")); tg != "/usr/bin/someone-elses" {
+			t.Fatalf("a foreign agent was removed: %q", tg)
+		}
+		f.plantSwitched(t, []cursorLinkState{{Path: f.local("agent"), Kind: "none"}})
+		f.link(t, "agent", filepath.Join(m.Dir, cursorTool))
+		if err := f.env.cursorRecover(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(f.local("agent")); err == nil {
+			t.Fatal("the published link stayed")
+		}
+	})
+	t.Run("a cursor update and the pin step exclude each other", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", cursorInstaller)
+		l, busy := flockPath(f.env.cursorLockPath())
+		if l == nil || busy {
+			t.Fatal("lock not taken")
+		}
+		f.env.selfUpdateCursor(context.Background())
+		if rc := Cursor(context.Background(), f.env); rc != ExitFailed {
+			t.Fatalf("pin step ran under a held lock: rc=%d", rc)
+		}
+		if usable(f.local("cursor-agent")) {
+			t.Fatal("an update ran under a held lock")
+		}
+		l.Close()
+		f.env.selfUpdateCursor(context.Background())
+		if !usable(f.local("cursor-agent")) {
+			t.Fatalf("no update once the lock was free:\n%s", f.out)
+		}
+	})
+}
+
+func TestNPMLockSurvivesAKilledParent(t *testing.T) {
+	if os.Getenv("AF_TEST_NPM_PARENT") != "" {
+		t.Skip("helper")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	started := filepath.Join(f.npmDir, "started")
+	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf("#!/bin/sh\necho up >%q\n/usr/bin/sleep 3\n", started))
+	cmd := exec.Command(os.Args[0], "-test.run=^TestNPMLockHelperProcess$")
+	cmd.Env = append(os.Environ(), "AF_TEST_NPM_PARENT=1", "AF_TEST_HOME="+f.home, "AF_TEST_NPM="+filepath.Join(f.npmDir, "npm"))
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Process.Kill()
+	for i := 0; i < 100 && f.read(started) == ""; i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if f.read(started) == "" {
+		t.Fatal("the fake npm did not start")
+	}
+	cmd.Process.Kill() // only the Go process; npm runs in its own group
+	cmd.Wait()
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, tree+npmBakSuffix+"/VERSION", "1.0.0")
+	f.write(t, f.env.npmMarker(), "pending\nclaude\n")
+	f.env.npmRecoverAside(false)
+	if got := f.read(filepath.Join(tree, "VERSION")); got != "2.0.0" {
+		t.Fatalf("restored under the surviving npm: %q", got)
+	}
+	for i := 0; i < 100; i++ {
+		if _, release, ok := f.env.lockNPM(); ok {
+			release()
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	f.env.npmRecoverAside(false)
+	if got := f.read(filepath.Join(tree, "VERSION")); got != "1.0.0" {
+		t.Fatalf("not restored after npm exited: %q\n%s", got, f.out)
+	}
+}
+
+func TestNPMLockHelperProcess(t *testing.T) {
+	if os.Getenv("AF_TEST_NPM_PARENT") == "" {
+		t.Skip("helper")
+	}
+	e := Env{Home: os.Getenv("AF_TEST_HOME"), NPM: os.Getenv("AF_TEST_NPM")}
+	e, _, ok := e.lockNPM()
+	if !ok {
+		os.Exit(3)
+	}
+	e.npmInstall([]string{"x"})
+	os.Exit(0)
+}
+
+func TestNPMLockIOErrorIsNotBusy(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	local := filepath.Join(f.home, ".local")
+	os.MkdirAll(local, 0o755)
+	os.Chmod(local, 0o555)
+	t.Cleanup(func() { os.Chmod(local, 0o755) })
+	if _, _, ok := f.env.lockNPM(); !ok {
+		t.Fatal("an unwritable ~/.local was reported as another holder")
+	}
 }
