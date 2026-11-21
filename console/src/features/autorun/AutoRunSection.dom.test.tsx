@@ -28,6 +28,7 @@ const { AutoRunSection } = await import("./AutoRunSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { ViewShownContext } = await import("../../lib/viewShown.ts");
 const { useTenantStore } = await import("../../core/store/tenant.ts");
+const { useQueueSettingsCache } = await import("../memo/queueSettingsCache.ts");
 
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 g.IS_REACT_ACT_ENVIRONMENT = true;
@@ -49,6 +50,7 @@ const mount = async (shown = true) => {
 };
 
 beforeEach(() => {
+  useQueueSettingsCache.getState().reset();
   opened.mockReset();
   memoQueueList.mockReset();
   memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] });

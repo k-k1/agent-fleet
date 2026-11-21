@@ -60,6 +60,7 @@ const { fmtDateTime } = await import("../../lib/intl.ts");
 const { errText } = await import("../../core/api/client.ts");
 const { deliveryStateKey } = await import("./queues.ts");
 const { resetShownNotes } = await import("./shownNotes.ts");
+const { useQueueSettingsCache } = await import("./queueSettingsCache.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -160,6 +161,7 @@ const bump = async () => {
 
 beforeEach(() => {
   resetShownNotes();
+  useQueueSettingsCache.getState().reset();
   localStorage.clear();
   servedMemos = [];
   servedCats = [aCat({ queue: true })];

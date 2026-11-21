@@ -19,9 +19,12 @@ import { errText } from "../../core/api/client.ts";
 import { scheduledKinds } from "../../agents/registry.ts";
 import { kindOfferedForRuns } from "../../agents/launchAccess.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useMemberCatalog } from "../settings/credentials/memberCatalog.ts";
 import type { MemoQueue } from "../../types/memo.ts";
 import { memoQueueDelete, memoQueuePut } from "./api.ts";
+import { readQueue } from "./queues.ts";
+import { useQueueSettingsCache } from "./queueSettingsCache.ts";
 import {
   QUEUE_BATCH_MAX,
   QUEUE_CONTINUATION_MAX,
@@ -111,6 +114,10 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
         toast(errText(res.error) || t("memo.q_save_failed"), { kind: "warn" });
         return;
       }
+      // Into the shared cache at once, so the other view does not open this dialog from the
+      // values before this save while its own refetch is still on the way (or fails).
+      const saved = readQueue(res);
+      if (saved) useQueueSettingsCache.getState().applySaved(useTenantStore.getState().tenant ?? "", saved);
       toast(t("memo.q_saved"), { kind: "success" });
       onChanged();
       onClose();
@@ -136,6 +143,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
         toast(t("memo.q_remove_failed"), { kind: "warn" });
         return;
       }
+      useQueueSettingsCache.getState().applyRemoved(useTenantStore.getState().tenant ?? "", categoryId);
       toast(t("memo.q_removed"));
       onChanged();
       onClose();

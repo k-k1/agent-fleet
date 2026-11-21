@@ -12,6 +12,7 @@ import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useLeftRail } from "../../core/store/leftRail.ts";
 import { useMemoStore } from "../memo/store.ts";
 import { MemoQueueSettingsModal } from "../memo/MemoQueueSettingsModal.tsx";
+import { useQueueSettings, useQueueSettingsCache } from "../memo/queueSettingsCache.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { useViewShown } from "../../lib/viewShown.ts";
@@ -50,8 +51,8 @@ function useQueueRuns(): { queues: MemoQueue[]; tenantEnabled: boolean; deliveri
   const tenant = useTenantStore((s) => s.tenant);
   const identity = useTenantStore((s) => s.identityRev);
   const scopeKey = tenant + "\u0000" + identity;
-  const [queues, setQueues] = useState<MemoQueue[]>([]);
-  const [tenantEnabled, setTenantEnabled] = useState(false);
+  // Shared with the Memo queue view: a save in either lands in the cache at once.
+  const { queues, tenantEnabled } = useQueueSettings(tenant);
   // Bumped by "reload" and by a saved setting: the effect below starts over and reads at once.
   const [rev, setRev] = useState(0);
   const [deliveries, setDeliveries] = useState<Map<string, RunDelivery>>(() => new Map());
@@ -59,8 +60,7 @@ function useQueueRuns(): { queues: MemoQueue[]; tenantEnabled: boolean; deliveri
   useEffect(() => {
     if (scope.current === scopeKey) return;
     scope.current = scopeKey;
-    setQueues([]);
-    setTenantEnabled(false);
+    useQueueSettingsCache.getState().reset();
     setDeliveries(new Map());
   }, [scopeKey]);
   useEffect(() => {
@@ -99,8 +99,10 @@ function useQueueRuns(): { queues: MemoQueue[]; tenantEnabled: boolean; deliveri
       if (listing) return;
       listing = true;
       try {
+        const ticket = useQueueSettingsCache.getState().begin();
         const wire = readMemoQueues(await memoQueueList());
         if (!live || !wire) return;
+        useQueueSettingsCache.getState().publish(tenant, ticket, wire);
         const now = new Set(wire.queues.map((q) => q.categoryId));
         for (const id of current) {
           if (now.has(id)) continue;
@@ -108,8 +110,6 @@ function useQueueRuns(): { queues: MemoQueue[]; tenantEnabled: boolean; deliveri
           reading.delete(id);
         }
         current = now;
-        setQueues(wire.queues);
-        setTenantEnabled(wire.tenantEnabled);
         // A category that is gone is no longer read: whatever it left unsettled is dropped too.
         setDeliveries((prev) => {
           let next: Map<string, RunDelivery> | null = null;
@@ -525,8 +525,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
             .filter((q) => q.categoryId !== settingsQueue.categoryId)
             .map((q) => ({ id: q.categoryId, label: q.repo ? q.repo + " / " + q.category : q.category }))}
           onClose={() => setSettingsFor(null)}
-          // The Memo queue view keeps its own copy of the settings: bump it too, or a form opened
-          // there next starts from the old values and a later save overwrites this change.
+          // The save already wrote the shared cache; the refetches only reconcile with the server.
           onChanged={() => {
             reload();
             useMemoStore.getState().bump();
