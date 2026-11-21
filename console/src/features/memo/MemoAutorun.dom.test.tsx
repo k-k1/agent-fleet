@@ -1379,6 +1379,22 @@ describe("inline run list under a category", () => {
     useSessionsStore.setState({ sessions: [] });
   });
 
+  it("keeps the link to the Auto-run view live while no working set narrows it", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    const { useAutoRunStore } = await import("../autorun/store.ts");
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }] as never });
+    const t0 = useTenantStore.getState();
+    useAutoRunStore.setState({ queues: [{ categoryId: "c1", repo: "other-repo", category: "x" }] as never, scope: t0.tenant + "\u0000" + t0.identityRev, loaded: true });
+    servedDeliveries = [run("d1")];
+    await render();
+    await click(toggle());
+    // No working set is active: the link is live.
+    expect(document.querySelector<HTMLButtonElement>(".memo-run-view")?.disabled).toBe(false);
+    useAutoRunStore.setState({ queues: [], scope: "", loaded: false });
+    useSessionsStore.setState({ sessions: [] });
+  });
+
   it("opens a run's session from its row, by click and by Enter, and leaves a sessionless run inert", async () => {
     servedDeliveries = [run("d1"), run("d2", { session: "", outcome: "failed" })];
     await render();

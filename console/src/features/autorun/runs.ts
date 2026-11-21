@@ -3,6 +3,8 @@
 // "session" all the way up) hang under it.
 import type { Session, SessionPR, SessionWorkLink } from "../../types/session.ts";
 import { isWaitingSession } from "../../app/activity/badges.ts";
+import type { MemoQueue } from "../../types/memo.ts";
+import type { WorkingSet } from "../../lib/workingSets.ts";
 
 export type RunState = "running" | "waiting" | "ended";
 
@@ -122,7 +124,8 @@ export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelive
         root,
         categoryId: d?.categoryId ?? "",
         deliveryId: d?.id ?? "",
-        failed: state === "ended" && d?.state === "closed" && d.turnOutcome === "turn-failed" && d.outcome !== "ended" && d.outcome !== "aborted",
+        // From the delivery alone: resuming the run's session changes what the row shows, not what happened.
+        failed: d?.state === "closed" && d.turnOutcome === "turn-failed" && d.outcome !== "ended" && d.outcome !== "aborted",
         state,
         resumed,
         item: link ? { key: link.key, label: itemLabel(link.key), title: link.title ?? "" } : null,
@@ -142,4 +145,15 @@ export function fmtElapsed(ms: number): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ${m % 60}m`;
   return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+/** The runs a working set shows: a category is in the set when its repository is; a category without
+ *  a repository, and the runs no queue category names, are in every set. The view, the icon's count
+ *  and the failure acknowledgement all use this one rule. */
+export function scopeRuns(runs: RunRow[], queues: MemoQueue[], set: WorkingSet | null): RunRow[] {
+  if (!set) return runs;
+  return runs.filter((r) => {
+    const q = queues.find((x) => x.categoryId === r.categoryId);
+    return !q || !q.repo || set.repos.includes(q.repo);
+  });
 }

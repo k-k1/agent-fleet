@@ -21,6 +21,7 @@ import { openHome } from "../features/home/open.ts";
 import { openSessionsOverview } from "../features/overview/open.ts";
 import { openImagegen } from "../features/imagegen/open.ts";
 import { useImagegenAvailable } from "../features/imagegen/available.ts";
+import { useReposStore } from "../features/repos/store.ts";
 import { openGeneratedGallery } from "../features/gallery/open.ts";
 import { hintSuffix } from "../features/keys/keyHint.ts";
 import { Icon } from "../ui/Icon.tsx";
@@ -30,7 +31,7 @@ import { hasUnreadConversation, hasUnreadSession, pendingNews, useRailAck, waiti
 import type { RailBadge } from "./activity/badges.ts";
 import { useAutoRunFeed, useScopedAutoRuns } from "../features/autorun/store.ts";
 import { waitingScheduledCount } from "../features/schedules/scheduledSessions.ts";
-import { buildRuns, failedRunKeys, waitingRunCount } from "../features/autorun/runs.ts";
+import { buildRuns, failedRunKeys, scopeRuns, waitingRunCount } from "../features/autorun/runs.ts";
 import { stepView } from "./barSwipe.ts";
 import { useBarSwipe } from "./useBarSwipe.ts";
 
@@ -239,11 +240,13 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   const pendingHandoffs = useHandoffStore((s) => pendingHandoffCount(s.received));
   // The runs the Auto-run view lists, read here too: the badge cannot wait for the view to mount.
   useAutoRunFeed(running);
-  const { deliveries: queueRuns, loaded: autoRunsLoaded } = useScopedAutoRuns();
-  const runs = useMemo(() => buildRuns(sessions, queueRuns), [sessions, queueRuns]);
+  const { queues: runQueues, deliveries: queueRuns, loaded: autoRunsLoaded } = useScopedAutoRuns();
+  // The rows the view lists under the active working set, so the count and the acknowledgement match them.
+  const runs = useMemo(() => scopeRuns(buildRuns(sessions, queueRuns), runQueues, wset), [sessions, queueRuns, runQueues, wset]);
   const waitingRuns = useMemo(() => waitingRunCount(runs), [runs]);
   const failedAutoRuns = useMemo(() => failedRunKeys(runs), [runs]);
-  const waitingScheduled = useMemo(() => waitingScheduledCount(sessions, wset), [sessions, wset]);
+  const repos = useReposStore((s) => s.repos);
+  const waitingScheduled = useMemo(() => waitingScheduledCount(sessions, wset, repos), [sessions, wset, repos]);
   const acked = useRailAck((s) => s.acked);
   const ack = useRailAck((s) => s.ack);
 

@@ -6,6 +6,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
+import { useReposStore } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -46,7 +47,8 @@ export function ScheduledSessions() {
   const sessions = useSessionsStore((s) => s.sessions);
   const [showEnded, setShowEnded] = useState(false);
   const wset = useActiveWorkingSet();
-  const runs = useMemo(() => buildScheduledRuns(sessions, wset), [sessions, wset]);
+  const repos = useReposStore((s) => s.repos);
+  const runs = useMemo(() => buildScheduledRuns(sessions, wset, repos), [sessions, wset, repos]);
   if (runs.length === 0) return null;
   const live = runs.filter((r) => r.live);
   const ended = runs.filter((r) => !r.live);

@@ -535,6 +535,22 @@ describe("repoTree: filtering and mixed copies", () => {
     expect(isUnattendedOnlyFolder([ss[0]], rs[1], rs)).toBe(true);
   });
 
+  it("a schedule's copy is out of the display but inside the base's stop and delete scope, before and after filtering", () => {
+    const rs = [repo("af"), wt("af@cron", "af", { createdAt: t(1) })];
+    const ss = [live(sess("cron", { repo: "af@cron", createdAt: t(1), origin: "schedule" }))];
+    const tree = repoTree(rs, ss);
+    for (const f of [tree, filterRepoTree(tree, () => true)]) {
+      expect(f[0].children).toEqual([]);
+      expect(planStopTree(f[0], ss).map((g) => [g.repo.name, g.detached])).toEqual([["af@cron", true]]);
+      expect(planTree(f[0], ss).map((p) => [p.repo.name, p.detached])).toEqual([["af", false], ["af@cron", true]]);
+    }
+    // A filter that keeps only the base leaves the schedule's copy out of the scope, as it did when
+    // the copy was grouped: the scope narrows with the filter.
+    const only = filterRepoTree(tree, (r) => r.name === "af");
+    expect(planStopTree(only[0], ss)).toEqual([]);
+    expect(filterRepoTree(tree, () => false)).toEqual([]);
+  });
+
   it("a copy a run made but where the member later started a session stays in the ordinary tree", () => {
     const mixed = [...sessions, live(sess("hand", { repo: "af@a", createdAt: t(4), origin: "user" }))];
     const r = repoTree(repos, mixed)[0];

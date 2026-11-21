@@ -29,6 +29,9 @@ export const useAutoRunStore = create<AutoRunStore>(() => ({ queues: [], tenantE
 interface Loop {
   scope: string;
   load: () => Promise<void>;
+  /** An explicit read: whatever is in flight may predate the change that asked for it, so its
+   *  answers are dropped and a new read starts (after the queue list in flight, if any). */
+  reload: () => void;
   stop: () => void;
 }
 
@@ -77,6 +80,7 @@ function startLoop(scope: string): Loop {
       if ((epoch.get(q.categoryId) ?? 0) === mine) reading.delete(q.categoryId);
     }
   };
+  let again = false;
   const load = async () => {
     if (listing) return;
     listing = true;
@@ -106,7 +110,19 @@ function startLoop(scope: string): Loop {
       /* keep the last read */
     } finally {
       listing = false;
+      if (again && live) {
+        again = false;
+        void load();
+      }
     }
+  };
+  const reload = () => {
+    for (const id of current) {
+      epoch.set(id, (epoch.get(id) ?? 0) + 1);
+      reading.delete(id);
+    }
+    if (listing) again = true; // the list in flight may predate the change: read once more after it
+    else void load();
   };
   void load();
   const id = setInterval(() => {
@@ -115,6 +131,7 @@ function startLoop(scope: string): Loop {
   return {
     scope,
     load,
+    reload,
     stop: () => {
       live = false;
       clearInterval(id);
@@ -144,8 +161,12 @@ export function acquireAutoRuns(scope: string): () => void {
   };
 }
 
-/** Read now, whatever the poll's phase: the view came on screen. */
-export const reloadAutoRuns = (): void => void loop?.load();
+/** Read now unless a read is in flight: the view came on screen. */
+export const refreshAutoRuns = (): void => void loop?.load();
+
+/** Read again from scratch: something the member changed (a saved setting, "Reload") may be missing
+ *  from a read in flight. */
+export const reloadAutoRuns = (): void => loop?.reload();
 
 /** The runs read for the scope in force: another scope's data is never returned, even before a poll
  *  has replaced it. */

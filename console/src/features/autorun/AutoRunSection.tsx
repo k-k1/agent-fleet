@@ -29,8 +29,8 @@ import { DeleteCopyModal } from "../repos/DeleteCopyModal.tsx";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat } from "../sessions/open.ts";
-import { reloadAutoRuns, useAutoRunFeed, pendingReveal, useAutoRunReveal, useScopedAutoRuns } from "./store.ts";
-import { buildRuns, fmtElapsed, waitsForMember, type RunRow } from "./runs.ts";
+import { refreshAutoRuns, reloadAutoRuns, useAutoRunFeed, pendingReveal, useAutoRunReveal, useScopedAutoRuns } from "./store.ts";
+import { buildRuns, fmtElapsed, scopeRuns, waitsForMember, type RunRow } from "./runs.ts";
 import { ancestorNames, planClearFinished, runStopScope, runWorktreeNode } from "./runActions.ts";
 import "./autorun.css";
 
@@ -232,15 +232,17 @@ function Category({
   const headRef = usePublishedHeight<HTMLDivElement>("--autorun-cat-head-h");
   const live = runs.filter((r) => r.state !== "ended");
   const ended = runs.filter((r) => r.state === "ended");
-  // A link from the memo run history to a finished run opens the fold it sits in, also when the
-  // run only reaches this category once its delivery has been read.
+  // A link from the memo run history opens the fold the run sits in, also when the run only
+  // reaches this category (or moves between its folds) once its delivery has been read.
   const revealN = useAutoRunReveal((s) => s.n);
-  const endedNames = ended.map((r) => r.root.name).join("\u0000");
+  const names = live.map((r) => r.root.name).join("\u0000") + "\u0001" + ended.map((r) => r.root.name).join("\u0000");
   useEffect(() => {
     const name = pendingReveal();
-    if (name && ended.some((r) => r.root.name === name)) setShowEnded(true);
+    if (!name) return;
+    if (live.some((r) => r.root.name === name)) setShowLive(true);
+    if (ended.some((r) => r.root.name === name)) setShowEnded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revealN, endedNames]);
+  }, [revealN, names]);
   return (
     <section className="autorun-cat" data-autorun-category={label}>
       <div className="autorun-cat-head" ref={headRef}>
@@ -356,15 +358,19 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
 }
 
 /** Scrolls the revealed run's row into view and focuses it, once it is rendered where it belongs:
- *  a finished run no delivery names yet is in "Other runs" and moves when its delivery arrives, so
- *  the request stays open until then. */
+ *  a run no delivery names yet is in "Other runs" and moves when its delivery arrives, so the
+ *  request stays open until then (and asks for that read). */
 function useRevealRun(runs: RunRow[]): void {
   const n = useAutoRunReveal((s) => s.n);
   useEffect(() => {
     const name = pendingReveal();
     const run = runs.find((r) => r.root.name === name);
-    if (!run || (run.state === "ended" && run.categoryId === "")) return;
-    // The view and an ended fold open in this commit or the next: wait a frame for the row.
+    if (!run) return;
+    if (run.categoryId === "") {
+      refreshAutoRuns();
+      return;
+    }
+    // The view and a fold open in this commit or the next: wait a frame for the row.
     const id = requestAnimationFrame(() => {
       const row = document.querySelector<HTMLElement>(`[data-autorun-run="${CSS.escape(name)}"]`);
       if (!row) return;
@@ -383,7 +389,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
   useAutoRunFeed(shown);
   // The bar's own read may be minutes old when the view comes back.
   useEffect(() => {
-    if (shown) reloadAutoRuns();
+    if (shown) refreshAutoRuns();
   }, [shown]);
   const { queues, tenantEnabled, deliveries } = useScopedAutoRuns();
   const reload = reloadAutoRuns;
@@ -397,18 +403,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
     return () => clearInterval(id);
   }, []);
   const allRuns = useMemo(() => buildRuns(sessions, deliveries), [sessions, deliveries]);
-  // A category is in the working set when its repository is; a category without a repository, and
-  // the runs no queue category names, are in every set.
-  const inScope = (id: string): boolean => {
-    if (!wset) return true;
-    const q = queues.find((x) => x.categoryId === id);
-    return !q || !q.repo || wset.repos.includes(q.repo);
-  };
-  const runs = useMemo(
-    () => (wset ? allRuns.filter((r) => inScope(r.categoryId)) : allRuns),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [allRuns, wset, queues],
-  );
+  const runs = useMemo(() => scopeRuns(allRuns, queues, wset), [allRuns, queues, wset]);
   useRevealRun(runs);
   const labelOf = (id: string): string => {
     const q = queues.find((x) => x.categoryId === id);

@@ -32,10 +32,29 @@ describe("buildScheduledRuns", () => {
   });
 
   it("narrows to a working set by the run's root session", () => {
-    const set = { id: "w", name: "w", repos: [], sessions: ["cron"], convs: [], schedules: [] } as never;
+    const set = { id: "w", name: "w", repos: [], sessions: ["cron", "rev"], convs: [], schedules: [] } as never;
     const rows = buildScheduledRuns([...sessions, sess("other", { origin: "schedule", state: "question" })], set);
     expect(rows.map((r) => r.root.name)).toEqual(["cron"]);
     expect(waitingScheduledCount([...sessions, sess("other", { origin: "schedule", state: "question" })], set)).toBe(1);
+  });
+
+  it("places a session by its folder's base, also for a worktree with a custom folder name", () => {
+    const repos = [{ name: "app" }, { name: "nightly", worktree: true, parent: "app" }] as never;
+    const set = { id: "w", name: "w", repos: ["app"], sessions: [], convs: [], schedules: [] } as never;
+    const ss = [sess("cron", { origin: "schedule", repo: "nightly", state: "question" })];
+    expect(buildScheduledRuns(ss, set, repos).map((r) => r.root.name)).toEqual(["cron"]);
+    expect(waitingScheduledCount(ss, set, repos)).toBe(1);
+  });
+
+  it("shows a run whose child is in the set, and counts only the sessions that are", () => {
+    const set = { id: "w", name: "w", repos: ["b"], sessions: [], convs: [], schedules: [] } as never;
+    const ss = [
+      sess("cron", { origin: "schedule", repo: "a", state: "question" }),
+      sess("rev", { origin: "session", originSession: "cron", repo: "b", state: "question" }),
+    ];
+    const rows = buildScheduledRuns(ss, set, [{ name: "a" }, { name: "b" }] as never);
+    expect(rows.map((r) => r.root.name)).toEqual(["cron"]); // the root anchors the child
+    expect(waitingScheduledCount(ss, set, [{ name: "a" }, { name: "b" }] as never)).toBe(1);
   });
 
   it("answers an empty list for a cycle or a vanished parent", () => {

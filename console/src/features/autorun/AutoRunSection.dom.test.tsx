@@ -150,6 +150,18 @@ describe("AutoRunSection", () => {
     expect(pendingReveal()).toBe("");
   });
 
+  it("opens the Running fold the member had closed when the history links to a live run", async () => {
+    const { useAutoRunReveal } = await import("./store.ts");
+    await mount();
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-autorun-group="live"] button')!.click()); // fold it
+    expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull();
+    await act(async () => useAutoRunReveal.getState().reveal("run-a"));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    expect(document.activeElement).toBe(host.querySelector('[data-autorun-run="run-a"] .autorun-run-main'));
+  });
+
   it("keeps a finished run's duration", async () => {
     await mount();
     await act(async () => host.querySelector<HTMLButtonElement>(".autorun-sub-head.is-ended")!.click());

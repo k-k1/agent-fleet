@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Session } from "../../types/session.ts";
-import { buildRuns, failedRunKeys, fmtElapsed, itemLabel, runRootName, waitingRunCount, type RunDelivery } from "./runs.ts";
+import { buildRuns, failedRunKeys, scopeRuns, fmtElapsed, itemLabel, runRootName, waitingRunCount, type RunDelivery } from "./runs.ts";
 
 const dlv = (categoryId: string, state: string, extra: Partial<RunDelivery> = {}): RunDelivery => ({ id: "d-" + categoryId, categoryId, state, outcome: "", turnOutcome: "", sentAt: "", createdAt: "", closedAt: "", heldBy: "", ...extra });
 const sess = (name: string, extra: Partial<Session>): Session => ({ name, kind: "claude", alive: true, ...extra });
@@ -137,5 +137,32 @@ describe("run badges", () => {
     );
     expect(waitingRunCount(rows)).toBe(1);
     expect(failedRunKeys(rows)).toEqual(["db"]);
+  });
+});
+
+describe("a failed run stays failed", () => {
+  it("when its session is resumed, which only changes what the row shows", () => {
+    const rows = buildRuns(
+      [sess("a", { origin: "queue", alive: true })],
+      new Map([["a", dlv("c", "closed", { id: "da", outcome: "clean", turnOutcome: "turn-failed" })]]),
+    );
+    expect(rows[0].resumed).toBe(true);
+    expect(failedRunKeys(rows)).toEqual(["da"]);
+  });
+});
+
+describe("scopeRuns", () => {
+  const rows = buildRuns(
+    [sess("a", { origin: "queue", state: "question" }), sess("b", { origin: "queue", state: "question" }), sess("c", { origin: "queue", state: "question" })],
+    new Map([["a", dlv("ca", "open")], ["b", dlv("cb", "open")], ["c", dlv("cx", "open")]]),
+  );
+  const queues = [{ categoryId: "ca", repo: "A" }, { categoryId: "cb", repo: "B" }] as never;
+  const set = { id: "w", name: "w", repos: ["A"], sessions: [], convs: [], schedules: [] } as never;
+
+  it("keeps the runs of the set's repositories and those no category names; count and view agree", () => {
+    expect(scopeRuns(rows, queues, null)).toHaveLength(3);
+    const scoped = scopeRuns(rows, queues, set);
+    expect(scoped.map((r) => r.root.name).sort()).toEqual(["a", "c"]);
+    expect(waitingRunCount(scoped)).toBe(2);
   });
 });

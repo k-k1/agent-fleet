@@ -9,7 +9,8 @@ import { useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { openSessionChat } from "../sessions/open.ts";
 import { useSessionsStore } from "../sessions/store.ts";
-import { useAutoRunReveal } from "../autorun/store.ts";
+import { useAutoRunReveal, useScopedAutoRuns } from "../autorun/store.ts";
+import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { errText } from "../../core/api/client.ts";
@@ -31,6 +32,11 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
   // A run whose session the Auto-run view lists can be shown there.
   const runNames = useSessionsStore((s) => s.sessions);
   const listed = new Set(runNames.filter((x) => x.origin === "queue").map((x) => x.name));
+  // The Auto-run view lists only the categories of the active working set; a link to a run it
+  // hides would land on nothing.
+  const wset = useActiveWorkingSet();
+  const repo = useScopedAutoRuns().queues.find((q) => q.categoryId === categoryId)?.repo ?? "";
+  const hidden = !!wset && !!repo && !wset.repos.includes(repo);
   // Only the newest read may land: a slow earlier one must not overwrite a later answer.
   const seq = useRef(0);
 
@@ -161,7 +167,8 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
               <button
                 type="button"
                 className="linkish memo-run-view"
-                title={tr("memo.d_show_run")}
+                title={hidden ? tr("memo.d_show_run_hidden") : tr("memo.d_show_run")}
+                disabled={hidden}
                 onClick={(e) => {
                   e.stopPropagation();
                   useAutoRunReveal.getState().reveal(d.session);

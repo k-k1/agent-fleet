@@ -210,6 +210,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.d_defer_returned": "You returned the memo before the hand-back",
   "memo.waiting_below_threshold_deferred": "Waiting for more memos: {count} of {needed} ready so far, and {deferred} more were handed back by their runs and wait for their time. Runs start once {needed} are ready.",
   "memo.waiting_below_threshold_blocked_deferred": "Waiting for more memos: {count} of {needed} ready so far; {blocked} more wait for the memos they depend on and {deferred} were handed back by their runs and wait for their time. Runs start once {needed} are ready.",
+  "memo.d_show_run_hidden": "Not in the working set you are looking at",
   "memo.d_show_run": "Show in Auto-run",
   "memo.d_end": "End",
   "memo.d_end_title": "End this run?",

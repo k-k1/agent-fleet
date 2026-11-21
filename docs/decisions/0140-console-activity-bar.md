@@ -165,7 +165,8 @@ instead of Ended. Decisions above are unchanged.
 ## Note, 2026-11-21: badges for the Auto-run icon; scheduled sessions move to the Schedules view (#4646, part 3)
 
 The Auto-run icon takes decision 4's two badges, counted only over the rows the view lists (every
-run; the view is not scoped by a working set). A waiting count: the runs whose session waits for the
+run of the active working set's repositories, #4670's scoping, which the count and the
+acknowledgement share with the view). A waiting count: the runs whose session waits for the
 member's answer, which stays while the view is open. A red news dot: a run its queue closed after
 its first turn failed (`firstTurn.outcome` is `turn-failed`; a delivery has no failed outcome of its own,
 and an aborted or hand-ended run is the member's own doing), acknowledged by opening the view like the
