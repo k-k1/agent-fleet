@@ -1273,11 +1273,17 @@ button.memo-reflink-key {
   width: 100%;
   padding: 4px 6px;
   border: 0;
-  background: none;
+  background: var(--leftpane-bg, var(--panel));
   color: var(--fg-muted);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+}
+/* Open, the line pins under the category head so the history can be closed from anywhere in it. */
+.memo-sent-fold[aria-expanded="true"] {
+  position: sticky;
+  top: calc(var(--sec-head-h, 34px) + var(--memo-repo-head-h, 0px) + var(--memo-cat-head-h, 28px));
+  z-index: 1;
 }
 .memo-sent-fold:hover {
   color: var(--fg);
