@@ -1,6 +1,6 @@
 // session_wire_origin_test.go — origin and originSession survive the stopped-workspace list.
 //
-// The Console moves scheduled and auto-run runs out of the Sessions list by origin and
+// The Console classifies runs (auto-run views vs. the Sessions list) by origin and
 // originSession. While the Workspace is stopped the DB mirror is the only source, so both
 // keys have to be written by sessionRows and read back by the stopped path.
 package main
@@ -41,15 +41,23 @@ func TestSessionsPayloadKeepsOriginThroughTheMirror(t *testing.T) {
 		_, _ = w.Write([]byte(`{"sessions":[
 			{"name":"child","kind":"claude","createdAt":"2026-09-23T10:00:00+09:00","alive":true,
 			 "origin":"session","originSession":"parent"},
-			{"name":"plain","kind":"claude","createdAt":"2026-09-23T08:00:00+09:00","alive":false}
+			{"name":"plain","kind":"claude","createdAt":"2026-09-23T08:00:00+09:00","alive":false},
+			{"name":"nul","kind":"claude","createdAt":"2026-09-23T07:00:00+09:00","alive":false,
+			 "origin":"sch\u0000edule"}
 		]}`))
 	}))
 	t.Cleanup(agent.Close)
 
-	api := workspaceAPI{memberAuth: memberAuth{mgr: &manager{store: st}}}
+	// Stopped is a fresh manager over the same DB and an Agent that does not answer, so only the
+	// mirror can supply the values.
 	payload := func(state string) map[string]map[string]any {
 		t.Helper()
-		res := &resolved{rt: stubRuntime{endpoint: agent.URL, token: "tok", state: state}, ws: ws}
+		endpoint := agent.URL
+		if state == "stopped" {
+			endpoint = "http://127.0.0.1:1"
+		}
+		api := workspaceAPI{memberAuth: memberAuth{mgr: &manager{store: st}}}
+		res := &resolved{rt: stubRuntime{endpoint: endpoint, token: "tok", state: state}, ws: ws}
 		raw, err := json.Marshal(api.sessionsPayload(ctx, res))
 		if err != nil {
 			t.Fatal(err)
@@ -64,8 +72,8 @@ func TestSessionsPayloadKeepsOriginThroughTheMirror(t *testing.T) {
 		for _, s := range body.Sessions {
 			byName[s["name"].(string)] = s
 		}
-		if len(byName) != 2 {
-			t.Fatalf("%s: sessions = %v, want child and plain", state, body.Sessions)
+		if len(byName) != 3 {
+			t.Fatalf("%s: sessions = %v, want child, plain and nul", state, body.Sessions)
 		}
 		return byName
 	}
@@ -75,6 +83,12 @@ func TestSessionsPayloadKeepsOriginThroughTheMirror(t *testing.T) {
 	if stopped["child"]["origin"] != "session" || stopped["child"]["originSession"] != "parent" {
 		t.Errorf("stopped: child origin = %v / %v, want session / parent",
 			stopped["child"]["origin"], stopped["child"]["originSession"])
+	}
+	if stopped["child"]["alive"] == true {
+		t.Errorf("stopped: child alive = true, want the mirror's stopped row")
+	}
+	if stopped["nul"]["origin"] != "schedule" {
+		t.Errorf("stopped: nul origin = %v, want schedule (NUL stripped, row kept)", stopped["nul"]["origin"])
 	}
 	for _, k := range []string{"origin", "originSession"} {
 		if v, ok := stopped["plain"][k]; ok {

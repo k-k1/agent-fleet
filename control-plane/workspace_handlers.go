@@ -1009,11 +1009,7 @@ type sessionWire struct {
 	// it is the only link there is — a worktree's folder and branch carry a random slug.
 	// Absent here it is silently dropped, every family collapses to size 1, and NOTHING of
 	// that display appears; because the Console declares it optional, the type check never
-	// complains either. No DB-mirror column: while the whole Workspace is stopped the repo
-	// list 502s and the rail has no working copies to nest under at all, so what is lost is
-	// the family colour on the flat session list, not the tree. Stopped SESSIONS are
-	// unaffected — the Agent is authoritative whenever the Workspace runs and reports them
-	// with their lineage intact.
+	// complains either. The DB mirror keeps it, so the stopped list carries the lineage too.
 	OriginSession string `json:"originSession,omitempty"`
 	// Origin: who raised the session (ADR 0073) — "session" marks a child another session
 	// spawned, the one thing originSession cannot say (a fork or a launched handoff proposal
@@ -1183,7 +1179,7 @@ func (a workspaceAPI) sessionsShared(ctx context.Context, res *resolved) []sessi
 			Carried: r0.Carried,
 			// Which studio a session belongs to decides which pane opens it.
 			Studio: r0.Studio,
-			// Who raised it: the Console sorts scheduled and auto-run runs out of the Sessions list by these.
+			// Who raised it: the Console classifies runs (auto-run views vs. Sessions list) by these.
 			Origin: r0.Origin, OriginSession: r0.OriginSession,
 			// Which items it is on: the Console's rows and item details read them while stopped too.
 			Links: store.SessionLinksJSON(links[r0.Name]),
