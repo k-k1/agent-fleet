@@ -213,15 +213,21 @@ describe("AutoRunSection", () => {
         await vi.advanceTimersByTimeAsync(30_000); // deleted
       });
       useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.map((x) => (x.origin === "user" ? x : { ...x, alive: false })) });
-      memoQueueDeliveries.mockImplementation(async () => []);
+      memoQueueDeliveries.mockImplementation(() => new Promise(() => {})); // the new read stays pending
       await act(async () => {
         await vi.advanceTimersByTimeAsync(30_000); // created again: a new read starts
       });
+      expect(memoQueueDeliveries).toHaveBeenCalledTimes(2);
       await act(async () => {
         late([{ id: "d1", session: "run-a", state: "open" }]); // the old answer arrives now
         await Promise.resolve();
       });
       expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull(); // not pinned open again
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      // The old read's finally must not have cleared the new read's in-flight mark.
+      expect(memoQueueDeliveries).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
