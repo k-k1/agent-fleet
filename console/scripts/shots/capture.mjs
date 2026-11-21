@@ -2682,7 +2682,8 @@ const SCENES = [
       for (let i = 0; i < 50 && !document.querySelector(".memo-cat-act"); i++) await new Promise((r) => setTimeout(r, 200));
       const cat = [...document.querySelectorAll(".memo-cat")].find((c) => /決済|Checkout/.test(c.querySelector(".memo-cat-name")?.textContent || ""));
       const acts = cat ? [...cat.querySelectorAll(".memo-cat-act")] : [];
-      acts[0]?.click();
+      // History is the button after Run now; it was the first action before Run now moved onto the head.
+      (cat?.querySelector(".memo-cat-run + .memo-cat-act") ?? acts[0])?.click();
       for (let i = 0; i < 50 && !document.querySelector(".memo-d-row"); i++) await new Promise((r) => setTimeout(r, 200));
     })()`,
     settle: 2000,
