@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Memo, MemoCategory } from "../../types/memo.ts";
 
 let servedMemos: Memo[] = [];
+let memoListRejects = false;
 let servedCats: MemoCategory[] = [];
 let servedQueues: unknown = { tenantEnabled: true, queues: [] };
 let queuesFail = false;
@@ -27,7 +28,10 @@ const memoQueueList = vi.fn(async () => {
 });
 
 vi.mock("./api.ts", () => ({
-  memoList: async () => servedMemos,
+  memoList: async () => {
+    if (memoListRejects) throw new Error("connection reset");
+    return servedMemos;
+  },
   memoCategoryList: async () => servedCats,
   memoCreate: async () => ({}),
   memoUpdate: (id: string, patch: unknown) => memoUpdateMock(id, patch),
@@ -165,6 +169,7 @@ beforeEach(() => {
   useQueueSettingsCache.getState().reset();
   localStorage.clear();
   servedMemos = [];
+  memoListRejects = false;
   memoUpdateMock.mockClear();
   servedCats = [aCat({ queue: true })];
   servedQueues = { tenantEnabled: true, queues: [aQueue()] };
@@ -708,14 +713,21 @@ describe("deliveries and Run now", () => {
       await render();
       expect(useQueueSettingsCache.getState().queues[0]?.fireBlock?.reason).toBe("nothing_waiting");
     });
+    it("keeps the queue list when the memo read itself fails", async () => {
+      memoListRejects = true;
+      servedQueues = { tenantEnabled: true, queues: [aQueue({ fireBlock: { reason: "no_place", detail: { by: "category" } } })] };
+      await render();
+      expect(useQueueSettingsCache.getState().queues[0]?.fireBlock?.reason).toBe("no_place");
+    });
     it("does not fold the category when a disabled button is pressed", async () => {
       servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
       servedQueues = { tenantEnabled: true, queues: [aQueue({ fireBlock: { reason: "prerequisites", detail: { blocked: 1 } } })] };
       await render();
-      const expanded = () => document.querySelector("[aria-expanded]:not(.memo-cat-run)")?.getAttribute("aria-expanded");
-      const before = expanded();
+      const caret = must(fireBtn().closest(".memo-cat-head")?.querySelector<HTMLElement>(".memo-cat-caret"), "category caret");
+      const before = caret.getAttribute("aria-expanded");
+      expect(before).toBe("true");
       await click(fireBtn());
-      expect(expanded()).toBe(before);
+      expect(caret.getAttribute("aria-expanded")).toBe(before);
       expect(memoQueueFire).not.toHaveBeenCalled();
     });
     it("is disabled while every waiting memo waits for another memo, and says so", async () => {
@@ -838,6 +850,18 @@ describe("deliveries and Run now", () => {
       const note = must(dialog().querySelector<HTMLElement>(".memo-d-slots-full"), "notice");
       expect(note.textContent).toBe(t("memo.d_load_failed"));
       expect(note.querySelector("ul")).toBeNull();
+    });
+
+    it("reads the holders again when the history is already open", async () => {
+      servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+      servedDeliveries = [];
+      memoQueueFire.mockResolvedValueOnce(noSlot);
+      await render();
+      await click(byLabel(t("memo.autorun_deliveries")));
+      expect(dialog().querySelector(".memo-d-slots-full")).toBeNull();
+      servedDeliveries = [run("d1", "open", "run-1", "person")]; // took the slot after the history was read
+      await click(must(document.querySelector<HTMLElement>(".memo-cat-run"), "Run now"));
+      expect(dialog().querySelector(".memo-d-slots-full")?.textContent).toContain(t("memo.d_slots_holder", { name: "run-1", why: t("memo.d_held_person") }));
     });
 
     it("only toasts for another refusal and opens nothing", async () => {

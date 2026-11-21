@@ -491,10 +491,12 @@
   text-align: left;
   white-space: nowrap;
 }
-.ui-menu-item:hover:not(:disabled) {
+.ui-menu-item:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--hover-bg);
 }
-.ui-menu-item:disabled {
+/* aria-disabled keeps the item focusable, so its reason can be read by keyboard. */
+.ui-menu-item:disabled,
+.ui-menu-item[aria-disabled="true"] {
   opacity: 0.4;
   cursor: default;
 }

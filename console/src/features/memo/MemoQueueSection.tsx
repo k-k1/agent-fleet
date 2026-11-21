@@ -274,22 +274,26 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       // Numbered when the request starts, and tied to the scope it starts in (store.ts).
       const ticket = useMemoStore.getState().begin();
       const queueTicket = useQueueSettingsCache.getState().begin();
-      return Promise.all([memoList(), memoCategoryList(), memoQueueList().catch(() => null)])
-        .then(([mList, cList, qRaw]) => {
+      // Published by its own read, so that a failed or slow memo or category read neither holds it
+      // back nor drops it: Run now's enabled state follows it. A failed settings read (an older
+      // Control Plane, an error body) keeps the cached one and never takes the memo list down.
+      const queues = memoQueueList()
+        .catch(() => null)
+        .then((qRaw) => {
+          if (!alive) return;
+          const fresh = readMemoQueues(qRaw);
+          if (fresh) useQueueSettingsCache.getState().publish(queueKey, queueTicket, fresh);
+        });
+      return Promise.all([memoList(), memoCategoryList(), queues])
+        .then(([mList, cList]) => {
           if (!alive) return;
           // An error body (api() resolves HTTP errors as {error}) is a failed read, not an empty
           // list: keep what is on screen, and with it the records of the changed notes.
-          // The settings read is independent of them: Run now's enabled state follows it, so a failed
-          // memo or category read must not leave it stale.
-          const fresh = readMemoQueues(qRaw);
-          if (fresh) useQueueSettingsCache.getState().publish(queueKey, queueTicket, fresh);
           const readOk = (v: unknown) => v === null || Array.isArray(v);
           if (!readOk(mList) || !readOk(cList)) return;
           const marr = Array.isArray(mList) ? mList : [];
           const carr = Array.isArray(cList) ? cList : [];
           useMemoStore.getState().publish(marr, ticket, scope);
-          // A failed settings read (an older Control Plane, an error body) keeps the cached one;
-          // it never takes the memo list down with it.
           setMemosTenant(tenant ?? "");
           const ser = JSON.stringify([marr, carr]);
           if (ser !== serRef.current) {

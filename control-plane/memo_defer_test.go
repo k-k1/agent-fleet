@@ -110,6 +110,9 @@ func TestMemoDeferAppliedByTheCleanClose(t *testing.T) {
 			store.DeliveryTS(time.Now().Add(-time.Minute)), mid); err != nil {
 			t.Fatal(err)
 		}
+		if fb := e.queueFireBlock(got.QueueID); fb != nil {
+			t.Fatalf("fireBlock %+v after the time passed", fb)
+		}
 		if d2 := e.fired(got.QueueID); !sameIDs(d2.MessageIDs, mid) {
 			t.Fatalf("re-fire claimed %v", d2.MessageIDs)
 		}

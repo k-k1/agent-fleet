@@ -131,6 +131,12 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
     }
   };
 
+  // A refusal for want of a slot arrives while the history is open: read the holders as of now, not
+  // as of the last poll (a manual open may predate the run that took the slot).
+  useEffect(() => {
+    if (slotsFull) void load();
+  }, [slotsFull, load]);
+
   useEffect(() => {
     alive.current = true;
     void load();
