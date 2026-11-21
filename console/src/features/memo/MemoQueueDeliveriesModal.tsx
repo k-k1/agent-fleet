@@ -76,19 +76,33 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
   const [undoing, setUndoing] = useState("");
   const [refused, setRefused] = useState<Record<string, MemoTidyBlocked[]>>({});
   const alive = useRef(true);
+  // Numbers each read of the runs when it starts: an answer that is not the newest is ignored, so a
+  // slow older read cannot overwrite a newer one. `answered` is the newest number applied (an
+  // answer or a failure), and `wanted` the number a slot refusal needs before its notice may claim
+  // anything: the notice must not rest on a list read before the refusal.
+  const seq = useRef(0);
+  const [answered, setAnswered] = useState(0);
+  const [wanted, setWanted] = useState(0);
+  const slotsAtOpen = useRef(slotsFull);
 
   const holders = (rows ?? []).filter((d) => d.state === "claimed" || d.state === "sending" || d.state === "open");
 
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     try {
       const got = readDeliveries(await memoQueueDeliveries(categoryId));
       if (!alive.current) return;
+      if (mine !== seq.current) return;
       if (got) {
         setRows(got);
         setFailed(false);
       } else setFailed(true);
+      setAnswered(mine);
     } catch {
-      if (alive.current) setFailed(true);
+      if (alive.current && mine === seq.current) {
+        setFailed(true);
+        setAnswered(mine);
+      }
     }
     // The tidy history is read on its own, so a Control Plane without it leaves the runs above alone.
     try {
@@ -134,12 +148,15 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
   // A refusal for want of a slot arrives while the history is open: read the holders as of now, not
   // as of the last poll (a manual open may predate the run that took the slot).
   useEffect(() => {
-    if (slotsFull) void load();
+    if (!slotsFull) return;
+    setWanted(seq.current + 1);
+    void load();
   }, [slotsFull, load]);
 
   useEffect(() => {
     alive.current = true;
-    void load();
+    // Opened by a slot refusal, the effect above already reads.
+    if (!slotsAtOpen.current) void load();
     const id = setInterval(() => {
       if (!document.hidden) void load();
     }, POLL_MS);
@@ -183,8 +200,10 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
         </div>
         {slotsFull && (
           <div className="ui-field-hint memo-d-slots-full">
-            {rows === null ? (
-              <p role="alert">{failed ? tr("memo.d_load_failed") : tr("common.loading")}</p>
+            {answered < wanted || wanted === 0 ? (
+              <p role="alert">{tr("common.loading")}</p>
+            ) : failed || rows === null ? (
+              <p role="alert">{tr("memo.d_load_failed")}</p>
             ) : holders.length === 0 ? (
               <p role="alert">{tr("memo.d_slots_cleared")}</p>
             ) : (

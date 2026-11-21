@@ -864,7 +864,19 @@ describe("deliveries and Run now", () => {
       expect(dialog().querySelector(".memo-d-slots-full")?.textContent).toContain(t("memo.d_slots_holder", { name: "run-1", why: t("memo.d_held_person") }));
     });
 
-    it("only toasts for another refusal and opens nothing", async () => {
+    it("does not say the slots are free when the re-read after the refusal fails", async () => {
+      servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+      servedDeliveries = []; // the open history read an empty list
+      memoQueueFire.mockResolvedValueOnce(noSlot);
+      await render();
+      await click(byLabel(t("memo.autorun_deliveries")));
+      servedDeliveries = { error: { code: "x" } };
+      await click(must(document.querySelector<HTMLElement>(".memo-cat-run"), "Run now"));
+      const note = must(dialog().querySelector<HTMLElement>(".memo-d-slots-full"), "notice");
+      expect(note.textContent).toBe(t("memo.d_load_failed"));
+    });
+
+        it("only toasts for another refusal and opens nothing", async () => {
       servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
       memoQueueFire.mockResolvedValueOnce({ error: { code: "memo_queue_member_limit", message: "x" } });
       await render();
