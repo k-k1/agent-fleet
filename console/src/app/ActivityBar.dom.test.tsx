@@ -463,3 +463,13 @@ describe("ActivityBar badges", () => {
     expect(badge("files")).toBeNull();
   });
 });
+
+describe("ActivityBar sparkle mark", () => {
+  it("is carried by the views that list agents at work, and by no other", async () => {
+    await mount();
+    const marked = [...host!.querySelectorAll<HTMLElement>(".actbar-btn[data-rail-view]")]
+      .filter((b) => b.querySelector(".actbar-mark"))
+      .map((b) => b.dataset.railView);
+    expect(marked).toEqual(["sessions", "shared", "autorun", "schedules"]);
+  });
+});
