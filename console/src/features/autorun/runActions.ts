@@ -3,7 +3,7 @@
 // builds, plus a filter that keeps a member's own session in a shared copy out of the scope.
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
-import { sessionFolder, sessionsInFolder, type RepoTreeNode } from "../../lib/project.ts";
+import { sessionFolder, sessionsInFolder, worktreeOwners, type RepoTreeNode } from "../../lib/project.ts";
 import type { RunRow } from "./runs.ts";
 
 const node = (repo: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo, children, groups: [], spine: "" });
@@ -28,37 +28,45 @@ export function runStopScope(run: RunRow, repos: Repo[]): { node: RepoTreeNode; 
   return { node: node(repoOf(head, repos), folders.filter((f) => f !== head).map((f) => node(repoOf(f, repos)))), only };
 }
 
-/** The run's own worktree for the delete plan; null when it runs in a base clone (never the
- *  run's to delete) or its copy is unknown. */
-export function runWorktreeNode(run: RunRow, repos: Repo[]): RepoTreeNode | null {
-  const repo = repos.find((r) => r.name === sessionFolder(run.root));
-  return repo?.worktree === true ? node(repo) : null;
+/** The run's own worktree for the delete plan; null when it runs in a base clone, its copy is
+ *  unknown, or the run did not create it. The run created a copy only when it is the first session
+ *  that ever ran there (worktreeOwners); a member's worktree a run was later pointed at is not the
+ *  run's to delete. `sessions` is the list the owner is read from. */
+export function runWorktreeNode(run: RunRow, repos: Repo[], sessions: Session[]): RepoTreeNode | null {
+  const folder = sessionFolder(run.root);
+  const repo = repos.find((r) => r.name === folder);
+  if (repo?.worktree !== true) return null;
+  if (worktreeOwners(sessions).get(folder)?.name !== run.root.name) return null;
+  return node(repo);
 }
 
-/** "Clear finished runs": stopped sessions of ended runs to archive, and one delete plan over the
- *  worktrees of runs whose PR was merged. A worktree another session also lives in is not
- *  offered, and its sessions are archived like any other copy's. */
+/** "Clear finished runs": per ended run, the stopped sessions to archive (what the run started
+ *  first, the run itself last, so a failure part-way leaves the run listed and retryable), and one
+ *  delete plan over the worktrees of runs whose PR was merged. A worktree another session also
+ *  lives in is not offered, and its sessions are archived like any other copy's. Session state is
+ *  read from `sessions`, so call it with the latest list. */
 export function planClearFinished(
   runs: RunRow[],
   sessions: Session[],
   repos: Repo[],
-): { archive: Session[]; node: RepoTreeNode | null } {
+): { archive: Session[][]; node: RepoTreeNode | null } {
+  const fresh = new Map(sessions.map((s) => [s.name, s]));
   const ended = runs.filter((r) => r.state === "ended");
-  const mine = new Set(ended.flatMap(runSessions).map((s) => s.name));
+  const ownedBy = (r: RunRow) => runSessions(r).flatMap((s) => fresh.get(s.name) ?? []);
+  const mine = new Set(ended.flatMap(ownedBy).map((s) => s.name));
   const heads: RepoTreeNode[] = [];
   const offered = new Set<string>();
   for (const r of ended) {
     if (r.pr?.state !== "merged") continue;
-    const wt = runWorktreeNode(r, repos);
+    const wt = runWorktreeNode(r, repos, sessions);
     if (!wt || offered.has(wt.repo.name)) continue;
     if (!sessionsInFolder(sessions, wt.repo.name).every((s) => mine.has(s.name))) continue;
     offered.add(wt.repo.name);
     heads.push(wt);
   }
   const archive = ended
-    .flatMap(runSessions)
-    .filter((s) => !s.alive && !s.locked && !offered.has(sessionFolder(s)))
-    .filter((s, i, all) => all.findIndex((x) => x.name === s.name) === i);
+    .map((r) => [...ownedBy(r)].reverse().filter((s) => !s.alive && !s.locked && !offered.has(sessionFolder(s))))
+    .filter((g) => g.length > 0);
   const [head, ...rest] = heads;
   return { archive, node: head ? { ...head, children: rest } : null };
 }

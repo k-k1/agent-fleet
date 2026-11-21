@@ -37,21 +37,29 @@ describe("runStopScope", () => {
 
 describe("runWorktreeNode", () => {
   it("offers a worktree and never a base clone", () => {
-    const [wt] = buildRuns([sess("r", { origin: "queue", repo: "base@wip-a" })], new Map());
-    const [bc] = buildRuns([sess("r", { origin: "queue", repo: "base" })], new Map());
-    expect(runWorktreeNode(wt, repos)!.repo.name).toBe("base@wip-a");
-    expect(runWorktreeNode(bc, repos)).toBeNull();
+    const a = [sess("r", { origin: "queue", repo: "base@wip-a" })];
+    const b = [sess("r", { origin: "queue", repo: "base" })];
+    expect(runWorktreeNode(buildRuns(a, new Map())[0], repos, a)!.repo.name).toBe("base@wip-a");
+    expect(runWorktreeNode(buildRuns(b, new Map())[0], repos, b)).toBeNull();
+  });
+
+  it("does not offer a worktree the run did not create (the member's session ran there first)", () => {
+    const sessions = [
+      sess("mine", { origin: "user", repo: "base@wip-a", createdAt: "2026-11-01T00:00:00Z" }),
+      sess("r", { origin: "queue", repo: "base@wip-a", createdAt: "2026-11-02T00:00:00Z" }),
+    ];
+    expect(runWorktreeNode(buildRuns(sessions, new Map())[0], repos, sessions)).toBeNull();
   });
 });
 
 describe("planClearFinished", () => {
   const merged = { number: 1, state: "merged" as const, url: "u" };
   const sessions = [
-    sess("r1", { origin: "queue", alive: false, repo: "base@wip-a", pr: merged }),
-    sess("k1", { origin: "session", originSession: "r1", alive: false, repo: "base@wip-a" }),
+    sess("r1", { origin: "queue", alive: false, repo: "base@wip-a", pr: merged, createdAt: "2026-11-01T00:00:00Z" }),
+    sess("k1", { origin: "session", originSession: "r1", alive: false, repo: "base@wip-a", createdAt: "2026-11-01T01:00:00Z" }),
     sess("r2", { origin: "queue", alive: false, repo: "base@wip-b", pr: { number: 2, state: "open", url: "u" } }),
-    sess("r3", { origin: "queue", alive: false, repo: "base@wip-c", pr: merged }),
-    sess("mine", { origin: "user", alive: false, repo: "base@wip-c" }),
+    sess("r3", { origin: "queue", alive: false, repo: "base@wip-c", pr: merged, createdAt: "2026-11-01T00:00:00Z" }),
+    sess("mine", { origin: "user", alive: false, repo: "base@wip-c", createdAt: "2026-11-02T00:00:00Z" }),
     sess("r4", { origin: "queue", alive: true, repo: "base" }),
   ];
   const runs = runsOf(sessions, ["r1", "r2", "r3"]);
@@ -61,13 +69,25 @@ describe("planClearFinished", () => {
     expect(p.node!.repo.name).toBe("base@wip-a");
     expect(p.node!.children).toEqual([]);
     // r1/k1 go with their worktree; r2 is unmerged; r3's copy holds a session of the member's.
-    expect(p.archive.map((s) => s.name).sort()).toEqual(["r2", "r3"]);
+    expect(p.archive.flat().map((s) => s.name).sort()).toEqual(["r2", "r3"]);
   });
 
   it("never touches a run that has not ended, nor a member's session", () => {
     const p = planClearFinished(runs, sessions, repos);
-    expect(p.archive.map((s) => s.name)).not.toContain("r4");
-    expect(p.archive.map((s) => s.name)).not.toContain("mine");
+    expect(p.archive.flat().map((s) => s.name)).not.toContain("r4");
+    expect(p.archive.flat().map((s) => s.name)).not.toContain("mine");
+  });
+
+  it("orders a run's sessions children first and the run last, and reads state from the latest list", () => {
+    const base = [
+      sess("r", { origin: "queue", alive: false, repo: "base" }),
+      sess("k1", { origin: "session", originSession: "r", alive: false, repo: "base", createdAt: "2026-11-01T00:00:00Z" }),
+      sess("k2", { origin: "session", originSession: "r", alive: false, repo: "base", createdAt: "2026-11-02T00:00:00Z" }),
+    ];
+    const rs = runsOf(base, ["r"]);
+    expect(planClearFinished(rs, base, repos).archive[0].map((s) => s.name)).toEqual(["k2", "k1", "r"]);
+    const resumed = base.map((s) => (s.name === "k1" ? { ...s, alive: true } : s));
+    expect(planClearFinished(rs, resumed, repos).archive[0].map((s) => s.name)).toEqual(["k2", "r"]);
   });
 
   it("chains several merged worktrees under one head", () => {

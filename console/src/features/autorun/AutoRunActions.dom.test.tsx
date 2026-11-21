@@ -104,6 +104,16 @@ describe("run row menu", () => {
   });
 });
 
+describe("dialog lifetime", () => {
+  it("keeps the stop dialog open when the run's sessions stop and the row moves away", async () => {
+    await openMenu("run-a");
+    await act(async () => item(0).click());
+    useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.map((s) => (s.origin === "user" ? s : { ...s, alive: false })) } as never);
+    await flush();
+    expect(document.body.querySelector("[data-stop-modal]")).not.toBeNull();
+  });
+});
+
 describe("Clear finished runs", () => {
   it("archives the stopped sessions that do not go with a merged worktree, after one confirmation, then offers the worktree", async () => {
     await act(async () => host.querySelector<HTMLButtonElement>(".autorun-clear")!.click());
@@ -112,6 +122,30 @@ describe("Clear finished runs", () => {
     // rev-old sits in the base clone: archived here; run-old's merged worktree goes through the delete dialog.
     expect(rawCall.mock.calls.map((c) => c[0])).toEqual(["api/sessions/rev-old/archive"]);
     expect(document.body.querySelector("[data-delete-modal]")!.getAttribute("data-delete-modal")).toBe("base@wip-o");
+  });
+
+  it("does not offer a worktree a member's session entered while the confirmation was open", async () => {
+    confirm.mockImplementationOnce(async () => {
+      useSessionsStore.setState({
+        sessions: [...useSessionsStore.getState().sessions, sess("late", { origin: "user", alive: false, repo: "base@wip-o", createdAt: "2026-11-05T00:00:00Z" })],
+      } as never);
+      return true;
+    });
+    await act(async () => host.querySelector<HTMLButtonElement>(".autorun-clear")!.click());
+    await flush();
+    expect(document.body.querySelector("[data-delete-modal]")).toBeNull();
+  });
+
+  it("archives the run's own session only after its children succeeded", async () => {
+    useSessionsStore.setState({
+      sessions: useSessionsStore.getState().sessions.map((s) => (s.name === "run-old" ? { ...s, repo: "base" } : s)),
+    } as never);
+    await flush();
+    rawCall.mockImplementation(async (u: string) => ({ ok: !u.includes("rev-old"), json: async () => ({}) }) as never);
+    await act(async () => host.querySelector<HTMLButtonElement>(".autorun-clear")!.click());
+    await flush();
+    expect(rawCall.mock.calls.map((c) => c[0])).toEqual(["api/sessions/rev-old/archive"]);
+    rawCall.mockImplementation(async () => ({ ok: true }));
   });
 
   it("archives nothing when the confirmation is declined", async () => {
