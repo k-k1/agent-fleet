@@ -549,6 +549,52 @@ describe("useFileEditor external change handling (docs/log/44 §7)", () => {
     expect(editor!.model?.externalObservation ?? null).toBeNull();
   });
 
+  it("keeps a missing observation that arrived while an earlier follow GET was pending", async () => {
+    const slow = deferred<EditableFile>();
+    vi.mocked(getEditableFile).mockReturnValueOnce(slow.promise);
+    const current = await renderEditor();
+    let first!: Promise<EditableFile | null>;
+    await act(async () => {
+      first = current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await current.applyProbeResult({ kind: "missing" });
+    });
+    slow.resolve(editableFile(external));
+    await act(async () => {
+      await first;
+    });
+    expect(editor!.model?.content).toBe(initial.content);
+    expect(editor!.model?.externalObservation).toEqual({ kind: "missing" });
+  });
+
+  it("drops a follow GET started for a slot the pane left and came back to", async () => {
+    const slow = deferred<EditableFile>();
+    vi.mocked(getEditableFile).mockReturnValueOnce(slow.promise);
+    const current = await renderEditor();
+    let first!: Promise<EditableFile | null>;
+    await act(async () => {
+      first = current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+      await Promise.resolve();
+    });
+    const aGiven = given;
+    given = { path: "repos/b.txt", content: "other\n", revision: revisionOf("other\n") };
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    given = aGiven;
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    slow.resolve(editableFile(external));
+    await act(async () => {
+      await first;
+    });
+    expect(editor!.model?.content).toBe(initial.content);
+    expect(editor!.model?.followEpoch).toBe(0);
+  });
+
   it("records missing/uneditable observations without touching the buffer", async () => {
     const current = await renderEditor();
     await act(async () => {

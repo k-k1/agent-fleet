@@ -504,6 +504,9 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     // A follow for another observation supersedes this one: its answer may be older than the one
     // already applied, on the success and on the error side alike.
     const seq = ++followSeq.current;
+    // The slot this GET was made for: a pane that went to another file and back has a new clean
+    // buffer on the same path, which this GET's answer (either side) must not touch.
+    const startSlot = slotRef.current;
     const current = modelRef.current;
     if (!current || savingRef.current || !isCleanForFollow(current)) return null;
     const path = current.path;
@@ -514,7 +517,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       const latest = modelRef.current;
       // Typing or a save that started while the GET was in flight wins; the
       // next probe re-observes and reports the change as an advisory instead.
-      if (!latest || latest.path !== path || savingRef.current || !isCleanForFollow(latest) || seq !== followSeq.current) return null;
+      if (!latest || slotRef.current !== startSlot || latest.path !== path || savingRef.current || !isCleanForFollow(latest) || seq !== followSeq.current) return null;
       if (remote.revision === latest.baseDiskRevision) {
         if (latest.externalObservation) setModel(observeExternal(latest, null));
         return null;
@@ -523,7 +526,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       return file;
     } catch (error) {
       const latest = modelRef.current;
-      if (!latest || latest.path !== path || !isCleanForFollow(latest) || seq !== followSeq.current) return null;
+      if (!latest || slotRef.current !== startSlot || latest.path !== path || !isCleanForFollow(latest) || seq !== followSeq.current) return null;
       const code = error instanceof Error ? error.message : "";
       // The full GET can disagree with the probe (§7.5): the file may have
       // become uneditable or vanished in between. Those become advisories;
@@ -563,6 +566,12 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     async (result: FileProbeResult): Promise<EditableFile | null> => {
       const current = modelRef.current;
       if (!current || savingRef.current) return null;
+      // An observation that needs no GET still outranks a follow GET started earlier: that GET's
+      // late answer describes an older moment and must not overwrite it.
+      if (result.kind !== "unavailable" && !(result.kind === "revision" && isCleanForFollow(current) && result.revision !== current.baseDiskRevision)) {
+        followSeq.current++;
+        followFlight.current = null;
+      }
       switch (result.kind) {
         case "unavailable":
           return null;
