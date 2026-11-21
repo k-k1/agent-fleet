@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,7 +20,7 @@ import (
 const cursorObject = "/2026.1.1-abc/linux/x64/agent-cli-package.tar.gz"
 
 // goodCursor answers only when the bundle's index.js sits beside it, as the real one needs.
-const goodCursor = "#!/bin/sh\n[ -f \"$(dirname \"$(readlink -f \"$0\")\")/index.js\" ] || exit 1\necho 2026.1.1-abc\n"
+const goodCursor = "#!/bin/sh\n[ \"$1 $2\" = \"--disable-auto-update --version\" ] || exit 2\n[ -f \"$(dirname \"$(readlink -f \"$0\")\")/index.js\" ] || exit 1\necho 2026.1.1-abc\n"
 
 type tarMember struct {
 	name, body, link string
@@ -316,5 +317,182 @@ func TestCursorWithoutPinDoesNothing(t *testing.T) {
 	delete(f.env.Pins, "cursor_sha256")
 	if rc := Cursor(t.Context(), f.env); rc != ExitOK || f.hits.Load() != 0 || f.statusText() != "" {
 		t.Errorf("rc=%d hits=%d status=%q", rc, f.hits.Load(), f.statusText())
+	}
+}
+
+func TestCursorStripMatchesTar(t *testing.T) {
+	// "./dist/f" and "dist/f" are the same member after stripping one component, as in tar;
+	// directory modes survive the umask; a hard link to another member is kept.
+	f := newCursor(t, append(goodCursorMembers(),
+		tarMember{name: "./dist-package/f", body: "one", mode: 0o644},
+		tarMember{name: "dist-package/f", body: "two", mode: 0o644},
+		tarMember{name: "dist-package/sub/", typ: tar.TypeDir, mode: 0o700},
+		tarMember{name: "dist-package/sub/g", body: "g", mode: 0o600},
+		tarMember{name: "dist-package/hl", typ: tar.TypeLink, link: "dist-package/sub/g"},
+	), "")
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	d := f.tree("2026.1.1-abc")
+	if b, _ := os.ReadFile(filepath.Join(d, "f")); string(b) != "two" {
+		t.Errorf("f=%q, want the later member", b)
+	}
+	if st, err := os.Stat(filepath.Join(d, "sub")); err != nil || st.Mode().Perm() != 0o700 {
+		t.Errorf("sub: %v %v", st, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(d, "hl")); err != nil || string(b) != "g" {
+		t.Errorf("hard link: %q %v", b, err)
+	}
+}
+
+func TestCursorRefusesChainedSymlinkEscape(t *testing.T) {
+	// a -> sub (inside), then a/../../x would resolve outside only through the link chain;
+	// and a file written through a symlinked directory must not leave the tree.
+	for _, ms := range [][]tarMember{
+		{{name: "p/a", typ: tar.TypeSymlink, link: ".."}, {name: "p/a/evil", body: "x", mode: 0o644}},
+		{{name: "p/d", typ: tar.TypeSymlink, link: "."}, {name: "p/d/d/../../../evil", body: "x", mode: 0o644}},
+		{{name: "p/hl", typ: tar.TypeLink, link: "../../etc/passwd"}},
+	} {
+		f := newCursor(t, append(goodCursorMembers(), ms...), "")
+		if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+			t.Errorf("%+v: rc=%d", ms, rc)
+		}
+		if _, err := os.Stat(filepath.Join(f.home, ".local", "share", "cursor-agent", "evil")); err == nil {
+			t.Errorf("%+v: wrote outside the stage", ms)
+		}
+		if _, err := os.Stat(f.tree("2026.1.1-abc")); err == nil {
+			t.Errorf("%+v: tree installed", ms)
+		}
+	}
+}
+
+func TestCursorRefusesUnsupportedMemberType(t *testing.T) {
+	f := newCursor(t, append(goodCursorMembers(), tarMember{name: "p/fifo", typ: tar.TypeFifo, mode: 0o644}), "")
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Errorf("rc=%d", rc)
+	}
+}
+
+func TestCursorMissingGzipFooterFails(t *testing.T) {
+	full := cursorTarball(t, goodCursorMembers())
+	cut := full[:len(full)-8] // the CRC and length footer; the tar stream itself is whole
+	f := newCursor(t, goodCursorMembers(), "")
+	h := sha256.Sum256(cut)
+	f.env.Pins["cursor_sha256"] = hex.EncodeToString(h[:])
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write(cut) }))
+	defer srv.Close()
+	f.env.CursorURL, f.env.Client = srv.URL, srv.Client()
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if _, err := os.Stat(f.tree("2026.1.1-abc")); err == nil {
+		t.Error("tree published from a truncated gzip")
+	}
+}
+
+func TestCursorRepinReadsLastVersionComponent(t *testing.T) {
+	// A HOME that itself contains /versions/<x>/ must not be read as the version.
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	f.env.Repin = true
+	home := filepath.Join(f.home, "versions", "team", "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(f.home, ".local"), filepath.Join(home, ".local")); err != nil {
+		t.Fatal(err)
+	}
+	f.env.Home = home
+	d := filepath.Join(home, ".local", "share", "cursor-agent", "versions", "2026.1.1-abc", "cursor-agent")
+	os.Remove(filepath.Join(home, ".local", "bin", "cursor-agent"))
+	os.Symlink(d, filepath.Join(home, ".local", "bin", "cursor-agent"))
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK || f.hits.Load() != 0 || !strings.Contains(f.out.String(), "already present") {
+		t.Errorf("rc=%d hits=%d out=%q", rc, f.hits.Load(), f.out)
+	}
+}
+
+func TestCursorAliasRenameFailureLeavesMainLinkForRetry(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	f.plant(t, "2026.2.2-def", goodCursor, true)
+	alias := filepath.Join(f.home, ".local", "bin", "agent")
+	os.Symlink(filepath.Join(f.tree("2026.2.2-def"), "cursor-agent"), alias)
+	f.env.Repin = true
+	orig := relinkRename
+	defer func() { relinkRename = orig }()
+	relinkRename = func(from, to string) error {
+		if to == alias {
+			return errors.New("injected")
+		}
+		return os.Rename(from, to)
+	}
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d", rc)
+	}
+	if got, _ := os.Readlink(f.link()); !strings.Contains(got, "2026.2.2-def") {
+		t.Fatalf("main link moved before the alias: %s", got)
+	}
+	relinkRename = orig
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("retry rc=%d", rc)
+	}
+	for _, l := range []string{f.link(), alias} {
+		if got, _ := os.Readlink(l); !strings.Contains(got, "2026.1.1-abc") {
+			t.Errorf("%s -> %s", l, got)
+		}
+	}
+	if m, _ := filepath.Glob(filepath.Join(f.home, ".local", "bin", "*.af-new.*")); len(m) != 0 {
+		t.Errorf("leftovers %v", m)
+	}
+}
+
+func TestCursorPinnedTreeIsProbedOnce(t *testing.T) {
+	// A pinned tree that answers the first probe is reused whatever space says afterwards.
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.0.9-old", goodCursor, true)
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	os.Remove(f.link())
+	os.Symlink(filepath.Join(f.tree("2026.0.9-old"), "cursor-agent"), f.link())
+	f.env.Repin = true
+	f.env.FreeMiB = func(string) (int64, bool) { return 1, true }
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK || f.hits.Load() != 0 {
+		t.Errorf("rc=%d hits=%d", rc, f.hits.Load())
+	}
+}
+
+func TestCursorCandidateThatDoesNotRunRestoresRunningTree(t *testing.T) {
+	// fetchCursorTree on a healthy tree (as when its probe flaked): a candidate that cannot run
+	// must leave the original tree and its link exactly as they were.
+	f := newCursor(t, []tarMember{{name: "p/cursor-agent", body: "#!/bin/sh\nexit 1\n", mode: 0o755}}, "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	dir := f.tree("2026.1.1-abc")
+	if err := f.env.fetchCursorTree(t.Context(), "2026.1.1-abc", f.env.Pins["cursor_sha256"], dir); err == nil {
+		t.Fatal("candidate that exits 1 was accepted")
+	}
+	if f.hits.Load() != 1 {
+		t.Fatalf("candidate was not fetched: %d", f.hits.Load())
+	}
+	if !f.env.cursorRuns(f.link()) {
+		t.Error("original tree/link no longer runs")
+	}
+	if m, _ := filepath.Glob(dir + ".af-*"); len(m) != 0 {
+		t.Errorf("leftovers %v", m)
+	}
+}
+
+func TestCursorDownloadFailureKeepsTreeAndRecordsNetwork(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	f.env.CursorURL, f.env.Client = srv.URL, srv.Client()
+	f.plant(t, "2026.1.1-abc", "#!/bi", false) // broken: a download is needed
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d", rc)
+	}
+	if f.statusText() != "cursor\tfailed\tnetwork\n" {
+		t.Errorf("status=%q", f.statusText())
+	}
+	if b, _ := os.ReadFile(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent")); string(b) != "#!/bi" {
+		t.Error("existing tree touched by a failed download")
 	}
 }

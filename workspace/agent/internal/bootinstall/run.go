@@ -67,7 +67,7 @@ func Run(args []string) {
 		}
 		os.Exit(e.NPMVerify(rest, false))
 	default:
-		fmt.Fprintf(os.Stderr, "boot-install: unknown step %q (have: rtk, agy, cursor, cursor, agy-version, npm, npm-verify)\n", step)
+		fmt.Fprintf(os.Stderr, "boot-install: unknown step %q (have: rtk, agy, cursor, agy-version, npm, npm-verify)\n", step)
 		os.Exit(2)
 	}
 }

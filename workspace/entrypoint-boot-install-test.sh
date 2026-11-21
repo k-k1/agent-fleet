@@ -74,7 +74,7 @@ cat >"$T/bin/workspace-agent" <<'S'
 #!/bin/sh
 echo "workspace-agent $*" >>"$STUB_WA_LOG"
 # STUB_WA_RC_NPM answers only the npm steps, so a test can tell the two mappings apart.
-case "$2" in npm|npm-verify) exit "${STUB_WA_RC_NPM:-${STUB_WA_RC:-0}}" ;; esac
+case "$2" in npm|npm-verify) exit "${STUB_WA_RC_NPM:-${STUB_WA_RC:-0}}" ;; cursor) exit "${STUB_WA_RC_CURSOR:-${STUB_WA_RC:-0}}" ;; esac
 exit "${STUB_WA_RC:-0}"
 S
 chmod +x "$T"/bin/*
@@ -129,6 +129,12 @@ reset; : >"$STUB_WA_LOG"; run_block AF_AGENT_SELF_UPDATE_SKIP=0
 grep -qx 'workspace-agent boot-install cursor --repin' "$STUB_WA_LOG" || fail "cursor: --repin not passed on a repin start"
 reset; run_block STUB_WA_RC=3 || fail "cursor: exit 3 aborted the entrypoint"
 has 'BI_LOW_SPACE=1' || fail "cursor: exit 3 did not set BI_LOW_SPACE"
+# Only cursor answers 3: dropping the exit-3 branch for cursor must show.
+reset; run_block STUB_WA_RC_CURSOR=3 STUB_WA_RC=0
+has 'BI_LOW_SPACE=1' || fail "cursor: its own exit 3 did not set BI_LOW_SPACE"
+reset; run_block STUB_WA_RC_CURSOR=0 STUB_WA_RC=3
+reset; run_block STUB_WA_RC_CURSOR=1 STUB_WA_RC=0
+has 'BI_LOW_SPACE=0' || fail "cursor: exit 1 set BI_LOW_SPACE"
 reset; run_block STUB_WA_RC=126
 has 'WARN: cursor boot-install exited 126' || fail "cursor: no WARN for an exit outside the contract"
 grep -qP '^cursor\tfailed\tother' "$T/bidir/install.tsv" || fail "cursor: no failed status for an exit outside the contract"

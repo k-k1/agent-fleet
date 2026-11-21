@@ -102,6 +102,8 @@ S
 cat >"$T/bin/workspace-agent" <<'S'
 #!/bin/sh
 echo "$*" >>"$STUB_DIR/agent.calls"
+[ "$1 $2" = "boot-install cursor" ] && echo "status=${AF_BOOT_INSTALL_STATUS-unset}" >>"$STUB_DIR/cursor.env"
+case "$2" in cursor) exit "${STUB_WA_RC_CURSOR:-${STUB_WA_RC:-0}}" ;; esac
 exit "${STUB_WA_RC:-0}"
 S
 chmod +x "$T"/bin/*
@@ -144,11 +146,11 @@ run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0
 # 4b. A skipped install is not undone by a later path in the same start: the claude fallback
 # (claude absent) and the self-update opt-in both stay off, and nothing is downloaded at all.
 reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/agy"; chmod +x "$T/home/.local/bin/agy"
-run_block STUB_FREE_MB=100 BI_AGENT_BIN="$T/bin/workspace-agent" STUB_WA_RC=3 # the Agent's own space check answered 3
+run_block BI_AGENT_BIN="$T/bin/workspace-agent" STUB_WA_RC_CURSOR=3 STUB_WA_RC=0 # only cursor's own space check answered 3; df says plenty
 [ ! -e "$T/curl.calls" ] || fail "low space: something was downloaded: $(cat "$T/curl.calls")"
 has 'not installing the Claude CLI' || fail "low space: the claude fallback was not held back"
 reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"
-run_block STUB_FREE_MB=100 BI_AGENT_BIN="$T/bin/workspace-agent" STUB_WA_RC=3 AF_AGENT_SELF_UPDATE_SKIP=0 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1
+run_block BI_AGENT_BIN="$T/bin/workspace-agent" STUB_WA_RC_CURSOR=3 STUB_WA_RC=0 AF_AGENT_SELF_UPDATE_SKIP=0 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1
 [ ! -e "$T/curl.calls" ] && [ ! -e "$T/npm.calls" ] || fail "low space + self-update opt-in: an install path still ran"
 has 'self-update: skipped for this boot (home is nearly full)' || fail "low space: self-update opt-in not held back"
 
@@ -175,6 +177,11 @@ reset; mkdir -p "$T/bidir/install.tsv"; : >"$T/bidir/install.tsv/blocker"
 run_block
 has 'AF_BOOT_INSTALL_STATUS=unset' || fail "recording could not start but the Agent was still pointed at a file"
 has 'cursor boot-install skipped' || fail "recording off broke the start"
+# With the Agent present the hand-off still happens, told no status file, and the start finishes.
+reset; rm -f "$T/cursor.env"; mkdir -p "$T/bidir/install.tsv"; : >"$T/bidir/install.tsv/blocker"
+run_block BI_AGENT_BIN="$T/bin/workspace-agent"
+grep -qx 'status=unset' "$T/cursor.env" 2>/dev/null || fail "recording off: cursor hand-off missing or told a status file ($(cat "$T/cursor.env" 2>/dev/null))"
+has 'AF_BOOT_INSTALL_STATUS=unset' || fail "recording off: the start did not finish"
 
 # Reason classes from the stderr of real-looking failures.
 reason() { printf '%s\n' "$1" >"$T/err.txt"; BI_ERR="$T/err.txt" bash -c 'source <(sed -n "/^bi_reason()/,/^}/p" "$1"); bi_reason' _ "$BLOCK_SRC"; }
@@ -199,6 +206,9 @@ BI_DIR_OVERRIDE="$T/linkdir" run_block
 [ -z "$(ls -A "$T/real")" ] || fail "a symlinked status directory was used"
 [ "$(stat -c %a "$T/real")" = 755 ] || fail "a refused symlinked directory had its target chmod'ed"
 has 'cursor boot-install skipped' || fail "a rejected status directory broke the start"
+reset; rm -f "$T/cursor.env"; mkdir -p "$T/real"; chmod 0755 "$T/real"; ln -sfn "$T/real" "$T/linkdir"
+BI_DIR_OVERRIDE="$T/linkdir" run_block BI_AGENT_BIN="$T/bin/workspace-agent"
+grep -qx 'status=unset' "$T/cursor.env" 2>/dev/null || fail "rejected status dir: cursor hand-off missing or told a status file"
 
 # 6. The self-update opt-in's own npm install (the pinned install and the repair pass are the
 # Agent's, tested in Go): its npm errors reach the log instead of /dev/null.
