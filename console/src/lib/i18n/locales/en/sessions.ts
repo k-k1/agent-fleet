@@ -476,7 +476,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.unlock": "Unlock (allow deletion)",
   "srow.locked_badge": "Locked against deletion (skipped by cleanup, and stays in this list)",
   "srow.studio_badge": "Bound to an image studio (opens the studio)",
-  "srow.pr_title": "Pull request #{n} for this branch: {state}{checks} (opens on GitHub)",
+  "srow.pr_title": "Pull request #{n} for this branch: {state}{checks} (opens the details)",
   "srow.pr_state.open": "open",
   "srow.pr_state.draft": "draft",
   "srow.pr_state.merged": "merged",

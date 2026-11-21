@@ -9,6 +9,7 @@ const { t } = await import("../../lib/i18n/index.ts");
 const { useLayoutStore } = await import("../../layout/store.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { useWorkItemModal } = await import("../workitems/modal.ts");
+const { useWorkItemStore } = await import("../workitems/store.ts");
 type Session = import("../../types/session.ts").Session;
 
 let root: Root | null = null;
@@ -29,7 +30,7 @@ const render = async (over: Partial<Session>, running = true): Promise<void> => 
 };
 
 const line = () => host.querySelector<HTMLElement>(".sess-links");
-const prLink = () => host.querySelector<HTMLAnchorElement>("a.sess-pr");
+const prLink = () => host.querySelector<HTMLButtonElement>("button.sess-pr");
 const ports = () => [...host.querySelectorAll<HTMLButtonElement>(".sess-port")];
 
 beforeEach(() => {
@@ -60,9 +61,7 @@ describe("SessionRow link line", () => {
   it("links the branch's open PR with its CI state", async () => {
     await render({ pr: { number: 1062, state: "open", url: "https://github.com/o/r/pull/1062", checks: "failure" } });
     const a = prLink()!;
-    expect(a.getAttribute("href")).toBe("https://github.com/o/r/pull/1062");
-    expect(a.target).toBe("_blank");
-    expect(a.rel).toContain("noopener");
+    expect(a.getAttribute("href")).toBeNull();
     expect(a.className).toContain("pr-open");
     expect(a.textContent).toContain("#1062");
     expect(a.querySelector(".sess-pr-ci.ci-failure")).not.toBeNull();
@@ -167,6 +166,32 @@ describe("SessionRow link line", () => {
     expect(detail?.item).toMatchObject({ provider: "jira", key: "PROJ-1" });
     expect(detail?.reference).toBe(true);
     useWorkItemModal.getState().close();
+  });
+
+  it("opens the work item modal from the PR chip: a reference stand-in when uncached, the row when cached", async () => {
+    await render({ pr: { number: 7, state: "open", url: "https://github.com/o/r/pull/7" } });
+    await act(async () => prLink()!.click());
+    let detail = useWorkItemModal.getState().detail;
+    expect(detail?.item).toMatchObject({ provider: "github", key: "o/r#7" });
+    expect(detail?.reference).toBe(true);
+    useWorkItemModal.getState().close();
+
+    const row = {
+      id: "row7", queryId: "q", provider: "github", kind: "pr", key: "o/r#7", title: "Cached PR", state: "open",
+      url: "https://github.com/o/r/pull/7", assignee: "", labels: [], labelColors: {}, repo: "o/r",
+      updatedAt: "", checks: { state: "", total: 0, failed: 0, pending: 0 }, mergeable: "",
+    };
+    const before = useWorkItemStore.getState().payload;
+    useWorkItemStore.setState({ payload: { items: [row] } as never });
+    try {
+      await act(async () => prLink()!.click());
+      detail = useWorkItemModal.getState().detail;
+      expect(detail?.item.id).toBe("row7");
+      expect(detail?.reference).toBe(false);
+    } finally {
+      useWorkItemStore.setState({ payload: before });
+      useWorkItemModal.getState().close();
+    }
   });
 
   it("draws a merged PR link dimmed, with the merge icon and its state in the title (#3166)", async () => {

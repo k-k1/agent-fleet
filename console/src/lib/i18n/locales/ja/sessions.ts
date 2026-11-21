@@ -484,7 +484,7 @@ export const sessions = {
   "srow.unlock": "削除ロックを解除する",
   "srow.locked_badge": "削除ロック中（削除・自動整理の対象外。この一覧に残ります）",
   "srow.studio_badge": "画像生成スタジオに紐づいています（開くとスタジオに移ります）",
-  "srow.pr_title": "このブランチのプルリクエスト #{n}：{state}{checks}（GitHub で開く）",
+  "srow.pr_title": "このブランチのプルリクエスト #{n}：{state}{checks}（詳細を開く）",
   "srow.pr_state.open": "オープン",
   "srow.pr_state.draft": "下書き",
   "srow.pr_state.merged": "マージ済み",
