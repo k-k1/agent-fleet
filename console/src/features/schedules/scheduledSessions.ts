@@ -13,6 +13,9 @@ export interface ScheduledRun {
   /** Sessions the run spawned (origin "session" all the way up), oldest first; under a working set,
    *  only those in it. */
   children: Session[];
+  /** False when the working set hides the root: it stays only as the heading of the children it shows,
+   *  with no state of its own and nothing to open. */
+  rootShown: boolean;
   /** Is any session of the run that the working set shows alive or waiting on the member? An ended
    *  run is folded away. */
   live: boolean;
@@ -68,7 +71,7 @@ export function buildScheduledRuns(sessions: Session[], set: WorkingSet | null =
       // not what the set shows.
       const shown = [...(shows(root) ? [root] : []), ...children];
       const waiting = shown.some(waitsForMember);
-      return { root, children, waiting, live: waiting || shown.some((s) => s.alive) };
+      return { root, children, rootShown: shows(root), waiting, live: waiting || shown.some((s) => s.alive) };
     });
 }
 

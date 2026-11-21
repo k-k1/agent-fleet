@@ -369,3 +369,4 @@
 .sched-sess-dot.run-live { background: var(--ok, #3fb950); opacity: 1; }
 .sched-sess-dot.run-wait { background: var(--warn, #d29922); opacity: 1; }
 .sched-sess-ended { font-size: 12px; opacity: 0.8; }
+.sched-sess-anchor { display: flex; padding: 3px 10px; opacity: 0.6; }

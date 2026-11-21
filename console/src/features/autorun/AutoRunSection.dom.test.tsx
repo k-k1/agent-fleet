@@ -179,6 +179,25 @@ describe("AutoRunSection", () => {
     expect(memoQueueList.mock.calls.length).toBe(afterReveal);
   });
 
+  it("reaches a run through the link even when the category read in flight predates it", async () => {
+    const { useAutoRunReveal } = await import("./store.ts");
+    let stale: (v: unknown) => void = () => {};
+    // The first category read is held back and will say nothing of run-old.
+    memoQueueDeliveries.mockImplementationOnce(() => new Promise((r) => (stale = r)));
+    await mount();
+    memoQueueDeliveries.mockImplementation(async () => [{ id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" }]);
+    await act(async () => useAutoRunReveal.getState().reveal("run-old"));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    // Without waiting for the next poll, and with the old read still unanswered.
+    expect(document.activeElement).toBe(host.querySelector('[data-autorun-run="run-old"] .autorun-run-main'));
+    stale([]);
+  });
+
   it("keeps a finished run's duration", async () => {
     await mount();
     await act(async () => host.querySelector<HTMLButtonElement>(".autorun-sub-head.is-ended")!.click());

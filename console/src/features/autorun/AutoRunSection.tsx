@@ -362,7 +362,8 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
  *  request stays open until then (and asks for that read). */
 function useRevealRun(runs: RunRow[]): void {
   const n = useAutoRunReveal((s) => s.n);
-  // One extra read per request: the poll goes on at its own pace after that.
+  // One explicit read per request (it invalidates what is in flight, which may predate the run); the
+  // poll goes on at its own pace after that.
   const asked = useRef(0);
   useEffect(() => {
     const name = pendingReveal();
@@ -371,7 +372,7 @@ function useRevealRun(runs: RunRow[]): void {
     if (run.categoryId === "") {
       if (asked.current !== n) {
         asked.current = n;
-        refreshAutoRuns();
+        reloadAutoRuns();
       }
       return;
     }

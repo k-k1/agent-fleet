@@ -22,10 +22,17 @@ function Item({ run }: { run: ScheduledRun }) {
   const tr = useT();
   return (
     <li className="sched-sess" data-sched-session={run.root.name}>
-      <button type="button" className="sched-sess-main" data-rail-row="" onClick={() => open(run.root)} title={tr("sched.open_session", { name: run.root.name })}>
-        <span className={"sched-sess-dot " + dotClass(stateOf(run.root))} aria-hidden="true" />
-        <span className="sched-sess-title">{displayName(run.root)}</span>
-      </button>
+      {run.rootShown ? (
+        <button type="button" className="sched-sess-main" data-rail-row="" onClick={() => open(run.root)} title={tr("sched.open_session", { name: run.root.name })}>
+          <span className={"sched-sess-dot " + dotClass(stateOf(run.root))} aria-hidden="true" />
+          <span className="sched-sess-title">{displayName(run.root)}</span>
+        </button>
+      ) : (
+        // Outside the working set: only the heading of the children that are in it.
+        <div className="sched-sess-anchor">
+          <span className="sched-sess-title">{displayName(run.root)}</span>
+        </div>
+      )}
       {run.children.length > 0 && (
         <ul className="sched-sess-kids">
           {run.children.map((c) => (

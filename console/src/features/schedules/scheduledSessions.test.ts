@@ -39,10 +39,12 @@ describe("buildScheduledRuns", () => {
     const b = buildScheduledRuns(ss, setB, repos);
     expect(b[0].children.map((c) => c.name)).toEqual(["rev"]);
     expect(b[0].live).toBe(false);
+    expect(b[0].rootShown).toBe(false);
     expect(waitingScheduledCount(ss, setB, repos)).toBe(0);
     const a = buildScheduledRuns(ss, setA, repos);
     expect(a[0].children.map((c) => c.name)).toEqual(["rev2"]);
     expect(a[0].live).toBe(true);
+    expect(a[0].rootShown).toBe(true);
     expect(waitingScheduledCount(ss, setA, repos)).toBe(2);
   });
 
