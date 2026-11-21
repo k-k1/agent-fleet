@@ -731,6 +731,12 @@ func cleanScheduleID(id string) string {
 	return id
 }
 
+// cleanQueueCategoryID returns the category id to store, or "" when it is unusable, by the same
+// rule as cleanScheduleID: dropped whole, never clipped, so the live row and the DB mirror agree.
+func cleanQueueCategoryID(id string) string {
+	return cleanScheduleID(id)
+}
+
 // CreateOrigin resolves a new session's origin (ADR 0029 §6) from the create request.
 // Precedence — most specific caller wins:
 //  1. an explicit origin field (the af_write MCP's create_session sends "operator" plus

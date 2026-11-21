@@ -26,7 +26,7 @@ export interface RunDelivery {
 
 export interface RunRow {
   root: Session;
-  /** The queue's category id the run came from; "" when no delivery names this session. */
+  /** The queue's category id the run came from: the delivery's, else the session's own; "" when neither names one. */
   categoryId: string;
   state: RunState;
   /** The delivery that started the run; "" while unknown. */
@@ -122,7 +122,8 @@ export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelive
       const startedAt = ms(d?.sentAt) || ms(d?.createdAt) || ms(root.createdAt);
       return {
         root,
-        categoryId: d?.categoryId ?? "",
+        // The delivery's word first; a run whose delivery left the history window has the session's own.
+        categoryId: d?.categoryId ?? root.queueCategoryId ?? "",
         deliveryId: d?.id ?? "",
         // From the delivery alone: resuming the run's session changes what the row shows, not what happened.
         failed: d?.state === "closed" && d.turnOutcome === "turn-failed" && d.outcome !== "ended" && d.outcome !== "aborted",

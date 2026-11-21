@@ -197,3 +197,76 @@ func TestAdminSessionListsCarryOriginAndScheduleID(t *testing.T) {
 		t.Fatalf("overview fallback = %+v, want run1 with origin, scheduleId and its mirrored state", over)
 	}
 }
+
+// The queue category id round-trips the DB mirror and reaches both admin session lists, so a
+// stopped queue run still names its category; an empty one stays out of the JSON.
+func TestQueueCategoryIDRoundTripsTheMirrorAndAdminRows(t *testing.T) {
+	ctx := context.Background()
+	st, _, _, _, ws := usageHourFixture(t)
+	if err := st.ReplaceSessions(ctx, ws.ID, []store.SessionRow{
+		{Name: "qrun", Kind: "claude", State: "stopped", Origin: "queue", QueueCategoryID: "cat-1"},
+		{Name: "plain", Kind: "claude", State: "stopped"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.ListSessions(ctx, ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]store.SessionRow{}
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	if got := byName["qrun"].QueueCategoryID; got != "cat-1" {
+		t.Fatalf("mirror QueueCategoryID = %q, want cat-1", got)
+	}
+	mir := mirroredAdminSession(byName["qrun"])
+	if mir.QueueCategoryID != "cat-1" {
+		t.Fatalf("mirrored admin row = %+v", mir)
+	}
+	row := adminSessionRowOf("sales", "w", "w@acme.co.jp", "stopped", mir)
+	b, _ := json.Marshal(row)
+	if row.QueueCategoryID != "cat-1" || !strings.Contains(string(b), `"queueCategoryId":"cat-1"`) {
+		t.Fatalf("admin row = %s", b)
+	}
+	b, _ = json.Marshal(adminSessionRowOf("sales", "w", "w@acme.co.jp", "stopped", mirroredAdminSession(byName["plain"])))
+	if strings.Contains(string(b), "queueCategoryId") {
+		t.Fatalf("empty id leaked into %s", b)
+	}
+}
+
+// The create the Control Plane sends for a queue fire names the delivering category, which the
+// Agent stores as the session's queue category id.
+func TestMemoDeliveryCreateBodyNamesTheCategory(t *testing.T) {
+	body := memoDeliveryCreateBody(store.MemoDelivery{ID: "d1"}, memoSendPlan{c: store.MemoCategory{ID: "cat-1", Name: "n"}})
+	var got struct {
+		QueueDelivery struct {
+			Queue string `json:"queue"`
+		} `json:"queue_delivery"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil || got.QueueDelivery.Queue != "cat-1" {
+		t.Fatalf("queue_delivery.queue = %q (%v), want cat-1", got.QueueDelivery.Queue, err)
+	}
+}
+
+// A queue run's category goes Agent response -> mirror (sessionRows) -> the stopped Workspace's
+// ordinary list (sessionsShared), so a run does not drop into "Other runs" when the Workspace stops.
+func TestQueueCategoryIDSurvivesTheMirrorIntoTheStoppedList(t *testing.T) {
+	ctx := context.Background()
+	_, mgr, _, _, ws := usageHourFixture(t)
+	srv := agentSessionsServer(t, `{"sessions":[
+		{"name":"qrun","alive":true,"state":"working","kind":"claude","origin":"queue","queueCategoryId":"cat-1"},
+		{"name":"plain","alive":true,"state":"working","kind":"claude"}
+	]}`)
+	mgr.rtFactory = stubFactory{rt: stubRuntime{endpoint: srv.URL}}
+	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+
+	api := workspaceAPI{memberAuth: memberAuth{mgr: mgr}}
+	got := map[string]string{}
+	for _, s := range api.sessionsShared(ctx, &resolved{rt: stubRuntime{state: "stopped"}, ws: ws}) {
+		got[s.Name] = s.QueueCategoryID
+	}
+	if got["qrun"] != "cat-1" || got["plain"] != "" || len(got) != 2 {
+		t.Fatalf("stopped list category ids = %v, want qrun=cat-1 and plain empty", got)
+	}
+}
