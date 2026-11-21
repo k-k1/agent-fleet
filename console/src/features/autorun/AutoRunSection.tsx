@@ -50,6 +50,22 @@ const PR_KEY = { open: "autorun.pr_open", merged: "autorun.pr_merged", closed: "
  *  (not the row) so it survives the row moving to "Ended" or the list refreshing under it. */
 type RunDialog = { kind: "stop"; node: RepoTreeNode; only: Set<string> } | { kind: "delete"; node: RepoTreeNode };
 
+/** Only one of the view's menus is open at a time. The menus dismiss on a pointer press or Escape,
+ *  not on keyboard focus moving, so opening one announces itself and the others close. */
+const MENU_OPENED = "autorun-menu-opened";
+const announceMenu = (who: string) => window.dispatchEvent(new CustomEvent(MENU_OPENED, { detail: who }));
+function useCloseOnOtherMenu(who: string, close: () => void) {
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    const h = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== who) closeRef.current();
+    };
+    window.addEventListener(MENU_OPENED, h);
+    return () => window.removeEventListener(MENU_OPENED, h);
+  }, [who]);
+}
+
 /** Opens the session menu for one session at a screen point. The view owns the menu itself. */
 type OpenSessionMenu = (s: Session, at: { x: number; y: number }) => void;
 
@@ -81,11 +97,13 @@ function RunMenu({ run, onDialog }: { run: RunRow; onDialog: (d: RunDialog) => v
   const sessions = useSessionsStore((s) => s.sessions);
   const wt = runWorktreeNode(run, repos, sessions);
   useDismiss([btnRef, menuRef], !!at, () => setAt(null));
+  useCloseOnOtherMenu("run:" + run.root.name, () => setAt(null));
   useMenuRoving(menuRef, !!at);
   useLayoutEffect(() => {
     if (at && menuRef.current) placeFixed(menuRef.current, at.x, at.y);
   });
   const open = () => {
+    announceMenu("run:" + run.root.name);
     const r = btnRef.current?.getBoundingClientRect();
     setAt(r ? { x: r.left, y: r.bottom } : { x: 0, y: 0 });
   };
@@ -464,7 +482,11 @@ export const AutoRunSection = memo(function AutoRunSection() {
   const actions = useSessionActions();
   const workspaceRunning = useWorkspaceStore((st) => st.state) === "running";
   const [menu, setMenu] = useState<{ s: Session; at: { x: number; y: number }; open: boolean } | null>(null);
-  const openMenu = useCallback<OpenSessionMenu>((s, at) => setMenu({ s, at, open: true }), []);
+  const openMenu = useCallback<OpenSessionMenu>((s, at) => {
+    announceMenu("session");
+    setMenu({ s, at, open: true });
+  }, []);
+  useCloseOnOtherMenu("session", () => setMenu((m) => (m ? { ...m, open: false } : m)));
   const menuSession = menu ? (sessions.find((x) => x.name === menu.s.name) ?? menu.s) : null;
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);

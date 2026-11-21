@@ -512,6 +512,57 @@ describe("AutoRunSection", () => {
       expect(sessMenu()).toBeNull();
     });
 
+    it("opens it for the other row when another row is right-clicked without closing the first", async () => {
+      await mount();
+      await ctx(mainBtn());
+      expect(sessMenu()!.textContent).toContain("run-a");
+      await ctx(kidBtn());
+      expect(document.querySelectorAll(".sess-menu").length).toBe(1);
+      expect(sessMenu()!.textContent).toContain("rev-a");
+      expect(sessMenu()!.textContent).not.toContain("run-a");
+    });
+
+    it("opens it with Shift+F10 too", async () => {
+      await mount();
+      const ev = new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true });
+      await act(async () => {
+        mainBtn().dispatchEvent(ev);
+      });
+      expect(ev.defaultPrevented).toBe(true);
+      expect(sessMenu()!.textContent).toContain("run-a");
+    });
+
+    it("never shows the session menu and the run menu together, by keyboard either way", async () => {
+      await mount();
+      const dots = () => host.querySelector<HTMLButtonElement>('[data-autorun-run="run-a"] .autorun-run-menu')!;
+      const runMenu = () => document.querySelector(".ui-menu:not(.sess-menu)");
+      await ctx(mainBtn());
+      await act(async () => dots().click());
+      expect(runMenu()).not.toBeNull();
+      expect(sessMenu()).toBeNull();
+      await act(async () => {
+        mainBtn().dispatchEvent(new KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true, cancelable: true }));
+      });
+      expect(sessMenu()).not.toBeNull();
+      expect(runMenu()).toBeNull();
+    });
+
+    it("keeps a confirmation opened from the menu when its row leaves the list", async () => {
+      await mount();
+      await ctx(mainBtn());
+      const items = Array.from(sessMenu()!.querySelectorAll<HTMLButtonElement>(".ui-menu-item"));
+      const recreate = items.find((b) => /recreate/i.test(b.textContent ?? ""))!;
+      expect(recreate, items.map((b) => b.textContent).join("|")).toBeTruthy();
+      await act(async () => recreate.click());
+      const dialog = () => document.querySelector('[role="dialog"], [role="alertdialog"]');
+      expect(dialog()).not.toBeNull();
+      await act(async () => {
+        useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.filter((x) => x.name !== "run-a" && x.name !== "rev-a") });
+      });
+      expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull();
+      expect(dialog()).not.toBeNull();
+    });
+
     it("keeps the menu when the row moves out of the list under it", async () => {
       await mount();
       await ctx(mainBtn());
