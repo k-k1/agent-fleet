@@ -74,16 +74,32 @@ func (a adminAPI) allSessions(w http.ResponseWriter, r *http.Request) {
 			rt := a.mgr.runtimeFor(ws, noSecretKeys)
 			state := rt.State(ctx)
 			for _, s := range a.mgr.sessionsForOverview(ctx, ws, rt, state) {
-				out = append(out, adminSessionRow{
-					Tenant: t.Slug, UserKey: mi.UserKey, Email: mi.Email, WorkspaceState: state,
-					Name: s.Name, Kind: s.Kind, Label: s.Label, Repo: s.Repo, Dir: s.Dir,
-					State: s.State, Alive: s.Alive, Resumable: s.Resumable, Started: s.Started,
-					Origin: s.Origin, ScheduleID: s.ScheduleID,
-				})
+				out = append(out, adminSessionRowOf(t.Slug, mi.UserKey, mi.Email, state, s))
 			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
+}
+
+// adminSessionRowOf tags one session with the member that owns it, for the overview.
+func adminSessionRowOf(tenant, userKey, email, wsState string, s sessionWire) adminSessionRow {
+	return adminSessionRow{
+		Tenant: tenant, UserKey: userKey, Email: email, WorkspaceState: wsState,
+		Name: s.Name, Kind: s.Kind, Label: s.Label, Repo: s.Repo, Dir: s.Dir,
+		State: s.State, Alive: s.Alive, Resumable: s.Resumable, Started: s.Started,
+		Origin: s.Origin, ScheduleID: s.ScheduleID,
+	}
+}
+
+// mirroredAdminSession is a DB-mirror row as the admin lists show it while the Agent is not
+// answering. Both admin session lists build their fallback rows here, so neither can drop a
+// field the other keeps.
+func mirroredAdminSession(r0 store.SessionRow) sessionWire {
+	return sessionWire{
+		Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
+		Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false, Resumable: true,
+		Origin: r0.Origin, OriginSession: r0.OriginSession, ScheduleID: r0.ScheduleID,
+	}
 }
 
 // tenantsInScope returns the tenants an admin view should span: exactly the one
@@ -124,12 +140,9 @@ func (m *manager) sessionsForOverview(ctx context.Context, ws store.Workspace, r
 	}
 	out := make([]sessionWire, 0, len(rows))
 	for _, r0 := range rows {
-		out = append(out, sessionWire{
-			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
-			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt,
-			State: r0.State, Alive: false, Resumable: true,
-			Origin: r0.Origin, OriginSession: r0.OriginSession, ScheduleID: r0.ScheduleID,
-		})
+		w := mirroredAdminSession(r0)
+		w.State = r0.State
+		out = append(out, w)
 	}
 	return out
 }

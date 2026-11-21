@@ -190,12 +190,7 @@ func (a adminAPI) memberSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]sessionWire, 0, len(rows))
 	for _, r0 := range rows {
-		out = append(out, sessionWire{
-			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
-			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false,
-			Resumable: true,
-			Origin:    r0.Origin, OriginSession: r0.OriginSession, ScheduleID: r0.ScheduleID,
-		})
+		out = append(out, mirroredAdminSession(r0))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
 }

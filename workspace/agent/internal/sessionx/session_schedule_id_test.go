@@ -5,6 +5,7 @@ package sessionx
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -58,5 +59,30 @@ func TestCleanScheduleIDDropsUnusableValuesWhole(t *testing.T) {
 		if got := cleanScheduleID(c.in); got != c.want {
 			t.Errorf("cleanScheduleID(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// armMeta stores the id through cleanScheduleID, and only for a schedule-origin create.
+func TestArmMetaStoresOnlyAUsableScheduleID(t *testing.T) {
+	isolateAgentState(t)
+	for _, c := range []struct {
+		name, origin, id, want string
+	}{
+		{"ok", session.OriginSchedule, "sch-1", "sch-1"},
+		{"too long", session.OriginSchedule, strings.Repeat("a", maxScheduleIDRunes+1), ""},
+		{"nul", session.OriginSchedule, "sch\x00-1", ""},
+		{"not a schedule", session.OriginUser, "sch-1", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			run := &createRun{w: httptest.NewRecorder(), r: httptest.NewRequest(http.MethodPost, "/sessions", nil),
+				name: "schmeta", origin: c.origin, req: &CreateReq{Dir: t.TempDir(), ScheduleID: c.id}}
+			meta, ok := run.armMeta()
+			if !ok {
+				t.Fatal("armMeta refused")
+			}
+			if meta.ScheduleID != c.want {
+				t.Fatalf("meta.ScheduleID = %q, want %q", meta.ScheduleID, c.want)
+			}
+		})
 	}
 }
