@@ -135,27 +135,35 @@ func (e Env) installCursor(ctx context.Context, ver, sum, dir, link string, pinn
 		return err
 	}
 	target := filepath.Join(dir, cursorTool)
-	// Both links are prepared first and the alias switches before the main link, so a failure
-	// part-way leaves the main link on the old version and the next repin start tries again.
-	links := []string{}
+	links, err := e.cursorLinks(link)
+	if err != nil {
+		return err
+	}
+	return relinkAll(links, target)
+}
+
+// cursorLinks is what follows a cursor version: the main link and, when the install script left
+// cursor's own `agent` alias, that too. The alias is listed first so it switches before the main
+// link: a failure part-way leaves the main link on the old version and the next repin start
+// tries again. Only cursor's own alias is touched, and a failed look at it stops before any link
+// moves.
+func (e Env) cursorLinks(link string) ([]string, error) {
+	var links []string
 	alias := filepath.Join(filepath.Dir(link), "agent")
-	// If the self-update's install.sh left an `agent` alias, it follows the same version.
-	// Only cursor's own alias is touched, and a failed look at it stops before any link moves.
 	st, err := lstatAlias(alias)
 	switch {
 	case err == nil && st.Mode()&os.ModeSymlink != 0:
 		t, err := readlinkAlias(alias)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if _, ok := e.aliasVersion(alias, t); ok {
 			links = append(links, alias)
 		}
 	case err != nil && !os.IsNotExist(err):
-		return err
+		return nil, err
 	}
-	links = append(links, link)
-	return relinkAll(links, target)
+	return append(links, link), nil
 }
 
 // relinkAll points every link at target (ln -sf) through sibling names and renames, in order.
@@ -483,3 +491,217 @@ var lstatAlias = os.Lstat
 
 // readlinkAlias is a seam for tests: reading where the alias points.
 var readlinkAlias = os.Readlink
+
+// cursorAnswers is cursorRuns that also requires a version on stdout: a bundle that exits 0
+// and prints nothing is not a working one.
+func (e Env) cursorAnswers(p string) bool {
+	out, _, err := e.probeArgs(p, []string{"--disable-auto-update", "--version"}, nil)
+	return err == nil && out != ""
+}
+
+// cursorSweepStale removes what a killed self-update left in the versions directory: a stage,
+// and the aside copy of a tree that was being replaced (put back when its name is free).
+func (e Env) cursorSweepStale() {
+	versions := e.cursorShare()
+	// The directory is opened and its entries matched by name: a glob would read brackets in a
+	// HOME path as a pattern and walk a sibling.
+	ents, err := os.ReadDir(versions)
+	if err != nil {
+		return
+	}
+	// Trees the launchers point at now are never swept, whatever their names look like.
+	live := map[string]bool{}
+	realVersions, rerr := filepath.EvalSymlinks(versions)
+	for _, l := range []string{filepath.Join(e.localBin(), cursorTool), filepath.Join(e.localBin(), "agent")} {
+		t, err := os.Readlink(l)
+		if err != nil {
+			continue
+		}
+		if !filepath.IsAbs(t) {
+			t = filepath.Join(filepath.Dir(l), t)
+		}
+		// By the link's own spelling, and by where the chain really ends (versions may itself be
+		// a link to another volume).
+		cands := []string{filepath.Clean(t)}
+		if r, err := filepath.EvalSymlinks(l); err == nil {
+			cands = append(cands, r)
+		}
+		for _, c := range cands {
+			d := filepath.Dir(c)
+			if pd := filepath.Dir(d); pd == filepath.Clean(versions) || (rerr == nil && pd == realVersions) {
+				live[filepath.Base(d)] = true
+			}
+		}
+	}
+	for _, de := range ents {
+		base := de.Name()
+		p := filepath.Join(versions, base)
+		if live[base] {
+			continue
+		}
+		if strings.HasPrefix(base, ".af-up-") {
+			removeTree(p)
+			continue
+		}
+		// Only the form this code makes: <name>.af-old.<pid>.
+		i := strings.LastIndex(base, ".af-old.")
+		if i <= 0 || !allDigits(base[i+len(".af-old."):]) {
+			continue
+		}
+		dir := filepath.Join(versions, base[:i])
+		if _, err := os.Lstat(dir); err != nil {
+			_ = restoreTree(p, dir)
+			continue
+		}
+		removeTree(p)
+	}
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// installCursorLatest runs the upstream install script against a private HOME inside the real
+// versions directory (so publishing is a rename on one filesystem) and publishes the version it
+// unpacked only after that bundle answers --version. The script never touches ~/.local: run
+// against the real home, a timeout after it removed the old link, or a bundle that only has the
+// execute bit, left no working copy. A healthy tree already published under the same version is
+// kept and only relinked. Every failure after the first change goes through one rollback.
+func (e Env) installCursorLatest(ctx context.Context, script string) (err error) {
+	versions := e.cursorShare()
+	if err := os.MkdirAll(versions, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(e.localBin(), 0o755); err != nil {
+		return err
+	}
+	e.cursorSweepStale()
+	stage, err := os.MkdirTemp(versions, ".af-up-")
+	if err != nil {
+		return err
+	}
+	defer removeTree(stage)
+	if err := e.runScriptHome(ctx, stage, script); err != nil {
+		return err
+	}
+	// The script's own layout: bin/cursor-agent -> share/cursor-agent/versions/<v>/cursor-agent.
+	real, err := filepath.EvalSymlinks(stage)
+	if err != nil {
+		return err
+	}
+	cand, err := filepath.EvalSymlinks(filepath.Join(stage, ".local", "bin", cursorTool))
+	if err != nil {
+		return fmt.Errorf("the install script left no cursor-agent: %w", err)
+	}
+	verDir := filepath.Dir(cand)
+	stageVersions := filepath.Join(real, ".local", "share", "cursor-agent", "versions")
+	ver := filepath.Base(verDir)
+	if filepath.Base(cand) != cursorTool || filepath.Dir(verDir) != stageVersions || ver == "" || ver == "." || ver == ".." || strings.Contains(ver, ".af-") {
+		return fmt.Errorf("the install script put cursor-agent at an unexpected path: %s", cand)
+	}
+	if !e.cursorAnswers(cand) {
+		return fmt.Errorf("cursor %s does not report a version in this environment, keeping the current copy", ver)
+	}
+	link := filepath.Join(e.localBin(), cursorTool)
+	links, err := e.cursorLinks(link)
+	if err != nil {
+		return err
+	}
+	// The script's own `agent` alias follows too when the real home has none yet (a first install);
+	// another tool's alias is never touched.
+	alias := filepath.Join(e.localBin(), "agent")
+	if _, aerr := lstatAlias(alias); os.IsNotExist(aerr) {
+		if t, terr := filepath.EvalSymlinks(filepath.Join(stage, ".local", "bin", "agent")); terr == nil && t == cand {
+			links = append([]string{alias}, links...)
+		}
+	}
+
+	var undo []func() // run in reverse order on failure
+	defer func() {
+		if err == nil {
+			return
+		}
+		for i := len(undo) - 1; i >= 0; i-- {
+			undo[i]()
+		}
+	}()
+
+	dir := filepath.Join(versions, ver)
+	target := filepath.Join(dir, cursorTool)
+	if !e.cursorAnswers(target) {
+		old := fmt.Sprintf("%s.af-old.%d", dir, os.Getpid())
+		removeTree(old)
+		moved := false
+		if _, lerr := os.Lstat(dir); lerr == nil {
+			if err := os.Rename(dir, old); err != nil {
+				return err
+			}
+			moved = true
+		}
+		if err := os.Rename(verDir, dir); err != nil {
+			if rerr := restoreTree(old, dir); rerr != nil {
+				return fmt.Errorf("%w; the previous tree is left at %s: %v", err, old, rerr)
+			}
+			return err
+		}
+		undo = append(undo, func() {
+			bad := fmt.Sprintf("%s.af-bad.%d", dir, os.Getpid())
+			removeTree(bad)
+			if os.Rename(dir, bad) == nil {
+				if rerr := restoreTree(old, dir); rerr != nil {
+					fmt.Fprintf(e.Stderr, "cursor: the previous tree is left at %s: %v\n", old, rerr)
+				}
+				removeTree(bad)
+			}
+		})
+		if !e.cursorAnswers(target) {
+			return fmt.Errorf("cursor %s does not report a version at its final path, keeping the current copy", ver)
+		}
+		defer func() {
+			if err == nil && moved {
+				removeTree(old)
+			}
+		}()
+	}
+
+	// Links: a regular file in a link's place is moved aside whole, and every link's previous
+	// target is remembered, so the rollback gives back exactly what was there.
+	for _, l := range links {
+		l := l
+		st, lerr := os.Lstat(l)
+		switch {
+		case lerr != nil:
+			undo = append(undo, func() { os.Remove(l) })
+		case st.Mode()&os.ModeSymlink != 0:
+			t, _ := os.Readlink(l)
+			undo = append(undo, func() { _ = relinkAll([]string{l}, t) })
+		default:
+			keep := fmt.Sprintf("%s.af-prev.%d", l, os.Getpid())
+			os.Remove(keep)
+			if err := os.Rename(l, keep); err != nil {
+				return err
+			}
+			undo = append(undo, func() { os.Remove(l); _ = os.Rename(keep, l) })
+			defer func() {
+				if err == nil {
+					os.Remove(keep)
+				}
+			}()
+		}
+	}
+	if err := relinkAll(links, target); err != nil {
+		return err
+	}
+	if !e.cursorAnswers(link) {
+		return fmt.Errorf("cursor %s does not report a version through ~/.local/bin", ver)
+	}
+	return nil
+}

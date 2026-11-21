@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -77,7 +78,7 @@ func newSU(t *testing.T, rtkScript, rtkSum, agyScript, cursorScript string) *suF
 	// directory of links to just the base tools the stubs use, so no real CLI of the machine
 	// running the test is ever called.
 	tools := t.TempDir()
-	for _, n := range []string{"sh", "bash", "cat", "tr", "wc", "cp", "mkdir", "chmod", "dirname", "printf", "echo", "head", "env", "timeout", "grep", "uname", "install", "rm", "mv"} {
+	for _, n := range []string{"sh", "bash", "cat", "tr", "wc", "cp", "mkdir", "chmod", "dirname", "printf", "echo", "head", "env", "timeout", "grep", "uname", "install", "rm", "mv", "ln", "touch"} {
 		for _, d := range []string{"/usr/bin", "/bin"} {
 			if _, err := os.Stat(filepath.Join(d, n)); err == nil {
 				_ = os.Symlink(filepath.Join(d, n), filepath.Join(tools, n))
@@ -251,8 +252,17 @@ func TestSelfUpdateAGY(t *testing.T) {
 	})
 }
 
-const cursorInstaller = "# https://downloads.cursor.com/lab/2026.2.0-abc123/linux/x64/agent-cli-package.tar.gz\n" +
-	`mkdir -p "$HOME/.local/bin"; printf '#!/bin/sh\necho 2026.2.0-abc123\n' >"$HOME/.local/bin/cursor-agent"; chmod +x "$HOME/.local/bin/cursor-agent"` + "\n"
+// cursorBundle is the upstream layout: a version tree under share/cursor-agent/versions plus the
+// bin link, all under $HOME (which the self-update points at a private directory).
+func cursorBundle(body string) string {
+	return `v="$HOME/.local/share/cursor-agent/versions/2026.2.0-abc123"; mkdir -p "$v" "$HOME/.local/bin"; ` +
+		`printf '` + body + `' >"$v/cursor-agent"; chmod +x "$v/cursor-agent"; ` +
+		`ln -sf "$v/cursor-agent" "$HOME/.local/bin/cursor-agent"` + "\n"
+}
+
+const cursorHeader = "# https://downloads.cursor.com/lab/2026.2.0-abc123/linux/x64/agent-cli-package.tar.gz\n"
+
+var cursorInstaller = cursorHeader + cursorBundle(`#!/bin/sh\necho 2026.2.0-abc123\n`)
 
 func TestSelfUpdateCursor(t *testing.T) {
 	t.Run("installs latest", func(t *testing.T) {
@@ -277,6 +287,523 @@ func TestSelfUpdateCursor(t *testing.T) {
 			t.Fatalf("no warning:\n%s", f.out)
 		}
 	})
+}
+
+// plantCursor makes a working cursor install at version v linked from ~/.local/bin.
+func (f *suFixture) plantCursor(t *testing.T, v string) string {
+	t.Helper()
+	d := filepath.Join(f.home, ".local", "share", "cursor-agent", "versions", v)
+	f.write(t, filepath.Join(d, "cursor-agent"), "#!/bin/sh\necho "+v+"\n")
+	if err := os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(d, "cursor-agent"), f.local("cursor-agent")); err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func TestSelfUpdateCursorIsolatedInstall(t *testing.T) {
+	t.Run("the script runs against a private HOME: a script that deletes the link and fails leaves the real one", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", cursorHeader+`rm -f "$HOME/.local/bin/cursor-agent"; exit 1`+"\n")
+		f.plantCursor(t, "1.0.0")
+		f.env.selfUpdateCursor(context.Background())
+		if out, _, err := f.env.probeArgs(f.local("cursor-agent"), nil, nil); err != nil || out != "1.0.0" {
+			t.Fatalf("working copy lost: %q %v\n%s", out, err, f.out)
+		}
+		if !strings.Contains(f.out.String(), "WARN: cursor update failed (using previous version)") {
+			t.Fatalf("no warning:\n%s", f.out)
+		}
+	})
+	t.Run("a bundle that does not run is never swapped in", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", cursorHeader+cursorBundle(`#!/bin/sh\nexit 1\n`))
+		f.plantCursor(t, "1.0.0")
+		f.env.selfUpdateCursor(context.Background())
+		if out, _, err := f.env.probeArgs(f.local("cursor-agent"), nil, nil); err != nil || out != "1.0.0" {
+			t.Fatalf("a broken bundle displaced the working one: %q %v", out, err)
+		}
+		if _, err := os.Stat(filepath.Join(f.home, ".local", "share", "cursor-agent", "versions", "2026.2.0-abc123")); err == nil {
+			t.Fatal("the broken version was published")
+		}
+	})
+	t.Run("a bundle with only the execute bit is refused", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", cursorHeader+cursorBundle(`not a program\n`))
+		f.plantCursor(t, "1.0.0")
+		f.env.selfUpdateCursor(context.Background())
+		if !strings.Contains(f.out.String(), "WARN: cursor update failed") || !strings.Contains(f.read(filepath.Join(f.home, ".local", "share", "cursor-agent", "versions", "1.0.0", "cursor-agent")), "1.0.0") {
+			t.Fatalf("working copy not kept:\n%s", f.out)
+		}
+	})
+	t.Run("a bundle that exits 0 and prints nothing is refused", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", cursorHeader+cursorBundle(`#!/bin/sh\nexit 0\n`))
+		f.plantCursor(t, "1.0.0")
+		f.env.selfUpdateCursor(context.Background())
+		if out, _, err := f.env.probeArgs(f.local("cursor-agent"), nil, nil); err != nil || out != "1.0.0" {
+			t.Fatalf("a silent bundle displaced the working one: %q %v", out, err)
+		}
+	})
+	t.Run("a candidate that runs inside its tree but not through the bin link rolls everything back, a real-file link included", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", cursorHeader+cursorBundle(`#!/bin/sh\ncase "$0" in */versions/*) echo 2026.2.0-abc123;; *) exit 1;; esac\n`))
+		f.write(t, f.local("cursor-agent"), "#!/bin/sh\necho realfile\n")
+		f.env.selfUpdateCursor(context.Background())
+		if out, _, err := f.env.probeArgs(f.local("cursor-agent"), nil, nil); err != nil || out != "realfile" {
+			t.Fatalf("the real file was not restored: %q %v\n%s", out, err, f.out)
+		}
+		if _, err := os.Stat(filepath.Join(f.home, ".local", "share", "cursor-agent", "versions", "2026.2.0-abc123")); err == nil {
+			t.Fatal("the failed version stayed published")
+		}
+	})
+	t.Run("a healthy tree of the same version is kept and only relinked", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", cursorInstaller)
+		d := f.plantCursor(t, "2026.2.0-abc123")
+		f.write(t, filepath.Join(d, "keep.txt"), "x")
+		os.Remove(f.local("cursor-agent"))
+		f.env.selfUpdateCursor(context.Background())
+		if _, err := os.Stat(filepath.Join(d, "keep.txt")); err != nil || !usable(f.local("cursor-agent")) {
+			t.Fatalf("healthy tree replaced or link missing:\n%s", f.out)
+		}
+	})
+	t.Run("a first install also gets the agent alias, an existing foreign one is left", func(t *testing.T) {
+		withAlias := cursorInstaller + `ln -sf "$HOME/.local/share/cursor-agent/versions/2026.2.0-abc123/cursor-agent" "$HOME/.local/bin/agent"` + "\n"
+		f := newSU(t, goodRTK, "", "", withAlias)
+		f.env.selfUpdateCursor(context.Background())
+		if tg, err := os.Readlink(f.local("agent")); err != nil || !strings.Contains(tg, "2026.2.0-abc123") {
+			t.Fatalf("alias not published: %q %v", tg, err)
+		}
+		g := newSU(t, goodRTK, "", "", withAlias)
+		g.write(t, g.local("agent"), "#!/bin/sh\necho foreign\n")
+		g.env.selfUpdateCursor(context.Background())
+		if !strings.Contains(g.read(g.local("agent")), "foreign") {
+			t.Fatal("another tool's agent was replaced")
+		}
+	})
+	t.Run("publishes the new version, repoints the link and leaves no stage", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", cursorInstaller)
+		f.plantCursor(t, "1.0.0")
+		f.env.selfUpdateCursor(context.Background())
+		if out, _, err := f.env.probeArgs(f.local("cursor-agent"), nil, nil); err != nil || out != "2026.2.0-abc123" {
+			t.Fatalf("not updated: %q %v\n%s", out, err, f.out)
+		}
+		ents, _ := os.ReadDir(filepath.Join(f.home, ".local", "share", "cursor-agent", "versions"))
+		for _, de := range ents {
+			if strings.HasPrefix(de.Name(), ".af-up-") {
+				t.Fatalf("stage left behind: %s", de.Name())
+			}
+		}
+	})
+}
+
+func TestCursorSweepStaleUsesTheEntrysOwnName(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	// A HOME whose own path contains the reserved marker must not change where a tree goes back to.
+	f.env.Home = filepath.Join(f.home, "x.af-old.y")
+	versions := f.env.cursorShare()
+	f.write(t, filepath.Join(versions, "1.0.0.af-old.9", "cursor-agent"), "#!/bin/sh\necho 1.0.0\n")
+	f.write(t, filepath.Join(versions, "2.0.0", "cursor-agent"), "#!/bin/sh\necho 2.0.0\n")
+	f.write(t, filepath.Join(versions, "2.0.0.af-old.9", "cursor-agent"), "#!/bin/sh\necho stale\n")
+	os.MkdirAll(filepath.Join(versions, ".af-up-zzz"), 0o755)
+	f.env.cursorSweepStale()
+	if f.read(filepath.Join(versions, "1.0.0", "cursor-agent")) == "" {
+		t.Fatal("the aside tree did not go back to its own name")
+	}
+	if !strings.Contains(f.read(filepath.Join(versions, "2.0.0", "cursor-agent")), "2.0.0") {
+		t.Fatal("a present version was replaced by its stale copy")
+	}
+	for _, n := range []string{"2.0.0.af-old.9", ".af-up-zzz"} {
+		if _, err := os.Lstat(filepath.Join(versions, n)); err == nil {
+			t.Fatalf("%s left", n)
+		}
+	}
+}
+
+func TestCursorSweepStaleIgnoresGlobCharactersInHome(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	root := t.TempDir()
+	f.env.Home = filepath.Join(root, "h[a]")
+	sibling := filepath.Join(root, "ha") // what the pattern "h[a]" would match
+	f.write(t, filepath.Join(sibling, ".local", "share", "cursor-agent", "versions", ".af-up-x", "f"), "x")
+	f.write(t, filepath.Join(sibling, ".local", "share", "cursor-agent", "versions", "1.0.0.af-old.5", "cursor-agent"), "x")
+	f.write(t, filepath.Join(f.env.cursorShare(), "1.0.0.af-old.7", "cursor-agent"), "x")
+	f.write(t, filepath.Join(f.env.cursorShare(), "1.0.0.af-old.mine", "cursor-agent"), "x") // not our form
+	f.env.cursorSweepStale()
+	sv := filepath.Join(sibling, ".local", "share", "cursor-agent", "versions")
+	for _, n := range []string{".af-up-x", "1.0.0.af-old.5"} {
+		if _, err := os.Lstat(filepath.Join(sv, n)); err != nil {
+			t.Fatalf("a sibling's %s was touched", n)
+		}
+	}
+	if f.read(filepath.Join(f.env.cursorShare(), "1.0.0", "cursor-agent")) == "" {
+		t.Fatal("own aside tree not restored")
+	}
+	if _, err := os.Lstat(filepath.Join(f.env.cursorShare(), "1.0.0.af-old.mine")); err != nil {
+		t.Fatal("an entry not of our form was moved")
+	}
+}
+
+func TestCursorSweepStaleSparesATreeALauncherPointsAt(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	d := f.plantCursor(t, "1.0.0.af-old.7") // a member's own version whose name looks like ours
+	f.env.cursorSweepStale()
+	if !usable(f.local("cursor-agent")) {
+		t.Fatalf("the live tree %s was swept", d)
+	}
+}
+
+func TestCursorSweepStaleSparesALiveTreeBehindALinkedVersionsDir(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	other := t.TempDir() // "another volume"
+	share := filepath.Join(f.home, ".local", "share", "cursor-agent")
+	if err := os.MkdirAll(share, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, filepath.Join(share, "versions")); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(other, "1.0.0.af-old.7")
+	f.write(t, filepath.Join(live, "cursor-agent"), "#!/bin/sh\necho live\n")
+	f.write(t, filepath.Join(other, "1.0.0", "cursor-agent"), "#!/bin/sh\necho plain\n")
+	if err := os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(live, "cursor-agent"), f.local("cursor-agent")); err != nil { // the physical path
+		t.Fatal(err)
+	}
+	f.env.cursorSweepStale()
+	if out, _, err := f.env.probeArgs(f.local("cursor-agent"), nil, nil); err != nil || out != "live" {
+		t.Fatalf("the live tree was swept: %q %v", out, err)
+	}
+}
+
+func TestSelfUpdateNPMSkipsWhileAnEarlierUpdateIsUnsettled(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	bak := tree + npmBakSuffix
+	f.write(t, filepath.Join(bak, "VERSION"), "1.0.0")
+	f.write(t, f.env.npmMarker(), "accepted\n"+tree+"\n")
+	parent := filepath.Dir(bak)
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	f.env.selfUpdateNPM()
+	if got := f.read(f.env.npmMarker()); got != "accepted\n"+tree+"\n" {
+		t.Fatalf("marker rewritten: %q", got)
+	}
+	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
+		t.Fatal("npm ran over unsettled backups")
+	}
+	os.Chmod(parent, 0o755)
+	f.env.selfUpdateNPM()
+	if _, err := os.Lstat(bak); err == nil {
+		t.Fatal("backup not swept once the permission is back")
+	}
+}
+
+func TestNPMMarkerWrite(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	t.Run("a member's file at the old fixed temp name survives", func(t *testing.T) {
+		f.write(t, f.env.npmMarker()+".new", "mine")
+		if err := f.env.npmWriteMarker("pending", []string{"/x/a"}); err != nil {
+			t.Fatal(err)
+		}
+		if f.read(f.env.npmMarker()+".new") != "mine" {
+			t.Fatal("the member's file was overwritten")
+		}
+	})
+	t.Run("a path with a line break is refused", func(t *testing.T) {
+		if err := f.env.npmWriteMarker("pending", []string{"/x/a\nb"}); err == nil {
+			t.Fatal("accepted")
+		}
+	})
+}
+
+func TestNPMDiscardAsideUnknownStateIsNotGone(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	bak := tree + npmBakSuffix
+	f.write(t, filepath.Join(bak, "VERSION"), "1.0.0")
+	parent := filepath.Dir(bak)
+	if err := os.Chmod(parent, 0o000); err != nil { // neither unlinking nor even looking is possible
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	if npmDiscardAside([]npmAside{{orig: tree, bak: bak}}) {
+		t.Fatal("reported gone although the backup could not even be looked at")
+	}
+	os.Chmod(parent, 0o755)
+	if !npmDiscardAside([]npmAside{{orig: tree, bak: bak}}) {
+		t.Fatal("not swept once the permission is back")
+	}
+}
+
+func TestNPMAcceptedCleanupFailureKeepsTheMarker(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	bak := tree + npmBakSuffix
+	f.write(t, filepath.Join(bak, "VERSION"), "1.0.0")
+	f.write(t, f.env.npmMarker(), "accepted\n"+tree+"\n")
+	parent := filepath.Dir(bak)
+	if err := os.Chmod(parent, 0o555); err != nil { // the backup cannot be unlinked from here
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	f.env.npmRecoverAside()
+	if _, err := os.Lstat(f.env.npmMarker()); err != nil {
+		t.Fatal("marker dropped although a backup is left")
+	}
+	os.Chmod(parent, 0o755)
+	f.env.npmRecoverAside()
+	if _, err := os.Lstat(bak); err == nil {
+		t.Fatal("backup not swept on the next start")
+	}
+	if _, err := os.Lstat(f.env.npmMarker()); err == nil {
+		t.Fatal("marker left after a clean sweep")
+	}
+}
+
+func TestScriptOverSizeLimitFailsAndDoesNotRun(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	big := "touch " + marker + "\n" + strings.Repeat("#"+strings.Repeat("x", 998)+"\n", maxScriptBytes/1000+10)
+	f := newSU(t, goodRTK, "", "", big)
+	err := f.env.runScript(context.Background(), f.env.CursorInstallURL)
+	if !errors.Is(err, ErrScriptTooLarge) {
+		t.Fatalf("err=%v, want ErrScriptTooLarge", err)
+	}
+	if _, serr := os.Stat(marker); serr == nil {
+		t.Fatal("a truncated script was run")
+	}
+	if got := f.env.fetchText(context.Background(), f.env.CursorInstallURL); got != "" {
+		t.Fatalf("fetchText returned %d bytes of an over-long body", len(got))
+	}
+	f.plantCursor(t, "1.0.0")
+	f.env.selfUpdateCursor(context.Background())
+	if _, serr := os.Stat(marker); serr == nil {
+		t.Fatal("selfUpdateCursor ran an over-long script")
+	}
+	t.Run("a script exactly at the limit is accepted", func(t *testing.T) {
+		body := "true\n"
+		body += strings.Repeat("#", maxScriptBytes-len(body)-1) + "\n"
+		b, err := readCapped(strings.NewReader(body), maxScriptBytes)
+		if err != nil || len(b) != maxScriptBytes {
+			t.Fatalf("len=%d err=%v", len(b), err)
+		}
+	})
+}
+
+// plantNPMTree makes the lib tree and npm's relative bin link of a CLI the way npm lays them out.
+func (f *suFixture) plantNPMTree(t *testing.T, pkg, name, version string) string {
+	t.Helper()
+	tree := filepath.Join(f.home, ".local", "lib", "node_modules", filepath.FromSlash(pkg))
+	f.write(t, filepath.Join(tree, "VERSION"), version)
+	f.write(t, filepath.Join(tree, "cli.sh"), "#!/bin/sh\necho "+version+"\n")
+	if err := os.MkdirAll(filepath.Dir(f.local(name)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rel, _ := filepath.Rel(filepath.Dir(f.local(name)), filepath.Join(tree, "cli.sh"))
+	if err := os.Symlink(rel, f.local(name)); err != nil {
+		t.Fatal(err)
+	}
+	return tree
+}
+
+func TestSelfUpdateNPMFailureRestoresTreeAndBin(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	// npm dies after writing a half tree and a broken bin entry.
+	f.write(t, filepath.Join(f.npmDir, "failafter"), "npm ERR! ENOSPC\n")
+	f.write(t, filepath.Join(f.npmDir, "body.claude"), brokenCLI)
+	stub := strings.Replace(f.read(filepath.Join(f.npmDir, "npm")), `mkdir -p "$prefix/bin"`, `mkdir -p "$prefix/bin" "$prefix/lib/node_modules/@anthropic-ai/claude-code"; echo half >"$prefix/lib/node_modules/@anthropic-ai/claude-code/VERSION"`, 1)
+	f.write(t, filepath.Join(f.npmDir, "npm"), stub)
+	f.env.selfUpdateNPM()
+	if got := f.read(filepath.Join(tree, "VERSION")); got != "1.0.0" {
+		t.Fatalf("tree not restored: %q\n%s", got, f.out)
+	}
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
+		t.Fatalf("bin not restored: %q %v", out, err)
+	}
+	for _, p := range []string{tree + npmBakSuffix, f.local("claude") + npmBakSuffix} {
+		if _, err := os.Lstat(p); err == nil {
+			t.Fatalf("backup left: %s", p)
+		}
+	}
+}
+
+func TestNPMRecoverAside(t *testing.T) {
+	setup := func(t *testing.T, state string) (*suFixture, string) {
+		f := newSU(t, goodRTK, "", "", "")
+		tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+		for _, p := range []string{tree, f.local("claude")} {
+			if err := os.Rename(p, p+npmBakSuffix); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if state != "" {
+			f.write(t, f.env.npmMarker(), state+"\n"+tree+"\n"+f.local("claude")+"\n")
+		}
+		return f, tree
+	}
+	t.Run("pending and nothing new: the backup goes back", func(t *testing.T) {
+		f, tree := setup(t, "pending")
+		f.env.npmRecoverAside()
+		if f.read(filepath.Join(tree, "VERSION")) != "1.0.0" || !usable(f.local("claude")) {
+			t.Fatal("not restored")
+		}
+		if _, err := os.Stat(f.env.npmMarker()); err == nil {
+			t.Fatal("marker left")
+		}
+	})
+	t.Run("pending and a new copy that runs is still replaced by the previous one", func(t *testing.T) {
+		f, tree := setup(t, "pending")
+		f.write(t, filepath.Join(tree, "VERSION"), "2.0.0") // npm got this far before the kill
+		f.write(t, f.local("claude"), "#!/bin/sh\necho 2.0.0\n")
+		f.env.npmRecoverAside()
+		if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" || f.read(filepath.Join(tree, "VERSION")) != "1.0.0" {
+			t.Fatalf("mixed state: %q %v", out, err)
+		}
+	})
+	t.Run("only the bin entry still backed up (killed while restoring)", func(t *testing.T) {
+		f, tree := setup(t, "pending")
+		if err := os.Rename(tree+npmBakSuffix, tree); err != nil {
+			t.Fatal(err)
+		}
+		f.write(t, f.local("claude"), "#!/bin/sh\necho half\n")
+		f.env.npmRecoverAside()
+		if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
+			t.Fatalf("bin not restored: %q %v", out, err)
+		}
+	})
+	t.Run("accepted: the listed backups go, the accepted copy stays", func(t *testing.T) {
+		f, tree := setup(t, "accepted")
+		f.write(t, filepath.Join(tree, "VERSION"), "2.0.0")
+		f.env.npmRecoverAside()
+		if f.read(filepath.Join(tree, "VERSION")) != "2.0.0" {
+			t.Fatal("the accepted copy was replaced")
+		}
+		if _, err := os.Lstat(tree + npmBakSuffix); err == nil {
+			t.Fatal("stale backup kept")
+		}
+	})
+	t.Run("no marker: a *.af-bak is the member's own and is left alone", func(t *testing.T) {
+		f, tree := setup(t, "")
+		f.env.npmRecoverAside()
+		if _, err := os.Lstat(tree + npmBakSuffix); err != nil {
+			t.Fatal("a backup the update did not make was touched")
+		}
+		if _, err := os.Lstat(f.local("claude") + npmBakSuffix); err != nil {
+			t.Fatal("a backup the update did not make was touched")
+		}
+	})
+	t.Run("an update does not overwrite a backup name that is already taken", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", "")
+		f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+		f.write(t, f.local("claude")+npmBakSuffix, "mine")
+		f.env.selfUpdateNPM()
+		if f.read(f.local("claude")+npmBakSuffix) != "mine" || f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
+			t.Fatalf("the member's file was overwritten or npm ran anyway:\n%s", f.out)
+		}
+	})
+	t.Run("a self-update start recovers first", func(t *testing.T) {
+		f, tree := setup(t, "pending")
+		f.write(t, filepath.Join(f.npmDir, "fail"), "npm ERR! network boom\n")
+		f.env.selfUpdateNPM()
+		if f.read(filepath.Join(tree, "VERSION")) != "1.0.0" || !usable(f.local("claude")) {
+			t.Fatalf("not restored:\n%s", f.out)
+		}
+	})
+}
+
+// realNPM makes the stub lay out what npm does: the package tree and a relative bin link, and
+// refuse (EEXIST) to overwrite a bin that is not a link.
+func (f *suFixture) realNPM(t *testing.T) {
+	t.Helper()
+	stub := f.read(filepath.Join(f.npmDir, "npm"))
+	old := `          if [ -f "$f" ]; then cp "$f" "$prefix/bin/$cli"; else printf '#!/bin/sh\necho 1.0.0\n' >"$prefix/bin/$cli"; fi
+          chmod +x "$prefix/bin/$cli"`
+	if !strings.Contains(stub, old) {
+		t.Fatal("npm stub changed")
+	}
+	repl := `          [ -e "$prefix/bin/$cli" ] && [ ! -L "$prefix/bin/$cli" ] && { echo "npm ERR! EEXIST $prefix/bin/$cli" >&2; exit 1; }
+          pkg=${1%@*}; tree="$prefix/lib/node_modules/$pkg"; mkdir -p "$tree"
+          echo "new-$cli" >"$tree/VERSION"
+          if [ -f "$f" ]; then cp "$f" "$tree/cli.sh"; else printf '#!/bin/sh\necho 9.9.9\n' >"$tree/cli.sh"; fi
+          chmod +x "$tree/cli.sh"; rm -f "$prefix/bin/$cli"; ln -s "../lib/node_modules/$pkg/cli.sh" "$prefix/bin/$cli"`
+	f.write(t, filepath.Join(f.npmDir, "npm"), strings.Replace(stub, old, repl, 1))
+}
+
+func TestSelfUpdateNPMSuccessInstallsNewTreeAndDropsBackups(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	f.realNPM(t)
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	f.env.selfUpdateNPM()
+	if f.read(filepath.Join(tree, "VERSION")) != "new-claude\n" {
+		t.Fatalf("new tree missing: %q\n%s", f.read(filepath.Join(tree, "VERSION")), f.out)
+	}
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "9.9.9" {
+		t.Fatalf("new claude not in place: %q %v", out, err)
+	}
+	for _, p := range []string{tree + npmBakSuffix, f.local("claude") + npmBakSuffix, f.env.npmMarker()} {
+		if _, err := os.Lstat(p); err == nil {
+			t.Fatalf("left behind after a good update: %s", p)
+		}
+	}
+}
+
+func TestSelfUpdateNPMLeavesAnUnmanagedBinAlone(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	f.realNPM(t)
+	f.write(t, f.local("claude"), "#!/bin/sh\necho mine\n") // not npm's link
+	f.env.selfUpdateNPM()
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "mine" {
+		t.Fatalf("the member's own claude was replaced or moved: %q %v\n%s", out, err, f.out)
+	}
+	if _, err := os.Lstat(f.local("claude") + npmBakSuffix); err == nil {
+		t.Fatal("unmanaged bin left as a backup")
+	}
+}
+
+func TestSelfUpdateNPMOneSlowProbeDoesNotCostThePreviousCopyOrTriggerAPinRepair(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	f.realNPM(t)
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	// The new copy answers once; any later probe fails (a slow start under load). A pin that
+	// differs from the installed latest must not make the verify pass reinstall over it.
+	cnt := filepath.Join(f.npmDir, "cnt")
+	f.write(t, filepath.Join(f.npmDir, "body.claude"), "#!/bin/sh\nn=$(cat "+cnt+" 2>/dev/null || echo 0); echo $((n+1)) >"+cnt+"; [ \"$n\" -lt 1 ] || exit 1; echo 2.0.0\n")
+	f.env.Pins = map[string]string{"claude": "0.9.0"}
+	f.env.selfUpdateNPM()
+	if strings.Contains(f.read(filepath.Join(f.npmDir, "npm.log")), "claude-code@0.9.0") {
+		t.Fatal("the verify pass reinstalled the pin over an accepted update")
+	}
+	if f.read(filepath.Join(tree, "VERSION")) != "new-claude\n" {
+		t.Fatalf("the update was not kept: %q", f.read(filepath.Join(tree, "VERSION")))
+	}
+}
+
+func TestSelfUpdateNPMNewCopyThatDoesNotRunGoesBack(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	f.realNPM(t)
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	f.write(t, filepath.Join(f.npmDir, "body.claude"), brokenCLI)
+	f.env.Pins = map[string]string{}
+	f.env.selfUpdateNPM()
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
+		t.Fatalf("previous claude not kept: %q %v\n%s", out, err, f.out)
+	}
+	if f.read(filepath.Join(tree, "VERSION")) != "1.0.0" {
+		t.Fatal("previous tree not kept")
+	}
+	if !strings.Contains(f.out.String(), "updated claude does not run; kept the previous copy") {
+		t.Fatalf("no report:\n%s", f.out)
+	}
 }
 
 func TestSelfUpdateAlwaysExitsZero(t *testing.T) {

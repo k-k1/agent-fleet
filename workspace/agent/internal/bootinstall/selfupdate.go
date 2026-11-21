@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,8 +23,9 @@ import (
 // AF_AGENT_SELF_UPDATE both 1). The entrypoint decides whether to run it (opt-in, unattended
 // start, free space) and calls `boot-install self-update`; each CLI here follows its own
 // distribution and a failure of one never stops the others or the start: the installed copy
-// stays. No status line is written: Settings > Toolchains reports the pinned boot-install, not
-// this opt-in.
+// stays. Status lines come only from the npm verify pass (NPMVerify records ok / failed for the
+// npm CLIs it checks); agy, rtk and cursor write none. Settings > Toolchains otherwise reports
+// the pinned boot-install, not this opt-in.
 
 const (
 	rtkLatestPage     = "https://github.com/rtk-ai/rtk/releases/latest"
@@ -33,6 +35,9 @@ const (
 	cursorInstallURL  = "https://cursor.com/install"
 	// installScriptTimeout bounds one upstream install script (it downloads the CLI itself).
 	installScriptTimeout = 10 * time.Minute
+	// maxScriptBytes is the largest install script we accept. A longer body is refused, never cut
+	// short: bash would run the truncated prefix as if it were the whole script.
+	maxScriptBytes = 4 << 20
 	// latestLookupTimeout bounds the small "what is latest" requests.
 	latestLookupTimeout = 15 * time.Second
 )
@@ -65,8 +70,23 @@ func (e Env) urls() (rtkPage, rtkDL, agyManifest, agyScript, cursorScript string
 		pick(e.CursorInstallURL, cursorInstallURL)
 }
 
-// fetchText GETs a small text document ("" on any failure: latest is then unknown and the
-// caller updates, as the shell did).
+// ErrScriptTooLarge marks an upstream script longer than maxScriptBytes.
+var ErrScriptTooLarge = errors.New("install script exceeds the size limit")
+
+// readCapped reads all of r and fails with ErrScriptTooLarge when it holds more than max bytes.
+func readCapped(r io.Reader, max int64) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > max {
+		return nil, ErrScriptTooLarge
+	}
+	return b, nil
+}
+
+// fetchText GETs a small text document ("" on any failure, an over-long body included: latest is
+// then unknown and the caller updates, as the shell did).
 func (e Env) fetchText(ctx context.Context, u string) string {
 	ctx, cancel := context.WithTimeout(ctx, latestLookupTimeout)
 	defer cancel()
@@ -82,13 +102,22 @@ func (e Env) fetchText(ctx context.Context, u string) string {
 	if resp.StatusCode != http.StatusOK {
 		return ""
 	}
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	b, err := readCapped(resp.Body, maxScriptBytes)
+	if err != nil {
+		return ""
+	}
 	return string(b)
 }
 
-// runScript fetches an upstream install script and runs it with bash under a deadline (the
-// whole group is killed at it). Output is dropped, as the shell's `>/dev/null 2>&1` did.
+// runScript runs an upstream install script with HOME = the real home.
 func (e Env) runScript(ctx context.Context, url string, args ...string) error {
+	return e.runScriptHome(ctx, e.Home, url, args...)
+}
+
+// runScriptHome fetches an upstream install script and runs it with bash under a deadline (the
+// whole group is killed at it), with HOME=home. Output is dropped, as the shell's `>/dev/null
+// 2>&1` did. A script over maxScriptBytes is an error and nothing runs.
+func (e Env) runScriptHome(ctx context.Context, home, url string, args ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, installScriptTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -103,13 +132,13 @@ func (e Env) runScript(ctx context.Context, url string, args ...string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s: %w", url, httpStatusError(resp.StatusCode))
 	}
-	script, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	script, err := readCapped(resp.Body, maxScriptBytes)
 	if err != nil {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, "bash", append([]string{"-s", "--"}, args...)...)
 	cmd.Stdin = bytes.NewReader(script)
-	cmd.Env = append(os.Environ(), "HOME="+e.Home)
+	cmd.Env = append(os.Environ(), "HOME="+home)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
@@ -132,6 +161,13 @@ func (e Env) pathVersion(name string, args ...string) string {
 }
 
 func (e Env) selfUpdateNPM() {
+	e.npmRecoverAside()
+	if _, err := os.Lstat(e.npmMarker()); err == nil {
+		// Recovery could not settle the earlier update's backups: starting another one would
+		// overwrite their record. The installed copies stay.
+		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update skipped (an earlier update's backups are not settled yet)")
+		return
+	}
 	prefixed, lsOK := e.npmLs()
 	need := !lsOK // an `npm ls` that failed cannot vouch for the tree: update
 	for _, c := range npmCLIs {
@@ -154,18 +190,89 @@ func (e Env) selfUpdateNPM() {
 		specs = append(specs, c.Pkg+"@latest")
 		names = append(names, c.Name)
 	}
+	// The installed trees are moved aside first and put back when the install fails or a new copy
+	// does not run: an ENOSPC or a kill mid-install must not cost the working copy.
+	moved, merr := e.npmMoveAside()
+	if merr != nil {
+		fmt.Fprintln(e.Stderr, merr)
+		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update failed (kept the installed versions)")
+		return
+	}
+	verify := names // the CLIs the pin-repairing verify pass may look at
 	if stderr, err := e.npmInstall(specs); err != nil {
 		fmt.Fprint(e.Stderr, stderr)
+		if e.npmRestoreAside(moved) {
+			moved = nil
+		}
 		if usable(filepath.Join(e.bakedBin(), "opencode")) {
 			fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update failed (using baked versions)")
 		} else {
 			fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update failed (kept the installed versions)")
 		}
 	} else {
+		// Each CLI that had a previous copy is judged once, here: a new copy that runs is accepted
+		// and is not handed to the verify pass (which would "repair" it to the pin on one slow
+		// probe and cost us the previous copy); one that does not run goes back to the previous
+		// copy. Only CLIs without a previous copy are left to the verify pass.
+		bad := e.npmNotRunning(moved)
+		var keep []npmAside
+		hadOld := map[string]bool{}
+		for _, m := range moved {
+			hadOld[m.cli] = true
+			if bad[m.cli] {
+				e.npmRestoreAside([]npmAside{m})
+				continue
+			}
+			keep = append(keep, m)
+		}
+		verify = nil
+		for _, c := range names {
+			switch {
+			case !hadOld[c] || bad[c]:
+				verify = append(verify, c)
+				if bad[c] {
+					fmt.Fprintf(e.Stdout, "[entrypoint] WARN: updated %s does not run; kept the previous copy\n", c)
+				}
+			default:
+				e.note(c, statusOK, "")
+			}
+		}
 		fmt.Fprintln(e.Stdout, "[entrypoint] agent CLIs updated (~/.local)")
+		moved = keep
 	}
-	// A failed install can leave a half-replaced tree, or none, so check either way.
-	e.NPMVerify(names, false)
+	// A failed install can leave a half-replaced tree, or none, so check what has no previous copy.
+	if len(verify) > 0 {
+		e.NPMVerify(verify, false)
+	}
+	// Accepted: the marker says so before the backups go, so a kill between the two cannot restore
+	// them over the new copies.
+	if len(moved) > 0 {
+		origs := make([]string, len(moved))
+		for i, m := range moved {
+			origs[i] = m.orig
+		}
+		if e.npmWriteMarker("accepted", origs) == nil && npmDiscardAside(moved) {
+			os.Remove(e.npmMarker()) // otherwise it stays and the next start sweeps again
+		}
+	} else if _, err := os.Stat(e.npmMarker()); err == nil {
+		os.Remove(e.npmMarker())
+	}
+}
+
+// npmNotRunning is the set of CLIs among the moved entries whose ~/.local copy does not answer
+// --version; each CLI is asked once, however many of its paths were moved.
+func (e Env) npmNotRunning(moved []npmAside) map[string]bool {
+	asked, bad := map[string]bool{}, map[string]bool{}
+	for _, m := range moved {
+		if asked[m.cli] {
+			continue
+		}
+		asked[m.cli] = true
+		if !e.runs(filepath.Join(e.localBin(), m.cli)) {
+			bad[m.cli] = true
+		}
+	}
+	return bad
 }
 
 func (e Env) npmLatest(pkg string) string {
@@ -310,7 +417,8 @@ func (e Env) selfUpdateCursor(ctx context.Context) {
 		return
 	}
 	link := filepath.Join(e.localBin(), cursorTool)
-	if err := e.runScript(ctx, script); err != nil || !usable(link) {
+	if err := e.installCursorLatest(ctx, script); err != nil {
+		fmt.Fprintln(e.Stderr, err)
 		prev := "baked"
 		if _, err := os.Stat(link); err == nil {
 			prev = "previous"

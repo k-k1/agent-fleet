@@ -40,6 +40,10 @@ func Run(args []string) {
 	if present && len(rest) > 0 {
 		usage()
 	}
+	if step == "npm" || step == "npm-verify" || step == "self-update" {
+		// Before anything looks at the npm CLIs: a killed self-update may have left them moved aside.
+		DefaultEnv(false).npmRecoverAside()
+	}
 	switch step {
 	case "rtk":
 		os.Exit(RTK(context.Background(), DefaultEnv(repin)))
