@@ -9,7 +9,7 @@
 // position or a poller that lives in a section.
 import { create } from "zustand";
 
-export const RAIL_VIEWS = ["sessions", "shared", "assistant", "workitems", "memo", "memory", "schedules", "files"] as const;
+export const RAIL_VIEWS = ["sessions", "shared", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"] as const;
 export type RailView = (typeof RAIL_VIEWS)[number];
 
 const readView = (): RailView => {

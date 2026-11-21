@@ -46,6 +46,7 @@ const VIEWS: ViewDef[] = [
   { id: "assistant", icon: "comment-discussion", label: "asst.section_title" },
   { id: "workitems", icon: "issues", label: "wi.title" },
   { id: "memo", icon: "note", label: "memo.title" },
+  { id: "autorun", icon: "play", label: "memo.autorun" },
   { id: "memory", icon: "archive", label: "rail.view.memory" },
   { id: "schedules", icon: "calendar", label: "sched.title" },
   { id: "files", icon: "files", label: "pj.files" },

@@ -211,7 +211,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "pj.peek_more": "Also running:\n{names}",
   "pj.expand": "Expand",
   "rp.lineage_detached": "Listed elsewhere",
-  "rp.lineage_detached_hint": "This copy was started from one of the copies below this row, but the tree lists it outside that group. It is part of this action.",
+  "rp.lineage_detached_hint": "This copy was started from one of the copies below this row, or made by an auto-run, and the tree lists it elsewhere (for an auto-run, in the Auto-run view). It is part of this action.",
   "pj.group_autorun": "Auto-run",
   "pj.group_schedule": "Schedules",
   "pj.group_count": "{n} sessions",

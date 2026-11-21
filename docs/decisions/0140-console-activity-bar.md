@@ -128,3 +128,24 @@ target the shared list). Decision 5: opening a handoff-offer notice brings the v
 phone's vertical swipe follows the icon order, so it includes the new view. The view is not scoped
 by a working set: a shared session belongs to another member's working copy. An empty view says
 that nothing is shared instead of staying blank.
+
+## Note, 2026-11-21: memo auto-run gets its own view; unattended work leaves the tree (#4646, part 1)
+
+Memo auto-run runs sat in a folded "Auto-run" group under each repository (#4627), which is still a
+long tree with a branch header per worktree. They now have a view of their own, `autorun` (icon
+`play`, label "Auto-run"), right after Memo queue, in the running and the stopped workspace alike. It
+lists one row per run (a session with origin `queue`), not one per worktree, under its queue's
+category: state (running, waiting for the member's answer, ended), the work item from the session's
+`started` link, the pull request when known, and the time it has been going. A row opens the run's
+session; the sessions the run started (origin `session` edges up to the run) sit one level under it;
+ended runs fold into "Ended N". The category of a run comes from the queue's deliveries, which the
+view reads while it is mounted; a run no delivery names is listed under "Other runs". The view is not
+scoped by a working set. Decisions above are unchanged.
+
+The repository tree no longer shows auto-run copies or sessions. They are carried in the owner's
+`detached` list, so bulk stop and delete on a base clone still count and name them (the confirmation
+labels them "Listed elsewhere"). Scheduled sessions keep their tree group in this part: the view that
+is to list them (the Schedules view) is a later part, and removing the group first would leave them
+nowhere. Later parts: the row actions and "Clear finished runs", the badges (decision 4: a waiting
+count, a failed dot, only for rows the view lists), scheduled sessions in the Schedules view, and the
+memo run history linking to a row. Follow-ups: #4646.

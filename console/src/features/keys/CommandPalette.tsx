@@ -82,7 +82,7 @@ import { loadMemoryList, searchMemoryBodies, type MemoryList } from "./memoryPal
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
-import { sessionFolder, workingCopyLabel, worktreeTag } from "../../lib/project.ts";
+import { isAutoRunOnlyFolder, sessionFolder, workingCopyLabel, worktreeTag } from "../../lib/project.ts";
 import type { Session } from "../../types/session.ts";
 import {
   joinChanges,
@@ -758,8 +758,10 @@ export function CommandPalette() {
         (r.branch ? " · " + r.branch : ""),
       search: r.name + " " + (r.branch || "") + " " + (r.worktree ? "worktree wt" : "repo"),
       keys: [],
+      // A copy only auto-run works in is not in the tree, so there is no row to reveal: open its
+      // Source Control instead.
       run: (split) =>
-        split
+        split || isAutoRunOnlyFolder(sessions, r, repos)
           ? useLayoutStore.getState().openTargetInNew({ content: { kind: "scm", scmRepo: r.name } })
           : revealRepoInRail(r.name),
     }));

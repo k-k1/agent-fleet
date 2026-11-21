@@ -209,7 +209,7 @@ export const repos = {
   "pj.peek_more": "ほかに稼働中:\n{names}",
   "pj.expand": "展開",
   "rp.lineage_detached": "別の場所に表示",
-  "rp.lineage_detached_hint": "このコピーは配下のコピーから起動されましたが、ツリーではそのグループの外に表示されます。この操作の対象に含まれます。",
+  "rp.lineage_detached_hint": "このコピーは、配下のコピーから起動されたか、自動実行が作ったもので、ツリーでは別の場所（自動実行のビューなど）に表示されます。この操作の対象に含まれます。",
   "pj.group_autorun": "自動実行",
   "pj.group_schedule": "スケジュール",
   "pj.group_count": "セッション {n} 件",

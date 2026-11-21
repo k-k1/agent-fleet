@@ -1,7 +1,6 @@
-// Render test for the rail's Auto-run / Schedules groups (issue #4627): worktrees raised by
-// memo auto-run (origin queue) or a schedule fold into a group under their repository, with
-// a count and a running badge, while the member's own copies stay in the tree. The fold
-// persists, and a filter match inside a folded group forces it open.
+// Render test for unattended work in the repository tree: a schedule's worktrees fold into a
+// group under their repository (issue #4627), while memo auto-run (origin queue) leaves the tree
+// for the Auto-run view (#4646). The member's own copies stay in the tree.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -92,45 +91,58 @@ afterEach(() => {
   host.remove();
 });
 
-describe("auto-run groups in the repository tree", () => {
-  it("folds unattended copies away by default and keeps the member's own in the tree", async () => {
+describe("unattended work in the repository tree", () => {
+  it("leaves auto-run copies out of the tree and folds schedule copies away", async () => {
     await render();
     expect(copies()).toEqual(["af", "af@hand"]);
-    expect(head("autorun").getAttribute("aria-expanded")).toBe("false");
+    expect(group("autorun")).toBeNull();
     expect(head("schedule").getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("shows a count, and a running badge only while something in the group is live", async () => {
+  it("shows a schedule group's count, and a running badge only while something in it is live", async () => {
     await render();
-    // af@run + its reviewer af@rev, both alive.
-    expect(head("autorun").querySelector(".repo-sess-badge:not(.run)")!.textContent).toBe("2");
-    expect(head("autorun").querySelector(".repo-sess-badge.run")!.textContent).toBe("●2");
     // The schedule's only session is stopped: a count, no running badge.
     expect(head("schedule").querySelector(".repo-sess-badge:not(.run)")!.textContent).toBe("1");
     expect(head("schedule").querySelector(".repo-sess-badge.run")).toBeNull();
   });
 
-  it("opens on click with the run's reviewer nested under it, and remembers the choice", async () => {
+  it("keeps the schedule fold across a remount", async () => {
     await render();
-    await act(async () => head("autorun").click());
-    expect(copies()).toEqual(["af", "af@hand", "af@run", "af@rev"]);
-    expect(
-      group("autorun")!.querySelector(':scope > ul.proj-children > li.proj-node > ul.proj-children [data-rail-repo="af@rev"]'),
-    ).not.toBeNull();
-    // A remount reads the persisted fold.
+    await act(async () => head("schedule").click());
+    expect(copies()).toEqual(["af", "af@hand", "af@cron"]);
     await act(async () => root!.unmount());
     root = createRoot(host);
     await render();
-    expect(head("autorun").getAttribute("aria-expanded")).toBe("true");
-    expect(head("schedule").getAttribute("aria-expanded")).toBe("false");
+    expect(head("schedule").getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("forces a group open while filtering to a session inside it, and hides the rest", async () => {
+  it("does not surface a run's session when filtering for it", async () => {
     useProjectFilter.setState({ q: "run-reviewer" });
     await render();
-    expect(head("autorun").getAttribute("aria-expanded")).toBe("true");
-    expect(group("schedule")).toBeNull();
-    expect(copies()).toEqual(["af", "af@run", "af@rev"]);
+    expect(group("autorun")).toBeNull();
+    expect(copies()).toEqual([]);
+  });
+
+  it("does not list an auto-run's session that reused the base clone's folder", async () => {
+    served = [{ name: "af", branch: "develop" }];
+    useReposStore.setState({ repos: served });
+    useSessionsStore.setState({
+      sessions: [
+        sess("handwork", { repo: "af", createdAt: at(1), origin: "user" }),
+        sess("nightly-run", { repo: "af", createdAt: at(2), origin: "queue" }),
+      ],
+    });
+    await render();
+    expect([...host.querySelectorAll("li.sess-row .sess-l1")].map((e) => e.textContent)).toEqual(["handwork"]);
+    expect(group("autorun")).toBeNull();
+    // Folded, the clone's row summarises only what the tree lists, and a search for the run's
+    // own name finds nothing.
+    await act(async () => host.querySelector<HTMLButtonElement>(".proj-node-caret")!.click());
+    expect(host.textContent).not.toContain("nightly-run");
+    expect(host.querySelector(".repo-sess-badge")?.textContent ?? "").not.toBe("2");
+    useProjectFilter.setState({ q: "nightly-run" });
+    await render();
+    expect(host.querySelector("[data-rail-repo]")).toBeNull();
   });
 });
 

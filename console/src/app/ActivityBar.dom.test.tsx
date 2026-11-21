@@ -151,6 +151,15 @@ describe("ActivityBar shared view", () => {
   });
 });
 
+describe("ActivityBar auto-run view", () => {
+  it("places the auto-run icon right after Memo queue, with no badge in part 1", async () => {
+    await mount();
+    const ids = [...host!.querySelectorAll<HTMLElement>(".actbar-btn[data-rail-view]")].map((b) => b.dataset.railView);
+    expect(ids[ids.indexOf("memo") + 1]).toBe("autorun");
+    expect(badge("autorun")).toBeNull();
+  });
+});
+
 describe("ActivityBar views", () => {
   it("presses the icon of the view on screen and no other", async () => {
     await mount();

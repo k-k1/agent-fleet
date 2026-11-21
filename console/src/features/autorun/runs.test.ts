@@ -1,0 +1,106 @@
+import { describe, expect, it } from "vitest";
+import type { Session } from "../../types/session.ts";
+import { buildRuns, fmtElapsed, itemLabel, runRootName, type RunDelivery } from "./runs.ts";
+
+const dlv = (categoryId: string, state: string, extra: Partial<RunDelivery> = {}): RunDelivery => ({ categoryId, state, sentAt: "", createdAt: "", closedAt: "", heldBy: "", ...extra });
+const sess = (name: string, extra: Partial<Session>): Session => ({ name, kind: "claude", alive: true, ...extra });
+
+describe("buildRuns", () => {
+  const sessions: Session[] = [
+    sess("run-a", {
+      origin: "queue",
+      createdAt: "2026-11-01T00:00:00Z",
+      links: [{ provider: "github", key: "o/r#12", role: "started", title: "Fix it" }],
+      pr: { number: 30, state: "open", url: "u" },
+    }),
+    sess("rev-a", { origin: "session", originSession: "run-a", createdAt: "2026-11-01T01:00:00Z" }),
+    sess("rev-a2", { origin: "session", originSession: "rev-a", createdAt: "2026-11-01T02:00:00Z" }),
+    sess("run-b", { origin: "queue", createdAt: "2026-11-02T00:00:00Z", alive: false }),
+    sess("run-c", { origin: "queue", createdAt: "2026-11-03T00:00:00Z", state: "question" }),
+    sess("hand", { origin: "user" }),
+    sess("cron", { origin: "schedule" }),
+    sess("kid-of-hand", { origin: "session", originSession: "hand" }),
+  ];
+  const rows = buildRuns(sessions, new Map([["run-a", dlv("cat1", "open")]]));
+
+  it("makes one row per run, newest first, and none for the member's or a schedule's sessions", () => {
+    expect(rows.map((r) => r.root.name)).toEqual(["run-c", "run-b", "run-a"]);
+  });
+
+  it("derives running, waiting and ended", () => {
+    expect(Object.fromEntries(rows.map((r) => [r.root.name, r.state]))).toEqual({ "run-a": "running", "run-b": "ended", "run-c": "waiting" });
+  });
+
+  it("carries the work item, the PR and the category", () => {
+    const a = rows.find((r) => r.root.name === "run-a")!;
+    expect(a.item).toEqual({ key: "o/r#12", label: "#12", title: "Fix it" });
+    expect(a.pr?.number).toBe(30);
+    expect(a.categoryId).toBe("cat1");
+    expect(rows[0].categoryId).toBe("");
+    expect(rows[0].item).toBeNull();
+  });
+
+  it("lists every session the run started under the run, oldest first", () => {
+    expect(rows.find((r) => r.root.name === "run-a")!.children.map((c) => c.name)).toEqual(["rev-a", "rev-a2"]);
+  });
+});
+
+describe("a run's state follows its queue's delivery", () => {
+  const t = (s: Session[], d?: RunDelivery) => buildRuns(s, d ? new Map([["r", d]]) : new Map())[0];
+  it("is waiting while a session the run started waits, though the root is stopped", () => {
+    const r = t([sess("r", { origin: "queue", alive: false }), sess("c", { origin: "session", originSession: "r", state: "question" })], dlv("c1", "open"));
+    expect(r.state).toBe("waiting");
+  });
+  it("is ended once the delivery closed, even if the root is still alive (retiring, or taken over)", () => {
+    expect(t([sess("r", { origin: "queue" })], dlv("c1", "closed", { closedAt: "2026-11-01T01:00:00Z" })).state).toBe("ended");
+  });
+  it("stays running while a child works after the root stopped", () => {
+    const r = t([sess("r", { origin: "queue", alive: false }), sess("c", { origin: "session", originSession: "r" })], dlv("c1", "open"));
+    expect(r.state).toBe("running");
+  });
+  it("falls back to the sessions when no delivery is known", () => {
+    expect(t([sess("r", { origin: "queue", alive: false })]).state).toBe("ended");
+    expect(t([sess("r", { origin: "queue", alive: false }), sess("c", { origin: "session", originSession: "r" })]).state).toBe("running");
+  });
+  it("keeps the start and end of a finished run", () => {
+    const r = t([sess("r", { origin: "queue", alive: false })], dlv("c1", "closed", { sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:30:00Z" }));
+    expect(r.endedAt - r.startedAt).toBe(30 * 60_000);
+  });
+  it("is waiting when a child was stopped on a question, or the queue holds the run for the member", () => {
+    const stopped = [sess("r", { origin: "queue", alive: false }), sess("c", { origin: "session", originSession: "r", alive: false, carried: "question" })];
+    expect(t(stopped, dlv("c1", "open")).state).toBe("waiting");
+    expect(t(stopped).state).toBe("waiting"); // and with no delivery at all
+    expect(t([sess("r", { origin: "queue", alive: false })], dlv("c1", "open", { heldBy: "person" })).state).toBe("waiting");
+  });
+  it("uses the sessions again once a delivery's state expired", () => {
+    expect(t([sess("r", { origin: "queue", alive: false })], dlv("c1", "")).state).toBe("ended");
+  });
+  it("names only the started work item, not one linked later", () => {
+    const r = t([sess("r", { origin: "queue", links: [{ provider: "github", key: "o/r#9", role: "watching", title: "Other" }] })]);
+    expect(r.item).toBeNull();
+  });
+});
+
+describe("runRootName", () => {
+  it("answers nothing for a cycle, a vanished parent and a hand-started parent", () => {
+    const by = new Map([
+      ["x", sess("x", { origin: "session", originSession: "y" })],
+      ["y", sess("y", { origin: "session", originSession: "x" })],
+      ["h", sess("h", { origin: "user" })],
+    ]);
+    expect(runRootName(by.get("x")!, by)).toBe("");
+    expect(runRootName(sess("z", { origin: "session", originSession: "gone" }), by)).toBe("");
+    expect(runRootName(sess("k", { origin: "session", originSession: "h" }), by)).toBe("");
+  });
+});
+
+describe("helpers", () => {
+  it("labels items and elapsed time", () => {
+    expect(itemLabel("o/r#5")).toBe("#5");
+    expect(itemLabel("PROJ-12")).toBe("PROJ-12");
+    expect(fmtElapsed(30_000)).toBe("<1m");
+    expect(fmtElapsed(12 * 60_000)).toBe("12m");
+    expect(fmtElapsed(65 * 60_000)).toBe("1h 5m");
+    expect(fmtElapsed(27 * 3600_000)).toBe("1d 3h");
+  });
+});

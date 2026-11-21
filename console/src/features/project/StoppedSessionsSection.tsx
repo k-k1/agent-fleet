@@ -2,7 +2,8 @@
 // Plane, but repo metadata and mutating session operations require the Agent.
 // Show every session as one history list instead of misclassifying all of them
 // as "other" merely because the repo endpoint is unavailable.
-import { memo } from "react";
+import { memo, useMemo } from "react";
+import { withoutAutoRun } from "../../lib/project.ts";
 import { Section } from "../../ui/Section.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
@@ -23,7 +24,9 @@ export const StoppedSessionsSection = memo(function StoppedSessionsSection() {
   // Working sets (docs/log/52): membership resolves from the folder name alone, so the
   // scope keeps working here even though the repo list needs the (stopped) agent.
   const wset = useActiveWorkingSet();
-  const shown = wset ? sessions.filter((s) => sessionInSet(wset, s)) : sessions;
+  // An auto-run's sessions are the Auto-run view's, here too (nothing else would list them).
+  const own = useMemo(() => withoutAutoRun(sessions), [sessions]);
+  const shown = wset ? own.filter((s) => sessionInSet(wset, s)) : own;
 
   // Collapsed, the header is all that is left of these rows — roll their unread dot up.
   const unreadSessions = useUnreadSessions();
