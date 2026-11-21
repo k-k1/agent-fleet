@@ -492,6 +492,7 @@ func TestBindingStallBeforeTheCallIsNotAClockChange(t *testing.T) {
 func TestStampedEventCorrection(t *testing.T) {
 	bindT(t)
 	at := time.UnixMilli(1_000_000)
+	stampUp = 50_000
 	clockStamp = func() (string, int64, bool) { return "boot", 50_000, true }
 	age := func(mono, wall time.Duration) {
 		instantAge = func(time.Time) (time.Duration, time.Duration) { return mono, wall }
@@ -504,7 +505,7 @@ func TestStampedEventCorrection(t *testing.T) {
 	}{
 		{"late by 3s", 3 * time.Second, 3 * time.Second, nil, bindEvent{At: 1_000_000, Boot: "boot", Up: 47_000}},
 		{"future instant is now", -3 * time.Second, -3 * time.Second, nil, bindEvent{At: 1_000_000, Boot: "boot", Up: 50_000}},
-		{"suspended meanwhile", 100 * time.Millisecond, 3100 * time.Millisecond, nil, bindEvent{At: 1_000_000}},
+		{"suspended meanwhile", 100 * time.Millisecond, 3100 * time.Millisecond, nil, bindEvent{At: 50_000, Boot: "boot", Up: 50_000}},
 		{"correction reaches boot", 50 * time.Second, 50 * time.Second, nil, bindEvent{At: 1_000_000}},
 		{"correction passes boot", 60 * time.Second, 60 * time.Second, nil, bindEvent{At: 1_000_000}},
 		{"no stamp", time.Second, time.Second, func() (string, int64, bool) { return "", 0, false }, bindEvent{At: 1_000_000}},
@@ -536,5 +537,66 @@ func TestBindingLateFirstOutReadingIsStamped(t *testing.T) {
 	}
 	if got := bind(t, routes.RouteOpencodeZen, false, 5000); got == "" {
 		t.Error("the key call lost its binding")
+	}
+}
+
+// A suspend between the instant and the stamp (the wall clock ran on, the monotonic clock did not)
+// records the reading as a pair of the moment of the stamp: a first out reading keeps its stamp, a
+// repeated one is dropped, and a daemon of unknown environment does not poison the next healthy one.
+func TestBindingSuspendKeepsLedgerUsable(t *testing.T) {
+	bindT(t)
+	suspended := func() {
+		instantAge = func(time.Time) (time.Duration, time.Duration) { return 100 * time.Millisecond, 3100 * time.Millisecond }
+	}
+	start(1000, 1, "key-A")
+	suspended()
+	stampUp = 1100
+	noteAccount(atMs(1100), acctOut, 1) // first out, held up by a suspend
+	evs := events(t)
+	if last := evs[len(evs)-1]; last.Floor == math.MaxInt64 || last.Boot == "" {
+		t.Errorf("first out after a suspend = %+v, want a stamp", last)
+	}
+	if bind(t, routes.RouteOpencodeZen, false, 5000) == "" {
+		t.Error("the key call lost its binding")
+	}
+	n := len(events(t))
+	stampUp = 1200
+	noteAccount(atMs(1200), acctOut, 1) // repeated out, also after a suspend
+	if got := len(events(t)); got != n {
+		t.Errorf("a repeated out after a suspend was kept: %d -> %d", n, got)
+	}
+	suspended()
+	stampUp = 9000
+	noteDaemonUnknown(2)
+	instantAge = func(time.Time) (time.Duration, time.Duration) { return 0, 0 }
+	stampUp = 9100
+	start(9100, 3, "key-C")
+	stampUp = 9200
+	acct(9200, acctOut, 3)
+	if bind(t, routes.RouteOpencodeZen, false, 9500) == "" {
+		t.Error("an unknown daemon after a suspend stopped the next healthy daemon from binding")
+	}
+}
+
+// A clock really set back while the reading was held up is recorded against the earlier events.
+func TestBindingClockSetDuringHoldUpIsKept(t *testing.T) {
+	bindT(t)
+	start(100_000, 1, "key-A")
+	stampUp = 110_000
+	noteAccount(atMs(110_000), acctOut, 1)
+	stampUp = 160_000
+	noteAccount(atMs(160_000), acctTouch, 1)
+	// The instant read 200 s on the wall, the stamp is taken 60 s back on it: monotonic elapsed 0,
+	// wall elapsed -60 s.
+	instantAge = func(time.Time) (time.Duration, time.Duration) { return 0, -60 * time.Second }
+	wallNow = func() time.Time { return time.UnixMilli(140_000) }
+	stampUp = 170_000
+	noteAccount(atMs(200_000), acctOut, 1)
+	evs := events(t)
+	if last := evs[len(evs)-1]; !last.Reg || last.Kind != evAccount || last.At != 140_000 {
+		t.Errorf("the reading across a clock set = %+v, want it kept with a clock-move record", last)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 141_000); got != "" {
+		t.Errorf("a call after the clock went back bound to %q", got)
 	}
 }

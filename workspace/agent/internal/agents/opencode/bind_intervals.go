@@ -405,15 +405,20 @@ var instantAge = func(at time.Time) (mono, wall time.Duration) {
 // with an uncorrected current uptime: a caller held up between taking `at` and getting here would
 // otherwise read as a clock that was set. The uptime counts time spent suspended and the monotonic
 // clock does not, so when the two elapsed readings disagree by more than stampWindow (a suspend, or
-// a clock set in between) the correction is unknowable. Then, as when the stamp cannot be taken,
-// was itself held up, or the correction runs past the start of the boot, the event is left
+// a clock set in between) the instant cannot be moved onto the uptime. The event is then taken at
+// the moment of the stamp read itself, a wall and uptime pair of one moment, so that a clock that
+// was really set shows against the earlier events and a suspend does not. A stamp that cannot be
+// taken, was itself held up, or whose correction runs past the start of the boot leaves the event
 // unstamped, which says nothing about the clock.
 func stampedEvent(at time.Time) bindEvent {
-	w0 := time.Now()
+	w0 := wallNow()
 	boot, up, ok := clockStamp()
-	mono, wall := instantAge(at)
-	if !ok || time.Since(w0) > stampWindow || wall-mono > stampWindow || mono-wall > stampWindow {
+	if !ok || wallNow().Sub(w0) > stampWindow {
 		return bindEvent{At: at.UnixMilli()}
+	}
+	mono, wall := instantAge(at)
+	if wall-mono > stampWindow || mono-wall > stampWindow {
+		return bindEvent{At: w0.UnixMilli(), Boot: boot, Up: up}
 	}
 	if mono < 0 {
 		mono = 0 // an instant ahead of now is taken as now
