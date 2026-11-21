@@ -327,6 +327,25 @@ describe("the list", () => {
     expect(bodies).toEqual(["new-n", "old-o", "bad-x"]);
   });
 
+  it("publishes the measured category head height on the category for the sticky fold line", async () => {
+    const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).classList.contains("memo-cat-head") ? 44 : 0;
+      },
+    });
+    try {
+      servedMemos = [aMemo({ id: "b", state: "delivered", provenance: "member" })];
+      await render();
+      const cat = document.querySelector<HTMLElement>(".memo-cat")!;
+      expect(cat.style.getPropertyValue("--memo-cat-head-h")).toBe("44px");
+      expect(cat.contains(document.querySelector(".memo-sent-fold"))).toBe(true);
+    } finally {
+      if (desc) Object.defineProperty(HTMLElement.prototype, "offsetHeight", desc);
+    }
+  });
+
   it("clears a folded memo's selection when select-all is turned off with the fold closed", async () => {
     servedMemos = [
       aMemo({ id: "b", body: "started-b", state: "delivered", provenance: "member", position: 0 }),
