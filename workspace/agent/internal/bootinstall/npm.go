@@ -345,10 +345,21 @@ type npmAside struct{ cli, orig, bak string }
 
 const npmBakSuffix = ".af-bak"
 
-// npmMarker exists while backups are the truth: written before anything is moved aside, removed
-// once the new copies are accepted (before the backups are deleted). A killed start leaves it
-// behind, and recovery then puts every backup back, whatever the new copy looks like.
+// npmMarker records one self-update's backups: a first line "pending" or "accepted", then the
+// original path of every entry moved aside (its backup is that path + npmBakSuffix). It is
+// written before anything is moved. A killed start leaves it behind, and recovery then acts on
+// exactly the listed backups: pending puts them back whatever the new copy looks like, accepted
+// deletes them. A *.af-bak that is not listed is someone else's and is never touched.
 func (e Env) npmMarker() string { return filepath.Join(e.Home, ".local", ".af-npm-update") }
+
+func (e Env) npmWriteMarker(state string, origs []string) error {
+	body := state + "\n" + strings.Join(origs, "\n") + "\n"
+	tmp := e.npmMarker() + ".new"
+	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, e.npmMarker())
+}
 
 // npmTreeOf is the package tree of a CLI under lib/node_modules.
 func (e Env) npmTreeOf(pkg string) string {
@@ -374,77 +385,94 @@ func npmManagedBin(bin, tree string) bool {
 	return t == tree || strings.HasPrefix(t, tree+string(filepath.Separator))
 }
 
-// npmRecoverAside settles what a killed self-update left. With the marker present the backups
-// are put back (the new tree is discarded); without it they are stale leftovers of an accepted
-// update and go. Run it before anything else looks at the npm CLIs.
+// npmRecoverAside settles what a killed self-update left, by what its marker lists. Run it before
+// anything else looks at the npm CLIs. The marker goes only when every listed backup is settled.
 func (e Env) npmRecoverAside() {
-	_, merr := os.Lstat(e.npmMarker())
-	marked := merr == nil
+	b, err := os.ReadFile(e.npmMarker())
+	if err != nil {
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	accepted := lines[0] == "accepted"
 	var all []npmAside
-	for _, c := range npmCLIs {
-		for _, orig := range []string{e.npmTreeOf(c.Pkg), filepath.Join(e.localBin(), c.Name)} {
-			if _, err := os.Lstat(orig + npmBakSuffix); err == nil {
-				all = append(all, npmAside{c.Name, orig, orig + npmBakSuffix})
-			}
+	for _, orig := range lines[1:] {
+		if orig == "" {
+			continue
 		}
+		all = append(all, npmAside{orig: orig, bak: orig + npmBakSuffix})
 	}
-	if marked {
-		e.npmRestoreAside(all)
-	} else {
+	if accepted {
 		npmDiscardAside(all)
+	} else if !e.npmRestoreAside(all) {
+		return // a backup could not be put back: keep the marker so the next start tries again
 	}
-	if marked {
-		os.Remove(e.npmMarker())
-	}
+	os.Remove(e.npmMarker())
 }
 
 // npmMoveAside renames the installed tree and npm's own bin link of every npm CLI to
 // <path>.af-bak, so an install that dies half-way (ENOSPC, a kill) cannot take the only copy
-// with it. A rename needs no extra space. On an error everything moved so far is put back.
+// with it. A rename needs no extra space. A backup name that already exists is not ours (the
+// marker would list it): the update is refused rather than overwrite it. On an error everything
+// moved so far is put back.
 func (e Env) npmMoveAside() ([]npmAside, error) {
-	if err := os.MkdirAll(filepath.Dir(e.npmMarker()), 0o755); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(e.npmMarker(), nil, 0o644); err != nil {
-		return nil, err
-	}
-	var moved []npmAside
-	fail := func(err error) ([]npmAside, error) {
-		e.npmRestoreAside(moved)
-		os.Remove(e.npmMarker())
-		return nil, err
-	}
+	type cand struct{ cli, orig string }
+	var plan []cand
 	for _, c := range npmCLIs {
 		tree := e.npmTreeOf(c.Pkg)
 		bin := filepath.Join(e.localBin(), c.Name)
-		paths := []string{}
 		if _, err := os.Lstat(tree); err == nil {
-			paths = append(paths, tree)
+			plan = append(plan, cand{c.Name, tree})
 		}
 		if npmManagedBin(bin, tree) {
-			paths = append(paths, bin)
+			plan = append(plan, cand{c.Name, bin})
 		}
-		for _, orig := range paths {
-			bak := orig + npmBakSuffix
-			removeTree(bak)
-			if err := os.Rename(orig, bak); err != nil {
-				return fail(err)
+	}
+	origs := make([]string, 0, len(plan))
+	for _, c := range plan {
+		if _, err := os.Lstat(c.orig + npmBakSuffix); err == nil {
+			return nil, fmt.Errorf("%s already exists; not overwriting it", c.orig+npmBakSuffix)
+		}
+		origs = append(origs, c.orig)
+	}
+	if len(plan) == 0 {
+		return nil, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(e.npmMarker()), 0o755); err != nil {
+		return nil, err
+	}
+	if err := e.npmWriteMarker("pending", origs); err != nil {
+		return nil, err
+	}
+	var moved []npmAside
+	for _, c := range plan {
+		bak := c.orig + npmBakSuffix
+		if err := os.Rename(c.orig, bak); err != nil {
+			if e.npmRestoreAside(moved) {
+				os.Remove(e.npmMarker())
 			}
-			moved = append(moved, npmAside{c.Name, orig, bak})
+			return nil, err
 		}
+		moved = append(moved, npmAside{c.cli, c.orig, bak})
 	}
 	return moved, nil
 }
 
-// npmRestoreAside puts the moved paths back, discarding whatever npm wrote at their names.
-func (e Env) npmRestoreAside(moved []npmAside) {
+// npmRestoreAside puts the moved paths back, discarding whatever npm wrote at their names. It
+// reports whether every one went back.
+func (e Env) npmRestoreAside(moved []npmAside) bool {
+	ok := true
 	for i := len(moved) - 1; i >= 0; i-- {
 		m := moved[i]
+		if _, err := os.Lstat(m.bak); err != nil {
+			continue // already back
+		}
 		removeTree(m.orig)
 		if err := os.Rename(m.bak, m.orig); err != nil {
+			ok = false
 			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: could not restore %s: %v (previous copy left at %s)\n", m.orig, err, m.bak)
 		}
 	}
+	return ok
 }
 
 // npmDiscardAside deletes the backups once the new copies are trusted.

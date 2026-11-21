@@ -510,7 +510,14 @@ func (e Env) cursorSweepStale() {
 	}
 	old, _ := filepath.Glob(filepath.Join(versions, "*.af-old.*"))
 	for _, p := range old {
-		dir := p[:strings.Index(p, ".af-old.")]
+		// The name is rebuilt from the entry's own basename inside versions: nothing above it (a
+		// HOME whose path contains ".af-old.") may change where it goes back to.
+		base := filepath.Base(p)
+		name := base[:strings.LastIndex(base, ".af-old.")]
+		dir := filepath.Join(versions, name)
+		if name == "" {
+			continue
+		}
 		if _, err := os.Lstat(dir); err != nil {
 			_ = restoreTree(p, dir)
 			continue
@@ -554,7 +561,7 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 	verDir := filepath.Dir(cand)
 	stageVersions := filepath.Join(real, ".local", "share", "cursor-agent", "versions")
 	ver := filepath.Base(verDir)
-	if filepath.Base(cand) != cursorTool || filepath.Dir(verDir) != stageVersions || ver == "" || ver == "." || ver == ".." || strings.HasPrefix(ver, ".af-") {
+	if filepath.Base(cand) != cursorTool || filepath.Dir(verDir) != stageVersions || ver == "" || ver == "." || ver == ".." || strings.Contains(ver, ".af-") {
 		return fmt.Errorf("the install script put cursor-agent at an unexpected path: %s", cand)
 	}
 	if !e.cursorAnswers(cand) {

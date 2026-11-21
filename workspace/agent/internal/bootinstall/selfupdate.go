@@ -192,54 +192,66 @@ func (e Env) selfUpdateNPM() {
 		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update failed (kept the installed versions)")
 		return
 	}
+	verify := names // the CLIs the pin-repairing verify pass may look at
 	if stderr, err := e.npmInstall(specs); err != nil {
 		fmt.Fprint(e.Stderr, stderr)
-		e.npmRestoreAside(moved)
-		moved = nil
+		if e.npmRestoreAside(moved) {
+			moved = nil
+		}
 		if usable(filepath.Join(e.bakedBin(), "opencode")) {
 			fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update failed (using baked versions)")
 		} else {
 			fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update failed (kept the installed versions)")
 		}
 	} else {
-		// A CLI whose new copy does not run goes back to its previous one now; the rest stay
-		// backed up until the verify pass below has had its say.
-		reverted := e.npmNotRunning(moved)
+		// Each CLI that had a previous copy is judged once, here: a new copy that runs is accepted
+		// and is not handed to the verify pass (which would "repair" it to the pin on one slow
+		// probe and cost us the previous copy); one that does not run goes back to the previous
+		// copy. Only CLIs without a previous copy are left to the verify pass.
+		bad := e.npmNotRunning(moved)
 		var keep []npmAside
+		hadOld := map[string]bool{}
 		for _, m := range moved {
-			if reverted[m.cli] {
+			hadOld[m.cli] = true
+			if bad[m.cli] {
 				e.npmRestoreAside([]npmAside{m})
 				continue
 			}
 			keep = append(keep, m)
 		}
+		verify = nil
 		for _, c := range names {
-			if reverted[c] {
-				fmt.Fprintf(e.Stdout, "[entrypoint] WARN: updated %s does not run; kept the previous copy\n", c)
+			switch {
+			case !hadOld[c] || bad[c]:
+				verify = append(verify, c)
+				if bad[c] {
+					fmt.Fprintf(e.Stdout, "[entrypoint] WARN: updated %s does not run; kept the previous copy\n", c)
+				}
+			default:
+				e.note(c, statusOK, "")
 			}
 		}
 		fmt.Fprintln(e.Stdout, "[entrypoint] agent CLIs updated (~/.local)")
 		moved = keep
 	}
-	// A failed install can leave a half-replaced tree, or none, so check either way.
-	e.NPMVerify(names, false)
-	// The verify pass may still drop a new copy (it removes a link that does not run): the
-	// previous copy goes back for those, and only then are the backups given up.
-	failed := e.npmNotRunning(moved)
-	var still []npmAside
-	for _, m := range moved {
-		if failed[m.cli] {
-			e.npmRestoreAside([]npmAside{m})
-		} else {
-			still = append(still, m)
+	// A failed install can leave a half-replaced tree, or none, so check what has no previous copy.
+	if len(verify) > 0 {
+		e.NPMVerify(verify, false)
+	}
+	// Accepted: the marker says so before the backups go, so a kill between the two cannot restore
+	// them over the new copies.
+	if len(moved) > 0 {
+		origs := make([]string, len(moved))
+		for i, m := range moved {
+			origs[i] = m.orig
 		}
+		if e.npmWriteMarker("accepted", origs) == nil {
+			npmDiscardAside(moved)
+			os.Remove(e.npmMarker())
+		}
+	} else if _, err := os.Stat(e.npmMarker()); err == nil {
+		os.Remove(e.npmMarker())
 	}
-	moved = still
-	if len(failed) > 0 {
-		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: a new agent CLI copy failed verification; kept the previous copy")
-	}
-	os.Remove(e.npmMarker()) // accepted: from here the backups are stale and only deleted
-	npmDiscardAside(moved)
 }
 
 // npmNotRunning is the set of CLIs among the moved entries whose ~/.local copy does not answer
