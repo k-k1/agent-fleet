@@ -150,6 +150,7 @@ function groupMemos(memos: Memo[], cats: MemoCategory[]): RepoBlock[] {
 export const MemoQueueSection = memo(function MemoQueueSection() {
   const workspaceRunning = useWorkspaceStore((s) => s.state) === "running";
   const tenant = useTenantStore((s) => s.tenant);
+  const identity = useTenantStore((s) => s.identityRev);
   const memosKey = useMemoStore((s) => s.tick);
   const bumpMemos = useMemoStore((s) => s.bump);
   const composeReq = useMemoStore((s) => s.composeReq);
@@ -229,7 +230,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // Auto-run settings (ADR 0137), read with the memo poll below. tenantEnabled false: the
   // tenant's administrator has not allowed new settings.
   // The settings live in the cache the Auto-run view shares (queueSettingsCache.ts).
-  const { queues, tenantEnabled, known: tenantKnown } = useQueueSettings(tenant ?? "");
+  const queueKey = (tenant ?? "") + "\u0000" + identity;
+  const { queues, tenantEnabled, known: tenantKnown } = useQueueSettings(queueKey);
   // The dialogs hold a category id, never a copy of the category or its settings: each render
   // looks the live row up, so a poll that renames or removes it is seen by the dialog.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
@@ -282,7 +284,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           // A failed settings read (an older Control Plane, an error body) keeps the cached one;
           // it never takes the memo list down with it.
           const fresh = readMemoQueues(qRaw);
-          if (fresh) useQueueSettingsCache.getState().publish(tenant ?? "", queueTicket, fresh);
+          if (fresh) useQueueSettingsCache.getState().publish(queueKey, queueTicket, fresh);
           setMemosTenant(tenant ?? "");
           const ser = JSON.stringify([marr, carr]);
           if (ser !== serRef.current) {
@@ -301,7 +303,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       alive = false;
       clearInterval(id);
     };
-  }, [memosKey, tenant, workspaceRunning]);
+  }, [memosKey, tenant, identity, workspaceRunning]);
 
   // Leader Ctrl/⌘+K → M (or any requestCompose) reveals + focuses the composer.
   useEffect(() => {

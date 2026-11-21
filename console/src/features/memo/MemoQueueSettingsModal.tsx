@@ -19,12 +19,11 @@ import { errText } from "../../core/api/client.ts";
 import { scheduledKinds } from "../../agents/registry.ts";
 import { kindOfferedForRuns } from "../../agents/launchAccess.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
-import { useTenantStore } from "../../core/store/tenant.ts";
 import { useMemberCatalog } from "../settings/credentials/memberCatalog.ts";
 import type { MemoQueue } from "../../types/memo.ts";
 import { memoQueueDelete, memoQueuePut } from "./api.ts";
 import { readQueue } from "./queues.ts";
-import { useQueueSettingsCache } from "./queueSettingsCache.ts";
+import { queueScope, useQueueSettingsCache } from "./queueSettingsCache.ts";
 import {
   QUEUE_BATCH_MAX,
   QUEUE_CONTINUATION_MAX,
@@ -109,6 +108,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
     if (Object.keys(errors).length > 0) return;
     setBusy(true);
     try {
+      const scope = queueScope(); // the answer is applied only if it still belongs to this scope
       const res = await memoQueuePut(categoryId, draftBody(draft, queue?.route ?? ""));
       if (res?.error) {
         toast(errText(res.error) || t("memo.q_save_failed"), { kind: "warn" });
@@ -117,7 +117,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
       // Into the shared cache at once, so the other view does not open this dialog from the
       // values before this save while its own refetch is still on the way (or fails).
       const saved = readQueue(res);
-      if (saved) useQueueSettingsCache.getState().applySaved(useTenantStore.getState().tenant ?? "", saved);
+      if (saved) useQueueSettingsCache.getState().applySaved(scope, saved);
       toast(t("memo.q_saved"), { kind: "success" });
       onChanged();
       onClose();
@@ -138,12 +138,13 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
     if (!ok) return;
     setBusy(true);
     try {
+      const scope = queueScope();
       const res = await memoQueueDelete(categoryId);
       if (!res.ok) {
         toast(t("memo.q_remove_failed"), { kind: "warn" });
         return;
       }
-      useQueueSettingsCache.getState().applyRemoved(useTenantStore.getState().tenant ?? "", categoryId);
+      useQueueSettingsCache.getState().applyRemoved(scope, categoryId);
       toast(t("memo.q_removed"));
       onChanged();
       onClose();

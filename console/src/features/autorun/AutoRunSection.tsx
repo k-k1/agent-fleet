@@ -52,7 +52,7 @@ function useQueueRuns(): { queues: MemoQueue[]; tenantEnabled: boolean; deliveri
   const identity = useTenantStore((s) => s.identityRev);
   const scopeKey = tenant + "\u0000" + identity;
   // Shared with the Memo queue view: a save in either lands in the cache at once.
-  const { queues, tenantEnabled } = useQueueSettings(tenant);
+  const { queues, tenantEnabled } = useQueueSettings(scopeKey);
   // Bumped by "reload" and by a saved setting: the effect below starts over and reads at once.
   const [rev, setRev] = useState(0);
   const [deliveries, setDeliveries] = useState<Map<string, RunDelivery>>(() => new Map());
@@ -60,7 +60,6 @@ function useQueueRuns(): { queues: MemoQueue[]; tenantEnabled: boolean; deliveri
   useEffect(() => {
     if (scope.current === scopeKey) return;
     scope.current = scopeKey;
-    useQueueSettingsCache.getState().reset();
     setDeliveries(new Map());
   }, [scopeKey]);
   useEffect(() => {
@@ -102,7 +101,7 @@ function useQueueRuns(): { queues: MemoQueue[]; tenantEnabled: boolean; deliveri
         const ticket = useQueueSettingsCache.getState().begin();
         const wire = readMemoQueues(await memoQueueList());
         if (!live || !wire) return;
-        useQueueSettingsCache.getState().publish(tenant, ticket, wire);
+        useQueueSettingsCache.getState().publish(scopeKey, ticket, wire);
         const now = new Set(wire.queues.map((q) => q.categoryId));
         for (const id of current) {
           if (now.has(id)) continue;

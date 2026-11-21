@@ -3,10 +3,35 @@
 // this cache, and a successful save writes its result in at once: a dialog opened from either view
 // right after a save starts from the saved values, not from whatever the last poll saw.
 import { create } from "zustand";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import type { MemoQueue, MemoQueuesWire } from "../../types/memo.ts";
 
+/** Who the settings belong to: the tenant and the signed-in account (a reconnect moves identityRev).
+ *  A save carries the scope it was sent in, so an answer that arrives after a switch is dropped. */
+export function queueScope(): string {
+  const s = useTenantStore.getState();
+  return (s.tenant ?? "") + "\u0000" + s.identityRev;
+}
+
+/** The run state of a queue: written by the Control Plane's own loops, not by a settings save, and
+ *  absent from (or defaulted in) the save's answer. A save keeps what the last list read said. */
+function withRunState(saved: MemoQueue, old: MemoQueue | undefined): MemoQueue {
+  if (!old) return saved;
+  return {
+    ...saved,
+    paused: old.paused,
+    pausedAt: old.pausedAt,
+    pausedReason: old.pausedReason,
+    draining: old.draining,
+    noReportAt: old.noReportAt,
+    noRefsAt: old.noRefsAt,
+    noTidyAt: old.noTidyAt,
+    waiting: old.waiting,
+  };
+}
+
 interface QueueSettingsCache {
-  /** The tenant the cached settings were read for; a read for another tenant replaces them. */
+  /** The scope (queueScope) the cached settings were read for; a read for another replaces them. */
   tenant: string;
   queues: MemoQueue[];
   tenantEnabled: boolean;
@@ -44,7 +69,7 @@ export const useQueueSettingsCache = create<QueueSettingsCache>((set, get) => ({
     if (!cur.known || cur.tenant !== tenant) return;
     floor = ++seq;
     const i = cur.queues.findIndex((q) => q.categoryId === queue.categoryId);
-    const queues = i < 0 ? [...cur.queues, queue] : cur.queues.map((q, j) => (j === i ? queue : q));
+    const queues = i < 0 ? [...cur.queues, queue] : cur.queues.map((q, j) => (j === i ? withRunState(queue, q) : q));
     set({ queues });
   },
   applyRemoved: (tenant, categoryId) => {
