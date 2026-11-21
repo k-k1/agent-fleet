@@ -15,6 +15,7 @@ vi.mock("../core/api/client.ts", async (importOriginal) => ({
 }));
 
 import { ActivityBar } from "./ActivityBar.tsx";
+import { RailView as RailViewPane } from "./RailView.tsx";
 import { SharedSessionsSection } from "../features/sharing/SharedSessionsSection.tsx";
 import { useRailAck } from "./activity/badges.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
@@ -130,7 +131,13 @@ describe("ActivityBar shared view", () => {
     const extra = document.createElement("div");
     document.body.append(extra);
     const r2 = createRoot(extra);
-    await act(async () => r2.render(<SharedSessionsSection />));
+    await act(async () =>
+      r2.render(
+        <RailViewPane id="shared" active="assistant" shown>
+          <SharedSessionsSection />
+        </RailViewPane>,
+      ),
+    );
     await act(async () => void (await new Promise((r) => setTimeout(r, 5))));
     expect(badge("shared")?.textContent).toBe("1");
     await act(async () => r2.unmount());

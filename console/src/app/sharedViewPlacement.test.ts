@@ -9,6 +9,11 @@ const block = (id: string) => {
 };
 
 describe("shared sessions placement", () => {
+  it("mounts the shared view eagerly, so its pollers feed the badge before the view is first shown", () => {
+    const open = src.slice(src.indexOf('<RailView id="shared"'));
+    expect(open.slice(0, open.indexOf(">"))).not.toMatch(/\blazy\b/);
+  });
+
   it("renders the section once, in the shared view only", () => {
     expect(src.match(/<SharedSessionsSection \/>/g)).toHaveLength(1);
     expect(block("shared")).toContain("<SharedSessionsSection />");
