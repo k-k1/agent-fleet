@@ -28,8 +28,8 @@ func TestOverlayLiveUsage(t *testing.T) {
 		wantCredits float64
 	}{
 		{"no live handle leaves usage unchanged", agents.LiveContext{}, false, false, 7},
-		{"metered credits replace, even a live 0", agents.LiveContext{Tokens: 10, Window: 100, Pct: 10, Credits: &zero}, true, true, 0},
-		{"a reported figure replaces", agents.LiveContext{Tokens: 10, Window: 100, Pct: 10, Credits: &five}, true, true, 5},
+		{"metered credits replace, even a live 0", agents.LiveContext{Tokens: 10, Window: 100, Pct: 10, WindowSource: "estimated", Model: "kiro-m", Credits: &zero}, true, true, 0},
+		{"a reported figure replaces", agents.LiveContext{Tokens: 10, Window: 100, Pct: 10, WindowSource: "recorded", Credits: &five}, true, true, 5},
 		{"an unmetered kind keeps the existing credits", agents.LiveContext{Tokens: 10, Window: 100, Pct: 10}, true, true, 7},
 	}
 	for _, c := range cases {
@@ -45,7 +45,8 @@ func TestOverlayLiveUsage(t *testing.T) {
 				t.Errorf("credits = %v, want %v", u.Cumulative.Credits, c.wantCredits)
 			}
 			if c.wantCtx && (u.Context.Tokens != c.lc.Tokens || u.Context.Fresh != c.lc.Tokens ||
-				u.Context.Window != c.lc.Window || u.Context.Pct != c.lc.Pct) {
+				u.Context.Window != c.lc.Window || u.Context.Pct != c.lc.Pct ||
+				u.Context.WindowSource != c.lc.WindowSource || u.Context.Model != c.lc.Model) {
 				t.Errorf("context = %+v, want the live figures %+v", u.Context, c.lc)
 			}
 		})
