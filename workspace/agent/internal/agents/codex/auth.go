@@ -184,6 +184,14 @@ const flowTTL = 16 * time.Minute
 
 var flows = agents.NewFlowStore(flowTTL).GuardLogins(routes.RouteChatGPTSubscription)
 
+// deviceLoginCmd is the device-auth process HandleDeviceStart launches under a staging
+// CODEX_HOME. The CLI contract test starts the same command.
+func deviceLoginCmd(stage string) *exec.Cmd {
+	cmd := exec.Command("codex", "login", "--device-auth")
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "CODEX_HOME="+stage)
+	return cmd
+}
+
 // HandleDeviceStart launches `codex login --device-auth`, scrapes the
 // verification URL + one-time code, and returns them with a flow_id the client
 // polls. The codex process is kept alive to do the OpenAI-side polling.
@@ -205,9 +213,7 @@ func HandleDeviceStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "stage_failed", err.Error())
 		return
 	}
-	cmd := exec.Command("codex", "login", "--device-auth")
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "CODEX_HOME="+stage)
-	f, err := agents.StartFlow(cmd)
+	f, err := agents.StartFlow(deviceLoginCmd(stage))
 	if err != nil {
 		_ = os.RemoveAll(stage)
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())

@@ -93,6 +93,14 @@ jobs:
       test_3: |
         go test -tags contract -run '^TestDriftAgyToolHooks$' -count=1 -v -timeout 8m ./...
 
+      # The Console's sign-in scrape: the agy TUI must still show the method selector and print
+      # a Google authorize URL once Enter picks OAuth. No credential: the URL prints before
+      # anything is approved, under an empty staging HOME (so the restored login is never
+      # read). A missing CLI fails the test, never skips.
+      test_4_name: Console sign-in scrape contract
+      test_4: |
+        go test -tags contract -run '^TestContractAgySignInURL$' -count=1 -v -timeout 3m ./internal/agents/agy/
+
   # The `tested` this run may have recorded is what a bump waits for; see cli-pin-bump.yml's
   # `on:` for why this dispatches it instead of relying on `workflow_run`. A job of its own,
   # so actions: write never reaches the steps that run the CLI. Whatever the result:

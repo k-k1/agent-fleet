@@ -127,6 +127,14 @@ const loginFlowTTL = 15 * time.Minute
 
 var loginFlows = agents.NewFlowStore(loginFlowTTL).GuardLogins(routes.RouteKiroLogin)
 
+// loginCmd is the device-flow login process HandleStart launches under a staging HOME. The CLI
+// contract test starts the same command.
+func loginCmd(stage string) *exec.Cmd {
+	cmd := exec.Command(bin(), "login", "--license", "free", "--use-device-flow")
+	cmd.Env = agents.WithHome(append(os.Environ(), "TERM=xterm-256color"), stage)
+	return cmd
+}
+
 // HandleStart launches the interactive device-flow login, scrapes the URL + code,
 // and returns them with a flow_id the client polls. The kiro process is kept alive
 // to do the AWS-side polling. POST /connections/kiro/start.
@@ -149,9 +157,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "stage_failed", err.Error())
 		return
 	}
-	cmd := exec.Command(bin(), "login", "--license", "free", "--use-device-flow")
-	cmd.Env = agents.WithHome(append(os.Environ(), "TERM=xterm-256color"), stage)
-	f, err := agents.StartFlow(cmd)
+	f, err := agents.StartFlow(loginCmd(stage))
 	if err != nil {
 		_ = os.RemoveAll(stage)
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())

@@ -54,7 +54,7 @@ jobs:
     with:
       cli: claude
       version: ${{ inputs.cli_version }}
-      # At least the sum of the steps' own -timeout ceilings (20 + 15 + 10 + 15), so a slow step is
+      # At least the sum of the steps' own -timeout ceilings (20 + 15 + 10 + 15 + 3), so a slow step is
       # ended by its test and reports a verdict, not by the job's clock.
       timeout_minutes: 60
       # Credentials go to the CLI through env (never typed or logged); the test steps drive
@@ -132,6 +132,16 @@ jobs:
       # (The credentials themselves are env-only and never printed; GitHub also masks
       # exact secret values in logs. This covers what masking cannot: values *derived*
       # from the account.) Wording drift stays visible even on green.
+      # The Console's re-authentication scrape: `claude auth login --claudeai` must still print
+      # an authorize URL that HandleStart's urlRe accepts. 2.1.330 moved that URL, the scrape
+      # went blind and this workflow stayed green (#4687). No credential and no turn: the URL
+      # prints before any code is entered, under an empty HOME and CLAUDE_CONFIG_DIR, and the
+      # test closes the flow without submitting one. The token is deliberately not exported.
+      # A missing CLI fails the test, never skips.
+      test_4_name: Console sign-in scrape contract (claude auth login)
+      test_4: |
+        go test -tags contract -run '^TestContractClaudeSignInURL$' -count=1 -v -timeout 3m ./internal/agents/claude/
+
       post: |
         [ -f /tmp/contract.log ] || exit 0
         sed -E \

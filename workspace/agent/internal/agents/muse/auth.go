@@ -190,6 +190,15 @@ const loginFlowTTL = 15 * time.Minute
 
 var loginFlows = agents.NewFlowStore(loginFlowTTL).GuardLogins(routes.RouteMuseLogin)
 
+// loginCmd is the device-code login process HandleStart launches under a staging HOME. The CLI
+// contract test starts the same command.
+func loginCmd(stage string) *exec.Cmd {
+	cmd := exec.Command(Bin(), "login")
+	// The pin is AF's, not the launcher's, on the login path too (decision 8).
+	cmd.Env = agents.WithHome(append(os.Environ(), "MUSE_NO_AUTO_UPDATE=1"), stage)
+	return cmd
+}
+
 // HandleStart launches the device-code login, scrapes the URL and code, and returns them
 // with a flow_id the client polls. The muse process is kept alive because it is the thing
 // doing the Meta-side polling. POST /connections/muse/start.
@@ -212,10 +221,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "stage_failed", err.Error())
 		return
 	}
-	cmd := exec.Command(Bin(), "login")
-	// The pin is AF's, not the launcher's, on the login path too (decision 8).
-	cmd.Env = agents.WithHome(append(os.Environ(), "MUSE_NO_AUTO_UPDATE=1"), stage)
-	f, err := agents.StartPipeFlow(cmd)
+	f, err := agents.StartPipeFlow(loginCmd(stage))
 	if err != nil {
 		_ = os.RemoveAll(stage)
 		httpx.WriteErr(w, http.StatusInternalServerError, "spawn_failed", err.Error())

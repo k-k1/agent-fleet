@@ -54,6 +54,13 @@ jobs:
         E2E_REQUIRE=1
       test_0: |
         go test -tags contract -run '^TestKiroTUIMirrorContract$' -count=1 -v -timeout 15m .
+      # The Console's sign-in scrape: `kiro-cli login` must still print a login URL that
+      # HandleStart accepts. No credential: the URL prints before anything is approved, under
+      # an empty staging HOME (so the restored auth above is never read). A missing CLI fails
+      # the test, never skips.
+      test_1_name: Console sign-in scrape contract
+      test_1: |
+        go test -tags contract -run '^TestContractKiroSignInURL$' -count=1 -v -timeout 3m ./internal/agents/kiro/
       # Declared Caps against observed behaviour (interrupt, fork-at, model override): the same
       # test as above in AF_CAPS_PROBES=only mode, so it reuses this kind's auth setup. Costs one
       # interrupted long turn and three one-line turns (up to five when the model probe meets

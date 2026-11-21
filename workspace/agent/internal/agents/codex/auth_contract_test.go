@@ -1,0 +1,41 @@
+//go:build contract
+
+// Contract for the Console device sign-in start: the real `codex login --device-auth` must
+// still print a verification URL and one-time code that HandleDeviceStart's scrape accepts.
+// Needs no credential: both print before anything is approved, and the test closes the flow
+// without approving. CODEX_HOME is an empty staging directory, so no real login is touched.
+//
+//	go test -tags contract -run TestContractCodexDeviceSignIn ./internal/agents/codex/
+package codex
+
+import (
+	"net/url"
+	"os/exec"
+	"testing"
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+)
+
+func TestContractCodexDeviceSignIn(t *testing.T) {
+	// A missing CLI is a failure, never a skip: a skipped contract reads as green.
+	if _, err := exec.LookPath("codex"); err != nil {
+		t.Fatalf("codex not on PATH: %v", err)
+	}
+	f, err := agents.StartFlow(deviceLoginCmd(t.TempDir()))
+	if err != nil {
+		t.Fatalf("StartFlow: %v", err)
+	}
+	defer f.Close()
+
+	got := f.WaitFor(urlRe, 20*time.Second)
+	if got == "" {
+		t.Fatalf("no verification URL matched urlRe within 20s; CLI output:\n%s", f.Clean())
+	}
+	if u, err := url.Parse(got); err != nil || u.Scheme != "https" || u.Host != "auth.openai.com" {
+		t.Fatalf("unexpected verification URL %q (err %v)", got, err)
+	}
+	if code := f.WaitFor(codeRe, 8*time.Second); code == "" {
+		t.Fatalf("no one-time code matched codeRe; CLI output:\n%s", f.Clean())
+	}
+}

@@ -88,6 +88,12 @@ jobs:
       # merely because another CLI is absent.
       test_0: |
         go test -tags contract -run '^TestDriftCodex' -v -timeout 10m ./...
+      # The Console's device sign-in scrape: `codex login --device-auth` must still print a
+      # verification URL and one-time code. No credential: both print before anything is
+      # approved, under an empty CODEX_HOME. A missing CLI fails the test, never skips.
+      test_1_name: Console sign-in scrape contract (${{ matrix.version }})
+      test_1: |
+        go test -tags contract -run '^TestContractCodexDeviceSignIn$' -count=1 -v -timeout 3m ./internal/agents/codex/
 
   live-drift:
     # Tier 2 — **consumes real turns**. Covers only the 4 things Tier 1 (free) cannot
