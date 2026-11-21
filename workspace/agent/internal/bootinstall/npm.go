@@ -339,3 +339,78 @@ func (e Env) NPMVerifyPresent() int {
 	}
 	return e.NPMVerify(list, true)
 }
+
+// npmAside is one path npm may replace, moved aside before a self-update install.
+type npmAside struct{ cli, orig, bak string }
+
+// npmAsidePaths lists, for one CLI, what an `npm install -g` replaces: its package tree under
+// lib/node_modules and its bin entry.
+func (e Env) npmAsidePaths(c struct{ Name, Pkg string }) []string {
+	local := filepath.Join(e.Home, ".local")
+	return []string{
+		filepath.Join(local, "lib", "node_modules", filepath.FromSlash(c.Pkg)),
+		filepath.Join(local, "bin", c.Name),
+	}
+}
+
+const npmBakSuffix = ".af-bak"
+
+// npmRecoverAside finishes what a killed self-update left: a backup whose original is missing is
+// the only copy of the CLI and goes back; one beside a present original is stale and goes.
+func (e Env) npmRecoverAside() {
+	for _, c := range npmCLIs {
+		for _, orig := range e.npmAsidePaths(c) {
+			bak := orig + npmBakSuffix
+			if _, err := os.Lstat(bak); err != nil {
+				continue
+			}
+			if _, err := os.Lstat(orig); err == nil {
+				removeTree(bak)
+				continue
+			}
+			if err := os.Rename(bak, orig); err != nil {
+				fmt.Fprintf(e.Stdout, "[entrypoint] WARN: could not restore %s: %v\n", orig, err)
+			}
+		}
+	}
+}
+
+// npmMoveAside renames the existing tree and bin entry of every npm CLI to <path>.af-bak, so an
+// install that dies half-way (ENOSPC, a kill) cannot take the only copy with it. A rename needs
+// no extra space. On an error everything moved so far is put back.
+func (e Env) npmMoveAside() ([]npmAside, error) {
+	var moved []npmAside
+	for _, c := range npmCLIs {
+		for _, orig := range e.npmAsidePaths(c) {
+			if _, err := os.Lstat(orig); err != nil {
+				continue
+			}
+			bak := orig + npmBakSuffix
+			removeTree(bak)
+			if err := os.Rename(orig, bak); err != nil {
+				e.npmRestoreAside(moved)
+				return nil, err
+			}
+			moved = append(moved, npmAside{c.Name, orig, bak})
+		}
+	}
+	return moved, nil
+}
+
+// npmRestoreAside puts the moved paths back, discarding whatever npm wrote at their names.
+func (e Env) npmRestoreAside(moved []npmAside) {
+	for i := len(moved) - 1; i >= 0; i-- {
+		m := moved[i]
+		removeTree(m.orig)
+		if err := os.Rename(m.bak, m.orig); err != nil {
+			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: could not restore %s: %v (previous copy left at %s)\n", m.orig, err, m.bak)
+		}
+	}
+}
+
+// npmDiscardAside deletes the backups once the new copies are trusted.
+func npmDiscardAside(moved []npmAside) {
+	for _, m := range moved {
+		removeTree(m.bak)
+	}
+}
