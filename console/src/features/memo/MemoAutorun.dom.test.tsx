@@ -422,6 +422,7 @@ describe("the settings dialog", () => {
     const expanded = head.querySelector("[aria-expanded]")?.getAttribute("aria-expanded");
     await click(gear);
     expect(document.querySelector("[role=dialog]")).toBeNull();
+    expect(document.querySelector(".ui-toast-msg")?.textContent).toBe(t("memo.q_tenant_off"));
     expect(head.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")).toBe(expanded);
   });
 
@@ -440,6 +441,26 @@ describe("the settings dialog", () => {
     await render();
     const gear = byLabel(t("memo.autorun_settings"));
     expect(gear.getAttribute("aria-disabled")).toBeNull();
+    await click(gear);
+    // The dialog does not call an unread setting "blocked by the administrator".
+    expect(dialog().querySelector(".memo-q-notice")).toBeNull();
+  });
+
+  it("does not carry a blocked tenant's setting over to another tenant whose read failed", async () => {
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    const switchTo = async (tenant: string) => {
+      await act(async () => useTenantStore.setState({ tenant }));
+      await settle();
+    };
+    await switchTo("a");
+    servedQueues = { tenantEnabled: false, queues: [] };
+    servedCats = [aCat({})];
+    await render();
+    expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.q_tenant_off")}"]`)).not.toBeNull();
+    queuesFail = true;
+    await switchTo("b");
+    expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.autorun_settings")}"]`)).not.toBeNull();
+    await switchTo("");
   });
 
   it("still lets an existing setting be removed while the switch is off", async () => {

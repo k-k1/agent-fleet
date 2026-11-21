@@ -232,7 +232,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // False until a settings read has succeeded: tenantEnabled's initial false is "not read yet",
   // not "the administrator said no", so the gear is never blocked on it.
   const [tenantKnown, setTenantKnown] = useState(false);
-  const lastQueues = useRef<{ tenantEnabled: boolean; queues: MemoQueue[] }>({ tenantEnabled: false, queues: [] });
+  const lastQueues = useRef<{ tenantEnabled: boolean; queues: MemoQueue[]; known: boolean }>({ tenantEnabled: false, queues: [], known: false });
+  // The tenant lastQueues was read for: a failed read reuses it only inside that tenant.
+  const lastQueuesTenant = useRef("");
   // The dialogs hold a category id, never a copy of the category or its settings: each render
   // looks the live row up, so a poll that renames or removes it is seen by the dialog.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
@@ -284,8 +286,11 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           // A failed settings read (an older Control Plane, an error body) keeps the last good
           // one; it never takes the memo list down with it.
           const fresh = readMemoQueues(qRaw);
-          if (fresh) setTenantKnown(true);
-          const qw = fresh ?? lastQueues.current;
+          if (lastQueuesTenant.current !== (tenant ?? "")) {
+            lastQueuesTenant.current = tenant ?? "";
+            lastQueues.current = { tenantEnabled: false, queues: [], known: false };
+          }
+          const qw = fresh ? { ...fresh, known: true } : lastQueues.current;
           lastQueues.current = qw;
           setMemosTenant(tenant ?? "");
           const ser = JSON.stringify([marr, carr, qw]);
@@ -295,6 +300,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             setCats(carr);
             setQueues(qw.queues);
             setTenantEnabled(qw.tenantEnabled);
+            setTenantKnown(qw.known);
           }
         })
         .catch(() => {});
@@ -1389,7 +1395,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             categoryId={c.id}
             categoryName={c.name}
             queue={queueByCat.get(c.id)}
-            tenantEnabled={tenantEnabled}
+            // Not read yet is not "blocked": the server still refuses a save the tenant does not allow.
+            tenantEnabled={tenantEnabled || !tenantKnown}
             destinations={queues
               .filter((q) => q.categoryId !== c.id)
               .map((q) => ({ id: q.categoryId, label: q.repo ? q.repo + " / " + q.category : q.category }))}
