@@ -85,11 +85,8 @@ How to read a cell:
 | `update_memo` | Edit a memo; only the fields passed change (`reference`: leave out to keep it, `{}` to remove it). Editing an approved auto-run memo sends it back for approval | ✓ | ✓ AF write | ✓ `write` | `id` |
 | `defer_queue_item` | Hand the auto-run memo that started this session back to its queue, to run again later; applied only when the run ends, and dropped when the session worked on or has an open or merged pull request | ✓ only a session an auto-run started | — | — | — |
 | `delete_memo` | Delete a memo by its id; refused in an auto-run category | — | ✓ AF write | ✓ `write` | `id` |
-| `list_memo_queues` | List the auto-run categories with their settings; settings are changed only in the Console | — | ✓ AF read | — | — |
+| `list_memo_queues` | Read the auto-run categories and their settings; settings are changed only in the Console | — | ✓ AF read | — | — |
 | `get_memo_queue_runs` | Read an auto-run category's run history | — | ✓ AF read | — | `categoryId` |
-| `run_memo_queue_now` | Run an auto-run category now, after the user's OK | — | ✓ AF write | — | `categoryId` |
-| `resume_memo_queue` | Resume an auto-run category that paused after failed runs | — | ✓ AF write | — | `categoryId` |
-| `stop_memo_queue_run` | End a running auto-run run and stop its session | — | ✓ AF write | — | `categoryId`, `id` |
 | `flush_memos` | Send the chosen memos to a session as one message; refused in an auto-run category | — | ✓ AF write | ✓ `write` | `sessionName`, `ids` |
 
 ## Schedules

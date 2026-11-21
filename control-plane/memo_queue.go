@@ -600,6 +600,7 @@ type memoQueuesWire struct {
 	Queues        []memoQueueDTO `json:"queues"`
 }
 
+// listQueues is also served on the token face (GET /internal/memo-queues), read-only.
 func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	on, err := a.mgr.store.GetTenantMemoQueues(r.Context(), mv.TenantID)
 	if err != nil {

@@ -64,7 +64,7 @@ It checks the real state before it answers, rather than guessing.
 | Stop when done | Lets the current turn finish and stops once the report is in. Sending a new instruction cancels the booking |
 | Clear up | Lists the same candidates as the Console's clean-up and archives or deletes only what you approve ([Clear away finished sessions](../sessions/cleanup.md)) |
 | Handle the memo queue | Checks, adds, tidies and sends the memos you pick, in bulk |
-| Look after memo auto-run | Lists your auto-run categories with their settings, reads the run history, and, once you say OK, runs a category now, resumes one that paused, or ends a run. It cannot change the settings, turn auto-run on or off, approve memos or return a run's memos: you do those in the Console ([Run memos automatically](../chat/memo-auto-run.md#ask-the-operator)) |
+| Read memo auto-run | Lists your auto-run categories with their settings and reads the run history. It cannot change settings, run, resume or end anything, or approve memos. It tells you which Console control to press, and shows the full settings it suggests first ([Ask the operator](../chat/memo-auto-run.md#ask-the-operator)) |
 | Consult another assistant | When a decision needs specialist knowledge, asks the SRE Assistant or another for advice before acting. The one consulted only advises |
 
 - It checks the list of models that can actually be chosen before naming one

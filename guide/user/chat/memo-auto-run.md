@@ -451,16 +451,16 @@ When the first turns of the last two runs both fail, the category **pauses** aut
 
 ## Ask the operator
 
-The [Fleet Operator](../fleet/operator.md) can look after auto-run for you, but only the part that starts, watches and stops work.
+The [Fleet Operator](../fleet/operator.md) can **read** auto-run for you and nothing else.
 
 | It can | It cannot |
 |---|---|
-| List your auto-run categories with their settings, and read a category's run history | Change a category's settings, including the instruction, turn "Run by itself" on or off, or remove auto-run |
-| Press "Run now", press "Resume" on a paused category, and end a run that is still going | Approve memos, or press "Return to queue" on a run |
+| List your auto-run categories with their settings, and read a category's run history | Change a category's settings (the instruction included), turn "Run by itself" on or off, or remove auto-run |
+| Tell you which Console control to press, and why | Press "Run now", "Resume" or "End", approve memos, or press "Return to queue" |
 
-Before it runs, resumes or ends anything, it tells you which category, how many memos and which instruction, and waits for your OK in the chat.
+The operator's list says why a category with memos waiting starts nothing now (outside its time window, at its limit, paused). It is left out for a category that can run, so it is not a count of waiting memos; the operator counts those from your memo list.
 
-The settings and the approval stay with you because the operator reads memos that sessions wrote. If it could save the instruction or approve memos, a memo carrying injected text could end up as an unattended run. When you want to change a setting, the operator shows you the full settings it suggests, with the instruction in full, and you save them in the Console under "Auto-run settings". "Run by itself" starts off, and turning it on is yours to do.
+You do these yourself, in the Console, because the operator reads memos that sessions wrote, and every session in the workspace can reach what the operator reaches. If the operator could save the instruction, start a run, resume a paused category or end a run, a memo carrying injected text could do the same. When you want to change a setting, the operator shows you the full settings it suggests, the instruction in full, and you save them under "Auto-run settings". For a run, it points you at "Run now", at "Resume" on a paused category, or at "End" on the run's row, after saying which run and which session. The reasons a session gave for handing a memo back are shown in the Console only.
 
 ## Notifications
 

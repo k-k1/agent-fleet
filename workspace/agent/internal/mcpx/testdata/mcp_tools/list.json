@@ -86,9 +86,6 @@
       "update_memo#1",
       "delete_memo#1",
       "flush_memos#1",
-      "run_memo_queue_now#1",
-      "resume_memo_queue#1",
-      "stop_memo_queue_run#1",
       "create_schedule#1",
       "update_schedule#1",
       "delete_schedule#1",
@@ -135,9 +132,6 @@
       "update_memo#1",
       "delete_memo#1",
       "flush_memos#1",
-      "run_memo_queue_now#1",
-      "resume_memo_queue#1",
-      "stop_memo_queue_run#1",
       "create_schedule#1",
       "update_schedule#1",
       "delete_schedule#1",
@@ -1447,7 +1441,7 @@
       "name": "get_image_studio"
     },
     "get_memo_queue_runs#1": {
-      "description": "指定したキューの実行履歴（新しい順）を返す。各行は run の id・状態・結果・開始したセッション・対象のメモなど。自動実行がちゃんと動いているか／失敗や一時停止していないかを確認する時や、stop_memo_queue_run の対象 id を選ぶ前に呼ぶ。categoryId は list_memo_queues で取得する。",
+      "description": "指定したキューの実行履歴（新しい順）を返す。各行は run の id・状態・結果・開始したセッション・対象のメモなど。自動実行がちゃんと動いているか／失敗や一時停止していないかを確認する時に呼ぶ（読み取り専用）。再開が要るなら、止まった原因（失敗した run の結果）を伝えて Console の「再開」を案内する。実行を終えたい時は、対象の run とそのセッションを示して Console の実行の行の「終了」を案内する。他の session の hand-back の理由はここには含まれない（Console だけ）。categoryId は list_memo_queues で取得する。",
       "inputSchema": {
         "properties": {
           "categoryId": {
@@ -1731,7 +1725,7 @@
       "name": "list_cleanup_candidates"
     },
     "list_memo_queues#1": {
-      "description": "メモの自動実行カテゴリ（キュー）と、その設定の一覧を返す（ADR 0137）。各キューは categoryId / 常設の指示（instruction）/ 自動で動かすか（enabled）/ 同時に動かす数 / 動く時間帯 / 続きの上限 / 費用の上限 / 一時停止の状態 / waiting（待機中の件数）などを持つ。利用者に「自動実行は今どうなっている?」と聞かれた時や、run_memo_queue_now / resume_memo_queue / get_memo_queue_runs で対象の categoryId を選ぶ前に呼ぶ。設定の変更（指示の書き換え、自動実行の on/off、同時数・時間帯・続きの上限・費用の上限、自動実行の解除）とメモの承認（解放）はこのツールでも他のツールでもできない。利用者が変更を望んだら、変更後の設定の全体（指示の全文、変える項目の現在値と新しい値）をチャットに示し、Console の「メモ」パネル → そのカテゴリの自動実行の設定で自分で保存・承認してもらうよう案内すること。指示は無人のセッションに渡る文なので、全文を省略せずに見せる。",
+      "description": "メモの自動実行カテゴリ（キュー）と、その設定を読む（読み取り専用。ADR 0137）。各キューは categoryId / repo / category / 常設の指示（instruction。無人のセッションに渡る文）/ enabled（自動で動かすか）/ maxActive（同時に動かす数）/ openCron・openMinutes・tz・openAfter・maxFiresPerDay（動く時間帯と日次上限）/ continuationMax / spendCapUsd / paused・pausedReason（一時停止）などを持つ。waiting は待機メモの件数ではない。待機メモがあるのに今は何も始まらないキューにだけ付く、その理由の説明で、実行できるキューや待機メモのないキューには付かない（無いことは待機が 0 件の意味ではない）。待機中のメモの件数と中身は list_memos の category / state で数える。利用者に「自動実行は今どうなっている?」と聞かれた時や、get_memo_queue_runs で対象の categoryId を選ぶ前に呼ぶ。このツールと get_memo_queue_runs は読むだけで、次のことはどのツールでもできない: 設定の変更（指示の書き換え、自動実行の on/off、同時数・時間帯・続きの上限・費用の上限）、自動実行の解除、メモの承認（解放）、今すぐ実行、一時停止の再開、実行の終了、実行のメモのキューへの返却。これらは利用者が Console で行う。利用者が設定の変更を望んだら、変更後の設定の全体（指示の全文を省略せず、変える項目の現在値と新しい値）をチャットに示し、Console の「メモ」パネル → そのカテゴリの「自動実行の設定」で自分で保存してもらうよう案内する。「今すぐ実行」「再開」、実行の行の「終了」「キューに戻す」も、どれを押すかを案内するだけにする。",
       "inputSchema": {
         "properties": {},
         "type": "object"
@@ -2401,22 +2395,6 @@
       },
       "name": "restore_memory_snapshot"
     },
-    "resume_memo_queue#1": {
-      "description": "失敗が続いて自動で一時停止したキューを再開する（失敗の数え直しも今から）。止まった原因（get_memo_queue_runs の失敗した run）を利用者に伝え、直ったことを確かめてから、了解を得て呼ぶこと。止まっていないキューに呼んでも何も変わらない。categoryId は list_memo_queues で取得。",
-      "inputSchema": {
-        "properties": {
-          "categoryId": {
-            "description": "キューのカテゴリ id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "categoryId"
-        ],
-        "type": "object"
-      },
-      "name": "resume_memo_queue"
-    },
     "resume_schedule#1": {
       "description": "一時停止したスケジュールを再開する（次回発火を今から再計算）。id は list_schedules で取得。",
       "inputSchema": {
@@ -2475,22 +2453,6 @@
         "type": "object"
       },
       "name": "run_image_trial"
-    },
-    "run_memo_queue_now#1": {
-      "description": "指定したキューを今すぐ1回動かす（Console の「今すぐ実行」と同じ）。待機中（承認済み）のメモを取り、セッションを起動して、キューの常設の指示どおりに仕事をさせる。次のスケジューラ tick（最大約1分後）で送られる。「自動で動かす」が off でも動く。承認待ちのメモは動かない。無人でセッションを起動する操作なので、実行前に必ず利用者へ「どのキューを・何件のメモで・どの指示で動かすか」を示して了解を得ること（list_memo_queues の指示と waiting を読み上げる）。キューに指示が無い、空きが無い、待機中のメモが無い、テナントがキューを有効にしていない場合は理由つきで断られる。",
-      "inputSchema": {
-        "properties": {
-          "categoryId": {
-            "description": "キューのカテゴリ id（list_memo_queues で取得）",
-            "type": "string"
-          }
-        },
-        "required": [
-          "categoryId"
-        ],
-        "type": "object"
-      },
-      "name": "run_memo_queue_now"
     },
     "run_schedule_now#1": {
       "description": "スケジュールを今すぐ発火させる（動作確認用）。定時発火と同じ経路（wake ポリシー・冪等・keep-alive）を通る。次のスケジューラ tick（最大約1分後）で実行される。停止中（pause 済み）のスケジュールは先に resume すること。id は list_schedules で取得。",
@@ -2799,27 +2761,6 @@
         "type": "object"
       },
       "name": "skill_restore"
-    },
-    "stop_memo_queue_run#1": {
-      "description": "動いている run を終える（run は「終了」で閉じ、そのセッションは停止される。アーカイブはされない）。run の枠が空く。まだセッションを起動していない run は断られる（tick が自分で片付ける）。止めると途中の仕事が中断されるので、対象の run とセッションを利用者に示して了解を得てから呼ぶこと。categoryId は list_memo_queues、id は get_memo_queue_runs で取得。メモをキューに戻す操作はこのツールにもなく、Console で利用者が行う。",
-      "inputSchema": {
-        "properties": {
-          "categoryId": {
-            "description": "キューのカテゴリ id",
-            "type": "string"
-          },
-          "id": {
-            "description": "run の id（get_memo_queue_runs で取得）",
-            "type": "string"
-          }
-        },
-        "required": [
-          "categoryId",
-          "id"
-        ],
-        "type": "object"
-      },
-      "name": "stop_memo_queue_run"
     },
     "stop_session#1": {
       "description": "指定セッションを停止する（停止中＝再開可能。会話履歴と作業ディレクトリは保持され、resume_session や Console から再開できる）。暴走している・不要になった・リソースを空けたいセッションを畳む時に呼ぶ。実行中の作業は中断され、そのセッションへの未達の自動報告は取り消される。実行前に『どのセッションを止めるか』を一言添えて利用者に確認すること。",

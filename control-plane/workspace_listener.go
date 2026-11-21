@@ -46,19 +46,16 @@ var workspaceRoutes = map[string]bool{
 	// Memo queue (AF_MEMO_TOKEN). Of the /internal/memo-categories face only the list is
 	// listed: the Agent's memo relay (list_memos marks which categories are queues) calls it,
 	// and no Agent code writes a category.
-	// Auto-run queues, operator tools only (ADR 0137, addendum 2026-11-21): no settings write, no
-	// release, no return.
-	"GET /internal/memo-queues":                                   true,
-	"POST /internal/memo-queues/{categoryId}/fire":                true,
-	"POST /internal/memo-queues/{categoryId}/resume":              true,
-	"GET /internal/memo-queues/{categoryId}/deliveries":           true,
-	"POST /internal/memo-queues/{categoryId}/deliveries/{id}/end": true,
-	"GET /internal/memo-categories":                               true,
-	"GET /internal/memos":                                         true,
-	"POST /internal/memos":                                        true,
-	"POST /internal/memos/flush":                                  true,
-	"PATCH /internal/memos/{id}":                                  true,
-	"DELETE /internal/memos/{id}":                                 true,
+	// Auto-run queues (AF_MEMO_TOKEN): the two reads the operator's tools call. The token is every
+	// session's, so no write, release, fire, resume or end is listed (ADR 0137, addendum 2026-11-21).
+	"GET /internal/memo-queues":                         true,
+	"GET /internal/memo-queues/{categoryId}/deliveries": true,
+	"GET /internal/memo-categories":                     true,
+	"GET /internal/memos":                               true,
+	"POST /internal/memos":                              true,
+	"POST /internal/memos/flush":                        true,
+	"PATCH /internal/memos/{id}":                        true,
+	"DELETE /internal/memos/{id}":                       true,
 	// A queue run's hand-back, relayed by the Agent's POST /memos/defer (ADR 0137, addendum
 	// 2026-11-19, part B).
 	"POST /internal/memo-deliveries/{id}/defer": true,
