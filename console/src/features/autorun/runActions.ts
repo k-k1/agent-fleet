@@ -29,9 +29,9 @@ export function runStopScope(run: RunRow, repos: Repo[]): { node: RepoTreeNode; 
 }
 
 /** The run's own worktree for the delete plan; null when it runs in a base clone, its copy is
- *  unknown, or the run did not create it. The run created a copy only when it is the first session
- *  that ever ran there (worktreeOwners); a member's worktree a run was later pointed at is not the
- *  run's to delete. `sessions` is the list the owner is read from. */
+ *  unknown, or the run did not create it (see createdWorktree for how that is decided). A member's
+ *  worktree a run was later pointed at is not the run's to delete. `sessions` is the list the
+ *  owner is read from. */
 export function runWorktreeNode(run: RunRow, repos: Repo[], sessions: Session[]): RepoTreeNode | null {
   const wt = createdWorktree(run, repos, sessions);
   return wt && !leavesRunSessions(wt.repo.name, sessions) ? wt : null;
