@@ -1176,3 +1176,72 @@ func TestMemoChildAnswerUnreadBounds(t *testing.T) {
 		t.Error("a stopped parent cannot read anything")
 	}
 }
+
+// A session list that cannot be read, that lacks the run's root, or that is stale must not count
+// toward closing a run; a consistent idle tree still closes on the usual ticks.
+func TestMemoOccupancyUnsoundReadKeepsRunOpen(t *testing.T) {
+	t.Run("unreadable list", func(t *testing.T) {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			agent, d := e.openReported(nil)
+			agent.mu.Lock()
+			agent.sessionsDown = true
+			agent.mu.Unlock()
+			for i := 0; i < 4; i++ {
+				e.settleNow(time.Now())
+			}
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+				t.Fatalf("unreadable list closed the run: %+v", got)
+			}
+		})
+	})
+	t.Run("root missing on a single read", func(t *testing.T) {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			agent, d := e.openReported(nil)
+			agent.mu.Lock()
+			saved := agent.rows
+			agent.rows = nil
+			agent.mu.Unlock()
+			e.settleNow(time.Now())
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+				t.Fatalf("one list without the root closed the run: %+v", got)
+			}
+			agent.mu.Lock()
+			agent.rows = saved
+			agent.mu.Unlock()
+			e.settleNow(time.Now()) // consistent again: the count restarts at one
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+				t.Fatalf("closed on the first consistent read after a gap: %+v", got)
+			}
+		})
+	})
+	t.Run("stale list", func(t *testing.T) {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			_, d := e.openReported(nil)
+			for i := 0; i < 4; i++ {
+				r := e.runner()
+				r.staleRead = -time.Second // every read is already older than the bound
+				r.settle(context.Background(), time.Now())
+			}
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+				t.Fatalf("stale lists closed the run: %+v", got)
+			}
+			e.settleNow(time.Now())
+			e.settleNow(time.Now())
+			if got := e.delivery(d.ID); got.State != store.DeliveryClosed {
+				t.Fatalf("consistent idle tree must close: %+v", got)
+			}
+		})
+	})
+	t.Run("member with unknown state", func(t *testing.T) {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			agent, d := e.openReported(nil)
+			agent.child("c1", d.Session, map[string]any{"state": ""})
+			for i := 0; i < 4; i++ {
+				e.settleNow(time.Now())
+			}
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+				t.Fatalf("closed with a member of unknown state: %+v", got)
+			}
+		})
+	})
+}

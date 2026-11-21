@@ -558,6 +558,9 @@ type memoQueueRunner struct {
 	// retireReserve is the end of it kept for the retire pass (memoRetireReserve).
 	settleBudget  time.Duration
 	retireReserve time.Duration
+	// staleRead is how old a session list may be when a delivery is decided on it; an older one
+	// closes nothing (closeIfDoneReported).
+	staleRead time.Duration
 	// settleOrder and retireOrder keep which member each pass tried last, so that a pass that runs
 	// out of budget inside one workspace starts with the members behind it on the next tick. They
 	// live in this process only: fairness never needs them to agree between Control Planes, and
@@ -580,7 +583,7 @@ func newMemoQueueRunner(mgr *manager, f *wakeFirer) *memoQueueRunner {
 	if ready <= 0 {
 		ready = 5 * time.Minute
 	}
-	return &memoQueueRunner{mgr: mgr, f: f, budget: ready + memoDeliverySendMargin, settleBudget: memoSettleBudget, retireReserve: memoRetireReserve}
+	return &memoQueueRunner{mgr: mgr, f: f, budget: ready + memoDeliverySendMargin, settleBudget: memoSettleBudget, retireReserve: memoRetireReserve, staleRead: memoSettleBudget}
 }
 
 // memoMemberView is what settle knows of one member's workspace in this tick.
@@ -610,6 +613,9 @@ type memoMemberView struct {
 	// defers is set when the Agent that answered reports the turn starts (queueDefer).
 	defers bool
 	readAt string
+	// readDone is when the session list finished arriving by the local clock: a list that waited
+	// behind a long tick is stale for the close decision.
+	readDone time.Time
 	// actMark is the envelope's actMark of that read, 0 when the Agent sent none.
 	actMark int64
 	// actIncarnation is the envelope's actIncarnation of that read: "" when the Agent sent none or
@@ -734,6 +740,7 @@ func (r *memoQueueRunner) view(ctx context.Context, views map[string]*memoMember
 		var env agentSessionsEnvelope
 		env, err = r.mgr.agentSessionsEnv(cctx, res.rt)
 		cancel()
+		v.readDone = time.Now()
 		v.live, v.liveOK, v.report = env.Sessions, err == nil, err == nil && env.reportsQueue()
 		v.refs = err == nil && env.showsReferences()
 		v.tidy = err == nil && env.showsTidy()
@@ -861,6 +868,7 @@ func (r *memoQueueRunner) closeIfDoneUnreported(ctx context.Context, v *memoMemb
 	}
 	if !v.liveOK && !v.mirrorOK {
 		// No observation this tick: the idle ticks are no longer consecutive.
+		log.Printf("memo queue: delivery %s: skipped close tick: session list unreadable", d.ID)
 		r.markIdle(ctx, d, 0)
 		return
 	}
@@ -1140,12 +1148,41 @@ func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
 	return false
 }
 
+// unsoundRead names what is wrong with the session list a close is about to be decided on, "" when
+// nothing is. Stale: the list was read longer ago than staleRead. Unknown state: a live member of
+// the tree has no state, so its hold cannot be read. When in doubt the answer is a reason, since
+// the cost of one more tick is nothing against closing a run that is working.
+func (r *memoQueueRunner) unsoundRead(v *memoMemberView, d store.MemoDelivery) string {
+	if !v.readDone.IsZero() && time.Since(v.readDone) > r.staleRead {
+		return "session list is stale"
+	}
+	for _, s := range deliveryTree(v.live, d.Session) {
+		if !s.Archived && s.Alive && s.State == "" {
+			return "session " + s.Name + " has an unknown state"
+		}
+	}
+	return ""
+}
+
 // closeIfDoneReported is the rule for an Agent that reports. It keeps what it read with the
 // delivery first, then closes the delivery when nothing has held it on two reads in a row.
 func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMemberView, d store.MemoDelivery, now time.Time) {
+	// A list that is old, or does not fit the delivery, must not count toward a close: a tick that
+	// reads one starts the count again and says why in the log.
+	if why := r.unsoundRead(v, d); why != "" {
+		log.Printf("memo queue: delivery %s: skipped close tick: %s", d.ID, why)
+		r.markIdle(ctx, d, 0)
+		return
+	}
 	tree := deliveryTree(v.live, d.Session)
 	if len(tree) == 0 {
-		// Only the Agent's own list proves a deletion.
+		// Only the Agent's own list proves a deletion, and one read that lacks the root is not
+		// proof: the second consecutive one is.
+		if d.IdleTicks < 1 {
+			log.Printf("memo queue: delivery %s: skipped close tick: root session %q missing from the list", d.ID, d.Session)
+			r.markIdle(ctx, d, 1)
+			return
+		}
 		r.closeOpen(ctx, d, store.DeliveryAborted)
 		return
 	}
