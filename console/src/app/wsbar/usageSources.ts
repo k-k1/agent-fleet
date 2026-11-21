@@ -168,6 +168,7 @@ export const AGY_USAGE: RemainingSource = {
       .filter((l) => Date.parse(l.resetsAt) > now)
       .map((l) => ({ id: l.model, label: l.label, resetsAt: l.resetsAt })),
   accountField: "account",
+  manageURL: "https://antigravity.google.com/remote?settingsOpen=true&settingsScreen=Models",
 };
 
 // In bar order, after USAGE_SOURCES.

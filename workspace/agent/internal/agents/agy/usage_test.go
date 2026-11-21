@@ -218,3 +218,60 @@ func TestAdjustGroupsMarksPastWindowsStale(t *testing.T) {
 		t.Error("adjustGroups mutated the cache")
 	}
 }
+
+func TestParseUsageJSON(t *testing.T) {
+	const sample = `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[
+{"name":"Gemini Models","description":"Models within this group: Gemini 4 Neon, Gemini 3.8 Flash","buckets":[
+{"window":"weekly","remaining_fraction":0.9927,"reset_time":"2026-11-28T08:58:55Z"},
+{"window":"5h","remaining_fraction":0.9899,"reset_time":"2026-11-21T13:58:55Z"}]},
+{"name":"Claude and GPT models","buckets":[
+{"window":"weekly","remaining_fraction":1,"reset_time":"1970-01-01T00:00:00Z"},
+{"window":"5h","remaining_fraction":1,"reset_time":"1970-01-01T00:00:00Z"}]},
+{"name":"Gemini 4 Argon","buckets":[{"window":"weekly","remaining_fraction":1,"reset_time":"2026-11-28T09:18:31Z"}]}]}}}`
+	res, err := parseUsageJSON([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Groups) != 3 {
+		t.Fatalf("groups = %d", len(res.Groups))
+	}
+	g := res.Groups[0]
+	if g.RemainingPct != 99.3 || g.ResetsAt != "2026-11-28T08:58:55Z" || g.FiveHour == nil || g.FiveHour.RemainingPct != 99 {
+		t.Errorf("gemini group = %+v five=%+v", g, g.FiveHour)
+	}
+	if g.Models != "Gemini 4 Neon, Gemini 3.8 Flash" {
+		t.Errorf("models = %q", g.Models)
+	}
+	if c := res.Groups[1]; c.ResetsAt != "" || c.FiveHour == nil || c.FiveHour.ResetsAt != "" {
+		t.Errorf("epoch reset must read as no reset: %+v", c)
+	}
+	if a := res.Groups[2]; a.FiveHour != nil || a.RemainingPct != 100 {
+		t.Errorf("weekly-only group = %+v", a)
+	}
+	if _, err := parseUsageJSON([]byte(`{"command":{"data":{"groups":[]}}}`)); err == nil {
+		t.Error("empty groups must be an error so the TUI fallback runs")
+	}
+}
+
+// Google Workspace accounts: Gemini has only a weekly bucket, while the Claude/GPT group
+// keeps both and reports the epoch as its reset.
+func TestParseUsageJSONWorkspaceAccount(t *testing.T) {
+	const sample = `{"command":{"data":{"groups":[
+{"name":"Gemini Models","description":"Models within this group: Gemini 3.8 Flash","buckets":[{"window":"weekly","remaining_fraction":1,"reset_time":"2026-11-28T09:25:01Z"}]},
+{"name":"Claude and GPT models","description":"Models within this group: Claude Sonnet 4.6, GPT-OSS 120B","buckets":[
+{"window":"weekly","remaining_fraction":1,"reset_time":"1970-01-01T00:00:00Z"},
+{"window":"5h","remaining_fraction":1,"reset_time":"1970-01-01T00:00:00Z"}]}]}}}`
+	res, err := parseUsageJSON([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Groups) != 2 {
+		t.Fatalf("groups = %d", len(res.Groups))
+	}
+	if g := res.Groups[0]; g.FiveHour != nil || g.RemainingPct != 100 || g.ResetsAt != "2026-11-28T09:25:01Z" {
+		t.Errorf("gemini = %+v", g)
+	}
+	if g := res.Groups[1]; g.FiveHour == nil || g.FiveHour.RemainingPct != 100 {
+		t.Errorf("claude/gpt = %+v", g)
+	}
+}
