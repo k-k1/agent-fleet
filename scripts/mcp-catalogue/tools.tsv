@@ -27,6 +27,11 @@ add_memo	memo	Add one memo to your memo queue; in an auto-run category it waits 
 update_memo	memo	Edit a memo; only the fields passed change (`reference`: leave out to keep it, `{}` to remove it). Editing an approved auto-run memo sends it back for approval	既存のメモを編集します。渡した項目だけが変わります（`reference` は省略で据え置き、`{}` で外す）。承認ずみの自動実行のメモを編集すると、承認待ちに戻ります
 defer_queue_item	memo	Hand the auto-run memo that started this session back to its queue, to run again later; applied only when the run ends, and dropped when the session worked on or has an open or merged pull request	このセッションを起動した自動実行のメモをキューに差し戻し、あとでもう一度実行させます。実行が終わるときにだけ行われ、セッションが作業を続けたときや、作成中かマージ済みの PR があるときは取り消されます
 delete_memo	memo	Delete a memo by its id; refused in an auto-run category	メモを id で削除します。自動実行のカテゴリでは断られます
+list_memo_queues	memo	List the auto-run categories with their settings; settings are changed only in the Console	自動実行のカテゴリを設定つきで一覧します。設定の変更は Console だけでできます
+get_memo_queue_runs	memo	Read an auto-run category's run history	自動実行カテゴリの実行履歴を読みます
+run_memo_queue_now	memo	Run an auto-run category now, after the user's OK	利用者の了解を得て、自動実行カテゴリを今すぐ実行します
+resume_memo_queue	memo	Resume an auto-run category that paused after failed runs	失敗が続いて止まった自動実行カテゴリを再開します
+stop_memo_queue_run	memo	End a running auto-run run and stop its session	動いている自動実行の実行を終え、そのセッションを止めます
 flush_memos	memo	Send the chosen memos to a session as one message; refused in an auto-run category	選んだメモを 1 通にまとめてセッションへ送ります。自動実行のカテゴリでは断られます
 list_schedules	schedule	List the schedules	定時実行のスケジュールを一覧します
 get_schedule_runs	schedule	Show a schedule's latest 50 runs	スケジュールの実行履歴（最新 50 件）を返します

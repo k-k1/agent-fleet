@@ -1104,3 +1104,12 @@ Postgres.
 *Decided by the owner, 2026-11-21:* the ceiling is 10 and the default 4 (not 0), applied to existing queues through the column
 default; a press on a continuation held for the limit starts a fresh chain of up to M, with one button; and a message the
 switch accepted may root a chain, like a person's press.
+
+## Addendum 2026-11-21: the fleet operator and auto-run categories (#4626)
+
+The Fleet Operator got tools for the parts of auto-run that start, watch and stop work, and none for the parts that decide what unattended sessions are told or approve memos for them.
+
+- **On the token face (`/internal/memo-queues`, `AF_MEMO_TOKEN`, the same handlers as the Console):** `GET /internal/memo-queues` (every queue with its settings), `GET .../{categoryId}/deliveries` (run history), `POST .../fire` (run now), `POST .../resume`, `POST .../deliveries/{id}/end`. The operator's tools are `list_memo_queues`, `get_memo_queue_runs`, `run_memo_queue_now`, `resume_memo_queue` and `stop_memo_queue_run`; the last three are `--write` only, and none is offered to an ordinary session. Their descriptions make the operator show the user what will run and get an OK in chat first.
+- **Not on the token face, and not an operator tool:** any write of a queue's settings (`PUT` and `DELETE /api/memo-queues/{categoryId}`: the standing instruction, run by itself, sessions at the same time, window, follow-up limit, spend limit, turning auto-run off), the release (section 3), and the return of a run's messages. A test lists the token face's routes and fails if one of these appears.
+- **Why.** `AF_MEMO_TOKEN` is in the environment of every session of a workspace, so a token-face route is one that a queue run that has read an injected memo can call as well; the advertised tool set is not a boundary. Running, resuming and ending only act on what the person has already approved and configured. A settings write would let such a run replace the standing instruction, which this ADR treats as the user's own words to unattended sessions, or turn auto-run on. Return puts a run's messages back to `pending`, which needs no new release, so it stays with the person as well. For settings, `list_memo_queues` tells the operator to show the user the full proposed settings and to send them to the Console's category settings; the person saves them there.
+- **Not decided here.** Whether a settings change may later reach the operator through an approval card of its own, as the release does. Nothing in this addendum prepares it.

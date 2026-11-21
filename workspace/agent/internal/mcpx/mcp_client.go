@@ -51,9 +51,20 @@ func cpMemoDo(method, path string, body []byte) (string, error) {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("CP メモAPI エラー (%d): %s", resp.StatusCode, string(b))
+		return "", &cpMemoError{Status: resp.StatusCode, Body: string(b)}
 	}
 	return string(b), nil
+}
+
+// cpMemoError is a CP memo API answer of 4xx/5xx. It is typed so a tool can turn the CP's error
+// code into a sentence; Error() is the text every caller has always shown.
+type cpMemoError struct {
+	Status int
+	Body   string
+}
+
+func (e *cpMemoError) Error() string {
+	return fmt.Sprintf("CP メモAPI エラー (%d): %s", e.Status, e.Body)
 }
 
 // CPScheduleDo calls the CP's /internal/schedules bridge (cpurl.Request, like cpMemoDo)

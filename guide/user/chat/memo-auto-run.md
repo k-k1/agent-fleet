@@ -449,6 +449,19 @@ When the first turns of the last two runs both fail, the category **pauses** aut
 - Only runs that start by themselves stop. "Run now" still works
 - Fix the cause and press "**Resume**". Counting failures starts again from then
 
+## Ask the operator
+
+The [Fleet Operator](../fleet/operator.md) can look after auto-run for you, but only the part that starts, watches and stops work.
+
+| It can | It cannot |
+|---|---|
+| List your auto-run categories with their settings, and read a category's run history | Change a category's settings, including the instruction, turn "Run by itself" on or off, or remove auto-run |
+| Press "Run now", press "Resume" on a paused category, and end a run that is still going | Approve memos, or press "Return to queue" on a run |
+
+Before it runs, resumes or ends anything, it tells you which category, how many memos and which instruction, and waits for your OK in the chat.
+
+The settings and the approval stay with you because the operator reads memos that sessions wrote. If it could save the instruction or approve memos, a memo carrying injected text could end up as an unattended run. When you want to change a setting, the operator shows you the full settings it suggests, with the instruction in full, and you save them in the Console under "Auto-run settings". "Run by itself" starts off, and turning it on is yours to do.
+
 ## Notifications
 
 They arrive in the notification center. In **⚙ Settings → "Notifications"**, the "**What each notification does**" table switches them together on the "Auto-run" row. Pressing a notification opens its category.

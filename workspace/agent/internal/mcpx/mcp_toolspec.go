@@ -89,6 +89,7 @@ func toolFamilies() [][]toolSpec {
 		fleetSpawnTools(),
 		chatPlanTools(),
 		memoTools(),
+		memoQueueTools(),
 		queueDeferTools(),
 		scheduleTools(),
 		driveTools(),

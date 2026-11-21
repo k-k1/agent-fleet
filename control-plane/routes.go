@@ -663,6 +663,16 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	// A queue run's session hands its message back (defer_queue_item, relayed by the Agent with
 	// the session's name). Only records the request: a clean close applies it.
 	mux.HandleFunc("POST /internal/memo-deliveries/{id}/defer", memo.withMemoToken(memo.deferDelivery))
+	// Auto-run queues for the fleet operator (ADR 0137, addendum 2026-11-21): read the settings and
+	// the run history, run now, resume, end a run. Deliberately absent from this face: any write of
+	// the settings (PUT/DELETE /api/memo-queues/{categoryId}), the release, and the return of a
+	// run's messages (they go back to pending, which needs no release). AF_MEMO_TOKEN reaches every
+	// session of the workspace, so a route here is one a run that read an injected memo can call.
+	mux.HandleFunc("GET /internal/memo-queues", memo.withMemoToken(memo.listQueues))
+	mux.HandleFunc("POST /internal/memo-queues/{categoryId}/fire", memo.withMemoTokenResolved(memo.fire))
+	mux.HandleFunc("POST /internal/memo-queues/{categoryId}/resume", memo.withMemoToken(memo.resumeQueue))
+	mux.HandleFunc("GET /internal/memo-queues/{categoryId}/deliveries", memo.withMemoToken(memo.listDeliveries))
+	mux.HandleFunc("POST /internal/memo-queues/{categoryId}/deliveries/{id}/end", memo.withMemoToken(memo.endDelivery))
 	mux.HandleFunc("GET /internal/memo-categories", memo.withMemoToken(memo.listCategories))
 	mux.HandleFunc("POST /internal/memo-categories", memo.withMemoToken(memo.createCategory))
 	mux.HandleFunc("PATCH /internal/memo-categories/{id}", memo.withMemoToken(memo.updateCategory(token)))

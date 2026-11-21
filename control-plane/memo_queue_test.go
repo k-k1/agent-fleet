@@ -339,14 +339,20 @@ func TestMemoQueueTokenFaceHasNoSettingsOrRelease(t *testing.T) {
 	e.queue(cat)
 	_, m := memoFaceClient{"token", e}.create(textMemo("r", "q", "from a session"))
 	for _, c := range []struct{ method, path string }{
-		{"GET", "/internal/memo-queues"},
 		{"PUT", "/internal/memo-queues/" + cat},
 		{"DELETE", "/internal/memo-queues/" + cat},
+		{"POST", "/internal/memo-queues/" + cat + "/deliveries/d1/return"},
 		{"POST", "/internal/memos/release"},
 	} {
 		body := map[string]any{"items": []map[string]any{{"id": m.ID, "contentHash": m.ContentHash}}, "instruction": "x"}
 		if r := e.memoTokenDo("a", c.method, c.path, body); r.Code < 400 {
 			t.Errorf("%s %s answered %d", c.method, c.path, r.Code)
+		}
+	}
+	// What the operator does get: the settings to read and the run history.
+	for _, path := range []string{"/internal/memo-queues", "/internal/memo-queues/" + cat + "/deliveries"} {
+		if r := e.memoTokenDo("a", "GET", path, nil); r.Code != 200 {
+			t.Errorf("GET %s answered %d: %s", path, r.Code, r.Body.String())
 		}
 	}
 	if got := e.memoRow(m.ID); got.State != store.MemoStateHeld {
