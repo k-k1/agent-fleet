@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -113,7 +114,7 @@ func PolicyEnv(ctx context.Context, st store.Store, tenantID string) []string {
 	switch {
 	case err == nil:
 		v = p
-	case currentCeiling().rule.Restricted():
+	case currentCeiling().rule.Restricted() || errors.Is(err, errCeilingUnsettled):
 		v = unknownPolicy{Unknown: true, ID: newMarkerID(), IssuedAt: nowUnix()}
 	default:
 		return nil

@@ -2,6 +2,7 @@ package routepolicysrv
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -40,7 +41,7 @@ func RouteRefusal(ctx context.Context, st store.Store, tenantID, route string) *
 	}
 	p, err := MemberPolicyOf(ctx, st, tenantID)
 	switch {
-	case err != nil && currentCeiling().rule.Restricted():
+	case err != nil && (currentCeiling().rule.Restricted() || errors.Is(err, errCeilingUnsettled)):
 		return &APIError{http.StatusServiceUnavailable, CodePolicyUnconfirmed,
 			"the credential policy cannot be computed now, and this deployment restricts routes; try again shortly"}
 	case err != nil || !p.Restricted:
@@ -56,7 +57,7 @@ func RouteRefusal(ctx context.Context, st store.Store, tenantID, route string) *
 func Restricted(ctx context.Context, st store.Store, tenantID string) bool {
 	p, err := MemberPolicyOf(ctx, st, tenantID)
 	if err != nil {
-		return currentCeiling().rule.Restricted()
+		return currentCeiling().rule.Restricted() || errors.Is(err, errCeilingUnsettled)
 	}
 	return p.Restricted
 }

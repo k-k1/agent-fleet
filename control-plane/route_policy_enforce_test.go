@@ -155,3 +155,26 @@ func TestFireRefusesARouteThePolicyForbids(t *testing.T) {
 		t.Error("a policy refusal must not be retried")
 	}
 }
+
+// A fire that meets a ceiling recorded by a newer Control Plane (a rollover) is retried on the
+// same slot, not recorded as a failed run that advances the ledger.
+func TestFireRetriesWhileTheCeilingBelongsToANewerControlPlane(t *testing.T) {
+	api, ctx, _ := newSchedAPITest(t)
+	tn, err := api.mgr.store.EnsureDefaultTenant(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := api.mgr.store.PutCeiling(ctx, `{"classes":["provided"]}`, "operator", store.CeilingWriterKey(1<<62, "z"), nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AF_MODEL_ROUTE_CEILING", "")
+	if err := routepolicysrv.LoadCeiling(); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = (&wakeFirer{mgr: api.mgr}).fire(ctx, store.Schedule{ID: "s", SessionMode: "new", AgentKind: "claude",
+		TenantID: tn.ID, MembershipID: "m-none", Route: "anthropic-subscription"}, time.Now())
+	var retry scheduleRetryable
+	if !errors.As(err, &retry) {
+		t.Errorf("fire = %v, want a retryable error", err)
+	}
+}

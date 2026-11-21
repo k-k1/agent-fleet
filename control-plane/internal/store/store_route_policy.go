@@ -133,7 +133,8 @@ func (s *SQL) PutRoutePolicyIf(ctx context.Context, scope, tenantID, rule, actor
 	return s.putRoutePolicy(ctx, scope, tenantID, rule, actor, "", expect, audit)
 }
 
-// PutCeiling: the supersede check runs after the sequence lock is held, so it reads the row as
+// PutCeiling: when the stored rule already equals rule it writes nothing and returns before as
+// both rows (after.Revision == before.Revision). The supersede check runs after the sequence lock is held, so it reads the row as
 // the last committed writer left it; a yield rolls back with the sequence untouched.
 func (s *SQL) PutCeiling(ctx context.Context, rule, actor, writer string, audit func(before, after RoutePolicyRow) AuditLog) (before, after RoutePolicyRow, err error) {
 	return s.putRoutePolicy(ctx, RoutePolicyCeiling, "", rule, actor, writer, nil, audit)
@@ -165,8 +166,19 @@ func (s *SQL) putRoutePolicy(ctx context.Context, scope, tenantID, rule, actor, 
 	if expect != nil && before.Revision != *expect {
 		return before, RoutePolicyRow{}, ErrRoutePolicyStale
 	}
-	if writer != "" && before.Writer > writer {
-		return before, RoutePolicyRow{}, ErrCeilingSuperseded
+	if writer != "" {
+		// Re-compared under the lock: a read made before another CP committed the same rule is stale.
+		if before.Revision != 0 && before.Rule == rule || before.Revision == 0 && rule == "{}" {
+			return before, before, nil
+		}
+		if before.Writer > writer {
+			return before, RoutePolicyRow{}, ErrCeilingSuperseded
+		}
+	}
+	if writer == "" {
+		// A write that is not a CP's own record (a database edit) changes the rule only: the
+		// ceiling row keeps the key of the newest writer.
+		writer = before.Writer
 	}
 	after = RoutePolicyRow{Scope: scope, TenantID: tenantID, Rule: rule, Revision: rev, UpdatedBy: actor, UpdatedAt: NowTS(), Writer: writer}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO route_policy(scope, tenant_id, rule, revision, updated_by, updated_at, writer)

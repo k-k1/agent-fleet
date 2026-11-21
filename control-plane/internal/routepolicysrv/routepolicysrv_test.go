@@ -734,3 +734,33 @@ func TestCeilingEqualWritesNothingAndEditIsRerecorded(t *testing.T) {
 		t.Errorf("the edit was not re-recorded: %+v", after)
 	}
 }
+
+// While the older CP yields, the Agent's authenticated pull gets the retryable 503 (not a 500)
+// and the newer CP's pull a 200; an older CP that allows everything refuses an explicit route
+// with 503 rather than allowing it, and starts a Workspace with the unknown marker.
+func TestCeilingOlderControlPlaneAnswersRetryableToAgents(t *testing.T) {
+	st, mux, tn := routePolicyFixture(t, "")
+	ctx := context.Background()
+	actAs(t, "classes=provided", 200)
+	if err := SyncCeiling(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	tok := MintToken(SignKey(testRoot), memberOf(t, st, tn, "m-x"))
+	if w := bridgeGet(mux, tok); w.Code != 200 {
+		t.Fatalf("newer CP pull: %d %s", w.Code, w.Body)
+	}
+	actAs(t, "", 100)
+	w := bridgeGet(mux, tok)
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), CodePolicyUnconfirmed) {
+		t.Errorf("older CP pull: %d %s, want 503 %s", w.Code, w.Body, CodePolicyUnconfirmed)
+	}
+	if e := RouteRefusal(ctx, st, tn.ID, "openai-api"); e == nil || e.Status != http.StatusServiceUnavailable {
+		t.Errorf("older CP explicit route: %+v, want 503", e)
+	}
+	if !Restricted(ctx, st, tn.ID) {
+		t.Error("older CP: Restricted = false while the policy is being replaced")
+	}
+	if env := PolicyEnv(ctx, st, tn.ID); len(env) != 1 || !strings.Contains(env[0], "unknown") {
+		t.Errorf("older CP policy env = %v, want the unknown marker", env)
+	}
+}

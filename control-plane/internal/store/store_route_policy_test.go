@@ -316,7 +316,36 @@ func TestPutCeilingYieldsToNewerWriter(t *testing.T) {
 		}
 		_, _, err = st.PutRoutePolicy(ctx, RoutePolicyCeiling, "", `{}`, "edit", nil)
 		mustDo(t, err)
-		_, _, err = st.PutCeiling(ctx, `{"deny":["y"]}`, "op", old, nil)
+		// The edit changed the rule only: the newer writer's key still stands.
+		if _, _, err = st.PutCeiling(ctx, `{"deny":["y"]}`, "op", old, nil); !errors.Is(err, ErrCeilingSuperseded) {
+			t.Fatalf("older writer after an edit: %v, want superseded", err)
+		}
+	})
+}
+
+// A write that finds the stored rule already equal (another CP recorded it after this one read
+// the row) writes nothing and does not yield, whichever writer key is greater; a write that is
+// not a CP's own (a database edit) changes the rule and keeps the newest writer's key.
+func TestPutCeilingEqualRuleAndEditKeepsWriter(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		old, newer := CeilingWriterKey(100, "a"), CeilingWriterKey(200, "a")
+		_, first, err := st.PutCeiling(ctx, `{"classes":["provided"]}`, "op", newer, nil)
 		mustDo(t, err)
+		before, after, err := st.PutCeiling(ctx, `{"classes":["provided"]}`, "op", old, nil)
+		if err != nil || before.Revision != first.Revision || after.Revision != first.Revision {
+			t.Fatalf("equal rule from an older writer: %+v %+v %v", before, after, err)
+		}
+		_, edited, err := st.PutRoutePolicy(ctx, RoutePolicyCeiling, "", `{}`, "edit", nil)
+		mustDo(t, err)
+		if edited.Writer != newer {
+			t.Fatalf("an edit dropped the writer key: %+v", edited)
+		}
+		if _, _, err := st.PutCeiling(ctx, `{}`, "op", old, nil); err != nil {
+			t.Fatalf("older writer, rule equal to the edited one: %v", err)
+		}
+		if _, _, err := st.PutCeiling(ctx, `{"deny":["z"]}`, "op", old, nil); !errors.Is(err, ErrCeilingSuperseded) {
+			t.Fatalf("older writer after an edit: %v, want superseded", err)
+		}
 	})
 }

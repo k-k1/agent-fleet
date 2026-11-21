@@ -85,7 +85,7 @@ func SyncCeiling(ctx context.Context, st store.Store) error {
 	if row.Rule == string(want) || row.Revision == 0 && !c.rule.Restricted() {
 		return nil
 	}
-	_, after, err := st.PutCeiling(ctx, string(want), "operator", c.writer,
+	before, after, err := st.PutCeiling(ctx, string(want), "operator", c.writer,
 		func(before, after store.RoutePolicyRow) store.AuditLog {
 			return store.AuditLog{ID: store.NewID(), ActorKind: "system", ActorID: "operator", Action: "route_policy.ceiling.sync",
 				Target: "deployment", Detail: fmt.Sprintf("before=%s after=%s revision=%d raw=%q", before.Rule, after.Rule, after.Revision, c.raw),
@@ -96,6 +96,9 @@ func SyncCeiling(ctx context.Context, st store.Store) error {
 	}
 	if err != nil {
 		return fmt.Errorf("recording the operator ceiling: %w", err)
+	}
+	if after.Revision == before.Revision {
+		return nil
 	}
 	log.Printf("route policy: the operator ceiling changed, recorded at revision %d", after.Revision)
 	return nil
