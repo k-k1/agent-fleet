@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Session } from "../../types/session.ts";
-import { buildRuns, fmtElapsed, itemLabel, runRootName, type RunDelivery } from "./runs.ts";
+import { buildRuns, failedRunKeys, scopeRuns, fmtElapsed, itemLabel, runRootName, waitingRunCount, type RunDelivery } from "./runs.ts";
 
-const dlv = (categoryId: string, state: string, extra: Partial<RunDelivery> = {}): RunDelivery => ({ categoryId, state, sentAt: "", createdAt: "", closedAt: "", heldBy: "", ...extra });
+const dlv = (categoryId: string, state: string, extra: Partial<RunDelivery> = {}): RunDelivery => ({ id: "d-" + categoryId, categoryId, state, outcome: "", turnOutcome: "", sentAt: "", createdAt: "", closedAt: "", heldBy: "", ...extra });
 const sess = (name: string, extra: Partial<Session>): Session => ({ name, kind: "claude", alive: true, ...extra });
 
 describe("buildRuns", () => {
@@ -117,5 +117,52 @@ describe("helpers", () => {
     expect(fmtElapsed(12 * 60_000)).toBe("12m");
     expect(fmtElapsed(65 * 60_000)).toBe("1h 5m");
     expect(fmtElapsed(27 * 3600_000)).toBe("1d 3h");
+  });
+});
+
+describe("run badges", () => {
+  it("counts the waiting runs and keys the failed ones by delivery", () => {
+    const closedRun = (name: string) => sess(name, { origin: "queue", alive: false });
+    const rows = buildRuns(
+      [sess("a", { origin: "queue", state: "question" }), closedRun("b"), closedRun("c"), closedRun("d"), closedRun("e")],
+      new Map([
+        ["a", dlv("c", "open", { id: "da" })],
+        // The first turn failed and the queue closed the run: a failure.
+        ["b", dlv("c", "closed", { id: "db", outcome: "clean", turnOutcome: "turn-failed" })],
+        // The member ended or aborted it: their doing, not a failure.
+        ["c", dlv("c", "closed", { id: "dc", outcome: "aborted", turnOutcome: "turn-failed" })],
+        ["d", dlv("c", "closed", { id: "dd", outcome: "ended", turnOutcome: "turn-failed" })],
+        ["e", dlv("c", "closed", { id: "de", outcome: "clean", turnOutcome: "clean" })],
+      ]),
+    );
+    expect(waitingRunCount(rows)).toBe(1);
+    expect(failedRunKeys(rows)).toEqual(["db"]);
+  });
+});
+
+describe("a failed run stays failed", () => {
+  it("when its session is resumed, which only changes what the row shows", () => {
+    const rows = buildRuns(
+      [sess("a", { origin: "queue", alive: true })],
+      new Map([["a", dlv("c", "closed", { id: "da", outcome: "clean", turnOutcome: "turn-failed" })]]),
+    );
+    expect(rows[0].resumed).toBe(true);
+    expect(failedRunKeys(rows)).toEqual(["da"]);
+  });
+});
+
+describe("scopeRuns", () => {
+  const rows = buildRuns(
+    [sess("a", { origin: "queue", state: "question" }), sess("b", { origin: "queue", state: "question" }), sess("c", { origin: "queue", state: "question" })],
+    new Map([["a", dlv("ca", "open")], ["b", dlv("cb", "open")], ["c", dlv("cx", "open")]]),
+  );
+  const queues = [{ categoryId: "ca", repo: "A" }, { categoryId: "cb", repo: "B" }] as never;
+  const set = { id: "w", name: "w", repos: ["A"], sessions: [], convs: [], schedules: [] } as never;
+
+  it("keeps the runs of the set's repositories and those no category names; count and view agree", () => {
+    expect(scopeRuns(rows, queues, null)).toHaveLength(3);
+    const scoped = scopeRuns(rows, queues, set);
+    expect(scoped.map((r) => r.root.name).sort()).toEqual(["a", "c"]);
+    expect(waitingRunCount(scoped)).toBe(2);
   });
 });

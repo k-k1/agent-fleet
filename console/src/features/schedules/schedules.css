@@ -353,3 +353,20 @@
    sits under the fields as plain hint text. */
 .sched-gate .sched-gate-last { margin-top: 6px; }
 .sched-gate [data-invalid] { color: var(--err); }
+
+/* Sessions schedules started: one row per run, the run's spawned sessions one level under. */
+.sched-sess-group { margin-top: 8px; }
+.sched-sess-head { margin: 0; padding: 4px 10px; font-size: 11px; font-weight: 600; opacity: 0.7; }
+.sched-sess-list, .sched-sess-kids { list-style: none; margin: 0; padding: 0; }
+.sched-sess-kids { padding-left: 20px; }
+.sched-sess-main, .sched-sess-ended {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 3px 10px;
+  background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.sched-sess-main:hover, .sched-sess-ended:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
+.sched-sess-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sched-sess-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.4; }
+.sched-sess-dot.run-live { background: var(--ok, #3fb950); opacity: 1; }
+.sched-sess-dot.run-wait { background: var(--warn, #d29922); opacity: 1; }
+.sched-sess-ended { font-size: 12px; opacity: 0.8; }
+.sched-sess-anchor { display: flex; padding: 3px 10px; opacity: 0.6; }

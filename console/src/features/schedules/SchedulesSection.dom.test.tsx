@@ -143,3 +143,60 @@ describe("SchedulesSection reveal", () => {
     localStorage.removeItem("af-section-schedules");
   });
 });
+
+// Sessions a schedule started are not in the repository tree; this view lists them.
+describe("SchedulesSection scheduled sessions", () => {
+  it("lists live scheduled runs with their spawned sessions, folds finished ones, and leaves others out", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    const s = (name: string, extra: Record<string, unknown>) => ({ name, title: name, kind: "claude", alive: true, ...extra });
+    useSessionsStore.setState({
+      sessions: [
+        s("cron-live", { origin: "schedule", createdAt: "2026-11-02T00:00:00Z" }),
+        s("cron-rev", { origin: "session", originSession: "cron-live", createdAt: "2026-11-02T01:00:00Z" }),
+        s("cron-old", { origin: "schedule", alive: false, createdAt: "2026-11-01T00:00:00Z" }),
+        s("mine", { origin: "user" }),
+      ] as never,
+    });
+    scheduleList.mockResolvedValue([sched]);
+    await render();
+    const row = (n: string) => host.querySelector(`[data-sched-session="${n}"]`);
+    expect(row("cron-live")?.querySelectorAll(".sched-sess-kids li")).toHaveLength(1);
+    expect(row("cron-old")).toBeNull();
+    expect(row("mine")).toBeNull();
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    expect(row("cron-old")).not.toBeNull();
+    useSessionsStore.setState({ sessions: [] });
+  });
+});
+
+describe("SchedulesSection scheduled sessions under a working set", () => {
+  it("shows a root outside the set as a heading without a state or an open button", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    const { useReposStore } = await import("../repos/store.ts");
+    const { createWorkingSet, setActiveWorkingSet, toggleWorkingSetMember, deleteWorkingSet } = await import("../../lib/workingSetsStore.ts");
+    const s = (name: string, extra: Record<string, unknown>) => ({ name, title: name, kind: "claude", alive: true, ...extra });
+    useReposStore.setState({ repos: [{ name: "a" }, { name: "b" }] as never });
+    useSessionsStore.setState({
+      sessions: [
+        s("cron", { origin: "schedule", repo: "a", state: "question", createdAt: "2026-11-02T00:00:00Z" }),
+        s("rev", { origin: "session", originSession: "cron", repo: "b", state: "working", createdAt: "2026-11-02T01:00:00Z" }),
+      ] as never,
+    });
+    scheduleList.mockResolvedValue([sched]);
+    const id = createWorkingSet("only B");
+    toggleWorkingSetMember(id, "repos", "b");
+    setActiveWorkingSet(id);
+    try {
+      await render();
+      const root = host.querySelector('[data-sched-session="cron"]')!;
+      expect(root.querySelector(":scope > .sched-sess-anchor")).not.toBeNull();
+      expect(root.querySelector(":scope > .sched-sess-main")).toBeNull(); // nothing to open, no waiting dot
+      expect(root.querySelectorAll(".sched-sess-kids .sched-sess-main")).toHaveLength(1);
+    } finally {
+      setActiveWorkingSet("");
+      deleteWorkingSet(id);
+      useSessionsStore.setState({ sessions: [] });
+      useReposStore.setState({ repos: [] });
+    }
+  });
+});

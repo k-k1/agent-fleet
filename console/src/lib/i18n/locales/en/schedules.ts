@@ -21,6 +21,8 @@ export const schedules: Record<keyof typeof jaSchedules, string> = {
   "sched.loading": "Loading…",
   "sched.load_failed": "Couldn't load schedules",
   "sched.retry": "Retry",
+  "sched.sessions": "Scheduled sessions",
+  "sched.sessions_ended": "Finished {n}",
   "sched.no_runs": "No runs yet.",
   "sched.paused": "Schedule paused",
   "sched.resumed": "Schedule resumed",

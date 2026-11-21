@@ -161,3 +161,24 @@ auto-run settings, a menu with the run history and "Show in Memo queue"), with t
 under it: "Running / waiting N" (open) and "Ended N" (folded). A run whose delivery is closed but whose
 root session is alive (taken over, or started again) is listed under Running with a "resumed" tag
 instead of Ended. Decisions above are unchanged.
+
+## Note, 2026-11-21: badges for the Auto-run icon; scheduled sessions move to the Schedules view (#4646, part 3)
+
+The Auto-run icon takes decision 4's two badges, counted only over the rows the view lists (every
+run of the active working set's repositories, #4670's scoping, which the count and the
+acknowledgement share with the view). A waiting count: the runs whose session waits for the
+member's answer, which stays while the view is open. A red news dot: a run its queue closed after
+its first turn failed (`firstTurn.outcome` is `turn-failed`; a delivery has no failed outcome of its own,
+and an aborted or hand-ended run is the member's own doing), acknowledged by opening the view like the
+Schedules dot. Acknowledged keys are never pruned by a read that lacks the run. Both need the runs while the view is off screen, so the queue list and its
+deliveries are read by a shared feed that runs while the workspace runs or the view is shown, and
+the view reads from it. The delivery read also asks for every open run (`?include=open`), so a run
+older than the newest fifty keeps its category.
+
+Scheduled sessions (origin `schedule`) leave the repository tree and the Sessions list too, so the
+tree's "Schedules" group is gone and its copies are carried in `detached` like auto-run's. The
+Schedules view lists them below the schedules: one row per scheduled run, the sessions it spawned one
+level under, finished runs folded. A session carries no schedule id, so they are listed as one group
+rather than under each schedule; the Schedules icon gets a waiting count for them (they no longer
+count in the Sessions badge). The memo run history links to a run's row in the Auto-run view.
+Follow-ups: #4646.

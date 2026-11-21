@@ -21,6 +21,7 @@ import { openHome } from "../features/home/open.ts";
 import { openSessionsOverview } from "../features/overview/open.ts";
 import { openImagegen } from "../features/imagegen/open.ts";
 import { useImagegenAvailable } from "../features/imagegen/available.ts";
+import { useReposStore } from "../features/repos/store.ts";
 import { openGeneratedGallery } from "../features/gallery/open.ts";
 import { hintSuffix } from "../features/keys/keyHint.ts";
 import { Icon } from "../ui/Icon.tsx";
@@ -28,6 +29,9 @@ import { tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
 import { hasUnreadConversation, hasUnreadSession, pendingNews, useRailAck, waitingSessions, workItemNewsKeys } from "./activity/badges.ts";
 import type { RailBadge } from "./activity/badges.ts";
+import { useAutoRunFeed, useScopedAutoRuns } from "../features/autorun/store.ts";
+import { waitingScheduledCount } from "../features/schedules/scheduledSessions.ts";
+import { buildRuns, failedRunKeys, scopeRuns, waitingRunCount } from "../features/autorun/runs.ts";
 import { stepView } from "./barSwipe.ts";
 import { useBarSwipe } from "./useBarSwipe.ts";
 
@@ -191,11 +195,11 @@ function badgeText(b: RailBadge, tr: ReturnType<typeof useT>, view: RailView): s
   switch (b.tone) {
     case "waiting":
       // What waits differs by view: sessions on an answer, proposals and memos on a decision.
-      return tCount(view === "shared" ? "rail.badge.handoffs" : view === "memory" ? "rail.badge.proposals" : view === "memo" ? "rail.badge.memos" : "rail.badge.waiting", b.count);
+      return tCount(view === "shared" ? "rail.badge.handoffs" : view === "memory" ? "rail.badge.proposals" : view === "memo" ? "rail.badge.memos" : view === "autorun" ? "rail.badge.runs" : "rail.badge.waiting", b.count);
     case "news":
       return tCount("rail.badge.news", b.count);
     case "failed":
-      return tr("rail.badge.failed");
+      return tr(view === "autorun" ? "rail.badge.run_failed" : "rail.badge.failed");
     default:
       return tr("rail.badge.unread");
   }
@@ -234,6 +238,15 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   // which App mounts for the whole session. There is no news dot for shared sessions: nothing
   // client-side marks one unread (notifications never target the shared list).
   const pendingHandoffs = useHandoffStore((s) => pendingHandoffCount(s.received));
+  // The runs the Auto-run view lists, read here too: the badge cannot wait for the view to mount.
+  useAutoRunFeed(running);
+  const { queues: runQueues, deliveries: queueRuns, loaded: autoRunsLoaded } = useScopedAutoRuns();
+  // The rows the view lists under the active working set, so the count and the acknowledgement match them.
+  const runs = useMemo(() => scopeRuns(buildRuns(sessions, queueRuns), runQueues, wset), [sessions, queueRuns, runQueues, wset]);
+  const waitingRuns = useMemo(() => waitingRunCount(runs), [runs]);
+  const failedAutoRuns = useMemo(() => failedRunKeys(runs), [runs]);
+  const repos = useReposStore((s) => s.repos);
+  const waitingScheduled = useMemo(() => waitingScheduledCount(sessions, wset, repos), [sessions, wset, repos]);
   const acked = useRailAck((s) => s.acked);
   const ack = useRailAck((s) => s.ack);
 
@@ -248,7 +261,10 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   useEffect(() => {
     if (onScreen === "workitems" && workItemsLoaded) ack("workitems", workItemKeys);
     if (onScreen === "schedules" && allFailedRuns !== null) ack("schedules", failedRuns, allFailedRuns);
-  }, [onScreen, workItemKeys, workItemsLoaded, failedRuns, allFailedRuns, ack]);
+    // Nothing is pruned: a read that lacks a run (the newest fifty, a history still on its way)
+    // says nothing about whether the run is gone, and a forgotten key would raise its dot again.
+    if (onScreen === "autorun" && autoRunsLoaded && failedAutoRuns.length > 0) ack("autorun", failedAutoRuns, [...(acked.autorun ?? []), ...failedAutoRuns]);
+  }, [onScreen, workItemKeys, workItemsLoaded, failedRuns, allFailedRuns, failedAutoRuns, autoRunsLoaded, acked.autorun, ack]);
 
   const out: Partial<Record<RailView, RailBadge>> = {};
   if (waiting > 0) out.sessions = { tone: "waiting", count: waiting };
@@ -263,7 +279,13 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   // memo view lists every note whatever the working set.
   if (waitingMemos > 0) out.memo = { tone: "waiting", count: waitingMemos };
   if (pendingHandoffs > 0) out.shared = { tone: "waiting", count: pendingHandoffs };
+  // A run's session waits on the member's answer: stays while the view is open, like a waiting
+  // session. A failed run is news: the dot clears when the view has been looked at.
+  if (waitingRuns > 0) out.autorun = { tone: "waiting", count: waitingRuns };
+  else if (onScreen !== "autorun" && autoRunsLoaded && pendingNews(failedAutoRuns, acked.autorun).length > 0) out.autorun = { tone: "failed" };
   if (pendingMemory > 0) out.memory = { tone: "waiting", count: pendingMemory };
-  if (onScreen !== "schedules" && pendingNews(failedRuns, acked.schedules).length > 0) out.schedules = { tone: "failed" };
+  // A scheduled run's session waits on the member's answer; the Sessions view does not list it.
+  if (waitingScheduled > 0) out.schedules = { tone: "waiting", count: waitingScheduled };
+  else if (onScreen !== "schedules" && pendingNews(failedRuns, acked.schedules).length > 0) out.schedules = { tone: "failed" };
   return out;
 }

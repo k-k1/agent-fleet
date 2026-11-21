@@ -369,29 +369,3 @@
   font-size: 12px;
   color: var(--muted);
 }
-
-/* Folded bucket of unattended working copies (RepoNode's AutoGroup): a quiet one-line
-   header under its owner, so the member's own copies above it keep the eye. */
-.proj-group-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 3px 6px;
-  background: none;
-  border: 0;
-  color: var(--muted);
-  font-size: 11px;
-  text-align: left;
-  cursor: pointer;
-}
-.proj-group-head:hover {
-  color: var(--fg);
-}
-.proj-group-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
