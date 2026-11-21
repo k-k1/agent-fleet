@@ -56,7 +56,8 @@ missing, empty or non-scanner file. A red run leaves the issue as it was.
 Each row has a **Remedy**:
 
 - `rebuild`: an OS package that the Dockerfile does not pin, or the Go standard library in `af-cp` / `workspace-agent`. A rebuild
-  with a refreshed base image and Go toolchain cures it, so it is a patch-release case.
+  with a refreshed base image and Go toolchain cures it, so it is a patch-release case. The control-plane
+  image runs `apt-get upgrade`, so its Debian fixes arrive on a rebuild even before the base tag is refreshed.
 - `bump`: a Debian package the Dockerfile pins to an exact version (`chromium`, `chromium-common`, `chromium-sandbox` via `CHROMIUM_VERSION`: a fresh base reinstalls the same build), a Go module, an npm package, or a tool we bake in (its own pin, e.g. a Go tool built with
   an old toolchain). A rebuild does not move it. Fix it with a normal PR to `main`, which the next
   release carries; if it cannot wait, the patch release has to carry that bump too (see below).
