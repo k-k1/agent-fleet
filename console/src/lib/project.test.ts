@@ -22,6 +22,7 @@ import {
   childNodes,
   lineageNodes,
   railNodeSessions,
+  splitNodeSessions,
   sessionAutoKind,
   type RepoTreeNode,
 } from "./project.ts";
@@ -516,7 +517,22 @@ describe("repoTree: filtering and mixed copies", () => {
     const f = filterRepoTree(tree, (r) => r.name === "af@r");
     expect(shapes(f)).toEqual([["af", [["af@h", [["af@r", []]]]]]]);
     expect(f[0].groups).toEqual([]);
-    expect(planStopTree(f[0], sessions).map((g) => g.repo.name)).toEqual(["af@h", "af@r"]);
+    // The display is H/R only, but the base's stop and delete still reach A once, as on main.
+    expect(planStopTree(f[0], sessions).map((g) => g.repo.name).sort()).toEqual(["af@a", "af@h", "af@r"]);
+    expect(planTree(f[0], sessions).map((p) => p.repo.name).sort()).toEqual(["af", "af@a", "af@h", "af@r"]);
+    expect(planTree(f[0], sessions).filter((p) => p.repo.name === "af@a").map((p) => p.detached)).toEqual([true]);
+  });
+
+  it("a run's copy where a schedule also runs stays ordinary, each session under its own heading", () => {
+    const ss = [...sessions, live(sess("cron", { repo: "af@a", createdAt: t(5), origin: "schedule" }))];
+    const r = repoTree(repos, ss)[0];
+    expect(r.groups).toEqual([]);
+    const a = r.children.find((c) => c.repo.name === "af@a")!;
+    const byName = new Map(ss.map((x) => [x.name, x]));
+    const sp = splitNodeSessions(sessionsInFolder(ss, "af@a"), byName, false);
+    expect(sp.byKind.autorun.map((x) => x.name)).toEqual(["A"]);
+    expect(sp.byKind.schedule.map((x) => x.name)).toEqual(["cron"]);
+    expect(railNodeSessions(a, ss, byName).map((x) => x.name)).toEqual(["H", "R", "A", "cron"]);
   });
 
   it("a copy a run made but where the member later started a session stays in the ordinary tree", () => {

@@ -430,12 +430,14 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
     // effectively random (temp/<slug>), while chronological order leaves the existing
     // worktrees where they are and puts a new one at the end of its level.
     const kindOf = new Map<string, AutoGroupKind | "">();
-    // A copy where the member also works (a hand-started session opened there later) stays in
+    // A copy where the member also works (a hand-started session or another kind of run opened there later) stays in
     // the ordinary tree, so that session is not buried in a folded group; its unattended
     // sessions fold into the node's own groups instead (splitNodeSessions).
     for (const w of worktrees) {
-      const mixed = sessionsInFolder(sessions, w.name).some((s) => !sessionAutoKind(s, ix.byName));
-      kindOf.set(w.name, mixed ? "" : sessionAutoKind(ix.owners.get(w.name), ix.byName));
+      const k = sessionAutoKind(ix.owners.get(w.name), ix.byName);
+      // Mixed = any session of a different origin kind, a run of another category included.
+      const mixed = sessionsInFolder(sessions, w.name).some((s) => sessionAutoKind(s, ix.byName) !== k);
+      kindOf.set(w.name, mixed ? "" : k);
     }
     // A copy whose parent copy is grouped nests under it as a plain child (the run's
     // reviewers and nested worktrees keep their nesting inside the group). A member's own
@@ -505,20 +507,37 @@ export function countRepoNodes(nodes: RepoTreeNode[]): number {
 // filterRepoTree prunes a forest to the nodes that match, keeping every ancestor of a
 // match as its anchor — the same rule the flat layout used when a base with no match
 // of its own stayed to carry a matching worktree, now applied at every level.
+//
+// Two trees come out of one pass. The DISPLAY keeps only matches and their ancestors. The
+// OPERATIONAL one (what stop / delete read) must still equal main's: a copy dropped from the
+// display (a run A whose handoff H holds the match) is carried in its parent's `detached`, so
+// an action on the base still reaches A once. A node dropped with nothing kept below it
+// leaves no trace.
 export function filterRepoTree(nodes: RepoTreeNode[], keep: (r: Repo) => boolean): RepoTreeNode[] {
-  const out: RepoTreeNode[] = [];
+  return pruneForest(nodes, keep).kept;
+}
+
+function pruneForest(nodes: RepoTreeNode[], keep: (r: Repo) => boolean): { kept: RepoTreeNode[]; scope: RepoTreeNode[] } {
+  const kept: RepoTreeNode[] = [];
+  const scope: RepoTreeNode[] = [];
   for (const n of nodes) {
-    const children = filterRepoTree(n.children, keep);
+    const ch = pruneForest(n.children, keep);
     const groups: RepoTreeGroup[] = [];
+    const rest = [...ch.scope];
     for (const g of n.groups) {
-      const kept = filterRepoTree(g.nodes, keep);
-      if (kept.length > 0) groups.push({ kind: g.kind, nodes: kept });
+      const gr = pruneForest(g.nodes, keep);
+      if (gr.kept.length > 0) groups.push({ kind: g.kind, nodes: gr.kept });
+      rest.push(...gr.scope);
     }
-    if (children.length > 0 || groups.length > 0 || keep(n.repo)) {
-      out.push({ repo: n.repo, children, groups, detached: n.detached ? filterRepoTree(n.detached, keep) : undefined, spine: n.spine });
+    const det = pruneForest(n.detached ?? [], keep);
+    const detached = [...det.kept, ...det.scope, ...rest];
+    if (ch.kept.length > 0 || groups.length > 0 || keep(n.repo)) {
+      kept.push({ repo: n.repo, children: ch.kept, groups, detached: detached.length > 0 ? detached : undefined, spine: n.spine });
+    } else if (detached.length > 0) {
+      scope.push({ repo: n.repo, children: [], groups: [], detached, spine: n.spine });
     }
   }
-  return out;
+  return { kept, scope };
 }
 
 // orphanSessions returns sessions that belong to no known working copy — a folder
