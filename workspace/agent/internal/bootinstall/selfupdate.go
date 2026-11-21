@@ -161,6 +161,14 @@ func (e Env) pathVersion(name string, args ...string) string {
 }
 
 func (e Env) selfUpdateNPM() {
+	// Held to the end, and handed to every npm this runs: the writer and the recovery of the next
+	// start exclude each other even when only this process dies.
+	e, release, ok := e.lockNPM()
+	if !ok {
+		e.npmBusy("agent CLI update")
+		return
+	}
+	defer release()
 	e.npmRecoverAside(false)
 	if _, err := os.Lstat(e.npmMarker()); err == nil {
 		// Recovery could not settle the earlier update's backups: starting another one would
@@ -426,6 +434,18 @@ func (e Env) installRTKFrom(ctx context.Context, base string) error {
 
 func (e Env) selfUpdateCursor(ctx context.Context) {
 	_, _, _, _, script := e.urls()
+	release, ok := e.lockCursor()
+	if !ok {
+		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: cursor update skipped (another cursor update is running)")
+		return
+	}
+	defer release()
+	// Before the latest check: a killed update's half-switched state would read as current.
+	if err := e.cursorRecover(); err != nil {
+		fmt.Fprintln(e.Stderr, err)
+		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: cursor update skipped (an earlier update could not be rolled back)")
+		return
+	}
 	// The install script embeds the version it installs; asking the script saves the ~100 MB
 	// download when PATH's cursor-agent (shadow or baked) already is it.
 	latest := ""
@@ -438,7 +458,11 @@ func (e Env) selfUpdateCursor(ctx context.Context) {
 		return
 	}
 	link := filepath.Join(e.localBin(), cursorTool)
-	if err := e.installCursorLatest(ctx, script); err != nil {
+	if err := e.installCursorLatest(ctx, script); errors.Is(err, errCursorUnsettled) {
+		fmt.Fprintln(e.Stderr, err)
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: cursor update verified at %s but not settled (the next start decides)\n", link)
+		return
+	} else if err != nil {
 		fmt.Fprintln(e.Stderr, err)
 		prev := "baked"
 		if _, err := os.Stat(link); err == nil {

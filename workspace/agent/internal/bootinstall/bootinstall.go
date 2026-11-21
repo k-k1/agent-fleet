@@ -76,6 +76,7 @@ type Env struct {
 	Stdout                                                                            io.Writer
 	Stderr                                                                            io.Writer
 	RunTimeout                                                                        time.Duration // --version probe bound
+	npmLockFile                                                                       *os.File      // held by lockNPM; handed to npm so it outlives this process
 }
 
 // DefaultEnv is the production environment.

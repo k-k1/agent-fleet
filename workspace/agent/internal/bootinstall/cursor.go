@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
@@ -73,6 +75,23 @@ var cursorVersionInLink = regexp.MustCompile(`^.*/versions/([^/]*)/.*$`)
 // and links ~/.local/bin/cursor-agent to it, the upstream install.sh layout. It installs when the
 // CLI is missing or its bundle is silent, and with Repin when the link points at another version.
 func Cursor(ctx context.Context, e Env) int {
+	// One writer per HOME: a recovery or a pin racing a self-update would read its marker
+	// mid-flight and undo a tree that is about to be accepted.
+	release, ok := e.lockCursor()
+	if !ok {
+		// No status change: the copy on disk is not known to be bad, only busy.
+		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: cursor boot-install skipped (another cursor update is running; retrying next start)")
+		return ExitFailed
+	}
+	defer release()
+	// What a killed self-update changed goes back before the pin is judged: a half-switched link
+	// pair would otherwise read as healthy.
+	if err := e.cursorRecover(); err != nil {
+		fmt.Fprintln(e.Stderr, err)
+		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: cursor boot-install skipped (an earlier update could not be rolled back; retrying next start)")
+		e.note(cursorStatusName, statusFailed, ReasonOther)
+		return ExitFailed
+	}
 	ver, sum := e.Pins["cursor"], e.Pins["cursor_sha256"]
 	link := filepath.Join(e.localBin(), cursorTool)
 	need := false
@@ -194,15 +213,20 @@ func relinkAll(links []string, target string) error {
 			cleanup()
 			// Put the links already switched back: a main link left behind an alias that moved
 			// would read as healthy and the repair would never be retried.
+			var stuck []string
 			for _, d := range done {
 				if d.target == "" {
 					continue
 				}
 				back := d.link + ".af-back." + fmt.Sprint(os.Getpid())
 				os.Remove(back)
-				if os.Symlink(d.target, back) == nil && os.Rename(back, d.link) != nil {
+				if serr := os.Symlink(d.target, back); serr != nil || os.Rename(back, d.link) != nil {
 					os.Remove(back)
+					stuck = append(stuck, d.link+" (was "+d.target+")")
 				}
+			}
+			if len(stuck) > 0 {
+				return fmt.Errorf("%w; could not put back: %s", err, strings.Join(stuck, ", "))
 			}
 			return err
 		}
@@ -275,6 +299,9 @@ func (e Env) fetchCursorTree(ctx context.Context, ver, sum, dir string) error {
 		bad := fmt.Sprintf("%s.af-bad.%d", dir, os.Getpid())
 		removeTree(bad)
 		if err := os.Rename(dir, bad); err != nil {
+			if _, lerr := os.Lstat(old); lerr == nil {
+				return fmt.Errorf("cursor %s does not run in this environment and cannot be moved aside: %v; the previous tree is left at %s", ver, err, old)
+			}
 			return fmt.Errorf("cursor %s does not run in this environment and cannot be moved aside: %v", ver, err)
 		}
 		if rerr := restoreTree(old, dir); rerr != nil {
@@ -583,6 +610,9 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 	if err := os.MkdirAll(e.localBin(), 0o755); err != nil {
 		return err
 	}
+	if err := e.cursorRecover(); err != nil {
+		return err
+	}
 	e.cursorSweepStale()
 	stage, err := os.MkdirTemp(versions, ".af-up-")
 	if err != nil {
@@ -624,77 +654,77 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 		}
 	}
 
-	var undo []func() // run in reverse order on failure
+	// The previous state is persisted before anything changes: a kill at any later instant is
+	// repaired by cursorRecover at the next start, and so is every failure below (one rollback
+	// path, not an in-memory undo list a kill would take along).
+	dir := filepath.Join(versions, ver)
+	target := filepath.Join(dir, cursorTool)
+	pid := os.Getpid()
+	m := cursorMarker{Dir: dir}
+	if !e.cursorAnswers(target) {
+		m.Tree = true
+		m.Old = fmt.Sprintf("%s.af-old.%d", dir, pid)
+		_, lerr := os.Lstat(dir)
+		if lerr != nil && !errors.Is(lerr, fs.ErrNotExist) {
+			return lerr // not knowing whether a tree is there must not read as "none"
+		}
+		had := lerr == nil
+		m.HadTree = &had
+	}
+	for _, l := range links {
+		st := cursorLinkState{Path: l, Kind: "none"}
+		if fi, lerr := os.Lstat(l); lerr == nil {
+			if fi.Mode()&os.ModeSymlink != 0 {
+				t, rerr := os.Readlink(l)
+				if rerr != nil {
+					return rerr
+				}
+				st.Kind, st.Target = "symlink", []byte(t)
+			} else {
+				st.Kind, st.Keep = "file", fmt.Sprintf("%s.af-prev.%d", l, pid)
+				if _, kerr := os.Lstat(st.Keep); !errors.Is(kerr, fs.ErrNotExist) {
+					return fmt.Errorf("%s already exists; not overwriting it", st.Keep)
+				}
+			}
+		} else if !os.IsNotExist(lerr) {
+			return lerr
+		}
+		m.Links = append(m.Links, st)
+	}
+	if m.Tree {
+		removeTree(m.Old)
+	}
+	if err := e.cursorWriteMarker(m); err != nil {
+		return err
+	}
 	defer func() {
-		if err == nil {
+		if err == nil || errors.Is(err, errCursorUnsettled) {
 			return
 		}
-		for i := len(undo) - 1; i >= 0; i-- {
-			undo[i]()
+		if rerr := e.cursorRecover(); rerr != nil {
+			err = fmt.Errorf("%w; %v", err, rerr)
 		}
 	}()
 
-	dir := filepath.Join(versions, ver)
-	target := filepath.Join(dir, cursorTool)
-	if !e.cursorAnswers(target) {
-		old := fmt.Sprintf("%s.af-old.%d", dir, os.Getpid())
-		removeTree(old)
-		moved := false
-		if _, lerr := os.Lstat(dir); lerr == nil {
-			if err := os.Rename(dir, old); err != nil {
+	if m.Tree {
+		if *m.HadTree {
+			if err := os.Rename(dir, m.Old); err != nil {
 				return err
 			}
-			moved = true
 		}
 		if err := os.Rename(verDir, dir); err != nil {
-			if rerr := restoreTree(old, dir); rerr != nil {
-				return fmt.Errorf("%w; the previous tree is left at %s: %v", err, old, rerr)
-			}
 			return err
 		}
-		undo = append(undo, func() {
-			bad := fmt.Sprintf("%s.af-bad.%d", dir, os.Getpid())
-			removeTree(bad)
-			if os.Rename(dir, bad) == nil {
-				if rerr := restoreTree(old, dir); rerr != nil {
-					fmt.Fprintf(e.Stderr, "cursor: the previous tree is left at %s: %v\n", old, rerr)
-				}
-				removeTree(bad)
-			}
-		})
 		if !e.cursorAnswers(target) {
 			return fmt.Errorf("cursor %s does not report a version at its final path, keeping the current copy", ver)
 		}
-		defer func() {
-			if err == nil && moved {
-				removeTree(old)
-			}
-		}()
 	}
-
-	// Links: a regular file in a link's place is moved aside whole, and every link's previous
-	// target is remembered, so the rollback gives back exactly what was there.
-	for _, l := range links {
-		l := l
-		st, lerr := os.Lstat(l)
-		switch {
-		case lerr != nil:
-			undo = append(undo, func() { os.Remove(l) })
-		case st.Mode()&os.ModeSymlink != 0:
-			t, _ := os.Readlink(l)
-			undo = append(undo, func() { _ = relinkAll([]string{l}, t) })
-		default:
-			keep := fmt.Sprintf("%s.af-prev.%d", l, os.Getpid())
-			os.Remove(keep)
-			if err := os.Rename(l, keep); err != nil {
+	// A regular file in a link's place is moved aside whole; the marker names where.
+	for _, st := range m.Links {
+		if st.Kind == "file" {
+			if err := os.Rename(st.Path, st.Keep); err != nil {
 				return err
 			}
-			undo = append(undo, func() { os.Remove(l); _ = os.Rename(keep, l) })
-			defer func() {
-				if err == nil {
-					os.Remove(keep)
-				}
-			}()
 		}
 	}
 	if err := relinkAll(links, target); err != nil {
@@ -702,6 +732,239 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 	}
 	if !e.cursorAnswers(link) {
 		return fmt.Errorf("cursor %s does not report a version through ~/.local/bin", ver)
+	}
+	// Accepted: the marker goes first, so a kill from here on cannot roll back a verified update.
+	if err := os.Remove(e.cursorMarkerPath()); err != nil && !os.IsNotExist(err) {
+		// The marker stays, so the next start rolls back: the backups it needs stay too.
+		fmt.Fprintf(e.Stderr, "cursor: cannot remove %s: %v (previous copies kept)\n", e.cursorMarkerPath(), err)
+		return errCursorUnsettled
+	}
+	if m.Tree {
+		removeTree(m.Old)
+	}
+	for _, st := range m.Links {
+		if st.Keep != "" {
+			os.Remove(st.Keep)
+		}
+	}
+	return nil
+}
+
+func (e Env) cursorLockPath() string { return filepath.Join(e.Home, ".local", ".af-cursor.lock") }
+
+// lockCursor takes the cursor lock without waiting; ok is false only when another process holds
+// it. A lock that cannot be set up at all is not a holder: go on unlocked, as main did.
+func (e Env) lockCursor() (release func(), ok bool) {
+	f, busy := flockPath(e.cursorLockPath())
+	if busy {
+		return func() {}, false
+	}
+	if f == nil {
+		return func() {}, true
+	}
+	return func() { f.Close() }, true
+}
+
+// errCursorUnsettled: the update verified but its marker could not be removed, so the next start
+// rolls it back from the kept backups. It is not reported as an update.
+var errCursorUnsettled = errors.New("cursor update verified but not settled: the marker could not be removed, the next start will roll it back")
+
+// cursorLinkState is what one launcher link was before a self-update touched it.
+type cursorLinkState struct {
+	Path   string `json:"path"`
+	Kind   string `json:"kind"`   // "symlink", "file" (moved to Keep) or "none"
+	Target []byte `json:"target"` // the symlink's previous target, raw bytes (a target need not be UTF-8)
+	Keep   string `json:"keep"`   // where a regular file was moved aside
+}
+
+// cursorMarker records what installCursorLatest is about to change, written before the first
+// change and removed when the update is verified or rolled back. Tree says the version
+// directory is replaced (Old is where the previous one goes, HadTree whether there was one).
+type cursorMarker struct {
+	Dir     string            `json:"dir"`
+	Old     string            `json:"old"`
+	Tree    bool              `json:"tree"`
+	HadTree *bool             `json:"hadTree"` // nil only in a marker this code did not write
+	Links   []cursorLinkState `json:"links"`
+}
+
+func (e Env) cursorMarkerPath() string {
+	return filepath.Join(e.Home, ".local", ".af-cursor-update")
+}
+
+func (e Env) cursorWriteMarker(m cursorMarker) error {
+	// What this writes must pass the reader: a marker the next start refuses would block the pin
+	// and every later update. JSON also turns non-UTF-8 strings into U+FFFD.
+	if !e.cursorMarkerValid(m) || !utf8.ValidString(m.Dir) {
+		return fmt.Errorf("cursor: not updating, the version directory name %q cannot be journaled", filepath.Base(m.Dir))
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(e.cursorMarkerPath()), ".af-cursor-update.tmp.")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, werr := f.Write(b)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp, e.cursorMarkerPath())
+	}
+	if werr != nil {
+		os.Remove(tmp)
+	}
+	return werr
+}
+
+// withSuffixDigits reports whether p is base + sep + digits.
+func withSuffixDigits(p, base, sep string) bool {
+	rest, ok := strings.CutPrefix(p, base+sep)
+	return ok && allDigits(rest)
+}
+
+// cursorMarkerValid: the marker is acted on only when every path in it is one this code builds
+// under this home, so a corrupt or planted marker cannot point a rename or a delete elsewhere.
+func (e Env) cursorMarkerValid(m cursorMarker) bool {
+	versions := filepath.Clean(e.cursorShare())
+	// Exactly the path the writer builds, not one that merely cleans to it: the OS gets the
+	// string as written.
+	if filepath.Dir(m.Dir) != versions || strings.HasPrefix(filepath.Base(m.Dir), ".") || m.Dir != filepath.Join(versions, filepath.Base(m.Dir)) {
+		return false
+	}
+	if m.Old != "" && !withSuffixDigits(m.Old, m.Dir, ".af-old.") {
+		return false
+	}
+	if m.Tree && (m.Old == "" || m.HadTree == nil) {
+		return false
+	}
+	// The writer always records the main link's state: a marker without it is not ours, and
+	// acting on it could delete a tree no update made.
+	hasMain := false
+	for _, l := range m.Links {
+		hasMain = hasMain || l.Path == filepath.Join(e.localBin(), cursorTool)
+	}
+	if !hasMain {
+		return false
+	}
+	own := map[string]bool{
+		filepath.Join(e.localBin(), cursorTool): true,
+		filepath.Join(e.localBin(), "agent"):    true,
+	}
+	seen := map[string]bool{}
+	for _, l := range m.Links {
+		if !own[l.Path] || seen[l.Path] {
+			return false
+		}
+		seen[l.Path] = true
+		isAlias := l.Path == filepath.Join(e.localBin(), "agent")
+		switch l.Kind {
+		case "symlink":
+			if len(l.Target) == 0 {
+				return false
+			}
+			// The alias is only ever restored to a state that was cursor's own.
+			if isAlias {
+				if _, ok := e.aliasVersion(l.Path, string(l.Target)); !ok {
+					return false
+				}
+			}
+		case "file":
+			if isAlias || !withSuffixDigits(l.Keep, l.Path, ".af-prev.") {
+				return false
+			}
+		case "none":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// cursorRecover puts back what a killed or failed self-update changed, from its marker. The
+// marker stays while anything could not be put back, and the error says where the previous
+// tree and files are. nil means nothing is pending.
+func (e Env) cursorRecover() error {
+	b, err := os.ReadFile(e.cursorMarkerPath())
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("cursor: cannot read %s: %v", e.cursorMarkerPath(), err)
+	}
+	var m cursorMarker
+	if json.Unmarshal(b, &m) != nil || !e.cursorMarkerValid(m) {
+		return fmt.Errorf("cursor: ignoring an unreadable %s (backups, if any, stay as *.af-old.* / *.af-prev.*)", e.cursorMarkerPath())
+	}
+	var errs []error
+	if m.Tree {
+		if _, lerr := os.Lstat(m.Old); lerr == nil {
+			// The candidate is moved aside whole before the old tree goes back: removing it in
+			// place can fail on a read-only subtree and would leave it at the final path.
+			bad := fmt.Sprintf("%s.af-bad.%d", m.Dir, os.Getpid())
+			removeTree(bad)
+			moved := true
+			if _, derr := os.Lstat(m.Dir); derr == nil {
+				if rerr := os.Rename(m.Dir, bad); rerr != nil {
+					moved = false
+					errs = append(errs, fmt.Errorf("cursor: cannot move %s aside; the previous tree is left at %s: %v", m.Dir, m.Old, rerr))
+				}
+			}
+			if moved {
+				if rerr := restoreTree(m.Old, m.Dir); rerr != nil {
+					errs = append(errs, fmt.Errorf("cursor: the previous tree is left at %s: %v", m.Old, rerr))
+				} else {
+					removeTree(bad)
+				}
+			}
+		} else if !*m.HadTree && errors.Is(lerr, fs.ErrNotExist) {
+			removeTree(m.Dir) // only the candidate this update published was ever there
+			if _, derr := os.Lstat(m.Dir); !errors.Is(derr, fs.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("cursor: cannot remove the unverified tree %s", m.Dir))
+			}
+		} else if !errors.Is(lerr, fs.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", m.Old, lerr))
+		}
+	}
+	for _, l := range m.Links {
+		switch l.Kind {
+		case "symlink":
+			if cur, rerr := os.Readlink(l.Path); rerr != nil || cur != string(l.Target) {
+				if err := relinkAll([]string{l.Path}, string(l.Target)); err != nil {
+					errs = append(errs, fmt.Errorf("cursor: cannot point %s back at %s: %v", l.Path, l.Target, err))
+				}
+			}
+		case "file":
+			if _, lerr := os.Lstat(l.Keep); lerr == nil {
+				os.Remove(l.Path)
+				if err := os.Rename(l.Keep, l.Path); err != nil {
+					errs = append(errs, fmt.Errorf("cursor: the previous %s is left at %s: %v", l.Path, l.Keep, err))
+				}
+			} else if !errors.Is(lerr, fs.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Keep, lerr))
+			}
+		case "none":
+			// Only a link this update published: one at a path that was empty before and now
+			// points at the tree it made. Anything else is someone else's.
+			cur, rerr := os.Readlink(l.Path)
+			switch {
+			case rerr == nil && cur == filepath.Join(m.Dir, cursorTool):
+				if err := os.Remove(l.Path); err != nil && !os.IsNotExist(err) {
+					errs = append(errs, fmt.Errorf("cursor: cannot remove %s: %v", l.Path, err))
+				}
+			case rerr != nil && !errors.Is(rerr, fs.ErrNotExist) && !errors.Is(rerr, syscall.EINVAL):
+				errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Path, rerr))
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	if err := os.Remove(e.cursorMarkerPath()); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }
