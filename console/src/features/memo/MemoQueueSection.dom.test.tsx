@@ -408,6 +408,32 @@ describe("repository group + button", () => {
     expect(memoCategoryCreate.mock.calls[0][0].repo).toBe("app2");
   });
 
+  it("lets the bottom button start a group for a workspace repository", async () => {
+    const { useReposStore } = await import("../repos/store.ts");
+    useReposStore.setState({
+      repos: [
+        { name: "newrepo" },
+        { name: "newrepo@wt", worktree: true, parent: "newrepo" },
+      ] as never,
+    });
+    servedCats = [aCat({ id: "c3", repo: "app", name: "Bugs" })];
+    await render();
+    const sel = must(document.querySelector<HTMLSelectElement>(".memo-addcat-repo"), "repo select");
+    expect([...sel.options].map((o) => o.value)).toEqual(["", "newrepo"]);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(sel, "newrepo");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await click(must(document.querySelector<HTMLButtonElement>(".memo-addcat"), "bottom add button"));
+    expect(memoCategoryCreate.mock.calls[0][0].repo).toBe("newrepo");
+
+    servedCats = [...servedCats, aCat({ id: "cnew", repo: "newrepo", name: "New category" })];
+    await act(async () => useMemoStore.getState().bump());
+    await settle();
+    expect([...document.querySelectorAll(".memo-repo-name")].map((e) => e.textContent)).toContain("newrepo");
+    useReposStore.setState({ repos: [] });
+  });
+
   it("keeps the bottom button for the unfiled area", async () => {
     servedCats = [aCat({ id: "c3", repo: "app", name: "Bugs" })];
     await render();
