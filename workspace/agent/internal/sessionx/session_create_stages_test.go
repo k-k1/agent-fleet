@@ -496,10 +496,18 @@ func TestCreateSessionEarlyReturnsAreByteIdentical(t *testing.T) {
 			}
 			if tc.leaves {
 				// The copy a refused launch leaves behind is recorded as created with no session.
+				found := 0
 				for _, e := range p.sideEffects().repos {
-					if st := func() string { _, st := gitx.ReadWorktreeCreatorState(filepath.Join(p.home, "repos", e)); return st }(); strings.Contains(e, "@") && st != gitx.CreatorStateNone {
+					if !strings.Contains(e, "@") {
+						continue
+					}
+					found++
+					if _, st := gitx.ReadWorktreeCreatorState(filepath.Join(p.home, "repos", e)); st != gitx.CreatorStateNone {
 						t.Errorf("worktree %s left by a refused launch has creator state %q, want none", e, st)
 					}
+				}
+				if found == 0 {
+					t.Errorf("a refused launch that leaves its side effect left no worktree")
 				}
 			}
 			if d := before.diff(p.sideEffects()); d != "" && !tc.leaves {

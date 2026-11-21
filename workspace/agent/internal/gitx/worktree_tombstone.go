@@ -44,7 +44,7 @@ type WorktreeTombstone struct {
 	// entry from the trash takes them off it again.
 	Shelved []string `json:"shelved,omitempty"`
 	// Creator is the worktree's creator record as stored (a session name, or "-" for a copy no
-	// session owned), so a restore keeps who made the copy. Empty when there was none or it was unreadable.
+	// session owned), so a restore keeps who made the copy. Empty when the copy had no record (clients keep their guess); "-" when it had one that no session owns or that could not be read.
 	Creator string `json:"creator,omitempty"`
 }
 

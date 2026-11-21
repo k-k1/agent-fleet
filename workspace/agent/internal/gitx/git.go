@@ -352,8 +352,8 @@ func RestoreWorktreeCreator(dir, raw string) error {
 	return WriteWorktreeCreator(dir, raw)
 }
 
-// worktreeCreatorRaw is the marker body as stored ("" when absent or unreadable), what a
-// tombstone keeps so a restore can put the same record back.
+// worktreeCreatorRaw is the marker body as stored: "" when there is none, "-" for a record no
+// session owns or one that cannot be read. A tombstone keeps it so a restore can put the same record back.
 func worktreeCreatorRaw(dir string) string {
 	session, state := ReadWorktreeCreatorState(dir)
 	if state != "" {
