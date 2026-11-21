@@ -89,6 +89,7 @@ Depends on: <item, or "none">
 - **State scope and out-of-scope.** An item with no edge grows. Naming what is left out is what keeps one run to one pull request
 - **Keep a fixed dependency line** such as `Depends on: …` in the text, so a reader and the next session see it. Where order matters, also set the memo to wait for the other one ([Make a memo wait for another](../chat/memo-auto-run.md#make-a-memo-wait-for-another)). The line is for people; the waiting is what the queue obeys
 - **Link a work item instead of copying its text.** The session reads the issue itself ([Add a work item](../chat/memo-auto-run.md#add-a-work-item))
+- **Decide first, then queue.** When your standing instruction tells the session to skip an item that needs a decision (`Deferred:`), an unattended run does, and nobody is there to answer otherwise. Record the decision on the issue first, as a comment that states the chosen option, and say in the memo to implement it "as decided in the issue's latest comment"
 - **Keep the memo short.** The item's detail belongs on the issue, where a person can read it too
 
 ## Order and concurrency
