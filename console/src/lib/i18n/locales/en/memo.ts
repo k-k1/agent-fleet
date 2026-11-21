@@ -252,6 +252,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.waiting_below_threshold": "Waiting for more memos: {count} of {needed} so far. Runs start once {needed} are waiting.",
   "memo.waiting_quiet": "A memo was just added. Runs start once nothing new has come in for a minute.",
   "memo.waiting_quiet_at": "A memo was just added. Runs start once nothing new has come in for a minute, at {at}.",
+  "memo.waiting_cap_hint": "Raise “Runs per day” in the category settings, or press “Run now”: a manual run is not bound by the cap.",
   "memo.waiting_cap": "The number of runs allowed per day has been reached, so nothing starts by itself.",
   "memo.waiting_cap_at": "The number of runs allowed per day has been reached. The next run can start at {at}.",
   "memo.waiting_backoff": "The last run could not be sent, so auto-run is waiting a while before it tries again.",

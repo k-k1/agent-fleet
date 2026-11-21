@@ -1093,6 +1093,16 @@
   font-size: 11px;
   color: var(--muted);
 }
+.memo-q-why-warn {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  color: var(--warn, var(--accent));
+}
+.memo-q-why-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
 .memo-q-paused,
 .memo-q-noreport {
   display: flex;
@@ -1143,6 +1153,10 @@
 /* State and producer share the reference's line; they wrap below it only when the pane is narrow. */
 .memo-reflink .memo-qmeta {
   margin-top: 0;
+}
+.memo-reflink-ext {
+  margin-left: 3px;
+  font-size: 11px;
 }
 button.memo-reflink-key {
   padding: 0;
