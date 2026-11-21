@@ -369,7 +369,11 @@ func TestPutCeilingFenceHoldsAcrossTheLock(t *testing.T) {
 		if _, r, err := st.PutCeiling(ctx, `{"deny":["old"]}`, "op", old, plain); err != nil || r.Writer != old {
 			t.Fatalf("an unkeyed row was not taken over: %+v %v", r, err)
 		}
+		newH, oldH := open(), open()
 		inTx, release := make(chan struct{}), make(chan struct{})
+		var once sync.Once
+		free := func() { once.Do(func() { close(release) }) }
+		defer free() // a failed path must not leave the newer writer parked
 		holding := func(before, after RoutePolicyRow) AuditLog {
 			close(inTx)
 			<-release
@@ -377,20 +381,31 @@ func TestPutCeilingFenceHoldsAcrossTheLock(t *testing.T) {
 		}
 		var newRow RoutePolicyRow
 		var newErr, oldErr error
-		var wg sync.WaitGroup
-		wg.Add(2)
+		newDone, oldDone := make(chan struct{}), make(chan struct{})
 		go func() {
-			defer wg.Done()
-			_, newRow, newErr = open().PutCeiling(ctx, `{"deny":["new"]}`, "op", newer, holding)
+			defer close(newDone)
+			_, newRow, newErr = newH.PutCeiling(ctx, `{"deny":["new"]}`, "op", newer, holding)
 		}()
-		<-inTx // the newer CP holds the lock with its write uncommitted
+		select {
+		case <-inTx: // the newer CP holds the lock with its write uncommitted
+		case <-newDone:
+			t.Fatalf("the newer writer finished before its audit callback: %v", newErr)
+		case <-time.After(10 * time.Second):
+			t.Fatal("the newer writer never reached its audit callback")
+		}
 		go func() {
-			defer wg.Done()
-			_, _, oldErr = open().PutCeiling(ctx, `{"deny":["old2"]}`, "op", old, plain)
+			defer close(oldDone)
+			_, _, oldErr = oldH.PutCeiling(ctx, `{"deny":["old2"]}`, "op", old, plain)
 		}()
 		time.Sleep(300 * time.Millisecond) // long enough for the older CP to read the row and queue on the lock
-		close(release)
-		wg.Wait()
+		free()
+		for _, d := range []chan struct{}{newDone, oldDone} {
+			select {
+			case <-d:
+			case <-time.After(10 * time.Second):
+				t.Fatal("a writer did not finish after the lock was released")
+			}
+		}
 		if newErr != nil {
 			t.Fatalf("newer writer: %v", newErr)
 		}
