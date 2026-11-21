@@ -63,6 +63,16 @@ describe("a worktree whose creator the Agent recorded", () => {
     expect(runWorktreeNode(run, rec("r"), sessions)!.repo.name).toBe("base@wip-a");
   });
 
+  it("is not offered when a member's session sorts before the run at the same timestamp", () => {
+    const tie = [
+      sess("saaaaaa", { origin: "user", repo: "base@wip-a", createdAt: "2026-11-02T00:00:00Z", alive: false }),
+      sess("szzzzzz", { origin: "queue", repo: "base@wip-a", createdAt: "2026-11-02T00:00:00Z", alive: false }),
+    ];
+    const run = buildRuns(tie, new Map())[0];
+    expect(runWorktreeNode(run, rec("szzzzzz"), tie)).toBeNull();
+    expect(runWorktreeNode(run, rec("szzzzzz"), [tie[1]])!.repo.name).toBe("base@wip-a");
+  });
+
   it("is not cleared with the finished runs either", () => {
     const merged = sess("r", { origin: "queue", repo: "base@wip-a", alive: false, pr: { state: "merged" } as Session["pr"] });
     const runs = runsOf([merged], ["r"]);

@@ -47,6 +47,13 @@ function createdWorktree(run: RunRow, repos: Repo[], sessions: Session[]): RepoT
   if (repo?.worktree !== true) return null;
   if (repo.createdBy) {
     if (repo.createdBy !== run.root.name) return null;
+    // The record can offer a copy the guess would not (a member's session that sorts first at the
+    // same timestamp). The delete dialog archives every session in the copy, so then a session of
+    // no run keeps the copy out of the offer rather than being swept up by it.
+    if (worktreeOwners(sessions).get(folder)?.name !== run.root.name) {
+      const byName = new Map(sessions.map((s) => [s.name, s]));
+      if (sessionsInFolder(sessions, folder).some((s) => runRootName(s, byName) === "")) return null;
+    }
   } else if (worktreeOwners(sessions).get(folder)?.name !== run.root.name) return null;
   return node(repo);
 }
