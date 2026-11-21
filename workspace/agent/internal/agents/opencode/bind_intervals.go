@@ -303,17 +303,24 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent, e bindEvent) bool)
 			// proves a payer (accountPayer).
 			di := lastDaemonEvent(kept)
 			if di >= 0 {
-				// Keep the start-of-life reading and the first event that can end it: they decide
-				// every key or free binding of the life. Drop the oldest of what follows.
-				first := di + 1
-				for first < len(kept) && kept[first].Acct == acctOut {
-					first++
+				// Keep the start-of-life reading (the first out) and the first event that can end it:
+				// they decide every key or free binding of the life. Drop the oldest of the rest.
+				pin := map[int]bool{}
+				for i := di + 1; i < len(kept); i++ {
+					if kept[i].Acct == acctOut && !pin[-1] {
+						pin[i], pin[-1] = true, true // the first out
+					}
+					if kept[i].Acct != acctOut {
+						pin[i] = true // the first event that is not an out
+						break
+					}
 				}
-				from := min(first+1, len(kept))
 				n := len(kept) - bindIntervalsKeep/2
-				if from+n <= len(kept) && n > 0 {
-					carry, acarry := kept[di].Carry, kept[di].AcctCarry
-					for _, ev := range kept[from : from+n] {
+				carry, acarry := kept[di].Carry, kept[di].AcctCarry
+				var rest []bindEvent
+				for i, ev := range kept {
+					if i > di && n > 0 && !pin[i] {
+						n--
 						carry = max(carry, ev.Carry)
 						acarry = max(acarry, ev.AcctCarry, satAdd(ev.At, accountQuiet.Milliseconds()))
 						if ev.Reg {
@@ -322,10 +329,12 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent, e bindEvent) bool)
 							}
 							acarry = max(acarry, satAdd(ev.Floor, accountQuiet.Milliseconds()))
 						}
+						continue
 					}
-					kept = append(append([]bindEvent{}, kept[:from]...), kept[from+n:]...)
-					kept[di].Carry, kept[di].AcctCarry = carry, acarry
+					rest = append(rest, ev)
 				}
+				kept = rest
+				kept[di].Carry, kept[di].AcctCarry = carry, acarry
 			}
 		}
 		var sb strings.Builder
@@ -444,6 +453,10 @@ func unknownClock(e bindEvent) bool {
 	return e.Kind == evAccount && e.Reg && e.Floor == math.MaxInt64
 }
 
+// movedClock reports an event that shows the clock moved (a stamp was taken and disagrees); a
+// missing stamp is not that, and does not make an event worth keeping twice.
+func movedClock(e bindEvent) bool { return e.Reg && e.Floor != math.MaxInt64 }
+
 // satAdd is a+b, saturating at MaxInt64 (an unknown clock bound is stored as MaxInt64).
 func satAdd(a, b int64) int64 {
 	if a > math.MaxInt64-b {
@@ -513,9 +526,9 @@ func noteAccountID(at time.Time, acct, id string, gen int) {
 			// Before any other account event: the account was out from the start of the life. After
 			// a sign-in observation: the credential is gone, which ends that credential's proof.
 			// A reading that shows the clock moved is always kept: it is the only trace of it.
-			return !hasBad && !hasOut || last != nil && last.Acct == acctIn || e.Reg
+			return !hasBad && !hasOut || last != nil && last.Acct == acctIn || movedClock(e)
 		case acctIn:
-			if last == nil || last.Acct != acctIn || last.ID != id || e.Reg {
+			if last == nil || last.Acct != acctIn || last.ID != id || movedClock(e) {
 				return true // a reading that shows the clock going back is never redundant
 			}
 			// The same credential again adds nothing once the earlier reading is already behind a
@@ -523,7 +536,7 @@ func noteAccountID(at time.Time, acct, id string, gen int) {
 			// that can prove the period over.
 			return !quietBehind(evs[di+1:], len(evs[di+1:])-1) && !tooClose(*last, e)
 		}
-		return last == nil || last.Acct != acctTouch || e.Reg || !tooClose(*last, e)
+		return last == nil || last.Acct != acctTouch || movedClock(e) || !tooClose(*last, e)
 	})
 }
 

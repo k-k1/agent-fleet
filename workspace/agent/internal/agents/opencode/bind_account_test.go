@@ -396,3 +396,38 @@ func TestBindingUnstampedEventStaysInItsLife(t *testing.T) {
 		t.Error("a healthy later daemon was not bound")
 	}
 }
+
+// A repeated out reading whose stamp is merely missing adds nothing: the call a key paid in the
+// life stays bound.
+func TestBindingUnstampedRepeatedOutIsNotKept(t *testing.T) {
+	bindT(t)
+	start(1000, 1, "key-A")
+	acct(1100, acctOut, 1)
+	if bind(t, routes.RouteOpencodeZen, false, 3000) == "" {
+		t.Fatal("test needs a bound call")
+	}
+	old := clockStamp
+	clockStamp = func() (string, int64, bool) { return "", 0, false }
+	noteAccount(atMs(5000), acctOut, 1)
+	clockStamp = old
+	if n := len(events(t)); n != 2 {
+		t.Errorf("a repeated out with no stamp was written: %d events", n)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 3000); got == "" {
+		t.Error("the call a key paid lost its binding")
+	}
+}
+
+// A run of out readings that each show the clock moving cannot grow the file without bound.
+func TestBindingRunOfMovedOutReadingsStaysBounded(t *testing.T) {
+	bindT(t)
+	start(1000, 1, "")
+	acct(1100, acctOut, 1)
+	for i := int64(0); i < 3*bindIntervalsKeep; i++ {
+		stampUp = 2000 + i*100000 // the uptime runs ahead of the wall clock
+		noteAccount(atMs(1200+i), acctOut, 1)
+	}
+	if n := len(events(t)); n > bindIntervalsKeep+1 {
+		t.Errorf("file holds %d events, want at most %d", n, bindIntervalsKeep+1)
+	}
+}
