@@ -66,7 +66,9 @@ export const useQueueSettingsCache = create<QueueSettingsCache>((set, get) => ({
     const cur = get();
     // Nothing read for this tenant yet: there is no stale copy to fix, and a lone row would pass
     // for the whole list.
-    if (!cur.known || cur.tenant !== tenant) return;
+    // The scope must also still be the live one: an answer from before a switch must not move the
+    // shared floor past a read the new scope has already started.
+    if (!cur.known || cur.tenant !== tenant || tenant !== queueScope()) return;
     floor = ++seq;
     const i = cur.queues.findIndex((q) => q.categoryId === queue.categoryId);
     const queues = i < 0 ? [...cur.queues, queue] : cur.queues.map((q, j) => (j === i ? withRunState(queue, q) : q));
@@ -74,7 +76,7 @@ export const useQueueSettingsCache = create<QueueSettingsCache>((set, get) => ({
   },
   applyRemoved: (tenant, categoryId) => {
     const cur = get();
-    if (!cur.known || cur.tenant !== tenant) return;
+    if (!cur.known || cur.tenant !== tenant || tenant !== queueScope()) return;
     floor = ++seq;
     set({ queues: cur.queues.filter((q) => q.categoryId !== categoryId) });
   },

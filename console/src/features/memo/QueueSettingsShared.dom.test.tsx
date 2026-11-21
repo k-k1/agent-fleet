@@ -35,11 +35,12 @@ const aQueue = (over: Record<string, unknown> = {}) => ({
 // does answer after a save is the server's truth and rightly replaces the cache.)
 let listMode: "old" | "fail" | "pending" = "old";
 const memoQueuePut = vi.fn(async (_id: string, _body: unknown): Promise<unknown> => aQueue({ batch: 3, generation: 2 }));
-const memoQueueList = vi.fn(async (): Promise<unknown> => {
+const defaultList = async (): Promise<unknown> => {
   if (listMode === "fail") throw new Error("down");
   if (listMode === "pending") return new Promise(() => {});
   return served();
-});
+};
+const memoQueueList = vi.fn(defaultList);
 let served: () => unknown = () => ({ tenantEnabled: true, queues: [aQueue()] });
 const memoQueueDelete = vi.fn(async (_id: string): Promise<unknown> => ({ ok: true }));
 const cat: MemoCategory = { id: "c1", repo: "agent-fleet", name: "inbox-q", position: 0, createdAt: "2026-09-09T00:00:00Z" };
@@ -127,7 +128,8 @@ beforeEach(async () => {
   memoQueuePut.mockResolvedValue(aQueue({ batch: 3, generation: 2 }));
   memoQueueDelete.mockClear();
   useTenantStore.setState({ tenant: "a" });
-  memoQueueList.mockClear();
+  memoQueueList.mockReset();
+  memoQueueList.mockImplementation(defaultList);
   useSessionsStore.setState({
     sessions: [{ name: "run-a", title: "run-a", kind: "claude", alive: true, origin: "queue", createdAt: new Date().toISOString() }],
   });
@@ -227,6 +229,27 @@ it("a save answered after the tenant changed does not enter the new tenant's cac
   listMode = "pending"; // the save's own refetch must not be what hides a wrongly applied row
   await act(async () => answer(aQueue({ batch: 3, generation: 2 })));
   await settle();
+  expect(cached().queues.map((q) => q.categoryId)).toEqual(["c9"]);
+});
+
+it("an old scope's save answer arriving before the new scope's first read lands does not discard that read", async () => {
+  let answer: (v: unknown) => void = () => {};
+  memoQueuePut.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+  await click(gear(memoHost, ".memo-cat-act"));
+  await setValue(document.querySelector<HTMLInputElement>("#memo-q-batch")!, "3");
+  await click(dialog()!.querySelector("button[type=submit]")!);
+  const reads: ((v: unknown) => void)[] = [];
+  memoQueueList.mockImplementation(() => new Promise((r) => reads.push(r)));
+  await act(async () => useTenantStore.setState({ tenant: "b" })); // B's reads are started and held
+  await settle();
+  const early = reads.splice(0); // B's reads, begun before A's answer
+  expect(early.length).toBeGreaterThan(0);
+  await act(async () => answer(aQueue({ batch: 3, generation: 2 }))); // A's answer lands first
+  await settle();
+  // Only those: the refetch the save asks for is held, so it cannot be what rescues the result.
+  await act(async () => early.forEach((r) => r({ tenantEnabled: true, queues: [aQueue({ categoryId: "c9", category: "other" })] })));
+  await settle();
+  expect(cached().known).toBe(true);
   expect(cached().queues.map((q) => q.categoryId)).toEqual(["c9"]);
 });
 
