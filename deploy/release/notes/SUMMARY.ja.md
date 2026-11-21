@@ -12,6 +12,44 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.48.0](0.48.0.ja.md) — 2026-11-21
+
+**CLI ピン** — Claude Code 2.1.330 / Codex 0.171.0 / Copilot 1.0.114 / Antigravity 1.5.14 / Muse Code 1.4.24-R9131.1 / rtk 1.2.1
+
+**New / Improved**
+
+- **[メモリ]** アクティビティバーのメモリのビュー（検索、絞り込み、整理の提案）。メモリは専用のペインで読む・編集・ピン留め・忘れる・履歴、保存前の文字は守られる ([#4567](https://github.com/k-k1/agent-fleet/issues/4567), [#4568](https://github.com/k-k1/agent-fleet/issues/4568), [#4569](https://github.com/k-k1/agent-fleet/issues/4569))
+- **[メモ]** 「自動実行」ビュー: カテゴリごとの実行と作業項目・PR・子のセッション、行のメニュー、「終了した実行を片付ける」、印。自動実行のセッションは「セッション」から外れ、スケジュールのセッションはスケジュールの下に ([#4646](https://github.com/k-k1/agent-fleet/issues/4646), [#4670](https://github.com/k-k1/agent-fleet/issues/4670), [#4674](https://github.com/k-k1/agent-fleet/issues/4674), [#4727](https://github.com/k-k1/agent-fleet/issues/4727), [#4728](https://github.com/k-k1/agent-fleet/issues/4728))
+- **[Console]** 共有セッションにアクティビティバーの専用のビュー ([#4645](https://github.com/k-k1/agent-fleet/issues/4645))
+- **[メモ]** キューのメッセージが同じキューのほかのメッセージの実行とマージを待つ。実行はメッセージをキューに戻せ、人も実行をキューに戻せる ([#4540](https://github.com/k-k1/agent-fleet/issues/4540), [#4541](https://github.com/k-k1/agent-fleet/issues/4541))
+- **[メモ]** メモの承認で続きのメモを決まった数まで承認なしで受け付け（カテゴリごと、既定 4）、「連鎖を止める」 ([#4606](https://github.com/k-k1/agent-fleet/issues/4606))
+- **[メモ]** 開いている実行を実行履歴の行から終了 ([#4515](https://github.com/k-k1/agent-fleet/issues/4515))
+- **[利用]** 稼働時間のグリッドの下に日ごとの利用の履歴。管理者はメンバーごととテナント全体 ([#4414](https://github.com/k-k1/agent-fleet/issues/4414), [#4493](https://github.com/k-k1/agent-fleet/issues/4493))
+- **[claude]** 使用量上限後の再開: AF で自動再開（既定）、Claude の自動継続、オフ ([#1422](https://github.com/k-k1/agent-fleet/issues/1422))
+- **[codex]** 「Codex 自身のモデルと推論レベルを記憶」をオフにできる ([#4590](https://github.com/k-k1/agent-fleet/issues/4590))
+- **[operator]** Fleet Operator がメモの自動実行のカテゴリと実行履歴を読める ([#4626](https://github.com/k-k1/agent-fleet/issues/4626))
+- **[メモ]** 実行履歴と「今すぐ実行」をカテゴリの見出しに（理由つき）、開始済みのメモを畳む、見出しの固定、リポジトリの下にカテゴリ、承認待ちの印、「送信済み」→「開始済み」、対応が要る待ちの理由は警告 ([#4534](https://github.com/k-k1/agent-fleet/issues/4534), [#4682](https://github.com/k-k1/agent-fleet/issues/4682), [#4512](https://github.com/k-k1/agent-fleet/issues/4512), [#4654](https://github.com/k-k1/agent-fleet/issues/4654), [#4607](https://github.com/k-k1/agent-fleet/issues/4607), [#4514](https://github.com/k-k1/agent-fleet/issues/4514), [#4647](https://github.com/k-k1/agent-fleet/issues/4647))
+- **[メモ]** 監視で開いたままの実行はその監視の名前を出す ([#4542](https://github.com/k-k1/agent-fleet/issues/4542))
+- **[モデルの利用]** 保存前のプレビュー、テナントより上の CIDR（メタデータのアドレスは拒否）、テナントに提供元の状態、同時編集で上書きしない ([#4446](https://github.com/k-k1/agent-fleet/issues/4446), [#4268](https://github.com/k-k1/agent-fleet/issues/4268), [#4577](https://github.com/k-k1/agent-fleet/issues/4577), [#4403](https://github.com/k-k1/agent-fleet/issues/4403), [#4367](https://github.com/k-k1/agent-fleet/issues/4367))
+- **[エージェント]** Kiro と Muse Code のインストールと更新は「エージェント」ページから ([#4352](https://github.com/k-k1/agent-fleet/issues/4352))
+- **[ecs-ec2]** WS バーでメンバーにも負荷とホームのディスク、テナント設定にブーストのサイズ ([#4550](https://github.com/k-k1/agent-fleet/issues/4550), [#4521](https://github.com/k-k1/agent-fleet/issues/4521))
+- **[Console]** PR のチップは作業項目を Console で開く、Bitbucket のマージは「ソースブランチを閉じる」を覚える、スマートフォンでアクティビティバーをスワイプ ([#4652](https://github.com/k-k1/agent-fleet/issues/4652), [#4592](https://github.com/k-k1/agent-fleet/issues/4592), [#4557](https://github.com/k-k1/agent-fleet/issues/4557))
+- **[antigravity]** 使用量の読み取りが安定、使用量のページへのリンク ([#4694](https://github.com/k-k1/agent-fleet/issues/4694))
+- **[ワークスペース]** エージェント CLI の自己更新が失敗したら前の版に戻す ([#4641](https://github.com/k-k1/agent-fleet/issues/4641), [#4664](https://github.com/k-k1/agent-fleet/issues/4664))
+- **[ワークスペース]** Go のビルドは既定で -trimpath、worktree どうしでビルドキャッシュを共有 ([#4560](https://github.com/k-k1/agent-fleet/issues/4560))
+
+**Fixed**
+
+- **[メモ]** PR のマージ後やチェックが止まっているのに実行が開いたまま。親が子の答えを待つ間に実行が閉じられた ([#4508](https://github.com/k-k1/agent-fleet/issues/4508), [#4532](https://github.com/k-k1/agent-fleet/issues/4532), [#4643](https://github.com/k-k1/agent-fleet/issues/4643))
+- **[claude]** 2.1.330 で再認証が失敗。確認ありのセッションが auto モードで始まった ([#4687](https://github.com/k-k1/agent-fleet/issues/4687), [#4713](https://github.com/k-k1/agent-fleet/issues/4713))
+- **[antigravity]** バックグラウンドのコマンドが終わったセッションが待機のまま。途中のターンの終わりを終わりと報告 ([#4581](https://github.com/k-k1/agent-fleet/issues/4581), [#4267](https://github.com/k-k1/agent-fleet/issues/4267))
+- **[opencode]** セキュリティのための再起動のあとマネージドのセッションが止まったまま ([#4552](https://github.com/k-k1/agent-fleet/issues/4552), [#4281](https://github.com/k-k1/agent-fleet/issues/4281))
+- **[モデルの利用]** 禁止したエージェントが切り替え、チャットのメニュー、AI アシストの固定、オンボーディングに残った ([#4360](https://github.com/k-k1/agent-fleet/issues/4360))
+- **[ecs-ec2]** ホームのアタッチが遅いと正常なスロットを隔離。隔離したスロットを終了できなかった ([#4511](https://github.com/k-k1/agent-fleet/issues/4511), [#4510](https://github.com/k-k1/agent-fleet/issues/4510))
+- **[Console]** ライトテーマのアクセント上の文字・セグメント・印が読みにくい。空の「でリセット（）」。チェック中なのに失敗と言うマージの注記 ([#4525](https://github.com/k-k1/agent-fleet/issues/4525), [#4595](https://github.com/k-k1/agent-fleet/issues/4595), [#4549](https://github.com/k-k1/agent-fleet/issues/4549), [#4483](https://github.com/k-k1/agent-fleet/issues/4483))
+- **[エージェント]** 起動されたセッションのプロンプトが呼び出し元の返事の指定を上書き ([#4642](https://github.com/k-k1/agent-fleet/issues/4642))
+- **[セキュリティ]** 同梱の GitHub CLI を CVE-2026-78661 の修正版に ([#4703](https://github.com/k-k1/agent-fleet/issues/4703))
+
 ## [0.47.0](0.47.0.ja.md) — 2026-11-18
 
 **CLI ピン** — Claude Code 2.1.327 / OpenCode 2.3.2 / Codex 0.169.1 / Copilot 1.0.113 / Antigravity 1.5.10

@@ -13,6 +13,44 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.48.0](0.48.0.md) — 2026-11-21
+
+**CLI pins** — Claude Code 2.1.330 / Codex 0.171.0 / Copilot 1.0.114 / Antigravity 1.5.14 / Muse Code 1.4.24-R9131.1 / rtk 1.2.1
+
+**New / Improved**
+
+- **[memory]** Memory view in the activity bar (search, filters, tidy-up proposals); a memory opens in its own pane to read, edit, pin, forget and see history, with unsaved-text guards ([#4567](https://github.com/k-k1/agent-fleet/issues/4567), [#4568](https://github.com/k-k1/agent-fleet/issues/4568), [#4569](https://github.com/k-k1/agent-fleet/issues/4569))
+- **[memos]** Auto-run view: runs by category with work item, PR and child sessions, row menu, "Clear finished runs", badges; auto-run sessions leave Sessions, scheduled ones group under their schedule ([#4646](https://github.com/k-k1/agent-fleet/issues/4646), [#4670](https://github.com/k-k1/agent-fleet/issues/4670), [#4674](https://github.com/k-k1/agent-fleet/issues/4674), [#4727](https://github.com/k-k1/agent-fleet/issues/4727), [#4728](https://github.com/k-k1/agent-fleet/issues/4728))
+- **[console]** Shared sessions get their own activity-bar view ([#4645](https://github.com/k-k1/agent-fleet/issues/4645))
+- **[memos]** Queue messages wait for others of their queue to run cleanly and merge; a run can hand its message back, a person can return a run ([#4540](https://github.com/k-k1/agent-fleet/issues/4540), [#4541](https://github.com/k-k1/agent-fleet/issues/4541))
+- **[memos]** Releasing a memo approves a bounded chain of follow-ups (default 4 per category), with Stop chain ([#4606](https://github.com/k-k1/agent-fleet/issues/4606))
+- **[memos]** End an open run from its history row ([#4515](https://github.com/k-k1/agent-fleet/issues/4515))
+- **[usage]** Daily usage history under the running-time grid for members, per member and per tenant for administrators ([#4414](https://github.com/k-k1/agent-fleet/issues/4414), [#4493](https://github.com/k-k1/agent-fleet/issues/4493))
+- **[claude]** Usage-limit resume: Resume with AF (default), Continue with Claude, or Off ([#1422](https://github.com/k-k1/agent-fleet/issues/1422))
+- **[codex]** "Remember Codex's own model and reasoning level" can be turned off ([#4590](https://github.com/k-k1/agent-fleet/issues/4590))
+- **[operator]** Fleet Operator reads memo auto-run categories and run history ([#4626](https://github.com/k-k1/agent-fleet/issues/4626))
+- **[memos]** Run history and Run now on the category head with the reason; started memos fold; pinned headers; categories under a repository; approval badge; "Sent" → "Started"; warning-style waiting reasons ([#4534](https://github.com/k-k1/agent-fleet/issues/4534), [#4682](https://github.com/k-k1/agent-fleet/issues/4682), [#4512](https://github.com/k-k1/agent-fleet/issues/4512), [#4654](https://github.com/k-k1/agent-fleet/issues/4654), [#4607](https://github.com/k-k1/agent-fleet/issues/4607), [#4514](https://github.com/k-k1/agent-fleet/issues/4514), [#4647](https://github.com/k-k1/agent-fleet/issues/4647))
+- **[memos]** A run held open by a watch names the watch ([#4542](https://github.com/k-k1/agent-fleet/issues/4542))
+- **[model access]** Pre-save preview, CIDR ranges above the tenant (metadata addresses refused), source state for tenants, concurrent edits no longer overwrite ([#4446](https://github.com/k-k1/agent-fleet/issues/4446), [#4268](https://github.com/k-k1/agent-fleet/issues/4268), [#4577](https://github.com/k-k1/agent-fleet/issues/4577), [#4403](https://github.com/k-k1/agent-fleet/issues/4403), [#4367](https://github.com/k-k1/agent-fleet/issues/4367))
+- **[agents]** Kiro and Muse Code installed and updated from the Agents page ([#4352](https://github.com/k-k1/agent-fleet/issues/4352))
+- **[ecs-ec2]** WS bar shows members load and home disk; tenant settings show the boost size ([#4550](https://github.com/k-k1/agent-fleet/issues/4550), [#4521](https://github.com/k-k1/agent-fleet/issues/4521))
+- **[console]** PR chip opens the work item in the Console; Bitbucket merge remembers "Close source branch"; swipe the activity bar on a phone ([#4652](https://github.com/k-k1/agent-fleet/issues/4652), [#4592](https://github.com/k-k1/agent-fleet/issues/4592), [#4557](https://github.com/k-k1/agent-fleet/issues/4557))
+- **[antigravity]** More reliable usage reading, link to the usage page ([#4694](https://github.com/k-k1/agent-fleet/issues/4694))
+- **[workspace]** A failed agent CLI self-update restores the previous version ([#4641](https://github.com/k-k1/agent-fleet/issues/4641), [#4664](https://github.com/k-k1/agent-fleet/issues/4664))
+- **[workspace]** Go builds use -trimpath by default so worktrees share the build cache ([#4560](https://github.com/k-k1/agent-fleet/issues/4560))
+
+**Fixed**
+
+- **[memos]** Runs stayed open after the PR merged or with idle checks; a run could close while a parent waited for a child's answer ([#4508](https://github.com/k-k1/agent-fleet/issues/4508), [#4532](https://github.com/k-k1/agent-fleet/issues/4532), [#4643](https://github.com/k-k1/agent-fleet/issues/4643))
+- **[claude]** Re-authenticate failed on 2.1.330; prompts-on sessions started in auto mode ([#4687](https://github.com/k-k1/agent-fleet/issues/4687), [#4713](https://github.com/k-k1/agent-fleet/issues/4713))
+- **[antigravity]** Sessions sat idle after a background command finished; interim turn end reported as the end ([#4581](https://github.com/k-k1/agent-fleet/issues/4581), [#4267](https://github.com/k-k1/agent-fleet/issues/4267))
+- **[opencode]** A managed session could stay stopped after a security restart ([#4552](https://github.com/k-k1/agent-fleet/issues/4552), [#4281](https://github.com/k-k1/agent-fleet/issues/4281))
+- **[model access]** Forbidden agents still showed in switch, chat menu, AI assist pin and onboarding ([#4360](https://github.com/k-k1/agent-fleet/issues/4360))
+- **[ecs-ec2]** A slow home attach quarantined a healthy slot; a quarantined slot could not be terminated ([#4511](https://github.com/k-k1/agent-fleet/issues/4511), [#4510](https://github.com/k-k1/agent-fleet/issues/4510))
+- **[console]** Light-theme contrast on accent text, segments and badges; empty "Resets ()" line; merge note said failing while checks ran ([#4525](https://github.com/k-k1/agent-fleet/issues/4525), [#4595](https://github.com/k-k1/agent-fleet/issues/4595), [#4549](https://github.com/k-k1/agent-fleet/issues/4549), [#4483](https://github.com/k-k1/agent-fleet/issues/4483))
+- **[agents]** A spawned session's prompt overrode the caller's reply instructions ([#4642](https://github.com/k-k1/agent-fleet/issues/4642))
+- **[security]** Baked GitHub CLI updated for CVE-2026-78661 ([#4703](https://github.com/k-k1/agent-fleet/issues/4703))
+
 ## [0.47.0](0.47.0.md) — 2026-11-18
 
 **CLI pins** — Claude Code 2.1.327 / OpenCode 2.3.2 / Codex 0.169.1 / Copilot 1.0.113 / Antigravity 1.5.10
