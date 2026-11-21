@@ -39,7 +39,7 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 
 | Tool | What it is for | Version | Licence |
 |---|---|---|---|
-| [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub from the command line, signed in with your Git hosting connection | `2.103.3` | [MIT](https://github.com/cli/cli/blob/v2.103.3/LICENSE) |
+| [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub from the command line, signed in with your Git hosting connection | `2.105.0` | [MIT](https://github.com/cli/cli/blob/v2.105.0/LICENSE) |
 | [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket pull requests and pipelines, signed in with your Git hosting connection | `0.37.0` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.37.0/LICENSE) |
 | [Jira CLI (`jira`)](https://github.com/ankitpokhrel/jira-cli) | Jira issues, signed in with your issue tracker connection | `1.7.0` | [MIT](https://github.com/ankitpokhrel/jira-cli/blob/v1.7.0/LICENSE) |
 | [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence pages, signed in with the same Atlassian connection as Jira | `2.31.2` | [MIT](https://github.com/pchuri/confluence-cli/blob/v2.31.2/LICENSE) |

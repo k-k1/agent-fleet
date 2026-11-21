@@ -37,7 +37,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
-| [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub をコマンドラインから使う。Git ホスティングの接続でサインイン済み | `2.103.3` | [MIT](https://github.com/cli/cli/blob/v2.103.3/LICENSE) |
+| [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub をコマンドラインから使う。Git ホスティングの接続でサインイン済み | `2.105.0` | [MIT](https://github.com/cli/cli/blob/v2.105.0/LICENSE) |
 | [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket のプルリクエストとパイプラインを扱う。Git ホスティングの接続でサインイン済み | `0.37.0` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.37.0/LICENSE) |
 | [Jira CLI (`jira`)](https://github.com/ankitpokhrel/jira-cli) | Jira の課題を扱う。課題管理の接続でサインイン済み | `1.7.0` | [MIT](https://github.com/ankitpokhrel/jira-cli/blob/v1.7.0/LICENSE) |
 | [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence のページを扱う。Jira と同じ Atlassian 接続でサインイン済み | `2.31.2` | [MIT](https://github.com/pchuri/confluence-cli/blob/v2.31.2/LICENSE) |
