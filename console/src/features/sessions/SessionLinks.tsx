@@ -23,6 +23,7 @@ import {
   linkPRState,
   prChecks,
   prFlags,
+  prItemOf,
   prStateKey,
   rowPorts,
   rowWorkLinks,
@@ -52,23 +53,23 @@ export function SessionLinks({ s, running, onTidy }: { s: Session; running: bool
   const [allLinks, setAllLinks] = useState(false);
   const links = rowWorkLinks(s);
   const pr = s.pr;
-  const href = pr ? safePRURL(pr.url) : null;
+  // The chip opens the in-app modal, which keeps its own link to the provider's page.
+  const prRef = pr ? prItemOf(pr.url) : null;
   // A port is only worth offering while the Workspace runs: the pane cannot reach it otherwise.
   const ports = running && s.alive ? rowPorts(s.ports) : [];
-  if (!(pr && href) && links.length === 0 && ports.length === 0) return null;
+  if (!(pr && prRef) && links.length === 0 && ports.length === 0) return null;
 
   return (
     <div className="sess-links" aria-label={tr("srow.links")}>
-      {pr && href && (() => {
+      {pr && prRef && (() => {
         const key = prStateKey(pr);
         const ci = prChecks(pr);
         const flags = prFlags(pr);
         return (
-          <a
+          <button
+            type="button"
             className={"sess-pr pr-" + key}
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
+            onClick={() => openWorkItem(prRef)}
             title={tr("srow.pr_title", {
               n: pr.number,
               state: tr(`srow.pr_state.${key}`),
@@ -80,7 +81,7 @@ export function SessionLinks({ s, running, onTidy }: { s: Session; running: bool
             {flags.map((f) => (
               <Icon key={f} name={PR_FLAG_ICON[f]} className={"sess-pr-flag flag-" + f} />
             ))}
-          </a>
+          </button>
         );
       })()}
       {links.length > 0 && (
@@ -129,17 +130,21 @@ export function SessionLinks({ s, running, onTidy }: { s: Session; running: bool
   );
 }
 
+function openWorkItem(ref: { provider: string; key: string }): void {
+  const items = useWorkItemStore.getState().payload?.items || [];
+  // Repository names are case-insensitive on both hosts, but the cache lookup is exact: a PR URL
+  // spelled `Owner/Repo` must still find the row cached as `owner/repo#N`.
+  const lower = ref.key.toLowerCase();
+  const hit = items.find((i) => i.provider === ref.provider && i.key.toLowerCase() === lower);
+  const { item, reference } = resolveWorkItemRef(hit ? { provider: hit.provider, key: hit.key } : ref, items);
+  useWorkItemModal.getState().openDetail(item, { reference });
+}
+
 /** One linked item. The row of the inbox cache is looked up at click time, as the mirror's ticket
  * links do: an item that is not cached opens as a reference stand-in. */
 function WorkLinkChip({ link }: { link: SessionWorkLink }) {
   const tr = useT();
-  const open = () => {
-    const { item, reference } = resolveWorkItemRef(
-      { provider: link.provider, key: link.key },
-      useWorkItemStore.getState().payload?.items || [],
-    );
-    useWorkItemModal.getState().openDetail(item, { reference });
-  };
+  const open = () => openWorkItem({ provider: link.provider, key: link.key });
   const role = knownRole(link.role);
   // A finished pull request draws its state, not the role it was worked in: the role is over.
   const prState = linkPRState(link);

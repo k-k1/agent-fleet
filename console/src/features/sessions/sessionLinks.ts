@@ -134,7 +134,7 @@ export const LINK_ROLE_ICON: Record<SessionWorkLinkRole, string> = {
 };
 
 /** The provider and "owner/repo#N" of a PR page, as the Agent keys it. */
-function prItemOf(url: string): { provider: string; key: string } | null {
+export function prItemOf(url: string): { provider: string; key: string } | null {
   const safe = safePRURL(url);
   if (!safe) return null;
   const u = new URL(safe);
