@@ -76,11 +76,13 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
   const [undoing, setUndoing] = useState("");
   const [refused, setRefused] = useState<Record<string, MemoTidyBlocked[]>>({});
   const alive = useRef(true);
-  // Numbers each read of the runs when it starts: an answer that is not the newest is ignored, so a
-  // slow older read cannot overwrite a newer one. `answered` is the newest number applied (an
-  // answer or a failure), and `wanted` the number a slot refusal needs before its notice may claim
-  // anything: the notice must not rest on a list read before the refusal.
+  // Numbers each read of the runs when it starts. An answer older than the newest one already applied
+  // is ignored, so a slow older read cannot overwrite a newer one; judging by the newest read
+  // STARTED instead would drop every answer slower than the poll interval. `answered` is the
+  // newest number applied (an answer or a failure), and `wanted` the number a slot refusal needs
+  // before its notice may claim anything: the notice must not rest on a list read before the refusal.
   const seq = useRef(0);
+  const applied = useRef(0);
   const [answered, setAnswered] = useState(0);
   const [wanted, setWanted] = useState(0);
   const slotsAtOpen = useRef(slotsFull);
@@ -91,15 +93,16 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
     const mine = ++seq.current;
     try {
       const got = readDeliveries(await memoQueueDeliveries(categoryId));
-      if (!alive.current) return;
-      if (mine !== seq.current) return;
+      if (!alive.current || mine < applied.current) return;
+      applied.current = mine;
       if (got) {
         setRows(got);
         setFailed(false);
       } else setFailed(true);
       setAnswered(mine);
     } catch {
-      if (alive.current && mine === seq.current) {
+      if (alive.current && mine > applied.current) {
+        applied.current = mine;
         setFailed(true);
         setAnswered(mine);
       }

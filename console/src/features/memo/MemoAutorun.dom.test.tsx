@@ -876,7 +876,7 @@ describe("deliveries and Run now", () => {
       expect(note.textContent).toBe(t("memo.d_load_failed"));
     });
 
-        it("only toasts for another refusal and opens nothing", async () => {
+    it("only toasts for another refusal and opens nothing", async () => {
       servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
       memoQueueFire.mockResolvedValueOnce({ error: { code: "memo_queue_member_limit", message: "x" } });
       await render();
@@ -890,6 +890,29 @@ describe("deliveries and Run now", () => {
       await click(byLabel(t("memo.autorun_deliveries")));
       expect(dialog().querySelector(".memo-d-slots-full")).toBeNull();
     });
+  });
+
+  it("shows a read that is slower than the poll interval, then a newer one, and never an older over a newer", async () => {
+    const slow = () => {
+      let resolve!: (v: unknown) => void;
+      const p = new Promise<unknown>((r) => (resolve = r));
+      return { p, resolve };
+    };
+    const one = (id: string, session: string) => [{ id, state: "closed", outcome: "clean", session, messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "" }];
+    const first = slow();
+    const second = slow();
+    memoQueueDeliveries.mockImplementationOnce(() => first.p as Promise<never>).mockImplementationOnce(() => second.p as Promise<never>);
+    await render();
+    await click(byLabel(t("memo.autorun_deliveries")));
+    // A second read starts while the first is still out (the poll, or Refresh).
+    await click(must([...dialog().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === t("memo.d_refresh")), "refresh"));
+    await act(async () => first.resolve(one("d1", "run-first")));
+    await settle();
+    expect(dialog().textContent).toContain("run-first");
+    await act(async () => second.resolve(one("d2", "run-second")));
+    await settle();
+    expect(dialog().textContent).toContain("run-second");
+    expect(dialog().textContent).not.toContain("run-first");
   });
 
   it("says so when the history cannot be read", async () => {
