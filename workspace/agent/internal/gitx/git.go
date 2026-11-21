@@ -305,6 +305,9 @@ func WriteWorktreeCreator(dir, session string) error {
 	return os.Rename(tmp.Name(), p)
 }
 
+// creatorMarkerMax bounds a marker read; a real one is a session name.
+const creatorMarkerMax = 4096
+
 // readCreatorFile returns the trimmed marker body; ok is false when it cannot be read, is empty,
 // or is not a small regular file. A named pipe or device in its place must never block the
 // reader (the delete path reads it while holding the deletion gate), so the file is opened
@@ -318,8 +321,10 @@ func readCreatorFile(p string) (string, bool) {
 	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
 		return "", false
 	}
-	b, err := io.ReadAll(io.LimitReader(f, 4096))
-	if err != nil {
+	// One byte over the limit: a longer marker is damaged, and its first 4 KiB must never be
+	// taken for a session name.
+	b, err := io.ReadAll(io.LimitReader(f, creatorMarkerMax+1))
+	if err != nil || len(b) > creatorMarkerMax {
 		return "", false
 	}
 	v := strings.TrimSpace(string(b))

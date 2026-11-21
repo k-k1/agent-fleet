@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -48,5 +49,28 @@ func TestWorktreeCreatorSpecialFileDoesNotBlock(t *testing.T) {
 	tomb, ok, err := PrepareTombstone(wt, parent)
 	if err != nil || !ok || tomb.Creator != "-" {
 		t.Fatalf("tombstone ok=%v err=%v creator=%q", ok, err, tomb.Creator)
+	}
+}
+
+// A marker longer than the limit is damaged: its first 4 KiB, even when they spell a real
+// session name, must not be taken as the creator.
+func TestWorktreeCreatorOversizedMarkerIsUnreadable(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "repos", "app")
+	gitInit(t, parent)
+	wt, _, err := EnsureWorktreeNew(parent, "main", "feat-a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "sess-a" + strings.Repeat(" ", creatorMarkerMax) + "tail\n"
+	if err := os.WriteFile(worktreeCreatorPath(wt), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s, st := ReadWorktreeCreatorState(wt); s != "" || st != CreatorStateUnreadable {
+		t.Fatalf("oversized marker = %q,%q, want unreadable", s, st)
 	}
 }
