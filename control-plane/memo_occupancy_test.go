@@ -1260,8 +1260,8 @@ func TestMemoOccupancyStaleReadResetsOnExpiredContext(t *testing.T) {
 			t.Fatalf("no live view: %+v", v)
 		}
 		v.readDone = time.Now().Add(-2 * r.staleReadMax)
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // the settle pass's deadline has passed
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second)) // the settle pass's deadline has passed
+		defer cancel()
 		r.closeIfDoneReported(ctx, v, stale, time.Now())
 		if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.IdleTicks != 0 {
 			t.Fatalf("the stale tick must reset the stored count: %+v", got)
