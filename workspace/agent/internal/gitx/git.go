@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -19,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
@@ -303,9 +305,20 @@ func WriteWorktreeCreator(dir, session string) error {
 	return os.Rename(tmp.Name(), p)
 }
 
-// readCreatorFile returns the trimmed marker body; ok is false when it cannot be read or is empty.
+// readCreatorFile returns the trimmed marker body; ok is false when it cannot be read, is empty,
+// or is not a small regular file. A named pipe or device in its place must never block the
+// reader (the delete path reads it while holding the deletion gate), so the file is opened
+// without blocking and its type is checked on the descriptor.
 func readCreatorFile(p string) (string, bool) {
-	b, err := os.ReadFile(p)
+	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		return "", false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 4096))
 	if err != nil {
 		return "", false
 	}
