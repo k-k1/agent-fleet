@@ -78,7 +78,9 @@ export function planClearFinished(
     if (!wt || offered.has(wt.repo.name)) continue;
     if (!sessionsInFolder(sessions, wt.repo.name).every((s) => mine.has(s.name))) continue;
     offered.add(wt.repo.name);
-    if (outsideFolder(r, wt.repo.name, sessions).length === 0) heads.push(wt);
+    // Every finished run that has a session in the copy goes with it, so none may have one left outside.
+    const sharing = ended.filter((x) => ownedBy(x).some((s) => sessionFolder(s) === wt.repo.name));
+    if (sharing.every((x) => outsideFolder(x, wt.repo.name, sessions).length === 0)) heads.push(wt);
   }
   // A session is archived only when it and everything the run started below it can be: an ancestor
   // archived while a descendant stays would leave that descendant unreachable from its run.

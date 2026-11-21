@@ -125,6 +125,18 @@ describe("planClearFinished", () => {
     expect(after.node!.repo.name).toBe("base@wip-a");
   });
 
+  it("keeps a worktree two finished runs share while the other run has a session elsewhere", () => {
+    const merged = { number: 1, state: "merged" as const, url: "u" };
+    const tree = [
+      sess("a", { origin: "queue", alive: false, repo: "base@wip-a", pr: merged, createdAt: "2026-11-01T00:00:00Z" }),
+      sess("b", { origin: "queue", alive: false, repo: "base@wip-a", createdAt: "2026-11-02T00:00:00Z" }),
+      sess("bc", { origin: "session", originSession: "b", alive: true, repo: "base", createdAt: "2026-11-03T00:00:00Z" }),
+    ];
+    const rs = runsOf(tree, ["a", "b"]);
+    expect(planClearFinished(rs, tree, repos).node).toBeNull();
+    expect(planClearFinished(rs, tree.filter((s) => s.name !== "bc"), repos).node!.repo.name).toBe("base@wip-a");
+  });
+
   it("archives a child elsewhere first and offers the worktree once it is gone", () => {
     const tree = [
       sess("r", { origin: "queue", alive: false, repo: "base@wip-a", pr: { number: 1, state: "merged", url: "u" }, createdAt: "2026-11-01T00:00:00Z" }),
