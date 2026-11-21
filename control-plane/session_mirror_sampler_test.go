@@ -138,3 +138,19 @@ func TestSampleDoesNotOverwriteANewerMirrorWriteWithASlowOlderRead(t *testing.T)
 		t.Errorf("mirror = %+v, want only the newer row \"new\"", rows)
 	}
 }
+
+// The admin overview carries origin and scheduleId on the DB-mirror fallback too, so a row does
+// not lose them when the Agent is unreachable.
+func TestAdminOverviewFallbackCarriesOriginAndScheduleID(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, _, ws := usageHourFixture(t)
+	if err := st.ReplaceSessions(ctx, ws.ID, []store.SessionRow{
+		{Name: "run1", Kind: "claude", State: "stopped", Origin: "schedule", ScheduleID: "sch-1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := mgr.sessionsForOverview(ctx, ws, stubRuntime{}, "stopped")
+	if len(got) != 1 || got[0].Origin != "schedule" || got[0].ScheduleID != "sch-1" {
+		t.Fatalf("overview rows = %+v, want origin and scheduleId carried", got)
+	}
+}

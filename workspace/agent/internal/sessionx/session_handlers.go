@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
@@ -713,6 +714,21 @@ func clipRunes(s string, n int) string {
 		return string(r[:n])
 	}
 	return s
+}
+
+// maxScheduleIDRunes bounds a stored schedule id.
+const maxScheduleIDRunes = 64
+
+// cleanScheduleID returns the id to store, or "" when it is unusable. A value holding a NUL or
+// longer than the limit is dropped whole, never clipped: the Control Plane's DB mirror drops a
+// NUL-bearing value whole (PostgreSQL TEXT rejects NUL), so a clipped or NUL-bearing id here
+// would show on the live row and vanish on the stopped one.
+func cleanScheduleID(id string) string {
+	id = strings.TrimSpace(id)
+	if strings.ContainsRune(id, 0) || utf8.RuneCountInString(id) > maxScheduleIDRunes {
+		return ""
+	}
+	return id
 }
 
 // CreateOrigin resolves a new session's origin (ADR 0029 §6) from the create request.

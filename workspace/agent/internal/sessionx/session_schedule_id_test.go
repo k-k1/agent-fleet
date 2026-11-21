@@ -5,6 +5,7 @@ package sessionx
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -42,5 +43,20 @@ func TestArchivedRowKeepsTheScheduleID(t *testing.T) {
 	m.Origin, m.ScheduleID = session.OriginSchedule, "sch-1"
 	if got := wireArchivedRow(m).ScheduleID; got != "sch-1" {
 		t.Fatalf("archived row ScheduleID = %q, want sch-1", got)
+	}
+}
+
+func TestCleanScheduleIDDropsUnusableValuesWhole(t *testing.T) {
+	long := strings.Repeat("あ", maxScheduleIDRunes+1)
+	for _, c := range []struct{ in, want string }{
+		{"  sch-1 ", "sch-1"},
+		{strings.Repeat("a", maxScheduleIDRunes), strings.Repeat("a", maxScheduleIDRunes)},
+		{long, ""},
+		{"sch\x00-1", ""},
+		{"", ""},
+	} {
+		if got := cleanScheduleID(c.in); got != c.want {
+			t.Errorf("cleanScheduleID(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }

@@ -31,6 +31,10 @@ type adminSessionRow struct {
 	Alive          bool   `json:"alive"`
 	Resumable      bool   `json:"resumable"`
 	Started        string `json:"started"`
+	// Origin and ScheduleID are who raised the session and the schedule that did, live or from the
+	// DB mirror alike, so the row does not change shape when the Agent is unreachable.
+	Origin     string `json:"origin,omitempty"`
+	ScheduleID string `json:"scheduleId,omitempty"`
 }
 
 // allSessions (GET /api/admin/sessions?tenant=<slug>) serves the overview.
@@ -74,6 +78,7 @@ func (a adminAPI) allSessions(w http.ResponseWriter, r *http.Request) {
 					Tenant: t.Slug, UserKey: mi.UserKey, Email: mi.Email, WorkspaceState: state,
 					Name: s.Name, Kind: s.Kind, Label: s.Label, Repo: s.Repo, Dir: s.Dir,
 					State: s.State, Alive: s.Alive, Resumable: s.Resumable, Started: s.Started,
+					Origin: s.Origin, ScheduleID: s.ScheduleID,
 				})
 			}
 		}
@@ -123,6 +128,7 @@ func (m *manager) sessionsForOverview(ctx context.Context, ws store.Workspace, r
 			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
 			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt,
 			State: r0.State, Alive: false, Resumable: true,
+			Origin: r0.Origin, OriginSession: r0.OriginSession, ScheduleID: r0.ScheduleID,
 		})
 	}
 	return out

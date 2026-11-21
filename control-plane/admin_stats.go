@@ -194,6 +194,7 @@ func (a adminAPI) memberSessions(w http.ResponseWriter, r *http.Request) {
 			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
 			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false,
 			Resumable: true,
+			Origin:    r0.Origin, OriginSession: r0.OriginSession, ScheduleID: r0.ScheduleID,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
