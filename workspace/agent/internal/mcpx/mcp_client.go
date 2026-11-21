@@ -49,12 +49,26 @@ func cpMemoDo(method, path string, body []byte) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, cpMemoMaxBody+1))
+	if err != nil {
+		return "", fmt.Errorf("CP メモAPI の応答を最後まで読めませんでした: %w", err)
+	}
+	// A body cut at the cap is not an answer: a truncated JSON list shown as a success would hide
+	// the queues after the cut, or hand the operator an instruction that ends mid-sentence.
+	if len(b) > cpMemoMaxBody && resp.StatusCode < 400 {
+		return "", fmt.Errorf("CP メモAPI の応答が上限（%d バイト）を超えたため、途中までしか読めません。切れた内容は使わないでください", cpMemoMaxBody)
+	}
+	if len(b) > cpMemoMaxBody {
+		b = b[:cpMemoMaxBody]
+	}
 	if resp.StatusCode >= 400 {
 		return "", &cpMemoError{Status: resp.StatusCode, Body: string(b)}
 	}
 	return string(b), nil
 }
+
+// cpMemoMaxBody bounds what cpMemoDo reads of one answer.
+const cpMemoMaxBody = 1 << 20
 
 // cpMemoError is a CP memo API answer of 4xx/5xx. It is typed so a tool can turn the CP's error
 // code into a sentence; Error() is the text every caller has always shown.

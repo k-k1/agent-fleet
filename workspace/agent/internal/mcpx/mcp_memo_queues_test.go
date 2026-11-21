@@ -138,3 +138,22 @@ func TestMemoQueueErrorCodesAreReadable(t *testing.T) {
 		t.Errorf("raw error JSON passed through: %s", resp)
 	}
 }
+
+// An answer over the read cap is a tool error, never a cut JSON handed back as a success.
+func TestMemoQueueListOverTheCapIsAnError(t *testing.T) {
+	big := `{"tenantEnabled":true,"queues":[{"instruction":"` + strings.Repeat("x", cpMemoMaxBody) + `"}]}`
+	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(big))
+	}))
+	defer cp.Close()
+	startToolAudience(t, toolAudience{args: []string{"--conv", "conv1"}})
+	t.Setenv("AF_CP_BASE_URL", "http://cp.invalid")
+	t.Setenv("AF_CP_INTERNAL_URL", cp.URL)
+	resp := callTool("list_memo_queues", map[string]any{})
+	if !strings.Contains(resp, `"isError":true`) || !strings.Contains(resp, "上限") {
+		t.Errorf("an over-cap list was not an error: %.300s", resp)
+	}
+	if strings.Contains(resp, "xxxxxxxx") {
+		t.Errorf("the cut body reached the model")
+	}
+}
