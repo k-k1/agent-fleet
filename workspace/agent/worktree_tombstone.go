@@ -108,7 +108,9 @@ func recreateFromTombstone(dir string, t gitx.WorktreeTombstone) error {
 	if err := gitx.RecreateWorktreeAt(t.Parent, dir, c, ""); err != nil {
 		return &restoreConflict{errCodeRecreateFailed, err.Error()}
 	}
-	gitx.RestoreWorktreeCreator(dir, t.Creator)
+	if err := gitx.RestoreWorktreeCreator(dir, t.Creator); err != nil {
+		return &restoreConflict{errCodeRecreateFailed, "the working copy is back but its creator record could not be written: " + err.Error()}
+	}
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,14 +69,7 @@ func TestWorktreeCreatorPlaceholderUnreadableAndTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Never recorded: empty state.
-	if s, st := ReadWorktreeCreatorState(wt); s != "" || st != "" {
-		t.Fatalf("never recorded = %q,%q", s, st)
-	}
 	// Created with no session yet (a launch that failed afterwards).
-	if err := RecordWorktreeCreated(wt); err != nil {
-		t.Fatal(err)
-	}
 	if s, st := ReadWorktreeCreatorState(wt); s != "" || st != CreatorStateNone {
 		t.Fatalf("placeholder = %q,%q", s, st)
 	}
@@ -136,5 +130,60 @@ func TestWorktreeCreatorPlaceholderUnreadableAndTombstone(t *testing.T) {
 	RestoreWorktreeCreator(dir3, "-")
 	if _, st := ReadWorktreeCreatorState(dir3); st != CreatorStateNone {
 		t.Fatalf("restored placeholder state = %q", st)
+	}
+}
+
+// A filesystem without hard links must still record the creator, as the exclusive create always did.
+func TestWorktreeCreatorWithoutHardLinks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "repos", "app")
+	gitInit(t, parent)
+	prev := linkFn
+	linkFn = func(string, string) error { return errors.New("operation not supported") }
+	t.Cleanup(func() { linkFn = prev })
+	wt, _, err := EnsureWorktreeNew(parent, "main", "feat-a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, st := ReadWorktreeCreatorState(wt); st != CreatorStateNone {
+		t.Fatalf("placeholder state = %q", st)
+	}
+	if err := WriteWorktreeCreator(wt, "sess-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteWorktreeCreator(wt, "sess-b"); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadWorktreeCreator(wt); got != "sess-a" {
+		t.Fatalf("creator = %q, want sess-a", got)
+	}
+}
+
+// The placeholder is written inside the worktree creation, so a launch refused afterwards leaves it.
+func TestEnsureWorktreeNewLeavesAPlaceholder(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "repos", "app")
+	gitInit(t, parent)
+	wt, created, err := EnsureWorktreeNew(parent, "main", "feat-a", "")
+	if err != nil || !created {
+		t.Fatalf("created=%v err=%v", created, err)
+	}
+	if _, st := ReadWorktreeCreatorState(wt); st != CreatorStateNone {
+		t.Fatalf("state = %q, want none", st)
+	}
+	// A relaunch reusing the copy does not touch it.
+	if _, _, err := EnsureWorktreeNew(parent, "feat-a", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, st := ReadWorktreeCreatorState(wt); st != CreatorStateNone {
+		t.Fatalf("state after reuse = %q", st)
 	}
 }

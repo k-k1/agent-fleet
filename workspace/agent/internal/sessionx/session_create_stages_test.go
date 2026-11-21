@@ -12,6 +12,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -492,6 +493,14 @@ func TestCreateSessionEarlyReturnsAreByteIdentical(t *testing.T) {
 			rec := p.post(tc.body(p), tc.booked)
 			if tc.code != "" && !strings.Contains(rec.Body.String(), `"`+tc.code+`"`) {
 				t.Errorf("= %d %s, want code %s", rec.Code, rec.Body, tc.code)
+			}
+			if tc.leaves {
+				// The copy a refused launch leaves behind is recorded as created with no session.
+				for _, e := range p.sideEffects().repos {
+					if st := func() string { _, st := gitx.ReadWorktreeCreatorState(filepath.Join(p.home, "repos", e)); return st }(); strings.Contains(e, "@") && st != gitx.CreatorStateNone {
+						t.Errorf("worktree %s left by a refused launch has creator state %q, want none", e, st)
+					}
+				}
 			}
 			if d := before.diff(p.sideEffects()); d != "" && !tc.leaves {
 				t.Errorf("a refused create left side effects: %s", d)

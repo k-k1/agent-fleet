@@ -35,6 +35,7 @@ func tombstoneSetup(t *testing.T) tombstoneEnv {
 	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
 	mux.HandleFunc("GET /repos/{name}/recreate", handleRecreatePlan)
+	mux.HandleFunc("POST /repos/{name}/recreate", handleRecreateWorktree)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -84,6 +85,9 @@ func worktreeArchives(t *testing.T, srv *httptest.Server) []cleanupManifest {
 // is what finally lets gc have the commits.
 func TestDeletedWorktreeRoundTripsThroughTheTrash(t *testing.T) {
 	e := tombstoneSetup(t)
+	if err := gitx.WriteWorktreeCreator(e.wt, "sess-a"); err != nil {
+		t.Fatal(err)
+	}
 	do(t, e.srv, "DELETE", "/repos/app@wt-x?force=true", nil, http.StatusOK, nil)
 	if gitx.IsGitRepo(e.wt) {
 		t.Fatal("the worktree is still there")
@@ -125,6 +129,9 @@ func TestDeletedWorktreeRoundTripsThroughTheTrash(t *testing.T) {
 		if m, _ := session.ReadMeta(name); m.Archived {
 			t.Errorf("shelved session %s was not restored with its folder", name)
 		}
+	}
+	if got := gitx.ReadWorktreeCreator(e.wt); got != "sess-a" {
+		t.Errorf("restored creator = %q, want sess-a", got)
 	}
 
 	// Purging the entry drops the pin (and nothing else).
@@ -182,6 +189,42 @@ func TestTrashRestoreOfAMovedBranchRefuses(t *testing.T) {
 	}
 	if m, _ := session.ReadMeta("aiaaaa1"); !m.Archived {
 		t.Error("the session left the shelf although its folder did not come back")
+	}
+}
+
+// Recreating from the archive on a new branch (the way forward when the trash restore refuses)
+// keeps the deleted copy's creator as well.
+func TestRecreateOnANewBranchKeepsTheCreator(t *testing.T) {
+	e := tombstoneSetup(t)
+	if err := gitx.WriteWorktreeCreator(e.wt, "sess-a"); err != nil {
+		t.Fatal(err)
+	}
+	do(t, e.srv, "DELETE", "/repos/app@wt-x?force=true", nil, http.StatusOK, nil)
+	gitAt(t, e.parent, "branch", "-q", "-f", "wt-x", "main")
+	do(t, e.srv, "POST", "/repos/app@wt-x/recreate",
+		map[string]string{"source": gitx.RecreateDeleted, "branch": "wt-x", "new_branch": "wt-y"}, http.StatusCreated, nil)
+	if got := gitx.ReadWorktreeCreator(e.wt); got != "sess-a" {
+		t.Fatalf("creator after recreate = %q, want sess-a", got)
+	}
+}
+
+// A copy whose record is unreadable stays unprovable through the trash instead of turning back
+// into "never recorded".
+func TestUnreadableCreatorRecordSurvivesTheTrash(t *testing.T) {
+	e := tombstoneSetup(t)
+	if err := gitx.WriteWorktreeCreator(e.wt, "sess-a"); err != nil {
+		t.Fatal(err)
+	}
+	// Truncate the marker the way a torn write would.
+	gitDir := strings.TrimSpace(gitAt(t, e.wt, "rev-parse", "--absolute-git-dir"))
+	if err := os.WriteFile(filepath.Join(gitDir, "agent-fleet-created-by"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	do(t, e.srv, "DELETE", "/repos/app@wt-x?force=true", nil, http.StatusOK, nil)
+	arcs := worktreeArchives(t, e.srv)
+	do(t, e.srv, "POST", "/cleanup/archives/"+arcs[0].ID+"/restore", nil, http.StatusOK, nil)
+	if s, st := gitx.ReadWorktreeCreatorState(e.wt); s != "" || st != gitx.CreatorStateNone {
+		t.Fatalf("restored = %q,%q, want state none", s, st)
 	}
 }
 

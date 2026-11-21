@@ -209,6 +209,9 @@ func worktreeCreatorPath(dir string) string {
 // publishNew writes body to a temp file beside p and hard-links it to p, which fails when p
 // exists: the marker appears complete or not at all, never empty or half written, and a racing
 // writer cannot be overwritten. exists reports that p was already there.
+// linkFn is os.Link; a test swaps it to stand in for a filesystem without hard links.
+var linkFn = os.Link
+
 func publishNew(p, body string) (exists bool, err error) {
 	tmp, err := os.CreateTemp(filepath.Dir(p), worktreeCreatorFile+".tmp-*")
 	if err != nil {
@@ -224,13 +227,37 @@ func publishNew(p, body string) (exists bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	if err = os.Link(tmp.Name(), p); err != nil {
+	if err = linkFn(tmp.Name(), p); err != nil {
 		if os.IsExist(err) {
 			return true, nil
 		}
-		return false, err
+		// A filesystem without hard links: create the final path exclusively and write it in
+		// place, as the marker always was. A crash in between reads as unreadable, never as a name.
+		return publishExclusive(p, body)
 	}
 	return false, nil
+}
+
+func publishExclusive(p, body string) (exists bool, err error) {
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return os.IsExist(err), ignoreExist(err)
+	}
+	_, err = f.WriteString(body + "\n")
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(p)
+	}
+	return false, err
+}
+
+func ignoreExist(err error) error {
+	if os.IsExist(err) {
+		return nil
+	}
+	return err
 }
 
 // RecordWorktreeCreated marks the linked worktree at dir as created by a launch with no owning
@@ -314,22 +341,24 @@ func ReadWorktreeCreator(dir string) string {
 }
 
 // RestoreWorktreeCreator puts back a creator record taken from a tombstone (see
-// WorktreeTombstone.Creator) on a worktree recreated at dir. Best effort and write-once.
-func RestoreWorktreeCreator(dir, raw string) {
+// WorktreeTombstone.Creator) on a worktree recreated at dir. Write-once; the error is the caller's to report.
+func RestoreWorktreeCreator(dir, raw string) error {
 	switch raw {
 	case "":
+		return nil
 	case worktreeCreatorNone:
-		_ = RecordWorktreeCreated(dir)
-	default:
-		_ = WriteWorktreeCreator(dir, raw)
+		return RecordWorktreeCreated(dir)
 	}
+	return WriteWorktreeCreator(dir, raw)
 }
 
 // worktreeCreatorRaw is the marker body as stored ("" when absent or unreadable), what a
 // tombstone keeps so a restore can put the same record back.
 func worktreeCreatorRaw(dir string) string {
 	session, state := ReadWorktreeCreatorState(dir)
-	if state == CreatorStateNone {
+	if state != "" {
+		// An unreadable record is kept as "no session": the copy stays unprovable instead of
+		// reverting to "never recorded" (and its guess) once it is restored.
 		return worktreeCreatorNone
 	}
 	return session
@@ -1445,6 +1474,11 @@ func EnsureWorktreeNew(parentDir, base, newBranch, folderSeg string) (string, bo
 	}
 	if out, err := Combined(parentDir, args...); err != nil {
 		return "", false, fmt.Errorf("worktree add: %v: %s", err, out)
+	}
+	// Before the submodule and scratch work below, which a killed Agent can interrupt: a copy
+	// that exists is known to have no owning session until a launch names one.
+	if err := RecordWorktreeCreated(dir); err != nil {
+		log.Printf("recording the creation of %s: %v", dir, err)
 	}
 	finishNewWorktree(dir, parentDir)
 	return dir, true, nil

@@ -8,6 +8,7 @@ package main
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -180,6 +181,14 @@ func recreateWorktreeGated(w http.ResponseWriter, r *http.Request, req recreateR
 		}
 		httpx.WriteErr(w, http.StatusBadGateway, errCodeRecreateFailed, err.Error())
 		return
+	}
+	// Only the delete's own candidate carries who made the copy; any other source is a new copy.
+	if c.Source == gitx.RecreateDeleted {
+		if t := latestTombstone(dir); t != nil {
+			if err := gitx.RestoreWorktreeCreator(dir, t.Creator); err != nil {
+				log.Printf("restoring the creator record of %s: %v", dir, err)
+			}
+		}
 	}
 	branch := c.Branch
 	if nb != "" {
