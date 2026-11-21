@@ -6,6 +6,7 @@ Repo.ahead number
 Repo.behind number
 Repo.branch string
 Repo.createdAt string,omitempty
+Repo.createdBy string,omitempty
 Repo.dirty bool
 Repo.integration.relation string
 Repo.integration.targetBranch string,omitempty

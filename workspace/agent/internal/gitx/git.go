@@ -98,6 +98,12 @@ type Repo struct {
 	// temp/<slug> worktrees). Empty for plain clones (their `.git` is a directory
 	// whose mtime churns) and when the stat fails.
 	CreatedAt string `json:"createdAt,omitempty"`
+	// CreatedBy is the name of the session whose launch ran `git worktree add` for this
+	// linked worktree (WriteWorktreeCreator). It is what lets the Console prove who made a
+	// copy: the first session still listed in a folder is only a guess once the creator was
+	// archived. Empty for a worktree made before the field existed, one made outside a
+	// session launch, and plain clones; a client must read empty as "unknown", never as "nobody".
+	CreatedBy string `json:"createdBy,omitempty"`
 	// Integration describes the linked worktree's commit relationship to the
 	// upstream of the parent working copy's branch (parent HEAD when it has none).
 	// It is deliberately separate from Ahead/Behind above, which describe this
@@ -165,6 +171,55 @@ func workingCopyMarkerPath(dir string) (string, error) {
 		return filepath.Join(svnMarker, "agent-fleet-working-copy-id"), nil
 	}
 	return "", fmt.Errorf("working-copy metadata not found")
+}
+
+// worktreeCreatorFile sits beside the working-copy id in the worktree's own git dir, so it
+// goes away with the worktree and is never shared with the parent.
+const worktreeCreatorFile = "agent-fleet-created-by"
+
+func worktreeCreatorPath(dir string) string {
+	id, err := workingCopyMarkerPath(dir)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(id), worktreeCreatorFile)
+}
+
+// WriteWorktreeCreator records the session whose launch created the linked worktree at dir.
+// Write-once: the first creator stays, so a later call can never re-attribute a copy.
+func WriteWorktreeCreator(dir, session string) error {
+	p := worktreeCreatorPath(dir)
+	if p == "" || strings.TrimSpace(session) == "" {
+		return fmt.Errorf("no worktree metadata for %s", dir)
+	}
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil
+		}
+		return err
+	}
+	_, werr := f.WriteString(strings.TrimSpace(session) + "\n")
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(p)
+	}
+	return werr
+}
+
+// ReadWorktreeCreator returns the recorded creator session, "" when none.
+func ReadWorktreeCreator(dir string) string {
+	p := worktreeCreatorPath(dir)
+	if p == "" {
+		return ""
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func ReadWorkingCopyID(path string) string {
@@ -1203,8 +1258,15 @@ func EnsureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 // disturbs the parent's submodules. git refuses to check out a branch already live in
 // another worktree, which the error surfaces as-is.
 func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error) {
+	dir, _, err := EnsureWorktreeNew(parentDir, base, newBranch, folderSeg)
+	return dir, err
+}
+
+// EnsureWorktreeNew is EnsureWorktree that also reports whether this call ran
+// `git worktree add`; false means an existing worktree was reused, which the caller did not create.
+func EnsureWorktreeNew(parentDir, base, newBranch, folderSeg string) (string, bool, error) {
 	if !IsGitRepo(parentDir) {
-		return "", fmt.Errorf("not a git working copy: %s", parentDir)
+		return "", false, fmt.Errorf("not a git working copy: %s", parentDir)
 	}
 	base = strings.TrimSpace(base)
 	newBranch = strings.TrimSpace(newBranch)
@@ -1215,7 +1277,7 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 		target = base
 	}
 	if target == "" || strings.HasPrefix(base, "-") || strings.HasPrefix(newBranch, "-") {
-		return "", fmt.Errorf("a base or new branch is required and must not start with '-'")
+		return "", false, fmt.Errorf("a base or new branch is required and must not start with '-'")
 	}
 	// folderSeg lets the folder name diverge from the branch (e.g. an auto branch
 	// temp/<slug> living in a wip-<slug> folder); default to the branch-derived name.
@@ -1228,7 +1290,7 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	name := worktreeNamePrefix(parentDir) + "@" + seg
 	dir, ok := ResolveRepoDir(name)
 	if !ok {
-		return "", fmt.Errorf("worktree name is invalid: %q", name)
+		return "", false, fmt.Errorf("worktree name is invalid: %q", name)
 	}
 	// Reuse an existing worktree at that path (idempotent re-launch); a non-git path of
 	// the same name is a conflict the caller must resolve with a different branch.
@@ -1238,10 +1300,10 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 			// name. Only the worktree already on this branch is the idempotent re-launch;
 			// anything else belongs to another session and must not be handed over.
 			if !sameRepoWorktree(parentDir, dir) {
-				return "", fmt.Errorf("%s already exists and is not a worktree of %s: pick a different folder name", name, filepath.Base(parentDir))
+				return "", false, fmt.Errorf("%s already exists and is not a worktree of %s: pick a different folder name", name, filepath.Base(parentDir))
 			}
 			if cur := GitCurrentBranch(dir); cur != target {
-				return "", fmt.Errorf("worktree %s already exists on branch %q, not %q: pick a different folder name", name, cur, target)
+				return "", false, fmt.Errorf("worktree %s already exists on branch %q, not %q: pick a different folder name", name, cur, target)
 			}
 			// A previous launch may have left submodules unfetched or wedged (the sync is
 			// time-boxed, and a killed clone does not resume by itself — git_submodule.go).
@@ -1251,9 +1313,9 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 				seedSubmodulesFromParent(dir, parentDir)
 				gitSubmodulesEnsure(dir)
 			}
-			return dir, nil
+			return dir, false, nil
 		}
-		return "", fmt.Errorf("path already exists and is not a worktree: %s", name)
+		return "", false, fmt.Errorf("path already exists and is not a worktree: %s", name)
 	}
 	// git worktree add [-b <newBranch>] <dir> [<base>]
 	args := []string{"worktree", "add"}
@@ -1269,10 +1331,10 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 		args = append(args, dir, base)
 	}
 	if out, err := Combined(parentDir, args...); err != nil {
-		return "", fmt.Errorf("worktree add: %v: %s", err, out)
+		return "", false, fmt.Errorf("worktree add: %v: %s", err, out)
 	}
 	finishNewWorktree(dir, parentDir)
-	return dir, nil
+	return dir, true, nil
 }
 
 // worktreeNamePrefix is the folder-name prefix for a worktree created from parentDir:

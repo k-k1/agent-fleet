@@ -52,6 +52,35 @@ describe("runWorktreeNode", () => {
   });
 });
 
+describe("a worktree whose creator the Agent recorded", () => {
+  const rec = (createdBy: string): Repo[] => [{ name: "base" }, { name: "base@wip-a", worktree: true, parent: "base", createdBy }];
+  // The member's session created the copy and was archived, so the run is the first one listed.
+  const sessions = [sess("r", { origin: "queue", repo: "base@wip-a", createdAt: "2026-11-02T00:00:00Z", alive: false })];
+
+  it("is not offered when another session created it, even if the run is the first one listed", () => {
+    const run = buildRuns(sessions, new Map())[0];
+    expect(runWorktreeNode(run, rec("mine"), sessions)).toBeNull();
+    expect(runWorktreeNode(run, rec("r"), sessions)!.repo.name).toBe("base@wip-a");
+  });
+
+  it("is not offered when a member's session sorts before the run at the same timestamp", () => {
+    const tie = [
+      sess("saaaaaa", { origin: "user", repo: "base@wip-a", createdAt: "2026-11-02T00:00:00Z", alive: false }),
+      sess("szzzzzz", { origin: "queue", repo: "base@wip-a", createdAt: "2026-11-02T00:00:00Z", alive: false }),
+    ];
+    const run = buildRuns(tie, new Map())[0];
+    expect(runWorktreeNode(run, rec("szzzzzz"), tie)).toBeNull();
+    expect(runWorktreeNode(run, rec("szzzzzz"), [tie[1]])!.repo.name).toBe("base@wip-a");
+  });
+
+  it("is not cleared with the finished runs either", () => {
+    const merged = sess("r", { origin: "queue", repo: "base@wip-a", alive: false, pr: { state: "merged" } as Session["pr"] });
+    const runs = runsOf([merged], ["r"]);
+    expect(planClearFinished(runs, [merged], rec("mine")).node).toBeNull();
+    expect(planClearFinished(runs, [merged], rec("r")).node?.repo.name).toBe("base@wip-a");
+  });
+});
+
 describe("planClearFinished", () => {
   const merged = { number: 1, state: "merged" as const, url: "u" };
   const sessions = [
