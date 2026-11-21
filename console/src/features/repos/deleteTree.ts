@@ -27,6 +27,9 @@ export type CopyGrade = "safe" | "review" | "blocked";
 /** One working copy's row in the plan. */
 export interface CopyPlan {
   repo: Repo;
+  /** True when the rail shows this copy elsewhere: it was started from a copy in this subtree
+   *  but sits outside the subtree's group. It is still part of what this action covers. */
+  detached: boolean;
   /** 0 = the copy that was right-clicked; each nested worktree adds one. */
   depth: number;
   /** Sessions living in this copy. Archived ones are not in the list the rail holds. */
@@ -132,8 +135,18 @@ function branchOf(r: Repo): { branch: string; branchIn: string } {
 }
 
 /** Flattens the rail's subtree into rows, the right-clicked copy first (pre-order). */
-export function planTree(node: RepoTreeNode, sessions: Session[], depth = 0): CopyPlan[] {
+export function planTree(
+  node: RepoTreeNode,
+  sessions: Session[],
+  depth = 0,
+  seen: Set<string> = new Set(),
+  detached = false,
+): CopyPlan[] {
   const r = node.repo;
+  // A copy is reachable twice when the rail displays it under the root but its lineage
+  // runs through a grouped copy (RepoTreeNode.detached): plan it once, at the first stop.
+  if (seen.has(r.name)) return [];
+  seen.add(r.name);
   const mine = sessionsInFolder(sessions, r.name);
   const stopped = mine.filter((s) => !s.alive && !s.locked);
   const { branch, branchIn } = branchOf(r);
@@ -150,8 +163,13 @@ export function planTree(node: RepoTreeNode, sessions: Session[], depth = 0): Co
     force: !!r.dirty || (r.ahead || 0) > 0,
     branch,
     branchIn,
+    detached,
   };
-  return [row, ...childNodes(node).flatMap((c) => planTree(c, sessions, depth + 1))];
+  return [
+    row,
+    ...childNodes(node).flatMap((c) => planTree(c, sessions, depth + 1, seen, false)),
+    ...(node.detached ?? []).flatMap((c) => planTree(c, sessions, depth + 1, seen, true)),
+  ];
 }
 
 /** Ticked when the modal opens: the rows that lose nothing. A row that would take work

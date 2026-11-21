@@ -61,6 +61,8 @@ export interface StopGroup {
   /** 0 = the copy that was right-clicked; each nested worktree adds one. */
   depth: number;
   rows: StopRow[];
+  /** The rail shows this copy elsewhere (see deleteTree.CopyPlan.detached). */
+  detached: boolean;
 }
 
 function rowFor(s: Session, copy: string): StopRow {
@@ -88,12 +90,25 @@ function rowFor(s: Session, copy: string): StopRow {
 
 /** Flattens the rail's subtree into per-copy groups of LIVE sessions, the right-clicked copy
  *  first (pre-order). Stopped sessions are not rows: there is nothing to stop. */
-export function planStopTree(node: RepoTreeNode, sessions: Session[], depth = 0): StopGroup[] {
+export function planStopTree(
+  node: RepoTreeNode,
+  sessions: Session[],
+  depth = 0,
+  seen: Set<string> = new Set(),
+  detached = false,
+): StopGroup[] {
+  // See deleteTree.planTree: a detached copy may be reachable twice; plan it once.
+  if (seen.has(node.repo.name)) return [];
+  seen.add(node.repo.name);
   const rows = sessionsInFolder(sessions, node.repo.name)
     .filter((s) => s.alive)
     .map((s) => rowFor(s, node.repo.name));
-  const here: StopGroup[] = rows.length ? [{ repo: node.repo, depth, rows }] : [];
-  return [...here, ...childNodes(node).flatMap((c) => planStopTree(c, sessions, depth + 1))];
+  const here: StopGroup[] = rows.length ? [{ repo: node.repo, depth, rows, detached }] : [];
+  return [
+    ...here,
+    ...childNodes(node).flatMap((c) => planStopTree(c, sessions, depth + 1, seen, false)),
+    ...(node.detached ?? []).flatMap((c) => planStopTree(c, sessions, depth + 1, seen, true)),
+  ];
 }
 
 /** Every row of the plan, groups flattened away. */

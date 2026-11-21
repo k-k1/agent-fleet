@@ -10,7 +10,8 @@
 // child's) nest one level further, so a spawn chain reads as a chain. Indentation
 // stops at three levels — a handoff chain has no bound and the rail is narrow — and
 // past that the spine colour alone carries the relation.
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
+import type { ReactElement } from "react";
 import type { CSSProperties } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -21,8 +22,8 @@ import { useRepoReveal } from "../repos/store.ts";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Session } from "../../types/session.ts";
 import { displayName } from "../../lib/sessionview.ts";
-import { childNodes, countRepoNodes, sessionsInFolder } from "../../lib/project.ts";
-import type { RepoTreeGroup, RepoTreeNode } from "../../lib/project.ts";
+import { childNodes, sessionAutoKind, sessionsInFolder } from "../../lib/project.ts";
+import type { AutoGroupKind, RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useRefIndex } from "../sessions/useRefIndex.ts";
@@ -43,9 +44,13 @@ interface RepoNodeProps {
   depth: number;
   ctx: RepoRailContext;
   actions: SessionActions;
+  /** True below an Auto-run / Schedules group: everything in here is already apart. */
+  grouped?: boolean;
 }
 
-export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
+const GROUP_KINDS: AutoGroupKind[] = ["autorun", "schedule"];
+
+export function RepoNode({ node: n, depth, ctx, actions, grouped = false }: RepoNodeProps) {
   const r = n.repo;
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
@@ -84,7 +89,12 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   // While filtering, every visible node is forced open (the parent already
   // pruned the tree to matches) and only matching sessions render.
   const open = nq ? true : openState.open;
-  const shownSessions = nq ? mine.filter((s) => sessionMatches(s, nq, refs)) : mine;
+  // Sessions an auto-run or schedule started in THIS folder (it reuses an existing copy
+  // instead of making a worktree) fold into the same groups; below a group nothing splits.
+  const byName = useMemo(() => new Map(sessions.map((s) => [s.name, s])), [sessions]);
+  const autoOf = (s: Session) => (grouped ? "" : sessionAutoKind(s, byName));
+  const ownSessions = mine.filter((s) => !autoOf(s));
+  const shownSessions = nq ? ownSessions.filter((s) => sessionMatches(s, nq, refs)) : ownSessions;
   // Session tally for the repo row's badge — real counts, not the filtered view:
   // own folder while open (the rows are visible right below); the whole subtree folds
   // in while collapsed, so a folded project still shows what's running inside.
@@ -125,6 +135,11 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   // A root's header height sets where its worktrees' headers pin (project.css). Only roots:
   // deeper worktree headers do not pin, and a nested value would shadow the root's.
   const headRef = usePublishedHeight<HTMLDivElement>("--proj-base-head-h", depth === 0);
+  const groupKinds = GROUP_KINDS.filter((k) => {
+    if (n.groups.some((g) => g.kind === k)) return true;
+    const own = mine.filter((s) => autoOf(s) === k);
+    return nq ? own.some((s) => sessionMatches(s, nq, refs)) : own.length > 0;
+  });
   const row = (s: Session) => (
     <SessionRow
       key={s.name}
@@ -189,13 +204,23 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
               body) to avoid a second, redundant gray guide left of the spine.
               The spine is indented to sit where that guide used to be, and stops
               being indented once the chain is deeper than MAX_INDENT_DEPTH. */}
-          {(n.children.length > 0 || n.groups.length > 0) && (
+          {(n.children.length > 0 || groupKinds.length > 0) && (
             <ul className={"proj-children" + (depth >= MAX_INDENT_DEPTH ? " flat" : "")}>
               {n.children.map((c) => (
-                <RepoNode key={c.repo.name} node={c} depth={depth + 1} ctx={ctx} actions={actions} />
+                <RepoNode key={c.repo.name} node={c} depth={depth + 1} ctx={ctx} actions={actions} grouped={grouped} />
               ))}
-              {n.groups.map((g) => (
-                <AutoGroup key={g.kind} owner={r.name} group={g} depth={depth} ctx={ctx} actions={actions} />
+              {groupKinds.map((k) => (
+                <AutoGroup
+                  key={k}
+                  kind={k}
+                  owner={r.name}
+                  nodes={n.groups.find((g) => g.kind === k)?.nodes ?? []}
+                  sessions={mine.filter((s) => autoOf(s) === k)}
+                  depth={depth}
+                  ctx={ctx}
+                  actions={actions}
+                  row={row}
+                />
               ))}
             </ul>
           )}
@@ -206,24 +231,33 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
 }
 
 interface AutoGroupProps {
+  kind: AutoGroupKind;
   /** Folder of the node the group hangs under — part of the fold key. */
   owner: string;
-  group: RepoTreeGroup;
+  /** Unattended copies of the owner, each with its nested descendants. */
+  nodes: RepoTreeNode[];
+  /** Sessions in the owner's own folder that an unattended source started. */
+  sessions: Session[];
   depth: number;
   ctx: RepoRailContext;
   actions: SessionActions;
+  row: (s: Session) => ReactElement;
 }
 
-// AutoGroup — the folded "Auto-run" / "Schedules" bucket under a node: working copies raised
-// by unattended work (lib/project.ts autoGroupOf), kept apart from the member's own. Folded by
-// default; the choice persists per owner and kind. Filtering forces it open like any node (the
-// tree is already pruned to matches), and a reveal aimed at a copy inside opens it.
-function AutoGroup({ owner, group, depth, ctx, actions }: AutoGroupProps) {
+// AutoGroup — the folded "Auto-run" / "Schedules" bucket under a node: what unattended work
+// created (copies, lib/project.ts sessionAutoKind) or ran in the node's own folder, kept apart
+// from the member's own. Folded by default; the choice persists per owner and kind. Filtering
+// forces it open (the tree is already pruned to matches), and a reveal aimed at a copy inside
+// opens it. The header is a rail row (data-rail-row) so the arrow keys reach it, and it carries
+// the unread dot of everything inside while folded, like a folded node does.
+function AutoGroup({ kind, owner, nodes, sessions: own, depth, ctx, actions, row }: AutoGroupProps) {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const nq = normQuery(useProjectFilter((f) => f.q));
-  const openState = usePersistedOpen(`af-proj-${owner}-grp-${group.kind}`, false);
-  const folders = group.nodes.flatMap((c) => [c.repo.name, ...descendantFolders(c)]);
+  const refs = useRefIndex();
+  const unreadSessions = useUnreadSessions();
+  const openState = usePersistedOpen(`af-proj-${owner}-grp-${kind}`, false);
+  const folders = nodes.flatMap((c) => [c.repo.name, ...descendantFolders(c)]);
   const revealN = useRepoReveal((s) => s.n);
   useEffect(() => {
     const target = useRepoReveal.getState().name;
@@ -231,22 +265,30 @@ function AutoGroup({ owner, group, depth, ctx, actions }: AutoGroupProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revealN]);
   const open = nq ? true : openState.open;
-  const copies = countRepoNodes(group.nodes);
-  const running = folders.reduce((c, f) => c + sessionsInFolder(sessions, f).filter((s) => s.alive).length, 0);
-  const label = tr(group.kind === "autorun" ? "pj.group_autorun" : "pj.group_schedule");
+  const shown = nq ? own.filter((s) => sessionMatches(s, nq, refs)) : own;
+  const inside = folders.flatMap((f) => sessionsInFolder(sessions, f));
+  const total = own.length + inside.length;
+  const running = [...own, ...inside].filter((s) => s.alive).length;
+  const unread = !open && [...own, ...inside].some((s) => unreadSessions.has(s.name));
+  const label = tr(kind === "autorun" ? "pj.group_autorun" : "pj.group_schedule");
   return (
-    <li className={"proj-group" + (open ? "" : " collapsed")} data-proj-group={group.kind}>
+    <li className={"proj-group" + (open ? "" : " collapsed")} data-proj-group={kind}>
       <button
         type="button"
         className="proj-group-head"
+        data-rail-row=""
+        data-proj-group-head=""
         onClick={openState.toggle}
         aria-expanded={open}
         title={open ? tr("pj.collapse") : tr("pj.expand")}
       >
         <Icon name={open ? "chevron-down" : "chevron-right"} />
         <span className="proj-group-label">{label}</span>
-        <span className="repo-sess-badge" title={tr("pj.group_count", { n: copies })}>
-          {copies}
+        {unread && (
+          <span className="unread-dot" role="img" aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />
+        )}
+        <span className="repo-sess-badge" title={tr("pj.group_count", { n: total })}>
+          {total}
         </span>
         {running > 0 && (
           <span className="repo-sess-badge run" title={tr("repo.sess_running", { n: running })}>
@@ -254,10 +296,11 @@ function AutoGroup({ owner, group, depth, ctx, actions }: AutoGroupProps) {
           </span>
         )}
       </button>
-      {open && (
+      {open && shown.length > 0 && <ul className="sess-list proj-sub-list">{shown.map(row)}</ul>}
+      {open && nodes.length > 0 && (
         <ul className={"proj-children" + (depth + 1 >= MAX_INDENT_DEPTH ? " flat" : "")}>
-          {group.nodes.map((c) => (
-            <RepoNode key={c.repo.name} node={c} depth={depth + 1} ctx={ctx} actions={actions} />
+          {nodes.map((c) => (
+            <RepoNode key={c.repo.name} node={c} depth={depth + 1} ctx={ctx} actions={actions} grouped />
           ))}
         </ul>
       )}

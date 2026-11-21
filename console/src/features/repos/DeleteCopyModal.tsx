@@ -255,6 +255,7 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
                     onChange={() => toggle(p.repo.name)}
                   />
                   <span className="wcdel-name">{p.repo.name}</span>
+                  {p.detached && <span className="wcdel-branch" title={tr("rp.lineage_detached_hint")}>{tr("rp.lineage_detached")}</span>}
                   {p.repo.branch && <span className="wcdel-branch">{p.repo.branch}</span>}
                   <span className="wcdel-sess">
                     {p.sessions.length === 0

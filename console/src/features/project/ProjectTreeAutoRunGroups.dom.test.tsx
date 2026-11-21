@@ -29,6 +29,7 @@ const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { useReposStore } = await import("../repos/store.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useProjectFilter } = await import("./filter.ts");
+const { useNotificationStore } = await import("../notifications/store.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -130,5 +131,62 @@ describe("auto-run groups in the repository tree", () => {
     expect(head("autorun").getAttribute("aria-expanded")).toBe("true");
     expect(group("schedule")).toBeNull();
     expect(copies()).toEqual(["af", "af@run", "af@rev"]);
+  });
+});
+
+const key = (el: Element, k: string) =>
+  act(async () => {
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  });
+
+describe("sessions that reuse an existing copy", () => {
+  // A schedule starts in the base clone itself (sch.Repo) — no worktree is made.
+  beforeEach(() => {
+    served = [{ name: "af", branch: "develop" }];
+    useReposStore.setState({ repos: served });
+    useSessionsStore.setState({
+      sessions: [
+        sess("handwork", { repo: "af", createdAt: at(1), origin: "user" }),
+        sess("nightly", { repo: "af", createdAt: at(2), origin: "schedule" }),
+        sess("nightly-rev", { repo: "af", createdAt: at(3), origin: "session", originSession: "nightly" }),
+      ],
+    });
+  });
+  const rows = () => [...host.querySelectorAll("li.sess-row .sess-l1")].map((e) => e.textContent);
+
+  it("folds the schedule's sessions away from the member's own, in the base clone's folder", async () => {
+    await render();
+    expect(rows()).toEqual(["handwork"]);
+    expect(head("schedule").querySelector(".repo-sess-badge:not(.run)")!.textContent).toBe("2");
+    await act(async () => head("schedule").click());
+    expect(rows().sort()).toEqual(["handwork", "nightly", "nightly-rev"]);
+    expect(group("schedule")!.querySelectorAll("li.sess-row").length).toBe(2);
+  });
+
+  it("shows the unread dot on a folded group header", async () => {
+    useNotificationStore.setState({
+      items: [
+        { seq: 1, id: "n1", kind: "answer-ready", target: { type: "session", id: "nightly" }, displayName: "", payload: {}, createdAt: "", seen: false },
+      ] as never,
+    });
+    await render();
+    expect(head("schedule").querySelector(".unread-dot")).not.toBeNull();
+    await act(async () => head("schedule").click());
+    expect(head("schedule").querySelector(".unread-dot")).toBeNull(); // the row carries its own now
+    useNotificationStore.setState({ items: [] });
+  });
+
+  it("is reachable with the arrow keys: down lands on the header, right opens, left closes", async () => {
+    await render();
+    const repoRow = host.querySelector<HTMLElement>('[data-rail-repo="af"]')!;
+    const list = [...host.querySelectorAll<HTMLElement>("[data-rail-row]")];
+    expect(list).toContain(head("schedule"));
+    head("schedule").focus();
+    await key(head("schedule"), "ArrowRight");
+    expect(head("schedule").getAttribute("aria-expanded")).toBe("true");
+    await key(head("schedule"), "ArrowLeft");
+    expect(head("schedule").getAttribute("aria-expanded")).toBe("false");
+    await key(head("schedule"), "ArrowLeft"); // collapsed: step out to the owning repo row
+    expect(document.activeElement).toBe(repoRow);
   });
 });

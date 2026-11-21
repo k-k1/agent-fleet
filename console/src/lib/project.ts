@@ -318,6 +318,10 @@ export interface RepoTreeNode {
   children: RepoTreeNode[];
   /** Auto-run / schedule copies of this node, folded away from `children`. At most one per kind. */
   groups: RepoTreeGroup[];
+  /** Copies the member started from this node's sessions that the rail shows elsewhere (cut
+   *  back to the group's root so hand-started work is not buried in a group). Display
+   *  ignores them; stop / delete scope them back in, as it did before grouping. */
+  detached?: RepoTreeNode[];
   /** CSS colour of this copy's lineage spine; "" = it belongs to no family. */
   spine: string;
 }
@@ -329,29 +333,33 @@ export function childNodes(n: RepoTreeNode): RepoTreeNode[] {
   return n.groups.length === 0 ? n.children : [...n.children, ...n.groups.flatMap((g) => g.nodes)];
 }
 
+/** Display plus detached: what a bulk action on this node acts on. Walkers must dedupe by
+ *  folder (a detached copy is also displayed under the root). */
+export function lineageNodes(n: RepoTreeNode): RepoTreeNode[] {
+  return n.detached && n.detached.length > 0 ? [...childNodes(n), ...n.detached] : childNodes(n);
+}
+
 const GROUP_ORDER: AutoGroupKind[] = ["autorun", "schedule"];
 
-// autoGroupOf — which group a worktree belongs to, "" = the member's own.
+// sessionAutoKind — which unattended source raised a session, "" = the member's own.
 //
-// The owner (worktreeOwners: the session that created the folder) decides. origin
-// queue / schedule is the unattended run itself. A child that run spawned (origin
-// "session") follows the ROOT of its spawn lineage, so a reviewer's worktree moves with
-// the run. Every other origin (user, operator, handoff, unknown, absent) stays put — a
-// handoff keeps origin=user while carrying originSession, so originSession alone must
-// never decide, and a hand-started session's child is never grouped because its root
-// is the hand-started one.
-function autoGroupOf(
-  owner: Session | undefined,
-  byName: Map<string, Session>,
-  lineages: Map<string, SessionLineage>,
-): AutoGroupKind | "" {
-  if (!owner) return "";
-  const kindOf = (s: Session | undefined): AutoGroupKind | "" =>
-    s?.origin === "queue" ? "autorun" : s?.origin === "schedule" ? "schedule" : "";
-  const own = kindOf(owner);
-  if (own) return own;
-  if (owner.origin !== "session") return "";
-  return kindOf(byName.get(lineages.get(owner.name)?.root ?? ""));
+// origin queue / schedule is the run itself. A child the run spawned (origin "session")
+// follows ONLY origin=session edges up to the first session that is not one: a handoff
+// the member launched from a run keeps origin=user while carrying originSession, so it
+// ends the walk as "the member's" and everything it spawns stays visible. A missing
+// parent or a cycle answers "" (ordinary display), never a guess.
+export function sessionAutoKind(s: Session | undefined, byName: Map<string, Session>): AutoGroupKind | "" {
+  const seen = new Set<string>();
+  let cur = s;
+  while (cur) {
+    if (seen.has(cur.name)) return "";
+    seen.add(cur.name);
+    if (cur.origin === "queue") return "autorun";
+    if (cur.origin === "schedule") return "schedule";
+    if (cur.origin !== "session") return "";
+    cur = cur.originSession ? byName.get(cur.originSession) : undefined;
+  }
+  return "";
 }
 
 // repoTree turns the flat repo list into the rail's forest: one root per group from
@@ -381,13 +389,18 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
     // effectively random (temp/<slug>), while chronological order leaves the existing
     // worktrees where they are and puts a new one at the end of its level.
     const kindOf = new Map<string, AutoGroupKind | "">();
-    for (const w of worktrees) kindOf.set(w.name, autoGroupOf(ix.owners.get(w.name), ix.byName, lineages));
+    for (const w of worktrees) kindOf.set(w.name, sessionAutoKind(ix.owners.get(w.name), ix.byName));
     // A copy whose parent copy is grouped nests under it as a plain child (the run's
     // reviewers and nested worktrees keep their nesting inside the group). A member's own
     // copy hanging under a grouped one is cut back to the group's root so it stays put.
     for (const w of worktrees) {
       const p = parentOf.get(w.name) || rootName;
-      if (p !== rootName && kindOf.get(p) && !kindOf.get(w.name)) parentOf.set(w.name, rootName);
+      if (p !== rootName && kindOf.get(p) && !kindOf.get(w.name)) {
+        parentOf.set(w.name, rootName);
+        const from = nodes.get(p);
+        const self = nodes.get(w.name);
+        if (from && self) (from.detached ??= []).push(self);
+      }
     }
     for (const w of worktrees) {
       const pName = parentOf.get(w.name) || rootName;
@@ -455,7 +468,7 @@ export function filterRepoTree(nodes: RepoTreeNode[], keep: (r: Repo) => boolean
       if (kept.length > 0) groups.push({ kind: g.kind, nodes: kept });
     }
     if (children.length > 0 || groups.length > 0 || keep(n.repo)) {
-      out.push({ repo: n.repo, children, groups, spine: n.spine });
+      out.push({ repo: n.repo, children, groups, detached: n.detached, spine: n.spine });
     }
   }
   return out;
