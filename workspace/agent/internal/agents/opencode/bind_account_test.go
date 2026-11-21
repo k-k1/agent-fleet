@@ -431,3 +431,30 @@ func TestBindingRunOfMovedOutReadingsStaysBounded(t *testing.T) {
 		t.Errorf("file holds %d events, want at most %d", n, bindIntervalsKeep+1)
 	}
 }
+
+// A process held up between reading the wall clock and the uptime does not read as a clock that was
+// set: a repeated out reading is still dropped and the key call stays bound.
+func TestBindingHeldUpStampIsNotAClockChange(t *testing.T) {
+	bindT(t)
+	real := func() (string, int64, bool) { return "boot", time.Now().UnixMilli(), true }
+	wallNow = time.Now
+	base := time.Now().UnixMilli() - 100000
+	start(base, 1, "key-A")
+	stampUp = base + 100
+	noteAccount(time.UnixMilli(base+100), acctOut, 1)
+	callAt := base + 5000
+	if bind(t, routes.RouteOpencodeZen, false, callAt) == "" {
+		t.Fatal("test needs a bound call")
+	}
+	clockStamp = func() (string, int64, bool) { // the process stalls before the uptime read
+		time.Sleep(2100 * time.Millisecond)
+		return real()
+	}
+	noteAccount(time.Now(), acctOut, 1)
+	if n := len(events(t)); n != 2 {
+		t.Errorf("a repeated out from a held-up sample was kept: %d events", n)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, callAt); got == "" {
+		t.Error("the call a key paid lost its binding")
+	}
+}

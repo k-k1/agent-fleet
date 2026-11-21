@@ -389,8 +389,23 @@ func stampNow() spawnStamp {
 	return spawnStamp{at: at, boot: boot, up: up, stamped: ok}
 }
 
-// stampedEvent is an event at the given instant with the uptime of that instant.
+// stampWindow is the longest the wall and uptime readings of one stamp may lie apart. A process
+// held up between the two reads (not scheduled for seconds) would pair an old wall time with a new
+// uptime and read as a clock that was set; such a sample says nothing, so it is left unstamped.
+const stampWindow = 250 * time.Millisecond
+
+// stampedEvent is an event at the given instant with the uptime of that instant. An instant that
+// is just now (an observation made as the event is written) is re-read together with the uptime,
+// so the two belong to one moment.
 func stampedEvent(at time.Time) bindEvent {
+	if d := time.Since(at); d >= 0 && d < time.Second {
+		w1 := time.Now()
+		boot, up, ok := clockStamp()
+		if !ok || time.Since(w1) > stampWindow {
+			return bindEvent{At: w1.UnixMilli()}
+		}
+		return bindEvent{At: w1.UnixMilli(), Boot: boot, Up: up}
+	}
 	boot, up, _ := clockStamp()
 	// clockStamp reads now; an instant a moment ago (an observation that waited for the lock) is
 	// close enough, since the slack is seconds.
