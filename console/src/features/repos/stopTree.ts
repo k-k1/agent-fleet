@@ -106,7 +106,7 @@ export function planStopTree(
   const here: StopGroup[] = rows.length ? [{ repo: node.repo, depth, rows, detached }] : [];
   return [
     ...here,
-    ...childNodes(node).flatMap((c) => planStopTree(c, sessions, depth + 1, seen, false)),
+    ...childNodes(node).flatMap((c) => planStopTree(c, sessions, depth + 1, seen, detached)),
     ...(node.detached ?? []).flatMap((c) => planStopTree(c, sessions, depth + 1, seen, true)),
   ];
 }

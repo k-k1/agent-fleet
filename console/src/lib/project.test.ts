@@ -21,6 +21,7 @@ import {
   countRepoNodes,
   childNodes,
   lineageNodes,
+  railNodeSessions,
   sessionAutoKind,
   type RepoTreeNode,
 } from "./project.ts";
@@ -475,7 +476,7 @@ describe("repoTree: a handoff the member made from a run", () => {
     expect(names(lineageNodes(a))).toEqual(["af@h"]); // …but part of its scope
     const live = sessions.map((x) => ({ ...x, alive: true }));
     const stop = planStopTree(a, live);
-    expect(stop.map((g) => [g.repo.name, g.detached])).toEqual([["af@a", false], ["af@h", true], ["af@r", false]]);
+    expect(stop.map((g) => [g.repo.name, g.detached])).toEqual([["af@a", false], ["af@h", true], ["af@r", true]]);
     expect(liveSessionCount(a, live)).toBe(3);
     const del = planTree(a, sessions);
     expect(del.map((p) => p.repo.name)).toEqual(["af@a", "af@h", "af@r"]);
@@ -490,5 +491,50 @@ describe("repoTree: a handoff the member made from a run", () => {
     ]);
     expect(sessionAutoKind(byName.get("x"), byName)).toBe("");
     expect(sessionAutoKind(sess("z", { origin: "session", originSession: "gone" }), byName)).toBe("");
+  });
+});
+
+describe("repoTree: filtering and mixed copies", () => {
+  const t = (n: number) => `2026-09-0${n}T00:00:00Z`;
+  const repos = [repo("af"), wt("af@a", "af", { createdAt: t(1) }), wt("af@h", "af", { createdAt: t(2) }), wt("af@r", "af", { createdAt: t(3) })];
+  const live = (x: Session): Session => ({ ...x, alive: true });
+  const sessions = [
+    live(sess("A", { repo: "af@a", createdAt: t(1), origin: "queue" })),
+    live(sess("H", { repo: "af@h", createdAt: t(2), origin: "user", originSession: "A" })),
+    live(sess("R", { repo: "af@r", createdAt: t(3), origin: "session", originSession: "H" })),
+  ];
+  const tree = repoTree(repos, sessions);
+  const names = (ns: RepoTreeNode[]) => ns.map((n) => n.repo.name);
+
+  it("a search that keeps only A leaves H and R out of A's stop and delete scope", () => {
+    const a = filterRepoTree(tree, (r) => r.name === "af@a")[0].groups[0].nodes[0];
+    expect(planStopTree(a, sessions).map((g) => g.repo.name)).toEqual(["af@a"]);
+    expect(planTree(a, sessions).map((p) => p.repo.name)).toEqual(["af@a"]);
+  });
+
+  it("a search that keeps only R shows it under the root and does not surface A's scope", () => {
+    const f = filterRepoTree(tree, (r) => r.name === "af@r");
+    expect(shapes(f)).toEqual([["af", [["af@h", [["af@r", []]]]]]]);
+    expect(f[0].groups).toEqual([]);
+    expect(planStopTree(f[0], sessions).map((g) => g.repo.name)).toEqual(["af@h", "af@r"]);
+  });
+
+  it("a copy a run made but where the member later started a session stays in the ordinary tree", () => {
+    const mixed = [...sessions, live(sess("hand", { repo: "af@a", createdAt: t(4), origin: "user" }))];
+    const r = repoTree(repos, mixed)[0];
+    expect(r.groups).toEqual([]);
+    expect(names(r.children)).toContain("af@a");
+    expect(planStopTree(r, mixed).map((g) => g.repo.name).sort()).toEqual(["af@a", "af@h", "af@r"]); // no copy twice
+  });
+
+  it("railOrder follows the drawn order: own, ordinary copies, then each group", () => {
+    const rs = [repo("af"), wt("af@w", "af", { createdAt: t(1) })];
+    const ss = [
+      sess("H", { repo: "af", createdAt: t(1), origin: "user" }),
+      sess("S", { repo: "af", createdAt: t(3), origin: "schedule" }),
+      sess("W", { repo: "af@w", createdAt: t(2), origin: "user" }),
+    ];
+    const byName = new Map(ss.map((x) => [x.name, x]));
+    expect(railNodeSessions(repoTree(rs, ss)[0], ss, byName).map((x) => x.name)).toEqual(["H", "W", "S"]);
   });
 });

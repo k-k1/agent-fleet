@@ -167,7 +167,7 @@ export function planTree(
   };
   return [
     row,
-    ...childNodes(node).flatMap((c) => planTree(c, sessions, depth + 1, seen, false)),
+    ...childNodes(node).flatMap((c) => planTree(c, sessions, depth + 1, seen, detached)),
     ...(node.detached ?? []).flatMap((c) => planTree(c, sessions, depth + 1, seen, true)),
   ];
 }

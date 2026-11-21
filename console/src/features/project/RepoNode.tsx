@@ -22,7 +22,7 @@ import { useRepoReveal } from "../repos/store.ts";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Session } from "../../types/session.ts";
 import { displayName } from "../../lib/sessionview.ts";
-import { childNodes, sessionAutoKind, sessionsInFolder } from "../../lib/project.ts";
+import { AUTO_GROUP_KINDS, childNodes, splitNodeSessions, sessionsInFolder } from "../../lib/project.ts";
 import type { AutoGroupKind, RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
@@ -48,7 +48,7 @@ interface RepoNodeProps {
   grouped?: boolean;
 }
 
-const GROUP_KINDS: AutoGroupKind[] = ["autorun", "schedule"];
+const GROUP_KINDS = AUTO_GROUP_KINDS;
 
 export function RepoNode({ node: n, depth, ctx, actions, grouped = false }: RepoNodeProps) {
   const r = n.repo;
@@ -92,8 +92,8 @@ export function RepoNode({ node: n, depth, ctx, actions, grouped = false }: Repo
   // Sessions an auto-run or schedule started in THIS folder (it reuses an existing copy
   // instead of making a worktree) fold into the same groups; below a group nothing splits.
   const byName = useMemo(() => new Map(sessions.map((s) => [s.name, s])), [sessions]);
-  const autoOf = (s: Session) => (grouped ? "" : sessionAutoKind(s, byName));
-  const ownSessions = mine.filter((s) => !autoOf(s));
+  const split = splitNodeSessions(mine, byName, grouped);
+  const ownSessions = split.own;
   const shownSessions = nq ? ownSessions.filter((s) => sessionMatches(s, nq, refs)) : ownSessions;
   // Session tally for the repo row's badge — real counts, not the filtered view:
   // own folder while open (the rows are visible right below); the whole subtree folds
@@ -137,7 +137,7 @@ export function RepoNode({ node: n, depth, ctx, actions, grouped = false }: Repo
   const headRef = usePublishedHeight<HTMLDivElement>("--proj-base-head-h", depth === 0);
   const groupKinds = GROUP_KINDS.filter((k) => {
     if (n.groups.some((g) => g.kind === k)) return true;
-    const own = mine.filter((s) => autoOf(s) === k);
+    const own = split.byKind[k];
     return nq ? own.some((s) => sessionMatches(s, nq, refs)) : own.length > 0;
   });
   const row = (s: Session) => (
@@ -215,7 +215,7 @@ export function RepoNode({ node: n, depth, ctx, actions, grouped = false }: Repo
                   kind={k}
                   owner={r.name}
                   nodes={n.groups.find((g) => g.kind === k)?.nodes ?? []}
-                  sessions={mine.filter((s) => autoOf(s) === k)}
+                  sessions={split.byKind[k]}
                   depth={depth}
                   ctx={ctx}
                   actions={actions}

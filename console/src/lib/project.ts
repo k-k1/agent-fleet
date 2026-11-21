@@ -362,6 +362,47 @@ export function sessionAutoKind(s: Session | undefined, byName: Map<string, Sess
   return "";
 }
 
+/** The kinds a rail renders, in order. */
+export const AUTO_GROUP_KINDS: AutoGroupKind[] = GROUP_ORDER;
+
+// splitNodeSessions — one node's sessions as the rail lists them: the member's own, and per
+// kind the ones an unattended source started in this very folder (it reused an existing
+// copy). Below a group (`grouped`) nothing splits: that copy holds only unattended work, or
+// it would not have been grouped (repoTree). RepoNode and railOrder share this so the two
+// can never disagree about what sits where.
+export function splitNodeSessions(
+  mine: Session[],
+  byName: Map<string, Session>,
+  grouped: boolean,
+): { own: Session[]; byKind: Record<AutoGroupKind, Session[]> } {
+  const byKind: Record<AutoGroupKind, Session[]> = { autorun: [], schedule: [] };
+  const own: Session[] = [];
+  for (const s of mine) {
+    const k = grouped ? "" : sessionAutoKind(s, byName);
+    if (k) byKind[k].push(s);
+    else own.push(s);
+  }
+  return { own, byKind };
+}
+
+/** Sessions of a subtree in the order the rail draws them: the node's own sessions, its
+ *  ordinary copies, then each group's own sessions and copies (Auto-run before Schedules). */
+export function railNodeSessions(
+  n: RepoTreeNode,
+  sessions: Session[],
+  byName: Map<string, Session>,
+  grouped = false,
+): Session[] {
+  const { own, byKind } = splitNodeSessions(sessionsInFolder(sessions, n.repo.name), byName, grouped);
+  const out = [...own];
+  for (const c of n.children) out.push(...railNodeSessions(c, sessions, byName, grouped));
+  for (const k of GROUP_ORDER) {
+    out.push(...byKind[k]);
+    for (const c of n.groups.find((g) => g.kind === k)?.nodes ?? []) out.push(...railNodeSessions(c, sessions, byName, true));
+  }
+  return out;
+}
+
 // repoTree turns the flat repo list into the rail's forest: one root per group from
 // groupedRepos (a base clone, or an orphaned worktree whose base is gone), with that
 // base's worktrees NESTED by lineage instead of laid out flat.
@@ -389,7 +430,13 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
     // effectively random (temp/<slug>), while chronological order leaves the existing
     // worktrees where they are and puts a new one at the end of its level.
     const kindOf = new Map<string, AutoGroupKind | "">();
-    for (const w of worktrees) kindOf.set(w.name, sessionAutoKind(ix.owners.get(w.name), ix.byName));
+    // A copy where the member also works (a hand-started session opened there later) stays in
+    // the ordinary tree, so that session is not buried in a folded group; its unattended
+    // sessions fold into the node's own groups instead (splitNodeSessions).
+    for (const w of worktrees) {
+      const mixed = sessionsInFolder(sessions, w.name).some((s) => !sessionAutoKind(s, ix.byName));
+      kindOf.set(w.name, mixed ? "" : sessionAutoKind(ix.owners.get(w.name), ix.byName));
+    }
     // A copy whose parent copy is grouped nests under it as a plain child (the run's
     // reviewers and nested worktrees keep their nesting inside the group). A member's own
     // copy hanging under a grouped one is cut back to the group's root so it stays put.
@@ -468,7 +515,7 @@ export function filterRepoTree(nodes: RepoTreeNode[], keep: (r: Repo) => boolean
       if (kept.length > 0) groups.push({ kind: g.kind, nodes: kept });
     }
     if (children.length > 0 || groups.length > 0 || keep(n.repo)) {
-      out.push({ repo: n.repo, children, groups, detached: n.detached, spine: n.spine });
+      out.push({ repo: n.repo, children, groups, detached: n.detached ? filterRepoTree(n.detached, keep) : undefined, spine: n.spine });
     }
   }
   return out;
