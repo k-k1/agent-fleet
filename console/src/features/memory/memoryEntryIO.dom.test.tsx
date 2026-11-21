@@ -351,6 +351,23 @@ describe("memoryEntryIO", () => {
     expect(apiJSON.mock.calls[0][2]).toMatchObject({ revision: 3 });
   });
 
+  it("records the kinds the store keeps after a save, not the ones sent", async () => {
+    for (const [kinds, expected] of [[[" claude "], 4], [["claude"], 6]] as const) {
+      resetMemoryRevisions();
+      apiJSON.mockReset();
+      api.mockReset();
+      const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+      const file = entryFile("k", { ...body, revision: 3, kinds: [" claude "] });
+      apiJSON.mockResolvedValueOnce({ revision: 4 });
+      await io.save("k", file.content, file.revision);
+      api.mockResolvedValue({ ...body, revision: 6, kinds: [...kinds] });
+      await io.load("k");
+      apiJSON.mockResolvedValueOnce({ revision: 9 });
+      await io.save("k", file.content, file.revision);
+      expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: expected });
+    }
+  });
+
   it("lets a memory whose recovery cannot be read be discarded", () => {
     expect(memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {}).discardUnconfirmed).toBe(true);
   });

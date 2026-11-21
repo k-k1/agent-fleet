@@ -389,7 +389,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       // What was saved is what the store now holds: the next base is this text at the counter it was given.
       const revision = revisionOf(content);
       sent.delete(key);
-      remember(key, revision, { revision: res.revision, kinds: base.kinds, type: goTrim(fields.type) }, true);
+      remember(key, revision, { revision: res.revision, kinds: uniq(base.kinds.map(goTrim)), type: goTrim(fields.type) }, true);
       // Every route that saves (the button, a guard, the resolution panel) ends here.
       useMemoryStore.getState().bump();
       return { ok: true, path: key, size: content.length, revision };
