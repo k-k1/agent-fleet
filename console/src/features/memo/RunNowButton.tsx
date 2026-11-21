@@ -7,14 +7,12 @@ import { useRunNow, type RunNowResult } from "./runNow.ts";
 interface Props {
   categoryId: string;
   queue: MemoQueue | undefined;
-  /** How many notes of the category wait to run. */
-  waiting: number;
   /** The press ended; the caller refetches on "started" and may explain a "no_slot". */
   onResult: (r: RunNowResult) => void;
 }
 
-export function RunNowButton({ categoryId, queue, waiting, onResult }: Props) {
-  const run = useRunNow(categoryId, queue, waiting);
+export function RunNowButton({ categoryId, queue, onResult }: Props) {
+  const run = useRunNow(categoryId, queue);
   const off = run.reason !== "" || run.busy;
   return (
     <button

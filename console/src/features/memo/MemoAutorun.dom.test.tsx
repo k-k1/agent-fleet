@@ -691,10 +691,32 @@ describe("deliveries and Run now", () => {
       await click(fireBtn());
       expect(memoQueueFire).not.toHaveBeenCalled();
     };
-    it("is disabled with nothing waiting", async () => {
+    it("is disabled with nothing waiting, as the queue list says", async () => {
+      servedQueues = { tenantEnabled: true, queues: [aQueue({ fireBlock: { reason: "nothing_waiting" } })] };
       await render();
       expect(fireBtn().getAttribute("aria-disabled")).toBe("true");
       expect(fireBtn().title).toBe(t("memo.d_fire_blocked", { why: t("memo.d_fire_none") }));
+    });
+    it("follows the queue list, not the memo list: an older Control Plane or a lagging memo read leaves it enabled", async () => {
+      servedMemos = []; // the memo read has not seen the new note yet
+      await render();
+      expect(fireBtn().getAttribute("aria-disabled")).toBeNull();
+    });
+    it("keeps the queue list when the memo or category read fails", async () => {
+      servedMemos = { error: { code: "x" } } as never;
+      servedQueues = { tenantEnabled: true, queues: [aQueue({ fireBlock: { reason: "nothing_waiting" } })] };
+      await render();
+      expect(useQueueSettingsCache.getState().queues[0]?.fireBlock?.reason).toBe("nothing_waiting");
+    });
+    it("does not fold the category when a disabled button is pressed", async () => {
+      servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+      servedQueues = { tenantEnabled: true, queues: [aQueue({ fireBlock: { reason: "prerequisites", detail: { blocked: 1 } } })] };
+      await render();
+      const expanded = () => document.querySelector("[aria-expanded]:not(.memo-cat-run)")?.getAttribute("aria-expanded");
+      const before = expanded();
+      await click(fireBtn());
+      expect(expanded()).toBe(before);
+      expect(memoQueueFire).not.toHaveBeenCalled();
     });
     it("is disabled while every waiting memo waits for another memo, and says so", async () => {
       await blocked({ reason: "prerequisites", detail: { blocked: 5 } }, t("memo.waiting_prerequisites", { count: 5 }));

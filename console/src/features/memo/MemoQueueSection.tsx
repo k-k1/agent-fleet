@@ -279,6 +279,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           if (!alive) return;
           // An error body (api() resolves HTTP errors as {error}) is a failed read, not an empty
           // list: keep what is on screen, and with it the records of the changed notes.
+          // The settings read is independent of them: Run now's enabled state follows it, so a failed
+          // memo or category read must not leave it stale.
+          const fresh = readMemoQueues(qRaw);
+          if (fresh) useQueueSettingsCache.getState().publish(queueKey, queueTicket, fresh);
           const readOk = (v: unknown) => v === null || Array.isArray(v);
           if (!readOk(mList) || !readOk(cList)) return;
           const marr = Array.isArray(mList) ? mList : [];
@@ -286,8 +290,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           useMemoStore.getState().publish(marr, ticket, scope);
           // A failed settings read (an older Control Plane, an error body) keeps the cached one;
           // it never takes the memo list down with it.
-          const fresh = readMemoQueues(qRaw);
-          if (fresh) useQueueSettingsCache.getState().publish(queueKey, queueTicket, fresh);
           setMemosTenant(tenant ?? "");
           const ser = JSON.stringify([marr, carr]);
           if (ser !== serRef.current) {
@@ -416,7 +418,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     revealN.current = reveal.n;
     setOpen(true);
     setCollapsedCats((s) => ({ ...s, [groupKey(c.repo, c.name)]: false }));
-    if (reveal.history) setDeliveriesFor(c.id);
+    if (reveal.history) {
+      setSlotsFullFor(!!reveal.slotsFull);
+      setDeliveriesFor(c.id);
+    }
     requestAnimationFrame(() => {
       document.querySelector(`[data-memo-cat="${CSS.escape(c.id)}"]`)?.scrollIntoView({ block: "nearest" });
     });
@@ -1191,7 +1196,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           <RunNowButton
                             categoryId={cat.id}
                             queue={queueByCat.get(cat.id)}
-                            waiting={pendingCount(g.memos)}
                             onResult={(r) => {
                               if (r === "started") bumpMemos();
                               // The refusal says a slot is taken; the history names who holds it.

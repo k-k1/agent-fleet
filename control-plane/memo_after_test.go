@@ -332,6 +332,10 @@ func TestMemoAfterDispatch(t *testing.T) {
 		if w := e.queueWaiting(q); w == nil || w.Reason != waitPrerequisites || w.Detail == nil || w.Detail.Blocked != 1 {
 			t.Fatalf("waiting %+v, want prerequisites", w)
 		}
+		// A press would be refused too, and the list says so for the same reason.
+		if fb := e.queueFireBlock(q); fb == nil || fb.Reason != waitPrerequisites || fb.Detail == nil || fb.Detail.Blocked != 1 {
+			t.Fatalf("fireBlock %+v, want prerequisites", fb)
+		}
 		if st := e.listed(b.ID).AfterStatus; len(st) != 1 || st[0].ID != a.ID || st[0].State != memoafter.Waiting || st[0].Reason != memoafter.WhyRunning {
 			t.Fatalf("after status %+v", st)
 		}
@@ -350,6 +354,10 @@ func TestMemoAfterDispatch(t *testing.T) {
 			t.Fatalf("after status %+v, want waiting for the PRs", st)
 		}
 		e.setPRs(da.ID, store.PRStateMerged)
+		// Its prerequisite is done: the block lifts before anything fires.
+		if fb := e.queueFireBlock(q); fb != nil {
+			t.Fatalf("fireBlock %+v after the prerequisite finished", fb)
+		}
 		if db := e.fired(q); !sameIDs(db.MessageIDs, b.ID) {
 			t.Fatalf("claimed %v, want b", db.MessageIDs)
 		}
@@ -466,6 +474,19 @@ func (e *deliveryEnv) queueWaiting(queueID string) *memoWaiting {
 	for _, q := range decode[struct{ Queues []memoQueueDTO }](e.t, e.do("a", "GET", "/api/memo-queues", nil)).Queues {
 		if q.CategoryID == queueID {
 			return q.Waiting
+		}
+	}
+	e.t.Fatal("queue not listed")
+	return nil
+}
+
+// queueFireBlock is the fireBlock of the queue's row in the member's list: why a press of "Run
+// now" would be refused (nil when it would claim something).
+func (e *deliveryEnv) queueFireBlock(queueID string) *memoWaiting {
+	e.t.Helper()
+	for _, q := range decode[struct{ Queues []memoQueueDTO }](e.t, e.do("a", "GET", "/api/memo-queues", nil)).Queues {
+		if q.CategoryID == queueID {
+			return q.FireBlock
 		}
 	}
 	e.t.Fatal("queue not listed")

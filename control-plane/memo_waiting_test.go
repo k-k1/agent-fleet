@@ -302,10 +302,17 @@ func TestMemoFireBlockOnTheWire(t *testing.T) {
 		// Nothing waiting: a press has nothing to take.
 		e.queueWith("app", "empty", map[string]any{"enabled": true})
 		list0 := decode[memoQueuesWire](t, e.do("a", "GET", "/api/memo-queues", nil))
+		seen := false
 		for _, dq := range list0.Queues {
-			if dq.Category == "empty" && (dq.FireBlock == nil || dq.FireBlock.Reason != waitNothing) {
-				t.Fatalf("empty queue: %+v", dq.FireBlock)
+			if dq.Category == "empty" {
+				seen = true
+				if dq.FireBlock == nil || dq.FireBlock.Reason != waitNothing {
+					t.Fatalf("empty queue: %+v", dq.FireBlock)
+				}
 			}
+		}
+		if !seen {
+			t.Fatal("the empty queue is not listed")
 		}
 		// Below its threshold the queue waits, but a press would claim the two notes.
 		_, q := e.autoQueue("app", "impl", map[string]any{"openAfter": 5, "maxActive": 1}, 2)
@@ -325,13 +332,18 @@ func TestMemoFireBlockOnTheWire(t *testing.T) {
 		}
 		e.pending("app", "impl", "one more")
 		list = decode[memoQueuesWire](t, e.do("a", "GET", "/api/memo-queues", nil))
+		seen = false
 		for _, dq := range list.Queues {
 			if dq.Category != "impl" {
 				continue
 			}
+			seen = true
 			if fb := dq.FireBlock; fb == nil || fb.Reason != waitNoPlace || fb.Detail == nil || fb.Detail.By != "category" {
 				t.Fatalf("slots full: %+v", dq.FireBlock)
 			}
+		}
+		if !seen {
+			t.Fatal("the full queue is not listed")
 		}
 	})
 }

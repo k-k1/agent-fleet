@@ -27,7 +27,8 @@ function withRunState(saved: MemoQueue, old: MemoQueue | undefined): MemoQueue {
     noRefsAt: old.noRefsAt,
     noTidyAt: old.noTidyAt,
     waiting: old.waiting,
-    fireBlock: old.fireBlock,
+    // A save may raise the slot limit that a "no_place" was read against; the next read says.
+    fireBlock: old.fireBlock?.reason === "no_place" ? undefined : old.fireBlock,
   };
 }
 

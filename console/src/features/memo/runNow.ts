@@ -31,13 +31,13 @@ export async function runNow(categoryId: string): Promise<RunNowResult> {
   }
 }
 
-/** The state of a Run now control. `waiting` is how many notes of the category wait to run, when
- *  the caller knows it (the Auto-run view does not: the list's fireBlock says "nothing_waiting"). */
-export function useRunNow(categoryId: string, queue: MemoQueue | undefined, waiting?: number) {
+/** The state of a Run now control. Whether it is enabled comes from the queue list's fireBlock
+ *  alone ("nothing_waiting" included): the memo list is a separate read and may lag it. */
+export function useRunNow(categoryId: string, queue: MemoQueue | undefined) {
   const tr = useT();
   const [busy, setBusy] = useState(false);
   const why = fireBlockWords(queue, (iso) => fmtDateTime(iso), (kind) => kindLabel(kind));
-  const reason = waiting === 0 ? tr("memo.d_fire_none") : why ? tr(why.key, why.params) : "";
+  const reason = why ? tr(why.key, why.params) : "";
   const press = async (): Promise<RunNowResult | null> => {
     if (busy || reason) return null;
     setBusy(true);

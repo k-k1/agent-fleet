@@ -388,9 +388,17 @@ describe("AutoRunSection", () => {
     it("starts a run through the same call as the Memo queue view when nothing blocks it", async () => {
       await mount();
       const item = await openMenu();
-      expect(item.disabled).toBe(false);
+      expect(item.getAttribute("aria-disabled")).toBeNull();
       await act(async () => item.click());
       expect(memoQueueFire).toHaveBeenCalledWith("c1");
+    });
+
+    it("opens the history with the slot holders when the press finds the slots taken", async () => {
+      memoQueueFire.mockResolvedValueOnce({ error: { code: "memo_queue_no_slot", message: "x" } });
+      await mount();
+      const { useMemoStore } = await import("../memo/store.ts");
+      await act(async () => (await openMenu()).click());
+      expect(useMemoStore.getState().reveal).toMatchObject({ id: "c1", history: true, slotsFull: true });
     });
 
     it.each([
@@ -401,7 +409,7 @@ describe("AutoRunSection", () => {
       queueWith({ fireBlock: { reason, detail } });
       await mount();
       const item = await openMenu();
-      expect(item.disabled).toBe(true);
+      expect(item.getAttribute("aria-disabled")).toBe("true");
       expect(item.title).toBe(`Run now is unavailable. ${words}`);
       await act(async () => item.click());
       expect(memoQueueFire).not.toHaveBeenCalled();

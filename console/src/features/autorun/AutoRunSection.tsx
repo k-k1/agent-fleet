@@ -159,10 +159,10 @@ function CategoryMenu({ categoryId, queue }: { categoryId: string; queue: MemoQu
   useLayoutEffect(() => {
     if (at && menuRef.current) placeFixed(menuRef.current, at.x, at.y);
   });
-  const reveal = (history: boolean) => {
+  const reveal = (history: boolean, slotsFull = false) => {
     setAt(null);
     useLeftRail.getState().showView("memo");
-    useMemoStore.getState().revealCategory(categoryId, history);
+    useMemoStore.getState().revealCategory(categoryId, history, slotsFull);
   };
   return (
     <>
@@ -189,12 +189,18 @@ function CategoryMenu({ categoryId, queue }: { categoryId: string; queue: MemoQu
                 type="button"
                 className="ui-menu-item"
                 title={run.title}
-                disabled={run.reason !== "" || run.busy}
+                aria-label={run.title}
+                // aria-disabled, not disabled: the roving focus skips a native disabled item, which
+                // would leave the reason unreachable by keyboard.
+                aria-disabled={run.reason !== "" || run.busy ? true : undefined}
                 onClick={() => {
+                  if (run.reason !== "" || run.busy) return;
                   setAt(null);
                   void run.press().then((r) => {
                     // The list behind the rows follows the start without waiting for its own poll.
                     if (r === "started") reloadAutoRuns();
+                    // A slot was taken since the list was read: the history names who holds them.
+                    if (r === "no_slot") reveal(true, true);
                   });
                 }}
               >
