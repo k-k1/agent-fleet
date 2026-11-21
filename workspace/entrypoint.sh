@@ -411,7 +411,7 @@ cli_usable() {
     [ -f "$p" ] && [ -x "$p" ] || continue
     case "$1" in
       agy) if [ "$p" = "$HOME/.local/bin/agy" ] && v="$(agy_effective_version)"; then [ -n "$v" ] || continue
-           else timeout 30 "$p" --version >/dev/null 2>&1 || continue; fi ;;
+           else agy_plain_runs "$p" || continue; fi ;;
       cursor) cursor_runs "$p" || continue ;;
       *) timeout 30 "$p" --version >/dev/null 2>&1 || continue ;;
     esac
@@ -481,6 +481,15 @@ oc_drop_v1 "$HOME/.local" || echo "[entrypoint] WARN: could not remove opencode 
 # internal/bootinstall (AgyEffectiveVersion) and only the image's Agent answers it; exit 1 means
 # it could not be asked (missing, or too old to know `agy-version`), and cli_usable then judges
 # the copy by a plain --version, like every other CLI.
+# agy_plain_runs <agy path> — --version answers, behind the same RDRAND mask the Agent applies
+# (agy aborts at start on a host without a usable RDRAND). Only for when the Agent cannot be asked.
+agy_plain_runs() {
+  if [ "$(uname -m)" = "aarch64" ] || grep -qw rdrand /proc/cpuinfo 2>/dev/null; then
+    timeout 30 "$1" --version >/dev/null 2>&1
+  else
+    OPENSSL_ia32cap='~0x4000000000000000' timeout 30 "$1" --version >/dev/null 2>&1
+  fi
+}
 agy_effective_version() {
   local wa="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
   [ -x "$wa" ] && "$wa" boot-install agy-version 2>/dev/null

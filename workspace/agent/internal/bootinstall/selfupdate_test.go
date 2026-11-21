@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -21,8 +22,11 @@ type suFixture struct {
 	pathDir string // first on PATH: stubs of what the entrypoint's PATH resolves
 	npmDir  string
 	out     *bytes.Buffer
+	mu      sync.Mutex
 	hits    map[string]int
 }
+
+func (f *suFixture) hit(name string) int { f.mu.Lock(); defer f.mu.Unlock(); return f.hits[name] }
 
 // newSU serves every upstream the self-update asks: rtk's latest page and release, agy's
 // manifest and install script, cursor's install script. agyScript and cursorScript are the
@@ -37,7 +41,7 @@ func newSU(t *testing.T, rtkScript, rtkSum, agyScript, cursorScript string) *suF
 	}
 	mux := http.NewServeMux()
 	hit := func(name string, h http.HandlerFunc) {
-		mux.HandleFunc("/"+name, func(w http.ResponseWriter, r *http.Request) { f.hits[name]++; h(w, r) })
+		mux.HandleFunc("/"+name, func(w http.ResponseWriter, r *http.Request) { f.mu.Lock(); f.hits[name]++; f.mu.Unlock(); h(w, r) })
 	}
 	srvURL := ""
 	hit("rtk-latest", func(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +73,10 @@ func newSU(t *testing.T, rtkScript, rtkSum, agyScript, cursorScript string) *suF
 	f.home = t.TempDir()
 	f.pathDir = t.TempDir()
 	f.npmDir = t.TempDir()
-	t.Setenv("PATH", f.pathDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Nothing of the host's: a fake HOME and a PATH of the stubs plus the base tools, so no real
+	// CLI of the machine running the test is ever called.
+	t.Setenv("HOME", f.home)
+	t.Setenv("PATH", f.pathDir+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
 	// The shared npm stub, plus `view` answering $D/view.<name-with-slashes-as-_>.
 	view := "view) f=\"$D/view.$(echo \"$2\" | tr '/' '_')\"; [ -f \"$f\" ] && cat \"$f\"; exit 0 ;;\n"
 	stub := strings.Replace(npmStub, "ls)", view+"ls)", 1)
@@ -160,7 +167,7 @@ func TestSelfUpdateRTK(t *testing.T) {
 		f := newSU(t, goodRTK, "", "", "")
 		f.write(t, filepath.Join(f.pathDir, "rtk"), "#!/bin/sh\necho rtk 2.0.0\n")
 		f.env.selfUpdateRTK(context.Background())
-		if !strings.Contains(f.out.String(), "rtk already latest (2.0.0); skip") || f.hits["rtk-dl/"+rtkAssetAMD64] != 0 {
+		if !strings.Contains(f.out.String(), "rtk already latest (2.0.0); skip") || f.hit("rtk-dl/"+rtkAssetAMD64) != 0 {
 			t.Fatalf("downloaded although latest:\n%s", f.out)
 		}
 	})
@@ -203,7 +210,7 @@ func TestSelfUpdateAGY(t *testing.T) {
 		f := newSU(t, goodRTK, "", agyInstaller, "")
 		f.write(t, f.local("agy"), "#!/bin/sh\necho 7.7.7\n")
 		f.env.selfUpdateAGY(context.Background())
-		if !strings.Contains(f.out.String(), "agy already latest (7.7.7); skip") || f.hits["agy-install.sh"] != 0 {
+		if !strings.Contains(f.out.String(), "agy already latest (7.7.7); skip") || f.hit("agy-install.sh") != 0 {
 			t.Fatalf("re-fetched:\n%s", f.out)
 		}
 	})
@@ -212,7 +219,7 @@ func TestSelfUpdateAGY(t *testing.T) {
 		f.write(t, f.local("agy"), "#!/bin/sh\necho 7.7.7\n")
 		f.write(t, f.local(agyMarker), "1.1.1\n")
 		f.env.selfUpdateAGY(context.Background())
-		if f.hits["agy-install.sh"] != 0 {
+		if f.hit("agy-install.sh") != 0 {
 			t.Fatal("the marker, not the binary, decided")
 		}
 	})
@@ -266,5 +273,52 @@ func TestSelfUpdateAlwaysExitsZero(t *testing.T) {
 	f := newSU(t, goodRTK, strings.Repeat("0", 64), "", "")
 	if rc := SelfUpdate(context.Background(), f.env); rc != ExitOK {
 		t.Fatalf("rc=%d: a failed step must not fail the start", rc)
+	}
+}
+
+func TestSelfUpdateNPMLsFailureForcesUpdate(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	var ls strings.Builder
+	ls.WriteString(`{"dependencies":{`)
+	for i, c := range npmCLIs {
+		if i > 0 {
+			ls.WriteString(",")
+		}
+		fmt.Fprintf(&ls, `%q:{"version":"5.0.0"}`, c.Pkg)
+		f.write(t, filepath.Join(f.npmDir, "view."+strings.ReplaceAll(c.Pkg, "/", "_")), "5.0.0\n")
+	}
+	ls.WriteString("}}")
+	f.write(t, filepath.Join(f.npmDir, "ls.json"), ls.String())
+	// Versions all match, but npm ls exits non-zero (a broken tree): the shell updated.
+	stub := strings.Replace(f.read(filepath.Join(f.npmDir, "npm")), "ls) [ -f \"$D/ls.json\" ] && cat \"$D/ls.json\"; exit 0 ;;", "ls) [ -f \"$D/ls.json\" ] && cat \"$D/ls.json\"; exit 1 ;;", 1)
+	f.write(t, filepath.Join(f.npmDir, "npm"), stub)
+	f.env.selfUpdateNPM()
+	if f.read(filepath.Join(f.npmDir, "npm.log")) == "" {
+		t.Fatalf("skipped on a failing npm ls:\n%s", f.out)
+	}
+}
+
+func TestSelfUpdateNPMFailureRepairsBrokenLink(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	// The failed install leaves a claude that does not run; the verify pass must reinstall the pin.
+	f.write(t, filepath.Join(f.npmDir, "failafter"), "npm ERR! ENOSPC\n")
+	f.write(t, filepath.Join(f.npmDir, "body.claude"), brokenCLI)
+	f.write(t, filepath.Join(f.npmDir, "body2.claude"), "#!/bin/sh\necho 1.0.0\n")
+	f.env.selfUpdateNPM()
+	log := f.read(filepath.Join(f.npmDir, "npm.log"))
+	if !strings.Contains(log, "@anthropic-ai/claude-code@1.0.0") {
+		t.Fatalf("no pin reinstall after the failed update: %s", log)
+	}
+}
+
+func TestSelfUpdateLaterStepsRunAfterEarlierFailure(t *testing.T) {
+	// rtk's checksum fails, npm fails: agy and cursor are still updated.
+	f := newSU(t, goodRTK, strings.Repeat("0", 64), agyInstaller, cursorInstaller)
+	f.write(t, filepath.Join(f.npmDir, "fail"), "npm ERR! network boom\n")
+	if rc := SelfUpdate(context.Background(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d", rc)
+	}
+	if !usable(f.local("agy")) || !usable(f.local("cursor-agent")) {
+		t.Fatalf("a failed step stopped the later ones:\n%s", f.out)
 	}
 }

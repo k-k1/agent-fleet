@@ -96,13 +96,21 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 
 // npmVersions is `npm ls`: package name to installed version, empty when npm cannot tell.
 func (e Env) npmVersions() map[string]string {
+	got, _ := e.npmLs()
+	return got
+}
+
+// npmLs is npmVersions that also says whether npm exited 0. npm ls exits non-zero for a tree
+// with problems and still prints json; the self-update treats that as "cannot decide" (updates),
+// as the shell's execSync did.
+func (e Env) npmLs() (map[string]string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, e.npmBin(), "ls", "-g", "--prefix", filepath.Join(e.Home, ".local"), "--depth=0", "--json")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.WaitDelay = time.Second
-	_ = cmd.Run() // npm ls exits non-zero for a tree with problems and still prints the json
+	runErr := cmd.Run() // npm ls exits non-zero for a tree with problems and still prints the json
 	var d struct {
 		Dependencies map[string]struct {
 			Version string `json:"version"`
@@ -114,7 +122,7 @@ func (e Env) npmVersions() map[string]string {
 			got[k] = v.Version
 		}
 	}
-	return got
+	return got, runErr == nil
 }
 
 // tailWriter keeps the last max bytes written: npm prints the reason it failed at the end, after

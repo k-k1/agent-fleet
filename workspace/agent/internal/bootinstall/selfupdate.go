@@ -132,9 +132,12 @@ func (e Env) pathVersion(name string, args ...string) string {
 }
 
 func (e Env) selfUpdateNPM() {
-	prefixed := e.npmVersions()
-	need := false
+	prefixed, lsOK := e.npmLs()
+	need := !lsOK // an `npm ls` that failed cannot vouch for the tree: update
 	for _, c := range npmCLIs {
+		if need {
+			break
+		}
 		latest := e.npmLatest(c.Pkg)
 		if cur := prefixed[c.Pkg]; cur == "" || latest == "" || cur != latest {
 			need = true
