@@ -31,16 +31,19 @@ import (
 // No env injection or token storage is needed — claude owns the credentials file.
 
 var (
-	urlRe = regexp.MustCompile(`https://claude\.com/cai/oauth/authorize\?\S+`)
+	// Anchored to the two authorize hosts the CLI has printed: claude.com/cai/oauth/authorize
+	// (up to 2.1.325) and claude.ai/oauth/authorize (2.1.330). The URL is shown to the user to
+	// click, so never widen this to an arbitrary host.
+	urlRe = regexp.MustCompile(`https://claude\.(?:com/cai|ai)/oauth/authorize\?\S+`)
 	errRe = regexp.MustCompile(`OAuth error:[^\n]*`)
 )
 
-// setup-token's OAuth code is short-lived; don't keep orphan PTYs around.
+// The login's OAuth code is short-lived; don't keep orphan PTYs around.
 const flowTTL = 10 * time.Minute
 
 var flows = agents.NewFlowStore(flowTTL).GuardLogins(routes.RouteAnthropicSubscription)
 
-// HandleStart launches setup-token, waits for the authorize URL, and
+// HandleStart launches `claude auth login --claudeai`, waits for the authorize URL, and
 // returns it with a flow_id the client uses to submit the code. It does not sign out an existing
 // login: re-authentication runs this over it, and the old credentials stay in use until the new
 // sign-in completes.
@@ -68,7 +71,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	url := f.WaitForURL(urlRe, 20*time.Second)
 	if url == "" {
 		f.Close()
-		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "setup-token did not emit an authorize URL")
+		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "claude auth login did not emit an authorize URL")
 		return
 	}
 	id := flows.Put(f)
