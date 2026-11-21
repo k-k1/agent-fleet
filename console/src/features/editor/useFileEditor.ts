@@ -544,8 +544,8 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   // The same observation of the same file shares the GET in flight: a slow GET that a periodic probe
   // keeps re-asking must still be allowed to finish.
   const followExternalChange = useCallback(
-    (observed: string): Promise<EditableFile | null> => {
-      const key = `${modelRef.current?.path}|${observed}`;
+    (observed: string, observation = ""): Promise<EditableFile | null> => {
+      const key = `${modelRef.current?.path}|${observed}|${observation}`;
       const flight = followFlight.current;
       // Of this slot only: a pane that went to another file and back has a new buffer, which must
       // not wait for (and take the answer of) a GET made for the old one.
@@ -591,7 +591,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
             if (current.externalObservation) setModel(observeExternal(current, null));
             return null;
           }
-          if (isCleanForFollow(current)) return followExternalChange(result.revision);
+          if (isCleanForFollow(current)) return followExternalChange(result.revision, result.observation);
           setModel(
             observeExternal(current, {
               kind: result.revision === current.bufferRevision ? "same_as_buffer" : "changed",

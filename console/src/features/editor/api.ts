@@ -94,7 +94,7 @@ export function putFile(
  *  transport failures, timeouts, and 5xx — the probe stays silent on those and
  *  the next trigger retries. The other kinds are advisory observations. */
 export type FileProbeResult =
-  | { kind: "revision"; revision: string }
+  | { kind: "revision"; revision: string; /** Tells two observations of one revision apart: only the same one shares a follow GET. */ observation?: string }
   | { kind: "uneditable"; reason: string }
   | { kind: "missing" }
   | { kind: "boundary" }

@@ -390,7 +390,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   useEffect(() => {
     if (!editing || !lagRevision) return;
     let live = true;
-    void editor.applyProbeResult({ kind: "revision", revision: lagRevision }).then((followed) => {
+    void editor.applyProbeResult({ kind: "revision", revision: lagRevision, observation: lagSnapshot }).then((followed) => {
       if (!live) return;
       // The body shown and the buffer now rest on different reads: re-read the body.
       bump();

@@ -595,6 +595,54 @@ describe("useFileEditor external change handling (docs/log/44 §7)", () => {
     expect(editor!.model?.followEpoch).toBe(0);
   });
 
+  it("ignores the failure of a follow GET started for a slot the pane left and came back to", async () => {
+    let rejectSlow!: (e: unknown) => void;
+    vi.mocked(getEditableFile).mockReturnValueOnce(new Promise<EditableFile>((_, r) => (rejectSlow = r)));
+    const current = await renderEditor();
+    let first!: Promise<EditableFile | null>;
+    await act(async () => {
+      first = current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+      await Promise.resolve();
+    });
+    const aGiven = given;
+    given = { path: "repos/b.txt", content: "other\n", revision: revisionOf("other\n") };
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    given = aGiven;
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    rejectSlow(new Error("http_404"));
+    await act(async () => {
+      await first;
+    });
+    expect(editor!.model?.externalObservation ?? null).toBeNull();
+  });
+
+  it("starts a new follow GET for an observation re-seen after a missing one superseded the pending GET", async () => {
+    const slow = deferred<EditableFile>();
+    vi.mocked(getEditableFile).mockReturnValueOnce(slow.promise).mockResolvedValueOnce(editableFile(external));
+    const current = await renderEditor();
+    let first!: Promise<EditableFile | null>;
+    await act(async () => {
+      first = current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await current.applyProbeResult({ kind: "missing" });
+    });
+    await act(async () => {
+      await current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+    });
+    expect(editor!.model?.content).toBe(external);
+    slow.resolve(editableFile("late\n"));
+    await act(async () => {
+      await first;
+    });
+    expect(editor!.model?.content).toBe(external);
+  });
+
   it("records missing/uneditable observations without touching the buffer", async () => {
     const current = await renderEditor();
     await act(async () => {
