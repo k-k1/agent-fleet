@@ -133,7 +133,8 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// is invisible from there on, exactly like the whole-conversation fork becomes a
 	// plain resume after its first launch. A failure must not fall through to
 	// `--fork-session`, which would copy the WHOLE conversation the user asked to cut.
-	if m.ForkAt != "" && m.ForkFrom != "" && !SessionJSONLExists(sid) {
+	pointFork := m.ForkAt != "" && m.ForkFrom != "" && !SessionJSONLExists(sid)
+	if pointFork {
 		if err := MaterializeForkAt(m.ForkFrom, sid, m.ForkAt); err != nil {
 			return agents.LaunchPlan{}, fmt.Errorf("発言時点からの分岐を作成できませんでした / could not create the fork at that message: %w", err)
 		}
@@ -181,7 +182,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 			env = append(env, "AF_CLAUDE_LIMIT_RESUME_MODE="+limitMode[0])
 		}
 	}
-	program := buildProgramPinned(pin, sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m), limitMode...)
+	program := buildProgramPinned(pin, sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m), pointFork, limitMode...)
 	if m.Route != nil {
 		program = routeLaunchProgram(program, unset)
 	}
