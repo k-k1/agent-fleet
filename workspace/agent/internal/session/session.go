@@ -276,6 +276,10 @@ type Session struct {
 	// ScheduleID mirrors Meta.ScheduleID: the schedule that started the session, set only under
 	// origin=schedule. The Schedules view groups scheduled sessions under their schedule by it.
 	ScheduleID string `json:"scheduleId,omitempty"`
+	// QueueCategoryID mirrors Meta.QueueCategoryID: the message-queue category whose delivery
+	// started the session, set only under origin=queue. The Auto-run view groups a run whose
+	// delivery has left its history window under that category by it.
+	QueueCategoryID string `json:"queueCategoryId,omitempty"`
 	// Studio / InitialPromptState mirror Meta's (ADR 0100 decision 2): which image studio this
 	// session is bound to, and how far its initial prompt got. The studio pane reads both off
 	// the list; the Control Plane's sessionWire has to carry them too or they vanish there.
@@ -851,6 +855,10 @@ type Meta struct {
 	// only under origin=schedule and "" otherwise or for a session created before the field.
 	// Never inherited by fork or recreate: those are not a fire of the schedule.
 	ScheduleID string `json:"scheduleId,omitempty"`
+	// QueueCategoryID is the message-queue category whose delivery created this session (the
+	// create's queue_delivery.queue), set only under origin=queue and "" otherwise or for a
+	// session created before the field. Never inherited by fork or recreate.
+	QueueCategoryID string `json:"queueCategoryId,omitempty"`
 	// Studio is the image studio this session is bound to (ADR 0100 decision 2), "" for none.
 	// It is a COPY kept for advertising the studio tools: the truth of the binding is the
 	// studio's own `session`, and the two cannot be written atomically, so every studio tool
