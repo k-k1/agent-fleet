@@ -275,6 +275,33 @@ describe("MemoryEntryView", () => {
     expect(host!.querySelector(".mentry-form")).toBeNull();
   });
 
+  it("follows again when the body shown goes back to a text it was followed to earlier, during the same edit", async () => {
+    await open();
+    const b = { ...memory, revision: 5, body: "Run `make v2`." };
+    const c = { ...memory, revision: 6, body: "Run `make v3`." };
+    let live = b;
+    let reads: unknown[] = [];
+    api.mockImplementation(async (url: string) => {
+      if (!url.startsWith("api/agents/memory/entries/member-read")) return url.includes("changes") ? { changes: [] } : {};
+      return reads.shift() ?? live;
+    });
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    // The follow that comes with Edit finds c; the body shown then catches up to c.
+    reads = [c];
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await flush();
+    live = c;
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("Run `make v3`.");
+    // Another writer puts b back before anything is typed.
+    live = b;
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("Run `make v2`.");
+  });
+
   it("does not bring edit mode back after the memory was forgotten and restored, or moved to another and back", async () => {
     await open();
     await act(async () => button(t("mem.br_edit"))!.click());

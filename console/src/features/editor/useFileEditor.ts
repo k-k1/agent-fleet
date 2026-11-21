@@ -499,7 +499,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   // Returns the fetched file when the model actually followed, so the caller
   // can refresh its own copy of the pane data from the same response.
   const followSeq = useRef(0);
-  const followFlight = useRef<{ key: string; promise: Promise<EditableFile | null> } | null>(null);
+  const followFlight = useRef<{ slot: EditorSlot; key: string; promise: Promise<EditableFile | null> } | null>(null);
   const runFollow = useCallback(async (): Promise<EditableFile | null> => {
     // A follow for another observation supersedes this one: its answer may be older than the one
     // already applied, on the success and on the error side alike.
@@ -544,9 +544,11 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     (observed: string): Promise<EditableFile | null> => {
       const key = `${modelRef.current?.path}|${observed}`;
       const flight = followFlight.current;
-      if (flight && flight.key === key) return flight.promise;
+      // Of this slot only: a pane that went to another file and back has a new buffer, which must
+      // not wait for (and take the answer of) a GET made for the old one.
+      if (flight && flight.slot === slotRef.current && flight.key === key) return flight.promise;
       const promise = runFollow();
-      followFlight.current = { key, promise };
+      followFlight.current = { slot: slotRef.current, key, promise };
       void promise.finally(() => {
         if (followFlight.current?.promise === promise) followFlight.current = null;
       });

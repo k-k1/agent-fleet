@@ -130,9 +130,6 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   // or newer than what the follow read found.
   const [followedTo, setFollowedTo] = useState("");
   // What was followed belongs to the edit it was for.
-  useEffect(() => {
-    if (!editing) setFollowedTo("");
-  }, [editing]);
   const [resolutionOpen, setResolutionOpen] = useState(true);
   const [refusal, setRefusalState] = useState<EntryRefusal | null>(null);
   const onRefused = useCallback((r: EntryRefusal | null) => {
@@ -379,6 +376,11 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   // A clean buffer whose base is not the body shown (the buffer was kept while the body was
   // re-read): editing it would start from the older text and end in a conflict. The form waits
   // until the hook has followed the shown text.
+  // The body shown moving on (or edit mode ending) ends it: a text that comes back later is a new
+  // snapshot, which the buffer has to follow again.
+  useEffect(() => {
+    setFollowedTo("");
+  }, [editing, file?.revision]);
   const baseLag = !isNew && !gone && !!model && !model.dirty && !!file && model.baseDiskRevision !== file.revision && followedTo !== file.revision;
   const lagRevision = baseLag ? file!.revision : "";
   useEffect(() => {
