@@ -18,6 +18,9 @@ type SessionRow struct {
 	Carried string
 	// Studio is the image studio the session is bound to (ADR 0100 decision 2), "" for none.
 	Studio string
+	// Origin and OriginSession are who raised the session and the session it came from (ADR 0073).
+	// The Console classifies scheduled and auto-run runs by them, so the stopped list must carry them.
+	Origin, OriginSession string
 	// Links are the work items and PRs the session is linked to (#3134), in the Agent's order.
 	// Written to session_work_link with the row; ListSessions does not fill it (ListSessionLinks
 	// does), so a reader that only counts sessions does not read every link title.
@@ -64,9 +67,9 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 	}
 	for _, r := range rows {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio); err != nil {
+			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession)); err != nil {
 			return err
 		}
 		if err := insertSessionLinks(ctx, tx, workspaceID, r.Name, r.Links); err != nil {
@@ -74,6 +77,16 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 		}
 	}
 	return tx.Commit()
+}
+
+// dropNUL empties a value that holds a NUL byte: PostgreSQL TEXT rejects it, and one rejected row
+// would roll back the whole ReplaceSessions swap. Stripping the byte instead would forge a valid
+// classification ("qu\x00eue" -> "queue") that the Console then acts on, so the field is dropped whole.
+func dropNUL(v string) string {
+	if strings.ContainsRune(v, 0) {
+		return ""
+	}
+	return v
 }
 
 // insertSessionLinks writes one session's links in one statement: the mirror is rewritten on
@@ -109,7 +122,7 @@ func insertSessionLinks(ctx context.Context, tx *sqlTx, workspaceID, session str
 
 func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio
+		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session
 		 FROM session WHERE workspace_id=? ORDER BY created_at DESC`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -118,7 +131,7 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 	var out []SessionRow
 	for rows.Next() {
 		r := SessionRow{WorkspaceID: workspaceID}
-		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio); err != nil {
+		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio, &r.Origin, &r.OriginSession); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
