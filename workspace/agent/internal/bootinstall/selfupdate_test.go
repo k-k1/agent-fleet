@@ -337,9 +337,9 @@ func TestSelfUpdateStepsAreIndependent(t *testing.T) {
 		}
 	})
 	t.Run("rtk alone failing still installs cursor", func(t *testing.T) {
-		f := newSU(t, goodRTK, strings.Repeat("0", 64), "", cursorInstaller)
+		f := newSU(t, goodRTK, strings.Repeat("0", 64), agyInstaller, cursorInstaller)
 		SelfUpdate(context.Background(), f.env)
-		if usable(f.local("rtk")) || !usable(f.local("cursor-agent")) {
+		if usable(f.local("rtk")) || !usable(f.local("agy")) || !usable(f.local("cursor-agent")) {
 			t.Fatalf("rtk failure handling wrong:\n%s", f.out)
 		}
 		if !strings.Contains(f.out.String(), "cursor updated: 2026.2.0-abc123") {
