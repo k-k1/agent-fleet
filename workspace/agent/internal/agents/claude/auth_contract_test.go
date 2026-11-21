@@ -1,15 +1,12 @@
 //go:build contract
 
 // Contract for the Console sign-in start: the real `claude auth login --claudeai` must still
-// print an authorize URL that HandleStart's scrape accepts.
+// print an authorize URL that HandleStart's scrape accepts. A URL the scraper cannot read
+// leaves the Console unable to re-authenticate while every other contract stays green.
 //
-// Why it exists: 2.1.330 moved the printed URL from claude.com/cai/oauth/authorize to
-// claude.ai/oauth/authorize, the scraper's urlRe stopped matching, and Console
-// re-authentication broke while every other contract stayed green.
-//
-// Needs no credential and no network login: the CLI prints the URL before anything is
-// entered, and the test closes the flow without submitting a code. HOME and
-// CLAUDE_CONFIG_DIR point at an empty directory so no real login is read or touched.
+// Needs no credential: the CLI prints the URL before anything is entered, and the test closes
+// the flow without submitting a code. The environment is reduced to an allowlist and HOME is
+// empty, so no real login is read or touched.
 //
 //	go test -tags contract -run TestContractClaudeSignInURL ./internal/agents/claude/
 package claude
@@ -22,6 +19,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/contractenv"
 )
 
 func TestContractClaudeSignInURL(t *testing.T) {
@@ -29,12 +27,9 @@ func TestContractClaudeSignInURL(t *testing.T) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		t.Fatalf("claude not on PATH: %v", err)
 	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_CONFIG_DIR", home+"/.claude")
-	// Credentials in the environment would make the CLI skip or alter the sign-in.
-	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
-	t.Setenv("ANTHROPIC_API_KEY", "")
+	// Only allowlisted variables reach the CLI; CLAUDE_CONFIG_DIR is not among them, so the
+	// config lands under the empty HOME.
+	contractenv.Isolate(t)
 
 	f, err := agents.StartFlow(loginCmd())
 	if err != nil {

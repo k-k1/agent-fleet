@@ -11,10 +11,12 @@ package kiro
 import (
 	"net/url"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/contractenv"
 )
 
 func TestContractKiroSignInURL(t *testing.T) {
@@ -22,17 +24,24 @@ func TestContractKiroSignInURL(t *testing.T) {
 	if _, err := exec.LookPath(bin()); err != nil {
 		t.Fatalf("%s not on PATH: %v", bin(), err)
 	}
-	f, err := agents.StartFlow(loginCmd(t.TempDir()))
-	if err != nil {
-		t.Fatalf("StartFlow: %v", err)
-	}
-	defer f.Close()
-
-	got := loginURLRe.FindString(f.WaitFor(loginURLRe, 20*time.Second))
+	contractenv.Isolate(t)
+	// The device-code request needs the network, so a CLI that exited without output is retried.
+	f, got := contractenv.Start(t,
+		func() (*agents.Flow, error) { return agents.StartFlow(loginCmd(t.TempDir())) },
+		func(f *agents.Flow) string { return loginURLRe.FindString(f.WaitFor(loginURLRe, 20*time.Second)) })
 	if got == "" {
 		t.Fatalf("no device URL matched loginURLRe within 20s; CLI output:\n%s", f.Clean())
 	}
-	if u, err := url.Parse(got); err != nil || u.Scheme != "https" || u.Host == "" {
+	u, err := url.Parse(got)
+	if err != nil || u.Scheme != "https" {
 		t.Fatalf("unexpected device URL %q (err %v)", got, err)
+	}
+	// The IAM Identity Center start page (measured) or the OIDC device endpoint; the one-time
+	// code rides in the fragment or the query. Any other host is a diagnostic link, not sign-in.
+	okHost := u.Host == "view.awsapps.com" ||
+		(strings.HasPrefix(u.Host, "device.sso.") && strings.HasSuffix(u.Host, ".amazonaws.com"))
+	if !okHost || !strings.Contains(u.Path+u.Fragment, "device") ||
+		!strings.Contains(u.RawQuery+u.Fragment, "user_code=") {
+		t.Fatalf("not a device sign-in URL: host %q path %q", u.Host, u.Path)
 	}
 }

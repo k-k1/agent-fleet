@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/contractenv"
 )
 
 func TestContractAgySignInURL(t *testing.T) {
@@ -23,6 +24,7 @@ func TestContractAgySignInURL(t *testing.T) {
 	if _, err := exec.LookPath("agy"); err != nil {
 		t.Fatalf("agy not on PATH: %v", err)
 	}
+	contractenv.Isolate(t)
 	stage, loginDir := t.TempDir(), t.TempDir()
 	if err := seedStagingSettings(stage, loginDir); err != nil {
 		t.Fatalf("seedStagingSettings: %v", err)

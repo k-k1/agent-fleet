@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/contractenv"
 )
 
 func TestContractCursorSignInURL(t *testing.T) {
@@ -22,6 +23,7 @@ func TestContractCursorSignInURL(t *testing.T) {
 	if _, err := exec.LookPath(bin()); err != nil {
 		t.Fatalf("%s not on PATH: %v", bin(), err)
 	}
+	contractenv.Isolate(t)
 	f, err := agents.StartFlow(loginCmd(t.TempDir()))
 	if err != nil {
 		t.Fatalf("StartFlow: %v", err)

@@ -315,23 +315,12 @@ jobs:
       - name: ${{ inputs.test_4_name }}
         id: contract_4
         if: inputs.test_4 != ''
+        # Never handed a credential, whatever tests_need_secrets says: step 4 is the sign-in
+        # scrape contract, and the CLI under test must not see a secret meant for another step.
         working-directory: workspace/agent
         env:
           SLOT: ${{ inputs.test_4 }}
           SLOT_ENV: ${{ inputs.test_4_env }}
-          E2E_ANTHROPIC_API_KEY: ${{ inputs.tests_need_secrets && secrets.E2E_ANTHROPIC_API_KEY || '' }}
-          E2E_CLAUDE_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_CLAUDE_OAUTH_TOKEN || '' }}
-          E2E_COPILOT_GITHUB_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_COPILOT_GITHUB_TOKEN || '' }}
-          E2E_AGY_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_AGY_OAUTH_TOKEN || '' }}
-          E2E_CURSOR_AUTH_JSON: ${{ inputs.tests_need_secrets && secrets.E2E_CURSOR_AUTH_JSON || '' }}
-          E2E_KIRO_AUTH_DB_B64_1: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_1 || '' }}
-          E2E_KIRO_AUTH_DB_B64_2: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_2 || '' }}
-          E2E_KIRO_AUTH_DB_B64_3: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_3 || '' }}
-          E2E_KIRO_AUTH_DB_B64_4: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_4 || '' }}
-          E2E_KIRO_AUTH_DB_B64_5: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_5 || '' }}
-          E2E_KIRO_AUTH_DB_B64_6: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_6 || '' }}
-          E2E_KIRO_AUTH_DB_B64_7: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_7 || '' }}
-          E2E_KIRO_AUTH_DB_B64_8: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_8 || '' }}
         run: |
           # shellcheck disable=SC2163 # `export "KEY=VALUE"` is the point
           while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$SLOT_ENV"

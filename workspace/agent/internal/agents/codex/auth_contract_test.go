@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/contractenv"
 )
 
 func TestContractCodexDeviceSignIn(t *testing.T) {
@@ -22,13 +23,11 @@ func TestContractCodexDeviceSignIn(t *testing.T) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		t.Fatalf("codex not on PATH: %v", err)
 	}
-	f, err := agents.StartFlow(deviceLoginCmd(t.TempDir()))
-	if err != nil {
-		t.Fatalf("StartFlow: %v", err)
-	}
-	defer f.Close()
-
-	got := f.WaitFor(urlRe, 20*time.Second)
+	contractenv.Isolate(t)
+	// The code request needs the network, so a CLI that exited without output is retried.
+	f, got := contractenv.Start(t,
+		func() (*agents.Flow, error) { return agents.StartFlow(deviceLoginCmd(t.TempDir())) },
+		func(f *agents.Flow) string { return f.WaitFor(urlRe, 20*time.Second) })
 	if got == "" {
 		t.Fatalf("no verification URL matched urlRe within 20s; CLI output:\n%s", f.Clean())
 	}
