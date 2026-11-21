@@ -512,4 +512,12 @@ export const memo = {
   "autorun.pr_open": "オープン",
   "autorun.pr_merged": "マージ済み",
   "autorun.pr_closed": "クローズ",
+  "autorun.menu": "実行の操作",
+  "autorun.stop_run": "この実行のセッションを停止",
+  "autorun.delete_worktree": "ワークツリーを削除",
+  "autorun.clear": "終了した実行を片付ける",
+  "autorun.clear_do": "アーカイブ",
+  "autorun.clear_confirm": "終了した実行の停止済みセッション {count} 件をアーカイブします。マージ済みのワークツリーは、続けて削除を確認します",
+  "autorun.cleared": "{count} 件のセッションをアーカイブしました",
+  "autorun.clear_failed": "{name} をアーカイブできませんでした: {err}",
 };

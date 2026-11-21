@@ -2,18 +2,31 @@
 // queue, grouped by the queue's category. Unattended work is listed here and not in the
 // repository tree. A row opens the run's session; the sessions the run started (reviewers) sit
 // one level under it, and finished runs fold into "Ended N".
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { useViewShown } from "../../lib/viewShown.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
+import { raw, errText, sessionDelete } from "../../core/api/client.ts";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { useMenuRoving } from "../../lib/useMenuRoving.ts";
+import { placeFixed } from "../../lib/placeFixed.ts";
+import { askConfirm } from "../../ui/confirmBridge.ts";
+import { toast } from "../../ui/toast.ts";
+import { agentOf } from "../../agents/registry.ts";
+import { useLayoutStore } from "../../layout/store.ts";
+import { useReposStore } from "../repos/store.ts";
+import { StopSessionsModal } from "../repos/StopSessionsModal.tsx";
+import { DeleteCopyModal } from "../repos/DeleteCopyModal.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat } from "../sessions/open.ts";
 import { memoQueueDeliveries, memoQueueList } from "../memo/api.ts";
 import { readDeliveries, readMemoQueues } from "../memo/queues.ts";
 import type { MemoQueue } from "../../types/memo.ts";
 import { buildRuns, fmtElapsed, waitsForMember, type RunDelivery, type RunRow } from "./runs.ts";
+import { planClearFinished, runStopScope, runWorktreeNode } from "./runActions.ts";
 import "./autorun.css";
 
 const POLL_MS = 30000;
@@ -117,6 +130,79 @@ const STATE_KEY = { running: "autorun.state_running", waiting: "autorun.state_wa
 
 const PR_KEY = { open: "autorun.pr_open", merged: "autorun.pr_merged", closed: "autorun.pr_closed" } as const;
 
+/** The row's "..." menu: stop the run's sessions, delete its worktree. Both open the repository
+ *  tree's own plan dialogs, which carry the confirmation. */
+function RunMenu({ run }: { run: RunRow }) {
+  const tr = useT();
+  const repos = useReposStore((s) => s.repos);
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  const [dlg, setDlg] = useState<"" | "stop" | "delete">("");
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+  const stop = runStopScope(run, repos);
+  const wt = runWorktreeNode(run, repos);
+  useDismiss([btnRef, menuRef], !!at, () => setAt(null));
+  useMenuRoving(menuRef, !!at);
+  useLayoutEffect(() => {
+    if (at && menuRef.current) placeFixed(menuRef.current, at.x, at.y);
+  });
+  const open = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    setAt(r ? { x: r.left, y: r.bottom } : { x: 0, y: 0 });
+  };
+  return (
+    <>
+      <button
+        type="button"
+        ref={btnRef}
+        className="autorun-run-menu"
+        aria-label={tr("autorun.menu")}
+        aria-haspopup="menu"
+        aria-expanded={!!at}
+        title={tr("autorun.menu")}
+        onClick={() => (at ? setAt(null) : open())}
+      >
+        <Icon name="ellipsis" />
+      </button>
+      {at &&
+        createPortal(
+          <ul className="ui-menu" ref={menuRef} style={{ left: at.x, top: at.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
+            <li>
+              <button type="button" className="ui-menu-item" disabled={!stop} onClick={() => { setAt(null); setDlg("stop"); }}>
+                <Icon name="debug-stop" /> {tr("autorun.stop_run")}
+              </button>
+            </li>
+            {wt && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setAt(null); setDlg("delete"); }}>
+                  <Icon name="trash" /> {tr("autorun.delete_worktree")}
+                </button>
+              </li>
+            )}
+          </ul>,
+          document.body,
+        )}
+      {dlg === "stop" && stop && (
+        <StopSessionsModal
+          node={stop.node}
+          only={stop.only}
+          onClose={() => setDlg("")}
+          onDone={(now, after) => {
+            const parts = [
+              ...(now > 0 ? [tr("rp.stop.done_now", { count: now })] : []),
+              ...(after > 0 ? [tr("rp.stop.done_after", { count: after })] : []),
+            ];
+            toast(parts.join(tr("common.list_sep")), { kind: "success" });
+          }}
+        />
+      )}
+      {dlg === "delete" && wt && (
+        <DeleteCopyModal node={wt} onClose={() => setDlg("")} onDeleted={(count) => toast(tr("rp.del.done", { count }), { kind: "success" })} />
+      )}
+    </>
+  );
+}
+
 function RunItem({ run, now }: { run: RunRow; now: number }) {
   const tr = useT();
   const { root, item, pr, children } = run;
@@ -141,6 +227,7 @@ function RunItem({ run, now }: { run: RunRow; now: number }) {
         )}
         {elapsed && <span className="autorun-elapsed">{elapsed}</span>}
       </button>
+      <RunMenu run={run} />
       {children.length > 0 && (
         <ul className="autorun-kids">
           {children.map((c) => (
@@ -189,6 +276,64 @@ function Category({ label, runs, now }: { label: string; runs: RunRow[]; now: nu
   );
 }
 
+/** "Clear finished runs": archives the stopped sessions of ended runs after one confirmation, then
+ *  offers the worktrees of merged runs to the delete dialog (its own confirmation). */
+function ClearFinished({ runs }: { runs: RunRow[] }) {
+  const tr = useT();
+  const sessions = useSessionsStore((s) => s.sessions);
+  const repos = useReposStore((s) => s.repos);
+  const closeSessionPanes = useLayoutStore((s) => s.closeSessionPanes);
+  const [del, setDel] = useState<ReturnType<typeof planClearFinished>["node"]>(null);
+  const [busy, setBusy] = useState(false);
+  const plan = useMemo(() => planClearFinished(runs, sessions, repos), [runs, sessions, repos]);
+  const nothing = plan.archive.length === 0 && !plan.node;
+  const click = async () => {
+    if (busy) return;
+    const { archive, node } = plan;
+    if (archive.length > 0) {
+      const ok = await askConfirm({
+        title: tr("autorun.clear"),
+        body: tr("autorun.clear_confirm", { count: archive.length }),
+        confirmLabel: tr("autorun.clear_do"),
+      });
+      if (!ok) return;
+      setBusy(true);
+      let failed = 0;
+      try {
+        for (const s of archive) {
+          const res = await (agentOf(s.kind).caps.ephemeral
+            ? sessionDelete(s.name, { stop: true })
+            : raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" })
+          ).catch(() => null);
+          if (res?.ok) closeSessionPanes(s.name);
+          else {
+            failed++;
+            const j = await res?.json().catch(() => null);
+            toast(tr("autorun.clear_failed", { name: s.name, err: j?.error ? errText(j.error) : "" }));
+          }
+        }
+      } finally {
+        setBusy(false);
+        void useSessionsStore.getState().refresh();
+      }
+      if (failed === 0) toast(tr("autorun.cleared", { count: archive.length }), { kind: "success" });
+    }
+    if (node) setDel(node);
+  };
+  return (
+    <>
+      <div className="autorun-toolbar">
+        <button type="button" className="autorun-clear" disabled={nothing || busy} onClick={() => void click()}>
+          {tr("autorun.clear")}
+        </button>
+      </div>
+      {del && (
+        <DeleteCopyModal node={del} onClose={() => setDel(null)} onDeleted={(count) => toast(tr("rp.del.done", { count }), { kind: "success" })} />
+      )}
+    </>
+  );
+}
+
 export const AutoRunSection = memo(function AutoRunSection() {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
@@ -209,6 +354,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
   if (runs.length === 0) return <div className="pane-empty">{tr("autorun.none")}</div>;
   return (
     <div className="autorun-view">
+      <ClearFinished runs={runs} />
       {ids.map((id) => (
         <Category key={id} label={labelOf(id)} runs={runs.filter((r) => keyOf(r.categoryId) === id)} now={now} />
       ))}

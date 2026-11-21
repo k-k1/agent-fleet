@@ -515,4 +515,12 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "autorun.pr_open": "open",
   "autorun.pr_merged": "merged",
   "autorun.pr_closed": "closed",
+  "autorun.menu": "Run actions",
+  "autorun.stop_run": "Stop this run's sessions",
+  "autorun.delete_worktree": "Delete the worktree",
+  "autorun.clear": "Clear finished runs",
+  "autorun.clear_do": "Archive",
+  "autorun.clear_confirm": "Archive {count} stopped sessions of finished runs? Merged worktrees are offered for deletion next.",
+  "autorun.cleared": "Archived {count} sessions",
+  "autorun.clear_failed": "Could not archive {name}: {err}",
 };
