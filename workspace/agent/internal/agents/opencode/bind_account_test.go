@@ -336,3 +336,63 @@ func TestBindingSettledReadingGoingBackIsKept(t *testing.T) {
 		t.Errorf("the reading that went back was dropped: %+v", got)
 	}
 }
+
+// An account event whose clock stamp was unusable concerns its own life only: the key calls of the
+// life before it survive a trim, and a healthy later daemon is bound as usual.
+func TestBindingUnstampedEventDoesNotReachLaterLives(t *testing.T) {
+	bindT(t)
+	x, y := accountBinding("acct-X"), accountBinding("acct-Y")
+	start(1000, 1, "key-A")
+	acct(1100, acctOut, 1)
+	acct(3000, acctTouch, 1)
+	old := clockStamp
+	clockStamp = func() (string, int64, bool) { return "", 0, false }
+	stampUp = 3000 + 2*touchCoalesce.Milliseconds()
+	noteAccount(atMs(stampUp), acctTouch, 1)
+	clockStamp = old
+	at := fillReadings(2*bindIntervalsKeep, 500000, x, y) // trims the life
+	start(at+1000, 2, "key-B")
+	acct(at+1100, acctOut, 2)
+	if got := bind(t, routes.RouteOpencodeZen, false, at+5000); got == "" {
+		t.Error("a healthy later daemon was not bound")
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 2000); got == "" {
+		t.Error("a key call before the first touch was lost after the trim")
+	}
+}
+
+// An out reading that shows the clock going back is kept even right behind a touch, and puts the
+// life in doubt.
+func TestBindingOutReadingGoingBackIsKept(t *testing.T) {
+	bindT(t)
+	start(1000, 1, "")
+	acct(1100, acctOut, 1)
+	acct(50000, acctTouch, 1)
+	stampUp = 50000 + 10*touchCoalesce.Milliseconds()
+	noteAccount(atMs(2000), acctOut, 1) // the wall clock is far behind the uptime
+	evs := events(t)
+	if got := evs[len(evs)-1]; got.Acct != acctOut || !got.Reg {
+		t.Fatalf("the out reading that went back was dropped: %+v", got)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 1500); got != "" {
+		t.Errorf("a call in a life whose clock moved = %q, want none", got)
+	}
+}
+
+func TestBindingUnstampedEventStaysInItsLife(t *testing.T) {
+	bindT(t)
+	start(1000, 1, "key-A")
+	acct(1100, acctOut, 1)
+	acct(3000, acctTouch, 1)
+	old := clockStamp
+	clockStamp = func() (string, int64, bool) { return "", 0, false }
+	stampUp = 3000 + 2*touchCoalesce.Milliseconds()
+	noteAccount(atMs(stampUp), acctTouch, 1)
+	clockStamp = old
+	b := stampUp + 1000
+	start(b, 2, "key-B")
+	acct(b+100, acctOut, 2)
+	if got := bind(t, routes.RouteOpencodeZen, false, b+5000); got == "" {
+		t.Error("a healthy later daemon was not bound")
+	}
+}

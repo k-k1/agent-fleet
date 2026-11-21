@@ -288,7 +288,7 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent, e bindEvent) bool)
 		carry := int64(0)
 		for _, ev := range evs[:cut] {
 			carry = max(carry, ev.Carry)
-			if ev.Reg {
+			if ev.Reg && !unknownClock(ev) {
 				carry = max(carry, ev.Floor)
 			}
 		}
@@ -317,7 +317,9 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent, e bindEvent) bool)
 						carry = max(carry, ev.Carry)
 						acarry = max(acarry, ev.AcctCarry, satAdd(ev.At, accountQuiet.Milliseconds()))
 						if ev.Reg {
-							carry = max(carry, ev.Floor)
+							if !unknownClock(ev) {
+								carry = max(carry, ev.Floor)
+							}
 							acarry = max(acarry, satAdd(ev.Floor, accountQuiet.Milliseconds()))
 						}
 					}
@@ -435,6 +437,13 @@ func eventGap(a, b bindEvent) int64 {
 	return b.At - a.At
 }
 
+// unknownClock reports an account event whose clock stamp could not be taken. It says nothing
+// about the clock having moved, so it concerns only the life it was written in (bindingAt's loop
+// over that life), never the lives after it and never a trim's floor for the key and free bindings.
+func unknownClock(e bindEvent) bool {
+	return e.Kind == evAccount && e.Reg && e.Floor == math.MaxInt64
+}
+
 // satAdd is a+b, saturating at MaxInt64 (an unknown clock bound is stored as MaxInt64).
 func satAdd(a, b int64) int64 {
 	if a > math.MaxInt64-b {
@@ -503,7 +512,8 @@ func noteAccountID(at time.Time, acct, id string, gen int) {
 		case acctOut:
 			// Before any other account event: the account was out from the start of the life. After
 			// a sign-in observation: the credential is gone, which ends that credential's proof.
-			return !hasBad && !hasOut || last != nil && last.Acct == acctIn
+			// A reading that shows the clock moved is always kept: it is the only trace of it.
+			return !hasBad && !hasOut || last != nil && last.Acct == acctIn || e.Reg
 		case acctIn:
 			if last == nil || last.Acct != acctIn || last.ID != id || e.Reg {
 				return true // a reading that shows the clock going back is never redundant
@@ -551,7 +561,7 @@ func bindingAt(evs []bindEvent, gaps []int64, route string, paid bool, times ...
 		}
 	}
 	for _, e := range evs[:life+1] {
-		if e.Reg && lo <= e.Floor || lo <= e.Carry {
+		if e.Reg && !unknownClock(e) && lo <= e.Floor || lo <= e.Carry {
 			return "" // possibly an earlier daemon's call, from before the clock was set
 		}
 	}
