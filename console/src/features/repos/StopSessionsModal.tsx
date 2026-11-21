@@ -45,6 +45,8 @@ interface RowResult {
 interface StopSessionsModalProps {
   /** The right-clicked copy and the subtree the rail nests under it. */
   node: RepoTreeNode;
+  /** Limits the plan to these sessions (see planStopTree). */
+  only?: ReadonlySet<string>;
   onClose: () => void;
   /** Fired only when every ticked row was accepted and the dialog closes itself — the one
    *  moment the outcome is no longer readable on screen. A partial run stays open with a
@@ -52,12 +54,12 @@ interface StopSessionsModalProps {
   onDone?: (now: number, after: number) => void;
 }
 
-export function StopSessionsModal({ node, onClose, onDone }: StopSessionsModalProps) {
+export function StopSessionsModal({ node, only, onClose, onDone }: StopSessionsModalProps) {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   // Frozen at open, as the delete plan is: the sessions list is polled every 4s, and a row
   // appearing or changing state under the pointer is how a tick lands on a row nobody read.
-  const groups = useMemo(() => planStopTree(node, sessions), [node]); // eslint-disable-line react-hooks/exhaustive-deps
+  const groups = useMemo(() => planStopTree(node, sessions, 0, new Set(), false, only), [node]); // eslint-disable-line react-hooks/exhaustive-deps
   const [selected, setSelected] = useState<Set<string>>(() => defaultStopSelection(groups));
   const [force, setForce] = useState(false);
   const [busy, setBusy] = useState(false);

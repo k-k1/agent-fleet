@@ -72,6 +72,15 @@ describe("停止計画の並べ方", () => {
   });
 });
 
+describe("対象セッションの絞り込み（自動実行ビュー）", () => {
+  it("only に挙げたセッションだけが行になり、同じ作業コピーのメンバー自身のセッションは入らない", () => {
+    const wt = node(repo("app@wip-a"), [node(repo("app@wip-b"))]);
+    const sessions = [sess("run", "app@wip-a"), sess("mine", "app@wip-a"), sess("rev", "app@wip-b"), sess("other", "app@wip-b")];
+    const groups = planStopTree(wt, sessions, 0, new Set(), false, new Set(["run", "rev"]));
+    expect(stopRows(groups).map((r) => r.session.name).sort()).toEqual(["rev", "run"]);
+  });
+});
+
 describe("行ごとの停止のしかた", () => {
   it("待機中はすぐ停止、実行中はターン終了後（既定ではターンを切らない）", () => {
     const groups = planStopTree(node(repo("app@a")), [

@@ -291,6 +291,8 @@ It is all or nothing, and it is refused once a result has been used. The history
 
 The "**Auto-run**" view of the left pane (the icon right after "Memo queue") lists the runs of every auto-run category, one row per run and not one per working copy. A row shows the run's state (running, waiting for your answer, or ended), the work item it started for (`#12 title`), its pull request and the pull request's state when known, and how long it has been going. Press a row to open the run's session. The sessions the run started, such as reviewers, are listed one level under the row. Ended runs are folded into "**Ended N**".
 
+The "**...**" button on a row opens its menu. "**Stop this run's sessions**" stops the run and the sessions it started, and nothing else in the same working copy. "**Delete the worktree**" opens the same confirmation as deleting a working copy from the repository tree; it is not offered for a run that works in a base clone. "**Clear finished runs**" at the top of the view archives the stopped sessions of ended runs after one confirmation, then offers the worktrees of runs whose pull request was merged to the same delete confirmation. A worktree that also holds a session of your own is left out.
+
 The runs are not listed in the "Sessions" view: the working copies and sessions that auto-run started stay out of the repository tree. Stopping or deleting a repository from the tree still covers them, and its confirmation lists them as "Listed elsewhere". Runs that a [schedule](../fleet/schedules.md) started are still grouped under their repository for now.
 
 ### Read the run history

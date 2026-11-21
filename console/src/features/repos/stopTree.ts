@@ -89,25 +89,28 @@ function rowFor(s: Session, copy: string): StopRow {
 }
 
 /** Flattens the rail's subtree into per-copy groups of LIVE sessions, the right-clicked copy
- *  first (pre-order). Stopped sessions are not rows: there is nothing to stop. */
+ *  first (pre-order). Stopped sessions are not rows: there is nothing to stop. `only` narrows
+ *  the rows to the named sessions: the Auto-run view stops one run's sessions, never a member's
+ *  own session that shares the copy. */
 export function planStopTree(
   node: RepoTreeNode,
   sessions: Session[],
   depth = 0,
   seen: Set<string> = new Set(),
   detached = false,
+  only?: ReadonlySet<string>,
 ): StopGroup[] {
   // See deleteTree.planTree: a detached copy may be reachable twice; plan it once.
   if (seen.has(node.repo.name)) return [];
   seen.add(node.repo.name);
   const rows = sessionsInFolder(sessions, node.repo.name)
-    .filter((s) => s.alive)
+    .filter((s) => s.alive && (!only || only.has(s.name)))
     .map((s) => rowFor(s, node.repo.name));
   const here: StopGroup[] = rows.length ? [{ repo: node.repo, depth, rows, detached }] : [];
   return [
     ...here,
-    ...childNodes(node).flatMap((c) => planStopTree(c, sessions, depth + 1, seen, detached)),
-    ...(node.detached ?? []).flatMap((c) => planStopTree(c, sessions, depth + 1, seen, true)),
+    ...childNodes(node).flatMap((c) => planStopTree(c, sessions, depth + 1, seen, detached, only)),
+    ...(node.detached ?? []).flatMap((c) => planStopTree(c, sessions, depth + 1, seen, true, only)),
   ];
 }
 
