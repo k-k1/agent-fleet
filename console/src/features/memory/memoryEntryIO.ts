@@ -208,6 +208,9 @@ const sameKinds = (a: string[], b: string[]) => {
   const y = uniq(b.map(goTrim));
   return x.length === y.length && x.every((k, i) => k === y[i]);
 };
+// Exactly as the store holds them: unlike a save's normalising comparison, whitespace inside a kind is
+// part of what a delivery matches on.
+const sameKindsExact = (a: string[], b: string[]) => a.length === b.length && a.every((k, i) => k === b[i]);
 const validRevision = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v > 0;
 
 // The Agent omits empty fields on the wire (omitempty), so a memory with no type or body is valid.
@@ -297,7 +300,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       // counter, so the save ends in a conflict instead of carrying kinds the member never saw.
       const prior = known.get(key)?.get(file.revision);
       const later = res as MemoryBody;
-      if (!adoptNow && prior && later.revision > prior.revision && sameKinds(later.kinds ?? [], prior.kinds)) {
+      if (!adoptNow && prior && later.revision > prior.revision && sameKindsExact(later.kinds ?? [], prior.kinds)) {
         remember(key, file.revision, { revision: later.revision, kinds: later.kinds ?? [] }, true);
       }
       // After a save whose outcome is unknown, the memory as the Agent stores the text sent is that
