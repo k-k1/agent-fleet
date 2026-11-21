@@ -47,17 +47,35 @@ describe("a run that closes after it left the newest fifty", () => {
     vi.useFakeTimers();
     memoQueueDeliveries.mockImplementation(async () => [
       { id: "d1", session: "run-a", state: "closed", closedAt: "2026-11-01T00:45:00Z" },
-      { id: "d2", session: "run-b", state: "open" },
+      { id: "d2", session: "run-b", state: "open", createdAt: "2026-11-01T00:50:00Z" },
     ]);
     const off = acquireAutoRuns("s");
     await vi.advanceTimersByTimeAsync(0);
-    // The first read has nothing to anchor on; the second asks for what closed since d1 did.
     expect(memoQueueDeliveries.mock.calls[0]).toEqual(["c1", true, ""]);
     // d2 is no longer in the newest fifty; only the closed-since part brings it back, closed.
     memoQueueDeliveries.mockImplementation(async () => [{ id: "d2", session: "run-b", state: "closed", outcome: "clean", closedAt: "2026-11-01T01:00:00Z" }]);
     await vi.advanceTimersByTimeAsync(30_000);
+    // The bound is d1's closing: d2 was created after it, so no earlier stamp is needed.
     expect(memoQueueDeliveries.mock.calls[1]).toEqual(["c1", true, "2026-11-01T00:45:00Z"]);
     expect(useAutoRunStore.getState().deliveries.get("run-b")).toMatchObject({ state: "closed", closedAt: "2026-11-01T01:00:00Z" });
+    off();
+  });
+
+  it("starts at the creation of a run known open when nothing has closed yet, or when it is older than the latest closing", async () => {
+    vi.useFakeTimers();
+    memoQueueDeliveries.mockImplementation(async () => [{ id: "d2", session: "run-b", state: "open", createdAt: "2026-11-01T00:10:00Z" }]);
+    const off = acquireAutoRuns("s");
+    await vi.advanceTimersByTimeAsync(0);
+    // The server keeps answering the open run; newer runs close around it.
+    memoQueueDeliveries.mockImplementation(async () => [
+      { id: "d9", session: "run-z", state: "closed", closedAt: "2026-11-01T05:00:00Z" },
+      { id: "d2", session: "run-b", state: "open", createdAt: "2026-11-01T00:10:00Z" },
+    ]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(memoQueueDeliveries.mock.calls[1]).toEqual(["c1", true, "2026-11-01T00:10:00Z"]);
+    // Newer runs closing does not move the bound past the run still known open.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(memoQueueDeliveries.mock.calls[2]).toEqual(["c1", true, "2026-11-01T00:10:00Z"]);
     off();
   });
 });

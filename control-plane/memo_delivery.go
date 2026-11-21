@@ -439,13 +439,13 @@ func (a memoAPI) listDeliveries(via memoVia) func(http.ResponseWriter, *http.Req
 		}
 		var ds []store.MemoDelivery
 		var err error
-		if cs := r.URL.Query().Get("closed_since"); cs != "" {
-			t, perr := time.Parse(time.RFC3339Nano, cs)
+		if r.URL.Query().Has("closed_since") {
+			t, perr := time.Parse(time.RFC3339Nano, r.URL.Query().Get("closed_since"))
 			if perr != nil {
 				writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "closed_since must be an RFC 3339 time"})
 				return
 			}
-			ds, err = a.store.ListMemoDeliveriesClosedSince(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax, store.DeliveryTS(t))
+			ds, err = a.store.ListMemoDeliveriesClosedSince(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax, store.DeliveryTS(ceilMicro(t)))
 		} else {
 			ds, err = list(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax)
 		}
@@ -465,6 +465,15 @@ func (a memoAPI) listDeliveries(via memoVia) func(http.ResponseWriter, *http.Req
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
+}
+
+// ceilMicro rounds t up to the microsecond a stored stamp has, so a bound that falls between two
+// stamps never admits the one before it.
+func ceilMicro(t time.Time) time.Time {
+	if f := t.Truncate(time.Microsecond); !f.Equal(t) {
+		return f.Add(time.Microsecond)
+	}
+	return t
 }
 
 // endDelivery (POST /api/memo-queues/{categoryId}/deliveries/{id}/end) finishes an open run by a

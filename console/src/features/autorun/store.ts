@@ -38,19 +38,28 @@ interface Loop {
 let loop: Loop | null = null;
 let users = 0;
 
-/** The latest closing already known for a category ("" when none): the next read asks for every
- *  run closed at or after it, so a run that closes after it left the newest fifty still gets its
- *  end. Server stamps are fixed-width, so the text order is the time order. */
-export function closedWatermark(deliveries: Map<string, RunDelivery>, categoryId: string): string {
-  let at = "";
-  for (const d of deliveries.values()) if (d.categoryId === categoryId && d.state === "closed" && d.closedAt > at) at = d.closedAt;
-  return at;
+/** Where the next read of a category starts looking for closings: the earlier of the latest
+ *  closing known and the creation of the oldest run still known as unsettled. A run closes no
+ *  earlier than it was created, so one that was open at the last read is found again however
+ *  many runs closed since, and a closing stamped before a later one (replicas whose clocks
+ *  differ) is not skipped. "" when nothing is known, which asks for no closings. Server stamps are
+ *  fixed-width, so the text order is the time order. */
+export function closedLowerBound(deliveries: Map<string, RunDelivery>, categoryId: string): string {
+  let closed = "";
+  let open = "";
+  for (const d of deliveries.values()) {
+    if (d.categoryId !== categoryId) continue;
+    if (d.state === "closed") {
+      if (d.closedAt > closed) closed = d.closedAt;
+    } else if (d.state !== "" && d.createdAt && (!open || d.createdAt < open)) open = d.createdAt;
+  }
+  return open && (!closed || open < closed) ? open : closed;
 }
 
 /** Each category is read on its own, one read at a time, so a slow one holds nobody up, and an
  *  answer to a read the scope has outgrown is dropped. The read asks for every open run too, so
- *  a run older than the newest fifty keeps its category and state, and every run closed since the
- *  latest closing known comes with it, so one that closes after it fell off the list gets its end. */
+ *  a run older than the newest fifty keeps its category and state, and every run closed since
+ *  closedLowerBound comes with it, so one that closes after it fell off the list gets its end. */
 function startLoop(scope: string): Loop {
   let live = true;
   let listing = false;
@@ -68,7 +77,7 @@ function startLoop(scope: string): Loop {
     reading.add(q.categoryId);
     const mine = epoch.get(q.categoryId) ?? 0;
     try {
-      const list = readDeliveries(await memoQueueDeliveries(q.categoryId, true, closedWatermark(useAutoRunStore.getState().deliveries, q.categoryId)));
+      const list = readDeliveries(await memoQueueDeliveries(q.categoryId, true, closedLowerBound(useAutoRunStore.getState().deliveries, q.categoryId)));
       if (!live || !list || !current.has(q.categoryId) || (epoch.get(q.categoryId) ?? 0) !== mine) return;
       set((prev) => {
         const next = new Map(prev);

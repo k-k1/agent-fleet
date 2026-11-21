@@ -1520,10 +1520,11 @@ export const memoQueueDeliveryEnd = (categoryId: string, deliveryId: string): Pr
 export const memoQueueDeliveryReturn = (categoryId: string, deliveryId: string): Promise<MemoWriteResult> =>
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries/${encodeURIComponent(deliveryId)}/return`, "POST", {});
 // `openToo` also asks for every run that is not closed, however old: the plain list is the newest
-// fifty. `closedSince` (the closedAt of the latest closing seen) adds the runs closed at or after
-// it, so a run that closed after it left the newest fifty still gets its end; it implies `openToo`.
+// fifty. `closedSince` adds the runs closed at or after it, so a run that closed after it left the
+// newest fifty still gets its end. include=open is sent with it: a Control Plane that does not know
+// closed_since still answers the open runs.
 export const memoQueueDeliveries = (categoryId: string, openToo = false, closedSince = ""): Promise<unknown> => {
-  const q = closedSince ? `?closed_since=${encodeURIComponent(closedSince)}` : openToo ? "?include=open" : "";
+  const q = closedSince ? `?include=open&closed_since=${encodeURIComponent(closedSince)}` : openToo ? "?include=open" : "";
   return api(`api/memo-queues/${encodeURIComponent(categoryId)}/deliveries${q}`);
 };
 // The tidy runs of a category, newest first. Raw like the other reads: readTidyRuns normalises it.
