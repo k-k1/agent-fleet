@@ -24,7 +24,8 @@ func bindT(t *testing.T) {
 	credbind.ResetForTest()
 	old := clockStamp
 	clockStamp = func() (string, int64, bool) { return "boot", stampUp, true }
-	oldNow, oldSlack := wallNow, callSlack
+	oldNow, oldSlack, oldSince := wallNow, callSlack, sinceInstant
+	sinceInstant = func(time.Time) time.Duration { return 0 } // test instants are taken as now
 	callSlack = 0
 	wallNow = func() time.Time { return time.UnixMilli(stampUp) }
 	gapsMem, sessGapsMem = nil, nil
@@ -34,7 +35,7 @@ func bindT(t *testing.T) {
 	t.Cleanup(func() {
 		credbind.ResetForTest()
 		clockStamp = old
-		wallNow, callSlack = oldNow, oldSlack
+		wallNow, callSlack, sinceInstant = oldNow, oldSlack, oldSince
 		gapsMem, sessGapsMem = nil, nil
 	})
 }

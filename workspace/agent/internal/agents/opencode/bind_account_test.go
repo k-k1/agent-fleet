@@ -458,3 +458,28 @@ func TestBindingHeldUpStampIsNotAClockChange(t *testing.T) {
 		t.Error("the call a key paid lost its binding")
 	}
 }
+
+// A caller held up between taking the observation instant and reaching the stamp (not scheduled for
+// seconds) does not read as a clock that was set: the old instant is paired with the uptime of that
+// instant, not the current one, so a repeated out reading is still dropped.
+func TestBindingStallBeforeTheCallIsNotAClockChange(t *testing.T) {
+	bindT(t)
+	base := time.Now().UnixMilli() - 100000
+	start(base, 1, "key-A")
+	stampUp = base + 100
+	noteAccount(time.UnixMilli(base+100), acctOut, 1)
+	callAt := base + 5000
+	if bind(t, routes.RouteOpencodeZen, false, callAt) == "" {
+		t.Fatal("test needs a bound call")
+	}
+	// real clocks from here on
+	clockStamp = func() (string, int64, bool) { return "boot", time.Now().UnixMilli(), true }
+	wallNow, sinceInstant = time.Now, time.Since
+	noteAccount(time.Now().Add(-3*time.Second), acctOut, 1) // the stall happened before the call
+	if n := len(events(t)); n != 2 {
+		t.Errorf("a repeated out from a stalled caller was kept: %d events", n)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, callAt); got == "" {
+		t.Error("the call a key paid lost its binding")
+	}
+}

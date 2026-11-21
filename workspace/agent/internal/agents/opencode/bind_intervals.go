@@ -394,21 +394,30 @@ func stampNow() spawnStamp {
 // uptime and read as a clock that was set; such a sample says nothing, so it is left unstamped.
 const stampWindow = 250 * time.Millisecond
 
-// stampedEvent is an event at the given instant with the uptime of that instant. An instant that
-// is just now (an observation made as the event is written) is re-read together with the uptime,
-// so the two belong to one moment.
+// sinceInstant is the time elapsed since an observation instant; a seam for tests whose instants
+// are not real time.
+var sinceInstant = time.Since
+
+// stampedEvent is an event at the given instant with the uptime of that instant. The uptime is
+// read now and moved back by the time elapsed since the instant (monotonic when `at` came from
+// time.Now), so a past instant is never paired with an uncorrected current uptime: a caller that
+// was held up between taking `at` and getting here would otherwise read as a clock that was set.
+// When the stamp cannot be taken, was itself held up, or the correction runs past the start of the
+// boot, the event is left unstamped, which says nothing about the clock.
 func stampedEvent(at time.Time) bindEvent {
-	if d := time.Since(at); d >= 0 && d < time.Second {
-		w1 := time.Now()
-		boot, up, ok := clockStamp()
-		if !ok || time.Since(w1) > stampWindow {
-			return bindEvent{At: w1.UnixMilli()}
-		}
-		return bindEvent{At: w1.UnixMilli(), Boot: boot, Up: up}
+	w0 := time.Now()
+	boot, up, ok := clockStamp()
+	elapsed := sinceInstant(at)
+	if !ok || time.Since(w0) > stampWindow {
+		return bindEvent{At: at.UnixMilli()}
 	}
-	boot, up, _ := clockStamp()
-	// clockStamp reads now; an instant a moment ago (an observation that waited for the lock) is
-	// close enough, since the slack is seconds.
+	if elapsed < 0 {
+		elapsed = 0 // an instant ahead of now is taken as now
+	}
+	up -= elapsed.Milliseconds()
+	if up <= 0 {
+		return bindEvent{At: at.UnixMilli()}
+	}
 	return bindEvent{At: at.UnixMilli(), Boot: boot, Up: up}
 }
 
