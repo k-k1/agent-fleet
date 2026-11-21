@@ -11,6 +11,7 @@ import { useActiveWorkingSet } from "../lib/workingSetsStore.ts";
 import { useWorkItemStore } from "../features/workitems/store.ts";
 import { useSeenStore } from "../features/workitems/seen.ts";
 import { dedupeWorkItems, sortWorkItems } from "../features/workitems/read.ts";
+import { pendingHandoffCount, useHandoffStore } from "../features/sharing/handoffStore.ts";
 import { useSchedulesStore } from "../features/schedules/store.ts";
 import { pendingProposals, useMemoryStore, useProposalsFeed } from "../features/memory/store.ts";
 import { memoScope, useMemoStore, useMemoWaitingFeed } from "../features/memo/store.ts";
@@ -41,6 +42,7 @@ interface ViewDef {
 
 const VIEWS: ViewDef[] = [
   { id: "sessions", icon: "repo", mark: "sparkle", label: "rail.view.sessions" },
+  { id: "shared", icon: "broadcast", label: "share.shared_sessions" },
   { id: "assistant", icon: "comment-discussion", label: "asst.section_title" },
   { id: "workitems", icon: "issues", label: "wi.title" },
   { id: "memo", icon: "note", label: "memo.title" },
@@ -188,7 +190,7 @@ function badgeText(b: RailBadge, tr: ReturnType<typeof useT>, view: RailView): s
   switch (b.tone) {
     case "waiting":
       // What waits differs by view: sessions on an answer, proposals and memos on a decision.
-      return tCount(view === "memory" ? "rail.badge.proposals" : view === "memo" ? "rail.badge.memos" : "rail.badge.waiting", b.count);
+      return tCount(view === "shared" ? "rail.badge.handoffs" : view === "memory" ? "rail.badge.proposals" : view === "memo" ? "rail.badge.memos" : "rail.badge.waiting", b.count);
     case "news":
       return tCount("rail.badge.news", b.count);
     case "failed":
@@ -227,6 +229,10 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   const memoScopeNow = memoScope(running, tenant);
   const waitingMemos = useMemoStore((s) => (s.waiting && s.waiting.scope === memoScopeNow ? s.waiting.n : 0));
   const pendingMemory = useMemoryStore((s) => pendingProposals(s.proposals));
+  // Handoffs offered to the member wait on their decision. Read by the shared view's section,
+  // which App mounts for the whole session. There is no news dot for shared sessions: nothing
+  // client-side marks one unread (notifications never target the shared list).
+  const pendingHandoffs = useHandoffStore((s) => pendingHandoffCount(s.received));
   const acked = useRailAck((s) => s.acked);
   const ack = useRailAck((s) => s.ack);
 
@@ -255,6 +261,7 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   // runs until the member approves, so the count stays while the view is open. Not set-scoped: the
   // memo view lists every note whatever the working set.
   if (waitingMemos > 0) out.memo = { tone: "waiting", count: waitingMemos };
+  if (pendingHandoffs > 0) out.shared = { tone: "waiting", count: pendingHandoffs };
   if (pendingMemory > 0) out.memory = { tone: "waiting", count: pendingMemory };
   if (onScreen !== "schedules" && pendingNews(failedRuns, acked.schedules).length > 0) out.schedules = { tone: "failed" };
   return out;

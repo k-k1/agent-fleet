@@ -89,6 +89,15 @@ describe("activity bar swipe", () => {
     expect(useLeftRail.getState().view).toBe("workitems");
   });
 
+  it("steps Sessions, Shared, Assistants in that order", async () => {
+    useLeftRail.setState({ view: "sessions" });
+    await mount();
+    await swipe(bar(), true);
+    expect(useLeftRail.getState().view).toBe("shared");
+    await swipe(bar(), true);
+    expect(useLeftRail.getState().view).toBe("assistant");
+  });
+
   it("clamps at the ends", async () => {
     useLeftRail.setState({ view: "files" });
     await mount();

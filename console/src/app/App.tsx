@@ -616,7 +616,6 @@ export function App() {
                     <ProjectTree />
                   </SoloSection>
                   <OtherSessionsSection />
-                  <SharedSessionsSection />
                 </>
               ) : (
                 <>
@@ -624,9 +623,13 @@ export function App() {
                     <StoppedRailSection id="repos" title={tr("ui.repositories")} icon="repo" />
                   </SoloSection>
                   <StoppedSessionsSection />
-                  <SharedSessionsSection />
                 </>
               )}
+            </RailView>
+            {/* Not scoped: a shared session belongs to another member's working copy, so a
+                working set of this member's repositories has nothing to narrow. */}
+            <RailView id="shared" active={railView} shown={railShown}>
+              <SharedSessionsSection />
             </RailView>
             <RailView id="assistant" active={railView} shown={railShown} scoped>
               <SoloSection>

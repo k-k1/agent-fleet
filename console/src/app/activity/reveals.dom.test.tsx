@@ -4,6 +4,7 @@ import { useLeftRail } from "../../core/store/leftRail.ts";
 import { useFilesStore } from "../../features/files/store.ts";
 import { useMemoStore } from "../../features/memo/store.ts";
 import { useRepoReveal } from "../../features/repos/store.ts";
+import { useSharedReveal } from "../../features/sharing/store.ts";
 import { useSchedulesStore } from "../../features/schedules/store.ts";
 
 let unwire: () => void;
@@ -39,6 +40,11 @@ describe("wireRailReveals", () => {
     expect(rail()).toEqual({ open: false, view: "assistant" });
     useFilesStore.getState().revealInFiles("repos/webshop", { focus: true });
     expect(rail()).toEqual({ open: true, view: "files" });
+  });
+
+  it("brings the shared view forward for a shared-session reveal", () => {
+    useSharedReveal.getState().reveal("cat1");
+    expect(rail()).toEqual({ open: true, view: "shared" });
   });
 
   it("stops following once unwired", () => {

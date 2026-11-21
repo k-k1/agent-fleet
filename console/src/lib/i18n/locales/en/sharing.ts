@@ -7,6 +7,7 @@
 import type { sharing as jaSharing } from "../ja/sharing.ts";
 
 export const sharing: Record<keyof typeof jaSharing, string> = {
+  "share.none": "Nothing is shared with you yet.",
   "share.shared_sessions": "Shared sessions",
   "share.list_title": "Shares",
   "share.reload": "Refresh",

@@ -50,7 +50,8 @@ The icons in the upper group choose the view the left pane shows. Hover over an 
 
 | Icon | What the left pane shows |
 |---|---|
-| Sessions | The cloned repositories with the sessions running under them, then **Other sessions** (home or a shell) and **Shared sessions** |
+| Sessions | The cloned repositories with the sessions running under them, then **Other sessions** (home or a shell) |
+| Shared sessions | The conversations other members shared with you, and handoffs waiting for your decision (a number on the icon) |
 | Assistants | The list of chats that use no repository, and **+** |
 | Issue tracker | Issues from the Jira or GitHub you connected ([Connect an issue tracker](../integrations/issue-tracker.md)) |
 | Memo queue | The instructions you jotted down |
@@ -81,8 +82,7 @@ The left pane shows the view chosen on the activity bar.
 - The **Sessions**, **Assistants**, **Schedules** and **Files** views start with the working-set bar ("All"). It narrows
   what is listed to a named group; "All" shows everything. The marks on the activity bar count only what the chosen
   group lists
-- In the Sessions view, click the **Other sessions** or **Shared sessions** heading to fold or unfold it. Shared sessions
-  is not shown when there are none
+- In the Sessions view, click the **Other sessions** heading to fold or unfold it. The Shared sessions view says so when nothing is shared with you
 
 While the workspace is stopped, **Session history** takes the place of Other sessions in the Sessions view and lists every
 session in one list. You can look at it; acting on a session waits until the workspace is started.

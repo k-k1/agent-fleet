@@ -1,6 +1,6 @@
 ---
 audience: "People who show a session's conversation to members of the same tenant, or read one shown to them"
-source_of_truth: "The Console's session ⋯ menu \"Share…\" and the Sessions view's \"Shared sessions\""
+source_of_truth: "The Console's session ⋯ menu \"Share…\" and the \"Shared sessions\" view"
 ---
 
 # Share a conversation
@@ -14,7 +14,7 @@ of this investigation", "follow how we got here while you review". Only the conv
 
 | What you do | What your teammate and the agent do |
 |---|---|
-| Choose a recipient and a permission with "**Share…**" in the ⋯ menu | The conversation appears, read-only, under "**Shared sessions**" in the Sessions view of their left pane |
+| Choose a recipient and a permission with "**Share…**" in the ⋯ menu | The conversation appears, read-only, in the "**Shared sessions**" view of their left pane |
 | "**Approve and send**" a proposal from someone you shared with "**Can propose**" | Until you approve, their proposal does not reach the agent |
 | "**Unshare**" when it is no longer needed | It leaves their list. A copy they already saved cannot be recalled |
 
@@ -25,7 +25,7 @@ The row of a shared session carries the "**Shared**" badge, so you can always te
 1. Open the "**Share**" dialog from one of these
    - "**Share…**" in a session row's ⋯ menu (the menu is pictured in [Stop and resume a session](../sessions/stop-resume.md))
    - "**Share…**" in a repository row's ⋯ menu
-   - ⚙ ("**Shares**") in "**Shared sessions**" in the Sessions view → "**New share…**"
+   - ⚙ ("**Shares**") in the "**Shared sessions**" view → "**New share…** (the ⚙ appears once something is shared with you or by you; use the ⋯ menus above before that)"
 2. Choose the "**Share target**"
 3. Search for the "**Recipient**" by e-mail address and pick them
 4. Choose the "**Permission**" and press "**Share**"
@@ -52,7 +52,7 @@ Highlights drawn on the conversation are shared too. A "Can propose" recipient c
 
 ## Read a conversation shared with you
 
-"**Shared sessions**" in the Sessions view lists them by owner and by project. Click one to open the conversation read-only.
+The "**Shared sessions**" view lists them by owner and by project. Click one to open the conversation read-only.
 It opens independently of your own workspace, so you can read it without having the repository.
 
 - The scroll position works as in a session's mirror. The first time it opens at the latest message (the bottom); after you read part of it and leave, it reopens where you were. Reloading the browser goes back to the latest
@@ -72,7 +72,7 @@ Only with "**Can propose**" can you "**Propose to owner**" from the input box. B
 
 ## Approve a proposal
 
-On the owner's side, "**N pending approval(s)**" appears in "**Shared sessions**" in the Sessions view. Open it to see the session, the action,
+On the owner's side, "**N pending approval(s)**" appears in the "**Shared sessions**" view. Open it to see the session, the action,
 the text and who proposed it, and choose "**Approve and send**" or "**Reject**".
 
 ## Unshare

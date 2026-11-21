@@ -18,7 +18,7 @@ Asking the AI questions, translating, reading documents and following developmen
 | Jot down requests and hand them to development | The **Memo queue** view |
 | Read documents and slides | The **Files** view |
 | See how far development has got | The **Sessions** view |
-| Read a conversation a developer shared with you | **Shared sessions** in the Sessions view |
+| Read a conversation a developer shared with you | the **Shared sessions** view |
 
 ## Read these first
 
