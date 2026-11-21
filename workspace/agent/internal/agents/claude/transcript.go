@@ -778,7 +778,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	// (docs/log/58 §58.16).
 	if ev.Type == "attachment" {
 		a := ev.Attachment
-		txt := a.Origin.text(a.Prompt)
+		txt := a.Origin.text(unwrapPasted(a.Prompt))
 		if a.Type != "queued_command" || txt == "" ||
 			(a.Origin.Kind != "" && a.Origin.Kind != "human" && !a.Origin.peer()) {
 			return transcript.Turn{}, false
@@ -1399,6 +1399,7 @@ func CollectQueued(lines [][]byte) []string {
 			if json.Unmarshal(ln, &ev) != nil || ev.Type != "queue-operation" {
 				continue
 			}
+			ev.Content = unwrapPasted(ev.Content)
 			switch {
 			case ev.Operation == "enqueue" && ev.Content != "":
 				queue = append(queue, ev.Content)
@@ -1624,7 +1625,8 @@ func toolEdits(name string, input json.RawMessage) (string, []transcript.Edit) {
 // contentText pulls the human text out of a message's content, which claude encodes
 // either as a plain string (simple user turns) or an array of typed blocks. Only
 // text blocks count; tool_use / tool_result / thinking / image blocks are skipped,
-// so a turn that is purely a tool round-trip yields "".
+// so a turn that is purely a tool round-trip yields "". A pasted prompt comes back without
+// claude's paste wrapper (unwrapPasted).
 func contentText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -1632,7 +1634,7 @@ func contentText(raw json.RawMessage) string {
 	if raw[0] == '"' { // plain-string content
 		var s string
 		if json.Unmarshal(raw, &s) == nil {
-			return strings.TrimSpace(s)
+			return strings.TrimSpace(unwrapPasted(s))
 		}
 		return ""
 	}
@@ -1649,5 +1651,5 @@ func contentText(raw json.RawMessage) string {
 			sb.WriteString(b.Text)
 		}
 	}
-	return strings.TrimSpace(sb.String())
+	return strings.TrimSpace(unwrapPasted(sb.String()))
 }
