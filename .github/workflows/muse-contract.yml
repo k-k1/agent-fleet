@@ -182,6 +182,29 @@ jobs:
             exit 1
           }
 
+      # The Console's sign-in scrape: `muse login` must still print a device URL that
+      # HandleStart accepts. No credential: the URL prints before anything is approved, under
+      # an empty staging HOME. AGENT_MUSE_BIN picks the binary installed above; the grep is
+      # load-bearing because a missing CLI must fail, and a test that did not run must not read
+      # as a pass.
+      # The code request needs the network: a CLI that exits without output is retried
+      # (3 attempts); one that keeps running with a different URL is not, so a changed URL
+      # stays red. A red from a sustained outage holds `latest` until the same version is
+      # re-run by hand (workflow_dispatch).
+      - name: the sign-in scrape still finds the device URL
+        run: |
+          set -euo pipefail
+          cd workspace/agent
+          status=0
+          AGENT_MUSE_BIN=/tmp/muse go test -tags contract ./internal/agents/muse/ \
+            -run '^TestContractMuseSignInURL$' -count=1 -v > /tmp/signin.log 2>&1 || status=$?
+          cat /tmp/signin.log
+          [ "$status" -eq 0 ] || exit "$status"
+          grep -q '^--- PASS: TestContractMuseSignInURL' /tmp/signin.log || {
+            echo '::error::the sign-in scrape contract did not run'
+            exit 1
+          }
+
   # The one write to the state issue, in a job that never runs muse: `issues: write` stays out
   # of reach of the binary the drift job executes.
   record:

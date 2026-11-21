@@ -80,6 +80,15 @@ type startReq struct {
 	ProjectID string `json:"project_id"`
 }
 
+// loginCmd is the agy TUI process HandleStart launches in loginDir under a staging HOME. The CLI
+// contract test starts the same command.
+func loginCmd(loginDir, stage string) *exec.Cmd {
+	cmd := exec.Command("agy")
+	cmd.Dir = loginDir
+	cmd.Env = Env(agents.WithHome(append(os.Environ(), "TERM=xterm-256color"), stage))
+	return cmd
+}
+
 // HandleStart launches the agy TUI, picks Google OAuth on the method selector,
 // waits for the authorize URL, and returns it with a flow_id the client uses to
 // submit the code. POST /connections/agy/start.
@@ -129,10 +138,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.Command("agy")
-	cmd.Dir = loginDir
-	cmd.Env = Env(agents.WithHome(append(os.Environ(), "TERM=xterm-256color"), stage))
-	f, err := agents.StartFlow(cmd)
+	f, err := agents.StartFlow(loginCmd(loginDir, stage))
 	if err != nil {
 		_ = os.RemoveAll(stage)
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())

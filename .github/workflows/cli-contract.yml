@@ -9,14 +9,14 @@
 #   cli, version      the manifest kind and `pinned` | `latest` | a number
 #   guard             a script run before the install: the credential guard / restore
 #   seed              a script run after the install (non-secret CLI state)
-#   test_0..test_3    the contract steps, in order, each stopping the job on failure; an empty
+#   test_0..test_4    the contract steps, in order, each stopping the job on failure; an empty
 #                     slot is skipped
 #   caps              the advisory capability-drift probe (cursor, copilot, kiro), or empty
 #   secrets           only that CLI's own secrets, by name. Never `secrets: inherit`: a step of
 #                     one CLI must not see another's credential.
 #
 # The "report only when a contract step failed" condition is kept: the failure report runs only
-# when one of contract_0..contract_3 or caps_probe concluded `failure`. A setup or credential
+# when one of contract_0..contract_4 or caps_probe concluded `failure`. A setup or credential
 # guard failure ran no test and spent no quota, so the next watcher run retries it instead of
 # holding the version until a human acts. Test and caps steps see the secrets only when the
 # caller sets tests_need_secrets (claude and copilot hand a credential to the CLI itself).
@@ -98,6 +98,18 @@ on:
         default: "contract"
       test_3_env:
         description: "KEY=VALUE lines exported before contract step 3 (data, never interpreted as shell)"
+        type: string
+        default: ""
+      test_4:
+        description: "Shell script of contract step 4; empty = no such step. Runs in workspace/agent with `bash -e`."
+        type: string
+        default: ""
+      test_4_name:
+        description: "Display name of contract step 4"
+        type: string
+        default: "contract"
+      test_4_env:
+        description: "KEY=VALUE lines exported before contract step 4 (data, never interpreted as shell)"
         type: string
         default: ""
       tests_need_secrets:
@@ -300,6 +312,20 @@ jobs:
           while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$SLOT_ENV"
           bash -e -c "$SLOT"
 
+      - name: ${{ inputs.test_4_name }}
+        id: contract_4
+        if: inputs.test_4 != ''
+        # Never handed a credential, whatever tests_need_secrets says: step 4 is the sign-in
+        # scrape contract, and the CLI under test must not see a secret meant for another step.
+        working-directory: workspace/agent
+        env:
+          SLOT: ${{ inputs.test_4 }}
+          SLOT_ENV: ${{ inputs.test_4_env }}
+        run: |
+          # shellcheck disable=SC2163 # `export "KEY=VALUE"` is the point
+          while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$SLOT_ENV"
+          bash -e -c "$SLOT"
+
       - name: post-process logs
         if: always() && inputs.post != ''
         env:
@@ -411,7 +437,7 @@ jobs:
       # (deploy/local/cli-contract-report.sh). A cancelled or timed-out run is not `failure()`,
       # so it leaves no marker and the version is retried. Only a failed contract step counts.
       - name: report failed contract for latest
-        if: failure() && (steps.contract_0.conclusion == 'failure' || steps.contract_1.conclusion == 'failure' || steps.contract_2.conclusion == 'failure' || steps.contract_3.conclusion == 'failure' || steps.caps_probe.conclusion == 'failure') && inputs.version == 'latest' && github.event_name != 'pull_request'
+        if: failure() && (steps.contract_0.conclusion == 'failure' || steps.contract_1.conclusion == 'failure' || steps.contract_2.conclusion == 'failure' || steps.contract_3.conclusion == 'failure' || steps.contract_4.conclusion == 'failure' || steps.caps_probe.conclusion == 'failure') && inputs.version == 'latest' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           EFFECTIVE: ${{ steps.cli.outputs.version }}

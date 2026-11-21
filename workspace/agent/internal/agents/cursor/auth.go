@@ -117,6 +117,14 @@ const loginFlowTTL = 10 * time.Minute
 
 var loginFlows = agents.NewFlowStore(loginFlowTTL).GuardLogins(routes.RouteCursorLogin)
 
+// loginCmd is the login process HandleStart launches under a staging HOME. The CLI contract
+// test starts the same command.
+func loginCmd(stage string) *exec.Cmd {
+	cmd := exec.Command(bin(), disableAutoUpdateFlag, "login")
+	cmd.Env = agents.WithHome(EnvWithoutCI(append(os.Environ(), "TERM=xterm-256color", "NO_OPEN_BROWSER=1")), stage) // CI is stripped (ci_env.go)
+	return cmd
+}
+
 // HandleStart launches the interactive login, scrapes the authorize URL, and
 // returns it with a flow_id the client polls. The cursor process is kept alive to
 // do the Cursor-side polling. POST /connections/cursor/start.
@@ -139,9 +147,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "stage_failed", err.Error())
 		return
 	}
-	cmd := exec.Command(bin(), disableAutoUpdateFlag, "login")
-	cmd.Env = agents.WithHome(EnvWithoutCI(append(os.Environ(), "TERM=xterm-256color", "NO_OPEN_BROWSER=1")), stage) // CI is stripped (ci_env.go)
-	f, err := agents.StartFlow(cmd)
+	f, err := agents.StartFlow(loginCmd(stage))
 	if err != nil {
 		_ = os.RemoveAll(stage)
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())

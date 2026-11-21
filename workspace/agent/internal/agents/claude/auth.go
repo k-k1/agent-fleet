@@ -37,6 +37,14 @@ var (
 	errRe = regexp.MustCompile(`OAuth error:[^\n]*`)
 )
 
+// loginCmd is the sign-in process HandleStart launches. The CLI contract test starts the same
+// command, so the arguments and environment cannot drift apart from what production runs.
+func loginCmd() *exec.Cmd {
+	cmd := exec.Command("claude", "auth", "login", "--claudeai")
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	return cmd
+}
+
 // The login's OAuth code is short-lived; don't keep orphan PTYs around.
 const flowTTL = 10 * time.Minute
 
@@ -59,9 +67,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	//
 	// The login change is recorded in HandleComplete, not here: the CLI writes nothing until a
 	// code is accepted, so a flow abandoned before then must leave the login's generation alone.
-	cmd := exec.Command("claude", "auth", "login", "--claudeai")
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-	f, err := agents.StartFlow(cmd)
+	f, err := agents.StartFlow(loginCmd())
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
