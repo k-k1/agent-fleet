@@ -15,6 +15,8 @@ export const memory = {
   "mem.ws_required_hint": "メモリの履歴はワークスペース内で管理しているため、起動中だけ操作できます。",
   "mem.start_ws": "ワークスペースを起動",
   "mem.views_label": "表示",
+  "mem.rail_head": "エージェントメモリ",
+  "mem.rail_group_forced": "開いたまま: 表示中のメモリか検索ヒットがあります",
   "mem.view_memories": "メモリ",
   "mem.view_changes": "変更",
   "mem.view_importexport": "取り込み・書き出し",

@@ -30,6 +30,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { freshLayout } from "../../layout/ops.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { setSetting } from "../../lib/settings.ts";
+import { readFileSync } from "node:fs";
 import type { MemoryListed } from "../settings/memory/memoryTypes.ts";
 
 const { t } = await import("../../lib/i18n/index.ts");
@@ -76,7 +77,8 @@ const flush = async () => {
 };
 const rows = () => Array.from(host!.querySelectorAll<HTMLButtonElement>("[data-row-key]"));
 const names = () => rows().map((r) => r.querySelector(".memrail-name")!.textContent);
-const button = (label: string) => Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === label)!;
+// The filter chips sit under the Memories head, after Proposals' own "All" toggle, so look in them.
+const button = (label: string) => Array.from(host!.querySelectorAll<HTMLButtonElement>(".memrail-chips button, button.memrail-link")).find((b) => b.textContent === label)!;
 async function setValue(el: HTMLInputElement | HTMLSelectElement, v: string) {
   await act(async () => {
     Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value")!.set!.call(el, v);
@@ -85,6 +87,7 @@ async function setValue(el: HTMLInputElement | HTMLSelectElement, v: string) {
 }
 
 beforeEach(async () => {
+  localStorage.removeItem("af.memrail-folded"); // before the first render reads it
   api.mockImplementation(async (url: string) => {
     if (url.startsWith("api/agents/memory/entries/list")) return { entries, withheld: 0 };
     if (url.startsWith("api/agents/memory/entries/member-forgotten"))
@@ -126,7 +129,7 @@ afterEach(async () => {
 
 describe("MemoryRailSection", () => {
   it("groups memories by scope, the user scope first and pinned first within it", () => {
-    const heads = Array.from(host!.querySelectorAll(".memrail-group-head")).map((h) => h.textContent);
+    const heads = Array.from(host!.querySelectorAll(".memrail-group-name")).map((h) => h.textContent);
     expect(heads).toEqual([t("mem.af_scope_user"), "app"]);
     expect(names()).toEqual(["rules", "plain", "build-cmd"]);
   });
@@ -297,5 +300,123 @@ describe("groupByScope", () => {
     const twin = { ...project, id: "twin-0123456789ab" };
     const keys = groupByScope([mem("a", { scope: "project", project }), mem("b", { scope: "project", project: twin })], "U").map(([k]) => k);
     expect(new Set(keys).size).toBe(2);
+  });
+});
+
+describe("MemoryRailSection layout (#4675)", () => {
+  const headTitles = () => Array.from(host!.querySelectorAll(".ui-section-title")).map((e) => e.textContent);
+  const groupHead = (k: string) => host!.querySelector<HTMLButtonElement>(`.memrail-group-head[data-group="${k}"]`)!;
+
+  it("titles the top section Agent memory, apart from the Memories list", () => {
+    expect(headTitles()).toEqual([t("mem.rail_head"), t("mem.view_proposals"), t("mem.view_memories")]);
+    expect(t("mem.rail_head")).not.toBe(t("rail.view.memory"));
+  });
+
+  it("keeps the search and filters inside the Memories section, not the top one", () => {
+    const sections = Array.from(host!.querySelectorAll("section.ui-section"));
+    const owner = sections.filter((s) => s.querySelector(".memrail-filter"));
+    expect(owner).toHaveLength(1);
+    expect(owner[0].querySelector(".ui-section-title")?.textContent).toBe(t("mem.view_memories"));
+    expect(sections[0].querySelector('input[type="search"]')).toBeNull();
+  });
+
+  it("renders the type as a badge, one class per known type and a neutral one otherwise", async () => {
+    const types = Array.from(host!.querySelectorAll(".memrail-type")).map((e) => e.className);
+    expect(types).toContain("memrail-type t-feedback");
+    expect(types).toContain("memrail-type t-project");
+    entries.push(mem("odd", { type: "mystery" }));
+    try {
+      await act(async () => useMemoryStore.setState({ version: 1 }));
+      await flush();
+      expect(host!.querySelector(".memrail-type.t-other")?.textContent).toBe("mystery");
+    } finally {
+      entries.pop();
+    }
+  });
+
+  it("folds a scope group, shows its count, and keeps the fold per device", async () => {
+    expect(groupHead("user").querySelector(".memrail-group-count")?.textContent).toBe("2");
+    expect(groupHead("user").getAttribute("aria-expanded")).toBe("true");
+    await act(async () => groupHead("user").click());
+    expect(groupHead("user").getAttribute("aria-expanded")).toBe("false");
+    expect(names()).toEqual(["build-cmd"]);
+    expect(JSON.parse(localStorage.getItem("af.memrail-folded")!)).toEqual({ user: true });
+    await act(async () => root!.unmount());
+    root = createRoot(host!);
+    await render(true);
+    expect(names()).toEqual(["build-cmd"]);
+    await act(async () => groupHead("user").click());
+    expect(names()).toEqual(["rules", "plain", "build-cmd"]);
+    expect(JSON.parse(localStorage.getItem("af.memrail-folded")!)).toEqual({});
+  });
+
+  it("starts open when the stored fold state is unreadable", async () => {
+    localStorage.setItem("af.memrail-folded", "{not json");
+    await act(async () => root!.unmount());
+    root = createRoot(host!);
+    await render(true);
+    expect(names()).toEqual(["rules", "plain", "build-cmd"]);
+  });
+
+  it("does not hide a folded group that holds a search hit, and counts the hits", async () => {
+    await act(async () => groupHead("user").click());
+    expect(names()).toEqual(["build-cmd"]);
+    await setValue(host!.querySelector<HTMLInputElement>('input[type="search"]')!, "plain");
+    expect(names()).toEqual(["plain"]);
+    expect(groupHead("user").getAttribute("aria-expanded")).toBe("true");
+    expect(groupHead("user").querySelector(".memrail-group-count")?.textContent).toBe("1");
+  });
+
+  it("does not hide a folded group that holds the open memory", async () => {
+    await act(async () => groupHead("project:" + project.id).click());
+    expect(names()).toEqual(["rules", "plain"]);
+    await act(async () =>
+      useLayoutStore.getState().openTarget({ content: memoryEntryContent({ scope: "project", project, name: "build-cmd" }) }),
+    );
+    expect(names()).toContain("build-cmd");
+  });
+
+  it.each([["null"], ["[1]"], ['"x"'], ['{"user":"false"}'], ['{"user":1}']])("ignores a stored fold state of the wrong shape: %s", async (raw) => {
+    localStorage.setItem("af.memrail-folded", raw);
+    await act(async () => root!.unmount());
+    root = createRoot(host!);
+    await render(true);
+    expect(names()).toEqual(["rules", "plain", "build-cmd"]);
+  });
+
+  it("drops a stale key from the stored state's effect and keeps a real fold", async () => {
+    localStorage.setItem("af.memrail-folded", JSON.stringify({ gone: true, user: true }));
+    await act(async () => root!.unmount());
+    root = createRoot(host!);
+    await render(true);
+    expect(names()).toEqual(["build-cmd"]);
+  });
+
+  it("publishes the filter block's height, again after the section is closed and reopened", async () => {
+    const body = () => host!.querySelector(".memrail-filter")!.parentElement!;
+    expect(body().style.getPropertyValue("--memrail-filter-h")).toBe("0px"); // jsdom lays nothing out
+    const toggle = () =>
+      Array.from(host!.querySelectorAll<HTMLButtonElement>("button.ui-section-toggle")).find((b) => b.textContent?.includes(t("mem.view_memories")))!;
+    await act(async () => toggle().click());
+    expect(host!.querySelector(".memrail-filter")).toBeNull();
+    await act(async () => toggle().click());
+    expect(body().style.getPropertyValue("--memrail-filter-h")).toBe("0px");
+    localStorage.removeItem("af-section-memory-list");
+  });
+
+  // jsdom has no layout, so the pinning is pinned in the stylesheet: section head, then the
+  // filter block under it, then the group heads under both, z-index descending.
+  const css = readFileSync("src/features/memory/memory-rail.css", "utf8");
+  it("pins the filter under the section head and the group heads under the filter", () => {
+    const rule = (sel: string) => css.match(new RegExp("(?:^|\\n)" + sel.replace(/[.]/g, "\\.") + " \\{([^}]*)\\}"))![1];
+    const filter = rule(".memrail-filter");
+    const head = rule(".memrail-group-head");
+    expect(filter).toMatch(/position:\s*sticky/);
+    expect(filter).toMatch(/top:\s*var\(--sec-head-h/);
+    expect(head).toMatch(/position:\s*sticky/);
+    expect(head).toMatch(/top:\s*calc\(var\(--sec-head-h[^)]*\)\s*\+\s*var\(--memrail-filter-h/);
+    const z = (r: string) => Number(r.match(/z-index:\s*(\d+)/)![1]);
+    expect(z(filter)).toBeGreaterThan(z(head));
+    expect(z(filter)).toBeLessThan(3); // .ui-section-head is 3
   });
 });

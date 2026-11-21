@@ -31,6 +31,9 @@ that wrote the Markdown file directly would skip all of that.
    - **Proposals**: the consolidator's pending proposals by default (decided / expired one click
      away), with the run state and the run button in the section head; foldable;
    - **Memories**: the filtered list, grouped by scope (user, then each project);
+   - (2026-11-21, #4675: the filter now sits under the Memories head and sticks there, the top head
+     reads "Agent memory", types are badges and each scope group folds, per device; a group holding
+     the open memory or a search hit stays open.)
    - at the foot, a link that opens the change list in the Memory pane, and `+` / overflow in the
      head (new memory, Settings > Agent memory).
 2. **Its badge is the number of pending proposals, as a waiting count.** A proposal waits on the
