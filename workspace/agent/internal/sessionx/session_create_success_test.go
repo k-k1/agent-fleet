@@ -95,6 +95,9 @@ func createSuccessCases() []createSuccessCase {
 		}},
 		{name: "tui_schedule", body: in(map[string]any{"initial_prompt": "nightly", "source": "schedule",
 			"schedule_id": "s1", "schedule_slot": "2026-10-29T03:00"})},
+		// A schedule id on a create that is not a scheduled fire is not recorded.
+		{name: "tui_schedule_id_without_schedule_origin", body: in(map[string]any{"initial_prompt": "nightly",
+			"schedule_id": "s1", "schedule_slot": "2026-10-29T03:00"})},
 		{name: "tui_ssm", body: func(p *createProbe) map[string]any {
 			return map[string]any{"kind": "ssm", "title": "box", "ssm_target": "i-0123", "ssm_profile": "dev",
 				"sso_region": "ap-northeast-1"}

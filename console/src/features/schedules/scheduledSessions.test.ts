@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Session } from "../../types/session.ts";
-import { buildScheduledRuns, waitingScheduledCount } from "./scheduledSessions.ts";
+import { buildScheduledRuns, groupRunsBySchedule, waitingScheduledCount } from "./scheduledSessions.ts";
 
 const sess = (name: string, extra: Partial<Session>): Session => ({ name, kind: "claude", alive: true, ...extra });
 
@@ -82,5 +82,19 @@ describe("buildScheduledRuns", () => {
 
   it("answers an empty list for a cycle or a vanished parent", () => {
     expect(buildScheduledRuns([sess("x", { origin: "session", originSession: "y" }), sess("y", { origin: "session", originSession: "x" })])).toEqual([]);
+  });
+});
+
+describe("groupRunsBySchedule", () => {
+  it("files runs under a listed schedule by id and leaves unknown or id-less ones in the rest", () => {
+    const runs = buildScheduledRuns([
+      sess("a2", { origin: "schedule", scheduleId: "A", createdAt: "2026-11-02T00:00:00Z" }),
+      sess("a1", { origin: "schedule", scheduleId: "A", createdAt: "2026-11-01T00:00:00Z" }),
+      sess("b", { origin: "schedule", scheduleId: "B", createdAt: "2026-11-03T00:00:00Z" }),
+      sess("none", { origin: "schedule", createdAt: "2026-11-04T00:00:00Z" }),
+    ]);
+    const g = groupRunsBySchedule(runs, new Set(["A"]));
+    expect(g.bySchedule.get("A")?.map((r) => r.root.name)).toEqual(["a2", "a1"]);
+    expect(g.rest.map((r) => r.root.name)).toEqual(["none", "b"]);
   });
 });

@@ -99,7 +99,7 @@ func wireArchivedRow(m session.Meta) session.Session {
 		Started: startedLabel(m), CreatedAt: m.CreatedAt, Branch: m.Branch,
 		Resumable: stoppedResumable(m),
 		Locked:    m.Locked, Archived: m.Archived, ArchivedAt: m.ArchivedAt,
-		Origin: session.OriginOf(m), OriginSession: m.OriginSession,
+		Origin: session.OriginOf(m), OriginSession: m.OriginSession, ScheduleID: m.ScheduleID,
 		QueueDelivery: m.QueueDelivery,
 	}
 }
@@ -158,7 +158,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		// "is this one of MY children" without reading metas off disk (ADR 0073): the MCP
 		// server's steering gate and per-parent budget, and the Console's mirror attribution
 		// for a spawned session's first turn.
-		Origin: session.OriginOf(m), OriginSession: m.OriginSession,
+		Origin: session.OriginOf(m), OriginSession: m.OriginSession, ScheduleID: m.ScheduleID,
 		Studio: m.Studio, InitialPromptState: m.InitialPromptState, InitialPromptReason: m.InitialPromptReason,
 		Moving: m.Moving, MovedTo: m.MovedTo, QueueDelivery: m.QueueDelivery,
 		// An outstanding handoff proposal is work this session has already described and

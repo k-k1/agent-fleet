@@ -1,7 +1,8 @@
 // Sessions a schedule started (origin "schedule") and the ones they spawned, as the Schedules
 // view lists them. They are in no other view: the repository tree and the Sessions list leave
-// unattended work out. A session carries no schedule id, so they are listed as a group of their
-// own, newest first, not under one schedule.
+// unattended work out. A run is listed under its schedule's row by the session's scheduleId; one
+// whose schedule is not listed (deleted, hidden by the working set) or that carries no id stays in
+// a group of its own, newest first.
 import type { Session } from "../../types/session.ts";
 import { waitsForMember } from "../autorun/runs.ts";
 import { repoInSet, sessionInSet, type WorkingSet } from "../../lib/workingSets.ts";
@@ -10,6 +11,8 @@ import type { Repo } from "../repos/store.ts";
 
 export interface ScheduledRun {
   root: Session;
+  /** The schedule that started the run ("" when the root carries none). */
+  scheduleId: string;
   /** Sessions the run spawned (origin "session" all the way up), oldest first; under a working set,
    *  only those in it. */
   children: Session[];
@@ -71,7 +74,7 @@ export function buildScheduledRuns(sessions: Session[], set: WorkingSet | null =
       // not what the set shows.
       const shown = [...(shows(root) ? [root] : []), ...children];
       const waiting = shown.some(waitsForMember);
-      return { root, children, rootShown: shows(root), waiting, live: waiting || shown.some((s) => s.alive) };
+      return { root, scheduleId: root.scheduleId || "", children, rootShown: shows(root), waiting, live: waiting || shown.some((s) => s.alive) };
     });
 }
 
@@ -83,3 +86,19 @@ export const waitingScheduledCount = (sessions: Session[], set: WorkingSet | nul
     (n, r) => n + [r.root, ...r.children].filter((s) => waitsForMember(s) && (!set || scheduledSessionInSet(set, s, repos))).length,
     0,
   );
+
+/** Splits runs (newest first, as built) into those under a listed schedule, by id, and the rest. */
+export function groupRunsBySchedule(runs: ScheduledRun[], known: ReadonlySet<string>): { bySchedule: Map<string, ScheduledRun[]>; rest: ScheduledRun[] } {
+  const bySchedule = new Map<string, ScheduledRun[]>();
+  const rest: ScheduledRun[] = [];
+  for (const r of runs) {
+    if (!r.scheduleId || !known.has(r.scheduleId)) {
+      rest.push(r);
+      continue;
+    }
+    const bucket = bySchedule.get(r.scheduleId);
+    if (bucket) bucket.push(r);
+    else bySchedule.set(r.scheduleId, [r]);
+  }
+  return { bySchedule, rest };
+}

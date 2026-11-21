@@ -29,20 +29,32 @@ export function runStopScope(run: RunRow, repos: Repo[]): { node: RepoTreeNode; 
 }
 
 /** The run's own worktree for the delete plan; null when it runs in a base clone, its copy is
- *  unknown, or the run did not create it. The run created a copy only when it is the first session
- *  that ever ran there (worktreeOwners); a member's worktree a run was later pointed at is not the
- *  run's to delete. `sessions` is the list the owner is read from. */
+ *  unknown, or the run did not create it (see createdWorktree for how that is decided). A member's
+ *  worktree a run was later pointed at is not the run's to delete. `sessions` is the list the
+ *  owner is read from. */
 export function runWorktreeNode(run: RunRow, repos: Repo[], sessions: Session[]): RepoTreeNode | null {
   const wt = createdWorktree(run, repos, sessions);
   return wt && !leavesRunSessions(wt.repo.name, sessions) ? wt : null;
 }
 
-/** The copy the run created, whatever else of the run lives elsewhere. */
+/** The copy the run created, whatever else of the run lives elsewhere. When the Agent recorded the
+ *  creating session (`createdBy`) that is the proof: only the run's root counts. A copy without the
+ *  record (made before it existed) falls back to the first session still listed there, which is a
+ *  guess (the creator may have been archived), so the delete dialog's confirmation stays the check. */
 function createdWorktree(run: RunRow, repos: Repo[], sessions: Session[]): RepoTreeNode | null {
   const folder = sessionFolder(run.root);
   const repo = repos.find((r) => r.name === folder);
   if (repo?.worktree !== true) return null;
-  if (worktreeOwners(sessions).get(folder)?.name !== run.root.name) return null;
+  if (repo.createdBy) {
+    if (repo.createdBy !== run.root.name) return null;
+    // The record can offer a copy the guess would not (a member's session that sorts first at the
+    // same timestamp). The delete dialog archives every session in the copy, so then a session of
+    // no run keeps the copy out of the offer rather than being swept up by it.
+    if (worktreeOwners(sessions).get(folder)?.name !== run.root.name) {
+      const byName = new Map(sessions.map((s) => [s.name, s]));
+      if (sessionsInFolder(sessions, folder).some((s) => runRootName(s, byName) === "")) return null;
+    }
+  } else if (worktreeOwners(sessions).get(folder)?.name !== run.root.name) return null;
   return node(repo);
 }
 

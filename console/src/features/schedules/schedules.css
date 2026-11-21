@@ -14,7 +14,10 @@
 .sched-row:last-child {
   border-bottom: none;
 }
-.sched-row.paused {
+/* A pause stops future fires: the dimming covers the schedule and its history, not the sessions
+   under it, which are running or waiting regardless. */
+.sched-row.paused > .sched-main,
+.sched-row.paused > .sched-runs {
   opacity: 0.62;
 }
 
@@ -356,6 +359,8 @@
 
 /* Sessions schedules started: one row per run, the run's spawned sessions one level under. */
 .sched-sess-group { margin-top: 8px; }
+/* Sessions a schedule started, under its row. */
+.sched-sess-under { margin: 2px 0 4px 18px; }
 .sched-sess-head { margin: 0; padding: 4px 10px; font-size: 11px; font-weight: 600; opacity: 0.7; }
 .sched-sess-list, .sched-sess-kids { list-style: none; margin: 0; padding: 0; }
 .sched-sess-kids { padding-left: 20px; }

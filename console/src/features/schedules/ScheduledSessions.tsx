@@ -49,19 +49,23 @@ function Item({ run }: { run: ScheduledRun }) {
   );
 }
 
-export function ScheduledSessions() {
-  const tr = useT();
+/** The runs the Schedules view shows, newest first, narrowed by the active working set. */
+export function useScheduledRuns(): ScheduledRun[] {
   const sessions = useSessionsStore((s) => s.sessions);
-  const [showEnded, setShowEnded] = useState(false);
   const wset = useActiveWorkingSet();
   const repos = useReposStore((s) => s.repos);
-  const runs = useMemo(() => buildScheduledRuns(sessions, wset, repos), [sessions, wset, repos]);
+  return useMemo(() => buildScheduledRuns(sessions, wset, repos), [sessions, wset, repos]);
+}
+
+/** Live runs, then the finished ones folded under "Finished N". */
+export function ScheduledRunList({ runs }: { runs: ScheduledRun[] }) {
+  const tr = useT();
+  const [showEnded, setShowEnded] = useState(false);
   if (runs.length === 0) return null;
   const live = runs.filter((r) => r.live);
   const ended = runs.filter((r) => !r.live);
   return (
-    <section className="sched-sess-group" data-sched-sessions="">
-      <h3 className="sched-sess-head">{tr("sched.sessions")}</h3>
+    <>
       <ul className="sched-sess-list">
         {live.map((r) => (
           <Item key={r.root.name} run={r} />
@@ -82,6 +86,19 @@ export function ScheduledSessions() {
           )}
         </>
       )}
+    </>
+  );
+}
+
+/** The runs that belong under no listed schedule: a deleted or hidden one, or a session that
+ *  carries no schedule id. */
+export function ScheduledSessions({ runs }: { runs: ScheduledRun[] }) {
+  const tr = useT();
+  if (runs.length === 0) return null;
+  return (
+    <section className="sched-sess-group" data-sched-sessions="">
+      <h3 className="sched-sess-head">{tr("sched.sessions")}</h3>
+      <ScheduledRunList runs={runs} />
     </section>
   );
 }

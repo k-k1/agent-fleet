@@ -160,6 +160,8 @@ describe("SchedulesSection scheduled sessions", () => {
     scheduleList.mockResolvedValue([sched]);
     await render();
     const row = (n: string) => host.querySelector(`[data-sched-session="${n}"]`);
+    // No schedule id: the group of their own, not under a row.
+    expect(host.querySelector("[data-sched-sessions]")?.contains(row("cron-live"))).toBe(true);
     expect(row("cron-live")?.querySelectorAll(".sched-sess-kids li")).toHaveLength(1);
     expect(row("cron-old")).toBeNull();
     expect(row("mine")).toBeNull();
@@ -197,6 +199,145 @@ describe("SchedulesSection scheduled sessions under a working set", () => {
       deleteWorkingSet(id);
       useSessionsStore.setState({ sessions: [] });
       useReposStore.setState({ repos: [] });
+    }
+  });
+});
+
+describe("SchedulesSection scheduled sessions under their schedule", () => {
+  it("lists a run under the row of the schedule that started it, and the rest in the group", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    const s = (name: string, extra: Record<string, unknown>) => ({ name, title: name, kind: "claude", alive: true, ...extra });
+    useSessionsStore.setState({
+      sessions: [
+        s("mine-run", { origin: "schedule", scheduleId: sched.id, createdAt: "2026-11-02T00:00:00Z" }),
+        s("mine-kid", { origin: "session", originSession: "mine-run", createdAt: "2026-11-02T01:00:00Z" }),
+        s("gone-run", { origin: "schedule", scheduleId: "deleted", createdAt: "2026-11-02T02:00:00Z" }),
+        s("old-run", { origin: "schedule", createdAt: "2026-11-01T00:00:00Z" }),
+      ] as never,
+    });
+    scheduleList.mockResolvedValue([sched]);
+    await render();
+    const under = host.querySelector(`[data-sched-sessions-of="${sched.id}"]`);
+    expect(under?.querySelector('[data-sched-session="mine-run"]')?.querySelectorAll(".sched-sess-kids li")).toHaveLength(1);
+    expect(under?.querySelector('[data-sched-session="gone-run"]')).toBeNull();
+    // A deleted schedule's run and one without an id keep the group of their own.
+    const group = host.querySelector("[data-sched-sessions]");
+    expect(group?.querySelector('[data-sched-session="gone-run"]')).not.toBeNull();
+    expect(group?.querySelector('[data-sched-session="old-run"]')).not.toBeNull();
+    expect(group?.querySelector('[data-sched-session="mine-run"]')).toBeNull();
+    useSessionsStore.setState({ sessions: [] });
+  });
+});
+
+describe("SchedulesSection scheduled sessions before the schedule list has loaded", () => {
+  const s = (name: string, extra: Record<string, unknown>) => ({ name, title: name, kind: "claude", alive: true, ...extra });
+  const seed = async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({
+      sessions: [
+        s("mine-run", { origin: "schedule", scheduleId: sched.id, createdAt: "2026-11-02T00:00:00Z" }),
+        s("old-run", { origin: "schedule", createdAt: "2026-11-01T00:00:00Z" }),
+      ] as never,
+    });
+    return useSessionsStore;
+  };
+
+  it("holds back a run that names a schedule until the list settles, then files it under its row without a group flash", async () => {
+    const store = await seed();
+    let resolve: (v: unknown) => void = () => {};
+    scheduleList.mockReturnValue(new Promise((r) => (resolve = r)));
+    await render();
+    const group = () => host.querySelector("[data-sched-sessions]");
+    expect(host.querySelector('[data-sched-session="mine-run"]')).toBeNull();
+    expect(group()?.querySelector('[data-sched-session="old-run"]')).not.toBeNull();
+    await act(async () => resolve([sched]));
+    await act(async () => {});
+    expect(host.querySelector(`[data-sched-sessions-of="${sched.id}"] [data-sched-session="mine-run"]`)).not.toBeNull();
+    expect(group()?.querySelector('[data-sched-session="mine-run"]')).toBeNull();
+    store.setState({ sessions: [] });
+  });
+
+  it("shows the run in the group when the first read fails", async () => {
+    const store = await seed();
+    scheduleList.mockResolvedValue({ error: { code: "http_502", message: "bad gateway" } });
+    await render();
+    expect(host.querySelector("[data-sched-sessions]")?.querySelector('[data-sched-session="mine-run"]')).not.toBeNull();
+    store.setState({ sessions: [] });
+  });
+
+  it("ends the wait when the first read never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = await seed();
+      scheduleList.mockReturnValue(new Promise(() => {}));
+      await render();
+      expect(host.querySelector('[data-sched-session="mine-run"]')).toBeNull();
+      await act(async () => {
+        vi.advanceTimersByTime(6000);
+      });
+      expect(host.querySelector("[data-sched-sessions]")?.querySelector('[data-sched-session="mine-run"]')).not.toBeNull();
+      store.setState({ sessions: [] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let another tenant's failed read end this tenant's wait", async () => {
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    const store = await seed();
+    scheduleList.mockResolvedValue({ error: { code: "http_502", message: "bad gateway" } });
+    await act(async () => useTenantStore.setState({ tenant: "A" } as never));
+    await render();
+    expect(host.querySelector('[data-sched-session="mine-run"]')).not.toBeNull(); // A failed: shown in the group
+    scheduleList.mockReturnValue(new Promise(() => {}));
+    await act(async () => useTenantStore.setState({ tenant: "B" } as never));
+    await act(async () => {});
+    expect(host.querySelector('[data-sched-session="mine-run"]')).toBeNull(); // B is still reading
+    store.setState({ sessions: [] });
+    await act(async () => useTenantStore.setState({ tenant: "" } as never));
+  });
+
+  it("waits again for a first read when the member returns to a tenant after another one expired", async () => {
+    vi.useFakeTimers();
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    try {
+      const store = await seed();
+      scheduleList.mockResolvedValue([sched]);
+      await act(async () => useTenantStore.setState({ tenant: "A" } as never));
+      await render();
+      await act(async () => {
+        vi.advanceTimersByTime(6000); // A's own wait expires
+      });
+      scheduleList.mockResolvedValue([{ ...sched, id: "sch_other" }]); // B lists another schedule
+      await act(async () => useTenantStore.setState({ tenant: "B" } as never));
+      await act(async () => {});
+      scheduleList.mockReturnValue(new Promise(() => {}));
+      await act(async () => useTenantStore.setState({ tenant: "A" } as never));
+      await act(async () => {});
+      expect(host.querySelector("[data-sched-sessions]")?.querySelector('[data-sched-session="mine-run"]') ?? null).toBeNull(); // A is reading again
+      store.setState({ sessions: [] });
+    } finally {
+      vi.useRealTimers();
+      await act(async () => useTenantStore.setState({ tenant: "" } as never));
+    }
+  });
+
+  it("waits again when the member returns to a tenant whose first read had failed", async () => {
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    try {
+      const store = await seed();
+      scheduleList.mockResolvedValue({ error: { code: "http_502", message: "bad gateway" } });
+      await act(async () => useTenantStore.setState({ tenant: "A" } as never));
+      await render();
+      expect(host.querySelector('[data-sched-session="mine-run"]')).not.toBeNull(); // A failed: shown in the group
+      scheduleList.mockReturnValue(new Promise(() => {})); // B and the second A never answer
+      await act(async () => useTenantStore.setState({ tenant: "B" } as never));
+      await act(async () => useTenantStore.setState({ tenant: "A" } as never));
+      await act(async () => {});
+      expect(host.querySelector("[data-sched-sessions]")?.querySelector('[data-sched-session="mine-run"]') ?? null).toBeNull();
+      store.setState({ sessions: [] });
+    } finally {
+      await act(async () => useTenantStore.setState({ tenant: "" } as never));
     }
   });
 });

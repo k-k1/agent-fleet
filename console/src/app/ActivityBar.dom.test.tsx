@@ -198,6 +198,16 @@ describe("ActivityBar auto-run view", () => {
     expect(badge("autorun")).toBeNull();
   });
 
+  it("lets the waiting count win over an unacknowledged failure, which shows once the count clears", async () => {
+    useSessionsStore.setState({ sessions: [run("a", "question"), run("b", "working", { alive: false })] });
+    served([["a", dlv("d1", "open")], ["b", dlv("d2", "closed", "clean", "turn-failed")]]);
+    await mount();
+    expect(badge("autorun")?.dataset.badge).toBe("waiting");
+    expect(badge("autorun")?.textContent).toBe("1");
+    await act(async () => useSessionsStore.setState({ sessions: [run("a", "working"), run("b", "working", { alive: false })] }));
+    expect(badge("autorun")?.dataset.badge).toBe("failed");
+  });
+
   it("shows no failed dot before the runs have been read", async () => {
     useSessionsStore.setState({ sessions: [run("a", "working", { alive: false })] });
     served([["a", dlv("d1", "closed", "clean", "turn-failed")]], false);
@@ -231,6 +241,15 @@ describe("ActivityBar auto-run view", () => {
     useSessionsStore.setState({ sessions: [run("cron", "working", { origin: "schedule", alive: false, carried: "question" })] });
     await mount();
     expect(badge("schedules")?.textContent).toBe("1");
+  });
+
+  it("lets a scheduled run's waiting count win over an unacknowledged failure, which shows once the count clears", async () => {
+    useSchedulesStore.setState({ failed: ["s1@2026-01-01T00:00:00Z"], failedAll: ["s1@2026-01-01T00:00:00Z"] });
+    useSessionsStore.setState({ sessions: [run("cron", "question", { origin: "schedule" })] });
+    await mount();
+    expect(badge("schedules")?.dataset.badge).toBe("waiting");
+    await act(async () => useSessionsStore.setState({ sessions: [] }));
+    expect(badge("schedules")?.dataset.badge).toBe("failed");
   });
 
   it("counts a scheduled run's waiting session on the Schedules icon", async () => {

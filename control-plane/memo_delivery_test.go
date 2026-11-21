@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1386,6 +1387,57 @@ func TestMemoDeliveryListWire(t *testing.T) {
 		list = decode[[]memoDeliveryDTO](t, e.do("a", "GET", "/api/memo-queues/"+q+"/deliveries?include=open", nil))
 		if len(list) != memoDeliveryListMax+1 || list[0].ID != d2.ID || list[len(list)-1].ID != old.ID {
 			t.Fatalf("include=open: %d rows, first %s, last %s", len(list), list[0].ID, list[len(list)-1].ID)
+		}
+		// A run that closes after it left the newest fifty is read back by closed_since, and only
+		// by it. Another old run stays open the whole time and must come with it, so the open runs
+		// are not tied to the closed part.
+		stillOpenAt := store.DeliveryTS(time.Now().Add(-900 * time.Hour))
+		stillOpen := store.MemoDelivery{ID: store.NewID(), QueueID: q, State: store.DeliveryOpen, CreatedAt: stillOpenAt, UpdatedAt: stillOpenAt}
+		closedTime := time.Now().Add(-500 * time.Hour).UTC().Truncate(time.Microsecond)
+		closedAt := store.DeliveryTS(closedTime)
+		if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+			if err := tx.InsertDelivery(stillOpen); err != nil {
+				return err
+			}
+			_, err := tx.MoveDelivery(old.ID, store.DeliveryOpen, store.DeliveryClosed, "", store.DeliveryClean, closedAt)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		has := func(path, id string) bool {
+			for _, d := range decode[[]memoDeliveryDTO](t, e.do("a", "GET", path, nil)) {
+				if d.ID == id {
+					return true
+				}
+			}
+			return false
+		}
+		base := "/api/memo-queues/" + q + "/deliveries"
+		since := func(at time.Time) string {
+			return base + "?closed_since=" + url.QueryEscape(at.Format(time.RFC3339Nano))
+		}
+		if has(base+"?include=open", old.ID) {
+			t.Fatal("a closed run outside the newest fifty is in include=open")
+		}
+		// The bound is inclusive to the microsecond; a bound between two stamps rounds up.
+		for _, c := range []struct {
+			at   time.Time
+			want bool
+		}{{closedTime.Add(-time.Hour), true}, {closedTime, true}, {closedTime.Add(time.Nanosecond), false}, {closedTime.Add(time.Microsecond), false}} {
+			if got := has(since(c.at), old.ID); got != c.want {
+				t.Fatalf("closed_since %s: closed run listed %v, want %v", c.at.Format(time.RFC3339Nano), got, c.want)
+			}
+			if !has(since(c.at), stillOpen.ID) {
+				t.Fatalf("closed_since %s lost an open run", c.at.Format(time.RFC3339Nano))
+			}
+		}
+		for _, bad := range []string{"closed_since=yesterday", "closed_since=", "closed_since=9999-12-31T23:59:59.999999999Z", "closed_since=9999-12-31T23:59:59-01:00"} {
+			if rec := e.do("a", "GET", base+"?"+bad, nil); rec.Code != http.StatusBadRequest {
+				t.Fatalf("%s: %d", bad, rec.Code)
+			}
+		}
+		if rec := e.do("c", "GET", since(closedTime.Add(-time.Hour)), nil); strings.TrimSpace(rec.Body.String()) != "[]" {
+			t.Fatalf("another member's closed_since list: %s", rec.Body.String())
 		}
 		// Another member sees none of it, with or without the parameter.
 		if rec := e.do("c", "GET", "/api/memo-queues/"+q+"/deliveries?include=open", nil); strings.TrimSpace(rec.Body.String()) != "[]" {

@@ -31,16 +31,18 @@ import (
 // No env injection or token storage is needed — claude owns the credentials file.
 
 var (
-	urlRe = regexp.MustCompile(`https://claude\.com/cai/oauth/authorize\?\S+`)
+	// The Console opens this URL for the user, so the host and path are pinned: only the CLI's
+	// two authorize endpoints match, never an arbitrary URL.
+	urlRe = regexp.MustCompile(`https://claude\.(?:com/cai|ai)/oauth/authorize\?\S+`)
 	errRe = regexp.MustCompile(`OAuth error:[^\n]*`)
 )
 
-// setup-token's OAuth code is short-lived; don't keep orphan PTYs around.
+// The login's OAuth code is short-lived; don't keep orphan PTYs around.
 const flowTTL = 10 * time.Minute
 
 var flows = agents.NewFlowStore(flowTTL).GuardLogins(routes.RouteAnthropicSubscription)
 
-// HandleStart launches setup-token, waits for the authorize URL, and
+// HandleStart launches `claude auth login --claudeai`, waits for the authorize URL, and
 // returns it with a flow_id the client uses to submit the code. It does not sign out an existing
 // login: re-authentication runs this over it, and the old credentials stay in use until the new
 // sign-in completes.
@@ -53,7 +55,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	flows.Reap()
 	// Real subscription login (writes .credentials.json with a refresh token).
 	// CLAUDE_CONFIG_DIR is inherited from os.Environ() so creds land where sessions
-	// read them. Same authorize URL as setup-token (claude.com/cai/oauth/authorize).
+	// read them.
 	//
 	// The login change is recorded in HandleComplete, not here: the CLI writes nothing until a
 	// code is accepted, so a flow abandoned before then must leave the login's generation alone.
@@ -68,7 +70,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	url := f.WaitForURL(urlRe, 20*time.Second)
 	if url == "" {
 		f.Close()
-		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "setup-token did not emit an authorize URL")
+		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "claude auth login did not emit an authorize URL")
 		return
 	}
 	id := flows.Put(f)
