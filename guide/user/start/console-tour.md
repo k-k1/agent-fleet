@@ -66,14 +66,16 @@ The icons in the upper group choose the view the left pane shows. Hover over an 
 | Mark | Meaning |
 |---|---|
 | Amber number on Sessions | Sessions waiting for your answer. It stays until you answer |
-| Blue dot on Sessions or Assistants | Something there is unread |
-| Blue number on Issue tracker | Issues or pull requests that moved since you last opened the view |
+| Red dot on Sessions or Assistants | Something there is unread |
+| Amber number on Shared sessions | Handoffs waiting for your decision |
+| Red number on Issue tracker | Issues or pull requests that moved since you last opened the view |
 | Red dot on Schedules | The latest run of a schedule failed |
 | Amber number on Schedules | Sessions a schedule started that wait for your answer |
 | Amber number on Auto-run | Runs whose session waits for your answer. It stays until you answer |
 | Red dot on Auto-run | A run ended as failed. It clears when you open the view |
 | Amber number on Memo queue | Memos waiting for your approval in an auto-run category. It stays until you approve or delete them ([Run memos automatically](../chat/memo-auto-run.md#approve)) |
 | Amber number on Memory | Memory suggestions waiting for your decision. It stays until you approve or reject them |
+| Small sparkle at the lower right of the icon | The view lists sessions: Sessions, Shared sessions, Auto-run and Schedules. It is part of the icon and not a notice |
 
 The other icons open a pane in the main area and leave the left pane as it is: **Home** at the top, and
 **Sessions overview**, **Images** and **Open generated images** at the foot. Images appears only where the deployment
