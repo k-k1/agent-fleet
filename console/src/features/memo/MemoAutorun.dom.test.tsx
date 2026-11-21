@@ -407,22 +407,39 @@ describe("the release card", () => {
 describe("the settings dialog", () => {
   const openSettings = async () => click(byLabel(t("memo.autorun_settings")));
 
-  it("disables the gear with the reason while the tenant blocks new setups", async () => {
+  const gearByReason = (reason: string) => must(document.querySelector<HTMLButtonElement>(`.memo-cat-act[aria-label="${reason}"]`), "gear");
+
+  it("marks the gear unavailable with the reason while the tenant blocks new setups", async () => {
     servedQueues = { tenantEnabled: false, queues: [] };
     servedCats = [aCat({})];
     await render();
-    const gear = byLabel(t("memo.autorun_settings")) as HTMLButtonElement;
-    expect(gear.disabled).toBe(true);
+    const gear = gearByReason(t("memo.q_tenant_off"));
+    // Not natively disabled: it must stay focusable so the reason reaches keyboard users.
+    expect(gear.disabled).toBe(false);
+    expect(gear.getAttribute("aria-disabled")).toBe("true");
     expect(gear.title).toBe(t("memo.q_tenant_off"));
+    const head = must(document.querySelector(".memo-cat-head"), "head");
+    const expanded = head.querySelector("[aria-expanded]")?.getAttribute("aria-expanded");
+    await click(gear);
+    expect(document.querySelector("[role=dialog]")).toBeNull();
+    expect(head.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")).toBe(expanded);
   });
 
-  it("keeps the gear enabled when the tenant allows auto-run", async () => {
+  it("keeps the gear available when the tenant allows auto-run", async () => {
     servedQueues = { tenantEnabled: true, queues: [] };
     servedCats = [aCat({})];
     await render();
-    const gear = byLabel(t("memo.autorun_settings")) as HTMLButtonElement;
-    expect(gear.disabled).toBe(false);
+    const gear = byLabel(t("memo.autorun_settings"));
+    expect(gear.getAttribute("aria-disabled")).toBeNull();
     expect(gear.title).toBe(t("memo.autorun_settings"));
+  });
+
+  it("does not claim the tenant blocks auto-run when the first settings read failed", async () => {
+    queuesFail = true;
+    servedCats = [aCat({})];
+    await render();
+    const gear = byLabel(t("memo.autorun_settings"));
+    expect(gear.getAttribute("aria-disabled")).toBeNull();
   });
 
   it("still lets an existing setting be removed while the switch is off", async () => {

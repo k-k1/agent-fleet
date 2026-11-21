@@ -229,6 +229,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // tenant's administrator has not allowed new settings.
   const [queues, setQueues] = useState<MemoQueue[]>([]);
   const [tenantEnabled, setTenantEnabled] = useState(false);
+  // False until a settings read has succeeded: tenantEnabled's initial false is "not read yet",
+  // not "the administrator said no", so the gear is never blocked on it.
+  const [tenantKnown, setTenantKnown] = useState(false);
   const lastQueues = useRef<{ tenantEnabled: boolean; queues: MemoQueue[] }>({ tenantEnabled: false, queues: [] });
   // The dialogs hold a category id, never a copy of the category or its settings: each render
   // looks the live row up, so a poll that renames or removes it is seen by the dialog.
@@ -280,7 +283,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           useMemoStore.getState().publish(marr, ticket, scope);
           // A failed settings read (an older Control Plane, an error body) keeps the last good
           // one; it never takes the memo list down with it.
-          const qw = readMemoQueues(qRaw) ?? lastQueues.current;
+          const fresh = readMemoQueues(qRaw);
+          if (fresh) setTenantKnown(true);
+          const qw = fresh ?? lastQueues.current;
           lastQueues.current = qw;
           setMemosTenant(tenant ?? "");
           const ser = JSON.stringify([marr, carr, qw]);
@@ -1195,16 +1200,23 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                         {cat && (() => {
                           // A category that already is a queue stays openable while the tenant blocks
                           // new setups: the dialog still lets the member remove it.
-                          const settingsBlocked = !tenantEnabled && !isQueue;
+                          const settingsBlocked = tenantKnown && !tenantEnabled && !isQueue;
                           return (
                           <button
                             type="button"
                             className="memo-cat-act"
                             title={settingsBlocked ? tr("memo.q_tenant_off") : tr("memo.autorun_settings")}
-                            aria-label={tr("memo.autorun_settings")}
-                            disabled={settingsBlocked}
+                            aria-label={settingsBlocked ? tr("memo.q_tenant_off") : tr("memo.autorun_settings")}
+                            // aria-disabled, not disabled: a native disabled button cannot take focus
+                            // (the reason would be unreachable by keyboard) and swallows the click,
+                            // which would then fall through to the header and fold the category.
+                            aria-disabled={settingsBlocked || undefined}
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (settingsBlocked) {
+                                toast(tr("memo.q_tenant_off"), { kind: "warn" });
+                                return;
+                              }
                               setSettingsFor(cat.id);
                             }}
                           >
