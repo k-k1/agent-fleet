@@ -120,9 +120,9 @@ describe("a row with a reference", () => {
   it("shows the key as a link to the item with the member's note below it", async () => {
     servedMemos = [aMemo({ reference: ref })];
     await renderSection();
-    expect(link()?.textContent).toBe("acme/app#12");
-    expect(link()?.getAttribute("href")).toBe(ref.url);
-    expect(link()?.getAttribute("target")).toBe("_blank");
+    // In the memo queue the key opens the in-app modal, cached or not.
+    expect(keyButton()?.textContent).toBe("acme/app#12");
+    expect(link()).toBeNull();
     expect(row().querySelector(".memo-reflink-mark .codicon-issues")).not.toBeNull();
     const html = row().innerHTML;
     expect(html.indexOf("memo-reflink")).toBeLessThan(html.indexOf("my note"));
@@ -153,11 +153,26 @@ describe("a row with a reference", () => {
     openDetail.mockRestore();
   });
 
-  it("keeps the external link when the item is not cached", async () => {
+  it("opens the in-app modal by key from an uncached item, as a reference stand-in", async () => {
     servedMemos = [aMemo({ reference: ref })];
     await renderSection();
+    expect(link()).toBeNull();
+    const openDetail = vi.spyOn(useWorkItemModal.getState(), "openDetail").mockImplementation(() => {});
+    await click(keyButton()!);
+    expect(openDetail).toHaveBeenCalledTimes(1);
+    expect((openDetail.mock.calls[0][0] as WorkItem).key).toBe("acme/app#12");
+    expect((openDetail.mock.calls[0][0] as WorkItem).url).toBe(ref.url);
+    expect(openDetail.mock.calls[0][1]).toEqual({ reference: true });
+    expect(row().classList.contains("exp")).toBe(false);
+    openDetail.mockRestore();
+  });
+
+  it("keeps an external link, marked as external, for a provider the modal does not know", async () => {
+    servedMemos = [aMemo({ reference: { provider: "gitlab", key: "a/b#1", url: "https://example.com/a/b/-/issues/1" } })];
+    await renderSection();
     expect(keyButton()).toBeNull();
-    expect(link()?.getAttribute("href")).toBe(ref.url);
+    expect(link()?.getAttribute("href")).toBe("https://example.com/a/b/-/issues/1");
+    expect(link()?.querySelector(".codicon-link-external")).not.toBeNull();
   });
 
   it("keeps state and producer below the body for a note without a reference, and for a file note", async () => {
@@ -209,7 +224,7 @@ describe("a row with a reference", () => {
     servedMemos = [aMemo({ body: "", reference: ref })];
     await renderSection();
     expect(document.querySelectorAll(".memo-row")).toHaveLength(1);
-    expect(link()?.textContent).toBe("acme/app#12");
+    expect(keyButton()?.textContent).toBe("acme/app#12");
     expect(row().querySelector(".memo-text")).toBeNull();
   });
 

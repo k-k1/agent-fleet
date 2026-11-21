@@ -1154,6 +1154,10 @@
 .memo-reflink .memo-qmeta {
   margin-top: 0;
 }
+.memo-reflink-ext {
+  margin-left: 3px;
+  font-size: 11px;
+}
 button.memo-reflink-key {
   padding: 0;
   border: 0;
