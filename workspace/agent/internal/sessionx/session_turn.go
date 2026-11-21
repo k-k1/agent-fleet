@@ -47,7 +47,7 @@ var managedDrivers = map[string]agents.Driver{
 // switch to Terminal (switch_guard.go).
 func driverOf(m session.Meta) (agents.Driver, bool) {
 	d, ok := managedDrivers[m.Kind]
-	if ok && m.Kind == session.KindCodex {
+	if ok && terminalSwitchNeedsStopped(m.Kind) {
 		return switchGuardedDriver{d}, true
 	}
 	return d, ok

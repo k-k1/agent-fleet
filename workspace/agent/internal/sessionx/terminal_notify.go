@@ -3,6 +3,7 @@ package sessionx
 import (
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/oscnotify"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -23,17 +24,14 @@ const (
 	terminalNotifyBurstWindow = time.Minute
 )
 
-// terminalNotifyHasHooks lists the kinds whose attention events (answer-ready,
+// terminalNotifyHasHooks reports whether the kind's attention events (answer-ready,
 // question, permission) already reach the outbox through structured hooks
 // (RunSessionStatusHook). An OSC notification from one of them reports the same
 // moment a second time, so it is dropped — the same rule cmux applies to panes
 // with a hook-integrated agent.
 func terminalNotifyHasHooks(kind string) bool {
-	switch kind {
-	case session.KindClaude, session.KindCodex, session.KindOpencode:
-		return true
-	}
-	return false
+	h, ok := AgentOf(kind).(agents.AttentionHooker)
+	return ok && h.AttentionViaHooks()
 }
 
 // terminalNotifyText is what the repeat filter compares: the text, not the sequence

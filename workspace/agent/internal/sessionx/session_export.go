@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -51,9 +51,8 @@ func HandleSessionExport(w http.ResponseWriter, r *http.Request) {
 // question the agent is still waiting on is held apart from the turns (TranscriptData.Pending)
 // so the mirror can render it as a live card; the file appends it, since it was asked.
 func exportTurns(m session.Meta) []transcript.Turn {
-	if m.Kind == session.KindClaude {
-		lines, _, _ := claude.TranscriptRead(session.UUID(m.Dir, m.Name))
-		return claude.CollectAllTurns(lines)
+	if r, ok := AgentOf(m.Kind).(agents.FullTranscriptReader); ok {
+		return r.FullTurns(m)
 	}
 	td, ok := AgentOf(m.Kind).Transcript(m)
 	if !ok {

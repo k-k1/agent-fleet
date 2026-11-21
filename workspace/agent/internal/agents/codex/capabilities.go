@@ -157,3 +157,6 @@ func (agentImpl) ModelRetirement(id string) (agents.ModelRetiring, bool) { retur
 
 // ChatFallbackModel is agents.ChatFallbackModeler.
 func (agentImpl) ChatFallbackModel() string { return modelfallback.ChatCodex }
+
+// AttentionViaHooks is agents.AttentionHooker.
+func (agentImpl) AttentionViaHooks() bool { return true }
