@@ -3,8 +3,12 @@ package claude
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // buildProgram must emit the official fork command on a fork's FIRST launch
@@ -270,10 +274,58 @@ func TestBuildProgramPermissionModeDetection(t *testing.T) {
 	if !strings.Contains(got, " --permission-mode default") {
 		t.Errorf("a label containing the flag text suppressed the default: %q", got)
 	}
-	for _, f := range []string{"--permission-mode=acceptEdits", "--verbose\t--permission-mode\tacceptEdits"} {
+	for _, f := range []string{"--permission-mode=acceptEdits", "--verbose\t--permission-mode\tacceptEdits", "'--permission-mode' acceptEdits"} {
 		t.Setenv("AGENT_CLAUDE_FLAGS", f)
 		if got := buildProgram("bb000000-0000-4000-8000-0000000000new", "", "", "", "", "", false); strings.Contains(got, "--permission-mode default") {
 			t.Errorf("AGENT_CLAUDE_FLAGS %q was overridden: %q", f, got)
 		}
+	}
+}
+
+// A quoted value of another flag that holds the text is not an explicit mode.
+func TestBuildProgramPermissionModeQuotedValueIsNotAFlag(t *testing.T) {
+	isolateSlot(t)
+	t.Setenv("AGENT_SESSION_CMD", "")
+	t.Setenv("AGENT_CLAUDE_FLAGS", `--name "調査 --permission-mode auto"`)
+	got := buildProgram("bb000000-0000-4000-8000-0000000000new", "", "", "", "", "", false)
+	if !strings.Contains(got, " --permission-mode default") {
+		t.Errorf("a quoted --name value suppressed the default: %q", got)
+	}
+}
+
+// The production wiring: BuildLaunch computes pointFork before MaterializeForkAt writes the
+// branch transcript, so the first launch of a prompts-on point fork starts in manual mode and
+// the next launch (a plain resume of that transcript) does not.
+func TestBuildLaunchPointForkStartsManualOnlyOnce(t *testing.T) {
+	cfg := isolateSlot(t)
+	dir := t.TempDir()
+	const srcSid = "11111111-1111-4111-8111-111111111111"
+	var buf strings.Builder
+	for _, ln := range convo(t) {
+		buf.Write(ln)
+		buf.WriteByte('\n')
+	}
+	pdir := filepath.Join(cfg, "projects", "-tmp-x")
+	if err := os.MkdirAll(pdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pdir, srcSid+".jsonl"), []byte(buf.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	m := session.Meta{Kind: session.KindClaude, Name: "pf-mode", Dir: dir, ForkFrom: srcSid, ForkAt: "u2", SkipPermissions: &off}
+	first, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})
+	if err != nil {
+		t.Fatalf("first launch: %v", err)
+	}
+	if !strings.Contains(first.Program, "--permission-mode default") {
+		t.Errorf("first point-fork launch must start in manual mode: %q", first.Program)
+	}
+	second, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})
+	if err != nil {
+		t.Fatalf("second launch: %v", err)
+	}
+	if !strings.Contains(second.Program, "claude --resume ") || strings.Contains(second.Program, "--permission-mode default") {
+		t.Errorf("a later launch must be a plain resume keeping the recorded mode: %q", second.Program)
 	}
 }

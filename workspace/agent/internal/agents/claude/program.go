@@ -529,7 +529,9 @@ func resumablePaths(paths []string) bool {
 // `--permission-mode X` or `--permission-mode=X`. Only whole whitespace-delimited tokens count, so
 // a quoted value that merely contains the text (a --name) does not.
 func hasPermissionModeFlag(flags string) bool {
-	for _, tok := range strings.Fields(flags) {
+	// shellSplit reads the quoting the shell would, so a quoted value that holds the text is not a
+	// flag and a quoted flag is. An unterminated quote yields nil: treated as no explicit mode.
+	for _, tok := range shellSplit(flags) {
 		if tok == "--permission-mode" || strings.HasPrefix(tok, "--permission-mode=") {
 			return true
 		}
