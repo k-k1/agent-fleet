@@ -162,6 +162,12 @@ func (e Env) pathVersion(name string, args ...string) string {
 
 func (e Env) selfUpdateNPM() {
 	e.npmRecoverAside()
+	if _, err := os.Lstat(e.npmMarker()); err == nil {
+		// Recovery could not settle the earlier update's backups: starting another one would
+		// overwrite their record. The installed copies stay.
+		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update skipped (an earlier update's backups are not settled yet)")
+		return
+	}
 	prefixed, lsOK := e.npmLs()
 	need := !lsOK // an `npm ls` that failed cannot vouch for the tree: update
 	for _, c := range npmCLIs {

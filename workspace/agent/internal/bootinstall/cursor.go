@@ -511,12 +511,24 @@ func (e Env) cursorSweepStale() {
 	}
 	// Trees the launchers point at now are never swept, whatever their names look like.
 	live := map[string]bool{}
+	realVersions, rerr := filepath.EvalSymlinks(versions)
 	for _, l := range []string{filepath.Join(e.localBin(), cursorTool), filepath.Join(e.localBin(), "agent")} {
-		if t, err := os.Readlink(l); err == nil {
-			if !filepath.IsAbs(t) {
-				t = filepath.Join(filepath.Dir(l), t)
-			}
-			if d := filepath.Dir(filepath.Clean(t)); filepath.Dir(d) == filepath.Clean(versions) {
+		t, err := os.Readlink(l)
+		if err != nil {
+			continue
+		}
+		if !filepath.IsAbs(t) {
+			t = filepath.Join(filepath.Dir(l), t)
+		}
+		// By the link's own spelling, and by where the chain really ends (versions may itself be
+		// a link to another volume).
+		cands := []string{filepath.Clean(t)}
+		if r, err := filepath.EvalSymlinks(l); err == nil {
+			cands = append(cands, r)
+		}
+		for _, c := range cands {
+			d := filepath.Dir(c)
+			if pd := filepath.Dir(d); pd == filepath.Clean(versions) || (rerr == nil && pd == realVersions) {
 				live[filepath.Base(d)] = true
 			}
 		}

@@ -449,6 +449,59 @@ func TestCursorSweepStaleSparesATreeALauncherPointsAt(t *testing.T) {
 	}
 }
 
+func TestCursorSweepStaleSparesALiveTreeBehindALinkedVersionsDir(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	other := t.TempDir() // "another volume"
+	share := filepath.Join(f.home, ".local", "share", "cursor-agent")
+	if err := os.MkdirAll(share, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, filepath.Join(share, "versions")); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(other, "1.0.0.af-old.7")
+	f.write(t, filepath.Join(live, "cursor-agent"), "#!/bin/sh\necho live\n")
+	f.write(t, filepath.Join(other, "1.0.0", "cursor-agent"), "#!/bin/sh\necho plain\n")
+	if err := os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(live, "cursor-agent"), f.local("cursor-agent")); err != nil { // the physical path
+		t.Fatal(err)
+	}
+	f.env.cursorSweepStale()
+	if out, _, err := f.env.probeArgs(f.local("cursor-agent"), nil, nil); err != nil || out != "live" {
+		t.Fatalf("the live tree was swept: %q %v", out, err)
+	}
+}
+
+func TestSelfUpdateNPMSkipsWhileAnEarlierUpdateIsUnsettled(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	bak := tree + npmBakSuffix
+	f.write(t, filepath.Join(bak, "VERSION"), "1.0.0")
+	f.write(t, f.env.npmMarker(), "accepted\n"+tree+"\n")
+	parent := filepath.Dir(bak)
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	f.env.selfUpdateNPM()
+	if got := f.read(f.env.npmMarker()); got != "accepted\n"+tree+"\n" {
+		t.Fatalf("marker rewritten: %q", got)
+	}
+	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
+		t.Fatal("npm ran over unsettled backups")
+	}
+	os.Chmod(parent, 0o755)
+	f.env.selfUpdateNPM()
+	if _, err := os.Lstat(bak); err == nil {
+		t.Fatal("backup not swept once the permission is back")
+	}
+}
+
 func TestNPMMarkerWrite(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	t.Run("a member's file at the old fixed temp name survives", func(t *testing.T) {
