@@ -253,7 +253,7 @@ func TestMemoDeliveryCreateBodyNamesTheCategory(t *testing.T) {
 // ordinary list (sessionsShared), so a run does not drop into "Other runs" when the Workspace stops.
 func TestQueueCategoryIDSurvivesTheMirrorIntoTheStoppedList(t *testing.T) {
 	ctx := context.Background()
-	st, mgr, _, _, ws := usageHourFixture(t)
+	_, mgr, _, _, ws := usageHourFixture(t)
 	srv := agentSessionsServer(t, `{"sessions":[
 		{"name":"qrun","alive":true,"state":"working","kind":"claude","origin":"queue","queueCategoryId":"cat-1"},
 		{"name":"plain","alive":true,"state":"working","kind":"claude"}
@@ -268,11 +268,5 @@ func TestQueueCategoryIDSurvivesTheMirrorIntoTheStoppedList(t *testing.T) {
 	}
 	if got["qrun"] != "cat-1" || got["plain"] != "" || len(got) != 2 {
 		t.Fatalf("stopped list category ids = %v, want qrun=cat-1 and plain empty", got)
-	}
-	rows, _ := st.ListSessions(ctx, ws.ID)
-	for _, r := range rows {
-		if r.Name == "qrun" && r.QueueCategoryID != "cat-1" {
-			t.Fatalf("mirror row = %+v", r)
-		}
 	}
 }

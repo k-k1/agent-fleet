@@ -45,6 +45,7 @@ func TestQueueCategoryRidesTheListedAndArchivedWire(t *testing.T) {
 	if got := wireArchivedRow(m).QueueCategoryID; got != "cat-1" {
 		t.Fatalf("archived row QueueCategoryID = %q, want cat-1", got)
 	}
+	m.Dir = t.TempDir() // wireSession resolves a working-copy id; never point it at a real checkout
 	for _, alive := range []bool{true, false} {
 		if got := wireSession(m, alive).QueueCategoryID; got != "cat-1" {
 			t.Fatalf("wireSession(alive=%v) QueueCategoryID = %q, want cat-1", alive, got)

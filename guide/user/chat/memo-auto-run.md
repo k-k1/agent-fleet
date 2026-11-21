@@ -292,7 +292,7 @@ The "**Auto-run**" view of the left pane (the icon right after "Memo queue") lis
 
 The view follows the [working set](../fleet/working-sets.md) you picked: a category is listed when its repository is in the set. A category without a repository, and runs that no category names, are listed under every set.
 
-A run is listed under the category whose delivery started it, also after that delivery has left the newest 50 of the category's history: the session records its category when it starts. "**Other runs**" holds the runs whose category cannot be told: the category no longer exists (its auto-run settings were deleted), or the session records none (it was started before sessions recorded it, or it is a run session started again).
+A run is listed under the category whose delivery started it, also after that delivery has left the newest 50 of the category's history: the session records its category when it starts. "**Other runs**" holds the runs whose category cannot be told: the category no longer exists (its auto-run settings were deleted), or neither the delivery nor the session names one (the session was started before sessions recorded it, or you used Recreate on the run's session).
 
 Each category has a pinned header like a repository in the "Sessions" view: the repository icon and `repository / category`. Its gear opens the category's auto-run settings, and its "**...**" menu has "**Run now**", "**Run history**" and "**Show in Memo queue**". Under it, "**Running / waiting N**" is open and "**Ended N**" is folded; press either to fold or open it.
 
