@@ -192,6 +192,34 @@ describe("AutoRunSection", () => {
     }
   });
 
+  it("scrolls again when the row changes place (category, Ended to Running) but not on a same-content re-poll", async () => {
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+    const frame = () => act(async () => new Promise<void>((r) => requestAnimationFrame(() => r())));
+    try {
+      await mount();
+      await act(async () => useLayoutStore.setState({ layout: singlePaneLayout({ kind: "terminal" } as never, "run-old") }));
+      await frame();
+      // A finished run sits in the closed Ended fold: nothing to scroll to.
+      expect(scroll).not.toHaveBeenCalled();
+      const base = useSessionsStore.getState().sessions;
+      // Resumed: the same run in the same category reaches the Running group.
+      await act(async () => useSessionsStore.setState({ sessions: base.map((x) => (x.name === "run-old" ? { ...x, alive: true } : x)) }));
+      await frame();
+      expect(host.querySelector('[data-autorun-run="run-old"]')).not.toBeNull();
+      expect(scroll).toHaveBeenCalledTimes(1);
+      await act(async () => useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.map((x) => ({ ...x })) }));
+      await frame();
+      expect(scroll).toHaveBeenCalledTimes(1);
+      // Its queue settings vanish: the row now renders under "Other runs".
+      await act(async () => useQueueSettingsCache.setState({ queues: [] }));
+      await frame();
+      expect(host.querySelector('[data-autorun-category]')!.getAttribute("data-autorun-category")).not.toBe("agent-fleet / issue-rounds");
+      expect(scroll).toHaveBeenCalledTimes(2);
+    } finally {
+      scroll.mockRestore();
+    }
+  });
+
   it("keeps a finished run's duration", async () => {
     await mount();
     await act(async () => host.querySelector<HTMLButtonElement>(".autorun-sub-head.is-ended")!.click());

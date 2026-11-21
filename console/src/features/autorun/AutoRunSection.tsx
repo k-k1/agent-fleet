@@ -464,12 +464,14 @@ export const AutoRunSection = memo(function AutoRunSection() {
   const activeName = useLayoutStore((st) => activePane(st.layout)?.session ?? null);
   // Scrolls only, never focuses: keyboard focus stays where the member put it. A row inside a
   // closed "Ended N" fold is not rendered, so it is not found and the fold stays closed.
+  // A category the queue list no longer names (its settings were deleted) is "Other runs" too.
+  const keyOf = (id: string) => (queues.some((q) => q.categoryId === id) ? id : "");
   // Where the row sits: it can appear late (sessions read) or move between categories (a run no
   // delivery names yet is under "Other runs"), so a change of place scrolls again; a plain
   // re-poll leaves it unchanged and does not.
   const place = (() => {
     const r = activeName ? runs.find((x) => x.root.name === activeName || x.children.some((c) => c.name === activeName)) : undefined;
-    return r ? r.root.name + "\u0000" + r.categoryId : "";
+    return r ? [r.root.name, keyOf(r.categoryId), r.state === "ended" ? "ended" : "live"].join("\u0000") : "";
   })();
   useEffect(() => {
     if (!shown || !activeName || !place) return;
@@ -482,8 +484,6 @@ export const AutoRunSection = memo(function AutoRunSection() {
     const q = queues.find((x) => x.categoryId === id);
     return q ? [q.repo, q.category].filter(Boolean).join(" / ") || tr("memo.autorun") : tr("autorun.other");
   };
-  // A category the queue list no longer names (its settings were deleted) is "Other runs" too.
-  const keyOf = (id: string) => (queues.some((q) => q.categoryId === id) ? id : "");
   const ids = [...new Set(runs.map((r) => keyOf(r.categoryId)))];
   const active = runs.filter((r) => r.state !== "ended").length;
   const doReload = async () => {
