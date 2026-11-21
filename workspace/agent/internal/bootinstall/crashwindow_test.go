@@ -208,8 +208,6 @@ func TestCursorMarkerOutsideTheCursorPathsIsRefused(t *testing.T) {
 		{Dir: victim, Old: victim + ".af-old.1", Tree: true},
 		{Dir: filepath.Join(f.versions(), "x"), Old: victim, Tree: true},
 		{Dir: filepath.Join(f.versions(), "x"), Links: []cursorLinkState{{Path: victim, Kind: "none"}}},
-		// Structurally incomplete: no main link state, or an unrecorded HadTree.
-		{Dir: filepath.Join(f.versions(), "live"), Old: filepath.Join(f.versions(), "live.af-old.1"), Tree: true},
 	} {
 		raw, _ := json.Marshal(m)
 		if err := os.WriteFile(f.env.cursorMarkerPath(), raw, 0o644); err != nil {
@@ -522,5 +520,36 @@ func TestCursorRecoverReadlinkErrorKeepsTheMarker(t *testing.T) {
 	}
 	if _, err := os.Lstat(f.local("agent")); err == nil {
 		t.Fatal("the published agent link stayed")
+	}
+}
+
+func TestCursorIncompleteMarkerLeavesALiveTree(t *testing.T) {
+	no, yes := false, true
+	for name, mut := range map[string]func(*cursorMarker){
+		"no hadTree":         func(m *cursorMarker) { m.HadTree = nil },
+		"no main link state": func(m *cursorMarker) { m.HadTree = &no; m.Links = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newSU(t, goodRTK, "", "", "")
+			live := filepath.Join(f.versions(), "live")
+			f.write(t, filepath.Join(live, "cursor-agent"), "#!/bin/sh\necho live\n")
+			os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755)
+			os.MkdirAll(filepath.Join(f.home, ".local"), 0o755)
+			f.link(t, "cursor-agent", filepath.Join(live, "cursor-agent"))
+			m := cursorMarker{Dir: live, Old: live + ".af-old.1", Tree: true, HadTree: &yes,
+				Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "none"}}}
+			mut(&m)
+			raw, _ := json.Marshal(m)
+			os.WriteFile(f.env.cursorMarkerPath(), raw, 0o644)
+			if err := f.env.cursorRecover(); err == nil {
+				t.Fatal("an incomplete marker was acted on")
+			}
+			if !strings.Contains(f.read(filepath.Join(live, "cursor-agent")), "live") {
+				t.Fatal("the live tree was deleted")
+			}
+			if tg, _ := os.Readlink(f.local("cursor-agent")); tg != filepath.Join(live, "cursor-agent") {
+				t.Fatal("the live launcher was removed")
+			}
+		})
 	}
 }

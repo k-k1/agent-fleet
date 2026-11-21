@@ -460,7 +460,7 @@ func (e Env) selfUpdateCursor(ctx context.Context) {
 	link := filepath.Join(e.localBin(), cursorTool)
 	if err := e.installCursorLatest(ctx, script); errors.Is(err, errCursorUnsettled) {
 		fmt.Fprintln(e.Stderr, err)
-		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: cursor update verified and in use, but not settled (%s)\n", e.pathVersion("cursor-agent", "--disable-auto-update", "--version"))
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: cursor update verified at %s but not settled (the next start decides)\n", link)
 		return
 	} else if err != nil {
 		fmt.Fprintln(e.Stderr, err)
