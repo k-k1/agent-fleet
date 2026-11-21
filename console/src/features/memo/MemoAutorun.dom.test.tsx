@@ -17,6 +17,7 @@ const memoQueuePut = vi.fn();
 const memoQueueDelete = vi.fn();
 const memoQueueFire = vi.fn();
 const memoQueueResume = vi.fn();
+const memoUpdateMock = vi.fn(async (_id: string, _patch: unknown) => ({}));
 const memoQueueDeliveryEnd = vi.fn();
 const memoQueueDeliveryReturn = vi.fn();
 const memoQueueDeliveries = vi.fn(async (_id: string) => servedDeliveries);
@@ -29,7 +30,7 @@ vi.mock("./api.ts", () => ({
   memoList: async () => servedMemos,
   memoCategoryList: async () => servedCats,
   memoCreate: async () => ({}),
-  memoUpdate: async () => ({}),
+  memoUpdate: (id: string, patch: unknown) => memoUpdateMock(id, patch),
   memoDelete: async () => ({ ok: true }),
   memoCategoryCreate: async () => ({}),
   memoCategoryUpdate: async () => ({}),
@@ -162,6 +163,7 @@ beforeEach(() => {
   resetShownNotes();
   localStorage.clear();
   servedMemos = [];
+  memoUpdateMock.mockClear();
   servedCats = [aCat({ queue: true })];
   servedQueues = { tenantEnabled: true, queues: [aQueue()] };
   queuesFail = false;
@@ -305,6 +307,24 @@ describe("the list", () => {
     await fire(rowOf("waiting-a"), "drop");
     await settle();
     expect(bodies().map((x) => x.slice(0, 9))).toEqual(["waiting-b", "waiting-a", "started-h"]);
+    // The patches renumber the whole group in server order, history included, so the waiting order survives a refetch.
+    expect(memoUpdateMock.mock.calls.map(([id, p]) => [id, (p as { position: number }).position])).toEqual([
+      ["b", 0],
+      ["a", 1],
+      ["h", 2],
+    ]);
+  });
+
+  it("sorts a history note with an unparsable time last instead of scrambling the rest", async () => {
+    servedMemos = [
+      aMemo({ id: "x", body: "bad-x", state: "delivered", provenance: "member", sentAt: "garbage", position: 0 }),
+      aMemo({ id: "o", body: "old-o", state: "delivered", provenance: "member", sentAt: "2026-09-01T00:00:00Z", position: 1 }),
+      aMemo({ id: "n", body: "new-n", state: "delivered", provenance: "member", sentAt: "2026-09-05T00:00:00Z", position: 2 }),
+    ];
+    await render();
+    await act(async () => document.querySelector<HTMLButtonElement>(".memo-sent-fold")!.click());
+    const bodies = [...document.querySelectorAll(".memo-cat-items .memo-body")].map((e) => (e.textContent ?? "").slice(0, 5));
+    expect(bodies).toEqual(["new-n", "old-o", "bad-x"]);
   });
 
   it("clears a folded memo's selection when select-all is turned off with the fold closed", async () => {
