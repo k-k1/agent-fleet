@@ -1207,20 +1207,24 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           // A category that already is a queue stays openable while the tenant blocks
                           // new setups: the dialog still lets the member remove it.
                           const settingsBlocked = tenantKnown && !tenantEnabled && !isQueue;
+                          // Until a settings read has succeeded the dialog would edit a draft built
+                          // from defaults, and a save would overwrite an existing queue's setting.
+                          const settingsUnread = !tenantKnown;
+                          const gearNote = settingsUnread ? tr("memo.q_unread") : settingsBlocked ? tr("memo.q_tenant_off") : null;
                           return (
                           <button
                             type="button"
                             className="memo-cat-act"
-                            title={settingsBlocked ? tr("memo.q_tenant_off") : tr("memo.autorun_settings")}
-                            aria-label={settingsBlocked ? tr("memo.q_tenant_off") : tr("memo.autorun_settings")}
+                            title={gearNote ?? tr("memo.autorun_settings")}
+                            aria-label={gearNote ?? tr("memo.autorun_settings")}
                             // aria-disabled, not disabled: a native disabled button cannot take focus
                             // (the reason would be unreachable by keyboard) and swallows the click,
                             // which would then fall through to the header and fold the category.
-                            aria-disabled={settingsBlocked || undefined}
+                            aria-disabled={gearNote ? true : undefined}
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (settingsBlocked) {
-                                toast(tr("memo.q_tenant_off"), { kind: "warn" });
+                              if (gearNote) {
+                                toast(gearNote, { kind: "warn" });
                                 return;
                               }
                               setSettingsFor(cat.id);
@@ -1395,8 +1399,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             categoryId={c.id}
             categoryName={c.name}
             queue={queueByCat.get(c.id)}
-            // Not read yet is not "blocked": the server still refuses a save the tenant does not allow.
-            tenantEnabled={tenantEnabled || !tenantKnown}
+            tenantEnabled={tenantEnabled}
             destinations={queues
               .filter((q) => q.categoryId !== c.id)
               .map((q) => ({ id: q.categoryId, label: q.repo ? q.repo + " / " + q.category : q.category }))}

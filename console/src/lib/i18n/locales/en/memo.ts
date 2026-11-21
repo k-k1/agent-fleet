@@ -154,6 +154,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.q_err_budget": "Enter a number from 0 to {max}.",
   "memo.q_err_max_active": "Enter a whole number from 1 to {max}.",
   "memo.q_err_batch": "Enter a whole number from 1 to {max}.",
+  "memo.q_unread": "The auto-run settings have not loaded yet. Try again in a moment.",
   "memo.q_save_failed": "Could not save the auto-run settings.",
   "memo.q_saved": "Saved the auto-run settings.",
   "memo.q_remove": "Remove settings",

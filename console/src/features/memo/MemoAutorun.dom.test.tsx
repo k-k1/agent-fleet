@@ -435,15 +435,17 @@ describe("the settings dialog", () => {
     expect(gear.title).toBe(t("memo.autorun_settings"));
   });
 
-  it("does not claim the tenant blocks auto-run when the first settings read failed", async () => {
+  it("does not open the dialog, nor call it a tenant block, while the settings are unread", async () => {
     queuesFail = true;
-    servedCats = [aCat({})];
+    servedCats = [aCat({ queue: true })]; // an existing queue whose settings could not be read
     await render();
-    const gear = byLabel(t("memo.autorun_settings"));
-    expect(gear.getAttribute("aria-disabled")).toBeNull();
+    const gear = gearByReason(t("memo.q_unread"));
+    expect(gear.getAttribute("aria-disabled")).toBe("true");
     await click(gear);
-    // The dialog does not call an unread setting "blocked by the administrator".
-    expect(dialog().querySelector(".memo-q-notice")).toBeNull();
+    // Opening it would edit a draft built from defaults and a save would overwrite the real setting.
+    expect(document.querySelector(".memo-q-modal")).toBeNull();
+    expect(document.querySelector(".ui-toast-msg")?.textContent).toBe(t("memo.q_unread"));
+    expect(memoQueuePut).not.toHaveBeenCalled();
   });
 
   it("does not carry a blocked tenant's setting over to another tenant whose read failed", async () => {
@@ -459,7 +461,7 @@ describe("the settings dialog", () => {
     expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.q_tenant_off")}"]`)).not.toBeNull();
     queuesFail = true;
     await switchTo("b");
-    expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.autorun_settings")}"]`)).not.toBeNull();
+    expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.q_unread")}"]`)).not.toBeNull();
     await switchTo("");
   });
 
