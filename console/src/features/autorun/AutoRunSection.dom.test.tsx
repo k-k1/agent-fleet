@@ -31,6 +31,11 @@ vi.mock("../memo/MemoQueueSettingsModal.tsx", () => ({
   ),
 }));
 
+// SessionMenu hosts the share dialog itself; a marker stands in for the form.
+vi.mock("../sharing/ShareCreateModal.tsx", () => ({
+  ShareCreateModal: (p: { initialTarget?: string }) => <div data-testid="share-modal" data-target={p.initialTarget} />,
+}));
+
 const { AutoRunSection } = await import("./AutoRunSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { ViewShownContext } = await import("../../lib/viewShown.ts");
@@ -561,6 +566,32 @@ describe("AutoRunSection", () => {
       });
       expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull();
       expect(dialog()).not.toBeNull();
+    });
+
+    it("keeps a dialog the menu itself hosts, on the same session, after the menu closed and its row left", async () => {
+      await mount();
+      await ctx(mainBtn());
+      const share = Array.from(sessMenu()!.querySelectorAll<HTMLButtonElement>(".ui-menu-item")).find((b) => /share/i.test(b.textContent ?? ""));
+      expect(share).toBeTruthy();
+      await act(async () => share!.click());
+      expect(sessMenu()).toBeNull();
+      const modal = () => document.querySelector<HTMLElement>('[data-testid="share-modal"]');
+      expect(modal()!.dataset.target).toBe("session:run-a");
+      await act(async () => {
+        useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.filter((x) => x.name !== "run-a" && x.name !== "rev-a") });
+      });
+      expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull();
+      expect(modal()!.dataset.target).toBe("session:run-a");
+    });
+
+    it("shows the session's current state in an open menu after a store update", async () => {
+      await mount();
+      await ctx(mainBtn());
+      expect(sessMenu()!.textContent).toContain("Stop (resumable");
+      await act(async () => {
+        useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.map((x) => (x.name === "run-a" ? { ...x, alive: false } : x)) });
+      });
+      expect(sessMenu()!.textContent).not.toContain("Stop (resumable");
     });
 
     it("keeps the menu when the row moves out of the list under it", async () => {
