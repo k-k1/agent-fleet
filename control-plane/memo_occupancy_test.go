@@ -1177,55 +1177,43 @@ func TestMemoChildAnswerUnreadBounds(t *testing.T) {
 	}
 }
 
-// A session list that cannot be read, that lacks the run's root, or that is stale must not count
-// toward closing a run; a consistent idle tree still closes on the usual ticks.
+// A session list that cannot be read, or that is stale, must not count toward closing a run; a
+// consistent idle tree still closes on the usual two reads.
 func TestMemoOccupancyUnsoundReadKeepsRunOpen(t *testing.T) {
 	t.Run("unreadable list", func(t *testing.T) {
 		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 			agent, d := e.openReported(nil)
+			e.settleNow(time.Now()) // one idle read is stored
 			agent.mu.Lock()
 			agent.sessionsDown = true
 			agent.mu.Unlock()
 			for i := 0; i < 4; i++ {
 				e.settleNow(time.Now())
 			}
-			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
-				t.Fatalf("unreadable list closed the run: %+v", got)
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.IdleTicks != 0 {
+				t.Fatalf("unreadable list must keep it open and reset the count: %+v", got)
 			}
 		})
 	})
-	t.Run("root missing on a single read", func(t *testing.T) {
-		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
-			agent, d := e.openReported(nil)
-			agent.mu.Lock()
-			saved := agent.rows
-			agent.rows = nil
-			agent.mu.Unlock()
-			e.settleNow(time.Now())
-			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
-				t.Fatalf("one list without the root closed the run: %+v", got)
-			}
-			agent.mu.Lock()
-			agent.rows = saved
-			agent.mu.Unlock()
-			e.settleNow(time.Now()) // consistent again: the count restarts at one
-			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
-				t.Fatalf("closed on the first consistent read after a gap: %+v", got)
-			}
-		})
-	})
-	t.Run("stale list", func(t *testing.T) {
+	t.Run("stale list after one idle read", func(t *testing.T) {
 		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 			_, d := e.openReported(nil)
-			for i := 0; i < 4; i++ {
+			e.settleNow(time.Now()) // idle read 1 of 2
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.IdleTicks != 1 {
+				t.Fatalf("setup: %+v", got)
+			}
+			for i := 0; i < 3; i++ {
 				r := e.runner()
-				r.staleRead = -time.Second // every read is already older than the bound
+				r.staleReadMax = -time.Second // every read is already older than the bound
 				r.settle(context.Background(), time.Now())
 			}
-			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
-				t.Fatalf("stale lists closed the run: %+v", got)
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.IdleTicks != 0 {
+				t.Fatalf("stale lists must reset the count: %+v", got)
 			}
 			e.settleNow(time.Now())
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+				t.Fatalf("the first consistent read after a stale one must not close: %+v", got)
+			}
 			e.settleNow(time.Now())
 			if got := e.delivery(d.ID); got.State != store.DeliveryClosed {
 				t.Fatalf("consistent idle tree must close: %+v", got)
@@ -1239,8 +1227,18 @@ func TestMemoOccupancyUnsoundReadKeepsRunOpen(t *testing.T) {
 			for i := 0; i < 4; i++ {
 				e.settleNow(time.Now())
 			}
-			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
-				t.Fatalf("closed with a member of unknown state: %+v", got)
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.HeldBy != store.HeldUnknown {
+				t.Fatalf("a member of unknown state must hold the run: %+v", got)
+			}
+		})
+	})
+	t.Run("deleted root still aborts", func(t *testing.T) {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			agent, d := e.openReported(nil)
+			agent.dropRow(d.Session)
+			e.settleNow(time.Now())
+			if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryAborted {
+				t.Fatalf("a deletion the Agent's own list proves must abort: %+v", got)
 			}
 		})
 	})
