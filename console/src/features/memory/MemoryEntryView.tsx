@@ -14,7 +14,7 @@
 // memory has no name to key a buffer by yet, so its buffer is keyed by the pane and carries the
 // name typed so far in its text; it is stored at revision 0, which the Agent refuses once the name
 // exists.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api, apiJSON, errDetail, isTransientErr } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { allViews } from "../../layout/ops.ts";
@@ -42,7 +42,18 @@ import type { PaneContent } from "../../layout/types.ts";
 import { memoryEntryContent } from "./openEntry.ts";
 import { openMemoryView } from "./open.ts";
 import { useMemoryStore } from "./store.ts";
-import { blankNewFile, clearPending, clearRefusal, decodeEntry, encodeEntry, entryFile, entryKey, isMemoryBody, memoryEntryIO, newEntryKey, refusalOf, subscribeRefusal, type EntryFields, type EntryRefusal } from "./memoryEntryIO.ts";
+import { isEditingPane, pruneEditingPanes, setEditingPane, subscribeEditing, blankNewFile, clearPending, clearRefusal, decodeEntry, encodeEntry, entryFile, entryKey, isMemoryBody, memoryEntryIO, newEntryKey, refusalOf, subscribeRefusal, type EntryFields, type EntryRefusal } from "./memoryEntryIO.ts";
+
+// Edit mode is kept only for a pane that is still open on the memory it was set for: a closed pane
+// can have its id given to a new one.
+useLayoutStore.subscribe((st) => {
+  const views = allViews(st.layout);
+  const tenant = useTenantStore.getState().tenant;
+  pruneEditingPanes((paneId, key) => {
+    const c = views.find((v) => v.id === paneId)?.content;
+    return !!c && c.kind === "memoryEntry" && c.name !== "" && !c.gone && entryKey(tenant, c) === key;
+  });
+});
 
 type EntryContent = Extract<PaneContent, { kind: "memoryEntry" }>;
 
@@ -111,7 +122,14 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   const [loadErr, setLoadErr] = useState("");
   const [formErr, setFormErr] = useState("");
   const [findings, setFindings] = useState<SecretFinding[]>([]);
-  const [editing, setEditing] = useState(false);
+  // Shared with the views that come after this one (a tab switch rebuilds it), so a save that
+  // finishes later ends edit mode in whichever view is on screen.
+  const editing = useSyncExternalStore(subscribeEditing, () => isEditingPane(paneId, key));
+  const setEditing = useCallback((on: boolean) => setEditingPane(paneId, key, on), [paneId, key]);
+  // The shown text the buffer has followed: the form opens on it even when the body shown is older
+  // or newer than what the follow read found.
+  const [followedTo, setFollowedTo] = useState("");
+  // What was followed belongs to the edit it was for.
   const [resolutionOpen, setResolutionOpen] = useState(true);
   const [refusal, setRefusalState] = useState<EntryRefusal | null>(null);
   const onRefused = useCallback((r: EntryRefusal | null) => {
@@ -194,7 +212,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     setBody(null);
     setChange(null);
     setLoadErr("");
-    setEditing(false);
+    // Edit mode survives a remount on the same memory; a forget ends it.
+    if (gone) setEditingPane(paneId, key, false);
+    setFollowedTo("");
     setResolutionOpen(true);
   }, [key, isNew, gone]);
   // The save that was refused may have been asked for by a view that is gone by now.
@@ -349,13 +369,44 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     }
     setEditing(true);
     setResolutionOpen(true);
-    // The buffer may predate a change made elsewhere; a clean one follows the store before it is edited.
-    if (!model.dirty) void editor.applyProbeResult({ kind: "revision", revision: file!.revision });
+    // A clean buffer that rests on older text than the body shown follows it before the form
+    // opens (see `baseLag`).
   };
+
+  // A clean buffer whose base is not the body shown (the buffer was kept while the body was
+  // re-read): editing it would start from the older text and end in a conflict. The form waits
+  // until the hook has followed the shown text.
+  // The body shown moving on (or edit mode ending) ends it: a text that comes back later is a new
+  // snapshot, which the buffer has to follow again.
+  useEffect(() => {
+    setFollowedTo("");
+  }, [editing, file?.revision]);
+  const baseLag = !isNew && !gone && !!model && !model.dirty && !!file && model.baseDiskRevision !== file.revision && followedTo !== file.revision;
+  const lagRevision = baseLag ? file!.revision : "";
+  useEffect(() => {
+    if (!editing || !lagRevision) return;
+    let live = true;
+    void editor.applyProbeResult({ kind: "revision", revision: lagRevision }).then((followed) => {
+      if (!live) return;
+      // The body shown and the buffer now rest on different reads: re-read the body.
+      bump();
+      if (followed) setFollowedTo(lagRevision);
+      else {
+        // The read behind the follow failed, or found nothing newer than the buffer has: opening
+        // now could start from an older base.
+        setEditing(false);
+        setFormErr(trRef.current("mem.br_edit_stale"));
+      }
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, lagRevision, key]);
 
   // What the form shows and edits: the hook's buffer, which for a new memory also holds its name.
   const decoded = model ? decodeEntry(model.content) : null;
-  const fields = isNew ? decoded && { ...decoded, name: decoded.name ?? "" } : !gone && (editing || model?.dirty) && decoded ? { ...decoded, name } : null;
+  const fields = isNew ? decoded && { ...decoded, name: decoded.name ?? "" } : !gone && ((editing && !baseLag) || model?.dirty) && decoded ? { ...decoded, name } : null;
   const setField = (patch: Partial<Pick<EntryFields, "name" | "description" | "type" | "body">>) => {
     if (model && !locked) editor.edit(encodeEntry({ ...decodeEntry(model.content), ...patch }));
   };

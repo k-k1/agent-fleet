@@ -152,6 +152,7 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.br_save": "Save",
   "mem.br_copy_current": "Copy current text",
   "mem.br_discard_unconfirmed_title": "Discard a memory that may have been saved?",
+  "mem.br_edit_stale": "The editor could not be opened on the latest text. Try Edit again.",
   "mem.br_discard_unconfirmed_body": "The Agent could not confirm whether \"{name}\" was saved. Discarding drops the text you typed; if it was saved, the memory stays.",
   "mem.br_discard_unconfirmed": "Discard",
   "mem.br_discard_conflict_title": "Discard your edit?",

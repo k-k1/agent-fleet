@@ -185,6 +185,158 @@ describe("MemoryEntryView", () => {
     expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("half-written");
   });
 
+  async function switchBack() {
+    await act(async () => root!.render(<></>));
+    await act(async () =>
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <Host />
+          </ConfirmProvider>
+        </ToastProvider>,
+      ),
+    );
+    await flush();
+  }
+
+  it("stays in edit mode across a tab switch, with nothing typed", async () => {
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    expect(host!.querySelector(".mentry-form")).not.toBeNull();
+    await switchBack();
+    expect(host!.querySelector(".mentry-form")).not.toBeNull();
+    await act(async () => button(t("mem.br_cancel"))!.click());
+    await flush();
+    await switchBack();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+  });
+
+  it("opens the editor on the text shown, not on the older buffer the pane kept through a re-read", async () => {
+    apiJSON.mockResolvedValue({ name: "build-cmd", revision: 6 });
+    await open();
+    const newer = { ...memory, revision: 5, body: "Run `make v2`." };
+    api.mockImplementation(async (url: string) => (url.startsWith("api/agents/memory/entries/member-read") ? newer : url.includes("changes") ? { changes: [] } : {}));
+    // Re-read while mounted: the body shown moves on, the clean buffer stays on the old text.
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    let release!: (v: unknown) => void;
+    api.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    await act(async () => button(t("mem.br_edit"))!.click());
+    // While the buffer catches up the form is not open: typing now would start from the old text.
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+    await act(async () => release(newer));
+    await flush();
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("Run `make v2`.");
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "Run `make v3`.");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(apiJSON.mock.calls[0][2]).toMatchObject({ revision: 5, body: "Run `make v3`." });
+  });
+
+  it("opens the form when the follow reads newer text than the body shown", async () => {
+    await open();
+    const shown = { ...memory, revision: 5, body: "Run `make v2`." };
+    const newest = { ...memory, revision: 6, body: "Run `make v3`." };
+    let reads = 0;
+    api.mockImplementation(async (url: string) => {
+      if (!url.startsWith("api/agents/memory/entries/member-read")) return url.includes("changes") ? { changes: [] } : {};
+      // The body re-read answers v2; the follow that comes with Edit finds v3 already.
+      return ++reads === 1 ? shown : newest;
+    });
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await flush();
+    expect(host!.querySelector(".mentry-form")).not.toBeNull();
+    expect(host!.textContent).not.toContain(t("mem.br_edit_stale"));
+  });
+
+  it("ends edit mode in the view that is on screen when a save outlives the view that asked for it", async () => {
+    let finish!: (v: unknown) => void;
+    apiJSON.mockImplementation(() => new Promise((r) => (finish = r)));
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "Run `make all`.");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await switchBack();
+    await act(async () => finish({ name: "build-cmd", revision: 5 }));
+    await flush();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+  });
+
+  it("does not bring edit mode back to a pane that was closed and opened again", async () => {
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    const id = pane().id;
+    await act(async () => useLayoutStore.getState().closePane(id));
+    await act(async () => root!.render(<></>));
+    useLayoutStore.setState({ layout: freshLayout() });
+    await open();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+  });
+
+  it("follows again when the body shown goes back to a text it was followed to earlier, during the same edit", async () => {
+    await open();
+    const b = { ...memory, revision: 5, body: "Run `make v2`." };
+    const c = { ...memory, revision: 6, body: "Run `make v3`." };
+    let live = b;
+    let reads: unknown[] = [];
+    api.mockImplementation(async (url: string) => {
+      if (!url.startsWith("api/agents/memory/entries/member-read")) return url.includes("changes") ? { changes: [] } : {};
+      return reads.shift() ?? live;
+    });
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    // The follow that comes with Edit finds c; the body shown then catches up to c.
+    reads = [c];
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await flush();
+    live = c;
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("Run `make v3`.");
+    // Another writer puts b back before anything is typed.
+    live = b;
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("Run `make v2`.");
+  });
+
+  it("does not bring edit mode back after the memory was forgotten and restored, or moved to another and back", async () => {
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    const id = pane().id;
+    const base = pane().content as Extract<typeof pane extends () => infer P ? (P extends { content: infer C } ? C : never) : never, { kind: "memoryEntry" }>;
+    await act(async () => useLayoutStore.getState().setPaneTarget(id, { content: { ...base, gone: true } }));
+    await flush();
+    await act(async () => useLayoutStore.getState().setPaneTarget(id, { content: { ...base, gone: false } }));
+    await flush();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await act(async () => useLayoutStore.getState().setPaneTarget(id, { content: { ...base, name: "other" } }));
+    await flush();
+    await act(async () => useLayoutStore.getState().setPaneTarget(id, { content: base }));
+    await flush();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+  });
+
+  it("does not open the editor on an older base when the follow read fails", async () => {
+    await open();
+    const newer = { ...memory, revision: 5, body: "Run `make v2`." };
+    let failing = false;
+    api.mockImplementation(async (url: string) => {
+      if (!url.startsWith("api/agents/memory/entries/member-read")) return url.includes("changes") ? { changes: [] } : {};
+      return failing ? { error: { code: "agent_unavailable", message: "x" } } : newer;
+    });
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    failing = true;
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await flush();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+    expect(host!.textContent).toContain(t("mem.br_edit_stale"));
+  });
+
   it("opens a new memory in edit mode and becomes that memory's pane once saved", async () => {
     await open(memoryEntryContent({ scope: "user", name: "" }));
     expect(api).not.toHaveBeenCalledWith(expect.stringContaining("member-read"));

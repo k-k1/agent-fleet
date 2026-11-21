@@ -151,6 +151,7 @@ export const memory = {
   "mem.br_save": "保存",
   "mem.br_copy_current": "現在の本文をコピー",
   "mem.br_discard_unconfirmed_title": "保存されたかもしれないメモを破棄しますか？",
+  "mem.br_edit_stale": "最新の本文でエディタを開けませんでした。もう一度「編集」を押してください。",
   "mem.br_discard_unconfirmed_body": "「{name}」が保存されたかどうかを Agent から確認できませんでした。破棄すると入力した本文は消えます。保存されていた場合、そのメモは残ります。",
   "mem.br_discard_unconfirmed": "破棄する",
   "mem.br_discard_conflict_title": "編集内容を破棄しますか？",

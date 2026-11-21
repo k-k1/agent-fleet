@@ -498,7 +498,12 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   // buffer holds no edits, so fetch the full body and rebuild the model on it.
   // Returns the fetched file when the model actually followed, so the caller
   // can refresh its own copy of the pane data from the same response.
-  const followExternalChange = useCallback(async (): Promise<EditableFile | null> => {
+  const followSeq = useRef(0);
+  const followFlight = useRef<{ slot: EditorSlot; key: string; promise: Promise<EditableFile | null> } | null>(null);
+  const runFollow = useCallback(async (): Promise<EditableFile | null> => {
+    // A follow for another observation supersedes this one: its answer may be older than the one
+    // already applied, on the success and on the error side alike.
+    const seq = ++followSeq.current;
     const current = modelRef.current;
     if (!current || savingRef.current || !isCleanForFollow(current)) return null;
     const path = current.path;
@@ -509,7 +514,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       const latest = modelRef.current;
       // Typing or a save that started while the GET was in flight wins; the
       // next probe re-observes and reports the change as an advisory instead.
-      if (!latest || latest.path !== path || savingRef.current || !isCleanForFollow(latest)) return null;
+      if (!latest || latest.path !== path || savingRef.current || !isCleanForFollow(latest) || seq !== followSeq.current) return null;
       if (remote.revision === latest.baseDiskRevision) {
         if (latest.externalObservation) setModel(observeExternal(latest, null));
         return null;
@@ -518,7 +523,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       return file;
     } catch (error) {
       const latest = modelRef.current;
-      if (!latest || latest.path !== path || !isCleanForFollow(latest)) return null;
+      if (!latest || latest.path !== path || !isCleanForFollow(latest) || seq !== followSeq.current) return null;
       const code = error instanceof Error ? error.message : "";
       // The full GET can disagree with the probe (§7.5): the file may have
       // become uneditable or vanished in between. Those become advisories;
@@ -533,6 +538,24 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       return null;
     }
   }, [setModel]);
+  // The same observation of the same file shares the GET in flight: a slow GET that a periodic probe
+  // keeps re-asking must still be allowed to finish.
+  const followExternalChange = useCallback(
+    (observed: string): Promise<EditableFile | null> => {
+      const key = `${modelRef.current?.path}|${observed}`;
+      const flight = followFlight.current;
+      // Of this slot only: a pane that went to another file and back has a new buffer, which must
+      // not wait for (and take the answer of) a GET made for the old one.
+      if (flight && flight.slot === slotRef.current && flight.key === key) return flight.promise;
+      const promise = runFollow();
+      followFlight.current = { slot: slotRef.current, key, promise };
+      void promise.finally(() => {
+        if (followFlight.current?.promise === promise) followFlight.current = null;
+      });
+      return promise;
+    },
+    [runFollow],
+  );
 
   // Route one probe observation into the model (docs/log/44 §7.3–§7.5). Advisory
   // by contract: apart from the clean auto-follow, the phase never moves.
@@ -559,7 +582,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
             if (current.externalObservation) setModel(observeExternal(current, null));
             return null;
           }
-          if (isCleanForFollow(current)) return followExternalChange();
+          if (isCleanForFollow(current)) return followExternalChange(result.revision);
           setModel(
             observeExternal(current, {
               kind: result.revision === current.bufferRevision ? "same_as_buffer" : "changed",

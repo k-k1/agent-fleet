@@ -481,6 +481,74 @@ describe("useFileEditor external change handling (docs/log/44 §7)", () => {
     expect(editor!.model?.followEpoch).toBe(0);
   });
 
+  it("drops an auto-follow that a later follow overtook", async () => {
+    const slow = deferred<EditableFile>();
+    const newer = "newer\n";
+    vi.mocked(getEditableFile).mockReturnValueOnce(slow.promise).mockResolvedValueOnce(editableFile(newer));
+    const current = await renderEditor();
+
+    let first!: Promise<EditableFile | null>;
+    await act(async () => {
+      first = current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await current.applyProbeResult({ kind: "revision", revision: revisionOf(newer) });
+    });
+    slow.resolve(editableFile(external));
+    await act(async () => {
+      await first;
+    });
+
+    // The older answer arrived last and must not move the buffer back.
+    expect(editor!.model?.content).toBe(newer);
+  });
+
+  it("lets a slow follow finish when the same observation is asked again", async () => {
+    const slow = deferred<EditableFile>();
+    vi.mocked(getEditableFile).mockReturnValue(slow.promise);
+    const current = await renderEditor();
+
+    let first!: Promise<EditableFile | null>;
+    let second!: Promise<EditableFile | null>;
+    await act(async () => {
+      first = current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+      await Promise.resolve();
+      second = current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+    });
+    slow.resolve(editableFile(external));
+    await act(async () => {
+      await Promise.all([first, second]);
+    });
+
+    expect(editor!.model?.content).toBe(external);
+    expect(vi.mocked(getEditableFile)).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores the failure of a follow that a later follow overtook", async () => {
+    let rejectSlow!: (e: unknown) => void;
+    const slow = { promise: new Promise<EditableFile>((_, r) => (rejectSlow = r)) };
+    const newer = "newer\n";
+    vi.mocked(getEditableFile).mockReturnValueOnce(slow.promise).mockResolvedValueOnce(editableFile(newer));
+    const current = await renderEditor();
+
+    let first!: Promise<EditableFile | null>;
+    await act(async () => {
+      first = current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await current.applyProbeResult({ kind: "revision", revision: revisionOf(newer) });
+    });
+    rejectSlow(new Error("http_404"));
+    await act(async () => {
+      await first;
+    });
+
+    expect(editor!.model?.content).toBe(newer);
+    expect(editor!.model?.externalObservation ?? null).toBeNull();
+  });
+
   it("records missing/uneditable observations without touching the buffer", async () => {
     const current = await renderEditor();
     await act(async () => {
