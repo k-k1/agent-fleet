@@ -89,8 +89,9 @@ export function RepoNode({ node: n, depth, ctx, actions, grouped = false }: Repo
   // While filtering, every visible node is forced open (the parent already
   // pruned the tree to matches) and only matching sessions render.
   const open = nq ? true : openState.open;
-  // Sessions an auto-run or schedule started in THIS folder (it reuses an existing copy
-  // instead of making a worktree) fold into the same groups; below a group nothing splits.
+  // Sessions a schedule started in THIS folder (it reuses an existing copy instead of making a
+  // worktree) fold into the group; an auto-run's are left to the Auto-run view. Below a group
+  // nothing splits.
   const byName = useMemo(() => new Map(sessions.map((s) => [s.name, s])), [sessions]);
   const split = splitNodeSessions(mine, byName, grouped);
   const ownSessions = split.own;

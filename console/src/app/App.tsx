@@ -65,6 +65,7 @@ import { SchedulesSection } from "../features/schedules/SchedulesSection.tsx";
 import { ProjectTree } from "../features/project/ProjectTree.tsx";
 import { OtherSessionsSection } from "../features/project/OtherSessionsSection.tsx";
 import { StoppedSessionsSection } from "../features/project/StoppedSessionsSection.tsx";
+import { AutoRunSection } from "../features/autorun/AutoRunSection.tsx";
 import { SharedSessionsSection } from "../features/sharing/SharedSessionsSection.tsx";
 import { FilesSection } from "../features/project/FilesSection.tsx";
 import { Section, SoloSection } from "../ui/Section.tsx";
@@ -651,6 +652,12 @@ export function App() {
             <RailView id="memo" active={railView} shown={railShown}>
               <SoloSection>
                 <MemoQueueSection />
+              </SoloSection>
+            </RailView>
+            {/* Not scoped: a run belongs to a queue category, not to a working set. */}
+            <RailView id="autorun" active={railView} shown={railShown}>
+              <SoloSection>
+                <AutoRunSection />
               </SoloSection>
             </RailView>
             {/* Mounted on first show, like Files: the memory list is a read of the Agent. The

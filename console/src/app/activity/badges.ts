@@ -30,6 +30,9 @@ export type RailBadge =
 
 const WAITING = new Set(["question", "plan", "permission"]);
 
+/** Is this running session stopped on an answer only the member can give? */
+export const isWaitingSession = (s: Session): boolean => s.alive === true && WAITING.has(String(s.state || ""));
+
 /** Running sessions stopped on an answer only the member can give. The usage-limit and
  * login states are left out: they are not answered in the session's pane. */
 export function waitingSessions(sessions: Session[], set: WorkingSet | null = null): number {

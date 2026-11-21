@@ -1,0 +1,15 @@
+.autorun-view { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+.autorun-cat-head { margin: 0; padding: 4px 10px; font-size: 11px; font-weight: 600; text-transform: none; opacity: 0.7; }
+.autorun-list, .autorun-kids { list-style: none; margin: 0; padding: 0; }
+.autorun-kids { padding-left: 20px; }
+.autorun-run-main, .autorun-kid, .autorun-ended-head {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 3px 10px;
+  background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.autorun-run-main:hover, .autorun-kid:hover, .autorun-ended-head:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
+.autorun-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.autorun-elapsed, .autorun-pr { flex: none; font-size: 11px; opacity: 0.7; }
+.autorun-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.4; }
+.autorun-dot.is-running { background: var(--ok, #3fb950); opacity: 1; }
+.autorun-dot.is-waiting { background: var(--warn, #d29922); opacity: 1; }
+.autorun-ended-head { font-size: 12px; opacity: 0.8; }

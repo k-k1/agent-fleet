@@ -421,10 +421,11 @@ describe("repoTree auto-run / schedule groups", () => {
   const tree = repoTree(repos, sessions)[0];
   const names = (ns: RepoTreeNode[]) => ns.map((n) => n.repo.name);
 
-  it("gathers queue and schedule worktrees into one group per kind, folded out of children", () => {
-    expect(tree.groups.map((g) => g.kind)).toEqual(["autorun", "schedule"]);
-    expect(shapes(tree.groups[0].nodes)).toEqual([["af@run", [["af@rev", []]]]]);
-    expect(names(tree.groups[1].nodes)).toEqual(["af@cron"]);
+  it("groups schedule worktrees and takes auto-run ones out of the tree's display", () => {
+    expect(tree.groups.map((g) => g.kind)).toEqual(["schedule"]);
+    expect(names(tree.groups[0].nodes)).toEqual(["af@cron"]);
+    // The run's copy is not displayed (the Auto-run view lists it) but stays in the scope.
+    expect(shapes(tree.detached ?? [])).toEqual([["af@run", [["af@rev", []]]]]);
   });
 
   it("leaves hand-started work, handoffs and a hand-started parent's child where they are", () => {
@@ -432,19 +433,19 @@ describe("repoTree auto-run / schedule groups", () => {
   });
 
   it("keeps a member's own copy out of a group even when its parent copy is grouped", () => {
-    expect(names(tree.groups[0].nodes)).not.toContain("af@hf");
+    expect(names(tree.detached ?? [])).not.toContain("af@hf");
   });
 
-  it("childNodes and countRepoNodes still see the grouped copies", () => {
-    expect(names(childNodes(tree))).toEqual(["af@hand", "af@hf", "af@run", "af@cron"]);
-    expect(countRepoNodes([tree])).toBe(7);
+  it("childNodes still sees the grouped copies and lineageNodes the auto-run ones", () => {
+    expect(names(childNodes(tree))).toEqual(["af@hand", "af@hf", "af@cron"]);
+    expect(names(lineageNodes(tree))).toEqual(["af@hand", "af@hf", "af@cron", "af@run"]);
+    expect(countRepoNodes([tree])).toBe(5);
   });
 
-  it("filterRepoTree reaches a match inside a group and drops empty groups", () => {
-    const hit = filterRepoTree([tree], (r) => r.name === "af@rev")[0];
+  it("filterRepoTree reaches a schedule match and drops empty groups", () => {
+    const hit = filterRepoTree([tree], (r) => r.name === "af@cron")[0];
     expect(hit.children).toEqual([]);
-    expect(hit.groups.map((g) => g.kind)).toEqual(["autorun"]);
-    expect(shapes(hit.groups[0].nodes)).toEqual([["af@run", [["af@rev", []]]]]);
+    expect(hit.groups.map((g) => g.kind)).toEqual(["schedule"]);
     expect(filterRepoTree([tree], (r) => r.name === "af@hand")[0].groups).toEqual([]);
   });
 
@@ -466,13 +467,14 @@ describe("repoTree: a handoff the member made from a run", () => {
   const tree = repoTree(repos, sessions)[0];
   const names = (ns: RepoTreeNode[]) => ns.map((n) => n.repo.name);
 
-  it("keeps H and its reviewer R in the ordinary tree, not under Auto-run", () => {
+  it("keeps H and its reviewer R in the ordinary tree, and A out of it", () => {
     expect(shapes(tree.children)).toEqual([["af@h", [["af@r", []]]]]);
-    expect(names(tree.groups[0].nodes)).toEqual(["af@a"]);
+    expect(names(tree.detached ?? [])).toEqual(["af@a"]);
+    expect(tree.groups).toEqual([]);
   });
 
   it("still counts H as part of what a stop / delete on A covers, once, flagged as listed elsewhere", () => {
-    const a = tree.groups[0].nodes[0];
+    const a = tree.detached![0];
     expect(a.children).toEqual([]); // not displayed under A…
     expect(names(lineageNodes(a))).toEqual(["af@h"]); // …but part of its scope
     const live = sessions.map((x) => ({ ...x, alive: true }));
@@ -482,7 +484,7 @@ describe("repoTree: a handoff the member made from a run", () => {
     const del = planTree(a, sessions);
     expect(del.map((p) => p.repo.name)).toEqual(["af@a", "af@h", "af@r"]);
     // From the root every copy shows up once, none flagged.
-    expect(planStopTree(tree, live).map((g) => [g.repo.name, g.detached])).toEqual([["af@h", false], ["af@r", false], ["af@a", false]]);
+    expect(planStopTree(tree, live).map((g) => [g.repo.name, g.detached])).toEqual([["af@h", false], ["af@r", false], ["af@a", true]]);
   });
 
   it("falls back to ordinary display for a cycle or a vanished parent", () => {
@@ -507,10 +509,8 @@ describe("repoTree: filtering and mixed copies", () => {
   const tree = repoTree(repos, sessions);
   const names = (ns: RepoTreeNode[]) => ns.map((n) => n.repo.name);
 
-  it("a search that keeps only A leaves H and R out of A's stop and delete scope", () => {
-    const a = filterRepoTree(tree, (r) => r.name === "af@a")[0].groups[0].nodes[0];
-    expect(planStopTree(a, sessions).map((g) => g.repo.name)).toEqual(["af@a"]);
-    expect(planTree(a, sessions).map((p) => p.repo.name)).toEqual(["af@a"]);
+  it("a search that matches only A shows nothing: the run is the Auto-run view's, not the tree's", () => {
+    expect(filterRepoTree(tree, (r) => r.name === "af@a")).toEqual([]);
   });
 
   it("a search that keeps only R shows it under the root and does not surface A's scope", () => {
@@ -523,7 +523,7 @@ describe("repoTree: filtering and mixed copies", () => {
     expect(planTree(f[0], sessions).filter((p) => p.repo.name === "af@a").map((p) => p.detached)).toEqual([true]);
   });
 
-  it("a run's copy where a schedule also runs stays ordinary, each session under its own heading", () => {
+  it("a run's copy where a schedule also runs stays ordinary; only the schedule's session has a heading", () => {
     const ss = [...sessions, live(sess("cron", { repo: "af@a", createdAt: t(5), origin: "schedule" }))];
     const r = repoTree(repos, ss)[0];
     expect(r.groups).toEqual([]);
@@ -532,7 +532,7 @@ describe("repoTree: filtering and mixed copies", () => {
     const sp = splitNodeSessions(sessionsInFolder(ss, "af@a"), byName, false);
     expect(sp.byKind.autorun.map((x) => x.name)).toEqual(["A"]);
     expect(sp.byKind.schedule.map((x) => x.name)).toEqual(["cron"]);
-    expect(railNodeSessions(a, ss, byName).map((x) => x.name)).toEqual(["H", "R", "A", "cron"]);
+    expect(railNodeSessions(a, ss, byName).map((x) => x.name)).toEqual(["H", "R", "cron"]);
   });
 
   it("a copy a run made but where the member later started a session stays in the ordinary tree", () => {

@@ -316,7 +316,7 @@ export interface RepoTreeNode {
   repo: Repo;
   /** Copies the member started (or that hang under a grouped copy), nested by lineage. */
   children: RepoTreeNode[];
-  /** Auto-run / schedule copies of this node, folded away from `children`. At most one per kind. */
+  /** Schedule copies of this node, folded away from `children`. At most one per kind. */
   groups: RepoTreeGroup[];
   /** Copies the member started from this node's sessions that the rail shows elsewhere (cut
    *  back to the group's root so hand-started work is not buried in a group). Display
@@ -341,6 +341,11 @@ export function lineageNodes(n: RepoTreeNode): RepoTreeNode[] {
 
 const GROUP_ORDER: AutoGroupKind[] = ["autorun", "schedule"];
 
+// Kinds the tree folds into a group. Auto-run is not one: its runs have a view of their own
+// (features/autorun), so the tree keeps their copies out of sight in `detached`, where stop /
+// delete still reach them. Schedules stay grouped until the Schedules view lists their runs.
+const GROUPED_KINDS: AutoGroupKind[] = ["schedule"];
+
 // sessionAutoKind — which unattended source raised a session, "" = the member's own.
 //
 // origin queue / schedule is the run itself. A child the run spawned (origin "session")
@@ -362,8 +367,8 @@ export function sessionAutoKind(s: Session | undefined, byName: Map<string, Sess
   return "";
 }
 
-/** The kinds a rail renders, in order. */
-export const AUTO_GROUP_KINDS: AutoGroupKind[] = GROUP_ORDER;
+/** The kinds a rail renders as a group, in order. */
+export const AUTO_GROUP_KINDS: AutoGroupKind[] = GROUPED_KINDS;
 
 // splitNodeSessions — one node's sessions as the rail lists them: the member's own, and per
 // kind the ones an unattended source started in this very folder (it reused an existing
@@ -396,7 +401,7 @@ export function railNodeSessions(
   const { own, byKind } = splitNodeSessions(sessionsInFolder(sessions, n.repo.name), byName, grouped);
   const out = [...own];
   for (const c of n.children) out.push(...railNodeSessions(c, sessions, byName, grouped));
-  for (const k of GROUP_ORDER) {
+  for (const k of GROUPED_KINDS) {
     out.push(...byKind[k]);
     for (const c of n.groups.find((g) => g.kind === k)?.nodes ?? []) out.push(...railNodeSessions(c, sessions, byName, true));
   }
@@ -459,6 +464,10 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
       const kind = kindOf.get(w.name);
       if (!kind || kindOf.get(pName)) {
         parent.children.push(self);
+        continue;
+      }
+      if (!GROUPED_KINDS.includes(kind)) {
+        (parent.detached ??= []).push(self);
         continue;
       }
       let g = parent.groups.find((x) => x.kind === kind);
