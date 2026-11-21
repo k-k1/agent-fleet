@@ -1070,6 +1070,11 @@ func heldWakersOf(detail string) []memoHeldWakerDTO {
 // ticks after the child's last turn, before a parent that waits for the child can act on it.
 const memoChildGrace = 15 * time.Minute
 
+// memoClockSkew is how far ahead of the Control Plane's clock a child's end may read and still
+// count as just ended, up to memoClockSkew. A stamp further ahead is a bad clock, not an answer to wait for: left
+// alone it would hold the run until the stamp's own time passed.
+const memoClockSkew = time.Minute
+
 // childAnswerUnread reports whether a live member of the tree has a child whose turn ended less
 // than memoChildGrace ago and has not started a turn since. The Agent stamps an end to the
 // second, so it stands for that whole second: only a parent start after it counts as later. An end
@@ -1087,7 +1092,7 @@ func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
 			continue
 		}
 		end, err := time.Parse(time.RFC3339Nano, c.LastTurnEndAt)
-		if err != nil || now.Sub(end) >= memoChildGrace {
+		if err != nil || now.Sub(end) >= memoChildGrace || end.Sub(now) > memoClockSkew {
 			continue
 		}
 		p := byName[c.OriginSession]
@@ -1095,7 +1100,7 @@ func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
 			continue
 		}
 		if p.LastTurnStartAt != "" {
-			if st, err := time.Parse(time.RFC3339Nano, p.LastTurnStartAt); err != nil || st.After(end.Add(time.Second)) {
+			if st, err := time.Parse(time.RFC3339Nano, p.LastTurnStartAt); err != nil || !st.Before(end.Add(time.Second)) {
 				continue
 			}
 		}
