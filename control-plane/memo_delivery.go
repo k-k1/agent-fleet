@@ -1071,7 +1071,10 @@ func heldWakersOf(detail string) []memoHeldWakerDTO {
 const memoChildGrace = 15 * time.Minute
 
 // childAnswerUnread reports whether a live member of the tree has a child whose turn ended less
-// than memoChildGrace ago and has not started a turn since. It reads only the Agent's turn
+// than memoChildGrace ago and has not started a turn since. The Agent stamps an end to the
+// second, so it stands for that whole second: only a parent start after it counts as later. An end
+// that reads as in the future is clock skew or a turn that ended after the tick began, and counts
+// as just ended. It reads only the Agent's turn
 // times on the rows, so every Control Plane and every restart answers alike. Times that do not
 // parse prove nothing: when in doubt, answer false.
 func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
@@ -1084,7 +1087,7 @@ func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
 			continue
 		}
 		end, err := time.Parse(time.RFC3339Nano, c.LastTurnEndAt)
-		if err != nil || end.After(now) || now.Sub(end) >= memoChildGrace {
+		if err != nil || now.Sub(end) >= memoChildGrace {
 			continue
 		}
 		p := byName[c.OriginSession]
@@ -1092,7 +1095,7 @@ func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
 			continue
 		}
 		if p.LastTurnStartAt != "" {
-			if st, err := time.Parse(time.RFC3339Nano, p.LastTurnStartAt); err != nil || st.After(end) {
+			if st, err := time.Parse(time.RFC3339Nano, p.LastTurnStartAt); err != nil || st.After(end.Add(time.Second)) {
 				continue
 			}
 		}
@@ -1134,7 +1137,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	// A hand-back is decided from reads that need the Agent (its PRs), made before the lock and
 	// only when this read may close the delivery: nothing holds it and the last one was clear.
 	var dc *memoDeferCheck
-	if d.DeferAt != "" && why == "" && d.Reported && d.HeldBy == "" && d.IdleTicks >= 1 {
+	if d.DeferAt != "" && why == "" && !unread && d.Reported && d.HeldBy == "" && d.IdleTicks >= 1 {
 		dc = r.deferCheck(ctx, v, d, tree)
 	}
 	// Keeping the read, counting it, and closing on it are one transaction behind the membership

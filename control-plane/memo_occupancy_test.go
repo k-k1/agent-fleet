@@ -1153,13 +1153,16 @@ func TestMemoChildAnswerUnreadBounds(t *testing.T) {
 		at   time.Time
 		want bool
 	}{
-		"child just ended":       {mk(f(now.Add(-time.Hour)), f(now.Add(-time.Minute))), now, true},
-		"parent never started":   {mk("", f(now.Add(-time.Minute))), now, true},
-		"grace over":             {mk(f(now.Add(-time.Hour)), f(now.Add(-time.Minute))), now.Add(memoChildGrace), false},
-		"parent started after":   {mk(f(now), f(now.Add(-time.Minute))), now, false},
-		"child mid-turn":         {mk(f(now.Add(-time.Hour)), ""), now, false},
-		"unparsable child time":  {mk("", "garbage"), now, false},
-		"unparsable parent time": {mk("garbage", f(now.Add(-time.Minute))), now, false},
+		"child just ended":          {mk(f(now.Add(-time.Hour)), f(now.Add(-time.Minute))), now, true},
+		"parent never started":      {mk("", f(now.Add(-time.Minute))), now, true},
+		"grace over":                {mk(f(now.Add(-time.Hour)), f(now.Add(-time.Minute))), now.Add(memoChildGrace), false},
+		"future end (skew)":         {mk(f(now.Add(-time.Hour)), f(now.Add(time.Minute))), now, true},
+		"same second, parent first": {mk(f(now.Truncate(time.Second).Add(200*time.Millisecond)), f(now.Truncate(time.Second))), now, true},
+		"parent a second later":     {mk(f(now.Truncate(time.Second).Add(1500*time.Millisecond)), f(now.Truncate(time.Second))), now, false},
+		"parent started after":      {mk(f(now), f(now.Add(-time.Minute))), now, false},
+		"child mid-turn":            {mk(f(now.Add(-time.Hour)), ""), now, false},
+		"unparsable child time":     {mk("", "garbage"), now, false},
+		"unparsable parent time":    {mk("garbage", f(now.Add(-time.Minute))), now, false},
 	} {
 		if got := childAnswerUnread(c.tree, c.at); got != c.want {
 			t.Errorf("%s: got %v", name, got)
