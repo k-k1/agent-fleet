@@ -631,15 +631,17 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PATCH /api/memo-categories/{id}", memo.withMembership(memo.updateCategory(console)))
 	mux.HandleFunc("DELETE /api/memo-categories/{id}", memo.withMembership(memo.deleteCategory(console)))
 
-	// Queue settings (ADR 0137): Console only, like the release.
+	// Queue settings (ADR 0137): written from the Console only, like the release. The list is also
+	// read on the token face (below); no write is.
 	mux.HandleFunc("GET /api/memo-queues", memo.withMembership(memo.listQueues))
 	mux.HandleFunc("PUT /api/memo-queues/{categoryId}", memo.withMembership(memo.putQueue))
 	mux.HandleFunc("DELETE /api/memo-queues/{categoryId}", memo.withMembership(memo.deleteQueue))
 	mux.HandleFunc("POST /api/memo-queues/{categoryId}/resume", memo.withMembership(memo.resumeQueue))
-	// Fire now and the delivery ledger (ADR 0137 section 6): Console only. The fire is a
+	// Fire now and the delivery ledger (ADR 0137 section 6): the fire, resume, end and return are
+	// Console only; the ledger is also read on the token face, without hand-back reasons. The fire is a
 	// person's press, through the same reservation and claim as an automatic fire.
 	mux.HandleFunc("POST /api/memo-queues/{categoryId}/fire", memo.withResolved(memo.fire))
-	mux.HandleFunc("GET /api/memo-queues/{categoryId}/deliveries", memo.withMembership(memo.listDeliveries))
+	mux.HandleFunc("GET /api/memo-queues/{categoryId}/deliveries", memo.withMembership(memo.listDeliveries(console)))
 	// End an open run from the history: close it as "ended" and retire its session. Console only.
 	mux.HandleFunc("POST /api/memo-queues/{categoryId}/deliveries/{id}/end", memo.withMembership(memo.endDelivery))
 	// Return a closed run's messages to the queue (ADR 0137, addendum 2026-11-19, part B): the
@@ -663,6 +665,14 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	// A queue run's session hands its message back (defer_queue_item, relayed by the Agent with
 	// the session's name). Only records the request: a clean close applies it.
 	mux.HandleFunc("POST /internal/memo-deliveries/{id}/defer", memo.withMemoToken(memo.deferDelivery))
+	// Auto-run queues for the fleet operator (ADR 0137, addendum 2026-11-21): reads only, the
+	// settings and the run history. AF_MEMO_TOKEN is in the environment of every session of the
+	// workspace, so nothing here may write the settings, release, return a run's messages, run
+	// now, resume or end a run: the same handlers on /api need the member's Console login.
+	// The history answers without the sessions' hand-back reasons (listDeliveries(token)).
+	// TestMemoQueueTokenFaceIsTheReadOnlyAllowlist holds the list.
+	mux.HandleFunc("GET /internal/memo-queues", memo.withMemoToken(memo.listQueues))
+	mux.HandleFunc("GET /internal/memo-queues/{categoryId}/deliveries", memo.withMemoToken(memo.listDeliveries(token)))
 	mux.HandleFunc("GET /internal/memo-categories", memo.withMemoToken(memo.listCategories))
 	mux.HandleFunc("POST /internal/memo-categories", memo.withMemoToken(memo.createCategory))
 	mux.HandleFunc("PATCH /internal/memo-categories/{id}", memo.withMemoToken(memo.updateCategory(token)))

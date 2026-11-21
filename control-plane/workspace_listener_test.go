@@ -242,6 +242,8 @@ func TestWorkspaceListenerServesKnownAgentCalls(t *testing.T) {
 		{"GET", "/internal/mcp-servers"},
 		{"GET", "/internal/aws-profiles"},
 		{"GET", "/internal/gcp-profiles"},
+		{"GET", "/internal/memo-queues"},
+		{"GET", "/internal/memo-queues/c1/deliveries"},
 		{"GET", "/internal/memo-categories"},
 		{"GET", "/internal/memos"},
 		{"POST", "/internal/memos"},

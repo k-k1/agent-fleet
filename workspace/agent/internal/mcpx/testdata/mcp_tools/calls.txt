@@ -1746,6 +1746,36 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for get_image_studio: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-queue-run session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_image_studio","type":"text"}],"isError":true,"resultType":"complete"}}
+## get_memo_queue_runs absent
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"categoryId（キューのカテゴリ id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-queue-run session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_memo_queue_runs","type":"text"}],"isError":true,"resultType":"complete"}}
+## get_memo_queue_runs empty {}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"categoryId（キューのカテゴリ id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-queue-run session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_memo_queue_runs","type":"text"}],"isError":true,"resultType":"complete"}}
+## get_memo_queue_runs unknown {"zz_unknown":1}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"zz_unknown\" for get_memo_queue_runs","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-queue-run session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_memo_queue_runs","type":"text"}],"isError":true,"resultType":"complete"}}
+## get_memo_queue_runs not-object [1]
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for get_memo_queue_runs: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-queue-run session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_memo_queue_runs","type":"text"}],"isError":true,"resultType":"complete"}}
+## get_memo_queue_runs badtype-categoryId {"categoryId":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"categoryId\" for get_memo_queue_runs: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-queue-run session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_memo_queue_runs","type":"text"}],"isError":true,"resultType":"complete"}}
+## get_memo_queue_runs full {"categoryId":"v"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-queue-run session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_memo_queue_runs","type":"text"}],"isError":true,"resultType":"complete"}}
 ## get_memory_snapshot absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"rev（snapshot id）か at（日時）のどちらかが必要です","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -2102,6 +2132,26 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_cleanup_candidates: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-queue-run session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_cleanup_candidates","type":"text"}],"isError":true,"resultType":"complete"}}
+## list_memo_queues absent
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-queue-run session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_memo_queues","type":"text"}],"isError":true,"resultType":"complete"}}
+## list_memo_queues empty {}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-queue-run session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_memo_queues","type":"text"}],"isError":true,"resultType":"complete"}}
+## list_memo_queues unknown {"zz_unknown":1}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_memo_queues","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-queue-run session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_memo_queues","type":"text"}],"isError":true,"resultType":"complete"}}
+## list_memo_queues not-object [1]
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_memo_queues: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-queue-run session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_memo_queues","type":"text"}],"isError":true,"resultType":"complete"}}
 ## list_memory_snapshots absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   -> GET /agents/memory/snapshots?native=1&limit=20

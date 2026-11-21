@@ -12,6 +12,8 @@
       "get_agent_usage#1",
       "list_repos#1",
       "list_memos#1",
+      "list_memo_queues#1",
+      "get_memo_queue_runs#1",
       "list_schedules#1",
       "get_schedule_runs#1",
       "list_memory_snapshots#1",
@@ -27,6 +29,8 @@
       "get_agent_usage#1",
       "list_repos#1",
       "list_memos#1",
+      "list_memo_queues#1",
+      "get_memo_queue_runs#1",
       "list_schedules#1",
       "get_schedule_runs#1",
       "list_memory_snapshots#1",
@@ -44,6 +48,8 @@
       "get_agent_usage#1",
       "list_repos#1",
       "list_memos#1",
+      "list_memo_queues#1",
+      "get_memo_queue_runs#1",
       "list_schedules#1",
       "get_schedule_runs#1",
       "list_memory_snapshots#1",
@@ -61,6 +67,8 @@
       "get_agent_usage#1",
       "list_repos#1",
       "list_memos#1",
+      "list_memo_queues#1",
+      "get_memo_queue_runs#1",
       "list_schedules#1",
       "get_schedule_runs#1",
       "list_memory_snapshots#1",
@@ -110,6 +118,8 @@
       "get_agent_usage#1",
       "list_repos#1",
       "list_memos#1",
+      "list_memo_queues#1",
+      "get_memo_queue_runs#1",
       "list_schedules#1",
       "get_schedule_runs#1",
       "list_memory_snapshots#1",
@@ -1430,6 +1440,22 @@
       },
       "name": "get_image_studio"
     },
+    "get_memo_queue_runs#1": {
+      "description": "指定したキューの実行履歴（新しい順）を返す。各行は run の id・状態・結果・開始したセッション・対象のメモなど。自動実行がちゃんと動いているか／失敗や一時停止していないかを確認する時に呼ぶ（読み取り専用）。再開が要るなら、止まった原因（失敗した run の結果）を伝えて Console の「再開」を案内する。実行を終えたい時は、対象の run とそのセッションを示して Console の実行の行の「終了」を案内する。他の session の hand-back の理由はここには含まれない（Console だけ）。categoryId は list_memo_queues で取得する。",
+      "inputSchema": {
+        "properties": {
+          "categoryId": {
+            "description": "キューのカテゴリ id（list_memo_queues で取得）",
+            "type": "string"
+          }
+        },
+        "required": [
+          "categoryId"
+        ],
+        "type": "object"
+      },
+      "name": "get_memo_queue_runs"
+    },
     "get_memory_snapshot#1": {
       "description": "指定時点のエージェント自身のメモリ（claude / codex / muse。Agent Fleet のメモリは含まない）の中身を返す。その時点に何が入っていたか（kind 別・プロジェクト別のファイル数）と、その snapshot が入れた変更の差分を返す。rev（list_memory_snapshots の id）か at（日時。その時刻以前の直近 snapshot に解決）のどちらかを指定する。restore_memory_snapshot で戻す前に「戻したら何がどう変わるか」を確認するために呼ぶ。差分が大きい時は path で絞る。",
       "inputSchema": {
@@ -1697,6 +1723,14 @@
         "type": "object"
       },
       "name": "list_cleanup_candidates"
+    },
+    "list_memo_queues#1": {
+      "description": "メモの自動実行カテゴリ（キュー）と、その設定を読む（読み取り専用。ADR 0137）。各キューは categoryId / repo / category / 常設の指示（instruction。無人のセッションに渡る文）/ enabled（自動で動かすか）/ maxActive（同時に動かす数）/ openCron・openMinutes・tz・openAfter・maxFiresPerDay（動く時間帯と日次上限）/ continuationMax / spendCapUsd / paused・pausedReason（一時停止）などを持つ。waiting は待機メモの件数ではない。待機メモがあるのに今は何も始まらないキューにだけ付く、その理由の説明で、実行できるキューや待機メモのないキューには付かない（無いことは待機が 0 件の意味ではない）。待機中のメモの件数と中身は list_memos の category / state で数える。利用者に「自動実行は今どうなっている?」と聞かれた時や、get_memo_queue_runs で対象の categoryId を選ぶ前に呼ぶ。このツールと get_memo_queue_runs は読むだけで、次のことはどのツールでもできない: 設定の変更（指示の書き換え、自動実行の on/off、同時数・時間帯・続きの上限・費用の上限）、自動実行の解除、メモの承認（解放）、今すぐ実行、一時停止の再開、実行の終了、実行のメモのキューへの返却。これらは利用者が Console で行う。利用者が設定の変更を望んだら、変更後の設定の全体（指示の全文を省略せず、変える項目の現在値と新しい値）をチャットに示し、Console の「メモ」パネル → そのカテゴリの「自動実行の設定」で自分で保存してもらうよう案内する。「今すぐ実行」「再開」、実行の行の「終了」「キューに戻す」も、どれを押すかを案内するだけにする。",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_memo_queues"
     },
     "list_memory_snapshots#1": {
       "description": "エージェント自身のメモリ（claude の auto-memory / codex の memories / muse の個人メモリ）の変更履歴を新しい順に返す。memory_* ツールで読み書きする Agent Fleet のメモリとは別物で、そちらの変更はここに出ない（Console のエージェントメモリの「変更」で見る）。各行は時刻・契機（auto/manual/pre-restore/restore/import）・変更されたプロジェクトを持つ。「メモリがいつ変わったか」「おかしくなったのはいつからか」を聞かれた時や、restore_memory_snapshot で戻す時点を選ぶ前に呼ぶ。中身の差分は get_memory_snapshot を見る。",

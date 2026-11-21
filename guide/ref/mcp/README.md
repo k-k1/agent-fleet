@@ -85,6 +85,8 @@ How to read a cell:
 | `update_memo` | Edit a memo; only the fields passed change (`reference`: leave out to keep it, `{}` to remove it). Editing an approved auto-run memo sends it back for approval | ✓ | ✓ AF write | ✓ `write` | `id` |
 | `defer_queue_item` | Hand the auto-run memo that started this session back to its queue, to run again later; applied only when the run ends, and dropped when the session worked on or has an open or merged pull request | ✓ only a session an auto-run started | — | — | — |
 | `delete_memo` | Delete a memo by its id; refused in an auto-run category | — | ✓ AF write | ✓ `write` | `id` |
+| `list_memo_queues` | Read the auto-run categories and their settings; settings are changed only in the Console | — | ✓ AF read | — | — |
+| `get_memo_queue_runs` | Read an auto-run category's run history | — | ✓ AF read | — | `categoryId` |
 | `flush_memos` | Send the chosen memos to a session as one message; refused in an auto-run category | — | ✓ AF write | ✓ `write` | `sessionName`, `ids` |
 
 ## Schedules

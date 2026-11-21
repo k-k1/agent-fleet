@@ -1104,3 +1104,13 @@ Postgres.
 *Decided by the owner, 2026-11-21:* the ceiling is 10 and the default 4 (not 0), applied to existing queues through the column
 default; a press on a continuation held for the limit starts a fresh chain of up to M, with one button; and a message the
 switch accepted may root a chain, like a person's press.
+
+## Addendum 2026-11-21: the fleet operator reads auto-run categories (#4626)
+
+The Fleet Operator got tools to read auto-run categories, and none to change, start or stop anything in them.
+
+- **On the token face (`/internal/memo-queues`, `AF_MEMO_TOKEN`, the Console's handlers):** `GET /internal/memo-queues` (every queue with its settings) and `GET .../{categoryId}/deliveries` (the run history, without the sessions' hand-back reasons, which stay on the Console's list as above). The operator's tools are `list_memo_queues` and `get_memo_queue_runs`, offered to the operator only, never to an ordinary session.
+- **Not on the token face, and not an operator tool:** any write of a queue's settings (`PUT` and `DELETE /api/memo-queues/{categoryId}`), the release (section 3), the return of a run's messages, run now (`fire`), resume and end. A test holds the routes under `/internal/memo-queues` to those two reads.
+- **Why.** `AF_MEMO_TOKEN` is in the environment of every session of a workspace, so a token-face route is one that a queue run that has read an injected memo can call, whatever the operator's tool list or its `--write` flag say: the advertised tool set is not a boundary over HTTP. A settings write would let such a run replace the standing instruction, which this ADR treats as the user's own words to unattended sessions. Run now skips the window and the daily cap, resume lifts the circuit breaker and resets its count, and end force-stops another run's session tree; on `/api` each needs the person's login. Return puts the messages back to `pending`, which needs no new release.
+- **What the operator does instead.** It reads, and tells the user which Console control to press: the category's auto-run settings (with the full proposed instruction and settings shown in the chat first), "Run now", "Resume", and "End" or "Return to queue" on a run's row. `waiting` in the list is why a queue with notes waiting starts nothing; it is absent for a queue that can run, so it is not a count.
+- **Not decided here.** Whether a start, resume, end or settings change may later reach the operator through an approval of its own that the Control Plane can verify and a session cannot forge, as the release does. Nothing in this addendum prepares it.

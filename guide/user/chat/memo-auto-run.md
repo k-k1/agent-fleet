@@ -449,6 +449,19 @@ When the first turns of the last two runs both fail, the category **pauses** aut
 - Only runs that start by themselves stop. "Run now" still works
 - Fix the cause and press "**Resume**". Counting failures starts again from then
 
+## Ask the operator
+
+The [Fleet Operator](../fleet/operator.md) can **read** auto-run for you and nothing else.
+
+| It can | It cannot |
+|---|---|
+| List your auto-run categories with their settings, and read a category's run history | Change a category's settings (the instruction included), turn "Run by itself" on or off, or remove auto-run |
+| Tell you which Console control to press, and why | Press "Run now", "Resume" or "End", approve memos, or press "Return to queue" |
+
+The operator's list says why a category with memos waiting starts nothing now (outside its time window, at its limit, paused). It is left out for a category that can run, so it is not a count of waiting memos; the operator counts those from your memo list.
+
+You do these yourself, in the Console, because the operator reads memos that sessions wrote, and every session in the workspace can reach what the operator reaches. If the operator could save the instruction, start a run, resume a paused category or end a run, a memo carrying injected text could do the same. When you want to change a setting, the operator shows you the full settings it suggests, the instruction in full, and you save them under "Auto-run settings". For a run, it points you at "Run now", at "Resume" on a paused category, or at "End" on the run's row, after saying which run and which session. The reasons a session gave for handing a memo back are shown in the Console only.
+
 ## Notifications
 
 They arrive in the notification center. In **⚙ Settings → "Notifications"**, the "**What each notification does**" table switches them together on the "Auto-run" row. Pressing a notification opens its category.

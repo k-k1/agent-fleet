@@ -424,19 +424,28 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 	return d, nil, nil
 }
 
-// listDeliveries (GET /api/memo-queues/{categoryId}/deliveries): a queue's deliveries, newest
-// first, at most memoDeliveryListMax.
-func (a memoAPI) listDeliveries(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-	ds, err := a.store.ListMemoDeliveries(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
+// listDeliveries (GET /api/memo-queues/{categoryId}/deliveries, and the same read on
+// /internal/memo-queues for the fleet operator): a queue's deliveries, newest first, at most
+// memoDeliveryListMax. The token face leaves out the sessions' hand-back reasons.
+func (a memoAPI) listDeliveries(via memoVia) func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView) {
+	return func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		ds, err := a.store.ListMemoDeliveries(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		out := make([]memoDeliveryDTO, 0, len(ds))
+		for _, d := range ds {
+			dto := memoDeliveryToDTO(d)
+			// A session's reason for handing a message back is the person's to read (ADR 0137,
+			// section on hand-backs): the token face is every session's, so it never carries one.
+			if via.face == memoFaceToken && dto.Defer != nil {
+				dto.Defer.Reason = ""
+			}
+			out = append(out, dto)
+		}
+		writeJSON(w, http.StatusOK, out)
 	}
-	out := make([]memoDeliveryDTO, 0, len(ds))
-	for _, d := range ds {
-		out = append(out, memoDeliveryToDTO(d))
-	}
-	writeJSON(w, http.StatusOK, out)
 }
 
 // endDelivery (POST /api/memo-queues/{categoryId}/deliveries/{id}/end) finishes an open run by a
