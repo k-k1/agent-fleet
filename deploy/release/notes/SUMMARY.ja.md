@@ -48,7 +48,7 @@
 - **[ecs-ec2]** ホームのアタッチが遅いと正常なスロットを隔離。隔離したスロットを終了できなかった ([#4511](https://github.com/k-k1/agent-fleet/issues/4511), [#4510](https://github.com/k-k1/agent-fleet/issues/4510))
 - **[Console]** ライトテーマのアクセント上の文字・セグメント・印が読みにくい。空の「でリセット（）」。チェック中なのに失敗と言うマージの注記 ([#4525](https://github.com/k-k1/agent-fleet/issues/4525), [#4595](https://github.com/k-k1/agent-fleet/issues/4595), [#4549](https://github.com/k-k1/agent-fleet/issues/4549), [#4483](https://github.com/k-k1/agent-fleet/issues/4483))
 - **[エージェント]** 起動されたセッションのプロンプトが呼び出し元の返事の指定を上書き ([#4642](https://github.com/k-k1/agent-fleet/issues/4642))
-- **[セキュリティ]** 同梱の GitHub CLI を CVE-2026-78661 の修正版に ([#4703](https://github.com/k-k1/agent-fleet/issues/4703))
+- **[セキュリティ]** ワークスペースの GitHub CLI（CVE-2026-78661）と Control Plane の zlib（CVE-2026-85091）を更新 ([#4703](https://github.com/k-k1/agent-fleet/issues/4703), [#3339](https://github.com/k-k1/agent-fleet/issues/3339))
 
 ## [0.47.0](0.47.0.ja.md) — 2026-11-18
 

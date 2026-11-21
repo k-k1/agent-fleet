@@ -49,7 +49,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 - **[ecs-ec2]** A slow home attach quarantined a healthy slot; a quarantined slot could not be terminated ([#4511](https://github.com/k-k1/agent-fleet/issues/4511), [#4510](https://github.com/k-k1/agent-fleet/issues/4510))
 - **[console]** Light-theme contrast on accent text, segments and badges; empty "Resets ()" line; merge note said failing while checks ran ([#4525](https://github.com/k-k1/agent-fleet/issues/4525), [#4595](https://github.com/k-k1/agent-fleet/issues/4595), [#4549](https://github.com/k-k1/agent-fleet/issues/4549), [#4483](https://github.com/k-k1/agent-fleet/issues/4483))
 - **[agents]** A spawned session's prompt overrode the caller's reply instructions ([#4642](https://github.com/k-k1/agent-fleet/issues/4642))
-- **[security]** Baked GitHub CLI updated for CVE-2026-78661 ([#4703](https://github.com/k-k1/agent-fleet/issues/4703))
+- **[security]** Workspace GitHub CLI (CVE-2026-78661) and Control Plane zlib (CVE-2026-85091) updated ([#4703](https://github.com/k-k1/agent-fleet/issues/4703), [#3339](https://github.com/k-k1/agent-fleet/issues/3339))
 
 ## [0.47.0](0.47.0.md) — 2026-11-18
 
