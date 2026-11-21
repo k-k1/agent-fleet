@@ -60,6 +60,9 @@ func claudeFixture(t *testing.T, kind string) session.Meta {
 		`{"type":"user","timestamp":"2026-10-17T10:00:00Z","message":{"role":"user","content":"refactor the parser"}}`,
 		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-17T10:00:03Z","content":"and keep the old API"}`,
 		`{"type":"assistant","timestamp":"2026-10-17T10:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"Starting."},{"type":"tool_use","id":"t1","name":"Write","input":{"file_path":"` + filepath.Join(dir, "parser.go") + `","content":"package p\n"}}]}}`,
+		`{"type":"user","timestamp":"2026-10-17T10:00:06Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"TOOLRESULT-OLD"}]}}`,
+		// More than 1 MiB of newer text, so the mirror's tail collector would drop everything above.
+		`{"type":"assistant","timestamp":"2026-10-17T11:00:00Z","message":{"role":"assistant","content":[{"type":"text","text":"` + strings.Repeat("x", 1<<20+4096) + `"}]}}`,
 	}
 	writeFile(t, filepath.Join(home, ".claude", "projects", "p", session.UUID(dir, m.Name)+".jsonl"), strings.Join(lines, "\n")+"\n")
 	return m
@@ -73,10 +76,13 @@ func turnsText(m session.Meta) string {
 // A claude session's export and move snapshot read the whole log through the capability.
 func TestClaudeFullTranscriptReachesExportAndMoveSnapshot(t *testing.T) {
 	m := claudeFixture(t, session.KindClaude)
-	if s := turnsText(m); !strings.Contains(s, "refactor the parser") || !strings.Contains(s, "Starting.") {
-		t.Fatalf("export turns = %s", s)
+	if s := turnsText(m); !strings.Contains(s, "refactor the parser") || !strings.Contains(s, "Starting.") || !strings.Contains(s, "TOOLRESULT-OLD") {
+		t.Fatalf("export lost the old turns or the tool result (%d bytes)", len(s))
 	}
 	in := readMoveSource(m)
+	if b, _ := json.Marshal(in.Turns); !strings.Contains(string(b), "refactor the parser") || !strings.Contains(string(b), "TOOLRESULT-OLD") {
+		t.Fatalf("snapshot lost the old turns or the tool result (%d bytes)", len(b))
+	}
 	if len(in.Turns) == 0 || len(in.Queued) != 1 || in.Queued[0] != "and keep the old API" {
 		t.Fatalf("snapshot turns=%d queued=%q", len(in.Turns), in.Queued)
 	}
