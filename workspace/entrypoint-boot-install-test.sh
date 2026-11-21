@@ -246,19 +246,26 @@ npm1=$(grep -nx 'workspace-agent boot-install npm' "$STUB_WA_LOG" | head -1 | cu
 reset; run_block STUB_WA_RC=126 || fail "npm-recover: an exit outside the contract aborted the start"
 has 'WARN: npm boot-install npm-recover exited 126' || fail "npm-recover: no WARN for an exit outside the contract"
 awk '/boot-install npm-recover/{r=NR} /npm uninstall -g/{u=NR} END{exit !(r && u && r<u)}' "$ENTRY" || fail "npm-recover: not before the OFF branch's npm uninstall"
-# ... and not directly inside a branch: the code line before it must be a finished statement (a
-# `then`, `do`, `else` or `{` there means a condition wraps it, which would skip the recovery on
-# the starts that most need it).
+# The step is exactly this stanza, at the top of the start (no condition added to the call or the
+# line before it can skip it on the starts that most need it), and it runs: the stanza is cut out
+# of the entrypoint and executed against the stub Agent.
+awk '/^NPM_RECOVER_WA=/{on=1} on{print} on&&/^fi$/{exit}' "$ENTRY" >"$T/recover.sh"
+want='NPM_RECOVER_WA="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
+if [ -x "$NPM_RECOVER_WA" ]; then
+  "$NPM_RECOVER_WA" boot-install npm-recover || echo "[entrypoint] WARN: npm boot-install npm-recover exited $? (continuing)"
+fi'
+[ "$(cat "$T/recover.sh")" = "$want" ] || fail "npm-recover: the stanza in entrypoint.sh changed"
 prev_code() { awk '/^[ \t]*#/ || /^[ \t]*$/ { next } /^NPM_RECOVER_WA=/ { print last; exit } { last=$0 }' "$1"; }
 case "$(prev_code "$ENTRY")" in
   *then|*do|*else|*'{'|*'&&'|*'||') fail "npm-recover: wrapped in a condition ($(prev_code "$ENTRY"))" ;;
   '') fail "npm-recover: the step is missing" ;;
 esac
-sed 's/^NPM_RECOVER_WA=/if [ ! -x \/usr\/local\/bin\/claude ]; then\nNPM_RECOVER_WA=/' "$ENTRY" >"$T/entry.mut"
-case "$(prev_code "$T/entry.mut")" in
-  *then) ;; # the check sees a wrapped step
-  *) fail "npm-recover: the wrapping check cannot tell a conditional step" ;;
-esac
+: >"$STUB_WA_LOG"
+BI_AGENT_BIN="$T/bin/workspace-agent" bash -c 'set -e; . "$1"' _ "$T/recover.sh" >"$T/out" 2>&1 || fail "npm-recover: the stanza failed"
+grep -qx 'workspace-agent boot-install npm-recover' "$STUB_WA_LOG" || fail "npm-recover: the stanza did not call the Agent"
+BI_AGENT_BIN="$T/none" bash -c 'set -e; . "$1"; echo STARTED' _ "$T/recover.sh" >"$T/out" 2>&1; has STARTED || fail "npm-recover: a missing Agent ended the start"
+# Where it sits: before the OFF branch's uninstall and before the lean block's installs.
+awk '/boot-install npm-recover/{r=NR} /npm uninstall -g/{u=NR} /^LEAN_CLIS=0/{l=NR} END{exit !(r && u && l && r<l && l<u)}' "$ENTRY" || fail "npm-recover: not before the lean block and the OFF branch's uninstall"
 # The shell no longer carries an npm install or a verify of its own.
 grep -q 'npm install -g' "$BLOCK" && fail "npm: shell install block still present"
 grep -q 'npm_clis_verify' "$BLOCK" && fail "npm: shell verify still present"

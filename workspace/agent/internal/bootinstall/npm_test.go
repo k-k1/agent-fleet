@@ -489,3 +489,22 @@ func TestNPMRepairNoSpaceAfterInstall(t *testing.T) {
 		}
 	}
 }
+
+func TestNPMSkipsACLIWhoseRestoreIsPending(t *testing.T) {
+	f := newNPM(t, allPins)
+	if err := os.MkdirAll(filepath.Join(f.home, ".local"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.npmWriteMarker("pending", []string{"claude"}); err != nil {
+		t.Fatal(err)
+	}
+	f.put("opencode", "#!/bin/sh\necho 2.0.0\n")
+	f.put("codex", "#!/bin/sh\necho 3.0.0\n")
+	// copilot is missing: it alone is installed; claude's previous copy is still waiting.
+	f.env.Repin = true
+	NPM(f.env)
+	log := f.npmLog()
+	if !strings.Contains(log, "@github/copilot@4.0.0") || strings.Contains(log, "claude-code") {
+		t.Fatalf("npm log %q: want the copilot pin only", log)
+	}
+}

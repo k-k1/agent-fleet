@@ -245,8 +245,25 @@ func (e Env) selfUpdateNPM() {
 		moved = keep
 	}
 	// A failed install can leave a half-replaced tree, or none, so check what has no previous copy.
-	if len(verify) > 0 {
-		e.NPMVerify(verify, false)
+	// A CLI whose previous copy could not be put back is waiting for the next start's recovery:
+	// the pin repair would delete the old link already restored, so it is not looked at here.
+	var held []string
+	for _, c := range npmCLINames(stuck) {
+		held = append(held, c)
+		e.note(c, statusFailed, ReasonOther)
+	}
+	var check []string
+	for _, c := range verify {
+		isHeld := false
+		for _, h := range held {
+			isHeld = isHeld || h == c
+		}
+		if !isHeld {
+			check = append(check, c)
+		}
+	}
+	if len(check) > 0 {
+		e.NPMVerify(check, false)
 	}
 	switch {
 	case len(stuck) > 0:

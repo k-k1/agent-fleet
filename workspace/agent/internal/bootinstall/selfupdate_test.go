@@ -1199,3 +1199,31 @@ func TestSelfUpdateNPMMixedKeepsOnlyTheStuckCLIPending(t *testing.T) {
 		t.Fatal("codex's accepted copy was replaced")
 	}
 }
+
+func TestSelfUpdateNPMUnreadableScopeKeepsTheRestoredLinkUntilRecovery(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	f.realNPM(t)
+	claude := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	// The new claude is healthy; only its scope directory turns unreadable right after npm wrote
+	// it, so the probe and the look at the previous tree both fail: one fault, nothing else.
+	stub := f.read(filepath.Join(f.npmDir, "npm"))
+	stub = strings.Replace(stub, `chmod +x "$tree/cli.sh"; rm -f`, `chmod +x "$tree/cli.sh"; [ "$cli" = claude ] && chmod 000 "$(dirname "$tree")"; rm -f`, 1)
+	f.write(t, filepath.Join(f.npmDir, "npm"), stub)
+	parent := filepath.Dir(claude)
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	f.env.selfUpdateNPM()
+	if _, err := os.Lstat(f.local("claude")); err != nil {
+		t.Fatalf("the restored link was removed in the same update:\n%s", f.out)
+	}
+	os.Chmod(parent, 0o755)
+	if st, ents, ok, bad := f.env.npmReadMarker(); !ok || bad || st != "pending" || len(ents) != 1 || ents[0] != "claude" {
+		t.Fatalf("marker = %q %v ok=%v", st, ents, ok)
+	}
+	f.env.npmRecoverAside(false)
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
+		t.Fatalf("the previous claude does not run after recovery: %q %v\n%s", out, err, f.out)
+	}
+}
