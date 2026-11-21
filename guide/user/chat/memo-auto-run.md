@@ -277,12 +277,11 @@ It is all or nothing, and it is refused once a result has been used. The history
 
 ### Run now
 
-1. Press the history button of the category ("**Run history**")
-2. Check "N waiting to run" and press "**Run now**"
-3. "Started the run." appears. The session starts at the next check, about a minute later. A stopped workspace takes longer, because it is started first
+1. Press "**Run now**" (the play button) on the category's header in the Memo queue view, or choose "**Run now**" in the "**...**" menu of the category in the Auto-run view
+2. "Started the run." appears. The session starts at the next check, about a minute later. A stopped workspace takes longer, because it is started first
 
 - A run takes the oldest memos waiting to run, as many as "Memos per session". One press is one run
-- It cannot be pressed while nothing is waiting to run
+- It is enabled by what the queue list checks, which is whether a press can start something: at least one memo waiting to run whose "Waits for" memos are all done, and a free place (under "Sessions at the same time", and under the limit across all your categories). Otherwise it is greyed out, and its tooltip says why: no memo is waiting, every waiting memo waits for another memo or for its time, or the places are taken. The Control Plane still decides when you press, so a refusal can still appear (an empty instruction, your session limit, or an organisation that has not allowed auto-run are not checked beforehand)
 - It works with "Run by itself" off, while paused, outside the time window, and when the day's runs are used up
 - A stopped workspace is started
 - It is refused when the category already has as many runs as "Sessions at the same time", when all your categories together have 4, when you are at your session limit, when the instruction is empty, or when the organisation has not allowed auto-run. The screen says which
@@ -293,7 +292,7 @@ The "**Auto-run**" view of the left pane (the icon right after "Memo queue") lis
 
 The view follows the [working set](../fleet/working-sets.md) you picked: a category is listed when its repository is in the set. A category without a repository, and runs that no category names, are listed under every set.
 
-Each category has a pinned header like a repository in the "Sessions" view: the repository icon and `repository / category`. Its gear opens the category's auto-run settings, and its "**...**" menu has "**Run history**" and "**Show in Memo queue**". Under it, "**Running / waiting N**" is open and "**Ended N**" is folded; press either to fold or open it.
+Each category has a pinned header like a repository in the "Sessions" view: the repository icon and `repository / category`. Its gear opens the category's auto-run settings, and its "**...**" menu has "**Run now**", "**Run history**" and "**Show in Memo queue**". Under it, "**Running / waiting N**" is open and "**Ended N**" is folded; press either to fold or open it.
 
 A row shows the run's state (running, waiting for your answer, or ended), the work item it started for (`#12 title`), its pull request and the pull request's state when known, and how long it has been going. Press a row to open the run's session. The sessions the run started, such as reviewers, are listed one level under the row. A run the queue has closed whose session is running again, because you took it over or it was started again, is listed under "Running / waiting" with a "**resumed**" tag and not under "Ended".
 
@@ -307,7 +306,7 @@ The icon shows an amber number when a run's session waits for your answer; it st
 
 "**Run history**" lists the category's latest runs, newest first, at most 50. It refreshes every 10 seconds, and "**Refresh**" reads it at once.
 
-![The "Run history" screen: "2 waiting to run", "Refresh" and "Run now" on top, with the runs below. A running row shows "Started by itself" and "Not finished: working", and a finished row shows "First turn: finished"](../../assets/chatpages-autorun-history-en-light.webp)
+![The "Run history" screen: "2 waiting to run" and "Refresh" on top, with the runs below. A running row shows "Started by itself" and "Not finished: working", and a finished row shows "First turn: finished"](../../assets/chatpages-autorun-history-en-light.webp)
 
 When memos are waiting to run and nothing starts, the top may show a line that says why, or a notice. They are the same as under the category's header ([Nothing starts by itself](#nothing-starts-by-itself)).
 

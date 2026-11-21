@@ -91,6 +91,9 @@ func TestMemoDeferAppliedByTheCleanClose(t *testing.T) {
 		if w := e.queueWaiting(got.QueueID); w == nil || w.Reason != waitDeferred || w.Until == "" {
 			t.Fatalf("waiting %+v", w)
 		}
+		if fb := e.queueFireBlock(got.QueueID); fb == nil || fb.Reason != waitDeferred || fb.Until == "" {
+			t.Fatalf("fireBlock %+v, want deferred", fb)
+		}
 		sql, goSide := e.statsOf(got.QueueID)
 		if sql.Eligible != 0 || sql.Deferred != 1 || goSide.Deferred != 1 || sql.NextAt != goSide.NextAt {
 			t.Fatalf("stats sql %+v go %+v", sql, goSide)
@@ -106,6 +109,9 @@ func TestMemoDeferAppliedByTheCleanClose(t *testing.T) {
 		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET not_before=? WHERE id=?`,
 			store.DeliveryTS(time.Now().Add(-time.Minute)), mid); err != nil {
 			t.Fatal(err)
+		}
+		if fb := e.queueFireBlock(got.QueueID); fb != nil {
+			t.Fatalf("fireBlock %+v after the time passed", fb)
 		}
 		if d2 := e.fired(got.QueueID); !sameIDs(d2.MessageIDs, mid) {
 			t.Fatalf("re-fire claimed %v", d2.MessageIDs)

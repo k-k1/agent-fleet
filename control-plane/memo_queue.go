@@ -400,6 +400,10 @@ type memoQueueDTO struct {
 	// Waiting is set by the list only: why a queue with notes waiting starts nothing now (see
 	// memoQueueWaiting). Absent when nothing waits or a run can start.
 	Waiting *memoWaiting `json:"waiting,omitempty"`
+	// FireBlock is set by the list only: why a press of "Run now" would be refused now (see
+	// memoFireBlock), a reason of the same shape as Waiting. Absent when a press would claim
+	// something.
+	FireBlock *memoWaiting `json:"fireBlock,omitempty"`
 }
 
 func memoQueueToDTO(q store.MemoQueue, c store.MemoCategory) memoQueueDTO {
@@ -648,6 +652,9 @@ func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Iden
 			}
 			var err error
 			if dto.Waiting, err = memoQueueWaiting(rd, q, on, stats[q.CategoryID], now); err != nil {
+				return err
+			}
+			if dto.FireBlock, err = memoFireBlock(rd, q, stats[q.CategoryID]); err != nil {
 				return err
 			}
 			out = append(out, dto)

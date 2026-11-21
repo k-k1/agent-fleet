@@ -161,6 +161,8 @@ export const memo = {
   "memo.q_remove_failed": "設定を外せませんでした。",
   "memo.d_fire": "今すぐ実行",
   "memo.d_fire_title": "実行待ちのメモを、今すぐセッションとして実行します。",
+  "memo.d_fire_blocked": "今すぐ実行はできません。{why}",
+  "memo.d_fire_none": "実行待ちのメモはありません。",
   "memo.d_fire_started": "実行を開始しました。",
   "memo.d_fire_failed": "実行を開始できませんでした。",
   "memo.d_slots_full": "「今すぐ実行」は実行されませんでした。このカテゴリの枠がすべて埋まっています。枠を使っている実行:",

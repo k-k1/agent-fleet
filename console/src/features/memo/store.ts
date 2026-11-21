@@ -20,8 +20,9 @@ interface MemoStore {
   requestCompose(): void;
   /** A request to show one auto-run category (from a notification): the panel opens, unfolds it,
    *  scrolls to it and, with history, opens its run history. n makes a repeat re-trigger. */
-  reveal: { id: string | null; history: boolean; n: number };
-  revealCategory(id: string, history: boolean): void;
+  reveal: { id: string | null; history: boolean; slotsFull: boolean; n: number };
+  /** slotsFull: a "Run now" was refused for want of a slot, so the history names who holds them. */
+  revealCategory(id: string, history: boolean, slotsFull?: boolean): void;
   /** Notes waiting for the member's approval, with the scope (see memoScope) the read was made
    *  for; null until a read has answered. A count, not the list: the list is replaced on every
    *  read and a subscriber would redraw each time. */
@@ -54,8 +55,8 @@ export const useMemoStore = create<MemoStore>((set, get) => ({
   bump: () => set((s) => ({ tick: s.tick + 1 })),
   composeReq: 0,
   requestCompose: () => set((s) => ({ composeReq: s.composeReq + 1 })),
-  reveal: { id: null, history: false, n: 0 },
-  revealCategory: (id, history) => set((s) => ({ reveal: { id, history, n: s.reveal.n + 1 } })),
+  reveal: { id: null, history: false, slotsFull: false, n: 0 },
+  revealCategory: (id, history, slotsFull = false) => set((s) => ({ reveal: { id, history, slotsFull, n: s.reveal.n + 1 } })),
   waiting: null,
   scope: "",
   setScope: (scope) => {

@@ -54,6 +54,7 @@ import { useQueueSettings, useQueueSettingsCache } from "./queueSettingsCache.ts
 import { MemoProducerText } from "./MemoProducerText.tsx";
 import { MemoQueueRuns } from "./MemoQueueRuns.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
+import { RunNowButton } from "./RunNowButton.tsx";
 import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
 import { memoReference } from "./reference.ts";
@@ -236,6 +237,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // looks the live row up, so a poll that renames or removes it is seen by the dialog.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   const [deliveriesFor, setDeliveriesFor] = useState<string | null>(null);
+  // The history was opened by a "Run now" that found every slot taken: it names who holds them.
+  const [slotsFullFor, setSlotsFullFor] = useState(false);
   // Categories whose inline run list is expanded. Not persisted: it reads the Control Plane on
   // open, so a reload starts quiet.
   const [runsOpen, setRunsOpen] = useState<Record<string, boolean>>({});
@@ -271,8 +274,18 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       // Numbered when the request starts, and tied to the scope it starts in (store.ts).
       const ticket = useMemoStore.getState().begin();
       const queueTicket = useQueueSettingsCache.getState().begin();
-      return Promise.all([memoList(), memoCategoryList(), memoQueueList().catch(() => null)])
-        .then(([mList, cList, qRaw]) => {
+      // Published by its own read, so that a failed or slow memo or category read neither holds it
+      // back nor drops it: Run now's enabled state follows it. A failed settings read (an older
+      // Control Plane, an error body) keeps the cached one and never takes the memo list down.
+      const queues = memoQueueList()
+        .catch(() => null)
+        .then((qRaw) => {
+          if (!alive) return;
+          const fresh = readMemoQueues(qRaw);
+          if (fresh) useQueueSettingsCache.getState().publish(queueKey, queueTicket, fresh);
+        });
+      return Promise.all([memoList(), memoCategoryList(), queues])
+        .then(([mList, cList]) => {
           if (!alive) return;
           // An error body (api() resolves HTTP errors as {error}) is a failed read, not an empty
           // list: keep what is on screen, and with it the records of the changed notes.
@@ -281,10 +294,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           const marr = Array.isArray(mList) ? mList : [];
           const carr = Array.isArray(cList) ? cList : [];
           useMemoStore.getState().publish(marr, ticket, scope);
-          // A failed settings read (an older Control Plane, an error body) keeps the cached one;
-          // it never takes the memo list down with it.
-          const fresh = readMemoQueues(qRaw);
-          if (fresh) useQueueSettingsCache.getState().publish(queueKey, queueTicket, fresh);
           setMemosTenant(tenant ?? "");
           const ser = JSON.stringify([marr, carr]);
           if (ser !== serRef.current) {
@@ -413,7 +422,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     revealN.current = reveal.n;
     setOpen(true);
     setCollapsedCats((s) => ({ ...s, [groupKey(c.repo, c.name)]: false }));
-    if (reveal.history) setDeliveriesFor(c.id);
+    if (reveal.history) {
+      setSlotsFullFor(!!reveal.slotsFull);
+      setDeliveriesFor(c.id);
+    }
     requestAnimationFrame(() => {
       document.querySelector(`[data-memo-cat="${CSS.escape(c.id)}"]`)?.scrollIntoView({ block: "nearest" });
     });
@@ -1185,6 +1197,20 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           <Icon name="add" />
                         </button>
                         {cat && isQueue && (
+                          <RunNowButton
+                            categoryId={cat.id}
+                            queue={queueByCat.get(cat.id)}
+                            onResult={(r) => {
+                              if (r === "started") bumpMemos();
+                              // The refusal says a slot is taken; the history names who holds it.
+                              if (r === "no_slot") {
+                                setSlotsFullFor(true);
+                                setDeliveriesFor(cat.id);
+                              }
+                            }}
+                          />
+                        )}
+                        {cat && isQueue && (
                           <button
                             type="button"
                             className="memo-cat-act"
@@ -1416,8 +1442,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             repo={c.repo}
             waiting={pendingCount(memos.filter((m) => m.repo === c.repo && m.category === c.name))}
             focusRun={focusRun}
+            slotsFull={slotsFullFor}
             onClose={() => {
               setDeliveriesFor(null);
+              setSlotsFullFor(false);
               setFocusRun("");
             }}
             onFired={bumpMemos}

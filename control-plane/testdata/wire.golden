@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 629
+# count: 645
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -316,6 +316,14 @@ memoQueueDTO.createdAt string
 memoQueueDTO.draining bool
 memoQueueDTO.effort string
 memoQueueDTO.enabled bool
+memoQueueDTO.fireBlock.detail.agentKind string,omitempty
+memoQueueDTO.fireBlock.detail.blocked number,omitempty
+memoQueueDTO.fireBlock.detail.by string,omitempty
+memoQueueDTO.fireBlock.detail.deferred number,omitempty
+memoQueueDTO.fireBlock.detail.needed number,omitempty
+memoQueueDTO.fireBlock.detail.waiting number,omitempty
+memoQueueDTO.fireBlock.reason string
+memoQueueDTO.fireBlock.until string,omitempty
 memoQueueDTO.generation number
 memoQueueDTO.instruction string
 memoQueueDTO.maxActive number
@@ -357,6 +365,14 @@ memoQueuesWire.queues[].createdAt string
 memoQueuesWire.queues[].draining bool
 memoQueuesWire.queues[].effort string
 memoQueuesWire.queues[].enabled bool
+memoQueuesWire.queues[].fireBlock.detail.agentKind string,omitempty
+memoQueuesWire.queues[].fireBlock.detail.blocked number,omitempty
+memoQueuesWire.queues[].fireBlock.detail.by string,omitempty
+memoQueuesWire.queues[].fireBlock.detail.deferred number,omitempty
+memoQueuesWire.queues[].fireBlock.detail.needed number,omitempty
+memoQueuesWire.queues[].fireBlock.detail.waiting number,omitempty
+memoQueuesWire.queues[].fireBlock.reason string
+memoQueuesWire.queues[].fireBlock.until string,omitempty
 memoQueuesWire.queues[].generation number
 memoQueuesWire.queues[].instruction string
 memoQueuesWire.queues[].maxActive number

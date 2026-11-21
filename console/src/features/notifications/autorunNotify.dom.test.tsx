@@ -90,6 +90,6 @@ describe("clicking an auto-run notification opens the category", () => {
     const before = useMemoStore.getState().reveal.n;
     const r = await openNotificationTarget(note(kind), false);
     expect(r.opened).toBe(true);
-    expect(useMemoStore.getState().reveal).toEqual({ id: "c1", history, n: before + 1 });
+    expect(useMemoStore.getState().reveal).toEqual({ id: "c1", history, slotsFull: false, n: before + 1 });
   });
 });

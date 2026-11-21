@@ -294,3 +294,56 @@ func containsWaiting(s string) bool {
 	}
 	return false
 }
+
+// fireBlock is about a press of "Run now", which ignores the window, the threshold and the caps
+// that hold back a fire by itself: only the claim's own refusals show.
+func TestMemoFireBlockOnTheWire(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// Nothing waiting: a press has nothing to take.
+		e.queueWith("app", "empty", map[string]any{"enabled": true})
+		list0 := decode[memoQueuesWire](t, e.do("a", "GET", "/api/memo-queues", nil))
+		seen := false
+		for _, dq := range list0.Queues {
+			if dq.Category == "empty" {
+				seen = true
+				if dq.FireBlock == nil || dq.FireBlock.Reason != waitNothing {
+					t.Fatalf("empty queue: %+v", dq.FireBlock)
+				}
+			}
+		}
+		if !seen {
+			t.Fatal("the empty queue is not listed")
+		}
+		// Below its threshold the queue waits, but a press would claim the two notes.
+		_, q := e.autoQueue("app", "impl", map[string]any{"openAfter": 5, "maxActive": 1}, 2)
+		list := decode[memoQueuesWire](t, e.do("a", "GET", "/api/memo-queues", nil))
+		var impl memoQueueDTO
+		for _, dq := range list.Queues {
+			if dq.Category == "impl" {
+				impl = dq
+			}
+		}
+		if impl.Waiting == nil || impl.FireBlock != nil {
+			t.Fatalf("below threshold: %+v", list.Queues)
+		}
+		// A press takes the one slot; the next press would be refused for want of a place.
+		if rec := e.do("a", "POST", "/api/memo-queues/"+q+"/fire", nil); rec.Code != http.StatusAccepted {
+			t.Fatalf("fire: %d %s", rec.Code, rec.Body.String())
+		}
+		e.pending("app", "impl", "one more")
+		list = decode[memoQueuesWire](t, e.do("a", "GET", "/api/memo-queues", nil))
+		seen = false
+		for _, dq := range list.Queues {
+			if dq.Category != "impl" {
+				continue
+			}
+			seen = true
+			if fb := dq.FireBlock; fb == nil || fb.Reason != waitNoPlace || fb.Detail == nil || fb.Detail.By != "category" {
+				t.Fatalf("slots full: %+v", dq.FireBlock)
+			}
+		}
+		if !seen {
+			t.Fatal("the full queue is not listed")
+		}
+	})
+}
