@@ -349,3 +349,56 @@ func TestPutCeilingEqualRuleAndEditKeepsWriter(t *testing.T) {
 		}
 	})
 }
+
+// Two Control Plane handles record different ceilings at once over a row an older writer
+// holds: whichever commits first, the row ends at the newer writer's rule and key, every
+// committed write has exactly one audit row, and a yield records nothing. A row with no writer
+// key (legacy, or written by an edit) is taken over by the first CP to record.
+func TestPutCeilingConcurrentWritersFence(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, open func() *SQL) {
+		ctx := context.Background()
+		old, newer := CeilingWriterKey(100, "a"), CeilingWriterKey(200, "a")
+		audit := func(before, after RoutePolicyRow) AuditLog {
+			return AuditLog{ID: NewID(), ActorKind: "system", ActorID: "op", Action: "route_policy.ceiling.sync", Target: "deployment", At: NowTS()}
+		}
+		if _, _, err := st.PutRoutePolicy(ctx, RoutePolicyCeiling, "", `{"deny":["legacy"]}`, "edit", nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, r, err := st.PutCeiling(ctx, `{"deny":["old"]}`, "op", old, audit); err != nil || r.Writer != old {
+			t.Fatalf("an unkeyed row was not taken over: %+v %v", r, err)
+		}
+		a, b := open(), open()
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		start := make(chan struct{})
+		for i, w := range []struct {
+			h    *SQL
+			rule string
+			key  string
+		}{{a, `{"deny":["old2"]}`, old}, {b, `{"deny":["new"]}`, newer}} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				_, _, errs[i] = w.h.PutCeiling(ctx, w.rule, "op", w.key, audit)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		if errs[1] != nil || errs[0] != nil && !errors.Is(errs[0], ErrCeilingSuperseded) {
+			t.Fatalf("errors: old %v, new %v", errs[0], errs[1])
+		}
+		row, _ := st.GetRoutePolicy(ctx, RoutePolicyCeiling, "")
+		if row.Writer != newer || row.Rule != `{"deny":["new"]}` {
+			t.Fatalf("the row did not end at the newer writer: %+v", row)
+		}
+		wrote := 2 // the takeover and the newer write
+		if errs[0] == nil {
+			wrote++ // the older write committed first
+		}
+		logs, _ := st.ListAuditByTenant(ctx, "", 20)
+		if len(logs) != wrote {
+			t.Errorf("audit rows = %d, want %d (old err %v)", len(logs), wrote, errs[0])
+		}
+	})
+}
