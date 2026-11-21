@@ -463,6 +463,15 @@
 .memo-cat-act:hover {
   color: var(--fg);
 }
+.memo-cat-act[aria-disabled="true"],
+.memo-cat-act[aria-disabled="true"]:hover {
+  color: var(--muted2);
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.memo-cat-head:hover .memo-cat-act[aria-disabled="true"] {
+  opacity: 0.3;
+}
 .memo-cat-del {
   flex: none;
   background: none;
@@ -1384,4 +1393,18 @@ button.memo-reflink-key {
 }
 .memo-d-defer.dropped {
   color: var(--muted);
+}
+.memo-addcat-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.memo-addcat-repo {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 4px;
 }

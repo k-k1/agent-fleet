@@ -40,6 +40,8 @@ import { memoScope, useMemoStore } from "./store.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
+import { useReposStore } from "../repos/store.ts";
+import { repoBaseName } from "../../lib/workingSets.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useDraft } from "../../lib/draft.ts";
@@ -162,6 +164,16 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const [memosTenant, setMemosTenant] = useState<string | null>(null);
   const [cats, setCats] = useState<MemoCategory[]>([]);
   const [sel, setSel] = useState<Record<string, boolean>>({});
+  // Where the bottom "Add category" files the new category: "" = unfiled, else a base repository.
+  const [newCatRepo, setNewCatRepo] = useState("");
+  const workRepos = useReposStore((st) => st.repos);
+  // Worktree folders file under their base repo (as add_memo does), so offer each base once.
+  const repoChoices = useMemo(() => [...new Set(workRepos.map(repoBaseName))].sort(), [workRepos]);
+  // A selection that left the list (repo removed, tenant switched) falls back to unfiled for good,
+  // so the same name reappearing later is not picked up silently.
+  useEffect(() => {
+    if (newCatRepo && !repoChoices.includes(newCatRepo)) setNewCatRepo("");
+  }, [newCatRepo, repoChoices]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // Collapsed category groups, keyed by repo\x00category and persisted so the fold state
   // survives reloads (clicking a category header toggles it).
@@ -217,7 +229,13 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // tenant's administrator has not allowed new settings.
   const [queues, setQueues] = useState<MemoQueue[]>([]);
   const [tenantEnabled, setTenantEnabled] = useState(false);
-  const lastQueues = useRef<{ tenantEnabled: boolean; queues: MemoQueue[] }>({ tenantEnabled: false, queues: [] });
+  // False until a settings read has succeeded: tenantEnabled's initial false is "not read yet",
+  // not "the administrator said no". Until then the gear is closed with its own reason
+  // (memo.q_unread), never the tenant-off one.
+  const [tenantKnown, setTenantKnown] = useState(false);
+  const lastQueues = useRef<{ tenantEnabled: boolean; queues: MemoQueue[]; known: boolean }>({ tenantEnabled: false, queues: [], known: false });
+  // The tenant lastQueues was read for: a failed read reuses it only inside that tenant.
+  const lastQueuesTenant = useRef("");
   // The dialogs hold a category id, never a copy of the category or its settings: each render
   // looks the live row up, so a poll that renames or removes it is seen by the dialog.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
@@ -268,7 +286,12 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           useMemoStore.getState().publish(marr, ticket, scope);
           // A failed settings read (an older Control Plane, an error body) keeps the last good
           // one; it never takes the memo list down with it.
-          const qw = readMemoQueues(qRaw) ?? lastQueues.current;
+          const fresh = readMemoQueues(qRaw);
+          if (lastQueuesTenant.current !== (tenant ?? "")) {
+            lastQueuesTenant.current = tenant ?? "";
+            lastQueues.current = { tenantEnabled: false, queues: [], known: false };
+          }
+          const qw = fresh ? { ...fresh, known: true } : lastQueues.current;
           lastQueues.current = qw;
           setMemosTenant(tenant ?? "");
           const ser = JSON.stringify([marr, carr, qw]);
@@ -278,6 +301,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             setCats(carr);
             setQueues(qw.queues);
             setTenantEnabled(qw.tenantEnabled);
+            setTenantKnown(qw.known);
           }
         })
         .catch(() => {});
@@ -908,6 +932,33 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     </div>
   );
 
+  const addCatRow = (
+    <span className="memo-addcat-row">
+      <button
+        type="button"
+        className="memo-addcat"
+        onClick={() => void addCategory(repoChoices.includes(newCatRepo) ? newCatRepo : "")}
+      >
+        <Icon name="add" /> {tr("memo.add_category")}
+      </button>
+      {repoChoices.length > 0 && (
+        <select
+          className="memo-addcat-repo"
+          aria-label={tr("memo.add_category_where")}
+          value={repoChoices.includes(newCatRepo) ? newCatRepo : ""}
+          onChange={(e) => setNewCatRepo(e.target.value)}
+        >
+          <option value="">{tr("memo.common")}</option>
+          {repoChoices.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+      )}
+    </span>
+  );
+
   return (
     <>
       <Section
@@ -922,7 +973,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         {!target && composer}
 
         {memos.length === 0 && cats.length === 0 ? (
-          <div className="pane-empty">{tr("memo.empty")}</div>
+          <>
+            <div className="pane-empty">{tr("memo.empty")}</div>
+            {addCatRow}
+          </>
         ) : (
           <>
             {blocks.map((rb) => (
@@ -1150,20 +1204,37 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             <Icon name="history" />
                           </button>
                         )}
-                        {cat && (
+                        {cat && (() => {
+                          // A category that already is a queue stays openable while the tenant blocks
+                          // new setups: the dialog still lets the member remove it.
+                          const settingsBlocked = tenantKnown && !tenantEnabled && !isQueue;
+                          // Until a settings read has succeeded the dialog would edit a draft built
+                          // from defaults, and a save would overwrite an existing queue's setting.
+                          const settingsUnread = !tenantKnown;
+                          const gearNote = settingsUnread ? tr("memo.q_unread") : settingsBlocked ? tr("memo.q_tenant_off") : null;
+                          return (
                           <button
                             type="button"
                             className="memo-cat-act"
-                            title={tr("memo.autorun_settings")}
-                            aria-label={tr("memo.autorun_settings")}
+                            title={gearNote ?? tr("memo.autorun_settings")}
+                            aria-label={gearNote ?? tr("memo.autorun_settings")}
+                            // aria-disabled, not disabled: a native disabled button cannot take focus
+                            // (the reason would be unreachable by keyboard) and swallows the click,
+                            // which would then fall through to the header and fold the category.
+                            aria-disabled={gearNote ? true : undefined}
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (gearNote) {
+                                toast(gearNote, { kind: "warn" });
+                                return;
+                              }
                               setSettingsFor(cat.id);
                             }}
                           >
                             <Icon name="settings-gear" />
                           </button>
-                        )}
+                          );
+                        })()}
                         {cat && (
                           <button
                             type="button"
@@ -1234,9 +1305,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
               </div>
             ))}
 
-            <button type="button" className="memo-addcat" onClick={() => void addCategory()}>
-              <Icon name="add" /> {tr("memo.add_category")}
-            </button>
+            {addCatRow}
           </>
         )}
 
