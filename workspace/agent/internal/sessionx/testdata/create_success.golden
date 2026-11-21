@@ -32,9 +32,9 @@ meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","launchR
 == tui_schedule
 status 201
 header Content-Type: application/json
-body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"launchRoute\":{\"route\":\"anthropic-subscription\"},\"origin\":\"schedule\",\"initialPromptState\":\"pending\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME1\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"launchRoute\":{\"route\":\"anthropic-subscription\"},\"origin\":\"schedule\",\"scheduleId\":\"s1\",\"initialPromptState\":\"pending\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME1\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
 delivered "nightly"
-meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","launchRoute":{"route":"anthropic-subscription"},"title":"","color":"","label":"[AF:$NAME] app @$STAMP","repo":"app","branch":"main","createdAt":"$TIME1","stoppedAt":"","archived":false,"origin":"schedule","initialPromptState":"pending"}
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","launchRoute":{"route":"anthropic-subscription"},"title":"","color":"","label":"[AF:$NAME] app @$STAMP","repo":"app","branch":"main","createdAt":"$TIME1","stoppedAt":"","archived":false,"origin":"schedule","scheduleId":"s1","initialPromptState":"pending"}
 == tui_ssm
 status 201
 header Content-Type: application/json

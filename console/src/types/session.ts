@@ -105,6 +105,9 @@ export interface Session {
   // "session" | "unknown". "session" is a child another session spawned with create_session —
   // the only reliable "child" test, since a fork or a launched handoff carries originSession too.
   origin?: string;
+  // The schedule that started this session (origin "schedule" only); absent for any other session
+  // and for one started before the field existed. The Schedules view groups by it.
+  scheduleId?: string;
   // The image studio this session is bound to (ADR 0100 decision 2); such a session opens in
   // the studio pane, not the mirror. Absent for an ordinary session.
   studio?: string;

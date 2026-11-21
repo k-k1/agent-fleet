@@ -25,7 +25,8 @@ import { useFold } from "../../lib/useFold.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
-import { ScheduledSessions } from "./ScheduledSessions.tsx";
+import { ScheduledRunList, ScheduledSessions, useScheduledRuns } from "./ScheduledSessions.tsx";
+import { groupRunsBySchedule, type ScheduledRun } from "./scheduledSessions.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openChat } from "../chat/open.ts";
 import { chatList } from "../chat/api.ts";
@@ -101,6 +102,8 @@ interface ScheduleRowProps {
   rowBusy: boolean;
   runsOpen: boolean;
   runs: ScheduleRun[] | undefined;
+  /** Sessions this schedule started (and the ones they spawned), newest first. */
+  sessionRuns: ScheduledRun[];
   /** Working sets (docs/log/52): the defined sets + the derivation context, for the
    * ⋯ menu's membership toggles. */
   wsets: WorkingSet[];
@@ -112,7 +115,7 @@ interface ScheduleRowProps {
   onDelete: (s: ScheduleDTO) => void;
 }
 
-function ScheduleRow({ s, rowBusy, runsOpen, runs, wsets, wctx, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
+function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, wsets, wctx, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
   const tr = useT();
   const paused = !s.enabled;
   const tone = statusTone(s.last_status);
@@ -299,6 +302,11 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, wsets, wctx, onToggleRuns, on
           )}
         </div>
       )}
+      {sessionRuns.length > 0 && (
+        <div className="sched-sess-under" data-sched-sessions-of={s.id}>
+          <ScheduledRunList runs={sessionRuns} />
+        </div>
+      )}
     </div>
   );
 }
@@ -393,6 +401,9 @@ export const SchedulesSection = memo(function SchedulesSection() {
 
   const sorted = useMemo(() => sortSchedules(items), [items]);
   const scoped = useMemo(() => (wset ? sorted.filter((s) => scheduleInSet(wset, s, wctx)) : sorted), [sorted, wset, wctx]);
+  const scheduledRuns = useScheduledRuns();
+  // Runs go under the row of the schedule that started them; the rows listed are the ones shown.
+  const grouped = useMemo(() => groupRunsBySchedule(scheduledRuns, new Set(scoped.map((s) => s.id))), [scheduledRuns, scoped]);
   const activeCount = useMemo(() => scoped.filter((s) => s.enabled).length, [scoped]);
   // From the rows the active working set lists, not from everything loaded: opening the view
   // acknowledges what it publishes, and a failure the view does not show must stay unread.
@@ -550,6 +561,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
               rowBusy={!!busy[s.id]}
               runsOpen={openRuns === s.id}
               runs={openRuns === s.id ? runs[s.id] : undefined}
+              sessionRuns={grouped.bySchedule.get(s.id) ?? []}
               wsets={wsets}
               wctx={wctx}
               onToggleRuns={(x) => void toggleRuns(x)}
@@ -561,7 +573,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
           ))}
         </div>
       )}
-      <ScheduledSessions />
+      <ScheduledSessions runs={grouped.rest} />
       {detail && (
         <ScheduleDetailModal
           s={detail}

@@ -687,6 +687,9 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		// and turning contributor mode on is the member's decision (ui_prefs.go's mark gate).
 		MuseContributorMode: contributorModeOn(c.kind),
 	}
+	if c.origin == session.OriginSchedule {
+		meta.ScheduleID = clipRunes(strings.TrimSpace(req.ScheduleID), 64)
+	}
 	applyCreateLinks(&meta, req)
 	// After the route has been checked and bound (checkRoute), before anything starts: the record
 	// is what the session launches on, the resolution the policy judged when it judged one.

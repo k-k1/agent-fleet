@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
+import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -17,6 +18,8 @@ import { t, useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { openSessionChat } from "../sessions/open.ts";
+import { useAutoRunReveal } from "../autorun/store.ts";
+import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import type { MemoDelivery, MemoQueue, MemoTidyBlocked, MemoTidyRunsWire } from "../../types/memo.ts";
 import { memoQueueDeliveries, memoQueueFire, memoTidyRuns, memoTidyUndo } from "./api.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
@@ -62,6 +65,12 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
   const toast = useToast();
   const askConfirm = useConfirm();
   const sessions = useSessionsStore((s) => s.sessions);
+  // A run whose session the Auto-run view lists can be shown there, unless the active working set
+  // hides the category's repository (the link would land on nothing).
+  const listed = new Set(sessions.filter((x) => x.origin === "queue").map((x) => x.name));
+  const wset = useActiveWorkingSet();
+  const repo = queue?.repo ?? "";
+  const hiddenByWset = !!wset && !!repo && !wset.repos.includes(repo);
   // The run whose notes are being returned to the queue.
   const [returning, setReturning] = useState("");
   const [rows, setRows] = useState<MemoDelivery[] | null>(null);
@@ -268,6 +277,20 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                     </button>
                   ) : (
                     <span className="muted">{tr("memo.d_no_session")}</span>
+                  )}
+                  {listed.has(d.session) && (
+                    <button
+                      type="button"
+                      className="linkish memo-d-show-run"
+                      title={hiddenByWset ? tr("memo.d_show_run_hidden") : tr("memo.d_show_run")}
+                      disabled={hiddenByWset}
+                      onClick={() => {
+                        useAutoRunReveal.getState().reveal(d.session);
+                        onClose();
+                      }}
+                    >
+                      <Icon name="play" /> {tr("memo.d_show_run")}
+                    </button>
                   )}
                   {d.overdue && (
                     <span

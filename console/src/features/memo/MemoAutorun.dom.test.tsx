@@ -1336,6 +1336,34 @@ describe("a notification asks to show a category", () => {
   });
 });
 
+describe("full run history dialog", () => {
+  const run = (id: string, over: Record<string, unknown> = {}) => ({
+    id, state: "closed", outcome: "clean", session: "s-" + id, messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "", auto: true, ...over,
+  });
+
+  it("links a run the Auto-run view lists to its row there and closes the dialog, as the inline list does", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    const { useAutoRunReveal } = await import("../autorun/store.ts");
+    const { useMemoStore } = await import("./store.ts");
+    useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }, { name: "s-d2", kind: "claude", alive: false, origin: "user" }] as never });
+    servedQueues = { tenantEnabled: true, queues: [aQueue()] };
+    servedDeliveries = [run("d1"), run("d2")];
+    await render();
+    await act(async () => useMemoStore.getState().revealCategory("c1", true));
+    await settle();
+    const links = dialog().querySelectorAll<HTMLElement>(".memo-d-show-run");
+    // Only the run whose session is a run of a queue; a hand-started session has no row there.
+    expect(links).toHaveLength(1);
+    const n = useAutoRunReveal.getState().n;
+    await click(links[0]);
+    expect(useAutoRunReveal.getState().name).toBe("s-d1");
+    expect(useAutoRunReveal.getState().n).toBe(n + 1);
+    expect(openSessionChat).not.toHaveBeenCalledWith("s-d1");
+    expect(document.querySelector(".ui-modal")).toBeNull();
+    useSessionsStore.setState({ sessions: [] });
+  });
+});
+
 describe("inline run list under a category", () => {
   const toggle = () => must([...document.querySelectorAll<HTMLElement>(".memo-runs-toggle")][0], "runs toggle");
   const run = (id: string, over: Record<string, unknown> = {}) => ({

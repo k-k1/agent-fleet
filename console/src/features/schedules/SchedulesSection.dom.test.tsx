@@ -160,6 +160,8 @@ describe("SchedulesSection scheduled sessions", () => {
     scheduleList.mockResolvedValue([sched]);
     await render();
     const row = (n: string) => host.querySelector(`[data-sched-session="${n}"]`);
+    // No schedule id: the group of their own, not under a row.
+    expect(host.querySelector("[data-sched-sessions]")?.contains(row("cron-live"))).toBe(true);
     expect(row("cron-live")?.querySelectorAll(".sched-sess-kids li")).toHaveLength(1);
     expect(row("cron-old")).toBeNull();
     expect(row("mine")).toBeNull();
@@ -198,5 +200,31 @@ describe("SchedulesSection scheduled sessions under a working set", () => {
       useSessionsStore.setState({ sessions: [] });
       useReposStore.setState({ repos: [] });
     }
+  });
+});
+
+describe("SchedulesSection scheduled sessions under their schedule", () => {
+  it("lists a run under the row of the schedule that started it, and the rest in the group", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    const s = (name: string, extra: Record<string, unknown>) => ({ name, title: name, kind: "claude", alive: true, ...extra });
+    useSessionsStore.setState({
+      sessions: [
+        s("mine-run", { origin: "schedule", scheduleId: sched.id, createdAt: "2026-11-02T00:00:00Z" }),
+        s("mine-kid", { origin: "session", originSession: "mine-run", createdAt: "2026-11-02T01:00:00Z" }),
+        s("gone-run", { origin: "schedule", scheduleId: "deleted", createdAt: "2026-11-02T02:00:00Z" }),
+        s("old-run", { origin: "schedule", createdAt: "2026-11-01T00:00:00Z" }),
+      ] as never,
+    });
+    scheduleList.mockResolvedValue([sched]);
+    await render();
+    const under = host.querySelector(`[data-sched-sessions-of="${sched.id}"]`);
+    expect(under?.querySelector('[data-sched-session="mine-run"]')?.querySelectorAll(".sched-sess-kids li")).toHaveLength(1);
+    expect(under?.querySelector('[data-sched-session="gone-run"]')).toBeNull();
+    // A deleted schedule's run and one without an id keep the group of their own.
+    const group = host.querySelector("[data-sched-sessions]");
+    expect(group?.querySelector('[data-sched-session="gone-run"]')).not.toBeNull();
+    expect(group?.querySelector('[data-sched-session="old-run"]')).not.toBeNull();
+    expect(group?.querySelector('[data-sched-session="mine-run"]')).toBeNull();
+    useSessionsStore.setState({ sessions: [] });
   });
 });
