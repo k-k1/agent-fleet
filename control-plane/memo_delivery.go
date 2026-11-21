@@ -1150,7 +1150,7 @@ func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
 	return false
 }
 
-// staleRead reports whether the session list was read longer ago than r.staleRead, as when the
+// staleRead reports whether more than r.staleReadMax has passed since the session list arrived, as when the
 // tick waited behind a slow pass. When in doubt it answers true: one more tick costs nothing
 // against closing a run that is working.
 func (r *memoQueueRunner) staleRead(v *memoMemberView) bool {
@@ -1159,7 +1159,7 @@ func (r *memoQueueRunner) staleRead(v *memoMemberView) bool {
 
 // resetIdle writes the idle count 0 whatever this tick's copy of the delivery says (another
 // Control Plane may have stored a 1 since), and on a context that outlives the settle pass's
-// deadline: a stale read is by definition one that arrived after that deadline.
+// deadline: by the time a list is judged stale, that deadline has usually passed.
 func (r *memoQueueRunner) resetIdle(ctx context.Context, d store.MemoDelivery) {
 	wctx, cancel := memoProgressCtx(ctx)
 	defer cancel()

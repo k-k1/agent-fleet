@@ -1243,3 +1243,36 @@ func TestMemoOccupancyUnsoundReadKeepsRunOpen(t *testing.T) {
 		})
 	})
 }
+
+// A stale read resets the count even when the settle pass's deadline has passed and this tick's
+// copy of the delivery still says 0 (another Control Plane stored a 1 since).
+func TestMemoOccupancyStaleReadResetsOnExpiredContext(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, d := e.openReported(nil)
+		stale := d // the copy this tick began with: IdleTicks 0
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.IdleTicks != 1 {
+			t.Fatalf("setup: %+v", got)
+		}
+		r := e.runner()
+		v := r.view(context.Background(), map[string]*memoMemberView{}, d.MembershipID)
+		if v == nil || !v.liveOK {
+			t.Fatalf("no live view: %+v", v)
+		}
+		v.readDone = time.Now().Add(-2 * r.staleReadMax)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // the settle pass's deadline has passed
+		r.closeIfDoneReported(ctx, v, stale, time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.IdleTicks != 0 {
+			t.Fatalf("the stale tick must reset the stored count: %+v", got)
+		}
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+			t.Fatalf("first read after the stale one must not close: %+v", got)
+		}
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed {
+			t.Fatalf("second read must close: %+v", got)
+		}
+	})
+}
