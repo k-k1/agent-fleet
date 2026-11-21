@@ -337,7 +337,7 @@ func TestCursorStripMatchesTar(t *testing.T) {
 	}
 	d := f.tree("2026.1.1-abc")
 	if b, _ := os.ReadFile(filepath.Join(d, "f")); string(b) != "two" {
-		t.Errorf("f=%q, want the later member", b)
+		t.Errorf("f=%q, want the member without ./", b)
 	}
 	// "./dist-package/f" loses only the "." component, so it lands at dist-package/f.
 	if b, _ := os.ReadFile(filepath.Join(d, "dist-package", "f")); string(b) != "one" {
@@ -539,18 +539,110 @@ func TestCursorAcceptsInternalLinks(t *testing.T) {
 }
 
 func TestCursorLeftoverStageIsNotReused(t *testing.T) {
+	// A read-only leftover under a predictable name cannot be deleted by a normal user; the
+	// published tree must still be built in a fresh stage.
 	f := newCursor(t, goodCursorMembers(), "")
 	share := filepath.Dir(f.tree("x"))
 	os.MkdirAll(share, 0o755)
-	for _, n := range []string{"2026.1.1-abc.af-new." + "1", "2026.1.1-abc.af-new." + strconv.Itoa(os.Getpid())} {
-		os.MkdirAll(filepath.Join(share, n), 0o755)
-		os.WriteFile(filepath.Join(share, n, "stale"), []byte("old"), 0o644)
+	var stale []string
+	for _, n := range []string{"2026.1.1-abc.af-new.1", "2026.1.1-abc.af-new." + strconv.Itoa(os.Getpid())} {
+		p := filepath.Join(share, n)
+		os.MkdirAll(p, 0o755)
+		os.WriteFile(filepath.Join(p, "stale"), []byte("old"), 0o644)
+		os.Chmod(p, 0o555)
+		stale = append(stale, p)
 	}
+	defer func() {
+		for _, p := range stale {
+			os.Chmod(p, 0o755)
+		}
+	}()
 	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
 		t.Fatalf("rc=%d out=%s", rc, f.out)
 	}
 	if _, err := os.Stat(filepath.Join(f.tree("2026.1.1-abc"), "stale")); err == nil {
 		t.Error("a stale file from a leftover stage reached the published tree")
+	}
+}
+
+func TestCursorUnpackTempNameNeverReplacesArchiveMember(t *testing.T) {
+	f := newCursor(t, append(goodCursorMembers(),
+		tarMember{name: "p/file.af-w0", body: "A", mode: 0o644},
+		tarMember{name: "p/file", body: "B", mode: 0o644},
+	), "")
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	d := f.tree("2026.1.1-abc")
+	a, _ := os.ReadFile(filepath.Join(d, "file.af-w0"))
+	b, _ := os.ReadFile(filepath.Join(d, "file"))
+	if string(a) != "A" || string(b) != "B" {
+		t.Errorf("file.af-w0=%q file=%q", a, b)
+	}
+}
+
+func TestCursorRefusesDanglingLinkThroughOutsideDirAndInsideRestrictedDir(t *testing.T) {
+	for name, ms := range map[string][]tarMember{
+		"dangling via an outside hop": {
+			{name: "p/d/", typ: tar.TypeDir, mode: 0o755},
+			{name: "p/d/up", typ: tar.TypeSymlink, link: ".."},
+			{name: "p/d/y", typ: tar.TypeSymlink, link: "up/../outside-new"},
+		},
+		"hidden in an execute-only dir": {
+			{name: "p/d/", typ: tar.TypeDir, mode: 0o111},
+			{name: "p/d/up", typ: tar.TypeSymlink, link: ".."},
+			{name: "p/d/y", typ: tar.TypeSymlink, link: "up/../outside-new"},
+		},
+	} {
+		f := newCursor(t, append(goodCursorMembers(), ms...), "")
+		if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+			t.Errorf("%s: rc=%d", name, rc)
+		}
+		if _, err := os.Stat(f.tree("2026.1.1-abc")); err == nil {
+			t.Errorf("%s: tree published", name)
+		}
+	}
+}
+
+func TestCursorLeavesAnotherToolsAgentAlias(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	other := filepath.Join(f.home, ".local", "share", "other-tool", "versions", "9.9", "agent")
+	os.MkdirAll(filepath.Dir(other), 0o755)
+	os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755)
+	alias := filepath.Join(f.home, ".local", "bin", "agent")
+	os.Symlink(other, alias)
+	f.env.Repin = true
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK || f.hits.Load() != 0 || !strings.Contains(f.out.String(), "already present") {
+		t.Fatalf("rc=%d hits=%d out=%s", rc, f.hits.Load(), f.out)
+	}
+	// And a real relink leaves it alone as well.
+	f.plant(t, "2026.2.2-def", goodCursor, true)
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("relink rc=%d", rc)
+	}
+	if got, _ := os.Readlink(alias); got != other {
+		t.Errorf("another tool's agent alias was replaced: %s", got)
+	}
+}
+
+func TestCursorAliasLookupFailureStopsBeforeAnyLinkMoves(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	f.plant(t, "2026.2.2-def", goodCursor, true)
+	bin := filepath.Join(f.home, ".local", "bin")
+	os.Symlink(filepath.Join(f.tree("2026.2.2-def"), "cursor-agent"), filepath.Join(bin, "agent"))
+	f.env.Repin = true
+	// A bin directory that cannot be searched makes the alias Lstat fail with something
+	// other than "not found"; the main link must stay where it was.
+	orig := lstatAlias
+	defer func() { lstatAlias = orig }()
+	lstatAlias = func(string) (os.FileInfo, error) { return nil, errors.New("injected I/O error") }
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d", rc)
+	}
+	if got, _ := os.Readlink(f.link()); !strings.Contains(got, "2026.2.2-def") {
+		t.Errorf("main link moved although the alias could not be checked: %s", got)
 	}
 }
 
