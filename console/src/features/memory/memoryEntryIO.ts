@@ -81,6 +81,8 @@ export interface EntryRefusal {
 interface Known {
   revision: number;
   kinds: string[];
+  /** The type as the store holds it: unset ("") reads as feedback in the buffer but is not the same type. */
+  type: string;
 }
 
 // Counters by memory and content hash, outside React for the same reason the buffer is outside it:
@@ -196,7 +198,7 @@ export function storedForm(text: string): string {
 export function entryFile(key: string, body: MemoryBody, overwrite = false): EditableFile {
   const content = encodeEntry({ description: body.description, type: body.type || "feedback", body: body.body ?? "" });
   const revision = revisionOf(content);
-  remember(key, revision, { revision: body.revision, kinds: body.kinds ?? [] }, overwrite);
+  remember(key, revision, { revision: body.revision, kinds: body.kinds ?? [], type: body.type ?? "" }, overwrite);
   return { path: key, content, size: content.length, binary: false, truncated: false, editable: true, editabilityReason: null, revision };
 }
 
@@ -300,8 +302,8 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       // counter, so the save ends in a conflict instead of carrying kinds the member never saw.
       const prior = known.get(key)?.get(file.revision);
       const later = res as MemoryBody;
-      if (!adoptNow && prior && later.revision > prior.revision && sameKindsExact(later.kinds ?? [], prior.kinds)) {
-        remember(key, file.revision, { revision: later.revision, kinds: later.kinds ?? [] }, true);
+      if (!adoptNow && prior && later.revision > prior.revision && sameKindsExact(later.kinds ?? [], prior.kinds) && (later.type ?? "") === prior.type) {
+        remember(key, file.revision, { revision: later.revision, kinds: later.kinds ?? [], type: later.type ?? "" }, true);
       }
       // After a save whose outcome is unknown, the memory as the Agent stores the text sent is that
       // text: reporting its trimmed form would read the committed save as a third version. The
@@ -314,13 +316,13 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       // old counter is the save not having landed, and anything else is another writer's.
       if (last && last.raw !== file.content && last.stored === file.content && answered.revision === last.revision + 1 && sameKinds(answered.kinds ?? [], last.kinds)) {
         const revision = revisionOf(last.raw);
-        remember(key, revision, { revision: (res as MemoryBody).revision, kinds: (res as MemoryBody).kinds ?? [] }, true);
+        remember(key, revision, { revision: (res as MemoryBody).revision, kinds: (res as MemoryBody).kinds ?? [], type: (res as MemoryBody).type ?? "" }, true);
         file = { ...file, content: last.raw, size: last.raw.length, revision };
       } else if (last && file.revision === last.base && (answered.revision !== last.revision || !sameKinds(answered.kinds ?? [], last.kinds)) && answered.revision > (known.get(key)?.get(file.revision)?.revision ?? 0)) {
         // Another writer stored the text the save started from, at a later counter: the save did not
         // land, but the counter it was sent with is spent. A resave from the original has to carry
         // the live one, or it ends in a 409.
-        remember(key, file.revision, { revision: answered.revision, kinds: answered.kinds ?? [] }, true);
+        remember(key, file.revision, { revision: answered.revision, kinds: answered.kinds ?? [], type: answered.type ?? "" }, true);
       }
       return file;
     },
@@ -387,7 +389,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       // What was saved is what the store now holds: the next base is this text at the counter it was given.
       const revision = revisionOf(content);
       sent.delete(key);
-      remember(key, revision, { revision: res.revision, kinds: base.kinds }, true);
+      remember(key, revision, { revision: res.revision, kinds: base.kinds, type: goTrim(fields.type) }, true);
       // Every route that saves (the button, a guard, the resolution panel) ends here.
       useMemoryStore.getState().bump();
       return { ok: true, path: key, size: content.length, revision };

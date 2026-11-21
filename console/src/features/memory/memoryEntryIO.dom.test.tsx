@@ -341,6 +341,16 @@ describe("memoryEntryIO", () => {
     expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 3, kinds: ["claude"] });
   });
 
+  it("does not move the counter forward when the type differs, though the buffer text is the same", async () => {
+    const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+    const file = entryFile("k", { ...body, type: "feedback" });
+    api.mockResolvedValue({ ...body, revision: 6, type: undefined });
+    await io.load("k");
+    apiJSON.mockResolvedValue({ revision: 7 });
+    await io.save("k", file.content, file.revision);
+    expect(apiJSON.mock.calls[0][2]).toMatchObject({ revision: 3 });
+  });
+
   it("lets a memory whose recovery cannot be read be discarded", () => {
     expect(memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {}).discardUnconfirmed).toBe(true);
   });
