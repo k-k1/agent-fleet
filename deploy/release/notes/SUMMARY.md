@@ -15,7 +15,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 ---
 ## [0.48.0](0.48.0.md) — 2026-11-21
 
-**CLI pins** — Claude Code 2.1.330 / Codex 0.171.0 / Copilot 1.0.114 / Antigravity 1.5.14 / Muse Code 1.4.24-R9131.1 / rtk 1.2.1
+**CLI pins** — Claude Code 2.1.330 / Codex 0.171.0 / Copilot 1.0.114 / Antigravity 1.5.14 / Muse Code 1.4.25-R9361.1 / rtk 1.2.1
 
 **New / Improved**
 

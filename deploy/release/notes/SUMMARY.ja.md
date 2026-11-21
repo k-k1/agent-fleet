@@ -14,7 +14,7 @@
 ---
 ## [0.48.0](0.48.0.ja.md) — 2026-11-21
 
-**CLI ピン** — Claude Code 2.1.330 / Codex 0.171.0 / Copilot 1.0.114 / Antigravity 1.5.14 / Muse Code 1.4.24-R9131.1 / rtk 1.2.1
+**CLI ピン** — Claude Code 2.1.330 / Codex 0.171.0 / Copilot 1.0.114 / Antigravity 1.5.14 / Muse Code 1.4.25-R9361.1 / rtk 1.2.1
 
 **New / Improved**
 
