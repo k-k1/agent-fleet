@@ -2,6 +2,9 @@ package agents
 
 import (
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // Optional Agent capabilities that replace the last two-branch kind literals outside this
@@ -91,4 +94,30 @@ type LiveContext struct {
 // ok is false without a live handle or before the first report. Default: nothing live to add.
 type LiveContextReader interface {
 	LiveContext(name string) (LiveContext, bool)
+}
+
+// AttentionHooker: the kind's attention events (answer-ready, question, permission) already
+// reach the outbox through structured hooks, so a terminal OSC notification from it reports
+// the same moment a second time and is dropped. Default: the OSC notification is the only
+// signal and is kept.
+type AttentionHooker interface {
+	AttentionViaHooks() bool
+}
+
+// ManagedMoveMirrorer: a Managed session of the kind is only a mirror of a CLI run, so a
+// move from it warns about that and is refused while the run is stopped. Default: a Managed
+// session moves like any other.
+type ManagedMoveMirrorer interface {
+	ManagedMoveIsMirror() bool
+}
+
+// FullTranscriptReader: the kind reads a conversation whole from its own log, because the
+// generic transcript collector keeps only a tail and leaves ordinary tool results out.
+// Default: the kind's Transcript is the whole conversation.
+type FullTranscriptReader interface {
+	// FullTurns is the whole conversation.
+	FullTurns(m session.Meta) []transcript.Turn
+	// FullMoveSource adds what a move needs: the prompts typed into the turn a limit cut off
+	// (queued, never run) and the files the conversation edited.
+	FullMoveSource(m session.Meta) (turns []transcript.Turn, queued []string, edits []transcript.FileEdit)
 }

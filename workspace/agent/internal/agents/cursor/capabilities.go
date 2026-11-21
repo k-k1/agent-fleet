@@ -75,3 +75,6 @@ func (agentImpl) NativeDialect() string { return "dollar_brace" }
 
 // ConfirmsTerminalSubmit is agents.SubmitRejectionConfirmer.
 func (agentImpl) ConfirmsTerminalSubmit() bool { return true }
+
+// ManagedMoveIsMirror is agents.ManagedMoveMirrorer: a Managed cursor session mirrors its CLI run.
+func (agentImpl) ManagedMoveIsMirror() bool { return true }

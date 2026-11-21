@@ -209,6 +209,15 @@ func beginSessionMove(ctx context.Context, source, target string) (*sourceMove, 
 // checkMoveSource is the state check of decision 11.2: nil when a move may start from m. The
 // move runs it under the exclusive gate; the preview runs it without, as an answer that can be
 // stale by the time the user confirms.
+// managedMoveIsMirror reports whether a Managed session of the kind only mirrors a CLI run.
+func managedMoveIsMirror(m session.Meta) bool {
+	if m.DriverKind() != session.DriverManaged {
+		return false
+	}
+	c, ok := registeredCap[agents.ManagedMoveMirrorer](m.Kind)
+	return ok && c.ManagedMoveIsMirror()
+}
+
 func checkMoveSource(m session.Meta) error {
 	if m.MovedTo != "" {
 		return &lifegate.MovedError{Session: m.Name, Target: m.MovedTo, Done: true}
@@ -216,7 +225,7 @@ func checkMoveSource(m session.Meta) error {
 	if m.Moving != "" {
 		return &lifegate.MovedError{Session: m.Name, Target: m.Moving}
 	}
-	if m.Kind == session.KindCursor && m.DriverKind() == session.DriverManaged && !ManagedAlive(m) {
+	if managedMoveIsMirror(m) && !ManagedAlive(m) {
 		return errMoveCursorStopped
 	}
 	state, blocker := moveSourceState(m)

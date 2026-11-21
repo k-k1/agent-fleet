@@ -124,3 +124,6 @@ func (agentImpl) NativeDialect() string { return "env_brace" }
 
 // ChatFallbackModel is agents.ChatFallbackModeler.
 func (agentImpl) ChatFallbackModel() string { return modelfallback.ChatOpencode }
+
+// AttentionViaHooks is agents.AttentionHooker.
+func (agentImpl) AttentionViaHooks() bool { return true }

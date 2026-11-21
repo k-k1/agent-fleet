@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -29,13 +28,10 @@ import (
 var readMoveSource = func(m session.Meta) HandoverInput {
 	in := HandoverInput{Source: m}
 	var edits []transcript.FileEdit
-	if m.Kind == session.KindClaude {
-		// The whole jsonl, as the export reads it: the mirror's collector keeps only a tail.
-		lines, _, _ := claude.TranscriptRead(session.UUID(m.Dir, m.Name))
-		in.Turns = claude.CollectAllTurns(lines)
-		in.Queued = claude.CollectQueued(lines) // typed into the turn the limit cut off, never run
-
-		edits = claude.CollectFileEdits(lines, 0)
+	if r, ok := registeredCap[agents.FullTranscriptReader](m.Kind); ok {
+		// The whole log, as the export reads it: the mirror's collector keeps only a tail.
+		// Queued is typed into the turn the limit cut off, never run.
+		in.Turns, in.Queued, edits = r.FullMoveSource(m)
 	} else if td, ok := AgentOf(m.Kind).Transcript(m); ok {
 		// td.Path is deliberately dropped: the file carries no path into a CLI store (decision 15).
 		in.Turns, in.Pending = td.Turns, td.Pending

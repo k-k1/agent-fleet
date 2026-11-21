@@ -139,7 +139,7 @@ func buildMovePreview(m session.Meta, now time.Time) movePreviewWire {
 	if m.MovedTo != "" {
 		p.Delivery = moveDeliveryState(m.MovedTo)
 	}
-	if m.Kind == session.KindCursor && m.DriverKind() == session.DriverManaged {
+	if managedMoveIsMirror(m) {
 		p.Warnings = append(p.Warnings, moveWarnCursorMirror)
 	}
 	if err := checkMoveRequest(context.Background(), m, moveRequest{Kind: anyEligibleTarget(m.Kind)}); err != nil {

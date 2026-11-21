@@ -8,6 +8,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -196,3 +197,18 @@ func (agentImpl) DeliveryBaseline(sid string) (logs, subagents map[string]int64)
 
 // ReportsTranscriptBusy is agents.TranscriptBusyReporter.
 func (agentImpl) ReportsTranscriptBusy() bool { return true }
+
+// AttentionViaHooks is agents.AttentionHooker.
+func (agentImpl) AttentionViaHooks() bool { return true }
+
+// FullTurns is agents.FullTranscriptReader: the whole jsonl, as the export reads it.
+func (agentImpl) FullTurns(m session.Meta) []transcript.Turn {
+	lines, _, _ := TranscriptRead(session.UUID(m.Dir, m.Name))
+	return CollectAllTurns(lines)
+}
+
+// FullMoveSource is agents.FullTranscriptReader.
+func (agentImpl) FullMoveSource(m session.Meta) ([]transcript.Turn, []string, []transcript.FileEdit) {
+	lines, _, _ := TranscriptRead(session.UUID(m.Dir, m.Name))
+	return CollectAllTurns(lines), CollectQueued(lines), CollectFileEdits(lines, 0)
+}
