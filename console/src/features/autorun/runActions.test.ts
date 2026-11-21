@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Session } from "../../types/session.ts";
 import type { Repo } from "../repos/store.ts";
 import { buildRuns, type RunDelivery } from "./runs.ts";
-import { planClearFinished, runStopScope, runWorktreeNode } from "./runActions.ts";
+import { ancestorNames, planClearFinished, runStopScope, runWorktreeNode } from "./runActions.ts";
 
 const sess = (name: string, extra: Partial<Session>): Session => ({ name, kind: "claude", alive: true, ...extra });
 const closed: RunDelivery = { categoryId: "c", state: "closed", sentAt: "", createdAt: "", closedAt: "", heldBy: "" };
@@ -78,16 +78,41 @@ describe("planClearFinished", () => {
     expect(p.archive.flat().map((s) => s.name)).not.toContain("mine");
   });
 
-  it("orders a run's sessions children first and the run last, and reads state from the latest list", () => {
+  it("lists the run last, after what it started, and reads state from the latest list", () => {
     const base = [
       sess("r", { origin: "queue", alive: false, repo: "base" }),
       sess("k1", { origin: "session", originSession: "r", alive: false, repo: "base", createdAt: "2026-11-01T00:00:00Z" }),
       sess("k2", { origin: "session", originSession: "r", alive: false, repo: "base", createdAt: "2026-11-02T00:00:00Z" }),
     ];
     const rs = runsOf(base, ["r"]);
-    expect(planClearFinished(rs, base, repos).archive[0].map((s) => s.name)).toEqual(["k2", "k1", "r"]);
+    expect(planClearFinished(rs, base, repos).archive[0].map((s) => s.name)).toEqual(["k1", "k2", "r"]);
     const resumed = base.map((s) => (s.name === "k1" ? { ...s, alive: true } : s));
-    expect(planClearFinished(rs, resumed, repos).archive[0].map((s) => s.name)).toEqual(["k2", "r"]);
+    // k1 is alive again: the run keeps it, so the run itself is kept too.
+    expect(planClearFinished(rs, resumed, repos).archive[0].map((s) => s.name)).toEqual(["k2"]);
+  });
+
+  it("keeps every ancestor of a session that cannot be archived (locked grandchild)", () => {
+    const tree = [
+      sess("r", { origin: "queue", alive: false, repo: "base", createdAt: "2026-11-01T00:00:00Z" }),
+      sess("c", { origin: "session", originSession: "r", alive: false, repo: "base", createdAt: "2026-11-02T00:00:00Z" }),
+      sess("g", { origin: "session", originSession: "c", alive: false, locked: true, repo: "base", createdAt: "2026-11-03T00:00:00Z" }),
+      sess("c2", { origin: "session", originSession: "r", alive: false, repo: "base", createdAt: "2026-11-04T00:00:00Z" }),
+    ];
+    expect(planClearFinished(runsOf(tree, ["r"]), tree, repos).archive[0].map((s) => s.name)).toEqual(["c2"]);
+  });
+
+  it("lists a deeper session before its parent", () => {
+    const tree = [
+      sess("r", { origin: "queue", alive: false, repo: "base", createdAt: "2026-11-01T00:00:00Z" }),
+      sess("c", { origin: "session", originSession: "r", alive: false, repo: "base", createdAt: "2026-11-02T00:00:00Z" }),
+      sess("g", { origin: "session", originSession: "c", alive: false, repo: "base", createdAt: "2026-11-03T00:00:00Z" }),
+    ];
+    expect(planClearFinished(runsOf(tree, ["r"]), tree, repos).archive[0].map((s) => s.name)).toEqual(["g", "c", "r"]);
+  });
+
+  it("names the ancestors of a session, for keeping them after a failure", () => {
+    const tree = [sess("r", { origin: "queue" }), sess("c", { origin: "session", originSession: "r" }), sess("g", { origin: "session", originSession: "c" })];
+    expect(ancestorNames("g", tree)).toEqual(["c", "r"]);
   });
 
   it("chains several merged worktrees under one head", () => {

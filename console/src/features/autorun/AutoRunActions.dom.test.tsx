@@ -114,6 +114,18 @@ describe("dialog lifetime", () => {
   });
 });
 
+describe("dialog lifetime when the last run goes", () => {
+  it("keeps the same dialog instance mounted when the run list empties", async () => {
+    await openMenu("run-a");
+    await act(async () => item(0).click());
+    const before = document.body.querySelector("[data-stop-modal]")!;
+    useSessionsStore.setState({ sessions: [] } as never);
+    await flush();
+    expect(host.querySelector(".pane-empty")).not.toBeNull();
+    expect(document.body.querySelector("[data-stop-modal]")).toBe(before);
+  });
+});
+
 describe("Clear finished runs", () => {
   it("archives the stopped sessions that do not go with a merged worktree, after one confirmation, then offers the worktree", async () => {
     await act(async () => host.querySelector<HTMLButtonElement>(".autorun-clear")!.click());

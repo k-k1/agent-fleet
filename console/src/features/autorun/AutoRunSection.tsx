@@ -27,7 +27,7 @@ import { memoQueueDeliveries, memoQueueList } from "../memo/api.ts";
 import { readDeliveries, readMemoQueues } from "../memo/queues.ts";
 import type { MemoQueue } from "../../types/memo.ts";
 import { buildRuns, fmtElapsed, waitsForMember, type RunDelivery, type RunRow } from "./runs.ts";
-import { planClearFinished, runStopScope, runWorktreeNode } from "./runActions.ts";
+import { ancestorNames, planClearFinished, runStopScope, runWorktreeNode } from "./runActions.ts";
 import "./autorun.css";
 
 const POLL_MS = 30000;
@@ -296,9 +296,11 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
       let failed = 0;
       try {
         for (const group of latest().archive) {
-          // A run's sessions go children first, the run last: when one fails the rest of the run
-          // stays, still listed under its run, and the next clear retries it.
+          // Deepest first: a session whose archive failed keeps its ancestors, so the run stays
+          // listed with everything below it and the next clear retries.
+          const keep = new Set<string>();
           for (const s of group) {
+            if (keep.has(s.name)) continue;
             const res = await (agentOf(s.kind).caps.ephemeral
               ? sessionDelete(s.name, { stop: true })
               : raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" })
@@ -311,7 +313,7 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
             failed++;
             const j = await res?.json().catch(() => null);
             toast(tr("autorun.clear_failed", { name: s.name, err: j?.error ? errText(j.error) : "" }));
-            break;
+            for (const n of ancestorNames(s.name, useSessionsStore.getState().sessions)) keep.add(n);
           }
         }
       } finally {
@@ -379,10 +381,10 @@ export const AutoRunSection = memo(function AutoRunSection() {
       )}
     </>
   );
-  if (runs.length === 0) return <>{<div className="pane-empty">{tr("autorun.none")}</div>}{dialogs}</>;
   return (
     <div className="autorun-view">
       <ClearFinished runs={runs} />
+      {runs.length === 0 && <div className="pane-empty">{tr("autorun.none")}</div>}
       {ids.map((id) => (
         <Category key={id} label={labelOf(id)} runs={runs.filter((r) => keyOf(r.categoryId) === id)} now={now} onDialog={setDialog} />
       ))}

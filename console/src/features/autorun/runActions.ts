@@ -64,9 +64,39 @@ export function planClearFinished(
     offered.add(wt.repo.name);
     heads.push(wt);
   }
+  // A session is archived only when it and everything the run started below it can be: an ancestor
+  // archived while a descendant stays would leave that descendant unreachable from its run.
   const archive = ended
-    .map((r) => [...ownedBy(r)].reverse().filter((s) => !s.alive && !s.locked && !offered.has(sessionFolder(s))))
+    .map((r) => {
+      const all = ownedBy(r);
+      const kids = new Map<string, string[]>();
+      for (const s of all) if (s.originSession) kids.set(s.originSession, [...(kids.get(s.originSession) ?? []), s.name]);
+      const byName = new Map(all.map((s) => [s.name, s]));
+      const ok = (s: Session) => !s.alive && !s.locked && !offered.has(sessionFolder(s));
+      const clearable = (name: string, seen = new Set<string>()): boolean => {
+        const s = byName.get(name);
+        if (!s) return false;
+        if (seen.has(name)) return true;
+        seen.add(name);
+        return ok(s) && (kids.get(name) ?? []).every((k) => clearable(k, seen));
+      };
+      const depth = (s: Session): number => {
+        let d = 0;
+        for (let c: Session | undefined = s; c?.originSession && d <= all.length; c = byName.get(c.originSession)) d++;
+        return d;
+      };
+      return all.filter((s) => clearable(s.name)).sort((x, y) => depth(y) - depth(x));
+    })
     .filter((g) => g.length > 0);
   const [head, ...rest] = heads;
   return { archive, node: head ? { ...head, children: rest } : null };
+}
+
+/** The names above `name` in its run (its parent, that one's parent, ...), for skipping the
+ *  ancestors of a session whose archive failed. */
+export function ancestorNames(name: string, sessions: Session[]): string[] {
+  const byName = new Map(sessions.map((s) => [s.name, s]));
+  const out: string[] = [];
+  for (let c = byName.get(name)?.originSession; c && !out.includes(c) && out.length < sessions.length; c = byName.get(c)?.originSession) out.push(c);
+  return out;
 }
