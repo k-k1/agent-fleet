@@ -542,10 +542,6 @@ type memoQueueRunner struct {
 	tidyJobs []func(context.Context)
 	// tidyCallWait is the wait for the Agent's tidy answer, memoTidyCallWait when zero.
 	tidyCallWait time.Duration
-	// busySeen is when this process last saw each session of an open delivery's tree busy (key:
-	// session name). Only the tick's goroutine touches it. Lost on restart, which falls back to
-	// closing on idleness alone, as before.
-	busySeen map[string]time.Time
 }
 
 func newMemoQueueRunner(mgr *manager, f *wakeFirer) *memoQueueRunner {
@@ -1069,43 +1065,40 @@ func heldWakersOf(detail string) []memoHeldWakerDTO {
 	return out
 }
 
-// memoChildGrace is how long a member that has been idle since before its child last worked keeps
-// the tree held after that child went idle: time for the member to read the child's answer.
-// Without it the run is closed and stopped about two ticks after the child's last turn, before an
-// idle parent that waits for the child can act on it.
+// memoChildGrace is how long a child's finished turn keeps its parent's run from closing: time
+// for an idle parent to read the answer. Without it the run is closed and stopped about two
+// ticks after the child's last turn, before a parent that waits for the child can act on it.
 const memoChildGrace = 15 * time.Minute
 
-// noteBusy records which sessions of the tree are busy at this read.
-func (r *memoQueueRunner) noteBusy(tree []*sessionWire, now time.Time) {
-	if r.busySeen == nil {
-		r.busySeen = map[string]time.Time{}
-	}
+// childAnswerUnread reports whether a live member of the tree has a child whose turn ended less
+// than memoChildGrace ago and has not started a turn since. It reads only the Agent's turn
+// times on the rows, so every Control Plane and every restart answers alike. Times that do not
+// parse prove nothing: when in doubt, answer false.
+func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
+	byName := map[string]*sessionWire{}
 	for _, s := range tree {
-		if s.Alive && (s.BackgroundBusy || busyState(s.State)) {
-			r.busySeen[s.Name] = now
-		}
+		byName[s.Name] = s
 	}
-}
-
-// childGraceHold names the live member that has not worked since a child of it last worked, when
-// that was within memoChildGrace; "" otherwise. A session not seen busy by this process does not
-// count, so a restart can only shorten the hold.
-func (r *memoQueueRunner) childGraceHold(tree []*sessionWire, now time.Time) string {
 	for _, c := range tree {
-		cb, ok := r.busySeen[c.Name]
-		if !ok || c.Archived || c.OriginSession == "" || now.Sub(cb) >= memoChildGrace {
+		if c.Archived || c.Origin != "session" || c.LastTurnEndAt == "" {
 			continue
 		}
-		for _, p := range tree {
-			if p.Name != c.OriginSession || p.Archived || !p.Alive {
+		end, err := time.Parse(time.RFC3339Nano, c.LastTurnEndAt)
+		if err != nil || end.After(now) || now.Sub(end) >= memoChildGrace {
+			continue
+		}
+		p := byName[c.OriginSession]
+		if p == nil || p.Archived || !p.Alive {
+			continue
+		}
+		if p.LastTurnStartAt != "" {
+			if st, err := time.Parse(time.RFC3339Nano, p.LastTurnStartAt); err != nil || st.After(end) {
 				continue
 			}
-			if pb, seen := r.busySeen[p.Name]; seen && cb.After(pb) {
-				return p.Name
-			}
 		}
+		return true
 	}
-	return ""
+	return false
 }
 
 // closeIfDoneReported is the rule for an Agent that reports. It keeps what it read with the
@@ -1122,12 +1115,9 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		return
 	}
 	why, who, progress := treeHold(tree, now)
-	r.noteBusy(tree, now)
-	if why == "" {
-		if p := r.childGraceHold(tree, now); p != "" {
-			why, who = store.HeldUnknown, p
-		}
-	}
+	// Not a hold: no reason is kept, so a stopped workspace and the overdue retire behave as
+	// they do for any idle tree. It only keeps this read from closing the delivery.
+	unread := why == "" && childAnswerUnread(tree, now)
 	gen, numbered := v.gens[d.ID]
 	if !numbered {
 		// No number for this read (the delivery opened after the numbers were handed out, or the
@@ -1166,7 +1156,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 			}
 			return err
 		}
-		if ticks < 2 {
+		if ticks < 2 || unread {
 			return nil
 		}
 		return memoCloseClean(tx, d.ID, dc)
