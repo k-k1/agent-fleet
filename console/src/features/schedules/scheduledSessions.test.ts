@@ -27,6 +27,17 @@ describe("buildScheduledRuns", () => {
     expect(waitingScheduledCount([sess("c", { origin: "schedule", state: "working" })])).toBe(0);
   });
 
+  it("counts a stopped session that still carries its question", () => {
+    expect(waitingScheduledCount([sess("c", { origin: "schedule", alive: false, carried: "question" })])).toBe(1);
+  });
+
+  it("narrows to a working set by the run's root session", () => {
+    const set = { id: "w", name: "w", repos: [], sessions: ["cron"], convs: [], schedules: [] } as never;
+    const rows = buildScheduledRuns([...sessions, sess("other", { origin: "schedule", state: "question" })], set);
+    expect(rows.map((r) => r.root.name)).toEqual(["cron"]);
+    expect(waitingScheduledCount([...sessions, sess("other", { origin: "schedule", state: "question" })], set)).toBe(1);
+  });
+
   it("answers an empty list for a cycle or a vanished parent", () => {
     expect(buildScheduledRuns([sess("x", { origin: "session", originSession: "y" }), sess("y", { origin: "session", originSession: "x" })])).toEqual([]);
   });

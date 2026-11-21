@@ -366,7 +366,9 @@ export function isUnattendedOnlyFolder(sessions: Session[], repo: Repo | undefin
   const here = sessionsInFolder(sessions, repo.name);
   if (here.length === 0) return false;
   const byName = new Map(sessions.map((s) => [s.name, s]));
-  return here.every((s) => !!sessionAutoKind(s, byName));
+  // The tree's own rule for a mixed copy: sessions of two unattended kinds keep the row in the tree.
+  const kinds = new Set(here.map((s) => sessionAutoKind(s, byName)));
+  return kinds.size === 1 && !kinds.has("");
 }
 
 /** Sessions of a subtree in the order the rail draws them: the node's own sessions, then its

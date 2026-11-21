@@ -366,6 +366,6 @@
 .sched-sess-main:hover, .sched-sess-ended:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
 .sched-sess-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sched-sess-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.4; }
-.sched-sess-dot.is-running { background: var(--ok, #3fb950); opacity: 1; }
-.sched-sess-dot.is-waiting { background: var(--warn, #d29922); opacity: 1; }
+.sched-sess-dot.run-live { background: var(--ok, #3fb950); opacity: 1; }
+.sched-sess-dot.run-wait { background: var(--warn, #d29922); opacity: 1; }
 .sched-sess-ended { font-size: 12px; opacity: 0.8; }

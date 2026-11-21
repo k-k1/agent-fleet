@@ -28,7 +28,7 @@ import { tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
 import { hasUnreadConversation, hasUnreadSession, pendingNews, useRailAck, waitingSessions, workItemNewsKeys } from "./activity/badges.ts";
 import type { RailBadge } from "./activity/badges.ts";
-import { useAutoRunFeed, useAutoRunStore } from "../features/autorun/store.ts";
+import { useAutoRunFeed, useScopedAutoRuns } from "../features/autorun/store.ts";
 import { waitingScheduledCount } from "../features/schedules/scheduledSessions.ts";
 import { buildRuns, failedRunKeys, waitingRunCount } from "../features/autorun/runs.ts";
 import { stepView } from "./barSwipe.ts";
@@ -198,7 +198,7 @@ function badgeText(b: RailBadge, tr: ReturnType<typeof useT>, view: RailView): s
     case "news":
       return tCount("rail.badge.news", b.count);
     case "failed":
-      return tr("rail.badge.failed");
+      return tr(view === "autorun" ? "rail.badge.run_failed" : "rail.badge.failed");
     default:
       return tr("rail.badge.unread");
   }
@@ -239,12 +239,11 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   const pendingHandoffs = useHandoffStore((s) => pendingHandoffCount(s.received));
   // The runs the Auto-run view lists, read here too: the badge cannot wait for the view to mount.
   useAutoRunFeed(running);
-  const queueRuns = useAutoRunStore((s) => s.deliveries);
-  const autoRunsLoaded = useAutoRunStore((s) => s.loaded);
+  const { deliveries: queueRuns, loaded: autoRunsLoaded } = useScopedAutoRuns();
   const runs = useMemo(() => buildRuns(sessions, queueRuns), [sessions, queueRuns]);
   const waitingRuns = useMemo(() => waitingRunCount(runs), [runs]);
   const failedAutoRuns = useMemo(() => failedRunKeys(runs), [runs]);
-  const waitingScheduled = useMemo(() => waitingScheduledCount(sessions), [sessions]);
+  const waitingScheduled = useMemo(() => waitingScheduledCount(sessions, wset), [sessions, wset]);
   const acked = useRailAck((s) => s.acked);
   const ack = useRailAck((s) => s.ack);
 
@@ -260,8 +259,10 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
     if (onScreen === "workitems" && workItemsLoaded) ack("workitems", workItemKeys);
     if (onScreen === "schedules" && allFailedRuns !== null) ack("schedules", failedRuns, allFailedRuns);
     // The view lists every run, so what is shown is also all there is.
-    if (onScreen === "autorun" && autoRunsLoaded) ack("autorun", failedAutoRuns);
-  }, [onScreen, workItemKeys, workItemsLoaded, failedRuns, allFailedRuns, failedAutoRuns, autoRunsLoaded, ack]);
+    // Nothing is pruned: a read that lacks a run (the newest fifty, a history still on its way)
+    // says nothing about whether the run is gone, and a forgotten key would raise its dot again.
+    if (onScreen === "autorun" && autoRunsLoaded && failedAutoRuns.length > 0) ack("autorun", failedAutoRuns, [...(acked.autorun ?? []), ...failedAutoRuns]);
+  }, [onScreen, workItemKeys, workItemsLoaded, failedRuns, allFailedRuns, failedAutoRuns, autoRunsLoaded, acked.autorun, ack]);
 
   const out: Partial<Record<RailView, RailBadge>> = {};
   if (waiting > 0) out.sessions = { tone: "waiting", count: waiting };

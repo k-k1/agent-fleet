@@ -18,6 +18,7 @@ const { AutoRunSection } = await import("./AutoRunSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { ViewShownContext } = await import("../../lib/viewShown.ts");
 const { useTenantStore } = await import("../../core/store/tenant.ts");
+const { useAutoRunStore } = await import("./store.ts");
 
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 g.IS_REACT_ACT_ENVIRONMENT = true;
@@ -39,6 +40,8 @@ const mount = async (shown = true) => {
 };
 
 beforeEach(() => {
+  // The store keeps what a scope knew across a pause of the poll; each test starts without it.
+  useAutoRunStore.setState({ queues: [], deliveries: new Map(), loaded: false, scope: "" });
   opened.mockReset();
   memoQueueList.mockReset();
   memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] });
@@ -114,6 +117,27 @@ describe("AutoRunSection", () => {
     const main = host.querySelector<HTMLElement>('[data-autorun-run="run-old"] .autorun-run-main');
     expect(main).not.toBeNull();
     expect(document.activeElement).toBe(main);
+  });
+
+  it("follows a revealed run to its category once its delivery arrives, then stops asking", async () => {
+    const { useAutoRunReveal, pendingReveal } = await import("./store.ts");
+    let answer: (v: unknown) => void = () => {};
+    memoQueueDeliveries.mockImplementation(() => new Promise((r) => (answer = r)));
+    await mount();
+    await act(async () => useAutoRunReveal.getState().reveal("run-old"));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    // Its delivery is unknown yet: the run would sit in "Other runs", so the request stays open.
+    expect(pendingReveal()).toBe("run-old");
+    await act(async () => answer([{ id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" }]));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    const main = host.querySelector<HTMLElement>('[data-autorun-run="run-old"] .autorun-run-main');
+    expect(main).not.toBeNull();
+    expect(document.activeElement).toBe(main);
+    expect(pendingReveal()).toBe("");
   });
 
   it("keeps a finished run's duration", async () => {

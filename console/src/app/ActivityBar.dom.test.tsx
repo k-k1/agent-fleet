@@ -27,6 +27,7 @@ import { useWorkItemStore } from "../features/workitems/store.ts";
 import { useSeenStore } from "../features/workitems/seen.ts";
 import { useAutoRunStore } from "../features/autorun/store.ts";
 import type { RunDelivery } from "../features/autorun/runs.ts";
+import { useTenantStore } from "../core/store/tenant.ts";
 import { useSchedulesStore } from "../features/schedules/store.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { useWorkspaceStore } from "../core/store/workspace.ts";
@@ -74,7 +75,7 @@ beforeEach(() => {
   useSeenStore.setState({ map: {} });
   useSchedulesStore.setState({ failed: [], failedAll: null });
   useRailAck.setState({ acked: {} });
-  useAutoRunStore.setState({ queues: [], deliveries: new Map(), loaded: false });
+  useAutoRunStore.setState({ queues: [], deliveries: new Map(), loaded: false, scope: "" });
   useMemoryStore.getState().reset();
   useHandoffStore.setState({ owned: [], received: [], receivedAt: 0 });
   useMemoStore.setState({ tick: 0, panels: 0, waiting: null, scope: "" });
@@ -156,8 +157,10 @@ describe("ActivityBar shared view", () => {
 
 describe("ActivityBar auto-run view", () => {
   const run = (name: string, state: string, extra: Partial<Session> = {}) => ({ name, state, alive: true, kind: "claude", origin: "queue", ...extra }) as unknown as Session;
-  const dlv = (id: string, state: string, outcome = ""): RunDelivery => ({ id, categoryId: "c", state, outcome, sentAt: "", createdAt: "", closedAt: "", heldBy: "" });
-  const served = (entries: [string, RunDelivery][]) => useAutoRunStore.setState({ deliveries: new Map(entries), loaded: true });
+  // outcome is the delivery's; turn is how its first turn ended (the only failure signal a queue records).
+  const dlv = (id: string, state: string, outcome = "", turn = ""): RunDelivery => ({ id, categoryId: "c", state, outcome, turnOutcome: turn, sentAt: "", createdAt: "", closedAt: "", heldBy: "" });
+  const scopeNow = () => useTenantStore.getState().tenant + "\u0000" + useTenantStore.getState().identityRev;
+  const served = (entries: [string, RunDelivery][], loaded = true) => useAutoRunStore.setState({ deliveries: new Map(entries), loaded, scope: scopeNow() });
 
   it("places the auto-run icon right after Memo queue, with no badge while nothing runs", async () => {
     await mount();
@@ -181,7 +184,7 @@ describe("ActivityBar auto-run view", () => {
 
   it("marks a failed run with a red dot until the view is opened, then keeps it acknowledged", async () => {
     useSessionsStore.setState({ sessions: [run("a", "working", { alive: false })] });
-    served([["a", dlv("d1", "closed", "failed")]]);
+    served([["a", dlv("d1", "closed", "clean", "turn-failed")]]);
     await mount();
     expect(badge("autorun")?.dataset.badge).toBe("failed");
     await act(async () => btn("autorun").click());
@@ -189,7 +192,7 @@ describe("ActivityBar auto-run view", () => {
     await act(async () => btn("sessions").click());
     expect(badge("autorun")).toBeNull();
     // A run the member stopped is not a failure.
-    served([["a", dlv("d1", "closed", "ended")], ["b", dlv("d2", "closed", "aborted")]]);
+    served([["a", dlv("d1", "closed", "ended", "turn-failed")], ["b", dlv("d2", "closed", "aborted", "turn-failed")], ["c", dlv("d3", "closed", "clean", "clean")]]);
     useRailAck.setState({ acked: {} });
     await render();
     expect(badge("autorun")).toBeNull();
@@ -197,9 +200,37 @@ describe("ActivityBar auto-run view", () => {
 
   it("shows no failed dot before the runs have been read", async () => {
     useSessionsStore.setState({ sessions: [run("a", "working", { alive: false })] });
-    useAutoRunStore.setState({ deliveries: new Map([["a", dlv("d1", "closed", "failed")]]), loaded: false });
+    served([["a", dlv("d1", "closed", "clean", "turn-failed")]], false);
     await mount();
     expect(badge("autorun")).toBeNull();
+  });
+
+  it("keeps an acknowledged failure acknowledged across a reload whose runs have not arrived", async () => {
+    useSessionsStore.setState({ sessions: [run("a", "working", { alive: false })] });
+    useRailAck.setState({ acked: { autorun: ["d1"] } });
+    useLeftRail.setState({ open: true, view: "autorun" });
+    served([], true); // the queue list came back, the delivery history has not
+    await mount();
+    expect(useRailAck.getState().acked.autorun).toEqual(["d1"]);
+    served([["a", dlv("d1", "closed", "clean", "turn-failed")]]);
+    await act(async () => btn("sessions").click());
+    expect(badge("autorun")).toBeNull();
+  });
+
+  it("does not show another scope's runs", async () => {
+    // The delivery says the run waits for the member (held by a person); the session itself works.
+    useSessionsStore.setState({ sessions: [run("a", "working")] });
+    served([["a", { ...dlv("d1", "open"), heldBy: "person" }]]);
+    await mount();
+    expect(badge("autorun")?.dataset.badge).toBe("waiting");
+    await act(async () => useAutoRunStore.setState({ scope: "someone else" }));
+    expect(badge("autorun")).toBeNull();
+  });
+
+  it("counts a stopped scheduled session that still carries its question, as the list shows it", async () => {
+    useSessionsStore.setState({ sessions: [run("cron", "working", { origin: "schedule", alive: false, carried: "question" })] });
+    await mount();
+    expect(badge("schedules")?.textContent).toBe("1");
   });
 
   it("counts a scheduled run's waiting session on the Schedules icon", async () => {

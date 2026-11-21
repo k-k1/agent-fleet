@@ -5,7 +5,7 @@ import { buildRuns, type RunDelivery } from "./runs.ts";
 import { ancestorNames, planClearFinished, runStopScope, runWorktreeNode } from "./runActions.ts";
 
 const sess = (name: string, extra: Partial<Session>): Session => ({ name, kind: "claude", alive: true, ...extra });
-const closed: RunDelivery = { id: "d", categoryId: "c", state: "closed", outcome: "clean", sentAt: "", createdAt: "", closedAt: "", heldBy: "" };
+const closed: RunDelivery = { id: "d", categoryId: "c", state: "closed", outcome: "clean", turnOutcome: "clean", sentAt: "", createdAt: "", closedAt: "", heldBy: "" };
 const repos: Repo[] = [
   { name: "base" },
   { name: "base@wip-a", worktree: true, parent: "base" },

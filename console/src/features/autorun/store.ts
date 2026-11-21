@@ -18,9 +18,11 @@ interface AutoRunStore {
   deliveries: Map<string, RunDelivery>;
   /** True once a queue list has been read for this scope: "nothing yet" is not "no failures". */
   loaded: boolean;
+  /** The tenant and account the data above was read for. */
+  scope: string;
 }
 
-export const useAutoRunStore = create<AutoRunStore>(() => ({ queues: [], deliveries: new Map(), loaded: false }));
+export const useAutoRunStore = create<AutoRunStore>(() => ({ queues: [], deliveries: new Map(), loaded: false, scope: "" }));
 
 interface Loop {
   scope: string;
@@ -62,7 +64,7 @@ function startLoop(scope: string): Loop {
         for (const [name, d] of prev) if (d.categoryId === q.categoryId && !seen.has(name) && d.state !== "closed") next.set(name, { ...d, state: "" });
         for (const d of list) {
           if (d.session) {
-            next.set(d.session, { id: d.id, categoryId: q.categoryId, state: d.state, outcome: d.outcome, sentAt: d.sentAt, createdAt: d.createdAt, closedAt: d.closedAt, heldBy: d.heldBy });
+            next.set(d.session, { id: d.id, categoryId: q.categoryId, state: d.state, outcome: d.outcome, turnOutcome: d.firstTurn?.outcome ?? "", sentAt: d.sentAt, createdAt: d.createdAt, closedAt: d.closedAt, heldBy: d.heldBy });
           }
         }
         return next;
@@ -118,17 +120,18 @@ function startLoop(scope: string): Loop {
   };
 }
 
-function acquire(scope: string): () => void {
+/** Starts (or joins) the poll for a scope; the returned function leaves it. */
+export function acquireAutoRuns(scope: string): () => void {
   users++;
   if (loop && loop.scope !== scope) {
     loop.stop();
     loop = null;
   }
-  if (!loop) {
-    // Another tenant's or account's runs are not this scope's.
-    useAutoRunStore.setState({ queues: [], deliveries: new Map(), loaded: false });
-    loop = startLoop(scope);
-  }
+  // Another tenant's or account's runs are not this scope's. The same scope keeps what it knew
+  // across a pause of the poll: a closed run that left the newest fifty has nowhere else to
+  // get its category and duration from.
+  if (useAutoRunStore.getState().scope !== scope) useAutoRunStore.setState({ queues: [], deliveries: new Map(), loaded: false, scope });
+  if (!loop) loop = startLoop(scope);
   let released = false;
   return () => {
     if (released) return;
@@ -142,18 +145,30 @@ function acquire(scope: string): () => void {
 /** Read now, whatever the poll's phase: the view came on screen. */
 export const reloadAutoRuns = (): void => void loop?.load();
 
+/** The runs read for the scope in force: another scope's data is never returned, even before a poll
+ *  has replaced it. */
+export function useScopedAutoRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDelivery>; loaded: boolean } {
+  const tenant = useTenantStore((s) => s.tenant);
+  const identity = useTenantStore((s) => s.identityRev);
+  const st = useAutoRunStore();
+  return st.scope === tenant + "\u0000" + identity ? st : EMPTY;
+}
+const EMPTY = { queues: [] as MemoQueue[], deliveries: new Map<string, RunDelivery>(), loaded: false };
+
 /** Keeps the queues and their runs current while `on`. Safe to call from several places. */
 export function useAutoRunFeed(on: boolean): void {
   const tenant = useTenantStore((s) => s.tenant);
   const identity = useTenantStore((s) => s.identityRev);
   const scope = tenant + "\u0000" + identity;
-  useEffect(() => (on ? acquire(scope) : undefined), [on, scope]);
+  useEffect(() => (on ? acquireAutoRuns(scope) : undefined), [on, scope]);
 }
 
 interface AutoRunReveal {
   /** The run (its session's name) to bring into view, and a counter so a repeat re-triggers. */
   name: string;
   n: number;
+  /** When the request was made (ms): one nobody has acted on for a while is dropped. */
+  at: number;
   reveal(name: string): void;
   /** The view has acted on the request: a later mount must not act on it again. */
   consume(): void;
@@ -163,6 +178,15 @@ interface AutoRunReveal {
 export const useAutoRunReveal = create<AutoRunReveal>((set) => ({
   name: "",
   n: 0,
-  reveal: (name) => set((s) => ({ name, n: s.n + 1 })),
+  at: 0,
+  reveal: (name) => set((s) => ({ name, n: s.n + 1, at: Date.now() })),
   consume: () => set({ name: "" }),
 }));
+
+const REVEAL_TTL_MS = 30000;
+
+/** The run a request still asks for, "" once it was acted on or went stale. */
+export function pendingReveal(): string {
+  const { name, at } = useAutoRunReveal.getState();
+  return name && Date.now() - at < REVEAL_TTL_MS ? name : "";
+}

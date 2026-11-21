@@ -1387,6 +1387,10 @@ func TestMemoDeliveryListWire(t *testing.T) {
 		if len(list) != memoDeliveryListMax+1 || list[0].ID != d2.ID || list[len(list)-1].ID != old.ID {
 			t.Fatalf("include=open: %d rows, first %s, last %s", len(list), list[0].ID, list[len(list)-1].ID)
 		}
+		// Another member sees none of it, with or without the parameter.
+		if rec := e.do("c", "GET", "/api/memo-queues/"+q+"/deliveries?include=open", nil); strings.TrimSpace(rec.Body.String()) != "[]" {
+			t.Fatalf("another member's include=open list: %s", rec.Body.String())
+		}
 	})
 }
 

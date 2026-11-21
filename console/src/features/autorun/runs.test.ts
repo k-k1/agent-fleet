@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Session } from "../../types/session.ts";
 import { buildRuns, failedRunKeys, fmtElapsed, itemLabel, runRootName, waitingRunCount, type RunDelivery } from "./runs.ts";
 
-const dlv = (categoryId: string, state: string, extra: Partial<RunDelivery> = {}): RunDelivery => ({ id: "d-" + categoryId, categoryId, state, outcome: "", sentAt: "", createdAt: "", closedAt: "", heldBy: "", ...extra });
+const dlv = (categoryId: string, state: string, extra: Partial<RunDelivery> = {}): RunDelivery => ({ id: "d-" + categoryId, categoryId, state, outcome: "", turnOutcome: "", sentAt: "", createdAt: "", closedAt: "", heldBy: "", ...extra });
 const sess = (name: string, extra: Partial<Session>): Session => ({ name, kind: "claude", alive: true, ...extra });
 
 describe("buildRuns", () => {
@@ -107,13 +107,17 @@ describe("helpers", () => {
 
 describe("run badges", () => {
   it("counts the waiting runs and keys the failed ones by delivery", () => {
+    const closedRun = (name: string) => sess(name, { origin: "queue", alive: false });
     const rows = buildRuns(
-      [sess("a", { origin: "queue", state: "question" }), sess("b", { origin: "queue", alive: false }), sess("c", { origin: "queue", alive: false }), sess("d", { origin: "queue", alive: false })],
+      [sess("a", { origin: "queue", state: "question" }), closedRun("b"), closedRun("c"), closedRun("d"), closedRun("e")],
       new Map([
         ["a", dlv("c", "open", { id: "da" })],
-        ["b", dlv("c", "closed", { id: "db", outcome: "failed" })],
-        ["c", dlv("c", "closed", { id: "dc", outcome: "aborted" })],
-        ["d", dlv("c", "closed", { id: "dd", outcome: "clean" })],
+        // The first turn failed and the queue closed the run: a failure.
+        ["b", dlv("c", "closed", { id: "db", outcome: "clean", turnOutcome: "turn-failed" })],
+        // The member ended or aborted it: their doing, not a failure.
+        ["c", dlv("c", "closed", { id: "dc", outcome: "aborted", turnOutcome: "turn-failed" })],
+        ["d", dlv("c", "closed", { id: "dd", outcome: "ended", turnOutcome: "turn-failed" })],
+        ["e", dlv("c", "closed", { id: "de", outcome: "clean", turnOutcome: "clean" })],
       ]),
     );
     expect(waitingRunCount(rows)).toBe(1);

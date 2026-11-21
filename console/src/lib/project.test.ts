@@ -527,6 +527,14 @@ describe("repoTree: filtering and mixed copies", () => {
     expect(railNodeSessions(a, ss, byName).map((x) => x.name)).toEqual(["H", "R"]);
   });
 
+  it("a copy where a run and a schedule both ran stays in the tree, so it is not 'unattended only' either", () => {
+    const ss = [live(sess("A", { repo: "af@a", createdAt: t(1), origin: "queue" })), live(sess("cron", { repo: "af@a", createdAt: t(2), origin: "schedule" }))];
+    const rs = [repo("af"), wt("af@a", "af", { createdAt: t(1) })];
+    expect(names(repoTree(rs, ss)[0].children)).toEqual(["af@a"]);
+    expect(isUnattendedOnlyFolder(ss, rs[1], rs)).toBe(false);
+    expect(isUnattendedOnlyFolder([ss[0]], rs[1], rs)).toBe(true);
+  });
+
   it("a copy a run made but where the member later started a session stays in the ordinary tree", () => {
     const mixed = [...sessions, live(sess("hand", { repo: "af@a", createdAt: t(4), origin: "user" }))];
     const r = repoTree(repos, mixed)[0];

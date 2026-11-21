@@ -22,7 +22,7 @@ import { DeleteCopyModal } from "../repos/DeleteCopyModal.tsx";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat } from "../sessions/open.ts";
-import { reloadAutoRuns, useAutoRunFeed, useAutoRunReveal, useAutoRunStore } from "./store.ts";
+import { reloadAutoRuns, useAutoRunFeed, pendingReveal, useAutoRunReveal, useScopedAutoRuns } from "./store.ts";
 import { buildRuns, fmtElapsed, waitsForMember, type RunRow } from "./runs.ts";
 import { ancestorNames, planClearFinished, runStopScope, runWorktreeNode } from "./runActions.ts";
 import "./autorun.css";
@@ -137,13 +137,15 @@ function Category({ label, runs, now, onDialog }: { label: string; runs: RunRow[
   const [showEnded, setShowEnded] = useState(false);
   const live = runs.filter((r) => r.state !== "ended");
   const ended = runs.filter((r) => r.state === "ended");
-  // A link from the memo run history to a finished run opens the fold it sits in.
+  // A link from the memo run history to a finished run opens the fold it sits in, also when the
+  // run only reaches this category once its delivery has been read.
   const revealN = useAutoRunReveal((s) => s.n);
+  const endedNames = ended.map((r) => r.root.name).join("\u0000");
   useEffect(() => {
-    const name = useAutoRunReveal.getState().name;
+    const name = pendingReveal();
     if (name && ended.some((r) => r.root.name === name)) setShowEnded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revealN]);
+  }, [revealN, endedNames]);
   return (
     <section className="autorun-cat" data-autorun-category={label}>
       <h3 className="autorun-cat-head">{label}</h3>
@@ -247,21 +249,25 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
   );
 }
 
-/** Scrolls the revealed run's row into view and focuses it, once it is rendered. */
-function useRevealRun(): void {
+/** Scrolls the revealed run's row into view and focuses it, once it is rendered where it belongs:
+ *  a finished run no delivery names yet is in "Other runs" and moves when its delivery arrives, so
+ *  the request stays open until then. */
+function useRevealRun(runs: RunRow[]): void {
   const n = useAutoRunReveal((s) => s.n);
   useEffect(() => {
-    const name = useAutoRunReveal.getState().name;
-    if (!name || n === 0) return;
+    const name = pendingReveal();
+    const run = runs.find((r) => r.root.name === name);
+    if (!run || (run.state === "ended" && run.categoryId === "")) return;
     // The view and an ended fold open in this commit or the next: wait a frame for the row.
     const id = requestAnimationFrame(() => {
       const row = document.querySelector<HTMLElement>(`[data-autorun-run="${CSS.escape(name)}"]`);
-      row?.scrollIntoView({ block: "nearest" });
-      row?.querySelector<HTMLElement>(".autorun-run-main")?.focus();
-      useAutoRunReveal.getState().consume();
+      if (!row) return;
+      row.scrollIntoView({ block: "nearest" });
+      row.querySelector<HTMLElement>(".autorun-run-main")?.focus();
+      if (useAutoRunReveal.getState().n === n) useAutoRunReveal.getState().consume();
     });
     return () => cancelAnimationFrame(id);
-  }, [n]);
+  }, [n, runs]);
 }
 
 export const AutoRunSection = memo(function AutoRunSection() {
@@ -273,9 +279,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
   useEffect(() => {
     if (shown) reloadAutoRuns();
   }, [shown]);
-  useRevealRun();
-  const queues = useAutoRunStore((s) => s.queues);
-  const deliveries = useAutoRunStore((s) => s.deliveries);
+  const { queues, deliveries } = useScopedAutoRuns();
   const [dialog, setDialog] = useState<RunDialog | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -283,6 +287,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
     return () => clearInterval(id);
   }, []);
   const runs = useMemo(() => buildRuns(sessions, deliveries), [sessions, deliveries]);
+  useRevealRun(runs);
   const labelOf = (id: string): string => {
     const q = queues.find((x) => x.categoryId === id);
     return q ? [q.repo, q.category].filter(Boolean).join(" / ") || tr("memo.autorun") : tr("autorun.other");

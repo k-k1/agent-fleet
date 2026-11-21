@@ -372,6 +372,7 @@ export const common = {
   "rail.badge.waiting_other": "返事待ちのセッション {count} 件",
   "rail.badge.news_one": "新着 {count} 件",
   "rail.badge.news_other": "新着 {count} 件",
+  "rail.badge.run_failed": "失敗した実行があります",
   "rail.badge.unread": "未読あり",
   "rail.badge.runs_one": "返事待ちの自動実行 {count} 件",
   "rail.badge.runs_other": "返事待ちの自動実行 {count} 件",

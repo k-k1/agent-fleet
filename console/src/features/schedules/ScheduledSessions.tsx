@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName } from "../../lib/sessionview.ts";
+import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -13,6 +14,7 @@ import type { Session } from "../../types/session.ts";
 import { buildScheduledRuns, type ScheduledRun } from "./scheduledSessions.ts";
 
 const open = (s: Session) => (agentOf(s.kind).caps.chat ? openSessionChat : openSessionTerminal)(s.name);
+const dotClass = (st: string) => (st === "running" ? "run-live" : st === "waiting" ? "run-wait" : "");
 const stateOf = (s: Session) => (waitsForMember(s) ? "waiting" : s.alive ? "running" : "ended");
 
 function Item({ run }: { run: ScheduledRun }) {
@@ -20,7 +22,7 @@ function Item({ run }: { run: ScheduledRun }) {
   return (
     <li className="sched-sess" data-sched-session={run.root.name}>
       <button type="button" className="sched-sess-main" data-rail-row="" onClick={() => open(run.root)} title={tr("sched.open_session", { name: run.root.name })}>
-        <span className={"sched-sess-dot is-" + stateOf(run.root)} aria-hidden="true" />
+        <span className={"sched-sess-dot " + dotClass(stateOf(run.root))} aria-hidden="true" />
         <span className="sched-sess-title">{displayName(run.root)}</span>
       </button>
       {run.children.length > 0 && (
@@ -28,7 +30,7 @@ function Item({ run }: { run: ScheduledRun }) {
           {run.children.map((c) => (
             <li key={c.name}>
               <button type="button" className="sched-sess-main" data-rail-row="" onClick={() => open(c)} title={tr("sched.open_session", { name: c.name })}>
-                <span className={"sched-sess-dot is-" + stateOf(c)} aria-hidden="true" />
+                <span className={"sched-sess-dot " + dotClass(stateOf(c))} aria-hidden="true" />
                 <span className="sched-sess-title">{displayName(c)}</span>
               </button>
             </li>
@@ -43,7 +45,8 @@ export function ScheduledSessions() {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const [showEnded, setShowEnded] = useState(false);
-  const runs = useMemo(() => buildScheduledRuns(sessions), [sessions]);
+  const wset = useActiveWorkingSet();
+  const runs = useMemo(() => buildScheduledRuns(sessions, wset), [sessions, wset]);
   if (runs.length === 0) return null;
   const live = runs.filter((r) => r.live);
   const ended = runs.filter((r) => !r.live);

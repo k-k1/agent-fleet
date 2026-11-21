@@ -11,8 +11,10 @@ export interface RunDelivery {
   id: string;
   categoryId: string;
   state: string;
-  /** How a closed run ended: clean | failed | aborted | ended | unknown | not_sent | deferred. */
+  /** How a closed run ended: clean | aborted | ended | unknown | not_sent | deferred. */
   outcome: string;
+  /** How the run's first turn ended: clean | turn-failed | ""; the only failure signal a queue records. */
+  turnOutcome: string;
   sentAt: string;
   createdAt: string;
   closedAt: string;
@@ -25,9 +27,10 @@ export interface RunRow {
   /** The queue's category id the run came from; "" when no delivery names this session. */
   categoryId: string;
   state: RunState;
-  /** The delivery that started the run and how it ended; "" while unknown or not closed. */
+  /** The delivery that started the run; "" while unknown. */
   deliveryId: string;
-  outcome: string;
+  /** The queue closed the run and its first turn failed. A run the member ended or aborted is not one. */
+  failed: boolean;
   /** The work item the run started for; null when the session has no `started` link. */
   item: { key: string; label: string; title: string } | null;
   pr: SessionPR | null;
@@ -56,9 +59,8 @@ export function runRootName(s: Session, byName: Map<string, Session>): string {
 /** Runs that wait for the member's answer: the Auto-run icon's count. */
 export const waitingRunCount = (runs: RunRow[]): number => runs.filter((r) => r.state === "waiting").length;
 
-/** One key per run whose queue closed it as failed: the Auto-run icon's red dot, acknowledged by
- *  opening the view. Aborted and ended-by-hand runs are the member's own doing, not failures. */
-export const failedRunKeys = (runs: RunRow[]): string[] => runs.filter((r) => r.outcome === "failed" && r.deliveryId).map((r) => r.deliveryId);
+/** One key per failed run: the Auto-run icon's red dot, acknowledged by opening the view. */
+export const failedRunKeys = (runs: RunRow[]): string[] => runs.filter((r) => r.failed && r.deliveryId).map((r) => r.deliveryId);
 
 /** "owner/repo#45" -> "#45"; a Jira key stays as it is. */
 export function itemLabel(key: string): string {
@@ -111,7 +113,7 @@ export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelive
         root,
         categoryId: d?.categoryId ?? "",
         deliveryId: d?.id ?? "",
-        outcome: state === "ended" && d?.state === "closed" ? d.outcome : "",
+        failed: state === "ended" && d?.state === "closed" && d.turnOutcome === "turn-failed" && d.outcome !== "ended" && d.outcome !== "aborted",
         state,
         item: link ? { key: link.key, label: itemLabel(link.key), title: link.title ?? "" } : null,
         pr: root.pr ?? null,

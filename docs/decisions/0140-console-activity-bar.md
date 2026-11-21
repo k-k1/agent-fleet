@@ -154,9 +154,10 @@ memo run history linking to a row. Follow-ups: #4646.
 
 The Auto-run icon takes decision 4's two badges, counted only over the rows the view lists (every
 run; the view is not scoped by a working set). A waiting count: the runs whose session waits for the
-member's answer, which stays while the view is open. A red news dot: a run its queue closed as
-`failed` (an aborted or hand-ended run is the member's own doing), acknowledged by opening the view
-like the Schedules dot. Both need the runs while the view is off screen, so the queue list and its
+member's answer, which stays while the view is open. A red news dot: a run its queue closed after
+its first turn failed (`firstTurn.outcome` is `turn-failed`; a delivery has no failed outcome of its own,
+and an aborted or hand-ended run is the member's own doing), acknowledged by opening the view like the
+Schedules dot. Acknowledged keys are never pruned by a read that lacks the run. Both need the runs while the view is off screen, so the queue list and its
 deliveries are read by a shared feed that runs while the workspace runs or the view is shown, and
 the view reads from it. The delivery read also asks for every open run (`?include=open`), so a run
 older than the newest fifty keeps its category.

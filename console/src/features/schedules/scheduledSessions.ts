@@ -4,6 +4,7 @@
 // own, newest first, not under one schedule.
 import type { Session } from "../../types/session.ts";
 import { waitsForMember } from "../autorun/runs.ts";
+import { sessionInSet, type WorkingSet } from "../../lib/workingSets.ts";
 
 export interface ScheduledRun {
   root: Session;
@@ -31,7 +32,8 @@ function scheduleRootName(s: Session, byName: Map<string, Session>): string {
   return "";
 }
 
-export function buildScheduledRuns(sessions: Session[]): ScheduledRun[] {
+/** `set` narrows the runs the way the tree used to: a run is in a working set when its root session is. */
+export function buildScheduledRuns(sessions: Session[], set: WorkingSet | null = null): ScheduledRun[] {
   const byName = new Map(sessions.map((s) => [s.name, s]));
   const kids = new Map<string, Session[]>();
   for (const s of sessions) {
@@ -41,7 +43,7 @@ export function buildScheduledRuns(sessions: Session[]): ScheduledRun[] {
     kids.set(root, [...(kids.get(root) ?? []), s]);
   }
   return sessions
-    .filter((s) => s.origin === "schedule")
+    .filter((s) => s.origin === "schedule" && (!set || sessionInSet(set, s)))
     .sort((a, b) => byCreated(b, a))
     .map((root) => {
       const children = (kids.get(root.name) ?? []).sort(byCreated);
@@ -51,6 +53,7 @@ export function buildScheduledRuns(sessions: Session[]): ScheduledRun[] {
     });
 }
 
-/** Sessions of scheduled runs that wait for the member's answer: the Schedules icon's count. */
-export const waitingScheduledCount = (sessions: Session[]): number =>
-  buildScheduledRuns(sessions).reduce((n, r) => n + [r.root, ...r.children].filter((s) => s.alive && waitsForMember(s)).length, 0);
+/** Sessions of scheduled runs that wait for the member's answer, by the rule the list uses
+ *  (a stopped session that still carries its question counts): the Schedules icon's count. */
+export const waitingScheduledCount = (sessions: Session[], set: WorkingSet | null = null): number =>
+  buildScheduledRuns(sessions, set).reduce((n, r) => n + [r.root, ...r.children].filter(waitsForMember).length, 0);
