@@ -19,6 +19,11 @@
   background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
 }
 .autorun-run-main:hover, .autorun-kid:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
+/* The session open in the focused pane: the Sessions view's active-row look (.sess-row.active). */
+.autorun-run-main.active, .autorun-kid.active {
+  background: var(--lp-active-bg, var(--active-bg));
+  box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
+}
 /* After the shared button rule above, which resets the background. Opaque, with the hover tint
    laid over the base: a pinned band must never show the rows scrolling under it. */
 .autorun-sub-head {

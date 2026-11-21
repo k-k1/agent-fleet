@@ -1534,54 +1534,18 @@ describe("full run history dialog", () => {
     id, state: "closed", outcome: "clean", session: "s-" + id, messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "", auto: true, ...over,
   });
 
-  it("links a run the Auto-run view lists to its row there and closes the dialog, as the inline list does", async () => {
+  it("has no Show in Auto-run link; pressing the session opens it", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
-    const { useAutoRunReveal } = await import("../autorun/store.ts");
     const { useMemoStore } = await import("./store.ts");
-    useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }, { name: "s-d2", kind: "claude", alive: false, origin: "user" }] as never });
+    useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }] as never });
     servedQueues = { tenantEnabled: true, queues: [aQueue()] };
-    servedDeliveries = [run("d1"), run("d2")];
+    servedDeliveries = [run("d1")];
     await render();
     await act(async () => useMemoStore.getState().revealCategory("c1", true));
     await settle();
-    const links = dialog().querySelectorAll<HTMLElement>(".memo-d-show-run");
-    // Only the run whose session is a run of a queue; a hand-started session has no row there.
-    expect(links).toHaveLength(1);
-    const n = useAutoRunReveal.getState().n;
-    await click(links[0]);
-    expect(useAutoRunReveal.getState().name).toBe("s-d1");
-    expect(useAutoRunReveal.getState().n).toBe(n + 1);
-    expect(openSessionChat).not.toHaveBeenCalledWith("s-d1");
-    expect(document.querySelector(".ui-modal")).toBeNull();
+    expect(dialog().querySelector(".memo-d-show-run")).toBeNull();
+    expect(dialog().querySelector(".memo-d-session")).not.toBeNull();
     useSessionsStore.setState({ sessions: [] });
-  });
-});
-
-describe("full run history dialog under a working set", () => {
-  it("disables the Auto-run link for a category the working set hides, even when the queue list failed to load", async () => {
-    const { useSessionsStore } = await import("../sessions/store.ts");
-    const { useMemoStore } = await import("./store.ts");
-    const { createWorkingSet, setActiveWorkingSet, toggleWorkingSetMember, deleteWorkingSet } = await import("../../lib/workingSetsStore.ts");
-    useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }] as never });
-    servedCats = [aCat({ repo: "B", queue: true })];
-    queuesFail = true;
-    servedDeliveries = [{ id: "d1", state: "closed", outcome: "clean", session: "s-d1", messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "", auto: true }];
-    const id = createWorkingSet("only A");
-    toggleWorkingSetMember(id, "repos", "A");
-    setActiveWorkingSet(id);
-    try {
-      await render();
-      await act(async () => useMemoStore.getState().revealCategory("c1", true));
-      await settle();
-      const link = dialog().querySelector<HTMLButtonElement>(".memo-d-show-run");
-      expect(link?.disabled).toBe(true);
-      expect(link?.title).toBe(t("memo.d_show_run_hidden"));
-    } finally {
-      queuesFail = false;
-      setActiveWorkingSet("");
-      deleteWorkingSet(id);
-      useSessionsStore.setState({ sessions: [] });
-    }
   });
 });
 
@@ -1610,49 +1574,15 @@ describe("inline run list under a category", () => {
     expect(document.querySelector(".memo-runs")).toBeNull();
   });
 
-  it("links a run the Auto-run view lists to its row there, without opening the session", async () => {
+  it("has no Show in Auto-run link in a run row", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
-    const { useAutoRunReveal } = await import("../autorun/store.ts");
-    useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }, { name: "s-d2", kind: "claude", alive: false, origin: "user" }] as never });
-    servedDeliveries = [run("d1"), run("d2")];
+    useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }] as never });
+    servedDeliveries = [run("d1")];
     await render();
     await click(toggle());
-    const links = document.querySelectorAll<HTMLElement>(".memo-run-view");
-    // Only the run whose session is a run of a queue; a hand-started session has no row there.
-    expect(links).toHaveLength(1);
-    const n = useAutoRunReveal.getState().n;
-    await click(links[0]);
-    expect(useAutoRunReveal.getState().name).toBe("s-d1");
-    expect(useAutoRunReveal.getState().n).toBe(n + 1);
-    expect(openSessionChat).not.toHaveBeenCalledWith("s-d1");
+    expect(document.querySelectorAll(".memo-run")).toHaveLength(1);
+    expect(document.querySelector(".memo-run-view")).toBeNull();
     useSessionsStore.setState({ sessions: [] });
-  });
-
-  it("disables the link to the Auto-run view for a category the active working set hides, whatever the shared feed has read", async () => {
-    const { useSessionsStore } = await import("../sessions/store.ts");
-    const { createWorkingSet, setActiveWorkingSet, toggleWorkingSetMember, deleteWorkingSet } = await import("../../lib/workingSetsStore.ts");
-    useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }] as never });
-    servedCats = [aCat({ repo: "B", queue: true })];
-    servedQueues = { tenantEnabled: true, queues: [aQueue({ repo: "B" })] };
-    servedDeliveries = [run("d1")];
-    const id = createWorkingSet("only A");
-    toggleWorkingSetMember(id, "repos", "A");
-    setActiveWorkingSet(id);
-    try {
-      await render();
-      await click(toggle());
-      // The shared auto-run feed has read nothing in this test: the section's own repo decides.
-      const link = () => document.querySelector<HTMLButtonElement>(".memo-run-view");
-      expect(link()?.disabled).toBe(true);
-      expect(link()?.title).toBe(t("memo.d_show_run_hidden"));
-      toggleWorkingSetMember(id, "repos", "B");
-      await act(async () => {});
-      expect(link()?.disabled).toBe(false);
-    } finally {
-      setActiveWorkingSet("");
-      deleteWorkingSet(id);
-      useSessionsStore.setState({ sessions: [] });
-    }
   });
 
   it("opens a run's session from its row, by click and by Enter, and leaves a sessionless run inert", async () => {

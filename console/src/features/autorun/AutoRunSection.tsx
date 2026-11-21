@@ -25,6 +25,7 @@ import { askConfirm } from "../../ui/confirmBridge.ts";
 import { toast } from "../../ui/toast.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
+import { activePane } from "../../layout/ops.ts";
 import { useReposStore } from "../repos/store.ts";
 import { StopSessionsModal } from "../repos/StopSessionsModal.tsx";
 import { DeleteCopyModal } from "../repos/DeleteCopyModal.tsx";
@@ -37,7 +38,7 @@ import { isContextMenuKey, menuAnchor } from "../project/contextMenuKey.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import type { Session } from "../../types/session.ts";
 import { openSessionChat } from "../sessions/open.ts";
-import { refreshAutoRuns, reloadAutoRuns, useAutoRunFeed, pendingReveal, useAutoRunReveal, useScopedAutoRuns } from "./store.ts";
+import { refreshAutoRuns, reloadAutoRuns, useAutoRunFeed, useScopedAutoRuns } from "./store.ts";
 import { buildRuns, fmtElapsed, scopeRuns, waitsForMember, type RunRow } from "./runs.ts";
 import { ancestorNames, planClearFinished, runStopScope, runWorktreeNode } from "./runActions.ts";
 import "./autorun.css";
@@ -143,7 +144,7 @@ function RunMenu({ run, onDialog }: { run: RunRow; onDialog: (d: RunDialog) => v
   );
 }
 
-function RunItem({ run, now, onDialog, openMenu }: { run: RunRow; now: number; onDialog: (d: RunDialog) => void; openMenu: OpenSessionMenu }) {
+function RunItem({ run, now, onDialog, openMenu, activeName }: { run: RunRow; now: number; onDialog: (d: RunDialog) => void; openMenu: OpenSessionMenu; activeName: string | null }) {
   const tr = useT();
   const { root, item, pr, children } = run;
   const end = run.state === "ended" ? run.endedAt : now;
@@ -153,7 +154,8 @@ function RunItem({ run, now, onDialog, openMenu }: { run: RunRow; now: number; o
     <li className={"autorun-run is-" + run.state} data-autorun-run={root.name} data-autorun-state={run.state}>
       <button
         type="button"
-        className="autorun-run-main"
+        className={"autorun-run-main" + (root.name === activeName ? " active" : "")}
+        aria-current={root.name === activeName ? "true" : undefined}
         data-rail-row=""
         onClick={() => openSessionChat(root.name)}
         {...menuHandlers(root, openMenu)}
@@ -178,7 +180,7 @@ function RunItem({ run, now, onDialog, openMenu }: { run: RunRow; now: number; o
         <ul className="autorun-kids">
           {children.map((c) => (
             <li key={c.name}>
-              <button type="button" className="autorun-kid" data-rail-row="" onClick={() => openSessionChat(c.name)} {...menuHandlers(c, openMenu)} title={tr("autorun.open", { name: c.name })}>
+              <button type="button" className={"autorun-kid" + (c.name === activeName ? " active" : "")} aria-current={c.name === activeName ? "true" : undefined} data-rail-row="" onClick={() => openSessionChat(c.name)} {...menuHandlers(c, openMenu)} title={tr("autorun.open", { name: c.name })}>
                 <span className={"autorun-dot is-" + (waitsForMember(c) ? "waiting" : c.alive ? "running" : "ended")} aria-hidden="true" />
                 <span className="autorun-title">{displayName(c)}</span>
               </button>
@@ -288,6 +290,7 @@ function Category({
   onDialog,
   openMenu,
   onSettings,
+  activeName,
 }: {
   label: string;
   /** The category's live queue settings (undefined: none are known). */
@@ -299,6 +302,7 @@ function Category({
   onDialog: (d: RunDialog) => void;
   openMenu: OpenSessionMenu;
   onSettings: (id: string) => void;
+  activeName: string | null;
 }) {
   const tr = useT();
   const [showLive, setShowLive] = useState(true);
@@ -307,17 +311,6 @@ function Category({
   const headRef = usePublishedHeight<HTMLDivElement>("--autorun-cat-head-h");
   const live = runs.filter((r) => r.state !== "ended");
   const ended = runs.filter((r) => r.state === "ended");
-  // A link from the memo run history opens the fold the run sits in, also when the run only
-  // reaches this category (or moves between its folds) once its delivery has been read.
-  const revealN = useAutoRunReveal((s) => s.n);
-  const names = live.map((r) => r.root.name).join("\u0000") + "\u0001" + ended.map((r) => r.root.name).join("\u0000");
-  useEffect(() => {
-    const name = pendingReveal();
-    if (!name) return;
-    if (live.some((r) => r.root.name === name)) setShowLive(true);
-    if (ended.some((r) => r.root.name === name)) setShowEnded(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revealN, names]);
   return (
     <section className="autorun-cat" data-autorun-category={label}>
       <div className="autorun-cat-head" ref={headRef}>
@@ -338,7 +331,7 @@ function Category({
           {showLive && (
             <ul className="autorun-list">
               {live.map((r) => (
-                <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} openMenu={openMenu} />
+                <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} openMenu={openMenu} activeName={activeName} />
               ))}
             </ul>
           )}
@@ -350,7 +343,7 @@ function Category({
           {showEnded && (
             <ul className="autorun-list">
               {ended.map((r) => (
-                <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} openMenu={openMenu} />
+                <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} openMenu={openMenu} activeName={activeName} />
               ))}
             </ul>
           )}
@@ -432,37 +425,6 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
   );
 }
 
-/** Scrolls the revealed run's row into view and focuses it, once it is rendered where it belongs:
- *  a run no delivery names yet is in "Other runs" and moves when its delivery arrives, so the
- *  request stays open until then (and asks for that read). */
-function useRevealRun(runs: RunRow[]): void {
-  const n = useAutoRunReveal((s) => s.n);
-  // One explicit read per request (it invalidates what is in flight, which may predate the run); the
-  // poll goes on at its own pace after that.
-  const asked = useRef(0);
-  useEffect(() => {
-    const name = pendingReveal();
-    const run = runs.find((r) => r.root.name === name);
-    if (!run) return;
-    if (run.categoryId === "") {
-      if (asked.current !== n) {
-        asked.current = n;
-        reloadAutoRuns();
-      }
-      return;
-    }
-    // The view and a fold open in this commit or the next: wait a frame for the row.
-    const id = requestAnimationFrame(() => {
-      const row = document.querySelector<HTMLElement>(`[data-autorun-run="${CSS.escape(name)}"]`);
-      if (!row) return;
-      row.scrollIntoView({ block: "nearest" });
-      row.querySelector<HTMLElement>(".autorun-run-main")?.focus();
-      if (useAutoRunReveal.getState().n === n) useAutoRunReveal.getState().consume();
-    });
-    return () => cancelAnimationFrame(id);
-  }, [n, runs]);
-}
-
 export const AutoRunSection = memo(function AutoRunSection() {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
@@ -497,13 +459,31 @@ export const AutoRunSection = memo(function AutoRunSection() {
   }, []);
   const allRuns = useMemo(() => buildRuns(sessions, deliveries), [sessions, deliveries]);
   const runs = useMemo(() => scopeRuns(allRuns, queues, wset), [allRuns, queues, wset]);
-  useRevealRun(runs);
+  // The session open in the focused pane marks its run row or child row, as the Sessions view
+  // marks its own active row.
+  const activeName = useLayoutStore((st) => activePane(st.layout)?.session ?? null);
+  // Scrolls only, never focuses: keyboard focus stays where the member put it. A row inside a
+  // closed "Ended N" fold is not rendered, so it is not found and the fold stays closed.
+  // A category the queue list no longer names (its settings were deleted) is "Other runs" too.
+  const keyOf = (id: string) => (queues.some((q) => q.categoryId === id) ? id : "");
+  // Where the row sits: it can appear late (sessions read) or move between categories (a run no
+  // delivery names yet is under "Other runs"), so a change of place scrolls again; a plain
+  // re-poll leaves it unchanged and does not.
+  const place = (() => {
+    const r = activeName ? runs.find((x) => x.root.name === activeName || x.children.some((c) => c.name === activeName)) : undefined;
+    return r ? [r.root.name, keyOf(r.categoryId), r.state === "ended" ? "ended" : "live"].join("\u0000") : "";
+  })();
+  useEffect(() => {
+    if (!shown || !activeName || !place) return;
+    const id = requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(".autorun-view [aria-current='true']")?.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [shown, activeName, place]);
   const labelOf = (id: string): string => {
     const q = queues.find((x) => x.categoryId === id);
     return q ? [q.repo, q.category].filter(Boolean).join(" / ") || tr("memo.autorun") : tr("autorun.other");
   };
-  // A category the queue list no longer names (its settings were deleted) is "Other runs" too.
-  const keyOf = (id: string) => (queues.some((q) => q.categoryId === id) ? id : "");
   const ids = [...new Set(runs.map((r) => keyOf(r.categoryId)))];
   const active = runs.filter((r) => r.state !== "ended").length;
   const doReload = async () => {
@@ -580,6 +560,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
             onDialog={setDialog}
             openMenu={openMenu}
             onSettings={setSettingsFor}
+            activeName={activeName}
           />
         ))}
       </div>
