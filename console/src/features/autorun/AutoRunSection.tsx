@@ -525,7 +525,12 @@ export const AutoRunSection = memo(function AutoRunSection() {
             .filter((q) => q.categoryId !== settingsQueue.categoryId)
             .map((q) => ({ id: q.categoryId, label: q.repo ? q.repo + " / " + q.category : q.category }))}
           onClose={() => setSettingsFor(null)}
-          onChanged={reload}
+          // The Memo queue view keeps its own copy of the settings: bump it too, or a form opened
+          // there next starts from the old values and a later save overwrites this change.
+          onChanged={() => {
+            reload();
+            useMemoStore.getState().bump();
+          }}
         />
       )}
     </>

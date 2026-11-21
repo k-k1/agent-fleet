@@ -17,7 +17,11 @@ vi.mock("../memo/api.ts", () => ({ memoQueueList: () => memoQueueList(), memoQue
 // The settings dialog is the Memo queue's own and has its own tests; here only that the gear opens it
 // for the category.
 vi.mock("../memo/MemoQueueSettingsModal.tsx", () => ({
-  MemoQueueSettingsModal: (p: { categoryId: string; queue: unknown }) => <div data-testid="settings-modal" data-cat={p.categoryId} data-has-queue={String(!!p.queue)} />,
+  MemoQueueSettingsModal: (p: { categoryId: string; queue: unknown; onChanged: () => void }) => (
+    <div data-testid="settings-modal" data-cat={p.categoryId} data-has-queue={String(!!p.queue)}>
+      <button type="button" data-testid="settings-save" onClick={p.onChanged} />
+    </div>
+  ),
 }));
 
 const { AutoRunSection } = await import("./AutoRunSection.tsx");
@@ -266,6 +270,13 @@ describe("AutoRunSection", () => {
     await act(async () => host.querySelector<HTMLButtonElement>('.autorun-cat-head button[aria-label="Auto-run settings"]')!.click());
     const m = host.querySelector('[data-testid="settings-modal"]')!;
     expect([m.getAttribute("data-cat"), m.getAttribute("data-has-queue")]).toEqual(["c1", "true"]);
+    // A save reads the queues again and tells the Memo queue view, which holds its own copy.
+    const { useMemoStore } = await import("../memo/store.ts");
+    const tick = useMemoStore.getState().tick;
+    const reads = memoQueueList.mock.calls.length;
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="settings-save"]')!.click());
+    expect(useMemoStore.getState().tick).toBe(tick + 1);
+    expect(memoQueueList.mock.calls.length).toBe(reads + 1);
   });
 
   it("opens the memo queue at the category from the menu", async () => {
