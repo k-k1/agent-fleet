@@ -85,6 +85,7 @@ fails=0
 fail() { echo "FAIL: $1" >&2; echo "--- output ---" >&2; cat "$T/out" >&2; fails=$((fails+1)); }
 # run_block [VAR=val ...] — one start. SKIP=1 means no repin, so only absence/breakage triggers.
 run_block() {
+  : >"$STUB_WA_LOG"
   cd "$T/cwd" && env -i PATH="$T/bin:/usr/bin:/bin:$(dirname "$(command -v node)")" HOME="$T/home" TMPDIR="$T/tmp" BI_DIR="$T/bidir" STUB_WA_LOG="$STUB_WA_LOG" BI_AGENT_BIN="$T/bin/workspace-agent" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
     bash -c 'set -e; export PATH="$HOME/.local/bin:$PATH"; source "$1"; echo "BI_LOW_SPACE=$BI_LOW_SPACE"' _ "$BLOCK" >"$T/out" 2>&1
 }
@@ -245,6 +246,8 @@ npm1=$(grep -nx 'workspace-agent boot-install npm' "$STUB_WA_LOG" | head -1 | cu
 reset; run_block STUB_WA_RC=126 || fail "npm-recover: an exit outside the contract aborted the start"
 has 'WARN: npm boot-install npm-recover exited 126' || fail "npm-recover: no WARN for an exit outside the contract"
 awk '/boot-install npm-recover/{r=NR} /npm uninstall -g/{u=NR} END{exit !(r && u && r<u)}' "$ENTRY" || fail "npm-recover: not before the OFF branch's npm uninstall"
+# ... and at the top level, so no branch (lean, OFF, unattended) can skip it.
+grep -q '^NPM_RECOVER_WA=' "$ENTRY" && grep -q '^  "\$NPM_RECOVER_WA" boot-install npm-recover' "$ENTRY" || fail "npm-recover: not an unconditional top-level step"
 # The shell no longer carries an npm install or a verify of its own.
 grep -q 'npm install -g' "$BLOCK" && fail "npm: shell install block still present"
 grep -q 'npm_clis_verify' "$BLOCK" && fail "npm: shell verify still present"

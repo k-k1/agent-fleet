@@ -959,3 +959,120 @@ func TestSelfUpdateNPMKeepsTheMarkerWhenARestoreFails(t *testing.T) {
 		t.Fatal("not restored on the next start")
 	}
 }
+
+func TestSelfUpdateNPMRefusesWhenOnlyTheBinBackupNameIsTaken(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	f.realNPM(t)
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	if err := os.Remove(f.local("claude")); err != nil { // no npm link: only the tree would move
+		t.Fatal(err)
+	}
+	f.write(t, f.local("claude")+npmBakSuffix, "mine")
+	f.env.selfUpdateNPM()
+	f.env.npmRecoverAside(false)
+	if f.read(f.local("claude")+npmBakSuffix) != "mine" {
+		t.Fatalf("the member's file was touched:\n%s", f.out)
+	}
+	if f.read(filepath.Join(tree, "VERSION")) != "1.0.0" {
+		t.Fatal("the update ran over a name recovery would treat as ours")
+	}
+}
+
+func TestNPMMarkerFromAnEarlierFormatIsUnderstood(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	for _, p := range []string{tree, f.local("claude")} {
+		if err := os.Rename(p, p+npmBakSuffix); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.write(t, f.env.npmMarker(), "pending\n"+tree+"\n"+f.local("claude")+"\n")
+	f.env.npmRecoverAside(false)
+	if f.read(filepath.Join(tree, "VERSION")) != "1.0.0" || !usable(f.local("claude")) {
+		t.Fatal("an absolute-path marker was not recovered")
+	}
+	f.write(t, f.env.npmMarker(), "pending\n/etc/passwd\n")
+	f.env.npmRecoverAside(false)
+	if _, err := os.Lstat(f.env.npmMarker()); err != nil {
+		t.Fatal("a marker naming a foreign path was dropped instead of refused")
+	}
+}
+
+func TestNPMVerifyPresentRestoresWhenTheAcceptedLinkVanished(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, filepath.Join(tree+npmBakSuffix, "cli.sh"), "#!/bin/sh\necho 1.0.0\n")
+	if err := os.Chmod(filepath.Join(tree+npmBakSuffix, "cli.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rel, _ := filepath.Rel(filepath.Dir(f.local("claude")), filepath.Join(tree+npmBakSuffix, "cli.sh"))
+	_ = rel
+	if err := os.Symlink(filepath.Join(tree, "cli.sh"), f.local("claude")+npmBakSuffix); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(f.local("claude")); err != nil { // the new link is gone
+		t.Fatal(err)
+	}
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
+	f.env.npmRecoverAside(true)
+	f.env.NPMVerifyPresent()
+	f.env.npmRecoverAside(false)
+	if f.read(filepath.Join(tree, "cli.sh")) != "#!/bin/sh\necho 1.0.0\n" {
+		t.Fatalf("previous tree not back:\n%s", f.out)
+	}
+}
+
+func TestNPMVerifyPresentKeepsAFailedRestoreForTheNextStart(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, filepath.Join(tree, "cli.sh"), "#!/bin/sh\nexit 1\n")
+	f.write(t, filepath.Join(tree+npmBakSuffix, "cli.sh"), "#!/bin/sh\necho 1.0.0\n")
+	if err := os.Chmod(filepath.Join(tree+npmBakSuffix, "cli.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
+	parent := filepath.Dir(tree)
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	f.env.npmRecoverAside(true)
+	if err := os.Chmod(parent, 0o000); err != nil { // one transient fault: nothing in the scope dir is reachable
+		t.Fatal(err)
+	}
+	f.env.NPMVerifyPresent()
+	f.env.npmRecoverAside(false)
+	os.Chmod(parent, 0o755)
+	if _, err := os.Lstat(tree + npmBakSuffix); err != nil {
+		t.Fatalf("the previous tree was discarded after a failed restore:\n%s", f.out)
+	}
+	if st, _, ok, _ := f.env.npmReadMarker(); !ok || st != "pending" {
+		t.Fatalf("marker state %q ok=%v, want pending", st, ok)
+	}
+	f.env.npmRecoverAside(false) // permission is back: the next start restores it
+	if f.read(filepath.Join(tree, "cli.sh")) != "#!/bin/sh\necho 1.0.0\n" {
+		t.Fatal("previous tree not restored on the next start")
+	}
+}
+
+func TestNPMVerifyPresentMixedKeepsOnlyTheStuckCLI(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	claude := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	codex := f.plantNPMTree(t, "@openai/codex", "codex", "2.0.0")
+	f.write(t, filepath.Join(codex+npmBakSuffix, "VERSION"), "1.0.0")
+	f.write(t, filepath.Join(claude+npmBakSuffix, "VERSION"), "1.0.0")
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\ncodex\n")
+	f.env.npmRecoverAside(true)
+	if rc := f.env.NPMVerifyPresent(); rc != ExitOK {
+		t.Fatalf("rc=%d\n%s", rc, f.out)
+	}
+	f.env.npmRecoverAside(false)
+	for _, p := range []string{claude + npmBakSuffix, codex + npmBakSuffix, f.env.npmMarker()} {
+		if _, err := os.Lstat(p); err == nil {
+			t.Fatalf("left after the final pass: %s", p)
+		}
+	}
+	if f.read(filepath.Join(codex, "VERSION")) != "2.0.0" {
+		t.Fatal("a healthy accepted copy was replaced")
+	}
+}
