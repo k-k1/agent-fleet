@@ -70,10 +70,12 @@ type Env struct {
 	AgyBaseURL string          // https://storage.googleapis.com/antigravity-public/antigravity-cli (tests: a local server)
 	AgyEnv     func() []string // env overlay every agy run needs on this host; nil = hostcaps.AgyRDRANDMask
 	CursorURL  string          // https://downloads.cursor.com/lab (tests: a local server)
-	BakedBin   string          // where the image bakes its CLIs; empty = /usr/local/bin
-	Stdout     io.Writer
-	Stderr     io.Writer
-	RunTimeout time.Duration // --version probe bound
+	// The self-update opt-in's "latest" sources; empty = the upstream URL (tests: a local server).
+	RTKLatestPage, RTKLatestDownload, AgyManifestURL, AgyInstallURL, CursorInstallURL string
+	BakedBin                                                                          string // where the image bakes its CLIs; empty = /usr/local/bin
+	Stdout                                                                            io.Writer
+	Stderr                                                                            io.Writer
+	RunTimeout                                                                        time.Duration // --version probe bound
 }
 
 // DefaultEnv is the production environment.

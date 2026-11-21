@@ -3,7 +3,6 @@ package bootinstall
 import (
 	"context"
 	"fmt"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,36 +76,5 @@ func RTK(ctx context.Context, e Env) int {
 }
 
 func (e Env) installRTK(ctx context.Context, ver string) error {
-	asset, err := rtkAsset(e.Arch)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.MkdirTemp("", "af-rtk-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmp)
-	base := fmt.Sprintf("%s/v%s", e.RTKBaseURL, ver)
-	archive, sums := filepath.Join(tmp, asset), filepath.Join(tmp, "checksums.txt")
-	if err := e.get(ctx, base+"/"+asset, archive); err != nil {
-		return err
-	}
-	if err := e.get(ctx, base+"/checksums.txt", sums); err != nil {
-		return err
-	}
-	want, err := checksumFor(sums, asset)
-	if err != nil {
-		return err
-	}
-	if err := installx.VerifySha256(archive, want); err != nil {
-		return fmt.Errorf("%w: %v", ErrChecksum, err)
-	}
-	bin := filepath.Join(tmp, "rtk")
-	if err := extractMember(archive, "rtk", bin); err != nil {
-		return err
-	}
-	// A matching checksum says nothing about whether the binary's runtime libraries match this
-	// image (the arm64 release is a gnu build that needs a recent glibc), so the candidate is run
-	// before it replaces anything.
-	return e.installAtomic(bin, filepath.Join(e.localBin(), "rtk"))
+	return e.installRTKFrom(ctx, fmt.Sprintf("%s/v%s", e.RTKBaseURL, ver))
 }
