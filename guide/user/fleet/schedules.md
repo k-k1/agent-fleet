@@ -49,6 +49,8 @@ The row's ⋯ menu (also opened with a right-click) offers:
 | Run now | Runs it once without waiting for the time |
 | Delete | Removes the schedule |
 
+Below the list, "**Scheduled sessions**" shows the sessions schedules started, newest first, with the sessions they started one level under. Finished ones are folded into "**Finished N**". Press a row to open it. They are not listed in the "Sessions" view or the repository tree. The Schedules icon shows an amber number while one of them waits for your answer. A session does not say which schedule started it, so they are not grouped by schedule; the run history of a row names the session of each run.
+
 The conversation of a session it ran carries a **Scheduled** or **Manual fire** badge, so it is not mixed up with what you typed.
 
 ## Change what it does

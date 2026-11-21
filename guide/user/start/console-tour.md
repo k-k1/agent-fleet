@@ -57,7 +57,7 @@ The icons in the upper group choose the view the left pane shows. Hover over an 
 | Memo queue | The instructions you jotted down |
 | Auto-run | One row per run of a memo auto-run category: its state, the work item, the pull request and how long it has run. Press a row to open its session ([See the runs](../chat/memo-auto-run.md#see-the-runs)) |
 | Memory | Agent memory: the tidy-up's suggestions and the memories, with search and filters ([Read and correct agent memory](../memory/overview.md)) |
-| Schedules | Sessions set to run at a fixed time. Shown only where the deployment offers it |
+| Schedules | Sessions set to run at a fixed time, and the sessions they started. Shown only where the deployment offers it, or while sessions a schedule started still exist |
 | Files | The workspace's file tree |
 
 - Press the icon of the view on screen to fold the left pane away. Press any icon to bring it back
@@ -69,6 +69,9 @@ The icons in the upper group choose the view the left pane shows. Hover over an 
 | Blue dot on Sessions or Assistants | Something there is unread |
 | Blue number on Issue tracker | Issues or pull requests that moved since you last opened the view |
 | Red dot on Schedules | The latest run of a schedule failed |
+| Amber number on Schedules | Sessions a schedule started that wait for your answer |
+| Amber number on Auto-run | Runs whose session waits for your answer. It stays until you answer |
+| Red dot on Auto-run | A run ended as failed. It clears when you open the view |
 | Amber number on Memo queue | Memos waiting for your approval in an auto-run category. It stays until you approve or delete them ([Run memos automatically](../chat/memo-auto-run.md#approve)) |
 | Amber number on Memory | Memory suggestions waiting for your decision. It stays until you approve or reject them |
 

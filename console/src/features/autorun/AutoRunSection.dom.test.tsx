@@ -8,11 +8,11 @@ import type { Session } from "../../types/session.ts";
 const opened = vi.fn();
 vi.mock("../sessions/open.ts", () => ({ openSessionChat: (n: string) => opened(n) }));
 const memoQueueList = vi.fn(async () => ({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] }));
-const memoQueueDeliveries = vi.fn(async (_id: string): Promise<unknown> => [
+const memoQueueDeliveries = vi.fn(async (_id: string, _openToo?: boolean): Promise<unknown> => [
   { id: "d1", session: "run-a", state: "open" },
   { id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" },
 ]);
-vi.mock("../memo/api.ts", () => ({ memoQueueList: () => memoQueueList(), memoQueueDeliveries: (id: string) => memoQueueDeliveries(id) }));
+vi.mock("../memo/api.ts", () => ({ memoQueueList: () => memoQueueList(), memoQueueDeliveries: (id: string, openToo?: boolean) => memoQueueDeliveries(id, openToo) }));
 
 // The settings dialog is the Memo queue's own and has its own tests; here only that the gear opens it
 // for the category.
@@ -28,6 +28,7 @@ const { AutoRunSection } = await import("./AutoRunSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { ViewShownContext } = await import("../../lib/viewShown.ts");
 const { useTenantStore } = await import("../../core/store/tenant.ts");
+const { useAutoRunStore, useAutoRunReveal } = await import("./store.ts");
 
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 g.IS_REACT_ACT_ENVIRONMENT = true;
@@ -49,6 +50,9 @@ const mount = async (shown = true) => {
 };
 
 beforeEach(() => {
+  // The store keeps what a scope knew across a pause of the poll; each test starts without it.
+  useAutoRunStore.setState({ queues: [], deliveries: new Map(), loaded: false, scope: "" });
+  useAutoRunReveal.setState({ name: "", n: 0, at: 0 });
   opened.mockReset();
   memoQueueList.mockReset();
   memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] });
@@ -106,6 +110,92 @@ describe("AutoRunSection", () => {
     expect(head.textContent).toContain("1");
     await act(async () => head.click());
     expect(host.querySelector('[data-autorun-run="run-old"]')!.getAttribute("data-autorun-state")).toBe("ended");
+  });
+
+  it("asks for every open run too, so one older than the newest fifty keeps its category", async () => {
+    await mount();
+    expect(memoQueueDeliveries).toHaveBeenCalledWith("c1", true);
+  });
+
+  it("opens the Ended fold and focuses the row when the memo run history links to a finished run", async () => {
+    const { useAutoRunReveal } = await import("./store.ts");
+    await mount();
+    expect(host.querySelector('[data-autorun-run="run-old"]')).toBeNull();
+    await act(async () => useAutoRunReveal.getState().reveal("run-old"));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    const main = host.querySelector<HTMLElement>('[data-autorun-run="run-old"] .autorun-run-main');
+    expect(main).not.toBeNull();
+    expect(document.activeElement).toBe(main);
+  });
+
+  it("follows a revealed run to its category once its delivery arrives, then stops asking", async () => {
+    const { useAutoRunReveal, pendingReveal } = await import("./store.ts");
+    let answer: (v: unknown) => void = () => {};
+    memoQueueDeliveries.mockImplementation(() => new Promise((r) => (answer = r)));
+    await mount();
+    await act(async () => useAutoRunReveal.getState().reveal("run-old"));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    // Its delivery is unknown yet: the run would sit in "Other runs", so the request stays open.
+    expect(pendingReveal()).toBe("run-old");
+    await act(async () => answer([{ id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" }]));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    const main = host.querySelector<HTMLElement>('[data-autorun-run="run-old"] .autorun-run-main');
+    expect(main).not.toBeNull();
+    expect(document.activeElement).toBe(main);
+    expect(pendingReveal()).toBe("");
+  });
+
+  it("opens the Running fold the member had closed when the history links to a live run", async () => {
+    const { useAutoRunReveal } = await import("./store.ts");
+    await mount();
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-autorun-group="live"] button')!.click()); // fold it
+    expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull();
+    await act(async () => useAutoRunReveal.getState().reveal("run-a"));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    expect(document.activeElement).toBe(host.querySelector('[data-autorun-run="run-a"] .autorun-run-main'));
+  });
+
+  it("asks for one extra read per link while the run's category is unknown, not one per data change", async () => {
+    const { useAutoRunReveal } = await import("./store.ts");
+    memoQueueDeliveries.mockImplementation(async () => []); // no delivery names run-old
+    await mount();
+    const before = memoQueueList.mock.calls.length;
+    await act(async () => useAutoRunReveal.getState().reveal("run-old"));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    const afterReveal = memoQueueList.mock.calls.length;
+    expect(afterReveal).toBe(before + 1);
+    // The sessions list changes again and again; the request does not read again each time.
+    for (let i = 0; i < 3; i++) await act(async () => useSessionsStore.setState({ sessions: [...useSessionsStore.getState().sessions] }));
+    expect(memoQueueList.mock.calls.length).toBe(afterReveal);
+  });
+
+  it("reaches a run through the link even when the category read in flight predates it", async () => {
+    const { useAutoRunReveal } = await import("./store.ts");
+    let stale: (v: unknown) => void = () => {};
+    // The first category read is held back and will say nothing of run-old.
+    memoQueueDeliveries.mockImplementationOnce(() => new Promise((r) => (stale = r)));
+    await mount();
+    memoQueueDeliveries.mockImplementation(async () => [{ id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" }]);
+    await act(async () => useAutoRunReveal.getState().reveal("run-old"));
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    // Without waiting for the next poll, and with the old read still unanswered.
+    expect(document.activeElement).toBe(host.querySelector('[data-autorun-run="run-old"] .autorun-run-main'));
+    stale([]);
   });
 
   it("keeps a finished run's duration", async () => {

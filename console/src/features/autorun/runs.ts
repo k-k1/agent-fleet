@@ -3,13 +3,20 @@
 // "session" all the way up) hang under it.
 import type { Session, SessionPR, SessionWorkLink } from "../../types/session.ts";
 import { isWaitingSession } from "../../app/activity/badges.ts";
+import type { MemoQueue } from "../../types/memo.ts";
+import type { WorkingSet } from "../../lib/workingSets.ts";
 
 export type RunState = "running" | "waiting" | "ended";
 
 /** What a queue reported about the run that started a session. */
 export interface RunDelivery {
+  id: string;
   categoryId: string;
   state: string;
+  /** How a closed run ended: clean | aborted | ended | unknown | not_sent | deferred. */
+  outcome: string;
+  /** How the run's first turn ended: clean | turn-failed | ""; the only failure signal a queue records. */
+  turnOutcome: string;
   sentAt: string;
   createdAt: string;
   closedAt: string;
@@ -22,6 +29,10 @@ export interface RunRow {
   /** The queue's category id the run came from; "" when no delivery names this session. */
   categoryId: string;
   state: RunState;
+  /** The delivery that started the run; "" while unknown. */
+  deliveryId: string;
+  /** The queue closed the run and its first turn failed. A run the member ended or aborted is not one. */
+  failed: boolean;
   /** The queue closed the run but its root session is alive again (the member took it over or
    *  started it again): listed as running, tagged so it is not mistaken for a fresh run. */
   resumed: boolean;
@@ -49,6 +60,12 @@ export function runRootName(s: Session, byName: Map<string, Session>): string {
   }
   return "";
 }
+
+/** Runs that wait for the member's answer: the Auto-run icon's count. */
+export const waitingRunCount = (runs: RunRow[]): number => runs.filter((r) => r.state === "waiting").length;
+
+/** One key per failed run: the Auto-run icon's red dot, acknowledged by opening the view. */
+export const failedRunKeys = (runs: RunRow[]): string[] => runs.filter((r) => r.failed && r.deliveryId).map((r) => r.deliveryId);
 
 /** "owner/repo#45" -> "#45"; a Jira key stays as it is. */
 export function itemLabel(key: string): string {
@@ -106,6 +123,9 @@ export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelive
       return {
         root,
         categoryId: d?.categoryId ?? "",
+        deliveryId: d?.id ?? "",
+        // From the delivery alone: resuming the run's session changes what the row shows, not what happened.
+        failed: d?.state === "closed" && d.turnOutcome === "turn-failed" && d.outcome !== "ended" && d.outcome !== "aborted",
         state,
         resumed,
         item: link ? { key: link.key, label: itemLabel(link.key), title: link.title ?? "" } : null,
@@ -125,4 +145,15 @@ export function fmtElapsed(ms: number): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ${m % 60}m`;
   return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+/** The runs a working set shows: a category is in the set when its repository is; a category without
+ *  a repository, and the runs no queue category names, are in every set. The view, the icon's count
+ *  and the failure acknowledgement all use this one rule. */
+export function scopeRuns(runs: RunRow[], queues: MemoQueue[], set: WorkingSet | null): RunRow[] {
+  if (!set) return runs;
+  return runs.filter((r) => {
+    const q = queues.find((x) => x.categoryId === r.categoryId);
+    return !q || !q.repo || set.repos.includes(q.repo);
+  });
 }

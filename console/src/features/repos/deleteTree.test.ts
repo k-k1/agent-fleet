@@ -27,7 +27,7 @@ const repo = (name: string, over: Partial<Repo> = {}): Repo => ({
   ...over,
 });
 
-const node = (r: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo: r, children, groups: [], spine: "" });
+const node = (r: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo: r, children, spine: "" });
 
 const sess = (name: string, folder: string, over: Partial<Session> = {}): Session => ({
   name,

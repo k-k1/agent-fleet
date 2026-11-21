@@ -426,10 +426,17 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 
 // listDeliveries (GET /api/memo-queues/{categoryId}/deliveries, and the same read on
 // /internal/memo-queues for the fleet operator): a queue's deliveries, newest first, at most
-// memoDeliveryListMax. The token face leaves out the sessions' hand-back reasons.
+// memoDeliveryListMax. With ?include=open the answer also holds every delivery that is not
+// closed, however old (one read, so one snapshot), so a view that lists live runs never loses one
+// to the limit. The token
+// face leaves out the sessions' hand-back reasons.
 func (a memoAPI) listDeliveries(via memoVia) func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView) {
 	return func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-		ds, err := a.store.ListMemoDeliveries(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax)
+		list := a.store.ListMemoDeliveries
+		if r.URL.Query().Get("include") == "open" {
+			list = a.store.ListMemoDeliveriesWithOpen
+		}
+		ds, err := list(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax)
 		if err != nil {
 			writeAPIErr(w, internalErr(err))
 			return

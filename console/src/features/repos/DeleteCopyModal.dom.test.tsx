@@ -41,7 +41,7 @@ const repo = (name: string, over: Partial<Repo> = {}): Repo => ({
   integration: { relation: "contained", targetUnique: 5, worktreeUnique: 0 },
   ...over,
 });
-const node = (r: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo: r, children, groups: [], spine: "" });
+const node = (r: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo: r, children, spine: "" });
 const sess = (name: string, folder: string, over: Partial<Session> = {}): Session => ({
   name,
   kind: "claude",

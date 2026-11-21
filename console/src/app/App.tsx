@@ -159,7 +159,11 @@ export function App() {
   // gone", which is worse than showing a section the deployment may not drive. Only an
   // answered whoami can hide it — and that answer is re-read on push reconnect (wire.ts),
   // so enabling the scheduler no longer needs a browser reload.
-  const schedulerEnabled = useTenantStore((s) => (s.whoami ? !!s.whoami.scheduler_enabled : true));
+  const schedulerOn = useTenantStore((s) => (s.whoami ? !!s.whoami.scheduler_enabled : true));
+  // Sessions a schedule started are listed only in the Schedules view, so the view stays while
+  // any exist even where the scheduler was switched off afterwards.
+  const hasScheduledSessions = useSessionsStore((s) => s.sessions.some((x) => x.origin === "schedule"));
+  const schedulerEnabled = schedulerOn || hasScheduledSessions;
   const layout = useLayoutStore((s) => s.layout);
   const paneLayout = useSettings().paneLayout;
   const settingsOpen = useSettingsUI((s) => s.settingsOpen);

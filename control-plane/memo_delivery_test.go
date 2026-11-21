@@ -1370,6 +1370,27 @@ func TestMemoDeliveryListWire(t *testing.T) {
 		if len(list) != memoDeliveryListMax || list[0].ID != d2.ID {
 			t.Fatalf("bounded list: %d, first %s", len(list), list[0].ID)
 		}
+		// An open run older than everything the list holds is left out of it, and ?include=open
+		// brings it back without losing the order.
+		oldAt := store.DeliveryTS(time.Now().Add(-1000 * time.Hour))
+		old := store.MemoDelivery{ID: store.NewID(), QueueID: q, State: store.DeliveryOpen, CreatedAt: oldAt, UpdatedAt: oldAt}
+		if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error { return tx.InsertDelivery(old) }); err != nil {
+			t.Fatal(err)
+		}
+		list = decode[[]memoDeliveryDTO](t, e.do("a", "GET", "/api/memo-queues/"+q+"/deliveries", nil))
+		for _, d := range list {
+			if d.ID == old.ID {
+				t.Fatalf("the old open run is inside the bound: %d", len(list))
+			}
+		}
+		list = decode[[]memoDeliveryDTO](t, e.do("a", "GET", "/api/memo-queues/"+q+"/deliveries?include=open", nil))
+		if len(list) != memoDeliveryListMax+1 || list[0].ID != d2.ID || list[len(list)-1].ID != old.ID {
+			t.Fatalf("include=open: %d rows, first %s, last %s", len(list), list[0].ID, list[len(list)-1].ID)
+		}
+		// Another member sees none of it, with or without the parameter.
+		if rec := e.do("c", "GET", "/api/memo-queues/"+q+"/deliveries?include=open", nil); strings.TrimSpace(rec.Body.String()) != "[]" {
+			t.Fatalf("another member's include=open list: %s", rec.Body.String())
+		}
 	})
 }
 
