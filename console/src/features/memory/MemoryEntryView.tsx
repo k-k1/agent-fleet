@@ -126,8 +126,8 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   // finishes later ends edit mode in whichever view is on screen.
   const editing = useSyncExternalStore(subscribeEditing, () => isEditingPane(paneId, key));
   const setEditing = useCallback((on: boolean) => setEditingPane(paneId, key, on), [paneId, key]);
-  // The shown text the buffer has followed: the form opens on it even when the body shown is older
-  // or newer than what the follow read found.
+  // The shown snapshot (text and store counter) the buffer has followed: the form opens on it even
+  // when the body shown is older or newer than what the follow read found.
   const [followedTo, setFollowedTo] = useState("");
   // What was followed belongs to the edit it was for.
   const [resolutionOpen, setResolutionOpen] = useState(true);
@@ -378,19 +378,23 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
   // until the hook has followed the shown text.
   // The body shown moving on (or edit mode ending) ends it: a text that comes back later is a new
   // snapshot, which the buffer has to follow again.
+  // A snapshot is the text and the store counter it was read at: the same text coming back at a
+  // later counter (another writer reverted to it) is a new snapshot that has to be followed again.
+  const shownSnapshot = file && body && bodyKey === key ? `${file.revision}@${body.revision}` : file ? `${file.revision}@` : "";
   useEffect(() => {
     setFollowedTo("");
-  }, [editing, file?.revision]);
-  const baseLag = !isNew && !gone && !!model && !model.dirty && !!file && model.baseDiskRevision !== file.revision && followedTo !== file.revision;
+  }, [editing, shownSnapshot]);
+  const baseLag = !isNew && !gone && !!model && !model.dirty && !!file && model.baseDiskRevision !== file.revision && followedTo !== shownSnapshot;
   const lagRevision = baseLag ? file!.revision : "";
+  const lagSnapshot = baseLag ? shownSnapshot : "";
   useEffect(() => {
     if (!editing || !lagRevision) return;
     let live = true;
-    void editor.applyProbeResult({ kind: "revision", revision: lagRevision }).then((followed) => {
+    void editor.applyProbeResult({ kind: "revision", revision: lagRevision, observation: lagSnapshot }).then((followed) => {
       if (!live) return;
       // The body shown and the buffer now rest on different reads: re-read the body.
       bump();
-      if (followed) setFollowedTo(lagRevision);
+      if (followed) setFollowedTo(lagSnapshot);
       else {
         // The read behind the follow failed, or found nothing newer than the buffer has: opening
         // now could start from an older base.
@@ -402,7 +406,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, lagRevision, key]);
+  }, [editing, lagSnapshot, key]);
 
   // What the form shows and edits: the hook's buffer, which for a new memory also holds its name.
   const decoded = model ? decodeEntry(model.content) : null;

@@ -302,6 +302,66 @@ describe("MemoryEntryView", () => {
     expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("Run `make v2`.");
   });
 
+  it("follows again when the shown text is reverted to at a later counter after the follow adopted a text never shown", async () => {
+    await open();
+    const b = { ...memory, revision: 5, body: "Run `make v2`." };
+    const c = { ...memory, revision: 6, body: "Run `make v3`." };
+    let live = b;
+    let reads: unknown[] = [];
+    api.mockImplementation(async (url: string) => {
+      if (!url.startsWith("api/agents/memory/entries/member-read")) return url.includes("changes") ? { changes: [] } : {};
+      return reads.shift() ?? live;
+    });
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    // The follow that comes with Edit adopts c, which the body shown never was.
+    reads = [c];
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await flush();
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("Run `make v3`.");
+    // Another writer reverts to b at a later counter before anything is typed.
+    live = { ...b, revision: 7 };
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("Run `make v2`.");
+    apiJSON.mockResolvedValue({ name: "build-cmd", revision: 8 });
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "Run `make v4`.");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({ revision: 7 });
+  });
+
+  it("starts a new follow for the same text at a later counter while the follow for the earlier one is still out", async () => {
+    await open();
+    const b = { ...memory, revision: 5, body: "Run `make v2`." };
+    const c = { ...memory, revision: 6, body: "Run `make v3`." };
+    let live = b;
+    let reads: unknown[] = [];
+    api.mockImplementation(async (url: string) => {
+      if (!url.startsWith("api/agents/memory/entries/member-read")) return url.includes("changes") ? { changes: [] } : {};
+      return reads.shift() ?? live;
+    });
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    // The follow for b@5 reads c@6, but its answer is slow.
+    let answerC!: (v: unknown) => void;
+    reads = [new Promise((r) => (answerC = r))];
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await flush();
+    // Another writer reverts to b at a later counter; the body shown catches up first.
+    live = { ...b, revision: 7 };
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    await act(async () => answerC(c));
+    await flush();
+    expect(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!.value).toBe("Run `make v2`.");
+    apiJSON.mockResolvedValue({ name: "build-cmd", revision: 8 });
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "Run `make v4`.");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await flush();
+    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({ revision: 7 });
+  });
+
   it("does not bring edit mode back after the memory was forgotten and restored, or moved to another and back", async () => {
     await open();
     await act(async () => button(t("mem.br_edit"))!.click());
