@@ -25,7 +25,7 @@ The row of a shared session carries the "**Shared**" badge, so you can always te
 1. Open the "**Share**" dialog from one of these
    - "**Share…**" in a session row's ⋯ menu (the menu is pictured in [Stop and resume a session](../sessions/stop-resume.md))
    - "**Share…**" in a repository row's ⋯ menu
-   - ⚙ ("**Shares**") in the "**Shared sessions**" view → "**New share…**"
+   - ⚙ ("**Shares**") in the "**Shared sessions**" view → "**New share…** (the ⚙ appears once something is shared with you or by you; use the ⋯ menus above before that)"
 2. Choose the "**Share target**"
 3. Search for the "**Recipient**" by e-mail address and pick them
 4. Choose the "**Permission**" and press "**Share**"

@@ -15,6 +15,7 @@ vi.mock("../core/api/client.ts", async (importOriginal) => ({
 }));
 
 import { ActivityBar } from "./ActivityBar.tsx";
+import { SharedSessionsSection } from "../features/sharing/SharedSessionsSection.tsx";
 import { useRailAck } from "./activity/badges.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import type { RailView } from "../core/store/leftRail.ts";
@@ -117,6 +118,23 @@ describe("ActivityBar shared view", () => {
     expect(badge("shared")?.textContent).toBe("2");
     expect(btn("shared").title).toContain(tCount("rail.badge.handoffs", 2));
     expect(badge("sessions")).toBeNull();
+  });
+
+  it("badges from the CP's answer while another view is on screen, before the shared view was ever shown", async () => {
+    api.mockImplementation((...a: unknown[]) =>
+      Promise.resolve(a[0] === "api/session-handoff-offers/received" ? { offers: [offer("a", "pending")] } : {}),
+    );
+    useLeftRail.setState({ view: "assistant" });
+    await mount();
+    // What App does: the section is mounted inside a hidden view for the whole session.
+    const extra = document.createElement("div");
+    document.body.append(extra);
+    const r2 = createRoot(extra);
+    await act(async () => r2.render(<SharedSessionsSection />));
+    await act(async () => void (await new Promise((r) => setTimeout(r, 5))));
+    expect(badge("shared")?.textContent).toBe("1");
+    await act(async () => r2.unmount());
+    extra.remove();
   });
 
   it("shows no badge without a pending handoff", async () => {

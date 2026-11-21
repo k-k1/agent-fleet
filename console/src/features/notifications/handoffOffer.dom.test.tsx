@@ -12,6 +12,8 @@ import { openSharedSession } from "../sharing/open.ts";
 import { useHandoffStore, type HandoffOffer } from "../sharing/handoffStore.ts";
 import { api } from "../../core/api/client.ts";
 import { toast } from "../../ui/toast.ts";
+import { wireRailReveals } from "../../app/activity/reveals.ts";
+import { useLeftRail } from "../../core/store/leftRail.ts";
 import { t } from "../../lib/i18n/index.ts";
 
 vi.mock("../sharing/open.ts", () => ({ openSharedSession: vi.fn() }));
@@ -49,6 +51,15 @@ describe("a handoff-offer notification", () => {
     vi.clearAllMocks();
     vi.mocked(api).mockImplementation(async () => ({}));
     useHandoffStore.setState({ owned: [], received: [], receivedAt: 0 });
+  });
+
+  it("brings the Shared rail view forward when it opens a pending offer", async () => {
+    useLeftRail.setState({ open: false, view: "assistant" });
+    const unwire = wireRailReveals();
+    useHandoffStore.setState({ received: [offer("o1")], receivedAt: Date.now() });
+    await openNotificationTarget(offerNotification(), false);
+    unwire();
+    expect(useLeftRail.getState()).toMatchObject({ open: true, view: "shared" });
   });
 
   it("opens the shared view of a pending offer a current inbox already holds, without asking the CP", async () => {
