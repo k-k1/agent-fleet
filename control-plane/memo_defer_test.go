@@ -613,3 +613,33 @@ func TestMemoReturnSettlesAnUndecidedHandBack(t *testing.T) {
 		}
 	})
 }
+
+// While a child's answer is unread the delivery cannot close, so the hand-back's PR check is not
+// made on every such read; once the grace lifts, the close does the check and applies the hand-back.
+func TestMemoDeferWaitsOutAnUnreadChildAnswer(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d, _ := e.openDeferrable(map[string]any{"enabled": true})
+		if rec := e.deferCall(d.ID, map[string]any{"session": d.Session, "reason": "waiting",
+			"notBefore": time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)}); rec.Code != http.StatusOK {
+			t.Fatalf("defer: %d", rec.Code)
+		}
+		t0 := time.Now()
+		agent.child("rev", d.Session, map[string]any{"lastTurnEndAt": t0.UTC().Format(time.RFC3339Nano)})
+		r := e.runner()
+		for i := 1; i <= 5; i++ {
+			r.settle(context.Background(), t0.Add(time.Duration(i)*time.Minute))
+		}
+		if n := len(agent.prCallsSoFar()); n != 0 {
+			t.Fatalf("%d PR checks while the delivery could not close", n)
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+			t.Fatalf("closed in the grace: %+v", got)
+		}
+		for i := 0; i < 3; i++ {
+			r.settle(context.Background(), t0.Add(memoChildGrace+time.Duration(i)*time.Second))
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.DeferResult != store.DeferApplied {
+			t.Fatalf("after the grace: %+v", got)
+		}
+	})
+}

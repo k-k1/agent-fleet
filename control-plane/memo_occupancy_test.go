@@ -1093,3 +1093,86 @@ func TestMemoOccupancyStrongerHoldClearsTheNames(t *testing.T) {
 		}
 	})
 }
+
+// A child whose turn ended after its idle parent's last turn start keeps the run open for
+// memoChildGrace, so the parent can read the answer. The parent starting a turn, or the grace
+// running out, lets it close clean. Nothing is retired meanwhile.
+func TestMemoOccupancyIdleChildHoldsRunForItsParent(t *testing.T) {
+	ts := func(x time.Time) string { return x.UTC().Format(time.RFC3339Nano) }
+	t0 := time.Now()
+	setup := func(e *deliveryEnv) (*fakeQueueAgent, store.MemoDelivery, *memoQueueRunner) {
+		agent, d := e.openReported(nil)
+		agent.setRow(d.Session, map[string]any{"lastTurnStartAt": ts(t0.Add(-time.Minute))})
+		agent.child("rev", d.Session, map[string]any{"lastTurnEndAt": ts(t0)})
+		return agent, d, e.runner()
+	}
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d, r := setup(e)
+		for i := 1; i <= 6; i++ {
+			r.settle(context.Background(), t0.Add(time.Duration(i)*time.Minute))
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen || agent.retireCalls() != 0 {
+			t.Fatalf("closed while a child's answer is unread: %+v", got)
+		}
+		// The parent has a turn after the child ended.
+		agent.setRow(d.Session, map[string]any{"lastTurnStartAt": ts(t0.Add(7 * time.Minute))})
+		for i := 7; i <= 9; i++ {
+			r.settle(context.Background(), t0.Add(time.Duration(i)*time.Minute))
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryClean {
+			t.Fatalf("not closed after the parent's turn: %+v", got)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d, r := setup(e)
+		// The parent never reads it: open just before the grace ends, clean after.
+		for i := 1; i <= 3; i++ {
+			r.settle(context.Background(), t0.Add(memoChildGrace-time.Duration(i)*time.Second))
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen || agent.retireCalls() != 0 {
+			t.Fatalf("closed inside the grace: %+v", got)
+		}
+		for i := 0; i < 3; i++ {
+			r.settle(context.Background(), t0.Add(memoChildGrace+time.Duration(i)*time.Second))
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryClean {
+			t.Fatalf("not closed after the grace: %+v", got)
+		}
+	})
+}
+
+func TestMemoChildAnswerUnreadBounds(t *testing.T) {
+	now := time.Now()
+	f := func(x time.Time) string { return x.UTC().Format(time.RFC3339Nano) }
+	mk := func(pStart, cEnd string) []*sessionWire {
+		return []*sessionWire{{Name: "p", Alive: true, LastTurnStartAt: pStart},
+			{Name: "c", Alive: true, Origin: "session", OriginSession: "p", LastTurnEndAt: cEnd}}
+	}
+	for name, c := range map[string]struct {
+		tree []*sessionWire
+		at   time.Time
+		want bool
+	}{
+		"child just ended":              {mk(f(now.Add(-time.Hour)), f(now.Add(-time.Minute))), now, true},
+		"parent never started":          {mk("", f(now.Add(-time.Minute))), now, true},
+		"grace over":                    {mk(f(now.Add(-time.Hour)), f(now.Add(-time.Minute))), now.Add(memoChildGrace), false},
+		"future end (skew)":             {mk(f(now.Add(-time.Hour)), f(now.Add(time.Minute))), now, true},
+		"same second, parent first":     {mk(f(now.Truncate(time.Second).Add(200*time.Millisecond)), f(now.Truncate(time.Second))), now, true},
+		"parent a second later":         {mk(f(now.Truncate(time.Second).Add(1500*time.Millisecond)), f(now.Truncate(time.Second))), now, false},
+		"end beyond the skew bound":     {mk(f(now.Add(-time.Hour)), f(now.Add(memoClockSkew+time.Minute))), now, false},
+		"parent exactly a second later": {mk(f(now.Truncate(time.Second).Add(time.Second)), f(now.Truncate(time.Second))), now, false},
+		"parent started after":          {mk(f(now), f(now.Add(-time.Minute))), now, false},
+		"child mid-turn":                {mk(f(now.Add(-time.Hour)), ""), now, false},
+		"unparsable child time":         {mk("", "garbage"), now, false},
+		"unparsable parent time":        {mk("garbage", f(now.Add(-time.Minute))), now, false},
+	} {
+		if got := childAnswerUnread(c.tree, c.at); got != c.want {
+			t.Errorf("%s: got %v", name, got)
+		}
+	}
+	dead := mk("", f(now.Add(-time.Minute)))
+	dead[0].Alive = false
+	if childAnswerUnread(dead, now) {
+		t.Error("a stopped parent cannot read anything")
+	}
+}

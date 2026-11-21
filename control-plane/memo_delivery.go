@@ -1065,6 +1065,50 @@ func heldWakersOf(detail string) []memoHeldWakerDTO {
 	return out
 }
 
+// memoChildGrace is how long a child's finished turn keeps its parent's run from closing: time
+// for an idle parent to read the answer. Without it the run is closed and stopped about two
+// ticks after the child's last turn, before a parent that waits for the child can act on it.
+const memoChildGrace = 15 * time.Minute
+
+// memoClockSkew is how far ahead of the Control Plane's clock a child's end may read and still
+// count as just ended, up to memoClockSkew. A stamp further ahead is a bad clock, not an answer to wait for: left
+// alone it would hold the run until the stamp's own time passed.
+const memoClockSkew = time.Minute
+
+// childAnswerUnread reports whether a live member of the tree has a child whose turn ended less
+// than memoChildGrace ago and has not started a turn since. The Agent stamps an end to the
+// second, so it stands for that whole second: only a parent start after it counts as later. An end
+// that reads as in the future is clock skew or a turn that ended after the tick began, and counts
+// as just ended. It reads only the Agent's turn
+// times on the rows, so every Control Plane and every restart answers alike. Times that do not
+// parse prove nothing: when in doubt, answer false.
+func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
+	byName := map[string]*sessionWire{}
+	for _, s := range tree {
+		byName[s.Name] = s
+	}
+	for _, c := range tree {
+		if c.Archived || c.Origin != "session" || c.LastTurnEndAt == "" {
+			continue
+		}
+		end, err := time.Parse(time.RFC3339Nano, c.LastTurnEndAt)
+		if err != nil || now.Sub(end) >= memoChildGrace || end.Sub(now) > memoClockSkew {
+			continue
+		}
+		p := byName[c.OriginSession]
+		if p == nil || p.Archived || !p.Alive {
+			continue
+		}
+		if p.LastTurnStartAt != "" {
+			if st, err := time.Parse(time.RFC3339Nano, p.LastTurnStartAt); err != nil || !st.Before(end.Add(time.Second)) {
+				continue
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // closeIfDoneReported is the rule for an Agent that reports. It keeps what it read with the
 // delivery first, then closes the delivery when nothing has held it on two reads in a row.
 func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMemberView, d store.MemoDelivery, now time.Time) {
@@ -1079,6 +1123,9 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		return
 	}
 	why, who, progress := treeHold(tree, now)
+	// Not a hold: no reason is kept, so a stopped workspace and the overdue retire behave as
+	// they do for any idle tree. It only keeps this read from closing the delivery.
+	unread := why == "" && childAnswerUnread(tree, now)
 	gen, numbered := v.gens[d.ID]
 	if !numbered {
 		// No number for this read (the delivery opened after the numbers were handed out, or the
@@ -1095,7 +1142,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	// A hand-back is decided from reads that need the Agent (its PRs), made before the lock and
 	// only when this read may close the delivery: nothing holds it and the last one was clear.
 	var dc *memoDeferCheck
-	if d.DeferAt != "" && why == "" && d.Reported && d.HeldBy == "" && d.IdleTicks >= 1 {
+	if d.DeferAt != "" && why == "" && !unread && d.Reported && d.HeldBy == "" && d.IdleTicks >= 1 {
 		dc = r.deferCheck(ctx, v, d, tree)
 	}
 	// Keeping the read, counting it, and closing on it are one transaction behind the membership
@@ -1117,7 +1164,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 			}
 			return err
 		}
-		if ticks < 2 {
+		if ticks < 2 || unread {
 			return nil
 		}
 		return memoCloseClean(tx, d.ID, dc)
