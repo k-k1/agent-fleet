@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Repo } from "../features/repos/store.ts";
 import type { Session } from "../types/session.ts";
+import { railOrder } from "../features/sessions/rotate.ts";
 import { planStopTree, liveSessionCount } from "../features/repos/stopTree.ts";
 import { planTree } from "../features/repos/deleteTree.ts";
 import {
@@ -9,6 +10,8 @@ import {
   groupedRepos,
   sessionsInFolder,
   orphanSessions,
+  isAutoRunOnlyFolder,
+  withoutAutoRun,
   workingCopyLabel,
   worktreeOwners,
   worktreeParentFolder,
@@ -552,5 +555,27 @@ describe("repoTree: filtering and mixed copies", () => {
     ];
     const byName = new Map(ss.map((x) => [x.name, x]));
     expect(railNodeSessions(repoTree(rs, ss)[0], ss, byName).map((x) => x.name)).toEqual(["H", "W", "S"]);
+  });
+});
+
+describe("auto-run sessions outside the member's lists", () => {
+  const repos = [repo("af")];
+  const sessions = [
+    sess("shellrun", { origin: "queue", createdAt: "2026-09-01T00:00:00Z" }), // a common category: no repository
+    sess("shellrev", { origin: "session", originSession: "shellrun" }),
+    sess("hand", { origin: "user" }),
+    sess("inrepo", { repo: "af", origin: "queue" }),
+  ];
+  it("withoutAutoRun drops a run and what it started, and keeps the member's own", () => {
+    expect(withoutAutoRun(sessions).map((s) => s.name)).toEqual(["hand"]);
+  });
+  it("leaves them out of the repo-less sessions and the rotation order", () => {
+    expect(orphanSessions(sessions, repos).map((s) => s.name)).toEqual(["hand"]);
+    expect(railOrder(sessions, repos, null).map((s) => s.name)).toEqual(["hand"]);
+  });
+  it("tells a copy only auto-run works in", () => {
+    expect(isAutoRunOnlyFolder(sessions, "af")).toBe(true);
+    expect(isAutoRunOnlyFolder([...sessions, sess("m", { repo: "af", origin: "user" })], "af")).toBe(false);
+    expect(isAutoRunOnlyFolder(sessions, "empty")).toBe(false);
   });
 });

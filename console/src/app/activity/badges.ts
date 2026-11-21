@@ -22,6 +22,7 @@ import { seenId, unreadOf } from "../../features/workitems/seen.ts";
 import type { FleetNotification } from "../../features/notifications/store.ts";
 import { opensConversation, unreadSessionNames } from "../../features/notifications/read.ts";
 import { convInSet, sessionInSet } from "../../lib/workingSets.ts";
+import { withoutAutoRun } from "../../lib/project.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 
 export type RailBadge =
@@ -36,18 +37,20 @@ export const isWaitingSession = (s: Session): boolean => s.alive === true && WAI
 /** Running sessions stopped on an answer only the member can give. The usage-limit and
  * login states are left out: they are not answered in the session's pane. */
 export function waitingSessions(sessions: Session[], set: WorkingSet | null = null): number {
-  return sessions.filter((s) => s.alive && WAITING.has(String(s.state || "")) && (!set || sessionInSet(set, s))).length;
+  return withoutAutoRun(sessions).filter((s) => s.alive && WAITING.has(String(s.state || "")) && (!set || sessionInSet(set, s))).length;
 }
 
 /** Is there an unseen notification on a session the Sessions view lists? Under a working set
  * a session the list does not know cannot be placed in it, so it does not count. */
 export function hasUnreadSession(items: FleetNotification[], sessions: Session[], set: WorkingSet | null): boolean {
   const names = unreadSessionNames(items);
-  if (!set) return names.length > 0;
+  const listed = new Set(withoutAutoRun(sessions).map((s) => s.name));
+  const hidden = new Set(sessions.map((s) => s.name).filter((n) => !listed.has(n)));
+  if (!set) return names.some((n) => !hidden.has(n));
   const byName = new Map(sessions.map((s) => [s.name, s] as const));
   return names.some((n) => {
     const s = byName.get(n);
-    return !!s && sessionInSet(set, s);
+    return !!s && listed.has(n) && sessionInSet(set, s);
   });
 }
 

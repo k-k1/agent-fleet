@@ -27,7 +27,7 @@ import { useSessionUI } from "../sessions/ui.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { refQuery } from "../sessions/refSearch.ts";
 import { useLedgerWhile, useRefIndex } from "../sessions/useRefIndex.ts";
-import { repoTree, filterRepoTree, countRepoNodes, sessionsInFolder } from "../../lib/project.ts";
+import { repoTree, filterRepoTree, countRepoNodes, sessionsInFolder, withoutAutoRun } from "../../lib/project.ts";
 import { useActiveWorkingSet, repoInSet, autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filter.ts";
 import { RepoNode } from "./RepoNode.tsx";
@@ -104,7 +104,7 @@ export const ProjectTree = memo(function ProjectTree() {
   // Filtering: a working copy is visible when it matches itself or hosts a
   // matching session; an ancestor also stays as the anchor of a matching descendant.
   const visible = (r: (typeof repos)[number]) =>
-    repoMatches(r, nq) || sessionsInFolder(sessions, r.name).some((s) => sessionMatches(s, nq, refs));
+    repoMatches(r, nq) || sessionsInFolder(withoutAutoRun(sessions), r.name).some((s) => sessionMatches(s, nq, refs));
   const roots = nq ? filterRepoTree(scoped, visible) : scoped;
 
   // The Agent-side job is the source of truth for import progress (docs/log/78). This only
@@ -144,7 +144,7 @@ export const ProjectTree = memo(function ProjectTree() {
       onToggle={() => setSection(!secOpen)}
       title={tr("pj.repos")}
       icon="repo"
-      count={wset ? countRepoNodes(scoped) : repos.length}
+      count={countRepoNodes(scoped)}
       actions={
         <>
           {/* Icon-only: the labelled button took the width the view's title needs (the title was

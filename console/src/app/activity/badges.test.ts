@@ -118,3 +118,20 @@ describe("approvalCount", () => {
     expect(approvalCount([])).toBe(0);
   });
 });
+
+describe("auto-run sessions are the Auto-run view's, not the Sessions view's", () => {
+  const run = { name: "run", state: "question", alive: true, origin: "queue" } as unknown as Session;
+  const rev = { name: "rev", state: "plan", alive: true, origin: "session", originSession: "run" } as unknown as Session;
+  const own = { name: "own", state: "question", alive: true, origin: "user" } as unknown as Session;
+  const note = (id: string) => ({ seq: 1, id: "n" + id, kind: "answer-ready", target: { type: "session", id }, seen: false, payload: {} }) as unknown as FleetNotification;
+
+  it("does not count a waiting run or its reviewer", () => {
+    expect(waitingSessions([run, rev])).toBe(0);
+    expect(waitingSessions([run, rev, own])).toBe(1);
+  });
+
+  it("does not show an unread dot for a run's session", () => {
+    expect(hasUnreadSession([note("run"), note("rev")], [run, rev, own], null)).toBe(false);
+    expect(hasUnreadSession([note("run"), note("own")], [run, rev, own], null)).toBe(true);
+  });
+});

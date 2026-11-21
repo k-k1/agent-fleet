@@ -2,63 +2,82 @@
 // queue, grouped by the queue's category. Unattended work is listed here and not in the
 // repository tree. A row opens the run's session; the sessions the run started (reviewers) sit
 // one level under it, and finished runs fold into "Ended N".
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName } from "../../lib/sessionview.ts";
+import { useViewShown } from "../../lib/viewShown.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat } from "../sessions/open.ts";
 import { memoQueueDeliveries, memoQueueList } from "../memo/api.ts";
 import { readDeliveries, readMemoQueues } from "../memo/queues.ts";
-import type { MemoDelivery, MemoQueue } from "../../types/memo.ts";
-import { buildRuns, categoryIndex, fmtElapsed, type RunRow } from "./runs.ts";
+import type { MemoQueue } from "../../types/memo.ts";
+import { buildRuns, fmtElapsed, type RunDelivery, type RunRow } from "./runs.ts";
 import "./autorun.css";
 
 const POLL_MS = 30000;
 
-/** Queues and their deliveries, re-read while the view is mounted. A failed read keeps what was
- *  there; the rows themselves come from the session list, so a missing read costs only the
- *  category headings. */
-function useQueueRuns(): { queues: MemoQueue[]; byCategory: Record<string, MemoDelivery[]> } {
+/** Queues and their deliveries, read while the view is on screen and re-read when it comes back
+ *  or the tenant changes. Each category lands as it arrives (a slow one holds nobody up), and
+ *  an answer to a read the tenant or the view has outgrown is dropped. The newest fifty
+ *  deliveries are all the API returns, so what an earlier read learned about a run is kept. */
+function useQueueRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDelivery> } {
+  const shown = useViewShown();
+  const tenant = useTenantStore((s) => s.tenant);
   const [queues, setQueues] = useState<MemoQueue[]>([]);
-  const [byCategory, setBy] = useState<Record<string, MemoDelivery[]>>({});
-  const seq = useRef(0);
-  const load = useCallback(async () => {
-    const mine = ++seq.current;
-    try {
-      const wire = readMemoQueues(await memoQueueList());
-      if (!wire) return;
-      const got = await Promise.all(
-        wire.queues.map(async (q) => {
-          try {
-            return [q.categoryId, readDeliveries(await memoQueueDeliveries(q.categoryId))] as const;
-          } catch {
-            return [q.categoryId, null] as const;
-          }
-        }),
-      );
-      if (mine !== seq.current) return;
-      setQueues(wire.queues);
-      setBy((prev) => {
-        const next: Record<string, MemoDelivery[]> = {};
-        for (const [id, list] of got) next[id] = list ?? prev[id] ?? [];
-        return next;
-      });
-    } catch {
-      /* keep the last read */
-    }
-  }, []);
+  const [deliveries, setDeliveries] = useState<Map<string, RunDelivery>>(() => new Map());
+  const scope = useRef(tenant);
   useEffect(() => {
+    if (scope.current === tenant) return;
+    scope.current = tenant;
+    setQueues([]);
+    setDeliveries(new Map());
+  }, [tenant]);
+  useEffect(() => {
+    if (!shown) return;
+    let live = true;
+    let busy = false;
+    const load = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const wire = readMemoQueues(await memoQueueList());
+        if (!live || !wire) return;
+        setQueues(wire.queues);
+        await Promise.all(
+          wire.queues.map(async (q) => {
+            try {
+              const list = readDeliveries(await memoQueueDeliveries(q.categoryId));
+              if (!live || !list) return;
+              setDeliveries((prev) => {
+                const next = new Map(prev);
+                for (const d of list) {
+                  if (d.session) next.set(d.session, { categoryId: q.categoryId, state: d.state, sentAt: d.sentAt, createdAt: d.createdAt, closedAt: d.closedAt });
+                }
+                return next;
+              });
+            } catch {
+              /* keep what this category had */
+            }
+          }),
+        );
+      } catch {
+        /* keep the last read */
+      } finally {
+        busy = false;
+      }
+    };
     void load();
     const id = setInterval(() => {
       if (!document.hidden) void load();
     }, POLL_MS);
     return () => {
+      live = false;
       clearInterval(id);
-      seq.current++;
     };
-  }, [load]);
-  return { queues, byCategory };
+  }, [shown, tenant]);
+  return { queues, deliveries };
 }
 
 const STATE_KEY = { running: "autorun.state_running", waiting: "autorun.state_waiting", ended: "autorun.state_ended" } as const;
@@ -68,8 +87,8 @@ const PR_KEY = { open: "autorun.pr_open", merged: "autorun.pr_merged", closed: "
 function RunItem({ run, now }: { run: RunRow; now: number }) {
   const tr = useT();
   const { root, item, pr, children } = run;
-  const created = Date.parse(root.createdAt || "");
-  const elapsed = !run.state.startsWith("ended") && Number.isFinite(created) ? fmtElapsed(now - created) : "";
+  const end = run.state === "ended" ? run.endedAt : now;
+  const elapsed = Number.isFinite(run.startedAt) && Number.isFinite(end) ? fmtElapsed(end - run.startedAt) : "";
   const title = item ? `${item.label} ${item.title || displayName(root)}`.trim() : displayName(root);
   return (
     <li className={"autorun-run is-" + run.state} data-autorun-run={root.name} data-autorun-state={run.state}>
@@ -140,13 +159,13 @@ function Category({ label, runs, now }: { label: string; runs: RunRow[]; now: nu
 export const AutoRunSection = memo(function AutoRunSection() {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
-  const { queues, byCategory } = useQueueRuns();
+  const { queues, deliveries } = useQueueRuns();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(id);
   }, []);
-  const runs = useMemo(() => buildRuns(sessions, categoryIndex(byCategory)), [sessions, byCategory]);
+  const runs = useMemo(() => buildRuns(sessions, deliveries), [sessions, deliveries]);
   const labelOf = (id: string): string => {
     const q = queues.find((x) => x.categoryId === id);
     return q ? [q.repo, q.category].filter(Boolean).join(" / ") || tr("memo.autorun") : tr("autorun.other");

@@ -135,6 +135,14 @@ describe("unattended work in the repository tree", () => {
     await render();
     expect([...host.querySelectorAll("li.sess-row .sess-l1")].map((e) => e.textContent)).toEqual(["handwork"]);
     expect(group("autorun")).toBeNull();
+    // Folded, the clone's row summarises only what the tree lists, and a search for the run's
+    // own name finds nothing.
+    await act(async () => host.querySelector<HTMLButtonElement>(".proj-node-caret")!.click());
+    expect(host.textContent).not.toContain("nightly-run");
+    expect(host.querySelector(".repo-sess-badge")?.textContent ?? "").not.toBe("2");
+    useProjectFilter.setState({ q: "nightly-run" });
+    await render();
+    expect(host.querySelector("[data-rail-repo]")).toBeNull();
   });
 });
 

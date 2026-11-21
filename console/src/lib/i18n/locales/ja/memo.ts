@@ -498,7 +498,7 @@ export const memo = {
   "memo.tidyop_code_keep_only": "ほかのメモを待つメモと、ほかのメモに待たれているメモは、そのまま残します",
   "memo.tidyop_replaced_all": "選んだメモは、すでに整理で置き換えられているため、整理できません",
   "memo.tidyop_replaced_some": "整理で置き換え済みのメモ {count} 件を除いて整理します",
-  "autorun.none": "自動実行の実行はまだありません",
+  "autorun.none": "自動実行の履歴はまだありません",
   "autorun.open": "{name} を開く",
   "autorun.state_running": "実行中",
   "autorun.state_waiting": "あなたの回答待ち",

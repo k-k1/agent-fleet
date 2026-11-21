@@ -7,13 +7,17 @@ import type { Session } from "../../types/session.ts";
 
 const opened = vi.fn();
 vi.mock("../sessions/open.ts", () => ({ openSessionChat: (n: string) => opened(n) }));
-vi.mock("../memo/api.ts", () => ({
-  memoQueueList: vi.fn(async () => ({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] })),
-  memoQueueDeliveries: vi.fn(async () => [{ id: "d1", session: "run-a" }]),
-}));
+const memoQueueList = vi.fn(async () => ({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] }));
+const memoQueueDeliveries = vi.fn(async (_id: string): Promise<unknown> => [
+  { id: "d1", session: "run-a", state: "open" },
+  { id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" },
+]);
+vi.mock("../memo/api.ts", () => ({ memoQueueList: () => memoQueueList(), memoQueueDeliveries: (id: string) => memoQueueDeliveries(id) }));
 
 const { AutoRunSection } = await import("./AutoRunSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
+const { ViewShownContext } = await import("../../lib/viewShown.ts");
+const { useTenantStore } = await import("../../core/store/tenant.ts");
 
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 g.IS_REACT_ACT_ENVIRONMENT = true;
@@ -21,8 +25,14 @@ let root: Root;
 let host: HTMLDivElement;
 const sess = (name: string, extra: Partial<Session>): Session => ({ name, title: name, kind: "claude", alive: true, ...extra });
 
-const mount = async () => {
-  await act(async () => root.render(<AutoRunSection />));
+const mount = async (shown = true) => {
+  await act(async () =>
+    root.render(
+      <ViewShownContext.Provider value={shown}>
+        <AutoRunSection />
+      </ViewShownContext.Provider>,
+    ),
+  );
   await act(async () => {
     await Promise.resolve();
   });
@@ -30,6 +40,12 @@ const mount = async () => {
 
 beforeEach(() => {
   opened.mockReset();
+  memoQueueList.mockClear();
+  memoQueueDeliveries.mockReset();
+  memoQueueDeliveries.mockImplementation(async () => [
+    { id: "d1", session: "run-a", state: "open" },
+    { id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" },
+  ]);
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -79,6 +95,36 @@ describe("AutoRunSection", () => {
     expect(head.textContent).toContain("1");
     await act(async () => head.click());
     expect(host.querySelector('[data-autorun-run="run-old"]')!.getAttribute("data-autorun-state")).toBe("ended");
+  });
+
+  it("keeps a finished run's duration", async () => {
+    await mount();
+    await act(async () => host.querySelector<HTMLButtonElement>(".autorun-ended-head")!.click());
+    expect(host.querySelector('[data-autorun-run="run-old"] .autorun-elapsed')!.textContent).toBe("45m");
+  });
+
+  it("reads nothing while the view is hidden, and reads when it is shown", async () => {
+    await mount(false);
+    expect(memoQueueList).not.toHaveBeenCalled();
+    await mount(true);
+    expect(memoQueueList).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists a run under 'Other runs' when its category read fails, and keeps the rest", async () => {
+    memoQueueDeliveries.mockImplementation(async () => {
+      throw new Error("boom");
+    });
+    await mount();
+    expect(host.querySelector('[data-autorun-run="run-a"]')).not.toBeNull();
+    expect(host.querySelector("[data-autorun-category]")!.getAttribute("data-autorun-category")).not.toBe("agent-fleet / issue-rounds");
+  });
+
+  it("drops what it knew when the tenant changes and reads again", async () => {
+    await mount();
+    expect(memoQueueList).toHaveBeenCalledTimes(1);
+    await act(async () => useTenantStore.setState({ tenant: "other" }));
+    expect(memoQueueList).toHaveBeenCalledTimes(2);
+    useTenantStore.setState({ tenant: "" });
   });
 
   it("says so when there is no run", async () => {

@@ -22,7 +22,7 @@ import { useRepoReveal } from "../repos/store.ts";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Session } from "../../types/session.ts";
 import { displayName } from "../../lib/sessionview.ts";
-import { AUTO_GROUP_KINDS, childNodes, splitNodeSessions, sessionsInFolder } from "../../lib/project.ts";
+import { AUTO_GROUP_KINDS, childNodes, splitNodeSessions, sessionsInFolder, withoutAutoRun } from "../../lib/project.ts";
 import type { AutoGroupKind, RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
@@ -56,12 +56,15 @@ export function RepoNode({ node: n, depth, ctx, actions, grouped = false }: Repo
   const sessions = useSessionsStore((s) => s.sessions);
   const nq = normQuery(useProjectFilter((f) => f.q));
   const refs = useRefIndex();
-  const mine = sessionsInFolder(sessions, r.name);
+  // What the tree draws: a session an auto-run started is the Auto-run view's, so it is in no
+  // count, preview or match here (stop / delete read the full list through `detached`).
+  const shown = useMemo(() => withoutAutoRun(sessions), [sessions]);
+  const mine = sessionsInFolder(shown, r.name);
   const below = descendantFolders(n);
   // Empty repos (no sessions anywhere under them, worktrees included) default
   // folded — an unused clone shouldn't take up rail space. The default is live
   // until the user pins a choice (see usePersistedOpen).
-  const subtreeTotal = mine.length + below.reduce((c, f) => c + sessionsInFolder(sessions, f).length, 0);
+  const subtreeTotal = mine.length + below.reduce((c, f) => c + sessionsInFolder(shown, f).length, 0);
   const openState = usePersistedOpen(`af-proj-${r.name}`, subtreeTotal > 0);
   // Reveal-in-rail (command palette repo row): expand this node when it's the target —
   // or an ancestor of a target worktree, so the chain down to it mounts and the target
@@ -107,7 +110,7 @@ export function RepoNode({ node: n, depth, ctx, actions, grouped = false }: Repo
   const stoppedMine = mine.filter((s) => !s.alive && !s.locked);
   if (!open) {
     for (const f of below) {
-      const cs = sessionsInFolder(sessions, f);
+      const cs = sessionsInFolder(shown, f);
       sessAlive += cs.filter((s) => s.alive).length;
       sessTotal += cs.length;
     }
@@ -119,7 +122,7 @@ export function RepoNode({ node: n, depth, ctx, actions, grouped = false }: Repo
   const unreadSessions = useUnreadSessions();
   const unread =
     !open &&
-    [...mine, ...below.flatMap((f) => sessionsInFolder(sessions, f))].some((s) => unreadSessions.has(s.name));
+    [...mine, ...below.flatMap((f) => sessionsInFolder(shown, f))].some((s) => unreadSessions.has(s.name));
   // A folded node summarises its own sessions on the repo row: the newest live one, else the
   // newest stopped one (shown muted), plus the names of the other live ones for the badge tooltip.
   // The summarised row is the own folder's; the "also running" names cover the whole subtree so
@@ -127,7 +130,7 @@ export function RepoNode({ node: n, depth, ctx, actions, grouped = false }: Repo
   // the open list; filtering forces every node open, so the summary never competes with filtered rows.
   const live = mine.filter((s) => s.alive);
   const top = live[0] ?? mine[0];
-  const liveBelow = below.flatMap((f) => sessionsInFolder(sessions, f).filter((s) => s.alive));
+  const liveBelow = below.flatMap((f) => sessionsInFolder(shown, f).filter((s) => s.alive));
   const others = [...live.slice(1), ...liveBelow].map(displayName);
   const peek = !open && top ? { s: top } : undefined;
   // Independent of `peek`: a parent with no sessions of its own has no summary row but its badge

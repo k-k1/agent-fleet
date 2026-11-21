@@ -2,21 +2,32 @@
 // auto-run queue started (origin "queue"); the sessions it spawned (reviewers, origin
 // "session" all the way up) hang under it.
 import type { Session, SessionPR, SessionWorkLink } from "../../types/session.ts";
-import type { MemoDelivery } from "../../types/memo.ts";
 import { isWaitingSession } from "../../app/activity/badges.ts";
 
 export type RunState = "running" | "waiting" | "ended";
+
+/** What a queue reported about the run that started a session. */
+export interface RunDelivery {
+  categoryId: string;
+  state: string;
+  sentAt: string;
+  createdAt: string;
+  closedAt: string;
+}
 
 export interface RunRow {
   root: Session;
   /** The queue's category id the run came from; "" when no delivery names this session. */
   categoryId: string;
   state: RunState;
-  /** The work item the run started for; null when the session links none. */
+  /** The work item the run started for; null when the session has no `started` link. */
   item: { key: string; label: string; title: string } | null;
   pr: SessionPR | null;
   /** Sessions the run started, oldest first. */
   children: Session[];
+  /** When the run began and, once ended, finished (ms since the epoch); NaN when unknown. */
+  startedAt: number;
+  endedAt: number;
 }
 
 /** The run a session belongs to: the origin=queue session reached by following origin=session
@@ -40,16 +51,19 @@ export function itemLabel(key: string): string {
   return i >= 0 ? key.slice(i) : key;
 }
 
-function startedLink(links: SessionWorkLink[] | undefined): SessionWorkLink | null {
-  if (!links || links.length === 0) return null;
-  return links.find((l) => l.role === "started") ?? links[0];
-}
+// Only the link the run was started for: a work item linked later (link_work_item, role
+// watching) is not what the run is about.
+const startedLink = (links: SessionWorkLink[] | undefined): SessionWorkLink | null => links?.find((l) => l.role === "started") ?? null;
 
 const byCreated = (a: Session, b: Session) => (a.createdAt || "").localeCompare(b.createdAt || "");
+const ms = (iso: string | undefined): number => (iso ? Date.parse(iso) : NaN);
+const OPEN = new Set(["claimed", "sending", "open"]);
 
-/** Every run in the session list, newest first. `categoryOf` maps a run's session name to its
- *  queue category id (from the deliveries the queues report). */
-export function buildRuns(sessions: Session[], categoryOf: Map<string, string>): RunRow[] {
+/** Every run in the session list, newest first. `deliveries` maps a run's session name to what
+ *  its queue reported. A run's state is the queue's word when there is one (a delivery stays open
+ *  while a session it started still works, and closed once it ended whatever the root is doing),
+ *  and the sessions' own state only when no delivery is known. */
+export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelivery>): RunRow[] {
   const byName = new Map(sessions.map((s) => [s.name, s]));
   const kids = new Map<string, Session[]>();
   for (const s of sessions) {
@@ -65,22 +79,26 @@ export function buildRuns(sessions: Session[], categoryOf: Map<string, string>):
     .sort((a, b) => byCreated(b, a))
     .map((root) => {
       const link = startedLink(root.links);
+      const children = (kids.get(root.name) ?? []).sort(byCreated);
+      const tree = [root, ...children];
+      const d = deliveries.get(root.name);
+      let state: RunState;
+      if (d && d.state === "closed") state = "ended";
+      else if (d && !OPEN.has(d.state)) state = tree.some((x) => x.alive) ? (tree.some(isWaitingSession) ? "waiting" : "running") : "ended";
+      else if (!d && !tree.some((x) => x.alive)) state = "ended";
+      else state = tree.some(isWaitingSession) ? "waiting" : "running";
+      const startedAt = ms(d?.sentAt) || ms(d?.createdAt) || ms(root.createdAt);
       return {
         root,
-        categoryId: categoryOf.get(root.name) ?? "",
-        state: !root.alive ? "ended" : isWaitingSession(root) ? "waiting" : "running",
+        categoryId: d?.categoryId ?? "",
+        state,
         item: link ? { key: link.key, label: itemLabel(link.key), title: link.title ?? "" } : null,
         pr: root.pr ?? null,
-        children: (kids.get(root.name) ?? []).sort(byCreated),
+        children,
+        startedAt,
+        endedAt: state === "ended" ? ms(d?.closedAt) : NaN,
       } satisfies RunRow;
     });
-}
-
-/** session name -> category id, from each category's deliveries. */
-export function categoryIndex(byCategory: Record<string, MemoDelivery[]>): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const [id, list] of Object.entries(byCategory)) for (const d of list) if (d.session) out.set(d.session, id);
-  return out;
 }
 
 /** "12m", "1h 5m", "2d 3h": how long a run has been going (or went). */

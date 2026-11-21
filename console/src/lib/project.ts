@@ -367,6 +367,21 @@ export function sessionAutoKind(s: Session | undefined, byName: Map<string, Sess
   return "";
 }
 
+/** Sessions the member's own views list: everything except an auto-run run and the sessions it
+ *  started, which the Auto-run view lists instead. */
+export function withoutAutoRun(sessions: Session[]): Session[] {
+  const byName = new Map(sessions.map((s) => [s.name, s]));
+  return sessions.filter((s) => sessionAutoKind(s, byName) !== "autorun");
+}
+
+/** A working copy that only auto-run work lives in: the tree keeps it out of sight. */
+export function isAutoRunOnlyFolder(sessions: Session[], folder: string): boolean {
+  const here = sessionsInFolder(sessions, folder);
+  if (here.length === 0) return false;
+  const byName = new Map(sessions.map((s) => [s.name, s]));
+  return here.every((s) => sessionAutoKind(s, byName) === "autorun");
+}
+
 /** The kinds a rail renders as a group, in order. */
 export const AUTO_GROUP_KINDS: AutoGroupKind[] = GROUPED_KINDS;
 
@@ -554,7 +569,7 @@ function pruneForest(nodes: RepoTreeNode[], keep: (r: Repo) => boolean): { kept:
 // removed). These land in the rail's "other sessions" catch-all (pj.other_sessions).
 export function orphanSessions(sessions: Session[], repos: Repo[]): Session[] {
   const names = new Set(repos.map((r) => r.name));
-  return sessions
+  return withoutAutoRun(sessions)
     .filter((s) => {
       const f = sessionFolder(s);
       return !f || !names.has(f);
