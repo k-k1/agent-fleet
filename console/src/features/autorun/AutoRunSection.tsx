@@ -11,9 +11,7 @@ import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
 import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useLeftRail } from "../../core/store/leftRail.ts";
 import { useMemoStore } from "../memo/store.ts";
-import { useTenantStore } from "../../core/store/tenant.ts";
 import { MemoQueueSettingsModal } from "../memo/MemoQueueSettingsModal.tsx";
-import { useQueueSettings } from "../memo/queueSettingsCache.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { useViewShown } from "../../lib/viewShown.ts";
@@ -399,11 +397,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
   useEffect(() => {
     if (shown) refreshAutoRuns();
   }, [shown]);
-  const { deliveries } = useScopedAutoRuns();
-  // The settings come from the cache the Memo queue view shares: a save in either view lands there at once.
-  const tenant = useTenantStore((st) => st.tenant);
-  const identity = useTenantStore((st) => st.identityRev);
-  const { queues, tenantEnabled } = useQueueSettings(tenant + "\u0000" + identity);
+  const { queues, tenantEnabled, deliveries } = useScopedAutoRuns();
   const reload = reloadAutoRuns;
   const wset = useActiveWorkingSet();
   const [dialog, setDialog] = useState<RunDialog | null>(null);

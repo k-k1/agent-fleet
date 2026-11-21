@@ -79,6 +79,7 @@ const { useSessionsStore } = await import("../sessions/store.ts");
 const { useQueueSettingsCache } = await import("./queueSettingsCache.ts");
 const { t } = await import("../../lib/i18n/index.ts");
 const { useTenantStore } = await import("../../core/store/tenant.ts");
+const { useScopedAutoRuns } = await import("../autorun/store.ts");
 const { useMemoStore } = await import("./store.ts");
 
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
@@ -299,5 +300,24 @@ describe("a removal", () => {
     await act(async () => release({ tenantEnabled: true, queues: [aQueue()] }));
     await settle();
     expect(cached().queues).toEqual([]);
+  });
+
+  it("reaches what the activity bar's badge reads too (useScopedAutoRuns), while the refetch fails", async () => {
+    // The bar and the view must filter the runs by the same queue list.
+    let seen: string[] = [];
+    const Probe = () => {
+      seen = useScopedAutoRuns().queues.map((q) => q.categoryId);
+      return null;
+    };
+    const probeHost = document.createElement("div");
+    document.body.append(probeHost);
+    const probeRoot = createRoot(probeHost);
+    await act(async () => probeRoot.render(<Probe />));
+    expect(seen).toEqual(["c1"]);
+    listMode = "fail";
+    await removeFrom(memoHost, ".memo-cat-act");
+    expect(seen).toEqual([]);
+    await act(async () => probeRoot.unmount());
+    probeHost.remove();
   });
 });

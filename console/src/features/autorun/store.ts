@@ -8,7 +8,7 @@ import { memoQueueDeliveries, memoQueueList } from "../memo/api.ts";
 import { readDeliveries, readMemoQueues } from "../memo/queues.ts";
 import type { MemoQueue } from "../../types/memo.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
-import { useQueueSettingsCache } from "../memo/queueSettingsCache.ts";
+import { useQueueSettings, useQueueSettingsCache } from "../memo/queueSettingsCache.ts";
 import type { RunDelivery } from "./runs.ts";
 
 const POLL_MS = 30000;
@@ -176,8 +176,12 @@ export const reloadAutoRuns = (): void => loop?.reload();
 export function useScopedAutoRuns(): { queues: MemoQueue[]; tenantEnabled: boolean; deliveries: Map<string, RunDelivery>; loaded: boolean } {
   const tenant = useTenantStore((s) => s.tenant);
   const identity = useTenantStore((s) => s.identityRev);
+  const scope = tenant + "\u0000" + identity;
   const st = useAutoRunStore();
-  return st.scope === tenant + "\u0000" + identity ? st : EMPTY;
+  // The queues come from the cache the Memo queue view shares, so a settings change made there
+  // (a save or a removal) reaches the view and the bar's badge together, whatever the next read does.
+  const settings = useQueueSettings(scope);
+  return st.scope === scope ? { ...st, queues: settings.queues, tenantEnabled: settings.tenantEnabled } : EMPTY;
 }
 const EMPTY = { queues: [] as MemoQueue[], tenantEnabled: false, deliveries: new Map<string, RunDelivery>(), loaded: false };
 
