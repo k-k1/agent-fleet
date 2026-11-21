@@ -500,7 +500,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   // can refresh its own copy of the pane data from the same response.
   const followSeq = useRef(0);
   const followFlight = useRef<{ slot: EditorSlot; key: string; promise: Promise<EditableFile | null> } | null>(null);
-  const runFollow = useCallback(async (): Promise<EditableFile | null> => {
+  const runFollow = useCallback(async (confirmBase: boolean): Promise<EditableFile | null> => {
     // A follow for another observation supersedes this one: its answer may be older than the one
     // already applied, on the success and on the error side alike.
     const seq = ++followSeq.current;
@@ -520,7 +520,10 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       if (!latest || slotRef.current !== startSlot || latest.path !== path || savingRef.current || !isCleanForFollow(latest) || seq !== followSeq.current) return null;
       if (remote.revision === latest.baseDiskRevision) {
         if (latest.externalObservation) setModel(observeExternal(latest, null));
-        return null;
+        // The buffer already rests on what was read. Only a caller that asked (an edit form held
+        // while the body lags) is told so; the others take a returned file as a follow and
+        // refresh their data from it.
+        return confirmBase ? file : null;
       }
       setModel(followExternal(latest, remote));
       return file;
@@ -544,13 +547,13 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   // The same observation of the same file shares the GET in flight: a slow GET that a periodic probe
   // keeps re-asking must still be allowed to finish.
   const followExternalChange = useCallback(
-    (observed: string, observation = ""): Promise<EditableFile | null> => {
-      const key = `${modelRef.current?.path}|${observed}|${observation}`;
+    (observed: string, observation = "", confirmBase = false): Promise<EditableFile | null> => {
+      const key = `${modelRef.current?.path}|${observed}|${observation}|${confirmBase}`;
       const flight = followFlight.current;
       // Of this slot only: a pane that went to another file and back has a new buffer, which must
       // not wait for (and take the answer of) a GET made for the old one.
       if (flight && flight.slot === slotRef.current && flight.key === key) return flight.promise;
-      const promise = runFollow();
+      const promise = runFollow(confirmBase);
       followFlight.current = { slot: slotRef.current, key, promise };
       void promise.finally(() => {
         if (followFlight.current?.promise === promise) followFlight.current = null;
@@ -563,7 +566,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   // Route one probe observation into the model (docs/log/44 §7.3–§7.5). Advisory
   // by contract: apart from the clean auto-follow, the phase never moves.
   const applyProbeResult = useCallback(
-    async (result: FileProbeResult): Promise<EditableFile | null> => {
+    async (result: FileProbeResult, opts?: { confirmBase?: boolean }): Promise<EditableFile | null> => {
       const current = modelRef.current;
       if (!current || savingRef.current) return null;
       // An observation that needs no GET still outranks a follow GET started earlier: that GET's
@@ -591,7 +594,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
             if (current.externalObservation) setModel(observeExternal(current, null));
             return null;
           }
-          if (isCleanForFollow(current)) return followExternalChange(result.revision, result.observation);
+          if (isCleanForFollow(current)) return followExternalChange(result.revision, result.observation, opts?.confirmBase);
           setModel(
             observeExternal(current, {
               kind: result.revision === current.bufferRevision ? "same_as_buffer" : "changed",

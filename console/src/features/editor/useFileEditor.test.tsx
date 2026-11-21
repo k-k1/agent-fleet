@@ -405,6 +405,26 @@ describe("useFileEditor external change handling (docs/log/44 §7)", () => {
     expect(editor!.model?.followEpoch).toBe(1);
   });
 
+  it("reports the fetched file for the text the buffer rests on only to a caller that asks, and never as a follow otherwise", async () => {
+    vi.mocked(getEditableFile).mockResolvedValue(editableFile(initial.content));
+    const current = await renderEditor();
+
+    let followed: EditableFile | null = null;
+    await act(async () => {
+      followed = await current.applyProbeResult({ kind: "revision", revision: revisionOf(external) }, { confirmBase: true });
+    });
+
+    expect(followed).toEqual(editableFile(initial.content));
+    expect(editor!.model?.content).toBe(initial.content);
+    expect(editor!.model?.followEpoch).toBe(0);
+
+    let plain: EditableFile | null = initial as EditableFile;
+    await act(async () => {
+      plain = await current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+    });
+    expect(plain).toBeNull();
+  });
+
   it("does not mistake its own save for an external change", async () => {
     const mine = "mine\n";
     vi.mocked(putFile).mockResolvedValue({
