@@ -277,6 +277,9 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       // The ticket this read began under: only the flag raised before the read started, and still
       // the current one when it answers, lets it replace a counter.
       const adopting = adoptNext.get(key);
+      // The save attempt this read began under: a read that began before the save started must not
+      // be matched against it (it describes the memory as of before the save).
+      const attemptAtStart = sent.get(key);
       const q = `scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(name)}`;
       const res = await timed(READ_TIMEOUT_MS, (signal) => api(`api/agents/memory/entries/member-read?${q}`, { signal }));
       if (res?.error) throw new Error(res.error.code || "load_failed");
@@ -288,10 +291,21 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       let file = entryFile(key, res as MemoryBody, adoptNow);
       // Used up by the first read that adopts; a read answering later with the same ticket finds it gone.
       if (adoptNow) adoptNext.delete(key);
+      // The text is one the buffer already rests on, read again at a later counter with the same
+      // kinds (another writer reverted to it): nothing the member sees differs, so the counter
+      // moves forward and a save from this base is not refused. Different kinds keep the old
+      // counter, so the save ends in a conflict instead of carrying kinds the member never saw.
+      const prior = known.get(key)?.get(file.revision);
+      const later = res as MemoryBody;
+      if (!adoptNow && prior && later.revision > prior.revision && sameKinds(later.kinds ?? [], prior.kinds)) {
+        remember(key, file.revision, { revision: later.revision, kinds: later.kinds ?? [] }, true);
+      }
       // After a save whose outcome is unknown, the memory as the Agent stores the text sent is that
       // text: reporting its trimmed form would read the committed save as a third version. The
       // base for the next save is this very read, whatever counter an older read of the text had.
-      const last = sent.get(key);
+      // Only the recovery read of this attempt may settle it: an older read answering late would
+      // move the recorded counter back.
+      const last = attemptAtStart && sent.get(key) === attemptAtStart ? attemptAtStart : undefined;
       const answered = res as MemoryBody;
       // The one counter the sent save would have produced, with the kinds it sent: a read at the
       // old counter is the save not having landed, and anything else is another writer's.
@@ -299,7 +313,7 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         const revision = revisionOf(last.raw);
         remember(key, revision, { revision: (res as MemoryBody).revision, kinds: (res as MemoryBody).kinds ?? [] }, true);
         file = { ...file, content: last.raw, size: last.raw.length, revision };
-      } else if (last && file.revision === last.base && (answered.revision !== last.revision || !sameKinds(answered.kinds ?? [], last.kinds))) {
+      } else if (last && file.revision === last.base && (answered.revision !== last.revision || !sameKinds(answered.kinds ?? [], last.kinds)) && answered.revision > (known.get(key)?.get(file.revision)?.revision ?? 0)) {
         // Another writer stored the text the save started from, at a later counter: the save did not
         // land, but the counter it was sent with is spent. A resave from the original has to carry
         // the live one, or it ends in a 409.

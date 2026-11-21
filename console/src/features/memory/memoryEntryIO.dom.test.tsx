@@ -280,6 +280,42 @@ describe("memoryEntryIO", () => {
     }
   });
 
+  it("moves the counter of known text forward when it comes back at a later counter with the same kinds", async () => {
+    const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+    const file = entryFile("k", body);
+    api.mockResolvedValue({ ...body, revision: 6 });
+    await io.load("k");
+    apiJSON.mockResolvedValue({ revision: 7 });
+    await io.save("k", file.content, file.revision);
+    expect(apiJSON.mock.calls[0][2]).toMatchObject({ revision: 6, kinds: ["claude"] });
+  });
+
+  it("does not move the counter back when an older read of known text answers late", async () => {
+    const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+    const file = entryFile("k", body);
+    api.mockResolvedValue({ ...body, revision: 2 });
+    await io.load("k");
+    apiJSON.mockResolvedValue({ revision: 4 });
+    await io.save("k", file.content, file.revision);
+    expect(apiJSON.mock.calls[0][2]).toMatchObject({ revision: 3 });
+  });
+
+  it("lets only the recovery read of an unknown outcome move the recorded counter", async () => {
+    const io = memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {});
+    const file = entryFile("k", body);
+    // A read that began before the save, answering after the unknown outcome at an older counter.
+    let late: (v: unknown) => void = () => {};
+    api.mockReturnValueOnce(new Promise((r) => (late = r)));
+    const older = io.load("k");
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_snapshot_failed", message: "x" } });
+    await io.save("k", file.content + " edited", file.revision);
+    late({ ...body, revision: 1 });
+    await older;
+    apiJSON.mockResolvedValue({ revision: 4 });
+    await io.save("k", file.content + " edited", file.revision);
+    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 3 });
+  });
+
   it("lets a memory whose recovery cannot be read be discarded", () => {
     expect(memoryEntryIO({ key: "k", scope: "user", project: "", name: "n" }, () => {}).discardUnconfirmed).toBe(true);
   });

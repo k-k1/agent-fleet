@@ -520,7 +520,9 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       if (!latest || slotRef.current !== startSlot || latest.path !== path || savingRef.current || !isCleanForFollow(latest) || seq !== followSeq.current) return null;
       if (remote.revision === latest.baseDiskRevision) {
         if (latest.externalObservation) setModel(observeExternal(latest, null));
-        return null;
+        // The buffer already rests on what was read: the caller waiting for it to catch up (an
+        // edit form held while the body lags) is satisfied, not refused.
+        return file;
       }
       setModel(followExternal(latest, remote));
       return file;
