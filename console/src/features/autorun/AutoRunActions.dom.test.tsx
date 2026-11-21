@@ -2,6 +2,8 @@
 // what the clear action archives after its confirmation.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
+import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
+import { ToastProvider } from "../../ui/ToastProvider.tsx";
 import { createRoot, type Root } from "react-dom/client";
 import type { Session } from "../../types/session.ts";
 
@@ -22,7 +24,7 @@ vi.mock("../repos/DeleteCopyModal.tsx", () => ({
   DeleteCopyModal: (p: { node: { repo: { name: string } } }) => <div data-delete-modal={p.node.repo.name} />,
 }));
 const confirm = vi.fn(async (_o: unknown) => true);
-vi.mock("../../ui/confirmBridge.ts", () => ({ askConfirm: (o: unknown) => confirm(o) }));
+vi.mock("../../ui/confirmBridge.ts", async (orig) => ({ ...(await orig<object>()), askConfirm: (o: unknown) => confirm(o) }));
 const rawCall = vi.fn(async (_u: string, _o?: unknown) => ({ ok: true }));
 // An archive that lands: the session leaves the list, as the refresh after it would show.
 const archiveLands = async (u: string) => {
@@ -72,7 +74,11 @@ beforeEach(async () => {
   await act(async () =>
     root.render(
       <ViewShownContext.Provider value={true}>
-        <AutoRunSection />
+        <ConfirmProvider>
+          <ToastProvider>
+            <AutoRunSection />
+          </ToastProvider>
+        </ConfirmProvider>
       </ViewShownContext.Provider>,
     ),
   );

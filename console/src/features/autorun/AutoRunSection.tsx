@@ -2,8 +2,9 @@
 // queue, grouped by the queue's category. Unattended work is listed here and not in the
 // repository tree. A row opens the run's session; the sessions the run started (reviewers) sit
 // one level under it, and finished runs fold into "Ended N".
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import type { KeyboardEvent, MouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { Section } from "../../ui/Section.tsx";
 import { IconButton } from "../../ui/Button.tsx";
@@ -30,6 +31,11 @@ import { DeleteCopyModal } from "../repos/DeleteCopyModal.tsx";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import type { MemoQueue } from "../../types/memo.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { SessionMenu } from "../sessions/SessionMenu.tsx";
+import { useSessionActions } from "../sessions/useSessionActions.tsx";
+import { isContextMenuKey, menuAnchor } from "../project/contextMenuKey.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import type { Session } from "../../types/session.ts";
 import { openSessionChat } from "../sessions/open.ts";
 import { refreshAutoRuns, reloadAutoRuns, useAutoRunFeed, pendingReveal, useAutoRunReveal, useScopedAutoRuns } from "./store.ts";
 import { buildRuns, fmtElapsed, scopeRuns, waitsForMember, type RunRow } from "./runs.ts";
@@ -43,6 +49,25 @@ const PR_KEY = { open: "autorun.pr_open", merged: "autorun.pr_merged", closed: "
 /** What an open dialog acts on, frozen when the menu item is chosen. The view owns the dialog
  *  (not the row) so it survives the row moving to "Ended" or the list refreshing under it. */
 type RunDialog = { kind: "stop"; node: RepoTreeNode; only: Set<string> } | { kind: "delete"; node: RepoTreeNode };
+
+/** Opens the session menu for one session at a screen point. The view owns the menu itself. */
+type OpenSessionMenu = (s: Session, at: { x: number; y: number }) => void;
+
+/** Right-click and the Menu key / Shift+F10 on a row button open the session menu for that row's
+ *  session. Not on the li: the row's own "..." button must keep its run menu to itself. */
+function menuHandlers(s: Session, openMenu: OpenSessionMenu) {
+  return {
+    onContextMenu: (e: MouseEvent<HTMLElement>) => {
+      e.preventDefault();
+      openMenu(s, { x: e.clientX, y: e.clientY });
+    },
+    onKeyDown: (e: KeyboardEvent<HTMLElement>) => {
+      if (e.target !== e.currentTarget || !isContextMenuKey(e)) return;
+      e.preventDefault();
+      openMenu(s, menuAnchor(e.currentTarget));
+    },
+  };
+}
 
 /** The row's "..." menu: stop the run's sessions, delete its worktree. Both open the repository
  *  tree's own plan dialogs, which carry the confirmation. */
@@ -100,7 +125,7 @@ function RunMenu({ run, onDialog }: { run: RunRow; onDialog: (d: RunDialog) => v
   );
 }
 
-function RunItem({ run, now, onDialog }: { run: RunRow; now: number; onDialog: (d: RunDialog) => void }) {
+function RunItem({ run, now, onDialog, openMenu }: { run: RunRow; now: number; onDialog: (d: RunDialog) => void; openMenu: OpenSessionMenu }) {
   const tr = useT();
   const { root, item, pr, children } = run;
   const end = run.state === "ended" ? run.endedAt : now;
@@ -113,6 +138,7 @@ function RunItem({ run, now, onDialog }: { run: RunRow; now: number; onDialog: (
         className="autorun-run-main"
         data-rail-row=""
         onClick={() => openSessionChat(root.name)}
+        {...menuHandlers(root, openMenu)}
         title={tr("autorun.open", { name: root.name })}
       >
         <span className={"autorun-dot is-" + run.state} role="img" aria-label={tr(STATE_KEY[run.state])} title={tr(STATE_KEY[run.state])} />
@@ -134,7 +160,7 @@ function RunItem({ run, now, onDialog }: { run: RunRow; now: number; onDialog: (
         <ul className="autorun-kids">
           {children.map((c) => (
             <li key={c.name}>
-              <button type="button" className="autorun-kid" data-rail-row="" onClick={() => openSessionChat(c.name)} title={tr("autorun.open", { name: c.name })}>
+              <button type="button" className="autorun-kid" data-rail-row="" onClick={() => openSessionChat(c.name)} {...menuHandlers(c, openMenu)} title={tr("autorun.open", { name: c.name })}>
                 <span className={"autorun-dot is-" + (waitsForMember(c) ? "waiting" : c.alive ? "running" : "ended")} aria-hidden="true" />
                 <span className="autorun-title">{displayName(c)}</span>
               </button>
@@ -242,6 +268,7 @@ function Category({
   runs,
   now,
   onDialog,
+  openMenu,
   onSettings,
 }: {
   label: string;
@@ -252,6 +279,7 @@ function Category({
   runs: RunRow[];
   now: number;
   onDialog: (d: RunDialog) => void;
+  openMenu: OpenSessionMenu;
   onSettings: (id: string) => void;
 }) {
   const tr = useT();
@@ -292,7 +320,7 @@ function Category({
           {showLive && (
             <ul className="autorun-list">
               {live.map((r) => (
-                <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} />
+                <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} openMenu={openMenu} />
               ))}
             </ul>
           )}
@@ -304,7 +332,7 @@ function Category({
           {showEnded && (
             <ul className="autorun-list">
               {ended.map((r) => (
-                <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} />
+                <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} openMenu={openMenu} />
               ))}
             </ul>
           )}
@@ -430,6 +458,14 @@ export const AutoRunSection = memo(function AutoRunSection() {
   const reload = reloadAutoRuns;
   const wset = useActiveWorkingSet();
   const [dialog, setDialog] = useState<RunDialog | null>(null);
+  // The session menu is the view's, not a row's: its confirmation and share/handoff dialogs then
+  // survive the row moving between "Running" and "Ended" or leaving the list after an archive.
+  // `s` is kept after the menu closes for the same reason (the menu hosts those dialogs).
+  const actions = useSessionActions();
+  const workspaceRunning = useWorkspaceStore((st) => st.state) === "running";
+  const [menu, setMenu] = useState<{ s: Session; at: { x: number; y: number }; open: boolean } | null>(null);
+  const openMenu = useCallback<OpenSessionMenu>((s, at) => setMenu({ s, at, open: true }), []);
+  const menuSession = menu ? (sessions.find((x) => x.name === menu.s.name) ?? menu.s) : null;
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -520,11 +556,22 @@ export const AutoRunSection = memo(function AutoRunSection() {
             runs={runs.filter((r) => keyOf(r.categoryId) === id)}
             now={now}
             onDialog={setDialog}
+            openMenu={openMenu}
             onSettings={setSettingsFor}
           />
         ))}
       </div>
       {dialogs}
+      {menu && menuSession && (
+        <SessionMenu
+          s={menuSession}
+          actions={actions}
+          running={workspaceRunning}
+          open={menu.open}
+          place={(el) => placeFixed(el, menu.at.x, menu.at.y)}
+          onClose={() => setMenu((m) => (m ? { ...m, open: false } : m))}
+        />
+      )}
     </Section>
   );
 });
