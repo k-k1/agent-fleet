@@ -233,6 +233,48 @@ describe("MemoryEntryView", () => {
     expect(apiJSON.mock.calls[0][2]).toMatchObject({ revision: 5, body: "Run `make v3`." });
   });
 
+  it("opens the form when the follow reads newer text than the body shown", async () => {
+    await open();
+    const shown = { ...memory, revision: 5, body: "Run `make v2`." };
+    const newest = { ...memory, revision: 6, body: "Run `make v3`." };
+    let reads = 0;
+    api.mockImplementation(async (url: string) => {
+      if (!url.startsWith("api/agents/memory/entries/member-read")) return url.includes("changes") ? { changes: [] } : {};
+      // The body re-read answers v2; the follow that comes with Edit finds v3 already.
+      return ++reads === 1 ? shown : newest;
+    });
+    await act(async () => useMemoryStore.getState().bump());
+    await flush();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await flush();
+    expect(host!.querySelector(".mentry-form")).not.toBeNull();
+    expect(host!.textContent).not.toContain(t("mem.br_edit_stale"));
+  });
+
+  it("ends edit mode in the view that is on screen when a save outlives the view that asked for it", async () => {
+    let finish!: (v: unknown) => void;
+    apiJSON.mockImplementation(() => new Promise((r) => (finish = r)));
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    await setValue(host!.querySelector<HTMLTextAreaElement>('[data-testid="editor"]')!, "Run `make all`.");
+    await act(async () => button(t("mem.br_save"))!.click());
+    await switchBack();
+    await act(async () => finish({ name: "build-cmd", revision: 5 }));
+    await flush();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+  });
+
+  it("does not bring edit mode back to a pane that was closed and opened again", async () => {
+    await open();
+    await act(async () => button(t("mem.br_edit"))!.click());
+    const id = pane().id;
+    await act(async () => useLayoutStore.getState().closePane(id));
+    await act(async () => root!.render(<></>));
+    useLayoutStore.setState({ layout: freshLayout() });
+    await open();
+    expect(host!.querySelector(".mentry-form")).toBeNull();
+  });
+
   it("does not open the editor on an older base when the follow read fails", async () => {
     await open();
     const newer = { ...memory, revision: 5, body: "Run `make v2`." };

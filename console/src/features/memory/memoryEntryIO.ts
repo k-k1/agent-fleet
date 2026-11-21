@@ -118,14 +118,34 @@ function remember(key: string, sha: string, entry: Known, overwrite: boolean) {
 
 // The pane that was in edit mode, and on which memory: a tabbed cell renders only its selected
 // view, so the view that comes back reads this instead of falling to the read view. Per pane and
-// key, so a retarget does not carry edit mode to another memory.
-export const editingPanes = new Map<string, string>();
+// key, so a retarget does not carry edit mode to another memory. Shared and observable: a save that
+// finishes after the view was rebuilt must end edit mode in the view that is on screen.
+const editingPanes = new Map<string, string>();
+const editingListeners = new Set<() => void>();
+export const isEditingPane = (paneId: string, key: string) => editingPanes.get(paneId) === key;
+export function setEditingPane(paneId: string, key: string, on: boolean) {
+  if (on) editingPanes.set(paneId, key);
+  else if (editingPanes.get(paneId) === key) editingPanes.delete(paneId);
+  else return;
+  for (const fn of [...editingListeners]) fn();
+}
+/** Keeps only the panes `keep` accepts (still open, still on that memory). */
+export function pruneEditingPanes(keep: (paneId: string, key: string) => boolean) {
+  let changed = false;
+  for (const [paneId, key] of [...editingPanes]) if (!keep(paneId, key)) changed = editingPanes.delete(paneId) || changed;
+  if (changed) for (const fn of [...editingListeners]) fn();
+}
+export function subscribeEditing(fn: () => void): () => void {
+  editingListeners.add(fn);
+  return () => void editingListeners.delete(fn);
+}
 
 /** Test hook. */
 export function resetMemoryRevisions() {
   known.clear();
   adoptNext.clear();
   editingPanes.clear();
+  editingListeners.clear();
   sent.clear();
   sentNew.clear();
   refusals.clear();
@@ -154,6 +174,8 @@ export const clearRefusal = (key: string) => void refusals.delete(key);
 /** Forget what a finished or abandoned edit left: its refusal, and the text an unknown outcome
  *  would have to be matched against. */
 export function clearPending(key: string) {
+  // A conflict resolution that was abandoned must not make the next unrelated read adopt.
+  adoptNext.delete(key);
   refusals.delete(key);
   sent.delete(key);
   sentNew.delete(key);
@@ -252,6 +274,8 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         // (the view lands the pane when it is).
         return { ...blankNewFile(key), content: last.raw, size: last.raw.length, revision: revisionOf(last.raw) };
       }
+      // The ticket this read began under: only the flag raised before the read started, and still
+      // the current one when it answers, lets it replace a counter.
       const adopting = adoptNext.get(key);
       const q = `scope=${scope}&project=${encodeURIComponent(project)}&name=${encodeURIComponent(name)}`;
       const res = await timed(READ_TIMEOUT_MS, (signal) => api(`api/agents/memory/entries/member-read?${q}`, { signal }));
@@ -260,9 +284,10 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       if (!isMemoryBody(res, scope, name)) throw new Error("load_failed");
       // Not overwriting: a GET the buffer does not adopt (typing won the race) must not move the
       // counter the edit started from.
-      let file = entryFile(key, res as MemoryBody, adopting !== undefined);
-      // Only a read that began after the flag was raised uses it up; a newer flag stays.
-      if (adopting !== undefined && adoptNext.get(key) === adopting) adoptNext.delete(key);
+      const adoptNow = adopting !== undefined && adoptNext.get(key) === adopting;
+      let file = entryFile(key, res as MemoryBody, adoptNow);
+      // Used up by the first read that adopts; a read answering later with the same ticket finds it gone.
+      if (adoptNow) adoptNext.delete(key);
       // After a save whose outcome is unknown, the memory as the Agent stores the text sent is that
       // text: reporting its trimmed form would read the committed save as a third version. The
       // base for the next save is this very read, whatever counter an older read of the text had.

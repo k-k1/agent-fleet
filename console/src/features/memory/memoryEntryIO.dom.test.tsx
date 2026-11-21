@@ -8,7 +8,7 @@ vi.mock("../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...a: unknown[]) => apiJSON(...a),
 }));
 
-import { READ_TIMEOUT_MS, SAVE_TIMEOUT_MS, decodeEntry, encodeEntry, entryFile, memoryEntryIO, resetMemoryRevisions, storedForm } from "./memoryEntryIO.ts";
+import { clearPending, READ_TIMEOUT_MS, SAVE_TIMEOUT_MS, decodeEntry, encodeEntry, entryFile, memoryEntryIO, resetMemoryRevisions, storedForm } from "./memoryEntryIO.ts";
 import type { MemoryBody } from "../settings/memory/memoryTypes.ts";
 import { revisionOf } from "../editor/buffer.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
@@ -197,19 +197,48 @@ describe("memoryEntryIO", () => {
   it("does not let a read that began before the conflict use up the adoption flag", async () => {
     const io = memoryEntryIO(target, () => {});
     const file = entryFile("k", body);
-    // The follow read starts first and answers last.
-    let release!: (v: unknown) => void;
-    api.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const holds: Array<(v: unknown) => void> = [];
+    api.mockImplementation(() => new Promise((r) => holds.push(r)));
+    // A read begins before the conflict; another begins after it. The early one answers first.
     const early = io.load("k");
     apiJSON.mockResolvedValueOnce({ error: { code: "memory_conflict", message: "x" } });
     await io.save("k", file.content, file.revision);
-    api.mockResolvedValueOnce({ ...body, revision: 5, kinds: ["codex"] });
-    await io.load("k");
-    release({ ...body, revision: 4 });
+    const late = io.load("k");
+    holds[0]({ ...body, revision: 4 });
     await early;
+    holds[1]({ ...body, revision: 5, kinds: ["codex"] });
+    await late;
     apiJSON.mockResolvedValue({ revision: 6 });
     await io.save("k", file.content, file.revision);
     expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 5, kinds: ["codex"] });
+  });
+
+  it("lets only the first read that adopts replace the counter, and drops an abandoned flag", async () => {
+    const io = memoryEntryIO(target, () => {});
+    const file = entryFile("k", body);
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_conflict", message: "x" } });
+    await io.save("k", file.content, file.revision);
+    const holds: Array<(v: unknown) => void> = [];
+    api.mockImplementation(() => new Promise((r) => holds.push(r)));
+    const a = io.load("k");
+    const b = io.load("k");
+    holds[0]({ ...body, revision: 6, kinds: ["codex"] });
+    await a;
+    holds[1]({ ...body, revision: 5 });
+    await b;
+    apiJSON.mockResolvedValue({ revision: 7 });
+    await io.save("k", file.content, file.revision);
+    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 6 });
+    // The resolution was abandoned: the next read is not a remote to adopt.
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_conflict", message: "x" } });
+    await io.save("k", file.content, file.revision);
+    clearPending("k");
+    api.mockReset();
+    api.mockResolvedValue({ ...body, revision: 9 });
+    await io.load("k");
+    apiJSON.mockResolvedValue({ revision: 10 });
+    await io.save("k", file.content, file.revision);
+    expect(apiJSON.mock.calls[3][2]).toMatchObject({ revision: 7 });
   });
 
   it("does not take a read for the text sent once the save is known to have been refused as a conflict", async () => {

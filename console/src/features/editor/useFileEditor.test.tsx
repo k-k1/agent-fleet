@@ -481,6 +481,29 @@ describe("useFileEditor external change handling (docs/log/44 §7)", () => {
     expect(editor!.model?.followEpoch).toBe(0);
   });
 
+  it("drops an auto-follow that a later follow overtook", async () => {
+    const slow = deferred<EditableFile>();
+    const newer = "newer\n";
+    vi.mocked(getEditableFile).mockReturnValueOnce(slow.promise).mockResolvedValueOnce(editableFile(newer));
+    const current = await renderEditor();
+
+    let first!: Promise<EditableFile | null>;
+    await act(async () => {
+      first = current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await current.applyProbeResult({ kind: "revision", revision: revisionOf(newer) });
+    });
+    slow.resolve(editableFile(external));
+    await act(async () => {
+      await first;
+    });
+
+    // The older answer arrived last and must not move the buffer back.
+    expect(editor!.model?.content).toBe(newer);
+  });
+
   it("records missing/uneditable observations without touching the buffer", async () => {
     const current = await renderEditor();
     await act(async () => {

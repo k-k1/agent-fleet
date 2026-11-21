@@ -498,7 +498,10 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   // buffer holds no edits, so fetch the full body and rebuild the model on it.
   // Returns the fetched file when the model actually followed, so the caller
   // can refresh its own copy of the pane data from the same response.
+  const followSeq = useRef(0);
   const followExternalChange = useCallback(async (): Promise<EditableFile | null> => {
+    // A later follow supersedes this one: its answer may be older than the one already applied.
+    const seq = ++followSeq.current;
     const current = modelRef.current;
     if (!current || savingRef.current || !isCleanForFollow(current)) return null;
     const path = current.path;
@@ -509,7 +512,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       const latest = modelRef.current;
       // Typing or a save that started while the GET was in flight wins; the
       // next probe re-observes and reports the change as an advisory instead.
-      if (!latest || latest.path !== path || savingRef.current || !isCleanForFollow(latest)) return null;
+      if (!latest || latest.path !== path || savingRef.current || !isCleanForFollow(latest) || seq !== followSeq.current) return null;
       if (remote.revision === latest.baseDiskRevision) {
         if (latest.externalObservation) setModel(observeExternal(latest, null));
         return null;
