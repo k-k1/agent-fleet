@@ -574,8 +574,27 @@ describe("auto-run sessions outside the member's lists", () => {
     expect(railOrder(sessions, repos, null).map((s) => s.name)).toEqual(["hand"]);
   });
   it("tells a copy only auto-run works in", () => {
-    expect(isAutoRunOnlyFolder(sessions, "af")).toBe(true);
-    expect(isAutoRunOnlyFolder([...sessions, sess("m", { repo: "af", origin: "user" })], "af")).toBe(false);
-    expect(isAutoRunOnlyFolder(sessions, "empty")).toBe(false);
+    const wtree = { name: "af", worktree: true };
+    expect(isAutoRunOnlyFolder(sessions, wtree)).toBe(true);
+    expect(isAutoRunOnlyFolder([...sessions, sess("m", { repo: "af", origin: "user" })], wtree)).toBe(false);
+    expect(isAutoRunOnlyFolder(sessions, { name: "empty", worktree: true })).toBe(false);
+    // A base clone an auto-run reused is still a row of the tree.
+    expect(isAutoRunOnlyFolder(sessions, { name: "af" })).toBe(false);
+    expect(isAutoRunOnlyFolder(sessions, undefined)).toBe(false);
+  });
+});
+
+describe("a filter never narrows what stop and delete reach", () => {
+  const t = (n: number) => `2026-09-0${n}T00:00:00Z`;
+  const repos = [repo("af"), wt("af@run", "af", { createdAt: t(1) })];
+  const sessions = [
+    { ...sess("run", { repo: "af@run", createdAt: t(1), origin: "queue" }), alive: true },
+    { ...sess("hand", { repo: "af", createdAt: t(2), origin: "user" }), alive: true },
+  ];
+  it("keeps a hidden auto-run copy in the base's scope when only the base matches", () => {
+    const f = filterRepoTree(repoTree(repos, sessions), (r) => r.name === "af");
+    expect(f.map((n) => n.repo.name)).toEqual(["af"]);
+    expect(planStopTree(f[0], sessions).map((g) => g.repo.name).sort()).toEqual(["af", "af@run"]);
+    expect(planTree(f[0], sessions).map((p) => p.repo.name).sort()).toEqual(["af", "af@run"]);
   });
 });

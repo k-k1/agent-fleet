@@ -127,6 +127,45 @@ describe("AutoRunSection", () => {
     useTenantStore.setState({ tenant: "" });
   });
 
+  it("keeps refreshing one category while another read stays pending", async () => {
+    vi.useFakeTimers();
+    try {
+      memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "a", category: "x" }, { categoryId: "c2", repo: "b", category: "y" }] });
+      memoQueueDeliveries.mockImplementation((id: string) => (id === "c2" ? new Promise(() => {}) : Promise.resolve([{ id: "d1", session: "run-a", state: "open" }])));
+      await mount();
+      expect(memoQueueDeliveries.mock.calls.filter((c) => c[0] === "c1")).toHaveLength(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(memoQueueDeliveries.mock.calls.filter((c) => c[0] === "c1")).toHaveLength(2);
+      expect(memoQueueDeliveries.mock.calls.filter((c) => c[0] === "c2")).toHaveLength(1); // still in flight
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("expires an open run that fell off the delivery list, and drops a vanished category", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount();
+      expect(host.querySelector('[data-autorun-run="run-a"]')!.getAttribute("data-autorun-state")).toBe("running");
+      memoQueueDeliveries.mockImplementation(async () => []);
+      useSessionsStore.setState({ sessions: useSessionsStore.getState().sessions.map((x) => (x.origin === "user" ? x : { ...x, alive: false })) });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(host.querySelector('[data-autorun-run="run-a"]')).toBeNull(); // no longer pinned open: ended, folded
+      memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [{ categoryId: "c9", repo: "z", category: "z" }] });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(host.querySelectorAll("[data-autorun-category]")).toHaveLength(1);
+      expect(host.querySelector(".autorun-cat-head")!.textContent).not.toContain("issue-rounds");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("says so when there is no run", async () => {
     useSessionsStore.setState({ sessions: [sess("hand", { origin: "user" })] });
     await mount();

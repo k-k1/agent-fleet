@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Session } from "../../types/session.ts";
 import { buildRuns, fmtElapsed, itemLabel, runRootName, type RunDelivery } from "./runs.ts";
 
-const dlv = (categoryId: string, state: string, extra: Partial<RunDelivery> = {}): RunDelivery => ({ categoryId, state, sentAt: "", createdAt: "", closedAt: "", ...extra });
+const dlv = (categoryId: string, state: string, extra: Partial<RunDelivery> = {}): RunDelivery => ({ categoryId, state, sentAt: "", createdAt: "", closedAt: "", heldBy: "", ...extra });
 const sess = (name: string, extra: Partial<Session>): Session => ({ name, kind: "claude", alive: true, ...extra });
 
 describe("buildRuns", () => {
@@ -65,6 +65,15 @@ describe("a run's state follows its queue's delivery", () => {
   it("keeps the start and end of a finished run", () => {
     const r = t([sess("r", { origin: "queue", alive: false })], dlv("c1", "closed", { sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:30:00Z" }));
     expect(r.endedAt - r.startedAt).toBe(30 * 60_000);
+  });
+  it("is waiting when a child was stopped on a question, or the queue holds the run for the member", () => {
+    const stopped = [sess("r", { origin: "queue", alive: false }), sess("c", { origin: "session", originSession: "r", alive: false, carried: "question" })];
+    expect(t(stopped, dlv("c1", "open")).state).toBe("waiting");
+    expect(t(stopped).state).toBe("waiting"); // and with no delivery at all
+    expect(t([sess("r", { origin: "queue", alive: false })], dlv("c1", "open", { heldBy: "person" })).state).toBe("waiting");
+  });
+  it("uses the sessions again once a delivery's state expired", () => {
+    expect(t([sess("r", { origin: "queue", alive: false })], dlv("c1", "")).state).toBe("ended");
   });
   it("names only the started work item, not one linked later", () => {
     const r = t([sess("r", { origin: "queue", links: [{ provider: "github", key: "o/r#9", role: "watching", title: "Other" }] })]);

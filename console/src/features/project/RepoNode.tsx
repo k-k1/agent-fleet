@@ -107,7 +107,8 @@ export function RepoNode({ node: n, depth, ctx, actions, grouped = false }: Repo
   // The right-click "archive all stopped sessions" applies only to the sessions in this node's
   // own folder: mine comes from sessionsInFolder(r.name), so a worktree counts as a separate
   // folder name and is naturally excluded from the base repo's bulk action.
-  const stoppedMine = mine.filter((s) => !s.alive && !s.locked);
+  // Read from the whole folder, an auto-run's stopped sessions included: this is an action, not a count.
+  const stoppedMine = sessionsInFolder(sessions, r.name).filter((s) => !s.alive && !s.locked);
   if (!open) {
     for (const f of below) {
       const cs = sessionsInFolder(shown, f);

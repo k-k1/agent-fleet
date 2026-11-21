@@ -154,7 +154,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   // shell can open.
   const popout = usePopoutMode() === "popout";
   const mobile = useIsMobile();
-  const autoRunCopy = isAutoRunOnlyFolder(useSessionsStore((st) => st.sessions), folder);
+  const autoRunCopy = isAutoRunOnlyFolder(useSessionsStore((st) => st.sessions), repos.find((r) => r.name === folder));
   const showRepoMenu = running && !repoLess && !popout && !mobile && !autoRunCopy;
   const openRepoMenu = () => {
     onClose();

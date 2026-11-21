@@ -13,6 +13,8 @@ export interface RunDelivery {
   sentAt: string;
   createdAt: string;
   closedAt: string;
+  /** Why an open run keeps its place at the queue's last report ("person": it waits for the member). */
+  heldBy: string;
 }
 
 export interface RunRow {
@@ -58,6 +60,8 @@ const startedLink = (links: SessionWorkLink[] | undefined): SessionWorkLink | nu
 const byCreated = (a: Session, b: Session) => (a.createdAt || "").localeCompare(b.createdAt || "");
 const ms = (iso: string | undefined): number => (iso ? Date.parse(iso) : NaN);
 const OPEN = new Set(["claimed", "sending", "open"]);
+/** A session waiting for the member: its live state, or the question it was stopped on. */
+export const waitsForMember = (s: Session): boolean => isWaitingSession(s) || (!s.alive && !!s.carried);
 
 /** Every run in the session list, newest first. `deliveries` maps a run's session name to what
  *  its queue reported. A run's state is the queue's word when there is one (a delivery stays open
@@ -82,11 +86,13 @@ export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelive
       const children = (kids.get(root.name) ?? []).sort(byCreated);
       const tree = [root, ...children];
       const d = deliveries.get(root.name);
+      const waiting = tree.some(waitsForMember) || (!!d && OPEN.has(d.state) && d.heldBy === "person");
       let state: RunState;
       if (d && d.state === "closed") state = "ended";
-      else if (d && !OPEN.has(d.state)) state = tree.some((x) => x.alive) ? (tree.some(isWaitingSession) ? "waiting" : "running") : "ended";
-      else if (!d && !tree.some((x) => x.alive)) state = "ended";
-      else state = tree.some(isWaitingSession) ? "waiting" : "running";
+      else if (d && OPEN.has(d.state)) state = waiting ? "waiting" : "running";
+      // No usable delivery (none read, or its state expired): the sessions' own word.
+      else if (!tree.some((x) => x.alive) && !waiting) state = "ended";
+      else state = waiting ? "waiting" : "running";
       const startedAt = ms(d?.sentAt) || ms(d?.createdAt) || ms(root.createdAt);
       return {
         root,

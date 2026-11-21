@@ -322,6 +322,9 @@ export interface RepoTreeNode {
    *  back to the group's root so hand-started work is not buried in a group). Display
    *  ignores them; stop / delete scope them back in, as it did before grouping. */
   detached?: RepoTreeNode[];
+  /** Set on a copy the tree keeps out of sight because only auto-run works in it. A filter never
+   *  narrows what stop / delete reach through such a copy: its sessions are not what is matched. */
+  autorun?: true;
   /** CSS colour of this copy's lineage spine; "" = it belongs to no family. */
   spine: string;
 }
@@ -374,9 +377,11 @@ export function withoutAutoRun(sessions: Session[]): Session[] {
   return sessions.filter((s) => sessionAutoKind(s, byName) !== "autorun");
 }
 
-/** A working copy that only auto-run work lives in: the tree keeps it out of sight. */
-export function isAutoRunOnlyFolder(sessions: Session[], folder: string): boolean {
-  const here = sessionsInFolder(sessions, folder);
+/** A worktree that only auto-run work lives in: the tree keeps it out of sight. A base clone an
+ *  auto-run reused stays a row of the tree, so it is never one of these. */
+export function isAutoRunOnlyFolder(sessions: Session[], repo: { name: string; worktree?: boolean } | undefined): boolean {
+  if (!repo?.worktree) return false;
+  const here = sessionsInFolder(sessions, repo.name);
   if (here.length === 0) return false;
   const byName = new Map(sessions.map((s) => [s.name, s]));
   return here.every((s) => sessionAutoKind(s, byName) === "autorun");
@@ -482,6 +487,7 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
         continue;
       }
       if (!GROUPED_KINDS.includes(kind)) {
+        self.autorun = true;
         (parent.detached ??= []).push(self);
         continue;
       }
@@ -553,12 +559,14 @@ function pruneForest(nodes: RepoTreeNode[], keep: (r: Repo) => boolean): { kept:
       if (gr.kept.length > 0) groups.push({ kind: g.kind, nodes: gr.kept });
       rest.push(...gr.scope);
     }
-    const det = pruneForest(n.detached ?? [], keep);
-    const detached = [...det.kept, ...det.scope, ...rest];
+    // A hidden auto-run copy stays in scope whole whatever the filter matched.
+    const hidden = (n.detached ?? []).filter((d) => d.autorun);
+    const det = pruneForest((n.detached ?? []).filter((d) => !d.autorun), keep);
+    const detached = [...det.kept, ...det.scope, ...rest, ...hidden];
     if (ch.kept.length > 0 || groups.length > 0 || keep(n.repo)) {
-      kept.push({ repo: n.repo, children: ch.kept, groups, detached: detached.length > 0 ? detached : undefined, spine: n.spine });
+      kept.push({ repo: n.repo, children: ch.kept, groups, detached: detached.length > 0 ? detached : undefined, spine: n.spine, ...(n.autorun ? { autorun: true as const } : {}) });
     } else if (detached.length > 0) {
-      scope.push({ repo: n.repo, children: [], groups: [], detached, spine: n.spine });
+      scope.push({ repo: n.repo, children: [], groups: [], detached, spine: n.spine, ...(n.autorun ? { autorun: true as const } : {}) });
     }
   }
   return { kept, scope };

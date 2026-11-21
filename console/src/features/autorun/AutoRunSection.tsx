@@ -13,59 +13,69 @@ import { openSessionChat } from "../sessions/open.ts";
 import { memoQueueDeliveries, memoQueueList } from "../memo/api.ts";
 import { readDeliveries, readMemoQueues } from "../memo/queues.ts";
 import type { MemoQueue } from "../../types/memo.ts";
-import { buildRuns, fmtElapsed, type RunDelivery, type RunRow } from "./runs.ts";
+import { buildRuns, fmtElapsed, waitsForMember, type RunDelivery, type RunRow } from "./runs.ts";
 import "./autorun.css";
 
 const POLL_MS = 30000;
 
 /** Queues and their deliveries, read while the view is on screen and re-read when it comes back
- *  or the tenant changes. Each category lands as it arrives (a slow one holds nobody up), and
- *  an answer to a read the tenant or the view has outgrown is dropped. The newest fifty
- *  deliveries are all the API returns, so what an earlier read learned about a run is kept. */
+ *  or the tenant or the signed-in account changes. Each category is read on its own, one read at
+ *  a time, so a slow one holds nobody up, and an answer to a read the scope has outgrown is
+ *  dropped. The API returns only the newest fifty deliveries, so a category read keeps what an
+ *  earlier one learned about a run's category, but a run that fell off the list loses its
+ *  state (the sessions' own word is used for it). */
 function useQueueRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDelivery> } {
   const shown = useViewShown();
   const tenant = useTenantStore((s) => s.tenant);
+  const identity = useTenantStore((s) => s.identityRev);
+  const scopeKey = tenant + "\u0000" + identity;
   const [queues, setQueues] = useState<MemoQueue[]>([]);
   const [deliveries, setDeliveries] = useState<Map<string, RunDelivery>>(() => new Map());
-  const scope = useRef(tenant);
+  const scope = useRef(scopeKey);
   useEffect(() => {
-    if (scope.current === tenant) return;
-    scope.current = tenant;
+    if (scope.current === scopeKey) return;
+    scope.current = scopeKey;
     setQueues([]);
     setDeliveries(new Map());
-  }, [tenant]);
+  }, [scopeKey]);
   useEffect(() => {
     if (!shown) return;
     let live = true;
-    let busy = false;
+    let listing = false;
+    const reading = new Set<string>();
+    const readCategory = async (q: MemoQueue) => {
+      if (reading.has(q.categoryId)) return;
+      reading.add(q.categoryId);
+      try {
+        const list = readDeliveries(await memoQueueDeliveries(q.categoryId));
+        if (!live || !list) return;
+        setDeliveries((prev) => {
+          const next = new Map(prev);
+          const seen = new Set(list.map((d) => d.session));
+          for (const [name, d] of prev) if (d.categoryId === q.categoryId && !seen.has(name)) next.set(name, { ...d, state: "" });
+          for (const d of list) {
+            if (d.session) next.set(d.session, { categoryId: q.categoryId, state: d.state, sentAt: d.sentAt, createdAt: d.createdAt, closedAt: d.closedAt, heldBy: d.heldBy });
+          }
+          return next;
+        });
+      } catch {
+        /* keep what this category had */
+      } finally {
+        reading.delete(q.categoryId);
+      }
+    };
     const load = async () => {
-      if (busy) return;
-      busy = true;
+      if (listing) return;
+      listing = true;
       try {
         const wire = readMemoQueues(await memoQueueList());
         if (!live || !wire) return;
         setQueues(wire.queues);
-        await Promise.all(
-          wire.queues.map(async (q) => {
-            try {
-              const list = readDeliveries(await memoQueueDeliveries(q.categoryId));
-              if (!live || !list) return;
-              setDeliveries((prev) => {
-                const next = new Map(prev);
-                for (const d of list) {
-                  if (d.session) next.set(d.session, { categoryId: q.categoryId, state: d.state, sentAt: d.sentAt, createdAt: d.createdAt, closedAt: d.closedAt });
-                }
-                return next;
-              });
-            } catch {
-              /* keep what this category had */
-            }
-          }),
-        );
+        for (const q of wire.queues) void readCategory(q);
       } catch {
         /* keep the last read */
       } finally {
-        busy = false;
+        listing = false;
       }
     };
     void load();
@@ -76,7 +86,7 @@ function useQueueRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDeliv
       live = false;
       clearInterval(id);
     };
-  }, [shown, tenant]);
+  }, [shown, scopeKey]);
   return { queues, deliveries };
 }
 
@@ -113,7 +123,7 @@ function RunItem({ run, now }: { run: RunRow; now: number }) {
           {children.map((c) => (
             <li key={c.name}>
               <button type="button" className="autorun-kid" data-rail-row="" onClick={() => openSessionChat(c.name)} title={tr("autorun.open", { name: c.name })}>
-                <span className={"autorun-dot is-" + (c.alive ? "running" : "ended")} aria-hidden="true" />
+                <span className={"autorun-dot is-" + (waitsForMember(c) ? "waiting" : c.alive ? "running" : "ended")} aria-hidden="true" />
                 <span className="autorun-title">{displayName(c)}</span>
               </button>
             </li>
@@ -170,12 +180,14 @@ export const AutoRunSection = memo(function AutoRunSection() {
     const q = queues.find((x) => x.categoryId === id);
     return q ? [q.repo, q.category].filter(Boolean).join(" / ") || tr("memo.autorun") : tr("autorun.other");
   };
-  const ids = [...new Set(runs.map((r) => r.categoryId))];
+  // A category the queue list no longer names (its settings were deleted) is "Other runs" too.
+  const keyOf = (id: string) => (queues.some((q) => q.categoryId === id) ? id : "");
+  const ids = [...new Set(runs.map((r) => keyOf(r.categoryId)))];
   if (runs.length === 0) return <div className="pane-empty">{tr("autorun.none")}</div>;
   return (
     <div className="autorun-view">
       {ids.map((id) => (
-        <Category key={id} label={labelOf(id)} runs={runs.filter((r) => r.categoryId === id)} now={now} />
+        <Category key={id} label={labelOf(id)} runs={runs.filter((r) => keyOf(r.categoryId) === id)} now={now} />
       ))}
     </div>
   );
