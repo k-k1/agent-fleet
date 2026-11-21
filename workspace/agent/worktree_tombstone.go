@@ -108,6 +108,7 @@ func recreateFromTombstone(dir string, t gitx.WorktreeTombstone) error {
 	if err := gitx.RecreateWorktreeAt(t.Parent, dir, c, ""); err != nil {
 		return &restoreConflict{errCodeRecreateFailed, err.Error()}
 	}
+	gitx.RestoreWorktreeCreator(dir, t.Creator)
 	return nil
 }
 

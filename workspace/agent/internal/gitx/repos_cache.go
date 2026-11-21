@@ -27,7 +27,7 @@ import (
 //	createdAt                      mtime of the .git gitfile               -> identFP (it stats it)
 //	integration                    worktree HEAD vs the parent's upstream  -> refsFP of BOTH
 //	                               copies and the parent's branch label; maxIntegrationAge
-//	workingCopyId, createdBy,      read live on every call (a file read / the lock ledger)
+//	workingCopyId, createdBy(State), read live on every call (a file read / the lock ledger)
 //	locked, path
 //
 // A fingerprint is taken BEFORE git runs and stored with the result, so a change that lands
@@ -558,7 +558,7 @@ func fillGitFacts(c *repoCache, repos []Repo, idx []int, global gitGlobals) {
 		repos[i].Provider, repos[i].Remote, repos[i].RemotePath = id.provider, id.host, id.remotePath
 		if id.worktree {
 			repos[i].Worktree, repos[i].Parent, repos[i].CreatedAt = true, id.parent, id.createdAt
-			repos[i].CreatedBy = ReadWorktreeCreator(dir)
+			repos[i].CreatedBy, repos[i].CreatedByState = ReadWorktreeCreatorState(dir)
 			parents[i] = id.parentDir
 		}
 	})

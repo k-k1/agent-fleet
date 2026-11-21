@@ -28,6 +28,10 @@ export interface Repo {
   /** The session whose launch created this worktree. Absent means unknown (a copy made before
    * the Agent recorded it), never "nobody": a present value is proof, an absent one is not. */
   createdBy?: string;
+  /** Qualifies an empty `createdBy`: "none" = a launch created the copy and no session owns it (a
+   * failed launch left it behind); "unreadable" = a record exists but cannot be read. Neither is
+   * proof of any session, and neither is the "never recorded" case that falls back to a guess. */
+  createdByState?: "none" | "unreadable";
   /** Deletion lock (docs/log/45): while true, deletion is refused with 403 even when
    * forced, and an emptied worktree is excluded from automatic pruning. */
   locked?: boolean;

@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -52,5 +53,88 @@ func TestWorktreeCreatorRecordedOnceAndListed(t *testing.T) {
 	fillGitFacts(listCache, repos, []int{0, 1}, gitGlobals{})
 	if repos[0].CreatedBy != "sess-a" || repos[1].CreatedBy != "" {
 		t.Fatalf("createdBy = %q, %q", repos[0].CreatedBy, repos[1].CreatedBy)
+	}
+}
+
+func TestWorktreeCreatorPlaceholderUnreadableAndTombstone(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "repos", "app")
+	gitInit(t, parent)
+	wt, _, err := EnsureWorktreeNew(parent, "main", "feat-a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Never recorded: empty state.
+	if s, st := ReadWorktreeCreatorState(wt); s != "" || st != "" {
+		t.Fatalf("never recorded = %q,%q", s, st)
+	}
+	// Created with no session yet (a launch that failed afterwards).
+	if err := RecordWorktreeCreated(wt); err != nil {
+		t.Fatal(err)
+	}
+	if s, st := ReadWorktreeCreatorState(wt); s != "" || st != CreatorStateNone {
+		t.Fatalf("placeholder = %q,%q", s, st)
+	}
+	if raw := worktreeCreatorRaw(wt); raw != "-" {
+		t.Fatalf("raw = %q", raw)
+	}
+	// The launch's own session replaces the placeholder; a later one cannot replace that.
+	if err := WriteWorktreeCreator(wt, "sess-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteWorktreeCreator(wt, "sess-b"); err != nil {
+		t.Fatal(err)
+	}
+	if s, st := ReadWorktreeCreatorState(wt); s != "sess-a" || st != "" {
+		t.Fatalf("after upgrade = %q,%q", s, st)
+	}
+	// A record that cannot be read is told apart from none: an empty file stands for a torn write,
+	// a directory in its place for an I/O error.
+	p := worktreeCreatorPath(wt)
+	if err := os.WriteFile(p, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, st := ReadWorktreeCreatorState(wt); st != CreatorStateUnreadable {
+		t.Fatalf("empty marker state = %q", st)
+	}
+	_ = os.Remove(p)
+	if err := os.Mkdir(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, st := ReadWorktreeCreatorState(wt); st != CreatorStateUnreadable {
+		t.Fatalf("unreadable marker state = %q", st)
+	}
+	_ = os.Remove(p)
+	// No temp files are left behind by the writes.
+	if m, _ := filepath.Glob(p + ".tmp-*"); len(m) != 0 {
+		t.Fatalf("temp files left: %v", m)
+	}
+	// The tombstone keeps the record and a restore puts it back.
+	if err := WriteWorktreeCreator(wt, "sess-a"); err != nil {
+		t.Fatal(err)
+	}
+	tomb, ok, err := PrepareTombstone(wt, parent)
+	if err != nil || !ok || tomb.Creator != "sess-a" {
+		t.Fatalf("tombstone ok=%v err=%v creator=%q", ok, err, tomb.Creator)
+	}
+	dir2 := filepath.Join(home, "repos", "restored")
+	if _, err := Run(parent, "worktree", "add", "-b", "feat-r", dir2); err != nil {
+		t.Fatal(err)
+	}
+	RestoreWorktreeCreator(dir2, tomb.Creator)
+	if got := ReadWorktreeCreator(dir2); got != "sess-a" {
+		t.Fatalf("restored creator = %q", got)
+	}
+	dir3 := filepath.Join(home, "repos", "restored2")
+	if _, err := Run(parent, "worktree", "add", "-b", "feat-r2", dir3); err != nil {
+		t.Fatal(err)
+	}
+	RestoreWorktreeCreator(dir3, "-")
+	if _, st := ReadWorktreeCreatorState(dir3); st != CreatorStateNone {
+		t.Fatalf("restored placeholder state = %q", st)
 	}
 }

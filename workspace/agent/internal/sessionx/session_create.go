@@ -426,6 +426,11 @@ func (c *createRun) ensureWorktree(parent, base, newBranch, folderSeg string) (s
 	c.createdWorktree = ""
 	if err == nil && created {
 		c.createdWorktree = dir
+		// Recorded before any later stage can refuse the launch, so a copy left behind by a
+		// failed one is known to have no owning session instead of falling back to a guess.
+		if rerr := gitx.RecordWorktreeCreated(dir); rerr != nil {
+			log.Printf("recording the creation of %s: %v", dir, rerr)
+		}
 	}
 	return dir, err
 }

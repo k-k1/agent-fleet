@@ -104,6 +104,11 @@ type Repo struct {
 	// archived. Empty for a worktree made before the field existed, one made outside a
 	// session launch, and plain clones; a client must read empty as "unknown", never as "nobody".
 	CreatedBy string `json:"createdBy,omitempty"`
+	// CreatedByState qualifies an empty CreatedBy: "none" (a launch created the copy and no session
+	// owns it, e.g. the launch failed after `git worktree add`) or "unreadable" (a record exists
+	// but cannot be read). Absent: never recorded. Clients treat "none" and "unreadable" as "not
+	// provably anyone's", never as the never-recorded guess.
+	CreatedByState string `json:"createdByState,omitempty"`
 	// Integration describes the linked worktree's commit relationship to the
 	// upstream of the parent working copy's branch (parent HEAD when it has none).
 	// It is deliberately separate from Ahead/Behind above, which describe this
@@ -177,6 +182,22 @@ func workingCopyMarkerPath(dir string) (string, error) {
 // goes away with the worktree and is never shared with the parent.
 const worktreeCreatorFile = "agent-fleet-created-by"
 
+// worktreeCreatorNone is the marker body for "this launch created the copy, no session owns it
+// (yet)". It is written the moment the worktree exists, ahead of any later validation, so a launch
+// that fails afterwards still leaves a record; WriteWorktreeCreator replaces it with the session.
+// A session name never contains "-" alone, so the two cannot be confused.
+const worktreeCreatorNone = "-"
+
+// Values of Repo.CreatedByState. Absent means no record was ever made (a copy from before the
+// record, or one made outside a launch), which clients answer with their older guess.
+const (
+	// CreatorStateNone: a launch created the copy and no session took it over.
+	CreatorStateNone = "none"
+	// CreatorStateUnreadable: a record exists but cannot be read back. A client must not guess
+	// an owner from it, and must not read it as "never recorded".
+	CreatorStateUnreadable = "unreadable"
+)
+
 func worktreeCreatorPath(dir string) string {
 	id, err := workingCopyMarkerPath(dir)
 	if err != nil {
@@ -185,41 +206,133 @@ func worktreeCreatorPath(dir string) string {
 	return filepath.Join(filepath.Dir(id), worktreeCreatorFile)
 }
 
-// WriteWorktreeCreator records the session whose launch created the linked worktree at dir.
-// Write-once: the first creator stays, so a later call can never re-attribute a copy.
-func WriteWorktreeCreator(dir, session string) error {
+// publishNew writes body to a temp file beside p and hard-links it to p, which fails when p
+// exists: the marker appears complete or not at all, never empty or half written, and a racing
+// writer cannot be overwritten. exists reports that p was already there.
+func publishNew(p, body string) (exists bool, err error) {
+	tmp, err := os.CreateTemp(filepath.Dir(p), worktreeCreatorFile+".tmp-*")
+	if err != nil {
+		return false, err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err = tmp.WriteString(body + "\n"); err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return false, err
+	}
+	if err = os.Link(tmp.Name(), p); err != nil {
+		if os.IsExist(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	return false, nil
+}
+
+// RecordWorktreeCreated marks the linked worktree at dir as created by a launch with no owning
+// session yet. Write-once, like WriteWorktreeCreator.
+func RecordWorktreeCreated(dir string) error {
 	p := worktreeCreatorPath(dir)
-	if p == "" || strings.TrimSpace(session) == "" {
+	if p == "" {
 		return fmt.Errorf("no worktree metadata for %s", dir)
 	}
-	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		if os.IsExist(err) {
-			return nil
-		}
+	_, err := publishNew(p, worktreeCreatorNone)
+	return err
+}
+
+// WriteWorktreeCreator records the session whose launch created the linked worktree at dir.
+// The first creator stays, so a later call can never re-attribute a copy; the one exception is
+// the "no session yet" record of RecordWorktreeCreated, which the launch's own session replaces.
+func WriteWorktreeCreator(dir, session string) error {
+	p := worktreeCreatorPath(dir)
+	session = strings.TrimSpace(session)
+	if p == "" || session == "" || session == worktreeCreatorNone {
+		return fmt.Errorf("no worktree metadata for %s", dir)
+	}
+	exists, err := publishNew(p, session)
+	if err != nil || !exists {
 		return err
 	}
-	_, werr := f.WriteString(strings.TrimSpace(session) + "\n")
-	if cerr := f.Close(); werr == nil {
-		werr = cerr
+	if cur, ok := readCreatorFile(p); !ok || cur != worktreeCreatorNone {
+		return nil
 	}
-	if werr != nil {
-		_ = os.Remove(p)
+	// rename replaces the placeholder in one step; only the launch that made the copy calls this.
+	tmp, err := os.CreateTemp(filepath.Dir(p), worktreeCreatorFile+".tmp-*")
+	if err != nil {
+		return err
 	}
-	return werr
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(session + "\n")
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), p)
+}
+
+// readCreatorFile returns the trimmed marker body; ok is false when it cannot be read or is empty.
+func readCreatorFile(p string) (string, bool) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", false
+	}
+	v := strings.TrimSpace(string(b))
+	return v, v != ""
+}
+
+// ReadWorktreeCreatorState returns the recorded creator session and the record's state: an empty
+// state with a name or nothing at all, CreatorStateNone for a copy no session took over, and
+// CreatorStateUnreadable for a record that exists but cannot be read.
+func ReadWorktreeCreatorState(dir string) (session, state string) {
+	p := worktreeCreatorPath(dir)
+	if p == "" {
+		return "", ""
+	}
+	if _, err := os.Lstat(p); os.IsNotExist(err) {
+		return "", ""
+	}
+	v, ok := readCreatorFile(p)
+	switch {
+	case !ok:
+		return "", CreatorStateUnreadable
+	case v == worktreeCreatorNone:
+		return "", CreatorStateNone
+	}
+	return v, ""
 }
 
 // ReadWorktreeCreator returns the recorded creator session, "" when none.
 func ReadWorktreeCreator(dir string) string {
-	p := worktreeCreatorPath(dir)
-	if p == "" {
-		return ""
+	session, _ := ReadWorktreeCreatorState(dir)
+	return session
+}
+
+// RestoreWorktreeCreator puts back a creator record taken from a tombstone (see
+// WorktreeTombstone.Creator) on a worktree recreated at dir. Best effort and write-once.
+func RestoreWorktreeCreator(dir, raw string) {
+	switch raw {
+	case "":
+	case worktreeCreatorNone:
+		_ = RecordWorktreeCreated(dir)
+	default:
+		_ = WriteWorktreeCreator(dir, raw)
 	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return ""
+}
+
+// worktreeCreatorRaw is the marker body as stored ("" when absent or unreadable), what a
+// tombstone keeps so a restore can put the same record back.
+func worktreeCreatorRaw(dir string) string {
+	session, state := ReadWorktreeCreatorState(dir)
+	if state == CreatorStateNone {
+		return worktreeCreatorNone
 	}
-	return strings.TrimSpace(string(b))
+	return session
 }
 
 func ReadWorkingCopyID(path string) string {

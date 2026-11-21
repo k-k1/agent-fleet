@@ -73,6 +73,14 @@ describe("a worktree whose creator the Agent recorded", () => {
     expect(runWorktreeNode(run, rec("szzzzzz"), [tie[1]])!.repo.name).toBe("base@wip-a");
   });
 
+  it("is not offered when the record says no session owns the copy, or cannot be read", () => {
+    const run = buildRuns(sessions, new Map())[0];
+    for (const createdByState of ["none", "unreadable"] as const) {
+      const repos: Repo[] = [{ name: "base" }, { name: "base@wip-a", worktree: true, parent: "base", createdByState }];
+      expect(runWorktreeNode(run, repos, sessions)).toBeNull();
+    }
+  });
+
   it("is not cleared with the finished runs either", () => {
     const merged = sess("r", { origin: "queue", repo: "base@wip-a", alive: false, pr: { state: "merged" } as Session["pr"] });
     const runs = runsOf([merged], ["r"]);
