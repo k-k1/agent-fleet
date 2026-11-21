@@ -56,6 +56,12 @@ func handoffReportBackNote() string {
 //   - an empty launch task gets nothing. A child with no work to do but an instruction to
 //     report its completion is a turn spent on nothing.
 //
+// The line is conditional ("Unless the instructions above already say how and to whom to
+// report back"): it comes last, so an unconditional version overrides a reply contract the
+// caller wrote (observed: reviewers told to send every finding in full sent a one-paragraph
+// summary). Detecting a contract by string match is not reliable either way - a prompt that
+// merely mentions the tool would lose its only report-back line - so the model decides.
+//
 // The line is a request to the child, not machinery: the parent's reliable route remains
 // polling get_session_status. intent=answer is a protocol terminal (ADR 0041 decision 13), so
 // the reply cannot start a round trip. The envelope naming the parent is added by the Agent
@@ -64,7 +70,8 @@ func spawnPromptFor(parent, prompt string, reportBack *bool) string {
 	if strings.TrimSpace(prompt) == "" || !mcpPeerMessagingEnabled || (reportBack != nil && !*reportBack) {
 		return prompt
 	}
-	return prompt + "\n\nWhen this task is finished, send exactly one message back with " +
+	return prompt + "\n\nUnless the instructions above already say how and to whom to report back: " +
+		"when this task is finished, send exactly one message back with " +
 		"send_to_peer_session(name=\"" + parent + "\", intent=\"answer\") saying what came of it " +
 		"(one short paragraph: what you did, what is left, what went wrong). Send it once, at the end - " +
 		"not on progress, and not to acknowledge this instruction."
