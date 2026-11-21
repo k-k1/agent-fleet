@@ -8,7 +8,14 @@
   padding-bottom: 8px;
 }
 
+/* Pinned under the Memories head (--sec-head-h, published by Section); its own height is
+   published as --memrail-filter-h for the group heads below. z-index descends: head 3, filter 2,
+   group heads 1. */
 .memrail-filter {
+  position: sticky;
+  top: var(--sec-head-h, 34px);
+  z-index: 2;
+  background: var(--leftpane-bg);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -114,10 +121,29 @@
 .memrail-status {
   flex: none;
 }
+/* One pill per type, the hue from an existing theme token (each is contrast-tuned per theme);
+   the text is the token itself on a light tint of it. An unknown type stays neutral. */
 .memrail-type {
   flex: none;
   font-size: 10.5px;
-  color: var(--muted);
+  line-height: 1.5;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--badge, var(--muted)) 55%, transparent);
+  background: color-mix(in srgb, var(--badge, var(--muted)) 14%, transparent);
+  color: var(--badge, var(--muted));
+}
+.memrail-type.t-user {
+  --badge: var(--accent);
+}
+.memrail-type.t-feedback {
+  --badge: var(--warn);
+}
+.memrail-type.t-project {
+  --badge: var(--ok);
+}
+.memrail-type.t-reference {
+  --badge: var(--peer);
 }
 .memrail-sub {
   font-size: 11.5px;
@@ -128,13 +154,43 @@
 }
 
 .memrail-group-head {
-  padding: 6px 10px 2px;
+  position: sticky;
+  top: calc(var(--sec-head-h, 34px) + var(--memrail-filter-h, 0px));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 10px 2px;
+  border: none;
+  background: var(--leftpane-bg);
+  font: inherit;
   font-size: 11px;
   font-weight: 600;
   color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+.memrail-group-head:hover {
+  color: var(--fg);
+}
+.memrail-group-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.memrail-group-chev {
+  flex: none;
+}
+.memrail-group-name {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.memrail-group-count {
+  flex: none;
+  font-weight: 400;
 }
 
 .memrail-note {

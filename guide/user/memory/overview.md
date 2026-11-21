@@ -26,8 +26,10 @@ How it differs from instruction files and the agent's own memory is in [Choose w
 
 ## Open the Memory view
 
-Press the **Memory** icon on the activity bar. The left pane lists the tidy-up's pending suggestions and your memories by
-scope. Click a memory and it opens in a pane of its own: one pane per memory, like a file, so you can keep it beside a
+Press the **Memory** icon on the activity bar. The left pane, headed **Agent memory**, lists the tidy-up's pending
+suggestions and your memories by scope. The search box, scope, type and chips sit under the **Memories** heading and stay
+in view while the list scrolls. Each scope group has a chevron and a count; click it to fold the group (kept on this
+device). A group that holds the open memory or a search hit stays open. Click a memory and it opens in a pane of its own: one pane per memory, like a file, so you can keep it beside a
 session. Click a suggestion and it opens on its own in the **Suggestions** tab of the **Memory** pane. **Change history**
 at the foot of the left pane opens its **Changes** tab.
 

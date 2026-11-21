@@ -31,6 +31,7 @@ import { openMemoryEntry } from "./openEntry.ts";
 import { pendingProposals, useMemoryStore } from "./store.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useShownValue, useViewShown } from "../../lib/viewShown.ts";
+import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
 
 const TYPES = ["user", "feedback", "project", "reference"] as const;
 type Filter = "all" | "pinned" | "forgotten";
@@ -39,6 +40,16 @@ const FILTERS = [
   ["pinned", "mem.md_f_pinned"],
   ["forgotten", "mem.md_f_forgotten"],
 ] as const;
+
+const FOLD_KEY = "af.memrail-folded";
+// Per-device fold state of the scope groups, keyed by scope key; only folded groups are stored.
+const readFolded = (): Record<string, boolean> => {
+  try {
+    return JSON.parse(localStorage.getItem(FOLD_KEY) || "{}") ?? {};
+  } catch {
+    return {};
+  }
+};
 
 const scopeQuery = (scope: string): string => {
   const [kind, projectId = ""] = scope.split(":");
@@ -70,6 +81,20 @@ export function MemoryRailSection() {
   const [type, setType] = useState("");
   const [query, setQuery] = useState("");
   const [allProposals, setAllProposals] = useState(false);
+  const [folded, setFolded] = useState<Record<string, boolean>>(readFolded);
+  const toggleFold = (key: string) =>
+    setFolded((f) => {
+      const n = { ...f, [key]: !f[key] };
+      if (!n[key]) delete n[key];
+      try {
+        localStorage.setItem(FOLD_KEY, JSON.stringify(n));
+      } catch {
+        /* private mode / quota: the fold just won't persist */
+      }
+      return n;
+    });
+  // Published on the memory-list body so the group heads can pin under the filter block.
+  const filterRef = usePublishedHeight<HTMLDivElement>("--memrail-filter-h");
 
   // A write or a tenant switch while the view is hidden reloads on the next show, not for nobody
   // (ADR 0140 decision 3). A retry already scheduled when the view was hidden still runs once.
@@ -153,14 +178,15 @@ export function MemoryRailSection() {
           ? "mem.md_pinned_empty"
           : "mem.rv_list_empty";
 
-  // The view's head section (solo: always open) holds the filter; Proposals and Memories are its
-  // siblings, as the Sessions view stacks its sections. Nested, their sticky heads would pin over
-  // the view's own head and hide its settings button.
+  // The view's head section (solo: always open) is the title and its buttons; Proposals and
+  // Memories are its siblings, as the Sessions view stacks its sections. Nested, their sticky heads
+  // would pin over the view's own head and hide its settings button. The filter lives under the
+  // Memories head, where it applies.
   return (
     <div className="memrail" ref={rootRef}>
       <SoloSection>
         <Section
-          title={tr("rail.view.memory")}
+          title={tr("mem.rail_head")}
           icon="archive"
           actions={
             <>
@@ -168,41 +194,7 @@ export function MemoryRailSection() {
               <IconButton icon="settings-gear" label={tr("mem.mv_open_settings")} onClick={() => openSettings("memory")} />
             </>
           }
-        >
-          <div className="memrail-filter">
-            <input
-              type="search"
-              aria-label={tr("mem.br_search")}
-              placeholder={tr("mem.br_search")}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <div className="memrail-selects">
-              <select aria-label={tr("mem.br_scope")} value={scopeShown} onChange={(e) => setScope(e.target.value)}>
-                {scopes.map(([k, label]) => (
-                  <option key={k} value={k}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              <select aria-label={tr("mem.br_f_type")} value={type} disabled={filter === "forgotten"} onChange={(e) => setType(e.target.value)}>
-                <option value="">{tr("mem.rv_type_all")}</option>
-                {TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="memrail-chips" role="group" aria-label={tr("mem.md_filter")}>
-              {FILTERS.map(([f, label]) => (
-                <button key={f} type="button" className={"memrail-chip" + (f === filter ? " active" : "")} aria-pressed={f === filter} onClick={() => setFilter(f)}>
-                  {tr(label)}
-                </button>
-              ))}
-            </div>
-          </div>
-        </Section>
+        />
       </SoloSection>
 
       <Section
@@ -272,6 +264,39 @@ export function MemoryRailSection() {
       </Section>
 
       <Section id="memory-list" title={tr("mem.view_memories")} count={filter === "forgotten" ? goneShown.length : shown.length}>
+        <div className="memrail-filter" ref={filterRef}>
+          <input
+            type="search"
+            aria-label={tr("mem.br_search")}
+            placeholder={tr("mem.br_search")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <div className="memrail-selects">
+            <select aria-label={tr("mem.br_scope")} value={scopeShown} onChange={(e) => setScope(e.target.value)}>
+              {scopes.map(([k, label]) => (
+                <option key={k} value={k}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <select aria-label={tr("mem.br_f_type")} value={type} disabled={filter === "forgotten"} onChange={(e) => setType(e.target.value)}>
+              <option value="">{tr("mem.rv_type_all")}</option>
+              {TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="memrail-chips" role="group" aria-label={tr("mem.md_filter")}>
+            {FILTERS.map(([f, label]) => (
+              <button key={f} type="button" className={"memrail-chip" + (f === filter ? " active" : "")} aria-pressed={f === filter} onClick={() => setFilter(f)}>
+                {tr(label)}
+              </button>
+            ))}
+          </div>
+        </div>
         {loadErr && <p className="memrail-note warn">{loadErr}</p>}
         {withheld > 0 && filter !== "forgotten" && <p className="memrail-note warn">{tr("mem.br_withheld", { n: withheld })}</p>}
         {search.failed && <p className="memrail-note warn">{tr("mem.br_search_failed")}</p>}
@@ -319,37 +344,54 @@ export function MemoryRailSection() {
         ) : shown.length === 0 ? (
           !loadErr && <p className="memrail-note">{tr(emptyKey)}</p>
         ) : (
-          groups.map(([k, label, list]) => (
-            <div key={k} className="memrail-group">
-              <div className="memrail-group-head" title={label}>
-                {label}
+          groups.map(([k, label, list]) => {
+            // A group that holds the open memory or a search hit is never hidden: a fold that
+            // swallowed the hit would read as "no match".
+            const forced = !!q || list.some((m) => keyOf(m) === activeKey);
+            const open = forced || !folded[k];
+            return (
+              <div key={k} className="memrail-group">
+                <button
+                  type="button"
+                  className="memrail-group-head"
+                  title={forced && folded[k] ? tr("mem.rail_group_forced") : label}
+                  aria-expanded={open}
+                  data-group={k}
+                  onClick={() => toggleFold(k)}
+                >
+                  <Icon name={open ? "chevron-down" : "chevron-right"} className="memrail-group-chev" />
+                  <span className="memrail-group-name">{label}</span>
+                  <span className="memrail-group-count">{list.length}</span>
+                </button>
+                {open && (
+                  <ul className="memrail-list">
+                    {list.map((m) => (
+                      <li key={keyOf(m)}>
+                        <button
+                          type="button"
+                          className={"memrail-row" + (keyOf(m) === activeKey ? " active" : "")}
+                          aria-current={keyOf(m) === activeKey ? "true" : undefined}
+                          data-row-key={keyOf(m)}
+                          onClick={() => openMemoryEntry(m)}
+                        >
+                          <span className="memrail-line">
+                            {m.pinned && <Icon name="pinned" className="memrail-pin" title={tr("mem.br_pinned")} />}
+                            <span className="memrail-name">{m.name}</span>
+                            {m.type && <span className={"memrail-type t-" + ((TYPES as readonly string[]).includes(m.type) ? m.type : "other")}>{m.type}</span>}
+                          </span>
+                          {m.description && (
+                            <span className="memrail-sub" title={m.description}>
+                              {m.description}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
-              <ul className="memrail-list">
-                {list.map((m) => (
-                  <li key={keyOf(m)}>
-                    <button
-                      type="button"
-                      className={"memrail-row" + (keyOf(m) === activeKey ? " active" : "")}
-                      aria-current={keyOf(m) === activeKey ? "true" : undefined}
-                      data-row-key={keyOf(m)}
-                      onClick={() => openMemoryEntry(m)}
-                    >
-                      <span className="memrail-line">
-                        {m.pinned && <Icon name="pinned" className="memrail-pin" title={tr("mem.br_pinned")} />}
-                        <span className="memrail-name">{m.name}</span>
-                        {m.type && <span className="memrail-type">{m.type}</span>}
-                      </span>
-                      {m.description && (
-                        <span className="memrail-sub" title={m.description}>
-                          {m.description}
-                        </span>
-                      )}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))
+            );
+          })
         )}
       </Section>
 
