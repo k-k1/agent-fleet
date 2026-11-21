@@ -394,27 +394,31 @@ func stampNow() spawnStamp {
 // uptime and read as a clock that was set; such a sample says nothing, so it is left unstamped.
 const stampWindow = 250 * time.Millisecond
 
-// sinceInstant is the time elapsed since an observation instant; a seam for tests whose instants
-// are not real time.
-var sinceInstant = time.Since
+// instantAge is the time elapsed since an observation instant, measured on the monotonic clock
+// and on the wall clock. A seam for tests whose instants are not real time.
+var instantAge = func(at time.Time) (mono, wall time.Duration) {
+	return time.Since(at), time.Now().Round(0).Sub(at.Round(0))
+}
 
 // stampedEvent is an event at the given instant with the uptime of that instant. The uptime is
-// read now and moved back by the time elapsed since the instant (monotonic when `at` came from
-// time.Now), so a past instant is never paired with an uncorrected current uptime: a caller that
-// was held up between taking `at` and getting here would otherwise read as a clock that was set.
-// When the stamp cannot be taken, was itself held up, or the correction runs past the start of the
-// boot, the event is left unstamped, which says nothing about the clock.
+// read now and moved back by the time elapsed since the instant, so a past instant is never paired
+// with an uncorrected current uptime: a caller held up between taking `at` and getting here would
+// otherwise read as a clock that was set. The uptime counts time spent suspended and the monotonic
+// clock does not, so when the two elapsed readings disagree by more than stampWindow (a suspend, or
+// a clock set in between) the correction is unknowable. Then, as when the stamp cannot be taken,
+// was itself held up, or the correction runs past the start of the boot, the event is left
+// unstamped, which says nothing about the clock.
 func stampedEvent(at time.Time) bindEvent {
 	w0 := time.Now()
 	boot, up, ok := clockStamp()
-	elapsed := sinceInstant(at)
-	if !ok || time.Since(w0) > stampWindow {
+	mono, wall := instantAge(at)
+	if !ok || time.Since(w0) > stampWindow || wall-mono > stampWindow || mono-wall > stampWindow {
 		return bindEvent{At: at.UnixMilli()}
 	}
-	if elapsed < 0 {
-		elapsed = 0 // an instant ahead of now is taken as now
+	if mono < 0 {
+		mono = 0 // an instant ahead of now is taken as now
 	}
-	up -= elapsed.Milliseconds()
+	up -= mono.Milliseconds()
 	if up <= 0 {
 		return bindEvent{At: at.UnixMilli()}
 	}

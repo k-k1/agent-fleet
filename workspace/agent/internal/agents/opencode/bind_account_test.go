@@ -474,12 +474,67 @@ func TestBindingStallBeforeTheCallIsNotAClockChange(t *testing.T) {
 	}
 	// real clocks from here on
 	clockStamp = func() (string, int64, bool) { return "boot", time.Now().UnixMilli(), true }
-	wallNow, sinceInstant = time.Now, time.Since
+	wallNow = time.Now
+	instantAge = func(at time.Time) (time.Duration, time.Duration) {
+		return time.Since(at), time.Now().Round(0).Sub(at.Round(0))
+	}
 	noteAccount(time.Now().Add(-3*time.Second), acctOut, 1) // the stall happened before the call
 	if n := len(events(t)); n != 2 {
 		t.Errorf("a repeated out from a stalled caller was kept: %d events", n)
 	}
 	if got := bind(t, routes.RouteOpencodeZen, false, callAt); got == "" {
 		t.Error("the call a key paid lost its binding")
+	}
+}
+
+// stampedEvent moves the uptime back by the elapsed time, and leaves the event unstamped when the
+// correction cannot be known.
+func TestStampedEventCorrection(t *testing.T) {
+	bindT(t)
+	at := time.UnixMilli(1_000_000)
+	clockStamp = func() (string, int64, bool) { return "boot", 50_000, true }
+	age := func(mono, wall time.Duration) {
+		instantAge = func(time.Time) (time.Duration, time.Duration) { return mono, wall }
+	}
+	cases := []struct {
+		name       string
+		mono, wall time.Duration
+		stamp      func() (string, int64, bool)
+		want       bindEvent
+	}{
+		{"late by 3s", 3 * time.Second, 3 * time.Second, nil, bindEvent{At: 1_000_000, Boot: "boot", Up: 47_000}},
+		{"future instant is now", -3 * time.Second, -3 * time.Second, nil, bindEvent{At: 1_000_000, Boot: "boot", Up: 50_000}},
+		{"suspended meanwhile", 100 * time.Millisecond, 3100 * time.Millisecond, nil, bindEvent{At: 1_000_000}},
+		{"correction reaches boot", 50 * time.Second, 50 * time.Second, nil, bindEvent{At: 1_000_000}},
+		{"correction passes boot", 60 * time.Second, 60 * time.Second, nil, bindEvent{At: 1_000_000}},
+		{"no stamp", time.Second, time.Second, func() (string, int64, bool) { return "", 0, false }, bindEvent{At: 1_000_000}},
+	}
+	for _, c := range cases {
+		age(c.mono, c.wall)
+		old := clockStamp
+		if c.stamp != nil {
+			clockStamp = c.stamp
+		}
+		if got := stampedEvent(at); got != c.want {
+			t.Errorf("%s: got %+v, want %+v", c.name, got, c.want)
+		}
+		clockStamp = old
+	}
+}
+
+// A late first out reading keeps its stamp (corrected), so the key call stays provable.
+func TestBindingLateFirstOutReadingIsStamped(t *testing.T) {
+	bindT(t)
+	start(1000, 1, "key-A")
+	instantAge = func(time.Time) (time.Duration, time.Duration) { return 3 * time.Second, 3 * time.Second }
+	stampUp = 4100 // the stamp is read 3 s after the instant 1100
+	noteAccount(atMs(1100), acctOut, 1)
+	evs := events(t)
+	last := evs[len(evs)-1]
+	if last.Up != 1100 || last.Boot != "boot" || last.Floor == math.MaxInt64 {
+		t.Errorf("late first out reading = %+v, want it stamped at uptime 1100", last)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 5000); got == "" {
+		t.Error("the key call lost its binding")
 	}
 }
