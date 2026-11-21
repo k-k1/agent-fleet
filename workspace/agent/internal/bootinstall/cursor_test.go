@@ -566,18 +566,44 @@ func TestCursorLeftoverStageIsNotReused(t *testing.T) {
 }
 
 func TestCursorUnpackTempNameNeverReplacesArchiveMember(t *testing.T) {
+	// Members named like the unpack's temporary files must all survive.
 	f := newCursor(t, append(goodCursorMembers(),
-		tarMember{name: "p/file.af-w0", body: "A", mode: 0o644},
-		tarMember{name: "p/file", body: "B", mode: 0o644},
+		tarMember{name: "p/.af-w0", body: "A", mode: 0o644},
+		tarMember{name: "p/.af-w1", body: "B", mode: 0o644},
+		tarMember{name: "p/file.af-w", body: "D", mode: 0o644},
+		tarMember{name: "p/file.af-w0", body: "E", mode: 0o644},
+		tarMember{name: "p/file", body: "C", mode: 0o644},
 	), "")
 	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
 		t.Fatalf("rc=%d out=%s", rc, f.out)
 	}
 	d := f.tree("2026.1.1-abc")
-	a, _ := os.ReadFile(filepath.Join(d, "file.af-w0"))
-	b, _ := os.ReadFile(filepath.Join(d, "file"))
-	if string(a) != "A" || string(b) != "B" {
-		t.Errorf("file.af-w0=%q file=%q", a, b)
+	for n, want := range map[string]string{".af-w0": "A", ".af-w1": "B", "file": "C", "file.af-w": "D", "file.af-w0": "E"} {
+		if b, _ := os.ReadFile(filepath.Join(d, n)); string(b) != want {
+			t.Errorf("%s=%q, want %q", n, b, want)
+		}
+	}
+}
+
+func TestCursorLinkCheckFollowsRealResolution(t *testing.T) {
+	// A link to the tree root is fine; so are good links on the way. Only the real escape
+	// (d/y: through d/up -> .. and one more ..) is refused.
+	ok := newCursor(t, append(goodCursorMembers(),
+		tarMember{name: "p/d/", typ: tar.TypeDir, mode: 0o755},
+		tarMember{name: "p/d/root", typ: tar.TypeSymlink, link: ".."},
+		tarMember{name: "p/d/viaroot", typ: tar.TypeSymlink, link: "root/index.js"},
+	), "")
+	if rc := Cursor(t.Context(), ok.env); rc != ExitOK {
+		t.Fatalf("legitimate link to the root refused: rc=%d out=%s", rc, ok.out)
+	}
+	bad := newCursor(t, append(goodCursorMembers(),
+		tarMember{name: "p/d/", typ: tar.TypeDir, mode: 0o755},
+		tarMember{name: "p/d/root", typ: tar.TypeSymlink, link: ".."},
+		tarMember{name: "p/d/good", typ: tar.TypeSymlink, link: "root/index.js"},
+		tarMember{name: "p/d/esc", typ: tar.TypeSymlink, link: "root/../outside"},
+	), "")
+	if rc := Cursor(t.Context(), bad.env); rc != ExitFailed {
+		t.Fatalf("escape accepted: rc=%d", rc)
 	}
 }
 
@@ -605,24 +631,49 @@ func TestCursorRefusesDanglingLinkThroughOutsideDirAndInsideRestrictedDir(t *tes
 }
 
 func TestCursorLeavesAnotherToolsAgentAlias(t *testing.T) {
+	for name, mk := range map[string]func(home string, f *cursorFixture) string{
+		"lookalike path": func(home string, f *cursorFixture) string {
+			return filepath.Join(home, "work", "cursor-agent", "versions", "9.9", "agent")
+		},
+		"another file in a cursor version dir": func(home string, f *cursorFixture) string {
+			return filepath.Join(f.tree("2026.0.9-old"), "agent")
+		},
+	} {
+		f := newCursor(t, goodCursorMembers(), "")
+		f.plant(t, "2026.1.1-abc", goodCursor, true)
+		other := mk(f.home, f)
+		os.MkdirAll(filepath.Dir(other), 0o755)
+		os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755)
+		alias := filepath.Join(f.home, ".local", "bin", "agent")
+		os.Symlink(other, alias)
+		f.env.Repin = true
+		if rc := Cursor(t.Context(), f.env); rc != ExitOK || f.hits.Load() != 0 || !strings.Contains(f.out.String(), "already present") {
+			t.Fatalf("%s: rc=%d hits=%d out=%s", name, rc, f.hits.Load(), f.out)
+		}
+		f.plant(t, "2026.2.2-def", goodCursor, true) // a real relink happens now
+		if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+			t.Fatalf("%s: relink rc=%d", name, rc)
+		}
+		if got, _ := os.Readlink(alias); got != other {
+			t.Errorf("%s: another tool's agent alias was replaced: %s", name, got)
+		}
+	}
+}
+
+func TestCursorRetriesStaleCursorAlias(t *testing.T) {
 	f := newCursor(t, goodCursorMembers(), "")
 	f.plant(t, "2026.1.1-abc", goodCursor, true)
-	other := filepath.Join(f.home, ".local", "share", "other-tool", "versions", "9.9", "agent")
-	os.MkdirAll(filepath.Dir(other), 0o755)
-	os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755)
-	alias := filepath.Join(f.home, ".local", "bin", "agent")
-	os.Symlink(other, alias)
-	f.env.Repin = true
-	if rc := Cursor(t.Context(), f.env); rc != ExitOK || f.hits.Load() != 0 || !strings.Contains(f.out.String(), "already present") {
-		t.Fatalf("rc=%d hits=%d out=%s", rc, f.hits.Load(), f.out)
-	}
-	// And a real relink leaves it alone as well.
 	f.plant(t, "2026.2.2-def", goodCursor, true)
+	os.Remove(f.link())
+	os.Symlink(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent"), f.link())
+	alias := filepath.Join(f.home, ".local", "bin", "agent")
+	os.Symlink("../share/cursor-agent/versions/2026.2.2-def/cursor-agent", alias) // relative, cursor's own
+	f.env.Repin = true
 	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
-		t.Fatalf("relink rc=%d", rc)
+		t.Fatalf("rc=%d", rc)
 	}
-	if got, _ := os.Readlink(alias); got != other {
-		t.Errorf("another tool's agent alias was replaced: %s", got)
+	if got, _ := os.Readlink(alias); !strings.Contains(got, "2026.1.1-abc") {
+		t.Errorf("stale cursor alias not retried: %s", got)
 	}
 }
 
@@ -790,5 +841,30 @@ func TestCursorMainLinkFailureRestoresAliasAndAliasDriftIsRetried(t *testing.T) 
 	}
 	if got, _ := os.Readlink(alias); !strings.Contains(got, "2026.1.1-abc") {
 		t.Errorf("alias drift not retried: %s", got)
+	}
+}
+
+func TestCursorAliasReadlinkFailureStopsBeforeAnyLinkMoves(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	f.plant(t, "2026.2.2-def", goodCursor, true)
+	bin := filepath.Join(f.home, ".local", "bin")
+	oldT := filepath.Join(f.tree("2026.2.2-def"), "cursor-agent")
+	os.Symlink(oldT, filepath.Join(bin, "agent"))
+	f.env.Repin = true
+	orig := readlinkAlias
+	defer func() { readlinkAlias = orig }()
+	readlinkAlias = func(string) (string, error) { return "", errors.New("injected I/O error") }
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d", rc)
+	}
+	if got, _ := os.Readlink(f.link()); !strings.Contains(got, "2026.2.2-def") {
+		t.Errorf("main link moved: %s", got)
+	}
+	if got, _ := os.Readlink(filepath.Join(bin, "agent")); got != oldT {
+		t.Errorf("alias moved: %s", got)
+	}
+	if !strings.Contains(f.statusText(), "cursor\tfailed\t") {
+		t.Errorf("status=%q", f.statusText())
 	}
 }

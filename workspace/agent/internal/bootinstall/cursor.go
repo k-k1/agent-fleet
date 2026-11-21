@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,9 +49,20 @@ func (e Env) cursorShare() string {
 	return filepath.Join(e.Home, ".local", "share", "cursor-agent", "versions")
 }
 
-// isCursorTree: a link target inside cursor's own versions tree, as opposed to another tool's
-// agent command that happens to share the name.
-func isCursorTree(t string) bool { return strings.Contains(t, "/cursor-agent/versions/") }
+// aliasVersion is the version an `agent` alias at path points at when it is cursor's own: the
+// target, resolved from the alias's directory, must be exactly <share>/<version>/cursor-agent.
+// Another tool's `agent` (even one whose path contains cursor-agent/versions/) is not.
+func (e Env) aliasVersion(alias, target string) (string, bool) {
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(alias), target)
+	}
+	target = filepath.Clean(target)
+	verDir := filepath.Dir(target)
+	if filepath.Base(target) != cursorTool || filepath.Dir(verDir) != filepath.Clean(e.cursorShare()) {
+		return "", false
+	}
+	return filepath.Base(verDir), true
+}
 
 // cursorVersionInLink reads the version the way the shell's greedy sed did: the last
 // /versions/<v>/ of the target, whatever HOME's own path contains.
@@ -72,11 +85,15 @@ func Cursor(ctx context.Context, e Env) int {
 		case e.Repin:
 			// Decide from the link target, not --version: starting Node takes seconds.
 			// The agent alias counts too: a repair that left it on another version is retried.
-			for _, l := range []string{link, filepath.Join(e.localBin(), "agent")} {
-				if t, err := os.Readlink(l); err == nil && (l == link || isCursorTree(t)) {
-					if m := cursorVersionInLink.FindStringSubmatch(t); m != nil && m[1] != "" && m[1] != ver {
-						need = true
-					}
+			if t, err := os.Readlink(link); err == nil {
+				if m := cursorVersionInLink.FindStringSubmatch(t); m != nil && m[1] != "" && m[1] != ver {
+					need = true
+				}
+			}
+			alias := filepath.Join(e.localBin(), "agent")
+			if t, err := os.Readlink(alias); err == nil {
+				if v, ok := e.aliasVersion(alias, t); ok && v != ver {
+					need = true
 				}
 			}
 		}
@@ -127,7 +144,11 @@ func (e Env) installCursor(ctx context.Context, ver, sum, dir, link string, pinn
 	st, err := lstatAlias(alias)
 	switch {
 	case err == nil && st.Mode()&os.ModeSymlink != 0:
-		if t, _ := os.Readlink(alias); isCursorTree(t) {
+		t, err := readlinkAlias(alias)
+		if err != nil {
+			return err
+		}
+		if _, ok := e.aliasVersion(alias, t); ok {
 			links = append(links, alias)
 		}
 	case err != nil && !os.IsNotExist(err):
@@ -370,7 +391,7 @@ func untarStrip1(archive, dest string) error {
 			var tmpName string
 			var w *os.File
 			for n := 0; ; n++ {
-				tmpName = fmt.Sprintf("%s.af-w%d", rel, n)
+				tmpName = filepath.Join(filepath.Dir(rel), fmt.Sprintf(".af-w%d", n))
 				w, err = root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 				if err == nil {
 					break
@@ -414,7 +435,7 @@ func untarStrip1(archive, dest string) error {
 	if _, err := io.Copy(io.Discard, zr); err != nil {
 		return err
 	}
-	if err := checkLinksInside(dest); err != nil {
+	if err := checkLinksInside(dest, root); err != nil {
 		return err
 	}
 	// Directory modes last, deepest first: a restrictive parent must not block its children.
@@ -433,17 +454,12 @@ func untarStrip1(archive, dest string) error {
 	return nil
 }
 
-// checkLinksInside requires every symlink of the unpacked tree to resolve, hop by hop and
-// through any chain, to a place inside it, even where the final element does not exist yet
-// (something may create it later). A link it cannot verify is refused. It runs before the
-// directory modes are applied, so every directory can still be read. This is what the finished
-// tree does when run, where no os.Root confines anything.
-func checkLinksInside(dest string) error {
-	base, err := filepath.EvalSymlinks(dest)
-	if err != nil {
-		return err
-	}
-	inside := func(p string) bool { return p == base || strings.HasPrefix(p, base+string(os.PathSeparator)) }
+// checkLinksInside requires every symlink of the unpacked tree to resolve inside it, as the OS
+// would follow it, through any chain. os.Root does the resolving (it refuses any hop that
+// leaves the tree), so this is not a second, lexical opinion. A link whose final element does
+// not exist yet passes only when everything before it resolved inside. It runs before the
+// directory modes are applied, so every directory can still be read.
+func checkLinksInside(dest string, root *os.Root) error {
 	return filepath.WalkDir(dest, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -451,41 +467,19 @@ func checkLinksInside(dest string) error {
 		if d.Type()&os.ModeSymlink == 0 {
 			return nil
 		}
-		cur := p
-		for hops := 0; ; hops++ {
-			if hops > 40 {
-				return fmt.Errorf("unsafe link in archive: %s loops", strings.TrimPrefix(p, dest+"/"))
-			}
-			dir, name := filepath.Split(cur)
-			rd, err := filepath.EvalSymlinks(filepath.Clean(dir))
-			if err != nil || !inside(rd) {
-				return fmt.Errorf("unsafe link in archive: %s resolves outside the tree", strings.TrimPrefix(p, dest+"/"))
-			}
-			rp := filepath.Join(rd, name)
-			fi, err := os.Lstat(rp)
-			if err != nil {
-				if os.IsNotExist(err) {
-					return nil // dangling, but every directory on the way is inside
-				}
-				return err
-			}
-			if fi.Mode()&os.ModeSymlink == 0 {
-				if !inside(rp) {
-					return fmt.Errorf("unsafe link in archive: %s resolves outside the tree", strings.TrimPrefix(p, dest+"/"))
-				}
-				return nil
-			}
-			t, err := os.Readlink(rp)
-			if err != nil {
-				return err
-			}
-			if filepath.IsAbs(t) {
-				return fmt.Errorf("unsafe link in archive: %s is absolute", strings.TrimPrefix(p, dest+"/"))
-			}
-			cur = filepath.Join(rd, t)
+		rel, err := filepath.Rel(dest, p)
+		if err != nil {
+			return err
 		}
+		if _, err := root.Stat(rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("unsafe link in archive: %s: %v", rel, err)
+		}
+		return nil
 	})
 }
 
 // lstatAlias is a seam for tests: the look at the agent alias.
 var lstatAlias = os.Lstat
+
+// readlinkAlias is a seam for tests: reading where the alias points.
+var readlinkAlias = os.Readlink
