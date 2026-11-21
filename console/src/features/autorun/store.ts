@@ -14,6 +14,8 @@ const POLL_MS = 30000;
 
 interface AutoRunStore {
   queues: MemoQueue[];
+  /** Whether the organisation has allowed auto-run (the queue list says so). */
+  tenantEnabled: boolean;
   /** A run's session name -> what its queue reported. */
   deliveries: Map<string, RunDelivery>;
   /** True once a queue list has been read for this scope: "nothing yet" is not "no failures". */
@@ -22,7 +24,7 @@ interface AutoRunStore {
   scope: string;
 }
 
-export const useAutoRunStore = create<AutoRunStore>(() => ({ queues: [], deliveries: new Map(), loaded: false, scope: "" }));
+export const useAutoRunStore = create<AutoRunStore>(() => ({ queues: [], tenantEnabled: false, deliveries: new Map(), loaded: false, scope: "" }));
 
 interface Loop {
   scope: string;
@@ -88,7 +90,7 @@ function startLoop(scope: string): Loop {
         reading.delete(id);
       }
       current = now;
-      useAutoRunStore.setState({ queues: wire.queues, loaded: true });
+      useAutoRunStore.setState({ queues: wire.queues, tenantEnabled: wire.tenantEnabled, loaded: true });
       // A category that is gone is no longer read: whatever it left unsettled is dropped too.
       set((prev) => {
         let next: Map<string, RunDelivery> | null = null;
@@ -130,7 +132,7 @@ export function acquireAutoRuns(scope: string): () => void {
   // Another tenant's or account's runs are not this scope's. The same scope keeps what it knew
   // across a pause of the poll: a closed run that left the newest fifty has nowhere else to
   // get its category and duration from.
-  if (useAutoRunStore.getState().scope !== scope) useAutoRunStore.setState({ queues: [], deliveries: new Map(), loaded: false, scope });
+  if (useAutoRunStore.getState().scope !== scope) useAutoRunStore.setState({ queues: [], tenantEnabled: false, deliveries: new Map(), loaded: false, scope });
   if (!loop) loop = startLoop(scope);
   let released = false;
   return () => {
@@ -147,13 +149,13 @@ export const reloadAutoRuns = (): void => void loop?.load();
 
 /** The runs read for the scope in force: another scope's data is never returned, even before a poll
  *  has replaced it. */
-export function useScopedAutoRuns(): { queues: MemoQueue[]; deliveries: Map<string, RunDelivery>; loaded: boolean } {
+export function useScopedAutoRuns(): { queues: MemoQueue[]; tenantEnabled: boolean; deliveries: Map<string, RunDelivery>; loaded: boolean } {
   const tenant = useTenantStore((s) => s.tenant);
   const identity = useTenantStore((s) => s.identityRev);
   const st = useAutoRunStore();
   return st.scope === tenant + "\u0000" + identity ? st : EMPTY;
 }
-const EMPTY = { queues: [] as MemoQueue[], deliveries: new Map<string, RunDelivery>(), loaded: false };
+const EMPTY = { queues: [] as MemoQueue[], tenantEnabled: false, deliveries: new Map<string, RunDelivery>(), loaded: false };
 
 /** Keeps the queues and their runs current while `on`. Safe to call from several places. */
 export function useAutoRunFeed(on: boolean): void {

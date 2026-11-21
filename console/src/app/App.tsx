@@ -658,8 +658,9 @@ export function App() {
                 <MemoQueueSection />
               </SoloSection>
             </RailView>
-            {/* Not scoped: a run belongs to a queue category, not to a working set. */}
-            <RailView id="autorun" active={railView} shown={railShown}>
+            {/* Scoped by the category's repository: a category is listed when its repository is in the
+                working set, and a category without a repository is listed under every set. */}
+            <RailView id="autorun" active={railView} shown={railShown} scoped>
               <SoloSection>
                 <AutoRunSection />
               </SoloSection>

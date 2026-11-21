@@ -31,6 +31,9 @@ export interface RunRow {
   deliveryId: string;
   /** The queue closed the run and its first turn failed. A run the member ended or aborted is not one. */
   failed: boolean;
+  /** The queue closed the run but its root session is alive again (the member took it over or
+   *  started it again): listed as running, tagged so it is not mistaken for a fresh run. */
+  resumed: boolean;
   /** The work item the run started for; null when the session has no `started` link. */
   item: { key: string; label: string; title: string } | null;
   pr: SessionPR | null;
@@ -80,8 +83,9 @@ export const waitsForMember = (s: Session): boolean => isWaitingSession(s) || (!
 
 /** Every run in the session list, newest first. `deliveries` maps a run's session name to what
  *  its queue reported. A run's state is the queue's word when there is one (a delivery stays open
- *  while a session it started still works, and closed once it ended whatever the root is doing),
- *  and the sessions' own state only when no delivery is known. */
+ *  while a session it started still works, and closed once it ended), except that a closed run
+ *  whose root session is alive is listed as running (`resumed`); the sessions' own state decides
+ *  only when no delivery is known. */
 export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelivery>): RunRow[] {
   const byName = new Map(sessions.map((s) => [s.name, s]));
   const kids = new Map<string, Session[]>();
@@ -103,7 +107,12 @@ export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelive
       const d = deliveries.get(root.name);
       const waiting = tree.some(waitsForMember) || (!!d && OPEN.has(d.state) && d.heldBy === "person");
       let state: RunState;
-      if (d && d.state === "closed") state = "ended";
+      let resumed = false;
+      if (d && d.state === "closed") {
+        // Closed is the queue's word about the delivery; a root that works again is still work.
+        resumed = root.alive === true;
+        state = resumed ? (waitsForMember(root) ? "waiting" : "running") : "ended";
+      }
       else if (d && OPEN.has(d.state)) state = waiting ? "waiting" : "running";
       // No usable delivery (none read, or its state expired): the sessions' own word.
       else if (!tree.some((x) => x.alive) && !waiting) state = "ended";
@@ -115,6 +124,7 @@ export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelive
         deliveryId: d?.id ?? "",
         failed: state === "ended" && d?.state === "closed" && d.turnOutcome === "turn-failed" && d.outcome !== "ended" && d.outcome !== "aborted",
         state,
+        resumed,
         item: link ? { key: link.key, label: itemLabel(link.key), title: link.title ?? "" } : null,
         pr: root.pr ?? null,
         children,

@@ -16,6 +16,8 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.ws_required_hint": "Memory history lives inside the workspace, so it can only be managed while it is running.",
   "mem.start_ws": "Start the workspace",
   "mem.views_label": "Views",
+  "mem.rail_head": "Agent memory",
+  "mem.rail_group_forced": "Kept open: it holds the open memory or a search hit",
   "mem.view_memories": "Memories",
   "mem.view_changes": "Changes",
   "mem.view_importexport": "Import & export",
