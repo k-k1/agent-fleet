@@ -43,6 +43,9 @@ type WorktreeTombstone struct {
 	// Shelved names the stopped AI sessions the delete moved to the shelf; restoring the
 	// entry from the trash takes them off it again.
 	Shelved []string `json:"shelved,omitempty"`
+	// Creator is the worktree's creator record as stored (a session name, or "-" for a copy no
+	// session owned), so a restore keeps who made the copy. Empty when the copy had no record (clients keep their guess); "-" when it had one that no session owns or that could not be read.
+	Creator string `json:"creator,omitempty"`
 }
 
 // Target is the commit the pin points at: the snapshot when there is one, which keeps Head
@@ -72,7 +75,7 @@ func PrepareTombstone(dir, parent string) (t WorktreeTombstone, ok bool, err err
 	if herr != nil || head == "" {
 		return t, false, nil
 	}
-	t = WorktreeTombstone{Path: dir, Name: filepath.Base(dir), Parent: parent, Head: head}
+	t = WorktreeTombstone{Path: dir, Name: filepath.Base(dir), Parent: parent, Head: head, Creator: worktreeCreatorRaw(dir)}
 	if b := GitCurrentBranch(dir); b != "" && b != "(detached)" {
 		t.Branch = b
 	}

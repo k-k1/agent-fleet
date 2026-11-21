@@ -8,6 +8,7 @@ package main
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -69,7 +70,13 @@ func recreateTarget(w http.ResponseWriter, r *http.Request) (name, dir, parent s
 // recreateCandidates resolves the ways to put dir back, from the branches its sessions
 // recorded (newest session first) and the branches the Console archived before deleting.
 func recreateCandidates(dir, parent string) []gitx.RecreateCandidate {
-	return gitx.ResolveRecreate(parent, filepath.Base(dir), sessionBranchesIn(dir), trashedBranchSHA(parent), latestTombstone(dir))
+	return recreateCandidatesFrom(dir, parent, latestTombstone(dir))
+}
+
+// recreateCandidatesFrom is recreateCandidates for a tombstone already read, so a caller that also
+// needs the tombstone's creator uses the same entry the candidate came from.
+func recreateCandidatesFrom(dir, parent string, tomb *gitx.WorktreeTombstone) []gitx.RecreateCandidate {
+	return gitx.ResolveRecreate(parent, filepath.Base(dir), sessionBranchesIn(dir), trashedBranchSHA(parent), tomb)
 }
 
 // sessionBranchesIn lists the start branches of the sessions whose working copy was dir,
@@ -141,7 +148,8 @@ func recreateWorktreeGated(w http.ResponseWriter, r *http.Request, req recreateR
 		return
 	}
 	var c *gitx.RecreateCandidate
-	for _, cand := range recreateCandidates(dir, parent) {
+	tomb := latestTombstone(dir)
+	for _, cand := range recreateCandidatesFrom(dir, parent, tomb) {
 		if cand.Source == req.Source && cand.Branch == req.Branch {
 			c = &cand
 			break
@@ -180,6 +188,14 @@ func recreateWorktreeGated(w http.ResponseWriter, r *http.Request, req recreateR
 		}
 		httpx.WriteErr(w, http.StatusBadGateway, errCodeRecreateFailed, err.Error())
 		return
+	}
+	// Only the delete's own candidate carries who made the copy; any other source is a new copy.
+	if c.Source == gitx.RecreateDeleted {
+		if tomb != nil {
+			if err := gitx.RestoreWorktreeCreator(dir, tomb.Creator); err != nil {
+				log.Printf("restoring the creator record of %s: %v", dir, err)
+			}
+		}
 	}
 	branch := c.Branch
 	if nb != "" {

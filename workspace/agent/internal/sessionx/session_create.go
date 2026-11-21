@@ -636,14 +636,6 @@ func (c *createRun) identify() bool {
 		httpx.WriteErr(c.w, http.StatusConflict, "name_taken", "a session named "+c.name+" already exists")
 		return false
 	}
-	// The name is allocated only now (it hashes the resolved dir), after the worktree exists, so
-	// the creator is recorded here. A failed write only leaves the copy "unknown" to clients.
-	if c.createdWorktree != "" {
-		if err := gitx.WriteWorktreeCreator(c.createdWorktree, c.name); err != nil {
-			log.Printf("recording %s as creator of %s: %v", c.name, c.createdWorktree, err)
-		}
-	}
-
 	c.kind = NormalizeKind(req.Kind)
 	// An SSM session with no client title defaults to "{host alias} @MMDD-HHMM" — a
 	// human-meaningful "target + timestamp" name (vs the generic {home-basename} @… fallback).
@@ -768,6 +760,19 @@ func (c *createRun) publish(m session.Meta) bool {
 	return true
 }
 
+// recordCreator names this session as the creator of the worktree the create made. It runs once
+// the session is started and published: a launch refused after `git worktree add` keeps the "no
+// session" record gitx wrote at creation, and never names a session that does not exist. A failed
+// write only leaves the copy "no session", which clients never treat as proof.
+func (c *createRun) recordCreator() {
+	if c.createdWorktree == "" {
+		return
+	}
+	if err := gitx.WriteWorktreeCreator(c.createdWorktree, c.name); err != nil {
+		log.Printf("recording %s as creator of %s: %v", c.name, c.createdWorktree, err)
+	}
+}
+
 // launch is stage 9: start the session, publish its meta, record where its launch task came
 // from, deliver that task, and answer the create.
 func (c *createRun) launch(meta session.Meta) {
@@ -810,6 +815,7 @@ func (c *createRun) launch(meta session.Meta) {
 		if !c.publish(meta) {
 			return
 		}
+		c.recordCreator()
 		recordFleetGraphBirth(meta)
 		req.managed = true
 		noteCreateOrigin(name, req, c.spawnParent, c.origin)
@@ -845,6 +851,7 @@ func (c *createRun) launch(meta session.Meta) {
 	if !c.publish(meta) {
 		return
 	}
+	c.recordCreator()
 	recordFleetGraphBirth(meta)
 
 	// BEFORE the delivery below, not after: the record is what the mirror matches the turn

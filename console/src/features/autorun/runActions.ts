@@ -45,6 +45,9 @@ function createdWorktree(run: RunRow, repos: Repo[], sessions: Session[]): RepoT
   const folder = sessionFolder(run.root);
   const repo = repos.find((r) => r.name === folder);
   if (repo?.worktree !== true) return null;
+  // A record that says no session owns the copy, or that cannot be read, is not the missing-record
+  // case: the guess below must not stand in for it.
+  if (repo.createdByState) return null;
   if (repo.createdBy) {
     if (repo.createdBy !== run.root.name) return null;
     // The record can offer a copy the guess would not (a member's session that sorts first at the
