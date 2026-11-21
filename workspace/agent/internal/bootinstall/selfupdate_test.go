@@ -482,21 +482,21 @@ func TestSelfUpdateNPMSkipsWhileAnEarlierUpdateIsUnsettled(t *testing.T) {
 	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
 	bak := tree + npmBakSuffix
 	f.write(t, filepath.Join(bak, "VERSION"), "1.0.0")
-	f.write(t, f.env.npmMarker(), "accepted\n"+tree+"\n")
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
 	parent := filepath.Dir(bak)
 	if err := os.Chmod(parent, 0o000); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(parent, 0o755) })
 	f.env.selfUpdateNPM()
-	if got := f.read(f.env.npmMarker()); got != "accepted\n"+tree+"\n" {
+	if got := f.read(f.env.npmMarker()); got != "accepted\nclaude\n" {
 		t.Fatalf("marker rewritten: %q", got)
 	}
 	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
 		t.Fatal("npm ran over unsettled backups")
 	}
 	os.Chmod(parent, 0o755)
-	f.env.selfUpdateNPM()
+	f.env.npmRecoverAside(false)
 	if _, err := os.Lstat(bak); err == nil {
 		t.Fatal("backup not swept once the permission is back")
 	}
@@ -506,16 +506,11 @@ func TestNPMMarkerWrite(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	t.Run("a member's file at the old fixed temp name survives", func(t *testing.T) {
 		f.write(t, f.env.npmMarker()+".new", "mine")
-		if err := f.env.npmWriteMarker("pending", []string{"/x/a"}); err != nil {
+		if err := f.env.npmWriteMarker("pending", []string{"claude"}); err != nil {
 			t.Fatal(err)
 		}
 		if f.read(f.env.npmMarker()+".new") != "mine" {
 			t.Fatal("the member's file was overwritten")
-		}
-	})
-	t.Run("a path with a line break is refused", func(t *testing.T) {
-		if err := f.env.npmWriteMarker("pending", []string{"/x/a\nb"}); err == nil {
-			t.Fatal("accepted")
 		}
 	})
 }
@@ -550,18 +545,18 @@ func TestNPMAcceptedCleanupFailureKeepsTheMarker(t *testing.T) {
 	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
 	bak := tree + npmBakSuffix
 	f.write(t, filepath.Join(bak, "VERSION"), "1.0.0")
-	f.write(t, f.env.npmMarker(), "accepted\n"+tree+"\n")
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
 	parent := filepath.Dir(bak)
 	if err := os.Chmod(parent, 0o555); err != nil { // the backup cannot be unlinked from here
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(parent, 0o755) })
-	f.env.npmRecoverAside()
+	f.env.npmRecoverAside(false)
 	if _, err := os.Lstat(f.env.npmMarker()); err != nil {
 		t.Fatal("marker dropped although a backup is left")
 	}
 	os.Chmod(parent, 0o755)
-	f.env.npmRecoverAside()
+	f.env.npmRecoverAside(false)
 	if _, err := os.Lstat(bak); err == nil {
 		t.Fatal("backup not swept on the next start")
 	}
@@ -647,13 +642,13 @@ func TestNPMRecoverAside(t *testing.T) {
 			}
 		}
 		if state != "" {
-			f.write(t, f.env.npmMarker(), state+"\n"+tree+"\n"+f.local("claude")+"\n")
+			f.write(t, f.env.npmMarker(), state+"\nclaude\n")
 		}
 		return f, tree
 	}
 	t.Run("pending and nothing new: the backup goes back", func(t *testing.T) {
 		f, tree := setup(t, "pending")
-		f.env.npmRecoverAside()
+		f.env.npmRecoverAside(false)
 		if f.read(filepath.Join(tree, "VERSION")) != "1.0.0" || !usable(f.local("claude")) {
 			t.Fatal("not restored")
 		}
@@ -665,7 +660,7 @@ func TestNPMRecoverAside(t *testing.T) {
 		f, tree := setup(t, "pending")
 		f.write(t, filepath.Join(tree, "VERSION"), "2.0.0") // npm got this far before the kill
 		f.write(t, f.local("claude"), "#!/bin/sh\necho 2.0.0\n")
-		f.env.npmRecoverAside()
+		f.env.npmRecoverAside(false)
 		if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" || f.read(filepath.Join(tree, "VERSION")) != "1.0.0" {
 			t.Fatalf("mixed state: %q %v", out, err)
 		}
@@ -676,7 +671,7 @@ func TestNPMRecoverAside(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.write(t, f.local("claude"), "#!/bin/sh\necho half\n")
-		f.env.npmRecoverAside()
+		f.env.npmRecoverAside(false)
 		if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
 			t.Fatalf("bin not restored: %q %v", out, err)
 		}
@@ -684,7 +679,7 @@ func TestNPMRecoverAside(t *testing.T) {
 	t.Run("accepted: the listed backups go, the accepted copy stays", func(t *testing.T) {
 		f, tree := setup(t, "accepted")
 		f.write(t, filepath.Join(tree, "VERSION"), "2.0.0")
-		f.env.npmRecoverAside()
+		f.env.npmRecoverAside(false)
 		if f.read(filepath.Join(tree, "VERSION")) != "2.0.0" {
 			t.Fatal("the accepted copy was replaced")
 		}
@@ -694,7 +689,7 @@ func TestNPMRecoverAside(t *testing.T) {
 	})
 	t.Run("no marker: a *.af-bak is the member's own and is left alone", func(t *testing.T) {
 		f, tree := setup(t, "")
-		f.env.npmRecoverAside()
+		f.env.npmRecoverAside(false)
 		if _, err := os.Lstat(tree + npmBakSuffix); err != nil {
 			t.Fatal("a backup the update did not make was touched")
 		}
@@ -750,6 +745,11 @@ func TestSelfUpdateNPMSuccessInstallsNewTreeAndDropsBackups(t *testing.T) {
 	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "9.9.9" {
 		t.Fatalf("new claude not in place: %q %v", out, err)
 	}
+	// The backups outlive the update itself: the start's final verify pass settles them.
+	if st, _, ok, _ := f.env.npmReadMarker(); !ok || st != "accepted" {
+		t.Fatalf("marker state %q ok=%v, want accepted", st, ok)
+	}
+	f.env.npmRecoverAside(false)
 	for _, p := range []string{tree + npmBakSuffix, f.local("claude") + npmBakSuffix, f.env.npmMarker()} {
 		if _, err := os.Lstat(p); err == nil {
 			t.Fatalf("left behind after a good update: %s", p)
@@ -873,4 +873,89 @@ func TestSelfUpdateStepsAreIndependent(t *testing.T) {
 			t.Fatalf("cursor's new version not reported:\n%s", f.out)
 		}
 	})
+}
+
+func TestNPMRecoverRefusesAMarkerThatIsNotOurs(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	if err := os.Rename(tree, tree+npmBakSuffix); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "victim")
+	f.write(t, outside+npmBakSuffix, "keep")
+	f.write(t, outside, "keep")
+	for _, body := range []string{"accepted\nclaude\n" + outside + "\n", "pending\n../../etc\n", "weird\nclaude\n"} {
+		f.write(t, f.env.npmMarker(), body)
+		f.env.npmRecoverAside(false)
+		if _, err := os.Lstat(tree + npmBakSuffix); err != nil {
+			t.Fatalf("marker %q: a backup was touched", body)
+		}
+		if f.read(outside) != "keep" || f.read(outside+npmBakSuffix) != "keep" {
+			t.Fatalf("marker %q: a path outside the npm tree was touched", body)
+		}
+	}
+}
+
+func TestNPMRecoverKeepAcceptedLeavesBackupsForTheFinalPass(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, filepath.Join(tree+npmBakSuffix, "VERSION"), "1.0.0")
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
+	f.env.npmRecoverAside(true)
+	if _, err := os.Lstat(tree + npmBakSuffix); err != nil {
+		t.Fatal("backup discarded although the final pass may need it")
+	}
+	f.env.npmRecoverAside(false)
+	if _, err := os.Lstat(tree + npmBakSuffix); err == nil {
+		t.Fatal("backup not settled")
+	}
+}
+
+func TestNPMVerifyPresentRestoresAnAcceptedCopyThatStopsRunning(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, filepath.Join(tree, "cli.sh"), "#!/bin/sh\nexit 1\n") // the new copy does not run
+	f.write(t, filepath.Join(tree+npmBakSuffix, "cli.sh"), "#!/bin/sh\necho 1.0.0\n")
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
+	f.env.npmRecoverAside(true)
+	if rc := f.env.NPMVerifyPresent(); rc != ExitOK {
+		t.Fatalf("rc=%d\n%s", rc, f.out)
+	}
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
+		t.Fatalf("previous copy not back: %q %v\n%s", out, err, f.out)
+	}
+	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
+		t.Fatal("the pin was reinstalled instead of restoring the previous copy")
+	}
+}
+
+func TestSelfUpdateNPMKeepsTheMarkerWhenARestoreFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	parent := filepath.Dir(tree)
+	// npm writes half a tree and dies; the parent then refuses the restore's unlink and rename.
+	f.write(t, filepath.Join(f.npmDir, "failafter"), "npm ERR! ENOSPC\n")
+	f.write(t, filepath.Join(f.npmDir, "body.claude"), brokenCLI)
+	stub := strings.Replace(f.read(filepath.Join(f.npmDir, "npm")), `mkdir -p "$prefix/bin"`, `mkdir -p "$prefix/bin" "$prefix/lib/node_modules/@anthropic-ai/claude-code"; echo half >"$prefix/lib/node_modules/@anthropic-ai/claude-code/VERSION"; chmod 555 `+parent, 1)
+	f.write(t, filepath.Join(f.npmDir, "npm"), stub)
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	f.env.selfUpdateNPM()
+	os.Chmod(parent, 0o755)
+	if _, err := os.Lstat(tree + npmBakSuffix); err != nil {
+		t.Fatalf("setup: the restore did not fail:\n%s", f.out)
+	}
+	state, clis, ok, bad := f.env.npmReadMarker()
+	if !ok || bad || state != "pending" || len(clis) != 1 || clis[0] != "claude" {
+		t.Fatalf("marker = %q %v ok=%v bad=%v while the backup is still on disk", state, clis, ok, bad)
+	}
+	if !strings.Contains(f.out.String(), tree+npmBakSuffix) {
+		t.Fatalf("the old tree's location is not in the output:\n%s", f.out)
+	}
+	f.env.npmRecoverAside(false) // the next start puts it back
+	if f.read(filepath.Join(tree, "VERSION")) != "1.0.0" {
+		t.Fatal("not restored on the next start")
+	}
 }

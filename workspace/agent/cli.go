@@ -176,7 +176,7 @@ var subcommands = []subcommand{
 	{
 		// One CLI of the lean boot-install, moved out of entrypoint.sh a CLI at a time (#3894).
 		name:     "boot-install",
-		operands: "rtk|npm [--repin] | npm-verify [--present] [cli...]",
+		operands: "rtk|npm [--repin] | npm-recover | npm-verify [--present] [cli...]",
 		summary:  "install one pinned agent CLI into ~/.local and record the outcome",
 		hidden:   true,
 		run:      bootinstall.Run,

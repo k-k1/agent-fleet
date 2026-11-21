@@ -536,6 +536,13 @@ npm_wa() {
   esac
   return 0
 }
+# A killed self-update may have left the npm CLIs moved aside (*.af-bak). Settle that before
+# anything below looks at them: the opt-in OFF branch uninstalls the npm CLIs, and the lean
+# branch's pinned install would otherwise act on a tree that is not the member's.
+NPM_RECOVER_WA="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
+if [ -x "$NPM_RECOVER_WA" ]; then
+  "$NPM_RECOVER_WA" boot-install npm-recover || echo "[entrypoint] WARN: npm boot-install npm-recover exited $? (continuing)"
+fi
 # Lean detection: claude is not baked and versions.json has a pin for it → lean variant.
 # In lean, the start-time update in the CLAUDE_INSTALL block below is suppressed too, to keep
 # the pin (tracking latest is the self-update opt-in's job).

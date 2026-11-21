@@ -74,7 +74,7 @@ cat >"$T/bin/workspace-agent" <<'S'
 #!/bin/sh
 echo "workspace-agent $*" >>"$STUB_WA_LOG"
 # STUB_WA_RC_NPM answers only the npm steps, so a test can tell the two mappings apart.
-case "$2" in npm|npm-verify) exit "${STUB_WA_RC_NPM:-${STUB_WA_RC:-0}}" ;; cursor) exit "${STUB_WA_RC_CURSOR:-${STUB_WA_RC:-0}}" ;; esac
+case "$2" in npm|npm-verify|npm-recover) exit "${STUB_WA_RC_NPM:-${STUB_WA_RC:-0}}" ;; cursor) exit "${STUB_WA_RC_CURSOR:-${STUB_WA_RC:-0}}" ;; esac
 exit "${STUB_WA_RC:-0}"
 S
 chmod +x "$T"/bin/*
@@ -237,6 +237,14 @@ reset; rm -f "$T/fb.tsv"; mkdir -p "$T/home/.local/bin/codex/sub"
 fb 0 npm-verify --present
 grep -q STARTED "$T/fb.out" || fail "npm: an unremovable copy ended the start"
 grep -qP '^codex\tfailed' "$T/fb.tsv" || fail "npm: an unremovable copy left no status"
+# The recovery of a killed self-update runs before the OFF branch's `npm uninstall` and the lean block.
+reset; run_block STUB_WA_RC=0 || fail "npm-recover: the start aborted"
+rec=$(grep -nx 'workspace-agent boot-install npm-recover' "$STUB_WA_LOG" | head -1 | cut -d: -f1)
+npm1=$(grep -nx 'workspace-agent boot-install npm' "$STUB_WA_LOG" | head -1 | cut -d: -f1)
+{ [ -n "$rec" ] && [ -n "$npm1" ] && [ "$rec" -lt "$npm1" ]; } || fail "npm-recover: not run before the lean install ($(cat "$STUB_WA_LOG"))"
+reset; run_block STUB_WA_RC=126 || fail "npm-recover: an exit outside the contract aborted the start"
+has 'WARN: npm boot-install npm-recover exited 126' || fail "npm-recover: no WARN for an exit outside the contract"
+awk '/boot-install npm-recover/{r=NR} /npm uninstall -g/{u=NR} END{exit !(r && u && r<u)}' "$ENTRY" || fail "npm-recover: not before the OFF branch's npm uninstall"
 # The shell no longer carries an npm install or a verify of its own.
 grep -q 'npm install -g' "$BLOCK" && fail "npm: shell install block still present"
 grep -q 'npm_clis_verify' "$BLOCK" && fail "npm: shell verify still present"

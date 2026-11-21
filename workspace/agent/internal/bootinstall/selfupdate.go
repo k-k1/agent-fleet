@@ -161,7 +161,7 @@ func (e Env) pathVersion(name string, args ...string) string {
 }
 
 func (e Env) selfUpdateNPM() {
-	e.npmRecoverAside()
+	e.npmRecoverAside(false)
 	if _, err := os.Lstat(e.npmMarker()); err == nil {
 		// Recovery could not settle the earlier update's backups: starting another one would
 		// overwrite their record. The installed copies stay.
@@ -198,12 +198,14 @@ func (e Env) selfUpdateNPM() {
 		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update failed (kept the installed versions)")
 		return
 	}
-	verify := names // the CLIs the pin-repairing verify pass may look at
+	var stuck []npmAside // entries whose previous copy could not be put back
+	verify := names      // the CLIs the pin-repairing verify pass may look at
 	if stderr, err := e.npmInstall(specs); err != nil {
 		fmt.Fprint(e.Stderr, stderr)
-		if e.npmRestoreAside(moved) {
-			moved = nil
+		if !e.npmRestoreAside(moved) {
+			stuck = moved
 		}
+		moved = nil
 		if usable(filepath.Join(e.bakedBin(), "opencode")) {
 			fmt.Fprintln(e.Stdout, "[entrypoint] WARN: agent CLI update failed (using baked versions)")
 		} else {
@@ -220,7 +222,9 @@ func (e Env) selfUpdateNPM() {
 		for _, m := range moved {
 			hadOld[m.cli] = true
 			if bad[m.cli] {
-				e.npmRestoreAside([]npmAside{m})
+				if !e.npmRestoreAside([]npmAside{m}) {
+					stuck = append(stuck, m)
+				}
 				continue
 			}
 			keep = append(keep, m)
@@ -244,17 +248,19 @@ func (e Env) selfUpdateNPM() {
 	if len(verify) > 0 {
 		e.NPMVerify(verify, false)
 	}
-	// Accepted: the marker says so before the backups go, so a kill between the two cannot restore
-	// them over the new copies.
-	if len(moved) > 0 {
-		origs := make([]string, len(moved))
-		for i, m := range moved {
-			origs[i] = m.orig
-		}
-		if e.npmWriteMarker("accepted", origs) == nil && npmDiscardAside(moved) {
-			os.Remove(e.npmMarker()) // otherwise it stays and the next start sweeps again
-		}
-	} else if _, err := os.Stat(e.npmMarker()); err == nil {
+	switch {
+	case len(stuck) > 0:
+		// A previous copy could not be put back: its backup and the marker stay, so the next
+		// start retries. The accepted CLIs' backups go now, or the pending marker's restore would
+		// put them over their new copies; the rebuilt names list only the stuck CLIs.
+		npmDiscardAside(moved)
+		_ = e.npmWriteMarker("pending", npmCLINames(stuck))
+	case len(moved) > 0:
+		// Accepted: the marker says so, and the backups stay until the start's final verify pass
+		// (`npm-verify --present`) has looked at the new copies once more; it, or the next
+		// start's recovery, deletes them. A kill in between cannot restore them over the new copies.
+		_ = e.npmWriteMarker("accepted", npmCLINames(moved))
+	default:
 		os.Remove(e.npmMarker())
 	}
 }
