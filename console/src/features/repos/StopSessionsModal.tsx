@@ -146,6 +146,7 @@ export function StopSessionsModal({ node, onClose, onDone }: StopSessionsModalPr
               <p className="wcstop-copy">
                 <Icon name={g.repo.worktree ? "repo-forked" : "repo"} />
                 <span className="wcstop-copy-name">{g.repo.name}</span>
+                {g.detached && <span className="wcstop-branch" title={tr("rp.lineage_detached_hint")}>{tr("rp.lineage_detached")}</span>}
                 {g.repo.branch && <span className="wcstop-branch">{g.repo.branch}</span>}
               </p>
               <ul className="wcstop-rows">

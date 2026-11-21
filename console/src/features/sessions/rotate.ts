@@ -15,8 +15,7 @@
 //   folder) stopped matching the rail once worktrees nested by lineage.
 import { repoInSet, sessionInSet } from "../../lib/workingSets.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
-import { orphanSessions, repoTree, sessionsInFolder } from "../../lib/project.ts";
-import type { RepoTreeNode } from "../../lib/project.ts";
+import { orphanSessions, railNodeSessions, repoTree } from "../../lib/project.ts";
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 
@@ -31,13 +30,10 @@ import type { Session } from "../../types/session.ts";
  *  folder carries no "@<base>". set=null means no scope. */
 export function railOrder(sessions: Session[], repos: Repo[], set: WorkingSet | null): Session[] {
   const out: Session[] = [];
-  const walk = (n: RepoTreeNode) => {
-    out.push(...sessionsInFolder(sessions, n.repo.name));
-    n.children.forEach(walk);
-  };
+  const byName = new Map(sessions.map((s) => [s.name, s]));
   repoTree(repos, sessions)
     .filter((t) => !set || repoInSet(set, t.repo))
-    .forEach(walk);
+    .forEach((t) => out.push(...railNodeSessions(t, sessions, byName)));
   out.push(...orphanSessions(sessions, repos).filter((s) => !set || sessionInSet(set, s)));
   return out;
 }

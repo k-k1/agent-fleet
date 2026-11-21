@@ -76,7 +76,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, a
   // The subtree both plan dialogs work on. A row rendered outside the tree (the flat Repos
   // list) has no subtree; a leaf of one is the same shape. Memoized because each dialog
   // freezes its plan on this object's identity.
-  const treeNode: RepoTreeNode = useMemo(() => node || { repo: r, children: [], spine: "" }, [node, r]);
+  const treeNode: RepoTreeNode = useMemo(() => node || { repo: r, children: [], groups: [], spine: "" }, [node, r]);
   // The bulk stop's scope is that whole subtree, so the count that decides whether the menu
   // item appears is counted here rather than passed per folder like stoppedCount: a folded
   // spawn shows one row and holds four running sessions.

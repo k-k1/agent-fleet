@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { Repo } from "../features/repos/store.ts";
 import type { Session } from "../types/session.ts";
+import { planStopTree, liveSessionCount } from "../features/repos/stopTree.ts";
+import { planTree } from "../features/repos/deleteTree.ts";
 import {
   sessionFolder,
   orderedRepos,
@@ -17,6 +19,11 @@ import {
   repoTree,
   filterRepoTree,
   countRepoNodes,
+  childNodes,
+  lineageNodes,
+  railNodeSessions,
+  splitNodeSessions,
+  sessionAutoKind,
   type RepoTreeNode,
 } from "./project.ts";
 
@@ -386,5 +393,164 @@ describe("orphanSessions", () => {
       sess("gone", { repo: "removed-repo" }),
     ];
     expect(orphanSessions(sessions, repos).map((s) => s.name).sort()).toEqual(["gone", "shell"]);
+  });
+});
+
+describe("repoTree auto-run / schedule groups", () => {
+  const t = (n: number) => `2026-09-0${n}T00:00:00Z`;
+  const repos = [
+    repo("af"),
+    wt("af@hand", "af", { createdAt: t(1) }),
+    wt("af@run", "af", { createdAt: t(2) }),
+    wt("af@rev", "af", { createdAt: t(3) }),
+    wt("af@cron", "af", { createdAt: t(4) }),
+    wt("af@hf", "af", { createdAt: t(5) }),
+    wt("af@kid", "af", { createdAt: t(6) }),
+  ];
+  const sessions = [
+    sess("hand", { repo: "af@hand", createdAt: t(1), origin: "user" }),
+    sess("run", { repo: "af@run", createdAt: t(2), origin: "queue" }),
+    // The run's reviewer: a child spawned from the run's session, in its own worktree.
+    sess("rev", { repo: "af@rev", createdAt: t(3), origin: "session", originSession: "run" }),
+    sess("cron", { repo: "af@cron", createdAt: t(4), origin: "schedule" }),
+    // A handoff keeps origin=user while carrying originSession: it is the member's.
+    sess("hf", { repo: "af@hf", createdAt: t(5), origin: "user", originSession: "run" }),
+    // A child of a hand-started session stays with it.
+    sess("kid", { repo: "af@kid", createdAt: t(6), origin: "session", originSession: "hand" }),
+  ];
+  const tree = repoTree(repos, sessions)[0];
+  const names = (ns: RepoTreeNode[]) => ns.map((n) => n.repo.name);
+
+  it("gathers queue and schedule worktrees into one group per kind, folded out of children", () => {
+    expect(tree.groups.map((g) => g.kind)).toEqual(["autorun", "schedule"]);
+    expect(shapes(tree.groups[0].nodes)).toEqual([["af@run", [["af@rev", []]]]]);
+    expect(names(tree.groups[1].nodes)).toEqual(["af@cron"]);
+  });
+
+  it("leaves hand-started work, handoffs and a hand-started parent's child where they are", () => {
+    expect(shapes(tree.children)).toEqual([["af@hand", [["af@kid", []]]], ["af@hf", []]]);
+  });
+
+  it("keeps a member's own copy out of a group even when its parent copy is grouped", () => {
+    expect(names(tree.groups[0].nodes)).not.toContain("af@hf");
+  });
+
+  it("childNodes and countRepoNodes still see the grouped copies", () => {
+    expect(names(childNodes(tree))).toEqual(["af@hand", "af@hf", "af@run", "af@cron"]);
+    expect(countRepoNodes([tree])).toBe(7);
+  });
+
+  it("filterRepoTree reaches a match inside a group and drops empty groups", () => {
+    const hit = filterRepoTree([tree], (r) => r.name === "af@rev")[0];
+    expect(hit.children).toEqual([]);
+    expect(hit.groups.map((g) => g.kind)).toEqual(["autorun"]);
+    expect(shapes(hit.groups[0].nodes)).toEqual([["af@run", [["af@rev", []]]]]);
+    expect(filterRepoTree([tree], (r) => r.name === "af@hand")[0].groups).toEqual([]);
+  });
+
+  it("makes no group when nothing is unattended", () => {
+    expect(repoTree([repo("x"), wt("x@a", "x")], [sess("a", { repo: "x@a", origin: "user" })])[0].groups).toEqual([]);
+  });
+});
+
+describe("repoTree: a handoff the member made from a run", () => {
+  const t = (n: number) => `2026-09-0${n}T00:00:00Z`;
+  const repos = [repo("af"), wt("af@a", "af", { createdAt: t(1) }), wt("af@h", "af", { createdAt: t(2) }), wt("af@r", "af", { createdAt: t(3) })];
+  const sessions = [
+    sess("A", { repo: "af@a", createdAt: t(1), origin: "queue" }),
+    // The member opened a handoff A proposed: origin stays user, originSession names A.
+    sess("H", { repo: "af@h", createdAt: t(2), origin: "user", originSession: "A" }),
+    // H spawned a reviewer.
+    sess("R", { repo: "af@r", createdAt: t(3), origin: "session", originSession: "H" }),
+  ];
+  const tree = repoTree(repos, sessions)[0];
+  const names = (ns: RepoTreeNode[]) => ns.map((n) => n.repo.name);
+
+  it("keeps H and its reviewer R in the ordinary tree, not under Auto-run", () => {
+    expect(shapes(tree.children)).toEqual([["af@h", [["af@r", []]]]]);
+    expect(names(tree.groups[0].nodes)).toEqual(["af@a"]);
+  });
+
+  it("still counts H as part of what a stop / delete on A covers, once, flagged as listed elsewhere", () => {
+    const a = tree.groups[0].nodes[0];
+    expect(a.children).toEqual([]); // not displayed under A…
+    expect(names(lineageNodes(a))).toEqual(["af@h"]); // …but part of its scope
+    const live = sessions.map((x) => ({ ...x, alive: true }));
+    const stop = planStopTree(a, live);
+    expect(stop.map((g) => [g.repo.name, g.detached])).toEqual([["af@a", false], ["af@h", true], ["af@r", true]]);
+    expect(liveSessionCount(a, live)).toBe(3);
+    const del = planTree(a, sessions);
+    expect(del.map((p) => p.repo.name)).toEqual(["af@a", "af@h", "af@r"]);
+    // From the root every copy shows up once, none flagged.
+    expect(planStopTree(tree, live).map((g) => [g.repo.name, g.detached])).toEqual([["af@h", false], ["af@r", false], ["af@a", false]]);
+  });
+
+  it("falls back to ordinary display for a cycle or a vanished parent", () => {
+    const byName = new Map([
+      ["x", sess("x", { origin: "session", originSession: "y" })],
+      ["y", sess("y", { origin: "session", originSession: "x" })],
+    ]);
+    expect(sessionAutoKind(byName.get("x"), byName)).toBe("");
+    expect(sessionAutoKind(sess("z", { origin: "session", originSession: "gone" }), byName)).toBe("");
+  });
+});
+
+describe("repoTree: filtering and mixed copies", () => {
+  const t = (n: number) => `2026-09-0${n}T00:00:00Z`;
+  const repos = [repo("af"), wt("af@a", "af", { createdAt: t(1) }), wt("af@h", "af", { createdAt: t(2) }), wt("af@r", "af", { createdAt: t(3) })];
+  const live = (x: Session): Session => ({ ...x, alive: true });
+  const sessions = [
+    live(sess("A", { repo: "af@a", createdAt: t(1), origin: "queue" })),
+    live(sess("H", { repo: "af@h", createdAt: t(2), origin: "user", originSession: "A" })),
+    live(sess("R", { repo: "af@r", createdAt: t(3), origin: "session", originSession: "H" })),
+  ];
+  const tree = repoTree(repos, sessions);
+  const names = (ns: RepoTreeNode[]) => ns.map((n) => n.repo.name);
+
+  it("a search that keeps only A leaves H and R out of A's stop and delete scope", () => {
+    const a = filterRepoTree(tree, (r) => r.name === "af@a")[0].groups[0].nodes[0];
+    expect(planStopTree(a, sessions).map((g) => g.repo.name)).toEqual(["af@a"]);
+    expect(planTree(a, sessions).map((p) => p.repo.name)).toEqual(["af@a"]);
+  });
+
+  it("a search that keeps only R shows it under the root and does not surface A's scope", () => {
+    const f = filterRepoTree(tree, (r) => r.name === "af@r");
+    expect(shapes(f)).toEqual([["af", [["af@h", [["af@r", []]]]]]]);
+    expect(f[0].groups).toEqual([]);
+    // The display is H/R only, but the base's stop and delete still reach A once, as on main.
+    expect(planStopTree(f[0], sessions).map((g) => g.repo.name).sort()).toEqual(["af@a", "af@h", "af@r"]);
+    expect(planTree(f[0], sessions).map((p) => p.repo.name).sort()).toEqual(["af", "af@a", "af@h", "af@r"]);
+    expect(planTree(f[0], sessions).filter((p) => p.repo.name === "af@a").map((p) => p.detached)).toEqual([true]);
+  });
+
+  it("a run's copy where a schedule also runs stays ordinary, each session under its own heading", () => {
+    const ss = [...sessions, live(sess("cron", { repo: "af@a", createdAt: t(5), origin: "schedule" }))];
+    const r = repoTree(repos, ss)[0];
+    expect(r.groups).toEqual([]);
+    const a = r.children.find((c) => c.repo.name === "af@a")!;
+    const byName = new Map(ss.map((x) => [x.name, x]));
+    const sp = splitNodeSessions(sessionsInFolder(ss, "af@a"), byName, false);
+    expect(sp.byKind.autorun.map((x) => x.name)).toEqual(["A"]);
+    expect(sp.byKind.schedule.map((x) => x.name)).toEqual(["cron"]);
+    expect(railNodeSessions(a, ss, byName).map((x) => x.name)).toEqual(["H", "R", "A", "cron"]);
+  });
+
+  it("a copy a run made but where the member later started a session stays in the ordinary tree", () => {
+    const mixed = [...sessions, live(sess("hand", { repo: "af@a", createdAt: t(4), origin: "user" }))];
+    const r = repoTree(repos, mixed)[0];
+    expect(r.groups).toEqual([]);
+    expect(names(r.children)).toContain("af@a");
+    expect(planStopTree(r, mixed).map((g) => g.repo.name).sort()).toEqual(["af@a", "af@h", "af@r"]); // no copy twice
+  });
+
+  it("railOrder follows the drawn order: own, ordinary copies, then each group", () => {
+    const rs = [repo("af"), wt("af@w", "af", { createdAt: t(1) })];
+    const ss = [
+      sess("H", { repo: "af", createdAt: t(1), origin: "user" }),
+      sess("S", { repo: "af", createdAt: t(3), origin: "schedule" }),
+      sess("W", { repo: "af@w", createdAt: t(2), origin: "user" }),
+    ];
+    const byName = new Map(ss.map((x) => [x.name, x]));
+    expect(railNodeSessions(repoTree(rs, ss)[0], ss, byName).map((x) => x.name)).toEqual(["H", "W", "S"]);
   });
 });

@@ -30,7 +30,10 @@ export function useRailRoving() {
     // yank focus out of the modal into the tree while the user is typing.
     if (idx < 0) return;
     // Menu key / Shift+F10 opens the focused row's right-click menu (repo / session).
+    // A group header (Auto-run / Schedules) has no menu of its own.
+    const isGroup = cur.hasAttribute("data-proj-group-head");
     if (isContextMenuKey(e)) {
+      if (isGroup) return;
       e.preventDefault();
       synthContextMenu(cur);
       return;
@@ -57,6 +60,13 @@ export function useRailRoving() {
         cur.click();
         return;
       case "ArrowRight": {
+        if (isGroup) {
+          if (cur.getAttribute("aria-expanded") !== "true") {
+            e.preventDefault();
+            cur.click();
+          } else move(idx + 1);
+          return;
+        }
         const isRepo = cur.classList.contains("repo-card");
         const caret = isRepo ? caretFor(cur) : null;
         // Collapsed repo → expand; otherwise step to the next (child) row.
@@ -69,21 +79,39 @@ export function useRailRoving() {
         return;
       }
       case "ArrowLeft": {
+        const focusEl = (el: HTMLElement | null | undefined) => {
+          if (!el) return false;
+          e.preventDefault();
+          el.focus();
+          return true;
+        };
+        const headOf = (li: Element | null | undefined) =>
+          li?.querySelector<HTMLElement>(":scope > .proj-node-head [data-rail-row]");
+        if (isGroup) {
+          if (cur.getAttribute("aria-expanded") === "true") {
+            e.preventDefault();
+            cur.click();
+          } else focusEl(headOf(cur.closest(".proj-node")));
+          return;
+        }
         const isRepo = cur.classList.contains("repo-card");
         const caret = isRepo ? caretFor(cur) : null;
         if (caret && caret.getAttribute("aria-expanded") === "true") {
           // Expanded repo → collapse.
           e.preventDefault();
           caret.click();
-        } else if (!isRepo) {
-          // Session row → jump to its parent repo row.
-          const parent = cur.closest(".proj-node")?.querySelector<HTMLElement>(":scope > .proj-node-head [data-rail-row]");
-          if (parent) {
-            e.preventDefault();
-            parent.focus();
+        } else if (isRepo) {
+          // A collapsed copy inside a group steps out to the group header; elsewhere to the row above.
+          const node = cur.closest(".proj-node");
+          const grp = node?.parentElement?.parentElement;
+          if (!(grp?.classList.contains("proj-group") && focusEl(grp.querySelector<HTMLElement>(":scope > .proj-group-head")))) {
+            move(idx - 1);
           }
         } else {
-          move(idx - 1);
+          // Session row → its group header when it sits in one, else its repo row.
+          const up = cur.closest(".proj-node, .proj-group");
+          if (up?.classList.contains("proj-group")) focusEl(up.querySelector<HTMLElement>(":scope > .proj-group-head"));
+          else focusEl(headOf(up));
         }
         return;
       }
