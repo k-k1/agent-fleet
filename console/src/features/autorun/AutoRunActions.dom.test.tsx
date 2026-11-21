@@ -24,6 +24,13 @@ vi.mock("../repos/DeleteCopyModal.tsx", () => ({
 const confirm = vi.fn(async (_o: unknown) => true);
 vi.mock("../../ui/confirmBridge.ts", () => ({ askConfirm: (o: unknown) => confirm(o) }));
 const rawCall = vi.fn(async (_u: string, _o?: unknown) => ({ ok: true }));
+// An archive that lands: the session leaves the list, as the refresh after it would show.
+const archiveLands = async (u: string) => {
+  const name = u.split("/")[2];
+  const { useSessionsStore: st } = await import("../sessions/store.ts");
+  st.setState({ sessions: st.getState().sessions.filter((x) => x.name !== name) } as never);
+  return { ok: true };
+};
 vi.mock("../../core/api/client.ts", async (orig) => ({
   ...(await orig<object>()),
   raw: (u: string, o?: unknown) => rawCall(u, o),
@@ -44,7 +51,8 @@ const flush = () => act(async () => { await Promise.resolve(); await Promise.res
 
 beforeEach(async () => {
   confirm.mockClear();
-  rawCall.mockClear();
+  rawCall.mockReset();
+  rawCall.mockImplementation(archiveLands);
   useReposStore.setState({
     repos: [{ name: "base" }, { name: "base@wip-a", worktree: true, parent: "base" }, { name: "base@wip-o", worktree: true, parent: "base" }],
   } as never);

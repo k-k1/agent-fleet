@@ -33,12 +33,25 @@ export function runStopScope(run: RunRow, repos: Repo[]): { node: RepoTreeNode; 
  *  that ever ran there (worktreeOwners); a member's worktree a run was later pointed at is not the
  *  run's to delete. `sessions` is the list the owner is read from. */
 export function runWorktreeNode(run: RunRow, repos: Repo[], sessions: Session[]): RepoTreeNode | null {
+  const wt = createdWorktree(run, repos, sessions);
+  return wt && outsideFolder(run, wt.repo.name, sessions).length === 0 ? wt : null;
+}
+
+/** The copy the run created, whatever else of the run lives elsewhere. */
+function createdWorktree(run: RunRow, repos: Repo[], sessions: Session[]): RepoTreeNode | null {
   const folder = sessionFolder(run.root);
   const repo = repos.find((r) => r.name === folder);
   if (repo?.worktree !== true) return null;
   if (worktreeOwners(sessions).get(folder)?.name !== run.root.name) return null;
   return node(repo);
 }
+
+/** The run's sessions still listed that run outside `folder`. Deleting the folder archives the
+ *  run's root with it, and these would then be unreachable from any run. */
+const outsideFolder = (run: RunRow, folder: string, sessions: Session[]): Session[] => {
+  const listed = new Set(sessions.map((s) => s.name));
+  return runSessions(run).filter((s) => listed.has(s.name) && sessionFolder(s) !== folder);
+};
 
 /** "Clear finished runs": per ended run, the stopped sessions to archive (what the run started
  *  first, the run itself last, so a failure part-way leaves the run listed and retryable), and one
@@ -54,15 +67,18 @@ export function planClearFinished(
   const ended = runs.filter((r) => r.state === "ended");
   const ownedBy = (r: RunRow) => runSessions(r).flatMap((s) => fresh.get(s.name) ?? []);
   const mine = new Set(ended.flatMap(ownedBy).map((s) => s.name));
+  // `offered` holds every candidate copy, so its sessions are left to the delete dialog; `heads`
+  // only those whose run has nothing left outside the copy. A run with a session elsewhere (not yet
+  // archived, alive, locked, or failed) keeps its copy and root until a later clear finds it clear.
   const heads: RepoTreeNode[] = [];
   const offered = new Set<string>();
   for (const r of ended) {
     if (r.pr?.state !== "merged") continue;
-    const wt = runWorktreeNode(r, repos, sessions);
+    const wt = createdWorktree(r, repos, sessions);
     if (!wt || offered.has(wt.repo.name)) continue;
     if (!sessionsInFolder(sessions, wt.repo.name).every((s) => mine.has(s.name))) continue;
     offered.add(wt.repo.name);
-    heads.push(wt);
+    if (outsideFolder(r, wt.repo.name, sessions).length === 0) heads.push(wt);
   }
   // A session is archived only when it and everything the run started below it can be: an ancestor
   // archived while a descendant stays would leave that descendant unreachable from its run.

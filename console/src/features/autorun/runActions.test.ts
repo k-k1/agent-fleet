@@ -110,6 +110,31 @@ describe("planClearFinished", () => {
     expect(planClearFinished(runsOf(tree, ["r"]), tree, repos).archive[0].map((s) => s.name)).toEqual(["g", "c", "r"]);
   });
 
+  it("keeps a merged run's worktree while a session of the run lives elsewhere", () => {
+    const tree = [
+      sess("r", { origin: "queue", alive: false, repo: "base@wip-a", pr: { number: 1, state: "merged", url: "u" }, createdAt: "2026-11-01T00:00:00Z" }),
+      sess("c", { origin: "session", originSession: "r", alive: true, repo: "base", createdAt: "2026-11-02T00:00:00Z" }),
+    ];
+    const rs = runsOf(tree, ["r"]);
+    const p = planClearFinished(rs, tree, repos);
+    expect(p.node).toBeNull();
+    expect(p.archive).toEqual([]); // the root stays too: its worktree is a candidate, its child is alive
+    expect(runWorktreeNode(rs[0], repos, tree)).toBeNull();
+    // Once the child is gone from the list the copy is offered.
+    const after = planClearFinished(rs, tree.filter((s) => s.name !== "c"), repos);
+    expect(after.node!.repo.name).toBe("base@wip-a");
+  });
+
+  it("archives a child elsewhere first and offers the worktree once it is gone", () => {
+    const tree = [
+      sess("r", { origin: "queue", alive: false, repo: "base@wip-a", pr: { number: 1, state: "merged", url: "u" }, createdAt: "2026-11-01T00:00:00Z" }),
+      sess("c", { origin: "session", originSession: "r", alive: false, repo: "base", createdAt: "2026-11-02T00:00:00Z" }),
+    ];
+    const p = planClearFinished(runsOf(tree, ["r"]), tree, repos);
+    expect(p.archive.map((g) => g.map((s) => s.name))).toEqual([["c"]]);
+    expect(p.node).toBeNull();
+  });
+
   it("names the ancestors of a session, for keeping them after a failure", () => {
     const tree = [sess("r", { origin: "queue" }), sess("c", { origin: "session", originSession: "r" }), sess("g", { origin: "session", originSession: "c" })];
     expect(ancestorNames("g", tree)).toEqual(["c", "r"]);
