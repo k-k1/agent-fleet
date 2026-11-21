@@ -419,6 +419,10 @@ func TestNPMVerifyPresentRepairsOnlyTheBrokenCopy(t *testing.T) {
 	if !strings.HasSuffix(st, "codex\tok\t\n") || strings.Contains(st, "claude\tok") || !f.env.runs(f.bin("codex")) {
 		t.Fatalf("status=%q", st)
 	}
+	// The healthy copy still runs and keeps its earlier skipped status.
+	if !f.env.runs(f.bin("claude")) || f.env.lastStatus("claude") != statusSkip {
+		t.Fatalf("healthy claude: runs=%v status=%q", f.env.runs(f.bin("claude")), st)
+	}
 }
 
 func TestNPMVerifyReinstallsAMissingCopyWithoutABakedOne(t *testing.T) {
@@ -432,7 +436,7 @@ func TestNPMVerifyReinstallsAMissingCopyWithoutABakedOne(t *testing.T) {
 		t.Fatalf("npm log %q", log)
 	}
 	st := f.statusText()
-	if !strings.Contains(st, "claude\tok\t") || !strings.Contains(st, "codex\tok\t") || !f.env.runs(f.bin("codex")) {
+	if !strings.Contains(st, "claude\tok\t") || !strings.Contains(st, "codex\tok\t") || !f.env.runs(f.bin("codex")) || !f.env.runs(f.bin("claude")) {
 		t.Fatalf("status=%q", st)
 	}
 }
