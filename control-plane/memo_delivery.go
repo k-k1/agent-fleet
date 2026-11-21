@@ -441,11 +441,14 @@ func (a memoAPI) listDeliveries(via memoVia) func(http.ResponseWriter, *http.Req
 		var err error
 		if r.URL.Query().Has("closed_since") {
 			t, perr := time.Parse(time.RFC3339Nano, r.URL.Query().Get("closed_since"))
-			if perr != nil {
+			// A bound past year 9999 would format wider than every stored stamp and match none of
+			// the text order's expectations; refuse it.
+			bound := ceilMicro(t).UTC()
+			if perr != nil || bound.Year() > 9999 {
 				writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "closed_since must be an RFC 3339 time"})
 				return
 			}
-			ds, err = a.store.ListMemoDeliveriesClosedSince(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax, store.DeliveryTS(ceilMicro(t)))
+			ds, err = a.store.ListMemoDeliveriesClosedSince(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax, store.DeliveryTS(bound))
 		} else {
 			ds, err = list(r.Context(), mv.MembershipID, r.PathValue("categoryId"), memoDeliveryListMax)
 		}

@@ -1431,7 +1431,7 @@ func TestMemoDeliveryListWire(t *testing.T) {
 				t.Fatalf("closed_since %s lost an open run", c.at.Format(time.RFC3339Nano))
 			}
 		}
-		for _, bad := range []string{"closed_since=yesterday", "closed_since="} {
+		for _, bad := range []string{"closed_since=yesterday", "closed_since=", "closed_since=9999-12-31T23:59:59.999999999Z", "closed_since=9999-12-31T23:59:59-01:00"} {
 			if rec := e.do("a", "GET", base+"?"+bad, nil); rec.Code != http.StatusBadRequest {
 				t.Fatalf("%s: %d", bad, rec.Code)
 			}

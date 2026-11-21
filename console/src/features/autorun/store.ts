@@ -51,7 +51,7 @@ export function closedLowerBound(deliveries: Map<string, RunDelivery>, categoryI
     if (d.categoryId !== categoryId) continue;
     if (d.state === "closed") {
       if (d.closedAt > closed) closed = d.closedAt;
-    } else if (d.state !== "" && d.createdAt && (!open || d.createdAt < open)) open = d.createdAt;
+    } else if (d.createdAt && (!open || d.createdAt < open)) open = d.createdAt;
   }
   return open && (!closed || open < closed) ? open : closed;
 }
