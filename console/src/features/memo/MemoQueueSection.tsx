@@ -1192,12 +1192,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             <Icon name="history" />
                           </button>
                         )}
-                        {cat && (
+                        {cat && (() => {
+                          // A category that already is a queue stays openable while the tenant blocks
+                          // new setups: the dialog still lets the member remove it.
+                          const settingsBlocked = !tenantEnabled && !isQueue;
+                          return (
                           <button
                             type="button"
                             className="memo-cat-act"
-                            title={tr("memo.autorun_settings")}
+                            title={settingsBlocked ? tr("memo.q_tenant_off") : tr("memo.autorun_settings")}
                             aria-label={tr("memo.autorun_settings")}
+                            disabled={settingsBlocked}
                             onClick={(e) => {
                               e.stopPropagation();
                               setSettingsFor(cat.id);
@@ -1205,7 +1210,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           >
                             <Icon name="settings-gear" />
                           </button>
-                        )}
+                          );
+                        })()}
                         {cat && (
                           <button
                             type="button"

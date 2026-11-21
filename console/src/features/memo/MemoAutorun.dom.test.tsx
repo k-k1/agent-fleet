@@ -407,13 +407,22 @@ describe("the release card", () => {
 describe("the settings dialog", () => {
   const openSettings = async () => click(byLabel(t("memo.autorun_settings")));
 
-  it("says the tenant switch is off instead of offering to save", async () => {
+  it("disables the gear with the reason while the tenant blocks new setups", async () => {
     servedQueues = { tenantEnabled: false, queues: [] };
     servedCats = [aCat({})];
     await render();
-    await openSettings();
-    expect(dialog().querySelector(".memo-q-notice")?.textContent).toBe(t("memo.q_tenant_off"));
-    expect(must(dialog().querySelector<HTMLButtonElement>("button[type=submit]"), "save").disabled).toBe(true);
+    const gear = byLabel(t("memo.autorun_settings")) as HTMLButtonElement;
+    expect(gear.disabled).toBe(true);
+    expect(gear.title).toBe(t("memo.q_tenant_off"));
+  });
+
+  it("keeps the gear enabled when the tenant allows auto-run", async () => {
+    servedQueues = { tenantEnabled: true, queues: [] };
+    servedCats = [aCat({})];
+    await render();
+    const gear = byLabel(t("memo.autorun_settings")) as HTMLButtonElement;
+    expect(gear.disabled).toBe(false);
+    expect(gear.title).toBe(t("memo.autorun_settings"));
   });
 
   it("still lets an existing setting be removed while the switch is off", async () => {
