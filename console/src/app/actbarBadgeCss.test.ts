@@ -14,7 +14,7 @@ describe("activity-bar badge tones", () => {
     expect(rule(".actbar-badge.tone-news")).toContain("var(--err)");
     expect(rule(".actbar-badge.tone-unread,\n.actbar-badge.tone-failed")).toContain("var(--err)");
     expect(rule(".actbar-badge.tone-waiting")).toContain("var(--warn)");
-    expect(rule(".actbar-badge")).toContain("color: white");
+    expect(rule(".actbar-badge")).toContain("color: var(--on-err)");
     expect(css).not.toMatch(/\.actbar-badge[^{]*\{[^}]*var\(--accent\)/);
   });
 });

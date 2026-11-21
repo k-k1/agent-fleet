@@ -31,6 +31,7 @@
   --on-accent: #06222e; /* text/icon on an accent-filled button (dark theme: dark on light cyan) */
   --on-accent-theme: #06222e; /* same value, for .settings-modal, which re-binds --on-accent to the user accent's */
   --on-warn: #111; /* text on a --warn fill (dark theme: dark on amber) */
+  --on-err: #111; /* text on an --err fill (dark theme: white on #e06c75 is only 3.2:1) */
   --focus-ring: #79c0ff; /* keyboard focus ring — base.css :focus-visible (keyboard system) */
   --chat-accent: var(--accent); /* chat highlights follow the chosen surface color (overridden in applyTheme) */
   /* Accent for the admin modal, following the chosen top-bar surface. Concrete (not
@@ -229,6 +230,7 @@
   --on-accent: #ffffff; /* light theme: white text on the saturated blue accent */
   --on-accent-theme: #ffffff; /* same value, for .settings-modal, which re-binds --on-accent to the user accent's */
   --on-warn: #ffffff; /* light theme: --warn is a dark amber (#8a5b00), so white text */
+  --on-err: #ffffff; /* light theme: --err is a dark red, so white text */
   --focus-ring: #1d4ed8; /* keyboard focus ring — base.css :focus-visible (keyboard system) */
   --topbar-accent: #1d4ed8; /* light-theme default for the admin accent (see :root) */
   --btn: #e8eaee;

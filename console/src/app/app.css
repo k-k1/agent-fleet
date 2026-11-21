@@ -101,8 +101,8 @@
   background: var(--actbar-active-bg);
 }
 /* Badges sit at the upper right, the mark at the lower right: a count never covers it.
-   Colours follow the top bar's bell (.notification-badge): "new / unread" is --err with white
-   text, "waiting" (your turn) stays --warn, and a failed run keeps its own --err dot. --accent
+   Colours follow the top bar's bell (.notification-badge): "new / unread" is --err with
+   --on-err text, "waiting" (your turn) stays --warn, and a failed run keeps its own --err dot. --accent
    is not used: it is also the active view's indicator and changes with the theme. */
 .actbar-badge {
   position: absolute;
@@ -117,7 +117,7 @@
   line-height: 16px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-  color: white;
+  color: var(--on-err);
   pointer-events: none;
 }
 .actbar-badge.tone-waiting {
