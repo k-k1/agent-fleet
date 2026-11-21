@@ -557,6 +557,7 @@ func fillGitFacts(c *repoCache, repos []Repo, idx []int, global gitGlobals) {
 		repos[i].Provider, repos[i].Remote, repos[i].RemotePath = id.provider, id.host, id.remotePath
 		if id.worktree {
 			repos[i].Worktree, repos[i].Parent, repos[i].CreatedAt = true, id.parent, id.createdAt
+			repos[i].CreatedBy = ReadWorktreeCreator(dir)
 			parents[i] = id.parentDir
 		}
 	})

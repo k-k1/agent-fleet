@@ -34,6 +34,9 @@ type createRun struct {
 
 	// spawnParent names the session that raised this create (ADR 0073), "" for every other route.
 	spawnParent string
+	// createdWorktree is the worktree this create ran `git worktree add` for ("" when it reused
+	// one or made none); identify records the session's name on it once the name exists.
+	createdWorktree string
 	// idemKey is the idempotency key this create owns ("" when nothing is de-duplicated), and
 	// committed says its answer has been recorded under it.
 	idemKey   string
@@ -417,6 +420,16 @@ func (c *createRun) resolveLiveCatalogModel() bool {
 	return true
 }
 
+// ensureWorktree is gitx.EnsureWorktreeNew that remembers a worktree this create made.
+func (c *createRun) ensureWorktree(parent, base, newBranch, folderSeg string) (string, error) {
+	dir, created, err := gitx.EnsureWorktreeNew(parent, base, newBranch, folderSeg)
+	c.createdWorktree = ""
+	if err == nil && created {
+		c.createdWorktree = dir
+	}
+	return dir, err
+}
+
 // resolveWorkingCopy is stage 6: the directory the session will run in — a fresh worktree, a
 // clone, or the dir as sent, resolved against home — then the spawn working-copy check against
 // that RESOLVED dir, then the subdir beneath it. It leaves c.req.Dir resolved and sets c.subdir.
@@ -462,17 +475,17 @@ func (c *createRun) resolveWorkingCopy() bool {
 				// A queue's derived name was taken by another copy since it was chosen (two
 				// deliveries for one item): a name never fails a delivery.
 				slug := randSlug()
-				dir, err = gitx.EnsureWorktree(parent, "", "temp/"+slug, "wip-"+slug)
+				dir, err = c.ensureWorktree(parent, "", "temp/"+slug, "wip-"+slug)
 			} else {
 				gitx.EnsureBranchRef(parent, base) // branch pushed since our last fetch => fetch once
-				dir, err = gitx.EnsureWorktree(parent, base, "", "")
+				dir, err = c.ensureWorktree(parent, base, "", "")
 			}
 			if occ == "" {
 				if err == nil {
 					gitx.FastForwardWorktree(dir) // start at the branch's current tip, not a stale one
 				} else if c.queueNamed {
 					slug := randSlug()
-					dir, err = gitx.EnsureWorktree(parent, "", "temp/"+slug, "wip-"+slug)
+					dir, err = c.ensureWorktree(parent, "", "temp/"+slug, "wip-"+slug)
 				}
 			}
 		} else {
@@ -520,12 +533,12 @@ func (c *createRun) resolveWorkingCopy() bool {
 				}
 			}
 			if err == nil {
-				dir, err = gitx.EnsureWorktree(parent, start, nb, folderSeg)
+				dir, err = c.ensureWorktree(parent, start, nb, folderSeg)
 				if err != nil && c.queueNamed {
 					// git refused the derived name (an existing branch "feature" blocks
 					// "feature/x"): a name never fails a delivery.
 					slug := randSlug()
-					dir, err = gitx.EnsureWorktree(parent, start, "temp/"+slug, "wip-"+slug)
+					dir, err = c.ensureWorktree(parent, start, "temp/"+slug, "wip-"+slug)
 				}
 			}
 			if err == nil {
@@ -622,6 +635,13 @@ func (c *createRun) identify() bool {
 		// another session, which a create must never overwrite.
 		httpx.WriteErr(c.w, http.StatusConflict, "name_taken", "a session named "+c.name+" already exists")
 		return false
+	}
+	// The name is allocated only now (it hashes the resolved dir), after the worktree exists, so
+	// the creator is recorded here. A failed write only leaves the copy "unknown" to clients.
+	if c.createdWorktree != "" {
+		if err := gitx.WriteWorktreeCreator(c.createdWorktree, c.name); err != nil {
+			log.Printf("recording %s as creator of %s: %v", c.name, c.createdWorktree, err)
+		}
 	}
 
 	c.kind = NormalizeKind(req.Kind)

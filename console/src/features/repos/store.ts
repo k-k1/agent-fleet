@@ -25,6 +25,9 @@ export interface Repo {
   worktree?: boolean; // linked git worktree (not a standalone clone)
   parent?: string; // for a worktree, the parent working copy's folder name
   createdAt?: string; // for a worktree, its creation time (RFC3339); orders worktrees under a base
+  /** The session whose launch created this worktree. Absent means unknown (a copy made before
+   * the Agent recorded it), never "nobody": a present value is proof, an absent one is not. */
+  createdBy?: string;
   /** Deletion lock (docs/log/45): while true, deletion is refused with 403 even when
    * forced, and an emptied worktree is excluded from automatic pruning. */
   locked?: boolean;

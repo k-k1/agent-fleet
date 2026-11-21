@@ -37,12 +37,17 @@ export function runWorktreeNode(run: RunRow, repos: Repo[], sessions: Session[])
   return wt && !leavesRunSessions(wt.repo.name, sessions) ? wt : null;
 }
 
-/** The copy the run created, whatever else of the run lives elsewhere. */
+/** The copy the run created, whatever else of the run lives elsewhere. When the Agent recorded the
+ *  creating session (`createdBy`) that is the proof: only the run's root counts. A copy without the
+ *  record (made before it existed) falls back to the first session still listed there, which is a
+ *  guess (the creator may have been archived), so the delete dialog's confirmation stays the check. */
 function createdWorktree(run: RunRow, repos: Repo[], sessions: Session[]): RepoTreeNode | null {
   const folder = sessionFolder(run.root);
   const repo = repos.find((r) => r.name === folder);
   if (repo?.worktree !== true) return null;
-  if (worktreeOwners(sessions).get(folder)?.name !== run.root.name) return null;
+  if (repo.createdBy) {
+    if (repo.createdBy !== run.root.name) return null;
+  } else if (worktreeOwners(sessions).get(folder)?.name !== run.root.name) return null;
   return node(repo);
 }
 
