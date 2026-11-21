@@ -708,7 +708,7 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		MuseContributorMode: contributorModeOn(c.kind),
 	}
 	if c.origin == session.OriginSchedule {
-		meta.ScheduleID = clipRunes(strings.TrimSpace(req.ScheduleID), 64)
+		meta.ScheduleID = cleanScheduleID(req.ScheduleID)
 	}
 	applyCreateLinks(&meta, req)
 	// After the route has been checked and bound (checkRoute), before anything starts: the record

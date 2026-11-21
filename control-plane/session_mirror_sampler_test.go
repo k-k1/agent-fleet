@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -136,5 +138,62 @@ func TestSampleDoesNotOverwriteANewerMirrorWriteWithASlowOlderRead(t *testing.T)
 	rows, _ := st.ListSessions(ctx, ws.ID)
 	if len(rows) != 1 || rows[0].Name != "new" || rows[0].Carried != "question" {
 		t.Errorf("mirror = %+v, want only the newer row \"new\"", rows)
+	}
+}
+
+// Both admin session lists carry origin and scheduleId (and originSession on the member list)
+// from the DB mirror, and the overview row copies them from live and mirrored rows alike; an
+// empty value is left out of the JSON.
+func TestAdminSessionListsCarryOriginAndScheduleID(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, _, ws := usageHourFixture(t)
+	if err := st.ReplaceSessions(ctx, ws.ID, []store.SessionRow{
+		{Name: "run1", Kind: "claude", State: "stopped", Origin: "schedule", OriginSession: "parent", ScheduleID: "sch-1"},
+		{Name: "plain", Kind: "claude", State: "stopped"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.ListSessions(ctx, ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]store.SessionRow{}
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	// memberSessions' fallback: the mirror row as a wire row.
+	mir := mirroredAdminSession(byName["run1"])
+	if mir.Origin != "schedule" || mir.OriginSession != "parent" || mir.ScheduleID != "sch-1" {
+		t.Fatalf("mirrored row = %+v", mir)
+	}
+	// The overview's fallback and its row copy, mirrored and live.
+	over := mgr.sessionsForOverview(ctx, ws, stubRuntime{}, "stopped")
+	live := sessionWire{Name: "live", Alive: true, Origin: "schedule", ScheduleID: "sch-2"}
+	for _, c := range []struct {
+		w           sessionWire
+		origin, sch string
+		wantInJSON  bool
+	}{
+		{mirroredAdminSession(byName["run1"]), "schedule", "sch-1", true},
+		{live, "schedule", "sch-2", true},
+		{mirroredAdminSession(byName["plain"]), "", "", false},
+	} {
+		row := adminSessionRowOf("sales", "w", "w@acme.co.jp", "stopped", c.w)
+		if row.Origin != c.origin || row.ScheduleID != c.sch {
+			t.Errorf("row %s = %+v, want origin %q scheduleId %q", c.w.Name, row, c.origin, c.sch)
+		}
+		b, _ := json.Marshal(row)
+		if got := strings.Contains(string(b), `"scheduleId"`) || strings.Contains(string(b), `"origin"`); got != c.wantInJSON {
+			t.Errorf("row %s JSON %s: origin/scheduleId present = %v, want %v", c.w.Name, b, got, c.wantInJSON)
+		}
+	}
+	found := false
+	for _, w := range over {
+		if w.Name == "run1" {
+			found = w.Origin == "schedule" && w.ScheduleID == "sch-1" && w.State == "stopped"
+		}
+	}
+	if !found {
+		t.Fatalf("overview fallback = %+v, want run1 with origin, scheduleId and its mirrored state", over)
 	}
 }
