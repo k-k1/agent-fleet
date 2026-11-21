@@ -416,6 +416,76 @@ func TestCursorSweepStaleUsesTheEntrysOwnName(t *testing.T) {
 	}
 }
 
+func TestCursorSweepStaleIgnoresGlobCharactersInHome(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	root := t.TempDir()
+	f.env.Home = filepath.Join(root, "h[a]")
+	sibling := filepath.Join(root, "ha") // what the pattern "h[a]" would match
+	f.write(t, filepath.Join(sibling, ".local", "share", "cursor-agent", "versions", ".af-up-x", "f"), "x")
+	f.write(t, filepath.Join(sibling, ".local", "share", "cursor-agent", "versions", "1.0.0.af-old.5", "cursor-agent"), "x")
+	f.write(t, filepath.Join(f.env.cursorShare(), "1.0.0.af-old.7", "cursor-agent"), "x")
+	f.write(t, filepath.Join(f.env.cursorShare(), "1.0.0.af-old.mine", "cursor-agent"), "x") // not our form
+	f.env.cursorSweepStale()
+	sv := filepath.Join(sibling, ".local", "share", "cursor-agent", "versions")
+	for _, n := range []string{".af-up-x", "1.0.0.af-old.5"} {
+		if _, err := os.Lstat(filepath.Join(sv, n)); err != nil {
+			t.Fatalf("a sibling's %s was touched", n)
+		}
+	}
+	if f.read(filepath.Join(f.env.cursorShare(), "1.0.0", "cursor-agent")) == "" {
+		t.Fatal("own aside tree not restored")
+	}
+	if _, err := os.Lstat(filepath.Join(f.env.cursorShare(), "1.0.0.af-old.mine")); err != nil {
+		t.Fatal("an entry not of our form was moved")
+	}
+}
+
+func TestNPMMarkerWrite(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	t.Run("a member's file at the old fixed temp name survives", func(t *testing.T) {
+		f.write(t, f.env.npmMarker()+".new", "mine")
+		if err := f.env.npmWriteMarker("pending", []string{"/x/a"}); err != nil {
+			t.Fatal(err)
+		}
+		if f.read(f.env.npmMarker()+".new") != "mine" {
+			t.Fatal("the member's file was overwritten")
+		}
+	})
+	t.Run("a path with a line break is refused", func(t *testing.T) {
+		if err := f.env.npmWriteMarker("pending", []string{"/x/a\nb"}); err == nil {
+			t.Fatal("accepted")
+		}
+	})
+}
+
+func TestNPMAcceptedCleanupFailureKeepsTheMarker(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	bak := tree + npmBakSuffix
+	f.write(t, filepath.Join(bak, "VERSION"), "1.0.0")
+	f.write(t, f.env.npmMarker(), "accepted\n"+tree+"\n")
+	parent := filepath.Dir(bak)
+	if err := os.Chmod(parent, 0o555); err != nil { // the backup cannot be unlinked from here
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	f.env.npmRecoverAside()
+	if _, err := os.Lstat(f.env.npmMarker()); err != nil {
+		t.Fatal("marker dropped although a backup is left")
+	}
+	os.Chmod(parent, 0o755)
+	f.env.npmRecoverAside()
+	if _, err := os.Lstat(bak); err == nil {
+		t.Fatal("backup not swept on the next start")
+	}
+	if _, err := os.Lstat(f.env.npmMarker()); err == nil {
+		t.Fatal("marker left after a clean sweep")
+	}
+}
+
 func TestScriptOverSizeLimitFailsAndDoesNotRun(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "ran")
 	big := "touch " + marker + "\n" + strings.Repeat("#"+strings.Repeat("x", 998)+"\n", maxScriptBytes/1000+10)

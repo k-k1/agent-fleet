@@ -503,27 +503,43 @@ func (e Env) cursorAnswers(p string) bool {
 // and the aside copy of a tree that was being replaced (put back when its name is free).
 func (e Env) cursorSweepStale() {
 	versions := e.cursorShare()
-	if m, _ := filepath.Glob(filepath.Join(versions, ".af-up-*")); len(m) > 0 {
-		for _, p := range m {
-			removeTree(p)
-		}
+	// The directory is opened and its entries matched by name: a glob would read brackets in a
+	// HOME path as a pattern and walk a sibling.
+	ents, err := os.ReadDir(versions)
+	if err != nil {
+		return
 	}
-	old, _ := filepath.Glob(filepath.Join(versions, "*.af-old.*"))
-	for _, p := range old {
-		// The name is rebuilt from the entry's own basename inside versions: nothing above it (a
-		// HOME whose path contains ".af-old.") may change where it goes back to.
-		base := filepath.Base(p)
-		name := base[:strings.LastIndex(base, ".af-old.")]
-		dir := filepath.Join(versions, name)
-		if name == "" {
+	for _, de := range ents {
+		base := de.Name()
+		p := filepath.Join(versions, base)
+		if strings.HasPrefix(base, ".af-up-") {
+			removeTree(p)
 			continue
 		}
+		// Only the form this code makes: <name>.af-old.<pid>.
+		i := strings.LastIndex(base, ".af-old.")
+		if i <= 0 || !allDigits(base[i+len(".af-old."):]) {
+			continue
+		}
+		dir := filepath.Join(versions, base[:i])
 		if _, err := os.Lstat(dir); err != nil {
 			_ = restoreTree(p, dir)
 			continue
 		}
 		removeTree(p)
 	}
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // installCursorLatest runs the upstream install script against a private HOME inside the real

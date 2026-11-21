@@ -353,12 +353,32 @@ const npmBakSuffix = ".af-bak"
 func (e Env) npmMarker() string { return filepath.Join(e.Home, ".local", ".af-npm-update") }
 
 func (e Env) npmWriteMarker(state string, origs []string) error {
+	for _, o := range origs {
+		if strings.ContainsAny(o, "\r\n") {
+			return fmt.Errorf("a path with a line break cannot be recorded: %q", o)
+		}
+	}
 	body := state + "\n" + strings.Join(origs, "\n") + "\n"
-	tmp := e.npmMarker() + ".new"
-	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
+	// An exclusive temp file beside the marker: a fixed name could be the member's own file or a link.
+	f, err := os.CreateTemp(filepath.Dir(e.npmMarker()), ".af-npm-update.tmp.")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, e.npmMarker())
+	tmp := f.Name()
+	if _, err := f.WriteString(body); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, e.npmMarker()); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // npmTreeOf is the package tree of a CLI under lib/node_modules.
@@ -402,7 +422,9 @@ func (e Env) npmRecoverAside() {
 		all = append(all, npmAside{orig: orig, bak: orig + npmBakSuffix})
 	}
 	if accepted {
-		npmDiscardAside(all)
+		if !npmDiscardAside(all) {
+			return // something stayed behind: keep the marker so the next start sweeps it again
+		}
 	} else if !e.npmRestoreAside(all) {
 		return // a backup could not be put back: keep the marker so the next start tries again
 	}
@@ -475,9 +497,15 @@ func (e Env) npmRestoreAside(moved []npmAside) bool {
 	return ok
 }
 
-// npmDiscardAside deletes the backups once the new copies are trusted.
-func npmDiscardAside(moved []npmAside) {
+// npmDiscardAside deletes the backups once the new copies are trusted and reports whether none
+// is left.
+func npmDiscardAside(moved []npmAside) bool {
+	gone := true
 	for _, m := range moved {
 		removeTree(m.bak)
+		if _, err := os.Lstat(m.bak); err == nil {
+			gone = false
+		}
 	}
+	return gone
 }

@@ -245,9 +245,8 @@ func (e Env) selfUpdateNPM() {
 		for i, m := range moved {
 			origs[i] = m.orig
 		}
-		if e.npmWriteMarker("accepted", origs) == nil {
-			npmDiscardAside(moved)
-			os.Remove(e.npmMarker())
+		if e.npmWriteMarker("accepted", origs) == nil && npmDiscardAside(moved) {
+			os.Remove(e.npmMarker()) // otherwise it stays and the next start sweeps again
 		}
 	} else if _, err := os.Stat(e.npmMarker()); err == nil {
 		os.Remove(e.npmMarker())
