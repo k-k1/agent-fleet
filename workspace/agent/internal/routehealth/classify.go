@@ -14,9 +14,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Class is what a failed call says about the backend's availability.
@@ -147,20 +144,17 @@ var statusRe = regexp.MustCompile(`(?i)(?:^\s*|\b(?:http(?:/[\d.]+)?|status(?:[ 
 // helps; spend comes before window because calling a spend cap a window makes the router
 // expect a reset that never comes.
 func Classify(kind, msg string, now time.Time) Verdict {
-	switch kind {
-	case session.KindClaude:
-		if lk, at, ok := claude.LimitInMessage(msg, now); ok {
-			if lk == claude.LimitSpend {
-				return Verdict{Class: ClassSpend, Scope: ScopeKind}
+	if a, ok := agentreg.Lookup(kind); ok {
+		if r, ok := a.(agents.MessageLimitReader); ok {
+			if l, ok := r.LimitInMessage(msg, now); ok {
+				switch {
+				case l.Kind == agents.LimitSpend:
+					return Verdict{Class: ClassSpend, Scope: ScopeKind}
+				case l.PerModel:
+					return Verdict{Class: ClassWindow, Scope: ScopeModel, ResetAt: l.ResetAt}
+				}
+				return Verdict{Class: ClassWindow, Scope: ScopeKind, ResetAt: l.ResetAt}
 			}
-			if claude.IsPerModelLimit(msg) {
-				return Verdict{Class: ClassWindow, Scope: ScopeModel, ResetAt: at}
-			}
-			return Verdict{Class: ClassWindow, Scope: ScopeKind, ResetAt: at}
-		}
-	case session.KindMuse:
-		if at, ok := muse.LimitInMessage(msg); ok {
-			return Verdict{Class: ClassWindow, Scope: ScopeKind, ResetAt: at}
 		}
 	}
 	// A kind's own quota reader (agents.QuotaRefusalReader, today agy): the refusal names the

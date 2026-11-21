@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -41,13 +42,9 @@ const modelInfoCatalogFixture = `{
 func TestResolveModelInfo(t *testing.T) {
 	usagesvc.UseIsolatedUsageDir(t)
 	usagesvc.UseUsageCatalog(t, modelInfoCatalogFixture)
-	codexRetirement = func(id string) (agents.ModelRetiring, bool) {
-		if id == "gpt-5.5" {
-			return agents.ModelRetiring{At: "2026-10-14T19:00:00Z", Successor: "gpt-5.6-sol"}, true
-		}
-		return agents.ModelRetiring{}, false
-	}
-	t.Cleanup(func() { codexRetirement = defaultCodexRetirement })
+	codex.SetRetiringForTest(t, map[string]agents.ModelRetiring{
+		"gpt-5.5": {At: "2026-10-14T19:00:00Z", Successor: "gpt-5.6-sol"},
+	})
 
 	cases := []struct {
 		kind, id string

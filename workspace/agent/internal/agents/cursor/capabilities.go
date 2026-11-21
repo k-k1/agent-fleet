@@ -69,3 +69,9 @@ func (agentImpl) WarmStatus() { WarmStatus() }
 func (agentImpl) ProgressSignals() agents.ProgressTraits {
 	return agents.ProgressTraits{Signal: agents.ProgressPaneOnly, HooklessStatus: true}
 }
+
+// NativeDialect is agents.PlaceholderDialectWriter: ${VAR} (mcpproj.DialectDollarBrace).
+func (agentImpl) NativeDialect() string { return "dollar_brace" }
+
+// ConfirmsTerminalSubmit is agents.SubmitRejectionConfirmer.
+func (agentImpl) ConfirmsTerminalSubmit() bool { return true }

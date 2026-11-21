@@ -66,3 +66,6 @@ func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
 func (agentImpl) ProgressSignals() agents.ProgressTraits {
 	return agents.ProgressTraits{Signal: agents.ProgressPaneOnly, HooklessStatus: true}
 }
+
+// NativeDialect is agents.PlaceholderDialectWriter: ${VAR} (mcpproj.DialectDollarBrace).
+func (agentImpl) NativeDialect() string { return "dollar_brace" }

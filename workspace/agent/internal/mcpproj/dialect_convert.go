@@ -10,6 +10,9 @@ package mcpproj
 import (
 	"os"
 	"regexp"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
 
 // CanTranslate reports whether kind has a native dialect to translate INTO. codex
@@ -23,14 +26,12 @@ func CanTranslate(kind string) bool {
 // TRANSLATE target, as opposed to dialectByKind's full read-side support set
 // (cursor also READS dollar_env_brace, but nothing writes it natively).
 func nativeDialect(kind string) string {
-	switch kind {
-	case "claude", "copilot", "cursor":
-		return DialectDollarBrace
-	case "opencode":
-		return DialectEnvBrace
-	default:
-		return ""
+	if a, ok := agentreg.Lookup(kind); ok {
+		if w, ok := a.(agents.PlaceholderDialectWriter); ok {
+			return w.NativeDialect()
+		}
 	}
+	return ""
 }
 
 var (

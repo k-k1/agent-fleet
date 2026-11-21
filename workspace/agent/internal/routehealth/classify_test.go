@@ -94,3 +94,29 @@ func TestOnlyAvailabilityClassesCool(t *testing.T) {
 		}
 	}
 }
+
+// The kinds' own readers hand a reset instant to the router; losing it falls back to a default
+// wait, which the class/scope table above would not notice.
+func TestClassifyResetAt(t *testing.T) {
+	tokyo := time.FixedZone("JST", 9*3600)
+	now := time.Date(2026, 10, 26, 18, 0, 0, 0, tokyo)
+	cases := []struct {
+		name, kind, msg string
+		class           Class
+		scope           Scope
+		resetAt         time.Time
+	}{
+		{"claude window", session.KindClaude, "You've hit your session limit · resets 7:50pm (Asia/Tokyo)", ClassWindow, ScopeKind,
+			time.Date(2026, 10, 26, 19, 50, 0, 0, tokyo)},
+		{"claude per-model", session.KindClaude, "You've reached your Fable 5 limit. Run /usage-credits to continue", ClassWindow, ScopeModel, time.Time{}},
+		{"claude spend", session.KindClaude, "You've hit your org's monthly spend limit · run /usage-credits to raise it", ClassSpend, ScopeKind, time.Time{}},
+		{"muse quota", session.KindMuse, "API error 429 [request_id=8af4fc75]: Subscription quota exhausted. Your usage window resets at 2026-10-06T04:25:21Z. (rate_limit_error)",
+			ClassWindow, ScopeKind, time.Date(2026, 10, 6, 4, 25, 21, 0, time.UTC)},
+	}
+	for _, c := range cases {
+		v := Classify(c.kind, c.msg, now)
+		if v.Class != c.class || v.Scope != c.scope || !v.ResetAt.Equal(c.resetAt) {
+			t.Errorf("%s: got %+v, want class %v scope %v reset %v", c.name, v, c.class, c.scope, c.resetAt)
+		}
+	}
+}

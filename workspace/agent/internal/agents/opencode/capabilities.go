@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -117,3 +118,9 @@ func (agentImpl) PaneStartMarker() string { return "opencode" }
 
 // SlotSessionID is agents.SlotSessionIDer.
 func (agentImpl) SlotSessionID(m session.Meta) string { return SlotSessionID(m) }
+
+// NativeDialect is agents.PlaceholderDialectWriter: {env:VAR} (mcpproj.DialectEnvBrace).
+func (agentImpl) NativeDialect() string { return "env_brace" }
+
+// ChatFallbackModel is agents.ChatFallbackModeler.
+func (agentImpl) ChatFallbackModel() string { return modelfallback.ChatOpencode }

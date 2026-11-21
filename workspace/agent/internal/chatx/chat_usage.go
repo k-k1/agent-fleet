@@ -17,8 +17,9 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -244,11 +245,10 @@ func chatCtxModelFor(c *ChatConversation, kind string) string {
 	if m := chatModelFor(c, kind); m != "" {
 		return m
 	}
-	switch kind {
-	case session.KindCodex:
-		return defaultCodexChatModel
-	case session.KindOpencode:
-		return defaultOpencodeChatModel
+	if a, ok := agentreg.Lookup(kind); ok {
+		if f, ok := a.(agents.ChatFallbackModeler); ok {
+			return f.ChatFallbackModel()
+		}
 	}
 	return envOr("AF_CHAT_MODEL", defaultChatModel)
 }

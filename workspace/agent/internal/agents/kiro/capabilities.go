@@ -1,6 +1,7 @@
 package kiro
 
 import (
+	"math"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -84,4 +85,25 @@ func (agentImpl) SwitchNeedsStopped() bool { return false }
 func (agentImpl) DropForTerminalSwitch(name string) bool {
 	DropHandleWait(name, 5*time.Second)
 	return true
+}
+
+// LiveContext is agents.LiveContextReader: the managed driver's latest
+// _kiro.dev/metadata contextUsagePercentage against the model's real window, plus the metered
+// credit spend (docs/log/43 §10). The % is exact; the token count derived from it is an
+// estimate.
+func (agentImpl) LiveContext(name string) (agents.LiveContext, bool) {
+	pct, window, credits, model, ok := ManagedContext(name)
+	return liveContextOf(pct, window, credits, model, ok)
+}
+
+// liveContextOf converts the percentage against the window; no handle, or a non-positive
+// window, yields nothing.
+func liveContextOf(pct float64, window int, credits float64, model string, ok bool) (agents.LiveContext, bool) {
+	if !ok || window <= 0 {
+		return agents.LiveContext{}, false
+	}
+	return agents.LiveContext{
+		Tokens: int(math.Round(pct / 100 * float64(window))), Window: window,
+		WindowSource: "estimated", Pct: pct, Model: model, Credits: &credits,
+	}, true
 }

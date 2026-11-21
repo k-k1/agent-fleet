@@ -166,3 +166,33 @@ func (agentImpl) AnswersPendingQuestion() bool { return true }
 
 // RespondsToPlan is agents.PlanResponder: plan mode and its ExitPlanMode approval are claude's.
 func (agentImpl) RespondsToPlan() bool { return true }
+
+// claudeTierAliases are the fixed picker entries; which model an alias runs depends on the
+// installed CLI, so pricing "the newest model of that family" would be a guess.
+var claudeTierAliases = map[string]bool{"fable": true, "opus": true, "sonnet": true, "haiku": true}
+
+// SuppressesModelInfo is agents.ModelInfoSuppressor: the tier aliases.
+func (agentImpl) SuppressesModelInfo(id string) bool { return claudeTierAliases[id] }
+
+// NativeDialect is agents.PlaceholderDialectWriter: ${VAR} (mcpproj.DialectDollarBrace).
+func (agentImpl) NativeDialect() string { return "dollar_brace" }
+
+// UsesDeploymentChatModel is agents.ChatModelDefaulter: the historical AF_CHAT_MODEL default.
+func (agentImpl) UsesDeploymentChatModel() bool { return true }
+
+// LimitInMessage is agents.MessageLimitReader: this package's LimitInMessage.
+func (agentImpl) LimitInMessage(msg string, now time.Time) (agents.MessageLimit, bool) {
+	lk, at, ok := LimitInMessage(msg, now)
+	if !ok {
+		return agents.MessageLimit{}, false
+	}
+	return agents.MessageLimit{Kind: lk, PerModel: lk != LimitSpend && IsPerModelLimit(msg), ResetAt: at}, true
+}
+
+// DeliveryBaseline is agents.DeliveryBaseliner: the conversation and subagent log sizes.
+func (agentImpl) DeliveryBaseline(sid string) (logs, subagents map[string]int64) {
+	return TranscriptSnapshot(sid), SubagentSnapshot(sid)
+}
+
+// ReportsTranscriptBusy is agents.TranscriptBusyReporter.
+func (agentImpl) ReportsTranscriptBusy() bool { return true }

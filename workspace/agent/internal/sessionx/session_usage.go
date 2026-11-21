@@ -9,15 +9,13 @@ package sessionx
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"math"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -112,8 +110,7 @@ func HandleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 func completeUsage(m session.Meta, u sessionUsage) sessionUsage {
 	addSubagentUsage(&u, m)
 	u.Name, u.Display, u.Kind = m.Name, session.Display(m), string(m.Kind)
-	overlayKiroLiveUsage(m, &u)
-	overlayMuseLiveUsage(m, &u)
+	overlayLiveUsage(m, &u)
 	return u
 }
 
@@ -199,64 +196,33 @@ func allSessionsUsage(metas []session.Meta, budget time.Duration) ([]sessionUsag
 	return out, len(metas) - len(out)
 }
 
-// overlayKiroLiveUsage fills a running managed kiro session's context + credits from
-// its live ACP handle (Track D — docs/log/43 §10). kiro's v2 JSONL transcript carries no
-// token counts, so AggregateUsage leaves Context nil; but the managed driver holds the
-// latest _kiro.dev/metadata contextUsagePercentage in memory. We convert the % to a
-// token count against the model's real context window (so pct is exact and the token
-// figure is a faithful estimate), and surface the metered credit spend. No live handle
-// / no metadata yet ⇒ unchanged (Context stays nil, credits absent) — honest.
-func overlayKiroLiveUsage(m session.Meta, u *sessionUsage) {
-	if m.Kind != session.KindKiro {
-		return
-	}
-	pct, window, credits, model, ok := kiro.ManagedContext(m.Name)
-	if !ok || window <= 0 {
-		return
-	}
-	tokens := int(math.Round(pct / 100 * float64(window)))
-	u.Context = &usagex.ContextUsage{
-		Tokens: tokens,
-		Fresh:  tokens, // single un-broken-down segment (no cache-read/create split available)
-		Window: window,
-		// The window is the model's real catalog size, but tokens are derived from the
-		// reported %, so mark the count as estimated (the % itself is exact).
-		WindowSource: "estimated",
-		Pct:          pct,
-		Model:        model,
-	}
-	u.Cumulative.Credits = credits
-}
-
-// overlayMuseLiveUsage fills a running managed muse session's context from the live
-// MSP handle (ADR 0095 P2-16). MSP delivers session/contextUsage around every turn:
-// usedTokens is exact (counted-once) and windowTokens is the host's basis limit, absent
-// when the basis has no limit. No live handle / no notification yet ⇒ unchanged — honest.
-func overlayMuseLiveUsage(m session.Meta, u *sessionUsage) {
-	if m.Kind != session.KindMuse {
-		return
-	}
-	used, win, ok := muse.ManagedContext(m.Name)
+// overlayLiveUsage fills a running managed session's context (and credits) from its kind's
+// live handle, for kinds whose transcript carries no token counts. No live handle or no report
+// yet leaves the usage unchanged, which is honest. A window source of "estimated" means the
+// window is a default or a catalog size; whether the token count is exact is the kind's call.
+func overlayLiveUsage(m session.Meta, u *sessionUsage) {
+	a, ok := agentreg.Lookup(m.Kind)
 	if !ok {
 		return
 	}
-	window := muse.MuseDefaultWindow
-	windowSource := "estimated"
-	if win != nil && *win > 0 {
-		window = int(*win)
-		windowSource = "recorded"
+	r, ok := a.(agents.LiveContextReader)
+	if !ok {
+		return
 	}
-	tokens := int(used)
-	var pct float64
-	if window > 0 {
-		pct = float64(tokens) / float64(window) * 100
+	lc, ok := r.LiveContext(m.Name)
+	if !ok {
+		return
 	}
 	u.Context = &usagex.ContextUsage{
-		Tokens:       tokens,
-		Fresh:        tokens, // single segment — MSP carries no cache-read/create breakdown
-		Window:       window,
-		WindowSource: windowSource,
-		Pct:          pct,
+		Tokens:       lc.Tokens,
+		Fresh:        lc.Tokens, // single un-broken-down segment (no cache-read/create split available)
+		Window:       lc.Window,
+		WindowSource: lc.WindowSource,
+		Pct:          lc.Pct,
+		Model:        lc.Model,
+	}
+	if lc.Credits != nil {
+		u.Cumulative.Credits = *lc.Credits
 	}
 }
 
