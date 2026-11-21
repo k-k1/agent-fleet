@@ -11,7 +11,7 @@
 import { useFold } from "../../lib/useFold.ts";
 import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, RefObject } from "react";
+import type { ComponentProps, MouseEvent as RMouseEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -997,13 +997,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   const foldedIds = new Set(folded.map((m) => m.id));
                   const shown = folded.length > 0 ? g.memos.filter((m) => !foldedIds.has(m.id)) : g.memos;
                   const sentOpen = !!sentOpenCats[dropKey];
-                  // Open, the list keeps the server order so drag-and-drop matches what is on screen.
-                  const visible = sentOpen ? g.memos : shown;
+                  // Opening the fold adds the history below the fold line; the waiting notes and the line stay put.
+                  // Newest first, like the Auto-run view's "Ended N".
+                  const history = sentOpen
+                    ? [...folded].sort((a, b) => histTime(b) - histTime(a))
+                    : [];
+                  const visible = [...shown, ...history];
                   // A replaced note is read-only and cannot be sent, and a folded one is not on screen,
                   // so a select-all covers neither.
                   const ids = visible.filter((m) => !isSuperseded(m)).map((m) => m.id);
                   const allSel = ids.length > 0 && ids.every((id) => sel[id]);
-                  const renderRow = (m: Memo) => (
+                  const renderRow = (m: Memo, isHistory = false) => (
                     <MemoRow
                       key={m.id}
                       memo={m}
@@ -1047,7 +1051,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                         setDropCat(null);
                       }}
                       onDropBefore={() => {
-                        if (dragMemo.current) dropMemoOnMemo(dragMemo.current, m.id);
+                        // History notes are not drop targets: their server position says nothing about the waiting order.
+                        if (dragMemo.current && !isHistory) dropMemoOnMemo(dragMemo.current, m.id);
                       }}
                     />
                   );
@@ -1076,7 +1081,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       {/* The header bar toggles the group's fold on click; interactive
                           children (grip, checkbox, name, buttons) stop propagation so they
                           keep their own behaviour. */}
-                      <div
+                      <MemoCatHead
                         className={"memo-cat-head" + (collapsed ? " collapsed" : "")}
                         onClick={() => toggleCollapse(dropKey)}
                       >
@@ -1249,7 +1254,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             <Icon name="trash" />
                           </button>
                         )}
-                      </div>
+                      </MemoCatHead>
 
                       {queue && <MemoQueueNotices queue={queue} busy={resuming} onResume={() => void resume(queue.categoryId)} />}
 
@@ -1286,7 +1291,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
 
                       {!collapsed && (
                         <div className="memo-cat-items">
-                          {visible.map(renderRow)}
+                          {shown.map((m) => renderRow(m))}
                           {folded.length > 0 && (
                             <button
                               type="button"
@@ -1297,6 +1302,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                               <Icon name={sentOpen ? "chevron-down" : "chevron-right"} /> {tr("memo.sent_fold", { count: folded.length })}
                             </button>
                           )}
+                          {history.map((m) => renderRow(m, true))}
                         </div>
                       )}
                     </div>
@@ -1458,6 +1464,13 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   );
 });
 
+/** Category head. Publishes its height on `.memo-cat` as `--memo-cat-head-h` so the open fold line pins
+ *  directly below it however tall the head grows (larger text, wrapping). */
+function MemoCatHead(props: ComponentProps<"div">) {
+  const ref = usePublishedHeight<HTMLDivElement>("--memo-cat-head-h");
+  return <div {...props} ref={ref} />;
+}
+
 /** Repo row of the queue. Publishes its height on `.memo-repo` as `--memo-repo-head-h` so the
  *  pinned category rows (memo.css) sit directly below it, wrapped or not. Rendered only for a
  *  named repo; without it the variable stays unset and the offset falls back to 0. */
@@ -1519,6 +1532,12 @@ interface MemoRowProps {
   onDragEnd: () => void;
   onDropBefore: () => void;
 }
+
+/** Sort key of a history note: sent time, else created time; an unparsable stamp sorts last. */
+const histTime = (m: Memo): number => {
+  const t = Date.parse(m.sentAt || m.createdAt);
+  return Number.isFinite(t) ? t : -Infinity;
+};
 
 function MemoRow(props: MemoRowProps) {
   const { memo: m, selected, expanded, editing, currentCat } = props;

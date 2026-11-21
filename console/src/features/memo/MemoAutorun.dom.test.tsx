@@ -17,6 +17,7 @@ const memoQueuePut = vi.fn();
 const memoQueueDelete = vi.fn();
 const memoQueueFire = vi.fn();
 const memoQueueResume = vi.fn();
+const memoUpdateMock = vi.fn(async (_id: string, _patch: unknown) => ({}));
 const memoQueueDeliveryEnd = vi.fn();
 const memoQueueDeliveryReturn = vi.fn();
 const memoQueueDeliveries = vi.fn(async (_id: string) => servedDeliveries);
@@ -29,7 +30,7 @@ vi.mock("./api.ts", () => ({
   memoList: async () => servedMemos,
   memoCategoryList: async () => servedCats,
   memoCreate: async () => ({}),
-  memoUpdate: async () => ({}),
+  memoUpdate: (id: string, patch: unknown) => memoUpdateMock(id, patch),
   memoDelete: async () => ({ ok: true }),
   memoCategoryCreate: async () => ({}),
   memoCategoryUpdate: async () => ({}),
@@ -162,6 +163,7 @@ beforeEach(() => {
   resetShownNotes();
   localStorage.clear();
   servedMemos = [];
+  memoUpdateMock.mockClear();
   servedCats = [aCat({ queue: true })];
   servedQueues = { tenantEnabled: true, queues: [aQueue()] };
   queuesFail = false;
@@ -244,7 +246,7 @@ describe("the list", () => {
     expect(body()).not.toContain("started-b");
   });
 
-  it("leaves a folded memo out of select-all, and keeps the open list in server order", async () => {
+  it("leaves a folded memo out of select-all, and opens the history below the waiting notes", async () => {
     servedMemos = [
       aMemo({ id: "b", body: "started-b", state: "delivered", provenance: "member", position: 0 }),
       aMemo({ id: "a", body: "waiting-a", state: "pending", provenance: "member", position: 1 }),
@@ -255,7 +257,93 @@ describe("the list", () => {
     await act(async () => document.querySelector<HTMLButtonElement>(".memo-sent-fold")!.click());
     expect(document.querySelector(".memo-sent-fold")!.getAttribute("aria-expanded")).toBe("true");
     const bodies = [...document.querySelectorAll(".memo-cat-items .memo-body")].map((e) => e.textContent);
-    expect(bodies.findIndex((x) => x?.includes("started-b"))).toBeLessThan(bodies.findIndex((x) => x?.includes("waiting-a")));
+    expect(bodies.findIndex((x) => x?.includes("waiting-a"))).toBeLessThan(bodies.findIndex((x) => x?.includes("started-b")));
+  });
+
+  it("keeps the fold line right under the waiting notes when opened, with history newest first", async () => {
+    servedMemos = [
+      aMemo({ id: "o", body: "old-sent", state: "delivered", provenance: "member", position: 0, sentAt: "2026-09-01T00:00:00Z" }),
+      aMemo({ id: "n", body: "new-sent", state: "delivered", provenance: "member", position: 1, sentAt: "2026-09-05T00:00:00Z" }),
+      aMemo({ id: "a", body: "waiting-a", state: "pending", provenance: "member", position: 2 }),
+    ];
+    await render();
+    const order = () =>
+      [...document.querySelector(".memo-cat-items")!.children].map((e) =>
+        e.classList.contains("memo-sent-fold") ? "FOLD" : (e.querySelector(".memo-body")?.textContent ?? ""),
+      );
+    const before = order();
+    expect(before).toEqual([expect.stringContaining("waiting-a"), "FOLD"]);
+    await act(async () => document.querySelector<HTMLButtonElement>(".memo-sent-fold")!.click());
+    const after = order();
+    expect(after[0]).toContain("waiting-a");
+    expect(after[1]).toBe("FOLD");
+    expect(after[2]).toContain("new-sent");
+    expect(after[3]).toContain("old-sent");
+  });
+
+  it("still reorders waiting notes by drag, and ignores a drop on a history note", async () => {
+    servedMemos = [
+      aMemo({ id: "a", body: "waiting-a", state: "pending", provenance: "member", position: 0 }),
+      aMemo({ id: "b", body: "waiting-b", state: "pending", provenance: "member", position: 1 }),
+      aMemo({ id: "h", body: "started-h", state: "delivered", provenance: "member", position: 2 }),
+    ];
+    await render();
+    await act(async () => document.querySelector<HTMLButtonElement>(".memo-sent-fold")!.click());
+    const dt = { setData: () => {}, types: [], files: [], effectAllowed: "" };
+    const fire = (el: Element, type: string) =>
+      act(async () => {
+        const ev = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, "dataTransfer", { value: dt });
+        el.dispatchEvent(ev);
+      });
+    const rows = () => [...document.querySelectorAll<HTMLElement>(".memo-cat-items .memo-row")];
+    const bodies = () => rows().map((r) => r.querySelector(".memo-body")?.textContent ?? "");
+    const rowOf = (txt: string) => rows().find((r) => r.textContent?.includes(txt))!;
+    await fire(rowOf("waiting-a").querySelector(".memo-grip")!, "dragstart");
+    await fire(rowOf("started-h"), "drop");
+    await settle();
+    expect(bodies().map((x) => x.slice(0, 9))).toEqual(["waiting-a", "waiting-b", "started-h"]);
+    await fire(rowOf("waiting-b").querySelector(".memo-grip")!, "dragstart");
+    await fire(rowOf("waiting-a"), "drop");
+    await settle();
+    expect(bodies().map((x) => x.slice(0, 9))).toEqual(["waiting-b", "waiting-a", "started-h"]);
+    // The patches renumber the whole group in server order, history included, so the waiting order survives a refetch.
+    expect(memoUpdateMock.mock.calls.map(([id, p]) => [id, (p as { position: number }).position])).toEqual([
+      ["b", 0],
+      ["a", 1],
+      ["h", 2],
+    ]);
+  });
+
+  it("sorts a history note with an unparsable time last instead of scrambling the rest", async () => {
+    servedMemos = [
+      aMemo({ id: "x", body: "bad-x", state: "delivered", provenance: "member", sentAt: "garbage", position: 0 }),
+      aMemo({ id: "o", body: "old-o", state: "delivered", provenance: "member", sentAt: "2026-09-01T00:00:00Z", position: 1 }),
+      aMemo({ id: "n", body: "new-n", state: "delivered", provenance: "member", sentAt: "2026-09-05T00:00:00Z", position: 2 }),
+    ];
+    await render();
+    await act(async () => document.querySelector<HTMLButtonElement>(".memo-sent-fold")!.click());
+    const bodies = [...document.querySelectorAll(".memo-cat-items .memo-body")].map((e) => (e.textContent ?? "").slice(0, 5));
+    expect(bodies).toEqual(["new-n", "old-o", "bad-x"]);
+  });
+
+  it("publishes the measured category head height on the category for the sticky fold line", async () => {
+    const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).classList.contains("memo-cat-head") ? 44 : 0;
+      },
+    });
+    try {
+      servedMemos = [aMemo({ id: "b", state: "delivered", provenance: "member" })];
+      await render();
+      const cat = document.querySelector<HTMLElement>(".memo-cat")!;
+      expect(cat.style.getPropertyValue("--memo-cat-head-h")).toBe("44px");
+      expect(cat.contains(document.querySelector(".memo-sent-fold"))).toBe(true);
+    } finally {
+      if (desc) Object.defineProperty(HTMLElement.prototype, "offsetHeight", desc);
+    }
   });
 
   it("clears a folded memo's selection when select-all is turned off with the fold closed", async () => {
