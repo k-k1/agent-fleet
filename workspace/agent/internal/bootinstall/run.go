@@ -24,14 +24,14 @@ func Run(args []string) {
 		}
 	}
 	usage := func() {
-		fmt.Fprintln(os.Stderr, "usage: workspace-agent boot-install rtk|agy|cursor|npm [--repin] | agy-version | npm-verify [--present] [claude|opencode|codex|copilot...]")
+		fmt.Fprintln(os.Stderr, "usage: workspace-agent boot-install rtk|agy|cursor|npm [--repin] | agy-version | self-update | npm-verify [--present] [claude|opencode|codex|copilot...]")
 		os.Exit(2)
 	}
 	if len(names) == 0 {
 		usage()
 	}
 	step, rest := names[0], names[1:]
-	if step == "agy-version" && (len(rest) > 0 || repin || present) {
+	if (step == "agy-version" || step == "self-update") && (len(rest) > 0 || repin || present) {
 		usage()
 	}
 	if (step != "npm-verify" && step != "agy-version" && len(rest) > 0) || (present && step != "npm-verify") || (repin && step == "npm-verify") {
@@ -47,6 +47,8 @@ func Run(args []string) {
 		os.Exit(AGY(context.Background(), DefaultEnv(repin)))
 	case cursorStatusName:
 		os.Exit(Cursor(context.Background(), DefaultEnv(repin)))
+	case "self-update":
+		os.Exit(SelfUpdate(context.Background(), DefaultEnv(false)))
 	case "agy-version":
 		fmt.Println(DefaultEnv(false).AgyEffectiveVersion())
 	case "npm":
@@ -67,7 +69,7 @@ func Run(args []string) {
 		}
 		os.Exit(e.NPMVerify(rest, false))
 	default:
-		fmt.Fprintf(os.Stderr, "boot-install: unknown step %q (have: rtk, agy, cursor, agy-version, npm, npm-verify)\n", step)
+		fmt.Fprintf(os.Stderr, "boot-install: unknown step %q (have: rtk, agy, cursor, agy-version, self-update, npm, npm-verify)\n", step)
 		os.Exit(2)
 	}
 }

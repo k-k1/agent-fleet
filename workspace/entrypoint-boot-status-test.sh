@@ -183,15 +183,6 @@ run_block BI_AGENT_BIN="$T/bin/workspace-agent"
 grep -qx 'status=unset' "$T/cursor.env" 2>/dev/null || fail "recording off: cursor hand-off missing or told a status file ($(cat "$T/cursor.env" 2>/dev/null))"
 has 'AF_BOOT_INSTALL_STATUS=unset' || fail "recording off: the start did not finish"
 
-# Reason classes from the stderr of real-looking failures.
-reason() { printf '%s\n' "$1" >"$T/err.txt"; BI_ERR="$T/err.txt" bash -c 'source <(sed -n "/^bi_reason()/,/^}/p" "$1"); bi_reason' _ "$BLOCK_SRC"; }
-BLOCK_SRC="$ENTRY"
-[ "$(reason 'npm error request to https://registry.npmjs.org/foo failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org')" = network ] || fail "npm network error not classed network"
-[ "$(reason 'npm error command failed: permission denied')" = other ] || fail "permission failure not classed other"
-[ "$(reason 'agy.tgz: FAILED')" = checksum ] || fail "sha256sum FAILED line not classed checksum"
-[ "$(reason 'npm error code EINTEGRITY')" = checksum ] || fail "EINTEGRITY not classed checksum"
-[ "$(reason 'tar: x: Cannot write: No space left on device')" = no_space ] || fail "ENOSPC not classed no_space"
-
 # 4d. The status files sit in a private directory: a planted symlink is not followed, a symlinked
 # directory is not used, and the previous start's results are never served.
 reset; mkdir -p "$T/bidir"; echo keep >"$T/victim"; ln -s "$T/victim" "$T/bidir/install.tsv"; ln -s "$T/victim" "$T/bidir/install.err"
@@ -210,14 +201,7 @@ reset; rm -f "$T/cursor.env"; mkdir -p "$T/real"; chmod 0755 "$T/real"; ln -sfn 
 BI_DIR_OVERRIDE="$T/linkdir" run_block BI_AGENT_BIN="$T/bin/workspace-agent"
 grep -qx 'status=unset' "$T/cursor.env" 2>/dev/null || fail "rejected status dir: cursor hand-off missing or told a status file"
 
-# 6. The self-update opt-in's own npm install (the pinned install and the repair pass are the
-# Agent's, tested in Go): its npm errors reach the log instead of /dev/null.
 ON="AF_AGENT_SELF_UPDATE_SKIP=0 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1"
-reset; run_block
-# shellcheck disable=SC2086
-run_block STUB_NPM_FAIL=1 $ON
-has 'npm error ENOSPC' || fail "self-update failure: npm's error was discarded"
-has 'WARN: agent CLI update failed' || fail "self-update failure: no WARN"
 
 # 6b. The entrypoint's own calls into the Agent for the npm CLIs, in the real start slice: the
 # pinned install first, the every-start verify last, and the explicit verify after a self-update,
@@ -232,17 +216,36 @@ grep -qx 'boot-install npm' "$T/rec.calls" || fail "npm: the lean start did not 
 [ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "npm: the every-start verify is not the last call: $(cat "$T/rec.calls")"
 reset; rm -f "$T/rec.calls"; run_block BI_AGENT_BIN="$T/bin/rec-agent" STUB_FREE_MB=100
 [ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "npm: no every-start verify on a nearly full home: $(cat "$T/rec.calls")"
-reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"; rm -f "$T/rec.calls"
-# The self-update's order is the update, then the explicit verify (it repairs what the update
-# broke, and the update failing is no reason to skip it), then the every-start pass.
-for failing in "" 1; do
-  reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/claude"; chmod +x "$T/home/.local/bin/claude"; rm -f "$T/rec.calls"
-  # shellcheck disable=SC2086
-  run_block BI_AGENT_BIN="$T/bin/rec-agent" STUB_NPM_FAIL=$failing $ON
-  order="$(grep -n 'npm install -g .*@latest\|^boot-install npm-verify' "$T/rec.calls" | sed 's/^[0-9]*://' | tr '\n' '|')"
-  [ "$order" = 'npm install -g --prefix '"$T"'/home/.local @anthropic-ai/claude-code@latest @opencode/cli@latest @openai/codex@latest @github/copilot@latest|boot-install npm-verify claude opencode codex copilot|boot-install npm-verify --present|' ] \
-    || fail "npm: self-update order wrong (failing=${failing:-no}): $order"
-done
+# The self-update opt-in hands everything to the Agent: one `boot-install self-update`, after the
+# pinned installs and before the every-start verify, which is still the last call. An unattended
+# start (SKIP=1) and a nearly full home do not call it.
+reset; rm -f "$T/rec.calls"
+# shellcheck disable=SC2086
+run_block BI_AGENT_BIN="$T/bin/rec-agent" $ON
+[ "$(grep -c '^boot-install self-update$' "$T/rec.calls")" = 1 ] || fail "self-update: not called exactly once: $(cat "$T/rec.calls")"
+[ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "self-update: the every-start verify is not last: $(cat "$T/rec.calls")"
+[ "$(grep -n 'self-update$\|^boot-install npm$' "$T/rec.calls" | sed 's/^[0-9]*://' | tr '\n' '|')" = 'boot-install npm|boot-install self-update|' ] || fail "self-update: ran before the pinned install: $(cat "$T/rec.calls")"
+reset; rm -f "$T/rec.calls"
+run_block BI_AGENT_BIN="$T/bin/rec-agent" AF_AGENT_SELF_UPDATE_SKIP=1 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1
+grep -q 'self-update' "$T/rec.calls" && fail "self-update: called on an unattended start"
+reset; rm -f "$T/rec.calls"
+# shellcheck disable=SC2086
+run_block BI_AGENT_BIN="$T/bin/rec-agent" STUB_FREE_MB=100 $ON
+grep -q 'self-update' "$T/rec.calls" && fail "self-update: called on a nearly full home"
+has 'WARN: the Agent binary is missing; agent self-update skipped' && fail "unexpected missing-agent warning"
+# A self-update that exits non-zero (here 126) must not end the start under set -e: it is warned
+# about and the every-start verify still runs, last.
+printf '#!/bin/sh\n[ "$1 $2" = "boot-install self-update" ] && exit 126\necho "$*" >>"$STUB_DIR/rec.calls"\n' >"$T/bin/su-fail"; chmod +x "$T/bin/su-fail"
+reset; rm -f "$T/rec.calls"
+# shellcheck disable=SC2086
+run_block BI_AGENT_BIN="$T/bin/su-fail" $ON
+has 'WARN: agent self-update exited 126' || fail "self-update: a non-zero exit was not reported"
+[ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "self-update: a non-zero exit stopped the start: $(cat "$T/rec.calls")"
+has 'AF_BOOT_INSTALL_STATUS=' || fail "self-update: the start did not reach its end"
+reset
+# shellcheck disable=SC2086
+run_block BI_AGENT_BIN="$T/bin/none" $ON
+has 'agent self-update skipped' || fail "self-update: no warning when the Agent binary is missing"
 
 # 5. The prune runs before the installs, once.
 reset; run_block

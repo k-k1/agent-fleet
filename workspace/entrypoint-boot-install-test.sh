@@ -115,6 +115,18 @@ reset; printf '#!/bin/sh\necho 1.2.3\n' >"$T/home/.local/bin/agy"; chmod +x "$T/
 printf '#!/bin/sh\necho x >>"$STUB_WA_LOG"; exit 2\n' >"$T/bin/wa-old"; chmod +x "$T/bin/wa-old"
 run_block BI_AGENT_BIN="$T/bin/wa-old"
 grep -qP '^agy\tskipped' "$T/bidir/install.tsv" || fail "agy: a healthy copy was not recorded skipped with an old Agent"
+# A silent agy (exit 0, no version) is not usable: failed, as when the Agent answers.
+reset; printf '#!/bin/sh\nexit 0\n' >"$T/home/.local/bin/agy"; chmod +x "$T/home/.local/bin/agy"
+run_block BI_AGENT_BIN="$T/none"
+grep -qP '^agy\tfailed' "$T/bidir/install.tsv" || fail "agy: a silent copy was not recorded failed without the Agent"
+# On x86_64 without RDRAND, agy answers only behind the mask (it aborts at start otherwise).
+mkdir -p "$T/nord"
+printf '#!/bin/sh\necho x86_64\n' >"$T/nord/uname"
+printf '#!/bin/sh\ncase "$*" in *rdrand*) exit 1 ;; esac\nexec /usr/bin/grep "$@"\n' >"$T/nord/grep"
+chmod +x "$T/nord/uname" "$T/nord/grep"
+reset; printf '#!/bin/sh\n[ "$OPENSSL_ia32cap" = "~0x4000000000000000" ] && echo 1.2.3\n' >"$T/home/.local/bin/agy"; chmod +x "$T/home/.local/bin/agy"
+run_block BI_AGENT_BIN="$T/none" PATH="$T/nord:$T/bin:/usr/bin:/bin:$(dirname "$(command -v node)")"
+grep -qP '^agy\tskipped' "$T/bidir/install.tsv" || fail "agy: a copy that answers only behind the RDRAND mask was not recorded skipped without the Agent"
 reset; run_block
 [ -e "$T/home/.local/bin/agy" ] || [ -e "$T/home/.local/bin/.agy.version" ] && fail "agy: shell installed agy itself"
 grep -q 'agy-version' "$ENTRY" || fail "agy: agy_effective_version does not ask the Agent"

@@ -372,7 +372,6 @@ fi
 # -e is ignored.
 VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
-cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
 # Boot-install outcome per CLI, read by the Agent (boot_install_status.go) for Settings >
 # Toolchains. One line per CLI: <tool>\t<ok|skipped|failed>\t<reason>
 # (reason: failed always; skipped only for "no_space", an upgrade skipped with the old copy kept). It lives under /tmp rather
@@ -387,66 +386,36 @@ mkdir -m 700 "$BI_DIR" 2>/dev/null || true
 # Type and owner first: chmod follows a symlink, and a directory we refuse must stay untouched.
 if [ -d "$BI_DIR" ] && [ ! -L "$BI_DIR" ] && [ -O "$BI_DIR" ] \
    && chmod 700 "$BI_DIR" 2>/dev/null && [ "$(stat -c %a "$BI_DIR" 2>/dev/null)" = 700 ]; then
-  rm -f "$BI_DIR/install.tsv" "$BI_DIR/install.err" 2>/dev/null || true
+  rm -f "$BI_DIR/install.tsv" 2>/dev/null || true
   BI_STATUS="$BI_DIR/install.tsv"
-  # stderr of the block being run, truncated for each block, so nothing piles up across starts
-  # (this script ends in exec: no trap would ever clean up). If it cannot be created the redirect
-  # `2>"$BI_ERR"` would fail the block itself, hence the /dev/null fallback.
-  BI_ERR="$BI_DIR/install.err"
   # noclobber: create, never follow or truncate something that appeared in between.
   (set -C; : > "$BI_STATUS") 2>/dev/null || BI_STATUS=/dev/null
-  (set -C; : > "$BI_ERR") 2>/dev/null || BI_ERR=/dev/null
 else
   BI_STATUS=/dev/null
-  BI_ERR=/dev/null
 fi
 # The Agent is told where this start's file is (it execs from here, so it inherits this), and
 # gets nothing when recording is off: it must not fall back to a file an earlier start left.
 if [ "$BI_STATUS" != /dev/null ]; then export AF_BOOT_INSTALL_STATUS="$BI_STATUS"; else unset AF_BOOT_INSTALL_STATUS; fi
-# Set by bi_room when an install was skipped for lack of space: everything later in this start
+# Set when an Agent install step exits 3 (skipped for lack of space): everything later in this start
 # that would download or install (the claude fallback, the self-update opt-in) honours it too.
 BI_LOW_SPACE=0
 bi_note() { printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >> "$BI_STATUS" 2>/dev/null || true; }
-# bi_reason — the reason class of the failure whose stderr is in $BI_ERR. no_space is tested
-# first: a full disk also breaks downloads and checksums, and is the one the member can fix.
-bi_reason() {
-  if grep -qiE 'no space left|ENOSPC|quota exceeded' "$BI_ERR" 2>/dev/null; then echo no_space
-  elif grep -qiE 'did NOT match|computed checksum|: FAILED( |$)|EINTEGRITY|integrity (check|checksum) failed' "$BI_ERR" 2>/dev/null; then echo checksum
-  elif grep -qiE 'curl: \(|could not resolve|connection|timed out|ETIMEDOUT|ENOTFOUND|ECONNRE|EAI_AGAIN|network|registry' "$BI_ERR" 2>/dev/null; then echo network
-  else echo other; fi
-}
-# bi_failed <tool...> — record a failed block (stderr already echoed by the caller).
-bi_failed() { local r t; r="$(bi_reason)"; for t in "$@"; do bi_note "$t" failed "$r"; done; }
 # cli_usable <tool> — an installed copy that can run now: a regular executable file (symlinks
 # followed, so a dangling link or a directory does not count) that answers --version, asked the
 # way the install decision above asks (agy's env mask, cursor's bundle check). The status name
 # is not always the binary name (cursor is cursor-agent).
 cli_usable() {
-  local bin="$1" p
+  local bin="$1" p v
   [ "$1" = cursor ] && bin=cursor-agent
   for p in "/usr/local/bin/$bin" "$HOME/.local/bin/$bin"; do
     [ -f "$p" ] && [ -x "$p" ] || continue
     case "$1" in
-      agy) if [ "$p" = "$HOME/.local/bin/agy" ]; then [ -n "$(agy_effective_version)" ] || continue
-           else timeout 30 "$p" --version >/dev/null 2>&1 || continue; fi ;;
+      agy) if [ "$p" = "$HOME/.local/bin/agy" ] && v="$(agy_effective_version)"; then [ -n "$v" ] || continue
+           else agy_plain_runs "$p" || continue; fi ;;
       cursor) cursor_runs "$p" || continue ;;
       *) timeout 30 "$p" --version >/dev/null 2>&1 || continue ;;
     esac
     return 0
-  done
-  return 1
-}
-# bi_room <mb> <tool...> — whether home has <mb> MiB free (true when df cannot tell). When it
-# has not, the install is skipped and what is installed stays: a half-run install is how a full
-# home turned into "every agent broke at once". A tool with a usable copy (cli_usable, not the
-# weaker cli_present: a broken or non-executable leftover is not one) keeps working, so its
-# skipped upgrade is recorded "skipped no_space" and only a tool with nothing usable is
-# "failed no_space" (the Agent refuses a start only for the latter).
-bi_room() {
-  local need="$1" t; shift
-  bi_free_ok "$need" "$*" && return 0
-  for t in "$@"; do
-    if cli_usable "$t"; then bi_note "$t" skipped no_space; else bi_note "$t" failed no_space; fi
   done
   return 1
 }
@@ -461,33 +430,10 @@ bi_free_ok() {
   echo "[entrypoint] WARN: only ${free} MiB free in home, ${need} MiB needed for ${2:-installs}; skipping (keeping what is installed)"
   return 1
 }
-# install_atomic <src> <dest> [verify] — `install -m 0755` through a sibling temp name and a
-# rename, so a failure part-way (ENOSPC leaves a truncated file) never leaves anything at <dest>:
-# cli_present would count a truncated binary as installed and skip it on every later start.
-# With "verify" the candidate must answer --version before it replaces <dest>, so a binary that
-# cannot run here never displaces a working copy.
-install_atomic() {
-  local tmp="$2.af-new.$$" err
-  mkdir -p "$(dirname "$2")" || return 1
-  if install -m 0755 "$1" "$tmp"; then
-    if [ "${3:-}" = verify ] && ! err="$(timeout 30 "$tmp" --version 2>&1)"; then
-      echo "[entrypoint] $(basename "$2") does not run in this environment, keeping the current copy: $err" >&2
-      rm -f "$tmp"
-      return 1
-    fi
-    mv -f "$tmp" "$2" && return 0
-  fi
-  rm -f "$tmp"
-  return 1
-}
 # cursor_runs <cursor-agent path> — the bundle answers --version (a tree unpacked only in part
 # has the execute bit and still fails here). Slow (starts Node), so only asked of a tree that
 # is about to be trusted.
 cursor_runs() { timeout 30 "$1" --disable-auto-update --version >/dev/null 2>&1; }
-# bin_broken <path> — an installed ~/.local binary that does not answer --version. It counts as
-# not present: the boot-install reinstalls it whatever the repin setting says. Plain start only;
-# agy needs agy_effective_version's env mask.
-bin_broken() { [ -e "$1" ] && ! timeout 30 "$1" --version >/dev/null 2>&1; }
 # opencode is the npm package @opencode/cli; only opencode 2 is supported (ADR 0127). A home can
 # still hold the opencode 1 package, opencode-ai, in ~/.local (it self-updated on a 1.x pin): it
 # owns the `opencode` bin, so npm refuses to link @opencode/cli over it (EEXIST; measured
@@ -530,24 +476,25 @@ oc_drop_v1() { # oc_drop_v1 <prefix>
   rm -rf "$pfx/lib/node_modules/opencode-ai"
 }
 oc_drop_v1 "$HOME/.local" || echo "[entrypoint] WARN: could not remove opencode 1 from ~/.local (retrying next start)"
-# agy_effective_version — the version of the agy that is installed in ~/.local now ("" when it
-# does not answer). The rule (the binary, behind the host's RDRAND mask, never the marker alone;
-# the marker only when there is no binary) lives in internal/bootinstall (AgyEffectiveVersion),
-# asked of the image's Agent first, as for the installs. When that Agent is missing or too old to
-# know `agy-version` (exit != 0), the same rule is applied here, so a healthy agy is not judged
-# broken (and re-fetched) just because the Agent cannot answer.
-agy_effective_version() {
-  local wa="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}" bin="$HOME/.local/bin/agy" v=""
-  if [ -x "$wa" ] && v="$("$wa" boot-install agy-version 2>/dev/null)"; then printf '%s' "$v"; return 0; fi
-  v=""
-  if [ ! -x "$bin" ]; then :
-  elif [ "$(uname -m)" = "aarch64" ] || grep -qw rdrand /proc/cpuinfo 2>/dev/null; then
-    v="$(timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
+# agy_effective_version — the version of the agy installed in ~/.local now ("" when it does not
+# answer). The rule (the binary behind the host's RDRAND mask, never the marker alone) lives in
+# internal/bootinstall (AgyEffectiveVersion) and only the image's Agent answers it; exit 1 means
+# it could not be asked (missing, or too old to know `agy-version`), and cli_usable then judges
+# the copy by a plain --version, like every other CLI.
+# agy_plain_runs <agy path> — --version answers, behind the same RDRAND mask the Agent applies
+# (agy aborts at start on a host without a usable RDRAND). Only for when the Agent cannot be asked.
+agy_plain_runs() {
+  local v
+  if [ "$(uname -m)" = "aarch64" ] || grep -qw rdrand /proc/cpuinfo 2>/dev/null; then
+    v="$(timeout 30 "$1" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
   else
-    v="$(OPENSSL_ia32cap='~0x4000000000000000' timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
+    v="$(OPENSSL_ia32cap='~0x4000000000000000' timeout 30 "$1" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
   fi
-  [ -n "$v" ] || [ -e "$bin" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
-  printf '%s' "$v"
+  [ -n "$v" ]
+}
+agy_effective_version() {
+  local wa="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
+  [ -x "$wa" ] && "$wa" boot-install agy-version 2>/dev/null
 }
 # npm_wa <args...> — one step of `workspace-agent boot-install` for the npm CLIs (claude, opencode,
 # codex, copilot): the pinned install (`npm [--repin]`) and the repair pass (`npm-verify`), both
@@ -598,7 +545,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # Say explicitly that this is the lean variant, so agent.log shows why CLIs were or were
   # not downloaded. The first start downloads from npm/GitHub for several minutes; ~/.local
   # persists on the home volume, so later starts (offline restarts included) skip silently
-  # via cli_present=true and start immediately. That is by design, not a sign that the CLIs
+  # via the presence check and start immediately. That is by design, not a sign that the CLIs
   # are baked into the rootfs (docs/log/35 §35.7.2-8).
   echo "[entrypoint] lean variant: ensuring pinned agent CLIs under ~/.local (versions.json)"
   # Old copilot / cursor versions are the biggest thing a full home can give back, and the
@@ -779,131 +726,15 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
   echo "[entrypoint] agent self-update: skipped for this boot (home is nearly full) — keeping installed versions"
 elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: checking versions (member opt-in, operator-allowed) ..."
-  # Always target ~/.local (a baked /usr/local pin is immutable; only the PATH-first
-  # shadow is updated and compared).
-  NPM_PREFIX_DIR="$HOME/.local"
-  # Skip when unchanged: if every package's installed version (in the effective PATH
-  # prefix) equals the registry latest, skip the reinstall entirely (tarballs are fetched
-  # only on a new release). When it cannot be decided, update.
-  NPM_NEED=$(NPM_PREFIX_DIR="$NPM_PREFIX_DIR" node -e '
-    const { execSync } = require("child_process");
-    const pfx = process.env.NPM_PREFIX_DIR ? " --prefix " + process.env.NPM_PREFIX_DIR : "";
-    const run = (c) => execSync(c, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-    try {
-      const ls = JSON.parse(run("npm ls -g --depth=0 --json" + pfx));
-      let need = 0;
-      for (const p of ["@anthropic-ai/claude-code", "@opencode/cli", "@openai/codex", "@github/copilot"]) {
-        const cur = ((ls.dependencies || {})[p] || {}).version || "";
-        const latest = run("npm view " + p + " version");
-        if (!cur || !latest || cur !== latest) { need = 1; break; }
-      }
-      process.stdout.write(String(need));
-    } catch (e) { process.stdout.write("1"); }
-  ' 2>/dev/null || echo 1)
-  if [ "$NPM_NEED" = "0" ]; then
-    echo "[entrypoint] agent CLIs already latest; skip"
+  # The installs of "latest" (claude/opencode/codex/copilot, agy, rtk, cursor) are the Agent's
+  # (`workspace-agent boot-install self-update`, internal/bootinstall): each one skips when
+  # unchanged, installs into ~/.local as the PATH-first shadow, and keeps the installed copy on a
+  # failure. It always exits 0; the image's Agent first, as for the pinned installs.
+  SU_WA="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
+  if [ -x "$SU_WA" ]; then
+    "$SU_WA" boot-install self-update || echo "[entrypoint] WARN: agent self-update exited $? (keeping installed versions)"
   else
-    : > "$BI_ERR" 2>/dev/null || true
-    if npm install -g --prefix "$NPM_PREFIX_DIR" @anthropic-ai/claude-code@latest @opencode/cli@latest @openai/codex@latest @github/copilot@latest >/dev/null 2>>"${BI_ERR:-/dev/null}"; then
-      echo "[entrypoint] agent CLIs updated${NPM_PREFIX_DIR:+ (~/.local)}: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1) | copilot $(copilot --version 2>/dev/null | head -1)"
-    else
-      cat "$BI_ERR" >&2 2>/dev/null || true
-      if [ -x /usr/local/bin/opencode ]; then
-        echo "[entrypoint] WARN: agent CLI update failed (using baked versions)"
-      else
-        echo "[entrypoint] WARN: agent CLI update failed (kept the installed versions)"
-      fi
-    fi
-    # A failed install can leave a half-replaced tree, or none, so check either way.
-    npm_wa npm-verify claude opencode codex copilot
-  fi
-  # agy (Antigravity) follows the same opt-in to latest. It ships via Google's install.sh
-  # rather than npm, and a baked copy (BAKE_AGENT_CLIS=1) is in root-owned /usr/local/bin,
-  # so it goes into ~/.local/bin and wins on PATH (shadow). Skip when unchanged: take
-  # latest from the same distribution manifest install.sh uses (small JSON) and skip the
-  # ~187 MB re-download when it matches agy_effective_version() (the binary where it can be
-  # asked, otherwise the marker). Comparing the marker alone is wrong both ways: agy's own
-  # self-update does not move the marker, so on the pin side (repin) "marker == pin" sticks
-  # while the binary moves ahead (docs/log/70 §70.14.9), and here (opt-in ON) a stale marker
-  # would re-download ~187 MB on every start even when the binary is already latest.
-  # install.sh exits 0 without updating when a binary already exists, so install into an
-  # empty temp dir and then swap it in (the previous shadow survives a failure).
-  AGY_MARK="$HOME/.local/bin/.agy.version"
-  agy_arch="$(dpkg --print-architecture 2>/dev/null || uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
-  agy_latest="$(curl -fsSL --max-time 15 \
-    "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_${agy_arch}.json" 2>/dev/null \
-    | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-  if [ -n "$agy_latest" ] && [ -x "$HOME/.local/bin/agy" ] \
-     && [ "$(agy_effective_version)" = "$agy_latest" ]; then
-    echo "[entrypoint] agy already latest ($agy_latest); skip"
-  else
-    agy_tmp="$(mktemp -d)" || agy_tmp=""
-    if [ -n "$agy_tmp" ] && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$agy_tmp" >/dev/null 2>&1 \
-       && [ -x "$agy_tmp/agy" ]; then
-      if ! install_atomic "$agy_tmp/agy" "$HOME/.local/bin/agy"; then
-        echo "[entrypoint] WARN: agy update failed (install, using previous version)"
-      elif [ -z "$agy_latest" ]; then
-        rm -f "$AGY_MARK"; echo "[entrypoint] agy updated: latest"
-      elif printf '%s\n' "$agy_latest" > "$AGY_MARK"; then
-        echo "[entrypoint] agy updated: $agy_latest"
-      else
-        rm -f "$AGY_MARK"; echo "[entrypoint] agy updated: $agy_latest"
-      fi
-    else
-      echo "[entrypoint] WARN: agy update failed (using $([ -x "$HOME/.local/bin/agy" ] && echo previous || echo baked) version)"
-    fi
-    [ -z "$agy_tmp" ] || rm -rf "$agy_tmp"
-  fi
-  # rtk follows the same opt-in to latest. A baked /usr/local/bin/rtk (BAKE_AGENT_CLIS=1 and
-  # BAKE_RTK=1) is root-owned and cannot be overwritten, so the latest release goes into
-  # ~/.local/bin and wins on PATH (same shape as claude's user install). Checksum-verified;
-  # failure is soft (continue on the current version). Turning the opt-in OFF makes the
-  # branch below remove this shadow and fall back to the baked version, when there is one.
-  # Skip when unchanged: take the latest tag from GitHub's /releases/latest redirect and
-  # skip the download when it matches the PATH-first `rtk --version` (shadow or baked).
-  rtk_latest="$(curl -fsSI -o /dev/null -w '%{redirect_url}' --max-time 15 \
-    https://github.com/rtk-ai/rtk/releases/latest 2>/dev/null | sed -n 's#.*/tag/v##p')"
-  rtk_cur="$(rtk --version 2>/dev/null | head -1 | awk '{print $2}')"
-  if [ -n "$rtk_latest" ] && [ "$rtk_cur" = "$rtk_latest" ]; then
-    echo "[entrypoint] rtk already latest ($rtk_cur); skip"
-  else (
-    set -e
-    arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
-    case "$arch" in
-      amd64 | x86_64) asset="rtk-oss-x86_64-unknown-linux-musl.tar.gz" ;;
-      arm64 | aarch64) asset="rtk-oss-aarch64-unknown-linux-gnu.tar.gz" ;;
-      *) echo "unsupported arch: $arch" >&2; exit 1 ;;
-    esac
-    base="https://github.com/rtk-ai/rtk/releases/latest/download"
-    tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
-    cd "$tmp" || exit 1
-    curl -fsSL "${base}/${asset}" -o "${asset}" || exit 1
-    curl -fsSL "${base}/checksums.txt" -o checksums.txt || exit 1
-    grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
-    tar xzf "${asset}" || exit 1
-    install_atomic rtk "$HOME/.local/bin/rtk" verify || exit 1
-  ) && echo "[entrypoint] rtk updated: $("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1)" \
-    || echo "[entrypoint] WARN: rtk update failed (using baked version)"
-  fi
-  # cursor follows the same opt-in to latest. It ships via upstream's version-pinned
-  # install.sh rather than npm; a baked copy (BAKE_AGENT_CLIS=1) lives in root-owned
-  # /usr/local, so install into install.sh's default ~/.local and win on PATH (shadow,
-  # same shape as agy/rtk). install.sh links ~/.local/bin/{agent,cursor-agent} and unpacks
-  # into ~/.local/share/cursor-agent. Turning the opt-in OFF makes the branch below remove
-  # this shadow and fall back to the baked version, when there is one. Skip when unchanged:
-  # take the latest version from install.sh (a small script with the version embedded)
-  # and skip the ~100 MB re-download when it matches the PATH-first `cursor-agent
-  # --version` (shadow or baked).
-  cursor_latest="$(curl -fsSL --max-time 15 https://cursor.com/install 2>/dev/null \
-    | grep -oE 'lab/[0-9][0-9.]*-[a-f0-9]+' | head -1 | sed 's#lab/##')"
-  cursor_cur="$(cursor-agent --disable-auto-update --version 2>/dev/null | head -1)"
-  if [ -n "$cursor_latest" ] && [ "$cursor_cur" = "$cursor_latest" ]; then
-    echo "[entrypoint] cursor already latest ($cursor_cur); skip"
-  elif curl -fsSL https://cursor.com/install 2>/dev/null | bash >/dev/null 2>&1 \
-       && [ -x "$HOME/.local/bin/cursor-agent" ]; then
-    echo "[entrypoint] cursor updated: $(cursor-agent --disable-auto-update --version 2>/dev/null | head -1)"
-  else
-    echo "[entrypoint] WARN: cursor update failed (using $([ -e "$HOME/.local/bin/cursor-agent" ] && echo previous || echo baked) version)"
+    echo "[entrypoint] WARN: the Agent binary is missing; agent self-update skipped"
   fi
 else
   # Opt-in disabled (tenant disallows it or member OFF): rtk / agy shadows an earlier
