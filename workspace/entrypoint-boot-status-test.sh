@@ -233,6 +233,15 @@ reset; rm -f "$T/rec.calls"
 run_block BI_AGENT_BIN="$T/bin/rec-agent" STUB_FREE_MB=100 $ON
 grep -q 'self-update' "$T/rec.calls" && fail "self-update: called on a nearly full home"
 has 'WARN: the Agent binary is missing; agent self-update skipped' && fail "unexpected missing-agent warning"
+# A self-update that exits non-zero (here 126) must not end the start under set -e: it is warned
+# about and the every-start verify still runs, last.
+printf '#!/bin/sh\n[ "$1 $2" = "boot-install self-update" ] && exit 126\necho "$*" >>"$STUB_DIR/rec.calls"\n' >"$T/bin/su-fail"; chmod +x "$T/bin/su-fail"
+reset; rm -f "$T/rec.calls"
+# shellcheck disable=SC2086
+run_block BI_AGENT_BIN="$T/bin/su-fail" $ON
+has 'WARN: agent self-update exited 126' || fail "self-update: a non-zero exit was not reported"
+[ "$(tail -1 "$T/rec.calls")" = 'boot-install npm-verify --present' ] || fail "self-update: a non-zero exit stopped the start: $(cat "$T/rec.calls")"
+has 'AF_BOOT_INSTALL_STATUS=' || fail "self-update: the start did not reach its end"
 reset
 # shellcheck disable=SC2086
 run_block BI_AGENT_BIN="$T/bin/none" $ON

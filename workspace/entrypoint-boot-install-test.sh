@@ -115,6 +115,10 @@ reset; printf '#!/bin/sh\necho 1.2.3\n' >"$T/home/.local/bin/agy"; chmod +x "$T/
 printf '#!/bin/sh\necho x >>"$STUB_WA_LOG"; exit 2\n' >"$T/bin/wa-old"; chmod +x "$T/bin/wa-old"
 run_block BI_AGENT_BIN="$T/bin/wa-old"
 grep -qP '^agy\tskipped' "$T/bidir/install.tsv" || fail "agy: a healthy copy was not recorded skipped with an old Agent"
+# A silent agy (exit 0, no version) is not usable: failed, as when the Agent answers.
+reset; printf '#!/bin/sh\nexit 0\n' >"$T/home/.local/bin/agy"; chmod +x "$T/home/.local/bin/agy"
+run_block BI_AGENT_BIN="$T/none"
+grep -qP '^agy\tfailed' "$T/bidir/install.tsv" || fail "agy: a silent copy was not recorded failed without the Agent"
 reset; run_block
 [ -e "$T/home/.local/bin/agy" ] || [ -e "$T/home/.local/bin/.agy.version" ] && fail "agy: shell installed agy itself"
 grep -q 'agy-version' "$ENTRY" || fail "agy: agy_effective_version does not ask the Agent"

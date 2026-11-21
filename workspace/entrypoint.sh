@@ -484,11 +484,13 @@ oc_drop_v1 "$HOME/.local" || echo "[entrypoint] WARN: could not remove opencode 
 # agy_plain_runs <agy path> — --version answers, behind the same RDRAND mask the Agent applies
 # (agy aborts at start on a host without a usable RDRAND). Only for when the Agent cannot be asked.
 agy_plain_runs() {
+  local v
   if [ "$(uname -m)" = "aarch64" ] || grep -qw rdrand /proc/cpuinfo 2>/dev/null; then
-    timeout 30 "$1" --version >/dev/null 2>&1
+    v="$(timeout 30 "$1" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
   else
-    OPENSSL_ia32cap='~0x4000000000000000' timeout 30 "$1" --version >/dev/null 2>&1
+    v="$(OPENSSL_ia32cap='~0x4000000000000000' timeout 30 "$1" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
   fi
+  [ -n "$v" ]
 }
 agy_effective_version() {
   local wa="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"

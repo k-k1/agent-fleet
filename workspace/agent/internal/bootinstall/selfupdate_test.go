@@ -73,10 +73,20 @@ func newSU(t *testing.T, rtkScript, rtkSum, agyScript, cursorScript string) *suF
 	f.home = t.TempDir()
 	f.pathDir = t.TempDir()
 	f.npmDir = t.TempDir()
-	// Nothing of the host's: a fake HOME and a PATH of the stubs plus the base tools, so no real
-	// CLI of the machine running the test is ever called.
+	// Nothing of the host's: a fake HOME and a PATH of the stubs, the fake ~/.local/bin and a
+	// directory of links to just the base tools the stubs use, so no real CLI of the machine
+	// running the test is ever called.
+	tools := t.TempDir()
+	for _, n := range []string{"sh", "bash", "cat", "tr", "wc", "cp", "mkdir", "chmod", "dirname", "printf", "echo", "head", "env", "timeout", "grep", "uname", "install", "rm", "mv"} {
+		for _, d := range []string{"/usr/bin", "/bin"} {
+			if _, err := os.Stat(filepath.Join(d, n)); err == nil {
+				_ = os.Symlink(filepath.Join(d, n), filepath.Join(tools, n))
+				break
+			}
+		}
+	}
 	t.Setenv("HOME", f.home)
-	t.Setenv("PATH", f.pathDir+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
+	t.Setenv("PATH", strings.Join([]string{f.pathDir, filepath.Join(f.home, ".local", "bin"), tools}, string(os.PathListSeparator)))
 	// The shared npm stub, plus `view` answering $D/view.<name-with-slashes-as-_>.
 	view := "view) f=\"$D/view.$(echo \"$2\" | tr '/' '_')\"; [ -f \"$f\" ] && cat \"$f\"; exit 0 ;;\n"
 	stub := strings.Replace(npmStub, "ls)", view+"ls)", 1)
@@ -301,6 +311,9 @@ func TestSelfUpdateNPMLsFailureForcesUpdate(t *testing.T) {
 func TestSelfUpdateNPMFailureRepairsBrokenLink(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	// The failed install leaves a claude that does not run; the verify pass must reinstall the pin.
+	// Only the first install fails (after writing a claude that does not run); the repair works.
+	stub := strings.Replace(f.read(filepath.Join(f.npmDir, "npm")), `if [ -f "$D/failafter" ]`, `if [ -f "$D/failafter" ] && [ "$n" -eq 1 ]`, 1)
+	f.write(t, filepath.Join(f.npmDir, "npm"), stub)
 	f.write(t, filepath.Join(f.npmDir, "failafter"), "npm ERR! ENOSPC\n")
 	f.write(t, filepath.Join(f.npmDir, "body.claude"), brokenCLI)
 	f.write(t, filepath.Join(f.npmDir, "body2.claude"), "#!/bin/sh\necho 1.0.0\n")
@@ -309,16 +322,28 @@ func TestSelfUpdateNPMFailureRepairsBrokenLink(t *testing.T) {
 	if !strings.Contains(log, "@anthropic-ai/claude-code@1.0.0") {
 		t.Fatalf("no pin reinstall after the failed update: %s", log)
 	}
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
+		t.Fatalf("claude not repaired to the pin: %q %v", out, err)
+	}
 }
 
-func TestSelfUpdateLaterStepsRunAfterEarlierFailure(t *testing.T) {
-	// rtk's checksum fails, npm fails: agy and cursor are still updated.
-	f := newSU(t, goodRTK, strings.Repeat("0", 64), agyInstaller, cursorInstaller)
-	f.write(t, filepath.Join(f.npmDir, "fail"), "npm ERR! network boom\n")
-	if rc := SelfUpdate(context.Background(), f.env); rc != ExitOK {
-		t.Fatalf("rc=%d", rc)
-	}
-	if !usable(f.local("agy")) || !usable(f.local("cursor-agent")) {
-		t.Fatalf("a failed step stopped the later ones:\n%s", f.out)
-	}
+func TestSelfUpdateStepsAreIndependent(t *testing.T) {
+	t.Run("npm alone failing still installs rtk, agy and cursor", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", agyInstaller, cursorInstaller)
+		f.write(t, filepath.Join(f.npmDir, "fail"), "npm ERR! network boom\n")
+		SelfUpdate(context.Background(), f.env)
+		if !usable(f.local("rtk")) || !usable(f.local("agy")) || !usable(f.local("cursor-agent")) {
+			t.Fatalf("a failed npm step stopped later ones:\n%s", f.out)
+		}
+	})
+	t.Run("rtk alone failing still installs cursor", func(t *testing.T) {
+		f := newSU(t, goodRTK, strings.Repeat("0", 64), "", cursorInstaller)
+		SelfUpdate(context.Background(), f.env)
+		if usable(f.local("rtk")) || !usable(f.local("cursor-agent")) {
+			t.Fatalf("rtk failure handling wrong:\n%s", f.out)
+		}
+		if !strings.Contains(f.out.String(), "cursor updated: 2026.2.0-abc123") {
+			t.Fatalf("cursor's new version not reported:\n%s", f.out)
+		}
+	})
 }
