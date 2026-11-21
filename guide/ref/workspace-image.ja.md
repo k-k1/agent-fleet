@@ -57,7 +57,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 | [Antigravity CLI (`agy`)](https://antigravity.google/) | Google のコーディングエージェント | `1.5.14` | [提供元の規約](https://antigravity.google/terms) |
 | [Cursor CLI (`cursor-agent`)](https://cursor.com/) | Cursor のコーディングエージェント | `2026.10.22-27dcf5f` | [提供元の規約](https://cursor.com/terms-of-service) |
 | [Kiro CLI (`kiro-cli`)](https://kiro.dev/cli/) | AWS の Kiro のコーディングエージェント | `3.3.0` | [提供元の規約](https://kiro.dev/license/) |
-| [Muse Code (`muse`)](https://dev.meta.ai/) | Meta のコーディングエージェント | `1.4.24-R9131.1` | [提供元の規約](https://dev.meta.ai/legal) |
+| [Muse Code (`muse`)](https://dev.meta.ai/) | Meta のコーディングエージェント | `1.4.25-R9361.1` | [提供元の規約](https://dev.meta.ai/legal) |
 
 ## ユーティリティ
 
