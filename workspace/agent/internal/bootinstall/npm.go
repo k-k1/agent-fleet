@@ -195,6 +195,9 @@ func NPM(e Env) int {
 		if pin == "" {
 			continue
 		}
+		if e.npmPendingHas(c.Name) {
+			continue // its previous copy is still waiting to be put back
+		}
 		present := e.cliPresent(c.Name)
 		if present {
 			e.note(c.Name, statusSkip, "")
@@ -264,6 +267,12 @@ func (e Env) NPMVerify(clis []string, present bool) int {
 		}
 		// The every-start pass can follow an accepted self-update whose backups are still on disk:
 		// one probe that failed must not cost the previous copy, so it goes back first.
+		if present && e.npmPendingHas(c) {
+			// An earlier restore of this CLI has not gone through: its links are the copy being
+			// restored, so no repair or removal runs over them.
+			stuckRestore = append(stuckRestore, c)
+			continue
+		}
 		if present {
 			switch restored, failed := e.npmRestoreCLI(c); {
 			case failed:
@@ -326,10 +335,14 @@ func (e Env) NPMVerify(clis []string, present bool) int {
 	}
 	// No space first: the entrypoint holds back its later downloads on it, and the individual
 	// failures are in the status file either way.
+	for _, c := range stuckRestore {
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s does not run and its previous copy could not be restored yet (retrying next start)\n", c)
+		e.note(c, statusFailed, ReasonOther)
+	}
 	switch {
 	case noSpace:
 		return ExitNoSpace
-	case len(broken) > 0:
+	case len(broken) > 0 || len(stuckRestore) > 0:
 		return ExitFailed
 	}
 	return ExitOK
@@ -357,7 +370,7 @@ func (e Env) NPMVerifyPresent() int {
 		// copy may still be on disk.
 		listed := false
 		for _, m := range marked {
-			listed = listed || (mok && !mbad && m == c.Name)
+			listed = listed || (mok && !mbad && e.npmEntryCLI(m) == c.Name)
 		}
 		if err == nil || listed {
 			list = append(list, c.Name)
@@ -407,9 +420,11 @@ func (e Env) npmWriteMarker(state string, clis []string) error {
 	return nil
 }
 
-// npmReadMarker parses the marker: its state and the CLIs it lists. ok is false when there is no
-// marker; bad is true when it is present but not one we wrote (unknown state or CLI name).
-func (e Env) npmReadMarker() (state string, clis []string, ok, bad bool) {
+// npmReadMarker parses the marker: its state and its entries. An entry is a CLI name (both of
+// its paths) or, from an earlier release, the exact tree or bin path of a known CLI under this
+// home (that one path only: the other side was never recorded and is not ours). ok is false when
+// there is no marker; bad is true when it is present but not one we wrote.
+func (e Env) npmReadMarker() (state string, entries []string, ok, bad bool) {
 	b, err := os.ReadFile(e.npmMarker())
 	if err != nil {
 		return "", nil, false, false
@@ -423,37 +438,38 @@ func (e Env) npmReadMarker() (state string, clis []string, ok, bad bool) {
 		if l == "" {
 			continue
 		}
-		name := l
-		if npmPkg(l) == "" {
-			// An earlier marker listed absolute paths: only the exact tree or bin path of a known
-			// CLI under this home is understood, as that CLI.
-			name = ""
-			for _, c := range npmCLIs {
-				if l == e.npmTreeOf(c.Pkg) || l == filepath.Join(e.localBin(), c.Name) {
-					name = c.Name
-				}
-			}
-			if name == "" {
-				return state, nil, true, true
-			}
+		if e.npmEntryCLI(l) == "" {
+			return state, nil, true, true
 		}
-		dup := false
-		for _, x := range clis {
-			dup = dup || x == name
-		}
-		if !dup {
-			clis = append(clis, name)
-		}
+		entries = append(entries, l)
 	}
-	return state, clis, true, false
+	return state, entries, true, false
 }
 
-// npmAsidesOf rebuilds the backups of the named CLIs from their names: the tree and the bin link
-// whose <path>.af-bak exists.
-func (e Env) npmAsidesOf(clis []string) []npmAside {
+// npmEntryCLI is the CLI a marker entry belongs to ("" for an entry we do not understand).
+func (e Env) npmEntryCLI(entry string) string {
+	if npmPkg(entry) != "" {
+		return entry
+	}
+	for _, c := range npmCLIs {
+		if entry == e.npmTreeOf(c.Pkg) || entry == filepath.Join(e.localBin(), c.Name) {
+			return c.Name
+		}
+	}
+	return ""
+}
+
+// npmAsidesOf rebuilds the backups the marker entries stand for: a name gives the CLI's tree and
+// bin link, a legacy path only itself; each counts when its <path>.af-bak exists.
+func (e Env) npmAsidesOf(entries []string) []npmAside {
 	var out []npmAside
-	for _, c := range clis {
-		for _, orig := range []string{e.npmTreeOf(npmPkg(c)), filepath.Join(e.localBin(), c)} {
+	for _, ent := range entries {
+		c := e.npmEntryCLI(ent)
+		paths := []string{ent}
+		if c == ent {
+			paths = []string{e.npmTreeOf(npmPkg(c)), filepath.Join(e.localBin(), c)}
+		}
+		for _, orig := range paths {
 			bak := orig + npmBakSuffix
 			// Only a confirmed ENOENT means there is no backup: an unreadable parent says nothing.
 			if _, err := os.Lstat(bak); !errors.Is(err, fs.ErrNotExist) {
@@ -462,6 +478,27 @@ func (e Env) npmAsidesOf(clis []string) []npmAside {
 		}
 	}
 	return out
+}
+
+// npmEntriesOf selects the marker entries that belong to one of the named CLIs.
+func (e Env) npmEntriesOf(entries, clis []string) []string {
+	var out []string
+	for _, ent := range entries {
+		for _, c := range clis {
+			if e.npmEntryCLI(ent) == c {
+				out = append(out, ent)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// npmPendingHas reports whether a pending marker still lists the CLI: its previous copy is waiting
+// to be put back, so nothing may repair, reinstall or remove the CLI's links meanwhile.
+func (e Env) npmPendingHas(cli string) bool {
+	state, entries, ok, bad := e.npmReadMarker()
+	return ok && !bad && state == "pending" && len(e.npmEntriesOf(entries, []string{cli})) > 0
 }
 
 // npmCLINames is the distinct CLI names of the entries, in order.
@@ -533,44 +570,41 @@ func (e Env) npmRecoverAside(keepAccepted bool) {
 // run, while the backup is still there. restored says a previous copy went back; failed says one
 // is there and could not be put back.
 func (e Env) npmRestoreCLI(cli string) (restored, failed bool) {
-	state, clis, ok, bad := e.npmReadMarker()
+	state, entries, ok, bad := e.npmReadMarker()
 	if !ok || bad || state != "accepted" {
 		return false, false
 	}
-	for _, c := range clis {
-		if c == cli {
-			as := e.npmAsidesOf([]string{cli})
-			if len(as) == 0 {
-				return false, false
-			}
-			if e.npmRestoreAside(as) {
-				return true, false
-			}
-			return false, true
-		}
+	as := e.npmAsidesOf(e.npmEntriesOf(entries, []string{cli}))
+	if len(as) == 0 {
+		return false, false
 	}
-	return false, false
+	if e.npmRestoreAside(as) {
+		return true, false
+	}
+	return false, true
 }
 
-// npmKeepPendingFor turns an accepted marker into a pending one that names only the CLIs whose
-// restore failed, so the next start retries it; the other CLIs' backups (all verified by now) go.
+// npmKeepPendingFor turns an accepted marker into a pending one that keeps only the entries of the
+// CLIs whose restore failed, so the next start retries it; the other CLIs' backups (all verified
+// by now) go.
 func (e Env) npmKeepPendingFor(stuck []string) {
-	state, clis, ok, bad := e.npmReadMarker()
+	state, entries, ok, bad := e.npmReadMarker()
 	if !ok || bad || state != "accepted" {
 		return
 	}
+	keep := e.npmEntriesOf(entries, stuck)
 	var rest []string
-	for _, c := range clis {
-		isStuck := false
-		for _, s := range stuck {
-			isStuck = isStuck || s == c
+	for _, ent := range entries {
+		in := false
+		for _, k := range keep {
+			in = in || k == ent
 		}
-		if !isStuck {
-			rest = append(rest, c)
+		if !in {
+			rest = append(rest, ent)
 		}
 	}
 	npmDiscardAside(e.npmAsidesOf(rest))
-	_ = e.npmWriteMarker("pending", stuck)
+	_ = e.npmWriteMarker("pending", keep)
 }
 
 // npmMoveAside renames the installed tree and npm's own bin link of every npm CLI to
@@ -665,4 +699,13 @@ func npmDiscardAside(moved []npmAside) bool {
 		}
 	}
 	return gone
+}
+
+// NPMVerifyPresentStep is the entrypoint's final pass: it recovers what a killed update left but
+// keeps an accepted update's backups, verifies the copies, then settles the backups.
+func (e Env) NPMVerifyPresentStep() int {
+	e.npmRecoverAside(true)
+	rc := e.NPMVerifyPresent()
+	e.npmRecoverAside(false)
+	return rc
 }

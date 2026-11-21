@@ -43,7 +43,9 @@ func Run(args []string) {
 	if step == "npm" || step == "npm-verify" || step == "self-update" || step == "npm-recover" {
 		// Before anything looks at the npm CLIs: a killed self-update may have left them moved aside.
 		// The every-start verify pass keeps an accepted update's backups until it has run.
-		DefaultEnv(false).npmRecoverAside(step == "npm-verify" && present)
+		if !(step == "npm-verify" && present) {
+			DefaultEnv(false).npmRecoverAside(false)
+		}
 	}
 	switch step {
 	case "rtk":
@@ -64,9 +66,7 @@ func Run(args []string) {
 	case "npm-verify":
 		e := DefaultEnv(false)
 		if present {
-			rc := e.NPMVerifyPresent()
-			e.npmRecoverAside(false) // settles an accepted update's backups
-			os.Exit(rc)
+			os.Exit(e.NPMVerifyPresentStep())
 		}
 		for _, c := range rest {
 			if npmPkg(c) == "" {

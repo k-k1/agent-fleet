@@ -246,8 +246,19 @@ npm1=$(grep -nx 'workspace-agent boot-install npm' "$STUB_WA_LOG" | head -1 | cu
 reset; run_block STUB_WA_RC=126 || fail "npm-recover: an exit outside the contract aborted the start"
 has 'WARN: npm boot-install npm-recover exited 126' || fail "npm-recover: no WARN for an exit outside the contract"
 awk '/boot-install npm-recover/{r=NR} /npm uninstall -g/{u=NR} END{exit !(r && u && r<u)}' "$ENTRY" || fail "npm-recover: not before the OFF branch's npm uninstall"
-# ... and at the top level, so no branch (lean, OFF, unattended) can skip it.
-grep -q '^NPM_RECOVER_WA=' "$ENTRY" && grep -q '^  "\$NPM_RECOVER_WA" boot-install npm-recover' "$ENTRY" || fail "npm-recover: not an unconditional top-level step"
+# ... and not directly inside a branch: the code line before it must be a finished statement (a
+# `then`, `do`, `else` or `{` there means a condition wraps it, which would skip the recovery on
+# the starts that most need it).
+prev_code() { awk '/^[ \t]*#/ || /^[ \t]*$/ { next } /^NPM_RECOVER_WA=/ { print last; exit } { last=$0 }' "$1"; }
+case "$(prev_code "$ENTRY")" in
+  *then|*do|*else|*'{'|*'&&'|*'||') fail "npm-recover: wrapped in a condition ($(prev_code "$ENTRY"))" ;;
+  '') fail "npm-recover: the step is missing" ;;
+esac
+sed 's/^NPM_RECOVER_WA=/if [ ! -x \/usr\/local\/bin\/claude ]; then\nNPM_RECOVER_WA=/' "$ENTRY" >"$T/entry.mut"
+case "$(prev_code "$T/entry.mut")" in
+  *then) ;; # the check sees a wrapped step
+  *) fail "npm-recover: the wrapping check cannot tell a conditional step" ;;
+esac
 # The shell no longer carries an npm install or a verify of its own.
 grep -q 'npm install -g' "$BLOCK" && fail "npm: shell install block still present"
 grep -q 'npm_clis_verify' "$BLOCK" && fail "npm: shell verify still present"

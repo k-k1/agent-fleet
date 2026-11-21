@@ -1055,24 +1055,147 @@ func TestNPMVerifyPresentKeepsAFailedRestoreForTheNextStart(t *testing.T) {
 	}
 }
 
-func TestNPMVerifyPresentMixedKeepsOnlyTheStuckCLI(t *testing.T) {
+func TestNPMLegacyMarkerRecoversOnlyTheRecordedSide(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
-	claude := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
-	codex := f.plantNPMTree(t, "@openai/codex", "codex", "2.0.0")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, filepath.Join(tree+npmBakSuffix, "VERSION"), "1.0.0")
+	f.write(t, f.local("claude")+npmBakSuffix, "mine") // never recorded: the member's own
+	f.write(t, f.env.npmMarker(), "accepted\n"+tree+"\n")
+	f.env.npmRecoverAside(false)
+	if _, err := os.Lstat(tree + npmBakSuffix); err == nil {
+		t.Fatal("the recorded backup was not discarded")
+	}
+	if f.read(f.local("claude")+npmBakSuffix) != "mine" {
+		t.Fatal("an unrecorded backup name was swept")
+	}
+}
+
+// stuckAcceptedFixture: claude's new copy does not run and its previous copy cannot be put back
+// (its scope directory is unreadable); codex's new copy is healthy.
+func stuckAcceptedFixture(t *testing.T) (f *suFixture, claude, codex string) {
+	f = newSU(t, goodRTK, "", "", "")
+	claude = f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	codex = f.plantNPMTree(t, "@openai/codex", "codex", "2.0.0")
+	f.write(t, filepath.Join(claude, "cli.sh"), "#!/bin/sh\nexit 1\n")
+	f.write(t, filepath.Join(claude+npmBakSuffix, "cli.sh"), "#!/bin/sh\necho 1.0.0\n")
+	if err := os.Chmod(filepath.Join(claude+npmBakSuffix, "cli.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	f.write(t, filepath.Join(codex+npmBakSuffix, "VERSION"), "1.0.0")
-	f.write(t, filepath.Join(claude+npmBakSuffix, "VERSION"), "1.0.0")
 	f.write(t, f.env.npmMarker(), "accepted\nclaude\ncodex\n")
-	f.env.npmRecoverAside(true)
-	if rc := f.env.NPMVerifyPresent(); rc != ExitOK {
+	return f, claude, codex
+}
+
+func TestNPMVerifyPresentStepMixedKeepsOnlyTheStuckCLIAndFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f, claude, codex := stuckAcceptedFixture(t)
+	f.env.StatusPath = filepath.Join(t.TempDir(), "status.tsv")
+	f.write(t, f.env.StatusPath, "")
+	parent := filepath.Dir(claude)
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if rc := f.env.NPMVerifyPresentStep(); rc != ExitFailed {
+		t.Fatalf("rc=%d, want %d for a copy that does not run and cannot be restored\n%s", rc, ExitFailed, f.out)
+	}
+	if f.env.lastStatus("claude") != statusFailed {
+		t.Fatalf("claude status %q, want failed", f.env.lastStatus("claude"))
+	}
+	os.Chmod(parent, 0o755)
+	if _, err := os.Lstat(codex + npmBakSuffix); err == nil {
+		t.Fatal("the healthy CLI's backup was not settled")
+	}
+	st, ents, ok, bad := f.env.npmReadMarker()
+	if !ok || bad || st != "pending" || len(ents) != 1 || ents[0] != "claude" {
+		t.Fatalf("marker = %q %v; want pending [claude]", st, ents)
+	}
+	if _, err := os.Lstat(claude + npmBakSuffix); err != nil {
+		t.Fatal("the stuck CLI's previous tree is gone")
+	}
+}
+
+func TestNPMStuckRestoreSurvivesASecondStartWithTheSameFault(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f, claude, _ := stuckAcceptedFixture(t)
+	// The old bin link went back with the first attempt; the tree could not.
+	if err := os.Rename(f.local("claude")+npmBakSuffix, f.local("claude")); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	parent := filepath.Dir(claude)
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	f.env.NPMVerifyPresentStep()
+	f.env.NPMVerifyPresentStep() // the same fault on the next start
+	if _, err := os.Lstat(f.local("claude")); err != nil {
+		t.Fatalf("the link being restored was removed by the pin repair:\n%s", f.out)
+	}
+	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
+		t.Fatal("npm reinstalled over a CLI whose restore is pending")
+	}
+	os.Chmod(parent, 0o755)
+	f.env.NPMVerifyPresentStep() // permission is back
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
+		t.Fatalf("previous copy not back: %q %v\n%s", out, err, f.out)
+	}
+}
+
+func TestNPMVerifyPresentStepRestoresBeforeSettlingBackups(t *testing.T) {
+	f, claude, codex := stuckAcceptedFixture(t)
+	if rc := f.env.NPMVerifyPresentStep(); rc != ExitOK {
 		t.Fatalf("rc=%d\n%s", rc, f.out)
 	}
-	f.env.npmRecoverAside(false)
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
+		t.Fatalf("previous claude not back: %q %v\n%s", out, err, f.out)
+	}
 	for _, p := range []string{claude + npmBakSuffix, codex + npmBakSuffix, f.env.npmMarker()} {
 		if _, err := os.Lstat(p); err == nil {
 			t.Fatalf("left after the final pass: %s", p)
 		}
 	}
+	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
+		t.Fatal("the pin was reinstalled instead of restoring the previous copy")
+	}
 	if f.read(filepath.Join(codex, "VERSION")) != "2.0.0" {
-		t.Fatal("a healthy accepted copy was replaced")
+		t.Fatal("the healthy accepted copy was replaced")
+	}
+}
+
+func TestSelfUpdateNPMMixedKeepsOnlyTheStuckCLIPending(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	f.realNPM(t)
+	claude := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	codex := f.plantNPMTree(t, "@openai/codex", "codex", "1.0.0")
+	f.write(t, filepath.Join(f.npmDir, "body.claude"), brokenCLI) // the new claude does not run
+	// After npm lays claude's tree down its scope directory turns read-only, so putting the
+	// previous tree back fails; codex's new copy is healthy.
+	stub := f.read(filepath.Join(f.npmDir, "npm"))
+	stub = strings.Replace(stub, `chmod +x "$tree/cli.sh"; rm -f`, `chmod +x "$tree/cli.sh"; [ "$cli" = claude ] && chmod 555 "$(dirname "$tree")"; rm -f`, 1)
+	f.write(t, filepath.Join(f.npmDir, "npm"), stub)
+	parent := filepath.Dir(claude)
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	f.env.selfUpdateNPM()
+	os.Chmod(parent, 0o755)
+	if _, err := os.Lstat(claude + npmBakSuffix); err != nil {
+		t.Fatalf("setup: claude's previous tree was not left behind:\n%s", f.out)
+	}
+	st, ents, ok, bad := f.env.npmReadMarker()
+	if !ok || bad || st != "pending" || len(ents) != 1 || ents[0] != "claude" {
+		t.Fatalf("marker = %q %v; want pending [claude]", st, ents)
+	}
+	if _, err := os.Lstat(codex + npmBakSuffix); err == nil {
+		t.Fatal("the accepted CLI's backup was kept although only claude is pending")
+	}
+	if f.read(filepath.Join(codex, "VERSION")) != "new-codex\n" {
+		t.Fatal("codex's accepted copy was replaced")
 	}
 }
