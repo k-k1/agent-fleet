@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -585,5 +587,158 @@ func TestBindingUnknownGapBoundIgnoresFloor(t *testing.T) {
 	}
 	if got := bind(t, routes.RouteOpencodeZen, false, 15000); got == "" {
 		t.Error("the life started after the recovery is bound")
+	}
+}
+
+// holdLock takes the lock the way a second Agent process would (its own open file description) and
+// returns the release.
+func holdLock(t *testing.T) func() {
+	t.Helper()
+	if err := os.MkdirAll(paths.AgentConfigDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(paths.AgentConfigDir(), bindLockFile), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	release := func() { once.Do(func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }) }
+	t.Cleanup(release) // runs before bindT's cleanup restores the hooks and any waiter is collected below
+	return release
+}
+
+// waitRetry runs fn in a goroutine and returns once it has failed to get the lock at least once,
+// so "still blocked" is checked after the call really reached the lock.
+func waitRetry(t *testing.T, fn func()) (done chan struct{}) {
+	t.Helper()
+	tried := make(chan struct{}, 1)
+	bindLockRetry = func() {
+		select {
+		case tried <- struct{}{}:
+		default:
+		}
+	}
+	done = make(chan struct{})
+	go func() { fn(); close(done) }()
+	// Collect the waiter before HOME and the seam are restored (cleanups run last-in first, and
+	// holdLock's release was registered earlier, so release it here too).
+	t.Cleanup(func() {
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+		}
+		bindLockRetry = nil
+	})
+	select {
+	case <-tried:
+	case <-time.After(5 * time.Second):
+		t.Fatal("call never reached the lock")
+	}
+	return done
+}
+
+func TestBindingAppendWaitsForCrossProcessLock(t *testing.T) {
+	bindT(t)
+	unlock := holdLock(t)
+	done := waitRetry(t, func() { start(5000, 1, "A") })
+	select {
+	case <-done:
+		t.Fatal("append ran while another process held the lock")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("append did not proceed after the lock was released")
+	}
+	if evs, ok := readBindEvents(); !ok || len(evs) != 1 {
+		t.Fatalf("events = %v ok=%v, want one", evs, ok)
+	}
+}
+
+// daemonBinder resolves a pending gap marker only under the lock.
+func TestBindingDaemonBinderWaitsForCrossProcessLock(t *testing.T) {
+	bindT(t)
+	start(5000, 1, "A")
+	acct(5100, acctOut, 1)
+	gp := filepath.Join(paths.AgentConfigDir(), bindGapsFile)
+	if err := os.WriteFile(gp, []byte(gapPending+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unlock := holdLock(t)
+	done := waitRetry(t, func() { daemonBinder() })
+	select {
+	case <-done:
+		t.Fatal("daemonBinder ran while another process held the lock")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, pending, ok := readGapsFile(); !ok || !pending {
+		t.Errorf("pending marker resolved while the lock was held (pending=%v ok=%v)", pending, ok)
+	}
+	unlock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemonBinder did not proceed after the lock was released")
+	}
+	if _, pending, ok := readGapsFile(); !ok || pending {
+		t.Errorf("marker not resolved after release (pending=%v ok=%v)", pending, ok)
+	}
+}
+
+// within runs fn and fails the test when it does not finish in d (the holder stays locked).
+func within(t *testing.T, d time.Duration, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { fn(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(d):
+		t.Fatal("call did not finish within the bound while the lock was held")
+	}
+}
+
+// A holder that never lets go costs a bounded wait, then both paths run unlocked and still record
+// and bind the life.
+func TestBindingLockWaitIsBounded(t *testing.T) {
+	bindT(t)
+	old := bindLockWait
+	bindLockWait = 50 * time.Millisecond
+	t.Cleanup(func() { bindLockWait = old })
+	holdLock(t)
+	keyA := credbind.Key(opencodeKeyEnv, "A")
+	within(t, 3*time.Second, func() {
+		start(5000, 1, "A")
+		acct(5100, acctOut, 1)
+	})
+	var b bindFn
+	within(t, 3*time.Second, func() { b = daemonBinder() })
+	if b == nil {
+		t.Fatal("no binder while the lock is held past the wait")
+	}
+	if got := b(routes.RouteOpencodeZen, false, 5500); got != keyA || got == "" {
+		t.Errorf("binding = %q, want %q", got, keyA)
+	}
+}
+
+// A lock file that cannot be opened does not stop either path.
+func TestBindingLockOpenFailureContinues(t *testing.T) {
+	bindT(t)
+	if err := os.MkdirAll(filepath.Join(paths.AgentConfigDir(), bindLockFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	keyA := credbind.Key(opencodeKeyEnv, "A")
+	start(5000, 1, "A")
+	acct(5100, acctOut, 1)
+	b := daemonBinder()
+	if b == nil {
+		t.Fatal("no binder with an unopenable lock file")
+	}
+	if got := b(routes.RouteOpencodeZen, false, 5500); got != keyA || got == "" {
+		t.Errorf("binding = %q, want %q", got, keyA)
 	}
 }

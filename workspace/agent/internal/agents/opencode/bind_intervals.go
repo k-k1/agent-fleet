@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
@@ -238,8 +239,13 @@ func resolveGapPending(evs []bindEvent) bool {
 // readGaps returns every recorded gap; ok=false when the file cannot be read whole.
 func readGaps() (gaps []int64, ok bool) {
 	bindIntervalsMu.Lock()
+	defer bindIntervalsMu.Unlock()
+	return readGapsLocked()
+}
+
+// readGapsLocked is readGaps for a caller that holds bindIntervalsMu.
+func readGapsLocked() (gaps []int64, ok bool) {
 	gaps = append(gaps, gapsMem...)
-	bindIntervalsMu.Unlock()
 	fg, _, ok := readGapsFile()
 	if !ok {
 		return nil, false
@@ -292,12 +298,72 @@ func lastDaemonEvent(evs []bindEvent) int {
 	return -1
 }
 
+// bindLockFile is the lock shared by every Agent process on one home. It is a file of its own,
+// never the evidence file: trimming replaces that file by rename, and a lock on the old inode would
+// then guard nothing.
+const bindLockFile = "opencode-binding-intervals.lock"
+
+// lockBindFiles takes the cross-process lock (flock, released by the kernel when the process dies)
+// so that read-check-write on the evidence and gaps files is atomic across processes. Callers hold
+// bindIntervalsMu first. When the lock cannot be taken the section runs unlocked, which is what a
+// single process always did; it is not a reason to turn binding off.
+//
+// Limit: when the wait runs out the section goes on unlocked, so a holder stopped between creating
+// a trim temp file and renaming it can still overwrite an event appended meanwhile (the same race
+// main has). Closing it needs a different fallback contract, not a longer wait.
+//
+// Limit: this only orders Agent processes that share the home. A hand-made `opencode auth login`
+// changes the account without passing through any Agent, so no lock can see it; bindings after one
+// rest on the next account reading.
+var (
+	// bindLockWait bounds the wait for another process's lock; past it the section runs unlocked.
+	bindLockWait = 3 * time.Second
+	// bindLockRetry is a test seam: it runs after each failed attempt.
+	bindLockRetry func()
+)
+
+func lockBindFiles() func() {
+	dir := paths.AgentConfigDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return func() {}
+	}
+	f, err := os.OpenFile(filepath.Join(dir, bindLockFile), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		log.Printf("opencode: binding lock not taken: %v", err)
+		return func() {}
+	}
+	deadline := time.Now().Add(bindLockWait)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		// A holder that is stopped (not dead) never releases; blocking here would stall the
+		// Supervisor and every OAuth call behind it, which main never did.
+		left := time.Until(deadline)
+		if err != syscall.EWOULDBLOCK && err != syscall.EINTR || left <= 0 {
+			log.Printf("opencode: binding lock not taken: %v", err)
+			_ = f.Close()
+			return func() {}
+		}
+		if bindLockRetry != nil {
+			bindLockRetry()
+		}
+		time.Sleep(min(10*time.Millisecond, left))
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}
+}
+
 // appendBindEvent adds one line (a single O_APPEND write), trimming the oldest lines when the file
 // outgrows its bound. Done under the lock with check, which may refuse the event after looking at
 // the file (false = not written, not a failure). A write that fails leaves a gap (noteGap).
 func appendBindEvent(e bindEvent, check func(evs []bindEvent, e bindEvent) bool) {
 	bindIntervalsMu.Lock()
 	defer bindIntervalsMu.Unlock()
+	defer lockBindFiles()()
 	evs, ok := readBindEvents()
 	if !ok {
 		log.Printf("opencode: binding intervals unreadable; bindings stay unproven")
@@ -790,16 +856,21 @@ func ledgerBinder(m session.Meta) bindFn {
 // daemonBinder binds a call by the shared daemon's evidence; nil when that is unreadable.
 func daemonBinder() bindFn {
 	bindIntervalsMu.Lock()
+	unlock := lockBindFiles()
 	evs, ok := readBindEvents()
 	if ok {
 		ok = resolveGapPending(evs)
 	}
-	bindIntervalsMu.Unlock()
-	if !ok || len(evs) == 0 || bindOff.Load() {
-		return nil
+	// Read the gaps under the same lock: another process's pending marker must not be paired with
+	// events read before it.
+	var gaps []int64
+	gapsOK := false
+	if ok {
+		gaps, gapsOK = readGapsLocked()
 	}
-	gaps, ok := readGaps()
-	if !ok {
+	unlock()
+	bindIntervalsMu.Unlock()
+	if !ok || len(evs) == 0 || bindOff.Load() || !gapsOK {
 		return nil
 	}
 	return func(route string, paid bool, times ...int64) string {
