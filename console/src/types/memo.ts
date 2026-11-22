@@ -83,6 +83,12 @@ export interface Memo {
   /** The earliest time the note may run (ADR 0137, addendum 2026-11-22): set by whoever wrote it,
    *  part of what an approval covers, and kept by it. Absent for none. */
   startAfter?: string;
+  /** The run recipe this message asks for, field by field; absent = the category's own setting
+   *  (ADR 0137 addendum, #4845). */
+  agentKind?: string;
+  model?: string;
+  effort?: string;
+  route?: string;
   deferCount?: number;
   deferReasons?: MemoDeferEntry[];
 }
@@ -151,6 +157,11 @@ export interface MemoPatch {
   after?: string[];
   /** Absent leaves the start time as it is, an RFC 3339 time with an offset sets it, "" clears it. */
   startAfter?: string;
+  /** Absent leaves a field of the run recipe as it is, a value sets it, "" clears it (the
+   *  category's setting applies again). */
+  agentKind?: string;
+  model?: string;
+  effort?: string;
   position?: number;
 }
 

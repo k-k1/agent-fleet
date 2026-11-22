@@ -187,6 +187,19 @@ describe("reviewOps", () => {
     expect(r.leftOut[0]).toMatchObject({ why: "other_origin" });
     expect(r.leftOut[0].notes.map((n) => n.id)).toEqual(["a", "w"]);
   });
+  it("leaves out a merge of notes with different run recipes, and groups them apart in the prompt", () => {
+    const withRecipe = [note("a"), note("b"), note("r", { agentKind: "codex", model: "m1" }), note("s", { agentKind: "codex", model: "m1" })];
+    const r = reviewOps([{ op: "merge", ids: ["a", "r"], text: "x" }], withRecipe, dests);
+    expect(r.items).toEqual([]);
+    expect(r.leftOut[0]).toMatchObject({ why: "other_recipe" });
+    // Equal stored recipes still merge.
+    expect(reviewOps([{ op: "merge", ids: ["r", "s"], text: "x" }], withRecipe, dests).items).toHaveLength(1);
+    const items = JSON.parse(buildOpsPrompt(withRecipe, dests).split("メモ:\n")[1].split("\n\ndestinations:")[0]) as { id: string; group: number }[];
+    const g = Object.fromEntries(items.map((i) => [i.id, i.group]));
+    expect(g.a).toBe(g.b);
+    expect(g.r).toBe(g.s);
+    expect(g.a).not.toBe(g.r);
+  });
   it("leaves out a merge or split over waiting and approval-pending notes", () => {
     expect(review([{ op: "merge", ids: ["a", "h"], text: "x" }]).leftOut[0].why).toBe("mixed_states");
   });

@@ -57,13 +57,14 @@ import { MemoQueueRuns } from "./MemoQueueRuns.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
 import { CatHeadMenu, type CatHeadMenuAt } from "./CatHeadMenu.tsx";
 import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
+import { MemoRecipeBadge, MemoRecipeFields, recipeDraftOf, recipePatch, type RecipeDraft } from "./MemoRecipe.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
 import { memoReference } from "./reference.ts";
 import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import { tidySelection } from "./tidyOps.ts";
 import { effectiveTimeZone, fmtDateTime } from "../../lib/intl.ts";
-import { afterChoices, afterItemMessage, continuationHeldKey, afterItemWords, deferredUntil, scheduledUntil, fmtStartAfter, startAfterFromInput, startAfterInputValue, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
+import { afterChoices, afterItemMessage, continuationHeldKey, heldRecipeKey, afterItemWords, deferredUntil, scheduledUntil, fmtStartAfter, startAfterFromInput, startAfterInputValue, hasRecipe, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -568,7 +569,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   }, []);
 
   // ---- memo edit / delete ------------------------------------------------------
-  const saveEdit = async (m: Memo, body: string, category: string, clearRef: boolean, after?: string[], startAfter?: string) => {
+  const saveEdit = async (m: Memo, body: string, category: string, clearRef: boolean, after?: string[], startAfter?: string, recipe?: Partial<RecipeDraft>) => {
     setEditing(null);
     try {
       // The reference is left out unless the member removed it: absent keeps it, `{}` clears it. The
@@ -579,6 +580,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         ...(clearRef ? { reference: {} } : {}),
         ...(after ? { after } : {}),
         ...(startAfter !== undefined ? { startAfter } : {}),
+        ...(recipe ?? {}),
       });
       // apiJSON resolves a server error as {error} rather than throwing, so check it or a
       // false success toast is shown.
@@ -1142,7 +1144,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       onCollapse={() => setExpanded((s) => ({ ...s, [m.id]: false }))}
                       onEdit={() => setEditing(m.id)}
                       onCancelEdit={() => setEditing(null)}
-                      onSave={(body, category, clearRef, after, startAfter) => void saveEdit(m, body, category, clearRef, after, startAfter)}
+                      onSave={(body, category, clearRef, after, startAfter, recipe) => void saveEdit(m, body, category, clearRef, after, startAfter, recipe)}
+                      recipeAgent={isQueue && (m.state === "held" || m.state === "pending") ? (queue?.agentKind ?? "") : undefined}
                       afterChoices={isQueue && (m.state === "held" || m.state === "pending") ? afterChoices(g.memos, m) : undefined}
                       onOpenTidyRuns={
                         cat && isQueue
@@ -1559,6 +1562,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             categoryName={c.name}
             queue={queueByCat.get(c.id)}
             waiting={pendingCount(memos.filter((m) => m.repo === c.repo && m.category === c.name))}
+            messages={memos.filter((m) => m.repo === c.repo && m.category === c.name)}
             focusRun={focusRun}
             slotsFull={slotsFullFor}
             onClose={() => {
@@ -1657,7 +1661,10 @@ interface MemoRowProps {
   onCancelEdit: () => void;
   /** after is the notes it waits for when the member changed them, absent otherwise. */
   /** after and startAfter are sent only when the member changed them (absent keeps them). */
-  onSave: (body: string, category: string, clearRef: boolean, after?: string[], startAfter?: string) => void;
+  onSave: (body: string, category: string, clearRef: boolean, after?: string[], startAfter?: string, recipe?: Partial<RecipeDraft>) => void;
+  /** The category's own agent when the note may carry a run recipe of its own (a held or waiting note
+   *  of an auto-run category; "" when its settings are not read); absent elsewhere. */
+  recipeAgent?: string;
   /** The notes of its auto-run category it may wait for; absent outside one, or once it has run. */
   afterChoices?: { id: string; label: string }[];
   /** Opens the run history of this note's category; absent outside an auto-run category. */
@@ -1721,8 +1728,11 @@ function MemoRow(props: MemoRowProps) {
       setStartBad(true);
       return;
     }
-    props.onSave(body, cat, clearRef, afterChanged(), startAfter);
+    // Only the recipe fields the member changed, so a text edit never rewrites them.
+    const recipeChange = props.recipeAgent === undefined ? {} : recipePatch(recipeDraftOf(m), recipe);
+    props.onSave(body, cat, clearRef, afterChanged(), startAfter, Object.keys(recipeChange).length > 0 ? recipeChange : undefined);
   };
+  const [recipe, setRecipe] = useState<RecipeDraft>(() => recipeDraftOf(m));
   const taRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextarea(taRef, body);
 
@@ -1732,6 +1742,7 @@ function MemoRow(props: MemoRowProps) {
       setCat(currentCat);
       setClearRef(false);
       setAfter(m.after ?? []);
+      setRecipe(recipeDraftOf(m));
       requestAnimationFrame(() => {
         const ta = taRef.current;
         if (ta) {
@@ -1812,6 +1823,9 @@ function MemoRow(props: MemoRowProps) {
               {tr("common.cancel")}
             </Button>
           </div>
+          {props.recipeAgent !== undefined && (
+            <MemoRecipeFields value={recipe} onChange={setRecipe} categoryAgent={props.recipeAgent} />
+          )}
           {afterOptions && (
             <fieldset className="memo-edit-after">
               <legend>{tr("memo.after_edit_label")}</legend>
@@ -1890,7 +1904,7 @@ function MemoRow(props: MemoRowProps) {
   const marks = tidyMarks(m);
   const replaced = isSuperseded(m);
   const isLong = (m.body || "").length > 60 || (m.body || "").includes("\n");
-  const metaNode = (stateWords || originWords || marks.length > 0) && (
+  const metaNode = (stateWords || originWords || marks.length > 0 || hasRecipe(m)) && (
     <div className="memo-qmeta">
       {stateWords && (
         <span className={"memo-qstate s-" + m.state} title={tr(stateWords.title)}>
@@ -1902,6 +1916,7 @@ function MemoRow(props: MemoRowProps) {
           <MemoProducerText k={originWords.key} name={originWords.name ?? ""} link={m.provenance === "workspace" && !!originWords.name} />
         </span>
       )}
+      <MemoRecipeBadge memo={m} />
       {m.state === "pending" && m.releasedBy === "setting" && (
         <span className="memo-qorigin" title={tr("memo.accepted_by_setting_title")}>
           {tr("memo.accepted_by_setting")}
@@ -2035,7 +2050,10 @@ function MemoRow(props: MemoRowProps) {
         {m.state === "held" && continuationHeldKey(m.heldReason?.reason) && (
           <div className="memo-after-held">{tr("memo.continuation_held", { why: tr(continuationHeldKey(m.heldReason?.reason)!) })}</div>
         )}
-        {m.state === "held" && m.heldReason && m.heldReason.reason !== "deferred" && !continuationHeldKey(m.heldReason.reason) && (
+        {m.state === "held" && heldRecipeKey(m.heldReason?.reason) && (
+          <div className="memo-after-held">{tr(heldRecipeKey(m.heldReason?.reason)!)}</div>
+        )}
+        {m.state === "held" && m.heldReason && m.heldReason.reason !== "deferred" && !continuationHeldKey(m.heldReason.reason) && !heldRecipeKey(m.heldReason.reason) && (
           <div className="memo-after-held">
             {tr("memo.after_held", {
               label: m.afterStatus?.find((a) => a.id === m.heldReason!.after)?.label || m.heldReason.after,
