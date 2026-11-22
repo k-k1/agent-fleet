@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
@@ -292,12 +293,47 @@ func lastDaemonEvent(evs []bindEvent) int {
 	return -1
 }
 
+// bindLockFile is the lock shared by every Agent process on one home. It is a file of its own,
+// never the evidence file: trimming replaces that file by rename, and a lock on the old inode would
+// then guard nothing.
+const bindLockFile = "opencode-binding-intervals.lock"
+
+// lockBindFiles takes the cross-process lock (flock, released by the kernel when the process dies)
+// so that read-check-write on the evidence and gaps files is atomic across processes. Callers hold
+// bindIntervalsMu first. When the lock cannot be taken the section runs unlocked, which is what a
+// single process always did; it is not a reason to turn binding off.
+//
+// Limit: this only orders Agent processes that share the home. A hand-made `opencode auth login`
+// changes the account without passing through any Agent, so no lock can see it; bindings after one
+// rest on the next account reading.
+func lockBindFiles() func() {
+	dir := paths.AgentConfigDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return func() {}
+	}
+	f, err := os.OpenFile(filepath.Join(dir, bindLockFile), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		log.Printf("opencode: binding lock not taken: %v", err)
+		return func() {}
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		log.Printf("opencode: binding lock not taken: %v", err)
+		_ = f.Close()
+		return func() {}
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}
+}
+
 // appendBindEvent adds one line (a single O_APPEND write), trimming the oldest lines when the file
 // outgrows its bound. Done under the lock with check, which may refuse the event after looking at
 // the file (false = not written, not a failure). A write that fails leaves a gap (noteGap).
 func appendBindEvent(e bindEvent, check func(evs []bindEvent, e bindEvent) bool) {
 	bindIntervalsMu.Lock()
 	defer bindIntervalsMu.Unlock()
+	defer lockBindFiles()()
 	evs, ok := readBindEvents()
 	if !ok {
 		log.Printf("opencode: binding intervals unreadable; bindings stay unproven")
@@ -790,10 +826,12 @@ func ledgerBinder(m session.Meta) bindFn {
 // daemonBinder binds a call by the shared daemon's evidence; nil when that is unreadable.
 func daemonBinder() bindFn {
 	bindIntervalsMu.Lock()
+	unlock := lockBindFiles()
 	evs, ok := readBindEvents()
 	if ok {
 		ok = resolveGapPending(evs)
 	}
+	unlock()
 	bindIntervalsMu.Unlock()
 	if !ok || len(evs) == 0 || bindOff.Load() {
 		return nil

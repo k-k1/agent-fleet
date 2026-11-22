@@ -587,3 +587,29 @@ func TestBindingUnknownGapBoundIgnoresFloor(t *testing.T) {
 		t.Error("the life started after the recovery is bound")
 	}
 }
+
+// A second Agent process on the same home holds the lock: an append waits for it instead of
+// interleaving its read-check-write with the other process's.
+func TestBindingAppendWaitsForCrossProcessLock(t *testing.T) {
+	bindT(t)
+	unlock := lockBindFiles()
+	done := make(chan struct{})
+	go func() {
+		start(5000, 1, "A")
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("append ran while another process held the lock")
+	case <-time.After(200 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("append did not proceed after the lock was released")
+	}
+	if evs, ok := readBindEvents(); !ok || len(evs) != 1 {
+		t.Fatalf("events = %v ok=%v, want one", evs, ok)
+	}
+}
