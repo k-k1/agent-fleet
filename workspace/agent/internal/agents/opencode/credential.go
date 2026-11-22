@@ -179,6 +179,13 @@ func (agentImpl) ModelRoutes(model string) []string {
 }
 
 func resolveModel(model string, keys map[string]string, pref string, acct oauthState, engines []string, custom *secrets.CustomAPIConn) routes.Launch {
+	p, restricted := policyRestriction()
+	return resolveModelUnder(p, restricted, model, keys, pref, acct, engines, custom)
+}
+
+// resolveModelUnder is resolveModel on a policy the caller already read, so the launch and the
+// pin built beside it (RunPin) cannot disagree about it.
+func resolveModelUnder(p routepolicy.Policy, restricted bool, model string, keys map[string]string, pref string, acct oauthState, engines []string, custom *secrets.CustomAPIConn) routes.Launch {
 	prov, _, ok := splitModel(model)
 	if !ok || pref == UsageOff {
 		return routes.Launch{}
@@ -206,7 +213,6 @@ func resolveModel(model string, keys map[string]string, pref string, acct oauthS
 	// alone is recorded, as before. Under a restriction with a stored connection (customConn, from
 	// the credentialView snapshot) only the provider the URL belongs to is on that endpoint; any
 	// other custom provider resolves to nothing, since the route's approval is of the one host.
-	p, restricted := policyRestriction()
 	if !restricted {
 		return routes.Launch{Route: routes.RouteCustomAPI}
 	}

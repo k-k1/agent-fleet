@@ -100,13 +100,16 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	// handle is not published alive after it (dropEpoch).
 	// On the shared serve, a config file in the session's own directories could override the
 	// credential policy's provider pin: under a restriction that session does not start.
+	// One reading for both checks: the config files are judged against the connection the
+	// managed-only refusal is judged on.
+	view := readView()
 	if m.Route == nil {
-		if err := policyConfigErr(projectConfigFiles(m)); err != nil {
+		if err := policyConfigErrFrom(projectConfigFiles(m), view); err != nil {
 			return nil, err
 		}
 	}
 	// The approved custom endpoint is pinned on the shared serve only (customManagedOnlyErr).
-	if err := customManagedOnlyErr(m, m.Route == nil); err != nil {
+	if err := customManagedOnlyErrFrom(m, m.Route == nil, view, foreignConfigRoot()); err != nil {
 		return nil, err
 	}
 	epoch := dropEpochOf(m.Name)
@@ -117,6 +120,11 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	addr, gen, err := ensure()
 	if err != nil {
 		return nil, err
+	}
+	if m.Route == nil {
+		if err := supervisor.servePinMatches(view); err != nil {
+			return nil, err
+		}
 	}
 	ocSid := session.UUID(m.Dir, m.Name) // identity: the working copy, never the subdir
 	cwd := m.CWD()                       // where the session runs (Dir, or a chosen subdir)

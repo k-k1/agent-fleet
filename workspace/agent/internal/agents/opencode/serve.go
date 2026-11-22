@@ -88,8 +88,11 @@ type Supervisor struct {
 	// (credentialGen): the policy's pin and keys it was given. "" for an adopted daemon, whose
 	// environment is unknown. securing: a security restart is replacing the daemon, and no
 	// turn is admitted to it meanwhile (policy_restart.go).
-	credGen  string
-	securing bool
+	credGen string
+	// customPin is the custom pin digest (customPinDigest) the daemon was started with, "" for
+	// none or an adopted daemon; a turn judged on another pin is refused (servePinMatches).
+	customPin string
+	securing  bool
 	// exited is closed by waitDaemon once the process in cmd is reaped. It stays set after cmd
 	// is cleared, so a stop that began earlier can still be told apart from a live process.
 	exited chan struct{}
@@ -320,6 +323,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	// exit recording degrades to SSE-disconnect detection for an adopted daemon.
 	if healthy(addr) {
 		s.credGen = ""
+		s.customPin = ""
 		s.gen++
 		genSnap.Store(int64(s.gen))
 		s.cmd = nil
@@ -441,6 +445,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			s.up = true
 			s.stopping = false
 			s.credGen = credGen
+			s.customPin = customPinDigest(view.p, view.engines, view.custom)
 			gen := s.gen
 			s.armIdleWatchLocked()
 			exited := make(chan struct{})

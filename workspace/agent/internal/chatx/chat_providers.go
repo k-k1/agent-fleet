@@ -819,15 +819,15 @@ func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string
 	c.StartTurn()
 	pinned := chatModelFor(c, session.KindOpencode)                   // a pin on another kind resolves via this CLI's config
 	call := usagex.Call{Kind: session.KindOpencode, ModelReq: pinned} // usage ledger (ADR 0029 §3)
-	var policyErr error
-	if call.Route, call.Connection, policyErr = chatLaunchChecked(session.KindOpencode, pinned); policyErr != nil {
+	pin, route, binding, policyErr := opencodeLaunchChecked(pinned)
+	if call.Route, call.Connection = route, binding; policyErr != nil {
 		return "", policyErr
 	}
 	dir := opencodeChatDir(c)
 	spec := opencode.CurrentLaunch()
 	// Under a restriction the run is isolated like the shared serve (opencode.RunPolicyEnv); a
 	// run it refuses is a policy refusal, before any ledger row.
-	env, err := opencode.RunPolicyEnv(envWith(append(spec.Env(), opencodeConfigEnv(opencodeChatConfig(c))...)...), dir)
+	env, err := pin.Env(envWith(append(spec.Env(), opencodeConfigEnv(opencodeChatConfig(c))...)...), dir)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrRoutePolicy, err)
 	}
@@ -2424,7 +2424,7 @@ func oneShotOnCodex(ctx context.Context, call *usagex.Call, run oneShotRun) (str
 // settings name none), set on the call with the route and binding resolved on that model:
 // opencode's route follows the model's provider, so it is resolved again here, not on the model
 // oneShotRunOn saw before the recommendation (ADR 0138 D2).
-func opencodeOneShotModel(call *usagex.Call, selected string, configured bool, kind string, tier OneShotTier) (string, error) {
+func opencodeOneShotModel(call *usagex.Call, selected string, configured bool, kind string, tier OneShotTier) (opencode.RunPin, string, error) {
 	m := selected
 	if !configured {
 		m = recommendedOneShotModel(kind, tier) // AF_TITLE_MODEL_OPENCODE first, as for "recommended"
@@ -2432,9 +2432,9 @@ func opencodeOneShotModel(call *usagex.Call, selected string, configured bool, k
 	if m != "" {
 		call.ModelReq = m
 	}
-	var err error
-	call.Route, call.Connection, err = chatLaunchChecked(session.KindOpencode, m)
-	return m, err
+	pin, route, binding, err := opencodeLaunchChecked(m)
+	call.Route, call.Connection = route, binding
+	return pin, m, err
 }
 
 // oneShotOnOpencode runs one one-shot on opencode (oneShotRunOn).
@@ -2456,7 +2456,7 @@ func oneShotOnOpencode(ctx context.Context, call *usagex.Call, run oneShotRun) (
 	// it, while the configured default answers fine (measured 2026-07-25). A hard failure of
 	// title/branch/reply suggestions is worse than their token cost, so opencode keeps the
 	// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
-	m, err := opencodeOneShotModel(call, selected, configured, kind, tier)
+	pin, m, err := opencodeOneShotModel(call, selected, configured, kind, tier)
 	if err != nil {
 		return "", err
 	}
@@ -2472,7 +2472,7 @@ func oneShotOnOpencode(ctx context.Context, call *usagex.Call, run oneShotRun) (
 	}
 	cmd := exec.CommandContext(ctx, spec.Bin, args...)
 	cmd.Dir = chatWorkdir()
-	if cmd.Env, err = opencode.RunPolicyEnv(envWith(env...), cmd.Dir); err != nil {
+	if cmd.Env, err = pin.Env(envWith(env...), cmd.Dir); err != nil {
 		return "", fmt.Errorf("%w: %v", ErrRoutePolicy, err)
 	}
 	out, err := cmd.Output()

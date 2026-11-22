@@ -191,3 +191,25 @@ func (s *Supervisor) onPolicyChange(p routepolicy.Policy) {
 }
 
 func init() { routepolicy.OnChange(func(p routepolicy.Policy) { supervisor.onPolicyChange(p) }) }
+
+// servePinMatches refuses a session whose launch was judged on view while the shared serve runs
+// on another custom pin than the one that view carries, in either direction (a pin the view did
+// not have, or one it had and the serve lacks): a connection updated between the judgement and
+// Ensure would send a call the policy approved on URL A to URL B, and a project config judged
+// without the pin would run under one. Only the custom pin digest is compared, so an unrelated key
+// or provider change that restarts the serve never refuses a turn. An adopted daemon (credGen "")
+// has an unknown environment and is not judged here.
+func (s *Supervisor) servePinMatches(v policyView) error {
+	if _, restricted := policyRestriction(); !v.restricted && !restricted {
+		// Nothing restricted then or now: a serve that kept its pin past a lifted restriction
+		// is reused (Ensure's own rule), and its pin binds no call.
+		return nil
+	}
+	s.mu.Lock()
+	up, gen, pin := s.up, s.credGen, s.customPin
+	s.mu.Unlock()
+	if up && gen != "" && pin != customPinDigest(v.p, v.engines, v.custom) {
+		return ErrServePolicyMoved
+	}
+	return nil
+}
