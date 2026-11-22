@@ -5,7 +5,6 @@ import { getTts, putTtsDict, putTtsMode, type TtsStatus } from "./adminApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { setTenantDict } from "../../chat/ttsDict.ts";
-import { useInterval } from "../../../lib/useInterval.ts";
 
 export function TtsAdminView() {
   const tr = useT();
@@ -46,10 +45,14 @@ export function TtsAdminView() {
   // (the mode said off and the desired count has not caught up yet), or the control is
   // pinned off because no engine exists — that pin has to lift the moment one appears.
   // On-demand always polls: the desired count moves without anyone touching this screen.
-  const settled = !!(data?.engine?.ready || data?.engine?.state === "stopped");
-  const pinnedOff = data?.mode === "off" && !!data.managed && data.engine?.state !== "stopping";
-  const polling = !!data && !(settled && data.mode !== "ondemand") && !pinnedOff;
-  useInterval(() => void load(), polling ? 5000 : null);
+  useEffect(() => {
+    if (!data) return;
+    const settled = data.engine?.ready || data.engine?.state === "stopped";
+    if (settled && data.mode !== "ondemand") return;
+    if (data.mode === "off" && data.managed && data.engine?.state !== "stopping") return;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [data, load]);
 
   const setMode = async (mode: string) => {
     setBusy(true);

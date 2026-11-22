@@ -83,13 +83,18 @@ export function EnginesAdminView() {
   // Poll only while something is actually moving. An engine parked at "off", or stopped under
   // on-demand with nobody asking, is a settled state, and a GPU panel that polls forever is a
   // request per five seconds for a screen nobody is watching.
-  const moving = (rows ?? []).some(
-    (e) =>
-      e.state === "starting" ||
-      e.state === "stopping" ||
-      (e.mode === "ondemand" && e.state === "running"),
-  );
-  useInterval(() => void load(), moving ? 5000 : null);
+  useEffect(() => {
+    if (!rows) return;
+    const moving = rows.some(
+      (e) =>
+        e.state === "starting" ||
+        e.state === "stopping" ||
+        (e.mode === "ondemand" && e.state === "running"),
+    );
+    if (!moving) return;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [rows, load]);
 
   const setMode = async (key: string, mode: string) => {
     setBusy(key);
