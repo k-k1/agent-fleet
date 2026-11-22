@@ -961,3 +961,37 @@ func TestCursorRecoverForeignTreeWithoutNoReplaceRename(t *testing.T) {
 		t.Fatal("a place in use was overwritten")
 	}
 }
+
+// A kept launcher that can be neither renamed back (EINVAL) nor hard-linked (EPERM, as with
+// fs.protected_hardlinks on a file the user does not own) stays at its .af-prev path; the
+// recovery settles the marker instead of failing at every start.
+func TestCursorRecoverForeignTreeKeepsItemWhenLinkRefused(t *testing.T) {
+	oldR, oldL := renameNoReplace, linkFile
+	renameNoReplace = func(string, string) error { return syscall.EINVAL }
+	linkFile = func(string, string) error { return syscall.EPERM }
+	defer func() { renameNoReplace, linkFile = oldR, oldL }()
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "manual")
+	os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755)
+	keep := f.local("cursor-agent") + ".af-prev.3"
+	yes := true
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.3", Tree: true, HadTree: &yes, ID: "tok",
+		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "file", Keep: keep}}}
+	f.write(t, keep, "realfile")
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if f.read(keep) != "realfile" {
+		t.Fatal("the kept launcher was not preserved")
+	}
+	if _, err := os.Lstat(f.local("cursor-agent")); err == nil {
+		t.Fatal("the launcher path should stay empty")
+	}
+	if _, err := os.Lstat(f.env.cursorMarkerPath()); !os.IsNotExist(err) {
+		t.Fatalf("the marker was not settled: %v", err)
+	}
+}

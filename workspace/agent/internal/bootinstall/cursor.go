@@ -1047,25 +1047,34 @@ var renameNoReplace = func(from, to string) error {
 
 // restoreNoReplace moves the kept item back to an empty place without ever replacing anything.
 // Where the filesystem cannot do that atomically, a regular file goes back through a hard link
-// (which also refuses to replace); anything else stays at keep, which the caller's message
-// names, and the recovery counts as settled rather than failing at every start.
-func restoreNoReplace(keep, path string) error {
-	err := renameNoReplace(keep, path)
+// (which also refuses to replace). Anything that cannot go back stays at keep (kept is true) and
+// the recovery counts as settled: failing here would leave the marker, and the pin and the
+// self-update would stop at every start. A hard link is refused with EPERM for a file the user
+// does not own under fs.protected_hardlinks, so any link error other than "exists" is settled
+// the same way.
+func restoreNoReplace(keep, path string) (kept bool, err error) {
+	err = renameNoReplace(keep, path)
 	switch {
 	case err == nil || errors.Is(err, fs.ErrExist):
-		return nil
+		return false, nil
 	case !errors.Is(err, syscall.EINVAL) && !errors.Is(err, syscall.ENOSYS) && !errors.Is(err, syscall.EOPNOTSUPP):
-		return err
+		return false, err
 	}
 	if fi, lerr := os.Lstat(keep); lerr == nil && fi.Mode().IsRegular() {
-		if lerr := os.Link(keep, path); lerr == nil {
+		lerr := linkFile(keep, path)
+		switch {
+		case lerr == nil:
 			os.Remove(keep)
-		} else if !errors.Is(lerr, fs.ErrExist) {
-			return lerr
+			return false, nil
+		case errors.Is(lerr, fs.ErrExist):
+			return false, nil
 		}
 	}
-	return nil
+	return true, nil
 }
+
+// linkFile is a seam so a test can make the hard link fail the way protected_hardlinks does.
+var linkFile = os.Link
 
 // dirOwner says whose tree is at p: ours (it carries the token), foreign (no token, or the
 // name is not a plain file), or unknown (the token could not be read: retry later, touch
@@ -1249,8 +1258,11 @@ func (e Env) cursorRecover() error {
 					errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Path, perr))
 				case kerr == nil && perr != nil:
 					// Never overwrite what a manual installer put there meanwhile.
-					if err := restoreNoReplace(l.Keep, l.Path); err != nil {
+					kept, err := restoreNoReplace(l.Keep, l.Path)
+					if err != nil {
 						errs = append(errs, fmt.Errorf("cursor: the previous %s is left at %s: %v", l.Path, l.Keep, err))
+					} else if kept {
+						fmt.Fprintf(e.Stderr, "cursor: the previous %s could not be put back and stays at %s\n", l.Path, l.Keep)
 					}
 				}
 			}
