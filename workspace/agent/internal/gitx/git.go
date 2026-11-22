@@ -2092,18 +2092,28 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	tm := newDeleteTimer(dir)
 	defer tm.log()
 
-	// What kind of copy this is does not depend on any guard; read it before taking the gate.
-	svn := !IsGitRepo(dir) && isSvnRepo(dir)
-	linked := !svn && IsLinkedWorktree(dir)
-	parent := ""
-	if linked {
-		parent = WorktreeParent(dir)
-	}
-
-	var end func()
+	fireDeleteHook("pre-gate", dir)
+	var (
+		end         func()
+		parent      string
+		linked, svn bool
+	)
 	tm.step("gate", func() {
 		withDeletionGate(func() {
-			tm.step("guards", func() { end = decideDeleteRepo(w, dir, parent, linked) })
+			tm.step("guards", func() {
+				// Everything the guards and the mark rely on is read here, inside the gate: a
+				// delete that finished while this one waited has taken the folder, and this one
+				// answers 404 as it always did instead of "deleting" a path that is gone.
+				if _, ok := RepoAnyDirFromPath(w, r); !ok {
+					return
+				}
+				svn = !IsGitRepo(dir) && isSvnRepo(dir)
+				linked = !svn && IsLinkedWorktree(dir)
+				if linked {
+					parent = WorktreeParent(dir)
+				}
+				end = decideDeleteRepo(w, dir, parent, linked)
+			})
 		})
 	})
 	if end == nil {

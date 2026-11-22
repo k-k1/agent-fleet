@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -764,6 +768,24 @@ func waitArrivals(t *testing.T, arrived <-chan string, n int, release chan struc
 	}
 }
 
+// codeWithin is a request that can neither hang the test nor call t.Fatalf from a goroutine: it
+// answers the status and body, or -1 when the request failed or took longer than 15 s.
+func codeWithin(srv *httptest.Server, method, path string, body any) (int, string) {
+	b, _ := json.Marshal(body)
+	req, err := http.NewRequest(method, srv.URL+path, bytes.NewReader(b))
+	if err != nil {
+		return -1, err.Error()
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return -1, err.Error()
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(raw)
+}
+
 func twoWorktrees(t *testing.T) (home, parent, wt1, wt2 string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -781,19 +803,29 @@ func twoWorktrees(t *testing.T) (home, parent, wt1, wt2 string) {
 	return home, parent, wt1, wt2
 }
 
+func lockAndRecreateMux() *http.ServeMux {
+	mux := trashMux()
+	mux.HandleFunc("POST /repos/{name}/lock", sessionx.HandleRepoLock)
+	mux.HandleFunc("POST /sessions/{name}/lock", sessionx.HandleSessionLock)
+	mux.HandleFunc("POST /repos/{name}/recreate", handleRecreateWorktree)
+	return mux
+}
+
 // #4833: deletes of different working copies are not serialised by the deletion gate. Both must
-// be inside the slow work (`git worktree remove`) at the same moment; with the old whole-delete
-// gate the second never gets there and the test times out.
+// be inside `git worktree remove`, holding the base clone's lock together, at the same moment;
+// with the old whole-delete gate, or a remove that takes the parent lock exclusively, the second
+// never gets there and the test times out.
 func TestDeletesOfDifferentWorktreesOverlap(t *testing.T) {
 	_, parent, wt1, wt2 := twoWorktrees(t)
 	srv := httptest.NewServer(trashMux())
 	defer srv.Close()
 	release := make(chan struct{})
-	arrived := holdDeleteAt(t, "remove", release)
+	arrived := holdDeleteAt(t, "git-remove", release)
+	defer releaseOnce(release)
 
 	codes := make(chan int, 2)
 	for _, wt := range []string{wt1, wt2} {
-		go func() { codes <- httpStatus(t, srv, "DELETE", "/repos/"+filepath.Base(wt)+"?force=1", nil) }()
+		go func() { c, _ := codeWithin(srv, "DELETE", "/repos/"+filepath.Base(wt)+"?force=1", nil); codes <- c }()
 	}
 	waitArrivals(t, arrived, 2, release)
 	releaseOnce(release)
@@ -806,69 +838,91 @@ func TestDeletesOfDifferentWorktreesOverlap(t *testing.T) {
 		if session.DirExists(wt) {
 			t.Fatalf("%s was not deleted", wt)
 		}
+		if gitx.UnderDeletion(wt) {
+			t.Fatalf("the mark of %s outlived its delete", wt)
+		}
 	}
 	if n := gitx.LinkedWorktreeCount(parent); n != 0 {
 		t.Fatalf("%d worktrees left registered after both deletes", n)
 	}
+	end, ok, why := gitx.BeginDelete(parent, "")
+	if !ok {
+		t.Fatalf("the base clone is still refused after its worktrees' deletes: %s", why)
+	}
+	end()
 }
 
 // #4833 / ADR 0101: a lock request that arrives while a delete is past its decision is refused
 // (409), not answered "locked" and then deleted; the copy is deleted and no lock is left behind.
+// The refusal holds through a symlink to the copy and for a session in a sub-folder reached
+// through one, which the guards (real paths) see as the same place.
 func TestLockDuringADeleteIsRefusedAndTheCopyIsDeleted(t *testing.T) {
-	home, _, wt1, _ := twoWorktrees(t)
-	mux := trashMux()
-	mux.HandleFunc("POST /repos/{name}/lock", sessionx.HandleRepoLock)
-	mux.HandleFunc("POST /sessions/{name}/lock", sessionx.HandleSessionLock)
-	srv := httptest.NewServer(mux)
+	home, _, wt1, wt2 := twoWorktrees(t)
+	srv := httptest.NewServer(lockAndRecreateMux())
 	defer srv.Close()
+	alias := filepath.Join(home, "repos", "alias-one")
+	if err := os.Symlink(wt1, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(wt1, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(home, "elsewhere")
+	if err := os.Symlink(wt1, outside); err != nil {
+		t.Fatal(err)
+	}
 	session.WriteMeta(session.Meta{Name: "inwt001", Dir: wt1, Kind: session.KindCodex})
+	session.WriteMeta(session.Meta{Name: "inwt002", Dir: filepath.Join(outside, "sub"), Kind: session.KindCodex})
 	release := make(chan struct{})
-	arrived := holdDeleteAt(t, "remove", release)
+	arrived := holdDeleteAt(t, "git-remove", release)
 	defer releaseOnce(release)
 
 	done := make(chan int, 1)
-	go func() { done <- httpStatus(t, srv, "DELETE", "/repos/app@one?force=1", nil) }()
+	go func() { c, _ := codeWithin(srv, "DELETE", "/repos/app@one?force=1", nil); done <- c }()
 	waitArrivals(t, arrived, 1, release)
 
-	for _, path := range []string{"/repos/app@one/lock", "/sessions/inwt001/lock"} {
-		code, raw := roundtrip(t, srv, "POST", path, map[string]any{"locked": true})
-		if code != http.StatusConflict || !strings.Contains(string(raw), "delete_in_progress") {
-			t.Fatalf("POST %s during a delete = %d %s, want 409 delete_in_progress", path, code, raw)
+	want409 := func(method, path string, body any) {
+		t.Helper()
+		if code, raw := codeWithin(srv, method, path, body); code != http.StatusConflict || !strings.Contains(raw, "delete_in_progress") {
+			t.Fatalf("%s %s during a delete = %d %s, want 409 delete_in_progress", method, path, code, raw)
 		}
 	}
-	// The same copy cannot be deleted twice at once, and its base clone cannot go under it.
-	if code, raw := roundtrip(t, srv, "DELETE", "/repos/app@one?force=1", nil); code != http.StatusConflict || !strings.Contains(string(raw), "delete_in_progress") {
-		t.Fatalf("second delete of the same copy = %d %s, want 409 delete_in_progress", code, raw)
+	lock := map[string]any{"locked": true}
+	for _, path := range []string{"/repos/app@one/lock", "/repos/alias-one/lock", "/sessions/inwt001/lock", "/sessions/inwt002/lock"} {
+		want409("POST", path, lock)
 	}
-	if code, raw := roundtrip(t, srv, "DELETE", "/repos/app?force=1", nil); code != http.StatusConflict || !strings.Contains(string(raw), "delete_in_progress") {
-		t.Fatalf("delete of the base clone during a worktree delete = %d %s, want 409 delete_in_progress", code, raw)
+	// The same copy, also by another name, cannot be deleted twice at once; its base clone cannot
+	// go under it; and a worktree of the same base clone cannot be recreated meanwhile.
+	want409("DELETE", "/repos/app@one?force=1", nil)
+	want409("DELETE", "/repos/alias-one?force=1", nil)
+	want409("DELETE", "/repos/app?force=1", nil)
+	if err := os.RemoveAll(wt2); err != nil {
+		t.Fatal(err)
 	}
+	want409("POST", "/repos/app@two/recreate", map[string]any{"source": "deleted", "branch": "two"})
+
 	releaseOnce(release)
 	if code := <-done; code != http.StatusOK {
 		t.Fatalf("delete = %d, want 200", code)
 	}
-	if session.DirExists(wt1) {
-		t.Fatal("the worktree was not deleted")
+	if session.DirExists(wt1) || sessionx.RepoLocked(wt1) {
+		t.Fatal("the worktree is still there, or a lock was recorded for it")
 	}
-	if sessionx.RepoLocked(wt1) {
-		t.Fatal("a lock was recorded for the deleted copy")
+	for _, n := range []string{"inwt001", "inwt002"} {
+		if m, ok := session.ReadMeta(n); ok && m.Locked {
+			t.Fatalf("session %s was locked although its copy was deleted", n)
+		}
 	}
-	if m, ok := session.ReadMeta("inwt001"); ok && m.Locked {
-		t.Fatal("the session was locked although its copy was deleted")
+	// Once the delete is over its marks are gone: the same recreate is no longer refused for it.
+	if code, raw := codeWithin(srv, "POST", "/repos/app@two/recreate", map[string]any{"source": "deleted", "branch": "two"}); code == http.StatusConflict && strings.Contains(raw, "delete_in_progress") {
+		t.Fatalf("recreate after the delete is still refused: %s", raw)
 	}
-	// Once the delete is over the mark is gone: the base clone is deletable again.
-	if code := httpStatus(t, srv, "POST", "/repos/app/lock", map[string]any{"locked": true}); code != http.StatusOK {
-		t.Fatalf("lock after the delete = %d, want 200", code)
-	}
-	_ = home
 }
 
 // A failed delete clears its mark too: the refusal leaves the copy lockable and deletable.
 func TestRefusedDeleteClearsItsMark(t *testing.T) {
 	_, _, wt1, _ := twoWorktrees(t)
-	mux := trashMux()
-	mux.HandleFunc("POST /repos/{name}/lock", sessionx.HandleRepoLock)
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(lockAndRecreateMux())
 	defer srv.Close()
 	if err := os.WriteFile(filepath.Join(wt1, "dirty"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -878,5 +932,50 @@ func TestRefusedDeleteClearsItsMark(t *testing.T) {
 	}
 	if code := httpStatus(t, srv, "POST", "/repos/app@one/lock", map[string]any{"locked": true}); code != http.StatusOK {
 		t.Fatalf("lock after a refused delete = %d, want 200 (the mark leaked)", code)
+	}
+}
+
+// A delete that waited at the gate while another delete of the same copy finished answers 404
+// (the folder is gone), as it did when the existence check ran inside the gate; it must not
+// report a second success for a path that is no longer there.
+func TestSecondDeleteOfTheSameCopyAfterTheFirstFinishedIs404(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	gitInit(t, filepath.Join(home, "repos", "solo"))
+	srv := httptest.NewServer(trashMux())
+	defer srv.Close()
+
+	atGate, goOn := make(chan struct{}), make(chan struct{})
+	var first sync.Once
+	t.Cleanup(gitx.SetDeleteStepHook(func(step, dir string) {
+		if step != "pre-gate" {
+			return
+		}
+		blocked := false
+		first.Do(func() { blocked = true })
+		if blocked {
+			close(atGate)
+			<-goOn
+		}
+	}))
+	b := make(chan int, 1)
+	go func() { c, _ := codeWithin(srv, "DELETE", "/repos/solo", nil); b <- c }()
+	select {
+	case <-atGate:
+	case <-time.After(10 * time.Second):
+		close(goOn)
+		t.Fatal("the first delete never reached the gate")
+	}
+	if code, raw := codeWithin(srv, "DELETE", "/repos/solo", nil); code != http.StatusOK {
+		close(goOn)
+		t.Fatalf("delete A = %d %s, want 200", code, raw)
+	}
+	close(goOn)
+	if code := <-b; code != http.StatusNotFound {
+		t.Fatalf("delete B of a copy A already deleted = %d, want 404", code)
 	}
 }

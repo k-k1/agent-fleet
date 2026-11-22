@@ -25,7 +25,26 @@ var deleteMarks = struct {
 	m map[string]string
 }{m: map[string]string{}}
 
-func markKey(p string) string { return filepath.Clean(p) }
+// markKey is the identity a mark is compared by: the real path, the way the lock ledger
+// (sessionx.AbsPath) and git itself identify a working copy. A symlink to a worktree, or a
+// session whose Meta.Dir goes through one, must meet the same mark. A path that is gone (the
+// delete has already removed it) resolves through its nearest existing ancestor, so the key
+// stays the one the mark was taken under.
+func markKey(p string) string {
+	p = filepath.Clean(p)
+	rest := ""
+	for cur := p; ; {
+		if r, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(r, rest)
+		}
+		up := filepath.Dir(cur)
+		if up == cur {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = up
+	}
+}
 
 // BeginDelete marks dir as being deleted. parent is its base clone when dir is a linked
 // worktree. It refuses (ok=false, with a message for the 409) when the same copy is already
@@ -87,3 +106,28 @@ func UnderDeletion(p string) bool {
 
 // ErrCodeDeleteInProgress is the code lock endpoints answer with (409) while UnderDeletion.
 func ErrCodeDeleteInProgress() string { return errCodeDeleteInProgress }
+
+// DeleteTouches reports whether a delete in flight would collide with a git registry operation
+// on dir whose base clone is parent (recreating or restoring a worktree): the copy itself or its
+// base clone is being deleted, or another worktree of that base clone is, in which case the two
+// would run `git worktree prune` / `add` against one registry at once.
+func DeleteTouches(dir, parent string) bool {
+	dir, parent = markKey(dir), markKeyOrEmpty(parent)
+	deleteMarks.mu.Lock()
+	defer deleteMarks.mu.Unlock()
+	if _, busy := deleteMarks.m[dir]; busy {
+		return true
+	}
+	if parent == "" {
+		return false
+	}
+	if _, busy := deleteMarks.m[parent]; busy {
+		return true
+	}
+	for _, p := range deleteMarks.m {
+		if p == parent {
+			return true
+		}
+	}
+	return false
+}

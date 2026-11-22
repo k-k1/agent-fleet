@@ -21,24 +21,30 @@ type deleteTimer struct {
 
 func newDeleteTimer(dir string) *deleteTimer { return &deleteTimer{dir: dir, start: time.Now()} }
 
-// deleteStepHook, when set, is called as each step of a delete starts. Tests use it to hold a
-// delete inside its slow work and to see two deletes in there at once; production never sets it.
+// deleteStepHook, when set, is called as each step of a delete starts (and at "pre-gate" and
+// "git-remove", see fireDeleteHook). Tests use it to hold a delete at a chosen point and to see
+// two deletes there at once; production never sets it.
 var deleteStepHook atomic.Pointer[func(step, dir string)]
 
-// SetDeleteStepHook installs (nil removes) the test hook above. It returns what to call to restore.
+// SetDeleteStepHook installs fn (nil removes it) and returns a function that puts back the hook
+// that was installed before, so nested or overlapping tests do not clear one another's.
 func SetDeleteStepHook(fn func(step, dir string)) (restore func()) {
-	if fn == nil {
-		deleteStepHook.Store(nil)
-	} else {
-		deleteStepHook.Store(&fn)
+	var p *func(step, dir string)
+	if fn != nil {
+		p = &fn
 	}
-	return func() { deleteStepHook.Store(nil) }
+	prev := deleteStepHook.Swap(p)
+	return func() { deleteStepHook.CompareAndSwap(p, prev) }
+}
+
+func fireDeleteHook(step, dir string) {
+	if h := deleteStepHook.Load(); h != nil {
+		(*h)(step, dir)
+	}
 }
 
 func (t *deleteTimer) step(name string, fn func()) {
-	if h := deleteStepHook.Load(); h != nil {
-		(*h)(name, t.dir)
-	}
+	fireDeleteHook(name, t.dir)
 	s := time.Now()
 	fn()
 	t.steps = append(t.steps, fmt.Sprintf("%s=%s", name, time.Since(s).Round(time.Millisecond)))
@@ -74,13 +80,20 @@ func parentLock(parent string) *sync.RWMutex {
 func removeWorktree(parent, dir string) (out string, err error) {
 	l := parentLock(parent)
 	l.RLock()
+	fireDeleteHook("git-remove", dir)
 	out, err = Combined(parent, "worktree", "remove", "--force", dir)
 	l.RUnlock()
 	if err != nil {
 		return out, err
 	}
-	l.Lock()
-	_ = Cmd(parent, "worktree", "prune").Run()
-	l.Unlock()
+	pruneWorktrees(parent)
 	return "", nil
+}
+
+// pruneWorktrees runs `git worktree prune` once no remove is in flight on parent.
+func pruneWorktrees(parent string) {
+	l := parentLock(parent)
+	l.Lock()
+	defer l.Unlock()
+	_ = Cmd(parent, "worktree", "prune").Run()
 }

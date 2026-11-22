@@ -148,7 +148,7 @@ func recreateWorktreeGated(w http.ResponseWriter, r *http.Request, req recreateR
 		return
 	}
 	// A delete of this folder or of its base clone is still finishing outside the gate.
-	if gitx.UnderDeletion(dir) || gitx.UnderDeletion(parent) {
+	if gitx.DeleteTouches(dir, parent) {
 		httpx.WriteErr(w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(),
 			"a delete of this working copy or of its base clone is still in progress; try again in a moment")
 		return

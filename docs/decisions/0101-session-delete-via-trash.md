@@ -104,7 +104,7 @@ trash, the removal and the shelving run after it is released. A lock request on 
 in one, is refused with 409 `delete_in_progress` instead of waiting, so the guarantee is unchanged: no lock is
 answered "locked" for something that is then deleted. The mark is cleared when the delete ends, done or failed.
 Two deletes of the same copy, or of a worktree and its base clone, are refused the same way (409), and
-recreating or restoring a worktree under a marked copy or base clone is too. Nothing is removed before its
+recreating or restoring a worktree of a base clone that has a delete in flight is too (both run `git worktree prune`/`add` on one registry). Marks are keyed by real path, so a symlink to a copy meets the same mark. Nothing is removed before its
 tombstone is recorded, as before. Git takes no registry lock across `git worktree remove` of different worktrees
 of one base clone (three at once took about as long as one, and left no entry), so removes run concurrently;
 `git worktree prune` takes the write side of a per-base-clone lock, because it would otherwise drop the entry of
