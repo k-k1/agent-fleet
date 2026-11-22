@@ -164,6 +164,30 @@ describe("a note with a start time", () => {
     expect(memoUpdate).toHaveBeenLastCalledWith("a", { body: "job", category: "inbox", startAfter: "2099-12-04T14:00:00.000Z" });
   });
 
+  it("reads the field in the zone it shows, even when the setting changed before the first input", async () => {
+    setFormatPrefs("en-US", "Asia/Tokyo");
+    servedMemos = [aMemo({ id: "a", body: "job", state: "pending" })];
+    await renderSection();
+    await openEditor("job");
+    setFormatPrefs("en-US", "America/New_York");
+    expect(editRow().querySelector(".memo-edit-start")!.textContent).toContain("Asia/Tokyo");
+    await typeInto(startInput(), "2099-12-04T09:00");
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("a", { body: "job", category: "inbox", startAfter: "2099-12-04T00:00:00.000Z" });
+  });
+
+  it("keeps the typed time when the note's text is refreshed while the edit is open", async () => {
+    servedMemos = [aMemo({ id: "a", body: "job", state: "pending" })];
+    await renderSection();
+    await openEditor("job");
+    await typeInto(startInput(), "2099-12-04T09:00");
+    servedMemos = [aMemo({ id: "a", body: "job, edited elsewhere", state: "pending" })];
+    const { useMemoStore } = await import("./store.ts");
+    await act(async () => useMemoStore.getState().bump());
+    await settle();
+    expect(startInput().value).toBe("2099-12-04T09:00");
+  });
+
   it("tells apart the two instants of a wall time the clocks repeat", async () => {
     setFormatPrefs("en-US", "America/New_York");
     servedMemos = [

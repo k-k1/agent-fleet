@@ -296,3 +296,21 @@ func TestMemoDrainHeldByAHandSend(t *testing.T) {
 		}
 	})
 }
+
+// The oldest and latest stamps are over the claimable rows too: a newer message in a hand send does
+// not make the queue wait for a quiet minute, nor an older one move it ahead of other queues.
+func TestMemoStatsStampsSkipAHandSend(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", nil)
+		e.pending("app", "impl", "plain")
+		sending := e.pending("app", "impl", "in a hand send")
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET send_token='t', send_started_at=?, created_at=?, released_at=? WHERE id=?`,
+			store.NowTS(), "2000-01-01T00:00:00Z", "2999-01-01T00:00:00Z", sending.ID); err != nil {
+			t.Fatal(err)
+		}
+		sql, goSide := e.statsOf(q)
+		if sql.Count != 1 || sql.Held != 2 || sql.Oldest != goSide.Oldest || sql.Latest != goSide.Latest || sql.Oldest == "2000-01-01T00:00:00Z" || sql.Latest == "2999-01-01T00:00:00Z" {
+			t.Fatalf("stats sql %+v go %+v", sql, goSide)
+		}
+	})
+}

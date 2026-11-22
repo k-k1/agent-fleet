@@ -212,7 +212,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.waiting_below_threshold_blocked_timed": "Waiting for more memos: {count} of {needed} ready so far; {blocked} more wait for the memos they depend on and {timed} wait for their start time or the time their run handed them back to. Runs start once {needed} are ready.",
   "memo.start_invalid": "This time does not exist in your time zone (the clocks skip it). Pick another.",
   "memo.start_edit_label": "Do not run before",
-  "memo.start_edit_hint": "It waits until this time even when approved, and Run now does not start it earlier. The time is in your time zone setting; leave it empty to run as soon as its turn comes.",
+  "memo.start_edit_hint": "It waits until this time even when approved, and Run now does not start it earlier. The time is read in {zone}, your time zone setting when this edit began; leave it empty to run as soon as its turn comes.",
   "memo.start_clear": "Clear",
   "memo.start_until": "Runs from {at}",
   "memo.waiting_scheduled": "Every waiting memo ({count}) waits for its start time.",

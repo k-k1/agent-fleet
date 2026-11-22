@@ -210,7 +210,7 @@ export const memo = {
   "memo.waiting_below_threshold_blocked_timed": "メモがたまるのを待っています（実行できるのは {count} 件、ほかに {blocked} 件が先に終わるべきメモを待ち、{timed} 件は開始日時か、実行から差し戻された時刻を待っています。{needed} 件で実行を始めます）。",
   "memo.start_invalid": "この日時は設定のタイムゾーンにありません（時計が飛ばす時刻です）。別の日時を選んでください。",
   "memo.start_edit_label": "この日時より前は実行しない",
-  "memo.start_edit_hint": "承認してもこの日時までは待ち、「今すぐ実行」でも早く始まりません。時刻は設定のタイムゾーンで読みます。空にすると順番が来しだい実行します。",
+  "memo.start_edit_hint": "承認してもこの日時までは待ち、「今すぐ実行」でも早く始まりません。時刻は {zone}（この編集を始めたときの設定のタイムゾーン）で読みます。空にすると順番が来しだい実行します。",
   "memo.start_clear": "外す",
   "memo.start_until": "{at} から実行",
   "memo.waiting_scheduled": "待っているメモ（{count} 件）はどれも、開始日時を待っています。",

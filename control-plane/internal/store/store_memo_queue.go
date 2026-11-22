@@ -497,8 +497,8 @@ type QueuePending struct {
 	Held  int
 	Count int
 	// Eligible is how many of them may be claimed now: no prerequisite, or every prerequisite
-	// satisfied (MemoAfterSatisfiedSQL). Count, blocked ones included, keeps a drain going, and
-	// Eligible opens a threshold and is what a claim takes.
+	// satisfied (MemoAfterSatisfiedSQL). Eligible opens a threshold and is what a claim takes; Held,
+	// not Count, keeps a drain going.
 	Eligible int
 	// Refs is how many of the eligible ones carry a reference, Curators how many a tidy run
 	// derived: compared with Eligible they say that what a claim could take is all held back.
@@ -544,7 +544,9 @@ func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (
 	head := []any{now, now, now, now, now, now, now, now, now, now}
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN `+memoClaimableSQL+` THEN 1 ELSE 0 END), SUM(CASE WHEN `+eligible+` THEN 1 ELSE 0 END),
 		  SUM(CASE WHEN m.ref_key<>'' AND `+eligible+` THEN 1 ELSE 0 END),
-		  SUM(CASE WHEN m.provenance='curator' AND `+eligible+` THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at),
+		  SUM(CASE WHEN m.provenance='curator' AND `+eligible+` THEN 1 ELSE 0 END),
+		  COALESCE(MIN(CASE WHEN `+memoClaimableSQL+` THEN m.created_at END), ''), COALESCE(MAX(CASE WHEN `+memoClaimableSQL+` THEN m.created_at END), ''),
+		  COALESCE(MAX(CASE WHEN `+memoClaimableSQL+` THEN m.released_at END), ''),
 		  SUM(CASE WHEN `+claimable+`m.not_before>? THEN 1 ELSE 0 END),
 		  SUM(CASE WHEN `+claimable+`m.not_before<=? AND m.start_after>? THEN 1 ELSE 0 END),
 		  COALESCE(MIN(CASE WHEN `+claimable+memoWaitUntilSQL+`>? THEN `+memoWaitUntilSQL+` END), '')

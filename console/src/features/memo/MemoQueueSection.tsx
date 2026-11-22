@@ -1613,11 +1613,6 @@ function MemoRow(props: MemoRowProps) {
       setCat(currentCat);
       setClearRef(false);
       setAfter(m.after ?? []);
-      const zone = effectiveTimeZone();
-      setStartZone(zone);
-      setStart(startAfterInputValue(m.startAfter, zone));
-      setStartBase(startAfterInputValue(m.startAfter, zone));
-      setStartBad(false);
       requestAnimationFrame(() => {
         const ta = taRef.current;
         if (ta) {
@@ -1627,6 +1622,18 @@ function MemoRow(props: MemoRowProps) {
       });
     }
   }, [editing, m.body, currentCat]);
+  // The start time's draft and zone are taken once, when the edit begins: a refresh of the note
+  // while it is open (its text changed elsewhere) must not drop what the member typed, nor move it
+  // to another zone. The time it brings is not lost: the field is sent only when changed.
+  useEffect(() => {
+    if (!editing) return;
+    const zone = effectiveTimeZone();
+    setStartZone(zone);
+    setStart(startAfterInputValue(m.startAfter, zone));
+    setStartBase(startAfterInputValue(m.startAfter, zone));
+    setStartBad(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the start of an edit resets it
+  }, [editing]);
 
   if (editing) {
     return (
@@ -1750,7 +1757,7 @@ function MemoRow(props: MemoRowProps) {
                   {tr("memo.start_invalid")}
                 </div>
               )}
-              <div className="memo-edit-hint">{tr("memo.start_edit_hint")}</div>
+              <div className="memo-edit-hint">{tr("memo.start_edit_hint", { zone: startZone })}</div>
             </fieldset>
           )}
           <div className="memo-edit-hint">{m.kind === "file" ? tr("memo.edit_hint_file") : tr("memo.edit_hint")}</div>
