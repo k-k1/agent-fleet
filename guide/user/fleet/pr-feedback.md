@@ -190,9 +190,9 @@ af-watch-hook list
 af-watch-hook rm <id>
 ```
 
-`add` makes the hook at the Control Plane and installs it at the repository with your own connection (Settings > Connections), then pull request, review, comment and check events poke your workspace's watches. The hook's secret goes straight to GitHub or Bitbucket; it is never shown or saved. `rm` deletes the hook at the repository and at Agent Fleet.
+`add` makes the hook at the Control Plane and installs it at the repository with your own connection (Settings > Connections), then pull request, review and comment events (and, on GitHub, check events) poke your workspace's watches. The hook's secret goes straight to GitHub or Bitbucket; it is never shown or saved. `rm` deletes the hook at the repository and at Agent Fleet.
 
-- **You need admin rights on the repository.** GitHub: a classic token with the `repo` (or `admin:repo_hook`) scope, or a fine-grained token with Webhooks: Read and write. Bitbucket: the Webhooks scope and repository admin. Without them `add` says so and leaves nothing behind. Ask a repository admin, or keep polling
+- **You need admin rights on the repository.** GitHub: a classic token with the `repo` (or `admin:repo_hook`) scope, or a fine-grained token with Webhooks: Read and write. Bitbucket: an API token with `read:webhook:bitbucket` and `write:webhook:bitbucket` (and `delete:webhook:bitbucket` for `rm`; without it the hook stays at Bitbucket), or the OAuth Webhooks permission, and repository admin. Bitbucket hooks carry pull request events only, so a `pr.checks.*` watch on a Bitbucket pull request keeps polling. Without them `add` says so and leaves nothing behind. Ask a repository admin, or keep polling
 - **The deployment must have a public URL**, or a provider could not reach the hook
 - **Running `add` again** for a repository that has a hook changes nothing. To start over, `rm` it and `add` it again
 - **Your own GitHub App**: a webhook secret pasted into an App's settings must be shown to you once, which `af-watch-hook` does not do (it never prints the secret). Until it can, use `af-watch-hook add`, which needs no App

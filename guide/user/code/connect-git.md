@@ -67,6 +67,7 @@ Without OAuth, choose "**Connect with an app token**" and enter your Atlassian e
 | Pushing | `write:repository:bitbucket` as well |
 | `bkt pr create`, `bkt pipeline` in sessions, and the issue tracker | `read:pullrequest:bitbucket`, `write:pullrequest:bitbucket`, `read:pipeline:bitbucket`; add `write:pipeline:bitbucket` to start and stop pipelines |
 
+- `af-watch-hook` (webhook watches) also needs `read:webhook:bitbucket` and `write:webhook:bitbucket` to add a hook and `delete:webhook:bitbucket` to remove it; without the delete scope `rm` leaves the hook at Bitbucket
 - An OAuth connection finishes only in the Console of the member who started it. If the browser is signed in as someone else, or the Console session has expired, nothing is saved
 
 ## Choose the commit author

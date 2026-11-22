@@ -70,6 +70,8 @@ func TestJiraConnectVerifiesBeforeSaving(t *testing.T) {
 	// part is exercised directly here.
 	if _, err := jiraAccount(&secrets.JiraCreds{Site: bad.URL, Email: "a@example.com", Token: "t"}); err == nil {
 		t.Error("bad credentials were accepted")
+	} else if !strings.Contains(err.Error(), "classic") {
+		t.Errorf("token 401 does not point at a classic token: %v", err)
 	}
 	name, err := jiraAccount(&secrets.JiraCreds{Site: ok.URL, Email: "a@example.com", Token: "t"})
 	if err != nil || name != "山田 太郎" {

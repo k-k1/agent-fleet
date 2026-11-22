@@ -330,6 +330,23 @@ func TestCLIAgainstHandlers(t *testing.T) {
 	if rc := Main(c, []string{"add", "github", "acme/priv"}, &out, &errw); rc != 0 {
 		t.Fatalf("add rc=%d %s", rc, errw.String())
 	}
+	if !strings.Contains(out.String(), "check events") {
+		t.Fatalf("github success line lost its check events: %q", out.String())
+	}
+	out.Reset()
+	if rc := Main(c, []string{"add", "bitbucket", "acme/bb"}, &out, &errw); rc != 0 {
+		t.Fatalf("bitbucket add rc=%d %s", rc, errw.String())
+	}
+	if strings.Contains(out.String(), "and check events") || !strings.Contains(out.String(), "polling") {
+		t.Fatalf("bitbucket success line claims check events: %q", out.String())
+	}
+	e.status, e.msg = 403, "nope"
+	errw.Reset()
+	if rc := Main(c, []string{"add", "bitbucket", "acme/bb2"}, &out, &errw); rc != 1 || !strings.Contains(errw.String(), "write:webhook:bitbucket") || !strings.Contains(errw.String(), "delete:webhook:bitbucket") {
+		t.Fatalf("bitbucket refusal lacks scopes rc=%d %q", rc, errw.String())
+	}
+	e.status, e.msg = 201, ""
+	out.Reset()
 	if strings.Contains(out.String()+errw.String(), testSecret) {
 		t.Fatal("secret printed")
 	}

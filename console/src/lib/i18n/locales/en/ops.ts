@@ -405,5 +405,5 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "ops.jira_site_placeholder": "https://example.atlassian.net",
   "ops.jira_email_placeholder": "Atlassian account email",
   "ops.jira_token_placeholder": "API token",
-  "ops.jira_hint": "Connects the issue tracker rail to Jira. Create an API token in your Atlassian account settings — read-only access is enough. The email and token are kept in this container's encrypted store and never reach the Control Plane. The connection is verified before it is saved.",
+  "ops.jira_hint": "Connects the issue tracker rail to Jira. Create an API token in your Atlassian account settings — read-only access is enough. Use \"Create API token\", not \"Create API token with scopes\": a scoped token is rejected here. The email and token are kept in this container's encrypted store and never reach the Control Plane. The connection is verified before it is saved.",
 };

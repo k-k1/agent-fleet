@@ -616,6 +616,9 @@ function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
             {tr("git.bb_token_hint_pr")}
             <code>write:pipeline:bitbucket</code>
             {tr("git.bb_token_hint_pr_end")}
+            <br />
+            <code>read:webhook:bitbucket</code> <code>write:webhook:bitbucket</code> <code>delete:webhook:bitbucket</code>
+            {tr("git.bb_token_hint_webhook")}
           </Hint>
         </div>
       ) : (

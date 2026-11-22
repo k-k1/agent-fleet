@@ -1238,6 +1238,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "git.bb_token_hint_write": ". Use your canonical Atlassian account email as the username.",
   "git.bb_token_hint_pr": " for bkt pr create and bkt pipeline in a session and for the issue tracker rail (not needed for clone or push). To run or stop a pipeline, also add ",
   "git.bb_token_hint_pr_end": ".",
+  "git.bb_token_hint_webhook": " for af-watch-hook add (read and write) and rm (delete). Only needed for webhook watches.",
   "git.bb_err_scopeless": "Bitbucket rejected the token. Create an API token \"with scopes\" (select Bitbucket) and use your Atlassian account email as the username.",
   "git.bb_err_no_repo_read": "The token is missing the read:repository:bitbucket scope. Recreate it with scopes.",
   "git.bb_warn_no_write": "Connected, but pushing needs the write:repository:bitbucket scope, which this token doesn't have.",

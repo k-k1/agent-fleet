@@ -402,5 +402,5 @@ export const ops = {
   "ops.jira_site_placeholder": "https://example.atlassian.net",
   "ops.jira_email_placeholder": "Atlassian アカウントのメール",
   "ops.jira_token_placeholder": "API トークン",
-  "ops.jira_hint": "課題管理レールに Jira の課題を出すための接続です。API トークンは Atlassian のアカウント設定で発行できます（読み取り権限だけで足ります）。メールとトークンはこのコンテナの暗号化ストアに保存され、Control Plane には渡りません。保存前に接続を検証します。",
+  "ops.jira_hint": "課題管理レールに Jira の課題を出すための接続です。API トークンは Atlassian のアカウント設定で発行できます（読み取り権限だけで足ります）。「Create API token」で作ってください（「Create API token with scopes」のスコープ付きトークンはここでは拒否されます）。メールとトークンはこのコンテナの暗号化ストアに保存され、Control Plane には渡りません。保存前に接続を検証します。",
 };
