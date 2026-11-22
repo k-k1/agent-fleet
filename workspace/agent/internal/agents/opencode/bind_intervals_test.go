@@ -576,6 +576,10 @@ func TestBindingUnknownGapBoundIgnoresFloor(t *testing.T) {
 	}
 	start(8000, 2, "C")
 	acct(8100, acctOut, 2)
+	// The bound is the one daemon event's At, not the account reading's (7100) nor the Floor.
+	if gaps, pending, ok := readGapsFile(); !ok || pending || len(gaps) != 1 || gaps[0] != 7000 {
+		t.Errorf("gaps file = %v pending=%v ok=%v, want [7000] resolved", gaps, pending, ok)
+	}
 	if got := bind(t, routes.RouteOpencodeZen, false, 7500); got != "" {
 		t.Errorf("older life = %q, want none", got)
 	}
