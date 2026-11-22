@@ -225,6 +225,11 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // committed into the memo on Add). Not draft-persisted — the bytes live server-side
   // and a page reload would leave them orphaned, so a fresh composer starts empty.
   const [newImages, setNewImages] = useState<MemoAttachment[]>([]);
+  // The sweep after a bulk delete runs after a confirmation and a loop of requests; an upload that
+  // finishes meanwhile must still be kept, so it reads the composer's images through this ref
+  // rather than the closure of the click.
+  const newImagesRef = useRef(newImages);
+  newImagesRef.current = newImages;
   const [imgBusy, setImgBusy] = useState(false);
   const imgInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -353,6 +358,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const catNames = useMemo(() => [...new Set(cats.map((c) => c.name))], [cats]);
   const selectedIds = useMemo(() => memos.filter((m) => sel[m.id]).map((m) => m.id), [memos, sel]);
   const selectedMemos = useMemo(() => memos.filter((m) => sel[m.id]), [memos, sel]);
+  // A replaced note is selectable (so a fold can be cleared in bulk) but read-only: it is never sent.
+  const sendableMemos = useMemo(() => selectedMemos.filter((m) => !isSuperseded(m)), [selectedMemos]);
 
   const toggle = (id: string) => setSel((s) => ({ ...s, [id]: !s[id] }));
   const queueByCat = useMemo(() => new Map(queues.map((q) => [q.categoryId, q])), [queues]);
@@ -599,6 +606,49 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     } catch {
       toast(t("common.delete_failed"));
     }
+  };
+
+  // Delete every selected memo the Control Plane allows. A claimed memo is skipped up front (the
+  // Control Plane refuses it from the Console), and any other refusal is counted as left rather
+  // than failing the batch. One image sweep runs after the batch, from a fresh list; a memo whose
+  // delete failed still sits in that list, so its images are kept.
+  const removeSelected = async () => {
+    const picked = memos.filter((m) => sel[m.id]);
+    if (picked.length === 0) return;
+    const ok = await askConfirm({
+      title: t("memo.delete_selected"),
+      body: t("memo.delete_selected_confirm", { count: picked.length }),
+      confirmLabel: t("common.delete"),
+      danger: true,
+    });
+    if (!ok) return;
+    const deletable = picked.filter((m) => m.state !== "claimed");
+    let left = picked.length - deletable.length;
+    let deleted = 0;
+    const gone = new Set<string>();
+    for (const m of deletable) {
+      try {
+        const res = await memoDelete(m.id);
+        if (res.ok) {
+          deleted++;
+          gone.add(m.id);
+        } else left++;
+      } catch {
+        left++;
+      }
+    }
+    if (gone.size > 0) {
+      setSel((s) => {
+        const n = { ...s };
+        for (const id of gone) delete n[id];
+        return n;
+      });
+      const fresh = await memoList().catch(() => null);
+      if (Array.isArray(fresh)) runImageGC(fresh, newImagesRef.current);
+      bumpMemos();
+    }
+    if (left > 0) toast(t("memo.delete_selected_left", { deleted, count: left }), { kind: "warn" });
+    else toast(t("memo.delete_selected_done", { count: deleted }), { kind: "success" });
   };
 
   // ---- categories --------------------------------------------------------------
@@ -1019,11 +1069,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                     ? [...folded].sort((a, b) => histTime(b) - histTime(a))
                     : [];
                   const visible = [...shown, ...history];
-                  // A replaced note is read-only and cannot be sent, and a folded one is not on screen,
-                  // so a select-all covers neither.
-                  const ids = visible.filter((m) => !isSuperseded(m)).map((m) => m.id);
-                  if (cat) catSendIds.current.set(cat.id, ids);
+                  // A select-all covers what is on screen, replaced notes in an open fold included (so the
+                  // fold can be deleted in bulk); a folded one that is not on screen is left out. A replaced
+                  // note is read-only and cannot be sent, so the category's Send skips it.
+                  const ids = visible.map((m) => m.id);
+                  if (cat) catSendIds.current.set(cat.id, visible.filter((m) => !isSuperseded(m)).map((m) => m.id));
                   const allSel = ids.length > 0 && ids.every((id) => sel[id]);
+                  // Selected rows that are folded away (the fold was closed after ticking them) still count
+                  // in the selection bar. With nothing else on screen the head box drops them; otherwise it
+                  // keeps its ordinary select / unselect meaning for the visible rows.
+                  const hiddenSel = g.memos.some((m) => sel[m.id] && !ids.includes(m.id));
+                  const clearing = allSel || (ids.length === 0 && hiddenSel);
                   const renderRow = (m: Memo, isHistory = false) => (
                     <MemoRow
                       key={m.id}
@@ -1137,14 +1193,14 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           type="checkbox"
                           className="memo-cat-check"
                           checked={allSel}
-                          disabled={ids.length === 0}
+                          disabled={ids.length === 0 && !hiddenSel}
                           onClick={(e) => e.stopPropagation()}
                           onChange={() =>
                             setSel((s) => {
                               const n = { ...s };
                               // Clearing also drops folded rows that were selected while the fold was open.
-                              const target = allSel ? g.memos.filter((m) => !isSuperseded(m)).map((m) => m.id) : ids;
-                              for (const id of target) n[id] = !allSel;
+                              const target = clearing ? g.memos.map((m) => m.id) : ids;
+                              for (const id of target) n[id] = !clearing;
                               return n;
                             })
                           }
@@ -1299,7 +1355,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             <Button small variant="ghost" className="memo-selbar-clear" onClick={() => setSel({})}>
               {tr("memo.clear_selection")}
             </Button>
-            <Button small variant="primary" onClick={() => setSendOpen(true)}>
+            <Button small variant="danger" onClick={() => void removeSelected()}>
+              {tr("common.delete")}
+            </Button>
+            <Button small variant="primary" disabled={sendableMemos.length === 0} onClick={() => setSendOpen(true)}>
               {tr("memo.open_send")}
             </Button>
           </div>
@@ -1465,9 +1524,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           }}
         />
       )}
-      {sendOpen && selectedMemos.length > 0 && (
+      {sendOpen && sendableMemos.length > 0 && (
         <SendMemoModal
-          memos={selectedMemos}
+          memos={sendableMemos}
           onClose={() => setSendOpen(false)}
           onSent={() => {
             setSel({});
@@ -1867,7 +1926,7 @@ function MemoRow(props: MemoRowProps) {
       >
         <Icon name="gripper" />
       </span>
-      <input type="checkbox" checked={selected && !replaced} disabled={replaced} onChange={props.onToggle} />
+      <input type="checkbox" checked={selected} onChange={props.onToggle} />
       <div
         className="memo-body"
         onClick={(e) => {
