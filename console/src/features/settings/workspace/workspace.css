@@ -1168,13 +1168,9 @@ button.mv-path:focus-visible {
   width: 4.5em;
 }
 
-/* Destructive actions, ruled off below the operations that can be taken back. Same visual
-   language as the workspace tab's danger zone.
-   ⚠️ That one declares `.danger-zone` / `.danger-zone-title` BARE (workspace.css), and every
-   stylesheet here ends up in one bundle — so it already reaches this markup whether or not
-   these rules exist. They are scoped and kept anyway: what this block looks like must not
-   be decided by another tab's file, which can retune its own spacing at any time and would
-   silently retune the member detail with it (the lesson of .view-head). */
+/* Destructive actions in the member detail, ruled off below the operations that can be taken
+   back. The zone's own spacing is tighter here than in the workspace tab, hence the scoped
+   rules below; they stay after the base `.danger-zone` rules above. */
 .member-detail .danger-zone {
   margin-top: 16px;
   padding-top: 12px;
