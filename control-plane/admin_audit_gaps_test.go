@@ -223,6 +223,7 @@ var adminWriteRouteAudits = map[string]adminWriteRouteAudit{
 	"PUT /api/admin/tenants/{slug}/engine-access/members":         {marker: `member.engine_access`},
 	"PUT /api/admin/tenants/{slug}/branch-rules":                  {marker: `tenant.branch_rules`},
 	"PUT /api/admin/tenants/{slug}/member-defaults":               {marker: `tenant.member_defaults`},
+	"PUT /api/admin/tenants/{slug}/push-settings":                 {marker: `tenant.push_settings`},
 	"PUT /api/admin/tenants/{slug}/limit-board":                   {marker: `limit_board.set`},
 	"POST /api/admin/tenants/{slug}/idp":                          {marker: `tenant_idp.`},
 	"PUT /api/admin/tenants/{slug}/idp/{id}":                      {marker: `tenant_idp.`},

@@ -98,6 +98,23 @@ func registerPushRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/push/subscriptions/{id}", a.withMembership(func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 		cfg.mgr.push.Remove(w, r, mv.MembershipID, r.PathValue("id"))
 	}))
+	// Per-kind opt-out, stored server-side so the Control Plane can honour it while no Console is open.
+	mux.HandleFunc("GET /api/push/prefs", a.withMembership(func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		cfg.mgr.push.GetPrefs(w, r, mv.MembershipID)
+	}))
+	mux.HandleFunc("PUT /api/push/prefs", a.withMembership(func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		cfg.mgr.push.PutPrefs(w, r, mv.MembershipID)
+	}))
+	// A Console reports the session on screen so the phone is not buzzed for it.
+	mux.HandleFunc("POST /api/push/viewing", a.withMembership(func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		cfg.mgr.push.Viewing(w, r, mv.MembershipID)
+	}))
+	// Sign-out: reachable without a session, because the Console calls it as the session ends; the
+	// subscription's own keys are the proof of owning the browser.
+	exemptExact("/api/push/release")
+	mux.HandleFunc("POST /api/push/release", func(w http.ResponseWriter, r *http.Request) {
+		cfg.mgr.push.Release(w, r)
+	})
 }
 
 // --- authGate exemption registry (docs/log/23 P2-W1) ---------------------------
@@ -323,6 +340,9 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// GET /api/me/ui-state; only this face writes them.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/member-defaults", adm.tenantMemberDefaults)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/member-defaults", adm.setTenantMemberDefaults)
+	// Whether a push may carry a question's text (#4750; off by default).
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/push-settings", adm.tenantPushSettings)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/push-settings", adm.setTenantPushSettings)
 	mux.HandleFunc("GET /internal/branch-rules", branchRulesBridgeAPI{cfg.mgr}.list)
 	// Tenant-defined sign-in methods (docs/log/61 §61.11). The rows are the tenant's, so
 	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,

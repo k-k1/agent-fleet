@@ -30,6 +30,33 @@ type memStore struct {
 	mu         sync.Mutex
 	releaseErr error
 	subs       []store.PushSubscription
+	off        map[string][]string
+	inactive   map[string]bool
+	includeTxt bool
+}
+
+func (m *memStore) GetPushOffKinds(_ context.Context, mid string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.off[mid], nil
+}
+func (m *memStore) PutPushOffKinds(_ context.Context, mid string, k []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.off == nil {
+		m.off = map[string][]string{}
+	}
+	m.off[mid] = k
+	return nil
+}
+func (m *memStore) PushDeliveryContext(_ context.Context, mid string) (bool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.inactive[mid], m.includeTxt, nil
+}
+func (m *memStore) GetTenantPushIncludeText(context.Context, string) (bool, error) { return false, nil }
+func (m *memStore) PutTenantPushIncludeText(context.Context, string, bool, string) error {
+	return nil
 }
 
 func (m *memStore) UpsertPushSubscription(_ context.Context, p store.PushSubscription) error {
@@ -168,7 +195,7 @@ func newFixture(t *testing.T) *fixture {
 		check: func(e string) error {
 			return webpush.CheckEndpoint(strings.Replace(e, f.srv.URL, "https://fcm.googleapis.com", 1), webpush.DefaultEndpointHosts)
 		},
-		timeout: 5 * time.Second, slotWait: 2 * time.Second, slots: make(chan struct{}, pushMaxInFlight)}
+		timeout: 5 * time.Second, slotWait: 2 * time.Second, slots: make(chan struct{}, pushMaxInFlight), view: newViewing()}
 	return f
 }
 

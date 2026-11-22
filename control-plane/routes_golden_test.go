@@ -55,7 +55,8 @@ func routeSwitches(t *testing.T) []routeSwitch {
 		// Web Push subscriptions (#4750). Registration checks only the switch; the key is read at
 		// start-up and a missing one makes the routes answer 503.
 		{name: "web-push", env: map[string]string{"AF_WEB_PUSH": "true"},
-			routes: []string{"GET /api/push/config", "GET /api/push/subscriptions", "POST /api/push/subscriptions", "DELETE /api/push/subscriptions/{id}"}},
+			routes: []string{"GET /api/push/config", "GET /api/push/subscriptions", "POST /api/push/subscriptions", "DELETE /api/push/subscriptions/{id}",
+				"GET /api/push/prefs", "PUT /api/push/prefs", "POST /api/push/viewing", "POST /api/push/release"}},
 		// Native self-update (registerUpdateRoutes). Registration only checks that the variable
 		// is set; the link itself is read per request.
 		{name: "update", env: map[string]string{"AF_SELF_LINK": filepath.Join(t.TempDir(), "af")},

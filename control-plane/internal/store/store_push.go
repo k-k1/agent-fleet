@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 )
 
 // PushSubscription is one browser install a member enabled Web Push on (#4750).
@@ -34,6 +36,14 @@ type PushSubscriptionStore interface {
 	// presents the subscription's own keys: the endpoint alone is not proof of owning the browser.
 	ReleasePushEndpoint(ctx context.Context, endpoint, p256dh, auth string) error
 	TouchPushSubscription(ctx context.Context, membershipID, endpoint, at string) error
+	// GetPushOffKinds returns the notification kinds the member turned off for push (none by default).
+	GetPushOffKinds(ctx context.Context, membershipID string) ([]string, error)
+	PutPushOffKinds(ctx context.Context, membershipID string, kinds []string) error
+	// PushDeliveryContext answers, for one send: whether the membership is still active, and
+	// whether its tenant allows a question's text in the push (default false).
+	PushDeliveryContext(ctx context.Context, membershipID string) (active, includeText bool, err error)
+	GetTenantPushIncludeText(ctx context.Context, tenantID string) (bool, error)
+	PutTenantPushIncludeText(ctx context.Context, tenantID string, on bool, updatedBy string) error
 }
 
 const pushCols = `SELECT id, membership_id, endpoint, p256dh, auth, user_agent, created_at, last_ok_at FROM push_subscription`
@@ -90,5 +100,68 @@ func (s *SQL) TouchPushSubscription(ctx context.Context, membershipID, endpoint,
 
 func (s *SQL) ReleasePushEndpoint(ctx context.Context, endpoint, p256dh, auth string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE endpoint=? AND p256dh=? AND auth=?`, endpoint, p256dh, auth)
+	return err
+}
+
+func (s *SQL) GetPushOffKinds(ctx context.Context, membershipID string) ([]string, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT off_kinds FROM push_pref WHERE membership_id=?`, membershipID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	if json.Unmarshal([]byte(raw), &out) != nil {
+		// An unreadable row must not silence the member's pushes for good, nor flood them: read it as
+		// "nothing turned off" and let the next save repair it.
+		return nil, nil
+	}
+	return out, nil
+}
+
+func (s *SQL) PutPushOffKinds(ctx context.Context, membershipID string, kinds []string) error {
+	if kinds == nil {
+		kinds = []string{}
+	}
+	b, _ := json.Marshal(kinds)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO push_pref(membership_id, off_kinds, updated_at) VALUES(?,?,?)
+		ON CONFLICT(membership_id) DO UPDATE SET off_kinds=excluded.off_kinds, updated_at=excluded.updated_at`,
+		membershipID, string(b), NowTS())
+	return err
+}
+
+func (s *SQL) PushDeliveryContext(ctx context.Context, membershipID string) (active, includeText bool, err error) {
+	var inc sql.NullInt64
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(t.include_text, 0) FROM membership m
+		LEFT JOIN tenant_push_setting t ON t.tenant_id = m.tenant_id
+		WHERE m.id=? AND m.status='active'`, membershipID).Scan(&inc)
+	if err == sql.ErrNoRows {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	return true, inc.Int64 != 0, nil
+}
+
+func (s *SQL) GetTenantPushIncludeText(ctx context.Context, tenantID string) (bool, error) {
+	var v int
+	err := s.db.QueryRowContext(ctx, `SELECT include_text FROM tenant_push_setting WHERE tenant_id=?`, tenantID).Scan(&v)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return v != 0, err
+}
+
+func (s *SQL) PutTenantPushIncludeText(ctx context.Context, tenantID string, on bool, updatedBy string) error {
+	v := 0
+	if on {
+		v = 1
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tenant_push_setting(tenant_id, include_text, updated_by, updated_at) VALUES(?,?,?,?)
+		ON CONFLICT(tenant_id) DO UPDATE SET include_text=excluded.include_text, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+		tenantID, v, updatedBy, NowTS())
 	return err
 }

@@ -209,6 +209,7 @@ tenant_idp_api.go
 tenant_idp_secret.go
 tenant_login.go
 tenant_member_defaults.go
+tenant_push_settings.go
 tenant_wiring.go
 tts.go
 tts_engine_control.go
