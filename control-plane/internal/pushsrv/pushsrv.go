@@ -5,9 +5,12 @@ package pushsrv
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
@@ -34,7 +37,12 @@ var pushKinds = map[string]bool{
 }
 
 const (
+	// pushSendTimeout bounds one device; the HTTP client's own 15 s sits inside it.
 	pushSendTimeout = 20 * time.Second
+	// pushMaxInFlight caps concurrent sends CP-wide, and pushMaxPerMember the devices one member
+	// may register, so a burst of notifications cannot fan out without bound.
+	pushMaxInFlight  = 32
+	pushMaxPerMember = 20
 	// A question that waits an hour is stale for a phone; the service drops it after that.
 	pushTTL = time.Hour
 )
@@ -47,6 +55,18 @@ type Service struct {
 	// service at a local TLS server.
 	check   func(string) error
 	timeout time.Duration
+	slots   chan struct{}
+}
+
+// validSubject accepts mailto:<addr with @> or an https URL with a host: services that check the
+// contact reject anything else, and only at the first push.
+func validSubject(s string) bool {
+	if rest, ok := strings.CutPrefix(s, "mailto:"); ok {
+		user, host, found := strings.Cut(rest, "@")
+		return found && user != "" && host != ""
+	}
+	u, err := url.Parse(s)
+	return err == nil && u.Scheme == "https" && u.Hostname() != ""
 }
 
 func Enabled() bool { return envx.Or("AF_WEB_PUSH", "") == "true" }
@@ -63,7 +83,7 @@ func New(st *store.SQL) *Service {
 		return nil
 	}
 	subject := strings.TrimSpace(envx.Or("AF_WEB_PUSH_SUBJECT", ""))
-	if !strings.HasPrefix(subject, "mailto:") && !strings.HasPrefix(subject, "https://") {
+	if !validSubject(subject) {
 		log.Printf("WARN: web push disabled: AF_WEB_PUSH_SUBJECT must be a mailto: or https: contact")
 		return nil
 	}
@@ -74,7 +94,7 @@ func New(st *store.SQL) *Service {
 		}
 	}
 	p := &Service{store: st, sender: webpush.NewSender(keys, subject), pubKey: keys.PublicKey(),
-		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout}
+		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slots: make(chan struct{}, pushMaxInFlight)}
 	st.SetNotificationHook(p.onNotification)
 	log.Printf("web push enabled")
 	return p
@@ -97,7 +117,9 @@ func (p *Service) onNotification(n store.Notification) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+		// Each device gets its own deadline in deliver; this one only bounds the list read and
+		// the wait for a free slot.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*p.timeout)
 		defer cancel()
 		p.deliver(ctx, n)
 	}()
@@ -112,23 +134,43 @@ func (p *Service) deliver(ctx context.Context, n store.Notification) {
 		return
 	}
 	body, _ := json.Marshal(pushPayload{V: 1, Kind: n.Kind, Session: n.TargetID, Name: n.DisplayName})
+	// One goroutine per device with its own deadline: a device whose push service hangs must not
+	// eat the budget of the ones behind it. p.slots bounds the sends in flight CP-wide.
+	var wg sync.WaitGroup
 	for _, s := range subs {
-		// The endpoint was checked when it was stored; a changed allowlist applies to it too.
+		// An endpoint the allowlist refuses is skipped, not deleted: a missing AF_WEB_PUSH_ENDPOINT_HOSTS
+		// entry after a restart must not cost the member their subscriptions.
 		if p.check(s.Endpoint) != nil {
-			_ = p.store.DeletePushSubscriptionByEndpoint(ctx, s.Endpoint)
 			continue
 		}
-		err := p.sender.Send(ctx, webpush.Subscription{Endpoint: s.Endpoint, P256dh: s.P256dh, Auth: s.Auth}, body,
-			webpush.Options{TTL: pushTTL, Urgency: "high"})
-		switch {
-		case err == nil:
-			_ = p.store.TouchPushSubscription(ctx, s.Endpoint, store.NowTS())
-		case err == webpush.ErrGone:
-			_ = p.store.DeletePushSubscriptionByEndpoint(ctx, s.Endpoint)
-		default:
-			// Never log the endpoint: it is a bearer URL for the member's browser.
-			log.Printf("web push: send to %s: %v", s.ID, err)
-		}
+		wg.Add(1)
+		go func(s store.PushSubscription) {
+			defer wg.Done()
+			select {
+			case p.slots <- struct{}{}:
+				defer func() { <-p.slots }()
+			case <-ctx.Done():
+				return
+			}
+			sctx, cancel := context.WithTimeout(ctx, p.timeout)
+			defer cancel()
+			p.send(sctx, n.MembershipID, s, body)
+		}(s)
+	}
+	wg.Wait()
+}
+
+func (p *Service) send(ctx context.Context, membershipID string, s store.PushSubscription, body []byte) {
+	err := p.sender.Send(ctx, webpush.Subscription{Endpoint: s.Endpoint, P256dh: s.P256dh, Auth: s.Auth}, body,
+		webpush.Options{TTL: pushTTL, Urgency: "high"})
+	switch {
+	case err == nil:
+		_ = p.store.TouchPushSubscription(ctx, membershipID, s.Endpoint, store.NowTS())
+	case errors.Is(err, webpush.ErrGone):
+		_ = p.store.DeletePushSubscriptionByEndpoint(ctx, membershipID, s.Endpoint)
+	default:
+		// Send's errors carry no URL (the endpoint is a bearer URL for the member's browser).
+		log.Printf("web push: send to %s: %v", s.ID, err)
 	}
 }
 
@@ -236,6 +278,16 @@ func (p *Service) Subscribe(w http.ResponseWriter, r *http.Request, membershipID
 	if _, err := webpush.Encrypt(webpush.Subscription{Endpoint: in.Endpoint, P256dh: in.Keys.P256dh, Auth: in.Keys.Auth}, []byte("x")); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_keys", "invalid subscription keys")
 		return
+	}
+	if rows, err := p.store.ListPushSubscriptions(r.Context(), membershipID); err == nil && len(rows) >= pushMaxPerMember {
+		held := false
+		for _, s := range rows {
+			held = held || s.Endpoint == in.Endpoint
+		}
+		if !held {
+			writeErr(w, http.StatusConflict, "too_many_devices", "too many registered devices; remove one first")
+			return
+		}
 	}
 	ua := r.UserAgent()
 	if len(ua) > 200 {

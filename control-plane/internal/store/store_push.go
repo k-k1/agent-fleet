@@ -26,9 +26,11 @@ type PushSubscriptionStore interface {
 	ListPushSubscriptions(ctx context.Context, membershipID string) ([]PushSubscription, error)
 	// DeletePushSubscription reports whether a row of that membership was removed.
 	DeletePushSubscription(ctx context.Context, membershipID, id string) (bool, error)
-	// DeletePushSubscriptionByEndpoint drops a subscription the push service says is gone.
-	DeletePushSubscriptionByEndpoint(ctx context.Context, endpoint string) error
-	TouchPushSubscription(ctx context.Context, endpoint, at string) error
+	// DeletePushSubscriptionByEndpoint drops a subscription the push service says is gone. It is
+	// scoped to the membership the send was made for: a row that moved to another member while
+	// the send was in flight is not that subscription any more and must survive a stale result.
+	DeletePushSubscriptionByEndpoint(ctx context.Context, membershipID, endpoint string) error
+	TouchPushSubscription(ctx context.Context, membershipID, endpoint, at string) error
 }
 
 const pushCols = `SELECT id, membership_id, endpoint, p256dh, auth, user_agent, created_at, last_ok_at FROM push_subscription`
@@ -73,12 +75,12 @@ func (s *SQL) DeletePushSubscription(ctx context.Context, membershipID, id strin
 	return n > 0, err
 }
 
-func (s *SQL) DeletePushSubscriptionByEndpoint(ctx context.Context, endpoint string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE endpoint=?`, endpoint)
+func (s *SQL) DeletePushSubscriptionByEndpoint(ctx context.Context, membershipID, endpoint string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE membership_id=? AND endpoint=?`, membershipID, endpoint)
 	return err
 }
 
-func (s *SQL) TouchPushSubscription(ctx context.Context, endpoint, at string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE push_subscription SET last_ok_at=? WHERE endpoint=?`, at, endpoint)
+func (s *SQL) TouchPushSubscription(ctx context.Context, membershipID, endpoint, at string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE push_subscription SET last_ok_at=? WHERE membership_id=? AND endpoint=?`, at, membershipID, endpoint)
 	return err
 }

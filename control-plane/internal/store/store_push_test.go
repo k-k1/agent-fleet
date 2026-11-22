@@ -82,7 +82,11 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 	if ok, err := st.DeletePushSubscription(ctx, a, rows[0].ID); err != nil || ok {
 		t.Fatalf("another member removed it: ok=%v err=%v", ok, err)
 	}
-	if err := st.TouchPushSubscription(ctx, ep, "2026-01-01T00:00:00Z"); err != nil {
+	// A stale result for the previous owner touches nothing.
+	if err := st.TouchPushSubscription(ctx, a, ep, "2026-01-02T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.TouchPushSubscription(ctx, b, ep, "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 	if rows, _ = st.ListPushSubscriptions(ctx, b); rows[0].LastOKAt != "2026-01-01T00:00:00Z" {
@@ -92,7 +96,12 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
 	_ = st.UpsertPushSubscription(ctx, sub)
-	if err := st.DeletePushSubscriptionByEndpoint(ctx, ep); err != nil {
+	// A stale result for the previous owner must not delete the row that moved away from them.
+	_ = st.DeletePushSubscriptionByEndpoint(ctx, a, ep)
+	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 1 {
+		t.Fatalf("a stale delete removed the new owner's row: %+v", rows)
+	}
+	if err := st.DeletePushSubscriptionByEndpoint(ctx, b, ep); err != nil {
 		t.Fatal(err)
 	}
 	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 0 {

@@ -31,9 +31,9 @@ import (
 	"time"
 )
 
-// MaxPayload is the plaintext limit of RFC 8291 §4 (one 4096-byte record minus the 86 bytes of
-// header and the 17 of padding delimiter and tag, rounded to the 4078 services accept).
-const MaxPayload = 4078
+// MaxPayload is the plaintext limit of RFC 8291 §4: a push service must accept a 4096-byte body,
+// of which 86 bytes are the header (salt, rs, idlen, 65-byte key) and 17 the delimiter and tag.
+const MaxPayload = 3993
 
 const recordSize = 4096
 
@@ -97,9 +97,9 @@ func (k *Keys) authHeader(endpoint, subject string, now time.Time) (string, erro
 		return "", errors.New("webpush: bad endpoint")
 	}
 	hdr, _ := json.Marshal(map[string]string{"typ": "JWT", "alg": "ES256"})
-	// 12 hours is the ceiling services accept (RFC 8292 §2).
+	// RFC 8292 §2 caps exp at 24 hours; 12 leaves room for clock skew.
 	claims, _ := json.Marshal(map[string]any{
-		"aud": u.Scheme + "://" + u.Host, "exp": now.Add(12 * time.Hour).Unix(), "sub": subject})
+		"aud": origin(u), "exp": now.Add(12 * time.Hour).Unix(), "sub": subject})
 	signing := b64.EncodeToString(hdr) + "." + b64.EncodeToString(claims)
 	h := sha256.Sum256([]byte(signing))
 	der, err := ecdsa.SignASN1(rand.Reader, k.priv, h[:])
@@ -114,6 +114,20 @@ func (k *Keys) authHeader(endpoint, subject string, now time.Time) (string, erro
 	sig.R.FillBytes(raw[:32])
 	sig.S.FillBytes(raw[32:])
 	return "vapid t=" + signing + "." + b64.EncodeToString(raw) + ", k=" + k.PublicKey(), nil
+}
+
+// origin serialises u as RFC 6454 §6.1 does, which RFC 8292 §2 requires for aud: lower-case host,
+// and no port when it is the scheme's default.
+func origin(u *url.URL) string {
+	host := strings.ToLower(u.Hostname())
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if port := u.Port(); port != "" && !(scheme == "https" && port == "443") && !(scheme == "http" && port == "80") {
+		host += ":" + port
+	}
+	return scheme + "://" + host
 }
 
 // Encrypt produces the aes128gcm request body (RFC 8291 §3.4) for one subscription.
@@ -249,7 +263,13 @@ func (s *Sender) Send(ctx context.Context, sub Subscription, payload []byte, o O
 	}
 	resp, err := s.HTTP.Do(req)
 	if err != nil {
-		return err
+		// *url.Error prints the whole request URL, and the endpoint is a bearer URL for the
+		// member's browser; keep only the cause.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return fmt.Errorf("webpush: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))

@@ -211,3 +211,56 @@ func TestCheckEndpoint(t *testing.T) {
 		}
 	}
 }
+
+func TestAudIsAnOrigin(t *testing.T) {
+	keys, _, _ := GenerateKeys()
+	for endpoint, want := range map[string]string{
+		"https://FCM.GoogleAPIs.com:443/x": "https://fcm.googleapis.com",
+		"https://fcm.googleapis.com/x":     "https://fcm.googleapis.com",
+		"https://push.example:8443/x":      "https://push.example:8443",
+	} {
+		h, err := keys.authHeader(endpoint, "mailto:ops@example.invalid", time.Unix(1, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		claims, _ := b64.DecodeString(strings.Split(strings.TrimPrefix(h, "vapid t="), ".")[1])
+		if !strings.Contains(string(claims), `"aud":"`+want+`"`) {
+			t.Errorf("%s: claims %s, want aud %s", endpoint, claims, want)
+		}
+	}
+}
+
+func TestBodyLimitAndRecordSize(t *testing.T) {
+	sub, _, _ := newSub(t, "https://fcm.googleapis.com/x")
+	body, err := Encrypt(sub, make([]byte, MaxPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) != 4096 {
+		t.Fatalf("a full payload makes a %d-byte body; services accept 4096", len(body))
+	}
+	// rs is the record size, big-endian, at bytes 16..20.
+	if got := int(body[16])<<24 | int(body[17])<<16 | int(body[18])<<8 | int(body[19]); got != 4096 {
+		t.Fatalf("rs = %d", got)
+	}
+	if _, err := Encrypt(sub, make([]byte, MaxPayload+1)); err == nil {
+		t.Fatal("payload over the limit accepted")
+	}
+}
+
+type failingTransport struct{}
+
+func (failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("connection reset")
+}
+
+func TestSendErrorHasNoURL(t *testing.T) {
+	keys, _, _ := GenerateKeys()
+	s := NewSender(keys, "mailto:ops@example.invalid")
+	s.HTTP = &http.Client{Transport: failingTransport{}}
+	sub, _, _ := newSub(t, "https://fcm.googleapis.com/fcm/send/SECRET-TOKEN?q=1")
+	err := s.Send(context.Background(), sub, []byte("x"), Options{})
+	if err == nil || strings.Contains(err.Error(), "SECRET-TOKEN") || !strings.Contains(err.Error(), "connection reset") {
+		t.Fatalf("err = %v", err)
+	}
+}

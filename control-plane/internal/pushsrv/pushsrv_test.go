@@ -11,8 +11,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -64,7 +66,7 @@ func (m *memStore) DeletePushSubscription(_ context.Context, mid, id string) (bo
 	}
 	return false, nil
 }
-func (m *memStore) DeletePushSubscriptionByEndpoint(_ context.Context, ep string) error {
+func (m *memStore) DeletePushSubscriptionByEndpoint(_ context.Context, _, ep string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i, s := range m.subs {
@@ -75,7 +77,7 @@ func (m *memStore) DeletePushSubscriptionByEndpoint(_ context.Context, ep string
 	}
 	return nil
 }
-func (m *memStore) TouchPushSubscription(_ context.Context, ep, at string) error {
+func (m *memStore) TouchPushSubscription(_ context.Context, _, ep, at string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i, s := range m.subs {
@@ -151,7 +153,7 @@ func newFixture(t *testing.T) *fixture {
 		check: func(e string) error {
 			return webpush.CheckEndpoint(strings.Replace(e, f.srv.URL, "https://fcm.googleapis.com", 1), webpush.DefaultEndpointHosts)
 		},
-		timeout: 5 * time.Second}
+		timeout: 5 * time.Second, slots: make(chan struct{}, pushMaxInFlight)}
 	return f
 }
 
@@ -233,7 +235,7 @@ func TestGoneSubscriptionIsDeletedButFailureIsKept(t *testing.T) {
 	}
 }
 
-func TestEndpointOutsideAllowlistIsDroppedNotPosted(t *testing.T) {
+func TestEndpointOutsideAllowlistIsSkippedAndKept(t *testing.T) {
 	f := newFixture(t)
 	f.svc.check = func(string) error { return io.ErrUnexpectedEOF }
 	f.subscribe(t, "m1")
@@ -241,8 +243,82 @@ func TestEndpointOutsideAllowlistIsDroppedNotPosted(t *testing.T) {
 	if f.count() != 0 {
 		t.Fatal("posted to an endpoint the allowlist refuses")
 	}
-	if rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1"); len(rows) != 0 {
-		t.Fatal("refused endpoint kept")
+	// A restart without the extra AF_WEB_PUSH_ENDPOINT_HOSTS entry must not cost the subscription.
+	if rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1"); len(rows) != 1 {
+		t.Fatal("refused endpoint was deleted")
+	}
+}
+
+func TestSlowDeviceDoesNotStarveTheOthers(t *testing.T) {
+	f := newFixture(t)
+	release := make(chan struct{})
+	f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if strings.HasSuffix(r.URL.Path, "/slow") {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+			return
+		}
+		f.mu.Lock()
+		f.bodies = append(f.bodies, b)
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	})
+	_, p1, a1 := newDevice(t)
+	_ = f.st.UpsertPushSubscription(context.Background(), store.PushSubscription{MembershipID: "m1", Endpoint: f.srv.URL + "/slow", P256dh: p1, Auth: a1})
+	f.subscribe(t, "m1")
+	f.svc.timeout = 600 * time.Millisecond
+	f.svc.deliver(context.Background(), note("question"))
+	close(release)
+	if f.count() != 1 {
+		t.Fatalf("the healthy device got %d pushes behind a hanging one", f.count())
+	}
+}
+
+func TestSendErrorLogsNoEndpoint(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	f.srv.Close() // connection refused: *url.Error would print the full URL
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	f.svc.deliver(context.Background(), note("question"))
+	if buf.Len() == 0 {
+		t.Fatal("no failure logged; the check below would pass vacuously")
+	}
+	if strings.Contains(buf.String(), "/p/") || strings.Contains(buf.String(), f.srv.URL) {
+		t.Fatalf("log carries the endpoint: %s", buf.String())
+	}
+}
+
+func TestDeviceCap(t *testing.T) {
+	f := newFixture(t)
+	for i := 0; i < pushMaxPerMember; i++ {
+		f.subscribe(t, "m1")
+	}
+	_, p256, auth := newDevice(t)
+	post := func(ep string) int {
+		w := httptest.NewRecorder()
+		f.svc.Subscribe(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"endpoint":"`+ep+`","keys":{"p256dh":"`+p256+`","auth":"`+auth+`"}}`)), "m1")
+		return w.Code
+	}
+	if c := post(f.srv.URL + "/new"); c != 409 {
+		t.Fatalf("over the cap: %d", c)
+	}
+	rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1")
+	if c := post(rows[0].Endpoint); c != 201 { // re-registering a held endpoint is not a new device
+		t.Fatalf("refresh at the cap: %d", c)
+	}
+}
+
+func TestValidSubject(t *testing.T) {
+	for s, want := range map[string]bool{"mailto:ops@example.invalid": true, "https://example.invalid/contact": true,
+		"mailto:": false, "mailto:@x": false, "https://": false, "http://example.invalid": false, "": false} {
+		if validSubject(s) != want {
+			t.Errorf("%q: want %v", s, want)
+		}
 	}
 }
 
